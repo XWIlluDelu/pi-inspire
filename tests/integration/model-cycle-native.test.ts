@@ -101,7 +101,9 @@ it.each([false, true])(
     try {
       await runtime.openSession(manager.getSessionId());
       await runtime.setSteeringMode(manager.getSessionId(), "one-at-a-time");
-      host = await hostApiFixture({ runtime });
+      host = await hostApiFixture({
+        services: { runtime, catalog, attachments, cwd: f.cwd },
+      });
       installFakeWebSocket();
       vi.stubGlobal("fetch", (async (input, init) => {
         const headers = new Headers(init?.headers);
@@ -116,7 +118,7 @@ it.each([false, true])(
       const socket = FakeWebSocket.instances.at(-1)!;
       const id = manager.getSessionId();
       expect(new URL(socket.url).searchParams.get("detail")).toBe(id);
-      socket.openWithoutSnapshot();
+      socket.open();
       const subscription = observeEventSocket(
         `${host.baseUrl.replace("http", "ws")}/events?detail=${encodeURIComponent(id)}`,
       );
@@ -143,7 +145,7 @@ it.each([false, true])(
         model: { id: "b" },
         thinkingLevel: "low",
       });
-      expect((await runtime.snapshot()).active).toMatchObject({
+      expect((await runtime.snapshot(id)).active).toMatchObject({
         model: { id: "b" },
         thinkingLevel: "low",
       });
@@ -152,7 +154,7 @@ it.each([false, true])(
       );
       await store.setThinkingLevel("high");
       expect(store.getState().thinkingLevel).toBe("high");
-      expect((await runtime.snapshot()).active?.thinkingLevel).toBe("high");
+      expect((await runtime.snapshot(id)).active?.thinkingLevel).toBe("high");
       expect(
         await readFile(join(f.root, "model-events"), "utf8"),
       ).not.toContain(":request");

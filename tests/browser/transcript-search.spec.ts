@@ -1,4 +1,4 @@
-import { expect, type Response, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 import { checkpointAdapterConfiguration } from "../web/fixtures/extension-adapters";
 import { openEventSession } from "./support/host-events";
 import {
@@ -7,7 +7,11 @@ import {
 } from "./support/navigation";
 import { terminalOperation } from "./support/terminal-operations";
 
-const configuration = checkpointAdapterConfiguration;
+const searchFixture = (page: Page, name: string) =>
+  openEventSession(page, name, checkpointAdapterConfiguration, {});
+
+const highlightCount = (page: Page) =>
+  page.evaluate(() => CSS.highlights.get("transcript-match")?.size ?? 0);
 const current = () => {
   const range = CSS.highlights.get("transcript-current-match")?.values().next()
     .value as Range | undefined;
@@ -23,12 +27,7 @@ test("@cross-browser conversation search keeps its anchor and separates results 
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 850 });
-  const emit = await openEventSession(
-    page,
-    "Conversation search geometry",
-    configuration,
-    {},
-  );
+  const emit = await searchFixture(page, "Conversation search geometry");
   const text = Array.from({ length: 12 }, () => "calibration").join(" ");
   emit({
     type: "message_end",
@@ -70,10 +69,14 @@ test("@cross-browser conversation search keeps its anchor and separates results 
   await expect(count).toHaveText("12");
   const previousBox = (await previous.boundingBox())!;
   const nextBox = (await next.boundingBox())!;
-  expect(previousBox.width).toBeGreaterThanOrEqual(24);
-  expect(previousBox.height).toBeGreaterThanOrEqual(24);
-  expect(nextBox.width).toBeGreaterThanOrEqual(24);
-  expect(nextBox.height).toBeGreaterThanOrEqual(24);
+  expect(
+    Math.min(
+      previousBox.width,
+      previousBox.height,
+      nextBox.width,
+      nextBox.height,
+    ),
+  ).toBeGreaterThanOrEqual(24);
   expect(
     await count.evaluate((el) => {
       const range = document.createRange();
@@ -96,21 +99,12 @@ test("@cross-browser conversation search keeps its anchor and separates results 
 test("composition keys do not navigate transcript matches or dismiss search", async ({
   page,
 }) => {
-  const emit = await openEventSession(
-    page,
-    "Composition-owned search",
-    configuration,
-    {},
-  );
+  const emit = await searchFixture(page, "Composition-owned search");
   emit({
     type: "message_end",
     message: { role: "user", content: "测量一，测量二。", timestamp: 1 },
   });
-  await openConversationSearch(page);
-  const input = page.getByRole("searchbox", {
-    name: "Search conversation",
-    exact: true,
-  });
+  const input = await openConversationSearch(page);
   const result = page.getByLabel("Transcript search matches");
   await input.fill("测量");
   await expect(result).toHaveText("2 matches");
@@ -162,10 +156,9 @@ test("composition keys do not navigate transcript matches or dismiss search", as
   await expect(input).not.toBeFocused();
   await page.keyboard.press("Escape");
   const scope = page.getByRole("combobox", { name: "Search scope" });
+  await expect(scope).toHaveJSProperty("tagName", "SELECT");
   await scope.focus();
-  expect(await scope.evaluate(nativeFind)).toBe(true);
-
-  await page.locator(".transcript-wrap").press("Control+f");
+  await scope.press("Control+f");
   await expect(input).toBeFocused();
   await expect(input).toHaveValue("测量");
   expect(
@@ -198,12 +191,7 @@ test("composition keys do not navigate transcript matches or dismiss search", as
 test("search counts rendered shell text and reveals a matching branch summary", async ({
   page,
 }) => {
-  const emit = await openEventSession(
-    page,
-    "Visible search text",
-    configuration,
-    {},
-  );
+  const emit = await searchFixture(page, "Visible search text");
   emit(
     {
       type: "message_end",
@@ -256,12 +244,7 @@ test("search counts rendered shell text and reveals a matching branch summary", 
 test("literal highlights track visible matches and open collapsed results", async ({
   page,
 }) => {
-  const emit = await openEventSession(
-    page,
-    "Search highlights",
-    configuration,
-    {},
-  );
+  const emit = await searchFixture(page, "Search highlights");
   const code = 'const value = "precise match";';
   const source =
     "# Searchable answer\n\nOne **precise match**, another *precise match*.\n\n" +
@@ -302,11 +285,7 @@ test("literal highlights track visible matches and open collapsed results", asyn
   const count = page.getByLabel("Transcript search matches");
   await input.fill("PRECISE MATCH");
   await expect(count).toHaveText("6 matches");
-  await expect
-    .poll(() =>
-      page.evaluate(() => CSS.highlights.get("transcript-match")?.size),
-    )
-    .toBe(4);
+  await expect.poll(() => highlightCount(page)).toBe(4);
   for (let match = 0; match < 4; match++) await input.press("Enter");
   await expect(count).toHaveText("4 of 6");
   await expect
@@ -359,16 +338,8 @@ test("literal highlights track visible matches and open collapsed results", asyn
   await input.fill("hidden-path");
   await input.press("Enter");
   await expect(count).toHaveText("1 of 2");
-  await expect
-    .poll(() =>
-      page.evaluate(() => CSS.highlights.get("transcript-match")?.size),
-    )
-    .toBe(1);
-  await expect
-    .poll(() =>
-      page.evaluate(() => CSS.highlights.get("transcript-current-match")?.size),
-    )
-    .toBe(0);
+  await expect.poll(() => highlightCount(page)).toBe(1);
+  await expect.poll(() => page.evaluate(current)).toBeNull();
 
   const live = {
     role: "assistant",
@@ -387,12 +358,7 @@ test("literal highlights track visible matches and open collapsed results", asyn
 test("reveals a searched older live row and clears highlights on session change", async ({
   page,
 }) => {
-  const emit = await openEventSession(
-    page,
-    "Live search highlights",
-    configuration,
-    {},
-  );
+  const emit = await searchFixture(page, "Live search highlights");
   emit(
     ...Array.from({ length: 80 }, (_, index) => ({
       type: "message_end",
@@ -409,8 +375,7 @@ test("reveals a searched older live row and clears highlights on session change"
   await expect(
     page.getByRole("log").getByText("Ordinary prompt 79."),
   ).toBeAttached();
-  await openConversationSearch(page);
-  const input = page.getByRole("searchbox", { name: "Search conversation" });
+  const input = await openConversationSearch(page);
   // Search includes the bounded Live page even when rows are outside the viewport.
   await input.fill("Ordinary prompt");
   await expect(
@@ -425,9 +390,7 @@ test("reveals a searched older live row and clears highlights on session change"
     .poll(() => page.evaluate(current))
     .toMatchObject({ text: "unique older" });
   await page.getByRole("button", { name: "New session", exact: true }).click();
-  await expect
-    .poll(() => page.evaluate(() => CSS.highlights.has("transcript-match")))
-    .toBe(false);
+  await expect.poll(() => highlightCount(page)).toBe(0);
 });
 
 test.describe("touch reading controls", () => {
@@ -441,12 +404,7 @@ test.describe("touch reading controls", () => {
     page,
     context,
   }) => {
-    const emit = await openEventSession(
-      page,
-      "Touch code actions",
-      configuration,
-      {},
-    );
+    const emit = await searchFixture(page, "Touch code actions");
     const code = "console.log('Ready');";
     emit({
       type: "message_end",
@@ -505,37 +463,28 @@ test.describe("touch reading controls", () => {
     await expect(
       page.getByRole("button", { name: "Open conversation search" }),
     ).toBeFocused();
-    await expect
-      .poll(() => page.evaluate(() => CSS.highlights.has("transcript-match")))
-      .toBe(false);
-    const createdTerminals: Response[] = [];
-    const recordTerminal = (response: Response) => {
-      if (
+    await expect.poll(() => highlightCount(page)).toBe(0);
+    const created = page.waitForResponse(
+      (response) =>
         response.ok() &&
         response.request().method() === "POST" &&
         new URL(response.url()).pathname === "/api/terminal-operations" &&
-        response.request().postDataJSON()?.intent?.command === "create"
-      )
-        createdTerminals.push(response);
-    };
-    page.on("response", recordTerminal);
+        response.request().postDataJSON()?.intent?.command === "create",
+    );
+    await insert.tap();
+    const {
+      result: { id },
+    } = await (await created).json();
     try {
-      await insert.tap();
       await expect(
-        page.locator(".ctx__terminal-tabs [role=tab][aria-selected=true]"),
+        page.locator(`[role=tab][data-dock-tab="terminal:${id}"]`),
       ).toHaveAttribute("aria-selected", "true");
     } finally {
-      page.off("response", recordTerminal);
-      for (const response of createdTerminals) {
-        const {
-          result: { id },
-        } = (await response.json()) as { result: { id: string } };
-        const closed = await terminalOperation(page, {
-          command: "remove",
-          params: { id, force: true },
-        });
-        expect(closed.ok()).toBe(true);
-      }
+      const closed = await terminalOperation(page, {
+        command: "remove",
+        params: { id, force: true },
+      });
+      expect(closed.ok()).toBe(true);
     }
   });
 });

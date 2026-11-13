@@ -1,9 +1,9 @@
 import { expect, type Page, test } from "@playwright/test";
 import type { HostUpdateStatus } from "../../shared/contracts";
 import {
-  restartObservation,
   type HostRestartRequest,
   type HostRestartStatus,
+  restartObservation,
 } from "../../shared/host-restart";
 import { modelSettingsScenario } from "./fixtures/model-settings";
 import { clipboardLines } from "./support/clipboard";
@@ -114,7 +114,6 @@ test("busy Host restarts submit directly and keep narrow status stable", async (
   const readyStatus = (): HostRestartStatus => ({
     hostId: crypto.randomUUID(),
     available: true,
-    allAvailable: true,
     operation: null,
   });
   let status = readyStatus();
@@ -209,7 +208,6 @@ for (const includeHerdr of [false, true]) {
     const status: HostRestartStatus = {
       hostId: crypto.randomUUID(),
       available: true,
-      allAvailable: true,
       allPiAvailable: true,
       allPiIncludesHerdr: includeHerdr,
       operation: null,
@@ -287,7 +285,9 @@ test("selected Settings categories remain visible across responsive layouts with
     }, safe);
     await expect
       .poll(async () => {
-        const bounds = (await settings.boundingBox())!;
+        const bounds = (await settings
+          .locator(".dialog.settings")
+          .boundingBox())!;
         return Math.max(
           safe.left - bounds.x,
           bounds.x + bounds.width - (width - safe.right),

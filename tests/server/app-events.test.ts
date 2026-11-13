@@ -80,6 +80,8 @@ describe("WebSocket observation and transport limits", () => {
         return frame;
       });
       expect(frame).toMatchObject({
+        sessionId: "fixture-history",
+        runtimeSequence: expect.any(Number),
         transcript: {
           durableLeafId: id,
           effectiveLeafId: id,
@@ -414,56 +416,6 @@ describe("WebSocket observation and transport limits", () => {
     }
   });
 
-  it("reads the initial detail only on subscription and releases the backlog after it", async () => {
-    const read = deferredSignal();
-    const id = "fixture-active";
-    await runtime.openSession(id);
-    const snapshot = runtime.snapshot.bind(runtime);
-    const readSnapshot = vi
-      .spyOn(runtime, "snapshot")
-      .mockImplementation(async (sessionId) => {
-        await read.promise;
-        return snapshot(sessionId);
-      });
-    const { body } = await fixture.localRequest
-      .get("/api/bootstrap")
-      .expect(200);
-    expect(body).toMatchObject({
-      authorityId: application.authorityId,
-      startupSessionId: id,
-    });
-    expect(body).not.toHaveProperty("snapshot");
-    expect(readSnapshot).not.toHaveBeenCalled();
-
-    const { socket, frames } = observeEventSocket(
-      `${baseUrl.replace("http", "ws")}/events?detail=${id}`,
-    );
-    try {
-      await vi.waitFor(() =>
-        expect(readSnapshot).toHaveBeenCalledExactlyOnceWith(id),
-      );
-      runtime.emit("event", {
-        type: "agent_start",
-        sessionId: id,
-        sessionStatus: { runState: "running" },
-      });
-      expect(frames).toEqual([]);
-      read.resolve();
-      await vi.waitFor(() => expect(frames).toHaveLength(2));
-      expect(frames[0]).toMatchObject({
-        type: "snapshot",
-        authorityId: application.authorityId,
-        detailSessionId: id,
-        detailRevision: 0,
-        data: { active: { sessionId: id } },
-      });
-      expect(frames[1]).toMatchObject({ type: "agent_start", sessionId: id });
-    } finally {
-      read.resolve();
-      socket.close();
-    }
-  });
-
   it("settles a missing addressed session on the same socket without adopting another view", async () => {
     await runtime.openSession("fixture-active");
     const id = "missing";
@@ -499,49 +451,66 @@ describe("WebSocket observation and transport limits", () => {
     }
   });
 
-  it("replays only events newer than the runtime snapshot cut", async () => {
+  it("bootstraps without a snapshot and releases only detail newer than the subscription cut", async () => {
     const id = "fixture-active";
     await runtime.openSession(id);
     const snapshot = runtime.snapshot.bind(runtime);
-    const entered = deferredSignal();
-    const resume = deferredSignal();
+    const capture = deferredSignal();
     const captured = deferredSignal();
     const publish = deferredSignal();
+    const read = vi
+      .spyOn(runtime, "snapshot")
+      .mockImplementation(async (sessionId) => {
+        await capture.promise;
+        const view = await snapshot(sessionId);
+        captured.resolve();
+        await publish.promise;
+        return view;
+      });
+    const { body } = await fixture.localRequest
+      .get("/api/bootstrap")
+      .expect(200);
+    expect(body).toMatchObject({
+      authorityId: application.authorityId,
+      startupSessionId: id,
+    });
+    expect(body).not.toHaveProperty("snapshot");
+    expect(read).not.toHaveBeenCalled();
+
     const { slots, emitSlotEvent } = runtime as unknown as {
       slots: Map<string, unknown>;
       emitSlotEvent(slot: unknown, event: unknown): void;
     };
-    vi.spyOn(runtime, "snapshot").mockImplementation(async (sessionId) => {
-      entered.resolve();
-      await resume.promise;
-      const view = await snapshot(sessionId);
-      captured.resolve();
-      await publish.promise;
-      return view;
-    });
-    const { socket, frames } = observeEventSocket(
-      `${baseUrl.replace("http", "ws")}/events?detail=${id}`,
-    );
     const event = (name: string) =>
       emitSlotEvent.call(runtime, slots.get(id), {
         type: "test_snapshot_cut",
         name,
       });
+    const { socket, frames } = observeEventSocket(
+      `${baseUrl.replace("http", "ws")}/events?detail=${id}`,
+    );
     try {
-      await entered.promise;
-      event("included in the snapshot");
-      resume.resolve();
+      await vi.waitFor(() => expect(read).toHaveBeenCalledExactlyOnceWith(id));
+      event("before capture");
+      capture.resolve();
       await captured.promise;
-      event("after the snapshot");
+      event("after capture");
+      expect(frames).toEqual([]);
       publish.resolve();
       await vi.waitFor(() => expect(frames).toHaveLength(2));
-      expect(frames[0]).toMatchObject({ type: "snapshot" });
+      expect(frames[0]).toMatchObject({
+        type: "snapshot",
+        authorityId: application.authorityId,
+        detailSessionId: id,
+        detailRevision: 0,
+        data: { active: { sessionId: id } },
+      });
       expect(frames[1]).toMatchObject({
         type: "test_snapshot_cut",
-        name: "after the snapshot",
+        name: "after capture",
       });
     } finally {
-      resume.resolve();
+      capture.resolve();
       publish.resolve();
       socket.close();
     }
@@ -693,9 +662,9 @@ describe("WebSocket observation and transport limits", () => {
       const snapshotReady = deferredSignal();
       if (failure === "joining backlog") {
         const snapshot = runtime.snapshot.bind(runtime);
-        vi.spyOn(runtime, "snapshot").mockImplementation(async () => {
+        vi.spyOn(runtime, "snapshot").mockImplementation(async (sessionId) => {
           await snapshotReady.promise;
-          return snapshot();
+          return snapshot(sessionId);
         });
       }
       const { socket, frames } = observeEventSocket(

@@ -1,8 +1,11 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import request from "supertest";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MAX_PROMPT_CHARS } from "../../shared/contracts.js";
-import { hostReceipt } from "../../shared/host-operations.js";
+import {
+  hostReceipt,
+  promptFingerprintInput,
+} from "../../shared/host-operations.js";
 import {
   closeHostApiFixture,
   hostApiFixture,
@@ -26,7 +29,8 @@ describe("HTTP prompt operation ownership", () => {
   it("requires an open explicit target and accepts an escaped prompt at the character limit", async () => {
     const { localRequest, runtime, promptDelivery } = await start();
     await runtime.openSession("fixture-active");
-    const before = (await runtime.snapshot()).active?.transcriptPage.messages;
+    const before = (await runtime.snapshot("fixture-active")).active
+      ?.transcriptPage.messages;
     const prompt = vi.spyOn(runtime, "prompt");
     const abort = vi.spyOn(runtime, "abort");
     const send = (body: Parameters<typeof promptDelivery>[0]) =>
@@ -37,9 +41,10 @@ describe("HTTP prompt operation ownership", () => {
     expect(prompt).not.toHaveBeenCalled();
     expect(abort).not.toHaveBeenCalled();
     await send({ sessionId: "never-opened", message: "hello" }).expect(409);
-    expect((await runtime.snapshot()).active?.transcriptPage.messages).toEqual(
-      before,
-    );
+    expect(
+      (await runtime.snapshot("fixture-active")).active?.transcriptPage
+        .messages,
+    ).toEqual(before);
 
     prompt.mockClear().mockResolvedValue(null);
     const delivery = {
@@ -72,7 +77,11 @@ describe("HTTP prompt operation ownership", () => {
     const receipt = `/api/prompt/${operationId}`;
     const post = (body = delivery) =>
       localRequest.post("/api/prompt").send(body);
-    const observe = () => localRequest.get(receipt).query({ authorityId });
+    const fingerprint = createHash("sha256")
+      .update(promptFingerprintInput(delivery))
+      .digest("hex");
+    const observe = (proof = fingerprint) =>
+      localRequest.get(receipt).query({ authorityId, fingerprint: proof });
 
     const observer = new AbortController();
     const disconnected = expect(
@@ -97,6 +106,14 @@ describe("HTTP prompt operation ownership", () => {
       const pending = { ...identity, state: "pending" };
       expect((await observe().expect(202)).body).toEqual(pending);
       expect((await post().expect(202)).body).toEqual(pending);
+      await observe("0".repeat(64))
+        .expect(409)
+        .expect(({ body }) =>
+          expect(body).toMatchObject({
+            code: "PROMPT_OPERATION_MISMATCH",
+            outcomeUnknown: true,
+          }),
+        );
 
       await post({ ...delivery, message: "changed payload" })
         .expect(409)

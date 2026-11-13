@@ -127,9 +127,7 @@ describe("prompt delivery transport", () => {
       Response.json({ error: "No receipt" }, { status: 409 }),
     );
     vi.stubGlobal("fetch", fetch);
-    await expect(
-      createApi().prompt(prompt, undefined, true),
-    ).rejects.toMatchObject({
+    await expect(createApi().observePrompt(prompt)).rejects.toMatchObject({
       outcomeUnknown: true,
     });
     expect(fetch).toHaveBeenCalledExactlyOnceWith(

@@ -12,9 +12,10 @@ import type {
   GitStatusResponse,
 } from "../../shared/contracts";
 import { createInitialAppState } from "../../src/app-state";
-import { ChangesDetail, ChangesPane } from "../../src/components/ChangesPane";
+import { ChangesPane } from "../../src/components/ChangesPane";
 import type { ContextPaneView } from "../../src/components/context-pane-view";
 import { selectContextPaneView } from "../../src/components/context-pane-view";
+import { FilePreview } from "../../src/components/FilePreview";
 import type { FileReadingState } from "../../src/workbench-session";
 
 const clean: Extract<GitStatusResponse, { kind: "repository" }> = {
@@ -44,26 +45,6 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function Detail({
-  state,
-  readingState,
-}: {
-  state: ContextPaneView;
-  readingState?: FileReadingState;
-}) {
-  return (
-    <ChangesDetail
-      state={state}
-      readingState={readingState}
-      render={(controls, content) => (
-        <>
-          <div>{controls}</div>
-          <div className="file-preview__content">{content}</div>
-        </>
-      )}
-    />
-  );
-}
 const diff: Extract<GitDiffResponse, { kind: "text" }> = {
   kind: "text",
   path: changed.files[0].path,
@@ -111,7 +92,7 @@ function readings(): FileReadingState {
 
 it("distinguishes initial Git status loading and failure", () => {
   const view = render(
-    <ChangesPane state={{ ...initial, gitStatusLoading: true }} />,
+    <ChangesPane state={{ ...initial, gitStatusPending: true }} />,
   );
   expect(screen.getByText("Reading Git status")).toBeVisible();
   view.rerender(
@@ -122,6 +103,34 @@ it("distinguishes initial Git status loading and failure", () => {
 
 describe("File Changes rendering and navigation", () => {
   const path = diff.path;
+
+  it("shows deleted file changes with Source and download disabled", () => {
+    const state = ready();
+    render(
+      <FilePreview
+        state={{
+          ...state,
+          fileInspection: {
+            kind: "file",
+            reference: "notes.md",
+            preview: {
+              status: "error",
+              reference: "notes.md",
+              message: "File was deleted",
+            },
+          },
+        }}
+      />,
+    );
+    expect(
+      screen.getByRole("region", { name: "Source changes for notes.md" }),
+    ).toBeVisible();
+    expect(screen.queryByText("File was deleted")).toBeNull();
+    expect(screen.getByRole("button", { name: "Source" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Download unavailable" }),
+    ).toBeDisabled();
+  });
   const nonTextChanges: [string, GitDiffResponse, string][] = [
     ["Binary change", { kind: "binary", path }, "no line-based source view"],
     [
@@ -156,7 +165,7 @@ describe("File Changes rendering and navigation", () => {
   it.each(nonTextChanges)(
     "explains %s without showing a diff",
     (title, result, hint) => {
-      render(<Detail state={ready(result)} />);
+      render(<FilePreview state={ready(result)} />);
       expect(screen.getByText(title)).toBeInTheDocument();
       expect(screen.getByText(hint, { exact: false })).toBeInTheDocument();
     },
@@ -164,7 +173,7 @@ describe("File Changes rendering and navigation", () => {
 
   it("distinguishes a truncated diff from omitted context", () => {
     const renderDiff = (patch: GitDiffResponse) => (
-      <Detail state={ready(patch)} />
+      <FilePreview state={ready(patch)} />
     );
     const { rerender } = render(renderDiff({ ...diff, contextLimited: true }));
     const source = within(
@@ -188,7 +197,9 @@ describe("File Changes rendering and navigation", () => {
     });
     const scroll = vi.spyOn(HTMLElement.prototype, "scrollIntoView");
     const state = ready();
-    const view = render(<Detail state={state} readingState={readings()} />);
+    const view = render(
+      <FilePreview state={state} readingState={readings()} />,
+    );
     fireEvent.click(screen.getByRole("button", { name: "Next change" }));
     const otherPath = {
       id: "other",
@@ -196,9 +207,9 @@ describe("File Changes rendering and navigation", () => {
       utf8Path: "other.md",
     };
     const other = ready({ ...diff, path: otherPath });
-    view.rerender(<Detail state={{ ...other, gitDiff: state.gitDiff }} />);
+    view.rerender(<FilePreview state={{ ...other, gitDiff: state.gitDiff }} />);
     expect(screen.queryByRole("region", { name: /Source changes/ })).toBeNull();
-    view.rerender(<Detail state={other} readingState={readings()} />);
+    view.rerender(<FilePreview state={other} readingState={readings()} />);
     callbacks.forEach((callback) => callback());
     expect(scroll).not.toHaveBeenCalled();
     expect(screen.getByLabelText("Change position")).toHaveTextContent("1/2");
@@ -208,12 +219,12 @@ describe("File Changes rendering and navigation", () => {
 describe("Git evidence boundaries", () => {
   it("retains a confirmed empty comparison through refresh only for the same owner", () => {
     const state = { ...ready(), gitStatus: clean, gitDiff: null };
-    const pending = { ...state, gitStatusRefreshing: true };
-    const view = render(<Detail state={pending} />);
+    const pending = { ...state, gitStatusPending: true };
+    const view = render(<FilePreview state={pending} />);
     expect(screen.getByText("Reading Git status")).toBeVisible();
 
-    view.rerender(<Detail state={state} />);
-    view.rerender(<Detail state={pending} />);
+    view.rerender(<FilePreview state={state} />);
+    view.rerender(<FilePreview state={pending} />);
     expect(screen.getByText("No Git comparison")).toBeVisible();
     for (const nextOwner of [
       {
@@ -222,12 +233,13 @@ describe("Git evidence boundaries", () => {
           reference: "other.md",
           preview: null,
         },
+        resourceTabs: [{ reference: "other.md", view: "changes" as const }],
       },
       { sessionId: "other-session" },
       { cwd: "/other" },
       { transportGeneration: state.transportGeneration + 1 },
     ]) {
-      view.rerender(<Detail state={{ ...pending, ...nextOwner }} />);
+      view.rerender(<FilePreview state={{ ...pending, ...nextOwner }} />);
       expect(screen.getByText("Reading Git status")).toBeVisible();
     }
   });
@@ -242,7 +254,7 @@ describe("Git evidence boundaries", () => {
     "never shows a retained diff as current without Git evidence (%s, %s)",
     (gitStatus, gitStatusError, label) => {
       render(
-        <Detail
+        <FilePreview
           state={{
             ...ready(),
             gitStatus,

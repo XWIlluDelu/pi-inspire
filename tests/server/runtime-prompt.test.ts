@@ -17,6 +17,7 @@ import {
   token,
 } from "./fixtures/host-api.js";
 import {
+  catalog,
   deferredSignal,
   disposeRuntimeFixture,
   fakeRuntime,
@@ -26,10 +27,10 @@ import {
   preview,
   record,
   schedulingRuntime,
+  startWorker,
   trackedAttachmentStore,
   trackRuntime,
   upload,
-  startWorker,
   workspaceDirectories,
 } from "./fixtures/runtime.js";
 
@@ -268,8 +269,10 @@ describe("prompt admission and artifact ownership", () => {
     "retains an unknown prompt receipt when cancellation %s fails",
     async (failure) => {
       const store = trackedAttachmentStore();
+      const session = await persistedRecord("a");
+      const source = catalog([session]);
       const { runtime, workers } = fakeRuntime({
-        sessions: [await persistedRecord("a")],
+        source,
         attachments: store,
       });
       await runtime.openSession("a");
@@ -311,7 +314,14 @@ describe("prompt admission and artifact ownership", () => {
         rejectPrompt(error);
         return stopped;
       });
-      const http = await hostApiFixture({ runtime });
+      const http = await hostApiFixture({
+        services: {
+          runtime,
+          catalog: source,
+          attachments: store,
+          cwd: session.cwd,
+        },
+      });
       try {
         const prompt = vi.spyOn(runtime, "prompt");
         const doc = await store.add(upload("notes.txt", "text/plain"));
@@ -472,7 +482,7 @@ describe("prompt admission and artifact ownership", () => {
     ) {
       await vi.waitFor(() => expect(worker.stops).toBe(1));
       expect(
-        (await runtime.snapshot()).active?.projectionConflict,
+        (await runtime.snapshot("a")).active?.projectionConflict,
       ).toMatchObject({
         kind: "projection-failure",
       });

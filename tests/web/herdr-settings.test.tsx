@@ -20,7 +20,9 @@ const fixture = vi.hoisted(() => ({
 vi.mock("../../src/store", () => ({
   useAppState: (selector: (state: unknown) => unknown) =>
     selector({ prefs: { herdrEnabled: fixture.saved } }),
-  store: { setHerdrEnabled: fixture.save },
+  store: {
+    setPreference: (_field: string, value: boolean) => fixture.save(value),
+  },
 }));
 const ready = {
   enabled: false,

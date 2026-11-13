@@ -11,7 +11,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Composer } from "../../src/components/Composer";
 import { store } from "../../src/store";
 import { createComposerFixture } from "./fixtures/composer";
-import { activeSnapshot, deferred, FakeWebSocket } from "./helpers";
+import {
+  activeSnapshot,
+  deferred,
+  FakeWebSocket,
+  selectSession,
+} from "./helpers";
 
 let host: Awaited<ReturnType<typeof createComposerFixture>>;
 beforeEach(async () => {
@@ -56,9 +61,8 @@ describe("caret completion", () => {
 
   it("groups authoritative Pi command sources, preserves unknown sources, and supports click selection", async () => {
     act(() => {
-      FakeWebSocket.instances.at(-1)!.emit({
-        type: "snapshot",
-        data: activeSnapshot({
+      FakeWebSocket.instances.at(-1)!.emitSnapshot(
+        activeSnapshot({
           commands: [
             {
               name: "deploy",
@@ -82,7 +86,7 @@ describe("caret completion", () => {
             },
           ],
         }),
-      });
+      );
     });
     render(<Composer />);
     const textarea = screen.getByLabelText("Message") as HTMLTextAreaElement;
@@ -234,7 +238,7 @@ describe("caret completion", () => {
   });
 });
 describe("session-owned composer surfaces", () => {
-  it("closes a project-file picker and drop state before a session switch can retarget it", () => {
+  it("closes a project-file picker and drop state before a session switch can retarget it", async () => {
     const { container } = render(<Composer />);
     const form = container.querySelector(".composer")!;
     fireEvent.dragOver(form);
@@ -242,14 +246,12 @@ describe("session-owned composer surfaces", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add project files" }));
     expect(screen.getByLabelText("Search project files")).toBeInTheDocument();
 
-    act(() =>
-      FakeWebSocket.instances.at(-1)!.emit({
-        type: "snapshot",
-        data: activeSnapshot({
-          sessionId: "s2",
-          sessionName: "Second session",
-          cwd: "/proj/second",
-        }),
+    await selectSession(
+      store,
+      activeSnapshot({
+        sessionId: "s2",
+        sessionName: "Second session",
+        cwd: "/proj/second",
       }),
     );
 

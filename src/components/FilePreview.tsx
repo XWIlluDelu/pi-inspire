@@ -6,16 +6,8 @@ import {
   GitCompareArrows,
   MousePointer2,
   MousePointerClick,
-  RotateCw,
 } from "lucide-react";
-import {
-  type ReactNode,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ResourceDescriptor } from "../../shared/contracts";
 import {
   resourceReferenceLabel,
@@ -30,9 +22,11 @@ import {
   type ResourcePreview,
 } from "../resource-preview";
 import { store } from "../store";
-import { highlightSource, languageForFile } from "../syntax-highlighting";
+import { languageForFile } from "../syntax-highlighting";
 import { useCopied } from "../use-copied";
 import type { FileReadingState } from "../workbench-session";
+import { useFileChanges } from "./ChangesPane";
+import { CodeView } from "./CodeView";
 import { ContextPaneState } from "./ContextPaneState";
 import { CopyFeedback } from "./CopyFeedback";
 import type { ContextPaneView } from "./context-pane-view";
@@ -112,10 +106,6 @@ function SourceCodePreview({
     () => lines.map((_, index) => index + 1).join("\n"),
     [lines],
   );
-  const highlighted = useMemo(
-    () => highlightSource(text, language),
-    [language, text],
-  );
   useLayoutEffect(() => {
     const root = rootRef.current;
     if (!root) return;
@@ -162,15 +152,9 @@ function SourceCodePreview({
       <div className="source-view__gutter" aria-hidden>
         <pre>{lineNumbers}</pre>
       </div>
-      <pre className="source-view__pre">
-        <code
-          className={`hljs language-${language}`}
-          // highlight.js escapes the input and emits span elements only.
-          dangerouslySetInnerHTML={{ __html: highlighted }}
-        />
-      </pre>
+      <CodeView className="source-view__pre" text={text} language={language} />
       {truncated ? (
-        <div className="source-view__boundary">Preview ends here</div>
+        <div className="source-boundary">Preview ends here</div>
       ) : null}
     </div>
   );
@@ -414,24 +398,18 @@ function ResourcePreviewContent({
         icon={<AlertTriangle size={17} aria-hidden />}
         title={invalid ? "Not a file" : "Preview unavailable"}
         hint={preview.message}
-      >
-        {!invalid ? (
-          <button
-            type="button"
-            className="res__more button--quiet res__state-action"
-            onClick={() =>
-              void store.openResource(
-                preview.reference,
-                state.fileInspection.kind === "file"
-                  ? state.fileInspection.workspacePath
-                  : undefined,
-              )
-            }
-          >
-            <RotateCw size={12} aria-hidden /> Retry
-          </button>
-        ) : null}
-      </ContextPaneState>
+        onRetry={
+          invalid
+            ? undefined
+            : () =>
+                void store.openResource(
+                  preview.reference,
+                  state.fileInspection.kind === "file"
+                    ? state.fileInspection.workspacePath
+                    : undefined,
+                )
+        }
+      />
     );
   }
   return (
@@ -450,16 +428,21 @@ export type { FileReadingState } from "../workbench-session";
 export function FilePreview({
   state,
   readingState,
-  changes,
   onQuote,
 }: {
   state: ContextPaneView;
   readingState?: FileReadingState;
-  changes?: { controls: ReactNode; content: ReactNode };
   /** Body readers only: send a selected passage, with its location, to the composer. */
   onQuote?: (markdown: string) => void;
 }) {
   const { fileInspection } = state;
+  const fileTab = inspectedFileTab(state);
+  const showingChanges = fileTab?.view === "changes";
+  const changes = useFileChanges({
+    state,
+    readingState,
+    enabled: showingChanges,
+  });
   const selectedReference = fileInspection.reference;
   const workspacePath =
     fileInspection.kind === "file" ? fileInspection.workspacePath : undefined;
@@ -469,7 +452,7 @@ export function FilePreview({
   const displayPath =
     descriptor?.workspacePath ??
     workspacePath ??
-    inspectedFileTab(state)?.git?.displayPath ??
+    fileTab?.git?.displayPath ??
     (/^(?:file:\/\/|vscode:\/\/file\/)/iu.test(reference)
       ? reference
       : resourceReferenceLabel(reference));
@@ -535,7 +518,7 @@ export function FilePreview({
       readingState.save?.();
     }
     setFileView({ owner: readingPosition, mode });
-    if (changes) void store.setFileChangesView(false);
+    if (showingChanges) void store.setFileChangesView(false);
   };
   const htmlScope = [
     descriptor?.id,
@@ -548,7 +531,7 @@ export function FilePreview({
     state.contextMode,
     fileInspection.kind,
     viewMode,
-    Boolean(changes),
+    showingChanges,
   ].join("|");
   const [download, setDownload] = useState<{
     scope: string;
@@ -556,6 +539,7 @@ export function FilePreview({
     error?: string;
   } | null>(null);
   const currentDownload = download?.scope === htmlScope ? download : null;
+  const downloadName = state.sessionId ? descriptor?.name : null;
   const downloadResource = async () => {
     setDownload({ scope: htmlScope, pending: true });
     try {
@@ -593,8 +577,19 @@ export function FilePreview({
   }, [htmlScope]);
   const currentInteraction =
     interaction?.scope === htmlScope ? interaction : null;
+  const previewRefreshError =
+    !showingChanges && preview?.status === "ready"
+      ? preview.refreshError
+      : null;
+  const notices = {
+    refresh:
+      previewRefreshError &&
+      `Preview refresh failed: ${previewRefreshError}. Showing the last loaded content.`,
+    download: currentDownload?.error,
+    interaction: currentInteraction?.error,
+  };
   const canInteract =
-    !changes &&
+    !showingChanges &&
     descriptor?.kind === "html" &&
     viewMode === "preview" &&
     preview?.status === "ready" &&
@@ -630,7 +625,7 @@ export function FilePreview({
   const rootRef = useRef<HTMLDivElement>(null);
   const headingCount = useDocumentHeadingCount(
     contentRef,
-    !changes &&
+    !showingChanges &&
       viewMode === "preview" &&
       preview?.status === "ready" &&
       (descriptor?.kind === "markdown" || descriptor?.kind === "notebook"),
@@ -643,7 +638,7 @@ export function FilePreview({
     if (
       !root ||
       !saved ||
-      changes ||
+      showingChanges ||
       viewMode === "source" ||
       preview?.status !== "ready"
     )
@@ -667,19 +662,19 @@ export function FilePreview({
       root.addEventListener(event, stop, true);
     restore();
     return stop;
-  }, [readingState, viewMode, preview?.status, descriptor?.id, changes]);
+  }, [readingState, viewMode, preview?.status, descriptor?.id, showingChanges]);
   return (
     <div className="file-preview" ref={rootRef}>
       <div
-        className="file-preview__actions"
+        className="pane-toolbar file-preview__actions"
         role="toolbar"
         aria-label="File actions"
       >
-        {canToggle || changes ? (
+        {canToggle || showingChanges ? (
           <FileViewControl
-            mode={changes ? "preview" : viewMode}
+            mode={showingChanges ? "preview" : viewMode}
             disabled={
-              Boolean(changes) &&
+              showingChanges &&
               (preview?.status === "error" ||
                 (preview?.status === "ready" && preview.text === undefined))
             }
@@ -694,9 +689,9 @@ export function FilePreview({
           className="icon-button file-detail-header__git"
           aria-label="Git changes"
           title="Git changes"
-          aria-pressed={Boolean(changes)}
+          aria-pressed={showingChanges}
           disabled={!state.sessionId || !selectedReference}
-          onClick={() => void store.setFileChangesView(!changes)}
+          onClick={() => void store.setFileChangesView(!showingChanges)}
         >
           <GitCompareArrows size={16} aria-hidden />
         </button>
@@ -729,31 +724,21 @@ export function FilePreview({
             )}
           </button>
         ) : null}
-        <div className="file-preview__exports">
+        <span className="file-preview__exports">
           <PathCopyButton path={displayPath} />
-          {descriptor && state.sessionId ? (
-            <button
-              type="button"
-              className="icon-button"
-              aria-label={`Download ${descriptor.name}`}
-              title="Download"
-              disabled={currentDownload?.pending}
-              onClick={() => void downloadResource()}
-            >
-              <Download size={16} aria-hidden />
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="icon-button"
-              aria-label="Download unavailable"
-              title="Download unavailable"
-              disabled
-            >
-              <Download size={16} aria-hidden />
-            </button>
-          )}
-        </div>
+          <button
+            type="button"
+            className="icon-button"
+            aria-label={
+              downloadName ? `Download ${downloadName}` : "Download unavailable"
+            }
+            title={downloadName ? "Download" : "Download unavailable"}
+            disabled={!downloadName || currentDownload?.pending}
+            onClick={() => void downloadResource()}
+          >
+            <Download size={16} aria-hidden />
+          </button>
+        </span>
       </div>
       <div
         className="file-preview__content"
@@ -762,7 +747,7 @@ export function FilePreview({
           const element = event.target as HTMLElement;
           if (
             readingState &&
-            !changes &&
+            !showingChanges &&
             viewMode !== "source" &&
             (element === event.currentTarget ||
               element.matches('[data-pane-scroll-active="true"]'))
@@ -775,22 +760,13 @@ export function FilePreview({
           }
         }}
       >
-        {!changes && preview?.status === "ready" && preview.refreshError ? (
-          <div className="file-preview__notice" role="status">
-            Preview refresh failed: {preview.refreshError}. Showing the last
-            loaded content.
-          </div>
-        ) : null}
-        {currentDownload?.error ? (
-          <div className="file-preview__notice" role="status">
-            {currentDownload.error}
-          </div>
-        ) : null}
-        {currentInteraction?.error ? (
-          <div className="file-preview__notice" role="status">
-            {currentInteraction.error}
-          </div>
-        ) : null}
+        {Object.entries(notices).map(([key, notice]) =>
+          notice ? (
+            <div className="file-preview__notice" role="status" key={key}>
+              {notice}
+            </div>
+          ) : null,
+        )}
         {changes ? (
           changes.content
         ) : (
@@ -803,12 +779,12 @@ export function FilePreview({
           />
         )}
       </div>
-      {onQuote ? (
+      {!showingChanges && onQuote ? (
         <ReaderQuoteAction
           rootRef={rootRef}
           contentRef={contentRef}
           source={displayPath}
-          enabled={!changes && preview?.status === "ready"}
+          enabled={preview?.status === "ready"}
           onQuote={onQuote}
         />
       ) : null}

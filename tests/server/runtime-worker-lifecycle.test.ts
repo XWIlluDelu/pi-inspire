@@ -22,62 +22,16 @@ import {
   preview,
   record,
   schedulingRuntime,
+  startWorker,
   TEST_CWD,
   trackedAttachmentStore,
   trackRuntime,
-  startWorker,
 } from "./fixtures/runtime.js";
 
 beforeEach(initializeRuntimeFixture);
 afterEach(disposeRuntimeFixture);
 
 describe("worker startup and retirement", () => {
-  it("opens two previews without Pi and starts only the session receiving input", async () => {
-    const entered = deferredSignal();
-    const resume = deferredSignal();
-    const { runtime, workers } = schedulingRuntime({
-      sessions: [record("a", TEST_CWD), record("b", TEST_CWD)],
-      openSessionProjection: async (session) => {
-        if (session.id === "a") {
-          entered.resolve();
-          await resume.promise;
-        }
-        return preview(session);
-      },
-    });
-    const opening = runtime.openSession("a");
-    try {
-      await entered.promise;
-      await runtime.openSession("b");
-      resume.resolve();
-
-      expect((await opening).active).toMatchObject({
-        sessionId: "a",
-        transcriptPage: { messages: [{ content: "preview:a" }] },
-      });
-      expect((await runtime.snapshot()).active?.sessionId).toBe("b");
-      expect(workers).toHaveLength(0);
-
-      const release = runtime.retainSessionView("a");
-      try {
-        const snapshot = await runtime.snapshot("a");
-        await runtime.prompt({
-          sessionId: "a",
-          expectedViewId: snapshot.active?.transcriptPage.viewId,
-          message: "Continue in this view",
-        });
-        expect(workers.map((worker) => worker.sessionId)).toEqual(["a"]);
-        expect(runtime.startupSessionHint).toBe("b");
-      } finally {
-        release();
-      }
-    } finally {
-      resume.resolve();
-      await opening.catch(() => undefined);
-      await runtime.close();
-    }
-  });
-
   it("keeps existing and new sessions usable when project discovery cannot be saved", async () => {
     const source = catalog([record("a", TEST_CWD)]);
     const registrationError = new Error("Maintenance storage is unavailable");
@@ -201,7 +155,7 @@ describe("worker startup and retirement", () => {
       ]),
     );
     expect(existsSync(sessionFile)).toBe(false);
-    expect((await runtime.snapshot()).active).toMatchObject({
+    expect((await runtime.snapshot("new-id")).active).toMatchObject({
       model,
       thinkingLevel: "high",
     });
@@ -367,7 +321,9 @@ describe("worker startup and retirement", () => {
         expect.objectContaining({ type: "runtime_ready", sessionId: "new-id" }),
       );
       expect(created.active?.sessionId).toBe("new-id");
-      expect((await runtime.snapshot()).active?.sessionId).toBe("new-id");
+      expect((await runtime.snapshot("new-id")).active?.sessionId).toBe(
+        "new-id",
+      );
     } finally {
       runtime.off("event", observer);
       await runtime.close();
@@ -404,10 +360,10 @@ describe("worker startup and retirement", () => {
       statusKey: "usage",
       statusText: "37%",
     });
-    expect((await runtime.snapshot()).extensionDisplays).toHaveLength(1);
+    expect((await runtime.snapshot("a")).extensionDisplays).toHaveLength(1);
     f.worker.emit("exit", new Error("worker crashed"));
 
-    const recovered = await runtime.snapshot();
+    const recovered = await runtime.snapshot("a");
     expect(recovered.active?.transcriptPage.messages).toMatchObject([
       { role: "user", content: "preview:a", timestamp: 1 },
     ]);

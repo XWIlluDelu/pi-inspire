@@ -1,6 +1,6 @@
 import type { ComponentProps } from "react";
 
-export function NativeSelect({
+export function NativeSelect<Value extends string>({
   label,
   value,
   options,
@@ -11,9 +11,9 @@ export function NativeSelect({
 }: Omit<ComponentProps<"select">, "value" | "onChange"> & {
   label: string;
   value: string;
-  options: readonly { value: string; label: string; description?: string }[];
+  options: readonly { value: Value; label: string; description?: string }[];
   display?: string;
-  onChange(value: string): void;
+  onChange(value: Value): void;
 }) {
   const selected = options.some((option) => option.value === value);
   return (
@@ -23,7 +23,11 @@ export function NativeSelect({
       title={props.title ?? label}
       className={`native-select ${className ?? ""}`}
       value={display === undefined && selected ? value : ""}
-      onChange={(event) => onChange(event.currentTarget.value)}
+      onChange={(event) => {
+        const value = event.currentTarget.value;
+        const choice = options.find((option) => option.value === value);
+        if (choice) onChange(choice.value);
+      }}
       data-modal-autofocus={props.autoFocus || undefined}
     >
       {(display !== undefined || !selected) && (

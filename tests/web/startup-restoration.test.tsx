@@ -9,6 +9,7 @@ import {
   bootstrapPayload,
   DEFAULT_PREFS,
   deferred,
+  emptySnapshot,
   FakeWebSocket,
   installFakeWebSocket,
   installFetch,
@@ -48,17 +49,18 @@ describe("initial workbench restoration", () => {
     async (outcome) => {
       const catalog = deferred<ReturnType<typeof sessionPage>>();
       const opened = deferred<Awaited<ReturnType<RouteHandler>>>();
+      const open = vi.fn(() => opened.promise);
       route = (url) => {
         if (url.startsWith("/api/bootstrap"))
           return { body: continueBootstrap };
-        if (url === "/api/sessions/open") return opened.promise;
+        if (url === "/api/sessions/open") return open();
         if (url.startsWith("/api/sessions"))
           return catalog.promise.then((body) => ({ body }));
       };
       render(<App />);
       await act(async () => {
         await current.init();
-        FakeWebSocket.instances.at(-1)!.open();
+        FakeWebSocket.instances.at(-1)!.join();
       });
       expectRestoring();
       await act(() =>
@@ -89,6 +91,7 @@ describe("initial workbench restoration", () => {
           "Cannot read session",
         );
       }
+      expect(open).toHaveBeenCalledOnce();
     },
   );
 
@@ -101,14 +104,12 @@ describe("initial workbench restoration", () => {
     expectRestoring();
     const socket = FakeWebSocket.instances.at(-1)!;
     expect(new URL(socket.url).searchParams.get("detail")).toBe("deleted");
-    socket.openWithoutSnapshot();
+    socket.open();
     await act(async () => {
-      socket.emit({
-        type: "snapshot",
+      socket.emitSnapshot(emptySnapshot, {
         detailSessionId: "deleted",
         detailRevision: 0,
         missingDetail: true,
-        data: bootstrapPayload().snapshot,
       });
     });
     expect(
@@ -151,7 +152,7 @@ describe("initial workbench restoration", () => {
     await act(async () => {
       boot.resolve(continueBootstrap);
       await startup;
-      FakeWebSocket.instances.at(-1)!.open();
+      FakeWebSocket.instances.at(-1)!.join();
     });
     expectRestoring();
     await act(async () => {
@@ -167,8 +168,7 @@ describe("initial workbench restoration", () => {
     const open = vi.fn();
     route = async (url) => {
       if (url.startsWith("/api/bootstrap")) return { body: continueBootstrap };
-      if (url === "/api/sessions/deselect")
-        return { body: bootstrapPayload().snapshot };
+      if (url === "/api/sessions/deselect") return { body: emptySnapshot };
       if (url === "/api/sessions/open") {
         open();
         return { body: activeSnapshot() };

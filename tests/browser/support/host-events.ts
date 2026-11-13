@@ -25,26 +25,28 @@ export async function routeSnapshots(
     snapshot?: (snapshot: ActiveSnapshot) => void;
     bootstrap?: (bootstrap: BootstrapResponse) => void;
     event?: (event: SnapshotEvent) => false | void;
+    socket?: false;
   },
 ) {
   let socket: WebSocketRoute | undefined;
   let detailSessionId: string | undefined;
   let authority = "";
-  await page.routeWebSocket(/\/events(?:\?|$)/, (client) => {
-    socket = client;
-    detailSessionId = undefined;
-    const upstream = client.connectToServer();
-    upstream.onMessage((message) => {
-      if (socket !== client) return;
-      const event = JSON.parse(String(message)) as SnapshotEvent;
-      if (event.type === "snapshot") {
-        detailSessionId = event.detailSessionId;
-        if (event.data) options.snapshot?.(event.data);
-      }
-      if (options.event?.(event) === false) return;
-      client.send(JSON.stringify(event));
+  if (options.socket !== false)
+    await page.routeWebSocket(/\/events(?:\?|$)/, (client) => {
+      socket = client;
+      detailSessionId = undefined;
+      const upstream = client.connectToServer();
+      upstream.onMessage((message) => {
+        if (socket !== client) return;
+        const event = JSON.parse(String(message)) as SnapshotEvent;
+        if (event.type === "snapshot") {
+          detailSessionId = event.detailSessionId;
+          if (event.data) options.snapshot?.(event.data);
+        }
+        if (options.event?.(event) === false) return;
+        client.send(JSON.stringify(event));
+      });
     });
-  });
   for (const pattern of [
     "**/api/bootstrap**",
     "**/api/snapshot**",
@@ -107,8 +109,17 @@ export async function openEventSession(
   await expect(
     page.getByRole("button", { name: /^Session actions:/ }),
   ).toHaveText(name);
+  let status: SessionRuntimeStatus = { runState: "idle" };
   return (...events: Record<string, unknown>[]) => {
-    for (const event of events)
-      transport.send({ ...event, sessionId: createdSessionId });
+    for (const event of events) {
+      if (event.type === "agent_start") status = { runState: "running" };
+      else if (event.type === "agent_settled")
+        status = { runState: event.aborted ? "aborted" : "idle" };
+      transport.send({
+        sessionStatus: status,
+        ...event,
+        sessionId: createdSessionId,
+      });
+    }
   };
 }

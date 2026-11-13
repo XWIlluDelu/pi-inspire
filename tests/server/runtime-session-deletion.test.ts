@@ -19,10 +19,27 @@ import {
   preview,
   record,
   schedulingRuntime,
+  startWorker,
   trackedAttachmentStore,
   trackRuntime,
-  startWorker,
 } from "./fixtures/runtime.js";
+
+const deleteOne = (runtime: RuntimeController, sessionId: string) =>
+  runtime.deleteSessions(
+    { scope: "session", sessionId },
+    { hiddenSessionIds: [sessionId], hiddenProjectCwds: [] },
+  );
+
+const clearHidden = (
+  runtime: RuntimeController,
+  sessionIds: string[],
+  hiddenSessionIds: string[],
+  hiddenProjectCwds: string[],
+) =>
+  runtime.deleteSessions(
+    { scope: "hidden", sessionIds },
+    { hiddenSessionIds, hiddenProjectCwds },
+  );
 
 beforeEach(initializeRuntimeFixture);
 afterEach(disposeRuntimeFixture);
@@ -44,12 +61,12 @@ describe("runtime session deletion", () => {
     });
     trackRuntime(runtime);
     expect((await source.list()).sessions).toHaveLength(1);
-    await expect(
-      runtime.clearHiddenSessions(["a"], ["a"], []),
-    ).rejects.toMatchObject({ code: "SESSION_CATALOG_INCOMPLETE" });
+    await expect(clearHidden(runtime, ["a"], ["a"], [])).rejects.toMatchObject({
+      code: "SESSION_CATALOG_INCOMPLETE",
+    });
     expect(remove).not.toHaveBeenCalled();
-    await expect(runtime.deleteSession("a")).resolves.toMatchObject({
-      disposition: "trashed",
+    await expect(deleteOne(runtime, "a")).resolves.toEqual({
+      deleted: [{ sessionId: "a", disposition: "trashed" }],
     });
   });
   it("leaves a session file in place when an external instance cannot be ended", async () => {
@@ -67,9 +84,7 @@ describe("runtime session deletion", () => {
       throw new Error("Pi has not exited");
     });
     trackRuntime(runtime);
-    await expect(runtime.deleteSession("a")).rejects.toThrow(
-      "Pi has not exited",
-    );
+    await expect(deleteOne(runtime, "a")).rejects.toThrow("Pi has not exited");
     expect(remove).not.toHaveBeenCalled();
     await expect(access(session.path)).resolves.toBeUndefined();
   });
@@ -102,7 +117,7 @@ describe("runtime session deletion", () => {
       completion: new Promise(() => undefined),
     });
     try {
-      await expect(runtime.deleteSession("a")).rejects.toMatchObject({
+      await expect(deleteOne(runtime, "a")).rejects.toMatchObject({
         status: 409,
         message: "Wait for the session to finish opening before deleting it",
       });
@@ -130,7 +145,7 @@ describe("runtime session deletion", () => {
     await runtime.openSession("a");
     await startWorker(runtime);
     await expect(
-      runtime.clearHiddenSessions(["a", "b", "c"], ["a"], [HIDDEN_FOLDER_CWD]),
+      clearHidden(runtime, ["a", "b", "c"], ["a"], [HIDDEN_FOLDER_CWD]),
     ).resolves.toEqual({
       deleted: ["a", "b", "c"].map((sessionId) => ({
         sessionId,
@@ -140,7 +155,7 @@ describe("runtime session deletion", () => {
     expect(remove.mock.calls).toEqual(
       ["a", "b", "c"].map((id) => [expect.objectContaining({ id })]),
     );
-    expect((await runtime.snapshot()).active).toBeNull();
+    expect(runtime.startupSessionHint).toBeNull();
   });
 
   it("requires the complete selected folder and leaves other Hidden records untouched", async () => {
@@ -158,14 +173,14 @@ describe("runtime session deletion", () => {
     });
     trackRuntime(runtime);
     await expect(
-      runtime.clearHiddenSessions(["b"], [], [HIDDEN_FOLDER_CWD]),
+      clearHidden(runtime, ["b"], [], [HIDDEN_FOLDER_CWD]),
     ).rejects.toMatchObject({
       status: 409,
       code: "HIDDEN_SELECTION_CHANGED",
     });
     expect(remove).not.toHaveBeenCalled();
     await expect(
-      runtime.clearHiddenSessions(["b", "c"], [], [HIDDEN_FOLDER_CWD]),
+      clearHidden(runtime, ["b", "c"], [], [HIDDEN_FOLDER_CWD]),
     ).resolves.toMatchObject({
       deleted: [{ sessionId: "b" }, { sessionId: "c" }],
     });
@@ -189,7 +204,7 @@ describe("runtime session deletion", () => {
       );
       trackRuntime(runtime);
       await expect(
-        runtime.clearHiddenSessions(["a", "b"], ["a", "b"], []),
+        clearHidden(runtime, ["a", "b"], ["a", "b"], []),
       ).rejects.toMatchObject({ status: failure === "missing" ? 404 : 409 });
       expect(remove).not.toHaveBeenCalled();
       await expect(access(first.path)).resolves.toBeUndefined();
@@ -216,11 +231,11 @@ describe("runtime session deletion", () => {
       { deleteSessionRecord: remove },
     ).setExternalSessionTerminator(stop);
     trackRuntime(runtime);
-    await expect(
-      runtime.clearHiddenSessions(["a"], ["a"], []),
-    ).resolves.toMatchObject({
-      deleted: [{ sessionId: "a" }],
-    });
+    await expect(clearHidden(runtime, ["a"], ["a"], [])).resolves.toMatchObject(
+      {
+        deleted: [{ sessionId: "a" }],
+      },
+    );
     expect(stop).toHaveBeenCalledWith("a", session.path);
     expect(remove).toHaveBeenCalledWith(session);
   });
@@ -239,7 +254,7 @@ describe("runtime session deletion", () => {
       deleteSessionRecord: remove,
     });
 
-    await expect(runtime.deleteSession("a")).rejects.toMatchObject({
+    await expect(deleteOne(runtime, "a")).rejects.toMatchObject({
       message: "The session identity is ambiguous in the Pi catalog",
       status: 409,
     });
@@ -259,12 +274,10 @@ describe("runtime session deletion", () => {
     trackRuntime(runtime);
     await runtime.openSession("a");
     await startWorker(runtime);
-    await expect(runtime.deleteSession("a")).rejects.toThrow(
-      "Trash unavailable",
-    );
+    await expect(deleteOne(runtime, "a")).rejects.toThrow("Trash unavailable");
     expect(workers[0]!.stops).toBe(1);
     expect(runtime.startupSessionHint).toBe("a");
-    expect((await runtime.snapshot()).active?.sessionId).toBe("a");
+    expect(runtime.startupSessionHint).toBe("a");
     await runtime.openSession("a");
     await startWorker(runtime);
     expect(workers).toHaveLength(2);
@@ -293,7 +306,7 @@ describe("runtime session deletion", () => {
       try {
         await runtime.openSession("a");
         await startWorker(runtime);
-        const deleting = runtime.deleteSession("a");
+        const deleting = deleteOne(runtime, "a");
         await started;
         const opening = runtime.openSession("b");
         if (phase === "settled") await opening;
@@ -302,7 +315,7 @@ describe("runtime session deletion", () => {
         releasePreview();
         await opening;
         expect(runtime.startupSessionHint).toBe("b");
-        expect((await runtime.snapshot()).active?.sessionId).toBe("b");
+        expect(runtime.startupSessionHint).toBe("b");
       } finally {
         releaseDelete();
         releasePreview();
@@ -349,22 +362,25 @@ describe("runtime session deletion", () => {
           steering: ["waiting"],
           followUp: [],
         });
-        expect((await runtime.snapshot()).pendingQueues?.totalCount).toBe(1);
+        expect((await runtime.snapshot("a")).pendingQueues?.totalCount).toBe(1);
       }
       await runtime.openSession("b");
       await startWorker(runtime, "b");
 
       const outcome = { sessionId: "a", disposition: "trashed" };
       if (method === "clear")
-        await expect(
-          runtime.clearHiddenSessions(["a"], ["a"], []),
-        ).resolves.toEqual({ deleted: [outcome] });
-      else await expect(runtime.deleteSession("a")).resolves.toEqual(outcome);
+        await expect(clearHidden(runtime, ["a"], ["a"], [])).resolves.toEqual({
+          deleted: [outcome],
+        });
+      else
+        await expect(deleteOne(runtime, "a")).resolves.toEqual({
+          deleted: [outcome],
+        });
       expect(remove).toHaveBeenCalledExactlyOnceWith(
         expect.objectContaining({ id: "a", path: target.path }),
       );
       expect(runtime.sessionCwd("a")).toBeNull();
-      expect((await runtime.snapshot()).active?.sessionId).toBe("b");
+      expect(runtime.startupSessionHint).toBe("b");
     },
   );
 
@@ -400,7 +416,7 @@ describe("runtime session deletion", () => {
       const first = runtime.rename("a", "in progress").catch((error) => error);
       await entered.promise;
       const queued = runtime.rename("a", "queued").catch((error) => error);
-      await runtime.deleteSession("a");
+      await deleteOne(runtime, "a");
       expect(await first).toBeInstanceOf(Error);
       expect(await queued).toMatchObject({
         status: 409,
@@ -426,7 +442,7 @@ describe("runtime session deletion", () => {
       },
     });
 
-    const deleting = runtime.deleteSession("a");
+    const deleting = deleteOne(runtime, "a");
     await vi.waitFor(() => expect(entered).toBe(true));
     await expect(runtime.openSession("a")).rejects.toMatchObject({
       message: "That session is being deleted",
@@ -434,8 +450,7 @@ describe("runtime session deletion", () => {
     });
     release();
     await expect(deleting).resolves.toEqual({
-      sessionId: "a",
-      disposition: "trashed",
+      deleted: [{ sessionId: "a", disposition: "trashed" }],
     });
     await runtime.close();
   });

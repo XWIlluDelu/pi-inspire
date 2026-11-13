@@ -9,6 +9,7 @@ import {
   installFetch,
   jsonBody,
   type RouteResponse,
+  selectSession,
 } from "./helpers";
 import { baseRoutes, initStore } from "./store-fixture";
 
@@ -122,16 +123,15 @@ describe("Pi native command dispatch", () => {
       return baseRoutes(url, init);
     });
     const { store, socket } = await initStore();
-    socket.emit({
-      type: "snapshot",
-      data: activeSnapshot({
+    socket.emitSnapshot(
+      activeSnapshot({
         availableModels: [],
         commands: [
           { name: "model", source: "extension" },
           { name: "plugin:model", source: "extension" },
         ],
       }),
-    });
+    );
     for (const run of [store.sendPrompt, store.runPaletteNativeCommand]) {
       const previous = store.getState().nativeCommandUiRequest?.id;
       await run("/model");
@@ -180,7 +180,7 @@ describe("Pi native command dispatch", () => {
       return baseRoutes(url, init);
     });
     const { store, socket } = await initStore();
-    socket.emit({ type: "snapshot", data: settings });
+    socket.emitSnapshot(settings);
     const native = () =>
       calls.mock.calls.filter(([url]) => url === "/api/control/native-command");
 
@@ -222,7 +222,7 @@ describe("Pi native command dispatch", () => {
         if (url.startsWith("/api/control/")) return mutate(url, jsonBody(init));
         const snapshot = activeSnapshot({ runtimeSettings: settings });
         if (url.startsWith("/api/bootstrap"))
-          return { body: bootstrapPayload({ snapshot }) };
+          return { body: bootstrapPayload({ startupSessionId: "s1" }) };
         if (url.startsWith("/api/snapshot")) return { body: snapshot };
         return baseRoutes(url, init);
       });
@@ -237,7 +237,9 @@ describe("Pi native command dispatch", () => {
       };
       const mutate = vi.fn(() => ({ body: { ok: true } }));
       installSettingRoutes(settings, mutate);
-      const { store } = await initStore();
+      const { store } = await initStore(
+        activeSnapshot({ runtimeSettings: settings }),
+      );
 
       await store.setAutoCompaction(false);
       await store.setAutoRetry(false);
@@ -273,7 +275,9 @@ describe("Pi native command dispatch", () => {
             .mockReturnValueOnce(old.promise)
             .mockReturnValueOnce(latest.promise),
         );
-        const { store } = await initStore();
+        const { store } = await initStore(
+          activeSnapshot({ runtimeSettings: settings }),
+        );
         const olderWrite = store.setAutoRetry(true);
         expect(store.getState().runtimeSettings?.autoRetryEnabled).toBe(false);
         expect(store.getState().pendingRuntimeSettings.autoRetryEnabled).toBe(
@@ -314,25 +318,22 @@ describe("Pi native command dispatch", () => {
         : baseRoutes(url, init),
     );
     const { store, socket } = await initStore();
-    socket.emit({
-      type: "snapshot",
-      data: {
-        ...activeSnapshot({
-          pageMessages: [
-            {
-              role: "assistant",
-              content: "settled response",
-            },
-            {
-              role: "assistant",
-              content: "unfinished response",
-              __inspireLiveId: "live-1",
-              __inspireSettled: false,
-            },
-          ],
-        }),
-        runState: "running",
-      },
+    socket.emitSnapshot({
+      ...activeSnapshot({
+        pageMessages: [
+          {
+            role: "assistant",
+            content: "settled response",
+          },
+          {
+            role: "assistant",
+            content: "unfinished response",
+            __inspireLiveId: "live-1",
+            __inspireSettled: false,
+          },
+        ],
+      }),
+      runState: "running",
     });
 
     await expect(store.sendPrompt("/copy")).resolves.toMatchObject({
@@ -352,7 +353,7 @@ describe("Pi native command dispatch", () => {
     expect(query.get("viewId")).toBe(store.getState().transcriptViewId);
     const snapshot = activeSnapshot();
     snapshot.active!.transcriptPage.viewId = "another-branch";
-    socket.emit({ type: "snapshot", data: snapshot });
+    socket.emitSnapshot(snapshot);
     response.resolve({ body: { text: "old branch" } });
     await vi.waitFor(() =>
       expect(store.getState().commandActivities.s1?.at(-1)?.status).toBe(
@@ -398,12 +399,9 @@ describe("Pi native command dispatch", () => {
         ? response.promise
         : baseRoutes(url, init),
     );
-    const { store, socket } = await initStore();
+    const { store } = await initStore();
     await store.sendPrompt("/model kimi-coding/kimi-k3");
-    socket.emit({
-      type: "snapshot",
-      data: activeSnapshot({ sessionId: "s2" }),
-    });
+    await selectSession(store, activeSnapshot({ sessionId: "s2" }));
     const notices = store.getState().notices.length;
     response.resolve({ status: 400, body: { error: "Provider denied model" } });
     await vi.waitFor(() =>
@@ -426,13 +424,12 @@ describe("Pi native command dispatch", () => {
     await store.sendPrompt("/quit");
 
     const showStats = async (stats: unknown) => {
-      socket.emit({
-        type: "snapshot",
-        data: activeSnapshot({
+      socket.emitSnapshot(
+        activeSnapshot({
           stats,
           sessionFile: "/sessions/retained.jsonl",
         }),
-      });
+      );
       await store.sendPrompt("/session");
       return Object.fromEntries(
         readouts()![1]!.details!.map(({ id, value }) => [id, value]),
@@ -460,15 +457,12 @@ describe("Pi native command dispatch", () => {
     ]);
     socket.emit({ type: "agent_start", sessionId: "s1" });
     expect(store.getState().commandActivities.s1).toHaveLength(4);
-    socket.emit({
-      type: "snapshot",
-      data: activeSnapshot({ sessionId: "s2" }),
-    });
+    await selectSession(store, activeSnapshot({ sessionId: "s2" }));
     expect(
       store.getState().commandActivities.s1?.map((item) => item.command),
     ).toEqual(["unknown-query-test"]);
     expect(store.getState().commandActivities.s2).toBeUndefined();
-    socket.emit({ type: "snapshot", data: activeSnapshot() });
+    await selectSession(store, activeSnapshot());
     expect(
       store.getState().commandActivities.s1?.map((item) => item.command),
     ).toEqual(["unknown-query-test"]);

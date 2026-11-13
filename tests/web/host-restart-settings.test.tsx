@@ -24,7 +24,6 @@ vi.mock("../../src/controllers/host-restart-controller", () => ({
 const available = {
   hostId: "fixture-host",
   available: true,
-  allAvailable: true,
   allPiAvailable: true,
   allPiIncludesHerdr: false,
   operation: null,

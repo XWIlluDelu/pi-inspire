@@ -75,19 +75,21 @@ async function expectNotebookGutter(preview: Locator) {
 
 async function expectChangeGutter(pane: Locator) {
   const rows = [
-    pane.locator(".source-diff__line--context:has(code:not(:empty))").first(),
-    pane.locator(".source-diff__line--add").first(),
-    pane.locator(".source-diff__line--delete").first(),
+    pane
+      .locator('.code-row[data-kind="context"]:has(code:not(:empty))')
+      .first(),
+    pane.locator('.code-row[data-kind="add"]').first(),
+    pane.locator('.code-row[data-kind="delete"]').first(),
   ];
   for (const row of rows) {
-    const relativeTo = ".source-diff__line";
+    const relativeTo = ".code-row";
     const source = await row
       .locator("code")
       .evaluate(firstTextBaseline, relativeTo);
     expect(source).not.toBeNull();
     const baselines: number[] = [];
     for (const label of await row
-      .locator(".source-diff__number, .source-diff__mark")
+      .locator(".code-row__number, .code-row__mark")
       .all()) {
       const baseline = await label.evaluate(firstTextBaseline, relativeTo);
       if (baseline !== null) baselines.push(baseline);
@@ -106,7 +108,9 @@ test("Notebook and Changes gutters stay aligned as the shared reading size chang
   await page.setViewportSize({ width: 1280, height: 900 });
   const pane = await openResourceFixture(page);
   const host = hostRequest(page);
-  const before = await (await host.get("/api/preferences")).json();
+  const { preferences: before } = await (
+    await host.get("/api/preferences")
+  ).json();
   const changes = pane.getByRole("tab", { name: "Changes", exact: true });
   const preview = pane.getByRole("document", {
     name: "Notebook preview",

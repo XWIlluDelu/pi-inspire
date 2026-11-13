@@ -108,7 +108,7 @@ describe("RuntimeController shell acceptance", () => {
         });
         await vi.waitFor(async () =>
           expect(
-            (await runtime.snapshot()).pendingExtensionUiRequests,
+            (await runtime.snapshot("a")).pendingExtensionUiRequests,
           ).toHaveLength(1),
         );
         const stopping = runtime.abort("a");
@@ -160,7 +160,7 @@ describe("RuntimeController shell acceptance", () => {
       await expect(
         runtime.prompt({ sessionId: "a", message: "!echo done" }),
       ).resolves.toEqual({ text: "!echo done", images: [], files: [] });
-      expect((await runtime.snapshot()).runState).toBe("conflict");
+      expect((await runtime.snapshot("a")).runState).toBe("conflict");
       await expect(
         runtime.prompt({ sessionId: "a", message: "!echo done" }),
       ).rejects.toMatchObject({ status: 409 });

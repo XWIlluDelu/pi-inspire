@@ -275,21 +275,6 @@ export const Transcript = memo(function Transcript({
     viewport.jumpToLatest();
   };
 
-  const onActivityFoldClickCapture = (event: React.MouseEvent) => {
-    if (!(event.target instanceof Element)) return;
-    const control = event.target.closest<HTMLElement>(
-      "[data-activity-fold-anchor]",
-    );
-    const fold = control?.closest<HTMLElement>("[data-activity-fold]");
-    const alignment = control?.dataset.activityFoldAnchor;
-    if (
-      !fold ||
-      (alignment !== "start" && alignment !== "center" && alignment !== "end")
-    )
-      return;
-    viewport.preserveAnchorThroughLayout(fold, alignment);
-  };
-
   // One delegated handler serves every data-file-path element (Markdown
   // links/images, inline-code paths) across memoized
   // rows. Elements that must not bubble (tool-card summaries) stop propagation
@@ -393,7 +378,13 @@ export const Transcript = memo(function Transcript({
             viewport.markUserScrollIntent();
           }}
           onTouchMove={() => viewport.markUserScrollIntent()}
-          onClickCapture={onActivityFoldClickCapture}
+          onFocus={(event) => {
+            if (
+              event.target instanceof Element &&
+              event.target.closest(".activity-fold")
+            )
+              viewport.releaseLatestFollow();
+          }}
           onClick={onClick}
           onCopy={handleRichTextCopy}
         >
@@ -416,7 +407,7 @@ export const Transcript = memo(function Transcript({
                   rows.map((row, index) => {
                     return (
                       <div
-                        key={row.key}
+                        key={`${projectionViewKey}:${row.key}`}
                         data-transcript-row={index}
                         data-transcript-key={row.key}
                       >

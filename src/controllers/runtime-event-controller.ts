@@ -1,15 +1,13 @@
 import {
   type ActiveSnapshot,
   isBusyRunState,
-  isSessionRuntimeStatus,
   type LiveTranscript,
   type ProjectionConflict,
-  type ProjectionHealth,
   projectionConflictSeverity,
   type SessionRuntimeStatus,
 } from "../../shared/contracts";
 import { isExternalSessionActivities } from "../../shared/session-activity";
-import type { AppState } from "../app-state";
+import { type AppState, selectedRunState } from "../app-state";
 import {
   type ChatMessage,
   type EventSlice,
@@ -17,22 +15,18 @@ import {
   reduceEvent,
   type WireEvent,
 } from "../events";
-import {
-  projectionDiagnostic,
-  type ResyncOptions,
-} from "../snapshot-transition";
 
 interface RuntimeEventHost {
   state(): AppState;
   patch(patch: Partial<AppState>): void;
+  setEditorText?(sessionId: string, text: string): void;
   applySnapshot(snapshot: ActiveSnapshot): void;
-  applyTranscript?(
+  applyTranscript(
     sessionId: string,
     data: LiveTranscript,
     sequence: number,
     statuses?: Record<string, SessionRuntimeStatus>,
   ): void;
-  invalidateSelection(): void;
   ensureSessionVisible(sessionId: string): void;
   recordRuntimeReady(sessionId: string): void;
   clearRuntimeReady(sessionId: string): void;
@@ -41,11 +35,7 @@ interface RuntimeEventHost {
   refreshGitStatus(): Promise<void>;
   selectionGeneration(): number;
   invalidateResync(): void;
-  resync(
-    sessionId: string | null,
-    generation: number,
-    options?: ResyncOptions,
-  ): Promise<void>;
+  resync(sessionId: string | null, generation: number): Promise<void>;
 }
 
 /** Owns ordered runtime-event reduction and user-attention correlation.
@@ -56,11 +46,9 @@ export class RuntimeEventController {
   private readonly observedRuns = new Set<string>();
   private readonly titleAttention = new Set<string>();
   private readonly acknowledgedStatus = new Map<string, number>();
-  private resyncTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingResync: {
-    sessionId: string | null;
     generation: number;
-    minimumRevision?: number;
+    timer: ReturnType<typeof setTimeout>;
   } | null = null;
 
   constructor(private readonly host: RuntimeEventHost) {}
@@ -146,16 +134,6 @@ export class RuntimeEventController {
     }
   }
 
-  private statusOutcome(event: WireEvent): "completed" | "failed" | "aborted" {
-    const status = event.sessionStatus as
-      | Partial<SessionRuntimeStatus>
-      | undefined;
-    if (status?.runState === "failed" || status?.runState === "conflict")
-      return "failed";
-    if (status?.runState === "aborted") return "aborted";
-    return "completed";
-  }
-
   markTaskAttention(sessionId: string): void {
     if (
       this.host.state().taskAlerts.mode === "off" ||
@@ -168,49 +146,27 @@ export class RuntimeEventController {
 
   invalidateTransport(): void {
     this.observedRuns.clear();
-    this.cancelScheduledResync();
+    if (this.pendingResync) clearTimeout(this.pendingResync.timer);
+    this.pendingResync = null;
   }
 
   resetStatusAcknowledgements(): void {
     this.acknowledgedStatus.clear();
   }
 
-  private cancelScheduledResync(): void {
-    if (this.resyncTimer !== null) clearTimeout(this.resyncTimer);
-    this.resyncTimer = null;
-    this.pendingResync = null;
-  }
-
-  private scheduleResync(
-    sessionId: string | null,
-    minimumRevision?: number,
-  ): void {
+  private scheduleResync(sessionId: string | null): void {
     // Fence an older response as soon as the event arrives, even while the
     // next observation is waiting for the rest of this event burst.
     this.host.invalidateResync();
     const generation = this.host.selectionGeneration();
-    const pending = this.pendingResync;
-    if (pending?.sessionId === sessionId && pending.generation === generation) {
-      if (minimumRevision !== undefined)
-        pending.minimumRevision = Math.max(
-          pending.minimumRevision ?? minimumRevision,
-          minimumRevision,
-        );
-      return;
-    }
-    this.cancelScheduledResync();
-    const request = { sessionId, generation, minimumRevision };
-    this.pendingResync = request;
-    // Pi can publish the final projection and agent_settled within a single
-    // frame. Keep one fixed deadline so live projection changes cannot defer
-    // their authoritative refresh indefinitely.
-    this.resyncTimer = setTimeout(() => {
-      this.resyncTimer = null;
+    if (this.pendingResync?.generation === generation) return;
+    if (this.pendingResync) clearTimeout(this.pendingResync.timer);
+    // Settlement can arrive in a burst. Keep a fixed deadline for the refresh.
+    const timer = setTimeout(() => {
       this.pendingResync = null;
-      void this.host.resync(request.sessionId, request.generation, {
-        minimumRevision: request.minimumRevision,
-      });
+      void this.host.resync(sessionId, generation);
     }, 16);
+    this.pendingResync = { generation, timer };
   }
 
   clearTitleAttention(): void {
@@ -240,7 +196,6 @@ export class RuntimeEventController {
       streaming: s.streaming,
       bashRunning: s.bashRunning,
       activeAssistantMessageKey: s.activeAssistantMessageKey,
-      runState: s.runState,
       tools: s.tools,
       retry: s.retry,
       pendingRetryError: s.pendingRetryError,
@@ -251,7 +206,6 @@ export class RuntimeEventController {
       extensionDisplays: s.extensionDisplays,
       notices: s.notices,
       statuses: s.statuses,
-      editorText: s.editorText,
       windowTitle: s.windowTitle,
       nextNoticeId: s.nextNoticeId,
     };
@@ -275,11 +229,6 @@ export class RuntimeEventController {
     }
     if (event.type === "snapshot") {
       if (event.data) {
-        // Addressed snapshots refresh an existing detail interest, not a new
-        // selection intent. A later open/new/deselect may still be pending.
-        // Bootstrap replacement is fenced by AppStore's transport boundary;
-        // unaddressed selection pushes retain their replacement semantics.
-        if (event.detailRevision === undefined) this.host.invalidateSelection();
         const snapshot = event.data as ActiveSnapshot;
         this.host.applySnapshot({
           ...snapshot,
@@ -307,17 +256,14 @@ export class RuntimeEventController {
       if (event.type === "agent_start" || event.type === "auto_retry_start") {
         this.observedRuns.add(eventSessionId);
       } else if (event.type === "agent_settled") {
-        if (this.observedRuns.delete(eventSessionId)) {
-          const outcome = this.statusOutcome(event);
-          if (
-            outcome === "completed" &&
-            eventSessionId === this.host.state().sessionId
-          ) {
-            this.host.patch({
-              completedRunSequence: this.host.state().completedRunSequence + 1,
-            });
-          }
-          // System/title attention arrives independently from the Host.
+        if (
+          this.observedRuns.delete(eventSessionId) &&
+          event.sessionStatus?.runState === "idle" &&
+          eventSessionId === this.host.state().sessionId
+        ) {
+          this.host.patch({
+            completedRunSequence: this.host.state().completedRunSequence + 1,
+          });
         }
       } else if (
         event.type === "runtime_error" ||
@@ -359,67 +305,26 @@ export class RuntimeEventController {
     }
 
     if (
-      (event.type === "session_projection_changed" ||
-        event.type === "branch_changed") &&
-      eventSessionId &&
-      typeof event.runtimeSequence === "number" &&
-      Number.isSafeInteger(event.runtimeSequence) &&
-      event.transcript &&
-      this.host.applyTranscript
+      event.type === "session_projection_changed" ||
+      event.type === "branch_changed"
     ) {
       const transcript = event.transcript as LiveTranscript;
-      const page = transcript.transcriptPage;
+      const page = transcript?.transcriptPage;
       if (
+        !eventSessionId ||
+        typeof event.runtimeSequence !== "number" ||
+        !Number.isSafeInteger(event.runtimeSequence) ||
         page?.sessionId !== eventSessionId ||
         typeof page.viewId !== "string" ||
         !Number.isSafeInteger(page.revision) ||
         !Array.isArray(page.messages)
       )
-        return;
+        throw new Error("Invalid transcript replacement");
       this.host.applyTranscript(
         eventSessionId,
         transcript,
         event.runtimeSequence,
         sessionStatuses ?? undefined,
-      );
-      return;
-    }
-
-    if (event.type === "session_projection_changed") {
-      const rawHealth = event.health as Partial<ProjectionHealth> | undefined;
-      const health: ProjectionHealth =
-        rawHealth?.status === "error" || rawHealth?.status === "pending"
-          ? {
-              status: rawHealth.status,
-              ...(typeof rawHealth.message === "string"
-                ? { message: rawHealth.message }
-                : {}),
-            }
-          : rawHealth?.status === "ok"
-            ? { status: "ok" }
-            : this.host.state().projectionHealth;
-      const conflict =
-        event.conflict === null
-          ? null
-          : event.conflict && typeof event.conflict === "object"
-            ? (event.conflict as ProjectionConflict)
-            : this.host.state().projectionConflict;
-      const { error, errorSeverity, ...diagnostic } = projectionDiagnostic(
-        health,
-        conflict,
-      );
-      const clearedProjectionError =
-        !error && this.host.state().error === this.host.state().projectionError;
-      this.host.patch({
-        ...(sessionStatuses ? { sessionStatuses } : {}),
-        ...diagnostic,
-        ...(error || clearedProjectionError ? { error, errorSeverity } : {}),
-      });
-      const revision =
-        typeof event.revision === "number" ? event.revision : undefined;
-      this.scheduleResync(
-        eventSessionId ?? this.host.state().sessionId,
-        revision,
       );
       return;
     }
@@ -431,7 +336,6 @@ export class RuntimeEventController {
         this.host.patch({
           projectionConflict: conflict,
           projectionError: conflict.message,
-          runState: "conflict",
           error: conflict.message,
           errorSeverity:
             projectionConflictSeverity(conflict) === "attention"
@@ -453,10 +357,22 @@ export class RuntimeEventController {
       return;
     }
 
+    if (
+      event.type === "extension_ui_request" &&
+      event.method === "set_editor_text"
+    ) {
+      const sessionId = this.host.state().sessionId;
+      if (sessionId && typeof event.text === "string")
+        this.host.setEditorText?.(sessionId, event.text);
+      if (sessionStatuses) this.host.patch({ sessionStatuses });
+      return;
+    }
+
     const { slice, settle, resync, changed } = reduceEvent(
       this.eventSlice(),
       this.settledKeys,
       event,
+      selectedRunState(this.host.state()),
     );
     for (const key of settle) this.settledKeys.add(key);
     if (changed) {
@@ -474,9 +390,9 @@ export class RuntimeEventController {
   /** Merge an event's sessionStatus into the map; null when nothing changed. */
   private mergeSessionStatus(
     sessionId: string | null,
-    status: unknown,
+    status: SessionRuntimeStatus | undefined,
   ): Record<string, SessionRuntimeStatus> | null {
-    if (!sessionId || !isSessionRuntimeStatus(status)) return null;
+    if (!sessionId || !status) return null;
     if (sessionId === this.host.state().sessionId)
       this.viewStatus(sessionId, status);
     const next = this.displayStatus(sessionId, status);

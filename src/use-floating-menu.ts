@@ -38,7 +38,7 @@ interface FloatingMenuTarget {
   context: HTMLElement;
   anchor: FloatingMenuBounds;
   preferredWidth?: number;
-  /** Fixed-position containing block when a portal lives in a filtered overlay. */
+  /** Fixed-position containing block for a menu inside a filtered overlay. */
   positioningRoot?: HTMLElement | null;
   observe?: readonly Element[];
 }

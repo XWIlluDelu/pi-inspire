@@ -1,19 +1,20 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   hostServicePath,
-  inspectBrowserRestart,
   inspectHostService,
+  inspectRestartTarget,
   manageHostService,
-  requestBrowserRestart,
-  terminalServicePath,
+  submitSystemdRestart,
 } from "../../deploy/systemd/control.mjs";
 
-const root = "/workspace/inspire";
-const environment = {
-  HOME: "/home/tester",
-  XDG_CONFIG_HOME: "/home/tester/.config",
-  XDG_RUNTIME_DIR: "/run/tester",
-};
+import {
+  environment,
+  invocationId,
+  managedProperties,
+  managedTerminalProperties,
+  root,
+  show,
+} from "./systemd-fixture.mjs";
 
 const missingPath = async () => {
   throw Object.assign(new Error("absent"), { code: "ENOENT" });
@@ -23,50 +24,6 @@ const unavailableManager = async () => ({
   stdout: "",
   stderr: "Failed to connect to bus",
 });
-
-function show(
-  hostProperties,
-  terminalProperties = managedTerminalProperties(),
-) {
-  return async (arguments_) => {
-    const selected = arguments_.includes("inspire-terminal.service")
-      ? terminalProperties
-      : hostProperties;
-    return {
-      code: 0,
-      stdout: `${Object.entries(selected)
-        .map(([key, value]) => `${key}=${value}`)
-        .join("\n")}\n`,
-      stderr: "",
-    };
-  };
-}
-
-function managedProperties(overrides = {}) {
-  return {
-    LoadState: "loaded",
-    FragmentPath: hostServicePath(environment),
-    WorkingDirectory: root,
-    ExecStart: `{ path=${root}/inspire ; argv[]=${root}/inspire ; }`,
-    ExecStartPost: `{ path=${root}/inspire ; argv[]=${root}/inspire wait-ready ; }`,
-    Wants: "network-online.target inspire-terminal.service",
-    After: "network-online.target inspire-terminal.service",
-    UnitFileState: "enabled",
-    ActiveState: "active",
-    SubState: "running",
-    ...overrides,
-  };
-}
-
-function managedTerminalProperties(overrides = {}) {
-  return {
-    LoadState: "loaded",
-    FragmentPath: terminalServicePath(environment),
-    WorkingDirectory: root,
-    ExecStart: `{ path=${root}/inspire ; argv[]=${root}/inspire terminal-daemon --root ${root} --host 127.0.0.1 --port 4587 ; }`,
-    ...overrides,
-  };
-}
 
 describe.runIf(process.platform !== "win32")("host systemd control", () => {
   it("recognizes only the matching checkout unit", async () => {
@@ -80,6 +37,7 @@ describe.runIf(process.platform !== "win32")("host systemd control", () => {
       activeState: "active",
       subState: "running",
       unitFileState: "enabled",
+      invocationId,
     });
 
     await expect(
@@ -119,52 +77,83 @@ describe.runIf(process.platform !== "win32")("host systemd control", () => {
     expect(calls.some((args) => args.includes("restart"))).toBe(false);
   });
 
-  it("fences browser restart to the current invocation and commits after inspections", async () => {
-    const invocationId = "a".repeat(32);
-    const calls = [];
-    const run = async (args) => {
-      calls.push(args);
-      if (args.includes("--property=InvocationID"))
-        return {
-          code: 0,
-          stdout: `InvocationID=${invocationId}\nActiveState=active`,
-          stderr: "",
-        };
-      return show(managedProperties())(args);
-    };
-    const options = { environment, run, invocationId };
-    expect(
-      await inspectBrowserRestart(root, {
-        ...options,
-        invocationId: "b".repeat(32),
-      }),
-    ).toEqual({ kind: "invocation-changed" });
-    calls.length = 0;
-    const result = await requestBrowserRestart(
-      root,
-      true,
-      () => {
-        expect(
-          calls.some((args) => args.includes("--property=InvocationID")),
-        ).toBe(true);
-        return true;
-      },
-      options,
+  it("fences both phases to the captured invocation and uses one ordered restart", async () => {
+    let active = invocationId;
+    const run = vi.fn(async (args) =>
+      show(managedProperties({ InvocationID: active }))(args),
     );
-    expect(result.code).toBe(0);
-    expect(calls.at(-1)).toEqual([
+    const options = { environment, run };
+    const plan = {
+      invocationId,
+      terminals: true,
+      detached: true,
+      commit: vi.fn(async () => {
+        expect(run.mock.calls.at(-1)?.[0]).toContain(
+          "inspire-terminal.service",
+        );
+        return true;
+      }),
+    };
+    await expect(
+      inspectRestartTarget(root, "b".repeat(32), options),
+    ).resolves.toEqual({
+      kind: "invocation-changed",
+    });
+    await expect(submitSystemdRestart(root, plan, options)).resolves.toEqual({
+      kind: "issued",
+    });
+    expect(run.mock.calls.at(-1)?.[0]).toEqual([
       "--user",
       "--no-block",
       "restart",
       "inspire-terminal.service",
       "inspire-host.service",
     ]);
-    calls.length = 0;
-    expect(
-      await requestBrowserRestart(root, false, async () => false, options),
-    ).toMatchObject({ issued: false });
-    expect(calls.some((args) => args.includes("restart"))).toBe(false);
+
+    run.mockClear();
+    await expect(
+      submitSystemdRestart(
+        root,
+        {
+          ...plan,
+          beforeRestart: async () => {
+            active = "b".repeat(32);
+          },
+        },
+        options,
+      ),
+    ).resolves.toEqual({ kind: "not-issued", reason: "invocation-changed" });
+    expect(run.mock.calls.some(([args]) => args.includes("restart"))).toBe(
+      false,
+    );
   });
+
+  it.each([
+    [async () => ({ code: 1, issued: false }), "not-issued"],
+    [async () => ({ code: 1 }), "unconfirmed"],
+    [
+      async () => {
+        throw new Error("lost systemctl");
+      },
+      "unconfirmed",
+    ],
+  ])(
+    "preserves issuance evidence for either restart caller (%#)",
+    async (issue, kind) => {
+      const run = (args) =>
+        args.includes("restart") ? issue() : show(managedProperties())(args);
+      await expect(
+        submitSystemdRestart(
+          root,
+          { invocationId, commit: () => true },
+          {
+            environment,
+            run,
+          },
+        ),
+      ).resolves.toMatchObject({ kind });
+    },
+  );
 
   it("honors the manager's unit absence even when a unit file remains on disk", async () => {
     await expect(

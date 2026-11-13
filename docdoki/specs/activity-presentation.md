@@ -30,19 +30,14 @@ Displayed custom messages break the group and remain independently readable.
 
 | Density | Presentation |
 | --- | --- |
-| Expanded | Every item in source order; individual Thinking/Tool preferences still control its content. |
-| Compact | Latest 24 items; an Earlier activity control reveals an omitted prefix. Equivalent to Expanded for shorter runs. |
-| Collapsed | One left-aligned Activity disclosure. Manual item disclosure is retained. |
-| Adaptive (`dynamic`) | Historical groups start Collapsed; live groups start Compact and close at the lifecycle boundary below. |
+| Expanded | Starts on the first activity page in source order. |
+| Compact | Starts on the latest activity page. |
+| Collapsed | Starts with the Activity disclosure and summary. |
+| Adaptive (`dynamic`) | Opens the latest activity page while running and closes when settled unless the reader has opened or is inspecting it. |
 
-Preferences choose the initial state. Collapsed opens Compact, the Compact prefix opens Expanded,
-and the upper/lower boundary controls step downward. When Expanded and Compact are equivalent,
-closing skips that intermediate state.
-
-The disclosure has one accessible name and Tab stop, with a shared rounded hover/focus surface.
-Enter, Space or pointer activation opens Compact with the group's center reading anchor. Open
-groups have separate upper/lower controls, each with its own reading anchor. On lower collapse, focus
-returns to the unified disclosure with `preventScroll`.
+Each group has one persistent disclosure button. Earlier and Later page through at most 24
+items at a time. The group remains open while the reader is inspecting an activity item or
+using the page controls. A selected earlier page keeps its position when new work arrives.
 
 Adjacent activity items share one spacing rhythm across assistant-message boundaries; prose and
 expanded details keep their internal spacing. On fine-pointer desktops, activity headers are at
@@ -50,9 +45,8 @@ least 28px high and adjacent Activity groups and context checkpoints are 8px apa
 
 A single neutral vertical guide connects the open group's activity. Assistant-turn attribution rows
 and divider ticks are absent inside and outside groups. The group heading uses Flux Mono at 13px,
-medium weight and tightened tracking with secondary ink, the voice of the tool rows it holds. Lower
-collapse and Earlier activity controls use the same face, size, weight and ink, not a tiny caption.
-Individual identities use the smaller compact size and medium weight. Labels retain intrinsic
+secondary ink. The page controls show the current page and reach every item in the bounded Live
+tail. Individual identities use the smaller compact size and medium weight. Labels retain intrinsic
 layout width; positive 8px gaps separate label and summary without horizontal scaling or
 label-length-specific negative margins.
 
@@ -89,32 +83,10 @@ consume no header space and do not push Copy away.
 The PWA titlebar needles keep the paired-track motif independently of the transcript folds, using
 the active theme's Tool/Thinking identity roles. [[design-system]] owns their presentation.
 
-Fold-local choice overrides the default and survives pagination, virtualization, pairing changes,
-within the Live page. Older activity remains readable in Turn history. Manual disclosure stops automatic collapse.
-
-### Deferred history
-
-Older activity-only messages travel as opaque view-bound ranges:
-
-- Expanded loads every bounded page; Compact loads newest-first until it has 24 cards or exhausts
-  the range; Collapsed leaves it unloaded.
-- One prefix control represents omitted content, loading, and retry, with a matching text label.
-  Selecting it requests complete Expanded materialization.
-- A projection change invalidates the request. Inserted pages preserve the scroll anchor.
-- Compact mounts only its latest 24 activity items; an omitted prefix does not keep tool or
-  Thinking renderers alive. Collapsed unmounts the group's items.
-- Manual card disclosure belongs to the current projection and
-  survive these omissions. Reader choices (Show all, Arguments/Script and nested-call disclosures,
-  child-call inspection, tool-output scroll offsets) are retained by activity and
-  presentation-block key; rendered trees and clipboard feedback are not. Untouched cards follow
-  their preferences. Retained choices are released with the projection or when their activity
-  disappears.
-- If a live append moves the focused item into the omitted prefix, focus moves to Earlier activity
-  without scrolling the reading viewport. Expanded restores the retained choices; focus stays on
-  the control the reader used.
-
-The Earlier activity control uses a loading indicator while retrieving deferred rows and a retry
-action on failure.
+Manual fold choices survive updates to the same Live turn. Checkpoints keep the turn's identity
+while adopting native entry IDs for its rows. A matching Pi tool-call ID keeps deliberate
+card and reader choices across pages and checkpoints. Other row-local choices can reset
+when the owning native row changes. Older activity remains readable in Turn history.
 
 ## Independent card preferences
 
@@ -188,5 +160,6 @@ messages use the same interruption projection.
 
 ## Checks
 
-Component tests exercise fold state, bounded history, and lifecycle timing. Browser tests exercise
-disclosure focus and reading anchors. Event tests exercise tool phases and late updates.
+Component tests exercise fold choice, bounded pages and native checkpoint continuity. Browser
+tests exercise keyboard disclosure and reading while activity settles. Event tests exercise tool
+phases and late updates.

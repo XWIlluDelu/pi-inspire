@@ -22,7 +22,7 @@ type ThinkingControlProps = {
   disabled?: boolean;
   openRequest?: number;
   onOpenRequestHandled?: (id: number) => void;
-  onChange(value: string): void;
+  onChange(value: ThinkingLevel): void;
 };
 
 type ControlScope = {

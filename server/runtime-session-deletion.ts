@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import {
-  type HiddenClearResponse,
-  type SessionDeleteResponse,
+  type SessionDeletionOutcome,
+  type SessionDeletionRequest,
 } from "../shared/contracts.js";
 import { requestError } from "./request-error.js";
 import type { RuntimeSlot } from "./runtime-slot.js";
@@ -12,12 +12,9 @@ import {
 } from "./session-delete.js";
 
 interface RuntimeSessionDeletionHost {
-  assertNotClosing(): void;
   withMaintenance<T>(operation: () => Promise<T>): Promise<T>;
   clearStartupHint(sessionId: string): void;
-  selectionReserved(sessionId: string): boolean;
-  loading(sessionId: string, path?: string): Array<Promise<RuntimeSlot>>;
-  changing(sessionId: string, path?: string): boolean;
+  changing(sessionId: string, path: string): boolean;
   slot(sessionId: string): RuntimeSlot | undefined;
   removeSlot(sessionId: string, expected: RuntimeSlot): void;
   mutateSlot<T>(slot: RuntimeSlot, operation: () => Promise<T>): Promise<T>;
@@ -26,20 +23,22 @@ interface RuntimeSessionDeletionHost {
     slot: RuntimeSlot | undefined,
   ): Promise<void>;
   catalogGet(sessionId: string): Promise<SessionRecord | undefined>;
-  catalogRefresh(force?: boolean): Promise<readonly SessionRecord[]>;
+  catalogRefresh(): Promise<readonly SessionRecord[]>;
   invalidateCatalog(): void;
   deleteSessionRecord: DeleteSessionRecord;
 }
 
-type DeletionReservation =
-  | { kind: "single"; task: Promise<SessionDeleteResponse> }
-  | { kind: "batch"; task: Promise<HiddenClearResponse> };
+type HiddenCuration = {
+  hiddenSessionIds: readonly string[];
+  hiddenProjectCwds: readonly string[];
+};
 
-/** Owns single-session and reviewed Hidden deletion reservations, admission,
- * quiescence checks, and exact catalog-record destruction. */
+/** Owns reviewed deletion admission, target quiescence and exact file removal. */
 export class RuntimeSessionDeletionController {
-  private readonly reserved = new Map<string, DeletionReservation>();
-  private clearingHidden: Promise<HiddenClearResponse> | null = null;
+  private readonly reserved = new Map<
+    string,
+    Promise<SessionDeletionOutcome>
+  >();
 
   constructor(private readonly host: RuntimeSessionDeletionHost) {}
 
@@ -48,50 +47,123 @@ export class RuntimeSessionDeletionController {
   }
 
   hasInFlight(): boolean {
-    return this.reserved.size > 0 || this.clearingHidden !== null;
+    return this.reserved.size > 0;
   }
 
-  settled(): Promise<unknown>[] {
-    const pending = new Set(
-      Array.from(this.reserved.values(), ({ task }) => task),
-    );
-    if (this.clearingHidden) pending.add(this.clearingHidden);
-    return [...pending];
+  settled(): Promise<SessionDeletionOutcome>[] {
+    return [...new Set(this.reserved.values())];
   }
 
   clear(): void {
     this.reserved.clear();
-    this.clearingHidden = null;
   }
 
-  private reserve<T extends DeletionReservation>(
-    ids: readonly string[],
-    entry: T,
-  ): T["task"] {
-    for (const id of ids) this.reserved.set(id, entry);
-    const release = () => {
-      for (const id of ids) {
-        if (this.reserved.get(id) === entry) this.reserved.delete(id);
-      }
-    };
-    void entry.task.then(release, release);
-    return entry.task;
-  }
-
-  private async deletionCatalogRecord(
-    sessionId: string,
-  ): Promise<SessionRecord> {
-    const session = await this.host.catalogGet(sessionId);
-    if (!session)
-      throw requestError("Session not found", 404, {
-        code: "SESSION_NOT_FOUND",
+  deleteSessions(
+    request: SessionDeletionRequest,
+    curation: HiddenCuration,
+  ): Promise<SessionDeletionOutcome> {
+    return this.host.withMaintenance(() => {
+      const ids =
+        request.scope === "session" ? [request.sessionId] : request.sessionIds;
+      if (ids.some((id) => this.isDeleting(id)))
+        throw requestError("A reviewed session is already being deleted", 409);
+      const task = Promise.resolve().then(async () => {
+        const records = await this.reviewedRecords(request, curation);
+        for (const { id, path } of records) {
+          if (this.host.changing(id, resolve(path)))
+            throw requestError(
+              "Wait for the session to finish opening before deleting it",
+              409,
+            );
+        }
+        if (request.scope === "hidden") {
+          // Preflight the complete set before the first move. The actual move
+          // checks the final version again after native shutdown.
+          for (const session of records) await validateSessionFile(session);
+        }
+        const deleted: SessionDeletionOutcome["deleted"] = [];
+        for (const session of records) {
+          try {
+            deleted.push(await this.deleteRecord(session));
+          } catch (error) {
+            if (request.scope === "session") throw error;
+            return {
+              deleted,
+              failure: {
+                sessionId: session.id,
+                message:
+                  error instanceof Error
+                    ? error.message
+                    : "Failed to delete session",
+              },
+            };
+          }
+        }
+        return { deleted };
       });
-    return session;
+      for (const id of ids) this.reserved.set(id, task);
+      const release = () => {
+        for (const id of ids) {
+          if (this.reserved.get(id) === task) this.reserved.delete(id);
+        }
+      };
+      void task.then(release, release);
+      return task;
+    });
+  }
+
+  private async reviewedRecords(
+    request: SessionDeletionRequest,
+    { hiddenSessionIds, hiddenProjectCwds }: HiddenCuration,
+  ): Promise<readonly SessionRecord[]> {
+    const individuallyHidden = new Set(hiddenSessionIds);
+    const hiddenFolders = new Set(hiddenProjectCwds);
+    if (request.scope === "session") {
+      const record = await this.host.catalogGet(request.sessionId);
+      if (!record)
+        throw requestError("Session not found", 404, {
+          code: "SESSION_NOT_FOUND",
+        });
+      if (!individuallyHidden.has(record.id) && !hiddenFolders.has(record.cwd))
+        throw requestError(
+          "The session is no longer hidden; review it before deleting",
+          409,
+          {
+            code: "HIDDEN_SELECTION_CHANGED",
+          },
+        );
+      return [record];
+    }
+    const catalog = await this.host.catalogRefresh();
+    const records = catalog.filter(
+      ({ id, cwd }) => individuallyHidden.has(id) || hiddenFolders.has(cwd),
+    );
+    const ids = new Set(records.map(({ id }) => id));
+    const reviewed = new Set(request.sessionIds);
+    if (
+      !records.length ||
+      reviewed.size !== request.sessionIds.length ||
+      ids.size !== reviewed.size ||
+      [...ids].some((id) => !reviewed.has(id))
+    )
+      throw requestError(
+        "Hidden changed; review it before clearing",
+        records.length ? 409 : 404,
+        {
+          code: "HIDDEN_SELECTION_CHANGED",
+        },
+      );
+    if (catalog.filter(({ id }) => ids.has(id)).length !== ids.size)
+      throw requestError(
+        "Hidden contains ambiguous Pi session identities",
+        409,
+      );
+    return records;
   }
 
   private async deleteRecord(
     initial: SessionRecord,
-  ): Promise<HiddenClearResponse["deleted"][number]> {
+  ): Promise<SessionDeletionOutcome["deleted"][number]> {
     const { id: sessionId } = initial;
     const path = resolve(initial.path);
     if (this.host.changing(sessionId, path))
@@ -136,136 +208,18 @@ export class RuntimeSessionDeletionController {
       this.host.clearStartupHint(sessionId);
       // Suspension already drained reconciliation and closed the watcher.
       // Closing now releases only the committed session's retained projection.
-      await projection?.close();
+      await projection
+        ?.close()
+        .catch((error) =>
+          console.error(
+            `[session ${sessionId}] projection cleanup failed`,
+            error,
+          ),
+        );
       return { sessionId, disposition };
     } finally {
       projection?.resumeReconciliation();
       this.host.invalidateCatalog();
     }
-  }
-
-  deleteSession(sessionId: string): Promise<SessionDeleteResponse> {
-    return this.host.withMaintenance(() => {
-      this.host.assertNotClosing();
-      const pending = this.reserved.get(sessionId);
-      if (pending?.kind === "single") return pending.task;
-      if (pending) throw requestError("That session is being deleted", 409);
-      const operation = async () => {
-        if (this.host.selectionReserved(sessionId))
-          throw requestError(
-            "Wait for the session to finish opening before deleting it",
-            409,
-          );
-        await Promise.allSettled(this.host.loading(sessionId));
-        if (this.host.selectionReserved(sessionId))
-          throw requestError(
-            "The session became active while deletion was waiting for startup",
-            409,
-          );
-        const record = await this.deletionCatalogRecord(sessionId);
-        await Promise.allSettled(
-          this.host.loading(sessionId, resolve(record.path)),
-        );
-        return this.deleteRecord(record);
-      };
-      const task = Promise.resolve().then(operation);
-      return this.reserve([sessionId], { kind: "single", task });
-    });
-  }
-
-  /** Deletes precisely the reviewed catalog selection derived from Hidden's
-   * individual ids and complete project folders. */
-  clearHiddenSessions(
-    expectedSessionIds: readonly string[],
-    hiddenSessionIds: readonly string[],
-    hiddenProjectCwds: readonly string[],
-  ): Promise<HiddenClearResponse> {
-    return this.host.withMaintenance(() => {
-      this.host.assertNotClosing();
-      if (this.clearingHidden)
-        throw requestError("Hidden is already being cleared", 409);
-      const deletion = this.clearHiddenSessionsInside(
-        expectedSessionIds,
-        hiddenSessionIds,
-        hiddenProjectCwds,
-      ).finally(() => {
-        if (this.clearingHidden === deletion) this.clearingHidden = null;
-      });
-      this.clearingHidden = deletion;
-      return deletion;
-    });
-  }
-
-  private async clearHiddenSessionsInside(
-    expectedSessionIds: readonly string[],
-    hiddenSessionIds: readonly string[],
-    hiddenProjectCwds: readonly string[],
-  ): Promise<HiddenClearResponse> {
-    const catalog = await this.host.catalogRefresh(true);
-    const individualIds = new Set(hiddenSessionIds);
-    const projectCwds = new Set(hiddenProjectCwds);
-    const records = catalog.filter(
-      (session) =>
-        individualIds.has(session.id) || projectCwds.has(session.cwd),
-    );
-    if (records.length === 0)
-      throw requestError("No sessions remain in Hidden", 404, {
-        code: "HIDDEN_SELECTION_CHANGED",
-      });
-    const ids = new Set(records.map((session) => session.id));
-    const expected = new Set(expectedSessionIds);
-    if (
-      expected.size !== expectedSessionIds.length ||
-      ids.size !== expected.size ||
-      [...ids].some((sessionId) => !expected.has(sessionId))
-    ) {
-      throw requestError("Hidden changed; review it before clearing", 409, {
-        code: "HIDDEN_SELECTION_CHANGED",
-      });
-    }
-    if (
-      ids.size !== records.length ||
-      catalog.filter((session) => ids.has(session.id)).length !== ids.size
-    ) {
-      throw requestError(
-        "Hidden contains ambiguous Pi session identities",
-        409,
-      );
-    }
-    if (records.some((session) => this.isDeleting(session.id))) {
-      throw requestError("A session in Hidden is being deleted", 409);
-    }
-    const operation = async (): Promise<HiddenClearResponse> => {
-      for (const session of records)
-        if (this.host.changing(session.id, resolve(session.path)))
-          throw requestError(
-            "Wait for every session in Hidden to finish opening or changing before clearing it",
-            409,
-          );
-      const deleted: HiddenClearResponse["deleted"] = [];
-      // Validate the complete reviewed set before moving the first file. Each
-      // delete validates again at its commit boundary because files may still
-      // change after this all-or-nothing admission witness.
-      for (const session of records) await validateSessionFile(session);
-      for (const session of records) {
-        try {
-          deleted.push(await this.deleteRecord(session));
-        } catch (error) {
-          return {
-            deleted,
-            failure: {
-              sessionId: session.id,
-              message:
-                error instanceof Error
-                  ? error.message
-                  : "Failed to delete session",
-            },
-          };
-        }
-      }
-      return { deleted };
-    };
-    const task = Promise.resolve().then(operation);
-    return this.reserve([...ids], { kind: "batch", task });
   }
 }

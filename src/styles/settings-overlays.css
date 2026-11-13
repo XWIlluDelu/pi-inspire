@@ -1,6 +1,6 @@
 /* --- Settings dialog --- */
 
-/* Portalled menus keep one fixed containing block even without backdrop blur. */
+/* Menus share the modal's fixed positioning block when its backdrop is clear. */
 .overlay.settings-overlay {
   contain: layout;
   overflow: clip;
@@ -278,9 +278,7 @@
   display: none;
 }
 
-.dialog.settings .button,
-.dialog.settings .host-restart .button,
-.dialog.settings .models-provider-disclosure {
+.dialog.settings .button {
   height: var(--set-control-h);
   min-height: var(--set-control-h);
   padding: 0 var(--space-3);
@@ -289,9 +287,7 @@
 }
 
 @media (pointer: coarse) {
-  .dialog.settings .button,
-  .dialog.settings .host-restart .button,
-  .dialog.settings .models-provider-disclosure {
+  .dialog.settings .button {
     min-height: 40px;
     height: 40px;
   }
@@ -435,9 +431,9 @@
   border-bottom: 0;
 }
 
-/* Asynchronous readouts never recenter the field's label and explanation. */
-.settings__field:has(.settings__feedback) {
-  align-items: flex-start;
+/* The label stays at the top when asynchronous feedback adds lines. */
+.settings__field[data-detailed] {
+  align-items: start;
 }
 
 .settings__feedback {
@@ -449,37 +445,17 @@
   overflow-wrap: anywhere;
 }
 
-.settings__field > .settings__field-info {
-  flex: 1 1 180px;
+.settings__field[data-detailed] > .settings__field-info {
+  flex-basis: 180px;
 }
 
-.settings__field:not(:has(.settings__field-help)) > .settings__field-info {
-  flex-basis: auto;
-}
-
-/* Compact actions and identity summaries retain their inline layouts. */
-.settings__field:has(.settings-switch),
-.settings__field.models-default-row,
-.settings__field.models-default-row--empty,
-.settings__field.terminal-settings__font {
+.settings__field[data-layout="inline"] {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 2px var(--space-3);
 }
 
-.settings__field:has(.settings-switch):has(
-    .settings__field-help,
-    .settings__field-status
-  ) {
-  align-items: start;
-}
-
-.settings__field:has(.settings-switch):has(
-    .settings__field-help,
-    .settings__field-status
-  )
-  .settings-switch {
-  margin-block: calc((13px * var(--leading-ui) - var(--set-control-h)) / 2);
+.settings__field[data-detailed] .settings-switch {
+  margin-block: calc((19px - var(--set-control-h)) / 2);
 }
 
 .settings__error {
@@ -532,17 +508,6 @@
   margin-top: 2px;
 }
 
-.settings__field > .settings__field-control {
-  flex: 0 1 auto;
-  max-width: 100%;
-  grid-column: 2;
-  grid-row: 1;
-  justify-self: end;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-}
-
 .settings__field-info {
   min-width: 0;
   flex: 1 1 auto;
@@ -553,25 +518,17 @@
 
 .settings__field-control {
   min-width: 0;
+  max-width: 100%;
   display: flex;
-  align-items: center;
   justify-content: flex-end;
 }
 
-.settings__field-control > .segmented,
-.settings__field-control > .settings__notification-control,
-.settings__field-control > .native-select--field {
-  flex: 1;
-}
-
-.settings__field-control > .settings__notification-control,
-.settings__field-control > .native-select--field {
+.settings__field-control > :is(.settings__notification-control, .native-select--field) {
   width: var(--set-choice-w);
   max-width: 100%;
 }
 
-.settings__notification-control .native-select,
-.settings__field-control > .native-select--field {
+.settings__notification-control .native-select {
   width: 100%;
 }
 
@@ -604,24 +561,13 @@
 }
 
 @container settings-card (max-width: 439px) {
-  .settings__field > .settings__field-control {
-    flex-grow: 1;
-  }
-
-  .settings__field-control > .palette-picker {
-    width: 100%;
-  }
-
-  .settings__field.models-default-row {
+  .settings__field[data-layout="adaptive"] {
+    display: grid;
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .models-default-row > .settings__field-control {
-    grid-column: 1;
-    grid-row: auto;
-    justify-self: stretch;
-    justify-content: flex-start;
-    margin-top: var(--space-1);
+  .settings__field[data-layout="adaptive"] > .settings__field-control {
+    justify-content: start;
   }
 }
 
@@ -928,6 +874,13 @@
   --overlay-space-bottom: var(--space-4);
   position: fixed;
   inset: var(--window-titlebar-height) 0 0;
+  width: 100%;
+  height: calc(100% - var(--window-titlebar-height));
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  border: 0;
+  color: inherit;
   z-index: 50;
   background: var(--bg-overlay);
   backdrop-filter: blur(2px);
@@ -942,6 +895,14 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   animation: overlay-in var(--dur-standard) var(--ease-standard);
+}
+
+.overlay:not([open]) {
+  display: none;
+}
+
+.overlay::backdrop {
+  background: transparent;
 }
 
 @media (max-height: 640px) {
@@ -1948,11 +1909,6 @@
   )
   .notices {
   z-index: 38;
-}
-
-/* Non-modal feedback must not cover the current modal focus owner. */
-.app:has(.overlay > [aria-modal="true"]) .notices {
-  z-index: 49;
 }
 
 .feedback--leaving {

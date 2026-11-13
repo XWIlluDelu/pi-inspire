@@ -15,6 +15,7 @@ import { store } from "../../src/store";
 import { sessionPage } from "./fixtures/session-catalog";
 import {
   bootstrapPayload,
+  emptySnapshot,
   FakeWebSocket,
   installFakeWebSocket,
   installFetch,
@@ -44,7 +45,6 @@ describe("right-corner notices", () => {
         return {
           body: bootstrapPayload({
             updateStatus: updates,
-            snapshot: { active: null, runState: "idle", sessionStatuses: {} },
           }),
         };
       if (url.startsWith("/api/update/snooze"))
@@ -60,7 +60,7 @@ describe("right-corner notices", () => {
     });
     await store.init();
     const socket = FakeWebSocket.instances.at(-1)!;
-    socket.open();
+    socket.join(emptySnapshot, { updateStatus: updates });
     return socket;
   }
 

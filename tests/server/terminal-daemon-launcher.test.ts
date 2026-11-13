@@ -13,7 +13,7 @@ import {
 } from "../../server/terminal-daemon-launcher.js";
 import { TerminalDaemonServer } from "../../server/terminal-daemon-server.js";
 import * as daemonTls from "../../server/terminal-daemon-tls.js";
-import { LazyTerminalService } from "../../server/terminal-service.js";
+import { TerminalConnection } from "../../server/terminal-service.js";
 import { TerminalSessionManager } from "../../server/terminal-session-manager.js";
 
 // Even a regression must never launch systemd or a real daemon in this fixture.
@@ -117,11 +117,13 @@ it("recovers on demand after an absent daemon and a lost read without launching 
   const manager = new TerminalSessionManager({ profiles: [] });
   const catalog = manager.list(project);
   const reconnect = vi.fn(() => connectExistingTerminalDaemon(options));
-  const recovering = new LazyTerminalService(reconnect);
+  const recovering = new TerminalConnection(reconnect);
   let server: TerminalDaemonServer | undefined;
   let client: Awaited<ReturnType<typeof launchTerminalDaemon>> | undefined;
   try {
-    await expect(recovering.list(project)).rejects.toMatchObject({
+    await expect(
+      recovering.run((terminal) => terminal.list(project)),
+    ).rejects.toMatchObject({
       code: "terminal_daemon_unavailable",
     });
     await expect(
@@ -164,7 +166,10 @@ it("recovers on demand after an absent daemon and a lost read without launching 
     expect(read).toHaveBeenCalledExactlyOnceWith(project);
     await expect(client.list(project)).resolves.toEqual(catalog);
     await expect(
-      Promise.all([recovering.list(project), recovering.list(project)]),
+      Promise.all([
+        recovering.run((terminal) => terminal.list(project)),
+        recovering.run((terminal) => terminal.list(project)),
+      ]),
     ).resolves.toEqual([catalog, catalog]);
     expect(reconnect).toHaveBeenCalledTimes(2);
     expect(spawn).not.toHaveBeenCalled();

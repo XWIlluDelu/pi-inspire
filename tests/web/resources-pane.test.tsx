@@ -60,12 +60,7 @@ describe("Files pane", () => {
         if (url.startsWith("/api/bootstrap")) {
           return Response.json(
             bootstrapPayload({
-              snapshot: activeSnapshot({
-                transcriptPage: {
-                  revision: transcriptRevision,
-                  hasOlder: true,
-                },
-              }),
+              startupSessionId: "s1",
             }),
           );
         }
@@ -226,7 +221,11 @@ describe("Files pane", () => {
       store.toggleWorkspaceDirectory(dir);
     store.setWorkspaceShowHidden(false);
     await store.init();
-    FakeWebSocket.instances.at(-1)!.open(activeSnapshot());
+    FakeWebSocket.instances.at(-1)!.join(
+      activeSnapshot({
+        transcriptPage: { revision: transcriptRevision, hasOlder: true },
+      }),
+    );
     store.setResourcesOpen(false);
     store.setContextMode("files");
   });
@@ -305,20 +304,19 @@ describe("Files pane", () => {
         if (owner === "revision") {
           transcriptRevision = 2;
           act(() => {
-            FakeWebSocket.instances.at(-1)?.emit({
-              type: "snapshot",
-              data: activeSnapshot({
+            FakeWebSocket.instances.at(-1)?.emitSnapshot(
+              activeSnapshot({
                 transcriptPage: {
                   revision: 2,
                   hasOlder: true,
                 },
               }),
-            });
+            );
           });
         } else {
           await act(async () => {
             await store.init();
-            FakeWebSocket.instances.at(-1)!.open(activeSnapshot());
+            FakeWebSocket.instances.at(-1)!.join(activeSnapshot());
           });
         }
         await waitFor(() =>
@@ -379,12 +377,11 @@ describe("Files pane", () => {
     const listsBeforeAppend = requests("/api/resources/list").length;
     transcriptRevision = 2;
     act(() => {
-      FakeWebSocket.instances.at(-1)?.emit({
-        type: "snapshot",
-        data: activeSnapshot({
+      FakeWebSocket.instances.at(-1)?.emitSnapshot(
+        activeSnapshot({
           transcriptPage: { revision: 2, appendFromRevision: 2 },
         }),
-      });
+      );
     });
     await waitFor(() => expect(store.getState().transcriptRevision).toBe(2));
     const retainedSource = await screen.findByRole("region", {
@@ -477,16 +474,15 @@ describe("Files pane", () => {
       ),
     );
     act(() => {
-      FakeWebSocket.instances.at(-1)?.emit({
-        type: "snapshot",
-        data: activeSnapshot({
+      FakeWebSocket.instances.at(-1)?.emitSnapshot(
+        activeSnapshot({
           transcriptPage: {
             revision: 2,
             appendFromRevision: 2,
             incarnation: "projection-2",
           },
         }),
-      });
+      );
     });
     await waitFor(() =>
       expect(requests("/api/html-previews/html-grant")).toHaveLength(1),

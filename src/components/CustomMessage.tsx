@@ -80,7 +80,7 @@ export const CustomMessage = memo(function CustomMessage({
               projectionKey,
             })}
             label={`${title} block`}
-            className="custom-message__copy"
+            className="activity-copy custom-message__copy"
           />
         </div>
         <ImageGallery>

@@ -9,15 +9,8 @@ import {
   useState,
 } from "react";
 import { nativeCommand, parseCommandInvocation } from "../../shared/commands";
-import {
-  ACTIVITY_FOLD_VISIBILITIES,
-  isAbortableRunState,
-  isBusyRunState,
-  type PalettePreference,
-  type ThemePreference,
-  TOOL_VISIBILITY_PREFERENCES,
-  VISIBILITY_PREFERENCES,
-} from "../../shared/contracts";
+import { isAbortableRunState, isBusyRunState } from "../../shared/contracts";
+import { selectedRunState } from "../app-state";
 import {
   type PiCommand,
   resolveCommandInventory,
@@ -31,18 +24,18 @@ import { relativeTime } from "../format";
 import { isTouchFirstDevice } from "../input-device";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import { paletteTextMatchRanges, rankPaletteItems } from "../palette-search";
-import { PALETTE_LABELS, preferenceChoiceLabel } from "../preference-labels";
+import { preferenceChoices } from "../preference-labels";
 import { shallowEqual, store, useAppState } from "../store";
 import {
   queueTerminalAction,
   type TerminalUiAction,
 } from "../terminal-actions";
-import { useModalFocus } from "../use-modal-focus";
 import { useSearchFocus } from "../use-search-focus";
 import { modelCycleShortcut } from "../workbench-keyboard";
 import { sessionHeading } from "./AppTopbar";
 import { ButtonLabel } from "./ButtonLabel";
 import { ComposerInput } from "./ComposerInput";
+import { Modal } from "./Modal";
 import { visibleSessions } from "./nav-model";
 import { SearchMatchText } from "./SearchMatchText";
 
@@ -57,11 +50,14 @@ interface PaletteItem {
   run: () => void;
 }
 
-const THEME_LABELS: Record<ThemePreference, string> = {
-  light: "Light",
-  dark: "Dark",
-  system: "System",
-};
+const preferenceActionKeys = {
+  theme: "theme",
+  palette: "palette",
+  launch: "launch",
+  thinkingVisibility: "thinking",
+  toolVisibility: "tools",
+  activityFoldVisibility: "activity-folds",
+} satisfies Record<keyof typeof preferenceChoices, string>;
 
 function runTerminalAction(action: TerminalUiAction): void {
   const projectCwd = store.getState().cwd;
@@ -112,7 +108,7 @@ export const CommandPalette = memo(function CommandPalette({
         appState.messages,
         !appState.hasOlderMessages,
       ),
-      runState: appState.runState,
+      runState: selectedRunState(appState),
       bashRunning: appState.bashRunning,
       earlierContinuation: hasEarlierContinuation(appState),
       prefs: appState.prefs,
@@ -168,16 +164,7 @@ export const CommandPalette = memo(function CommandPalette({
     setRenameValue("");
     setRenameInitialValue("");
   }, []);
-  const dialogRef = useModalFocus<HTMLDivElement>(
-    active,
-    "command-palette",
-    (event) => {
-      if (isComposingKeyboardEvent(event)) return false;
-      if (preparation && !preparationSending) setPreparation(null);
-      else if (renaming) exitRename();
-      else onClose();
-    },
-  );
+  const dialogRef = useRef<HTMLDialogElement>(null);
   const abortable = isAbortableRunState(state.runState) || state.bashRunning;
 
   useSearchFocus(active && !preparation && !renaming, inputRef, dialogRef);
@@ -434,67 +421,19 @@ export const CommandPalette = memo(function CommandPalette({
         run: () => void store.abort(),
       });
     }
-    for (const theme of Object.keys(THEME_LABELS) as ThemePreference[]) {
-      actions.push({
-        id: `theme-${theme}`,
-        group: "Preferences",
-        title: `Theme: ${THEME_LABELS[theme]}`,
-        hint: state.prefs.theme === theme ? "current" : undefined,
-        run: () => store.setTheme(theme),
-      });
-    }
-    for (const palette of Object.keys(PALETTE_LABELS) as PalettePreference[]) {
-      actions.push({
-        id: `palette-${palette}`,
-        group: "Preferences",
-        title: `Palette: ${PALETTE_LABELS[palette]}`,
-        hint: state.prefs.palette === palette ? "current" : undefined,
-        run: () => store.setPalette(palette),
-      });
-    }
-    actions.push(
-      {
-        id: "launch-welcome",
-        group: "Preferences",
-        title: "On launch: show welcome",
-        hint: state.prefs.launch === "welcome" ? "current" : undefined,
-        run: () => store.setLaunch("welcome"),
-      },
-      {
-        id: "launch-continue",
-        group: "Preferences",
-        title: "On launch: continue previous session",
-        hint: state.prefs.launch === "continue" ? "current" : undefined,
-        run: () => store.setLaunch("continue"),
-      },
-    );
-    for (const value of VISIBILITY_PREFERENCES) {
-      actions.push({
-        id: `thinking-${value}`,
-        group: "Preferences",
-        title: `Reasoning details: ${preferenceChoiceLabel(value)}`,
-        hint: state.prefs.thinkingVisibility === value ? "current" : undefined,
-        run: () => store.setThinkingVisibility(value),
-      });
-    }
-    for (const value of TOOL_VISIBILITY_PREFERENCES) {
-      actions.push({
-        id: `tools-${value}`,
-        group: "Preferences",
-        title: `Tool activity: ${preferenceChoiceLabel(value)}`,
-        hint: state.prefs.toolVisibility === value ? "current" : undefined,
-        run: () => store.setToolVisibility(value),
-      });
-    }
-    for (const value of ACTIVITY_FOLD_VISIBILITIES) {
-      actions.push({
-        id: `activity-folds-${value}`,
-        group: "Preferences",
-        title: `Activity groups: ${preferenceChoiceLabel(value)}`,
-        hint:
-          state.prefs.activityFoldVisibility === value ? "current" : undefined,
-        run: () => store.setActivityFoldVisibility(value),
-      });
+    for (const key of Object.keys(
+      preferenceActionKeys,
+    ) as (keyof typeof preferenceChoices)[]) {
+      const field = preferenceChoices[key];
+      const title = "paletteLabel" in field ? field.paletteLabel : field.label;
+      for (const option of field.options)
+        actions.push({
+          id: `${preferenceActionKeys[key]}-${option.value}`,
+          group: "Preferences",
+          title: `${title}: ${"actionLabel" in option ? option.actionLabel : option.label}`,
+          hint: state.prefs[key] === option.value ? "current" : undefined,
+          run: () => store.setPreference(key, option.value),
+        });
     }
 
     const visible = visibleSessions(state.sessions, state.prefs);
@@ -702,48 +641,42 @@ export const CommandPalette = memo(function CommandPalette({
   };
 
   return (
-    <div
-      className="overlay palette-overlay"
-      role="presentation"
-      style={active ? undefined : { display: "none" }}
-      aria-hidden={!active || undefined}
-      onClick={onClose}
-    >
-      <div
-        ref={dialogRef}
-        className="palette"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Command palette"
-        tabIndex={-1}
-        data-modal-autofocus={
-          isTouchFirstDevice() && !preparation && !renaming ? true : undefined
+    <Modal
+      ref={dialogRef}
+      active={active}
+      aria-label="Command palette"
+      onDismiss={onClose}
+      focusSurface={isTouchFirstDevice() && !preparation && !renaming}
+      onEscape={() => {
+        if (preparation && !preparationSending) setPreparation(null);
+        else if (renaming) exitRename();
+        else onClose();
+      }}
+      onKeyDown={(event) => {
+        if (
+          preparation ||
+          renaming ||
+          event.defaultPrevented ||
+          isComposingKeyboardEvent(event.nativeEvent) ||
+          (event.target !== event.currentTarget &&
+            event.target !== inputRef.current)
+        )
+          return;
+        if (event.key === "ArrowDown") {
+          event.preventDefault();
+          setKeyboardActive(true);
+          setIndex(Math.min(clamped + 1, filtered.length - 1));
+        } else if (event.key === "ArrowUp") {
+          event.preventDefault();
+          setKeyboardActive(true);
+          setIndex(Math.max(clamped - 1, 0));
+        } else if (event.key === "Enter") {
+          event.preventDefault();
+          runItem(filtered[clamped]);
         }
-        onKeyDown={(event) => {
-          if (
-            preparation ||
-            renaming ||
-            event.defaultPrevented ||
-            isComposingKeyboardEvent(event.nativeEvent) ||
-            (event.target !== event.currentTarget &&
-              event.target !== inputRef.current)
-          )
-            return;
-          if (event.key === "ArrowDown") {
-            event.preventDefault();
-            setKeyboardActive(true);
-            setIndex(Math.min(clamped + 1, filtered.length - 1));
-          } else if (event.key === "ArrowUp") {
-            event.preventDefault();
-            setKeyboardActive(true);
-            setIndex(Math.max(clamped - 1, 0));
-          } else if (event.key === "Enter") {
-            event.preventDefault();
-            runItem(filtered[clamped]);
-          }
-        }}
-        onClick={(event) => event.stopPropagation()}
-      >
+      }}
+    >
+      <div className="palette">
         {preparation ? (
           <div className="palette__prepare">
             <h2 className="palette__prepare-title">
@@ -975,6 +908,6 @@ export const CommandPalette = memo(function CommandPalette({
           </>
         )}
       </div>
-    </div>
+    </Modal>
   );
 });

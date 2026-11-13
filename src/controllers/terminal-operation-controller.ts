@@ -1,13 +1,12 @@
 import { matchOperationReceipt } from "../../shared/host-operations";
-import { isJsonRecord } from "../../shared/json-record";
 import {
   TERMINAL_OPERATIONS_PATH,
-  terminalIntentSchema,
-  terminalOperationSchema,
-  terminalReceiptIdentity,
   type TerminalIntent,
   type TerminalOperation,
   type TerminalOperationResults,
+  terminalIntentSchema,
+  terminalOperationSchema,
+  terminalReceiptIdentity,
 } from "../../shared/terminal-operations";
 import { authenticatedFetch } from "../browser-auth";
 
@@ -146,8 +145,6 @@ export class TerminalOperationController {
     }
     const task = this.deliver<T>(key, intent).finally(() => {
       this.running.delete(key);
-      const pending = this.pending.get(key);
-      if (pending) pending.outcome ??= "unknown";
       this.publish();
     });
     this.running.set(key, task);
@@ -198,6 +195,7 @@ export class TerminalOperationController {
 
   private async deliver<T>(key: string, intent: TerminalIntent): Promise<T> {
     let pending = this.pending.get(key);
+    const observeOnly = pending?.outcome === "unknown";
     if (!pending) {
       if (this.pending.size >= MAX_PENDING)
         throw new Error(
@@ -237,11 +235,14 @@ export class TerminalOperationController {
       };
       this.pending.set(key, pending);
     }
-    this.persist(); // A previous storage failure cannot make a retry untracked.
+    this.persist();
+    pending.outcome = "unknown";
     const { operation } = pending;
     try {
       const response = await authenticatedFetch(
-        TERMINAL_OPERATIONS_PATH,
+        observeOnly
+          ? `${TERMINAL_OPERATIONS_PATH}?observe=1`
+          : TERMINAL_OPERATIONS_PATH,
         {
           method: "POST",
           body: JSON.stringify(operation),
@@ -254,20 +255,16 @@ export class TerminalOperationController {
         await response.json(),
         terminalReceiptIdentity(operation),
       );
-      const error = isJsonRecord(receipt?.error) ? receipt.error : null;
       const message =
-        typeof error?.message === "string" ? error.message : undefined;
-      const completed =
-        receipt &&
-        response.ok &&
-        receipt.state === "completed" &&
-        "result" in receipt;
+        receipt?.state === "rejected" || receipt?.state === "unknown"
+          ? receipt.error.message
+          : undefined;
+      const completed = receipt?.state === "completed" && response.ok;
       const rejected =
-        receipt &&
+        receipt?.state === "rejected" &&
         !response.ok &&
-        receipt.state === "rejected" &&
-        error?.status === response.status &&
-        !!message;
+        receipt.error.status === response.status &&
+        Boolean(message);
       if (completed || rejected) {
         this.pending.delete(key);
         try {

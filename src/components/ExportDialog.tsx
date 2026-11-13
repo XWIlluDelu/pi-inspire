@@ -1,8 +1,8 @@
 import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { store, useAppState } from "../store";
-import { useModalFocus } from "../use-modal-focus";
 import { ButtonLabel } from "./ButtonLabel";
+import { Modal } from "./Modal";
 
 export function ExportDialog({
   sessionId,
@@ -29,7 +29,6 @@ export function ExportDialog({
       mounted.current = false;
     };
   }, []);
-  const ref = useModalFocus<HTMLFormElement>(active, sessionId, onClose);
   const download = async () => {
     if (busy) return;
     const generation = store.getState().transportGeneration;
@@ -46,21 +45,14 @@ export function ExportDialog({
     else onClose();
   };
   return (
-    <div
-      className="overlay"
-      role="presentation"
-      style={active ? undefined : { display: "none" }}
-      aria-hidden={!active || undefined}
-      onClick={onClose}
+    <Modal
+      aria-labelledby="export-title"
+      active={active}
+      owner={sessionId}
+      onDismiss={onClose}
     >
       <form
-        ref={ref}
         className="dialog export-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="export-title"
-        tabIndex={-1}
-        onClick={(event) => event.stopPropagation()}
         onSubmit={(event) => {
           event.preventDefault();
           void download();
@@ -150,6 +142,6 @@ export function ExportDialog({
           </button>
         </footer>
       </form>
-    </div>
+    </Modal>
   );
 }

@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { isJsonRecord } from "./json-record.js";
 import {
   COMPOSER_HISTORY_FILE_REFERENCE,
   COMPOSER_HISTORY_IMAGE_REFERENCE,
@@ -15,6 +14,7 @@ import {
   MAX_PROMPT_CHARS,
   MAX_SESSION_ID_CHARS,
 } from "./contracts.js";
+import { isJsonRecord } from "./json-record.js";
 
 export const INPUT_OPERATION_PATHS = {
   prompt: "/api/prompt",
@@ -23,9 +23,11 @@ export const INPUT_OPERATION_PATHS = {
   pending: "/api/pending/operations",
 } as const;
 
-const addressedOperation = z.object({
-  operationId: z.string().uuid(),
-  authorityId: z.string().uuid(),
+export const hostOperationIdentitySchema = z
+  .object({ operationId: z.string().uuid(), authorityId: z.string().uuid() })
+  .strict();
+
+const addressedOperation = hostOperationIdentitySchema.extend({
   sessionId: z.string().min(1).max(MAX_SESSION_ID_CHARS),
   expectedViewId: z.string().min(1).max(240).optional(),
 });
@@ -59,15 +61,52 @@ export const promptSchema = addressedOperation
     behavior: z.enum(["steer", "followUp"]).optional(),
   })
   .strict();
+export const operationFingerprintSchema = z.string().regex(/^[a-f0-9]{64}$/u);
+export const promptObservationSchema = hostOperationIdentitySchema.extend({
+  fingerprint: operationFingerprintSchema.optional(),
+});
+
+/** Both the sender and Host serialize the validated fields in schema order. */
+export function promptFingerprintInput(
+  prompt: z.input<typeof promptSchema>,
+): string {
+  const {
+    operationId,
+    authorityId,
+    sessionId,
+    expectedViewId,
+    message,
+    attachmentIds,
+    historyArtifacts,
+    projectFiles,
+    behavior,
+  } = prompt;
+  const history = historyArtifacts && {
+    viewId: historyArtifacts.viewId,
+    incarnation: historyArtifacts.incarnation,
+    effectiveLeafId: historyArtifacts.effectiveLeafId,
+    imageReferences: historyArtifacts.imageReferences,
+    fileReferences: historyArtifacts.fileReferences,
+  };
+  return JSON.stringify([
+    operationId,
+    authorityId,
+    sessionId,
+    expectedViewId,
+    message,
+    attachmentIds,
+    history,
+    projectFiles,
+    behavior,
+  ]);
+}
+
 export const pendingOperationSchema = addressedOperation.strict();
 export const pendingOperationRequestSchema = pendingOperationSchema.extend({
   action: z.enum(["recover", "abort"]),
 });
 
-export interface HostOperationIdentity {
-  operationId: string;
-  authorityId: string;
-}
+export type HostOperationIdentity = z.infer<typeof hostOperationIdentitySchema>;
 
 export interface HostOperationError {
   message: string;
@@ -96,13 +135,23 @@ export type OperationReceipt<Executor, Command, Result> = {
   | { state: "rejected" | "unknown"; error: HostOperationError }
 );
 
+type MatchedReceipt = Record<string, unknown> &
+  (
+    | { state: "pending" }
+    | { state: "completed"; result: unknown }
+    | {
+        state: "unknown" | "rejected";
+        error: Record<string, unknown> & { message: string; status: number };
+      }
+  );
+
 export function matchOperationReceipt(
   value: unknown,
   expected: Pick<
     OperationReceipt<Record<string, string>, string, unknown>,
     "executor" | "operationId" | "command"
   >,
-): Record<string, unknown> | null {
+): MatchedReceipt | null {
   if (
     !isJsonRecord(value) ||
     !isJsonRecord(value.executor) ||
@@ -112,11 +161,27 @@ export function matchOperationReceipt(
   )
     return null;
   const executor = value.executor;
-  return Object.entries(expected.executor).every(
-    ([key, item]) => executor[key] === item,
+  if (
+    !Object.entries(expected.executor).every(
+      ([key, item]) => executor[key] === item,
+    )
   )
-    ? value
-    : null;
+    return null;
+  if (
+    value.state === "pending" ||
+    (value.state === "completed" && "result" in value)
+  )
+    return value as MatchedReceipt;
+  if (value.state === "unknown" || value.state === "rejected") {
+    const error = value.error;
+    if (
+      isJsonRecord(error) &&
+      typeof error.message === "string" &&
+      typeof error.status === "number"
+    )
+      return value as MatchedReceipt;
+  }
+  return null;
 }
 
 export type HostOperationReceipt<Command extends HostOperationCommand> =

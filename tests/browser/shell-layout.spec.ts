@@ -52,7 +52,6 @@ test("desktop pane gutters remain pointer and keyboard resize targets", async ({
     const pane = page.locator(selector);
     const initial = (await pane.boundingBox())!.width;
     const bounds = (await handle.boundingBox())!;
-    // A scroll thumb may own lower parts of the shared hit band.
     const x = bounds.x + bounds.width / 2;
     const y = bounds.y + 24;
     await page.mouse.move(x, y);
@@ -342,7 +341,6 @@ test("workbench headers keep labels, controls and the live Git count readable", 
       .evaluate((label) => label.scrollWidth - label.clientWidth),
   ).toBeLessThanOrEqual(1);
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
-  await page.getByRole("tab", { name: "History", exact: true }).click();
   const pane = page.getByRole("dialog", { name: "Context panel" });
   const modes = pane.locator(".ctx__modes");
   const changes = pane.getByRole("tab", { name: "Changes", exact: true });

@@ -83,7 +83,6 @@ interface SessionCatalogControllerHost {
   state(): SessionCatalogState;
   patch(patch: SessionCatalogPatch): void;
   api(): Api | null;
-  confirmedPreferences(): InspirePreferences;
   handleAuthFailure(): void;
 }
 
@@ -518,10 +517,7 @@ export class SessionCatalogController {
   }
 
   private curationOwnerKey(): string {
-    const { ids, cwds } = sessionCurationOwners(
-      this.host.state().prefs,
-      this.host.confirmedPreferences(),
-    );
+    const { ids, cwds } = sessionCurationOwners(this.host.state().prefs);
     return JSON.stringify([[...ids].sort(), [...cwds].sort()]);
   }
 
@@ -529,10 +525,7 @@ export class SessionCatalogController {
     ids: Set<string>;
     cwds: Set<string>;
   } {
-    const { ids, cwds } = sessionCurationOwners(
-      prefs,
-      this.host.confirmedPreferences(),
-    );
+    const { ids, cwds } = sessionCurationOwners(prefs);
     for (const id of this.liveSessionIds()) ids.add(id);
     return { ids, cwds };
   }
@@ -579,9 +572,7 @@ export class SessionCatalogController {
     return changed;
   }
 
-  /** Reclassify already-known rows synchronously. Optimistic removals retain
-   * the host-confirmed owners until the preference write settles, so an
-   * off-page row cannot disappear before a rejected write rolls back. */
+  /** Reclassify already-known rows after confirmed curation changes. */
   reconcileCuration(): void {
     const ownerKey = this.curationOwnerKey();
     const staleRequest =
@@ -651,9 +642,7 @@ export class SessionCatalogController {
     }
   }
 
-  /** Hydration is a separate atomic union. During an optimistic preference
-   * write, rows owned by the last confirmed curation survive until the host
-   * accepts or rejects the patch. Every request stays inside route caps. */
+  /** Hydration is a separate atomic union, bounded by the route caps. */
   private async readSupplementalRows(
     api: Api,
     base: readonly SessionSummary[],

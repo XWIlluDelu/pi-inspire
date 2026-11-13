@@ -7,7 +7,7 @@ import {
   activeSnapshot,
   bootstrapPayload,
   DEFAULT_PREFS,
-  FakeWebSocket,
+  deferred,
   installFakeWebSocket,
   installFetch,
   jsonBody,
@@ -66,14 +66,51 @@ describe("preference persistence", () => {
       "clone",
       "switch-branch",
     ] as const;
-    store.setTheme("dark");
-    store.setSessionActionOrder([...order]);
-    expect(store.getState().prefs).toMatchObject({
-      theme: "dark",
-      sessionActionOrder: order,
+    store.setPreference("theme", "dark");
+    store.setPreference("sessionActionOrder", [...order]);
+    expect(store.getState()).toMatchObject({
+      prefs: { theme: "system" },
+      desiredPreferences: { theme: "dark", sessionActionOrder: order },
     });
     await vi.waitFor(() => expect(saved).toHaveLength(2));
     expect(saved).toEqual([{ theme: "dark" }, { sessionActionOrder: order }]);
+    await vi.waitFor(() =>
+      expect(store.getState().prefs).toMatchObject({
+        theme: "dark",
+        sessionActionOrder: order,
+      }),
+    );
+  });
+
+  it("retires a refused value by intent even after the selection cycles back", async () => {
+    const first = deferred<void>();
+    const second = deferred<void>();
+    let writes = 0;
+    installFetch(async (url, init) => {
+      if (url === "/api/bootstrap") return { body: bootstrapPayload() };
+      if (url === "/api/preferences") {
+        if (++writes === 1) {
+          await first.promise;
+          return { status: 409, body: { error: "Preference refused" } };
+        }
+        await second.promise;
+        return { body: jsonBody(init) };
+      }
+      if (url.startsWith("/api/sessions")) return { body: sessionPage([], 0) };
+    });
+    const store = new AppStore();
+    await store.init();
+    for (const theme of ["dark", "light", "dark"] as const)
+      store.setPreference("theme", theme);
+    first.resolve();
+    await vi.waitFor(() => expect(writes).toBe(2));
+    expect(store.getState().desiredPreferences.theme).toBe("dark");
+    expect(store.getState().prefs.theme).toBe("system");
+    second.resolve();
+    await vi.waitFor(() =>
+      expect(store.getState().desiredPreferences).toEqual({}),
+    );
+    expect(store.getState().prefs.theme).toBe("dark");
   });
 });
 
@@ -103,7 +140,7 @@ describe("settings reset", () => {
         return {
           body: bootstrapPayload({
             preferences: initial,
-            snapshot: activeSnapshot(),
+            startupSessionId: "s1",
           }),
         };
       if (url.startsWith("/api/preferences") && init.method === "PATCH") {
@@ -132,31 +169,6 @@ describe("settings reset", () => {
 describe("launch behavior", () => {
   beforeEach(() => {
     installFakeWebSocket();
-  });
-
-  it("continue: automatically opens the most recent session once", async () => {
-    const summary = sessionSummary();
-    installFetch((url) => {
-      if (url.startsWith("/api/bootstrap")) {
-        return {
-          body: bootstrapPayload({
-            preferences: { ...DEFAULT_PREFS, launch: "continue" },
-          }),
-        };
-      }
-      if (url.startsWith("/api/sessions/open"))
-        return { body: activeSnapshot({ sessionId: summary.id }) };
-      if (url.startsWith("/api/sessions")) {
-        return {
-          body: sessionPage([summary], 1),
-        };
-      }
-      return undefined;
-    });
-    const store = new AppStore();
-    await store.init();
-    FakeWebSocket.instances.at(-1)!.open();
-    await vi.waitFor(() => expect(store.getState().sessionId).toBe(summary.id));
   });
 
   it("does not auto-continue over a new-session intent while the catalog is loading", async () => {

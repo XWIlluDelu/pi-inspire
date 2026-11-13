@@ -12,13 +12,6 @@
   padding: var(--space-8) var(--space-6);
 }
 
-/* Brand watermark: a huge, near-invisible math π recedes into the corner.
-   The layer clips it so the glyph never contributes scrollable overflow,
-   and z-index keeps it behind the hero content. */
-.welcome__mark {
-  display: none;
-}
-
 .welcome__tagline {
   margin: 0;
   color: var(--muted);

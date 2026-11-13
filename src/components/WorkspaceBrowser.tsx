@@ -123,7 +123,7 @@ const WorkspaceFileRow = memo(function WorkspaceFileRow({
   return (
     <button
       type="button"
-      className={`workspace-tree__row workspace-tree__row--file ${showPath ? "workspace-tree__row--result" : ""} ${selected ? "workspace-tree__row--active" : ""}`}
+      className={`file-row workspace-tree__row workspace-tree__row--file ${showPath ? "workspace-tree__row--result" : ""}`}
       style={{ paddingLeft: `${8 + depth * 14}px` }}
       title={`${path}\nCtrl+click: Show in file manager`}
       aria-label={showPath ? `${name}, ${path}` : undefined}
@@ -306,7 +306,7 @@ export function WorkspaceTree({
             <Fragment key={path}>
               <button
                 type="button"
-                className="workspace-tree__row workspace-tree__row--folder"
+                className="file-row workspace-tree__row workspace-tree__row--folder"
                 style={indent}
                 aria-expanded={open}
                 title={`${path}\nCtrl+click: Show in file manager`}

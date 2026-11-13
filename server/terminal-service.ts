@@ -1,11 +1,14 @@
 import type {
   TerminalCatalogResponse,
   TerminalClientControlMessage,
-  TerminalMutationMethod,
-  TerminalOperationIdentity,
   TerminalServerControlMessage,
   TerminalServiceSettings,
 } from "../shared/terminal-contracts.js";
+import type {
+  TerminalIntent,
+  TerminalOperation,
+  TerminalOperationResults,
+} from "../shared/terminal-operations.js";
 
 export interface TerminalAttachmentSink {
   sendControl(message: TerminalServerControlMessage): void;
@@ -36,11 +39,10 @@ export interface TerminalAttachment {
 
 export interface TerminalService {
   operationEpoch(): Promise<string>;
-  operate<Result>(
-    method: TerminalMutationMethod,
-    params: unknown,
-    operation: TerminalOperationIdentity,
-  ): Promise<Result>;
+  operate<I extends TerminalIntent>(
+    operation: TerminalOperation & { intent: I },
+    observeOnly?: boolean,
+  ): Promise<TerminalOperationResults[I["command"]]>;
   list(
     cwd?: string,
   ): TerminalCatalogResponse | Promise<TerminalCatalogResponse>;
@@ -53,42 +55,15 @@ export interface TerminalService {
 }
 
 /** Initialize only on demand. Connection failures may be retried; dispatched work never is. */
-export class LazyTerminalService implements TerminalService {
+export class TerminalConnection {
   private pending: Promise<TerminalService> | null = null;
-  private service: TerminalService | null = null;
   private closed = false;
   private closing: Promise<void> | null = null;
 
-  constructor(private readonly connect: () => Promise<TerminalService>) {}
-
-  operationEpoch(): Promise<string> {
-    return this.run((service) => service.operationEpoch());
-  }
-
-  operate<Result>(
-    method: TerminalMutationMethod,
-    params: unknown,
-    operation: TerminalOperationIdentity,
-  ): Promise<Result> {
-    return this.run((service) =>
-      service.operate<Result>(method, params, operation),
-    );
-  }
-
-  list(cwd?: string): Promise<TerminalCatalogResponse> {
-    return this.run((service) => service.list(cwd));
-  }
-
-  getSettings(): Promise<TerminalServiceSettings> {
-    return this.run((service) => service.getSettings());
-  }
-
-  attach(
-    options: TerminalAttachOptions,
-    sink: TerminalAttachmentSink,
-  ): Promise<TerminalAttachment> {
-    return this.run((service) => service.attach(options, sink));
-  }
+  constructor(
+    private readonly connect: () => Promise<TerminalService>,
+    private service: TerminalService | null = null,
+  ) {}
 
   close(): Promise<void> {
     if (this.closing) return this.closing;
@@ -110,7 +85,15 @@ export class LazyTerminalService implements TerminalService {
     );
   }
 
-  private async connected(): Promise<TerminalService> {
+  async run<Result>(
+    operation: (service: TerminalService) => Result | Promise<Result>,
+  ): Promise<Result> {
+    const service = await this.connectOnce();
+    if (this.closed) throw this.closedError();
+    return operation(service);
+  }
+
+  private async connectOnce(): Promise<TerminalService> {
     if (this.closed) throw this.closedError();
     if (this.service) return this.service;
     if (this.pending) return this.pending;
@@ -132,14 +115,6 @@ export class LazyTerminalService implements TerminalService {
       });
     this.pending = pending;
     return pending;
-  }
-
-  private async run<Result>(
-    action: (service: TerminalService) => Result | Promise<Result>,
-  ): Promise<Result> {
-    const service = await this.connected();
-    if (this.closed) throw this.closedError();
-    return action(service);
   }
 }
 

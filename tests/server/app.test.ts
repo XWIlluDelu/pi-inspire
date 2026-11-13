@@ -160,29 +160,6 @@ describe("Host HTTP workflows", () => {
       });
   });
 
-  it("forwards explicit directory creation only through authenticated new-session requests", async () => {
-    const create = vi.spyOn(runtime, "newSession");
-    const body = {
-      cwd: join(temporary, "new-project"),
-      createDirectory: true,
-      model: { provider: "anthropic", id: "claude-sonnet-4" },
-      thinkingLevel: "high",
-    };
-    await guest.post("/api/sessions/new").send(body).expect(401);
-    expect(create).not.toHaveBeenCalled();
-    await local
-      .post("/api/sessions/new")
-      .send({ ...body, createDirectory: "true" })
-      .expect(400);
-    expect(create).not.toHaveBeenCalled();
-    await local.post("/api/sessions/new").send(body).expect(200);
-    expect(create).toHaveBeenCalledWith(body.cwd, {
-      createDirectory: true,
-      model: body.model,
-      thinkingLevel: "high",
-    });
-  });
-
   it("stops accepting work before runtime teardown and drains an active request without deadlock", async () => {
     const originalSnapshot = runtime.snapshot.bind(runtime);
     const originalClose = runtime.close.bind(runtime);
@@ -194,9 +171,9 @@ describe("Host HTTP workflows", () => {
     const gate = new Promise<void>((resolveSnapshot) => {
       releaseSnapshot = resolveSnapshot;
     });
-    vi.spyOn(runtime, "snapshot").mockImplementation(async () => {
+    vi.spyOn(runtime, "snapshot").mockImplementation(async (sessionId) => {
       snapshotStarted();
-      const snapshot = await originalSnapshot();
+      const snapshot = await originalSnapshot(sessionId);
       await gate;
       return snapshot;
     });
@@ -204,7 +181,7 @@ describe("Host HTTP workflows", () => {
       releaseSnapshot();
       await originalClose();
     });
-    const active = local.get("/api/snapshot");
+    const active = local.get("/api/snapshot?detail=");
     const activeResult = active.then((response) => response.status);
     await started;
     const closing = application.close();
@@ -261,79 +238,81 @@ describe("Host HTTP workflows", () => {
     expect(opened.body.active.model.id).toBe("offline");
   });
 
-  it("authenticates Pending clear and scopes exact-text reads to the displayed item", async () => {
+  it("admits typed body routes after authentication and validates before dispatch", async () => {
+    const sessionId = "fixture-active";
+    const command = {
+      sessionId,
+      command: "compact",
+      argument: "preserve decisions",
+    };
+    const compacted = {
+      command: "compact",
+      outcome: "completed",
+      message: "Compaction completed",
+    } as const;
+    const native = vi
+      .spyOn(runtime, "nativeCommand")
+      .mockResolvedValue(compacted);
     const clear = vi
       .spyOn(runtime, "clearPending")
       .mockResolvedValue(undefined);
-    await guest
-      .post("/api/pending/clear")
-      .send({ sessionId: "fixture-active" })
-      .expect(401);
-    expect(clear).not.toHaveBeenCalled();
-    await local
-      .post("/api/pending/clear")
-      .send({ sessionId: "fixture-active", expectedRevision: 1 })
-      .expect(400);
-    expect(clear).not.toHaveBeenCalled();
-    await local
-      .post("/api/pending/clear")
-      .send({ sessionId: "fixture-active" })
-      .expect(200, { ok: true });
-    expect(clear).toHaveBeenCalledExactlyOnceWith("fixture-active");
     const pendingItem = {
-      sessionId: "fixture-active",
+      sessionId,
       viewId: "view",
       revision: 7,
       itemId: "text-steer-0",
     };
-    const exactText = "x".repeat(2000);
-    const text = vi
+    const pendingText = { text: "x".repeat(2000) };
+    const read = vi
       .spyOn(runtime, "pendingText")
-      .mockResolvedValue({ text: exactText });
-    await guest.post("/api/pending/text").send(pendingItem).expect(401);
-    await local
-      .post("/api/pending/text")
-      .send(pendingItem)
-      .expect("Cache-Control", "no-store")
-      .expect(200, { text: exactText });
-    expect(text).toHaveBeenCalledExactlyOnceWith(pendingItem);
-  });
-
-  it("dispatches a validated native command only to its authenticated explicit target", async () => {
-    await runtime.openSession("fixture-active");
-    await runtime.openSession("fixture-history");
-    const native = vi.spyOn(runtime, "nativeCommand").mockResolvedValue({
-      command: "compact",
-      outcome: "completed",
-      message: "Compaction completed",
-    });
-
-    await guest
-      .post("/api/control/native-command")
-      .send({ sessionId: "fixture-active", command: "compact" })
-      .expect(401);
-    await local
-      .post("/api/control/native-command")
-      .send({ sessionId: "fixture-active", command: "unknown" })
-      .expect(400);
-    expect(native).not.toHaveBeenCalled();
-
-    const command = {
-      sessionId: "fixture-active",
-      command: "compact",
-      argument: "preserve decisions",
-    };
-    const compacted = await local
-      .post("/api/control/native-command")
-      .send(command)
-      .expect(200);
-    expect(compacted.headers["cache-control"]).toContain("no-store");
-    expect(compacted.body).toMatchObject({
-      command: "compact",
-      outcome: "completed",
-    });
-    expect(native).toHaveBeenCalledExactlyOnceWith(command);
-    expect(runtime.startupSessionHint).toBe("fixture-history");
+      .mockResolvedValue(pendingText);
+    const cwd = join(temporary, "new-project");
+    const snapshot = await runtime.snapshot(null);
+    const create = vi.spyOn(runtime, "newSession").mockResolvedValue(snapshot);
+    for (const { path, body, invalid, handler, args, response } of [
+      {
+        path: "/api/control/native-command",
+        body: command,
+        invalid: { ...command, command: "unknown" },
+        handler: native,
+        args: [command],
+        response: compacted,
+      },
+      {
+        path: "/api/pending/clear",
+        body: { sessionId },
+        invalid: { sessionId, expectedRevision: 1 },
+        handler: clear,
+        args: [sessionId],
+        response: { ok: true },
+      },
+      {
+        path: "/api/pending/text",
+        body: pendingItem,
+        invalid: { ...pendingItem, revision: -1 },
+        handler: read,
+        args: [pendingItem],
+        response: pendingText,
+      },
+      {
+        path: "/api/sessions/new",
+        body: { cwd, createDirectory: true },
+        invalid: { cwd, createDirectory: "true" },
+        handler: create,
+        args: [cwd, { createDirectory: true }],
+        response: snapshot,
+      },
+    ]) {
+      await guest.post(path).send(body).expect(401);
+      await local.post(path).send(invalid).expect(400);
+      expect(handler).not.toHaveBeenCalled();
+      await local
+        .post(path)
+        .send(body)
+        .expect("Cache-Control", "no-store")
+        .expect(200, response);
+      expect(handler).toHaveBeenCalledExactlyOnceWith(...args);
+    }
   });
 
   it("applies native settings to the addressed session after authentication and validation", async () => {
@@ -345,7 +324,7 @@ describe("Host HTTP workflows", () => {
     const targetSettings = async () =>
       (await runtime.snapshot(sessionId)).active?.runtimeSettings;
     const selectedSettings = async () =>
-      (await runtime.snapshot()).active?.runtimeSettings;
+      (await runtime.snapshot("fixture-history")).active?.runtimeSettings;
     const selectedBefore = await vi.waitFor(async () => {
       const settings = await selectedSettings();
       expect(settings).toBeDefined();
@@ -380,12 +359,17 @@ describe("Host HTTP workflows", () => {
     }
   });
 
-  it("forwards authenticated transcript cursors to the correct reader", async () => {
-    const sessionId = "fixture-active";
-    const address = { sessionId, revision: 7, viewId: "branch-1" };
-    const page = {
+  it("validates and forwards an addressed history cursor", async () => {
+    const address = { sessionId: "fixture-active", viewId: "branch-1" };
+    const query = {
+      kind: "page",
+      entryId: "user-0",
+      cursor: "turn+cursor=",
+    } as const;
+    const response = {
       ...address,
-      messages: [{ role: "user", content: "older", timestamp: 1 }],
+      messages: [],
+      revision: 1,
       incarnation: "source",
       leafId: "leaf",
       firstTurn: 1,
@@ -394,37 +378,28 @@ describe("Host HTTP workflows", () => {
       earlier: null,
       later: null,
     };
-    const read = vi.spyOn(runtime, "sessionHistory");
-    for (const [query, expected] of [
-      [{ kind: "page", entryId: "user-0", cursor: "turn+cursor=" }, page],
-    ] as const) {
-      const { viewId } = address;
-      read.mockResolvedValueOnce(expected);
-      await guest
-        .get("/api/history")
-        .query({ sessionId, viewId, ...query })
-        .expect(401);
-      await local
-        .get("/api/history")
-        .query({ sessionId, viewId, ...query })
-        .expect(200, expected);
-      expect(read).toHaveBeenLastCalledWith(sessionId, viewId, query);
-    }
+    const read = vi
+      .spyOn(runtime, "sessionHistory")
+      .mockResolvedValue(response);
+    const url = "/api/history";
+    await guest
+      .get(url)
+      .query({ ...address, ...query })
+      .expect(401);
+    for (const invalid of [
+      { ...query, sessionId: address.sessionId },
+      { ...address, ...query, offset: 5 },
+    ])
+      await local.get(url).query(invalid).expect(400);
     await local
-      .get("/api/history")
-      .query({ sessionId, kind: "page" })
-      .expect(400);
-    await local
-      .get("/api/history")
-      .query({
-        sessionId,
-        viewId: address.viewId,
-        kind: "page",
-        cursor: "cursor",
-        offset: 5,
-      })
-      .expect(400);
-    expect(read).toHaveBeenCalledTimes(1);
+      .get(url)
+      .query({ ...address, ...query })
+      .expect(200, response);
+    expect(read).toHaveBeenCalledExactlyOnceWith(
+      address.sessionId,
+      address.viewId,
+      query,
+    );
   });
 
   it("reads and clones an addressed session while another session is selected", async () => {
@@ -449,7 +424,6 @@ describe("Host HTTP workflows", () => {
       ],
     ] as const) {
       const query = { sessionId, viewId, kind };
-      await guest.get("/api/history").query(query).expect(401);
       const result = await local.get("/api/history").query(query).expect(200);
       expect(result.body).toMatchObject({ sessionId, viewId, ...content });
       await local
@@ -472,7 +446,6 @@ describe("Host HTTP workflows", () => {
       (message: { role?: string }) => message.role === "user",
     )?.__inspireEntryId;
     const routes = { sessionId, viewId, kind: "routes", parentId: "" };
-    await guest.get("/api/history").query(routes).expect(401);
     await local
       .get("/api/history")
       .query({ ...routes, viewId: "old-branch" })
@@ -480,7 +453,6 @@ describe("Host HTTP workflows", () => {
     await local.get("/api/history").query(routes).expect(200);
     expect(target).toBeDefined();
     const entry = { sessionId, viewId, kind: "entry", targetId: target };
-    await guest.get("/api/history").query(entry).expect(401);
     const read = await local.get("/api/history").query(entry).expect(200);
     expect(read.body.text).toBe(firstPrompt);
     await local
@@ -631,7 +603,7 @@ describe("Host HTTP workflows", () => {
         hiddenSessionIds: ["fixture-older"],
       })
       .expect(200);
-    expect(curated.body).toMatchObject({
+    expect(curated.body.preferences).toMatchObject({
       pinnedSessionIds: ["fixture-active"],
       pinnedProjectCwds: ["/home/demo/project"],
       hiddenSessionIds: ["fixture-older"],
@@ -663,9 +635,12 @@ describe("Host HTTP workflows", () => {
       .send({ pinnedSessionIds: [] })
       .expect(200)
       .expect((response) => {
-        expect(response.body.pinnedSessionIds).toEqual([]);
+        expect(response.body.revision).toBeGreaterThan(curated.body.revision);
+        expect(response.body.preferences.pinnedSessionIds).toEqual([]);
         // A field-scoped patch leaves the other curated lists alone.
-        expect(response.body.hiddenSessionIds).toEqual(["fixture-older"]);
+        expect(response.body.preferences.hiddenSessionIds).toEqual([
+          "fixture-older",
+        ]);
       });
   });
 
@@ -698,13 +673,13 @@ describe("Host HTTP workflows", () => {
             : ("deleted" as const),
       }));
       const clear = vi
-        .spyOn(runtime, "clearHiddenSessions")
+        .spyOn(runtime, "deleteSessions")
         .mockResolvedValue({ deleted });
       const forget = vi.spyOn(resources, "forgetSession");
       const submit = (projectCwd?: string) =>
         local
-          .post("/api/sessions/clear-hidden")
-          .send({ sessionIds: ids, projectCwd });
+          .post("/api/sessions/delete")
+          .send({ scope: "hidden", sessionIds: ids, projectCwd });
 
       await submit(outside)
         .expect(409)
@@ -718,21 +693,30 @@ describe("Host HTTP workflows", () => {
         scope === "folder" ? target : undefined,
       ).expect(200);
       expect(clear).toHaveBeenCalledExactlyOnceWith(
-        ids,
-        scope === "folder" ? [] : hiddenSessions,
-        scope === "folder" ? [target] : hiddenFolders,
+        {
+          scope: "hidden",
+          sessionIds: ids,
+          projectCwd: scope === "folder" ? target : undefined,
+        },
+        expect.objectContaining({
+          hiddenSessionIds: scope === "folder" ? [] : hiddenSessions,
+          hiddenProjectCwds: scope === "folder" ? [target] : hiddenFolders,
+        }),
       );
       expect(response.body).toMatchObject({
         deleted,
-        preferences: {
-          pinnedSessionIds:
-            scope === "folder"
-              ? ["individual-entry", "unrelated"]
-              : ["unrelated"],
-          hiddenSessionIds: scope === "folder" ? hiddenSessions : [],
-          hiddenProjectCwds: remainingFolders,
-          pinnedProjectCwds: [...remainingFolders, outside],
-          navCollapsedGroups: [...remainingFolders, outside],
+        navigation: {
+          kind: "confirmed",
+          preferences: {
+            pinnedSessionIds:
+              scope === "folder"
+                ? ["individual-entry", "unrelated"]
+                : ["unrelated"],
+            hiddenSessionIds: scope === "folder" ? hiddenSessions : [],
+            hiddenProjectCwds: remainingFolders,
+            pinnedProjectCwds: [...remainingFolders, outside],
+            navCollapsedGroups: [...remainingFolders, outside],
+          },
         },
       });
       expect(forget.mock.calls).toEqual(ids.map((id) => [id]));
@@ -748,7 +732,7 @@ describe("Host HTTP workflows", () => {
     const deselected = await local.post("/api/sessions/deselect").expect(200);
     expect(deselected.body).toMatchObject({ active: null, runState: "idle" });
     expect(runtime.startupSessionHint).toBeNull();
-    await local
+    const before = await local
       .patch("/api/preferences")
       .send({
         pinnedSessionIds: ["fixture-history"],
@@ -757,14 +741,30 @@ describe("Host HTTP workflows", () => {
       .expect(200);
     const forget = vi.spyOn(resources, "forgetSession");
 
-    await guest.delete("/api/sessions/fixture-history").expect(401);
-    const deleted = await local
-      .delete("/api/sessions/fixture-history")
+    const request = { scope: "session", sessionId: "fixture-history" };
+    await guest.post("/api/sessions/delete").send(request).expect(401);
+    await local
+      .post("/api/sessions/delete")
+      .send({ ...request, sessionId: "fixture-active" })
+      .expect(409)
+      .expect(({ body }) => expect(body.code).toBe("HIDDEN_SELECTION_CHANGED"));
+    const { body: deleted } = await local
+      .post("/api/sessions/delete")
+      .send(request)
       .expect(200);
-    expect(deleted.body).toMatchObject({
-      sessionId: "fixture-history",
-      disposition: "trashed",
-      preferences: { pinnedSessionIds: [], hiddenSessionIds: [] },
+    const { body: bootstrap } = await local.get("/api/bootstrap").expect(200);
+    expect(bootstrap.preferenceRevision).toBeGreaterThan(
+      deleted.navigation.revision,
+    );
+    expect(deleted.navigation.revision).toBeGreaterThan(before.body.revision);
+    expect(bootstrap.preferences).toEqual(deleted.navigation.preferences);
+    expect(deleted).toMatchObject({
+      deleted: [{ sessionId: "fixture-history", disposition: "trashed" }],
+      navigation: {
+        kind: "confirmed",
+        authorityId: bootstrap.authorityId,
+        preferences: { pinnedSessionIds: [], hiddenSessionIds: [] },
+      },
     });
     expect(forget).toHaveBeenCalledWith("fixture-history");
 
@@ -772,6 +772,6 @@ describe("Host HTTP workflows", () => {
     expect(sessions.body.sessions).not.toContainEqual(
       expect.objectContaining({ id: "fixture-history" }),
     );
-    await local.delete("/api/sessions/fixture-history").expect(404);
+    await local.post("/api/sessions/delete").send(request).expect(404);
   });
 });

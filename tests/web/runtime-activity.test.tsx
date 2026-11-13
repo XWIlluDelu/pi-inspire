@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+
 import { act, render, screen, waitFor } from "@testing-library/react";
 import {
   afterEach,
@@ -9,6 +10,7 @@ import {
   it,
   vi,
 } from "vitest";
+import { selectedRunState } from "../../src/app-state";
 import { ActivityBar } from "../../src/components/ActivityBar";
 import { CommandActivity } from "../../src/components/CommandActivity";
 import { emptyEventSlice, reduceEvent } from "../../src/events";
@@ -21,6 +23,7 @@ import {
   FakeWebSocket,
   installFakeWebSocket,
   installFetch,
+  selectSession,
 } from "./helpers";
 
 let snapshot = activeSnapshot();
@@ -43,7 +46,11 @@ beforeAll(async () => {
   installFakeWebSocket();
   installFetch((url) => {
     if (url.startsWith("/api/bootstrap"))
-      return { body: bootstrapPayload({ snapshot }) };
+      return {
+        body: bootstrapPayload({
+          startupSessionId: snapshot.active?.sessionId ?? null,
+        }),
+      };
     if (url.startsWith("/api/snapshot")) return { body: snapshot };
     if (url.startsWith("/api/control/native-command"))
       return nativeResult.promise.then((body) => ({ body }));
@@ -51,13 +58,15 @@ beforeAll(async () => {
     return undefined;
   });
   await store.init();
-  socket().open();
+  socket().join(snapshot);
 });
 
-beforeEach(() => {
+beforeEach(async () => {
   snapshot = activeSnapshot({ sessionId: `activity-${++sessionNumber}` });
   nativeResult = deferred<unknown>();
-  act(() => socket().emit({ type: "snapshot", data: snapshot }));
+  await selectSession(store, snapshot);
+  if (socket().readyState === 0) socket().join(snapshot);
+  else act(() => socket().emitSnapshot(snapshot));
 });
 
 function start(
@@ -175,7 +184,9 @@ describe("runtime-owned activity", () => {
       result: null,
       errorMessage: "Provider quota exceeded",
     });
-    await waitFor(() => expect(store.getState().runState).toBe("idle"));
+    await waitFor(() =>
+      expect(selectedRunState(store.getState())).toBe("idle"),
+    );
     expect(progress()).not.toBeInTheDocument();
     expect(store.getState().notices.at(-1)).toMatchObject({
       kind: "error",
@@ -183,9 +194,8 @@ describe("runtime-owned activity", () => {
     });
   });
 
-  it("renders retry detail from a snapshot and discards it when switching sessions", () => {
-    const emitSnapshot = () =>
-      act(() => socket().emit({ type: "snapshot", data: snapshot }));
+  it("renders retry detail from a snapshot and discards it when switching sessions", async () => {
+    const emitSnapshot = () => act(() => socket().emitSnapshot(snapshot));
     renderActivity();
     snapshot.runState = "retrying";
     snapshot.retry = retry;
@@ -195,7 +205,7 @@ describe("runtime-owned activity", () => {
     emitSnapshot();
     expect(retryStatus()).toHaveTextContent(/^Retrying$/);
     snapshot = { ...activeSnapshot({ sessionId: "other-session" }), retry };
-    emitSnapshot();
+    await selectSession(store, snapshot);
     expect(retryStatus()).not.toBeInTheDocument();
   });
 
@@ -207,6 +217,7 @@ describe("runtime-owned activity", () => {
       );
     emit({
       type: "auto_retry_start",
+      sessionStatus: { runState: "retrying" },
       attempt: 2,
       maxAttempts: 3,
       errorMessage: "rate limited",
@@ -219,7 +230,7 @@ describe("runtime-owned activity", () => {
   it("restores compaction backoff on entry and retires it as attempts resume or finish", async () => {
     snapshot.runState = "compacting";
     snapshot.summarizationRetry = retry;
-    act(() => socket().emit({ type: "snapshot", data: snapshot }));
+    act(() => socket().emitSnapshot(snapshot));
     renderActivity();
     expect(progress()).toHaveTextContent(
       "Compaction retry 2/3 — waiting — Provider overloaded",
@@ -254,7 +265,9 @@ describe("runtime-owned activity", () => {
       result: null,
       sessionStatus: { runState: "failed" },
     });
-    await waitFor(() => expect(store.getState().runState).toBe("failed"));
+    await waitFor(() =>
+      expect(selectedRunState(store.getState())).toBe("failed"),
+    );
     expect(progress()).not.toBeInTheDocument();
     expect(store.getState().notices.at(-1)?.text).toContain(
       "Summary provider unavailable",
@@ -286,22 +299,6 @@ describe("runtime-owned activity", () => {
 });
 
 describe("phase event reduction", () => {
-  it.each([
-    {
-      type: "message_end",
-      message: { role: "assistant", content: [], stopReason: "error" },
-    },
-    { type: "agent_settled" },
-    { type: "session_status" },
-  ])("adopts the Host failure on $type", (event) => {
-    const { slice } = reduceEvent(
-      { ...emptyEventSlice(), runState: "running" },
-      new Set(),
-      { ...event, sessionStatus: { runState: "failed", indicator: "failed" } },
-    );
-    expect(slice.runState).toBe("failed");
-  });
-
   it.each([
     {
       reason: "overflow",
@@ -336,7 +333,6 @@ describe("phase event reduction", () => {
       const { slice, resync } = reduceEvent(
         {
           ...emptyEventSlice(),
-          runState: "compacting",
           summarizationRetry: retry,
         },
         new Set(),
@@ -347,7 +343,6 @@ describe("phase event reduction", () => {
         },
       );
       expect(resync).toBe(true);
-      expect(slice.runState).toBe(sessionStatus.runState);
       expect(slice.summarizationRetry).toBeNull();
       expect(slice.messages).toEqual([]);
       expect(slice.notices).toEqual(

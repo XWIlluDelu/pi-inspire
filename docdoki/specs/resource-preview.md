@@ -8,13 +8,13 @@ covers:
   - scripts/vite-pdf-assets.ts
   - server/current-web-build.mjs
   - src/controllers/{resource,git,workspace}-controller.ts
-  - src/components/{ContextPane,ContextTabStrip,ContextPaneState,FilesPane,FilePreview,PdfPreview,DocumentPreview,ChangesPane,WorkspaceBrowser,ResourcePathLabel,SearchMatchText,NotebookPreview,PaneResizeHandle,RichText,Transcript,TablePreview,DocumentOutline,ReaderQuoteAction}.tsx
+  - src/components/{ContextPane,ContextTabStrip,ContextPaneState,FilesPane,FilePreview,PdfPreview,DocumentPreview,ChangesPane,WorkspaceBrowser,ResourcePathLabel,SearchMatchText,NotebookPreview,PaneResizeHandle,RichText,CodeView,Transcript,TablePreview,DocumentOutline,ReaderQuoteAction}.tsx
   - src/components/context-pane-view.ts
   - src/App.tsx
   - src/styles.css
   - src/styles/*.css
   - tests/server/{app-resources,app-auth,resources,resources-windows-paths,runtime-reads,git-inspection,git-configuration,runtime-selection}.test.ts
-  - tests/web/{resources,document-resources,document-image-controller,resource-controller,git-controller,workspace-controller,store-preview-lifecycle}.test.ts
+  - tests/web/{resources,document-resources,resource-controller,git-controller,workspace-controller,store-preview-lifecycle}.test.ts
   - tests/web/{document-preview,pdf-preview,file-preview,resources-pane,search-match-text,changes-pane,pane-resize,rich-text}.test.tsx
   - tests/web/{source-presentation,reader-quote}.test.ts
   - tests/web/table-preview.test.tsx
@@ -217,10 +217,11 @@ transfer withholds an incomplete trailing code point and keeps its truncation ma
 not guessed from locale, extension or file existence. HTML reconstructed for static preview
 declares UTF-8 explicitly. Downloads keep complete original bytes, including BOM and line endings.
 
-Selected-file actions float above scrolling content. Copy path copies the path. Dual-view files
+Selected-file actions occupy one toolbar above scrolling content. Copy path copies the path. Dual-view files
 keep one reciprocal view action in a fixed trailing slot; files with no alternative view omit it.
 The same file tab offers body and Git Changes views; Source/Preview applies only within its body
-view. No file-editing controls are added.
+view. Its toolbar retains copy and download when switching modes and adds hunk navigation for
+Git Changes. No file-editing controls are added.
 
 The CSV/TSV Table parses RFC 4180 quoting (delimiters, doubled quotes and line breaks inside
 quoted fields, CRLF/LF, BOM) and treats the first record as its header. It shows a sticky header,

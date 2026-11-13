@@ -29,7 +29,7 @@ describe("new-session materialization", () => {
       worker.emitEventsBeforeWrite = false;
       worker.materializationCuts = [1, 3];
       worker.onMaterializationCut = async (lines) => {
-        const snapshot = await runtime.snapshot();
+        const snapshot = await runtime.snapshot("new-session");
         observations.push({
           lines,
           messages: snapshot.active?.transcriptPage.messages.length ?? -1,
@@ -63,7 +63,7 @@ describe("new-session materialization", () => {
       ]);
       fixture.worker.emitPromptEvents();
       expect(
-        (await runtime.snapshot()).active?.transcriptPage.messages,
+        (await runtime.snapshot("new-session")).active?.transcriptPage.messages,
       ).toMatchObject([
         { role: "user", content: "first prompt", __inspireEntryId: "user-1" },
         { role: "assistant", __inspireEntryId: "assistant-1" },
@@ -72,7 +72,7 @@ describe("new-session materialization", () => {
       fixture.worker.emitEventsBeforeWrite = true;
       fixture.worker.reusePromptTimestamps = true;
       await prompt("second prompt");
-      const snapshot = await runtime.snapshot();
+      const snapshot = await runtime.snapshot("new-session");
       expect(snapshot.active).toMatchObject({
         projectionHealth: { status: "ok" },
         projectionConflict: null,
@@ -116,7 +116,7 @@ describe("new-session materialization", () => {
         fixture.runtime.newSession(fixture.directory),
       ).rejects.toThrow("worker transport lost");
       expect(fixture.worker.stops).toBe(1);
-      expect((await fixture.runtime.snapshot()).active).toBeNull();
+      expect(fixture.runtime.startupSessionHint).toBeNull();
     } finally {
       await fixture.runtime.close();
     }
@@ -238,7 +238,9 @@ describe("new-session materialization", () => {
           fixture.attachments.resolveForPrompt([image.id]),
         ).rejects.toThrow(/expired/);
         expect(fixture.worker.stops).toBe(1);
-        expect((await fixture.runtime.snapshot()).runState).toBe("conflict");
+        expect((await fixture.runtime.snapshot("new-session")).runState).toBe(
+          "conflict",
+        );
         await expect(
           fixture.runtime.prompt({
             sessionId: "new-session",

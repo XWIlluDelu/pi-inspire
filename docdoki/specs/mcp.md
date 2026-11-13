@@ -101,6 +101,9 @@ editor, **Show saved URL** or **Show saved arguments** explicitly reads only tha
 connection values at the displayed file revision. The authenticated response is non-cacheable,
 does not resolve hooks and includes no unrelated credentials. Changed files require Refresh before
 revealing values; late reads cannot populate a different Settings owner or revision.
+The supported field definitions supply the patch schemas and form controls. Public fields use a
+safe projection, and the same descriptors distinguish the explicitly revealable connection fields
+from write-only secrets. Keep, replace and remove have separate edit intents.
 
 Revealing values alone does not make a write. The user can edit the loaded URL or individual
 arguments without re-entering the remaining list. Hidden URL and credential inputs keep stored
@@ -111,10 +114,10 @@ Pi's separate OAuth credential store.
 
 ### Saving and applying
 
-Writes validate the edited native fields, use revision-checked locks and atomic restrictive-mode
-replacement, and preserve legitimate user-file symlinks. Regular files lock their native resolved
-target once, including case/normalization aliases. Final symlinks retain both lexical and target
-authorities; publishing rechecks the target and revision. Project symlinks cannot escape their project.
+Writes validate the edited native fields through the same document transaction as model settings.
+The revision binds the resolved target and exact source text. Publication uses native-compatible
+locks and atomic restrictive-mode replacement. Final symlinks retain both lexical and target
+authorities; publishing rechecks the target and revision. Project symlinks stay within their project.
 Added names are checked across user/project files for Pi's hyphen/underscore namespace collisions;
 exact same-name overrides remain legal. Concurrent user/project additions cannot both publish
 conflicting names. Invalid files and conflicting edits are reported, not overwritten. A conflict
@@ -156,8 +159,9 @@ Configured MCP tools and Codemode composition continue through Pi.
 
 ## Checks
 
-File tests cover native parsing, revision authority, scoped policy, and protected values. Component
-tests cover draft ownership and Reload admission. Browser tests cover the responsive editor,
+File tests cover native parsing, scoped policy and protected values. The shared configuration-file
+suite covers revision authority and publication. Component tests cover draft ownership and Reload
+admission. Browser tests cover the responsive editor,
 stored-value editing, and saving and removing project definitions and overrides.
 
 ## Related interfaces

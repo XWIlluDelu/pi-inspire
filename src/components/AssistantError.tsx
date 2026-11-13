@@ -50,7 +50,7 @@ export function AssistantError({ text }: { text: string }) {
         <CopyAction
           text={text}
           label="Error message"
-          className="assistant-error__copy"
+          className="activity-copy"
         />
       </div>
       <section

@@ -60,16 +60,14 @@ export interface GitControllerState extends FileInspectionState {
   contextMode: "files" | "changes" | "terminal";
   gitStatus: GitStatusResponse | null;
   gitStatusError: string | null;
-  gitStatusLoading: boolean;
-  gitStatusRefreshing: boolean;
+  gitStatusPending: boolean;
   gitDiff: GitDiffView | null;
 }
 
 export interface GitControllerPatch {
   gitStatus?: GitStatusResponse | null;
   gitStatusError?: string | null;
-  gitStatusLoading?: boolean;
-  gitStatusRefreshing?: boolean;
+  gitStatusPending?: boolean;
   gitDiff?: GitDiffView | null;
 }
 
@@ -81,10 +79,13 @@ interface GitControllerHost {
   handleAuthFailure(): void;
 }
 
-interface GitChangeSelection {
+interface GitReadOwner {
   api: Api;
   sessionId: string;
   selectionGeneration: number;
+}
+
+interface GitChangeSelection extends GitReadOwner {
   change: GitFileChange;
 }
 
@@ -94,14 +95,15 @@ interface GitChangeSelection {
  * cross-domain resource transition through this narrow host interface.
  */
 export class GitController {
-  private statusRequest: AbortController | null = null;
-  private statusPromise: Promise<void> | null = null;
-  private statusEpoch = 0;
-  private refreshQueued = false;
-  private diffRequest: AbortController | null = null;
+  private statusRead: {
+    controller: AbortController;
+    task: Promise<void>;
+    queued: boolean;
+  } | null = null;
   private diffRead: {
     selection: GitChangeSelection;
-    promise: Promise<void>;
+    request: AbortController;
+    task: Promise<void>;
   } | null = null;
   private surfaces = new Set<string>();
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -130,17 +132,13 @@ export class GitController {
       } else if (previousInterval !== nextInterval) {
         this.clearRefreshTimer();
         if (nextInterval < previousInterval) void this.refreshStatus();
-        else if (!this.statusPromise) this.scheduleRefresh();
+        else if (!this.statusRead) this.scheduleRefresh();
       }
       return;
     }
     this.unobserveVisibility();
     this.clearRefreshTimer();
     this.cancelStatusRefresh();
-    const state = this.host.state();
-    if (state.gitStatusLoading || state.gitStatusRefreshing) {
-      this.host.patch({ gitStatusLoading: false, gitStatusRefreshing: false });
-    }
   }
 
   refreshStatus(): Promise<void> {
@@ -149,21 +147,36 @@ export class GitController {
   }
 
   private startStatusRefresh(periodic: boolean): Promise<void> {
-    if (!this.pageVisible() || !this.host.api() || !this.host.state().sessionId)
-      return Promise.resolve();
-    if (this.statusPromise) {
-      this.refreshQueued = true;
-      return this.statusPromise;
+    const api = this.host.api();
+    const { sessionId, selectionGeneration } = this.host.state();
+    if (!this.pageVisible() || !api || !sessionId) return Promise.resolve();
+    if (this.statusRead) {
+      this.statusRead.queued = true;
+      return this.statusRead.task;
     }
     this.clearRefreshTimer();
-    const epoch = this.statusEpoch;
-    const promise = this.runStatusRefresh(epoch, periodic).finally(() => {
-      if (this.statusPromise !== promise) return;
-      this.statusPromise = null;
-      this.scheduleRefresh();
-    });
-    this.statusPromise = promise;
-    return promise;
+    const request = {
+      controller: new AbortController(),
+      queued: false,
+      task: Promise.resolve().then(async () => {
+        try {
+          await this.runStatusRefresh(
+            request,
+            { api, sessionId, selectionGeneration },
+            periodic,
+          );
+        } finally {
+          if (this.statusRead === request) {
+            this.statusRead = null;
+            this.host.patch({ gitStatusPending: false });
+            this.scheduleRefresh();
+          }
+        }
+      }),
+    };
+    this.statusRead = request;
+    this.host.patch({ gitStatusPending: true });
+    return request.task;
   }
 
   private async resolveChange(
@@ -212,11 +225,10 @@ export class GitController {
       pending.selection.selectionGeneration === selectionGeneration &&
       pending.selection.change.path.id === pathId
     )
-      return pending.promise;
+      return pending.task;
 
     this.cancelDiff();
     const request = new AbortController();
-    this.diffRequest = request;
     const previous = this.host.state().gitDiff;
     const retained =
       previous?.status === "ready" && previous.result.path.id === pathId
@@ -226,7 +238,6 @@ export class GitController {
     const current = (): boolean => {
       const currentState = this.host.state();
       return (
-        this.diffRequest === request &&
         !request.signal.aborted &&
         this.host.api() === api &&
         currentState.sessionId === sessionId &&
@@ -235,7 +246,7 @@ export class GitController {
           pathId
       );
     };
-    const promise = (async () => {
+    const task = (async () => {
       try {
         const result = await api.gitDiff(sessionId, pathId, request.signal);
         if (!current()) return;
@@ -264,15 +275,12 @@ export class GitController {
             ? { ...retained, refreshError: message }
             : { status: "error", pathId, message },
         });
-      } finally {
-        if (this.diffRequest === request) {
-          this.diffRequest = null;
-          this.diffRead = null;
-        }
       }
-    })();
-    this.diffRead = { selection, promise };
-    return promise;
+    })().finally(() => {
+      if (this.diffRead?.request === request) this.diffRead = null;
+    });
+    this.diffRead = { selection, request, task };
+    return task;
   }
 
   clearComparison(): void {
@@ -302,12 +310,7 @@ export class GitController {
     this.clearRefreshTimer();
     this.cancelStatusRefresh();
     this.cancelDiff();
-    const state = this.host.state();
-    this.host.patch({
-      ...(state.gitStatusLoading ? { gitStatusLoading: false } : {}),
-      ...(state.gitStatusRefreshing ? { gitStatusRefreshing: false } : {}),
-      ...(state.gitDiff ? { gitDiff: null } : {}),
-    });
+    if (this.host.state().gitDiff) this.host.patch({ gitDiff: null });
   }
 
   /** Status and the selected visible diff share the same refresh boundary. */
@@ -317,39 +320,28 @@ export class GitController {
   }
 
   private async runStatusRefresh(
-    epoch: number,
+    request: NonNullable<GitController["statusRead"]>,
+    { api, sessionId, selectionGeneration }: GitReadOwner,
     periodic: boolean,
   ): Promise<void> {
-    do {
-      if (epoch !== this.statusEpoch) return;
-      this.refreshQueued = false;
-      const api = this.host.api();
+    const { signal } = request.controller;
+    const current = (): boolean => {
       const state = this.host.state();
-      const sessionId = state.sessionId;
-      if (!api || !sessionId) return;
-      const request = new AbortController();
-      this.statusRequest = request;
-      const selectionGeneration = state.selectionGeneration;
+      return (
+        !signal.aborted &&
+        this.host.api() === api &&
+        state.sessionId === sessionId &&
+        state.selectionGeneration === selectionGeneration
+      );
+    };
+    while (current()) {
+      request.queued = false;
+      const state = this.host.state();
       const refreshIntent = this.refreshIntent;
       const selectionEpoch = this.selectionEpoch;
-      this.host.patch({
-        gitStatusLoading: state.gitStatus === null,
-        gitStatusRefreshing: state.gitStatus !== null,
-      });
-      const current = (): boolean => {
-        const currentState = this.host.state();
-        return (
-          epoch === this.statusEpoch &&
-          this.statusRequest === request &&
-          !request.signal.aborted &&
-          this.host.api() === api &&
-          currentState.sessionId === sessionId &&
-          currentState.selectionGeneration === selectionGeneration
-        );
-      };
       try {
-        const status = await api.gitStatus(sessionId, request.signal);
-        if (!current()) continue;
+        const status = await api.gitStatus(sessionId, signal);
+        if (!current()) return;
         const currentState = this.host.state();
         const selectedChange = inspectedGitChange(currentState, status);
         const selectionChanged =
@@ -392,7 +384,7 @@ export class GitController {
           this.stableRefreshes =
             periodic && unchanged ? Math.min(this.stableRefreshes + 1, 2) : 0;
       } catch (error) {
-        if (!current()) continue;
+        if (!current()) return;
         if (this.refreshIntent === refreshIntent) this.stableRefreshes = 0;
         if (error instanceof ApiError && error.status === 401) {
           this.host.handleAuthFailure();
@@ -404,37 +396,27 @@ export class GitController {
               ? error.message
               : "Git status refresh failed",
         });
-      } finally {
-        if (this.statusRequest === request) {
-          this.statusRequest = null;
-          this.host.patch({
-            gitStatusLoading: false,
-            gitStatusRefreshing: false,
-          });
-        }
       }
-      // A coalesced explicit hint is fresh intent, not another quiet poll.
+      if (
+        !request.queued ||
+        !this.pageVisible() ||
+        (!this.hasVisibleSurface() && !showsFileComparison(this.host.state()))
+      )
+        return;
       periodic = false;
-    } while (
-      epoch === this.statusEpoch &&
-      this.refreshQueued &&
-      (this.hasVisibleSurface() || showsFileComparison(this.host.state())) &&
-      this.pageVisible()
-    );
+    }
   }
 
   private cancelStatusRefresh(): void {
     this.resetRefreshCadence();
-    this.statusEpoch += 1;
-    this.refreshQueued = false;
-    this.statusRequest?.abort();
-    this.statusRequest = null;
-    this.statusPromise = null;
+    this.statusRead?.controller.abort();
+    this.statusRead = null;
+    if (this.host.state().gitStatusPending)
+      this.host.patch({ gitStatusPending: false });
   }
 
   private cancelDiff(): void {
-    this.diffRequest?.abort();
-    this.diffRequest = null;
+    this.diffRead?.request.abort();
     this.diffRead = null;
   }
 
@@ -478,13 +460,6 @@ export class GitController {
     if (!this.pageVisible()) {
       this.clearRefreshTimer();
       this.cancelStatusRefresh();
-      const state = this.host.state();
-      if (state.gitStatusLoading || state.gitStatusRefreshing) {
-        this.host.patch({
-          gitStatusLoading: false,
-          gitStatusRefreshing: false,
-        });
-      }
       return;
     }
     if (this.hasVisibleSurface()) void this.refreshStatus();

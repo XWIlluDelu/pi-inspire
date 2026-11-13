@@ -1,7 +1,4 @@
-import type {
-  ActiveSnapshot,
-  SessionHistoryPages,
-} from "../shared/contracts.js";
+import type { SessionHistoryPages } from "../shared/contracts.js";
 import type { SessionHistoryQuery } from "../shared/history-query.js";
 import { lastAssistantText } from "./assistant-text.js";
 import { requestError } from "./request-error.js";
@@ -16,10 +13,8 @@ type RuntimeHistory = NonNullable<ReturnType<typeof runtimeHistory>>;
 
 interface RuntimeReadControllerHost {
   assertAvailable(): void;
-  emptySnapshot(): ActiveSnapshot;
   requireSlot(sessionId: string): RuntimeSlot;
   useSlot<T>(slot: RuntimeSlot, operation: () => Promise<T>): Promise<T>;
-  snapshotSlot(slot: RuntimeSlot): Promise<ActiveSnapshot>;
   reconcileSlot(slot: RuntimeSlot, force?: boolean): Promise<unknown>;
   promptFileName(path: string): string | null;
   skipSummaryPrompt(slot: RuntimeSlot): boolean;
@@ -35,13 +30,6 @@ function requireProjection(slot: RuntimeSlot) {
 /** Owns consistent, read-only projections of one selected branch view. */
 export class RuntimeReadController {
   constructor(private readonly host: RuntimeReadControllerHost) {}
-
-  async snapshot(sessionId: string | null): Promise<ActiveSnapshot> {
-    this.host.assertAvailable();
-    return sessionId === null
-      ? this.host.emptySnapshot()
-      : this.host.snapshotSlot(this.host.requireSlot(sessionId));
-  }
 
   private projectionRead<T>(
     sessionId: string,

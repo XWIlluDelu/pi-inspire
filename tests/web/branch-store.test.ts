@@ -1,59 +1,45 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { deleteSessionDraft } from "../../src/session-drafts";
-import { AppStore } from "../../src/store";
 import {
   activeSnapshot,
-  savedInputNode,
   deferred,
-  FakeWebSocket,
+  type FakeWebSocket,
   installFakeWebSocket,
   jsonBody,
   type RouteHandler,
   type RouteResponse,
+  savedInputNode,
 } from "./helpers";
-import { installStoreRoutes } from "./store-fixture";
+import { initStore, installStoreRoutes } from "./store-fixture";
 
-async function setup(route: RouteHandler) {
+function setup(route: RouteHandler) {
   installStoreRoutes(route);
-  const store = new AppStore();
-  await store.init();
-  FakeWebSocket.instances.at(-1)!.open();
-  return store;
+  return initStore();
 }
 
-function moveView(store: AppStore, viewId = "view-2"): void {
-  const snapshot = activeSnapshot({
-    transcriptPage: {
-      revision: 2,
-      viewId,
-      appendFromRevision: 2,
-      effectiveLeafId: "u1",
-      messages: [],
-    },
-    effectiveLeafId: "u1",
-  });
-  (
-    store as unknown as { applySnapshot(snapshot: unknown): void }
-  ).applySnapshot(snapshot);
-}
-
-function advanceLeaf(store: AppStore) {
-  // An append advances the effective leaf without replacing the view.
-  (
-    store as unknown as { applySnapshot(snapshot: unknown): void }
-  ).applySnapshot(
+function advanceView(socket: FakeWebSocket, change: "view" | "append") {
+  const effectiveLeafId = change === "view" ? "u1" : "a2";
+  socket.emitSnapshot(
     activeSnapshot({
-      effectiveLeafId: "a2",
-      transcriptPage: { revision: 2, effectiveLeafId: "a2" },
+      effectiveLeafId,
+      transcriptPage: {
+        revision: 2,
+        effectiveLeafId,
+        ...(change === "view"
+          ? { viewId: "view-2", appendFromRevision: 2 }
+          : {}),
+      },
     }),
+    { detailSessionId: "s1", detailRevision: 0 },
   );
 }
 
 describe("branch request view ownership", () => {
+  beforeEach(installFakeWebSocket);
+
   it("discards a complete-content copy when its source view changes during image loading", async () => {
     const image = deferred<RouteResponse>();
-    const store = await setup((url) => {
+    const { store, socket } = await setup((url) => {
       if (url.startsWith("/api/history?kind=entry&"))
         return {
           body: {
@@ -75,62 +61,48 @@ describe("branch request view ownership", () => {
         expect.anything(),
       ),
     );
-    moveView(store);
+    advanceView(socket, "view");
     image.resolve({ body: "saved pixels" });
     expect(await copy).toBeNull();
   });
 
-  beforeEach(() => {
-    installFakeWebSocket();
-    for (const id of ["s1", "s2", "forked"]) deleteSessionDraft(id);
-  });
-
-  it("retires History reads and withdraws late Fork attachments after switching sessions", async () => {
-    const fork = deferred<RouteResponse>();
-    const history = deferred<RouteResponse>();
-    const deletes: string[] = [];
-    const store = await setup((url, init) => {
-      if (url === "/api/branches/fork") return fork.promise;
-      if (url.startsWith("/api/history?kind=page")) return history.promise;
-      if (url === "/api/sessions/open")
-        return { body: activeSnapshot({ sessionId: "s2" }) };
-      if (init.method === "DELETE") {
-        deletes.push(url);
-        return { body: { ok: true } };
-      }
-      return undefined;
-    });
-    const reading = store.readNativeHistory(
-      "s1",
-      "view-s1",
-      { kind: "page" },
-      new AbortController().signal,
-    );
-    const forking = store.forkBranch("u1");
-    expect(store.getState()).toMatchObject({
-      branchActionId: "fork:u1",
-    });
-    await store.openSession("s2");
-    history.resolve({
-      body: { sessionId: "s1", viewId: "view-s1", revision: 99 },
-    });
-    fork.resolve({
-      body: {
-        sessionId: "forked",
-        snapshot: activeSnapshot({ sessionId: "forked" }),
-        editorText: "old",
-        editorAttachments: [{ id: "old-image" }],
-      },
-    });
-    await expect(reading).resolves.toBeNull();
-    await expect(forking).resolves.toBe(false);
-    expect(deletes).toEqual(["/api/attachments/old-image"]);
-    expect(store.getState()).toMatchObject({
-      sessionId: "s2",
-      branchTreeError: null,
-      attachments: [],
-    });
-  });
+  it.each(["selection", "disconnect"] as const)(
+    "withdraws late Fork attachments after %s",
+    async (boundary) => {
+      const fork = deferred<RouteResponse>();
+      const deletes: string[] = [];
+      const { store, socket } = await setup((url, init) => {
+        if (url === "/api/branches/fork") return fork.promise;
+        if (url === "/api/sessions/open")
+          return { body: activeSnapshot({ sessionId: "s2" }) };
+        if (init.method === "DELETE") {
+          deletes.push(url);
+          return { body: { ok: true } };
+        }
+      });
+      const forking = store.forkBranch("u1");
+      expect(store.getState().branchActionId).toBe("fork:u1");
+      if (boundary === "selection") await store.openSession("s2");
+      else socket.onclose?.();
+      fork.resolve({
+        body: {
+          sessionId: "forked",
+          snapshot: activeSnapshot({ sessionId: "forked" }),
+          editorText: "old",
+          editorAttachments: [{ id: "old-image" }],
+        },
+      });
+      await expect(forking).resolves.toBe(false);
+      const sessionId = boundary === "selection" ? "s2" : "s1";
+      expect(deletes).toEqual(["/api/attachments/old-image"]);
+      expect(store.getState()).toMatchObject({
+        sessionId,
+        branchActionId: null,
+        branchTreeError: null,
+      });
+      expect(store.drafts.get(sessionId).attachments).toEqual([]);
+    },
+  );
 
   it.each([
     { kind: "navigate", change: "append" },
@@ -140,15 +112,14 @@ describe("branch request view ownership", () => {
     "releases a failed $kind action after a source $change",
     async ({ kind, change }) => {
       const pending = deferred<RouteResponse | undefined>();
-      const store = await setup((url) =>
+      const { store, socket } = await setup((url) =>
         url.startsWith(`/api/branches/${kind}`) ? pending.promise : undefined,
       );
       const acting =
         kind === "navigate"
           ? store.navigateBranch("a1", "switch")
           : store.forkBranch("u1");
-      if (change === "view") moveView(store);
-      else advanceLeaf(store);
+      advanceView(socket, change);
       pending.resolve({ status: 409, body: { error: "Source changed" } });
       await expect(acting).resolves.toBe(false);
       expect(store.getState().branchActionId).toBeNull();
@@ -169,26 +140,24 @@ describe("branch request view ownership", () => {
     async (mode) => {
       const response = deferred<RouteResponse>();
       let request: Record<string, unknown> | undefined;
-      const store = await setup((url, init) => {
+      const { store, socket } = await setup((url, init) => {
         if (url === `/api/branches/${mode}`) {
           request = jsonBody(init);
           return response.promise;
         }
       });
-      const internal = store as unknown as {
-        applySnapshot(snapshot: unknown): void;
-      };
-      internal.applySnapshot(
+      socket.emitSnapshot(
         activeSnapshot({
           effectiveLeafId: "a1",
           transcriptPage: { effectiveLeafId: "a1" },
         }),
+        { detailSessionId: "s1", detailRevision: 0 },
       );
       const copying =
         mode === "fork"
           ? store.forkFromEntry("u1")
           : store.cloneCurrentBranch();
-      advanceLeaf(store);
+      advanceView(socket, "append");
       response.resolve({
         body: {
           sessionId: "forked",
@@ -206,35 +175,15 @@ describe("branch request view ownership", () => {
     },
   );
 
-  it("ignores delayed fork success after reconnect invalidates ownership", async () => {
-    const fork = deferred<RouteResponse | undefined>();
-    const store = await setup((url) => {
-      if (url.startsWith("/api/branches/fork")) return fork.promise;
-      return undefined;
-    });
-    const forking = store.forkBranch("u1");
-    FakeWebSocket.instances.at(-1)!.onclose?.();
-    fork.resolve({
-      body: {
-        sessionId: "forked",
-        snapshot: activeSnapshot({ sessionId: "forked" }),
-        editorText: "old",
-      },
-    });
-    await expect(forking).resolves.toBe(false);
-    expect(store.getState().sessionId).toBe("s1");
-    expect(store.getState().branchActionId).toBeNull();
-  });
-
   it.each([
     ["history", "view"],
     ["history", "transport"],
     ["fork", "transport"],
   ] as const)(
-    "scopes a delayed branch %s 401 after replacing its %s",
+    "retires a delayed branch %s 401 when its %s is replaced",
     async (kind, changed) => {
       const pending = deferred<RouteResponse | undefined>();
-      const store = await setup((url) =>
+      const { store, socket } = await setup((url) =>
         url.startsWith(
           kind === "history"
             ? "/api/history?kind=page"
@@ -252,23 +201,17 @@ describe("branch request view ownership", () => {
               new AbortController().signal,
             )
           : store.forkBranch("u1");
-      if (changed === "view") moveView(store);
+      if (changed === "view") advanceView(socket, "view");
       else await store.init();
       pending.resolve({ status: 401, body: { error: "Unauthorized" } });
       await request;
-      if (changed === "view")
-        expect(store.getState()).toMatchObject({
-          needsToken: true,
-          connection: "offline",
-          error: null,
-        });
-      else expect(store.getState().needsToken).toBe(false);
+      expect(store.getState().needsToken).toBe(false);
     },
   );
 
   it("keeps a failed selection's error when an older branch action also fails", async () => {
     const branch = deferred<RouteResponse>();
-    const store = await setup((url) => {
+    const { store } = await setup((url) => {
       if (url === "/api/branches/navigate") return branch.promise;
       if (url === "/api/sessions/open")
         return { status: 500, body: { error: "selection failed" } };

@@ -139,7 +139,7 @@ test.describe("phone action dialogs", () => {
   }
 });
 
-test("Settings keeps modal ownership when the workspace becomes a drawer", async ({
+test("Settings keeps modal ownership when the workspace becomes a drawer @cross-browser", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -152,6 +152,11 @@ test("Settings keeps modal ownership when the workspace becomes a drawer", async
   await openSettings(page);
   const dialog = page.getByRole("dialog", { name: "Settings", exact: true });
   await expect(dialog).toBeVisible();
+  const background = page.locator(
+    'button[aria-label="Toggle resources panel"]',
+  );
+  await background.evaluate((element) => element.focus());
+  await expect(dialog.locator(":focus")).toBeVisible();
   await page.setViewportSize({ width: 390, height: 760 });
   const close = dialog.getByRole("button", { name: "Close settings" });
   await close.focus();

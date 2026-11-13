@@ -90,13 +90,14 @@ File and terminal tabs share one horizontally scrollable strip with a searchable
 The selected tab is brought into view. Arrow keys, Home and End navigate the strip. On compact
 panes the tab strip gets its own row, keeping the selected tab and tools reachable. Opening,
 closing, renaming and resizing preserve the underlying readers and terminal processes.
+The strip renders file and terminal descriptors directly and uses the same descriptors for search.
+Focused terminal windows use the same terminal tab controls within their own toolbar.
 
-Files and Changes use the same content-connected selected-tab background, top corners and fine
-boundary as file/terminal tabs, with no additional accent underline. The Terminal shortcut remains
-an action that creates a terminal. Inactive file hover surfaces share the 4px top corners.
-Fine-pointer desktop headers stay 32px high through loading, empty and opened-tab states.
-Narrow/touch targets keep their existing size. File and terminal actions sit in compact toolbars
-above their content. Terminal search and selection overlays stay within the output area.
+Files and Changes share the selected-tab surface, top corners and fine boundary with file and
+terminal tabs. The Terminal shortcut creates a terminal. Fine-pointer desktop headers use a 32px
+row. A pane at most 400px wide gives open tabs a second row when present.
+File, PDF and terminal actions use the same compact toolbar above their content. Terminal search
+and selection overlays stay within the output area.
 Desktop HTML previews use the context perimeter instead of a second complete inner frame.
 
 The Files search field starts 8px below contextual chrome with 12px horizontal insets. It uses the

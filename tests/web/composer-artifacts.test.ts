@@ -1,11 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  deleteSessionDraft,
-  sessionDraft,
-  setSessionDraft,
-} from "../../src/session-drafts";
-import {
   activeSnapshot,
   bootstrapPayload,
   deferred,
@@ -14,6 +9,7 @@ import {
   installFetch,
   jsonBody,
   type RouteResponse,
+  selectSession,
   TEST_HOST_AUTHORITY,
 } from "./helpers";
 import { baseRoutes, initStore } from "./store-fixture";
@@ -21,8 +17,6 @@ import { baseRoutes, initStore } from "./store-fixture";
 describe("Pending input recovery and copying", () => {
   beforeEach(() => {
     installFakeWebSocket();
-    deleteSessionDraft("s1");
-    deleteSessionDraft("s2");
   });
 
   it("reclaims Pending input after reconnect without continuing the old Stop", async () => {
@@ -54,10 +48,12 @@ describe("Pending input recovery and copying", () => {
     const stopping = store.abort();
     await started.promise;
     await store.openSession("s2");
-    setSessionDraft("s2", "B draft");
+    store.drafts.setText("s2", "B draft");
     await store.init();
-    FakeWebSocket.instances.at(-1)!.open(selected);
-    await vi.waitFor(() => expect(sessionDraft("s1")).toBe("retained handoff"));
+    FakeWebSocket.instances.at(-1)!.join(selected);
+    await vi.waitFor(() =>
+      expect(store.drafts.get("s1").text).toBe("retained handoff"),
+    );
     expect(store.getState().sessionId).toBe("s2");
     mutation.resolve({
       body: { steering: ["retained handoff"], followUp: [] },
@@ -65,15 +61,23 @@ describe("Pending input recovery and copying", () => {
     await stopping;
     expect(posts).toHaveBeenCalledOnce();
     expect(aborts).not.toHaveBeenCalled();
-    expect(sessionDraft("s1")).toBe("retained handoff");
-    expect(sessionDraft("s2")).toBe("B draft");
+    expect(store.drafts.get("s1").text).toBe("retained handoff");
+    expect(store.drafts.get("s2").text).toBe("B draft");
   });
 
-  it("merges a delayed mixed recovery with its originating session's latest draft and makes the image removable", async () => {
+  it("merges delayed recovery into its original draft, keeping files and image removal", async () => {
     const recovery = deferred<RouteResponse>();
     const deletes: string[] = [];
     installFetch((url, init) => {
       if (url === "/api/pending/recover") return recovery.promise;
+      if (url === "/api/attachments")
+        return {
+          body: {
+            attachments: [
+              { id: "saved-file", fileName: "latest.txt", kind: "file" },
+            ],
+          },
+        };
       if (url.endsWith("/image")) return { body: "preview bytes" };
       if (init.method === "DELETE" && url.startsWith("/api/attachments/")) {
         deletes.push(url);
@@ -81,15 +85,14 @@ describe("Pending input recovery and copying", () => {
       }
       return baseRoutes(url, init);
     });
-    const { store, socket } = await initStore();
-    setSessionDraft("s1", "first draft");
+    const { store } = await initStore();
+    await store.addFiles([new File(["draft file"], "latest.txt")]);
+    store.addProjectFile("README.md");
+    store.drafts.setText("s1", "first draft");
     const restoring = store.recoverPending();
-    setSessionDraft("s1", "newest draft");
-    socket.emit({
-      type: "snapshot",
-      data: activeSnapshot({ sessionId: "s2" }),
-    });
-    setSessionDraft("s2", "other session");
+    store.drafts.setText("s1", "newest draft");
+    await selectSession(store, activeSnapshot({ sessionId: "s2" }));
+    store.drafts.setText("s2", "other session");
     recovery.resolve({
       body: {
         steering: ["queued caption"],
@@ -107,21 +110,26 @@ describe("Pending input recovery and copying", () => {
       },
     });
     expect(await restoring).toBe(true);
-    expect(store.getState().attachments).toEqual([]);
-    expect(sessionDraft("s2")).toBe("other session");
-    expect(store.getState().editorText).toBeNull();
-    expect(sessionDraft("s1")).toBe(
-      "queued caption\n\nnext input\n\nnewest draft",
-    );
-    socket.emit({
-      type: "snapshot",
-      data: activeSnapshot({ sessionId: "s1" }),
+    expect(store.drafts.get("s2")).toMatchObject({
+      text: "other session",
+      attachments: [],
     });
+    expect(store.drafts.get("s1")).toMatchObject({
+      text: "queued caption\n\nnext input\n\nnewest draft",
+      projectFiles: ["README.md"],
+    });
+    await selectSession(store, activeSnapshot());
     await vi.waitFor(() =>
-      expect(store.getState().attachments[0]?.previewUrl).toMatch(/^blob:/),
+      expect(
+        store.drafts.get(store.getState().sessionId).attachments[0]?.previewUrl,
+      ).toMatch(/^blob:/),
     );
-    store.removeAttachment(store.getState().attachments[0]!.localId);
-    expect(store.getState().attachments).toEqual([]);
+    store.removeAttachment(
+      store.drafts.get(store.getState().sessionId).attachments[0]!.localId,
+    );
+    expect(
+      store.drafts.get("s1").attachments.map(({ uploadedId }) => uploadedId),
+    ).toEqual(["saved-file"]);
     expect(deletes).toEqual(["/api/attachments/original-image"]);
   });
 
@@ -148,65 +156,17 @@ describe("Pending input recovery and copying", () => {
     });
     const { store } = await initStore();
     expect(await store.recoverPending()).toBe(true);
-    expect(store.getState().attachments).toHaveLength(9);
+    expect(
+      store.drafts.get(store.getState().sessionId).attachments,
+    ).toHaveLength(9);
     expect(await store.sendPrompt("all captions")).toBe(false);
-    expect(store.getState().attachments).toHaveLength(9);
+    expect(
+      store.drafts.get(store.getState().sessionId).attachments,
+    ).toHaveLength(9);
     expect(store.getState().notices.at(-1)?.text).toBe(
       "At most 8 attachments per message",
     );
   });
-
-  it.each(["text-only", "image-only"] as const)(
-    "merges %s recovery into the current draft",
-    async (mode) => {
-      const original = {
-        id: "saved-file",
-        fileName: "latest.txt",
-        mimeType: "text/plain",
-        size: 7,
-        kind: "file",
-      };
-      const image = {
-        id: "pending-image",
-        fileName: "pending.png",
-        mimeType: "image/png",
-        size: 7,
-        kind: "image",
-      };
-      installFetch((url, init) => {
-        if (url === "/api/attachments" && init.method === "POST")
-          return { body: { attachments: [original] } };
-        if (url === "/api/pending/recover")
-          return {
-            body: {
-              steering: mode === "text-only" ? ["returned text"] : [""],
-              followUp: [],
-              ...(mode === "image-only"
-                ? { attachments: [image], authorityId: TEST_HOST_AUTHORITY }
-                : {}),
-            },
-          };
-        if (url.endsWith("/image")) return { body: "preview bytes" };
-        return baseRoutes(url, init);
-      });
-      const { store } = await initStore();
-      await store.addFiles([
-        new File(["payload"], "latest.txt", { type: "text/plain" }),
-      ]);
-      store.addProjectFile("README.md");
-      setSessionDraft("s1", "newest saved text");
-      expect(await store.recoverPending()).toBe(true);
-      expect(sessionDraft("s1")).toBe(
-        mode === "text-only"
-          ? "returned text\n\nnewest saved text"
-          : "newest saved text",
-      );
-      expect(
-        store.getState().attachments.map((item) => item.uploadedId),
-      ).toEqual(mode === "text-only" ? [original.id] : [image.id, original.id]);
-      expect(store.getState().projectFiles).toEqual(["README.md"]);
-    },
-  );
 
   it("restores input before sending Stop and binds both requests to the original session", async () => {
     const stopped = deferred<RouteResponse>();
@@ -219,28 +179,26 @@ describe("Pending input recovery and copying", () => {
       }
       if (url === "/api/control/abort") {
         calls.push("abort");
-        expect(sessionDraft("s1")).toBe("steer\n\nfollow\n\ndraft");
-        expect(storeRef.getState().editorText?.text).toBe(sessionDraft("s1"));
+        expect(storeRef.drafts.get("s1").text).toBe("steer\n\nfollow\n\ndraft");
         expect(jsonBody(init).sessionId).toBe("s1");
         return stopped.promise;
       }
       return baseRoutes(url, init);
     });
-    const { store, socket } = await initStore();
+    const { store } = await initStore();
     storeRef = store;
-    setSessionDraft("s1", "draft");
+    store.drafts.setText("s1", "draft");
     const stopping = store.abort();
     await vi.waitFor(() => expect(calls).toEqual(["recover", "abort"]));
-    socket.emit({
-      type: "snapshot",
-      data: activeSnapshot({ sessionId: "s2" }),
-    });
-    setSessionDraft("s2", "other work");
-    setSessionDraft("s1", "edited while stopping");
+    await selectSession(store, activeSnapshot({ sessionId: "s2" }));
+    store.drafts.setText("s2", "other work");
+    store.drafts.setText("s1", "edited while stopping");
     stopped.resolve({ body: { steering: [], followUp: ["late pending"] } });
     await stopping;
-    expect(sessionDraft("s1")).toBe("late pending\n\nedited while stopping");
-    expect(sessionDraft("s2")).toBe("other work");
+    expect(store.drafts.get("s1").text).toBe(
+      "late pending\n\nedited while stopping",
+    );
+    expect(store.drafts.get("s2").text).toBe("other work");
   });
 
   it("copies addressed Pending content without recovering it and retires old text and images", async () => {
@@ -306,16 +264,13 @@ describe("Pending input recovery and copying", () => {
       steering: [],
       followUp: [],
     };
-    socket.emit({ type: "snapshot", data: snapshot });
+    socket.emitSnapshot(snapshot);
     delayedImage.resolve({ body: "image pixels" });
     expect(await copy).toBeNull();
 
     readText.mockReturnValueOnce(delayedText.promise);
     const reading = store.pendingText(99);
-    socket.emit({
-      type: "snapshot",
-      data: activeSnapshot({ sessionId: "s2" }),
-    });
+    await selectSession(store, activeSnapshot({ sessionId: "s2" }));
     delayedText.resolve({ body: { text: "old queue" } });
     expect(await reading).toBeNull();
 
@@ -323,7 +278,9 @@ describe("Pending input recovery and copying", () => {
     expect(await store.pendingText(7)).toBeNull();
     expect(store.getState().notices.at(-1)?.text).toBe(refusal);
     expect(mutations).toEqual([]);
-    expect(store.getState().attachments).toEqual([]);
+    expect(store.drafts.get(store.getState().sessionId).attachments).toEqual(
+      [],
+    );
   });
 });
 
@@ -338,7 +295,7 @@ describe("composer session partitions", () => {
       if (url.startsWith("/api/bootstrap"))
         return {
           body: {
-            ...bootstrapPayload({ snapshot: activeSnapshot() }),
+            ...bootstrapPayload({ startupSessionId: "s1" }),
             authorityId,
           },
         };
@@ -361,14 +318,20 @@ describe("composer session partitions", () => {
     const { store } = await initStore();
     await store.addFiles([new File(["notes"], "notes.txt")]);
     await store.init();
-    expect(store.getState().attachments[0]?.status).toBe("ready");
+    expect(
+      store.drafts.get(store.getState().sessionId).attachments[0]?.status,
+    ).toBe("ready");
     expect(uploads).toBe(1);
     authorityId = "22222222-2222-4222-8222-222222222222";
     await store.init();
-    expect(store.getState().attachments[0]?.status).toBe("uploading");
-    FakeWebSocket.instances.at(-1)!.open(activeSnapshot(), authorityId);
+    expect(
+      store.drafts.get(store.getState().sessionId).attachments[0]?.status,
+    ).toBe("uploading");
+    FakeWebSocket.instances.at(-1)!.join(activeSnapshot(), { authorityId });
     await vi.waitFor(() =>
-      expect(store.getState().attachments[0]).toMatchObject({
+      expect(
+        store.drafts.get(store.getState().sessionId).attachments[0],
+      ).toMatchObject({
         status: "ready",
         uploadedId: "upload-2",
         uploadedAuthorityId: authorityId,

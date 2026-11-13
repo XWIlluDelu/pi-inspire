@@ -198,8 +198,9 @@ local requests, never by sending the reusable Host token.
   state, support for signed local control, and a fresh authenticated HTTP readiness result.
   An unsupported live owner blocks takeover. Case aliases are verified against the native
   directory identity, so distinct case-sensitive roots remain distinct on Windows.
-- The local HTTP control protocol binds each request and response to the published installation,
-  address, mode, process birth and startup incarnation. Domain-separated HMACs authenticate a fresh
+- The local HTTP control protocol binds each request and response to the current published state
+  format, installation, address, process birth, startup incarnation and systemd invocation when
+  present. Domain-separated HMACs authenticate a fresh
   nonce, action, deadline and payload without sending the reusable Host token. Readiness,
   pairing-transfer issuance and maintenance prepare/commit/release use this protocol. One-use
   requests expire within 15 seconds, live replay records are bounded at 1,024, and request/response
@@ -221,7 +222,7 @@ local requests, never by sending the reusable Host token.
 - Managed shutdown has an HTTP-independent local control capability: bounded atomic
   request/result files beside instance state, authenticated with domain-separated
   HMACs using the existing private Host authority without serializing its token. Requests expire and
-  bind root, address, mode, process birth and startup incarnation. Old, forged or foreign requests
+  bind root, address, process birth, startup incarnation and service invocation. Old, forged or foreign requests
   cannot stop a replacement or another instance.
 - The Host retains its cooperative control loop if HTTP stops listening. It runs the same application,
   owned-worker and backend cleanup as ordinary shutdown and signs the outcome before exiting. CLI
@@ -234,8 +235,8 @@ local requests, never by sending the reusable Host token.
   Endpoint close callbacks, including terminal detach, precede service-client close; owned-worker
   and PTY exit still require separate confirmation.
 - A stop racing dependency installation or build cancels that pending start. The CLI stops a
-  published Host through authenticated shutdown. Stop an older Host without that control through
-  its original launcher or service manager before upgrading.
+  published Host through authenticated shutdown. Stop an older Host through its running
+  launcher's control or service manager before upgrading to the current state format.
 
 ## Worker processes
 
@@ -290,7 +291,8 @@ is skipped without force or same-day retry.
 Scheduled restart uses a single-owner handoff through signed actions at `/api/host/local-control`.
 
 1. `maintenance-prepare` grants an opaque `leaseId` and 30-second `expiresAt`.
-   Preparation blocks new work but does not authorize restart. After systemd ownership checks,
+   Preparation blocks new work but does not authorize restart. The runner binds its plan to
+   the invocation published by the issuing Host. After systemd ownership checks,
    `maintenance-commit` validates that current, unexpired lease and idle runtime,
    then synchronously commits the drain. Only its matching `committed` response authorizes one
    external restart; duplicate, expired, released, foreign and previous-Host leases cannot do so.
@@ -376,8 +378,7 @@ unconfirmed submission keeps its domain phase and does not trigger a new restart
 - **Restart all** confirms Pi termination before submission and requires `interruptWork: true`.
   Acquire and commit the same restart admission lease, then terminate the selected Pi processes
   before issuing the service restart. It does not depend on attached-Pi Stop acknowledgement.
-  Use the distinct `all-pi` API scope; older clients\' `all` scope remains terminal-service-only.
-  Unsupported scope is rejected before preparation; absence of the new capability disables it.
+  The `all-pi` API scope is available when the installed services and Pi process control are ready.
 - Linux process cleanup snapshots exact `pi` and `pi-rpc` titles owned by the current OS user.
   Herdr pane/socket environment markers identify Herdr Pi. Revalidate birth ticks, ownership,
   title and inclusion before each signal; send SIGTERM, wait up to five seconds, then SIGKILL
@@ -390,7 +391,8 @@ unconfirmed submission keeps its domain phase and does not trigger a new restart
 ### Submission and recovery
 
 - Recheck the live launcher channel or current service invocation before committing the non-expiring
-  drain and submitting the restart. The existing Host shutdown retires its workers. Proven
+  drain and submitting the restart. The systemd plan rechecks the captured invocation after commit
+  and again after any Pi cleanup. The existing Host shutdown retires its workers. Proven
   non-issuance releases admission; uncertain submission retains the drain and reports recovery
   required. A lost launcher acceptance cannot trigger shutdown from a late reply or turn a later
   normal exit into a restart.

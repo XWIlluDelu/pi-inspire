@@ -14,11 +14,6 @@ import type { StatusControlDeclaration } from "../../shared/tool-presentation-co
 import { App } from "../../src/App";
 import { Composer } from "../../src/components/Composer";
 import { Welcome } from "../../src/components/Welcome";
-import {
-  sessionDraft,
-  setSessionDraft,
-  setStartDraft,
-} from "../../src/session-drafts";
 import { store, useAppState } from "../../src/store";
 import { mockModelMenuLayout } from "./fixtures/model-menu-layout";
 import { sessionPage } from "./fixtures/session-catalog";
@@ -26,11 +21,13 @@ import {
   activeSnapshot,
   bootstrapPayload,
   deferred,
+  emptySnapshot,
   FakeWebSocket,
   installFakeWebSocket,
   installFetch,
   jsonBody,
   type RouteResponse,
+  selectSession,
 } from "./helpers";
 
 let newSessionBody: Record<string, unknown> | null;
@@ -72,18 +69,6 @@ beforeEach(async () => {
           availableModels: welcomeModels,
         }),
       };
-    if (url.startsWith("/api/new-session/thinking")) {
-      if (directoryFailure === "missing")
-        return {
-          status: 400,
-          body: {
-            error: "Project path does not exist",
-            code: "PROJECT_DIRECTORY_MISSING",
-          },
-        };
-      const query = new URL(url, "http://local").searchParams;
-      return { body: { level: query.get("current") ?? "high" } };
-    }
     if (url.startsWith("/api/models")) {
       const parsed = new URL(url, "http://local");
       if (sourceWriterActive && parsed.searchParams.has("sessionId"))
@@ -185,6 +170,7 @@ beforeEach(async () => {
       promptBody = jsonBody(init);
       return promptGate ?? { status: 202, body: { accepted: true } };
     }
+    if (url === "/api/sessions/deselect") return { body: emptySnapshot };
     if (url.startsWith("/api/sessions/refresh")) return { body: { ok: true } };
     if (url.startsWith("/api/sessions")) return { body: sessionPage([], 0) };
     if (url.startsWith("/api/preferences"))
@@ -192,7 +178,8 @@ beforeEach(async () => {
     return undefined;
   });
   await store.init();
-  FakeWebSocket.instances.at(-1)?.open();
+  if (store.getState().sessionId) await store.deselectSession();
+  FakeWebSocket.instances.at(-1)!.join();
 });
 
 afterEach(() => {
@@ -202,7 +189,11 @@ afterEach(() => {
   recoveredPromptId = null;
   observedPromptReceipt = null;
   beforeUpload = null;
-  setStartDraft("");
+  for (const key of [null, "new-session"] as const) {
+    for (const item of store.drafts.get(key).attachments)
+      store.removeAttachment(item.localId, key);
+    store.drafts.clear(key);
+  }
 });
 
 function SessionSurface() {
@@ -213,11 +204,9 @@ describe("new-session start surface", () => {
   it("reads and writes MCP settings for New's prospective directory", async () => {
     // Workspace ownership is independent of the lazy surface's chunk arrival.
     await import("../../src/components/Settings");
-    act(() =>
-      FakeWebSocket.instances.at(-1)!.emit({
-        type: "snapshot",
-        data: activeSnapshot({ sessionId: "source", cwd: "/source" }),
-      }),
+    await selectSession(
+      store,
+      activeSnapshot({ sessionId: "source", cwd: "/source" }),
     );
     const config: McpConfigSnapshot = {
       cwd: "/prospective",
@@ -361,16 +350,14 @@ describe("new-session start surface", () => {
 
   it("preflights New from read-only history and keeps an invalid path blocked during retry", async () => {
     directoryFailure = "file";
-    act(() =>
-      FakeWebSocket.instances.at(-1)!.emit({
-        type: "snapshot",
-        data: activeSnapshot({
-          sessionId: "archived",
-          cwd: "/file/project",
-          readOnlyReason: "workspace-unavailable",
-          model: welcomeModels[1],
-          thinkingLevel: "high",
-        }),
+    await selectSession(
+      store,
+      activeSnapshot({
+        sessionId: "archived",
+        cwd: "/file/project",
+        readOnlyReason: "workspace-unavailable",
+        model: welcomeModels[1],
+        thinkingLevel: "high",
       }),
     );
     const view = render(<App />);
@@ -473,7 +460,7 @@ describe("new-session start surface", () => {
     observedPromptReceipt = null;
     recoveredPromptId = original?.operationId;
     await act(async () =>
-      fireEvent.click(screen.getByRole("button", { name: "Send message" })),
+      fireEvent.click(screen.getByRole("button", { name: "Retry delivery" })),
     );
     expect(promptBody).toBeNull();
     expect(observedPromptReceipt).toBe(recoveredPromptId);
@@ -484,12 +471,9 @@ describe("new-session start surface", () => {
     const upload = deferred<void>();
     const startUpload = vi.fn(() => upload.promise);
     beforeUpload = startUpload;
-    const socket = FakeWebSocket.instances.at(-1)!;
-    setSessionDraft("session-b", "Belongs to B");
+    store.drafts.setText("session-b", "Belongs to B");
     const select = (sessionId: string) =>
-      act(() => {
-        socket.emit({ type: "snapshot", data: activeSnapshot({ sessionId }) });
-      });
+      selectSession(store, activeSnapshot({ sessionId }));
 
     try {
       render(<SessionSurface />);
@@ -507,22 +491,22 @@ describe("new-session start surface", () => {
       fireEvent.click(startButton);
       await waitFor(() => expect(startUpload).toHaveBeenCalled());
 
-      select("session-b");
+      await select("session-b");
       await act(async () => upload.resolve());
       expect(screen.getByLabelText("Message")).toHaveValue("Belongs to B");
       expect(
         screen.queryByRole("button", { name: "Preview image.png" }),
       ).toBeNull();
       expect(promptBody).toBeNull();
-      select("new-session");
+      await select("new-session");
       expect(screen.getByLabelText("Message")).toHaveValue("Owned by A");
       expect(
         screen.getByRole("button", { name: "Preview image.png" }),
       ).toBeVisible();
     } finally {
       upload.resolve();
-      setSessionDraft("session-b", "");
-      setSessionDraft("new-session", "");
+      store.drafts.setText("session-b", "");
+      store.drafts.setText("new-session", "");
     }
   });
 
@@ -656,7 +640,7 @@ describe("Welcome capability controls and command completion", () => {
     requests = [];
     created = 0;
     sessionId = `configured-session-${++fixtureNumber}`;
-    setStartDraft("");
+    store.drafts.setText(null, "");
     for (const notice of store.getState().notices)
       store.dismissNotice(notice.id);
     installFakeWebSocket();
@@ -700,11 +684,11 @@ describe("Welcome capability controls and command completion", () => {
       return undefined;
     });
     await store.init();
-    FakeWebSocket.instances.at(-1)!.open();
+    FakeWebSocket.instances.at(-1)!.join();
   });
 
   afterEach(() => {
-    setStartDraft("");
+    store.drafts.setText(null, "");
     vi.restoreAllMocks();
   });
 
@@ -739,14 +723,10 @@ describe("Welcome capability controls and command completion", () => {
 
   it("discovers target commands without a session and confirms a preselection before first input", async () => {
     await selectMode();
-    expect(sessionDraft(sessionId)).toBe("Review this project");
+    expect(store.drafts.get(sessionId).text).toBe("Review this project");
     await act(async () => {});
     expect(requests).toHaveLength(1);
-    act(() =>
-      FakeWebSocket.instances
-        .at(-1)!
-        .emit({ type: "snapshot", data: snapshot("quick") }),
-    );
+    act(() => FakeWebSocket.instances.at(-1)!.emitSnapshot(snapshot("quick")));
     await waitFor(() =>
       expect(requests).toEqual(["/response-mode quick", "Review this project"]),
     );
@@ -800,20 +780,16 @@ describe("Welcome capability controls and command completion", () => {
           ),
       ).toBe(true),
     );
-    expect(sessionDraft(sessionId)).toBe("Review this project");
+    expect(store.drafts.get(sessionId).text).toBe("Review this project");
     expect(requests).toEqual(["/response-mode quick"]);
   });
 
   it("retires a pending initialization when another session takes ownership", async () => {
     await selectMode();
-    act(() =>
-      FakeWebSocket.instances
-        .at(-1)!
-        .emit({ type: "snapshot", data: snapshot("normal", "other") }),
-    );
+    await selectSession(store, snapshot("normal", "other"));
     await act(async () => {});
     expect(requests).toEqual(["/response-mode quick"]);
-    expect(sessionDraft(sessionId)).toBe("Review this project");
+    expect(store.drafts.get(sessionId).text).toBe("Review this project");
     expect(
       store
         .getState()

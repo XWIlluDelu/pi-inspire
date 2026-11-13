@@ -147,29 +147,25 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   disagree. Folder pins use the exact cwd identity that already defines groups and their collapse
   state.
 
-- The header bell switches All to Needs you, a flat cross-project list. Its pressed state uses
-  accent ink and tint. The count is green, or red when any session is waiting or failed.
+- The catalog offers All, Needs you and Hidden above one scrolling list. Needs you is a flat
+  cross-project list. Its count is green, or red when any session is waiting or failed.
   Needs you lists sessions waiting for input or recovery, then unseen failures, then unseen
   completions, newest activity first within each priority. Pinning changes the order in All.
   Needs you includes blocked terminal Pi sessions and excludes
   Hidden and sessions still working. Viewing clears an unseen outcome, while a row opened from
-  Needs you stays in place for the selected session. Search uses the current mode. Folders, Pinned,
-  pagination and Hidden belong to All. The browser remembers the mode with its other navigation
-  disclosures. Header actions use 15px glyphs, 4px gaps and 28px mouse or 36px touch targets.
+  Needs you stays in place for the selected session. The browser remembers the catalog view
+  independently of Recent on the start screen.
 
-- In hover-capable layouts wider than 600px, an ordinary session row is a 32px line with the
-  activity mark, title and trailing age. The activity mark sits right-aligned inside the same 16px
+- Each session row is 44px high, with the title above its activity age or search excerpt.
+  The activity mark sits right-aligned inside the same 16px
   icon slot and 8px label gap as folder rows. The status mark renders at 10px, scaled about its
   painted right edge and vertical centre without moving the slot, text axis or selection marker.
-  The text axis stays reserved when no status is present. Cross-project rows (Pinned and Needs
-  you), search excerpts, and narrow or non-hover layouts use two lines, with the title above
-  metadata. Hidden separates its status mark from the selection marker.
+  The text axis stays reserved when no status is present. Hidden separates its status mark from
+  the selection marker.
 
-  Desktop Pin/Hide or Restore/Delete appear at the trailing edge on hover or keyboard focus. On a
-  one-line row they take the age's place and the title fades under them without changing width;
-  while a session is opening, its Opening… status keeps that place and the actions wait. Two-line
-  rows are 44px high. On phone-width layouts or without hover, the 36px actions stay visible in a
-  separate column beside both text lines. Pin and Hide stay directly accessible. The exact timestamp
+  Pin/Hide and Restore/Delete stay visible in a trailing column beside both text lines. The
+  actions have 24px targets on hover-capable desktop and 36px targets on phone-width or non-hover
+  layouts. An opening session keeps its Opening… status in the metadata line. The exact timestamp
   and message count stay in tooltips.
 
   On devices without hover, the action's background shows during the press and clears on release.
@@ -182,13 +178,8 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   folder headers and session-row surfaces share the same outer inset; their internal icon/text axes
   stay stable.
 
-  Hidden's section header stays distinct from its inset contents. Its root folders and row
-  surfaces use the normal project axes without an extra section-wide indent. Independent hidden
-  sessions stay at that root text axis; grouped sessions keep the compact desktop layout rather
-  than adding another 20px indent. Hidden lists independent sessions before folders and their
-  children, preserving each category's existing order, and keyboard search navigation follows that
-  visual order. A folder following independent sessions keeps the same root inset and spacing
-  used between folders.
+  Hidden lists independently hidden sessions before folders and their children. Both use the
+  catalog's normal text axis and folder spacing. Keyboard search follows the displayed order.
 
 - Project groups expose native expand/collapse controls across the header's main button. A single
   open/closed folder icon conveys the state with no separate disclosure arrow, leaving more width
@@ -196,19 +187,14 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   containing the visible session carries the active highlight on its header, and active search
   results stay visible regardless of saved collapse state.
 
-  Hidden follows the ordinary session groups in the same scroll area. Its header has a disclosure,
-  count and Clear Hidden action. Opening Hidden expands the section in place and keeps focus on
-  the disclosure.
+  Choosing Hidden keeps focus on the view button and shows its sessions in the same catalog.
+  All excludes hidden sessions during browsing. A search in All includes matching hidden sessions
+  after the ordinary results. Hidden and Needs you search within their views.
 
-  Project identity on cross-project Hidden rows is quiet text, not a filled badge. On phone-width
-  or non-hover layouts, all cross-project rows (Pinned, search and Hidden) place project and age
-  beneath the title so persistent actions do not crowd it. Selection and search highlights cover
-  the whole row, including its action area.
+  Cross-project rows place the project and age beneath the title. Selection and search highlights
+  cover the whole row, including its action area.
 
-  The section defaults closed and keeps its state when the tab reloads. It is absent when there
-  are no hidden results. Search reveals matching hidden sessions in the section. Ordinary
-  session-entry surfaces, including Welcome recents and the command palette's recents/search, share
-  the hidden-session/project filter.
+  Welcome recents and the command palette's recents/search share the hidden-session/project filter.
 
   Ordinary rows keep Pin and Hide; Hidden rows reuse those two action slots for Restore and Delete,
   so deletion is a second-stage action rather than a third always-present icon. Every hidden
@@ -218,8 +204,8 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   curation intact. Folder headers have the same Restore/Delete columns. Folder Delete confirms the
   count and full path and clears only that complete hidden folder.
 
-  Clear Hidden has its own accessible name and click target in the section header. Clear confirms
-  the complete section with one count-bearing dialog. Search, incomplete catalog data, a target
+  Clear Hidden has its own accessible name and click target beside the views. Clear confirms
+  the complete Hidden view with one count-bearing dialog. Search, incomplete catalog data, a target
   opening, or another deletion block admission. The folder action applies these checks to its own
   targets. [[session-deletion]] defines target validation, Pi instance shutdown and file removal.
 

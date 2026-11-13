@@ -14,6 +14,7 @@ import {
 import { flushSync } from "react-dom";
 import { isAbortableRunState, type ThemePreference } from "../shared/contracts";
 import type { ModelSettingsDestination } from "../shared/model-settings";
+import { selectedRunState } from "./app-state";
 import { pairBrowser } from "./browser-auth";
 import { ActivityBar } from "./components/ActivityBar";
 import { AppTopbar } from "./components/AppTopbar";
@@ -338,7 +339,7 @@ const ConversationStage = memo(function ConversationStage({
       thinkingLevel: source.thinkingLevel,
       messages: source.messages,
       streaming: source.streaming,
-      runState: source.runState,
+      runState: selectedRunState(source),
       activeAssistantMessageKey: source.activeAssistantMessageKey,
       tools: source.tools,
       transcriptViewId: source.transcriptViewId,
@@ -500,7 +501,7 @@ export function App() {
       sessionName: source.sessionName,
       attentionCount: source.attentionSessionIds.length,
       sessionId: source.sessionId,
-      runState: source.runState,
+      runState: selectedRunState(source),
       bashRunning: source.bashRunning,
       error: source.error,
       errorSeverity: source.errorSeverity,

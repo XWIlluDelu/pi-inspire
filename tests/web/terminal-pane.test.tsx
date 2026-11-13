@@ -8,6 +8,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   TerminalCatalogResponse,
@@ -51,11 +52,13 @@ vi.mock("../../src/components/TerminalView", () => ({
   TerminalView: ({
     terminal,
     active,
+    toolbar,
     onBell,
     onCommandComplete,
   }: {
     terminal: TerminalDescriptor;
     active: boolean;
+    toolbar?: (controls: ReactNode, actions: ReactNode) => ReactNode;
     onBell(terminal: TerminalDescriptor): void;
     onCommandComplete(
       terminal: TerminalDescriptor,
@@ -78,6 +81,7 @@ vi.mock("../../src/components/TerminalView", () => ({
     });
     return (
       <div data-testid="shell-cwd">
+        {active && toolbar?.(null, null)}
         {terminal.projectCwd}
         <textarea
           className="xterm-helper-textarea"

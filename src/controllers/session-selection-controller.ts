@@ -47,8 +47,7 @@ export class SessionSelectionController {
 
   constructor(private readonly host: SessionSelectionControllerHost) {}
 
-  /** A replacement bootstrap or unaddressed selection push supersedes every
-   * in-flight selection, including one that may never answer on an old client. */
+  /** A replacement transport retires every in-flight selection. */
   invalidateForReplacement(): void {
     this.host.invalidateOpening();
     this.observation?.abort();

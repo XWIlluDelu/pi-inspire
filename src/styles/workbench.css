@@ -206,23 +206,22 @@ body.pane-resizing .nav {
   margin-bottom: -1px;
 }
 
-.ctx__file-tabs-shell {
+.dock-tabs {
   min-width: 0;
   flex: 1;
   display: flex;
   align-items: stretch;
 }
 
-.ctx__file-tabs {
+.dock-tabs__scroll {
   min-width: 0;
   flex: 1;
   display: flex;
-  overflow-x: auto;
+  overflow: auto hidden;
   scrollbar-width: none;
-  gap: 0;
 }
 
-.ctx__file-tabs::-webkit-scrollbar { display: none; }
+.dock-tabs__scroll::-webkit-scrollbar { display: none; }
 
 .ctx__tab-overflow {
   flex: 0 0 30px;
@@ -246,10 +245,7 @@ body.pane-resizing .nav {
 }
 .ctx__open-tab-results small { color: var(--muted); }
 
-.ctx__terminal-tabs { display: contents; }
-
-.ctx__file-tab {
-  position: relative;
+.dock-tab {
   flex: 0 0 auto;
   min-width: 132px;
   max-width: 180px;
@@ -259,90 +255,85 @@ body.pane-resizing .nav {
   border-radius: var(--radius-control) var(--radius-control) 0 0;
 }
 
-.ctx__file-tab--active {
-  background: var(--bg-stage);
+.dock-tab[data-selected="true"] {
   color: var(--accent-deep);
-  border-radius: var(--radius-control) var(--radius-control) 0 0;
+  background: var(--dock-tab-surface, var(--bg-stage));
   box-shadow: inset 0 1px var(--hairline), inset -1px 0 var(--hairline), inset 1px 0 var(--hairline);
 }
 
-.ctx__file-tab--active::after {
-  content: "";
-  position: absolute;
-  inset: auto 0 0;
-  height: 1px;
-  background: var(--bg-stage);
-  pointer-events: none;
-}
-
-.ctx__file-tab > button {
+.dock-tab__select {
+  flex: 1;
   min-width: 0;
-  min-height: 30px;
   display: flex;
   align-items: center;
   gap: 5px;
   padding: 3px 8px;
   border: 0;
-  border-radius: 0;
+  border-radius: inherit;
   background: transparent;
   color: inherit;
   font-size: var(--text-sm);
+  text-align: start;
   cursor: pointer;
 }
 
-.ctx__file-tab > button > svg { flex: 0 0 auto; }
-.ctx__file-tab > button[role="tab"] { flex: 1; }
-.ctx__file-tab > button > span:not(.ctx__terminal-icon):not(.terminal-tab__unread) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ctx__file-tab > button:focus-visible { outline-offset: -2px; }
-.ctx__file-tab > button:hover { color: var(--ink); }
-.ctx__file-tab--active > button[role="tab"] { color: inherit; }
-.ctx__file-tab > .ctx__file-close { flex: 0 0 22px; justify-content: center; padding-inline: 3px; }
-.ctx__file-tab > .ctx__file-close:focus-visible { outline-width: 1px; }
+.dock-tab__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
-/* Keep a full-size active tab plus its overflow trigger at the desktop pane's
-   minimum width. Compact spacing, not the icon or pointer targets. */
+.dock-tab__select > svg { flex: none; }
+.dock-tab :is(button, input):focus-visible { outline-offset: -2px; }
+
+.dock-tab__icon {
+  display: grid;
+  flex: 0 0 13px;
+  place-items: center;
+}
+
+.dock-tab__rename {
+  flex: 1;
+  align-self: center;
+  width: 0;
+  height: 23px;
+  margin-inline: 20px 4px;
+  padding-inline: 5px;
+  font-size: var(--text-sm);
+}
+
+.dock-tab__close {
+  align-self: center;
+  width: var(--dock-tab-close-size, 22px);
+  height: var(--dock-tab-close-size, 22px);
+}
+
+@media (pointer: coarse), (max-width: 720px) {
+  .dock-tab {
+    --dock-tab-close-size: 32px;
+  }
+}
+
 @container context-pane (max-width: 400px) {
-  .ctx__header:has(.ctx__tabs) { padding-right: var(--space-1); gap: 0; }
-  .ctx__tabs { gap: 0; }
-  .ctx__tabs .ctx__modes { gap: 0; }
-}
+  .ctx__header:has(.ctx__tabs) {
+    padding-inline-end: var(--space-1);
+    gap: 2px;
+  }
 
-/* Keep room for an active tab and overflow beside the modes and full Changes
-   count. Drawers need more space because they also have a Close button. */
-@container context-pane (max-width: 384px) {
-  .app--narrow .ctx__header:has(.ctx__file-tab) {
+  .ctx__tabs {
+    gap: 2px;
+  }
+
+  .ctx__header[data-has-tabs] {
     display: grid;
-    grid-template-columns: 1fr auto;
+    grid-template-columns: minmax(0, 1fr) auto;
+    height: auto;
   }
-  .app--narrow .ctx__header:has(.ctx__file-tab) .ctx__tabs { display: contents; }
-  .app--narrow .ctx__header:has(.ctx__file-tab) .ctx__file-tabs-shell { grid-column: 1 / -1; min-height: 36px; }
-  .app--narrow .ctx__header:has(.ctx__file-tab) .ctx__modes { padding-left: var(--space-2); margin-bottom: -1px; }
-}
 
-@container context-pane (max-width: 342px) {
-  @media (pointer: fine) {
-    .app:not(.app--narrow) .ctx__modes button:not(:has(.ctx__mode-count)),
-    .app:not(.app--narrow) .ctx__header-actions .icon-button {
-      width: 26px;
-      min-width: 26px;
-    }
-    .app:not(.app--narrow) .ctx__modes button:has(.ctx__mode-count) {
-      min-width: 36px;
-      padding-inline: 1px;
-      gap: 2px;
-    }
-    .app:not(.app--narrow) .ctx__header-actions { gap: 2px; }
-  }
-  @media (pointer: coarse) {
-    .app:not(.app--narrow) .ctx__header:has(.ctx__file-tab) {
-      display: grid;
-      grid-template-columns: 1fr auto;
-      height: auto;
-    }
-    .app:not(.app--narrow) .ctx__header:has(.ctx__file-tab) .ctx__tabs { display: contents; }
-    .app:not(.app--narrow) .ctx__header:has(.ctx__file-tab) .ctx__file-tabs-shell { grid-column: 1 / -1; min-height: 32px; }
-    .app:not(.app--narrow) .ctx__header:has(.ctx__file-tab) .ctx__modes { min-height: 32px; padding-left: var(--space-2); margin-bottom: -1px; }
-  }
+  .ctx__header[data-has-tabs] .ctx__tabs { display: contents; }
+  .ctx__header[data-has-tabs] .dock-tabs { grid-column: 1 / -1; min-height: 36px; }
+  .ctx__header[data-has-tabs] .ctx__modes { padding-inline-start: var(--space-2); }
 }
 
 .ctx__modes {
@@ -413,9 +404,7 @@ body.pane-resizing .nav {
 
 .ctx__modes button:focus-visible { outline-offset: -2px; }
 
-.ctx__modes button[aria-pressed="true"],
-.ctx__modes button[aria-selected="true"],
-.ctx__modes button.segmented__item--active {
+.ctx__modes button[aria-selected="true"] {
   align-self: stretch;
   height: auto;
   background: var(--bg-stage);
@@ -424,7 +413,7 @@ body.pane-resizing .nav {
   font-weight: 600;
 }
 
-.ctx__modes button:is([aria-pressed="true"], [aria-selected="true"], .segmented__item--active)::after {
+.ctx__modes button[aria-selected="true"]::after {
   content: "";
   position: absolute;
   inset: auto 0 0;
@@ -439,20 +428,16 @@ body.pane-resizing .nav {
 }
 
 @media (hover: hover) {
-  .ctx__file-tab:hover,
+  .dock-tab:hover,
   .ctx__modes button:hover:not(:disabled) {
     background: var(--bg-control);
   }
 
-  .ctx__file-tab--active:hover,
+  .dock-tab[data-selected="true"]:hover,
   .ctx__modes button[aria-selected="true"]:hover:not(:disabled) {
     background:
       linear-gradient(var(--accent-tint), var(--accent-tint)),
-      var(--bg-stage);
-  }
-
-  .ctx__file-tab > .ctx__file-close:hover {
-    color: var(--ink);
+      var(--dock-tab-surface, var(--bg-stage));
   }
 }
 
@@ -674,41 +659,48 @@ body.pane-resizing .nav {
   gap: 1px;
 }
 
-.recent-file {
+.file-row {
   display: flex;
   width: 100%;
-  height: 28px;
-  min-height: 28px;
-  flex: 0 0 28px;
+  min-height: var(--file-row-height, 28px);
   align-items: center;
-  gap: 6px;
+  gap: var(--file-row-gap, var(--space-2));
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
   padding: 2px var(--space-2);
   color: var(--body);
   font: var(--text-sm)/var(--leading-ui) var(--font-sans);
-  text-align: left;
+  text-align: start;
   cursor: pointer;
   transition:
     background var(--dur-micro) var(--ease-standard),
     color var(--dur-micro) var(--ease-standard);
 }
 
-.recent-file::before {
-  content: "";
-  flex: 0 0 11px;
+@media (hover: hover) {
+  .file-row:hover:where(:not([aria-current="true"])) {
+    background: var(--bg-inset);
+    color: var(--ink);
+  }
 }
 
-.recent-file:hover {
-  background: var(--bg-inset);
-  color: var(--ink);
-}
-
-.recent-file--active,
-.recent-file--active:hover {
+.file-row[aria-current="true"] {
   background: var(--accent-tint);
   color: var(--ink);
+}
+
+.file-row[aria-current="true"] > svg:first-child {
+  color: var(--accent-deep);
+}
+
+.recent-file {
+  --file-row-gap: 6px;
+}
+
+:is(.recent-file, .workspace-tree__row--file)::before {
+  content: "";
+  flex: 0 0 11px;
 }
 
 .recent-file--unavailable .recent-file__name {
@@ -720,13 +712,9 @@ body.pane-resizing .nav {
   text-decoration-color: var(--hairline-strong);
 }
 
-.recent-file > svg:first-child {
+:is(.recent-file, .workspace-tree__row) > svg:first-child {
   flex: 0 0 auto;
   color: var(--faint);
-}
-
-.recent-file--active > svg:first-child {
-  color: var(--accent-deep);
 }
 
 /* Availability shares Git's trailing 16px status column, even without a path.
@@ -791,16 +779,34 @@ body.pane-resizing .nav {
 
 .file-preview { position: relative; }
 
-.file-preview__actions {
+.pane-toolbar {
+  --pane-tool-size: 28px;
   position: relative;
   z-index: 2;
+  flex: none;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: flex-end;
   gap: 2px;
   padding: 2px var(--space-2);
   border-bottom: 1px solid var(--hairline);
+}
+
+.pane-toolbar .icon-button {
+  width: var(--pane-tool-size);
+  height: var(--pane-tool-size);
+}
+
+.pane-toolbar .icon-button:focus-visible { outline-offset: -2px; }
+
+@media (pointer: coarse), (max-width: 900px) {
+  .pane-toolbar {
+    --pane-tool-size: 32px;
+  }
+}
+
+.file-preview__actions {
+  justify-content: flex-end;
   background: var(--bg-file-surface);
 }
 
@@ -873,8 +879,7 @@ body.pane-resizing .nav {
   }
 }
 
-/* Appears only while reader text is selected; shares the floating file-action
-   surface so it reads as part of the reader, not a new toolbar. */
+/* The selection action stays next to the selected reader text. */
 .reader-quote {
   position: absolute;
   z-index: 3;
@@ -1013,10 +1018,6 @@ body.pane-resizing .nav {
   color: var(--success-ink);
 }
 
-.file-preview__actions .icon-button:focus-visible {
-  outline-offset: -2px;
-}
-
 .changes__position {
   min-width: var(--change-position-width, 3ch);
   padding-inline: 2px;
@@ -1034,14 +1035,6 @@ body.pane-resizing .nav {
 
 @media (pointer: coarse) {
   .ctx__modes button { min-height: 32px; }
-  .ctx__file-tab > .ctx__file-close { flex-basis: 32px; min-width: 32px; }
-}
-
-@media (pointer: coarse), (max-width: 900px) {
-  .file-preview__actions .icon-button {
-    width: 32px;
-    height: 32px;
-  }
 }
 
 .file-preview__content {
@@ -1085,12 +1078,6 @@ body.pane-resizing .nav {
   padding: 0;
 }
 
-.file-preview .source-view__gutter,
-.file-preview .source-view__pre,
-.file-preview .source-diff__lines {
-  padding-top: var(--space-3);
-}
-
 .source-reader {
   min-height: 0;
   flex: 1 1 auto;
@@ -1129,20 +1116,10 @@ body.pane-resizing .nav {
 
 .source-view__pre {
   min-width: 100%;
-  margin: 0;
   padding: var(--space-3) var(--space-3) var(--space-3) var(--space-2);
-  overflow: visible;
-  color: var(--body);
-  font: inherit;
-  white-space: pre;
 }
 
-.source-view__pre code {
-  display: block;
-  font: inherit;
-}
-
-.source-view__boundary {
+.source-boundary {
   position: sticky;
   left: 0;
   grid-column: 1 / -1;
@@ -1196,41 +1173,6 @@ button.res__more:hover {
   background: var(--bg-inset);
   border-color: var(--hairline-strong);
   color: var(--ink);
-}
-
-.res__row {
-  display: flex;
-  width: 100%;
-  height: 28px;
-  min-height: 28px;
-  align-items: center;
-  gap: var(--space-2);
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  padding: 2px var(--space-2);
-  font-size: var(--text-sm);
-  color: var(--body);
-  text-align: left;
-  cursor: pointer;
-  transition:
-    background var(--dur-micro) var(--ease-standard),
-    color var(--dur-micro) var(--ease-standard);
-}
-
-.res__row:hover {
-  background: var(--bg-inset);
-  color: var(--ink);
-}
-
-.res__row--active,
-.res__row--active:hover {
-  background: var(--accent-tint);
-  color: var(--ink);
-}
-
-.res__row--active > svg:first-child {
-  color: var(--accent-deep);
 }
 
 .res__choices {
@@ -1459,97 +1401,10 @@ button.res__more:hover {
   cursor: default;
 }
 
-.source-diff__lines {
-  width: max-content;
-  min-width: 100%;
+.source-diff .code-lines {
+  --code-gutter-size: calc((var(--code-line-digits) + 1) * 1ch + 2 * var(--space-1));
+  --code-line-surface: var(--bg-surface);
   padding-block: var(--space-3);
-}
-
-.source-diff__line {
-  display: grid;
-  min-height: 22px;
-  grid-template-columns: auto minmax(max-content, 1fr);
-  align-items: start;
-  font-size: var(--text-reading-code);
-}
-
-.source-diff__gutter {
-  position: sticky;
-  left: 0;
-  z-index: 1;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(3.5ch, max-content)) 16px;
-  align-items: baseline;
-  align-self: stretch;
-  background: var(--bg-surface);
-}
-
-.source-diff__number,
-.source-diff__mark {
-  padding: 1px var(--space-1);
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-  user-select: none;
-}
-
-.source-diff__number {
-  min-width: calc(var(--diff-line-digits, 1) * 1ch + 2 * var(--space-1));
-  border-right: none;
-  background: transparent;
-  font-size: 11px;
-  line-height: 1;
-}
-
-.source-diff__mark {
-  padding-inline: 0;
-  text-align: center;
-  /* The mark supplies the source-sized baseline for the smaller line numbers. */
-  font: inherit;
-}
-
-.source-diff__mark:empty::before {
-  content: "0";
-  visibility: hidden;
-}
-
-.source-diff__line code {
-  padding: 1px var(--space-2) 1px 2px;
-  color: var(--body);
-  white-space: pre;
-  font-size: var(--text-reading-code);
-}
-
-.source-diff__line--add,
-.source-diff__line--add .source-diff__gutter {
-  background: color-mix(in srgb, var(--success) 8%, var(--bg-surface));
-}
-
-.source-diff__line--add .source-diff__mark {
-  color: var(--success);
-}
-
-.source-diff__line--delete,
-.source-diff__line--delete .source-diff__gutter {
-  background: color-mix(in srgb, var(--error) 7%, var(--bg-surface));
-}
-
-.source-diff__line--delete .source-diff__mark {
-  color: var(--error);
-}
-
-.source-diff__line--active,
-.source-diff__line--active .source-diff__gutter {
-  box-shadow: inset 2px 0 var(--accent);
-}
-
-.source-diff__boundary {
-  padding: var(--space-2);
-  border-top: 1px solid var(--hairline);
-  background: var(--warning-tint);
-  color: var(--warning-ink);
-  font: 500 var(--text-xs)/var(--leading-ui) var(--font-sans);
-  text-align: center;
 }
 
 .res__preview-fill {
@@ -1698,14 +1553,6 @@ button.res__more:hover {
   text-align: center;
 }
 
-@container context-pane (max-width: 420px) {
-  /* Keep the opening text clear of the floating file actions. The inset
-     scrolls with the Markdown and stays stable as the actions collapse. */
-  .res__preview-document {
-    padding-block-start: calc(var(--space-8) + var(--space-2));
-  }
-}
-
 .res__preview-document,
 .notebook-preview .rich-text {
   font-size: var(--text-reading);
@@ -1778,12 +1625,8 @@ button.res__more:hover {
 .notebook-preview__cell-body > pre,
 .notebook-preview__output-body > pre {
   max-width: 100%;
-  margin: 0;
   padding: var(--space-3);
   overflow: auto;
-  color: var(--body);
-  font: var(--text-reading-code) / var(--leading-mono) var(--font-mono);
-  white-space: pre;
 }
 
 .notebook-preview__cell--markdown .notebook-preview__cell-body {

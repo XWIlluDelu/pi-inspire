@@ -1,5 +1,6 @@
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { once } from "node:events";
 import {
   access,
   copyFile,
@@ -10,7 +11,6 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -21,6 +21,8 @@ import {
 } from "../server/process-tree.mjs";
 import { TerminalDaemonClient } from "../server/terminal-daemon-client.js";
 import { terminalDaemonSecretPath } from "../server/terminal-daemon-tls.js";
+import { directLauncherEnvironment } from "./fixtures/packaged-launcher.mjs";
+import { isolatedTestEnvironment } from "./server/fixtures/isolated-environment.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const launcher = join(root, "inspire.mjs");
@@ -57,43 +59,6 @@ async function isolatedCheckout(directory: string): Promise<string> {
     "junction",
   );
   return checkout;
-}
-
-async function freePort(): Promise<number> {
-  const server = createServer();
-  await new Promise<void>((resolveListen, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => resolveListen());
-  });
-  const address = server.address();
-  if (!address || typeof address === "string")
-    throw new Error("Expected a TCP test server");
-  const port = address.port;
-  await new Promise<void>((resolveClose, reject) =>
-    server.close((error) => (error ? reject(error) : resolveClose())),
-  );
-  return port;
-}
-
-function launcherEnv(
-  statePath: string,
-  port: number,
-  home: string,
-): NodeJS.ProcessEnv {
-  return {
-    ...process.env,
-    HOME: home,
-    USERPROFILE: home,
-    APPDATA: join(home, "AppData", "Roaming"),
-    LOCALAPPDATA: join(home, "AppData", "Local"),
-    XDG_CONFIG_HOME: join(home, "config"),
-    XDG_STATE_HOME: join(home, "state"),
-    XDG_RUNTIME_DIR: join(home, "runtime"),
-    INSPIRE_HOST: "127.0.0.1",
-    INSPIRE_PORT: String(port),
-    INSPIRE_STATE_PATH: statePath,
-    INSPIRE_OPEN: "0",
-  };
 }
 
 function runLauncher(
@@ -172,10 +137,8 @@ describe("production launcher", () => {
   it("stops the readiness wait when the service process exits", async () => {
     const directory = await mkdtemp(join(tmpdir(), "inspire-systemd-ready-"));
     temporaryDirectories.push(directory);
-    const statePath = join(directory, "instance.json");
-    const port = await freePort();
     const environment = {
-      ...launcherEnv(statePath, port, join(directory, "home")),
+      ...(await directLauncherEnvironment(directory)),
       MAINPID: "999999999",
     };
 
@@ -197,10 +160,13 @@ describe("production launcher", () => {
   it("restarts without an existing instance and owns one isolated lifecycle", async () => {
     const directory = await mkdtemp(join(tmpdir(), "inspire-launcher-"));
     temporaryDirectories.push(directory);
-    const statePath = join(directory, "instance.json");
-    const port = await freePort();
-    const home = join(directory, "home");
-    const env = launcherEnv(statePath, port, home);
+    const env: NodeJS.ProcessEnv = {
+      ...isolatedTestEnvironment(directory),
+      ...(await directLauncherEnvironment(directory)),
+      INSPIRE_PI_COMMAND: process.env.INSPIRE_PI_COMMAND,
+    };
+    const statePath = env.INSPIRE_STATE_PATH!;
+    const port = env.INSPIRE_PORT!;
     // The launcher builds into its own checkout; never the shared one, whose
     // dist/ a running Host may serve.
     const checkout = await isolatedCheckout(directory);
@@ -259,18 +225,37 @@ describe("production launcher", () => {
     const publishedAsset = join(checkout, "dist", "assets", outgoingAsset);
     await mkdir(dirname(publishedAsset), { recursive: true });
     await writeFile(publishedAsset, "old chunk\n");
-    const output: Buffer[] = [];
-    const child = spawn(process.execPath, [checkoutLauncher, "restart"], {
-      cwd: checkout,
-      env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    activeEnvironment = env;
-    children.push(child);
-    child.stdout?.on("data", (chunk: Buffer) => output.push(chunk));
-    child.stderr?.on("data", (chunk: Buffer) => output.push(chunk));
+    async function launch(mode: "restart" | "start") {
+      const output: Buffer[] = [];
+      const child = spawn(process.execPath, [checkoutLauncher, mode], {
+        cwd: checkout,
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      activeEnvironment = env;
+      children.push(child);
+      child.stdout.on("data", (chunk: Buffer) => output.push(chunk));
+      child.stderr.on("data", (chunk: Buffer) => output.push(chunk));
+      await waitForLauncher(
+        child,
+        env,
+        output,
+        mode === "restart" ? 120_000 : 60_000,
+        checkoutLauncher,
+      );
+      return child;
+    }
 
-    await waitForLauncher(child, env, output, 120_000, checkoutLauncher);
+    async function stop(child: ChildProcess) {
+      const exited = once(child, "close");
+      expect(runLauncher(["stop"], env, checkoutLauncher)).toContain(
+        "Stopped INSΠRE process",
+      );
+      await expect(exited).resolves.toEqual([0, null]);
+      activeEnvironment = null;
+    }
+
+    const child = await launch("restart");
     const readState = async () =>
       JSON.parse(await readFile(statePath, "utf8")) as {
         pid: number;
@@ -320,7 +305,7 @@ describe("production launcher", () => {
       );
 
     const original = await restartStatus();
-    expect(original).toMatchObject({ available: true, allAvailable: false });
+    expect(original).toMatchObject({ available: true, allPiAvailable: false });
     const response = await fetch(`${origin}/api/host/restart`, {
       method: "POST",
       headers: terminalHeaders,
@@ -346,34 +331,12 @@ describe("production launcher", () => {
     expect(child.signalCode).toBeNull();
     await assertTerminalPreserved();
 
-    const stopOutput = runLauncher(["stop"], env, checkoutLauncher);
-    expect(stopOutput).toContain("Stopped INSΠRE process");
-    const exitCode = await new Promise<number | null>((resolveExit) =>
-      child.once("close", (code) => resolveExit(code)),
-    );
-    expect(exitCode).toBe(0);
-    activeEnvironment = null;
+    await stop(child);
     await expect(readFile(statePath, "utf8")).rejects.toMatchObject({
       code: "ENOENT",
     });
 
-    const restarted = spawn(process.execPath, [checkoutLauncher, "start"], {
-      cwd: checkout,
-      env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    activeEnvironment = env;
-    children.push(restarted);
-    const restartOutput: Buffer[] = [];
-    restarted.stdout!.on("data", (chunk: Buffer) => restartOutput.push(chunk));
-    restarted.stderr!.on("data", (chunk: Buffer) => restartOutput.push(chunk));
-    await waitForLauncher(
-      restarted,
-      env,
-      restartOutput,
-      undefined,
-      checkoutLauncher,
-    );
+    const restarted = await launch("start");
     expect((await readState()).token).toBe(firstState.token);
     await assertTerminalPreserved();
     const closeTerminalResponse = await terminalOperation({
@@ -381,15 +344,6 @@ describe("production launcher", () => {
       params: { id: createdTerminal.id, force: true },
     });
     expect(closeTerminalResponse.ok).toBe(true);
-    expect(runLauncher(["stop"], env, checkoutLauncher)).toContain(
-      "Stopped INSΠRE process",
-    );
-    const restartedExit =
-      restarted.exitCode ??
-      (await new Promise<number | null>((resolveExit) =>
-        restarted.once("close", resolveExit),
-      ));
-    expect(restartedExit).toBe(0);
-    activeEnvironment = null;
+    await stop(restarted);
   }, 240_000);
 });

@@ -1,4 +1,3 @@
-import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
 import { Maximize2, Minimize2 } from "lucide-react";
 import {
   type ClipboardEventHandler,
@@ -27,11 +26,11 @@ import {
   replaceFileCompletion,
   resolveCommandInventory,
 } from "../composer-completion";
-import { fileIconForPath } from "../file-icons";
 import { isComposingKeyboardEvent } from "../keyboard-input";
+import { useFloatingMenuDismissal } from "../use-floating-menu";
 import { HiddenFilesToggle } from "./HiddenFilesToggle";
-import { parentPath, ResourcePathLabel } from "./ResourcePathLabel";
-import { SearchMatchText, searchMatchRanges } from "./SearchMatchText";
+import { type ListOption, OptionList, useOptionList } from "./OptionList";
+import { ProjectFileLabel } from "./ProjectFiles";
 
 interface CompletionItem {
   key: string;
@@ -44,168 +43,56 @@ interface CompletionItem {
 }
 
 function CompletionMenu({
-  id,
+  list,
   token,
-  items,
-  active,
-  keyboardActive,
+  options,
   status,
   truncated,
   showHiddenFiles,
   onShowHiddenFilesChange,
-  onActive,
   onPick,
   onDismiss,
   anchorRef,
 }: {
-  id: string;
+  list: ReturnType<typeof useOptionList<CompletionItem>>;
   token: CaretCompletion;
-  items: CompletionItem[];
-  active: number;
-  keyboardActive: boolean;
+  options: readonly ListOption<CompletionItem>[];
   status: "loading" | "ready" | "error";
   truncated: boolean;
   showHiddenFiles: boolean;
   onShowHiddenFilesChange?: (value: boolean) => void;
-  onActive: (index: number) => void;
   onPick: (item: CompletionItem) => void;
   onDismiss: () => void;
   anchorRef: RefObject<HTMLDivElement | null>;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const outside = (event: Event) => {
-      const target = event.target as Node;
-      if (
-        !anchorRef.current?.contains(target) &&
-        !menuRef.current?.contains(target)
-      )
-        onDismiss();
-    };
-    document.addEventListener("pointerdown", outside);
-    document.addEventListener("focusin", outside);
-    return () => {
-      document.removeEventListener("pointerdown", outside);
-      document.removeEventListener("focusin", outside);
-    };
-  }, [anchorRef, onDismiss]);
-  const refs = useRef<Array<HTMLDivElement | null>>([]);
-  const listRef = useRef<HTMLDivElement>(null);
-  const virtualized = items.length > 50;
-  const fileControls =
-    token.kind === "file" && Boolean(onShowHiddenFilesChange);
-  const hasHeading = useCallback(
-    (index: number) =>
-      items[index]?.group !== items[index - 1]?.group && !fileControls,
-    [items, fileControls],
-  );
-  const getItemKey = useCallback((index: number) => items[index]!.key, [items]);
-  const estimateSize = useCallback(
-    (index: number) => 48 + (hasHeading(index) ? 28 : 0),
-    [hasHeading],
-  );
-  const virtualizer = useVirtualizer({
-    enabled: virtualized,
-    count: items.length,
-    getScrollElement: () => menuRef.current,
-    getItemKey,
-    estimateSize,
-    scrollMargin: listRef.current?.offsetTop ?? 0,
-    overscan: 4,
-    rangeExtractor: (range) => {
-      const indexes = defaultRangeExtractor(range);
-      // Keyboard navigation keeps its active descendant mounted offscreen.
-      if (!indexes.includes(active)) indexes.push(active);
-      return indexes.sort((left, right) => left - right);
-    },
-  });
-  useLayoutEffect(() => {
-    if (!keyboardActive) return;
-    if (virtualized) virtualizer.scrollToIndex(active, { align: "auto" });
-    else refs.current[active]?.scrollIntoView({ block: "nearest" });
-  }, [active, items, keyboardActive, virtualized, virtualizer]);
-  const renderItem = (item: CompletionItem, index: number) => {
-    const Icon = item.file ? fileIconForPath(item.file.path) : null;
-    const directory = item.file ? parentPath(item.file.path) : null;
-    const matches = item.file
-      ? searchMatchRanges(item.file.path, token.query.trim().split(/\s+/))
-      : [];
-    return (
+  useFloatingMenuDismissal(true, anchorRef, menuRef, onDismiss);
+  const renderItem = ({ value: item }: ListOption<CompletionItem>) =>
+    item.file ? (
+      <ProjectFileLabel
+        path={item.file.path}
+        name={item.title}
+        query={token.query}
+        captionClass="completion__hint"
+      />
+    ) : (
       <>
-        {hasHeading(index) ? (
-          <div className="completion__heading" aria-hidden>
-            {item.group}
-          </div>
-        ) : null}
-        <div
-          ref={(element) => {
-            refs.current[index] = element;
-          }}
-          id={`${id}-option-${index}`}
-          role="option"
-          aria-selected={keyboardActive && index === active}
-          aria-posinset={index + 1}
-          aria-setsize={items.length}
-          className={`completion__option ${item.file ? "completion__option--file" : ""} ${keyboardActive && index === active ? "completion__option--active" : ""}`}
-          title={item.file?.path}
-          aria-label={
-            item.file ? `${item.title}, ${item.file.path}` : undefined
-          }
-          onMouseDown={(event) => event.preventDefault()}
-          onPointerMove={(event) => {
-            if (event.pointerType !== "touch") onActive(index);
-          }}
-          onClick={() => onPick(item)}
-        >
-          <span
-            className={`completion__title ${item.file ? "completion__title--file" : ""}`}
-          >
-            {item.file && Icon ? (
-              <>
-                <Icon size={13} aria-hidden />
-                <span>
-                  <SearchMatchText
-                    text={item.title}
-                    ranges={matches}
-                    offset={item.file.path.length - item.title.length}
-                  />
-                </span>
-              </>
-            ) : item.command ? (
-              <>
-                /{item.command.name}
-                {item.command.argumentHint ? (
-                  <span className="completion__arguments">
-                    {" "}
-                    {item.command.argumentHint}
-                  </span>
-                ) : null}
-              </>
-            ) : (
-              item.title
-            )}
-          </span>
-          {item.file ? (
-            directory ? (
-              <ResourcePathLabel
-                path={directory}
-                title={item.file.path}
-                className="completion__hint"
-                matches={matches}
-              />
-            ) : null
-          ) : item.hint ? (
-            <span className="completion__hint">{item.hint}</span>
-          ) : null}
-        </div>
+        <span className="completion__title">
+          {item.command ? `/${item.command.name}` : item.title}
+          {item.command?.argumentHint && (
+            <span className="completion__arguments">
+              {" "}
+              {item.command.argumentHint}
+            </span>
+          )}
+        </span>
+        {item.hint && <span className="completion__hint">{item.hint}</span>}
       </>
     );
-  };
   return (
     <div
       ref={menuRef}
       className="completion"
-      data-keyboard-active={keyboardActive}
       onClick={(event) => event.stopPropagation()}
     >
       {token.kind === "file" && onShowHiddenFilesChange ? (
@@ -220,52 +107,37 @@ function CompletionMenu({
           />
         </div>
       ) : null}
-      <div
-        ref={listRef}
-        id={id}
-        role="listbox"
-        aria-label={
+      <OptionList
+        list={list}
+        options={options}
+        optionClass="completion__option"
+        className="completion__list"
+        onPick={onPick}
+        highlightAsSelection
+        heading={({ group }) => (
+          <div className="completion__heading" aria-hidden>
+            {group}
+          </div>
+        )}
+        renderOption={renderItem}
+        label={
           token.kind === "file"
             ? "Project file completions"
             : token.kind === "argument"
               ? `${token.name === "model" ? "Model" : "Thinking level"} argument completions`
               : "Slash command completions"
         }
-        aria-busy={status === "loading"}
+        loading={status === "loading"}
       >
-        {virtualized ? (
-          <div
-            style={{ height: virtualizer.getTotalSize(), position: "relative" }}
-          >
-            {virtualizer.getVirtualItems().map((row) => (
-              <div
-                key={row.key}
-                data-index={row.index}
-                ref={virtualizer.measureElement}
-                style={{
-                  position: "absolute",
-                  top: row.start - virtualizer.options.scrollMargin,
-                  left: 0,
-                  width: "100%",
-                }}
-              >
-                {renderItem(items[row.index]!, row.index)}
-              </div>
-            ))}
-          </div>
-        ) : (
-          items.map((item, index) => (
-            <div key={item.key}>{renderItem(item, index)}</div>
-          ))
-        )}
         {truncated ? (
-          <div className="completion__empty" role="status">
+          <div className="picker__empty" role="status">
             Partial search results
           </div>
         ) : null}
-        {items.length === 0 ? (
+        {options.length === 0 ? (
           <div
-            className={`completion__empty ${status === "error" ? "completion__empty--error" : ""}`}
+            className="picker__empty"
+            data-error={status === "error"}
             role="status"
           >
             {status === "loading"
@@ -279,7 +151,7 @@ function CompletionMenu({
                     : "No matching commands"}
           </div>
         ) : null}
-      </div>
+      </OptionList>
     </div>
   );
 }
@@ -329,7 +201,7 @@ export function ComposerInput({
   onPaste?: ClipboardEventHandler<HTMLTextAreaElement>;
   onKeyDown?: KeyboardEventHandler<HTMLTextAreaElement>;
 }) {
-  const completionId = useId();
+  const completionList = useOptionList<CompletionItem>();
   const editorId = useId();
   const [expanded, setExpanded] = useState(false);
   const [completionTruncated, setCompletionTruncated] = useState(false);
@@ -340,9 +212,6 @@ export function ComposerInput({
   const [completionStatus, setCompletionStatus] = useState<
     "loading" | "ready" | "error"
   >("ready");
-  const [completionActive, setCompletionActive] = useState(0);
-  const [completionKeyboardActive, setCompletionKeyboardActive] =
-    useState(true);
   const inputWrapRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   // Let an enclosing modal capture its opener before moving focus.
@@ -408,8 +277,7 @@ export function ComposerInput({
     }
     dismissedCompletionRef.current = null;
     const token = parseCaretCompletion(draft, caret);
-    setCompletionActive(0);
-    setCompletionKeyboardActive(true);
+    completionList.reset(true);
     setCompletion(
       (token?.kind === "file" && !searchProjectFiles) ||
         (token?.kind === "argument" && !includeNativeCommands)
@@ -511,13 +379,18 @@ export function ComposerInput({
     }));
   }, [commandInventory, completion, completionFiles, models, activeModel]);
 
-  useEffect(
-    () => setCompletionActive(0),
-    [completion?.kind, completion?.query],
-  );
-  const activeIndex = Math.min(
-    completionActive,
-    Math.max(0, completionItems.length - 1),
+  const options = useMemo(
+    () =>
+      completionItems.map(
+        (item): ListOption<CompletionItem> => ({
+          key: item.key,
+          value: item,
+          group: item.file && onShowHiddenFilesChange ? undefined : item.group,
+          title: item.file?.path,
+          label: item.file ? `${item.title}, ${item.file.path}` : undefined,
+        }),
+      ),
+    [completionItems, onShowHiddenFilesChange],
   );
 
   const pickCompletion = (item: CompletionItem | undefined) => {
@@ -550,6 +423,7 @@ export function ComposerInput({
       : { value: next.value, caret: next.caret };
     completionSelectionRef.current = next;
     onChange(next.value);
+    completionList.reset(true);
     setCompletion(nextArgument);
   };
 
@@ -563,33 +437,13 @@ export function ComposerInput({
         dismissCompletion();
         return;
       }
-      if (event.key === "ArrowDown" && completionItems.length > 0) {
-        event.preventDefault();
-        setCompletionKeyboardActive(true);
-        setCompletionActive((index) =>
-          Math.min(index + 1, completionItems.length - 1),
-        );
-        return;
-      }
       if (
-        event.key === "ArrowUp" &&
-        !event.altKey &&
-        completionItems.length > 0
-      ) {
-        event.preventDefault();
-        setCompletionKeyboardActive(true);
-        setCompletionActive((index) => Math.max(0, index - 1));
+        completionList.navigate(event, options, pickCompletion, {
+          tab: true,
+          excludeAltUp: true,
+        })
+      )
         return;
-      }
-      if (
-        (event.key === "Enter" || event.key === "Tab") &&
-        !event.shiftKey &&
-        completionItems[activeIndex]
-      ) {
-        event.preventDefault();
-        pickCompletion(completionItems[activeIndex]);
-        return;
-      }
     }
     onKeyDown?.(event);
   };
@@ -603,7 +457,7 @@ export function ComposerInput({
         aria-label={completionLabel}
         aria-haspopup="listbox"
         aria-expanded={Boolean(completion)}
-        aria-owns={completion ? completionId : undefined}
+        aria-owns={completion ? completionList.id : undefined}
       >
         <textarea
           ref={textareaRef}
@@ -616,13 +470,9 @@ export function ComposerInput({
             } as CSSProperties
           }
           aria-autocomplete="list"
-          aria-controls={completion ? completionId : undefined}
+          aria-controls={completion ? completionList.id : undefined}
           aria-activedescendant={
-            completion &&
-            completionKeyboardActive &&
-            completionItems[activeIndex]
-              ? `${completionId}-option-${activeIndex}`
-              : undefined
+            completion ? completionList.descendant(options) : undefined
           }
           rows={rows}
           value={value}
@@ -670,11 +520,9 @@ export function ComposerInput({
         />
         {completion && (
           <CompletionMenu
-            id={completionId}
+            list={completionList}
             token={completion}
-            items={completionItems}
-            active={activeIndex}
-            keyboardActive={completionKeyboardActive}
+            options={options}
             status={completion.kind === "file" ? completionStatus : "ready"}
             truncated={completion.kind === "file" && completionTruncated}
             showHiddenFiles={showHiddenFiles}
@@ -686,10 +534,6 @@ export function ComposerInput({
                   }
                 : undefined
             }
-            onActive={(index) => {
-              setCompletionKeyboardActive(false);
-              setCompletionActive(index);
-            }}
             onPick={pickCompletion}
             onDismiss={dismissCompletion}
             anchorRef={inputWrapRef}

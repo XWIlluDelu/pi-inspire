@@ -51,7 +51,7 @@ interface ResourceControllerHost {
   revealWorkspacePath(workspacePath: string): void;
 }
 
-interface ImageReadOwner {
+interface ResourceReadOwner {
   api: Api;
   sessionId: string;
   viewId: string;
@@ -68,8 +68,8 @@ interface ImageReadOwner {
 export class ResourceController {
   private previewObjectUrl: string | null = null;
   private resourceRequest: AbortController | null = null;
-  private documentImageRequests = new Set<AbortController>();
-  private downloadRequests = new Set<AbortController>();
+  private documentImages = new AbortController();
+  private downloads = new AbortController();
   private resourceProbeRequest: AbortController | null = null;
   private resourceProbeKey: string | null = null;
   private probeRecovery = new RecoveryBackoff();
@@ -82,11 +82,11 @@ export class ResourceController {
     this.resourceRequest?.abort();
     this.resourceRequest = null;
     if (!retainDocumentImages) {
-      for (const request of this.documentImageRequests) request.abort();
-      this.documentImageRequests.clear();
+      this.documentImages.abort();
+      this.documentImages = new AbortController();
     }
-    for (const request of this.downloadRequests) request.abort();
-    this.downloadRequests.clear();
+    this.downloads.abort();
+    this.downloads = new AbortController();
   }
 
   cancelProbes(clearStanding = false): void {
@@ -394,7 +394,7 @@ export class ResourceController {
   }
 
   private async readInlineImage(
-    { api, sessionId, viewId, signal, checkCurrent }: ImageReadOwner,
+    { api, sessionId, viewId, signal, checkCurrent }: ResourceReadOwner,
     reference: string,
     source: "transcript" | "document",
   ): Promise<Blob> {
@@ -495,109 +495,88 @@ export class ResourceController {
     }
   }
 
-  /** A document image is independently authorized by the ordinary resource
-   * resolver. Reading a document grants no authority over its linked files. */
-  async loadDocumentImage(
+  /** Both image reads and download tickets are bound to the current file. */
+  private async readSelectedFile<T>(
     documentId: string,
-    reference: string,
     signal: AbortSignal,
-  ): Promise<Blob> {
+    ownsPane: (state: ResourceControllerState) => boolean,
+    perform: (owner: ResourceReadOwner) => Promise<T>,
+  ): Promise<T> {
     const api = this.host.api();
     const { sessionId, transcriptViewId: viewId } = this.host.state();
     const retired = () =>
-      Object.assign(new Error("The document preview is no longer current"), {
-        name: "AbortError",
-      });
+      new DOMException("The file selection changed", "AbortError");
     if (!api || !sessionId || !viewId) throw retired();
-    const request = new AbortController();
-    const abort = () => request.abort();
-    signal.addEventListener("abort", abort, { once: true });
-    if (signal.aborted) request.abort();
-    this.documentImageRequests.add(request);
     const checkCurrent = () => {
       const state = this.host.state();
+      const preview = inspectedPreview(state.fileInspection);
       if (
-        request.signal.aborted ||
+        signal.aborted ||
         this.host.api() !== api ||
         state.sessionId !== sessionId ||
         state.transcriptViewId !== viewId ||
         !state.resourcesOpen ||
-        state.contextMode !== "files" ||
-        state.fileInspection.kind !== "file" ||
-        state.fileInspection.preview?.status !== "ready" ||
-        state.fileInspection.preview.descriptor.id !== documentId
+        !ownsPane(state) ||
+        preview?.status !== "ready" ||
+        preview.descriptor.id !== documentId
       )
         throw retired();
     };
     try {
-      return await this.readInlineImage(
-        { api, sessionId, viewId, signal: request.signal, checkCurrent },
-        reference,
-        "document",
-      );
+      checkCurrent();
+      return await perform({ api, sessionId, viewId, signal, checkCurrent });
     } catch (error) {
       checkCurrent();
       if (error instanceof ApiError && error.status === 401)
         this.host.handleAuthFailure();
       throw error;
-    } finally {
-      signal.removeEventListener("abort", abort);
-      this.documentImageRequests.delete(request);
     }
   }
 
-  /** Mint a single-file capability only while the selected preview still owns
-   * the session/view/transport. The browser streams the complete original file. */
+  /** A linked image needs its own resource authorization. */
+  loadDocumentImage(
+    documentId: string,
+    reference: string,
+    signal: AbortSignal,
+  ): Promise<Blob> {
+    return this.readSelectedFile(
+      documentId,
+      AbortSignal.any([this.documentImages.signal, signal]),
+      (state) => state.contextMode === "files",
+      (owner) => this.readInlineImage(owner, reference, "document"),
+    );
+  }
+
   async downloadResource(): Promise<void> {
-    const api = this.host.api();
-    const {
-      sessionId,
-      transcriptViewId: viewId,
-      fileInspection,
-    } = this.host.state();
+    const { sessionId, transcriptViewId, fileInspection } = this.host.state();
     const preview = inspectedPreview(fileInspection);
-    if (!api || !sessionId || !viewId || preview?.status !== "ready") return;
+    if (
+      !this.host.api() ||
+      !sessionId ||
+      !transcriptViewId ||
+      preview?.status !== "ready"
+    )
+      return;
     const { descriptor } = preview;
-    const request = new AbortController();
-    this.downloadRequests.add(request);
-    const checkCurrent = () => {
-      const state = this.host.state();
-      if (
-        request.signal.aborted ||
-        this.host.api() !== api ||
-        state.sessionId !== sessionId ||
-        state.transcriptViewId !== viewId ||
-        !state.resourcesOpen ||
-        state.fileInspection.kind !== "file" ||
-        state.fileInspection.preview?.status !== "ready" ||
-        state.fileInspection.preview.descriptor.id !== descriptor.id
-      )
-        throw Object.assign(new Error("The file selection changed"), {
-          name: "AbortError",
-        });
-    };
-    try {
-      checkCurrent();
-      const grant = await api.resourceDownloadTicket(
-        descriptor.id,
-        sessionId,
-        request.signal,
-      );
-      checkCurrent();
-      if (!/^[A-Za-z0-9_-]{43}$/.test(grant.ticket))
-        throw new Error("The Host returned an invalid download ticket");
-      this.host.saveDownload(
-        `/api/resource-downloads/${grant.ticket}`,
-        descriptor.name,
-      );
-    } catch (error) {
-      checkCurrent();
-      if (error instanceof ApiError && error.status === 401)
-        this.host.handleAuthFailure();
-      throw error;
-    } finally {
-      this.downloadRequests.delete(request);
-    }
+    await this.readSelectedFile(
+      descriptor.id,
+      this.downloads.signal,
+      () => true,
+      async (owner) => {
+        const grant = await owner.api.resourceDownloadTicket(
+          descriptor.id,
+          owner.sessionId,
+          owner.signal,
+        );
+        owner.checkCurrent();
+        if (!/^[A-Za-z0-9_-]{43}$/.test(grant.ticket))
+          throw new Error("The Host returned an invalid download ticket");
+        this.host.saveDownload(
+          `/api/resource-downloads/${grant.ticket}`,
+          descriptor.name,
+        );
+      },
+    );
   }
 
   /** Resolve a conversation reference through the authenticated host endpoint

@@ -21,12 +21,11 @@ export function hostRestartBackend(
   const launcher = createLauncherRestartClient(process);
   return {
     async inspect() {
-      return { host: await launcher.inspect(), all: false };
+      return { host: await launcher.inspect() };
     },
     prepare: () => prepareHostRestart(root),
     async request(scope, commit) {
-      if (scope === "all" || scope === "all-pi")
-        return { code: 1, issued: false };
+      if (scope === "all-pi") return { code: 1, issued: false };
       const result = await launcher.request(commit);
       if (result.issued) {
         // Let the controller publish submission before graceful shutdown.

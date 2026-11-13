@@ -33,7 +33,6 @@ import {
   type BranchNavigateRequest,
   type BranchNavigateResponse,
   type ComposerHistoryEntry,
-  type HiddenClearResponse,
   type HostNativeCommandRequest,
   type HostNativeCommandResponse,
   isBusyRunState,
@@ -51,14 +50,14 @@ import {
   type PiMessageDeliveryMode,
   type ProjectionConflict,
   type PromptRequest,
-  type SessionDeleteResponse,
+  type SessionDeletionOutcome,
+  type SessionDeletionRequest,
   type SessionRuntimeStatus,
   THINKING_LEVELS,
   type ThinkingLevel,
   type UploadedAttachment,
 } from "../shared/contracts.js";
 import type { SessionHistoryQuery } from "../shared/history-query.js";
-import type { ModelCatalogResponse } from "../shared/model-settings.js";
 import type { TaskNotification, TaskOutcome } from "../shared/notifications.js";
 import {
   PROVIDER_AUTH_SUFFIX,
@@ -79,7 +78,11 @@ import type {
 } from "./external-session.js";
 import { modelOption, modelSettings } from "./model-catalog.js";
 import { refreshWorkerCatalog } from "./model-catalog-refresh.js";
-import type { ModelMetadata, ModelMetadataCatalog } from "./model-metadata.js";
+import type {
+  ModelMetadata,
+  ModelMetadataCatalog,
+  NativeModelCatalog,
+} from "./model-metadata.js";
 import {
   createProjectDirectory,
   resolveProjectDirectory,
@@ -544,27 +547,18 @@ export class RuntimeController extends EventEmitter {
       },
     });
     this.deletions = new RuntimeSessionDeletionController({
-      assertNotClosing: () => this.assertNotClosing(),
       withMaintenance: (operation) => this.withMaintenanceOperation(operation),
       clearStartupHint: (sessionId) => {
         if (this.lastOpenedSessionId === sessionId)
           this.lastOpenedSessionId = null;
       },
-      selectionReserved: (sessionId) =>
-        this.selectionReservations.has(sessionId) ||
-        Boolean(this.provisionalReservation(sessionId)),
-      loading: (sessionId, path) =>
-        [
-          this.loadingSlots.get(sessionId),
-          path ? this.loadingPaths.get(path) : undefined,
-        ].filter((task) => task !== undefined),
       changing: (sessionId, path) =>
         this.selectionReservations.has(sessionId) ||
         this.loadingSlots.has(sessionId) ||
-        (path !== undefined && this.loadingPaths.has(path)) ||
+        this.loadingPaths.has(path) ||
         Boolean(this.provisionalReservation(sessionId, path)) ||
         this.forkReservationsById.has(sessionId) ||
-        (path !== undefined && this.forkReservationsByPath.has(path)),
+        this.forkReservationsByPath.has(path),
       slot: (sessionId) => this.slots.get(sessionId),
       removeSlot: (sessionId, expected) => {
         this.externalSessions?.detach(expected);
@@ -586,8 +580,8 @@ export class RuntimeController extends EventEmitter {
         }
       },
       catalogGet: (sessionId) => this.catalog.get(sessionId),
-      catalogRefresh: (force) =>
-        this.catalog.refresh(force, { requireComplete: true }),
+      catalogRefresh: () =>
+        this.catalog.refresh(true, { requireComplete: true }),
       invalidateCatalog: () => this.catalog.invalidate(),
       deleteSessionRecord: (session) => this.deleteSessionRecord(session),
     });
@@ -656,10 +650,8 @@ export class RuntimeController extends EventEmitter {
     });
     this.reads = new RuntimeReadController({
       assertAvailable: () => this.assertMaintenanceAvailable(),
-      emptySnapshot: () => this.emptySnapshot(),
       requireSlot: (sessionId) => this.requireSlot(sessionId),
       useSlot: (slot, operation) => this.useSlot(slot, operation),
-      snapshotSlot: (slot) => this.snapshotSlot(slot),
       reconcileSlot: (slot, force) => this.reconcileSlot(slot, force),
       throwIfConflicted: (slot) => this.throwIfConflicted(slot),
       promptFileName: (path) => this.attachments.promptFileName(path),
@@ -1761,7 +1753,6 @@ export class RuntimeController extends EventEmitter {
   }
 
   private eventSequence = 0;
-  private readonly snapshotCuts = new WeakMap<ActiveSnapshot, number>();
   private lastTaskCreatedAt = 0;
 
   private finishTask(slot: RuntimeSlot, outcome: TaskOutcome | null): void {
@@ -1790,15 +1781,9 @@ export class RuntimeController extends EventEmitter {
     } satisfies TaskNotification);
   }
 
-  /** Metadata and the event boundary are captured in the same synchronous
-   * projection, after any asynchronous Pi and file reads finish. */
-  eventSnapshotCut(snapshot: ActiveSnapshot): number | undefined {
-    return this.snapshotCuts.get(snapshot);
-  }
-
+  /** Capture the event cut in the same synchronous projection. */
   private captureSnapshot(snapshot: ActiveSnapshot): ActiveSnapshot {
-    this.snapshotCuts.set(snapshot, this.eventSequence);
-    return snapshot;
+    return { ...snapshot, runtimeSequence: this.eventSequence };
   }
 
   private emptySnapshot(): ActiveSnapshot {
@@ -2114,6 +2099,7 @@ export class RuntimeController extends EventEmitter {
       slot.overlay,
       effectiveLeafId,
       slot.viewId,
+      slot.workerView?.entryTurns,
     );
     return {
       transcriptPage,
@@ -2123,10 +2109,7 @@ export class RuntimeController extends EventEmitter {
       effectiveLeafId,
       navigationLeased: workerOnSeparateBranch(slot),
       branchRevision: slot.branchRevision,
-      activeAssistantMessageKey: this.liveTail.activeAssistantSnapshotKey(
-        slot,
-        transcriptPage.messages,
-      ),
+      activeAssistantMessageKey: slot.activeAssistantKey,
     };
   }
 
@@ -2190,7 +2173,6 @@ export class RuntimeController extends EventEmitter {
         ...this.liveTranscript(slot),
         isStreaming: isBusyRunState(slot.runState),
         toolActivity: slot.toolActivity,
-        isCompacting: slot.runState === "compacting",
       },
       runState: slot.runState,
       bashRunning: Boolean(slot.nativeBash),
@@ -2540,62 +2522,56 @@ export class RuntimeController extends EventEmitter {
     this.rejectExternalWriter(slot);
   }
 
-  async selectBranch(
-    sessionId: string,
-    leafId: string,
-  ): Promise<ActiveSnapshot> {
-    return this.withMaintenanceOperation(async () => {
-      const slot = this.requireSlot(sessionId);
-      await this.mutateSlot(slot, async () => {
-        const projection = slot.projection;
-        const target = projection?.entry(leafId);
-        if (!projection || !target)
-          throw requestError("That branch no longer exists", 404);
-        if (leafId === effectiveRuntimeLeaf(slot)) return false;
-        const reported = this.externalSessions?.reportedLeaf(slot);
-        if (reported !== undefined && reported === leafId) return false;
-        const watching = await this.externalWriterContinues(slot, leafId, true);
-        if (
-          !watching &&
-          slot.readOnlyReason !== "workspace-unavailable" &&
-          isBranchEditTarget(target) &&
-          leafId !== projection.leafId
-        )
-          throw requestError(
-            "Pi cannot continue after this branch end. Use Edit from here in History.",
-            409,
-          );
-        if (watching || this.externalSessions?.has(slot))
-          this.requireIdleBranchSlot(slot, slot.branchRevision);
-        // Release the old owner only after the switch has passed admission.
-        this.externalSessions?.detach(slot);
-        if (watching) {
-          // A live Pi is running the chosen branch: watch it, as on entry.
-          if (slot.process) await this.stopWriter(slot);
-          this.workingSessions.delete(slot.id);
-          this.moveView(slot, leafId);
-          this.markExternalActive(slot);
-          return false;
-        }
-        if (slot.readOnlyReason === "external-active")
-          slot.readOnlyReason = null;
-        this.workingSessions.add(slot.id);
-        if (slot.process && slot.ready) {
-          await this.navigateInsideGate(slot, {
-            sessionId,
-            targetId: leafId,
-            mode: "switch",
-            revision: slot.branchRevision,
-          });
-          return false;
-        }
-        // Inspire's own worker starts at this branch when it is next needed.
-        this.moveView(slot, leafId);
-        this.emitSlotEvent(slot, { type: "runtime_ready" });
-        return slot.readOnlyReason === null;
+  /** Switch the viewed branch without starting a cold writer. */
+  private async watchBranch(
+    slot: RuntimeSlot,
+    { targetId, revision }: BranchNavigateRequest,
+  ): Promise<void> {
+    this.requireFreshBranchRevision(slot, revision);
+    const projection = slot.projection;
+    const target = projection?.entry(targetId);
+    if (!projection || !target)
+      throw requestError("That branch no longer exists", 404);
+    if (
+      targetId === effectiveRuntimeLeaf(slot) ||
+      targetId === this.externalSessions?.reportedLeaf(slot)
+    )
+      return;
+    const watching = await this.externalWriterContinues(slot, targetId, true);
+    this.requireFreshBranchRevision(slot, revision);
+    if (
+      !watching &&
+      slot.readOnlyReason !== "workspace-unavailable" &&
+      isBranchEditTarget(target) &&
+      targetId !== projection.leafId
+    )
+      throw requestError(
+        "Pi cannot continue after this branch end. Use Edit from here in History.",
+        409,
+      );
+    if (watching || this.externalSessions?.has(slot))
+      this.requireIdleBranchSlot(slot, revision);
+    this.externalSessions?.detach(slot);
+    if (watching) {
+      if (slot.process) await this.stopWriter(slot);
+      this.workingSessions.delete(slot.id);
+      this.moveView(slot, targetId);
+      this.markExternalActive(slot);
+      return;
+    }
+    if (slot.readOnlyReason === "external-active") slot.readOnlyReason = null;
+    this.workingSessions.add(slot.id);
+    if (slot.process && slot.ready) {
+      await this.navigateInsideGate(slot, {
+        sessionId: slot.id,
+        targetId,
+        mode: "switch",
+        revision,
       });
-      return this.snapshotSlot(slot);
-    });
+      return;
+    }
+    this.moveView(slot, targetId);
+    this.emitSlotEvent(slot, { type: "runtime_ready" });
   }
 
   private moveView(slot: RuntimeSlot, leafId: string | null): void {
@@ -2684,20 +2660,11 @@ export class RuntimeController extends EventEmitter {
     return this.emptySnapshot();
   }
 
-  deleteSession(sessionId: string): Promise<SessionDeleteResponse> {
-    return this.deletions.deleteSession(sessionId);
-  }
-
-  clearHiddenSessions(
-    expectedSessionIds: readonly string[],
-    hiddenSessionIds: readonly string[],
-    hiddenProjectCwds: readonly string[],
-  ): Promise<HiddenClearResponse> {
-    return this.deletions.clearHiddenSessions(
-      expectedSessionIds,
-      hiddenSessionIds,
-      hiddenProjectCwds,
-    );
+  deleteSessions(
+    request: SessionDeletionRequest,
+    curation: Parameters<RuntimeSessionDeletionController["deleteSessions"]>[1],
+  ): Promise<SessionDeletionOutcome> {
+    return this.deletions.deleteSessions(request, curation);
   }
 
   private rememberProjectCwd(cwd: string): void {
@@ -3640,22 +3607,21 @@ export class RuntimeController extends EventEmitter {
   async navigateBranch(
     request: BranchNavigateRequest,
   ): Promise<BranchNavigateResponse> {
-    return this.withMaintenanceOperation(() =>
-      this.navigateBranchInside(request),
-    );
-  }
-
-  private async navigateBranchInside(
-    request: BranchNavigateRequest,
-  ): Promise<BranchNavigateResponse> {
-    const slot = this.requireSlot(request.sessionId);
-    return this.mutateSlot(slot, () => this.navigateInsideGate(slot, request));
+    return this.withMaintenanceOperation(() => {
+      const slot = this.requireSlot(request.sessionId);
+      return this.mutateSlot(slot, async () => {
+        if (request.mode !== "watch")
+          return this.navigateInsideGate(slot, request);
+        await this.watchBranch(slot, request);
+        return { snapshot: await this.snapshotSlot(slot) };
+      });
+    });
   }
 
   /** Branch navigation of the slot's own worker; caller holds the slot gate. */
   private async navigateInsideGate(
     slot: RuntimeSlot,
-    request: BranchNavigateRequest,
+    request: Exclude<BranchNavigateRequest, { mode: "watch" }>,
     restoringView = false,
   ): Promise<BranchNavigateResponse> {
     this.requireIdleBranchSlot(slot, request.revision);
@@ -5028,7 +4994,7 @@ export class RuntimeController extends EventEmitter {
   async refreshModels(
     sessionId: string,
     inherit = false,
-  ): Promise<ModelCatalogResponse & { enabledModelPatterns?: string[] }> {
+  ): Promise<NativeModelCatalog> {
     this.assertMaintenanceAvailable();
     const retained = this.slots.get(sessionId);
     const slot =
@@ -5087,10 +5053,7 @@ export class RuntimeController extends EventEmitter {
           );
         this.previewModels.set(slot, { revision, data: metadata });
         return {
-          models: metadata.models,
-          enabledModelPatterns: metadata.enabledModelPatterns,
-          defaults: metadata.defaults,
-          ...(metadata.warning ? { warning: metadata.warning } : {}),
+          ...metadata,
           ...(await selected()),
         };
       }
@@ -5366,20 +5329,9 @@ export class RuntimeController extends EventEmitter {
     };
   }
 
-  async snapshot(sessionId?: string | null): Promise<ActiveSnapshot> {
-    if (sessionId === undefined) {
-      const hint = this.startupSessionHint;
-      if (hint === null) return this.reads.snapshot(null);
-      try {
-        return await this.snapshot(hint);
-      } catch (error) {
-        if ((error as { code?: string })?.code !== "SESSION_NOT_FOUND")
-          throw error;
-        return this.reads.snapshot(null);
-      }
-    }
-    if (sessionId === null) return this.reads.snapshot(null);
-    this.assertNotClosing();
+  async snapshot(sessionId: string | null): Promise<ActiveSnapshot> {
+    this.assertMaintenanceAvailable();
+    if (sessionId === null) return this.emptySnapshot();
     const retained = this.slots.get(sessionId);
     const slot =
       retained && (retained.projection || retained.process)
@@ -5388,7 +5340,8 @@ export class RuntimeController extends EventEmitter {
     return this.useSlot(slot, async () => {
       if (!slot.mutationQueue.pending && this.sessionViewObservers.has(slot.id))
         await this.observeExternalOwner(slot);
-      return this.reads.snapshot(sessionId);
+      this.assertMaintenanceAvailable();
+      return this.snapshotSlot(this.requireSlot(sessionId));
     });
   }
 

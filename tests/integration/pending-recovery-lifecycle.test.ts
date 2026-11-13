@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hostReceipt } from "../../shared/host-operations";
-import { deleteSessionDraft, sessionDraft } from "../../src/session-drafts";
 import {
   closeHostApiFixture,
   hostApiFixture,
 } from "../server/fixtures/host-api";
 import {
+  activeSnapshot,
   deferred,
   FakeWebSocket,
   installFakeWebSocket,
@@ -21,7 +21,6 @@ describe("Pending intent and receipt lifecycle", () => {
   let forward: ReturnType<typeof forwardHostRequests>;
   beforeEach(async () => {
     installFakeWebSocket();
-    deleteSessionDraft("s1");
     f = await hostApiFixture();
     forward = forwardHostRequests(f.application);
   });
@@ -70,7 +69,7 @@ describe("Pending intent and receipt lifecycle", () => {
         await admitted.promise;
         store.recoverConnection("online");
         await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2));
-        FakeWebSocket.instances[1]!.open();
+        FakeWebSocket.instances[1]!.join(activeSnapshot());
 
         if (receipt === "unavailable") {
           await vi.waitFor(() => expect(receiptReads).toHaveBeenCalledOnce());
@@ -84,7 +83,7 @@ describe("Pending intent and receipt lifecycle", () => {
           transportGeneration: generation,
         });
         expect(recover).toHaveBeenCalledOnce();
-        expect(sessionDraft("s1")).toBe(expectedDraft);
+        expect(store.drafts.get("s1").text).toBe(expectedDraft);
         const notices = store.getState().notices;
         expect(notices).toHaveLength(receipt === "failed" ? 1 : 0);
         expect(
@@ -100,12 +99,12 @@ describe("Pending intent and receipt lifecycle", () => {
         delivery.resolve();
         await operation;
       }
-      expect(sessionDraft("s1")).toBe(expectedDraft);
+      expect(store.drafts.get("s1").text).toBe(expectedDraft);
       if (receipt === "failed") {
         recover.mockResolvedValue({ steering: ["new input"], followUp: [] });
         expect(await store.recoverPending()).toBe(true);
         expect(recover).toHaveBeenCalledTimes(2);
-        expect(sessionDraft("s1")).toBe("new input");
+        expect(store.drafts.get("s1").text).toBe("new input");
       }
     },
   );
@@ -147,7 +146,7 @@ describe("Pending intent and receipt lifecycle", () => {
     expect(await store.recoverPending()).toBe(true);
     expect(ids).toHaveLength(1);
     expect(recover).toHaveBeenCalledOnce();
-    expect(sessionDraft("s1")).toBe("retained");
+    expect(store.drafts.get("s1").text).toBe("retained");
   });
 
   it("keeps a retired receipt unknown until a new queue is admitted", async () => {
@@ -185,7 +184,7 @@ describe("Pending intent and receipt lifecycle", () => {
     });
     expect(await store.recoverPending()).toBe(true);
     expect(requests[1]?.operationId).not.toBe(requests[0]?.operationId);
-    expect(sessionDraft("s1")).toBe("current queue");
+    expect(store.drafts.get("s1").text).toBe("current queue");
     const retired = await forward("/api/pending/recover", {
       method: "POST",
       body: JSON.stringify(requests[0]),
@@ -233,8 +232,10 @@ describe("Pending intent and receipt lifecycle", () => {
       },
     });
     expect(await store.recoverPending()).toBe(true);
-    await vi.waitFor(() => expect(sessionDraft("s1")).toContain("old queue"));
-    expect(sessionDraft("s1")).toContain("new queue");
+    await vi.waitFor(() =>
+      expect(store.drafts.get("s1").text).toContain("old queue"),
+    );
+    expect(store.drafts.get("s1").text).toContain("new queue");
     expect(ids[0]).not.toBe(ids[1]);
     expect(recover).toHaveBeenCalledTimes(2);
   });

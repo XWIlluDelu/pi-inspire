@@ -1,19 +1,23 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ModelRuntime as NativeModelRuntime } from "@earendil-works/pi-coding-agent";
-import stripJsonComments from "strip-json-comments";
 import { type ModelOption, THINKING_LEVELS } from "../shared/contracts.js";
-import type {
-  ModelConfigEdit,
-  ModelPreferencesPatch,
-  ModelSettingsSnapshot,
-  PiModelPreferences,
-  ProviderDeclaration,
+import { isJsonRecord } from "../shared/json-record.js";
+import {
+  type ModelConfigEdit,
+  type ModelPreferencesPatch,
+  type ModelSettingsSnapshot,
+  modelDeclarationSchema,
+  type PiModelPreferences,
+  type ProviderDeclaration,
+  providerDeclarationSchema,
 } from "../shared/model-settings.js";
 import {
-  editConfigurationFile,
-  readConfigurationText as textAt,
+  applyConfigurationPatch,
+  editConfigurationDocument,
+  parseConfigurationObject,
+  readConfigurationFile,
 } from "./configuration-file.js";
 import {
   readNativeModelSettings,
@@ -23,27 +27,17 @@ import {
   getAgentDir,
   ModelRuntime,
   resolveModelScopeWithDiagnostics,
-  SettingsManager,
 } from "./pi-runtime.js";
 import { requestError } from "./request-error.js";
 
 type JsonObject = Record<string, unknown>;
-const revision = (text: string | undefined) =>
-  createHash("sha256")
-    .update(text === undefined ? "missing" : `file:${text}`)
-    .digest("hex");
-function object(text: string | undefined, comments = false): JsonObject {
-  const source = text?.replace(/^\uFEFF/u, "");
-  const value =
-    source === undefined
-      ? {}
-      : JSON.parse(comments ? stripJsonComments(source) : source);
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    throw new Error("Expected a JSON object");
-  return value;
-}
-const string = (value: unknown) =>
-  typeof value === "string" ? value : undefined;
+const settingsDocument = {
+  invalid: "settings.json is invalid. Repair the file before saving.",
+};
+const modelsDocument = {
+  invalid: "models.json is invalid. Repair the file before saving.",
+  comments: true,
+};
 function preferences(value: JsonObject): PiModelPreferences {
   return {
     defaultModel:
@@ -63,94 +57,24 @@ function preferences(value: JsonObject): PiModelPreferences {
       : [],
   };
 }
-const MODEL_FIELDS = [
-  "id",
-  "name",
-  "api",
-  "baseUrl",
-  "reasoning",
-  "input",
-  "contextWindow",
-  "maxTokens",
-  "type",
-];
 function declarationProjection(config: JsonObject): ProviderDeclaration[] {
-  const providers = config.providers;
-  if (!providers || typeof providers !== "object" || Array.isArray(providers))
-    return [];
-  return Object.entries(providers).flatMap(([id, value]) => {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return [];
-    const provider = value as JsonObject;
+  if (!isJsonRecord(config.providers)) return [];
+  return Object.entries(config.providers).flatMap(([id, provider]) => {
+    if (!isJsonRecord(provider)) return [];
     return [
       {
         id,
-        baseUrl: string(provider.baseUrl),
-        api: string(provider.api),
+        ...providerDeclarationSchema.parse(provider),
         apiKeyConfigured: provider.apiKey !== undefined,
         models: Array.isArray(provider.models)
           ? provider.models.flatMap((value) => {
-              if (
-                !value ||
-                typeof value !== "object" ||
-                Array.isArray(value) ||
-                typeof value.id !== "string"
-              )
-                return [];
-              const model = value as JsonObject;
-              return [
-                {
-                  id: model.id as string,
-                  name: string(model.name),
-                  api: string(model.api),
-                  baseUrl: string(model.baseUrl),
-                  type: string(model.type),
-                  reasoning:
-                    typeof model.reasoning === "boolean"
-                      ? model.reasoning
-                      : undefined,
-                  input: Array.isArray(model.input)
-                    ? model.input.filter(
-                        (item): item is string => typeof item === "string",
-                      )
-                    : undefined,
-                  contextWindow:
-                    typeof model.contextWindow === "number"
-                      ? model.contextWindow
-                      : undefined,
-                  maxTokens:
-                    typeof model.maxTokens === "number"
-                      ? model.maxTokens
-                      : undefined,
-                },
-              ];
+              const model = modelDeclarationSchema.safeParse(value);
+              return model.success ? [model.data] : [];
             })
           : [],
       },
     ];
   });
-}
-
-async function editFile(
-  path: string,
-  expectedRevision: string,
-  transform: (current: JsonObject) => Promise<JsonObject>,
-  comments = false,
-): Promise<void> {
-  await editConfigurationFile(
-    { path, expectedRevision, revision },
-    async (source) => {
-      let parsed: JsonObject;
-      try {
-        parsed = object(source, comments);
-      } catch {
-        throw requestError(
-          "Repair the invalid Pi JSON file before saving",
-          409,
-        );
-      }
-      return `${JSON.stringify(await transform(parsed), null, 2)}\n`;
-    },
-  );
 }
 
 export async function commonModelOptions(
@@ -174,13 +98,15 @@ export class ModelSettingsService {
   private nativeApiProviders: Promise<string[]> | undefined;
   constructor(private readonly agentDir = getAgentDir()) {}
 
-  async readCommonModels(cwd: string, models: ModelOption[]) {
-    if (models.length === 0) return [];
-    const native = await readNativeModelSettings(cwd, this.agentDir);
-    return commonModelOptions(
-      preferences(native.effective).enabledModels,
-      models,
+  async readCatalogPreferences(cwd: string) {
+    const { effective, thinkingPreferences } = await readNativeModelSettings(
+      cwd,
+      this.agentDir,
     );
+    return {
+      enabledModelPatterns: preferences(effective).enabledModels,
+      thinkingPreferences,
+    };
   }
   private readNativeApiProviders(): Promise<string[]> {
     return (this.nativeApiProviders ??= ModelRuntime.create({
@@ -203,24 +129,23 @@ export class ModelSettingsService {
     cwd: string,
     models: ModelOption[],
   ): Promise<ModelSettingsSnapshot> {
-    const [settingsText, configText, native] = await Promise.all([
-      textAt(join(this.agentDir, "settings.json")),
-      textAt(join(this.agentDir, "models.json")),
+    const [settings, modelsFile, native] = await Promise.all([
+      readConfigurationFile({ path: join(this.agentDir, "settings.json") }),
+      readConfigurationFile({ path: join(this.agentDir, "models.json") }),
       readNativeModelSettings(cwd, this.agentDir),
     ]);
     let global: JsonObject = {},
       config: JsonObject = {};
     let settingsError: string | undefined, configError: string | undefined;
     try {
-      global = object(settingsText);
+      global = parseConfigurationObject(settings.source, settingsDocument);
     } catch {
-      settingsError =
-        "settings.json is invalid. Repair the file before saving.";
+      settingsError = settingsDocument.invalid;
     }
     try {
-      config = object(configText, true);
+      config = parseConfigurationObject(modelsFile.source, modelsDocument);
     } catch {
-      configError = "models.json is invalid. Repair the file before saving.";
+      configError = modelsDocument.invalid;
     }
     const effective = preferences(native.effective);
     if (native.globalError)
@@ -231,8 +156,8 @@ export class ModelSettingsService {
       : undefined;
     const saved = preferences(global);
     return {
-      settingsRevision: revision(settingsText),
-      configRevision: revision(configText),
+      settingsRevision: settings.revision,
+      configRevision: modelsFile.revision,
       saved,
       effective,
       projectOverrides: native.projectOverrides,
@@ -255,40 +180,22 @@ export class ModelSettingsService {
     expected: string,
     patch: ModelPreferencesPatch,
   ): Promise<void> {
-    await editFile(
-      join(this.agentDir, "settings.json"),
-      expected,
-      async (current) => {
-        let serialized = JSON.stringify(current);
-        const settings = SettingsManager.fromStorage({
-          withLock: (scope, fn) => {
-            const next = fn(scope === "global" ? serialized : undefined);
-            if (scope === "global" && next !== undefined) serialized = next;
-          },
-        });
-        if (patch.defaultModel)
-          settings.setDefaultModelAndProvider(
-            patch.defaultModel.provider,
-            patch.defaultModel.id,
-          );
-        if (patch.defaultThinkingLevel)
-          settings.setDefaultThinkingLevel(patch.defaultThinkingLevel);
-        if (patch.enabledModels !== undefined)
-          settings.setEnabledModels(
-            patch.enabledModels.length ? patch.enabledModels : undefined,
-          );
-        await settings.flush();
-        if (settings.drainErrors().length)
-          throw requestError("Pi could not save model settings", 409);
-        const next = object(serialized);
-        if (patch.defaultModel === null) {
-          delete next.defaultProvider;
-          delete next.defaultModel;
-        }
-        if (patch.defaultThinkingLevel === null)
-          delete next.defaultThinkingLevel;
-        return next;
+    return editConfigurationDocument(
+      {
+        path: join(this.agentDir, "settings.json"),
+        expectedRevision: expected,
       },
+      settingsDocument,
+      (current) =>
+        applyConfigurationPatch(current, {
+          defaultProvider:
+            patch.defaultModel === null ? null : patch.defaultModel?.provider,
+          defaultModel:
+            patch.defaultModel === null ? null : patch.defaultModel?.id,
+          defaultThinkingLevel: patch.defaultThinkingLevel,
+          enabledModels:
+            patch.enabledModels?.length === 0 ? null : patch.enabledModels,
+        }),
     );
   }
   async saveConfig(
@@ -296,35 +203,29 @@ export class ModelSettingsService {
     expected: string,
     edit: ModelConfigEdit,
   ): Promise<void> {
-    await editFile(
-      join(this.agentDir, "models.json"),
-      expected,
+    await editConfigurationDocument(
+      { path: join(this.agentDir, "models.json"), expectedRevision: expected },
+      modelsDocument,
       async (current) => {
-        if (
-          current.providers !== undefined &&
-          (!current.providers ||
-            typeof current.providers !== "object" ||
-            Array.isArray(current.providers))
-        )
+        if (current.providers !== undefined && !isJsonRecord(current.providers))
           throw requestError("models.json providers must be an object", 409);
         const providers = (current.providers ??= {}) as JsonObject;
         const providerId = "provider" in edit ? edit.provider : edit.id;
         if (edit.kind === "remove-provider") delete providers[providerId];
         else {
-          const value = Object.hasOwn(providers, providerId)
+          const provider = Object.hasOwn(providers, providerId)
             ? providers[providerId]
             : {};
-          if (!value || typeof value !== "object" || Array.isArray(value))
+          if (!isJsonRecord(provider))
             throw requestError(
               "Repair this provider declaration before saving",
               409,
             );
-          const provider = value as JsonObject;
           if (edit.kind === "provider") {
-            for (const [key, value] of Object.entries(edit.values)) {
-              if (value === null) delete provider[key];
-              else provider[key] = value;
-            }
+            current.providers = {
+              ...providers,
+              [providerId]: applyConfigurationPatch(provider, edit.values),
+            };
           } else {
             if (
               provider.models !== undefined &&
@@ -334,47 +235,46 @@ export class ModelSettingsService {
                 "Repair this provider's models list before saving",
                 409,
               );
-            const models = (provider.models ??= []) as JsonObject[];
+            const models = (provider.models ??= []) as unknown[];
             const id = edit.kind === "model" ? edit.originalId : edit.id;
-            const type =
+            const originalType =
               edit.kind === "model"
                 ? (edit.originalType ?? edit.values.type ?? "chat")
                 : (edit.type ?? "chat");
-            const index = models.findIndex(
-              (model) => model.id === id && (model.type ?? "chat") === type,
-            );
+            const index =
+              id === undefined
+                ? -1
+                : models.findIndex((model) =>
+                    isModelDeclaration(model, id, originalType),
+                  );
             if (edit.kind === "remove-model") {
               if (index < 0)
                 throw requestError("That declaration no longer exists", 409);
               models.splice(index, 1);
             } else {
+              if (id !== undefined && index < 0)
+                throw requestError("That declaration no longer exists", 409);
+              const prior = models[index];
+              const model = applyConfigurationPatch(
+                isJsonRecord(prior) ? prior : {},
+                edit.values,
+              );
               if (
                 models.some(
-                  (model, i) =>
+                  (candidate, i) =>
                     i !== index &&
-                    model.id === edit.values.id &&
-                    (model.type ?? "chat") === (edit.values.type ?? type),
+                    isModelDeclaration(
+                      candidate,
+                      edit.values.id,
+                      model.type ?? "chat",
+                    ),
                 )
               )
                 throw requestError("A model with that ID already exists", 400);
-              const model = index >= 0 ? { ...models[index] } : {};
-              for (const key of MODEL_FIELDS) {
-                if (Object.hasOwn(edit.values, key)) {
-                  const value = (edit.values as unknown as JsonObject)[key];
-                  if (value === null) delete model[key];
-                  else model[key] = value;
-                }
-              }
-              if (index < 0) models.push(model);
-              else models[index] = model;
+              models[index < 0 ? models.length : index] = model;
             }
+            current.providers = { ...providers, [providerId]: provider };
           }
-          Object.defineProperty(providers, providerId, {
-            value: provider,
-            enumerable: true,
-            configurable: true,
-            writable: true,
-          });
         }
         // Bind the same trusted provider registrations as Pi before validating.
         // The disposable metadata worker never starts a turn or persistent session.
@@ -382,24 +282,28 @@ export class ModelSettingsService {
           this.agentDir,
           `.inspire-validate-${randomUUID()}.json`,
         );
+        await writeFile(validationPath, JSON.stringify(current), {
+          mode: 0o600,
+          flag: "wx",
+        });
         try {
-          await writeFile(validationPath, JSON.stringify(current), {
-            mode: 0o600,
-          });
-          try {
-            await validateModelConfig(cwd, this.agentDir, validationPath);
-          } catch {
-            throw requestError(
-              "Pi rejected this declaration. Check its endpoint, API, model fields and extensions.",
-              400,
-            );
-          }
+          await validateModelConfig(cwd, this.agentDir, validationPath);
+        } catch {
+          throw requestError(
+            "Pi rejected this declaration. Check its endpoint, API, model fields and extensions.",
+            400,
+          );
         } finally {
-          await rm(validationPath, { force: true });
+          await rm(validationPath, { force: true }).catch(() => undefined);
         }
         return current;
       },
-      true,
     );
   }
+}
+
+function isModelDeclaration(model: unknown, id: string, type: unknown) {
+  return (
+    isJsonRecord(model) && model.id === id && (model.type ?? "chat") === type
+  );
 }

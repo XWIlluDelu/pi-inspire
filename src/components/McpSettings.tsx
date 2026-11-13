@@ -22,18 +22,21 @@ import type {
   McpConfigSnapshot,
   McpConfigValues,
 } from "../../shared/mcp";
+import { selectedRunState } from "../app-state";
 import { shallowEqual, store, useAppState } from "../store";
+import { useConfigurationDocument } from "../use-configuration-document";
 import { McpServerForm } from "./McpServerForm";
 import { SettingsSection } from "./SettingsSection";
 
 type Owner = { sessionId?: string; cwd?: string };
-type Editor = {
-  scope: McpConfigScope;
-  entry: McpConfigEntry | null;
-  policyName?: string;
-};
-const messageOf = (error: unknown) =>
-  error instanceof Error ? error.message : "MCP configuration is unavailable";
+type Selection =
+  | {
+      kind: "edit";
+      scope: McpConfigScope;
+      entry: McpConfigEntry | null;
+      policyName?: string;
+    }
+  | { kind: "remove"; scope: McpConfigScope; entry: McpConfigEntry };
 export function McpSettings({
   active,
   owner,
@@ -45,7 +48,7 @@ export function McpSettings({
     (source) => ({
       readOnlyReason: source.readOnlyReason,
       sessionId: source.sessionId,
-      runState: source.runState,
+      runState: selectedRunState(source),
       external: Boolean(
         source.sessionId && source.sessionStatuses[source.sessionId]?.external,
       ),
@@ -82,78 +85,64 @@ function McpConfiguration({
   nativeReload: boolean;
   reloadBlocked: boolean;
 }) {
-  const [snapshot, setSnapshot] = useState<McpConfigSnapshot | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [editor, setEditor] = useState<Editor | null>(null);
-  const [removing, setRemoving] = useState<Editor | null>(null);
+  const { snapshot, error, setError, busy, readFailed, load, write } =
+    useConfigurationDocument<McpConfigSnapshot>(
+      JSON.stringify(owner),
+      "MCP configuration is unavailable",
+      true,
+    );
+  const [selection, setSelection] = useState<Selection | null>(null);
+  const editor = selection?.kind === "edit" ? selection : null;
+  const removing = selection?.kind === "remove" ? selection : null;
   const [saved, setSaved] = useState<string | null>(null);
   const [confirmReload, setConfirmReload] = useState(false);
-  const alive = useRef(false);
-  const attempted = useRef(false);
+  const readStarted = useRef(false);
   const opener = useRef<HTMLElement | null>(null);
   const addButton = useRef<HTMLButtonElement>(null);
   const focusBack = useRef(false);
+  const read = useCallback(
+    () => load(() => store.readMcpConfig(owner)),
+    [load, owner],
+  );
+  useLayoutEffect(
+    () => () => {
+      readStarted.current = false;
+    },
+    [],
+  );
   useEffect(() => {
-    alive.current = true;
-    return () => {
-      alive.current = false;
-    };
-  }, []);
-  const read = useCallback(async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      const value = await store.readMcpConfig(owner);
-      if (alive.current) setSnapshot(value);
-    } catch (error) {
-      if (alive.current) setError(messageOf(error));
-    } finally {
-      if (alive.current) setBusy(false);
-    }
-  }, [owner]);
-  useEffect(() => {
-    if (!active || attempted.current) return;
-    attempted.current = true;
+    if (!active || readStarted.current) return;
+    readStarted.current = true;
     void read();
   }, [active, read]);
   useLayoutEffect(() => {
-    if (active && !editor && !removing && focusBack.current) {
+    if (active && !selection && focusBack.current) {
       focusBack.current = false;
       (opener.current?.isConnected
         ? opener.current
         : addButton.current
       )?.focus();
     }
-  }, [active, editor, removing]);
+  }, [active, selection]);
   function closeEditor() {
     focusBack.current = true;
-    setEditor(null);
-    setRemoving(null);
+    setSelection(null);
     setError(null);
   }
-  function beginEdit(trigger: HTMLElement) {
+  function open(trigger: HTMLElement, next: Selection) {
     opener.current = trigger;
+    setSelection(next);
     setError(null);
     setConfirmReload(false);
   }
   async function save(edit: McpConfigEdit) {
-    setBusy(true);
-    setError(null);
-    try {
-      const result = await store.editMcpConfig(owner, edit);
-      if (!alive.current) return;
-      setSnapshot(result.snapshot ?? null);
-      setSaved(
-        result.warning ??
-          "Saved to file. Running sessions have not been reloaded.",
-      );
-      closeEditor();
-    } catch (error) {
-      if (alive.current) setError(messageOf(error));
-    } finally {
-      if (alive.current) setBusy(false);
-    }
+    const result = await write(() => store.editMcpConfig(owner, edit));
+    if (!result) return;
+    setSaved(
+      result.warning ??
+        "Saved to file. Running sessions have not been reloaded.",
+    );
+    closeEditor();
   }
   const projectFile = snapshot?.files.find((file) => file.scope === "project");
   function submit(
@@ -220,6 +209,7 @@ function McpConfiguration({
             initialScope={editor.scope}
             snapshot={snapshot}
             busy={busy}
+            readFailed={readFailed}
             error={error}
             onSave={submit}
             onReadConnection={(input) => store.readMcpConnection(owner, input)}
@@ -248,11 +238,14 @@ function McpConfiguration({
                 type="button"
                 className="button"
                 ref={addButton}
-                disabled={busy || !snapshot}
-                onClick={(event) => {
-                  beginEdit(event.currentTarget);
-                  setEditor({ scope: "user", entry: null });
-                }}
+                disabled={busy || !snapshot || readFailed}
+                onClick={(event) =>
+                  open(event.currentTarget, {
+                    kind: "edit",
+                    scope: "user",
+                    entry: null,
+                  })
+                }
               >
                 <Plus size={14} aria-hidden />
                 Add server
@@ -314,7 +307,7 @@ function McpConfiguration({
                       if (
                         current.sessionId !== owner.sessionId ||
                         current.readOnlyReason ||
-                        isBusyRunState(current.runState)
+                        isBusyRunState(selectedRunState(current))
                       ) {
                         setError("Reload requires an available, idle session.");
                         return;
@@ -414,15 +407,15 @@ function McpConfiguration({
                               type="button"
                               className="models-text-button"
                               aria-label={`Customize for this project: ${entry.name}`}
-                              disabled={busy}
-                              onClick={(event) => {
-                                beginEdit(event.currentTarget);
-                                setEditor({
+                              disabled={busy || readFailed}
+                              onClick={(event) =>
+                                open(event.currentTarget, {
+                                  kind: "edit",
                                   scope: "project",
                                   entry: null,
                                   policyName: entry.name,
-                                });
-                              }}
+                                })
+                              }
                             >
                               Customize for this project
                             </button>
@@ -435,12 +428,17 @@ function McpConfiguration({
                             title="Edit server"
                             aria-label={`Edit ${file.scope} server ${entry.name}`}
                             disabled={
-                              busy || (!entry.transport && !entry.policyOnly)
+                              busy ||
+                              readFailed ||
+                              (!entry.transport && !entry.policyOnly)
                             }
-                            onClick={(event) => {
-                              beginEdit(event.currentTarget);
-                              setEditor({ scope: file.scope, entry });
-                            }}
+                            onClick={(event) =>
+                              open(event.currentTarget, {
+                                kind: "edit",
+                                scope: file.scope,
+                                entry,
+                              })
+                            }
                           >
                             <Pencil size={14} aria-hidden />
                           </button>
@@ -449,18 +447,21 @@ function McpConfiguration({
                             className="models-icon-button"
                             title="Remove server"
                             aria-label={`Remove ${file.scope} server ${entry.name}`}
-                            disabled={busy}
-                            onClick={(event) => {
-                              beginEdit(event.currentTarget);
-                              setRemoving({ scope: file.scope, entry });
-                            }}
+                            disabled={busy || readFailed}
+                            onClick={(event) =>
+                              open(event.currentTarget, {
+                                kind: "remove",
+                                scope: file.scope,
+                                entry,
+                              })
+                            }
                           >
                             <Trash2 size={14} aria-hidden />
                           </button>
                         </div>
                       </div>
                       {removing?.scope === file.scope &&
-                      removing.entry?.name === entry.name ? (
+                      removing.entry.name === entry.name ? (
                         <div
                           className="models-confirm"
                           role="group"
@@ -479,7 +480,7 @@ function McpConfiguration({
                             <button
                               type="button"
                               className="button button--danger"
-                              disabled={busy}
+                              disabled={busy || readFailed}
                               onClick={() =>
                                 void save({
                                   scope: file.scope,

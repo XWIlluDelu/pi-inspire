@@ -370,7 +370,9 @@ test("Markdown and notebook prose follow reading size without scaling resource c
 }) => {
   const pane = await openReadingPane(page);
   const host = hostRequest(page);
-  const before = await (await host.get("/api/preferences")).json();
+  const { preferences: before } = await (
+    await host.get("/api/preferences")
+  ).json();
   const chromeSize = await pane
     .getByRole("tab", { name: "Files", exact: true })
     .evaluate((el) => getComputedStyle(el).fontSize);

@@ -8,11 +8,6 @@ import {
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TaskBoardAdapter } from "../../docs/examples/task-board/TaskBoardAdapter";
 import { App } from "../../src/App";
-import {
-  deleteSessionDraft,
-  sessionDraft,
-  setSessionDraft,
-} from "../../src/session-drafts";
 import { store } from "../../src/store";
 import { sessionPage } from "./fixtures/session-catalog";
 import {
@@ -23,6 +18,7 @@ import {
   installFakeWebSocket,
   installFetch,
   jsonBody,
+  selectSession,
   sessionSummary,
 } from "./helpers";
 
@@ -45,8 +41,6 @@ let aborts = 0;
 let catalog: ReturnType<typeof sessionSummary>[];
 
 beforeEach(async () => {
-  deleteSessionDraft("s1");
-  deleteSessionDraft("s2");
   prompts = [];
   aborts = 0;
   catalog = [
@@ -56,9 +50,13 @@ beforeEach(async () => {
   installFakeWebSocket();
   installFetch((url, init) => {
     if (url.startsWith("/api/bootstrap"))
+      return { body: bootstrapPayload({ startupSessionId: "s1" }) };
+    if (url === "/api/sessions/open")
       return {
-        body: bootstrapPayload({
-          snapshot: activeSnapshot({ commands, availableModels: models }),
+        body: activeSnapshot({
+          sessionId: String(jsonBody(init).id),
+          commands,
+          availableModels: models,
         }),
       };
     if (url.startsWith("/api/snapshot"))
@@ -95,12 +93,18 @@ beforeEach(async () => {
       return { body: { kind: "not-repository" } };
     return undefined;
   });
-  await act(async () => store.init());
-  for (const item of store.getState().attachments)
+  await act(async () => {
+    await store.init();
+    if (store.getState().sessionId && store.getState().sessionId !== "s1")
+      await store.openSession("s1");
+    FakeWebSocket.instances
+      .at(-1)!
+      .join(activeSnapshot({ commands, availableModels: models }));
+  });
+  for (const item of store.drafts.get(store.getState().sessionId).attachments)
     store.removeAttachment(item.localId);
-  for (const path of store.getState().projectFiles)
+  for (const path of store.drafts.get(store.getState().sessionId).projectFiles)
     store.removeProjectFile(path);
-  FakeWebSocket.instances.at(-1)?.open();
 });
 
 async function palette(query?: string) {
@@ -112,19 +116,16 @@ async function palette(query?: string) {
   return input;
 }
 async function savedDraft() {
-  setSessionDraft("s1", "UNFINISHED DRAFT");
+  store.drafts.setText("s1", "UNFINISHED DRAFT");
   await act(async () =>
     store.addFiles([new File(["draft"], "draft.txt", { type: "text/plain" })]),
   );
 }
 function runBusy() {
   act(() =>
-    FakeWebSocket.instances.at(-1)?.emit({
-      type: "snapshot",
-      data: {
-        ...activeSnapshot({ commands, availableModels: models }),
-        runState: "running",
-      },
+    FakeWebSocket.instances.at(-1)?.emitSnapshot({
+      ...activeSnapshot({ commands, availableModels: models }),
+      runState: "running",
     }),
   );
 }
@@ -162,31 +163,20 @@ describe("command discovery and preparation", () => {
         ],
         pageMessages: [message],
       });
-    act(() =>
-      FakeWebSocket.instances
-        .at(-1)
-        ?.emit({ type: "snapshot", data: snapshot(false) }),
-    );
+    act(() => FakeWebSocket.instances.at(-1)?.emitSnapshot(snapshot(false)));
     render(<TaskBoardAdapter />);
     fireEvent.click(screen.getByRole("button", { name: /Review input/ }));
     expect(screen.getByRole("button", { name: "Stop" })).toBeDisabled();
-    act(() =>
-      FakeWebSocket.instances
-        .at(-1)
-        ?.emit({ type: "snapshot", data: snapshot(true) }),
-    );
+    act(() => FakeWebSocket.instances.at(-1)?.emitSnapshot(snapshot(true)));
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
     await waitFor(() => expect(prompts).toHaveLength(1));
     expect(prompts[0]).toMatchObject({ message: "/demo-tasks-stop task-1" });
     expect(prompts[0]).not.toHaveProperty("attachmentIds");
-    expect(sessionDraft("s1")).toBe("UNFINISHED DRAFT");
-    expect(store.getState().attachments[0]?.uploadedId).toBe("upload-a");
-    act(() =>
-      FakeWebSocket.instances.at(-1)?.emit({
-        type: "snapshot",
-        data: activeSnapshot({ sessionId: "s2", pageMessages: [] }),
-      }),
-    );
+    expect(store.drafts.get("s1").text).toBe("UNFINISHED DRAFT");
+    expect(
+      store.drafts.get(store.getState().sessionId).attachments[0]?.uploadedId,
+    ).toBe("upload-a");
+    await selectSession(store, activeSnapshot({ sessionId: "s2" }));
     expect(
       screen.queryByRole("button", { name: "Back to tasks" }),
     ).not.toBeInTheDocument();
@@ -205,8 +195,14 @@ describe("command discovery and preparation", () => {
     await act(async () => {
       await store.loadSessions("");
       store.toggleSessionHidden("hidden");
-      store.toggleProjectHidden("/archive");
     });
+    await waitFor(() =>
+      expect(store.getState().prefs.hiddenSessionIds).toContain("hidden"),
+    );
+    act(() => store.toggleProjectHidden("/archive"));
+    await waitFor(() =>
+      expect(store.getState().prefs.hiddenProjectCwds).toContain("/archive"),
+    );
     render(<App />);
     const input = await palette();
     for (const query of ["", "session"]) {

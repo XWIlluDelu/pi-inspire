@@ -46,26 +46,10 @@
 .shell-execution__context {
   margin-left: auto;
 }
-.shell-execution__copy.icon-button {
-  flex-shrink: 0;
-  width: 24px;
-  height: 24px;
-}
-@media (pointer: coarse) {
-  .shell-execution__copy.icon-button {
-    width: 32px;
-    height: 32px;
-    margin-block: calc(-1 * var(--space-1));
-  }
-}
-
 .shell-execution__command,
 .shell-execution__output {
-  margin: 0;
   padding: var(--space-2) var(--space-3);
-  font-family: var(--font-mono);
   font-size: var(--text-reading-small);
-  line-height: var(--leading-mono);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -115,7 +99,6 @@
 }
 
 .card__header {
-  --activity-copy-size: 24px;
   /* The full header is clickable without becoming a filled card. */
   -webkit-tap-highlight-color: transparent;
   position: relative;
@@ -200,43 +183,26 @@
   z-index: 1;
 }
 
-.card__copy.icon-button {
+.activity-copy.icon-button {
   width: var(--activity-copy-size);
   height: var(--activity-copy-size);
-  flex: 0 0 auto;
-  color: var(--faint);
-  opacity: 0;
-  border-radius: var(--radius-sm);
-  transition:
-    opacity var(--dur-micro) var(--ease-standard),
-    color var(--dur-micro) var(--ease-standard),
-    background var(--dur-micro) var(--ease-standard);
 }
 
-.card__header:hover .card__copy,
-.card__header:has(:focus-visible) .card__copy {
-  opacity: 1;
-}
-
-@media (hover: hover) {
-  .card__copy.icon-button:hover:where(:not(:disabled)) {
-    color: var(--ink);
-    background: var(--bg-inset);
-  }
+:is(.card__header, .shell-execution, .custom-message, .assistant-error) {
+  --activity-copy-size: 24px;
 }
 
 @media (pointer: coarse) {
-  .card__header {
+  :is(.card__header, .shell-execution, .custom-message, .assistant-error) {
     --activity-copy-size: 32px;
   }
+
+  :is(.shell-execution, .custom-message, .assistant-error) .activity-copy {
+    margin-block: calc(-1 * var(--space-1));
+  }
+
   .card__disclosure {
     min-height: 32px;
-  }
-}
-
-@media (hover: none) {
-  .card__copy.icon-button {
-    opacity: 0.75;
   }
 }
 
@@ -411,14 +377,6 @@
   transform: rotate(90deg);
 }
 
-.chev-flip {
-  transition: transform var(--dur-standard) var(--ease-standard);
-}
-
-.chev-flip--open {
-  transform: rotate(180deg);
-}
-
 .card__section-label {
   font-size: var(--text-xs);
   color: var(--muted);
@@ -440,39 +398,6 @@
 
 .card__mono--error {
   color: var(--error-ink);
-}
-
-/* Unified diffs in tool results: line-level tints derived from the status
-   hues, hunk headers as quiet mono landmarks. */
-.diff {
-  border-radius: var(--radius-xs);
-  overflow: hidden;
-}
-
-.diff__lines {
-  display: block;
-}
-
-.diff__line {
-  display: block;
-  padding: 0 var(--space-2);
-}
-
-.diff__line--add {
-  background: color-mix(in srgb, var(--success) 12%, transparent);
-}
-
-.diff__line--del {
-  background: color-mix(in srgb, var(--error) 11%, transparent);
-}
-
-.diff__line--hunk {
-  color: var(--muted);
-  background: var(--bg-inset);
-}
-
-.diff__line--meta {
-  color: var(--faint);
 }
 
 .card__pending {
@@ -736,20 +661,18 @@
 .tool-code,
 .tool-terminal,
 .tool-text,
+.diff,
 .codemode-result {
   max-width: 100%;
   margin: 0;
   border: 1px solid var(--hairline);
   border-radius: var(--radius-xs);
   background: var(--bg-inset);
-  font-family: var(--font-mono);
-  font-size: var(--text-reading-code);
-  line-height: var(--leading-mono);
 }
 
-.tool-code {
-  --tool-line-number-width: 4.5ch;
-  white-space: pre;
+.tool-text,
+.codemode-result {
+  font: var(--text-reading-code)/var(--leading-mono) var(--font-mono);
 }
 
 /* Long tool content stays inspectable without taking over the transcript.
@@ -757,7 +680,7 @@
 .tool-code,
 .tool-terminal,
 .tool-markdown,
-.tool-presentation .diff,
+.diff,
 .card--tool .card__mono,
 .card--generic .card__mono {
   max-height: min(32rem, 65vh);
@@ -955,35 +878,6 @@ span.card__file-arg {
   cursor: default;
 }
 
-.tool-code__lines {
-  display: block;
-  width: max-content;
-  min-width: 100%;
-}
-
-.tool-code__line {
-  display: grid;
-  grid-template-columns: var(--tool-line-number-width) minmax(max-content, 1fr);
-  min-height: 20px;
-}
-
-.tool-code__number {
-  position: sticky;
-  left: 0;
-  border-right: 1px solid var(--hairline);
-  background: var(--bg-inset);
-  padding: 0 var(--space-1);
-  color: var(--faint);
-  text-align: right;
-  user-select: none;
-}
-
-.tool-code__line code {
-  padding: 0 var(--space-2);
-  color: var(--body);
-  font: inherit;
-}
-
 .tool-image-block {
   margin: 0;
 }
@@ -1066,20 +960,11 @@ span.card__file-arg {
   color: var(--error-ink);
 }
 
-.tool-presentation .diff {
-  max-width: 100%;
-  border: 1px solid var(--hairline);
-  background: var(--bg-inset);
+.diff {
+  font-size: var(--text-reading-code);
   white-space: pre;
+  overflow-wrap: normal;
   word-break: normal;
-}
-
-/* The pre owns scrolling; this inner content plane grows to the longest line
-   while remaining at least viewport-wide, so every row tint spans the same
-   complete horizontal range. */
-.tool-presentation .diff__lines {
-  width: max-content;
-  min-width: 100%;
 }
 
 .tool-list {
@@ -1462,10 +1347,6 @@ span.card__file-arg {
   background: var(--bg-surface);
 }
 
-:root[data-theme="dark"] .code-block {
-  background: var(--bg-surface);
-}
-
 .code-block__bar {
   display: flex;
   align-items: center;
@@ -1488,44 +1369,14 @@ span.card__file-arg {
   gap: 2px;
 }
 
-.code-block__copy,
-.code-block__terminal {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+.code-block__actions > .icon-button {
   width: 24px;
   height: 24px;
-  padding: 0;
-  border: 0;
-  background: transparent;
   color: var(--faint);
-  border-radius: var(--radius-sm);
-  transition:
-    color var(--dur-micro) var(--ease-standard),
-    background var(--dur-micro) var(--ease-standard);
 }
 
-/* The compact bar has no room for an outward focus ring. */
-.code-block__actions > button:focus-visible {
+.code-block__actions > .icon-button:focus-visible {
   outline-offset: -2px;
-}
-
-.code-block__actions > button > svg {
-  flex: 0 0 auto;
-}
-
-@media (hover: hover) {
-  .code-block__copy:hover,
-  .code-block__terminal:hover {
-    color: var(--ink);
-    background: var(--bg-inset);
-  }
-}
-
-.code-block__copy:active,
-.code-block__terminal:active {
-  color: var(--ink);
-  background: var(--bg-inset);
 }
 
 @media (pointer: coarse) {
@@ -1538,30 +1389,25 @@ span.card__file-arg {
     gap: var(--space-2);
   }
 
-  .code-block__copy,
-  .code-block__terminal {
+  .code-block__actions > .icon-button {
     width: 36px;
     height: 36px;
   }
 }
 
 .code-block__pre {
-  margin: 0;
-  /* The language label above is the block's only header; no divider. */
   padding: var(--space-1) var(--space-3) var(--space-3);
   overflow-x: auto;
-  font-size: var(--text-reading-code);
-  line-height: var(--leading-mono);
 }
 
 /* Mono changes interface accents only. Keep the existing default syntax colors
    inside code leaves; their toolbar, gutter and controls retain Mono's UI roles. */
-:root[data-palette="mono"] :is(.hljs, .source-diff__line code) {
+:root[data-palette="mono"] :is(.hljs, .source-diff .code-row code) {
   --accent-deep: #8A4605;
   --muted: #635E56;
 }
 
-:root[data-theme="dark"][data-palette="mono"] :is(.hljs, .source-diff__line code) {
+:root[data-theme="dark"][data-palette="mono"] :is(.hljs, .source-diff .code-row code) {
   --accent-deep: #F2B25C;
   --muted: #968E83;
 }

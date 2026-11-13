@@ -1,95 +1,4 @@
-/* --- Boundary scroll rails --- */
-
-/* Navigation and Transcript retain their established boundary rails. Files
-   and Changes deliberately use native scrollbars so their dense code/list
-   surfaces remain dependable beside the pane resize boundary. */
-.nav,
-.nav__list,
-.transcript {
-  scrollbar-width: none;
-}
-
-.nav::-webkit-scrollbar,
-.nav__list::-webkit-scrollbar,
-.transcript::-webkit-scrollbar {
-  display: none;
-}
-
-.srail {
-  position: fixed;
-  z-index: 30;
-  width: 16px;
-  transform: translateX(-50%);
-  /* The band itself must not intercept clicks or wheel — only the thumb. */
-  pointer-events: none;
-}
-
-.srail__thumb {
-  position: absolute;
-  left: 0;
-  width: 100%;
-  pointer-events: auto;
-  cursor: grab;
-  /* Resting state stays faintly visible so the grab point is discoverable
-     without scrolling first; activity brings it to full strength. */
-  opacity: 0.4;
-  transition: opacity var(--dur-panel) var(--ease-standard);
-}
-
-.srail__thumb::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 50%;
-  width: 6px;
-  transform: translateX(-50%);
-  border-radius: var(--radius-pill);
-  background: var(--thumb);
-  transition: background var(--dur-micro) var(--ease-standard);
-}
-
-.srail--show .srail__thumb,
-.srail:hover .srail__thumb {
-  opacity: 1;
-}
-
-.srail:hover .srail__thumb::after {
-  background: color-mix(in srgb, var(--ink) 32%, transparent);
-}
-
-.srail--drag .srail__thumb {
-  cursor: grabbing;
-}
-
-.srail--drag .srail__thumb::after {
-  background: color-mix(in srgb, var(--ink) 45%, transparent);
-}
-
-body.srail-dragging {
-  cursor: grabbing;
-  user-select: none;
-}
-
 /* --- Responsive --- */
-
-@media (max-width: 1280px) {
-  :root {
-    --content-max: min(var(--reading-width-max), 800px);
-    --composer-max: min(var(--reading-width-max), 800px);
-  }
-}
-
-@media (max-width: 1100px) {
-  :root {
-    --content-max: min(var(--reading-width-max), 740px);
-    --composer-max: min(var(--reading-width-max), 740px);
-  }
-
-  .topbar__project {
-    max-width: 240px;
-  }
-}
 
 @media (max-width: 900px) {
   .app {
@@ -155,10 +64,6 @@ body.srail-dragging {
   }
 
   .app--narrow .ctx__header:has(.ctx__tabs) { padding-left: 0; }
-
-  .app--narrow .ctx__modes {
-    flex: 0 0 auto;
-  }
 
   .app--narrow .ctx__modes button {
     min-height: 32px;
@@ -413,46 +318,8 @@ body.srail-dragging {
     line-height: 1.45;
   }
 
-  .composer__spacer {
-    flex: 1 1 0;
-    min-width: 0;
-  }
-
-  .composer__meta {
-    min-width: 0;
-  }
-
-  .composer__meta .composer-thinking-control {
-    flex-shrink: 0;
-  }
-
-  .composer__meta .model-picker {
-    flex: 0 1 auto;
-    min-width: 0;
-    max-width: min(220px, 45vw);
-  }
-
   .composer__meta .thinking-select {
     min-height: 36px;
-    padding: 2px 6px;
-  }
-
-  /* The model trigger can be the only elastic control in a narrow composer.
-     Keep its label inside that control rather than letting a long model id
-     paint over adjacent picker and action hit targets. */
-  .composer__meta .model-picker__trigger {
-    overflow: hidden;
-  }
-
-  .composer__meta .model-picker__trigger-copy {
-    flex: 1 1 auto;
-    overflow: hidden;
-  }
-
-  .composer__meta .model-picker__trigger-copy > .model-picker__value {
-    width: 100%;
-    min-width: 0;
-    max-width: none;
   }
 
   .composer__meta .icon-button,
@@ -462,10 +329,6 @@ body.srail-dragging {
     height: 36px;
     min-width: 36px;
     min-height: 36px;
-  }
-
-  .composer__meta .meter {
-    flex-shrink: 0;
   }
 
   .welcome {
@@ -612,37 +475,12 @@ body.srail-dragging {
 }
 
 @media (max-width: 420px) {
-  .app--narrow .ctx__header,
-  .app--narrow .ctx__header-actions {
-    gap: 2px;
-  }
-
   .settings__nav-icon {
     display: none;
   }
 
   .welcome__row-project {
     display: none;
-  }
-}
-
-/* Leave the selectors a readable row when the tool row includes editor size,
-   usage, and both delivery actions. */
-@media (max-width: 460px) {
-  .composer__meta {
-    flex-wrap: wrap;
-  }
-
-  .composer__selectors {
-    display: flex;
-    flex: 1 0 100%;
-    align-items: center;
-    gap: var(--space-2);
-    min-width: 0;
-  }
-
-  .composer__meta .model-picker {
-    max-width: none;
   }
 }
 
@@ -664,28 +502,6 @@ body.srail-dragging {
 
   .settings__footer:has(.settings__install, .settings__installed) .settings__utility {
     padding-inline: var(--space-1);
-  }
-}
-
-/* Desktop side panes can make the editor narrower than the phone layout.
-   Reuse its selector row without splitting the task actions across lines. */
-@media (min-width: 901px) {
-  @container reading-stage (max-width: 440px) {
-    .composer__meta {
-      flex-wrap: wrap;
-    }
-
-    .composer__selectors {
-      display: flex;
-      flex: 1 0 100%;
-      align-items: center;
-      gap: var(--space-2);
-      min-width: 0;
-    }
-
-    .composer__selectors > .dropdown {
-      flex-shrink: 0;
-    }
   }
 }
 

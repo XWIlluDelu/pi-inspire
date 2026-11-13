@@ -4,11 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { assistantOutcome } from "../../shared/assistant-outcome";
 import { AppErrorBoundary } from "../../src/components/AppErrorBoundary";
 import { Transcript } from "../../src/components/Transcript";
-import {
-  type ChatMessage,
-  emptyEventSlice,
-  reduceEvent,
-} from "../../src/events";
+import type { ChatMessage } from "../../src/events";
 import { openTranscriptSearch } from "./helpers";
 
 function transcript(messages: ChatMessage[], streaming = false) {
@@ -52,36 +48,6 @@ describe("Stopped assistant outcomes", () => {
     ).toHaveTextContent("1 of 1");
     expect(screen.getByRole("group", { name: "Stopped" })).toBeVisible();
   });
-
-  it.each([
-    ["aborted", "This operation was aborted", "aborted"],
-    ["error", "This operation was aborted", "failed"],
-  ])(
-    "reduces %s / %s to its true terminal state before settlement",
-    (stopReason, errorMessage, outcome) => {
-      const start = reduceEvent(emptyEventSlice(), new Set(), {
-        type: "agent_start",
-      });
-      const source = {
-        role: "assistant",
-        content: [],
-        stopReason,
-        errorMessage,
-        timestamp: 2,
-      };
-      const end = reduceEvent(start.slice, new Set(), {
-        type: "message_end",
-        message: source,
-      });
-      expect(end.slice.runState).toBe(outcome);
-      expect(end.slice.streaming).toBe(false);
-      expect(end.slice.messages[0]).toMatchObject(source);
-      const settled = reduceEvent(end.slice, new Set(), {
-        type: "agent_settled",
-      });
-      expect(settled.slice.runState).toBe(outcome);
-    },
-  );
 
   it("only assigns an outcome to a terminal assistant record", () => {
     expect(

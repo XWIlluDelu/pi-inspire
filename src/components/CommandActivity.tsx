@@ -16,7 +16,6 @@ import {
 import { shallowEqual, store, useAppState } from "../store";
 import { readingDwellMs, useReadingDwell } from "../use-reading-dwell";
 import { PiLoader } from "./PiLoader";
-import { ScrollRail } from "./ScrollRail";
 
 function ActivityIcon({ status }: { status: Activity["status"] }) {
   if (status === "running") return <PiLoader size={14} aria-hidden />;
@@ -67,6 +66,7 @@ function CommandActivityItem({
   );
   const isSession =
     activity.command === "session" && activity.status === "info";
+  const title = `/${activity.command}`;
   return (
     <article
       ref={ref}
@@ -78,7 +78,7 @@ function CommandActivityItem({
       </div>
       <div className="command-activity__body">
         <div className="command-activity__heading">
-          <code>{activity.title}</code>
+          <code>{title}</code>
           <span className="command-activity__state">
             {activity.status === "running"
               ? "Running"
@@ -143,7 +143,7 @@ function CommandActivityItem({
         <button
           type="button"
           className="command-activity__dismiss"
-          aria-label={`Dismiss ${activity.title} result`}
+          aria-label={`Dismiss ${title} result`}
           onClick={dismiss}
         >
           <X size={13} aria-hidden />
@@ -179,7 +179,6 @@ export const CommandActivity = memo(function CommandActivity() {
       aria-label="Command activity"
       tabIndex={0}
     >
-      <ScrollRail container={dockRef} variant="dock" />
       {activities.map((activity) => (
         <CommandActivityItem
           key={

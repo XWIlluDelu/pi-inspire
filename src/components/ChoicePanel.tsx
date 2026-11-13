@@ -1,10 +1,8 @@
 import { type ReactNode, useCallback, useEffect, useId, useRef } from "react";
-import { createPortal } from "react-dom";
 import {
   useFloatingMenuDismissal,
   useFloatingMenuPlacement,
 } from "../use-floating-menu";
-import { useModalPortal } from "../use-modal-focus";
 
 const bounds = {
   gap: 4,
@@ -46,7 +44,6 @@ export function ChoicePanel({
   }, []);
   const placement = useFloatingMenuPlacement(open, target, bounds);
   const shown = open && placement !== null;
-  useModalPortal(shown, opener, panel);
   useFloatingMenuDismissal(open, root, panel, () => setOpen(false));
   useEffect(() => {
     if (shown)
@@ -71,37 +68,34 @@ export function ChoicePanel({
       >
         {trigger}
       </button>
-      {createPortal(
-        <div
-          id={id}
-          ref={panel}
-          className={`choice-panel__body ${className ?? ""}`}
-          role="dialog"
-          aria-label={label}
-          hidden={!shown}
-          style={
-            placement
-              ? {
-                  left: placement.left,
-                  top: placement.top,
-                  bottom: placement.bottom,
-                  width: placement.width,
-                  maxHeight: placement.maxHeight,
-                }
-              : undefined
-          }
-          onKeyDown={(event) => {
-            if (event.key !== "Escape") return;
-            event.preventDefault();
-            event.stopPropagation();
-            setOpen(false);
-            opener.current?.focus({ preventScroll: true });
-          }}
-        >
-          {children}
-        </div>,
-        opener.current?.closest(".overlay") ?? document.body,
-      )}
+      <div
+        id={id}
+        ref={panel}
+        className={`choice-panel__body ${className ?? ""}`}
+        role="dialog"
+        aria-label={label}
+        hidden={!shown}
+        style={
+          placement
+            ? {
+                left: placement.left,
+                top: placement.top,
+                bottom: placement.bottom,
+                width: placement.width,
+                maxHeight: placement.maxHeight,
+              }
+            : undefined
+        }
+        onKeyDown={(event) => {
+          if (event.key !== "Escape") return;
+          event.preventDefault();
+          event.stopPropagation();
+          setOpen(false);
+          opener.current?.focus({ preventScroll: true });
+        }}
+      >
+        {children}
+      </div>
     </div>
   );
 }

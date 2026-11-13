@@ -1,24 +1,29 @@
 import {
-  type ActivityFoldVisibilityPreference,
-  type ContentTextSizePreference,
-  type DesktopSendKeyPreference,
   defaultInterfaceSettings,
-  defaultPreferences,
   type InspirePreferences,
-  type LaunchPreference,
   type ModelIdentity,
   modelIdentityKey,
-  type PalettePreference,
-  type ProjectDisplayPreference,
-  type ReadingWidthPreference,
-  type SessionActionId,
-  type ThemePreference,
-  type ToolVisibilityPreference,
-  type VisibilityPreference,
+  type PreferencePublication,
 } from "../../shared/contracts";
 import { type Api, ApiError } from "../api";
 import type { AppState } from "../app-state";
+import { isTransientFailure } from "../recovery-backoff";
 import { sessionCurationOwners } from "../session-curation";
+
+type PreferenceKey = keyof InspirePreferences;
+type PreferencePatch = Partial<InspirePreferences>;
+type CurationKey =
+  | "pinnedSessionIds"
+  | "hiddenSessionIds"
+  | "pinnedProjectCwds"
+  | "hiddenProjectCwds";
+
+const CURATION_FIELDS: CurationKey[] = [
+  "pinnedSessionIds",
+  "hiddenSessionIds",
+  "pinnedProjectCwds",
+  "hiddenProjectCwds",
+];
 
 interface PreferenceControllerHost {
   state(): AppState;
@@ -30,294 +35,208 @@ interface PreferenceControllerHost {
   clearCompletionAttention(): void;
 }
 
-/** Owns field-scoped optimistic preference writes and their confirmed host
- * baseline. AppStore remains the publisher; this controller keeps write
- * ordering and stale-response ownership out of unrelated session logic. */
+function sameList(left: readonly string[], right: readonly string[]): boolean {
+  return (
+    left.length === right.length &&
+    left.every((value, index) => value === right[index])
+  );
+}
+
+function toggle(items: string[], value: string): string[] {
+  return items.includes(value)
+    ? items.filter((item) => item !== value)
+    : [value, ...items];
+}
+
+/** A Host publication owns confirmed state; the latest local intent owns only
+ * its desired preview. A transport loss never repeats a PATCH. */
 export class PreferenceController {
-  private writes: Promise<unknown> = Promise.resolve();
-  private sequence = 0;
-  /** Newest local intent, retained after settlement so stale operations can
-   * distinguish a later ABA edit from an unchanged value. */
-  private fieldOwners = new Map<keyof InspirePreferences, number>();
-  private pendingFieldOwners = new Map<keyof InspirePreferences, number>();
-  private confirmedFieldOwners = new Map<keyof InspirePreferences, number>();
-  private confirmedPrefs: InspirePreferences = defaultPreferences;
+  private writes: Promise<void> = Promise.resolve();
+  private readonly desired = new Map<PreferenceKey, PreferencePatch>();
+  private authority: string | null = null;
+  private readyApi: Api | null = null;
+  private pendingObservation = false;
+  private revision = -1;
+  private curationRevision = 0;
 
   constructor(private readonly host: PreferenceControllerHost) {}
 
-  flush(): Promise<unknown> {
-    return this.writes;
-  }
-
-  confirmed(): InspirePreferences {
-    return this.confirmedPrefs;
-  }
-
-  captureOwners(): ReadonlyMap<keyof InspirePreferences, number> {
-    return new Map(this.fieldOwners);
-  }
-
-  /** A write already pending when bootstrap starts may settle on either side
-   * of that snapshot. Omitting its field makes reconciliation preserve the
-   * visible intent while adopting authority as its rollback baseline. */
-  captureBootstrapOwners(): ReadonlyMap<keyof InspirePreferences, number> {
-    const owners = new Map(this.fieldOwners);
-    for (const field of this.pendingFieldOwners.keys()) owners.delete(field);
-    return owners;
-  }
-
-  reconcile(
-    authoritative: InspirePreferences,
-    baselineOwners: ReadonlyMap<keyof InspirePreferences, number>,
-  ): InspirePreferences {
-    const visible = { ...authoritative };
-    const confirmed = { ...authoritative };
-    for (const field of Object.keys(authoritative) as Array<
-      keyof InspirePreferences
-    >) {
-      const baselineOwner = baselineOwners.get(field);
-      if (this.fieldOwners.get(field) === baselineOwner) {
-        this.confirmedFieldOwners.delete(field);
-        continue;
-      }
-      Object.assign(visible, { [field]: this.host.state().prefs[field] });
-      // Preserve a completed newer write. For a pending or refused newer
-      // intent, this response is the newest confirmed baseline to roll back to.
-      if (this.confirmedFieldOwners.get(field) === baselineOwner) {
-        this.confirmedFieldOwners.delete(field);
-      } else {
-        Object.assign(confirmed, { [field]: this.confirmedPrefs[field] });
-      }
-    }
-    this.confirmedPrefs = confirmed;
-    return visible;
-  }
-
-  private curationMutationBlocked(): boolean {
-    const state = this.host.state();
-    return Boolean(state.deletingSessionId || state.clearingHidden);
-  }
-
-  private isCurationPatch(patch: Partial<InspirePreferences>): boolean {
-    return (
-      "pinnedSessionIds" in patch ||
-      "hiddenSessionIds" in patch ||
-      "pinnedProjectCwds" in patch ||
-      "hiddenProjectCwds" in patch
-    );
-  }
-
-  private curationDiffers(
-    previous: InspirePreferences,
-    next: InspirePreferences,
-  ): boolean {
-    const differs = (left: readonly string[], right: readonly string[]) =>
-      left.length !== right.length ||
-      left.some((value, index) => value !== right[index]);
-    return (
-      differs(previous.pinnedSessionIds, next.pinnedSessionIds) ||
-      differs(previous.hiddenSessionIds, next.hiddenSessionIds) ||
-      differs(previous.pinnedProjectCwds, next.pinnedProjectCwds) ||
-      differs(previous.hiddenProjectCwds, next.hiddenProjectCwds)
-    );
-  }
-
-  private curationNeedsHydration(
-    previous: InspirePreferences,
-    previousConfirmed: InspirePreferences,
-    next: InspirePreferences,
-    nextConfirmed: InspirePreferences,
-  ): boolean {
-    const before = sessionCurationOwners(previous, previousConfirmed);
-    const after = sessionCurationOwners(next, nextConfirmed);
-    const loadedIds = new Set(
-      this.host.state().sessions.map((session) => session.id),
-    );
-    for (const id of after.ids) {
-      if (!before.ids.has(id) && !loadedIds.has(id)) return true;
-    }
-    for (const cwd of after.cwds) {
-      if (!before.cwds.has(cwd)) return true;
-    }
-    return false;
-  }
-
-  private save(patch: Partial<InspirePreferences>): void {
-    const fields = Object.keys(patch) as Array<keyof InspirePreferences>;
-    const owner = ++this.sequence;
-    const api = this.host.api();
-    for (const field of fields) {
-      this.fieldOwners.set(field, owner);
-      this.pendingFieldOwners.set(field, owner);
-    }
-    const responseOwners = this.captureOwners();
-    const curationPatch = this.isCurationPatch(patch);
-    const previousPrefs = this.host.state().prefs;
-    const nextPrefs = { ...previousPrefs, ...patch };
-    const hydrateCuration =
-      curationPatch &&
-      this.curationNeedsHydration(
-        previousPrefs,
-        this.confirmedPrefs,
-        nextPrefs,
-        this.confirmedPrefs,
-      );
-    this.host.patch({ prefs: nextPrefs });
-    if (curationPatch) this.host.curationChanged(hydrateCuration);
-
-    this.writes = this.writes
-      .then(async () => {
-        if (!api) throw new Error("Not connected to the Inspire host");
-        const authoritative = await api.savePreferences(patch);
-        const previousPrefs = this.host.state().prefs;
-        const previousConfirmed = this.confirmedPrefs;
-        for (const field of fields) {
-          this.confirmedFieldOwners.set(field, owner);
-          if (this.pendingFieldOwners.get(field) === owner)
-            this.pendingFieldOwners.delete(field);
-        }
-        let nextPrefs = previousPrefs;
-        if (this.host.api() === api) {
-          nextPrefs = this.reconcile(authoritative, responseOwners);
-          this.host.patch({ prefs: nextPrefs });
-        } else {
-          this.confirmedPrefs = { ...previousConfirmed, ...patch };
-        }
-        if (
-          curationPatch ||
-          this.curationDiffers(previousPrefs, nextPrefs) ||
-          this.curationDiffers(previousConfirmed, this.confirmedPrefs)
-        ) {
-          this.host.curationChanged(
-            this.curationNeedsHydration(
-              previousPrefs,
-              previousConfirmed,
-              nextPrefs,
-              this.confirmedPrefs,
-            ),
-          );
-        }
-      })
-      .catch((error: unknown) => {
-        // Only fields still owned by this write roll back. Equality is not an
-        // ownership test because a newer edit may cycle back to the same value.
-        const stale = fields.filter(
-          (field) => this.fieldOwners.get(field) === owner,
-        );
-        const previousPrefs = this.host.state().prefs;
-        if (stale.length > 0) {
-          const restored = Object.fromEntries(
-            stale.map((field) => [field, this.confirmedPrefs[field]]),
-          ) as Partial<InspirePreferences>;
-          this.host.patch({
-            prefs: { ...this.host.state().prefs, ...restored },
-          });
-        }
-        for (const field of fields) {
-          if (this.pendingFieldOwners.get(field) === owner)
-            this.pendingFieldOwners.delete(field);
-          // A refused newest intent no longer needs to fence an authoritative
-          // snapshot that was captured while this write was pending.
-          if (this.fieldOwners.get(field) === owner)
-            this.fieldOwners.delete(field);
-        }
-        if (curationPatch) {
-          const hydrateRestoredCuration = this.curationNeedsHydration(
-            previousPrefs,
-            this.confirmedPrefs,
-            this.host.state().prefs,
-            this.confirmedPrefs,
-          );
-          this.host.curationChanged(hydrateRestoredCuration);
-        }
-        if (
-          error instanceof ApiError &&
-          error.status === 401 &&
-          this.host.api() === api
-        ) {
-          this.host.handleAuthFailure();
-        } else {
-          this.host.notify(
-            "warning",
-            error instanceof Error
-              ? error.message
-              : "Failed to save the preference",
-          );
-        }
-      });
-  }
-
-  rememberModel(model: ModelIdentity): void {
-    const current = this.host.state().prefs.recentModelIds;
-    const recentModelIds = [
-      { provider: model.provider, id: model.id },
-      ...current.filter(
-        (candidate) => modelIdentityKey(candidate) !== modelIdentityKey(model),
+  private desiredState(): Pick<
+    AppState,
+    "desiredPreferences" | "curationPending"
+  > {
+    return {
+      desiredPreferences: Object.fromEntries(
+        [...this.desired].map(([field, intent]) => [field, intent[field]]),
       ),
-    ].slice(0, 8);
+      curationPending: CURATION_FIELDS.some((field) => this.desired.has(field)),
+    };
+  }
+
+  private clear(intent: PreferencePatch): void {
+    for (const [field, owner] of this.desired) {
+      if (owner === intent) this.desired.delete(field);
+    }
+  }
+
+  invalidateTransport(): void {
+    this.readyApi = null;
+    this.writes = Promise.resolve();
+    if (this.desired.size === 0) return;
+    this.desired.clear();
+    this.host.patch(this.desiredState());
+  }
+
+  bootstrap(
+    authority: string,
+    publication: PreferencePublication,
+  ): InspirePreferences {
+    this.readyApi = this.host.api();
+    if (authority !== this.authority) {
+      this.authority = authority;
+      this.revision = -1;
+      this.pendingObservation = false;
+    }
+    if (this.pendingObservation && this.readyApi)
+      void this.observeAfterReplacement(this.readyApi);
+    return this.accept(publication) ?? this.host.state().prefs;
+  }
+
+  private accept({ preferences, revision }: PreferencePublication) {
+    if (!Number.isSafeInteger(revision) || revision <= this.revision)
+      return null;
+    this.revision = revision;
+    return preferences;
+  }
+
+  publish(publication: PreferencePublication): void {
+    const preferences = this.accept(publication);
+    const previous = this.host.state().prefs;
+    this.host.patch({
+      ...(preferences ? { prefs: preferences } : {}),
+      ...this.desiredState(),
+    });
     if (
-      recentModelIds.length === current.length &&
-      recentModelIds.every(
-        (candidate, index) =>
-          modelIdentityKey(candidate) === modelIdentityKey(current[index]!),
+      !preferences ||
+      CURATION_FIELDS.every((field) =>
+        sameList(previous[field], preferences[field]),
       )
     )
       return;
-    this.save({ recentModelIds });
+    this.curationRevision++;
+    const before = sessionCurationOwners(previous);
+    const after = sessionCurationOwners(preferences);
+    const loaded = new Set(
+      this.host.state().sessions.map((session) => session.id),
+    );
+    this.host.curationChanged(
+      [...after.ids].some((id) => !before.ids.has(id) && !loaded.has(id)) ||
+        [...after.cwds].some((cwd) => !before.cwds.has(cwd)),
+    );
   }
 
-  setTheme(theme: ThemePreference): void {
-    this.save({ theme });
+  private save(patch: PreferencePatch): void {
+    const api = this.host.api();
+    if (!api || this.readyApi !== api) return;
+    const intent = { ...patch };
+    const authority = this.authority;
+    for (const field of Object.keys(patch) as PreferenceKey[])
+      this.desired.set(field, intent);
+    this.host.patch(this.desiredState());
+    this.writes = this.writes.then(async () => {
+      if (this.host.api() !== api) return;
+      try {
+        const publication = await api.savePreferences(intent);
+        if (this.host.api() !== api) return;
+        this.clear(intent);
+        this.publish(publication);
+      } catch (error) {
+        if (this.host.api() !== api) return;
+        if (error instanceof ApiError && error.status === 401) {
+          this.host.handleAuthFailure();
+          return;
+        }
+        if (isTransientFailure(error)) {
+          try {
+            const observation = await api.preferences();
+            if (this.host.api() !== api) return;
+            if (this.matches(intent, observation.preferences))
+              this.clear(intent);
+            this.publish(observation);
+            this.host.notify(
+              "warning",
+              "Preference save was not confirmed. Showing the value currently saved by the Host.",
+            );
+            return;
+          } catch {
+            if (this.host.api() !== api) return;
+            // Keep the outstanding intent available for read-only recheck.
+            this.host.notify(
+              "warning",
+              "Preference save was not confirmed. Refresh the workbench to check the saved value.",
+            );
+            return;
+          }
+        } else {
+          this.clear(intent);
+          this.host.patch(this.desiredState());
+        }
+        this.host.notify(
+          "warning",
+          error instanceof Error
+            ? error.message
+            : "Failed to save the preference",
+        );
+      } finally {
+        if (this.host.api() !== api && this.authority === authority) {
+          this.pendingObservation = true;
+          const current = this.readyApi;
+          if (current && current === this.host.api())
+            void this.observeAfterReplacement(current);
+        }
+      }
+    });
   }
 
-  setPalette(palette: PalettePreference): void {
-    this.save({ palette });
+  private async observeAfterReplacement(api: Api): Promise<void> {
+    this.pendingObservation = false;
+    try {
+      const publication = await api.preferences();
+      if (this.host.api() === api) this.publish(publication);
+    } catch {
+      // The next bootstrap still supplies the latest confirmed preferences.
+    }
   }
 
-  setTitlebarNeedles(titlebarNeedles: boolean): void {
-    this.save({ titlebarNeedles });
+  private matches(
+    intent: PreferencePatch,
+    confirmed: InspirePreferences,
+  ): boolean {
+    return (Object.keys(intent) as PreferenceKey[]).every(
+      (field) =>
+        JSON.stringify(intent[field]) === JSON.stringify(confirmed[field]),
+    );
   }
 
-  setContentTextSize(contentTextSize: ContentTextSizePreference): void {
-    this.save({ contentTextSize });
-  }
-
-  setReadingWidth(readingWidth: ReadingWidthPreference): void {
-    this.save({ readingWidth });
-  }
-
-  setLaunch(launch: LaunchPreference): void {
-    this.save({ launch });
-  }
-
-  setHerdrEnabled(herdrEnabled: boolean): void {
-    this.save({ herdrEnabled });
-  }
-
-  setDesktopSendKey(desktopSendKey: DesktopSendKeyPreference): void {
-    this.save({ desktopSendKey });
-  }
-
-  setProjectDisplay(projectDisplay: ProjectDisplayPreference): void {
-    this.save({ projectDisplay });
-  }
-
-  setSessionActionOrder(sessionActionOrder: SessionActionId[]): void {
-    this.save({ sessionActionOrder });
-  }
-
-  setThinkingVisibility(thinkingVisibility: VisibilityPreference): void {
-    this.save({ thinkingVisibility });
-  }
-
-  setToolVisibility(toolVisibility: ToolVisibilityPreference): void {
-    this.save({ toolVisibility });
-  }
-
-  setActivityFoldVisibility(
-    activityFoldVisibility: ActivityFoldVisibilityPreference,
+  set<Field extends keyof typeof defaultInterfaceSettings>(
+    field: Field,
+    value: InspirePreferences[Field],
   ): void {
-    this.save({ activityFoldVisibility });
+    this.save({ [field]: value });
+  }
+
+  rememberModel(model: ModelIdentity): void {
+    const current =
+      this.desired.get("recentModelIds")?.recentModelIds ??
+      this.host.state().prefs.recentModelIds;
+    const key = modelIdentityKey(model);
+    if (current[0] && modelIdentityKey(current[0]) === key) return;
+    this.save({
+      recentModelIds: [
+        { provider: model.provider, id: model.id },
+        ...current.filter((candidate) => modelIdentityKey(candidate) !== key),
+      ].slice(0, 8),
+    });
   }
 
   restoreDefaults(): void {
@@ -326,56 +245,49 @@ export class PreferenceController {
   }
 
   toggleNavGroup(cwd: string): void {
-    if (this.curationMutationBlocked()) return;
-    const current = this.host.state().prefs.navCollapsedGroups;
+    const { prefs, desiredPreferences } = this.host.state();
+    const items =
+      desiredPreferences.navCollapsedGroups ?? prefs.navCollapsedGroups;
+    this.save({ navCollapsedGroups: toggle(items, cwd) });
+  }
+
+  private curationBlocked(): boolean {
+    const state = this.host.state();
+    return Boolean(
+      state.deletingSessionId || state.clearingHidden || state.curationPending,
+    );
+  }
+
+  private curate(key: CurationKey, opposite: CurationKey, value: string): void {
+    if (this.curationBlocked()) return;
+    const prefs = this.host.state().prefs;
     this.save({
-      navCollapsedGroups: current.includes(cwd)
-        ? current.filter((item) => item !== cwd)
-        : [...current, cwd],
+      [key]: toggle(prefs[key], value),
+      ...(!prefs[key].includes(value) && prefs[opposite].includes(value)
+        ? { [opposite]: prefs[opposite].filter((item) => item !== value) }
+        : {}),
     });
   }
 
   toggleSessionPin(id: string): void {
-    if (this.curationMutationBlocked()) return;
-    const { pinnedSessionIds, hiddenSessionIds } = this.host.state().prefs;
-    const pinned = pinnedSessionIds.includes(id);
-    this.save({
-      pinnedSessionIds: pinned
-        ? pinnedSessionIds.filter((candidate) => candidate !== id)
-        : [id, ...pinnedSessionIds],
-      ...(!pinned && hiddenSessionIds.includes(id)
-        ? {
-            hiddenSessionIds: hiddenSessionIds.filter(
-              (candidate) => candidate !== id,
-            ),
-          }
-        : {}),
-    });
+    this.curate("pinnedSessionIds", "hiddenSessionIds", id);
   }
 
   toggleSessionHidden(id: string): void {
-    if (this.curationMutationBlocked()) return;
-    const state = this.host.state();
-    const { pinnedSessionIds, hiddenSessionIds, hiddenProjectCwds } =
-      state.prefs;
-    const session = state.sessions.find((candidate) => candidate.id === id);
-    if (session && hiddenProjectCwds.includes(session.cwd)) {
+    if (this.curationBlocked()) return;
+    const { sessions, prefs } = this.host.state();
+    const session = sessions.find((candidate) => candidate.id === id);
+    if (session && prefs.hiddenProjectCwds.includes(session.cwd))
       void this.restoreSessionFromHiddenFolder(id, session.cwd);
-      return;
-    }
-    const hidden = hiddenSessionIds.includes(id);
-    this.save({
-      hiddenSessionIds: hidden
-        ? hiddenSessionIds.filter((candidate) => candidate !== id)
-        : [id, ...hiddenSessionIds],
-      ...(!hidden && pinnedSessionIds.includes(id)
-        ? {
-            pinnedSessionIds: pinnedSessionIds.filter(
-              (candidate) => candidate !== id,
-            ),
-          }
-        : {}),
-    });
+    else this.curate("hiddenSessionIds", "pinnedSessionIds", id);
+  }
+
+  toggleProjectPin(cwd: string): void {
+    this.curate("pinnedProjectCwds", "hiddenProjectCwds", cwd);
+  }
+
+  toggleProjectHidden(cwd: string): void {
+    this.curate("hiddenProjectCwds", "pinnedProjectCwds", cwd);
   }
 
   private async restoreSessionFromHiddenFolder(
@@ -384,25 +296,12 @@ export class PreferenceController {
   ): Promise<void> {
     const api = this.host.api();
     if (!api) return;
-    const owners = this.captureOwners();
+    const revision = this.curationRevision;
     try {
-      // A visible page or search result is not the complete folder. Resolve its
-      // full catalog membership before leaving the other sessions in Hidden.
       const { sessions } = await api.sessionsByCwds([cwd]);
-      if (this.host.api() !== api) return;
+      if (this.host.api() !== api || this.curationBlocked()) return;
       const prefs = this.host.state().prefs;
-      if (
-        !prefs.hiddenProjectCwds.includes(cwd) ||
-        this.curationMutationBlocked()
-      )
-        return;
-      if (
-        ["hiddenSessionIds", "hiddenProjectCwds"].some(
-          (field) =>
-            this.fieldOwners.get(field as keyof InspirePreferences) !==
-            owners.get(field as keyof InspirePreferences),
-        )
-      ) {
+      if (revision !== this.curationRevision) {
         this.host.notify(
           "info",
           "Hidden changed while loading this folder. Try restoring the session again.",
@@ -440,37 +339,5 @@ export class PreferenceController {
             : "Could not restore the session",
         );
     }
-  }
-
-  toggleProjectPin(cwd: string): void {
-    if (this.curationMutationBlocked()) return;
-    const { pinnedProjectCwds, hiddenProjectCwds } = this.host.state().prefs;
-    const pinned = pinnedProjectCwds.includes(cwd);
-    this.save({
-      pinnedProjectCwds: pinned
-        ? pinnedProjectCwds.filter((item) => item !== cwd)
-        : [cwd, ...pinnedProjectCwds],
-      ...(!pinned && hiddenProjectCwds.includes(cwd)
-        ? {
-            hiddenProjectCwds: hiddenProjectCwds.filter((item) => item !== cwd),
-          }
-        : {}),
-    });
-  }
-
-  toggleProjectHidden(cwd: string): void {
-    if (this.curationMutationBlocked()) return;
-    const { pinnedProjectCwds, hiddenProjectCwds } = this.host.state().prefs;
-    const hidden = hiddenProjectCwds.includes(cwd);
-    this.save({
-      hiddenProjectCwds: hidden
-        ? hiddenProjectCwds.filter((item) => item !== cwd)
-        : [cwd, ...hiddenProjectCwds],
-      ...(!hidden && pinnedProjectCwds.includes(cwd)
-        ? {
-            pinnedProjectCwds: pinnedProjectCwds.filter((item) => item !== cwd),
-          }
-        : {}),
-    });
   }
 }

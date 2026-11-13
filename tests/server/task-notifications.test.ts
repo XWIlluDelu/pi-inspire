@@ -3,11 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type webPush from "web-push";
-import {
-  pushSubscriptionSchema,
-  TaskNotifications,
-} from "../../server/task-notifications.js";
+import { TaskNotifications } from "../../server/task-notifications.js";
 import type { TaskNotification } from "../../shared/notifications.js";
+import { pushSubscriptionSchema } from "../../shared/notifications.js";
 
 const directories: string[] = [];
 const services: TaskNotifications[] = [];

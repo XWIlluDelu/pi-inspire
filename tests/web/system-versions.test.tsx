@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { PiUpdateCheckResponse } from "../../shared/contracts";
+import type {
+  HostUpdateStatus,
+  PiUpdateCheckResponse,
+} from "../../shared/contracts";
 import { Notices } from "../../src/components/Notices";
 import { SystemVersionsCard } from "../../src/components/SystemVersionsCard";
 import { store } from "../../src/store";
@@ -9,6 +12,7 @@ import { sessionPage } from "./fixtures/session-catalog";
 import {
   bootstrapPayload,
   deferred,
+  emptySnapshot,
   FakeWebSocket,
   installFakeWebSocket,
   installFetch,
@@ -55,7 +59,7 @@ describe("System versions", () => {
     const bootstrap = bootstrapPayload({
       piVersion: piUpdateCheck.currentVersion,
     });
-    const updateStatus = {
+    const updateStatus: HostUpdateStatus = {
       ...bootstrap.updateStatus,
       piUpdateCheck,
       inspireUpdateCheck: { kind: "unreleased" },
@@ -67,7 +71,7 @@ describe("System versions", () => {
       return updateRoute?.(url, init);
     });
     await store.init();
-    FakeWebSocket.instances.at(-1)!.open();
+    FakeWebSocket.instances.at(-1)!.join(emptySnapshot, { updateStatus });
   }
 
   it("replaces update actions and the notice with one restart status, then clears it for a new Host", async () => {

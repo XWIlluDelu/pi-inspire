@@ -302,7 +302,7 @@ async function setup({
   await runtime.openSession(SESSION_ID);
   if (externallyOwned) {
     await vi.waitFor(async () =>
-      expect((await runtime.snapshot()).active?.readOnlyReason).toBe(
+      expect((await runtime.snapshot(SESSION_ID)).active?.readOnlyReason).toBe(
         "external-active",
       ),
     );
@@ -376,7 +376,7 @@ describe("stock RPC branch bridge", () => {
     await appendFile(path, jsonl(saved));
     worker.emit("event", { type: "message_end", message: saved.message });
     worker.publishSaved(saved);
-    const snapshot = await runtime.snapshot();
+    const snapshot = await runtime.snapshot(SESSION_ID);
     const request = {
       sessionId: SESSION_ID,
       viewId: snapshot.active!.transcriptPage.viewId,
@@ -401,12 +401,12 @@ describe("stock RPC branch bridge", () => {
     );
     worker.emit("event", { type: "agent_start" });
     await vi.waitFor(async () =>
-      expect((await runtime.snapshot()).runState).toBe("running"),
+      expect((await runtime.snapshot(SESSION_ID)).runState).toBe("running"),
     );
     await runtime.abort(SESSION_ID, request.viewId);
     worker.emit("event", { type: "agent_settled", aborted: true });
     await vi.waitFor(async () =>
-      expect((await runtime.snapshot()).runState).toBe("aborted"),
+      expect((await runtime.snapshot(SESSION_ID)).runState).toBe("aborted"),
     );
     const tree = (await runtime.snapshot(SESSION_ID)).active!;
     const edited = await runtime.navigateBranch({
@@ -538,7 +538,12 @@ describe("stock RPC branch bridge", () => {
     runtime.setExternalSessionPresence(async () => []);
     await runtime.takeOverSession(SESSION_ID);
     await expect(
-      runtime.selectBranch(SESSION_ID, "unfinished"),
+      runtime.navigateBranch({
+        sessionId: SESSION_ID,
+        targetId: "unfinished",
+        revision: (await runtime.snapshot(SESSION_ID)).active!.branchRevision!,
+        mode: "watch",
+      }),
     ).rejects.toMatchObject({
       status: 409,
       message: expect.stringContaining("Use Edit from here"),
@@ -702,12 +707,13 @@ describe("stock RPC branch bridge", () => {
       },
     };
     await vi.waitFor(async () =>
-      expect(await runtime.snapshot()).toMatchObject(busySource),
+      expect(await runtime.snapshot(SESSION_ID)).toMatchObject(busySource),
     );
     const sourceBefore = await readFile(path, "utf8");
     const request = {
       sessionId: SESSION_ID,
-      viewId: (await runtime.snapshot()).active!.transcriptPage.viewId,
+      viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
+        .viewId,
     };
     expect(
       await runtime.sessionHistory(request.sessionId, request.viewId, {
@@ -984,7 +990,7 @@ describe("stock RPC branch bridge", () => {
       '"id":"a1"',
     );
     expect(worker.stops).toBe(0);
-    expect((await runtime.snapshot()).runState).not.toBe("conflict");
+    expect((await runtime.snapshot(SESSION_ID)).runState).not.toBe("conflict");
   });
 
   it("follows the viewed branch while another Pi runs it and switches by the same admission rule", async () => {
@@ -1012,14 +1018,24 @@ describe("stock RPC branch bridge", () => {
       expect(routes.nodes.map((node) => node.leafId)).toEqual(["a2", "alt-a"]);
 
       // No Pi runs the other branch: it opens editable here.
-      const editable = await runtime.selectBranch(SESSION_ID, "alt-a");
+      const { snapshot: editable } = await runtime.navigateBranch({
+        sessionId: SESSION_ID,
+        targetId: "alt-a",
+        revision: (await runtime.snapshot(SESSION_ID)).active!.branchRevision!,
+        mode: "watch",
+      });
       expect(editable.active?.readOnlyReason).toBeUndefined();
       expect(JSON.stringify(editable.active?.transcriptPage)).toContain(
         "alternative answer",
       );
 
       // Back to the branch the live Pi runs: read-only again.
-      const watched = await runtime.selectBranch(SESSION_ID, "a2");
+      const { snapshot: watched } = await runtime.navigateBranch({
+        sessionId: SESSION_ID,
+        targetId: "a2",
+        revision: (await runtime.snapshot(SESSION_ID)).active!.branchRevision!,
+        mode: "watch",
+      });
       expect(watched.active?.readOnlyReason).toBe("external-active");
       expect(JSON.stringify(watched.active?.transcriptPage)).toContain(
         "second answer",

@@ -1,6 +1,6 @@
 import { expect, it, vi } from "vitest";
 import {
-  LazyTerminalService,
+  TerminalConnection,
   type TerminalService,
 } from "../../server/terminal-service.js";
 
@@ -31,8 +31,10 @@ function asService(client: ReturnType<typeof backend>): TerminalService {
 }
 it("cancels same-tick initialization when the service closes", async () => {
   const connect = vi.fn();
-  const service = new LazyTerminalService(connect);
-  const read = expect(service.list()).rejects.toMatchObject({
+  const service = new TerminalConnection(connect);
+  const read = expect(
+    service.run((terminal) => terminal.list()),
+  ).rejects.toMatchObject({
     code: "terminal_service_closed",
   });
   await service.close();
@@ -44,25 +46,29 @@ it("closes a late connection without reviving its old lifecycle or dispatching o
   const oldClient = backend();
   const newClient = backend();
   let accept!: (service: TerminalService) => void;
-  const old = new LazyTerminalService(
+  const old = new TerminalConnection(
     () =>
       new Promise((resolve) => {
         accept = resolve;
       }),
   );
-  const rejected = expect(old.list()).rejects.toMatchObject({
+  const rejected = expect(
+    old.run((terminal) => terminal.list()),
+  ).rejects.toMatchObject({
     code: "terminal_service_closed",
   });
   await Promise.resolve();
   const closing = old.close();
-  const current = new LazyTerminalService(async () => asService(newClient));
-  await expect(current.list()).resolves.toEqual(catalog);
+  const current = new TerminalConnection(async () => asService(newClient));
+  await expect(current.run((terminal) => terminal.list())).resolves.toEqual(
+    catalog,
+  );
   accept(asService(oldClient));
   await Promise.all([closing, rejected]);
   expect(oldClient.close).toHaveBeenCalledOnce();
   expect(oldClient.list).not.toHaveBeenCalled();
   expect(newClient.close).not.toHaveBeenCalled();
-  await expect(old.list()).rejects.toMatchObject({
+  await expect(old.run((terminal) => terminal.list())).rejects.toMatchObject({
     code: "terminal_service_closed",
   });
   await current.close();
@@ -71,23 +77,27 @@ it("closes a late connection without reviving its old lifecycle or dispatching o
 it("never replays dispatched mutations or input after a lost acknowledgement", async () => {
   const client = backend();
   const connect = vi.fn().mockResolvedValue(asService(client));
-  const service = new LazyTerminalService(connect);
-  const attachment = await service.attach(
-    { terminalId: "terminal", clientId: "browser", cols: 80, rows: 24 },
-    { sendControl: vi.fn(), sendData: vi.fn(), close: vi.fn() },
+  const service = new TerminalConnection(connect);
+  const attachment = await service.run((terminal) =>
+    terminal.attach(
+      { terminalId: "terminal", clientId: "browser", cols: 80, rows: 24 },
+      { sendControl: vi.fn(), sendData: vi.fn(), close: vi.fn() },
+    ),
   );
   attachment.writeInput(1, new Uint8Array([65]));
-  const identity = { id: "operation", epoch: "fixture" };
+  const operation = {
+    operationId: "operation",
+    executor: { kind: "terminal", epoch: "fixture" },
+    intent: { command: "restart", params: { id: "terminal" } },
+  } as const;
   await expect(
-    service.operate("restart", { id: "terminal" }, identity),
+    service.run((terminal) => terminal.operate(operation, false)),
   ).rejects.toThrow("Acknowledgement lost");
-  await expect(service.list()).resolves.toEqual(catalog);
-  expect(connect).toHaveBeenCalledOnce();
-  expect(client.operate).toHaveBeenCalledExactlyOnceWith(
-    "restart",
-    { id: "terminal" },
-    identity,
+  await expect(service.run((terminal) => terminal.list())).resolves.toEqual(
+    catalog,
   );
+  expect(connect).toHaveBeenCalledOnce();
+  expect(client.operate).toHaveBeenCalledExactlyOnceWith(operation, false);
   expect(client.writeInput).toHaveBeenCalledExactlyOnceWith(
     1,
     new Uint8Array([65]),

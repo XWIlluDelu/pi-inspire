@@ -44,16 +44,21 @@ Input-method-owned keydowns stay native even if `compositionend` preceded the fi
 `isComposing` or key code 229 prevents submission, completion/history selection and dialog actions.
 The next ordinary key keeps its existing behavior.
 
-Each session keeps its unsent text, attachments and project references across switching. Text
-restores from tab-session storage for the same Host origin; New has a separate text partition.
-Both editors render text directly from their draft partition. Attachments and project references
-remain in memory. Material edits advance the draft revision. First-message creation transfers the
-captured text to the assigned session, and submission checks its revision after attachment upload
-and initial controls. New input typed during that handoff remains available. Automatic recovery
-requires the revision left by the original handoff. If the user edits and then clears the field,
-the failed input stays available through Restore. Explicit clear and deletion remove saved text.
-Storage refusal leaves an in-memory draft. Append-only transcript updates preserve textarea focus
-and selection.
+Each session keeps one draft for text, attachments and project references across switching. New has
+its own draft. Text restores from tab-session storage for the same Host origin. Attachments and
+project references remain in memory. A tab-wide sequence advances on material edits, so an older
+handoff cannot match a cleared or replaced draft. First-message creation transfers the captured
+input to the assigned session. Before submission it checks the destination after attachment upload
+and initial controls. New input typed during that handoff remains available.
+
+An uncertain prompt retains the original operation. Automatic restoration requires the revision
+left by the handoff. After an edit and clear, Restore can recover the prior input explicitly.
+Editing the restored draft keeps its link. Retry delivery observes the original receipt. **New
+input** detaches the link so an intentional duplicate can be sent as a separate prompt, restaging
+browser-held files. Same-version tab reload retains receipt tracking for observation only.
+Unreadable receipt records remain in place until Stop tracking. A failure to publish the next
+receipt leaves the draft editable and blocks its dispatch.
+Append-only transcript updates preserve textarea focus and selection.
 
 Send remains mounted across idle/busy transitions. Conflict recovery is the sole action when
 delivery is unavailable.
@@ -105,6 +110,11 @@ captions; it is visual only and excluded from paths, titles, accessible names an
 filenames elide without overflowing. The search row stays on the edge nearest the toolbar trigger
 as the results change. Its boundary against the results spans the input and hidden-files toggle
 and uses the accent color only while the input is focused.
+
+Model selection, project file search and inline completion share keyboard and pointer selection,
+active-descendant tracking and list scrolling. Model groups keep their headings. Larger model and
+completion lists mount the current range and keep the active choice present. File selection skips
+already attached files and keeps Home and End in the search field.
 
 Both searches offer default-off Show hidden files for dot names and native hidden attributes,
 independently of Git ignore. New keeps this filter choice across directory edits while clearing
@@ -289,9 +299,9 @@ their own keyboard focus, deadlines and cancellation under [[pi-integration]].
 
 Submission, including the first Welcome message, synchronously hands the exact draft/artifacts to
 an operation keyed by its original receipt and leaves the editor ready for the next input.
-Sending, unknown acceptance and draft recovery belong to that record. Delayed receipts cannot
-clear newer drafts. On definitive failure or unknown acceptance, input is restored into an empty
-editor; otherwise Restore offers it without replacing newer work. While text or artifacts occupy the
+Sending, unknown acceptance and draft recovery belong to that record. On definitive failure or
+unknown acceptance, input returns to the unedited draft left by the handoff. Restore offers it
+alongside later edits. While text or artifacts occupy the
 editor, Restore's compact quiet action uses the shared neutral unavailable state and keeps its 32px
 target. Artifacts are released only on confirmed acceptance, explicit Clear, or withdrawal after
 restoration. Known acceptance remains non-retryable even if later projection reconciliation

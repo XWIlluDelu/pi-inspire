@@ -1,22 +1,24 @@
 import { History, Send, Square } from "lucide-react";
 import {
   memo,
+  type ReactNode,
   useEffect,
   useId,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import {
   type ComposerHistoryEntry,
   isAbortableRunState,
   isBusyRunState,
 } from "../../shared/contracts";
+import { contextUsage, selectedRunState } from "../app-state";
 import {
   type ComposerHistoryScope,
   recentComposerHistory,
-  rememberComposerHistory,
 } from "../composer-history";
 import { shouldSubmitComposerEnter } from "../composer-keyboard";
 import { isComposingKeyboardEvent } from "../keyboard-input";
@@ -24,12 +26,7 @@ import {
   resolveModelMetadata,
   supportedThinkingLevels,
 } from "../model-options";
-import {
-  sessionDraft,
-  sessionDraftRevision,
-  setSessionDraft,
-  useDraftText,
-} from "../session-drafts";
+import { hasDraftInput, useSessionDraft } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
 import { hasActiveModal } from "../use-modal-focus";
 import { AttachmentList } from "./AttachmentList";
@@ -43,15 +40,31 @@ import { useComposerAttachmentInput } from "./use-composer-attachment-input";
 const RING_RADIUS = 5;
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 
+function DeliveryNotice({
+  text,
+  children,
+}: {
+  text: string;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="composer__failed-delivery" role="status">
+      <span>{text}</span>
+      {children}
+    </div>
+  );
+}
+
 const ContextMeter = memo(function ContextMeter() {
-  const { usage, model, sessionId } = useAppState(
+  const { stats, model, sessionId } = useAppState(
     (state) => ({
-      usage: state.contextUsage,
+      stats: state.sessionStats,
       model: state.model,
       sessionId: state.sessionId,
     }),
     shallowEqual,
   );
+  const usage = contextUsage(stats);
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const hintId = useId();
@@ -179,13 +192,9 @@ export const Composer = memo(function Composer() {
       transcriptIncarnation: source.transcriptIncarnation,
       transcriptEffectiveLeafId: source.transcriptEffectiveLeafId,
       composerHistoryVersion: source.composerHistoryVersion,
-      runState: source.runState,
+      runState: selectedRunState(source),
       bashRunning: source.bashRunning,
       sessionSelectionPending: source.sessionSelectionPending,
-      editorText: source.editorText,
-      attachments: source.attachments,
-      projectFiles: source.projectFiles,
-      failedDeliveryCount: source.failedDeliveryCount,
       workspaceShowHidden: source.workspaceShowHidden,
       model: source.model,
       availableModels: source.availableModels,
@@ -240,21 +249,23 @@ export const Composer = memo(function Composer() {
     key: string;
     draftRevision: number;
   } | null>(null);
-  const draft = useDraftText(sessionId);
+  const draft = useSessionDraft(store.drafts, sessionId ?? undefined);
+  useSyncExternalStore(
+    store.subscribeComposerDeliveries,
+    store.composerDeliveryVersion,
+  );
+  const {
+    failedCount,
+    storageIssue: deliveryStorageIssue,
+    reloaded: reloadedDelivery,
+    previous: previousDelivery,
+  } = store.composerDeliveryState(sessionId);
+  const observingDelivery = Boolean(draft.intentId || reloadedDelivery);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [deliveryBehavior, setDeliveryBehavior] = useState<
     "steer" | "followUp"
   >("steer");
   const wasBusyRef = useRef(false);
-  const inputSnapshot = useMemo(
-    () => ({
-      draft,
-      attachments: state.attachments,
-      projectFiles: state.projectFiles,
-    }),
-    [draft, state.attachments, state.projectFiles],
-  );
-  const handedOffRef = useRef<typeof inputSnapshot | null>(null);
   const busy = isBusyRunState(state.runState);
   const sessionOpening = state.sessionSelectionPending;
   const attachmentInput = useComposerAttachmentInput(
@@ -271,7 +282,7 @@ export const Composer = memo(function Composer() {
   const native = sessionId ? state.sessionStatuses[sessionId] : undefined;
   const terminalQueueOnly = busy && native?.external && !native.queueAdmission;
   const deliveryBusy = busy && !terminalQueueOnly;
-  const shellInput = draft.trim().startsWith("!");
+  const shellInput = draft.text.trim().startsWith("!");
 
   const runStateClass = isRunning
     ? "composer--running"
@@ -283,16 +294,11 @@ export const Composer = memo(function Composer() {
           ? "composer--failed"
           : "";
 
-  const updateDraft = (text: string) => {
-    handedOffRef.current = null;
-    if (sessionId) setSessionDraft(sessionId, text);
-  };
-
   const openHistory = () => {
     if (!sessionOpening && sessionId && historyKey)
       setHistoryOpen({
         key: historyKey,
-        draftRevision: sessionDraftRevision(sessionId),
+        draftRevision: draft.revision,
       });
   };
 
@@ -307,7 +313,6 @@ export const Composer = memo(function Composer() {
       )
     )
       return false;
-    updateDraft(entry.text);
     setHistoryOpen(null);
     return true;
   };
@@ -320,7 +325,6 @@ export const Composer = memo(function Composer() {
   useLayoutEffect(() => {
     if (previousSessionRef.current === sessionId) return;
     previousSessionRef.current = sessionId;
-    handedOffRef.current = null;
     // Every transient composer surface belongs to the session that opened it.
     // Reset before paint so it cannot silently retarget the newly visible one.
     setPickerOpen(false);
@@ -332,62 +336,24 @@ export const Composer = memo(function Composer() {
     wasBusyRef.current = busy;
   }, [busy]);
 
-  const editorNonce = state.editorText?.nonce;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: Pi's nonce is the editor-delivery revision; same-nonce payload changes must not replace a draft.
-  useLayoutEffect(() => {
-    const delivery = state.editorText;
-    if (
-      delivery &&
-      (delivery.draftRevision === undefined ||
-        (sessionId &&
-          sessionDraftRevision(sessionId) === delivery.draftRevision))
-    )
-      updateDraft(delivery.text);
-  }, [editorNonce]);
-
   const canSend = Boolean(
     !sessionOpening &&
-      !terminalQueueOnly &&
       sessionId &&
-      (draft.trim() ||
-        state.attachments.length > 0 ||
-        state.projectFiles.length > 0),
+      (observingDelivery ||
+        (deliveryStorageIssue !== "format" &&
+          !terminalQueueOnly &&
+          (draft.text.trim() ||
+            draft.attachments.length ||
+            draft.projectFiles.length))),
   );
   const activeBehavior = deliveryBusy
     ? deliveryBehavior
     : state.runState === "conflict"
       ? "steer"
       : undefined;
-  const submit = async (behavior?: "steer" | "followUp") => {
-    const message = draft;
-    if (!canSend || sessionOpening || handedOffRef.current === inputSnapshot)
-      return;
-    const owner = sessionId;
-    if (!owner || sessionDraft(owner) !== message) return;
-    const current = store.getState();
-    if (
-      current.sessionId !== owner ||
-      current.attachments !== inputSnapshot.attachments ||
-      current.projectFiles !== inputSnapshot.projectFiles
-    )
-      return;
-    const revision = sessionDraftRevision(owner);
-    const recordsHistory = !store.isNativeCommand(message);
-    let handedOff = false;
-    const sent = await store.sendPrompt(message, behavior, () => {
-      handedOff = true;
-      handedOffRef.current = inputSnapshot;
-      if (sessionDraftRevision(owner) === revision) setSessionDraft(owner, "");
-    });
-    if (!sent) return;
-    if (recordsHistory && historyScope) {
-      rememberComposerHistory(
-        historyScope,
-        sent.historyEntry ?? { text: message.trim(), images: [], files: [] },
-      );
-    }
-    if (!handedOff && sessionDraftRevision(owner) === revision)
-      setSessionDraft(owner, "");
+  const submit = (behavior?: "steer" | "followUp") => {
+    if (!canSend || store.getState().sessionId !== sessionId) return;
+    void store.sendPrompt(draft.text, behavior, draft);
   };
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -414,6 +380,20 @@ export const Composer = memo(function Composer() {
   const modelControls = Boolean(state.sessionId);
   const thinkingSupported = activeModel?.reasoning !== false;
   const thinkingLevels = supportedThinkingLevels(activeModel);
+  const deliveryAction = (
+    label: string,
+    run: () => void,
+    disabled = sessionOpening,
+  ) => (
+    <button
+      type="button"
+      className="button button--quiet"
+      onClick={run}
+      disabled={disabled}
+    >
+      {label}
+    </button>
+  );
 
   return (
     <form
@@ -429,38 +409,65 @@ export const Composer = memo(function Composer() {
       {attachmentInput.input}
       <AttachmentList
         sessionId={sessionId}
-        items={state.attachments}
+        items={draft.attachments}
         disabled={sessionOpening}
         onRemove={store.removeAttachment}
         onRetry={(localId) => void store.retryAttachment(localId)}
       />
       <ProjectFileChips
-        paths={state.projectFiles}
+        paths={draft.projectFiles}
         disabled={sessionOpening}
         onRemove={store.removeProjectFile}
       />
-      {state.failedDeliveryCount > 0 ? (
-        <div className="composer__failed-delivery" role="status">
-          <span>Message not delivered</span>
-          <button
-            type="button"
-            className="button button--quiet"
-            disabled={
-              sessionOpening ||
-              Boolean(
-                draft || state.attachments.length || state.projectFiles.length,
-              )
-            }
-            onClick={() => store.restoreFailedComposerPrompt()}
-          >
-            Restore
-          </button>
-        </div>
+      {deliveryStorageIssue === "format" ? (
+        <DeliveryNotice text="Previous delivery records could not be read. Check the conversation before sending again.">
+          {deliveryAction(
+            "Stop tracking",
+            store.forgetUnsupportedComposerDeliveries,
+          )}
+        </DeliveryNotice>
+      ) : (
+        deliveryStorageIssue && (
+          <DeliveryNotice text="This tab cannot save delivery records." />
+        )
+      )}
+      {observingDelivery ? (
+        <DeliveryNotice
+          text={
+            reloadedDelivery
+              ? "Delivery before reload is unconfirmed"
+              : "Delivery unconfirmed"
+          }
+        >
+          {deliveryAction(
+            reloadedDelivery ? "Stop tracking" : "New input",
+            store.detachComposerPrompt,
+          )}
+        </DeliveryNotice>
+      ) : failedCount > 0 ? (
+        <DeliveryNotice text="Previous input">
+          {deliveryAction(
+            "Restore",
+            store.restoreFailedComposerPrompt,
+            sessionOpening || hasDraftInput(draft),
+          )}
+        </DeliveryNotice>
       ) : null}
+      {!observingDelivery && previousDelivery && (
+        <DeliveryNotice text="Earlier delivery unconfirmed">
+          {deliveryAction("Check receipt", store.retryPreviousComposerDelivery)}
+          {deliveryAction(
+            "Stop tracking",
+            store.forgetPreviousComposerDelivery,
+          )}
+        </DeliveryNotice>
+      )}
       <ComposerInput
         key={`input-${inputKey}`}
-        value={draft}
-        onChange={updateDraft}
+        value={draft.text}
+        onChange={(text) => {
+          if (sessionId) store.drafts.setText(sessionId, text);
+        }}
         commands={state.commands}
         models={state.availableModels}
         activeModel={activeModel}
@@ -569,7 +576,7 @@ export const Composer = memo(function Composer() {
           onOpenChange={setPickerOpen}
           showHidden={state.workspaceShowHidden}
           onShowHiddenChange={store.setWorkspaceShowHidden}
-          selected={state.projectFiles}
+          selected={draft.projectFiles}
           disabled={sessionOpening}
           search={store.searchProjectFiles}
           onAdd={(file) => store.addProjectFile(file.path)}
@@ -613,28 +620,35 @@ export const Composer = memo(function Composer() {
             <Square size={14} aria-hidden />
           </button>
         ) : null}
-        {!abortable || deliveryBusy || state.bashRunning ? (
+        {!abortable ||
+        deliveryBusy ||
+        state.bashRunning ||
+        (observingDelivery && state.runState !== "conflict") ? (
           <button
             type="submit"
             className="composer__send"
             disabled={!canSend}
             aria-label={
-              shellInput
-                ? "Run shell command"
-                : !deliveryBusy
-                  ? "Send message"
-                  : deliveryBehavior === "steer"
-                    ? "Send as steer"
-                    : "Queue after current task"
+              observingDelivery
+                ? "Retry delivery"
+                : shellInput
+                  ? "Run shell command"
+                  : !deliveryBusy
+                    ? "Send message"
+                    : deliveryBehavior === "steer"
+                      ? "Send as steer"
+                      : "Queue after current task"
             }
             title={
-              shellInput
-                ? "Run shell command"
-                : !deliveryBusy
-                  ? "Send"
-                  : deliveryBehavior === "steer"
-                    ? "Send as steer"
-                    : "Queue after current task"
+              observingDelivery
+                ? "Check the original delivery receipt"
+                : shellInput
+                  ? "Run shell command"
+                  : !deliveryBusy
+                    ? "Send"
+                    : deliveryBehavior === "steer"
+                      ? "Send as steer"
+                      : "Queue after current task"
             }
           >
             <Send size={14} aria-hidden />

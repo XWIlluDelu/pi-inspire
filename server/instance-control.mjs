@@ -6,6 +6,7 @@ import {
 } from "node:crypto";
 
 const DOMAIN = "inspire:local-http-control:v1";
+export const INSTANCE_STATE_VERSION = 2;
 const TTL_MS = 15_000;
 const MAX_BYTES = 2_048;
 const MAX_PENDING = 1_024;
@@ -18,11 +19,6 @@ const actions = new Set([
   "maintenance-release",
 ]);
 const encodedSecret = /^[A-Za-z0-9_-]{43}$/u;
-
-// Keep the published marker for compatibility with running Hosts and launchers.
-export function supportsInstanceControl(state) {
-  return state?.durableWorkerRelease === true;
-}
 
 /** The state owner, never a caller-supplied PID/root, supplies this binding.
  * Keep the encoding shared with the existing local shutdown mailbox. */
@@ -37,7 +33,7 @@ export function instanceIdentity(state) {
         state.root,
         state.host,
         state.port,
-        false, // Reserved identity slot; keep existing authenticated control proofs valid.
+        state.systemdInvocationId ?? null,
       ]),
     )
     .digest("base64url");
@@ -79,7 +75,7 @@ export function createInstanceControlRequest(
   payload = {},
   timeoutMs = TTL_MS,
 ) {
-  if (!supportsInstanceControl(state) || !actions.has(action))
+  if (state?.schemaVersion !== INSTANCE_STATE_VERSION || !actions.has(action))
     throw new Error("This Host does not support authenticated local HTTP control");
   const message = {
     version: 1,
@@ -107,7 +103,7 @@ export class InstanceHttpControl {
   accept(state, value) {
     const now = this.#now();
     if (
-      !supportsInstanceControl(state) ||
+      state?.schemaVersion !== INSTANCE_STATE_VERSION ||
       !value ||
       value.version !== 1 ||
       typeof value.nonce !== "string" ||

@@ -13,11 +13,11 @@ import type {
   ExtensionWidgetDisplay,
 } from "../../shared/contracts";
 import { stripTerminalSequences } from "../ansi";
+import { isComposingKeyboardEvent } from "../keyboard-input";
 import {
   controlState,
   usePresentationAdapters,
 } from "../presentation-adapters";
-import { isComposingKeyboardEvent } from "../keyboard-input";
 import { shallowEqual, useAppState } from "../store";
 import {
   type FloatingMenuConstraints,
@@ -25,7 +25,6 @@ import {
   useFloatingMenuPlacement,
 } from "../use-floating-menu";
 import { CopyAction } from "./CopyAction";
-import { ScrollRail } from "./ScrollRail";
 
 type Placement = ExtensionWidgetDisplay["placement"];
 
@@ -199,7 +198,6 @@ export const ExtensionDisplayDock = memo(function ExtensionDisplayDock({
   displays: ExtensionDisplay[];
   placement: Placement;
 }) {
-  const dockRef = useRef<HTMLDivElement>(null);
   const visible = displays.filter(
     (display): display is ExtensionWidgetDisplay =>
       display.kind === "widget" && display.placement === placement,
@@ -207,7 +205,6 @@ export const ExtensionDisplayDock = memo(function ExtensionDisplayDock({
   if (visible.length === 0) return null;
   return (
     <div
-      ref={dockRef}
       className={`extension-dock extension-dock--${placement === "aboveEditor" ? "above" : "below"}`}
       role="region"
       tabIndex={0}
@@ -217,7 +214,6 @@ export const ExtensionDisplayDock = memo(function ExtensionDisplayDock({
           : "Extension content below composer"
       }
     >
-      <ScrollRail container={dockRef} variant="dock" />
       {visible.map((display) => (
         <TextWidget key={display.id} display={display} />
       ))}

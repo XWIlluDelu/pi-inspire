@@ -5,16 +5,24 @@ import { prepareHostRestart } from "./host-restart-preparation.js";
 import { stopAllPiProcesses, supportsGlobalPiStop } from "./pi-processes.mjs";
 
 interface ServiceControl {
-  inspectBrowserRestart(
+  inspectRestartTarget(
     root: string,
-    options: { invocationId: string },
+    invocationId: string,
   ): Promise<{ kind: string }>;
-  requestBrowserRestart(
+  submitSystemdRestart(
     root: string,
-    all: boolean,
-    commit: () => boolean | Promise<boolean>,
-    options: { invocationId: string },
-  ): Promise<{ code: number; issued?: boolean }>;
+    plan: {
+      invocationId: string;
+      terminals: boolean;
+      detached: boolean;
+      commit: () => boolean | Promise<boolean>;
+      beforeRestart?: () => Promise<void>;
+    },
+  ): Promise<
+    | { kind: "issued" }
+    | { kind: "unconfirmed" }
+    | { kind: "not-issued"; reason: string; error?: unknown }
+  >;
 }
 
 export function systemdRestartBackend(
@@ -40,11 +48,10 @@ export function systemdRestartBackend(
     async inspect() {
       const available =
         supported &&
-        (await (await control()).inspectBrowserRestart(root, { invocationId }))
+        (await (await control()).inspectRestartTarget(root, invocationId))
           .kind === "managed";
       return {
         host: available,
-        all: available,
         allPi: available && supportsGlobalPiStop(),
         includeHerdr,
       };
@@ -53,25 +60,33 @@ export function systemdRestartBackend(
     async request(scope, commit) {
       if (!supported || (scope === "all-pi" && !supportsGlobalPiStop()))
         return { issued: false, code: 1 };
-      let stopError: string | undefined;
-      const result = await (await control()).requestBrowserRestart(
-        root,
-        scope === "all" || scope === "all-pi",
-        async () => {
-          if (!(await commit())) return false;
-          if (scope === "all-pi") {
-            try {
-              await stopPi({ includeHerdr });
-            } catch (error) {
-              stopError = `Pi shutdown failed. Inspire was not restarted. ${error instanceof Error ? error.message : String(error)}`;
-              return false;
-            }
-          }
-          return true;
-        },
-        { invocationId },
-      );
-      return stopError ? { ...result, error: stopError } : result;
+      const result = await (await control()).submitSystemdRestart(root, {
+        invocationId,
+        terminals: scope === "all-pi",
+        detached: true,
+        commit,
+        beforeRestart:
+          scope === "all-pi"
+            ? async () => {
+                try {
+                  await stopPi({ includeHerdr });
+                } catch (error) {
+                  throw new Error(
+                    `Pi shutdown failed. Inspire was not restarted. ${error instanceof Error ? error.message : String(error)}`,
+                  );
+                }
+              }
+            : undefined,
+      });
+      if (result.kind === "issued") return { code: 0, issued: true };
+      if (result.kind === "unconfirmed") return { code: 1 };
+      return {
+        code: 1,
+        issued: false,
+        ...(result.error instanceof Error
+          ? { error: result.error.message }
+          : {}),
+      };
     },
   };
 }

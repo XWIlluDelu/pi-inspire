@@ -2,9 +2,9 @@ import { fireEvent, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComposerHistoryEntry } from "../../../shared/contracts";
 import { discardComposerHistory } from "../../../src/composer-history";
-import { deleteSessionDraft } from "../../../src/session-drafts";
 import { store } from "../../../src/store";
 import {
+  activeSnapshot,
   FakeWebSocket,
   installFakeWebSocket,
   installFetch,
@@ -23,7 +23,7 @@ export async function createComposerFixture() {
     historyGate: null as Promise<void> | null,
   };
   for (const id of ["s1", "s2"]) {
-    deleteSessionDraft(id);
+    store.drafts.setText(id, "");
     discardComposerHistory(id);
   }
   installFakeWebSocket();
@@ -93,7 +93,7 @@ export async function createComposerFixture() {
     return baseRoutes(url, init);
   });
   await store.init();
-  FakeWebSocket.instances.at(-1)?.open();
+  FakeWebSocket.instances.at(-1)?.join(activeSnapshot());
 
   clearComposer();
   return host;
@@ -117,9 +117,9 @@ export function typeDraft(text: string) {
 
 function clearComposer() {
   store.replaceComposerText("");
-  for (const item of store.getState().attachments)
+  for (const item of store.drafts.get(store.getState().sessionId).attachments)
     store.removeAttachment(item.localId);
-  for (const path of store.getState().projectFiles)
+  for (const path of store.drafts.get(store.getState().sessionId).projectFiles)
     store.removeProjectFile(path);
   store.dismissError();
 }

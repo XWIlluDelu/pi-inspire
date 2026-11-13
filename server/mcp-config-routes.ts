@@ -1,11 +1,9 @@
-import type { Express, Response } from "express";
-import { z } from "zod";
+import type { Express } from "express";
+import { hostEndpoints as routes } from "../shared/host-endpoints.js";
+import type { ModelSettingsOwner } from "../shared/model-settings.js";
 import { savedConfiguration } from "./configuration-file.js";
-import {
-  type McpConfigService,
-  mcpConfigEditSchema,
-  mcpConnectionReadSchema,
-} from "./mcp-config.js";
+import { jsonRoute } from "./json-route.js";
+import type { McpConfigService } from "./mcp-config.js";
 import { resolveUserPath } from "./paths.js";
 import { requestError } from "./request-error.js";
 import type { RuntimeController } from "./runtime.js";
@@ -17,14 +15,7 @@ export function registerMcpConfigRoutes(
     mcpConfig?: McpConfigService;
   },
 ) {
-  const query = z
-    .object({
-      sessionId: z.string().min(1).max(256).optional(),
-      cwd: z.string().min(1).max(4096).optional(),
-    })
-    .strict();
-  function context(input: unknown): string | null {
-    const { sessionId, cwd } = query.parse(input);
+  function context({ sessionId, cwd }: ModelSettingsOwner): string | null {
     const root = sessionId ? deps.runtime.sessionCwd(sessionId) : cwd;
     if (sessionId && !root)
       throw requestError(
@@ -34,35 +25,24 @@ export function registerMcpConfigRoutes(
     // Project availability belongs to the project file, not user configuration.
     return root ? resolveUserPath(root, process.cwd()) : null;
   }
-  function configuration(response: Response): McpConfigService {
-    response.setHeader("Cache-Control", "no-store");
+  function configuration(): McpConfigService {
     if (!deps.mcpConfig)
       throw requestError("MCP configuration is unavailable on this Host", 503);
     return deps.mcpConfig;
   }
-  app.get("/api/mcp-config", async (request, response) => {
-    response.json(await configuration(response).read(context(request.query)));
-  });
-  app.post("/api/mcp-config/connection", async (request, response) => {
-    const service = configuration(response);
-    const input = mcpConnectionReadSchema.safeParse(request.body);
-    if (!input.success) throw requestError("Invalid MCP connection read", 400);
-    response.json(
-      await service.readConnection(context(request.query), input.data),
-    );
-  });
-  app.patch("/api/mcp-config", async (request, response) => {
-    const service = configuration(response);
-    const edit = mcpConfigEditSchema.safeParse(request.body);
-    if (!edit.success)
-      throw requestError("Invalid MCP configuration edit", 400);
-    const cwd = context(request.query);
-    await service.save(cwd, edit.data);
-    response.json(
-      await savedConfiguration(
-        () => service.read(cwd),
-        "Saved to Pi. Refresh files before the next edit.",
-      ),
+  jsonRoute(app, routes.mcpConfig, ({ query }) =>
+    configuration().read(context(query)),
+  );
+  jsonRoute(app, routes.mcpConnection, ({ query, body }) =>
+    configuration().readConnection(context(query), body),
+  );
+  jsonRoute(app, routes.editMcpConfig, async ({ query, body }) => {
+    const service = configuration();
+    const cwd = context(query);
+    await service.save(cwd, body);
+    return savedConfiguration(
+      () => service.read(cwd),
+      "Saved to Pi. Refresh files before the next edit.",
     );
   });
 }

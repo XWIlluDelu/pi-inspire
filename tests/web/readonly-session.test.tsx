@@ -9,7 +9,6 @@ import {
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { App } from "../../src/App";
-import { setSessionDraft } from "../../src/session-drafts";
 import { store } from "../../src/store";
 import { sessionPage } from "./fixtures/session-catalog";
 import {
@@ -23,10 +22,11 @@ import {
 
 afterEach(() => {
   cleanup();
-  for (const attachment of store.getState().attachments)
+  for (const attachment of store.drafts.get(store.getState().sessionId)
+    .attachments)
     store.removeAttachment(attachment.localId);
   if (store.getState().sessionId)
-    setSessionDraft(store.getState().sessionId!, "");
+    store.drafts.setText(store.getState().sessionId!, "");
   vi.restoreAllMocks();
 });
 
@@ -53,7 +53,7 @@ it.each([
     installFakeWebSocket();
     installFetch((url) => {
       if (url.startsWith("/api/bootstrap"))
-        return { body: bootstrapPayload({ snapshot: snapshot() }) };
+        return { body: bootstrapPayload({ startupSessionId: "s1" }) };
       if (url.startsWith("/api/snapshot") || url === "/api/sessions/open")
         return { body: snapshot() };
       if (url.startsWith("/api/sessions"))
@@ -77,7 +77,7 @@ it.each([
     });
     await act(async () => store.init());
     const socket = FakeWebSocket.instances.at(-1)!;
-    socket.open();
+    socket.join(snapshot());
     render(<App />);
 
     expect(await screen.findByText("Retained answer")).toBeVisible();
@@ -100,7 +100,7 @@ it.each([
     fireEvent.keyDown(filter, { key: "Escape" });
 
     const { sessionId, transcriptViewId } = store.getState();
-    setSessionDraft(sessionId!, "Keep this unsent draft");
+    store.drafts.setText(sessionId!, "Keep this unsent draft");
     await act(async () =>
       store.addFiles([
         new File(["notes"], "notes.txt", { type: "text/plain" }),
@@ -133,7 +133,7 @@ it("keeps session settings readable while another Pi runs it, until Take over", 
   installFakeWebSocket();
   const fetch = installFetch((url) => {
     if (url.startsWith("/api/bootstrap"))
-      return { body: bootstrapPayload({ snapshot: snapshot() }) };
+      return { body: bootstrapPayload({ startupSessionId: "s1" }) };
     if (url.startsWith("/api/sessions/takeover")) {
       external = false;
       return { body: snapshot() };
@@ -143,7 +143,7 @@ it("keeps session settings readable while another Pi runs it, until Take over", 
     return undefined;
   });
   await act(async () => store.init());
-  FakeWebSocket.instances.at(-1)?.open();
+  FakeWebSocket.instances.at(-1)?.join(snapshot());
   render(<App />);
 
   const settings = within(await screen.findByLabelText("Session settings"));
@@ -166,11 +166,7 @@ it("does not substitute a catalog model when read-only selection is unknown", as
     if (url.startsWith("/api/bootstrap"))
       return {
         body: bootstrapPayload({
-          snapshot: activeSnapshot({
-            readOnlyReason: "external-active",
-            model: null,
-            thinkingLevel: "off",
-          }),
+          startupSessionId: "s1",
         }),
       };
     if (url.startsWith("/api/sessions"))
@@ -178,7 +174,13 @@ it("does not substitute a catalog model when read-only selection is unknown", as
     return undefined;
   });
   await act(async () => store.init());
-  FakeWebSocket.instances.at(-1)?.open();
+  FakeWebSocket.instances.at(-1)?.join(
+    activeSnapshot({
+      readOnlyReason: "external-active",
+      model: null,
+      thinkingLevel: "off",
+    }),
+  );
   render(<App />);
 
   const settings = within(await screen.findByLabelText("Session settings"));

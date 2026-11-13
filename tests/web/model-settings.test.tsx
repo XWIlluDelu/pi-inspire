@@ -3,6 +3,7 @@ import {
   act,
   fireEvent,
   render,
+  renderHook,
   screen,
   waitFor,
   within,
@@ -10,6 +11,7 @@ import {
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ModelsSettings } from "../../src/components/ModelsSettings";
 import type { store } from "../../src/store";
+import { useConfigurationDocument } from "../../src/use-configuration-document";
 import { mockModelMenuLayout } from "./fixtures/model-menu-layout";
 import {
   loginProviders,
@@ -24,7 +26,6 @@ const fixture = vi.hoisted(() => ({
     saveModelPreferences: vi.fn<typeof store.saveModelPreferences>(),
     editModelConfig: vi.fn(),
     providerAuth: vi.fn(),
-    refreshModels: vi.fn(),
   },
 }));
 vi.mock("../../src/store", () => ({
@@ -65,7 +66,6 @@ beforeEach(() => {
     snapshot: modelSettingsSnapshot(),
   });
   fixture.host.providerAuth.mockResolvedValue(loginProviders());
-  fixture.host.refreshModels.mockResolvedValue(undefined);
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
     configurable: true,
     value: vi.fn(),
@@ -73,65 +73,35 @@ beforeEach(() => {
 });
 
 describe("Models settings configuration and ownership", () => {
-  it.each(["refresh", "settings reread"] as const)(
-    "keeps a saved default when an obsolete %s settles",
-    async (phase) => {
-      const warmup = deferred<string | undefined>();
-      const reread = deferred<ReturnType<typeof modelSettingsSnapshot>>();
-      const rereadStarted = deferred<void>();
-      const saved = modelSettingsSnapshot();
-      saved.saved.defaultModel = saved.effective.defaultModel = {
-        provider: "anthropic",
-        id: "claude-haiku",
-      };
-      fixture.host.refreshModels.mockReturnValueOnce(warmup.promise);
-      fixture.host.readModelSettings
-        .mockResolvedValueOnce(modelSettingsSnapshot())
-        .mockImplementationOnce(() => {
-          rereadStarted.resolve();
-          return reread.promise;
-        });
-      fixture.host.saveModelPreferences.mockResolvedValue({
-        saved: true,
-        snapshot: saved,
-      });
-      render(<ModelsSettings />);
-      await inspectModel("Claude Haiku");
-      const choice = screen.getByRole("button", { name: "Set as default" });
-      if (phase === "settings reread") {
-        await act(async () => {
-          warmup.resolve("Obsolete catalog warning");
-          await rereadStarted.promise;
-        });
-      }
-      fireEvent.click(choice);
-      await waitFor(() => expect(choice).toBeDisabled());
-
-      await act(async () => {
-        if (phase === "refresh") warmup.resolve("Obsolete catalog warning");
-        else reread.reject(new Error("Obsolete settings failure"));
-      });
-      expect(choice).toBeDisabled();
-      expect(
-        screen.queryByText(
-          /Obsolete catalog warning|Obsolete settings failure/,
-        ),
-      ).toBeNull();
-    },
-  );
-
-  it("retains the newest catalog failure when an older refresh finishes late", async () => {
-    const older = deferred<undefined>();
-    fixture.host.refreshModels
-      .mockReturnValueOnce(older.promise)
-      .mockRejectedValueOnce(new Error("Current catalog failure"));
+  it("keeps a committed default when an earlier catalog refresh fails", async () => {
+    const older = deferred<ReturnType<typeof modelSettingsSnapshot>>();
+    fixture.host.readModelSettings
+      .mockResolvedValueOnce(modelSettingsSnapshot())
+      .mockReturnValueOnce(older.promise);
+    const saved = modelSettingsSnapshot();
+    saved.saved.defaultModel = saved.effective.defaultModel = {
+      provider: "anthropic",
+      id: "claude-haiku",
+    };
+    fixture.host.saveModelPreferences.mockResolvedValue({
+      saved: true,
+      snapshot: saved,
+    });
     render(<ModelsSettings />);
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Refresh available models" }),
+    await inspectModel("Claude Haiku");
+    const refresh = screen.getByRole("button", {
+      name: "Refresh available models",
+    });
+    fireEvent.click(refresh);
+    expect(fixture.host.readModelSettings).toHaveBeenLastCalledWith(
+      { sessionId: "one" },
+      true,
     );
-    expect(await screen.findByText("Current catalog failure")).toBeVisible();
+    const choice = screen.getByRole("button", { name: "Set as default" });
+    fireEvent.click(choice);
+    await waitFor(() => expect(choice).toBeDisabled());
     await act(async () => older.reject(new Error("Obsolete catalog failure")));
-    expect(screen.getByText("Current catalog failure")).toBeVisible();
+    expect(choice).toBeDisabled();
     expect(screen.queryByText("Obsolete catalog failure")).toBeNull();
   });
 
@@ -150,29 +120,6 @@ describe("Models settings configuration and ownership", () => {
       screen.getByRole("combobox", { name: "Default thinking" }),
     ).toBeEnabled();
     expect(screen.getByRole("button", { name: "Add provider" })).toBeEnabled();
-    await openDeclarations();
-    const details = screen
-      .getByRole("button", { name: "Edit declared model custom/local" })
-      .closest("details")!;
-    details.open = true;
-    fireEvent.click(
-      screen.getByRole("button", { name: "Edit declared model custom/local" }),
-    );
-    fireEvent.change(screen.getByLabelText("Display name"), {
-      target: { value: "Repaired" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() =>
-      expect(fixture.host.editModelConfig).toHaveBeenCalledWith(
-        { sessionId: "one" },
-        "b".repeat(64),
-        expect.objectContaining({
-          kind: "model",
-          provider: "custom",
-          values: expect.objectContaining({ name: "Repaired" }),
-        }),
-      ),
-    );
   });
   it("shows saved and effective project defaults separately, including a provider-only project override", async () => {
     const snapshot = modelSettingsSnapshot({
@@ -569,59 +516,25 @@ describe("Models settings configuration and ownership", () => {
     ).toBeEnabled();
   });
 
-  it.each(["session switch", "transport replacement"] as const)(
-    "keeps current settings and warning when an old refresh read settles after %s",
-    async (transition) => {
-      const readback = deferred<ReturnType<typeof modelSettingsSnapshot>>();
-      const oldSettings = modelSettingsSnapshot({
-        saved: {
-          ...modelSettingsSnapshot().saved,
-          defaultThinkingLevel: "xhigh",
-        },
-      });
-      const currentSettings = modelSettingsSnapshot({
-        saved: {
-          ...modelSettingsSnapshot().saved,
-          defaultThinkingLevel: "low",
-        },
-      });
-      fixture.host.readModelSettings
-        .mockResolvedValueOnce(oldSettings)
-        .mockReturnValueOnce(readback.promise)
-        .mockResolvedValue(currentSettings);
-      fixture.host.refreshModels
-        .mockResolvedValueOnce("Old worker warning")
-        .mockResolvedValue("Current worker warning");
-      const view = render(<ModelsSettings />);
-      await waitFor(() =>
-        expect(fixture.host.readModelSettings).toHaveBeenCalledTimes(2),
-      );
-      expect(
-        screen.getByRole("combobox", { name: "Default thinking" }),
-      ).toHaveTextContent("Xhigh");
-      expect(screen.queryByText("Old worker warning")).not.toBeInTheDocument();
+  it("reads settings again for a changed session and a replaced Host", async () => {
+    const view = render(<ModelsSettings />);
+    await screen.findByRole("combobox", { name: "Default thinking" });
+    fixture.state = { sessionId: "two", cwd: "/two", transportGeneration: 1 };
+    view.rerender(<ModelsSettings />);
+    await waitFor(() =>
+      expect(fixture.host.readModelSettings).toHaveBeenLastCalledWith(
+        { sessionId: "two" },
+        true,
+      ),
+    );
 
-      fixture.state =
-        transition === "session switch"
-          ? { sessionId: "two", cwd: "/two", transportGeneration: 1 }
-          : { ...fixture.state, transportGeneration: 2 };
-      view.rerender(<ModelsSettings />);
-      await screen.findByText("Current worker warning");
-      expect(
-        screen.getByRole("combobox", { name: "Default thinking" }),
-      ).toHaveTextContent("Low");
-      expect(fixture.host.readModelSettings).toHaveBeenLastCalledWith({
-        sessionId: transition === "session switch" ? "two" : "one",
-      });
-
-      await act(async () => readback.resolve(oldSettings));
-      expect(
-        screen.getByRole("combobox", { name: "Default thinking" }),
-      ).toHaveTextContent("Low");
-      expect(screen.getByText("Current worker warning")).toBeInTheDocument();
-      expect(screen.queryByText("Old worker warning")).not.toBeInTheDocument();
-    },
-  );
+    fixture.host.readModelSettings.mockResolvedValue(
+      modelSettingsSnapshot({ modelsWarning: "Replacement Host warning" }),
+    );
+    fixture.state = { ...fixture.state, transportGeneration: 2 };
+    view.rerender(<ModelsSettings />);
+    await screen.findByText("Replacement Host warning");
+  });
 
   it("does not invoke old-owner callbacks after logout settles across a session/transport change", async () => {
     const logout = deferred<null>();
@@ -650,15 +563,13 @@ describe("Models settings configuration and ownership", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "Remove saved credentials" }),
     );
-    const before = fixture.host.refreshModels.mock.calls.length;
     fixture.state = { sessionId: "two", cwd: "/two", transportGeneration: 2 };
     view.rerender(<ModelsSettings />);
     const connect = screen.getByRole("button", { name: "Connect provider" });
     await waitFor(() => expect(connect).toBeEnabled());
     fireEvent.click(connect);
     await screen.findByText("New owner provider");
-    const afterChange = fixture.host.refreshModels.mock.calls.length;
-    expect(afterChange).toBeGreaterThan(before);
+    const afterChange = fixture.host.readModelSettings.mock.calls.length;
     await act(async () => logout.resolve(null));
     expect(screen.queryByText("Anthropic")).not.toBeInTheDocument();
     expect(
@@ -667,6 +578,42 @@ describe("Models settings configuration and ownership", () => {
           owner.sessionId === "one" && operation.operation === "providers",
       ),
     ).toHaveLength(1);
-    expect(fixture.host.refreshModels).toHaveBeenCalledTimes(afterChange);
+    expect(fixture.host.readModelSettings).toHaveBeenCalledTimes(afterChange);
+  });
+});
+
+it("retires a configuration read and write when their shared document owner changes", async () => {
+  const read = deferred<string>();
+  const write = deferred<{ snapshot: string; warning: string }>();
+  const { result, rerender } = renderHook(
+    ({ owner }) => useConfigurationDocument<string>(owner, "Unavailable"),
+    { initialProps: { owner: "old" } },
+  );
+  const startRead = () => void result.current.load(() => read.promise);
+  const startWrite = () => void result.current.write(() => write.promise);
+  act(startRead);
+  rerender({ owner: "replacement" });
+  await act(async () => read.resolve("old read"));
+  expect(result.current.snapshot).toBeNull();
+
+  act(startWrite);
+  expect(result.current.busy).toBe(true);
+  rerender({ owner: "latest" });
+  await act(async () =>
+    write.resolve({ snapshot: "old write", warning: "old warning" }),
+  );
+  expect(result.current).toMatchObject({
+    snapshot: null,
+    busy: false,
+    error: null,
+  });
+  await act(async () => {
+    await result.current.load(async () => "current");
+  });
+  expect(result.current).toMatchObject({
+    snapshot: "current",
+    busy: false,
+    error: null,
+    readFailed: false,
   });
 });

@@ -33,7 +33,7 @@ describe("composer-adjacent status and queued controls", () => {
     const queued = activeSnapshot();
     queued.runState = "queued";
     queued.sessionStatuses = { s1: { runState: "queued" } };
-    act(() => socket.emit({ type: "snapshot", data: queued }));
+    act(() => socket.emitSnapshot(queued));
 
     render(<Composer />);
     const textarea = screen.getByLabelText("Message");
@@ -75,7 +75,7 @@ describe("composer-adjacent status and queued controls", () => {
       }),
     );
 
-    act(() => socket.emit({ type: "snapshot", data: activeSnapshot() }));
+    act(() => socket.emitSnapshot(activeSnapshot()));
   });
 
   it("does not let a late compact HTTP receipt lock the composer after Pi settles", async () => {
@@ -94,20 +94,20 @@ describe("composer-adjacent status and queued controls", () => {
     };
     try {
       const socket = FakeWebSocket.instances.at(-1)!;
-      act(() => socket.emit({ type: "snapshot", data: activeSnapshot() }));
+      act(() => socket.emitSnapshot(activeSnapshot()));
       render(<Composer />);
       await store.sendPrompt("/compact");
       const compacting = activeSnapshot();
       compacting.runState = "compacting";
       compacting.sessionStatuses.s1 = { runState: "compacting" };
-      act(() => socket.emit({ type: "snapshot", data: compacting }));
+      act(() => socket.emitSnapshot(compacting));
       await waitFor(() =>
         expect(store.getState().commandActivities.s1?.at(-1)).toMatchObject({
           command: "compact",
           status: "running",
         }),
       );
-      act(() => socket.emit({ type: "snapshot", data: activeSnapshot() }));
+      act(() => socket.emitSnapshot(activeSnapshot()));
       typeDraft("next task");
       fireEvent.click(screen.getByRole("button", { name: "Send message" }));
       await waitFor(() =>
@@ -124,11 +124,7 @@ describe("composer-adjacent status and queued controls", () => {
         },
       });
       globalThis.fetch = previousFetch;
-      act(() =>
-        FakeWebSocket.instances
-          .at(-1)!
-          .emit({ type: "snapshot", data: activeSnapshot() }),
-      );
+      act(() => FakeWebSocket.instances.at(-1)!.emitSnapshot(activeSnapshot()));
     }
   });
 
@@ -140,7 +136,7 @@ describe("composer-adjacent status and queued controls", () => {
     compacting.sessionStatuses = {
       s1: { runState: "compacting", indicator: "running" },
     };
-    act(() => socket.emit({ type: "snapshot", data: compacting }));
+    act(() => socket.emitSnapshot(compacting));
 
     render(<Composer />);
     const textarea = screen.getByLabelText("Message");
@@ -161,7 +157,7 @@ describe("composer-adjacent status and queued controls", () => {
     });
     expect(textarea).toHaveValue("");
 
-    act(() => socket.emit({ type: "snapshot", data: activeSnapshot() }));
+    act(() => socket.emitSnapshot(activeSnapshot()));
   });
 });
 describe("composer meta row", () => {
@@ -181,7 +177,7 @@ describe("composer meta row", () => {
       const snapshot = activeSnapshot();
       snapshot.runState = runState;
       snapshot.sessionStatuses = { s1: { runState } };
-      act(() => socket.emit({ type: "snapshot", data: snapshot }));
+      act(() => socket.emitSnapshot(snapshot));
       const stop = screen.getByRole("button", {
         name:
           runState === "compacting"
@@ -193,7 +189,7 @@ describe("composer meta row", () => {
       expect(send).toHaveFocus();
     }
 
-    act(() => socket.emit({ type: "snapshot", data: activeSnapshot() }));
+    act(() => socket.emitSnapshot(activeSnapshot()));
     expect(screen.getByRole("button", { name: "Send message" })).toBe(send);
     expect(
       screen.queryByRole("button", { name: "Abort running task" }),
@@ -202,7 +198,7 @@ describe("composer meta row", () => {
     const conflict = activeSnapshot();
     conflict.runState = "conflict";
     conflict.sessionStatuses = { s1: { runState: "conflict" } };
-    act(() => socket.emit({ type: "snapshot", data: conflict }));
+    act(() => socket.emitSnapshot(conflict));
     expect(screen.getAllByRole("button").at(-1)).toHaveAccessibleName(
       "Recover session",
     );
@@ -213,14 +209,13 @@ describe("composer meta row", () => {
     const socket = FakeWebSocket.instances.at(-1)!;
     const update = (tokens: number | null, percent: number | null) =>
       act(() =>
-        socket.emit({
-          type: "snapshot",
-          data: activeSnapshot({
+        socket.emitSnapshot(
+          activeSnapshot({
             stats: {
               contextUsage: { tokens, contextWindow: 131_072, percent },
             },
           }),
-        }),
+        ),
       );
     update(null, null);
     render(<Composer />);
@@ -249,7 +244,7 @@ describe("composer meta row", () => {
     const snapshot = activeSnapshot();
     snapshot.runState = "running";
     snapshot.sessionStatuses.s1 = { runState: "running", external: true };
-    act(() => socket.emit({ type: "snapshot", data: snapshot }));
+    act(() => socket.emitSnapshot(snapshot));
     render(<Composer />);
     expect(screen.getByLabelText("Message")).toBeEnabled();
     expect(screen.getByRole("button", { name: "Model" })).toBeEnabled();
@@ -261,7 +256,7 @@ describe("composer meta row", () => {
       id: "plain",
       reasoning: false,
     };
-    act(() => socket.emit({ type: "snapshot", data: snapshot }));
+    act(() => socket.emitSnapshot(snapshot));
     expect(screen.getByRole("button", { name: "Model" })).toBeEnabled();
     expect(
       screen.getByRole("combobox", { name: "Thinking level" }),

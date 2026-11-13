@@ -20,7 +20,7 @@ import {
 import { defaultTerminalDaemonAddress } from "../../server/terminal-daemon-protocol.js";
 import { TERMINAL_DAEMON_OWNER_CONFLICT_EXIT_CODE } from "../../server/terminal-daemon-socket.js";
 import { readTerminalDaemonSecret } from "../../server/terminal-daemon-tls.js";
-import type { TerminalDescriptor } from "../../shared/terminal-contracts.js";
+
 import { isolatedTestEnvironment } from "./fixtures/isolated-environment.js";
 
 const execFile = promisify(execFileCallback);
@@ -205,16 +205,20 @@ it("restarts only the authenticated scoped owner, stops actual PTYs, and restore
       otherBefore.instanceId,
     );
     const epoch = await first.client.operationEpoch();
-    const terminal = await first.client.operate<TerminalDescriptor>(
-      "create",
-      {
-        request: {
-          cwd: join(f.directory, "project with spaces"),
-          profileId: process.platform === "win32" ? "cmd" : "sh",
+    const executor = { kind: "terminal" as const, epoch };
+    const terminal = await first.client.operate({
+      executor,
+      operationId: randomUUID(),
+      intent: {
+        command: "create",
+        params: {
+          request: {
+            cwd: join(f.directory, "project with spaces"),
+            profileId: process.platform === "win32" ? "cmd" : "sh",
+          },
         },
       },
-      { id: randomUUID(), epoch },
-    );
+    });
     const attachment = await first.client.attach(
       {
         terminalId: terminal.id,
@@ -253,11 +257,14 @@ it("restarts only the authenticated scoped owner, stops actual PTYs, and restore
       { timeout: 10_000 },
     );
     const ownedBirth = await processStartIdentity(ownedPid);
-    await first.client.operate(
-      "rename",
-      { id: terminal.id, title: "Retained metadata" },
-      { id: randomUUID(), epoch },
-    );
+    await first.client.operate({
+      executor,
+      operationId: randomUUID(),
+      intent: {
+        command: "rename",
+        params: { id: terminal.id, title: "Retained metadata" },
+      },
+    });
     // A live shell needs consent; refusal keeps both daemon and tab alive.
     await expect(f.cli("restart")).rejects.toThrow("--force");
     expect((await first.client.list()).terminals[0]?.status).toBe("running");

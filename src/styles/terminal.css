@@ -141,71 +141,26 @@
   }
 }
 
-.terminal-tabs-shell {
-  position: relative;
+.terminal-toolbar {
   z-index: 4;
   min-height: 38px;
-  flex: 0 0 38px;
-  /* Tabs and utility controls share the same inset content row. */
-  padding-top: 4px;
-  display: flex;
-  align-items: stretch;
-  border-bottom: 1px solid var(--hairline);
+  justify-content: flex-end;
   background: var(--bg-context);
 }
 
-.terminal-tabs {
-  min-width: 0;
-  flex: 1;
-  display: flex;
-  align-items: stretch;
-  gap: 1px;
-  padding: 0 2px 0 6px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
+.terminal-pane > .dock-tabs__scroll {
+  --dock-tab-surface: var(--terminal-bg);
+  flex: 0 0 32px;
+  padding-inline: var(--space-1);
+  background: var(--bg-context);
 }
 
-.terminal-tabs::-webkit-scrollbar {
-  display: none;
+@media (hover: none), (pointer: coarse), (max-width: 720px) {
+  .terminal-pane > .dock-tabs__scroll {
+    flex-basis: 36px;
+  }
 }
 
-.terminal-tabs--shared,
-.terminal-controls {
-  display: contents;
-}
-
-.ctx__terminal-select { flex: 1; }
-.ctx__file-tab > .ctx__terminal-select { cursor: pointer; }
-.ctx__file-tab .terminal-tab__status { align-self: center; }
-.ctx__terminal-icon {
-  display: inline-flex;
-  flex: 0 0 13px;
-  height: 13px;
-  align-items: center;
-  justify-content: center;
-}
-.ctx__file-tab .terminal-tab__rename {
-  align-self: center;
-  width: calc(100% - 46px);
-  /* Same 13px icon slot as files; input contributes 1px border + 5px padding. */
-  margin-left: 20px;
-  margin-right: 4px;
-}
-
-.terminal-pane--shared .terminal-tabs-shell {
-  min-height: 0;
-  flex: none;
-  justify-content: flex-end;
-  padding: 2px var(--space-2);
-}
-.terminal-pane--shared .terminal-controls {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 2px;
-}
 .terminal-pane--shared .terminal-tabs__new {
   border: 0;
   padding: 0;
@@ -214,69 +169,6 @@
 .terminal-pane--shared .terminal-tabs__new:has(> button[hidden]):not(:has(details)),
 .terminal-pane--shared .terminal-tabs__profile-new { display: none; }
 .terminal-pane--shared .terminal-tabs__profile-chevron { display: block; }
-
-.terminal-tab {
-  position: relative;
-  min-width: 88px;
-  max-width: 190px;
-  flex: 0 1 152px;
-  display: flex;
-  align-items: center;
-  border: 1px solid transparent;
-  border-bottom: 0;
-  border-radius: var(--radius-control) var(--radius-control) 0 0;
-  color: var(--muted);
-  background: transparent;
-}
-
-.terminal-tab:hover {
-  background: color-mix(in srgb, var(--bg-surface) 54%, transparent);
-}
-
-.terminal-tab--active {
-  border-color: var(--hairline);
-  color: var(--ink);
-  background: var(--terminal-bg);
-}
-
-.terminal-tab__select {
-  min-width: 0;
-  height: 100%;
-  flex: 1;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  border: 0;
-  padding: 0 27px 0 8px;
-  border-radius: inherit;
-  color: inherit;
-  background: transparent;
-  font: 500 var(--text-xs)/1 var(--font-sans);
-  text-align: left;
-  cursor: default;
-}
-
-.terminal-tab__select:focus-visible {
-  outline: 2px solid var(--accent-focus);
-  outline-offset: -2px;
-}
-
-.terminal-tab__rename {
-  min-width: 0;
-  width: calc(100% - 42px);
-  height: 23px;
-  /* Match the label after its 8px inset, 6px status, and 6px gap. */
-  margin-left: 14px;
-  padding-inline: 5px;
-  font: 500 var(--text-xs)/1 var(--font-sans);
-}
-
-.terminal-tab__label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
 .terminal-tab__status {
   width: 6px;
@@ -309,46 +201,12 @@
   background: var(--accent);
 }
 
-.terminal-tab__close {
-  position: absolute;
-  right: 3px;
-  width: 24px;
-  height: 24px;
-  display: grid;
-  place-items: center;
-  border: 0;
-  border-radius: var(--radius-control);
-  padding: 0;
-  color: var(--muted);
-  background: transparent;
-  cursor: pointer;
-  opacity: 0;
-}
-
-.terminal-tab:hover .terminal-tab__close,
-.terminal-tab--active .terminal-tab__close,
-.terminal-tab:focus-within .terminal-tab__close {
-  opacity: 1;
-}
-
-.terminal-tab__close:hover {
-  color: var(--ink);
-  background: var(--bg-control);
-}
-
 .terminal-tabs__new {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
   border-left: 1px solid var(--hairline);
   padding-left: 2px;
-}
-
-.terminal-tabs__new > .icon-button,
-.terminal-tabs__focus,
-.terminal-view-controls,
-.terminal-tabs-shell > .terminal-menu {
-  align-self: center;
 }
 
 .terminal-tabs__profile {
@@ -543,7 +401,7 @@
   color: var(--error-ink);
 }
 
-.terminal-menu__view:not(:empty) {
+.terminal-menu__view {
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -1134,26 +992,6 @@
   gap: var(--space-4);
 }
 
-.terminal-settings .settings__field.terminal-settings__font {
-  grid-template-columns: minmax(0, 1fr) auto;
-}
-
-.terminal-settings .settings__field.terminal-settings__font > .settings__field-control {
-  grid-column: 2;
-  grid-row: 1;
-  justify-self: end;
-  width: auto;
-  margin-top: 0;
-}
-
-@container settings-card (max-width: 439px) {
-  /* Keep neighboring choice rows on the same reading grid; short labels must
-     not pull only one segmented control back beside its label. */
-  .terminal-settings .settings__field:has(.segmented) > .settings__field-info {
-    flex-basis: 100%;
-  }
-}
-
 .terminal-settings__loading {
   padding: var(--space-3);
   color: var(--muted);
@@ -1251,28 +1089,8 @@
     min-height: 44px;
   }
 
-  .terminal-tab {
-    min-width: 96px;
-  }
-
-  .terminal-tab__select {
-    padding-right: 35px;
-  }
-
-  .terminal-tab__rename {
-    width: calc(100% - 50px);
-  }
-
-  .terminal-tab__close {
-    width: 32px;
-    height: 32px;
-    opacity: 1;
-  }
-
-  .terminal-tabs-shell {
-    /* 44px targets + the shared 4px inset + the bottom border. */
-    min-height: 49px;
-    flex-basis: 49px;
+  .terminal-toolbar {
+    --pane-tool-size: 44px;
   }
 
   .terminal-tabs__new--profiles > .icon-button,
@@ -1285,7 +1103,6 @@
   }
 
   .terminal-tabs__profile,
-  .terminal-tabs-shell .icon-button,
   .terminal-search .icon-button,
   .terminal-search__option {
     min-width: 44px;
@@ -1457,9 +1274,5 @@
 
   .terminal-menu__popover .terminal-menu__focus {
     display: flex;
-  }
-
-  .terminal-tab {
-    min-width: 88px;
   }
 }

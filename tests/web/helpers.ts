@@ -1,7 +1,8 @@
-import { fireEvent, screen } from "@testing-library/react";
+import { act, fireEvent, screen } from "@testing-library/react";
 import { vi } from "vitest";
 import {
   type ActiveSnapshot,
+  type BootstrapResponse,
   type BranchTreeNode,
   defaultPreferences,
   type HostUpdateStatus,
@@ -9,6 +10,28 @@ import {
 } from "../../shared/contracts";
 
 import { hostReceipt } from "../../shared/host-operations";
+import { emptyToolPresentationConfiguration } from "../../shared/tool-presentation-config";
+
+let nextSelection: ActiveSnapshot | undefined;
+
+/** Commit a fixture navigation through the same HTTP owner as production. */
+export async function selectSession(
+  store: {
+    openSession(id: string): Promise<void>;
+    deselectSession(): Promise<boolean>;
+  },
+  snapshot: ActiveSnapshot,
+): Promise<void> {
+  nextSelection = snapshot;
+  try {
+    await act(async () => {
+      if (snapshot.active) await store.openSession(snapshot.active.sessionId);
+      else await store.deselectSession();
+    });
+  } finally {
+    nextSelection = undefined;
+  }
+}
 
 function inputReceiptFixture(
   url: string,
@@ -80,40 +103,46 @@ export type RouteHandler = (
   init: RequestInit,
 ) => RouteResponse | undefined | Promise<RouteResponse | undefined>;
 
+let fixturePreferenceRevision = 0;
+
 export function installFetch(handler: RouteHandler) {
+  let preferences = defaultPreferences;
   const fn = vi.fn(async (input: unknown, init?: RequestInit) => {
     const url = String(input);
+    const selected = nextSelection;
+    if (
+      selected &&
+      (selected.active
+        ? url === "/api/sessions/open" &&
+          jsonBody(init ?? {}).id === selected.active.sessionId
+        : url === "/api/sessions/deselect")
+    ) {
+      nextSelection = undefined;
+      return new Response(JSON.stringify(selected), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
     const route = (await handler(url, init ?? {})) ?? {
       status: 404,
       body: { error: `No mock route for ${url}` },
     };
-    if (
-      url.startsWith("/api/bootstrap") &&
-      (route.status ?? 200) < 400 &&
-      route.body &&
-      typeof route.body === "object" &&
-      "snapshot" in route.body
-    ) {
-      const bootstrap = route.body as {
-        snapshot: ActiveSnapshot;
-        updateStatus?: HostUpdateStatus;
-      };
-      FakeWebSocket.bootstrapSnapshot = bootstrap.snapshot;
-      FakeWebSocket.bootstrapUpdateStatus = bootstrap.updateStatus;
-    }
     let body = inputReceiptFixture(url, init ?? {}, route);
-    if (
-      url === "/api/bootstrap" &&
-      body &&
-      typeof body === "object" &&
-      "snapshot" in body
-    ) {
-      const { snapshot, ...metadata } = body;
-      body = {
-        startupSessionId:
-          (snapshot as ActiveSnapshot).active?.sessionId ?? null,
-        ...metadata,
-      };
+    if ((route.status ?? 200) < 400 && body && typeof body === "object") {
+      if (url === "/api/preferences" && !("revision" in body)) {
+        preferences = { ...preferences, ...body };
+        body = { preferences, revision: ++fixturePreferenceRevision };
+      } else if (
+        (url.startsWith("/api/bootstrap") ||
+          url.startsWith("/api/sessions/") ||
+          url.startsWith("/api/presentation-adapters")) &&
+        "preferences" in body &&
+        body.preferences &&
+        typeof body.preferences === "object"
+      ) {
+        preferences = { ...defaultPreferences, ...body.preferences };
+        if (!("preferenceRevision" in body))
+          body = { ...body, preferenceRevision: ++fixturePreferenceRevision };
+      }
     }
     return new Response(JSON.stringify(body), {
       status: route.status ?? 200,
@@ -155,22 +184,29 @@ export function installLocalStorage(): void {
 
 export const TEST_HOST_AUTHORITY = "11111111-1111-4111-8111-111111111111";
 
+type SnapshotEnvelope = {
+  authorityId?: string;
+  updateStatus?: HostUpdateStatus;
+  runtimeSequence?: number;
+  detailSessionId?: string | null;
+  detailRevision?: number;
+  missingDetail?: boolean;
+};
+
 export class FakeWebSocket {
   static OPEN = 1;
+  static instances: FakeWebSocket[] = [];
   readyState = 0;
   sent: string[] = [];
+  closeCount = 0;
   send(data: string): void {
     this.sent.push(data);
   }
-  static instances: FakeWebSocket[] = [];
-  static bootstrapSnapshot: ActiveSnapshot | undefined;
-  static bootstrapUpdateStatus: HostUpdateStatus | undefined;
   onopen: ((event: unknown) => void) | null = null;
   onmessage: ((event: { data: unknown }) => void) | null = null;
   onclose: (() => void) | null = null;
   onerror: (() => void) | null = null;
   extensions = "";
-  private opened = false;
 
   constructor(public url: string) {
     FakeWebSocket.instances.push(this);
@@ -178,53 +214,57 @@ export class FakeWebSocket {
 
   close(): void {
     this.readyState = 3;
+    this.closeCount++;
+    this.onclose?.();
   }
-  openWithoutSnapshot(): void {
-    this.opened = true;
+  open(): void {
     this.readyState = 1;
     this.onopen?.({});
   }
-  open(
-    snapshot = FakeWebSocket.bootstrapSnapshot,
-    authorityId = TEST_HOST_AUTHORITY,
-  ): void {
-    if (this.opened) return;
-    this.openWithoutSnapshot();
-    if (snapshot)
-      this.emit({
-        type: "snapshot",
-        authorityId,
-        updateStatus: FakeWebSocket.bootstrapUpdateStatus ?? hostUpdateStatus(),
-        data: snapshot,
-      });
+  join(data = emptySnapshot, envelope?: SnapshotEnvelope): void {
+    if (this.readyState !== 0) return;
+    this.open();
+    this.emitSnapshot(data, envelope);
+  }
+  emitSnapshot(data: ActiveSnapshot, envelope?: SnapshotEnvelope): void {
+    const interest = this.sent.length
+      ? (JSON.parse(this.sent.at(-1)!) as {
+          sessionId: string | null;
+          revision: number;
+        })
+      : {
+          sessionId: new URL(this.url).searchParams.get("detail") || null,
+          revision: 0,
+        };
+    this.emit({
+      type: "snapshot",
+      authorityId: TEST_HOST_AUTHORITY,
+      updateStatus: hostUpdateStatus(),
+      detailSessionId: interest.sessionId,
+      detailRevision: interest.revision,
+      runtimeSequence: data.runtimeSequence,
+      ...envelope,
+      data,
+    });
   }
   emit(event: unknown): void {
-    const wire =
-      event &&
-      typeof event === "object" &&
-      !Array.isArray(event) &&
-      (event as { type?: unknown }).type === "snapshot"
-        ? {
-            authorityId: TEST_HOST_AUTHORITY,
-            updateStatus:
-              FakeWebSocket.bootstrapUpdateStatus ?? hostUpdateStatus(),
-            ...event,
-          }
-        : event;
-    this.onmessage?.({ data: JSON.stringify(wire) });
+    this.onmessage?.({ data: JSON.stringify(event) });
   }
 }
 
 export function installFakeWebSocket(): void {
   FakeWebSocket.instances = [];
-  FakeWebSocket.bootstrapSnapshot = undefined;
-  FakeWebSocket.bootstrapUpdateStatus = undefined;
   vi.stubGlobal("WebSocket", FakeWebSocket);
 }
 
 // --- Payloads ---
 
 export const DEFAULT_PREFS = defaultPreferences;
+export const emptySnapshot: ActiveSnapshot = {
+  active: null,
+  runState: "idle",
+  sessionStatuses: {},
+};
 
 export const savedInputNode: BranchTreeNode = {
   id: "u1",
@@ -263,7 +303,6 @@ export function activeSnapshot(
     model: { provider: "kimi-coding", id: "kimi-k3" },
     thinkingLevel: "medium",
     isStreaming: false,
-    isCompacting: false,
     projectionHealth: { status: "ok" as const },
     projectionConflict: null,
     stats: {
@@ -320,14 +359,16 @@ function hostUpdateStatus(
   };
 }
 
-export function bootstrapPayload(overrides: Record<string, unknown> = {}) {
+export function bootstrapPayload(overrides: Partial<BootstrapResponse> = {}) {
   return {
-    appName: "inspire",
+    appName: "inspire" as const,
     authorityId: TEST_HOST_AUTHORITY,
+    startupSessionId: null,
     version: "0.1.0",
     piVersion: "0.80.10",
     updateStatus: hostUpdateStatus(),
     preferences: DEFAULT_PREFS,
+    toolPresentations: emptyToolPresentationConfiguration(),
     availableModels: [
       {
         provider: "kimi-coding",
@@ -342,7 +383,6 @@ export function bootstrapPayload(overrides: Record<string, unknown> = {}) {
         reasoning: true,
       },
     ],
-    snapshot: { active: null, runState: "idle" as const, sessionStatuses: {} },
     ...overrides,
   };
 }

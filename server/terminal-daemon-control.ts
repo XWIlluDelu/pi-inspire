@@ -1,9 +1,8 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { readFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import { acquireFileLock } from "./file-lock.mjs";
-import { processStartIdentity } from "./instance-state.mjs";
+import { observeProcessExit, processStartIdentity } from "./instance-state.mjs";
 import { TerminalDaemonClient } from "./terminal-daemon-client.js";
 import {
   resolveTerminalDaemonConfiguration,
@@ -22,7 +21,7 @@ import { prepareTerminalStateDirectory } from "./terminal-state-store.js";
 const execFile = promisify(execFileCallback);
 const STOP_TIMEOUT_MS = 20_000;
 const CONNECTION_GUIDANCE =
-  "A terminal endpoint is listening, but its authenticated maintenance connection could not be verified. This does not establish whether normal terminal data is compatible. Existing terminal processes were left running. Inspect the owning service and connection error before deciding whether replacement is needed; replacing that daemon ends its live terminals.";
+  "A terminal endpoint is listening, but its authenticated connection could not be verified. Existing terminal processes were left running. Inspect the owning service before replacing it.";
 
 type TerminalDaemonStatus =
   | { kind: "running"; info: TerminalDaemonInfo }
@@ -51,37 +50,41 @@ function validInfo(
   );
 }
 
-async function clientFor(
+async function withTerminalClient<T>(
   config: TerminalDaemonConfiguration,
-): Promise<TerminalDaemonClient> {
-  return new TerminalDaemonClient(
+  operation: (client: TerminalDaemonClient) => Promise<T>,
+): Promise<T> {
+  const client = new TerminalDaemonClient(
     config.address,
     await readTerminalDaemonSecret(config.tokenPath),
   );
-}
-
-async function assertProcess(info: TerminalDaemonInfo): Promise<void> {
-  if ((await processStartIdentity(info.pid)) !== info.processStartTime)
-    throw new Error(
-      "The terminal daemon process identity changed; inspect it again.",
-    );
+  try {
+    return await operation(client);
+  } finally {
+    await client.close();
+  }
 }
 
 export async function inspectTerminalDaemon(
   options: TerminalDaemonLaunchOptions,
 ): Promise<TerminalDaemonStatus> {
   const config = resolveTerminalDaemonConfiguration(options);
-  let client: TerminalDaemonClient | undefined;
   try {
-    client = await clientFor(config);
-    const info = await client.daemonInfo();
+    const info = await withTerminalClient(config, (client) =>
+      client.daemonInfo(),
+    );
     if (!validInfo(info, config))
       throw new TerminalServiceError(
         "terminal_scope_mismatch",
         409,
         "The authenticated terminal endpoint belongs to a different instance.",
       );
-    await assertProcess(info);
+    if ((await processStartIdentity(info.pid)) !== info.processStartTime)
+      throw new TerminalServiceError(
+        "terminal_scope_mismatch",
+        409,
+        "The terminal daemon process identity changed; inspect it again.",
+      );
     return { kind: "running", info };
   } catch (error) {
     // A verified foreign owner is not absence, even if it stopped listening
@@ -99,39 +102,7 @@ export async function inspectTerminalDaemon(
     // A missing listener is not proof of exit. A control request keeps its
     // captured process identity until confirmed below; status grants no stop.
     return { kind: "stopped" };
-  } finally {
-    await client?.close();
   }
-}
-
-async function waitForExit(
-  info: TerminalDaemonInfo,
-  timeoutMs: number,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      if ((await processStartIdentity(info.pid)) !== info.processStartTime)
-        return;
-      if (process.platform === "linux") {
-        // Linux retains /proc for a reaped-later child zombie.
-        const raw = await readFile(`/proc/${info.pid}/stat`, "utf8");
-        if (raw.slice(raw.lastIndexOf(")") + 2).startsWith("Z ")) return;
-      }
-    } catch (error) {
-      try {
-        process.kill(info.pid, 0);
-      } catch (probe) {
-        if ((probe as NodeJS.ErrnoException).code === "ESRCH") return;
-      }
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT")
-        throw new Error("Cannot confirm the terminal daemon's process exit.");
-    }
-    await delay(75);
-  }
-  throw new Error(
-    "Terminal shutdown is unconfirmed. No replacement was started; run terminal status before retrying.",
-  );
 }
 
 export async function controlTerminalDaemon(
@@ -155,9 +126,11 @@ export async function controlTerminalDaemon(
     let unit: string | null = null;
     if (status.kind === "running") {
       unit = status.info.systemdUnit;
-      const client = await clientFor(config);
+      const { instanceId } = status.info;
       try {
-        await client.shutdownDaemon(status.info.instanceId, force);
+        await withTerminalClient(config, (client) =>
+          client.shutdownDaemon(instanceId, force),
+        );
       } catch (error) {
         // A definite refusal (including busy/changed-owner) is not acceptance.
         if (
@@ -170,10 +143,11 @@ export async function controlTerminalDaemon(
           throw error;
         // An acknowledgement can be lost during shutdown. Only actual exit
         // resolves it; the missing socket alone never permits replacement.
-      } finally {
-        await client.close();
       }
-      await waitForExit(status.info, STOP_TIMEOUT_MS);
+      if (!(await observeProcessExit(status.info, STOP_TIMEOUT_MS)))
+        throw new Error(
+          "Terminal shutdown is unconfirmed. No replacement was started; run terminal status before retrying.",
+        );
     }
     await control.assertOwned();
     // Absence of a listener alone is not permission to overlap an owner that

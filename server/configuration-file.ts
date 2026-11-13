@@ -1,16 +1,10 @@
-import { randomUUID } from "node:crypto";
-import {
-  lstat,
-  mkdir,
-  readFile,
-  readlink,
-  realpath,
-  rename,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { lstat, mkdir, readFile, readlink, realpath } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import lockfile from "proper-lockfile";
+import stripJsonComments from "strip-json-comments";
+import { isJsonRecord } from "../shared/json-record.js";
+import { replacePrivateStateFile } from "./private-state-file.js";
 import { requestError } from "./request-error.js";
 
 /** A readback failure after publication leaves the save committed. */
@@ -25,7 +19,7 @@ export async function savedConfiguration<T>(
   }
 }
 
-export async function readConfigurationText(
+async function readConfigurationText(
   path: string,
 ): Promise<string | undefined> {
   try {
@@ -99,23 +93,97 @@ interface ConfigurationAuthority {
   /** Services retain project containment and other scope-specific authority. */
   resolveTarget?: () => Promise<string>;
 }
+
+interface JsonDocument {
+  invalid: string;
+  comments?: boolean;
+  preserveIndent?: boolean;
+}
+
 interface ConfigurationEdit extends ConfigurationAuthority {
   expectedRevision: string;
-  revision(source: string | undefined, target: string): string;
   /** Related files whose namespace participates in this edit. */
   alsoLock?: ConfigurationAuthority[];
 }
 
+type ConfigurationObject = Record<string, unknown>;
+
+function revisionOf(source: string | undefined, target: string) {
+  return createHash("sha256")
+    .update(JSON.stringify([target, source ?? null]))
+    .digest("hex");
+}
+
+function resolveAuthority(file: ConfigurationAuthority) {
+  return file.resolveTarget ?? (() => configurationFileTarget(file.path));
+}
+
+export async function readConfigurationFile(file: ConfigurationAuthority) {
+  const target = await resolveAuthority(file)();
+  const source = await readConfigurationText(target);
+  return { source, revision: revisionOf(source, target) };
+}
+
+export function parseConfigurationObject(
+  source: string | undefined,
+  { invalid, comments }: JsonDocument,
+): ConfigurationObject {
+  try {
+    const text = source?.replace(/^\uFEFF/u, "");
+    const value: unknown =
+      text === undefined
+        ? {}
+        : JSON.parse(comments ? stripJsonComments(text) : text);
+    if (isJsonRecord(value)) return value;
+  } catch {
+    // Diagnostics describe the file without returning raw configuration text.
+  }
+  throw requestError(invalid, 409);
+}
+
+/** Omission preserves the native field. Null removes it. */
+export function applyConfigurationPatch(
+  current: ConfigurationObject,
+  patch: ConfigurationObject,
+): ConfigurationObject {
+  const next = { ...current };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null) delete next[key];
+    else if (value !== undefined)
+      Object.defineProperty(next, key, {
+        value,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+  }
+  return next;
+}
+
+export function editConfigurationDocument(
+  edit: ConfigurationEdit,
+  recipe: JsonDocument,
+  transform: (
+    document: ConfigurationObject,
+  ) => ConfigurationObject | Promise<ConfigurationObject>,
+): Promise<void> {
+  return editConfigurationFile(edit, async (source) => {
+    const document = await transform(parseConfigurationObject(source, recipe));
+    const indent =
+      (recipe.preserveIndent && source?.match(/^([ \t]+)\S/m)?.[1]) || "  ";
+    return `${JSON.stringify(document, null, indent)}\n`;
+  });
+}
+
 /** One native-compatible lock/revision/publication boundary for Pi file editors.
- * Parsing, field merging and native validation belong to the calling service. */
+ * A revision binds the exact reviewed text to its resolved native target. */
 export async function editConfigurationFile(
   edit: ConfigurationEdit,
   transform: (source: string | undefined) => Promise<string>,
 ): Promise<void> {
   const authorities = await Promise.all(
     [edit, ...(edit.alsoLock ?? [])].map(async (file) => {
-      const resolveTarget =
-        file.resolveTarget ?? (() => configurationFileTarget(file.path));
+      const resolveTarget = resolveAuthority(file);
       return { ...file, resolveTarget, target: await resolveTarget() };
     }),
   );
@@ -130,12 +198,7 @@ export async function editConfigurationFile(
     lockPaths.push(...(await configurationEditLockPaths(lexical, file.target)));
   }
   const releases: Array<() => Promise<void>> = [];
-  const temporary = join(
-    dirname(target),
-    `.inspire-config-${randomUUID()}.json`,
-  );
   let compromised = false;
-  let failed = false;
   const changed = () =>
     requestError(
       "Pi configuration changed elsewhere. Refresh before saving.",
@@ -160,33 +223,23 @@ export async function editConfigurationFile(
         );
       }
     }
-    const source = await readConfigurationText(edit.path);
-    if (edit.revision(source, target) !== edit.expectedRevision)
-      throw changed();
-    const next = await transform(source);
-    await writeFile(temporary, next, { mode: 0o600, flag: "wx" });
-    for (const file of authorities)
-      if ((await file.resolveTarget()) !== file.target) throw changed();
-    if (
-      compromised ||
-      edit.revision(await readConfigurationText(edit.path), target) !==
-        edit.expectedRevision
-    )
-      throw changed();
-    await rename(temporary, target);
-  } catch (error) {
-    failed = true;
-    throw error;
+    const source = await readConfigurationText(target);
+    if (revisionOf(source, target) !== edit.expectedRevision) throw changed();
+    await replacePrivateStateFile(target, await transform(source), {
+      beforeReplace: async () => {
+        for (const file of authorities)
+          if ((await file.resolveTarget()) !== file.target) throw changed();
+        const current = await readConfigurationText(target);
+        if (
+          compromised ||
+          revisionOf(current, target) !== edit.expectedRevision
+        )
+          throw changed();
+      },
+    });
   } finally {
-    // A failed temporary-file cleanup must not strand any acquired lock, and
-    // cleanup errors must not replace the original validation/conflict error.
-    const cleanup = await Promise.allSettled([
-      rm(temporary, { force: true }),
-      ...releases.reverse().map(async (release) => release()),
-    ]);
-    if (!failed) {
-      const rejected = cleanup.find((result) => result.status === "rejected");
-      if (rejected?.status === "rejected") throw rejected.reason;
-    }
+    await Promise.allSettled(
+      releases.reverse().map(async (release) => release()),
+    );
   }
 }

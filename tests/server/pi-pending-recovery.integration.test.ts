@@ -111,10 +111,12 @@ describe("native Pending recovery", () => {
           await (await f.api.attachmentPreview(image.id)).arrayBuffer(),
         ),
       ).toEqual(png);
-      expect((await f.runtime.snapshot()).pendingQueues?.followUp).toEqual([
+      expect(
+        (await f.runtime.snapshot(f.sessionId)).pendingQueues?.followUp,
+      ).toEqual([
         expect.objectContaining({ textPreview: "later input stays queued" }),
       ]);
-      expect((await f.runtime.snapshot()).runState).toBe("running");
+      expect((await f.runtime.snapshot(f.sessionId)).runState).toBe("running");
     },
     30_000,
   );
@@ -138,7 +140,7 @@ describe("native Pending recovery", () => {
       });
     const longText = `${"long queued input ".repeat(200)}EXACT_END`;
     await f.api.prompt({ ...f.delivery(longText), behavior: "steer" });
-    const { active, pendingQueues } = await f.runtime.snapshot();
+    const { active, pendingQueues } = await f.runtime.snapshot(f.sessionId);
     const read = {
       sessionId: f.sessionId,
       viewId: active!.transcriptPage.viewId,
@@ -155,7 +157,9 @@ describe("native Pending recovery", () => {
       text: `1. same caption\n2. same caption\n3. ${longText}\n4. same caption\n5. `,
       imageAttachmentIds: images.map(({ id }) => id),
     });
-    expect((await f.runtime.snapshot()).pendingQueues).toEqual(pendingQueues);
+    expect((await f.runtime.snapshot(f.sessionId)).pendingQueues).toEqual(
+      pendingQueues,
+    );
     const recovered = await f.api.recoverPending(f.sessionId);
     expect(recovered).toEqual({
       steering: ["same caption", "same caption", longText],
@@ -163,7 +167,7 @@ describe("native Pending recovery", () => {
       attachments: images,
       authorityId: f.application.authorityId,
     });
-    expect(await f.runtime.snapshot()).toMatchObject({
+    expect(await f.runtime.snapshot(f.sessionId)).toMatchObject({
       pendingQueues: { totalCount: 0 },
       runState: "running",
     });
@@ -176,7 +180,7 @@ describe("native Pending recovery", () => {
       attachmentIds: recovered.attachments!.map((image) => image.id),
     });
     expect(
-      (await f.runtime.snapshot()).pendingQueues!.followUp[0],
+      (await f.runtime.snapshot(f.sessionId)).pendingQueues!.followUp[0],
     ).toMatchObject({
       imageCount: 4,
       textLength: merged.trim().length,
@@ -234,7 +238,7 @@ describe("native Pending recovery", () => {
         behavior: mode,
         attachmentIds: [image.id],
       });
-      const admitted = await f.runtime.snapshot();
+      const admitted = await f.runtime.snapshot(f.sessionId);
       expect(admitted.pendingQueues!.totalCount).toBe(1);
       const firstRow =
         mode === "steer"
@@ -248,7 +252,9 @@ describe("native Pending recovery", () => {
       };
       f.finishFirst();
       await vi.waitFor(() => expect(f.modelRequests).toHaveLength(2));
-      expect((await f.runtime.snapshot()).pendingQueues!.totalCount).toBe(0);
+      expect(
+        (await f.runtime.snapshot(f.sessionId)).pendingQueues!.totalCount,
+      ).toBe(0);
       expect(eventsOf(f.runtimeEvents, "queue_update").at(-1)).toMatchObject({
         pendingQueues: { totalCount: 0 },
       });
@@ -265,7 +271,7 @@ describe("native Pending recovery", () => {
         ...f.delivery("later exact text"),
         behavior: mode,
       });
-      const snapshot = await f.runtime.snapshot();
+      const snapshot = await f.runtime.snapshot(f.sessionId);
       expect(snapshot.runState).toBe("running");
       expect(snapshot.pendingQueues!.totalCount).toBe(2);
       const rows =
@@ -305,7 +311,9 @@ describe("native Pending recovery", () => {
       const body = f.modelRequests[1]!.body;
       expect(JSON.stringify(body)).toContain("data:image/png;base64,");
       expect(JSON.stringify(body)).not.toContain("data:image/gif;base64,");
-      expect((await f.runtime.snapshot()).pendingQueues!.totalCount).toBe(0);
+      expect(
+        (await f.runtime.snapshot(f.sessionId)).pendingQueues!.totalCount,
+      ).toBe(0);
       await f.api.abort(f.sessionId);
       expect(f.modelRequests).toHaveLength(2);
     },
@@ -328,7 +336,9 @@ describe("native Pending recovery", () => {
       await vi.waitFor(() => expect(f.modelRequests).toHaveLength(2));
       gates[1]!.resolve();
       await settled(f, 1);
-      expect((await f.runtime.snapshot()).pendingQueues!.totalCount).toBe(0);
+      expect(
+        (await f.runtime.snapshot(f.sessionId)).pendingQueues!.totalCount,
+      ).toBe(0);
       await f.api.prompt(f.delivery("Second synthetic task."));
       await vi.waitFor(() => expect(f.modelRequests).toHaveLength(3));
       const pending = await addImage(f, "pending.png");
@@ -337,7 +347,9 @@ describe("native Pending recovery", () => {
         behavior: "steer",
         attachmentIds: [pending.id],
       });
-      expect((await f.runtime.snapshot()).pendingQueues).toMatchObject({
+      expect(
+        (await f.runtime.snapshot(f.sessionId)).pendingQueues,
+      ).toMatchObject({
         totalCount: 1,
         steering: [{ textPreview: "", imageAttachmentIds: [pending.id] }],
         followUp: [],
@@ -371,10 +383,11 @@ describe("native Pending recovery", () => {
     f.finishFirst();
     await vi.waitFor(async () =>
       expect(
-        (await f.runtime.snapshot()).pendingExtensionUiRequests,
+        (await f.runtime.snapshot(f.sessionId)).pendingExtensionUiRequests,
       ).toHaveLength(1),
     );
-    const dialog = (await f.runtime.snapshot()).pendingExtensionUiRequests![0]!;
+    const dialog = (await f.runtime.snapshot(f.sessionId))
+      .pendingExtensionUiRequests![0]!;
     const publicMessages = await f.workers[0]!.request<{
       messages: unknown[];
     }>({ type: "get_messages" });

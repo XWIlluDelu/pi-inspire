@@ -195,18 +195,15 @@ boundaries in this contract.
 
   While latest-follow is active, the viewport follows actual rendered-content and scrollport
   geometry, not only message-count or ordinary-text changes. Thinking/tool deltas, Markdown reflow,
-  card transitions, virtual-row measurement, and a mobile keyboard resizing the scrollport therefore
+  disclosure and a mobile keyboard resizing the scrollport therefore
   cannot strand new content below the fold. Only an explicit wheel, touch, or keyboard gesture
   releases latest-follow outright.
 
-  A fold disclosure gesture owns its layout mutation before resizing. The unified collapsed
-  disclosure keeps the center anchor; open upper/lower controls keep their respective anchors
-  through ordinary and virtualized history. The gesture keeps latest-follow afterward only when the
-  anchored result is at the exact latest boundary. Input owns the viewport before its deferred
-  scroll event. Once follow is released, Markdown reflow, scrollport resize,
-  and other programmatic scroll events cannot silently reacquire it; only the user reaching the
-  latest boundary or choosing Jump to latest does. Transcript search keeps its separate viewport
-  lock.
+  Focusing activity pauses latest-follow while the reader inspects it. One persistent Activity
+  disclosure and bounded Earlier/Later pages keep navigation in the group. Input owns the
+  viewport before its deferred scroll event. Once follow is released, only reaching the latest
+  boundary through user scrolling or choosing Jump to latest resumes it. Transcript search keeps
+  its separate viewport lock.
 
 - Cancellation is a normal terminal outcome, not a Pi failure. An assistant with
   `stopReason: "aborted"` displays **Stopped** after its partial content, outside activity folding.

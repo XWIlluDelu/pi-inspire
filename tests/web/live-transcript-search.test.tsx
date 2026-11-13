@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { useState } from "react";
 import { describe, expect, it } from "vitest";
 
@@ -24,82 +24,23 @@ describe("Live transcript search navigation", () => {
     expect(search).toHaveValue("");
   });
 
-  it("retains a manual fold override as its Live context changes", () => {
-    const recent = [
-      ...Array.from({ length: 57 }, (_, index) => ({
-        role: "user",
-        content: `user ${index}`,
-        timestamp: index,
-      })),
-      {
-        role: "assistant",
-        content: [{ type: "thinking", thinking: "paged activity" }],
-        timestamp: 100,
-      },
-      {
-        role: "assistant",
-        content: "visible response",
-        timestamp: 101,
-      },
-    ];
-    const props = {
-      streaming: false,
-      thinkingVisibility: "expanded" as const,
-      toolVisibility: "collapsed" as const,
-      activityFoldVisibility: "expanded" as const,
-      sessionId: "paging-session",
-      viewId: "paging-view",
-    };
-    const { container, rerender } = render(
-      <Transcript {...props} messages={recent} />,
-    );
-    const initialFold = container.querySelector(
-      "[data-activity-fold]",
-    ) as HTMLElement;
-    fireEvent.click(
-      within(initialFold).getByRole("button", {
-        name: "Collapse assistant activity from the upper boundary",
-      }),
-    );
-    expect(initialFold).toHaveAttribute("data-activity-fold", "closed");
-
-    rerender(
-      <Transcript
-        {...props}
-        messages={[
-          { role: "user", content: "older user", timestamp: -1 },
-          ...recent,
-        ]}
-      />,
-    );
-
-    expect(container.querySelector("[data-activity-fold]")).toHaveAttribute(
-      "data-activity-fold",
-      "closed",
-    );
-  });
-
   it("follows the Live tail when the same message grows", () => {
-    const messages = Array.from({ length: 60 }, (_, index) => ({
-      role: index % 2 === 0 ? "user" : "assistant",
-      content: index === 59 ? [] : `settled row ${index}`,
-      timestamp: index,
-      ...(index === 59
-        ? { __inspireLiveId: "virtual-tail", __inspireSettled: false }
-        : {}),
-    }));
+    const prompt = { role: "user", content: "Latest prompt", timestamp: 1 };
+    const live = {
+      role: "assistant",
+      timestamp: 2,
+      __inspireLiveId: "tail",
+      __inspireSettled: false,
+      content: [],
+    };
     const props = {
       streaming: true,
-      activeAssistantMessageKey: "live:virtual-tail",
+      activeAssistantMessageKey: "live:tail",
       thinkingVisibility: "dynamic" as const,
       toolVisibility: "dynamic" as const,
     };
     const { rerender } = render(
-      <Transcript
-        sessionId="virtual-follow"
-        messages={messages.slice(0, 59)}
-        {...props}
-      />,
+      <Transcript sessionId="follow" messages={[prompt]} {...props} />,
     );
 
     const log = screen.getByRole("log");
@@ -109,7 +50,7 @@ describe("Live transcript search navigation", () => {
       scrollTop: { configurable: true, writable: true, value: 5_600 },
     });
     rerender(
-      <Transcript sessionId="virtual-follow" messages={messages} {...props} />,
+      <Transcript sessionId="follow" messages={[prompt, live]} {...props} />,
     );
     expect(log.scrollTop).toBe(5_700);
     expect(
@@ -122,23 +63,22 @@ describe("Live transcript search navigation", () => {
     });
     rerender(
       <Transcript
-        sessionId="virtual-follow"
-        messages={messages.map((message, index) =>
-          index === 59
-            ? {
-                ...message,
-                content: [
-                  { type: "thinking", thinking: "continuing reasoning" },
-                  {
-                    type: "toolCall",
-                    id: "long-tool",
-                    name: "write",
-                    arguments: { path: "theory.md" },
-                  },
-                ],
-              }
-            : message,
-        )}
+        sessionId="follow"
+        messages={[
+          prompt,
+          {
+            ...live,
+            content: [
+              { type: "thinking", thinking: "continuing reasoning" },
+              {
+                type: "toolCall",
+                id: "long-tool",
+                name: "write",
+                arguments: { path: "theory.md" },
+              },
+            ],
+          },
+        ]}
         {...props}
       />,
     );
@@ -148,31 +88,13 @@ describe("Live transcript search navigation", () => {
 
   it("keeps a search match selected when a near-bottom scroll precedes a live append", async () => {
     function Harness() {
-      const [messages, setMessages] = useState(
-        Array.from({ length: 60 }, (_, index) => ({
-          role: index % 2 === 0 ? "user" : "assistant",
-          content: index === 55 ? "anchored target" : `settled row ${index}`,
-          timestamp: index + 10,
-        })),
-      );
+      const [messages, setMessages] = useState([
+        { role: "user", content: "anchored target", timestamp: 1 },
+        { role: "assistant", content: "settled reply", timestamp: 2 },
+      ]);
       const [streaming, setStreaming] = useState(false);
       return (
         <>
-          <button
-            type="button"
-            onClick={() => {
-              setMessages((current) => [
-                ...Array.from({ length: 5 }, (_, index) => ({
-                  role: "user",
-                  content: `older ${index}`,
-                  timestamp: index,
-                })),
-                ...current,
-              ]);
-            }}
-          >
-            Prepend older
-          </button>
           <button
             type="button"
             onClick={() => {
@@ -203,7 +125,6 @@ describe("Live transcript search navigation", () => {
     }
 
     render(<Harness />);
-    fireEvent.click(screen.getByRole("button", { name: "Prepend older" }));
     fireEvent.change(openTranscriptSearch(), { target: { value: "anchored" } });
     fireEvent.click(
       screen.getByRole("button", { name: "Next transcript match" }),

@@ -11,6 +11,7 @@ import {
   isolatedProcessOptions,
   signalProcessTree,
 } from "../../server/process-tree.mjs";
+import { freeLoopbackPort } from "../fixtures/packaged-launcher.mjs";
 import { isolatedTestEnvironment } from "./fixtures/isolated-environment.js";
 
 const root = resolve(import.meta.dirname, "../..");
@@ -35,19 +36,13 @@ async function listen(server: Server): Promise<number> {
     throw new Error("Expected TCP listener");
   return address.port;
 }
-async function freePort(): Promise<number> {
-  const server = createServer();
-  const port = await listen(server);
-  await new Promise<void>((done) => server.close(() => done()));
-  return port;
-}
 async function scenario(webPort?: number) {
   const home = await mkdtemp(join(tmpdir(), "inspire-dev-fixture-"));
   directories.push(home);
   const sentinel = join(home, "inherited-instance.json");
   await writeFile(sentinel, "existing instance must remain untouched");
-  const backendPort = await freePort();
-  const frontendPort = webPort ?? (await freePort());
+  const backendPort = await freeLoopbackPort();
+  const frontendPort = webPort ?? (await freeLoopbackPort());
   const environment = isolatedTestEnvironment(home, {
     INSPIRE_HOST: "127.0.0.1",
     INSPIRE_PORT: String(backendPort),

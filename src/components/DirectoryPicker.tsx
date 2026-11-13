@@ -5,7 +5,7 @@ import { ApiError } from "../api";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import { isTransientFailure, recoverableRead } from "../recovery-backoff";
 import { store, useAppState } from "../store";
-import { useModalFocus } from "../use-modal-focus";
+import { Modal } from "./Modal";
 import { PiLoader } from "./PiLoader";
 
 /**
@@ -49,11 +49,6 @@ export function DirectoryPicker({
   );
   const ownsTransport = () =>
     store.getState().transportGeneration === transportGeneration;
-  const dialogRef = useModalFocus<HTMLDivElement>(
-    true,
-    "directory-picker",
-    onCancel,
-  );
   const listRef = useRef<HTMLDivElement>(null);
   const restoreListFocus = useRef(false);
   useLayoutEffect(() => {
@@ -164,16 +159,8 @@ export function DirectoryPicker({
   }, [transportGeneration]);
 
   return (
-    <div className="overlay" role="presentation" onClick={onCancel}>
-      <div
-        ref={dialogRef}
-        className="dialog dirpicker"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Choose project directory"
-        tabIndex={-1}
-        onClick={(event) => event.stopPropagation()}
-      >
+    <Modal aria-label="Choose project directory" onDismiss={onCancel}>
+      <div className="dialog dirpicker">
         <div className="dirpicker__header">
           <h2 className="dialog__title">Choose project directory</h2>
           <button
@@ -317,6 +304,6 @@ export function DirectoryPicker({
           </button>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

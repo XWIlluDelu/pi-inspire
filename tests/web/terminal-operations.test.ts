@@ -91,12 +91,12 @@ it("restores the original daemon identity until an expired intent is retired", a
   await expect(
     new TerminalOperationController(transport(handle)).run(remove),
   ).rejects.toThrow("outcome is unknown");
-  const restarted = new TerminalOperationController(
-    transport(handle, newEpoch),
-  );
+  const request = transport(handle, newEpoch);
+  const restarted = new TerminalOperationController(request);
   restarted.restore();
   const [entry] = restarted.snapshot();
   await expect(restarted.retry(entry!.key)).rejects.toThrow("Receipt expired");
+  expect(request.mock.calls[0]?.[0]).toBe("/api/terminal-operations?observe=1");
   expect(delivered).toEqual([delivered[0], delivered[0]]);
   restarted.stopTracking(entry!.key);
   await expect(restarted.run(remove)).resolves.toBeNull();

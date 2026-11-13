@@ -1,101 +1,25 @@
 import { mkdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { z } from "zod";
 import {
-  CONTENT_TEXT_SIZES,
-  DESKTOP_SEND_KEYS,
   defaultPreferences,
   type InspirePreferences,
-  MAX_SESSION_ID_CHARS,
-  PALETTE_PREFERENCES,
-  READING_WIDTHS,
-  SESSION_ACTION_IDS,
+  type PreferencePublication,
 } from "../shared/contracts.js";
-import { adapterIdSchema } from "../shared/tool-presentation-config.js";
+import {
+  preferenceFields,
+  preferencesPatchSchema,
+  preferencesSchema,
+} from "../shared/preferences-schema.js";
 import { acquireFileLock } from "./file-lock.mjs";
 import { inspireConfigDirectory } from "./platform-paths.mjs";
 import { replacePrivateStateFile } from "./private-state-file.js";
 import { ProjectDirectoryStore } from "./project-directories.js";
 import { requestError } from "./request-error.js";
 
-// Field validators stay default-free here: `.partial()` keeps `.default()`,
-// so a patch schema derived from defaulted fields would fill absent keys and
-// clobber stored values on every patch.
-const preferenceFields = {
-  adapterEnabled: z
-    .record(adapterIdSchema, z.boolean())
-    .refine((value) => Object.keys(value).length <= 32)
-    .optional(),
-  herdrEnabled: z.boolean(),
-  theme: z.enum(["system", "light", "dark"]),
-  palette: z.enum(PALETTE_PREFERENCES),
-  titlebarNeedles: z.boolean(),
-  contentTextSize: z.enum(CONTENT_TEXT_SIZES),
-  readingWidth: z.enum(READING_WIDTHS),
-  launch: z.enum(["welcome", "continue"]),
-  desktopSendKey: z.enum(DESKTOP_SEND_KEYS),
-  thinkingVisibility: z.enum(["dynamic", "expanded", "collapsed", "hidden"]),
-  toolVisibility: z.enum([
-    "dynamic",
-    "expanded",
-    "compact",
-    "collapsed",
-    "hidden",
-  ]),
-  activityFoldVisibility: z.enum([
-    "dynamic",
-    "expanded",
-    "compact",
-    "collapsed",
-  ]),
-  projectDisplay: z.enum(["folder", "path"]),
-  sessionActionOrder: z
-    .array(z.enum(SESSION_ACTION_IDS))
-    .max(SESSION_ACTION_IDS.length)
-    .refine((order) => new Set(order).size === order.length, {
-      message: "Session actions must not repeat",
-    })
-    // New actions join the end without discarding a saved order.
-    .transform((order) => [
-      ...order,
-      ...SESSION_ACTION_IDS.filter((id) => !order.includes(id)),
-    ]),
-  recentModelIds: z
-    .array(
-      z.object({
-        provider: z.string().min(1).max(120),
-        id: z.string().min(1).max(240),
-      }),
-    )
-    .max(8),
-  pinnedSessionIds: z
-    .array(z.string().min(1).max(MAX_SESSION_ID_CHARS))
-    .max(100),
-  pinnedProjectCwds: z.array(z.string().min(1).max(4_096)).max(100),
-  hiddenProjectCwds: z.array(z.string().min(1).max(4_096)).max(100),
-  hiddenSessionIds: z
-    .array(z.string().min(1).max(MAX_SESSION_ID_CHARS))
-    .max(500),
-  navCollapsedGroups: z.array(z.string().min(1).max(4_096)).max(500),
-};
-
-const preferencesSchema = z.object(preferenceFields).strict();
-
-// Writes are field-scoped patches merged over the stored file, never full
-// snapshots, so concurrent writers can only contend on the fields they
-// actually changed. Reject unknown patch fields, but preserve existing fields
-// belonging to other versions of Inspire.
-const preferencesPatchSchema = preferencesSchema.partial().strict();
-
 interface DiskPreferences {
   preferences: InspirePreferences;
   /** Absent only when the file cannot be safely patched as a JSON object. */
   source?: Record<string, unknown>;
-  warning?: string;
-}
-
-interface PreferencesInspection {
-  preferences: InspirePreferences;
   warning?: string;
 }
 
@@ -141,6 +65,7 @@ export class PreferencesStore {
   readonly path: string;
   readonly projectDirectories: ProjectDirectoryStore;
   private writes: Promise<void> = Promise.resolve();
+  private revision = 0;
 
   constructor(path = join(inspireConfigDirectory(), "preferences.json")) {
     this.path = path;
@@ -174,11 +99,12 @@ export class PreferencesStore {
     }
   }
 
-  async inspect(): Promise<PreferencesInspection> {
+  async inspect(): Promise<PreferencePublication & { warning?: string }> {
     return this.enqueue(async () => {
       const current = await this.readDisk();
       return {
         preferences: current.preferences,
+        revision: ++this.revision,
         ...(current.warning
           ? {
               warning: `${current.warning} The saved file at ${this.path} was left unchanged.`,
@@ -229,7 +155,7 @@ export class PreferencesStore {
 
   private mutate(
     transform: (current: InspirePreferences) => unknown,
-  ): Promise<InspirePreferences> {
+  ): Promise<PreferencePublication> {
     return this.enqueue(() =>
       this.withWriteLock(async (assertOwned) => {
         const current = await this.readDisk();
@@ -256,12 +182,12 @@ export class PreferencesStore {
           ]);
         }
         await this.persist(source, assertOwned);
-        return preferences;
+        return { preferences, revision: ++this.revision };
       }),
     );
   }
 
-  async patch(value: unknown): Promise<InspirePreferences> {
+  async patch(value: unknown): Promise<PreferencePublication> {
     const patch = preferencesPatchSchema.parse(value);
     return this.mutate((current) => ({
       ...patch,
@@ -278,14 +204,19 @@ export class PreferencesStore {
 
   /** The read/transform/write stays in one serialized preference operation,
    * so concurrent curation patches cannot be overwritten by deletion cleanup. */
-  private removeNavigationIdentities(
+  removeDeletedSessions(
     deletedSessionIds: readonly string[],
-    clearedHiddenSessionIds: readonly string[],
-    clearedProjectCwds: readonly string[],
-  ): Promise<InspirePreferences> {
+    cleared?: {
+      hiddenSessionIds: readonly string[];
+      hiddenProjectCwds: readonly string[];
+    },
+  ): Promise<PreferencePublication> {
     const deleted = new Set(deletedSessionIds);
-    const clearedHidden = new Set(clearedHiddenSessionIds);
-    const clearedProjects = new Set(clearedProjectCwds);
+    const clearedHidden = new Set([
+      ...deleted,
+      ...(cleared?.hiddenSessionIds ?? []),
+    ]);
+    const clearedProjects = new Set(cleared?.hiddenProjectCwds);
     return this.mutate((current) => ({
       pinnedSessionIds: current.pinnedSessionIds.filter(
         (id) => !deleted.has(id),
@@ -307,27 +238,5 @@ export class PreferencesStore {
           }
         : {}),
     }));
-  }
-
-  /** Remove the committed subset of a Hidden clear. Only a complete clear
-   * removes the reviewed curation snapshot; a partial filesystem result keeps
-   * folder ownership for the sessions that remain. */
-  removeClearedHidden(
-    deletedSessionIds: readonly string[],
-    reviewedHiddenSessionIds: readonly string[],
-    reviewedHiddenProjectCwds: readonly string[],
-    complete: boolean,
-  ): Promise<InspirePreferences> {
-    return this.removeNavigationIdentities(
-      deletedSessionIds,
-      complete
-        ? [...deletedSessionIds, ...reviewedHiddenSessionIds]
-        : deletedSessionIds,
-      complete ? reviewedHiddenProjectCwds : [],
-    );
-  }
-
-  removeSession(sessionId: string): Promise<InspirePreferences> {
-    return this.removeNavigationIdentities([sessionId], [sessionId], []);
   }
 }

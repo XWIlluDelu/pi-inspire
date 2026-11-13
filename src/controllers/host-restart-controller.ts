@@ -1,8 +1,8 @@
 import {
-  hostRestartRequestSchema,
   type HostRestartRequest,
   type HostRestartScope,
   type HostRestartStatus,
+  hostRestartRequestSchema,
 } from "../../shared/host-restart";
 import { createApi } from "../api";
 
@@ -169,9 +169,7 @@ export class HostRestartClient {
         (scope === "all-pi" && !interruptWork) ||
         !(scope === "all-pi"
           ? this.state.status.allPiAvailable
-          : scope === "all"
-            ? this.state.status.allAvailable
-            : this.state.status.available) ||
+          : this.state.status.available) ||
         this.state.status.hostId !== hostId
       )
         return;

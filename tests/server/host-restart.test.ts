@@ -31,7 +31,7 @@ function fixture(overrides: Partial<HostRestartBackend> = {}) {
     stopAttachedPiWork: vi.fn(async () => {}),
   };
   const backend: HostRestartBackend = {
-    inspect: vi.fn(async () => ({ host: true, all: true, allPi: true })),
+    inspect: vi.fn(async () => ({ host: true, allPi: true })),
     prepare: vi.fn(async () => {}),
     request: vi.fn(async (_all, commit) =>
       (await commit()) ? { code: 0 } : { code: 1, issued: false },
@@ -45,71 +45,40 @@ async function intent(controller: HostRestartController) {
   return {
     hostId: (await controller.status()).hostId,
     operationId: randomUUID(),
-    scope: "all" as const,
+    scope: "host" as const,
   };
 }
 
 describe("manual Host restart ownership", () => {
-  it.each(["host", "all"] as const)(
-    "%s restart sends no command to taken-over Pi before submission",
+  it.each(["host", "all-pi"] as const)(
+    "checks the scope's authority before submitting %s",
     async (scope) => {
-      const f = fixture();
-      f.controller.start({
-        hostId: (await f.controller.status()).hostId,
-        operationId: randomUUID(),
-        scope,
-      });
+      const { controller, runtime, backend } = fixture();
+      const request = { ...(await intent(controller)), scope };
+      const global = scope === "all-pi";
+      if (global)
+        expect(() => controller.start(request)).toThrow(
+          "Confirm closing all Pi",
+        );
+      controller.start(global ? { ...request, interruptWork: true } : request);
       await vi.waitFor(async () =>
-        expect((await f.controller.status()).operation?.phase).toBe(
-          "submitted",
-        ),
+        expect((await controller.status()).operation?.phase).toBe("submitted"),
       );
-      expect(f.runtime.reserveMaintenanceRestart).toHaveBeenCalledWith(
-        false,
+      expect(runtime.reserveMaintenanceRestart).toHaveBeenCalledWith(
+        global,
         true,
       );
-      expect(f.runtime.stopAttachedPiWork).not.toHaveBeenCalled();
-      expect(f.runtime.checkAttachedRestartWork).toHaveBeenCalledOnce();
-      expect(f.backend.request).toHaveBeenCalledWith(
-        scope,
-        expect.any(Function),
+      expect(runtime.stopAttachedPiWork).not.toHaveBeenCalled();
+      expect(runtime.checkAttachedRestartWork).toHaveBeenCalledTimes(
+        global ? 0 : 1,
       );
+      expect(backend.request).toHaveBeenCalledWith(scope, expect.any(Function));
     },
   );
 
-  it("requires explicit permission for global Pi shutdown and bypasses attached-only Stop", async () => {
-    const f = fixture();
-    const request = {
-      ...(await intent(f.controller)),
-      scope: "all-pi" as const,
-    };
-    expect(() => f.controller.start(request)).toThrow("Confirm closing all Pi");
-    f.controller.start({ ...request, interruptWork: true });
-    await vi.waitFor(async () =>
-      expect((await f.controller.status()).operation?.phase).toBe("submitted"),
-    );
-    expect(f.backend.request).toHaveBeenCalledWith(
-      "all-pi",
-      expect.any(Function),
-    );
-    expect(f.runtime.reserveMaintenanceRestart).toHaveBeenCalledWith(
-      true,
-      true,
-    );
-    expect(f.runtime.stopAttachedPiWork).not.toHaveBeenCalled();
-    expect(f.runtime.checkAttachedRestartWork).not.toHaveBeenCalled();
-  });
-
   it("finishes preparation before acquiring idle authority and excludes other operations", async () => {
-    let ready!: () => void;
-    const f = fixture({
-      prepare: vi.fn(
-        () =>
-          new Promise<void>((resolve) => {
-            ready = resolve;
-          }),
-      ),
-    });
+    const ready = Promise.withResolvers<void>();
+    const f = fixture({ prepare: vi.fn(() => ready.promise) });
     const request = await intent(f.controller);
     expect(f.controller.start(request).phase).toBe("preparing");
     await vi.waitFor(() => expect(f.backend.prepare).toHaveBeenCalledOnce());
@@ -117,7 +86,7 @@ describe("manual Host restart ownership", () => {
     expect(() =>
       f.controller.start({ ...request, operationId: randomUUID() }),
     ).toThrow("already pending");
-    ready();
+    ready.resolve();
     await vi.waitFor(async () =>
       expect((await f.controller.status()).operation?.phase).toBe("submitted"),
     );
@@ -224,18 +193,22 @@ describe("manual Host restart ownership", () => {
 
   it("reports scopes separately and rejects unsupported full restart before preparation", async () => {
     const f = fixture({
-      inspect: vi.fn(async () => ({ host: true, all: false })),
+      inspect: vi.fn(async () => ({ host: true, allPi: false })),
     });
     expect(await f.controller.status()).toMatchObject({
       available: true,
-      allAvailable: false,
-      allReason: expect.stringContaining("Linux systemd"),
+      allPiAvailable: false,
+      allPiReason: expect.stringContaining("Linux services"),
     });
-    f.controller.start(await intent(f.controller));
+    f.controller.start({
+      ...(await intent(f.controller)),
+      scope: "all-pi",
+      interruptWork: true,
+    });
     await vi.waitFor(async () =>
       expect((await f.controller.status()).operation).toMatchObject({
         phase: "rejected",
-        error: expect.stringContaining("Restart with terminals requires"),
+        error: expect.stringContaining("Restart all requires"),
       }),
     );
     expect(f.backend.prepare).not.toHaveBeenCalled();
@@ -244,20 +217,6 @@ describe("manual Host restart ownership", () => {
     await vi.waitFor(async () =>
       expect((await f.controller.status()).operation?.phase).toBe("submitted"),
     );
-  });
-
-  it("releases only after proven non-issuance", async () => {
-    const f = fixture({
-      request: vi.fn(async (_all, commit) => {
-        await commit();
-        return { issued: false, code: 1 };
-      }),
-    });
-    f.controller.start(await intent(f.controller));
-    await vi.waitFor(async () =>
-      expect((await f.controller.status()).operation?.phase).toBe("rejected"),
-    );
-    expect(f.runtime.releaseMaintenanceRestart).toHaveBeenCalledWith("lease");
   });
 
   it.each(["active-work", "in-flight-operation"] as const)(
@@ -282,29 +241,38 @@ describe("manual Host restart ownership", () => {
     },
   );
 
-  it.each(["exit-error", "lost-result"])(
-    "retains committed drain and prohibits replay after %s",
-    async (mode) => {
-      const f = fixture({
-        request: vi.fn(async (_all, commit) => {
-          await commit();
-          if (mode === "lost-result") throw new Error("IPC lost");
-          return { code: 1 };
-        }),
-      });
-      const request = await intent(f.controller);
-      f.controller.start(request);
-      await vi.waitFor(async () =>
-        expect((await f.controller.status()).operation?.phase).toBe("unknown"),
-      );
+  it.each([
+    ["proven non-issuance", "rejected"],
+    ["exit-error", "unknown"],
+    ["lost-result", "unknown"],
+  ] as const)("publishes %s as %s without replay", async (mode, phase) => {
+    const f = fixture({
+      request: vi.fn(async (_scope, commit) => {
+        expect(await commit()).toBe(true);
+        if (mode === "lost-result") throw new Error("IPC lost");
+        return mode === "proven non-issuance"
+          ? { code: 1, issued: false }
+          : { code: 1 };
+      }),
+    });
+    const request = await intent(f.controller);
+    f.controller.start(request);
+    await vi.waitFor(async () =>
+      expect((await f.controller.status()).operation?.phase).toBe(phase),
+    );
+    if (phase === "rejected")
+      expect(
+        f.runtime.releaseMaintenanceRestart,
+      ).toHaveBeenCalledExactlyOnceWith("lease");
+    else {
       expect(f.runtime.releaseMaintenanceRestart).not.toHaveBeenCalled();
-      expect(f.controller.start(request).phase).toBe("unknown");
-      expect(f.backend.request).toHaveBeenCalledOnce();
       expect(() =>
         f.controller.start({ ...request, operationId: randomUUID() }),
       ).toThrow("already pending");
-    },
-  );
+    }
+    expect(f.controller.start(request).phase).toBe(phase);
+    expect(f.backend.request).toHaveBeenCalledOnce();
+  });
 });
 
 it("captures an isolated restart preflight failure and allows a corrected retry", async () => {
@@ -314,11 +282,10 @@ it("captures an isolated restart preflight failure and allows a corrected retry"
     const backend = systemdRestartBackend(root, false);
     expect(await backend.inspect()).toMatchObject({
       host: false,
-      all: false,
       allPi: false,
     });
     await expect(
-      backend.request("all", () => {
+      backend.request("host", () => {
         throw new Error("must not commit");
       }),
     ).resolves.toEqual({ issued: false, code: 1 });

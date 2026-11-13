@@ -1,22 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import request from "supertest";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createInspireServer } from "../../server/app.js";
-import {
-  type HostRestartBackend,
-  HostRestartController,
-} from "../../server/host-restart.js";
-import { PreferencesStore } from "../../server/preferences.js";
-import { ResourceStore } from "../../server/resources.js";
+import type { HostRestartBackend } from "../../server/host-restart.js";
 import type { HerdrEnhancementStatus } from "../../shared/herdr.js";
-import { hostServices } from "../fixtures/host-services.js";
+import { closeHostApiFixture, hostApiFixture } from "./fixtures/host-api.js";
 
-const cleanup: Array<() => Promise<void>> = [];
+let host: Awaited<ReturnType<typeof hostApiFixture>> | undefined;
 afterEach(async () => {
-  for (const close of cleanup.splice(0).reverse()) await close();
+  if (host) await closeHostApiFixture(host);
+  host = undefined;
 });
 
 async function fixture(
@@ -25,50 +17,25 @@ async function fixture(
     getHerdrStatus?: () => Promise<HerdrEnhancementStatus>;
   } = {},
 ) {
-  const directory = await mkdtemp(join(tmpdir(), "inspire-host-admin-"));
-  cleanup.push(() => rm(directory, { recursive: true, force: true }));
-  const services = hostServices(directory);
-  const application = createInspireServer({
-    ...services,
-    token: "fixture-token",
-    preferences: new PreferencesStore(join(directory, "preferences.json")),
-    resources: new ResourceStore(),
-    git: {
-      status: async () => ({ kind: "not-repository" }),
-      diff: async () => {
-        throw new Error("Git is outside this fixture");
-      },
-    },
-    version: "test",
-    piVersion: "test",
-    hostRestart: options.restart
-      ? new HostRestartController(services.runtime, options.restart)
-      : undefined,
+  host = await hostApiFixture({
     getHerdrStatus: options.getHerdrStatus,
+    restartBackend: options.restart,
   });
-  cleanup.push(() => application.close());
   return {
-    runtime: services.runtime,
-    guest: request(application.app),
-    local: request
-      .agent(application.app)
-      .set("Authorization", "Bearer fixture-token"),
+    runtime: host.runtime,
+    guest: request(host.application.server),
+    local: host.localRequest,
   };
 }
 
 describe("Host administration API", () => {
   it("authenticates restart, deduplicates preparation, and retains a failed receipt without restarting", async () => {
     const restart = vi.fn(async () => ({ code: 0 }));
-    let rejectPreparation!: (error: Error) => void;
-    const prepare = vi.fn(
-      () =>
-        new Promise<void>((_resolve, reject) => {
-          rejectPreparation = reject;
-        }),
-    );
+    const preparation = Promise.withResolvers<void>();
+    const prepare = vi.fn(() => preparation.promise);
     const { runtime, guest, local } = await fixture({
       restart: {
-        inspect: async () => ({ host: true, all: true }),
+        inspect: async () => ({ host: true, allPi: true, includeHerdr: true }),
         prepare,
         request: restart,
       },
@@ -78,21 +45,29 @@ describe("Host administration API", () => {
     const submit = (intent: object) => local.post(path).send(intent);
     await guest.get(path).expect(401);
     await guest.post(path).send({}).expect(401);
-    const status = await local
-      .get(path)
-      .expect("Cache-Control", "no-store")
-      .expect(200);
+    const observe = () =>
+      local.get(path).expect("Cache-Control", "no-store").expect(200);
+    const { body: status } = await observe();
+    expect(status).toMatchObject({
+      allPiAvailable: true,
+      allPiIncludesHerdr: true,
+    });
     const intent = {
-      hostId: status.body.hostId,
+      hostId: status.hostId,
       operationId: randomUUID(),
-      scope: "all",
+      scope: "all-pi",
       interruptWork: true,
     };
     await submit(intent).set("Origin", "https://foreign.example").expect(403);
-    await submit({ ...intent, scope: "arbitrary-service" }).expect(400);
-    await submit({ ...intent, scope: "host-only" }).expect(400);
-    await submit({ ...intent, interruptWork: false }).expect(400);
+    for (const patch of [
+      { scope: "arbitrary-service" },
+      { scope: "all" },
+      { interruptWork: false },
+      { interruptWork: undefined },
+    ])
+      await submit({ ...intent, ...patch }).expect(400);
     await submit({ ...intent, hostId: randomUUID() }).expect(409);
+    expect(prepare).not.toHaveBeenCalled();
     const admitted = await submit(intent).expect(202);
     expect(admitted.body).toMatchObject({
       executor: { kind: "lifecycle", hostId: intent.hostId },
@@ -103,14 +78,13 @@ describe("Host administration API", () => {
     });
     await submit(intent).expect(202);
     await submit({ ...intent, scope: "host" }).expect(409);
-    await submit({ ...intent, interruptWork: undefined }).expect(409);
-    const late = await local.get(path).expect(200);
+    const late = await observe();
     expect(late.body.operation).toMatchObject({
       id: intent.operationId,
-      scope: "all",
+      scope: "all-pi",
       phase: "preparing",
     });
-    rejectPreparation(new Error("Synthetic preparation failure"));
+    preparation.reject(new Error("Synthetic preparation failure"));
     await vi.waitFor(async () => {
       const { body } = await local.get(path).expect(200);
       expect(body.operation).toMatchObject({
@@ -125,44 +99,6 @@ describe("Host administration API", () => {
     expect(prepare).toHaveBeenCalledOnce();
     expect(reserve).not.toHaveBeenCalled();
     expect(restart).not.toHaveBeenCalled();
-  });
-
-  it("requires explicit global shutdown permission before preparing a new-scope restart", async () => {
-    const prepare = vi.fn(async () => {
-      throw new Error("Synthetic preflight failure");
-    });
-    const { local } = await fixture({
-      restart: {
-        inspect: async () => ({
-          host: true,
-          all: true,
-          allPi: true,
-          includeHerdr: true,
-        }),
-        prepare,
-        request: vi.fn(async () => {
-          throw new Error("must not submit");
-        }),
-      },
-    });
-    const path = "/api/host/restart";
-    const { body: status } = await local.get(path).expect(200);
-    expect(status).toMatchObject({
-      allPiAvailable: true,
-      allPiIncludesHerdr: true,
-    });
-    const intent = {
-      hostId: status.hostId,
-      operationId: randomUUID(),
-      scope: "all-pi",
-    };
-    await local.post(path).send(intent).expect(400);
-    expect(prepare).not.toHaveBeenCalled();
-    await local
-      .post(path)
-      .send({ ...intent, interruptWork: true })
-      .expect(202);
-    await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
   });
 
   it("authenticates Herdr status and reports missing integration as unavailable", async () => {
@@ -199,7 +135,8 @@ describe("Host administration API", () => {
       false,
     );
     expect(
-      (await local.get("/api/preferences").expect(200)).body.herdrEnabled,
+      (await local.get("/api/preferences").expect(200)).body.preferences
+        .herdrEnabled,
     ).toBe(true);
   });
 });

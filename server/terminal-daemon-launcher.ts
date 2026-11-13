@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { installationKey } from "./platform-paths.mjs";
 import { TerminalDaemonClient } from "./terminal-daemon-client.js";
@@ -24,12 +25,6 @@ import {
 
 const require = createRequire(import.meta.url);
 const START_TIMEOUT_MS = 8_000;
-
-function delay(milliseconds: number): Promise<void> {
-  return new Promise((resolvePromise) =>
-    setTimeout(resolvePromise, milliseconds),
-  );
-}
 
 async function runSystemdUnit(
   command: string,
@@ -69,29 +64,13 @@ async function runSystemdUnit(
   });
 }
 
-function daemonCommand(): { command: string; prefix: string[]; entry: string } {
-  const sourceMode = fileURLToPath(import.meta.url).endsWith(".ts");
-  const directory = dirname(fileURLToPath(import.meta.url));
-  if (sourceMode)
-    return {
-      command: process.execPath,
-      prefix: [require.resolve("tsx/cli")],
-      entry: join(directory, "terminal-daemon-entry.ts"),
-    };
-  return {
-    command: process.execPath,
-    prefix: [],
-    entry: join(directory, "terminal-daemon-entry.js"),
-  };
-}
+const sourceMode = fileURLToPath(import.meta.url).endsWith(".ts");
 
 function terminalConnectionFailure(
   error: unknown,
   listening: boolean,
 ): TerminalServiceError {
-  const prefix = fileURLToPath(import.meta.url).endsWith(".ts")
-    ? "npm run inspire --"
-    : "inspire";
+  const prefix = sourceMode ? "npm run inspire --" : "inspire";
   const detail =
     error instanceof Error ? error.message : "No authenticated reply.";
   return new TerminalServiceError(
@@ -155,10 +134,12 @@ export async function launchTerminalDaemon(
     throw terminalConnectionFailure(probeError, true);
   }
 
-  const executable = daemonCommand();
   const daemonArgs = [
-    ...executable.prefix,
-    executable.entry,
+    ...(sourceMode ? [require.resolve("tsx/cli")] : []),
+    join(
+      dirname(fileURLToPath(import.meta.url)),
+      `terminal-daemon-entry.${sourceMode ? "ts" : "js"}`,
+    ),
     "--root",
     root,
     "--host",
@@ -178,13 +159,13 @@ export async function launchTerminalDaemon(
     options.port,
   ).slice(0, 12)}`;
   const startedBySystemd = await runSystemdUnit(
-    executable.command,
+    process.execPath,
     daemonArgs,
     unit,
     environment,
   );
   if (!startedBySystemd) {
-    const child = spawn(executable.command, daemonArgs, {
+    const child = spawn(process.execPath, daemonArgs, {
       cwd: root,
       detached: true,
       windowsHide: true,

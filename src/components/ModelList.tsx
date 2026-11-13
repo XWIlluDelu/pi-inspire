@@ -1,12 +1,7 @@
-import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
-import { Check, Search } from "lucide-react";
+import { Check } from "lucide-react";
 import {
   type KeyboardEvent,
   type ReactNode,
-  useCallback,
-  useEffect,
-  useId,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -19,6 +14,8 @@ import {
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import { useSearchFocus } from "../use-search-focus";
 
+import { type ListOption, OptionList, useOptionList } from "./OptionList";
+import { SearchField } from "./SearchField";
 import {
   fuzzySearchMatchRanges,
   mergeSearchMatchRanges,
@@ -81,26 +78,24 @@ function fuzzyCategory(value: string, queryValue: string): number | null {
 function modelSearchText(model: ModelOption): string {
   return `${model.provider} ${model.id} ${model.name ?? ""} ${model.provider}/${model.id}`;
 }
+interface ModelCandidate {
+  model: ModelOption;
+  common?: boolean;
+}
+
 interface ModelGroup {
   provider: string;
   models: ModelOption[];
   common?: boolean;
 }
 function prepareModelOptions(models: readonly ModelOption[]): ModelOption[] {
-  return models
-    .map((model, order) => ({ model, order }))
-    .sort((left, right) =>
-      left.model.provider < right.model.provider
-        ? -1
-        : left.model.provider > right.model.provider
-          ? 1
-          : left.model.id < right.model.id
-            ? -1
-            : left.model.id > right.model.id
-              ? 1
-              : left.order - right.order,
-    )
-    .map(({ model }) => model);
+  return [...models].sort((left, right) => {
+    const [a, b] =
+      left.provider === right.provider
+        ? [left.id, right.id]
+        : [left.provider, right.provider];
+    return a < b ? -1 : a > b ? 1 : 0;
+  });
 }
 function groupPreparedModels(
   models: readonly ModelOption[],
@@ -186,16 +181,13 @@ export function ModelList({
   searchLabel?: string;
   emptyAction?: ReactNode;
 }) {
-  const id = useId();
   const inputRef = useRef<HTMLInputElement>(null);
-  const listRef = useRef<HTMLDivElement>(null);
   const [query, setQuery] = useState(initialQuery);
-  const [keyboardActive, setKeyboardActive] = useState(autoFocus);
   const currentKey = value ? modelIdentityKey(value) : "";
-  const [activeModelKey, setActiveModelKey] = useState<string | null>(
-    initialQuery ? null : currentKey,
+  const list = useOptionList<ModelCandidate>(
+    initialQuery ? undefined : currentKey,
+    autoFocus,
   );
-  const fallbackActiveIndex = useRef(0);
   const recentKeys = useMemo(
     () => new Set(recent.map(modelIdentityKey)),
     [recent],
@@ -205,284 +197,132 @@ export function ModelList({
     () => groupPreparedModels(prepared, recent, query, common),
     [prepared, recent, query, common],
   );
-  const { options, indexes, rows, optionRows } = useMemo(() => {
-    const options: ModelOption[] = [],
-      optionRows: number[] = [];
-    const rows: Array<
-      | { kind: "heading"; group: ModelGroup; key: string }
-      | {
-          kind: "model";
-          group: ModelGroup;
-          model: ModelOption;
-          index: number;
-          key: string;
-        }
-    > = [];
-    for (const group of groups) {
-      rows.push({
-        kind: "heading",
-        group,
-        key: group.common ? "common" : `provider/${group.provider}`,
-      });
-      for (const model of group.models) {
-        optionRows.push(rows.length);
-        rows.push({
-          kind: "model",
-          group,
-          model,
-          index: options.length,
-          key: modelIdentityKey(model),
-        });
-        options.push(model);
-      }
-    }
-    return {
-      options,
-      indexes: new Map(
-        options.map((model, index) => [modelIdentityKey(model), index]),
+  const options = useMemo(
+    () =>
+      groups.flatMap(({ provider, common, models }) =>
+        models.map((model): ListOption<ModelCandidate> => {
+          const key = modelIdentityKey(model);
+          return {
+            key,
+            value: { model, common },
+            selected: key === currentKey,
+            group: provider,
+            title: `${model.name ?? model.id} — ${model.provider}/${model.id}`,
+          };
+        }),
       ),
-      rows,
-      optionRows,
-    };
-  }, [groups]);
-  const active =
-    indexes.get(activeModelKey ?? "") ??
-    Math.min(fallbackActiveIndex.current, Math.max(0, options.length - 1));
-  const activeRow = optionRows[active];
-  const activate = (index: number) => {
-    const next = Math.max(0, Math.min(index, options.length - 1));
-    fallbackActiveIndex.current = next;
-    setActiveModelKey(options[next] ? modelIdentityKey(options[next]) : null);
-  };
-  const getScrollElement = useCallback(() => listRef.current, []);
-  const estimateSize = useCallback(
-    (index: number) => (rows[index]?.kind === "heading" ? 28 : 48),
-    [rows],
+    [groups, currentKey],
   );
-  const getItemKey = useCallback((index: number) => rows[index]!.key, [rows]);
-  const virtualizer = useVirtualizer({
-    count: rows.length,
-    getScrollElement,
-    estimateSize,
-    getItemKey,
-    overscan: 4,
-    rangeExtractor: (range) => {
-      const indexes = defaultRangeExtractor(range);
-      // Keep the active descendant mounted before scrolling a distant row.
-      if (activeRow !== undefined && !indexes.includes(activeRow))
-        indexes.push(activeRow);
-      return indexes.sort((left, right) => left - right);
-    },
-  });
-  const visibleGroups = new Map<
-    ModelGroup,
-    ReturnType<typeof virtualizer.getVirtualItems>
-  >();
-  for (const item of virtualizer.getVirtualItems()) {
-    const group = rows[item.index]!.group;
-    const items = visibleGroups.get(group) ?? [];
-    items.push(item);
-    visibleGroups.set(group, items);
-  }
-  useSearchFocus(autoFocus, inputRef, listRef);
-  useEffect(() => {
-    fallbackActiveIndex.current = active;
-    const key = options[active] ? modelIdentityKey(options[active]) : null;
-    if (activeModelKey !== key) setActiveModelKey(key);
-  }, [options, active, activeModelKey]);
-  useLayoutEffect(() => {
-    if (activeRow !== undefined && keyboardActive)
-      virtualizer.scrollToIndex(activeRow, { align: "auto" });
-  }, [activeRow, keyboardActive, rows, virtualizer]);
+  const pick = onSelect
+    ? ({ model }: ModelCandidate) => onSelect(model)
+    : undefined;
+  useSearchFocus(autoFocus, inputRef, list.scrollRef);
   const navigate = (event: KeyboardEvent) => {
-    if (event.defaultPrevented || isComposingKeyboardEvent(event.nativeEvent))
-      return;
-    if (
-      options.length &&
-      ["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)
-    ) {
-      event.preventDefault();
-      setKeyboardActive(true);
-      activate(
-        event.key === "ArrowDown"
-          ? active + 1
-          : event.key === "ArrowUp"
-            ? active - 1
-            : event.key === "Home"
-              ? 0
-              : options.length - 1,
-      );
-    } else if (event.key === "Enter" && onSelect && options[active]) {
-      event.preventDefault();
-      onSelect(options[active]!);
-    } else onKeyDown?.(event);
+    if (isComposingKeyboardEvent(event.nativeEvent)) return;
+    if (!list.navigate(event, options, pick, { edges: true }))
+      onKeyDown?.(event);
   };
   return (
     <>
-      <div className="model-picker__search">
-        <Search size={13} aria-hidden />
-        <input
-          ref={inputRef}
-          role="combobox"
-          aria-label={searchLabel}
-          aria-autocomplete="list"
-          aria-haspopup="listbox"
-          aria-expanded="true"
-          aria-controls={`${id}-list`}
-          aria-activedescendant={
-            keyboardActive && options[active]
-              ? `${id}-option-${active}`
-              : undefined
-          }
-          value={query}
-          onChange={(event) => {
-            setQuery(event.target.value);
-            setKeyboardActive(true);
-            fallbackActiveIndex.current = 0;
-            setActiveModelKey(null);
-            virtualizer.scrollToOffset(0);
-          }}
-          onKeyDown={navigate}
-          onBlur={() => setKeyboardActive(false)}
-          onPointerDown={() => setKeyboardActive(false)}
-          placeholder={placeholder ?? "Search provider or model…"}
-        />
-        {searchAction}
-      </div>
+      <SearchField
+        className="model-picker__search"
+        iconSize={13}
+        inputRef={inputRef}
+        role="combobox"
+        aria-label={searchLabel}
+        aria-autocomplete="list"
+        aria-haspopup="listbox"
+        aria-expanded="true"
+        aria-controls={list.id}
+        aria-activedescendant={list.descendant(options)}
+        value={query}
+        onValueChange={(value) => {
+          setQuery(value);
+          list.reset(true);
+        }}
+        onKeyDown={navigate}
+        onBlur={() => list.pointer()}
+        onPointerDown={() => list.pointer()}
+        placeholder={placeholder ?? "Search provider or model…"}
+        action={searchAction}
+      />
       {status ? (
         <div className="picker__empty" role="status">
           {status}
         </div>
       ) : null}
-      <div
-        ref={listRef}
-        data-keyboard-active={keyboardActive}
-        id={`${id}-list`}
-        tabIndex={-1}
+      <OptionList
+        list={list}
+        options={options}
+        label="Available models"
+        className="model-picker__list"
+        optionClass="model-picker__option"
+        fixedRows
+        onPick={pick}
         onKeyDown={navigate}
-        role="listbox"
-        aria-label="Available models"
-        aria-activedescendant={
-          keyboardActive && options[active]
-            ? `${id}-option-${active}`
-            : undefined
-        }
-        className={`model-picker__list ${options.length ? "" : "model-picker__list--empty"}`}
-      >
-        <div
-          className="model-picker__rows"
-          style={{ height: virtualizer.getTotalSize() }}
-        >
-          {[...visibleGroups].map(([group, items]) => (
-            <div
-              key={group.common ? "common" : `provider/${group.provider}`}
-              {...{
-                role: "group",
-                "aria-label": group.provider,
-              }}
-            >
-              {items.map((item) => {
-                const row = rows[item.index]!;
-                const style = {
-                  position: "absolute" as const,
-                  top: item.start,
-                  left: 0,
-                  width: "100%",
-                  height: item.size,
-                };
-                if (row.kind === "heading")
-                  return (
-                    <div
-                      key={row.key}
-                      className="model-picker__heading"
-                      title={group.provider}
-                      aria-hidden
-                      style={style}
-                    >
+        heading={({ group, value: { model, common } }, style, key) => (
+          <div
+            key={key}
+            className="model-picker__heading"
+            title={group}
+            aria-hidden
+            style={style}
+          >
+            <SearchMatchText
+              text={group!}
+              ranges={
+                common ? [] : modelSearchHighlights(model, query).provider
+              }
+            />
+          </div>
+        )}
+        renderOption={({ key, value: { model, common }, selected }) => {
+          const name = model.name ?? model.id;
+          const matches = modelSearchHighlights(model, query);
+          return (
+            <>
+              <span className="model-picker__option-copy">
+                <span className="model-picker__name">
+                  <span className="model-picker__name-text">
+                    <SearchMatchText text={name} ranges={matches.name} />
+                  </span>
+                  {model.virtual ? (
+                    <span className="model-picker__badge">Router</span>
+                  ) : null}
+                </span>
+                <span className="model-picker__id">
+                  {common ? (
+                    <>
                       <SearchMatchText
-                        text={group.provider}
-                        ranges={
-                          group.common
-                            ? []
-                            : modelSearchHighlights(group.models[0]!, query)
-                                .provider
-                        }
+                        text={model.provider}
+                        ranges={matches.provider}
                       />
-                    </div>
-                  );
-                const { model, index, key } = row;
-                const selected = key === currentKey;
-                const name = model.name ?? model.id;
-                const matches = modelSearchHighlights(model, query);
-                return (
-                  <div
-                    key={key}
-                    id={`${id}-option-${index}`}
-                    role="option"
-                    aria-selected={selected}
-                    aria-posinset={index + 1}
-                    aria-setsize={options.length}
-                    style={style}
-                    title={`${model.name ?? model.id} — ${model.provider}/${model.id}`}
-                    className={`model-picker__option ${index === active && keyboardActive ? "model-picker__option--active" : ""}`}
-                    onMouseDown={(event) => event.preventDefault()}
-                    onPointerMove={(event) => {
-                      if (event.pointerType === "touch") return;
-                      setKeyboardActive(false);
-                      activate(index);
-                    }}
-                    onClick={() => onSelect?.(model)}
-                  >
-                    <span className="model-picker__option-copy">
-                      <span className="model-picker__name">
-                        <span className="model-picker__name-text">
-                          <SearchMatchText text={name} ranges={matches.name} />
-                        </span>
-                        {model.virtual ? (
-                          <span className="model-picker__badge model-picker__badge--neutral">
-                            Router
-                          </span>
-                        ) : null}
-                      </span>
-                      <span className="model-picker__id">
-                        {group.common ? (
-                          <>
-                            <SearchMatchText
-                              text={model.provider}
-                              ranges={matches.provider}
-                            />
-                            /
-                          </>
-                        ) : null}
-                        <SearchMatchText text={model.id} ranges={matches.id} />
-                      </span>
-                    </span>
-                    <span className="model-picker__badges">
-                      {!selected && recentKeys.has(key) ? (
-                        <span className="model-picker__badge model-picker__badge--recent">
-                          Recent
-                        </span>
-                      ) : null}
-                      {model.reasoning === false ? (
-                        <span className="model-picker__badge model-picker__badge--neutral">
-                          No thinking
-                        </span>
-                      ) : null}
-                      {selected ? <Check size={12} aria-hidden /> : null}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          ))}
-        </div>
+                      /
+                    </>
+                  ) : null}
+                  <SearchMatchText text={model.id} ranges={matches.id} />
+                </span>
+              </span>
+              <span className="model-picker__badges">
+                {!selected && recentKeys.has(key) ? (
+                  <span className="model-picker__badge">Recent</span>
+                ) : null}
+                {model.reasoning === false ? (
+                  <span className="model-picker__badge">No thinking</span>
+                ) : null}
+                {selected ? <Check size={12} aria-hidden /> : null}
+              </span>
+            </>
+          );
+        }}
+      >
         {!options.length && !status ? (
           <div className="picker__empty">
             <p>{query ? "No matching models" : "No models available yet."}</p>
             {!query && emptyAction ? emptyAction : null}
           </div>
         ) : null}
-      </div>
+      </OptionList>
     </>
   );
 }

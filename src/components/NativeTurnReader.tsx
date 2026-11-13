@@ -6,6 +6,7 @@ import {
   type SessionHistoryPages,
 } from "../../shared/contracts";
 import { stripTerminalSequences } from "../ansi";
+import { selectedRunState } from "../app-state";
 import { copyLoader } from "../content-copy";
 import { branchCopiesBlocked } from "../controllers/branch-controller";
 import {
@@ -16,7 +17,6 @@ import {
   userMessageFileName,
 } from "../events";
 import { resourceReferenceFromEventTarget } from "../resources";
-import { sessionDraft } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
 import { BashExecution } from "./BashExecution";
 import { CopyAction } from "./CopyAction";
@@ -81,7 +81,7 @@ export function NativeTurnReader({
       busy: Boolean(
         state.readOnlyReason ||
           state.projectionHealth.status !== "ok" ||
-          isBusyRunState(state.runState) ||
+          isBusyRunState(selectedRunState(state)) ||
           state.bashRunning ||
           state.queue.totalCount ||
           state.extensionUiRequests.length,
@@ -113,50 +113,60 @@ export function NativeTurnReader({
   const wanted = useRef<Location | null>(null);
   const retry = useRef<(() => void) | null>(null);
 
-  async function read(
-    cursor?: string,
-    location?: Location,
-    routeLeaf?: string,
+  async function observe<T>(
+    request: (signal: AbortSignal) => Promise<T | null>,
+    apply: (value: T) => void,
+    failure: string,
   ) {
     pending.current?.abort();
-    const request = new AbortController();
-    pending.current = request;
+    const controller = new AbortController();
+    pending.current = controller;
     setLoading(true);
     setError("");
-    setResults(null);
-    setBody(null);
-    setRoutes(null);
+    retry.current = null;
     try {
-      const next = await store.readNativeHistory(
-        sessionId,
-        viewId,
-        {
-          kind: "page",
-          cursor,
-          entryId: location?.entryId,
-          leafId:
-            routeLeaf ??
-            location?.leafId ??
-            (cursor ? (page?.leafId ?? undefined) : undefined),
-        },
-        request.signal,
-      );
-      if (!next || request.signal.aborted) return;
-      wanted.current = location ?? null;
-      setPage(next);
-      if (location?.bodyOffset !== undefined)
-        void readBody(location.entryId, location.bodyOffset, next.leafId);
+      const value = await request(controller.signal);
+      if (value !== null && !controller.signal.aborted) apply(value);
     } catch (reason) {
-      if (request.signal.aborted) return;
-      retry.current = () => void read(cursor, location, routeLeaf);
-      setError(
-        reason instanceof Error
-          ? reason.message
-          : "History could not be loaded",
-      );
+      if (controller.signal.aborted) return;
+      retry.current = () => void observe(request, apply, failure);
+      setError(reason instanceof Error ? reason.message : failure);
     } finally {
-      if (!request.signal.aborted) setLoading(false);
+      if (!controller.signal.aborted && pending.current === controller) {
+        pending.current = null;
+        setLoading(false);
+      }
     }
+  }
+
+  function read(cursor?: string, location?: Location, routeLeaf?: string) {
+    return observe(
+      (signal) =>
+        store.readNativeHistory(
+          sessionId,
+          viewId,
+          {
+            kind: "page",
+            cursor,
+            entryId: location?.entryId,
+            leafId:
+              routeLeaf ??
+              location?.leafId ??
+              (cursor ? (page?.leafId ?? undefined) : undefined),
+          },
+          signal,
+        ),
+      (next) => {
+        wanted.current = location ?? null;
+        setPage(next);
+        setResults(null);
+        setBody(null);
+        setRoutes(null);
+        if (location?.bodyOffset !== undefined)
+          void readBody(location.entryId, location.bodyOffset, next.leafId);
+      },
+      "History could not be loaded",
+    );
   }
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: This keyed reader opens once per view; live state must not restart its reads.
@@ -202,46 +212,28 @@ export function NativeTurnReader({
     });
   }
 
-  async function search(text: string) {
-    pending.current?.abort();
-    const request = new AbortController();
-    pending.current = request;
-    setError("");
-    setLoading(true);
-    setBody(null);
-    try {
-      const result = await store.readNativeHistory(
-        sessionId,
-        viewId,
-        { kind: "search", text, leafId: page?.leafId ?? undefined },
-        request.signal,
-      );
-      if (!request.signal.aborted) setResults(result);
-    } catch (reason) {
-      if (!request.signal.aborted) {
-        retry.current = () => void search(text);
-        setError(
-          reason instanceof Error ? reason.message : "History search failed",
-        );
-      }
-    } finally {
-      if (!request.signal.aborted) setLoading(false);
-    }
+  function search(text: string) {
+    return observe(
+      (signal) =>
+        store.readNativeHistory(
+          sessionId,
+          viewId,
+          { kind: "search", text, leafId: page?.leafId ?? undefined },
+          signal,
+        ),
+      (result) => {
+        setResults(result);
+        setBody(null);
+        setRoutes(null);
+      },
+      "History search failed",
+    );
   }
 
-  async function readBody(entryId: string, offset = 0, leafId = page?.leafId) {
-    pending.current?.abort();
-    const request = new AbortController();
-    pending.current = request;
-    setError("");
-    setLoading(true);
-    try {
-      const result = await store.readBranchEntry(
-        entryId,
-        offset,
-        request.signal,
-      );
-      if (result && !request.signal.aborted) {
+  function readBody(entryId: string, offset = 0, leafId = page?.leafId) {
+    return observe(
+      (signal) => store.readBranchEntry(entryId, offset, signal),
+      (result) => {
         setBody({ entryId, offset, result });
         saveLocation(key, {
           entryId,
@@ -249,44 +241,23 @@ export function NativeTurnReader({
           bodyOffset: offset,
           leafId: leafId ?? undefined,
         });
-      }
-    } catch (reason) {
-      if (!request.signal.aborted) {
-        retry.current = () => void readBody(entryId, offset, leafId);
-        setError(
-          reason instanceof Error
-            ? reason.message
-            : "Entry could not be loaded",
-        );
-      }
-    } finally {
-      if (!request.signal.aborted) setLoading(false);
-    }
+      },
+      "Entry could not be loaded",
+    );
   }
 
-  async function readRoutes(parentId: string, before?: string) {
-    pending.current?.abort();
-    const request = new AbortController();
-    pending.current = request;
-    setError("");
-    setLoading(true);
-    try {
-      const page = await store.readNativeHistory(
-        sessionId,
-        viewId,
-        { kind: "routes", parentId, before },
-        request.signal,
-      );
-      if (page && !request.signal.aborted) setRoutes({ parentId, page });
-    } catch (reason) {
-      if (request.signal.aborted) return;
-      retry.current = () => void readRoutes(parentId, before);
-      setError(
-        reason instanceof Error ? reason.message : "Routes could not be loaded",
-      );
-    } finally {
-      if (!request.signal.aborted) setLoading(false);
-    }
+  function readRoutes(parentId: string, before?: string) {
+    return observe(
+      (signal) =>
+        store.readNativeHistory(
+          sessionId,
+          viewId,
+          { kind: "routes", parentId, before },
+          signal,
+        ),
+      (page) => setRoutes({ parentId, page }),
+      "Routes could not be loaded",
+    );
   }
 
   async function act(
@@ -298,30 +269,28 @@ export function NativeTurnReader({
     if (
       action === "navigate" &&
       node.canEdit &&
-      sessionDraft(sessionId) &&
+      store.drafts.get(sessionId).text &&
       !window.confirm(
         "Replace your current draft with this message and continue from before it?",
       )
     )
       return;
     const ok =
-      action === "watch"
-        ? await store.selectBranch(sessionId, node.id)
-        : action === "fork"
-          ? await store.forkBranch(node.id)
-          : action === "clone"
-            ? await store.cloneBranch(node.id)
-            : await store.navigateBranch(
-                node.id,
-                node.canEdit ? "edit" : "switch",
-                {
-                  summarize: summary && !entry.skipSummaryPrompt,
-                  ...(summary && instructions.trim()
-                    ? { customInstructions: instructions.trim() }
-                    : {}),
-                },
-                entry.revision,
-              );
+      action === "fork"
+        ? await store.forkBranch(node.id)
+        : action === "clone"
+          ? await store.cloneBranch(node.id)
+          : await store.navigateBranch(
+              node.id,
+              action === "watch" ? "watch" : node.canEdit ? "edit" : "switch",
+              {
+                summarize: summary && !entry.skipSummaryPrompt,
+                ...(summary && instructions.trim()
+                  ? { customInstructions: instructions.trim() }
+                  : {}),
+              },
+              entry.revision,
+            );
     if (ok) onLive();
   }
 

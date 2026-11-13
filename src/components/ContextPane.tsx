@@ -1,5 +1,4 @@
 import {
-  FileText,
   Folder,
   GitCompareArrows,
   RefreshCw,
@@ -29,19 +28,20 @@ import {
   resourceRows as toResourceRows,
   withProducedResources,
 } from "../resources";
-import { sessionDraft, setSessionDraft } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
 import { queueTerminalAction } from "../terminal-actions";
 import { hasActiveModal, recoverModalFocus } from "../use-modal-focus";
 import { ChangesPane } from "./ChangesPane";
-import { ContextTabStrip } from "./ContextTabStrip";
+import {
+  ContextTabStrip,
+  type FileDockTab,
+  type TerminalDockTab,
+} from "./ContextTabStrip";
 import { selectContextPaneView } from "./context-pane-view";
+import { handleDockTabKey } from "./dock-tab-keyboard";
 import type { FileReadingState } from "./FilePreview";
 import { FilesPane } from "./FilesPane";
 import { PiLoader } from "./PiLoader";
-import { TerminalTabs, type TerminalTab } from "./TerminalTabs";
-
-import { handleDockTabKey } from "./dock-tab-keyboard";
 
 const TerminalPane = lazy(() =>
   import("./TerminalPane").then((module) => ({ default: module.TerminalPane })),
@@ -79,8 +79,9 @@ export const ContextPane = memo(function ContextPane({
     [state.sessionId, state.cwd, transportGeneration],
   );
   const [terminalVisited, setTerminalVisited] = useState(false);
-  const [terminalTabs, setTerminalTabs] = useState<readonly TerminalTab[]>([]);
-  const fileTabsRef = useRef<HTMLDivElement>(null);
+  const [terminalTabs, setTerminalTabs] = useState<readonly TerminalDockTab[]>(
+    [],
+  );
   useEffect(() => {
     if (state.contextMode === "terminal" || (state.resourcesOpen && state.cwd))
       setTerminalVisited(true);
@@ -266,9 +267,10 @@ export const ContextPane = memo(function ContextPane({
     (markdown: string) => {
       const sessionId = store.getState().sessionId;
       if (!sessionId) return;
-      const next = appendDraftBlock(sessionDraft(sessionId), markdown);
-      setSessionDraft(sessionId, next);
-      store.replaceComposerText(next);
+      store.drafts.setText(
+        sessionId,
+        appendDraftBlock(store.drafts.get(sessionId).text, markdown),
+      );
       // On a narrow screen the drawer yields to the conversation; Back and the
       // file tab keep the reader at the same place.
       if (isModal) onClose?.();
@@ -288,10 +290,9 @@ export const ContextPane = memo(function ContextPane({
     (text: string) => {
       const sessionId = store.getState().sessionId;
       if (!sessionId) return;
-      const current = sessionDraft(sessionId);
+      const current = store.drafts.get(sessionId).text;
       const next = `${current}${current ? "\n\n" : ""}${fencedMarkdown(text.replace(/\s+$/u, ""), "text")}`;
-      setSessionDraft(sessionId, next);
-      store.replaceComposerText(next);
+      store.drafts.setText(sessionId, next);
       if (isModal) onClose?.();
       // Both the selection dialog and the drawer release/restore focus first.
       requestAnimationFrame(() => {
@@ -348,95 +349,37 @@ export const ContextPane = memo(function ContextPane({
       setManualRefresh((current) => (current === request ? null : current));
     }
   };
-  const fileTabs = state.resourceTabs.map((tab) => {
+  const fileTabs = state.resourceTabs.map((tab): FileDockTab => {
     const title =
       tab.workspacePath ??
       tab.git?.displayPath ??
       resourceReferenceLabel(tab.reference);
-    return { ...tab, title, label: title.split(/[\\/]/u).at(-1) || title };
-  });
-  const tabs = [
-    ...fileTabs.map((tab) => ({
-      id: `file:${tab.reference}`,
-      label: tab.label,
-      title: tab.title,
+    return {
+      kind: "file",
+      id: tab.reference,
+      title,
+      label: title.split(/[\\/]/u).at(-1) || title,
       selected: activeFile && selectedReference === tab.reference,
       select: () => void store.selectResourceTab(tab.reference),
-    })),
-    ...terminalTabs.map((tab) => ({ ...tab, id: `terminal:${tab.id}` })),
-  ];
+      reveal: () =>
+        void store.showInFileManager(tab.reference, tab.workspacePath),
+      close: () => store.closeResourceTab(tab.reference),
+    };
+  });
   const contents = (
     <>
-      <div className="ctx__header" ref={recoverModalFocus}>
+      <div
+        className="ctx__header"
+        data-has-tabs={fileTabs.length + terminalTabs.length > 0 || undefined}
+        ref={recoverModalFocus}
+      >
         <div
           className="ctx__tabs"
           role="tablist"
           aria-label="Context tabs"
           onKeyDown={handleDockTabKey}
         >
-          <ContextTabStrip stripRef={fileTabsRef} tabs={tabs}>
-            {fileTabs.map((tab) => {
-              const { label, title: path } = tab;
-              const selected =
-                activeFile && selectedReference === tab.reference;
-              return (
-                <div
-                  key={tab.reference}
-                  className={`ctx__file-tab ${selected ? "ctx__file-tab--active" : ""}`}
-                >
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-label={label}
-                    data-dock-tab={`file:${tab.reference}`}
-                    title={path}
-                    aria-selected={selected}
-                    aria-controls="context-file-content"
-                    tabIndex={selected ? 0 : -1}
-                    onClick={(event) => {
-                      if (event.ctrlKey || event.metaKey) {
-                        event.preventDefault();
-                        void store.showInFileManager(
-                          tab.reference,
-                          tab.workspacePath,
-                        );
-                        return;
-                      }
-                      void store.selectResourceTab(tab.reference);
-                    }}
-                  >
-                    <FileText size={13} aria-hidden />
-                    <span>{label}</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="ctx__file-close"
-                    aria-label={`Close ${label}`}
-                    title={`Close ${label}`}
-                    onClick={(event) => {
-                      const restoreFocus =
-                        document.activeElement === event.currentTarget;
-                      store.closeResourceTab(tab.reference);
-                      if (restoreFocus)
-                        requestAnimationFrame(() => {
-                          fileTabsRef.current
-                            ?.closest(".ctx__tabs")
-                            ?.querySelector<HTMLElement>(
-                              '[role="tab"][aria-selected="true"]',
-                            )
-                            ?.focus();
-                        });
-                    }}
-                  >
-                    <X size={13} aria-hidden />
-                  </button>
-                </div>
-              );
-            })}
-            <div className="ctx__terminal-tabs">
-              <TerminalTabs tabs={terminalTabs} sharedTabs />
-            </div>
-          </ContextTabStrip>
+          <ContextTabStrip tabs={[...fileTabs, ...terminalTabs]} />
           <div className="ctx__modes">
             {(["files", "changes"] as const).map((mode) => {
               const label = mode === "files" ? "Files" : "Changes";

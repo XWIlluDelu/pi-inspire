@@ -30,27 +30,26 @@ import type {
   ModelPreferencesPatch,
   ModelSettingsDestination,
   ModelSettingsSnapshot,
-  ModelSettingsWriteResult,
   ProviderDeclaration,
   ProviderLoginOption,
 } from "../../shared/model-settings";
 import { thinkingLevelLabel, thinkingLevelOptions } from "../model-options";
 import { shallowEqual, store, useAppState } from "../store";
+import { useConfigurationDocument } from "../use-configuration-document";
 import { DetailSummary } from "./DetailSummary";
-import { NativeSelect } from "./NativeSelect";
 import { ModelForm, ProviderForm } from "./ModelDeclarationForms";
 import { ModelList } from "./ModelList";
+import { NativeSelect } from "./NativeSelect";
 import { ProviderAuthentication } from "./ProviderAuthentication";
 import { SettingField } from "./SettingsControls";
 import { SettingsSection } from "./SettingsSection";
 
 type Owner = { sessionId?: string; cwd?: string };
-type FocusTicket = {
+type FocusHandoff = {
   origin: HTMLElement | null;
-  allowed: () => boolean;
   release: () => void;
 };
-type FocusPlan = (ticket: FocusTicket) => void;
+type FocusTarget = () => HTMLElement | null;
 const messageOf = (error: unknown) =>
   error instanceof Error
     ? error.message
@@ -62,8 +61,6 @@ export function ModelsSettings({
   destination?: ModelSettingsDestination;
   active?: boolean;
 }) {
-  const activeRef = useRef(active);
-  activeRef.current = active;
   const state = useAppState(
     (source) => ({
       sessionId: source.sessionId,
@@ -82,17 +79,32 @@ export function ModelsSettings({
           : {}),
     [destination?.owner, state.sessionId, state.cwd],
   );
-  const [snapshot, setSnapshot] = useState<ModelSettingsSnapshot | null>(null);
+  const settingsOwner = JSON.stringify([
+    owner.sessionId,
+    owner.cwd,
+    state.transport,
+  ]);
+  const {
+    snapshot,
+    error,
+    setError,
+    readFailed,
+    busy,
+    alive,
+    revision: generation,
+    load: readSettings,
+    write,
+  } = useConfigurationDocument<ModelSettingsSnapshot>(
+    settingsOwner,
+    "The Host could not complete this operation",
+  );
   const [providers, setProviders] = useState<ProviderLoginOption[]>([]);
   const [authError, setAuthError] = useState<string | null>(null);
   const [providersLoading, setProvidersLoading] = useState(true);
   const [providersLoaded, setProvidersLoaded] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [readFailed, setReadFailed] = useState(false);
   const [errorTarget, setErrorTarget] = useState<"config" | "common" | null>(
     null,
   );
-  const [busy, setBusy] = useState(false);
   const [editingCommon, setEditingCommon] = useState<{
     index: number;
     value: string;
@@ -119,63 +131,45 @@ export function ModelsSettings({
   const addModelRefs = useRef(new Map<string, HTMLButtonElement>());
   const removalOpener = useRef<HTMLElement | null>(null);
   const [selectedModelKey, setSelectedModelKey] = useState<string>();
-  const focusTicketRef = useRef<FocusTicket | null>(null);
-  const [focusHandoff, setFocusHandoff] = useState<{
-    ticket: FocusTicket;
-    focus: FocusPlan;
-  } | null>(null);
-  const currentOwner = useRef({ owner, transport: state.transport });
-  currentOwner.current = { owner, transport: state.transport };
-  const mounted = useRef(false),
-    generation = useRef(0),
-    choicesGeneration = useRef(0),
-    providerGeneration = useRef(0);
-  const ownsSettings = useCallback(
-    () =>
-      mounted.current &&
-      currentOwner.current.owner === owner &&
-      currentOwner.current.transport === state.transport,
-    [owner, state.transport],
-  );
-  const captureFocus = (): FocusTicket => {
-    focusTicketRef.current?.release();
+  const handoff = useRef<FocusHandoff | null>(null);
+  const [focusTarget, setFocusTarget] = useState<FocusTarget | null>(null);
+  const providerGeneration = useRef(0);
+  useLayoutEffect(() => {
+    setEditingCommon(null);
+    setEditor(null);
+    setRemoving(null);
+    setDeclarationsOpen(false);
+    setSelectedModelKey(undefined);
+    setProviders([]);
+    setAuthError(null);
+    setProvidersLoaded(false);
+    setErrorTarget(null);
+    return () => {
+      handoff.current?.release();
+      providerGeneration.current++;
+    };
+  }, [settingsOwner]);
+  const captureFocus = () => {
+    handoff.current?.release();
     const origin =
       document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
-    let moved = !rootRef.current?.contains(origin),
-      released = false;
+    if (!rootRef.current?.contains(origin)) return null;
     const observe = (event: FocusEvent) => {
-      if (event.target !== origin && event.target !== document.body)
-        moved = true;
+      if (event.target !== origin && event.target !== document.body) release();
     };
-    document.addEventListener("focusin", observe, true);
-    const ticket: FocusTicket = {
+    const release = () => {
+      document.removeEventListener("focusin", observe, true);
+      if (handoff.current === pending) handoff.current = null;
+    };
+    const pending = {
       origin,
-      allowed: () =>
-        !released &&
-        !moved &&
-        ownsSettings() &&
-        activeRef.current &&
-        Boolean(rootRef.current?.isConnected),
-      release: () => {
-        released = true;
-        document.removeEventListener("focusin", observe, true);
-      },
+      release,
     };
-    focusTicketRef.current = ticket;
-    return ticket;
-  };
-  const focusElement = (ticket: FocusTicket, element: HTMLElement | null) => {
-    const target =
-      element?.isConnected && !element.matches(":disabled")
-        ? element
-        : rootRef.current?.querySelector<HTMLElement>(
-            '[aria-label="Search available models"]',
-          );
-    const allowed = ticket.allowed();
-    ticket.release();
-    if (allowed) target?.focus();
+    handoff.current = pending;
+    document.addEventListener("focusin", observe, true);
+    return pending;
   };
   useLayoutEffect(() => {
     const content = rootRef.current?.closest(".settings__content");
@@ -193,11 +187,24 @@ export function ModelsSettings({
     wasEditing.current = Boolean(editor);
   }, [editor, active]);
   useLayoutEffect(() => {
-    if (busy || !focusHandoff) return;
-    if (focusHandoff.ticket.allowed()) focusHandoff.focus(focusHandoff.ticket);
-    else focusHandoff.ticket.release();
-    setFocusHandoff(null);
-  }, [busy, focusHandoff]);
+    if (busy || !focusTarget) return;
+    const pending = handoff.current;
+    if (pending && active) {
+      const element = focusTarget();
+      const target =
+        element?.isConnected && !element.matches(":disabled")
+          ? element
+          : rootRef.current?.querySelector<HTMLElement>(
+              '[aria-label="Search available models"]',
+            );
+      pending.release();
+      target?.focus();
+    } else pending?.release();
+    setFocusTarget(null);
+  }, [busy, focusTarget, active]);
+  const returnFocus = (target: FocusTarget) => {
+    if (captureFocus()) setFocusTarget(() => target);
+  };
   const openEditor = (next: typeof editor, opener: HTMLElement) => {
     editorOpener.current = opener;
     browseScroll.current =
@@ -207,38 +214,18 @@ export function ModelsSettings({
     setRemoving(null);
   };
   const cancelEditor = () => {
-    const ticket = captureFocus();
     setError(null);
     setEditor(null);
-    setFocusHandoff({
-      ticket,
-      focus: (ticket) => focusElement(ticket, editorOpener.current),
-    });
+    returnFocus(() => editorOpener.current);
   };
-  const load = useCallback(async () => {
-    const current = ++generation.current;
-    try {
-      const settings = await store.readModelSettings(owner);
-      if (generation.current !== current) return null;
-      setSnapshot(settings);
-      setReadFailed(false);
-      setError(null);
-      return current;
-    } catch (error) {
-      if (generation.current === current) {
-        setReadFailed(true);
-        setError(messageOf(error));
-      }
-      return null;
-    }
-  }, [owner, state.transport]);
-  const reloadSettings = useCallback(async () => {
-    await load();
-  }, [load]);
+  const load = useCallback(
+    () => readSettings(() => store.readModelSettings(owner, true)),
+    [readSettings, owner],
+  );
   const refreshProviders = useCallback(async () => {
-    if (!ownsSettings()) return;
+    if (!alive.current) return;
     const current = ++providerGeneration.current;
-    const owns = () => ownsSettings() && providerGeneration.current === current;
+    const owns = () => alive.current && providerGeneration.current === current;
     setProvidersLoading(true);
     try {
       const auth = await store.providerAuth(owner, { operation: "providers" });
@@ -252,50 +239,14 @@ export function ModelsSettings({
     } finally {
       if (owns()) setProvidersLoading(false);
     }
-  }, [owner, ownsSettings]);
-  const refreshChoices = useCallback(async () => {
-    const request = ++choicesGeneration.current;
-    const settingsGeneration = generation.current;
-    const owns = () => ownsSettings() && choicesGeneration.current === request;
-    if (!owns()) return;
-    try {
-      const warning = await store.refreshModels(owner);
-      if (owns() && generation.current === settingsGeneration) {
-        const observed = await load();
-        if (warning && owns() && observed === generation.current)
-          setError(warning);
-      }
-    } catch (error) {
-      if (owns() && generation.current === settingsGeneration)
-        setError(messageOf(error));
-    }
-  }, [owner, load, ownsSettings]);
+  }, [owner, alive]);
+  const refreshCredentials = async () => {
+    await Promise.all([refreshProviders(), load()]);
+  };
   useEffect(() => {
-    mounted.current = true;
-    setSnapshot(null);
-    setReadFailed(false);
-    setProviders([]);
-    setAuthError(null);
-    setProvidersLoading(true);
-    setProvidersLoaded(false);
-    setError(null);
-    setEditingCommon(null);
-    setEditor(null);
-    setRemoving(null);
-    setBusy(false);
-    setDeclarationsOpen(false);
-    setSelectedModelKey(undefined);
     void load();
     void refreshProviders();
-    void refreshChoices();
-    return () => {
-      mounted.current = false;
-      focusTicketRef.current?.release();
-      ++generation.current;
-      ++choicesGeneration.current;
-      ++providerGeneration.current;
-    };
-  }, [load, refreshProviders, refreshChoices]);
+  }, [load, refreshProviders]);
   const focusedDestination = useRef<string | undefined>(undefined);
   useEffect(() => {
     const key = `${destination?.focus ?? ""}/${destination?.query ?? ""}`;
@@ -319,72 +270,56 @@ export function ModelsSettings({
     return () => cancelAnimationFrame(frame);
   }, [active, snapshot, destination]);
   const mutate = async (
-    operation: () => Promise<ModelSettingsWriteResult>,
-    onSaved?: (next: ModelSettingsWriteResult) => FocusPlan,
+    operation: () => Promise<{
+      snapshot?: ModelSettingsSnapshot;
+      warning?: string;
+    }>,
+    onSaved?: (next: { snapshot?: ModelSettingsSnapshot }) => FocusTarget,
     target: "config" | "common" | null = null,
   ): Promise<boolean> => {
     if (busy) return false;
-    const ticket = captureFocus();
-    let focus: FocusPlan = (ticket) => focusElement(ticket, ticket.origin);
-    ++generation.current;
-    setBusy(true);
-    setError(null);
+    const pending = captureFocus();
     setErrorTarget(target);
-    try {
-      const next = await operation();
-      if (!ownsSettings()) return false;
-      ++generation.current;
-      if (next.snapshot) {
-        setSnapshot(next.snapshot);
-        setReadFailed(false);
-      }
-      setError(next.warning ?? null);
+    const saving = write(operation);
+    const writingVersion = generation.current;
+    const next = await saving;
+    if (!alive.current || generation.current !== writingVersion) return false;
+    let targetAfterSave: FocusTarget = () => pending?.origin ?? null;
+    if (next) {
       setErrorTarget(null);
-      if (onSaved) focus = onSaved(next);
-      return true;
-    } catch (error) {
-      if (ownsSettings()) {
-        setError(messageOf(error));
-        if (target)
-          focus = (ticket) =>
-            focusElement(
-              ticket,
-              rootRef.current?.querySelector<HTMLElement>(
-                target === "config"
-                  ? '.models-form [role="alert"]'
-                  : '.models-common__editor [role="alert"]',
-              ) ?? ticket.origin,
-            );
-      }
-      return false;
-    } finally {
-      if (ownsSettings()) {
-        setBusy(false);
-        setFocusHandoff({ ticket, focus });
-      } else ticket.release();
+      if (onSaved) targetAfterSave = onSaved(next);
+    } else if (target) {
+      targetAfterSave = () =>
+        rootRef.current?.querySelector<HTMLElement>(
+          target === "config"
+            ? '.models-form [role="alert"]'
+            : '.models-common__editor [role="alert"]',
+        ) ??
+        pending?.origin ??
+        null;
     }
+    if (pending && handoff.current === pending)
+      setFocusTarget(() => targetAfterSave);
+    return Boolean(next);
   };
   const save = async (patch: ModelPreferencesPatch) => {
-    if (!snapshot) return false;
+    if (!snapshot || readFailed) return false;
     return mutate(
       () => store.saveModelPreferences(owner, snapshot.settingsRevision, patch),
       () => {
         const target =
           patch.enabledModels && editingCommon
             ? commonOpener.current
-            : (focusTicketRef.current?.origin ?? null);
+            : (handoff.current?.origin ?? null);
         if (patch.enabledModels) setEditingCommon(null);
-        return (ticket) =>
-          focusElement(
-            ticket,
-            patch.defaultModel === null ? defaultThinkingRef.current : target,
-          );
+        return () =>
+          patch.defaultModel === null ? defaultThinkingRef.current : target;
       },
       editingCommon ? "common" : null,
     );
   };
   const edit = async (edit: ModelConfigEdit) => {
-    if (!snapshot) return false;
+    if (!snapshot || readFailed || snapshot.configError) return false;
     const saved = await mutate(
       () => store.editModelConfig(owner, snapshot.configRevision, edit),
       (next) => {
@@ -407,22 +342,19 @@ export function ModelsSettings({
             setSelectedModelKey(
               modelIdentityKey({ provider: edit.provider, id: edit.values.id }),
             );
-          return (ticket) => focusElement(ticket, editorOpener.current);
+          return () => editorOpener.current;
         }
-        return (ticket) =>
-          focusElement(
-            ticket,
-            (edit.kind === "provider" &&
-              editor?.kind === "provider" &&
-              !editor.value) ||
-              edit.kind === "remove-model"
-              ? (addModelRefs.current.get(
-                  edit.kind === "provider" ? edit.id : edit.provider,
-                ) ?? addProviderRef.current)
-              : edit.kind === "remove-provider"
-                ? addProviderRef.current
-                : editorOpener.current,
-          );
+        return () =>
+          (edit.kind === "provider" &&
+            editor?.kind === "provider" &&
+            !editor.value) ||
+          edit.kind === "remove-model"
+            ? (addModelRefs.current.get(
+                edit.kind === "provider" ? edit.id : edit.provider,
+              ) ?? addProviderRef.current)
+            : edit.kind === "remove-provider"
+              ? addProviderRef.current
+              : editorOpener.current;
       },
       editor && (edit.kind === "provider" || edit.kind === "model")
         ? "config"
@@ -461,6 +393,7 @@ export function ModelsSettings({
       snapshot.saved.defaultModel)
     : null;
   const preferencesUnavailable = readFailed || Boolean(snapshot?.settingsError);
+  const configurationUnavailable = readFailed || Boolean(snapshot?.configError);
   const projectModelOverride = snapshot?.projectOverrides.some(
     (field) => field === "defaultModel" || field === "defaultProvider",
   );
@@ -602,7 +535,7 @@ export function ModelsSettings({
                       className="models-icon-button"
                       title="Edit provider"
                       aria-label={`Edit provider ${provider.id}`}
-                      disabled={busy}
+                      disabled={busy || configurationUnavailable}
                       onClick={(event) =>
                         openEditor(
                           { kind: "provider", value: provider },
@@ -617,7 +550,7 @@ export function ModelsSettings({
                       className="models-icon-button"
                       title="Remove provider"
                       aria-label={`Remove provider configuration ${provider.id}`}
-                      disabled={busy}
+                      disabled={busy || configurationUnavailable}
                       onClick={(event) => {
                         removalOpener.current = event.currentTarget;
                         setRemoving({
@@ -655,7 +588,7 @@ export function ModelsSettings({
                               className="models-icon-button"
                               title="Edit model"
                               aria-label={`Edit declared model ${provider.id}/${model.id}${model.type && model.type !== "chat" ? ` (${model.type})` : ""}`}
-                              disabled={busy}
+                              disabled={busy || configurationUnavailable}
                               onClick={(event) =>
                                 openEditor(
                                   {
@@ -674,7 +607,7 @@ export function ModelsSettings({
                               className="models-icon-button"
                               title="Remove model"
                               aria-label={`Remove model configuration ${provider.id}/${model.id}${model.type && model.type !== "chat" ? ` (${model.type})` : ""}`}
-                              disabled={busy}
+                              disabled={busy || configurationUnavailable}
                               onClick={(event) => {
                                 removalOpener.current = event.currentTarget;
                                 setRemoving({
@@ -696,7 +629,7 @@ export function ModelsSettings({
                     type="button"
                     className="button models-add-model"
                     aria-label={`Add model to ${provider.id}`}
-                    disabled={busy}
+                    disabled={busy || configurationUnavailable}
                     ref={(element) => {
                       if (element)
                         addModelRefs.current.set(provider.id, element);
@@ -728,7 +661,7 @@ export function ModelsSettings({
                 <button
                   type="button"
                   className="button button--danger"
-                  disabled={busy}
+                  disabled={busy || configurationUnavailable}
                   onClick={() => void edit(removing)}
                 >
                   Remove configuration
@@ -738,13 +671,8 @@ export function ModelsSettings({
                   className="button button--quiet"
                   disabled={busy}
                   onClick={() => {
-                    const ticket = captureFocus();
                     setRemoving(null);
-                    setFocusHandoff({
-                      ticket,
-                      focus: (ticket) =>
-                        focusElement(ticket, removalOpener.current),
-                    });
+                    returnFocus(() => removalOpener.current);
                   }}
                 >
                   Cancel
@@ -794,7 +722,7 @@ export function ModelsSettings({
             <ProviderForm
               key={JSON.stringify(["provider", editor.value?.id ?? null])}
               value={editor.value}
-              busy={busy}
+              busy={busy || configurationUnavailable}
               nativeApiProviders={snapshot?.nativeApiProviders ?? []}
               error={errorTarget === "config" ? error : null}
               onCancel={cancelEditor}
@@ -810,7 +738,7 @@ export function ModelsSettings({
               ])}
               provider={editor.provider}
               value={editor.value}
-              busy={busy}
+              busy={busy || configurationUnavailable}
               hasInheritedApi={hasInheritedApi}
               error={errorTarget === "config" ? error : null}
               onCancel={cancelEditor}
@@ -858,7 +786,7 @@ export function ModelsSettings({
                         aria-label="Refresh available models"
                         title="Refresh available models"
                         disabled={busy}
-                        onClick={() => void refreshChoices()}
+                        onClick={() => void load()}
                       >
                         <RefreshCw size={14} />
                       </button>
@@ -897,7 +825,7 @@ export function ModelsSettings({
                           <button
                             type="button"
                             className="button button--quiet"
-                            disabled={busy}
+                            disabled={busy || configurationUnavailable}
                             aria-label={`Edit model ${inspectedModel.provider}/${inspectedModel.id}`}
                             onClick={(event) =>
                               openEditor(
@@ -979,11 +907,7 @@ export function ModelsSettings({
                 <div className="models-results">
                   <SettingField
                     label="Default model"
-                    className={
-                      savedModel
-                        ? "models-default-row"
-                        : "models-default-row--empty"
-                    }
+                    layout={savedModel ? "adaptive" : "inline"}
                     description={
                       preferencesUnavailable
                         ? undefined
@@ -1165,16 +1089,8 @@ export function ModelsSettings({
                                   className="button button--quiet"
                                   disabled={busy}
                                   onClick={() => {
-                                    const ticket = captureFocus();
                                     setEditingCommon(null);
-                                    setFocusHandoff({
-                                      ticket,
-                                      focus: (ticket) =>
-                                        focusElement(
-                                          ticket,
-                                          commonOpener.current,
-                                        ),
-                                    });
+                                    returnFocus(() => commonOpener.current);
                                   }}
                                 >
                                   Cancel
@@ -1282,8 +1198,7 @@ export function ModelsSettings({
             loadError={authError}
             loading={providersLoading}
             loaded={providersLoaded}
-            onRefresh={refreshProviders}
-            onModelsRefreshed={reloadSettings}
+            onRefresh={refreshCredentials}
           />
         </SettingsSection>
 
@@ -1296,7 +1211,7 @@ export function ModelsSettings({
               <button
                 type="button"
                 className="button"
-                disabled={busy}
+                disabled={busy || configurationUnavailable}
                 ref={addProviderRef}
                 onClick={(event) =>
                   openEditor(

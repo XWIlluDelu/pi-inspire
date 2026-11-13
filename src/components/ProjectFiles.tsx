@@ -4,12 +4,10 @@ import {
   type RefObject,
   useCallback,
   useEffect,
-  useId,
   useMemo,
   useRef,
   useState,
 } from "react";
-import { createPortal } from "react-dom";
 import type { ProjectFileResult, ProjectFileSearchResult } from "../api";
 import { rankProjectFiles } from "../composer-completion";
 import { fileIconForPath } from "../file-icons";
@@ -21,11 +19,48 @@ import {
   useFloatingMenuDismissal,
   useFloatingMenuPlacement,
 } from "../use-floating-menu";
-import { useModalPortal } from "../use-modal-focus";
 import { useSearchFocus } from "../use-search-focus";
 import { HiddenFilesToggle } from "./HiddenFilesToggle";
+import { type ListOption, OptionList, useOptionList } from "./OptionList";
 import { parentPath, ResourcePathLabel } from "./ResourcePathLabel";
+import { SearchField } from "./SearchField";
 import { SearchMatchText, searchMatchRanges } from "./SearchMatchText";
+
+export function ProjectFileLabel({
+  path,
+  name,
+  query,
+  captionClass,
+}: Pick<ProjectFileResult, "path" | "name"> & {
+  query: string;
+  captionClass: string;
+}) {
+  const Icon = fileIconForPath(path);
+  const directory = parentPath(path);
+  const matches = searchMatchRanges(path, query.trim().split(/\s+/));
+  return (
+    <>
+      <span className="picker__file-name">
+        <Icon size={13} aria-hidden />
+        <span>
+          <SearchMatchText
+            text={name}
+            ranges={matches}
+            offset={path.length - name.length}
+          />
+        </span>
+      </span>
+      {directory && (
+        <ResourcePathLabel
+          path={directory}
+          title={path}
+          className={captionClass}
+          matches={matches}
+        />
+      )}
+    </>
+  );
+}
 
 export function ProjectFileChips({
   paths,
@@ -140,10 +175,8 @@ function ProjectFilePicker({
   const [status, setStatus] = useState<"loading" | "ready" | "error">(
     "loading",
   );
-  const [activeIndex, setActiveIndex] = useState(0);
-  const [keyboardActive, setKeyboardActive] = useState(true);
-  const listId = useId();
-  const listRef = useRef<HTMLDivElement>(null);
+  const list = useOptionList<ProjectFileResult>();
+  const { reset } = list;
   const menuRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const resolveTarget = useCallback(() => {
@@ -152,6 +185,7 @@ function ProjectFilePicker({
       ? {
           context: anchor,
           anchor: anchor.getBoundingClientRect(),
+          positioningRoot: anchor.closest<HTMLElement>(".overlay"),
           observe: [anchor, ...(anchor.form ? [anchor.form] : [])],
         }
       : null;
@@ -161,33 +195,30 @@ function ProjectFilePicker({
     resolveTarget,
     PICKER_CONSTRAINTS,
   );
-  useModalPortal(Boolean(placement), anchorRef, menuRef);
   useSearchFocus(Boolean(placement), inputRef, menuRef);
 
   useFloatingMenuDismissal(Boolean(placement), anchorRef, menuRef, onClose);
-  const availableIndexes = useMemo(
+  const options = useMemo(
     () =>
-      results.flatMap((file, index) =>
-        !disabled && !selected.includes(file.path) ? [index] : [],
-      ),
-    [disabled, results, selected],
+      results.map((file): ListOption<ProjectFileResult> => {
+        const added = selected.includes(file.path);
+        return {
+          key: file.path,
+          value: file,
+          disabled: disabled || added,
+          selected: added,
+          title: file.path,
+          label: `${file.name}, ${file.path}`,
+        };
+      }),
+    [results, disabled, selected],
   );
-  const activeOption = availableIndexes.includes(activeIndex)
-    ? results[activeIndex]
-    : undefined;
-
-  const moveActive = (direction: -1 | 1) => {
-    if (availableIndexes.length === 0) return;
-    const position = availableIndexes.indexOf(activeIndex);
-    const next =
-      position < 0
-        ? direction === 1
-          ? 0
-          : availableIndexes.length - 1
-        : (position + direction + availableIndexes.length) %
-          availableIndexes.length;
-    setActiveIndex(availableIndexes[next]!);
-  };
+  const navigate = (event: KeyboardEvent) =>
+    list.navigate(event, options, onAdd, {
+      wrap: true,
+      tab: true,
+      consumeEmptyEnter: true,
+    });
 
   useEffect(() => {
     const request = recoverableRead(
@@ -195,7 +226,7 @@ function ProjectFilePicker({
     );
     setResults([]);
     setTruncated(false);
-    setActiveIndex(0);
+    reset();
     setStatus("loading");
     const read = async () => {
       try {
@@ -203,7 +234,7 @@ function ProjectFilePicker({
         if (!request.current()) return;
         setResults(rankProjectFiles(result.files, query));
         setTruncated(Boolean(result.truncated));
-        setActiveIndex(0);
+        reset();
         setStatus("ready");
       } catch {
         if (request.current()) setStatus("error");
@@ -214,42 +245,10 @@ function ProjectFilePicker({
       request.abort();
       clearTimeout(timer);
     };
-  }, [query, scope, search, showHidden, transportGeneration]);
-
-  useEffect(() => {
-    if (
-      availableIndexes.length > 0 &&
-      !availableIndexes.includes(activeIndex)
-    ) {
-      setActiveIndex(availableIndexes[0]!);
-    }
-  }, [activeIndex, availableIndexes]);
-
-  useEffect(() => {
-    if (!keyboardActive) return;
-    const option = document.getElementById(`${listId}-option-${activeIndex}`);
-    if (option && listRef.current?.contains(option))
-      option.scrollIntoView({ block: "nearest" });
-  }, [activeIndex, keyboardActive, listId, results]);
-
-  const navigate = (event: KeyboardEvent) => {
-    if (event.defaultPrevented || isComposingKeyboardEvent(event.nativeEvent))
-      return;
-    if (event.key === "Enter" || (event.key === "Tab" && activeOption)) {
-      event.preventDefault();
-      if (activeOption) onAdd(activeOption);
-      return;
-    }
-    if (availableIndexes.length === 0) return;
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-      event.preventDefault();
-      setKeyboardActive(true);
-      moveActive(event.key === "ArrowDown" ? 1 : -1);
-    }
-  };
+  }, [query, scope, search, showHidden, transportGeneration, reset]);
 
   if (!placement) return null;
-  return createPortal(
+  return (
     <div
       ref={menuRef}
       className="picker picker--files"
@@ -257,7 +256,6 @@ function ProjectFilePicker({
       aria-label="Add project files"
       tabIndex={-1}
       data-placement={placement.direction}
-      data-keyboard-active={keyboardActive}
       style={{
         left: placement.left,
         top: placement.top,
@@ -281,24 +279,19 @@ function ProjectFilePicker({
       }}
     >
       <div className="file-search-controls">
-        <input
-          ref={inputRef}
-          className="picker__input"
-          type="search"
+        <SearchField
+          inputRef={inputRef}
+          iconSize={13}
           role="combobox"
           value={query}
-          onChange={(event) => setQuery(event.target.value)}
+          onValueChange={setQuery}
           onKeyDown={navigate}
           placeholder="Search project files…"
           aria-label="Search project files"
           aria-autocomplete="list"
-          aria-controls={listId}
+          aria-controls={list.id}
           aria-expanded="true"
-          aria-activedescendant={
-            keyboardActive && activeOption
-              ? `${listId}-option-${activeIndex}`
-              : undefined
-          }
+          aria-activedescendant={list.descendant(options)}
         />
         <HiddenFilesToggle
           showHidden={showHidden}
@@ -310,64 +303,24 @@ function ProjectFilePicker({
           Partial results. Browse for more files.
         </div>
       ) : null}
-      <div
-        ref={listRef}
-        id={listId}
+      <OptionList
+        list={list}
+        options={options}
+        label="Project files"
         className="picker__list"
-        role="listbox"
-        aria-label="Project files"
-        aria-busy={status === "loading"}
-        onPointerMove={(event) => {
-          if (event.pointerType !== "touch") setKeyboardActive(false);
-        }}
+        loading={status === "loading"}
+        onPick={onAdd}
+        optionButtons
+        plain
+        renderOption={({ value: file }) => (
+          <ProjectFileLabel
+            path={file.path}
+            name={file.name}
+            query={query}
+            captionClass="picker__path"
+          />
+        )}
       >
-        {results.map((file, index) => {
-          const Icon = fileIconForPath(file.path);
-          const directory = parentPath(file.path);
-          const matches = searchMatchRanges(
-            file.path,
-            query.trim().split(/\s+/),
-          );
-          const added = selected.includes(file.path);
-          const unavailable = disabled || added;
-          return (
-            <button
-              type="button"
-              id={`${listId}-option-${index}`}
-              role="option"
-              aria-label={`${file.name}, ${file.path}`}
-              title={file.path}
-              aria-selected={added}
-              disabled={unavailable}
-              tabIndex={-1}
-              key={file.path}
-              className={`picker__row ${added ? "picker__row--added" : ""} ${keyboardActive && index === activeIndex && !unavailable ? "picker__row--active" : ""}`}
-              onPointerMove={(event) => {
-                if (event.pointerType !== "touch" && !unavailable)
-                  setActiveIndex(index);
-              }}
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => onAdd(file)}
-            >
-              <Icon size={13} aria-hidden />
-              <span className="picker__name">
-                <SearchMatchText
-                  text={file.name}
-                  ranges={matches}
-                  offset={file.path.length - file.name.length}
-                />
-              </span>
-              {directory ? (
-                <ResourcePathLabel
-                  path={directory}
-                  title={file.path}
-                  className="picker__path"
-                  matches={matches}
-                />
-              ) : null}
-            </button>
-          );
-        })}
         {results.length === 0 ? (
           <div className="picker__empty" role="status">
             {status === "loading"
@@ -377,8 +330,7 @@ function ProjectFilePicker({
                 : "No matching files"}
           </div>
         ) : null}
-      </div>
-    </div>,
-    anchorRef.current?.closest(".overlay") ?? document.body,
+      </OptionList>
+    </div>
   );
 }

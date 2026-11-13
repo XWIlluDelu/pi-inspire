@@ -140,7 +140,6 @@ describe("message reconciliation", () => {
     expect(start.slice).toMatchObject({
       streaming: true,
       activeAssistantMessageKey: "assistant:2",
-      runState: "running",
     });
     const message = assistantText("ab");
     expect(emit({ type: "message_update", message }).slice.messages).toEqual([
@@ -274,10 +273,15 @@ describe("message reconciliation", () => {
       type: "message_start",
       message,
     });
-    const ended = reduce(started.slice, new Set(), {
-      type: "message_end",
-      message,
-    });
+    const ended = reduce(
+      started.slice,
+      new Set(),
+      {
+        type: "message_end",
+        message,
+      },
+      "running",
+    );
     expect(ended.slice.streaming).toBe(false);
     expect(ended.slice.tools.queued).toEqual({
       id: "queued",
@@ -317,10 +321,15 @@ describe("message reconciliation", () => {
       message,
     });
     for (const stopReason of ["aborted", "error"]) {
-      const ended = reduce(started.slice, new Set(), {
-        type: "message_end",
-        message: { ...message, stopReason },
-      });
+      const ended = reduce(
+        started.slice,
+        new Set(),
+        {
+          type: "message_end",
+          message: { ...message, stopReason },
+        },
+        "running",
+      );
       expect(ended.slice.tools).toEqual({});
     }
     const partial = reduce(started.slice, new Set(), {
@@ -384,7 +393,6 @@ describe("message reconciliation", () => {
 
   it("refreshes the snapshot after a handled prompt without inventing an agent settlement", () => {
     const slice = emptyEventSlice();
-    slice.runState = "running";
     slice.streaming = true;
     slice.activeAssistantMessageKey = "live:retained";
     slice.queue = pendingQueues(["steer"], ["later"]);
@@ -415,88 +423,38 @@ describe("message reconciliation", () => {
 });
 
 describe("transient tool/retry/queue activity", () => {
-  it("maps auto-retry start/end into run state and retry info", () => {
-    const slice = emptyEventSlice();
-    const started = reduce(slice, new Set(), {
+  it("shows Host retry details and reports the final error only after a non-aborted settlement", () => {
+    const started = reduce(emptyEventSlice(), new Set(), {
       type: "auto_retry_start",
+      sessionStatus: { runState: "retrying" },
       attempt: 2,
       maxAttempts: 5,
       errorMessage: "rate limited",
     });
-    expect(started.slice.runState).toBe("retrying");
     expect(started.slice.retry).toEqual({
       attempt: 2,
       maxAttempts: 5,
       message: "rate limited",
     });
-
-    const recovered = reduce(started.slice, new Set(), {
-      type: "auto_retry_end",
-      success: true,
-      attempt: 2,
-    });
-    expect(recovered.slice.runState).toBe("running");
-    expect(recovered.slice.retry).toBeNull();
-
     const failed = reduce(started.slice, new Set(), {
       type: "auto_retry_end",
+      sessionStatus: { runState: "failed" },
       success: false,
-      attempt: 5,
       finalError: "overloaded",
     });
-    expect(failed.slice.runState).toBe("failed");
+    expect(failed.slice.retry).toBeNull();
     expect(failed.slice.notices).toEqual([]);
-    const settled = reduce(failed.slice, new Set(), {
-      type: "agent_settled",
-      aborted: false,
-    });
-    expect(settled.slice.notices.at(-1)).toMatchObject({
-      kind: "error",
-      text: "Retry failed: overloaded",
-    });
-  });
-
-  it.each(["retry", "completed message"])(
-    "uses run-level cancellation after %s without erasing diagnostics",
-    (phase) => {
-      const emit = observe();
-      emit({ type: "agent_start" });
-      emit({
-        type: "extension_error",
-        error: "earlier diagnostic",
+    for (const aborted of [false, true]) {
+      const settled = reduce(failed.slice, new Set(), {
+        type: "agent_settled",
+        sessionStatus: { runState: aborted ? "aborted" : "failed" },
+        aborted,
       });
-      const message = {
-        role: "assistant",
-        content: "finished",
-        timestamp: 1,
-        stopReason: "stop",
-      };
-      emit(
-        phase === "retry"
-          ? {
-              type: "auto_retry_end",
-              success: false,
-              finalError: "Retry cancelled",
-            }
-          : { type: "message_end", message },
+      expect(settled.slice.notices.map(({ text }) => text)).toEqual(
+        aborted ? [] : ["Retry failed: overloaded"],
       );
-      const { slice } = emit({
-        type: "agent_settled",
-        aborted: true,
-      });
-      expect(slice.runState).toBe("aborted");
-      expect(slice.notices.map(({ text }) => text)).toEqual([
-        "Extension error: earlier diagnostic",
-      ]);
-      if (phase === "completed message")
-        expect(slice.messages[0]?.stopReason).toBe("stop");
-      const conflicted = reduce({ ...slice, runState: "conflict" }, new Set(), {
-        type: "agent_settled",
-        aborted: true,
-      });
-      expect(conflicted.slice.runState).toBe("conflict");
-    },
-  );
+    }
+  });
 });
 
 describe("extension_ui_request mapping", () => {
@@ -581,7 +539,6 @@ describe("extension_ui_request mapping", () => {
     );
     expect(result.resync).toBe(true);
     expect(result.slice).toMatchObject({
-      runState: "failed",
       streaming: false,
       activeAssistantMessageKey: null,
       tools: {},
@@ -613,13 +570,12 @@ describe("extension_ui_request mapping", () => {
     "settles a released busy attachment (%s) without a failure",
     (reason, notice) => {
       const result = reduce(
-        { ...emptyEventSlice(), runState: "running", streaming: true },
+        { ...emptyEventSlice(), streaming: true },
         new Set(),
         { type: "external_attachment_ended", reason, duringWork: true },
       );
       expect(result.resync).toBe(true);
       expect(result.slice).toMatchObject({
-        runState: "idle",
         streaming: false,
       });
       expect(result.slice.notices.at(-1)).toMatchObject({

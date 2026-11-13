@@ -15,19 +15,19 @@ import type {
 } from "../../shared/contracts";
 import { createInitialAppState } from "../../src/app-state";
 import { Nav } from "../../src/components/Nav";
+import { ProjectGroup, SessionRow } from "../../src/components/NavSessions";
 import {
+  buildSessionCatalog,
   hiddenDeletionBlockReason,
   type NavCuration,
-  splitNavSections,
+  sectionSessions,
 } from "../../src/components/nav-model";
-import { ProjectGroup, SessionRow } from "../../src/components/NavSessions";
 import { compactAge } from "../../src/format";
 import { needsYouRows } from "../../src/needs-you";
 import { store } from "../../src/store";
 import { readNavigationDisclosure } from "../../src/workbench-session";
 import { sessionPage } from "./fixtures/session-catalog";
 import {
-  activeSnapshot,
   bootstrapPayload,
   installFakeWebSocket,
   installFetch,
@@ -174,7 +174,7 @@ async function openNavigation({
   installFetch((url, init) => {
     if (url.startsWith("/api/bootstrap")) {
       const payload = bootstrapPayload({
-        snapshot: activeSnapshot({ sessionId: alpha.id, cwd: alpha.cwd }),
+        startupSessionId: alpha.id,
       });
       return {
         body: {
@@ -251,35 +251,40 @@ it("reveals a collapsed project for search without persisting the expansion", as
   expect(screen.queryByText(alpha.title)).toBeNull();
 });
 
-it("repairs an invalid Hidden choice without changing Recent or saving a search expansion", async () => {
+it("remembers Hidden without changing Recent and keeps hidden matches reachable in All", async () => {
   sessionStorage.setItem(
     "inspire:workbench:v1:navigation-disclosures",
-    JSON.stringify({ recentSessions: false, hiddenSessions: "true" }),
+    JSON.stringify({ recentSessions: false }),
+  );
+  sessionStorage.setItem(
+    "inspire:workbench:v1:session-catalog",
+    JSON.stringify("retired"),
   );
   const { nav, unmount } = await openNavigation({
     preferences: { hiddenSessionIds: [alpha.id] },
   });
-  expect(hiddenToggle()).toHaveAttribute("aria-expanded", "false");
+  const all = () => screen.getByRole("button", { name: "All" });
+  expect(all()).toHaveAttribute("aria-pressed", "true");
   fireEvent.click(hiddenToggle());
   unmount();
-  const view = render(nav());
-  expect(hiddenToggle()).toHaveAttribute("aria-expanded", "true");
-  expect(readNavigationDisclosure("recentSessions")).toBe(false);
-  fireEvent.click(hiddenToggle());
-
-  searchFor("alpha");
-  const hidden = await screen.findByRole("region", { name: "Hidden" });
-  expect(
-    await within(hidden).findByRole("button", { name: /^Alpha session/ }),
-  ).toBeVisible();
-  expect(hiddenToggle()).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Clear Hidden" })).toBeDisabled();
-  view.unmount();
   render(nav());
+  expect(hiddenToggle()).toHaveAttribute("aria-pressed", "true");
+  expect(readNavigationDisclosure("recentSessions")).toBe(false);
+  expect(
+    within(screen.getByRole("region", { name: "Hidden" })).getByText(
+      alpha.title,
+    ),
+  ).toBeVisible();
+  searchFor("alpha");
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Clear Hidden" })).toBeDisabled(),
+  );
+  fireEvent.click(all());
+  expect(
+    await screen.findByRole("button", { name: /^Alpha session/ }),
+  ).toBeVisible();
   searchFor("");
-  const restored = await screen.findByRole("region", { name: "Hidden" });
-  expect(hiddenToggle()).toHaveAttribute("aria-expanded", "false");
-  expect(within(restored).queryByText(alpha.title)).toBeNull();
+  await waitFor(() => expect(screen.queryByText(alpha.title)).toBeNull());
 });
 
 it("search reaches an individually hidden session before hidden folder contents", async () => {
@@ -307,12 +312,14 @@ it("preserves search identity through curation and follows the resulting visible
   expect(searchStatus()).toHaveTextContent(alpha.title);
 
   fireEvent.click(screen.getByRole("button", { name: 'Pin "Alpha session"' }));
+  await screen.findByRole("button", { name: 'Unpin "Alpha session"' });
   expect(searchStatus()).toHaveTextContent(alpha.title);
   fireEvent.keyDown(search(), { key: "ArrowDown" });
   expect(searchStatus()).toHaveTextContent(beta.title);
 
   fireEvent.keyDown(search(), { key: "ArrowUp" });
   fireEvent.click(screen.getByRole("button", { name: 'Hide "Alpha session"' }));
+  await screen.findByRole("button", { name: 'Restore "Alpha session"' });
   expect(searchStatus()).toHaveTextContent(alpha.title);
   fireEvent.keyDown(search(), { key: "ArrowUp" });
   fireEvent.keyDown(search(), { key: "Enter" });
@@ -328,9 +335,9 @@ it("preserves search identity through curation and follows the resulting visible
 
 it.each([
   {
-    name: "entire collapsed drawer",
+    name: "entire Hidden view",
     folder: false,
-    targets: [alpha.id, beta.id],
+    targets: [beta.id, alpha.id],
     cwd: undefined,
   },
   { name: "one folder", folder: true, targets: [alpha.id], cwd: alpha.cwd },
@@ -342,7 +349,7 @@ it.each([
     },
   });
   const clear = vi.spyOn(store, "clearHiddenSessions").mockResolvedValue(null);
-  if (folder) fireEvent.click(hiddenToggle());
+  fireEvent.click(hiddenToggle());
   const trigger = screen.getByRole("button", {
     name: folder ? "Delete all sessions in folder alpha" : "Clear Hidden",
   });
@@ -359,7 +366,7 @@ it.each([
   if (cwd) expect(dialog).toHaveAccessibleDescription(new RegExp(cwd));
   fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
   expect(clear).not.toHaveBeenCalled();
-  expect(hiddenToggle()).toHaveAttribute("aria-expanded", String(folder));
+  expect(hiddenToggle()).toHaveAttribute("aria-pressed", "true");
 
   fireEvent.click(trigger);
   fireEvent.click(screen.getByRole("button", { name: `Delete ${count}` }));
@@ -383,6 +390,7 @@ describe("hidden deletion eligibility", () => {
     sessionListHydrating: false,
     sessionListError: null,
     sessionListIssues: [],
+    curationPending: false,
     clearingHidden: false,
     deletingSessionId: null,
   });
@@ -426,7 +434,7 @@ function navModelRow(id: string, folder: string, day: number) {
 }
 
 it("files each session once and orders projects by newest activity", () => {
-  const sections = splitNavSections(
+  const catalog = buildSessionCatalog(
     [
       navModelRow("pinned-old", "archive", 15),
       navModelRow("older", "app", 20),
@@ -445,20 +453,20 @@ it("files each session once and orders projects by newest activity", () => {
       hiddenProjectCwds: ["/work/private"],
     }),
   );
-  const ids = (rows: typeof sections.pinned) => rows.map(({ id }) => id);
-  expect(ids(sections.pinned)).toEqual(["pinned-new", "pinned-old"]);
-  expect(ids(sections.hidden)).toEqual(["hidden"]);
-  expect(
-    sections.pinnedGroups.map(({ cwd, sessions }) => [cwd, ids(sessions)]),
-  ).toEqual([["/work/archive", ["archived"]]]);
-  expect(
-    sections.hiddenGroups.map(({ cwd, sessions }) => [cwd, ids(sessions)]),
-  ).toEqual([["/work/private", ["hidden-folder-new", "hidden-folder-child"]]]);
-  expect(
-    sections.groups.map(({ cwd, sessions }) => [cwd, ids(sessions)]),
-  ).toEqual([
+  const sectionRows = (sections: typeof catalog.all) =>
+    sections.map((section) => [
+      section.kind === "folder" ? section.group.cwd : section.kind,
+      sectionSessions(section).map(({ id }) => id),
+    ]);
+  expect(sectionRows(catalog.all)).toEqual([
+    ["pinned", ["pinned-new", "pinned-old"]],
+    ["/work/archive", ["archived"]],
     ["/work/app", ["recent", "older"]],
     ["/work/team/app", ["other"]],
+  ]);
+  expect(sectionRows(catalog.hidden)).toEqual([
+    ["hidden", ["hidden"]],
+    ["/work/private", ["hidden-folder-new", "hidden-folder-child"]],
   ]);
 });
 

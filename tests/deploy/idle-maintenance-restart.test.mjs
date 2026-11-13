@@ -1,14 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
-import {
-  hostServicePath,
-  restartIdleHost,
-  terminalServicePath,
-} from "../../deploy/systemd/control.mjs";
 import { runIdleMaintenanceRestart } from "../../deploy/systemd/idle-maintenance-restart.mjs";
 import { RuntimeController } from "../../server/runtime.js";
+import {
+  environment,
+  invocationId,
+  managedProperties,
+  root,
+  show,
+} from "./systemd-fixture.mjs";
 
-const root = "/synthetic/inspire";
-const environment = { HOME: "/synthetic/home" };
+const state = { systemdInvocationId: invocationId };
 const leaseId = "a".repeat(43);
 const ready = { kind: "ready", leaseId, expiresAt: 30_000 };
 
@@ -22,37 +23,23 @@ function fixture({
     if (args.includes("restart")) return issue();
     const terminal = args.includes("inspire-terminal.service");
     await inspect(terminal);
-    return {
-      code: 0,
-      stderr: "",
-      stdout: [
-        "LoadState=loaded",
-        `FragmentPath=${terminal ? terminalServicePath(environment) : hostServicePath(environment)}`,
-        `WorkingDirectory=${root}`,
-        `ExecStart={ path=${root}/inspire ; argv[]=${root}/inspire${terminal ? ` terminal-daemon --root ${root} --host 127.0.0.1 --port 4587` : ""} ; }`,
-        `ExecStartPost={ path=${root}/inspire ; argv[]=${root}/inspire wait-ready ; }`,
-        "Wants=inspire-terminal.service",
-        "After=inspire-terminal.service",
-        "ActiveState=active",
-      ].join("\n"),
-    };
+    return show(managedProperties())(args);
   });
   return {
     run,
     requests,
     execute: () =>
-      runIdleMaintenanceRestart(
-        {},
-        root,
-        (path, handoff) => restartIdleHost(path, handoff, { environment, run }),
-        async (_state, action, owner) => {
+      runIdleMaintenanceRestart(state, root, {
+        environment,
+        run,
+        request: async (_state, action, owner) => {
           requests.push([action, owner]);
           if (request) return request(action, owner);
           if (!action) return ready;
           if (action === "commit") return { kind: "committed", leaseId: owner };
           return { kind: "released" };
         },
-      ),
+      }),
   };
 }
 
@@ -144,74 +131,61 @@ describe.runIf(process.platform !== "win32")(
       },
     );
 
-    it.each(["absent", "inspection-error"])(
-      "cancels before commit when service is %s",
-      async (kind) => {
-        const handoff = { commit: vi.fn(), release: vi.fn(async () => true) };
-        const run = vi.fn(async () => {
-          if (kind === "inspection-error") throw new Error("inspection failed");
-          return { code: 0, stdout: "LoadState=not-found", stderr: "" };
-        });
-        expect(
-          (await restartIdleHost(root, handoff, { environment, run })).kind,
-        ).toBe("skipped");
-        expect(handoff.commit).not.toHaveBeenCalled();
-        expect(handoff.release).toHaveBeenCalledOnce();
-        expect(restarts(run)).toHaveLength(0);
-      },
-    );
-
-    it("never consumes a commit for a different lease", async () => {
-      const test = fixture({
-        request: async (action) => {
-          if (!action) return ready;
-          return action === "commit"
-            ? { kind: "committed", leaseId: "b".repeat(43) }
-            : { kind: "released" };
-        },
-      });
-      expect((await test.execute()).kind).toBe("skipped");
-      expect(restarts(test.run)).toHaveLength(0);
-      expect(test.requests.at(-1)).toEqual(["release", leaseId]);
-    });
-
-    it("releases a known failure to spawn", async () => {
-      const test = fixture({ issue: async () => ({ code: 1, issued: false }) });
-      expect(await test.execute()).toEqual({
-        kind: "skipped",
-        reason: "restart-not-issued",
-      });
-      expect(test.requests.at(-1)).toEqual(["release", leaseId]);
-    });
-
     it.each([
-      async () => ({ code: 1 }),
-      async () => {
-        throw new Error("lost systemctl");
+      {
+        label: "foreign commit",
+        commit: { kind: "committed", leaseId: "b".repeat(43) },
+        result: { kind: "skipped", reason: "commit-not-authorized" },
+        issued: false,
+        release: true,
       },
-    ])(
-      "retains committed admission for uncertain restart results",
-      async (issue) => {
-        const test = fixture({ issue });
-        expect(await test.execute()).toEqual({
+      {
+        label: "known failure to spawn",
+        issue: { code: 1, issued: false },
+        result: { kind: "skipped", reason: "restart-not-issued" },
+        issued: true,
+        release: true,
+      },
+      {
+        label: "potentially issued restart",
+        issue: { code: 1 },
+        result: {
           kind: "recovery-required",
           reason: "restart-outcome-unknown",
+        },
+        issued: true,
+        release: false,
+      },
+      {
+        label: "unconfirmed release",
+        commit: null,
+        released: null,
+        result: { kind: "recovery-required", reason: "release-unconfirmed" },
+        issued: false,
+        release: true,
+      },
+    ])(
+      "keeps the lease identity and reports $label",
+      async ({ commit, released, issue, result, issued, release }) => {
+        const runner = fixture({
+          issue: async () => issue,
+          request: async (action, owner) => {
+            if (!action) return ready;
+            if (action === "commit")
+              return commit === undefined
+                ? { kind: "committed", leaseId: owner }
+                : commit;
+            return released === undefined ? { kind: "released" } : released;
+          },
         });
-        expect(test.requests.some(([action]) => action === "release")).toBe(
-          false,
-        );
+        expect(await runner.execute()).toEqual(result);
+        expect(restarts(runner.run)).toHaveLength(Number(issued));
+        expect(runner.requests).toEqual([
+          [undefined, undefined],
+          ["commit", leaseId],
+          ...(release ? [["release", leaseId]] : []),
+        ]);
       },
     );
-
-    it("reports an unconfirmed release instead of claiming admission reopened", async () => {
-      const test = fixture({
-        request: async (action) => (action ? null : ready),
-      });
-      expect(await test.execute()).toEqual({
-        kind: "recovery-required",
-        reason: "release-unconfirmed",
-      });
-      expect(restarts(test.run)).toHaveLength(0);
-    });
   },
 );

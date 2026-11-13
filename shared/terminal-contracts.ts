@@ -1,3 +1,5 @@
+import type { TerminalIntent } from "./terminal-operations.js";
+
 export const MAX_TERMINALS_PER_PROJECT = 32;
 export const MAX_TERMINALS_TOTAL = 128;
 export const MIN_TERMINAL_HISTORY_DAYS = 1;
@@ -102,36 +104,14 @@ export interface TerminalServiceSettings {
   historyRetentionDays: number;
 }
 
-export interface TerminalServiceSettingsPatch {
-  persistOutput?: boolean;
-  historyRetentionDays?: number;
-}
-
-/** Identifies one immutable control intent, fenced by the daemon's receipt epoch. */
-export interface TerminalOperationIdentity {
-  id: string;
-  epoch: string;
-}
-
-export type TerminalMutationMethod =
-  | "create"
-  | "rename"
-  | "reorder"
-  | "restart"
-  | "remove"
-  | "updateSettings"
-  | "clearHistory";
-
-export interface TerminalCreateRequest {
-  cwd: string;
-  profileId?: string;
-  cols?: number;
-  rows?: number;
-}
-
-export interface TerminalRenameRequest {
-  title: string | null;
-}
+type TerminalParams<Command extends TerminalIntent["command"]> = Extract<
+  TerminalIntent,
+  { command: Command }
+>["params"];
+export type TerminalServiceSettingsPatch =
+  TerminalParams<"updateSettings">["patch"];
+export type TerminalCreateRequest = TerminalParams<"create">["request"];
+export type TerminalRenameRequest = Pick<TerminalParams<"rename">, "title">;
 
 export interface TerminalRemoveResponse {
   catalogEpoch: string;

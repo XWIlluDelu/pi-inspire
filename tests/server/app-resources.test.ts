@@ -14,7 +14,7 @@ import { join } from "node:path";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { showInFileManager } from "../../server/file-manager.js";
-import { ResourceStore } from "../../server/resources.js";
+import type { ResourceStore } from "../../server/resources.js";
 import { MAX_ATTACHMENT_FILE_BYTES } from "../../shared/contracts.js";
 import {
   fileResourceReference,
@@ -27,6 +27,8 @@ import {
   pairedBrowser,
   token,
 } from "./fixtures/host-api.js";
+import { resourceHttp } from "./fixtures/resource-http.js";
+import { deferredSignal } from "./fixtures/runtime.js";
 
 vi.mock("../../server/file-manager.js", () => ({
   showInFileManager: vi.fn(),
@@ -64,41 +66,33 @@ describe("HTTP resource and upload authority", () => {
     return body.active.sessionId;
   }
 
+  async function openFile(reference: string, bytes: string) {
+    const path = join(temporary, reference);
+    await writeFile(path, bytes);
+    const api = resourceHttp(local, await openProject());
+    const descriptor = await api.descriptor(reference);
+    return {
+      path,
+      descriptor,
+      url: api.contentPath(descriptor.id),
+      read: () => api.content(descriptor.id),
+    };
+  }
+
   it("allows URI escaping overhead without enlarging the literal workspace-path budget", async () => {
     await writeFile(join(temporary, "long-url.md"), "LONG_LINK_BYTES");
-    const sessionId = await openProject();
+    const api = resourceHttp(local, await openProject());
     // A valid escaped relative URL whose native target is a short owned path.
     // No platform-dependent deep directory or overlong component is needed.
     const reference = "%2E/".repeat(2_100) + "long-url.md";
-    const resolved = await local
-      .post("/api/resources/resolve")
-      .send({ sessionId, reference })
-      .expect(200);
-    expect(resolved.body.name).toBe("long-url.md");
-    const content = await local
-      .get(`/api/resources/${resolved.body.id}/content`)
-      .query({ sessionId })
-      .expect(200);
-    expect(content.text).toBe("LONG_LINK_BYTES");
-    await local
-      .post("/api/resources/resolve")
-      .send({
-        sessionId,
-        reference: "a".repeat(MAX_RESOURCE_REFERENCE_LENGTH + 1),
-      })
+    const resolved = await api.descriptor(reference);
+    expect(resolved.name).toBe("long-url.md");
+    await api.content(resolved.id).expect(200, "LONG_LINK_BYTES");
+    await api
+      .resolve("a".repeat(MAX_RESOURCE_REFERENCE_LENGTH + 1))
       .expect(400);
-    await local
-      .post("/api/resources/resolve")
-      .send({ sessionId, reference: "a".repeat(8_193) })
-      .expect(400);
-    await local
-      .post("/api/resources/resolve")
-      .send({
-        sessionId,
-        reference: "long-url.md",
-        workspacePath: "a".repeat(8_193),
-      })
-      .expect(400);
+    await api.resolve("a".repeat(8_193)).expect(400);
+    await api.resolve("long-url.md", "a".repeat(8_193)).expect(400);
   });
 
   it("streams only the one-use download's current session/view/resource and revalidates before bytes", async () => {
@@ -106,15 +100,7 @@ describe("HTTP resource and upload authority", () => {
     const name = "report%20 draft.md";
     await writeFile(join(temporary, name), "complete raw download\n");
     const sessionId = await openProject(temporary, paired);
-    const resolved = await paired
-      .post("/api/resources/resolve")
-      .send({
-        sessionId,
-        reference: name,
-        workspacePath: name,
-      })
-      .expect(200);
-    const id = resolved.body.id as string;
+    const { id } = await resourceHttp(paired, sessionId).descriptor(name, name);
     const mint = async () => {
       const result = await paired
         .post(`/api/resources/${id}/download-ticket`)
@@ -206,14 +192,9 @@ describe("HTTP resource and upload authority", () => {
       .query({ sessionId, showHidden: "yes" })
       .expect(400);
     // Workspace filtering does not affect authorization of an exact path.
-    const resolved = await local
-      .post("/api/resources/resolve")
-      .send({ sessionId, reference: ".env", workspacePath: ".env" })
-      .expect(200);
-    await local
-      .get(`/api/resources/${resolved.body.id}/content`)
-      .query({ sessionId })
-      .expect(200, "SYNTHETIC_CONFIG=true\n");
+    const api = resourceHttp(local, sessionId);
+    const { id } = await api.descriptor(".env", ".env");
+    await api.content(id).expect(200, "SYNTHETIC_CONFIG=true\n");
   }, 30_000);
 
   it("serves only authenticated session-addressed Git status and diff inspection", async () => {
@@ -358,11 +339,10 @@ describe("HTTP resource and upload authority", () => {
       local.post("/api/sessions/open").send({ id }).expect(200);
     await open(sessionId);
     const pending = await runtime.resourceContext(sessionId);
-    const resolve = (reference: string) =>
-      local.post("/api/resources/resolve").send({ sessionId, reference });
-    const file = (await resolve(name).expect(200)).body;
+    const api = resourceHttp(local, sessionId);
+    const file = await api.descriptor(name);
     expect(file).toMatchObject({ name, kind: "markdown" });
-    await resolve("../outside.txt").expect(403);
+    await api.resolve("../outside.txt").expect(403);
 
     const other = "fixture-history";
     await open(other);
@@ -390,7 +370,7 @@ describe("HTTP resource and upload authority", () => {
     const embedded = list.resources.find((resource: { reference: string }) =>
       resource.reference.startsWith("pi-embedded://"),
     );
-    const savedImage = (await resolve(embedded.reference).expect(200)).body;
+    const savedImage = await api.descriptor(embedded.reference);
     expect(savedImage).toMatchObject({ kind: "image", size: image.length });
     await local
       .post("/api/resources/probe")
@@ -401,8 +381,8 @@ describe("HTTP resource and upload authority", () => {
           { availability: "available", workspacePath: name },
         ]),
       );
-    const content = (id: string, owner = sessionId) =>
-      local.get(`/api/resources/${id}/content`).query({ sessionId: owner });
+    const { content } = api;
+    const otherContent = resourceHttp(local, other).content;
     await content(file.id)
       .expect(
         "Content-Disposition",
@@ -420,108 +400,54 @@ describe("HTTP resource and upload authority", () => {
       .expect("Content-Range", "bytes 0-5/15")
       .expect(206, "# Host");
     await content(file.id).set("Range", "bytes=999-1000").expect(416);
-    await content(file.id, other).expect(404);
+    await otherContent(file.id).expect(404);
     const ranged = await content(savedImage.id)
       .set("Range", "bytes=0-4")
       .expect("Content-Type", "image/png")
       .expect("Content-Range", `bytes 0-4/${image.length}`)
       .expect(206);
     expect(ranged.body).toEqual(image.subarray(0, 5));
-    await content(savedImage.id, other).expect(404);
+    await otherContent(savedImage.id).expect(404);
   });
 
   it("uses the current resource size after resolve when a file grows or shrinks", async () => {
-    const resourcePath = join(temporary, "changing.md");
-    await writeFile(resourcePath, "old\n");
-    const sessionId = await openProject();
-    const resolved = await local
-      .post("/api/resources/resolve")
-      .send({ sessionId, reference: "changing.md" })
-      .expect(200);
-    expect(resolved.body.size).toBe(4);
-
-    const grown = "grown-content\n";
-    await writeFile(resourcePath, grown);
-    const grownResponse = await local
-      .get(
-        `/api/resources/${resolved.body.id}/content?sessionId=${encodeURIComponent(sessionId)}`,
-      )
-      .set("Range", "bytes=0-262143")
-      .expect(206);
-    expect(grownResponse.headers["content-range"]).toBe(
-      `bytes 0-${grown.length - 1}/${grown.length}`,
+    const { path, read, descriptor } = await openFile(
+      "changing.md",
+      "initial\n",
     );
-    expect(grownResponse.text).toBe(grown);
-
-    const shrunk = "new\n";
-    await writeFile(resourcePath, shrunk);
-    const shrunkResponse = await local
-      .get(
-        `/api/resources/${resolved.body.id}/content?sessionId=${encodeURIComponent(sessionId)}`,
-      )
-      .set("Range", "bytes=0-262143")
-      .expect(206);
-    expect(shrunkResponse.headers["content-range"]).toBe(
-      `bytes 0-${shrunk.length - 1}/${shrunk.length}`,
-    );
-    expect(shrunkResponse.text).toBe(shrunk);
+    expect(descriptor.size).toBe(8);
+    for (const bytes of ["grown-content\n", "new\n"]) {
+      await writeFile(path, bytes);
+      await read()
+        .set("Range", "bytes=0-262143")
+        .expect("Content-Range", `bytes 0-${bytes.length - 1}/${bytes.length}`)
+        .expect(206, bytes);
+    }
   });
 
   it("refuses stale range continuation and serves the atomic replacement on refresh", async () => {
-    const path = join(temporary, "document.pdf");
-    await writeFile(path, "%PDF-old-body");
-    const sessionId = await openProject();
-    const resolved = await local
-      .post("/api/resources/resolve")
-      .send({ sessionId, reference: "document.pdf" })
-      .expect(200);
-    const url = `/api/resources/${resolved.body.id}/content?sessionId=${encodeURIComponent(sessionId)}`;
-    const first = await local.get(url).set("Range", "bytes=0-7").expect(206);
+    const { path, read } = await openFile("document.pdf", "%PDF-old-body");
+    const first = await read().set("Range", "bytes=0-7").expect(206);
     expect(first.body.toString()).toBe("%PDF-old");
     const version = first.headers.etag ?? "";
     expect(version).toMatch(/^"[\w-]+"$/);
-    await local
-      .get(url)
-      .set("Range", "bytes=8-")
-      .set("If-Match", version)
-      .expect(206);
+    const continueRange = (header: string) =>
+      read().set("Range", "bytes=8-").set(header, version);
+    await continueRange("If-Match").expect(206);
 
     await writeFile(`${path}.new`, "%PDF-new-body");
     await rename(`${path}.new`, path);
-    await local
-      .get(url)
-      .set("Range", "bytes=8-")
-      .set("If-Match", version)
-      .expect(409);
-    await local
-      .get(url)
-      .set("Range", "bytes=8-")
-      .set("If-Range", version)
-      .expect(409);
-    const refreshed = await local
-      .get(url)
-      .set("Range", "bytes=0-7")
-      .expect(206);
+    await continueRange("If-Match").expect(409);
+    await continueRange("If-Range").expect(409);
+    const refreshed = await read().set("Range", "bytes=0-7").expect(206);
     expect(refreshed.body.toString()).toBe("%PDF-new");
     expect(refreshed.headers.etag).not.toBe(version);
   });
 
   it("closes an opened file when the client aborts during authorization", async () => {
-    await writeFile(join(temporary, "slow.md"), "slow preview\n");
-    const sessionId = await openProject();
-    const resolved = await local
-      .post("/api/resources/resolve")
-      .send({ sessionId, reference: "slow.md" })
-      .expect(200);
-
-    let releaseOpen!: () => void;
-    const gate = new Promise<void>(
-      (resolveGate) => (releaseOpen = resolveGate),
-    );
-    let opened!: () => void;
-    const openedHandle = new Promise<void>(
-      (resolveOpened) => (opened = resolveOpened),
-    );
+    const { url } = await openFile("slow.md", "slow preview\n");
+    const gate = deferredSignal();
+    const opened = deferredSignal();
     let handle:
       | Awaited<ReturnType<ResourceStore["openForServing"]>>["handle"]
       | null = null;
@@ -529,25 +455,26 @@ describe("HTTP resource and upload authority", () => {
     resources.openForServing = async (resource) => {
       const result = await openForServing(resource);
       handle = result.handle;
-      opened();
-      await gate;
+      opened.resolve();
+      await gate.promise;
       return result;
     };
 
     const controller = new AbortController();
-    const fetching = fetch(
-      `${baseUrl}/api/resources/${resolved.body.id}/content?sessionId=${encodeURIComponent(sessionId)}`,
-      {
-        headers: { Authorization: `Bearer ${token}` },
-        signal: controller.signal,
-      },
-    ).catch((error: Error) => error);
-    await openedHandle;
-    controller.abort();
-    const failure = await fetching;
-    expect(failure).toBeInstanceOf(Error);
-    expect((failure as Error).name).toBe("AbortError");
-    releaseOpen();
+    const fetching = fetch(baseUrl + url, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: controller.signal,
+    });
+    const aborted = expect(fetching).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    try {
+      await opened.promise;
+      controller.abort();
+      await aborted;
+    } finally {
+      gate.resolve();
+    }
 
     await vi.waitFor(async () => {
       await expect(handle!.stat()).rejects.toMatchObject({ code: "EBADF" });

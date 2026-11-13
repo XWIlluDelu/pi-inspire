@@ -42,7 +42,9 @@ describe("writer startup attestation", () => {
         parentId !== null,
       );
       await vi.waitFor(async () => {
-        expect((await runtime.snapshot()).active?.thinkingLevel).toBe("off");
+        expect(
+          (await runtime.snapshot("session-a")).active?.thinkingLevel,
+        ).toBe("off");
         expect(
           workers[0]!.commands.some(
             (command) => command.type === "get_commands",
@@ -153,7 +155,7 @@ describe("writer startup attestation", () => {
     });
     await vi.waitFor(() => expect(workers[0]!.stops).toBe(1));
     expect(sequence).not.toContain("start");
-    const changed = (await runtime.snapshot()).active!;
+    const changed = (await runtime.snapshot("session-a")).active!;
     expect(changed.transcriptPage.viewId).not.toBe(
       opened.active!.transcriptPage.viewId,
     );
@@ -172,7 +174,7 @@ describe("writer startup attestation", () => {
     await vi.waitFor(() => expect(workers[0]!.stops).toBe(1));
     expect(sequence).not.toContain("start");
     expect(workers[0]!.commands).toEqual([]);
-    expect((await runtime.snapshot()).runState).toBe("failed");
+    expect((await runtime.snapshot("session-a")).runState).toBe("failed");
   });
 
   it.each([
@@ -262,7 +264,7 @@ describe("writer startup attestation", () => {
     async ({ prepare }) => {
       const { runtime, workers } = await setup([], prepare);
       await vi.waitFor(() => expect(workers[0]!.stops).toBe(1));
-      expect((await runtime.snapshot()).runState).toBe("failed");
+      expect((await runtime.snapshot("session-a")).runState).toBe("failed");
       expect(workers).toHaveLength(1);
       expect(workers[0]!.commands).not.toContainEqual({
         type: "get_commands",

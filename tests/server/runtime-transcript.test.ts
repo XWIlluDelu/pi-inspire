@@ -103,7 +103,7 @@ describe("live and durable transcript reconciliation", () => {
           details: { progress: "native metadata" },
         },
       });
-      const tool = (await runtime.snapshot()).active?.toolActivity?.[
+      const tool = (await runtime.snapshot("session-a")).active?.toolActivity?.[
         "long-output"
       ];
       expect(tool?.outputPreview?.text).toMatch(/LATEST_OUTPUT$/);
@@ -165,7 +165,7 @@ describe("live and durable transcript reconciliation", () => {
       childCalls: { source: "codemode", complete: false },
     });
     expect((event.childCalls as { calls: unknown[] }).calls).toHaveLength(256);
-    const activity = (await runtime.snapshot()).active?.toolActivity;
+    const activity = (await runtime.snapshot("session-a")).active?.toolActivity;
     expect(Object.keys(activity ?? {})).toEqual(["script"]);
     expect(activity?.script?.calls).toEqual(event.childCalls);
   });
@@ -218,7 +218,7 @@ describe("live and durable transcript reconciliation", () => {
         details: { rawResult: true },
       },
     });
-    const tools = (await runtime.snapshot()).active?.toolActivity;
+    const tools = (await runtime.snapshot("session-a")).active?.toolActivity;
     expect(Object.keys(tools!)).toEqual(["parent"]);
     expect(tools?.parent).toMatchObject({
       phase: "running",
@@ -248,9 +248,9 @@ describe("live and durable transcript reconciliation", () => {
       result: { content: [{ type: "text", text: "Parent succeeded" }] },
       isError: false,
     });
-    expect((await runtime.snapshot()).active?.toolActivity?.parent?.phase).toBe(
-      "done",
-    );
+    expect(
+      (await runtime.snapshot("session-a")).active?.toolActivity?.parent?.phase,
+    ).toBe("done");
     emit({
       type: "tool_execution_update",
       parentToolCallId: "parent",
@@ -259,11 +259,13 @@ describe("live and durable transcript reconciliation", () => {
       partialResult: {},
     });
     expect(
-      (await runtime.snapshot()).active?.toolActivity?.parent?.calls?.calls[0]
-        ?.status,
+      (await runtime.snapshot("session-a")).active?.toolActivity?.parent?.calls
+        ?.calls[0]?.status,
     ).toBe("error");
     emit({ type: "agent_start" });
-    expect((await runtime.snapshot()).active?.toolActivity).toEqual({});
+    expect((await runtime.snapshot("session-a")).active?.toolActivity).toEqual(
+      {},
+    );
   });
 
   it.each([
@@ -317,7 +319,7 @@ describe("live and durable transcript reconciliation", () => {
       worker.emit("event", { type: "message_start", message: live });
       worker.emit("event", { type: "message_end", message: stopped });
       expect(forwarded.at(-1)?.message).toMatchObject(stopped);
-      const reconnect = await runtime.snapshot();
+      const reconnect = await runtime.snapshot("session-a");
       expect(reconnect.runState).toBe(runState);
       expect(reconnect.active?.transcriptPage.messages.at(-1)).toMatchObject(
         stopped,
@@ -328,7 +330,7 @@ describe("live and durable transcript reconciliation", () => {
       worker.publishCheckpoint([entry], { sealed: "settled" });
       worker.emit("event", { type: "agent_settled" });
       await vi.waitFor(async () => {
-        const snapshot = await runtime.snapshot();
+        const snapshot = await runtime.snapshot("session-a");
         expect(snapshot.runState).toBe(runState);
         const stoppedMessages = snapshot.active?.transcriptPage.messages.filter(
           (value) =>
@@ -374,7 +376,9 @@ describe("live and durable transcript reconciliation", () => {
       })),
     );
     expect(
-      (await runtime.snapshot()).active?.transcriptPage.messages.at(-1),
+      (await runtime.snapshot("session-a")).active?.transcriptPage.messages.at(
+        -1,
+      ),
     ).toMatchObject({
       __inspireLiveId: firstId,
       __inspireStreamRevision: 4,
@@ -399,7 +403,7 @@ describe("live and durable transcript reconciliation", () => {
     expect(secondId).not.toBe(firstId);
     expect(secondEnd!.message).toMatchObject({ __inspireLiveId: secondId });
 
-    const active = (await runtime.snapshot()).active!;
+    const active = (await runtime.snapshot("session-a")).active!;
     expect(active.activeAssistantMessageKey).toBe(`live:${secondId}`);
     expect(active.transcriptPage.messages.slice(1)).toMatchObject([
       { __inspireLiveId: firstId, content },
@@ -428,7 +432,7 @@ describe("live and durable transcript reconciliation", () => {
       workers[0]!.emit("event", { type: "message_start", message: value });
       workers[0]!.emit("event", { type: "message_end", message: value });
     }
-    let snapshot = await runtime.snapshot();
+    let snapshot = await runtime.snapshot("session-a");
     expect(
       snapshot.active?.transcriptPage.messages.filter(
         (value) => (value as { role?: string }).role === "toolResult",
@@ -443,7 +447,7 @@ describe("live and durable transcript reconciliation", () => {
     );
     workers[0]!.emit("event", { type: "agent_settled" });
     await vi.waitFor(async () => {
-      snapshot = await runtime.snapshot();
+      snapshot = await runtime.snapshot("session-a");
       expect(snapshot.runState).toBe("idle");
     });
     expect(
@@ -480,7 +484,7 @@ describe("live and durable transcript reconciliation", () => {
         message: structuredClone(live),
       });
     }
-    const liveIds = customMessages(await runtime.snapshot()).map(
+    const liveIds = customMessages(await runtime.snapshot("session-a")).map(
       (message) => (message as { __inspireLiveId?: string }).__inspireLiveId,
     );
     expect(liveIds).toEqual([expect.any(String), expect.any(String)]);
@@ -507,7 +511,7 @@ describe("live and durable transcript reconciliation", () => {
     worker.publishCheckpoint(native, { sealed: "settled" });
     worker.emit("event", { type: "agent_settled" });
     const saved = await vi.waitFor(async () => {
-      const snapshot = await runtime.snapshot();
+      const snapshot = await runtime.snapshot("session-a");
       expect(snapshot.runState).toBe("idle");
       const messages = customMessages(snapshot);
       expect(messages).toMatchObject(
@@ -548,7 +552,7 @@ describe("live and durable transcript reconciliation", () => {
     worker.emit("event", { type: "message_start", message: live });
     worker.emit("event", { type: "message_end", message: live });
     const before = (
-      await runtime.snapshot()
+      await runtime.snapshot("session-a")
     ).active!.transcriptPage.messages.at(-1);
     expect(before).toMatchObject({
       __inspireLiveId: expect.any(String),
@@ -556,7 +560,8 @@ describe("live and durable transcript reconciliation", () => {
     });
     expect(before).not.toHaveProperty("__inspireEntryId");
     worker.publishCheckpoint([entry], { sealed: "idle" });
-    const after = (await runtime.snapshot()).active!.transcriptPage.messages;
+    const after = (await runtime.snapshot("session-a")).active!.transcriptPage
+      .messages;
     expect(
       after.filter((item) => (item as { role?: string }).role === "custom"),
     ).toMatchObject([{ __inspireEntryId: entry.id, content: entry.content }]);
@@ -572,12 +577,16 @@ describe("live and durable transcript reconciliation", () => {
     };
     workers[0]!.emit("event", { type: "agent_start" });
     workers[0]!.emit("event", { type: "message_start", message: live });
-    let snapshot = await runtime.snapshot();
-    expect(
-      snapshot.active?.transcriptPage.messages.filter(
-        (message) => (message as { timestamp?: number }).timestamp === 2,
-      ),
-    ).toHaveLength(1);
+    let snapshot = await runtime.snapshot("session-a");
+    const liveMessage = snapshot.active!.transcriptPage.messages.at(
+      -1,
+    ) as Record<string, unknown>;
+    const turn = liveMessage.__inspireTurnId;
+    expect(liveMessage).toMatchObject({
+      __inspireLiveId: expect.any(String),
+      __inspireTurnId: expect.any(String),
+      timestamp: 2,
+    });
     expect(
       Buffer.byteLength(JSON.stringify(snapshot.active?.transcriptPage)),
     ).toBeLessThanOrEqual(TRANSCRIPT_PAGE_MAX_BYTES);
@@ -592,12 +601,16 @@ describe("live and durable transcript reconciliation", () => {
     workers[0]!.emit("event", { type: "message_end", message: live });
     workers[0]!.publishCheckpoint([entry], { sealed: "settled" });
     await vi.waitFor(async () => {
-      snapshot = await runtime.snapshot();
+      snapshot = await runtime.snapshot("session-a");
       expect(snapshot.active?.activeAssistantMessageKey).toBe("persisted:a1:0");
+      expect(snapshot.active?.transcriptPage.messages.at(-1)).toMatchObject({
+        __inspireMessageId: "a1:0",
+        __inspireTurnId: turn,
+      });
     });
     workers[0]!.emit("event", { type: "agent_settled" });
     await vi.waitFor(async () => {
-      snapshot = await runtime.snapshot();
+      snapshot = await runtime.snapshot("session-a");
       expect(snapshot.runState).toBe("idle");
     });
     const page = snapshot.active!.transcriptPage;

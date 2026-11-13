@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { sessionDraft, setSessionDraft } from "../../src/session-drafts";
 import { sessionPage } from "./fixtures/session-catalog";
 import {
   activeSnapshot,
@@ -11,8 +10,21 @@ import {
   installFetch,
   jsonBody,
   sessionSummary,
+  TEST_HOST_AUTHORITY,
 } from "./helpers";
 import { baseRoutes, initStore } from "./store-fixture";
+
+function committed(sessionId: string, preferences = DEFAULT_PREFS) {
+  return {
+    deleted: [{ sessionId, disposition: "trashed" as const }],
+    navigation: {
+      kind: "confirmed" as const,
+      authorityId: TEST_HOST_AUTHORITY,
+      revision: 1_000_000,
+      preferences,
+    },
+  };
+}
 
 describe("session deletion ownership", () => {
   beforeEach(() => installFakeWebSocket());
@@ -29,23 +41,18 @@ describe("session deletion ownership", () => {
         if (url.startsWith("/api/bootstrap"))
           return {
             body: bootstrapPayload({
-              snapshot: activeSnapshot({ sessionId: "s1" }),
+              startupSessionId: "s1",
               preferences: { ...DEFAULT_PREFS, hiddenSessionIds: ["s1"] },
             }),
           };
-        if (url === "/api/sessions/s1" && init.method === "DELETE") {
+        if (url === "/api/sessions/delete") {
           requested = true;
           await deleteGate;
           if (outcome === "failure")
             return { status: 500, body: { error: "Trash unavailable" } };
           deleted = true;
-          return {
-            body: {
-              sessionId: "s1",
-              disposition: "trashed",
-              preferences: DEFAULT_PREFS,
-            },
-          };
+          expect(jsonBody(init)).toEqual({ scope: "session", sessionId: "s1" });
+          return { body: committed("s1") };
         }
         if (url === "/api/sessions/open") {
           if (outcome === "opening") await openGate;
@@ -66,8 +73,8 @@ describe("session deletion ownership", () => {
         activities: { s1: "idle" },
       });
       expect(store.getState().externalSessionActivities.s1).toBe("idle");
-      setSessionDraft("s1", "deleted draft");
-      setSessionDraft("s2", "keep this draft");
+      store.drafts.setText("s1", "deleted draft");
+      store.drafts.setText("s2", "keep this draft");
       const deleting = store.deleteSession("s1");
       await vi.waitFor(() => expect(requested).toBe(true));
       expect(store.getState().sessionId).toBe("s1");
@@ -89,16 +96,16 @@ describe("session deletion ownership", () => {
         outcome === "failure" ? "s1" : outcome === "success" ? null : "s2",
       );
       if (outcome === "failure") {
-        expect(sessionDraft("s1")).toBe("deleted draft");
+        expect(store.drafts.get("s1").text).toBe("deleted draft");
         expect(store.getState().prefs.hiddenSessionIds).toEqual(["s1"]);
         expect(store.getState().sessions).toHaveLength(2);
         expect(store.getState().sessionDeleteError).toBe("Trash unavailable");
       } else {
-        expect(sessionDraft("s1")).toBe("");
+        expect(store.drafts.get("s1").text).toBe("");
         expect(store.getState().sessionStatuses.s1).toBeUndefined();
         expect(store.getState().externalSessionActivities.s1).toBeUndefined();
       }
-      expect(sessionDraft("s2")).toBe("keep this draft");
+      expect(store.drafts.get("s2").text).toBe("keep this draft");
       expect(
         fetch.mock.calls.some(([url]) => String(url).includes("/deselect")),
       ).toBe(false);
@@ -107,7 +114,6 @@ describe("session deletion ownership", () => {
 
   it.each([
     { method: "delete", result: "committed" },
-    { method: "clear", result: "committed" },
     { method: "delete", result: "refused" },
     { method: "clear", result: "partial" },
   ] as const)(
@@ -126,7 +132,7 @@ describe("session deletion ownership", () => {
         if (url.startsWith("/api/bootstrap"))
           return {
             body: bootstrapPayload({
-              snapshot: activeSnapshot(),
+              startupSessionId: "s1",
               preferences: { ...DEFAULT_PREFS, hiddenSessionIds: targets },
             }),
           };
@@ -134,26 +140,20 @@ describe("session deletion ownership", () => {
           reads += 1;
           return reads === 1 ? oldRead.promise : { body: activeSnapshot() };
         }
-        if (
-          (url === "/api/sessions/s1" && init.method === "DELETE") ||
-          url === "/api/sessions/clear-hidden"
-        ) {
+        if (url === "/api/sessions/delete") {
           requested.resolve();
           await deletion.promise;
           if (result === "refused")
             return { status: 500, body: { error: "Trash unavailable" } };
           const sessionId = result === "partial" ? "s2" : "s1";
           sessions = sessions.filter((row) => row.id !== sessionId);
-          const deleted = { sessionId, disposition: "trashed" };
-          if (result === "partial")
-            return {
-              body: {
-                deleted: [deleted],
-                failure: { sessionId: "s1", message: "Trash unavailable" },
-              },
-            };
           return {
-            body: method === "clear" ? { deleted: [deleted] } : deleted,
+            body: {
+              ...committed(sessionId),
+              ...(result === "partial"
+                ? { failure: { sessionId: "s1", message: "Trash unavailable" } }
+                : {}),
+            },
           };
         }
         if (url.startsWith("/api/sessions/by-id"))
@@ -222,15 +222,15 @@ describe("session deletion ownership", () => {
       if (url.startsWith("/api/bootstrap"))
         return {
           body: bootstrapPayload({
-            snapshot: activeSnapshot(),
+            startupSessionId: "s1",
             preferences: { ...DEFAULT_PREFS, hiddenSessionIds: ["s1"] },
           }),
         };
       if (url.startsWith("/api/snapshot")) return response.promise;
-      if (url === "/api/sessions/s1" && init.method === "DELETE") {
+      if (url === "/api/sessions/delete") {
         deleting = true;
         await deletion.promise;
-        return { body: { sessionId: "s1", disposition: "trashed" } };
+        return { body: committed("s1") };
       }
       return baseRoutes(url, init);
     });
@@ -249,28 +249,22 @@ describe("session deletion ownership", () => {
     expect(store.getState().notices).toEqual([]);
   });
 
-  it("fences an optimistic Hide write before sending the destructive request", async () => {
+  it("allows deletion only after the Hide write is confirmed", async () => {
     const rows = [sessionSummary({ id: "s1" }), sessionSummary({ id: "s2" })];
     const { promise: patchGate, resolve: releasePatch } = deferred<void>();
     let deleteCalled = false;
     let deleted = false;
     installFetch(async (url, init) => {
       if (url.startsWith("/api/bootstrap"))
-        return { body: bootstrapPayload({ snapshot: activeSnapshot() }) };
+        return { body: bootstrapPayload({ startupSessionId: "s1" }) };
       if (url.startsWith("/api/preferences") && init.method === "PATCH") {
         await patchGate;
         return { body: { ...DEFAULT_PREFS, hiddenSessionIds: ["s2"] } };
       }
-      if (url.startsWith("/api/sessions/s2") && init.method === "DELETE") {
+      if (url === "/api/sessions/delete") {
         deleteCalled = true;
         deleted = true;
-        return {
-          body: {
-            sessionId: "s2",
-            disposition: "trashed",
-            preferences: { ...DEFAULT_PREFS, hiddenSessionIds: [] },
-          },
-        };
+        return { body: committed("s2") };
       }
       if (url.startsWith("/api/sessions")) {
         const sessions = deleted ? rows.slice(0, 1) : rows;
@@ -284,88 +278,78 @@ describe("session deletion ownership", () => {
     await vi.waitFor(() => expect(store.getState().sessions).toHaveLength(2));
 
     store.toggleSessionHidden("s2");
-    expect(store.getState().prefs.hiddenSessionIds).toEqual(["s2"]);
-    const deleting = store.deleteSession("s2");
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(store.getState().prefs.hiddenSessionIds).toEqual([]);
+    await expect(store.deleteSession("s2")).resolves.toBeNull();
     expect(deleteCalled).toBe(false);
     releasePatch();
-    await expect(deleting).resolves.toBe("trashed");
+    await vi.waitFor(() =>
+      expect(store.getState().prefs.hiddenSessionIds).toEqual(["s2"]),
+    );
+    await expect(store.deleteSession("s2")).resolves.toBe("trashed");
     expect(deleteCalled).toBe(true);
   });
 
-  it.each(["delete", "clear"] as const)(
-    "reconciles %s without discarding a newer setting or the other session's draft",
-    async (method) => {
-      const active = activeSnapshot({ sessionId: "s1" });
-      active.sessionStatuses.s2 = { runState: "idle", indicator: "completed" };
-      const rows = [sessionSummary({ id: "s1" }), sessionSummary({ id: "s2" })];
-      const initial = {
-        ...DEFAULT_PREFS,
-        pinnedSessionIds: ["s2"],
-        hiddenSessionIds: ["s2"],
-      };
-      const deletion = deferred<void>();
-      const requested = deferred<void>();
-      const patches: Record<string, unknown>[] = [];
-      let deleted = false;
-      installFetch(async (url, init) => {
-        if (url.startsWith("/api/bootstrap"))
-          return {
-            body: bootstrapPayload({ snapshot: active, preferences: initial }),
-          };
-        if (url.startsWith("/api/preferences") && init.method === "PATCH") {
-          const patch = jsonBody(init);
-          patches.push(patch);
-          return { body: { ...initial, ...patch } };
-        }
-        if (
-          (url === "/api/sessions/s2" && init.method === "DELETE") ||
-          url === "/api/sessions/clear-hidden"
-        ) {
-          requested.resolve();
-          await deletion.promise;
-          deleted = true;
-          const outcome = { sessionId: "s2", disposition: "trashed" };
-          return {
-            body: {
-              ...(method === "clear" ? { deleted: [outcome] } : outcome),
-              preferences: DEFAULT_PREFS,
-            },
-          };
-        }
-        if (url.startsWith("/api/sessions/by-id"))
-          return { body: { sessions: deleted ? [] : [rows[1]] } };
-        if (url.startsWith("/api/sessions")) {
-          const sessions = deleted ? rows.slice(0, 1) : rows;
-          return { body: sessionPage(sessions, sessions.length) };
-        }
-        return baseRoutes(url, init);
-      });
-      const { store } = await initStore();
-      await vi.waitFor(() => expect(store.getState().sessions).toHaveLength(2));
-      setSessionDraft("s1", "keep this draft");
-      setSessionDraft("s2", "deleted draft");
+  it("reconciles deletion without discarding a newer setting or another session's draft", async () => {
+    const active = activeSnapshot({ sessionId: "s1" });
+    active.sessionStatuses.s2 = { runState: "idle", indicator: "completed" };
+    const rows = [sessionSummary({ id: "s1" }), sessionSummary({ id: "s2" })];
+    const initial = {
+      ...DEFAULT_PREFS,
+      pinnedSessionIds: ["s2"],
+      hiddenSessionIds: ["s2"],
+    };
+    const deletion = deferred<void>();
+    const requested = deferred<void>();
+    const patches: Record<string, unknown>[] = [];
+    let deleted = false;
+    installFetch(async (url, init) => {
+      if (url.startsWith("/api/bootstrap"))
+        return {
+          body: bootstrapPayload({
+            startupSessionId: "s1",
+            preferences: initial,
+          }),
+        };
+      if (url.startsWith("/api/preferences") && init.method === "PATCH") {
+        const patch = jsonBody(init);
+        patches.push(patch);
+        return { body: { ...initial, ...patch } };
+      }
+      if (url === "/api/sessions/delete") {
+        requested.resolve();
+        await deletion.promise;
+        deleted = true;
+        return { body: committed("s2", { ...DEFAULT_PREFS, theme: "dark" }) };
+      }
+      if (url.startsWith("/api/sessions/by-id"))
+        return { body: { sessions: deleted ? [] : [rows[1]] } };
+      if (url.startsWith("/api/sessions")) {
+        const sessions = deleted ? rows.slice(0, 1) : rows;
+        return { body: sessionPage(sessions, sessions.length) };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore(active);
+    await vi.waitFor(() => expect(store.getState().sessions).toHaveLength(2));
+    store.drafts.setText("s1", "keep this draft");
+    store.drafts.setText("s2", "deleted draft");
 
-      const removing =
-        method === "clear"
-          ? store.clearHiddenSessions(["s2"])
-          : store.deleteSession("s2");
-      await requested.promise;
-      store.setTheme("dark");
-      store.toggleSessionPin("s1");
-      await vi.waitFor(() => expect(patches).toContainEqual({ theme: "dark" }));
-      expect(patches.some((patch) => "pinnedSessionIds" in patch)).toBe(false);
-      deletion.resolve();
-      await removing;
-      expect(store.getState().sessions.map(({ id }) => id)).toEqual(["s1"]);
-      expect(store.getState().sessionStatuses).not.toHaveProperty("s2");
-      expect(store.getState().prefs).toMatchObject({
-        theme: "dark",
-        pinnedSessionIds: [],
-        hiddenSessionIds: [],
-      });
-      expect(sessionDraft("s1")).toBe("keep this draft");
-      expect(sessionDraft("s2")).toBe("");
-    },
-  );
+    const removing = store.deleteSession("s2");
+    await requested.promise;
+    store.setPreference("theme", "dark");
+    store.toggleSessionPin("s1");
+    await vi.waitFor(() => expect(patches).toContainEqual({ theme: "dark" }));
+    expect(patches.some((patch) => "pinnedSessionIds" in patch)).toBe(false);
+    deletion.resolve();
+    await removing;
+    expect(store.getState().sessions.map(({ id }) => id)).toEqual(["s1"]);
+    expect(store.getState().sessionStatuses).not.toHaveProperty("s2");
+    expect(store.getState().prefs).toMatchObject({
+      theme: "dark",
+      pinnedSessionIds: [],
+      hiddenSessionIds: [],
+    });
+    expect(store.drafts.get("s1").text).toBe("keep this draft");
+    expect(store.drafts.get("s2").text).toBe("");
+  });
 });

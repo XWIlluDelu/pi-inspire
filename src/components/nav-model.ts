@@ -4,6 +4,7 @@ import {
   type SessionSummary,
 } from "../../shared/contracts";
 import type { AppState } from "../app-state";
+import type { SessionCatalogView } from "../workbench-session";
 
 type HiddenDeletionState = Pick<
   AppState,
@@ -14,16 +15,19 @@ type HiddenDeletionState = Pick<
   | "sessionListHydrating"
   | "sessionListError"
   | "sessionListIssues"
+  | "curationPending"
   | "clearingHidden"
   | "deletingSessionId"
 >;
 
-/** The drawer and each complete folder require a complete, settled selection.
+/** Hidden and each folder require a complete, settled selection.
  * Confirmed deletion ends active Pi instances; work does not disable it. */
 export function hiddenDeletionBlockReason(
   sessions: readonly SessionSummary[],
   state: HiddenDeletionState,
 ): string | null {
+  if (state.curationPending)
+    return "Wait for the current navigation change to finish";
   if (state.clearingHidden)
     return "Wait for the current Hidden deletion to finish";
   if (state.deletingSessionId !== null)
@@ -88,19 +92,23 @@ export type NavCuration = Pick<
   | "hiddenSessionIds"
 >;
 
-interface NavSections {
-  /** Browsable sessions before the All view groups them. */
+type FolderSection = {
+  kind: "folder";
+  group: SessionGroup;
+  hidden: boolean;
+};
+type CatalogSection =
+  | FolderSection
+  | { kind: "pinned" | "needs-you" | "hidden"; sessions: SessionSummary[] };
+
+export function sectionSessions(section: CatalogSection): SessionSummary[] {
+  return section.kind === "folder" ? section.group.sessions : section.sessions;
+}
+
+interface Catalog {
   visible: SessionSummary[];
-  /** Individually pinned sessions across projects, newest activity first. */
-  pinned: SessionSummary[];
-  /** Groups whose folder is pinned, ordered like ordinary groups. */
-  pinnedGroups: SessionGroup[];
-  /** The remaining folders. */
-  groups: SessionGroup[];
-  /** Folders moved into Hidden as complete groups. */
-  hiddenGroups: SessionGroup[];
-  /** Individually hidden sessions outside hidden folders, newest first. */
-  hidden: SessionSummary[];
+  all: CatalogSection[];
+  hidden: CatalogSection[];
 }
 
 /** Hiding applies to every session-entry surface, not just the sidebar. */
@@ -115,35 +123,65 @@ export function visibleSessions(
   );
 }
 
-/** Partition the list into navigation sections with one display owner per
- * session. A hidden folder outranks both session-level states; individual
- * hiding then outranks pinning, and an individual pin outranks a folder pin. */
-export function splitNavSections(
+/** Hidden folder, hidden session, pinned session, then pinned folder. */
+export function buildSessionCatalog(
   sessions: SessionSummary[],
   curation: NavCuration,
-): NavSections {
+): Catalog {
   const pinnedIds = new Set(curation.pinnedSessionIds);
   const hiddenIds = new Set(curation.hiddenSessionIds);
   const pinnedCwds = new Set(curation.pinnedProjectCwds);
   const hiddenCwds = new Set(curation.hiddenProjectCwds);
   const visible = visibleSessions(sessions, curation);
-  const groups = groupSessionsByCwd(
+  const groupSection = (
+    group: SessionGroup,
+    hidden = false,
+  ): FolderSection => ({ kind: "folder", group, hidden });
+  const folderSections = groupSessionsByCwd(
     visible.filter((session) => !pinnedIds.has(session.id)),
-  );
+  ).map((group) => groupSection(group));
   return {
     visible,
-    pinned: visible
-      .filter((session) => pinnedIds.has(session.id))
-      .sort(byRecency),
-    pinnedGroups: groups.filter((group) => pinnedCwds.has(group.cwd)),
-    groups: groups.filter((group) => !pinnedCwds.has(group.cwd)),
-    hiddenGroups: groupSessionsByCwd(
-      sessions.filter((session) => hiddenCwds.has(session.cwd)),
-    ),
-    hidden: sessions
-      .filter(
-        (session) => !hiddenCwds.has(session.cwd) && hiddenIds.has(session.id),
-      )
-      .sort(byRecency),
+    all: [
+      {
+        kind: "pinned",
+        sessions: visible
+          .filter((session) => pinnedIds.has(session.id))
+          .sort(byRecency),
+      },
+      ...folderSections.filter(({ group }) => pinnedCwds.has(group.cwd)),
+      ...folderSections.filter(({ group }) => !pinnedCwds.has(group.cwd)),
+    ],
+    hidden: [
+      {
+        kind: "hidden",
+        sessions: sessions
+          .filter(
+            (session) =>
+              !hiddenCwds.has(session.cwd) && hiddenIds.has(session.id),
+          )
+          .sort(byRecency),
+      },
+      ...groupSessionsByCwd(
+        sessions.filter((session) => hiddenCwds.has(session.cwd)),
+      ).map((group) => groupSection(group, true)),
+    ],
   };
+}
+
+export function catalogSections(
+  catalog: Catalog,
+  view: SessionCatalogView,
+  searching: boolean,
+  needsYou: SessionSummary[],
+): CatalogSection[] {
+  const sections =
+    view === "needs-you"
+      ? [{ kind: "needs-you" as const, sessions: needsYou }]
+      : view === "hidden"
+        ? catalog.hidden
+        : searching
+          ? [...catalog.all, ...catalog.hidden]
+          : catalog.all;
+  return sections.filter((section) => sectionSessions(section).length);
 }

@@ -114,7 +114,13 @@ function parseWireEvent(data: unknown): WireEvent | null {
       typeof (event as { type?: unknown }).type !== "string"
     )
       return null;
-    return event as WireEvent;
+    const wire = event as WireEvent;
+    if (
+      wire.sessionStatus !== undefined &&
+      !isSessionRuntimeStatus(wire.sessionStatus)
+    )
+      return null;
+    return wire;
   } catch {
     return null;
   }
@@ -127,7 +133,12 @@ function isAuthoritativeSnapshot(
   if (
     event.type !== "snapshot" ||
     !authorityId ||
-    event.authorityId !== authorityId
+    event.authorityId !== authorityId ||
+    typeof event.detailRevision !== "number" ||
+    !Number.isSafeInteger(event.detailRevision) ||
+    event.detailRevision < 0 ||
+    (event.detailSessionId !== null &&
+      typeof event.detailSessionId !== "string")
   )
     return false;
   const data = event.data;
@@ -145,8 +156,7 @@ function isAuthoritativeSnapshot(
         !Array.isArray(active))) &&
     (event.missingDetail === true
       ? active === null && typeof event.detailSessionId === "string"
-      : event.detailRevision === undefined ||
-        activeId === event.detailSessionId) &&
+      : activeId === event.detailSessionId) &&
     sessionStatuses !== null &&
     typeof sessionStatuses === "object" &&
     !Array.isArray(sessionStatuses) &&
@@ -295,19 +305,18 @@ export class ConnectionController {
       }
 
       if (event.type === "snapshot") {
-        // A snapshot already in flight for an old interest cannot replace a
-        // selection the browser committed while that read was pending.
-        if (
-          event.detailRevision !== undefined &&
-          (event.detailRevision !== this.detailRevision ||
-            event.detailSessionId !== this.detailSessionId ||
-            this.detailSessionId !== this.wantedDetailSessionId)
-        )
-          return;
         if (!isAuthoritativeSnapshot(event, this.host.state().authorityId)) {
           this.failSocket(socket, "bootstrap");
           return;
         }
+        // A snapshot already in flight for an old interest cannot replace a
+        // selection the browser committed while that read was pending.
+        if (
+          event.detailRevision !== this.detailRevision ||
+          event.detailSessionId !== this.detailSessionId ||
+          this.detailSessionId !== this.wantedDetailSessionId
+        )
+          return;
         const first = !this.synchronized;
         if (!this.flushStreamUpdate(socket)) return;
         if (event.missingDetail === true) {

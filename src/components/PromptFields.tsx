@@ -30,19 +30,24 @@ export function PromptInput({
   const id = useId();
   const [value, setValue] = useState(initialValue);
   const [revealed, setRevealed] = useState(false);
-  const field = (
+  const field = {
+    id,
+    "aria-label": title,
+    "data-modal-autofocus": true,
+    autoFocus: true,
+    placeholder,
+    disabled: pending,
+    value,
+    onChange: (
+      event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
+    ) => setValue(event.target.value),
+  };
+  const input = (
     <input
-      id={id}
-      aria-label={title}
-      data-modal-autofocus
-      autoFocus
+      {...field}
       className={inlineLabel ? undefined : "dialog__input"}
       type={kind === "secret" && !revealed ? "password" : "text"}
       autoComplete="off"
-      placeholder={placeholder}
-      disabled={pending}
-      value={value}
-      onChange={(event) => setValue(event.target.value)}
     />
   );
   const submit = (
@@ -75,20 +80,10 @@ export function PromptInput({
         <h2 className="dialog__title">{title}</h2>
       )}
       {kind === "editor" ? (
-        <textarea
-          id={id}
-          aria-label={title}
-          data-modal-autofocus
-          autoFocus
-          rows={10}
-          className="dialog__editor"
-          value={value}
-          disabled={pending}
-          onChange={(event) => setValue(event.target.value)}
-        />
+        <textarea {...field} rows={10} className="dialog__editor" />
       ) : kind === "secret" ? (
         <div className="models-secret-input">
-          {field}
+          {input}
           <button
             type="button"
             className="models-icon-button"
@@ -104,7 +99,7 @@ export function PromptInput({
           </button>
         </div>
       ) : (
-        field
+        input
       )}
       {error}
       {inlineLabel ? (

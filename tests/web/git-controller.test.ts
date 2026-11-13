@@ -75,8 +75,7 @@ function createHarness(initial: Partial<GitControllerState> = {}) {
     resourceTabs: [],
     gitStatus: null,
     gitStatusError: null,
-    gitStatusLoading: false,
-    gitStatusRefreshing: false,
+    gitStatusPending: false,
     gitDiff: null,
     ...initial,
   };

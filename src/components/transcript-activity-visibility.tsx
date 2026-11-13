@@ -8,8 +8,6 @@ import {
   useState,
 } from "react";
 
-const VisibleActivityItems = createContext<ReadonlySet<string> | null>(null);
-
 interface ReaderScrollPosition {
   top: number;
   left: number;
@@ -25,7 +23,9 @@ type ActivityReadingChoice = {
 /** Only deliberate choices outlive an omitted card. The projection owns this
  * map; defaults and transient renderer state never become saved preferences. */
 export type ActivityReadingChoices = Map<string, ActivityReadingChoice>;
-const ReadingChoices = createContext<ActivityReadingChoices | null>(null);
+export const ReadingChoices = createContext<ActivityReadingChoices | null>(
+  null,
+);
 const ActivityItemId = createContext<string | null>(null);
 const ReadingBlock = createContext("");
 
@@ -131,28 +131,6 @@ export function useActivityReaderScroll<T extends HTMLElement>(
   };
 }
 
-export function ActivityItemVisibilityProvider({
-  visibleIds,
-  readingChoices,
-  children,
-}: {
-  visibleIds: ReadonlySet<string> | null;
-  readingChoices?: ActivityReadingChoices;
-  children: ReactNode;
-}) {
-  return (
-    <ReadingChoices.Provider value={readingChoices ?? null}>
-      <VisibleActivityItems.Provider value={visibleIds}>
-        {children}
-      </VisibleActivityItems.Provider>
-    </ReadingChoices.Provider>
-  );
-}
-
-function useVisibleActivityItemIds(): ReadonlySet<string> | null {
-  return useContext(VisibleActivityItems);
-}
-
 export function useActivityDisclosure() {
   const choices = useContext(ReadingChoices);
   const id = useContext(ActivityItemId);
@@ -169,75 +147,21 @@ export function useActivityDisclosure() {
   ] as const;
 }
 
-function isVisible(
-  visibleIds: ReadonlySet<string> | null,
-  ids: readonly string[],
-): boolean {
-  return (
-    visibleIds === null ||
-    ids.length === 0 ||
-    ids.some((id) => visibleIds.has(id))
-  );
-}
-
-/** A rolling compact tail can retire a focused card, strip button or detail.
- * Ref cleanup observes focus before its DOM disappears; a later user choice
- * still wins over the deferred recovery. */
-function recoverOmittedActivityFocus(element: HTMLElement | null) {
-  if (!element) return;
-  return () => {
-    const focused = document.activeElement;
-    if (!element.contains(focused)) return;
-    const fold = element.closest<HTMLElement>("[data-activity-fold]");
-    queueMicrotask(() => {
-      if (
-        focused?.isConnected ||
-        (document.activeElement !== document.body &&
-          document.activeElement !== focused)
-      )
-        return;
-      const control =
-        fold?.querySelector<HTMLElement>(".activity-fold__omission") ??
-        fold?.querySelector<HTMLElement>(
-          '[data-activity-fold-anchor="start"], [data-activity-fold-anchor="center"]',
-        );
-      control?.focus({ preventScroll: true });
-    });
-  };
-}
-
-/** Omitted fragments do not mount their renderers or layout wrappers. */
-export function ActivitySegmentBoundary({
-  ids,
+/** Only a real Pi tool call carries its explicit choices across pages and checkpoints. */
+export function ActivityItemOwner({
+  toolCallId,
+  onFocus,
   children,
 }: {
-  ids: readonly string[];
+  toolCallId?: string;
+  onFocus: () => void;
   children: ReactNode;
 }) {
-  const visibleIds = useVisibleActivityItemIds();
-  return isVisible(visibleIds, ids) ? (
-    <div ref={recoverOmittedActivityFocus} className="activity-item-boundary">
-      {children}
-    </div>
-  ) : null;
-}
-
-/** A visible card borrows its small reading choice from the projection, so
- * Compact can unmount the hidden prefix without forgetting manual disclosure. */
-export function ActivityItemBoundary({
-  id,
-  children,
-}: {
-  id: string;
-  children: ReactNode;
-}) {
-  const visibleIds = useVisibleActivityItemIds();
-  if (visibleIds !== null && !visibleIds.has(id)) return null;
   return (
-    <ActivityItemId.Provider value={id}>
-      <div ref={recoverOmittedActivityFocus} className="activity-item-boundary">
+    <ActivityItemId value={toolCallId ?? null}>
+      <div className="activity-item-boundary" onFocus={onFocus}>
         {children}
       </div>
-    </ActivityItemId.Provider>
+    </ActivityItemId>
   );
 }

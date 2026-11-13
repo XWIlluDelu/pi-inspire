@@ -1,147 +1,138 @@
 import { Plus, Trash2, Undo2 } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
+import {
+  type ConfigurationControl,
+  type SecretEdit,
+  secretValue,
+} from "../../shared/configuration-fields";
 import {
   MCP_EXPOSURES,
-  type McpClientRegistration,
+  MCP_SERVER_NAME,
   type McpConfigEntry,
   type McpConfigScope,
   type McpConfigSnapshot,
   type McpConfigValues,
   type McpConnectionRead,
   type McpConnectionValues,
-  type McpExposure,
   mcpOAuthError,
+  mcpOAuthFields,
+  mcpSecretMaps,
+  mcpServerFields,
 } from "../../shared/mcp";
-import { ConfigurationForm } from "./ConfigurationForm";
+import {
+  ConfigurationForm,
+  ConfigurationInput,
+  ProtectedConfigurationInput,
+} from "./ConfigurationForm";
 import { DetailSummary } from "./DetailSummary";
 import { NativeSelect } from "./NativeSelect";
 import { SettingsSwitch } from "./SettingsControls";
 
 const exposureOptions = MCP_EXPOSURES.map((value) => ({
   value,
-  label:
-    value === "codemode"
-      ? "Codemode"
-      : value[0]!.toUpperCase() + value.slice(1),
+  label: value[0]!.toUpperCase() + value.slice(1),
 }));
-type Pair = {
+type MapRow<Value> = {
   id: number;
   key: string;
-  value: string;
-  stored: boolean;
-  removed: boolean;
+  value: Value;
+  stored?: boolean;
 };
-function validateUniqueKeys(fieldset: HTMLFieldSetElement | null) {
-  const inputs = [
-    ...(fieldset?.querySelectorAll<HTMLInputElement>("input[data-map-key]") ??
-      []),
-  ];
-  const keys = inputs.map((input) => input.value);
-  for (const input of inputs)
-    input.setCustomValidity(
-      keys.filter((key) => key === input.value).length > 1
-        ? "Names must be unique within this list."
-        : "",
-    );
-}
-function storedPairs(keys: string[]): Pair[] {
-  return keys.map((key, id) => ({
+
+function mapRows<Value>(entries: Record<string, Value>): MapRow<Value>[] {
+  return Object.entries(entries).map(([key, value], id) => ({
     id,
     key,
-    value: "",
-    stored: true,
-    removed: false,
+    value,
   }));
 }
-/** Values are write-only. Empty replacement means keep; deletion is always explicit. */
-function SecretMap({
+
+type SecretRow = MapRow<SecretEdit>;
+const keepSecret = { kind: "keep" } as const;
+function storedSecrets(keys: string[]): SecretRow[] {
+  return keys.map((key, id) => ({ id, key, value: keepSecret, stored: true }));
+}
+
+function MapFields<Value>({
   label,
+  keyLabel,
+  addLabel,
   rows,
-  onChange,
+  initialValue,
   busy,
+  hint,
+  onChange,
+  remove,
+  valueInput,
 }: {
   label: string;
-  rows: Pair[];
-  onChange: (rows: Pair[]) => void;
+  keyLabel: string;
+  addLabel: string;
+  rows: MapRow<Value>[];
+  initialValue: Value;
   busy: boolean;
+  hint?: string;
+  onChange: (rows: MapRow<Value>[]) => void;
+  remove: (
+    row: MapRow<Value>,
+    index: number,
+  ) => {
+    label: string;
+    restore?: boolean;
+    value?: Value;
+  };
+  valueInput: (row: MapRow<Value>, update: (value: Value) => void) => ReactNode;
 }) {
   const fieldset = useRef<HTMLFieldSetElement>(null);
-  useLayoutEffect(() => validateUniqueKeys(fieldset.current), [rows]);
+  useLayoutEffect(() => {
+    const counts = new Map<string, number>();
+    for (const row of rows) counts.set(row.key, (counts.get(row.key) ?? 0) + 1);
+    for (const input of fieldset.current?.querySelectorAll<HTMLInputElement>(
+      "input[data-map-key]",
+    ) ?? [])
+      input.setCustomValidity(
+        (counts.get(input.value) ?? 0) > 1
+          ? "Names must be unique within this list."
+          : "",
+      );
+  }, [rows]);
+  const change = (id: number, fields: Partial<MapRow<Value>>) =>
+    onChange(rows.map((row) => (row.id === id ? { ...row, ...fields } : row)));
   return (
     <fieldset className="mcp-fields" ref={fieldset}>
       <legend>{label}</legend>
-      {rows.map((row) => (
-        <div className="mcp-pair" key={row.id}>
-          <label>
-            Name
-            <input
-              aria-label={`${label} name`}
+      {hint && <p className="models-status">{hint}</p>}
+      {rows.map((row, index) => {
+        const action = remove(row, index);
+        const Icon = action.restore ? Undo2 : Trash2;
+        return (
+          <div className="mcp-pair" key={row.id}>
+            <ConfigurationInput
+              label={keyLabel}
+              aria-label={keyLabel}
               data-map-key
               value={row.key}
-              required={!row.removed}
+              required
               disabled={busy || row.stored}
-              onChange={(event) =>
-                onChange(
-                  rows.map((item) =>
-                    item.id === row.id
-                      ? { ...item, key: event.target.value }
-                      : item,
-                  ),
-                )
-              }
+              onChange={(event) => change(row.id, { key: event.target.value })}
             />
-          </label>
-          <label>
-            Value
-            <input
-              aria-label={`${label} value for ${row.key || "new entry"}`}
-              type="password"
-              autoComplete="new-password"
-              value={row.value}
-              disabled={busy || row.removed}
-              placeholder={
-                row.removed
-                  ? "Will be removed"
-                  : row.stored
-                    ? "Stored · leave blank to keep"
-                    : "${ENV_VAR} or a value"
+            {valueInput(row, (value) => change(row.id, { value }))}
+            <button
+              type="button"
+              className="models-icon-button"
+              aria-label={action.label}
+              disabled={busy}
+              onClick={() =>
+                action.value === undefined
+                  ? onChange(rows.filter((item) => item.id !== row.id))
+                  : change(row.id, { value: action.value })
               }
-              onChange={(event) =>
-                onChange(
-                  rows.map((item) =>
-                    item.id === row.id
-                      ? { ...item, value: event.target.value }
-                      : item,
-                  ),
-                )
-              }
-            />
-          </label>
-          <button
-            type="button"
-            className="models-icon-button"
-            aria-label={`${row.removed ? "Keep" : "Remove"} ${label.toLowerCase()} ${row.key || "entry"}`}
-            disabled={busy}
-            onClick={() =>
-              onChange(
-                row.stored
-                  ? rows.map((item) =>
-                      item.id === row.id
-                        ? { ...item, removed: !item.removed, value: "" }
-                        : item,
-                    )
-                  : rows.filter((item) => item.id !== row.id),
-              )
-            }
-          >
-            {row.removed ? (
-              <Undo2 size={14} aria-hidden />
-            ) : (
-              <Trash2 size={14} aria-hidden />
-            )}
-          </button>
-        </div>
-      ))}
+            >
+              <Icon size={14} aria-hidden />
+            </button>
+          </div>
+        );
+      })}
       <button
         type="button"
         className="models-text-button"
@@ -149,30 +140,88 @@ function SecretMap({
         onClick={() =>
           onChange([
             ...rows,
-            {
-              id: (rows.at(-1)?.id ?? -1) + 1,
-              key: "",
-              value: "",
-              stored: false,
-              removed: false,
-            },
+            { id: (rows.at(-1)?.id ?? -1) + 1, key: "", value: initialValue },
           ])
         }
       >
-        <Plus size={13} aria-hidden /> Add {label.toLowerCase()}
+        <Plus size={13} aria-hidden /> {addLabel}
       </button>
     </fieldset>
   );
 }
-const oauthLabels = [
-  ["clientId", "Client ID"],
-  ["clientSecret", "Client secret"],
-  ["clientName", "Client name"],
-  ["callbackUrl", "Callback URL"],
-  ["callbackPort", "Callback port"],
-  ["scope", "OAuth scope"],
-  ["authServerMetadataUrl", "Authorization server metadata URL"],
+
+function SecretMap({
+  label,
+  rows,
+  onChange,
+  busy,
+}: {
+  label: string;
+  rows: SecretRow[];
+  onChange: (rows: SecretRow[]) => void;
+  busy: boolean;
+}) {
+  return (
+    <MapFields<SecretEdit>
+      label={label}
+      keyLabel={`${label} name`}
+      addLabel={`Add ${label.toLowerCase()}`}
+      rows={rows}
+      onChange={onChange}
+      initialValue={keepSecret}
+      busy={busy}
+      remove={(row) => {
+        const restore = row.value.kind === "remove";
+        return {
+          label: `${restore ? "Keep" : "Remove"} ${label.toLowerCase()} ${row.key || "entry"}`,
+          restore,
+          value: row.stored
+            ? restore
+              ? keepSecret
+              : { kind: "remove" }
+            : undefined,
+        };
+      }}
+      valueInput={(row, change) => (
+        <ConfigurationInput
+          label="Value"
+          aria-label={`${label} value for ${row.key || "new entry"}`}
+          type="password"
+          autoComplete="new-password"
+          value={secretValue(row.value) ?? ""}
+          disabled={busy || row.value.kind === "remove"}
+          placeholder={
+            row.value.kind === "remove"
+              ? "Will be removed"
+              : row.stored
+                ? "Stored · leave blank to keep"
+                : "${ENV_VAR} or a value"
+          }
+          onChange={(event) =>
+            change(
+              event.target.value
+                ? { kind: "replace", value: event.target.value }
+                : keepSecret,
+            )
+          }
+        />
+      )}
+    />
+  );
+}
+
+type OAuthField = keyof typeof mcpOAuthFields;
+const oauthFields = Object.entries(mcpOAuthFields) as [
+  OAuthField,
+  { control: ConfigurationControl },
+][];
+const oauthRegistrationOptions = [
+  { value: "auto", label: "Automatic (Pi default)" },
+  { value: "dcr", label: "Client ID or dynamic registration" },
+  { value: "cimd", label: "Pi metadata document (CIMD)" },
 ] as const;
+const hasOAuthIdentity = (key: string) =>
+  key === "clientId" || key === "clientName";
 
 export function McpServerForm({
   entry,
@@ -180,6 +229,7 @@ export function McpServerForm({
   initialScope,
   snapshot,
   busy,
+  readFailed,
   error,
   onSave,
   onReadConnection,
@@ -191,6 +241,7 @@ export function McpServerForm({
   initialScope: McpConfigScope;
   snapshot: McpConfigSnapshot;
   busy: boolean;
+  readFailed?: boolean;
   error: string | null;
   onSave: (
     scope: McpConfigScope,
@@ -205,12 +256,10 @@ export function McpServerForm({
   const [name, setName] = useState(entry?.name ?? policyName ?? "");
   const [transport, setTransport] = useState(entry?.transport ?? "http");
   const [patch, setPatch] = useState<McpConfigValues>({});
-  const [envRows, setEnvRows] = useState(() =>
-    storedPairs(entry?.envKeys ?? []),
-  );
-  const [headerRows, setHeaderRows] = useState(() =>
-    storedPairs(entry?.headerKeys ?? []),
-  );
+  const [secrets, setSecrets] = useState(() => ({
+    env: storedSecrets(entry?.envKeys ?? []),
+    headers: storedSecrets(entry?.headerKeys ?? []),
+  }));
   const [connection, setConnection] = useState<McpConnectionValues | null>(
     null,
   );
@@ -218,22 +267,23 @@ export function McpServerForm({
   useLayoutEffect(() => {
     if (connection) connectionInput.current?.focus();
   }, [connection]);
-  const [readingConnection, setReadingConnection] = useState(false);
-  const [connectionError, setConnectionError] = useState<string | null>(null);
-  const mounted = useRef(false);
-  useEffect(() => {
-    mounted.current = true;
+  const [connectionStatus, setConnectionStatus] = useState<
+    "loading" | { error: string }
+  >();
+  const readingConnection = connectionStatus === "loading";
+  const connectionError =
+    typeof connectionStatus === "object" ? connectionStatus.error : undefined;
+  const connectionOwner = useRef<string | null>(null);
+  const file = snapshot.files.find((file) => file.scope === scope)!;
+  useLayoutEffect(() => {
+    connectionOwner.current = file.revision;
     return () => {
-      mounted.current = false;
+      connectionOwner.current = null;
     };
-  }, []);
-  const [replaceArgs, setReplaceArgs] = useState(false);
-  const [args, setArgs] = useState<string[]>([]);
+  }, [file.revision]);
+  const args = patch.args ?? connection?.args ?? [];
   const [toolRules, setToolRules] = useState(
-    Object.entries(entry?.toolExposure ?? {}).map(([key, value]) => ({
-      key,
-      value,
-    })),
+    mapRows(entry?.toolExposure ?? {}),
   );
   const hasStoredPrivateValues = Boolean(
     entry &&
@@ -243,19 +293,34 @@ export function McpServerForm({
         entry.headerKeys.length ||
         entry.oauthFields.length),
   );
-  const ruleFields = useRef<HTMLFieldSetElement>(null);
-  useLayoutEffect(() => validateUniqueKeys(ruleFields.current), [toolRules]);
   const change = <K extends keyof McpConfigValues>(
     key: K,
     value: McpConfigValues[K],
   ) => setPatch((current) => ({ ...current, [key]: value }));
-  const file = snapshot.files.find((file) => file.scope === scope)!;
-  const currentRevision = useRef(file.revision);
-  currentRevision.current = file.revision;
+  const fields = <Key extends keyof typeof mcpServerFields>(key: Key) => {
+    const { control } = mcpServerFields[key];
+    return {
+      ...control,
+      disabled: busy,
+      value: patch[key] === null ? "" : (patch[key] ?? entry?.[key] ?? ""),
+      onChange: ({
+        currentTarget: input,
+      }: React.ChangeEvent<HTMLInputElement>) =>
+        change(
+          key,
+          (input.value
+            ? control.type === "number"
+              ? input.valueAsNumber
+              : input.value
+            : control.required
+              ? ""
+              : null) as McpConfigValues[Key],
+        ),
+    };
+  };
   async function showConnection() {
     if (!entry) return;
-    setReadingConnection(true);
-    setConnectionError(null);
+    setConnectionStatus("loading");
     const revision = file.revision;
     try {
       const value = await onReadConnection({
@@ -263,25 +328,31 @@ export function McpServerForm({
         name: entry.name,
         revision,
       });
-      if (!mounted.current) return;
-      if (currentRevision.current !== revision)
+      if (connectionOwner.current === null) return;
+      if (connectionOwner.current !== revision)
         throw new Error("Configuration changed. Show the saved values again.");
       setConnection(value);
-      if (transport === "stdio") {
-        setArgs(value.args ?? []);
-        setReplaceArgs(true);
-      }
+      setConnectionStatus(undefined);
     } catch (error) {
-      if (mounted.current)
-        setConnectionError(
-          error instanceof Error
-            ? error.message
-            : "Saved connection values could not be read.",
-        );
-    } finally {
-      if (mounted.current) setReadingConnection(false);
+      if (connectionOwner.current !== null)
+        setConnectionStatus({
+          error:
+            error instanceof Error
+              ? error.message
+              : "Saved connection values could not be read.",
+        });
     }
   }
+  const revealConnection = (label: string) => (
+    <button
+      type="button"
+      className="models-text-button"
+      disabled={busy || readingConnection || Boolean(file.error)}
+      onClick={() => void showConnection()}
+    >
+      {readingConnection ? `Loading saved ${label}…` : `Show saved ${label}`}
+    </button>
+  );
   const enabled = patch.enabled === undefined ? entry?.enabled : patch.enabled;
   const exposure =
     patch.exposure === undefined ? entry?.exposure : patch.exposure;
@@ -297,6 +368,8 @@ export function McpServerForm({
     ...patch.oauth,
     clientRegistration: registration,
   };
+  const secretKey = transport === "http" ? "headers" : "env";
+  const secretMap = mcpSecretMaps[secretKey];
   for (const key of ["clientId", "clientName"] as const)
     if (patch.oauth?.[key] === undefined && entry?.oauthFields.includes(key))
       oauth[key] = "stored";
@@ -304,6 +377,9 @@ export function McpServerForm({
     if (value === null) delete oauth[key];
   const oauthError =
     transport === "http" && !policyOnly ? mcpOAuthError(oauth) : undefined;
+  const blocked = Boolean(
+    readingConnection || readFailed || file.error || oauthError,
+  );
   const unchangedPolicy =
     Boolean(policyName) && !Object.values(patch).some((value) => value != null);
   const rulesChanged = (rules: typeof toolRules) => {
@@ -323,17 +399,17 @@ export function McpServerForm({
     });
   };
   const submit = () => {
-    if (oauthError || unchangedPolicy) return;
+    if (busy || blocked || unchangedPolicy) return;
     const values = { ...patch };
-    const secrets = Object.fromEntries(
-      (transport === "http" ? headerRows : envRows).flatMap((row) =>
-        row.key && (row.removed || row.value || !row.stored)
-          ? [[row.key, row.removed ? null : row.value]]
-          : [],
-      ),
+    const editedSecrets = Object.fromEntries(
+      secrets[secretKey].flatMap(({ key, value, stored }) => {
+        const change = secretValue(value);
+        return key && (change !== undefined || !stored)
+          ? [[key, change === undefined ? "" : change]]
+          : [];
+      }),
     );
-    if (Object.keys(secrets).length)
-      values[transport === "http" ? "headers" : "env"] = secrets;
+    if (Object.keys(editedSecrets).length) values[secretKey] = editedSecrets;
     if (!entry) {
       if (transport === "http") {
         delete values.command;
@@ -349,12 +425,7 @@ export function McpServerForm({
   return (
     <ConfigurationForm
       busy={busy}
-      saveDisabled={
-        readingConnection ||
-        Boolean(file.error) ||
-        Boolean(oauthError) ||
-        unchangedPolicy
-      }
+      saveDisabled={blocked || unchangedPolicy}
       pendingLabel="Saving…"
       onSave={submit}
       onCancel={onCancel}
@@ -372,21 +443,19 @@ export function McpServerForm({
           </p>
         ) : (
           <>
-            <label>
-              Server name
-              <input
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                required
-                pattern="[A-Za-z0-9_-]+"
-                disabled={busy}
-                autoFocus
-                placeholder="project-tools"
-              />
-            </label>
+            <ConfigurationInput
+              label="Server name"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              required
+              pattern={MCP_SERVER_NAME.source}
+              disabled={busy}
+              autoFocus
+              placeholder="project-tools"
+            />
             <div className="models-form__field">
               <span>Configuration target</span>
-              <NativeSelect
+              <NativeSelect<McpConfigScope>
                 className="native-select--field"
                 label="Configuration target"
                 value={scope}
@@ -398,7 +467,7 @@ export function McpServerForm({
                       ? "User · all projects"
                       : "This project",
                 }))}
-                onChange={(value) => setScope(value as McpConfigScope)}
+                onChange={setScope}
               />
             </div>
           </>
@@ -413,87 +482,62 @@ export function McpServerForm({
         {!entry && !policyName && (
           <div className="models-form__field models-form__wide">
             <span>Transport</span>
-            <NativeSelect
+            <NativeSelect<"http" | "stdio">
               className="native-select--field"
               label="Transport"
               value={transport}
               disabled={busy}
-              options={[
-                { value: "http", label: "Streamable HTTP" },
-                { value: "stdio", label: "Stdio" },
-              ]}
-              onChange={(value) => setTransport(value as "http" | "stdio")}
+              options={
+                [
+                  { value: "http", label: "Streamable HTTP" },
+                  { value: "stdio", label: "Stdio" },
+                ] as const
+              }
+              onChange={setTransport}
             />
           </div>
         )}
         {policyOnly ? null : transport === "http" ? (
           <div className="models-form__field models-form__wide">
-            <label>
-              Server URL
-              <input
-                type="text"
-                autoComplete="new-password"
-                ref={connectionInput}
-                value={patch.url ?? connection?.url ?? ""}
-                onChange={(event) =>
-                  change(
-                    "url",
-                    connection
-                      ? event.target.value
-                      : event.target.value || undefined,
-                  )
-                }
-                required={Boolean(connection) || !entry?.urlConfigured}
-                disabled={busy}
-                autoFocus={Boolean(entry)}
-                placeholder={
-                  entry?.urlConfigured
-                    ? "Stored URL · leave blank to keep"
-                    : "https://example.com/mcp"
-                }
-              />
-            </label>
-            {entry?.urlConfigured && !connection ? (
-              <button
-                type="button"
-                className="models-text-button"
-                disabled={busy || readingConnection || Boolean(file.error)}
-                onClick={() => void showConnection()}
-              >
-                {readingConnection ? "Loading saved URL…" : "Show saved URL"}
-              </button>
-            ) : null}
+            <ConfigurationInput
+              label="Server URL"
+              type="text"
+              autoComplete="new-password"
+              ref={connectionInput}
+              value={patch.url ?? connection?.url ?? ""}
+              onChange={(event) =>
+                change(
+                  "url",
+                  connection
+                    ? event.target.value
+                    : event.target.value || undefined,
+                )
+              }
+              required={Boolean(connection) || !entry?.urlConfigured}
+              disabled={busy}
+              autoFocus={Boolean(entry)}
+              placeholder={
+                entry?.urlConfigured
+                  ? "Stored URL · leave blank to keep"
+                  : "https://example.com/mcp"
+              }
+            />
+            {entry?.urlConfigured && !connection && revealConnection("URL")}
           </div>
         ) : (
           <>
-            <label className="models-form__wide">
-              Program
-              <input
-                value={patch.command ?? entry?.command ?? ""}
-                onChange={(event) => change("command", event.target.value)}
-                required
-                disabled={busy}
-                autoFocus={Boolean(entry)}
-                placeholder="npx"
-              />
-            </label>
+            <ConfigurationInput
+              {...fields("command")}
+              autoFocus={Boolean(entry)}
+            />
             <fieldset className="mcp-fields models-form__wide">
               <legend>Arguments</legend>
-              {entry && !replaceArgs ? (
+              {entry && !connection ? (
                 <>
                   <p className="models-status">
                     {entry.argumentCount} saved arguments
                   </p>
-                  <button
-                    type="button"
-                    className="models-text-button"
-                    disabled={busy || readingConnection || Boolean(file.error)}
-                    onClick={() => void showConnection()}
-                  >
-                    {readingConnection
-                      ? "Loading saved arguments…"
-                      : "Show saved arguments"}
-                  </button>
+                  {revealConnection("arguments")}
                 </>
               ) : (
                 <>
@@ -505,33 +549,33 @@ export function McpServerForm({
                   ) : null}
                   {args.map((arg, index) => (
                     <div className="mcp-argument" key={index}>
-                      <label>
-                        Argument {index + 1}
-                        <input
-                          type="text"
-                          autoComplete="off"
-                          ref={index === 0 ? connectionInput : undefined}
-                          value={arg}
-                          disabled={busy}
-                          onChange={(event) => {
-                            const next = args.map((value, i) =>
+                      <ConfigurationInput
+                        label={`Argument ${index + 1}`}
+                        type="text"
+                        autoComplete="off"
+                        ref={index === 0 ? connectionInput : undefined}
+                        value={arg}
+                        disabled={busy}
+                        onChange={(event) =>
+                          change(
+                            "args",
+                            args.map((value, i) =>
                               i === index ? event.target.value : value,
-                            );
-                            setArgs(next);
-                            change("args", next);
-                          }}
-                        />
-                      </label>
+                            ),
+                          )
+                        }
+                      />
                       <button
                         type="button"
                         className="models-icon-button"
                         aria-label={`Remove argument ${index + 1}`}
                         disabled={busy}
-                        onClick={() => {
-                          const next = args.filter((_, i) => i !== index);
-                          setArgs(next);
-                          change("args", next);
-                        }}
+                        onClick={() =>
+                          change(
+                            "args",
+                            args.filter((_, i) => i !== index),
+                          )
+                        }
                       >
                         <Trash2 size={14} aria-hidden />
                       </button>
@@ -541,11 +585,7 @@ export function McpServerForm({
                     type="button"
                     className="models-text-button"
                     disabled={busy}
-                    onClick={() => {
-                      const next = [...args, ""];
-                      setArgs(next);
-                      change("args", next);
-                    }}
+                    onClick={() => change("args", [...args, ""])}
                   >
                     Add argument
                   </button>
@@ -555,8 +595,7 @@ export function McpServerForm({
                       className="models-text-button"
                       disabled={busy}
                       onClick={() => {
-                        setReplaceArgs(false);
-                        setArgs([]);
+                        setConnection(null);
                         change("args", undefined);
                       }}
                     >
@@ -581,41 +620,8 @@ export function McpServerForm({
         <div className="models-form__grid">
           {!policyOnly ? (
             <>
-              <label className="models-form__wide">
-                Description
-                <input
-                  value={
-                    patch.description === null
-                      ? ""
-                      : (patch.description ?? entry?.description ?? "")
-                  }
-                  onChange={(event) =>
-                    change("description", event.target.value || null)
-                  }
-                  disabled={busy}
-                />
-              </label>
-              <label>
-                Timeout (seconds)
-                <input
-                  type="number"
-                  min="0.001"
-                  step="any"
-                  placeholder="60"
-                  value={
-                    patch.timeout === null
-                      ? ""
-                      : (patch.timeout ?? entry?.timeout ?? "")
-                  }
-                  disabled={busy}
-                  onChange={(event) =>
-                    change(
-                      "timeout",
-                      event.target.value ? Number(event.target.value) : null,
-                    )
-                  }
-                />
-              </label>
+              <ConfigurationInput {...fields("description")} />
+              <ConfigurationInput {...fields("timeout")} />
             </>
           ) : null}
           <div className="models-form__field">
@@ -635,10 +641,7 @@ export function McpServerForm({
               }
               disabled={busy}
               onChange={(value) =>
-                change(
-                  "exposure",
-                  value === "inherit" ? null : (value as McpExposure),
-                )
+                change("exposure", value === "inherit" ? null : value)
               }
             />
           </div>
@@ -675,206 +678,99 @@ export function McpServerForm({
               />
             )}
           </div>
-          {transport === "stdio" ? (
-            <label className="models-form__wide">
-              Working directory
-              <input
-                value={
-                  patch.cwd === null ? "" : (patch.cwd ?? entry?.cwd ?? "")
-                }
-                disabled={busy}
-                onChange={(event) => change("cwd", event.target.value || null)}
-                placeholder="Relative to the session directory"
-              />
-            </label>
-          ) : null}
+          {transport === "stdio" && <ConfigurationInput {...fields("cwd")} />}
         </div>
-        {policyOnly ? null : transport === "stdio" ? (
+        {!policyOnly && (
           <SecretMap
-            label="Environment variable"
-            rows={envRows}
-            onChange={setEnvRows}
+            label={secretMap.label}
+            rows={secrets[secretKey]}
+            onChange={(rows) =>
+              setSecrets((current) => ({ ...current, [secretKey]: rows }))
+            }
             busy={busy}
           />
-        ) : (
-          <>
-            <SecretMap
-              label="Header"
-              rows={headerRows}
-              onChange={setHeaderRows}
-              busy={busy}
-            />
-            <details className="models-form__optional">
-              <DetailSummary>OAuth client configuration</DetailSummary>
-              <p className="models-status">
-                HTTP servers can use Pi's automatic OAuth discovery. Configure
-                these only when the server needs them; saving does not sign in.
-              </p>
-              <div className="models-form__grid">
-                <div className="models-form__field models-form__wide">
-                  <span>Client registration</span>
-                  <NativeSelect
-                    className="native-select--field"
-                    label="Client registration"
-                    value={registration}
-                    disabled={busy}
-                    options={[
-                      { value: "auto", label: "Automatic (Pi default)" },
-                      {
-                        value: "dcr",
-                        label: "Client ID or dynamic registration",
-                      },
-                      { value: "cimd", label: "Pi metadata document (CIMD)" },
-                    ]}
-                    onChange={(value) =>
+        )}
+        {!policyOnly && transport === "http" && (
+          <details className="models-form__optional">
+            <DetailSummary>OAuth client configuration</DetailSummary>
+            <p className="models-status">
+              HTTP servers can use Pi's automatic OAuth discovery. Configure
+              these only when the server needs them; saving does not sign in.
+            </p>
+            <div className="models-form__grid">
+              <div className="models-form__field models-form__wide">
+                <span>Client registration</span>
+                <NativeSelect
+                  className="native-select--field"
+                  label="Client registration"
+                  value={registration}
+                  disabled={busy}
+                  options={oauthRegistrationOptions}
+                  onChange={(value) =>
+                    change("oauth", {
+                      ...patch.oauth,
+                      clientRegistration: value,
+                    })
+                  }
+                />
+              </div>
+              {registration === "cimd" ? (
+                <p className="models-status models-form__wide">
+                  Uses Pi's client metadata document instead of a client ID or
+                  name. A custom callback must use localhost or 127.0.0.1 with
+                  the path /callback.
+                </p>
+              ) : null}
+              {oauthFields
+                .filter(
+                  ([key]) =>
+                    registration !== "cimd" ||
+                    !hasOAuthIdentity(key) ||
+                    oauth[key] !== undefined ||
+                    entry?.oauthFields.includes(key),
+                )
+                .map(([key, { control }]) => (
+                  <ProtectedConfigurationInput
+                    key={key}
+                    control={control}
+                    value={patch.oauth?.[key]}
+                    busy={busy}
+                    stored={entry?.oauthFields.includes(key)}
+                    onChange={(edit) =>
                       change("oauth", {
                         ...patch.oauth,
-                        clientRegistration: value as McpClientRegistration,
+                        [key]: secretValue(edit),
                       })
                     }
                   />
-                </div>
-                {registration === "cimd" ? (
-                  <p className="models-status models-form__wide">
-                    Uses Pi's client metadata document instead of a client ID or
-                    name. A custom callback must use localhost or 127.0.0.1 with
-                    the path /callback.
-                  </p>
-                ) : null}
-                {oauthLabels
-                  .filter(
-                    ([key]) =>
-                      registration !== "cimd" ||
-                      !["clientId", "clientName"].includes(key) ||
-                      oauth[key] !== undefined ||
-                      entry?.oauthFields.includes(key),
-                  )
-                  .map(([key, label]) => (
-                    <div className="models-form__field" key={key}>
-                      <label>
-                        {label}
-                        <input
-                          type={
-                            key === "callbackPort"
-                              ? "number"
-                              : key === "clientSecret"
-                                ? "password"
-                                : "text"
-                          }
-                          autoComplete="new-password"
-                          value={patch.oauth?.[key] ?? ""}
-                          min={key === "callbackPort" ? 1 : undefined}
-                          max={key === "callbackPort" ? 65535 : undefined}
-                          disabled={busy || patch.oauth?.[key] === null}
-                          placeholder={
-                            entry?.oauthFields.includes(key)
-                              ? "Stored · leave blank to keep"
-                              : "Optional"
-                          }
-                          onChange={(event) =>
-                            change("oauth", {
-                              ...patch.oauth,
-                              [key]: event.target.value
-                                ? key === "callbackPort"
-                                  ? Number(event.target.value)
-                                  : event.target.value
-                                : undefined,
-                            })
-                          }
-                        />
-                      </label>
-                      {entry?.oauthFields.includes(key) ? (
-                        <label className="models-checkbox">
-                          <input
-                            type="checkbox"
-                            className="choice-input"
-                            disabled={busy}
-                            checked={patch.oauth?.[key] === null}
-                            onChange={(event) =>
-                              change("oauth", {
-                                ...patch.oauth,
-                                [key]: event.target.checked ? null : undefined,
-                              })
-                            }
-                          />
-                          Remove {label.toLowerCase()}
-                        </label>
-                      ) : null}
-                    </div>
-                  ))}
-              </div>
-            </details>
-          </>
-        )}
-        <fieldset className="mcp-fields" ref={ruleFields}>
-          <legend>Per-tool exposure</legend>
-          <p className="models-status">
-            Use exact tool names or * patterns. Exact names win; patterns match
-            in order.
-          </p>
-          {toolRules.map((rule, index) => (
-            <div className="mcp-pair" key={index}>
-              <label>
-                Tool name or pattern
-                <input
-                  value={rule.key}
-                  data-map-key
-                  required
-                  disabled={busy}
-                  onChange={(event) =>
-                    rulesChanged(
-                      toolRules.map((item, i) =>
-                        i === index
-                          ? { ...item, key: event.target.value }
-                          : item,
-                      ),
-                    )
-                  }
-                />
-              </label>
-              <div className="models-form__field">
-                <span>Exposure</span>
-                <NativeSelect
-                  className="native-select--field"
-                  label={`Exposure for ${rule.key || "new rule"}`}
-                  value={rule.value}
-                  options={exposureOptions}
-                  disabled={busy}
-                  onChange={(value) =>
-                    rulesChanged(
-                      toolRules.map((item, i) =>
-                        i === index
-                          ? { ...item, value: value as McpExposure }
-                          : item,
-                      ),
-                    )
-                  }
-                />
-              </div>
-              <button
-                type="button"
-                className="models-icon-button"
-                aria-label={`Remove tool rule ${index + 1}`}
-                disabled={busy}
-                onClick={() =>
-                  rulesChanged(toolRules.filter((_, i) => i !== index))
-                }
-              >
-                <Trash2 size={14} aria-hidden />
-              </button>
+                ))}
             </div>
-          ))}
-          <button
-            type="button"
-            className="models-text-button"
-            disabled={busy}
-            onClick={() =>
-              rulesChanged([...toolRules, { key: "", value: "codemode" }])
-            }
-          >
-            Add tool rule
-          </button>
-        </fieldset>
+          </details>
+        )}
+        <MapFields
+          label="Per-tool exposure"
+          keyLabel="Tool name or pattern"
+          hint="Use exact tool names or * patterns. Exact names win; patterns match in order."
+          addLabel="Add tool rule"
+          rows={toolRules}
+          initialValue="codemode"
+          busy={busy}
+          onChange={rulesChanged}
+          remove={(_, index) => ({ label: `Remove tool rule ${index + 1}` })}
+          valueInput={(rule, change) => (
+            <div className="models-form__field">
+              <span>Exposure</span>
+              <NativeSelect
+                className="native-select--field"
+                label={`Exposure for ${rule.key || "new rule"}`}
+                value={rule.value}
+                options={exposureOptions}
+                disabled={busy}
+                onChange={change}
+              />
+            </div>
+          )}
+        />
       </details>
       {scope === "project" ? (
         <p className="models-status">

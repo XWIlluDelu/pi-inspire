@@ -98,6 +98,8 @@ export interface WorkerView {
   contextGeneration: number;
   finishedMessages: Map<string, string | Record<string, unknown>>;
   sealedCursor: string | null;
+  /** View-local turn owners for native entries adopted from the current worker. */
+  entryTurns: Map<string, string>;
 }
 
 /** What the current Pi worker publishes about its extensions and tools.
@@ -200,10 +202,8 @@ export interface RuntimeSlot {
   /** Exact serialized bytes for each bounded overlay item. */
   overlayItemBytes: number[];
   nextOverlayId: number;
-  /** Fallback correlation of the assistant message whose tool batch is live.
-   * It survives live-overlay absorption without treating an older assistant
-   * as active when the current message falls outside a bounded page. */
-  activeAssistantCorrelation: string | null;
+  activeAssistantKey: string | null;
+  activeTurnId: string | null;
   activeOverlayIds: Map<string, string>;
   conflict: ProjectionConflict | null;
   mutationQueue: RuntimeOperationQueue;
@@ -283,7 +283,8 @@ export function createRuntimeSlot(seed: RuntimeSlotSeed): RuntimeSlot {
     overlay: [],
     overlayItemBytes: [],
     nextOverlayId: 0,
-    activeAssistantCorrelation: null,
+    activeAssistantKey: null,
+    activeTurnId: null,
     activeOverlayIds: new Map(),
     conflict: null,
     mutationQueue: emptyOperationQueue(),

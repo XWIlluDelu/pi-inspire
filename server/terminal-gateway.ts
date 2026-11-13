@@ -5,6 +5,7 @@ import type { Express } from "express";
 import { WebSocket, WebSocketServer } from "ws";
 import { z } from "zod";
 import { BROWSER_UPGRADE_CLOSE } from "../shared/browser-build.mjs";
+import { hostEndpoints as routes } from "../shared/host-endpoints.js";
 import type { OperationReceipt } from "../shared/host-operations.js";
 import {
   decodeTerminalInputFrame,
@@ -14,21 +15,19 @@ import {
 import {
   TERMINAL_OPERATIONS_PATH,
   terminalDimensionsSchema,
-  terminalIdSchema,
   terminalOperationIdentitySchema,
   terminalOperationSchema,
   terminalReceiptIdentity,
 } from "../shared/terminal-operations.js";
 import { canonicalOrigin } from "./browser-auth.js";
+import { jsonRoute } from "./json-route.js";
 import { requestError } from "./request-error.js";
 import type {
   TerminalAttachment,
+  TerminalConnection,
   TerminalService,
 } from "./terminal-service.js";
 
-const terminalListSchema = z.object({
-  cwd: z.string().min(1).max(4_096).optional(),
-});
 const terminalAttachSchema = z
   .object({
     type: z.literal("attach"),
@@ -71,7 +70,7 @@ interface TerminalSocketState {
  * This gateway owns only tickets/attachments; the daemon still owns the PTYs. */
 export function createTerminalGateway(
   app: Express,
-  service: TerminalService | undefined,
+  service: TerminalService | Pick<TerminalConnection, "run"> | undefined,
   heartbeatIntervalMs: number,
   currentBrowserBuild: () => Promise<string | undefined>,
 ) {
@@ -101,18 +100,23 @@ export function createTerminalGateway(
       ? { terminalId: entry.terminalId }
       : null;
   };
-  const requireTerminal = (): TerminalService => {
+  const terminal = async <Result>(
+    operation: (service: TerminalService) => Result | Promise<Result>,
+  ): Promise<Result> => {
     if (!service)
       throw requestError("Terminal service is unavailable", 503, {
         code: "terminal_unavailable",
       });
-    return service;
+    return "run" in service ? service.run(operation) : operation(service);
   };
   app.get(TERMINAL_OPERATIONS_PATH, async (_request, response) => {
     response.set("Cache-Control", "no-store");
-    response.json({ epoch: await requireTerminal().operationEpoch() });
+    response.json({
+      epoch: await terminal((service) => service.operationEpoch()),
+    });
   });
   app.post(TERMINAL_OPERATIONS_PATH, async (request, response) => {
+    const observeOnly = request.query.observe === "1";
     const identity = terminalOperationIdentitySchema.parse(request.body);
     const parsed = terminalOperationSchema.safeParse(request.body);
     const command = request.body?.intent?.command;
@@ -121,19 +125,16 @@ export function createTerminalGateway(
       response.status(400).json({
         ...identity,
         command,
-        state: "rejected",
+        state: observeOnly ? "unknown" : "rejected",
         error: { status: 400, message: "The terminal operation is invalid." },
       });
       return;
     }
     const { data: operation } = parsed;
     const receipt = terminalReceiptIdentity(operation);
-    const terminal = requireTerminal();
     try {
-      const result = await terminal.operate<unknown>(
-        receipt.command,
-        operation.intent.params,
-        { id: receipt.operationId, epoch: receipt.executor.epoch },
+      const result = await terminal((service) =>
+        service.operate(operation, observeOnly),
       );
       response.json({
         ...receipt,
@@ -152,6 +153,7 @@ export function createTerminalGateway(
       const retired = [
         "terminal_operation_epoch_changed",
         "terminal_operation_expired",
+        "terminal_operation_missing",
         "terminal_operation_mismatch",
       ].includes(code ?? "");
       response.status(status).json({
@@ -169,31 +171,32 @@ export function createTerminalGateway(
       });
     }
   });
-  app.get("/api/terminals", async (request, response) => {
-    const { cwd } = terminalListSchema.parse(request.query);
-    response.json(await requireTerminal().list(cwd));
-  });
-  app.get("/api/terminal-settings", async (_request, response) => {
-    response.json(await requireTerminal().getSettings());
-  });
-  app.post("/api/terminals/:id/attach-ticket", async (request, response) => {
-    const terminal = requireTerminal();
-    const terminalId = terminalIdSchema.parse(request.params.id);
-    const catalog = await terminal.list();
-    if (!catalog.terminals.some((candidate) => candidate.id === terminalId))
-      throw requestError("Terminal was not found", 404, {
-        code: "terminal_not_found",
+  jsonRoute(app, routes.terminals, ({ query }) =>
+    terminal((service) => service.list(query.cwd)),
+  );
+  jsonRoute(app, routes.terminalSettings, () =>
+    terminal((service) => service.getSettings()),
+  );
+  jsonRoute(
+    app,
+    routes.terminalAttachTicket,
+    async ({ params: { id: terminalId } }, request) => {
+      const catalog = await terminal((service) => service.list());
+      if (!catalog.terminals.some((candidate) => candidate.id === terminalId))
+        throw requestError("Terminal was not found", 404, {
+          code: "terminal_not_found",
+        });
+      pruneTerminalTickets();
+      const ticket = randomUUID();
+      const expiresAt = Date.now() + TERMINAL_ATTACH_TICKET_TTL_MS;
+      terminalTickets.set(ticket, {
+        terminalId,
+        origin: canonicalOrigin(request.get("host"), request.secure),
+        expiresAt,
       });
-    pruneTerminalTickets();
-    const ticket = randomUUID();
-    const expiresAt = Date.now() + TERMINAL_ATTACH_TICKET_TTL_MS;
-    terminalTickets.set(ticket, {
-      terminalId,
-      origin: canonicalOrigin(request.get("host"), request.secure),
-      expiresAt,
-    });
-    response.json({ ticket, expiresAt: new Date(expiresAt).toISOString() });
-  });
+      return { ticket, expiresAt: new Date(expiresAt).toISOString() };
+    },
+  );
 
   const terminalWebsocket = new WebSocketServer({
     noServer: true,
@@ -350,8 +353,9 @@ export function createTerminalGateway(
         peer.attachment = "attaching";
         clearTimeout(attachTimeout);
         const { ticket: _ticket, type: _type, ...options } = request;
-        void requireTerminal()
-          .attach({ ...options, terminalId: ticket.terminalId }, sink)
+        void terminal((service) =>
+          service.attach({ ...options, terminalId: ticket.terminalId }, sink),
+        )
           .then((handle) => {
             if (terminalSockets.has(socket)) peer.attachment = handle;
             else handle.detach();

@@ -4,6 +4,7 @@ import { ATTACHMENT_CONTEXT_HEADING } from "../../shared/attachment-context.js";
 import {
   HISTORY_FIXTURE_SESSION_ID,
   historyFixtureEntries,
+  savedAssistant,
 } from "./history-session.js";
 
 const now = Date.now();
@@ -59,9 +60,8 @@ const initialMessages = [
     content: "Show me a formula-rich example and inspect the analysis steps.",
     timestamp: now - 30_000,
   },
-  {
-    role: "assistant",
-    content: [
+  savedAssistant(
+    [
       {
         type: "thinking",
         thinking:
@@ -75,19 +75,18 @@ const initialMessages = [
       },
       { type: "text", text: richText },
     ],
-    provider: "workbench",
-    model: "offline",
-    usage: {
-      input: 800,
-      output: 420,
-      cacheRead: 320,
-      cacheWrite: 0,
-      totalTokens: 1_540,
-      cost: { total: 0 },
+    {
+      usage: {
+        input: 800,
+        output: 420,
+        cacheRead: 320,
+        cacheWrite: 0,
+        totalTokens: 1_540,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      timestamp: now - 28_000,
     },
-    stopReason: "stop",
-    timestamp: now - 28_000,
-  },
+  ),
   {
     role: "toolResult",
     toolCallId: "fixture-tool-1",
@@ -109,9 +108,8 @@ const initialMessages = [
     isError: false,
     timestamp: now - 29_000,
   },
-  {
-    role: "assistant",
-    content: [
+  savedAssistant(
+    [
       {
         type: "toolCall",
         id: "fixture-tool-2",
@@ -128,19 +126,18 @@ const initialMessages = [
       },
       { type: "text", text: "Tightened the window normalization." },
     ],
-    provider: "workbench",
-    model: "offline",
-    usage: {
-      input: 900,
-      output: 160,
-      cacheRead: 620,
-      cacheWrite: 0,
-      totalTokens: 1_680,
-      cost: { total: 0 },
+    {
+      usage: {
+        input: 900,
+        output: 160,
+        cacheRead: 620,
+        cacheWrite: 0,
+        totalTokens: 1_680,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      timestamp: now - 26_000,
     },
-    stopReason: "stop",
-    timestamp: now - 26_000,
-  },
+  ),
   {
     role: "toolResult",
     toolCallId: "fixture-tool-2",
@@ -176,25 +173,6 @@ const initialMessages = [
   },
 ];
 
-const promptMapFixtureMessages = Array.from({ length: 13 }, (_, index) => {
-  const timestamp = now - (13 - index) * 2_000;
-  return [
-    {
-      role: "user",
-      content: `Prompt map fixture turn ${index + 1}`,
-      timestamp,
-    },
-    {
-      role: "assistant",
-      content: `Prompt map fixture response ${index + 1}.`,
-      provider: "workbench",
-      model: "offline",
-      stopReason: "stop",
-      timestamp: timestamp + 1,
-    },
-  ];
-}).flat();
-
 const writtenResource =
   "tests/browser/fixtures/file-previews/report%20 draft.md";
 const resourceFixtureReferences = [
@@ -211,19 +189,15 @@ const resourceFixtureReferences = [
  * routes as a real session without turning ordinary presentation sessions into
  * an oversized transcript. The two real files stay at the top of Recent. */
 const resourceFixtureMessages = [
-  {
-    role: "assistant",
-    content: resourceFixtureReferences.map((path, index) => ({
+  savedAssistant(
+    resourceFixtureReferences.map((path, index) => ({
       type: "toolCall",
       id: `fixture-resource-${index + 1}`,
       name: path === writtenResource ? "write" : "read",
       arguments: { path },
     })),
-    provider: "workbench",
-    model: "offline",
-    stopReason: "stop",
-    timestamp: now - 40_000,
-  },
+    { timestamp: now - 40_000 },
+  ),
 ];
 
 function messagesForFixture(id: string, image?: string): unknown[] {
@@ -237,9 +211,8 @@ function messagesForFixture(id: string, image?: string): unknown[] {
         ],
         timestamp: now,
       },
-      {
-        role: "assistant",
-        content: [
+      savedAssistant(
+        [
           { type: "thinking", thinking: "Private reasoning for the test" },
           { type: "text", text: savedCopy.response },
           {
@@ -250,8 +223,8 @@ function messagesForFixture(id: string, image?: string): unknown[] {
           },
           { type: "text", text: savedCopy.final },
         ],
-        timestamp: now,
-      },
+        { timestamp: now },
+      ),
       {
         role: "custom",
         customType: "copy_fixture",
@@ -283,11 +256,9 @@ function messagesForFixture(id: string, image?: string): unknown[] {
         content: "Retained request before compaction",
         timestamp: now - 90_000,
       },
-      {
-        role: "assistant",
-        content: "Retained response before compaction",
+      savedAssistant("Retained response before compaction", {
         timestamp: now - 80_000,
-      },
+      }),
       {
         role: "compactionSummary",
         summary:
@@ -300,11 +271,9 @@ function messagesForFixture(id: string, image?: string): unknown[] {
         content: "Next request after compaction",
         timestamp: now - 60_000,
       },
-      {
-        role: "assistant",
-        content: "Next response after compaction",
+      savedAssistant("Next response after compaction", {
         timestamp: now - 50_000,
-      },
+      }),
     ];
   if (id === ERROR_FIXTURE_SESSION_ID)
     return [
@@ -313,56 +282,21 @@ function messagesForFixture(id: string, image?: string): unknown[] {
         content: "Inspect the interrupted reply.",
         timestamp: now - 3_000,
       },
-      {
-        role: "assistant",
+      savedAssistant("Partial output before the failure.", {
         timestamp: now - 2_000,
-        content: [{ type: "text", text: "Partial output before the failure." }],
         stopReason: "error",
         errorMessage: "WebSocket error",
-      },
-      {
-        role: "assistant",
+      }),
+      savedAssistant([], {
         timestamp: now - 1_000,
-        content: [],
         stopReason: "error",
         errorMessage: `fetch failed\n${"Diagnostic detail: request unavailable. ".repeat(25)}\n<details>原始错误信息</details>`,
-      },
+      }),
     ];
   if (id === RESOURCE_FIXTURE_SESSION_ID) return resourceFixtureMessages;
-  if (id === PROMPT_MAP_FIXTURE_SESSION_ID) return promptMapFixtureMessages;
+  if (id === PROMPT_MAP_FIXTURE_SESSION_ID)
+    return [{ role: "user", content: "Pinned catalog entry", timestamp: now }];
   return initialMessages;
-}
-
-function persistedMessage(message: Record<string, unknown>) {
-  if (message.role !== "assistant") return message;
-  const usage = message.usage as Record<string, unknown> | undefined;
-  return {
-    api: "openai-completions",
-    provider: "workbench",
-    model: "offline",
-    stopReason: "stop",
-    ...message,
-    content:
-      typeof message.content === "string"
-        ? [{ type: "text", text: message.content }]
-        : message.content,
-    usage: {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-      totalTokens: 0,
-      ...usage,
-      cost: {
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        total: 0,
-        ...(usage?.cost as object),
-      },
-    },
-  };
 }
 
 /** Persist ordinary native session files. No simulated runtime or projection is involved. */
@@ -377,7 +311,6 @@ export async function seedWorkbenchSessions(
     [COPY_FIXTURE_SESSION_ID, "Copy saved messages"],
     ["fixture-active", "Formula rendering and spectral analysis"],
     ["fixture-history", "Review extension event lifecycle"],
-    ["fixture-branch", "Earlier branch recovery fixture"],
     [HISTORY_FIXTURE_SESSION_ID, "Calibration history fixture"],
     [COMPACTION_FIXTURE_SESSION_ID, "Compaction checkpoint fixture"],
     [ERROR_FIXTURE_SESSION_ID, "Pi error display fixture"],
@@ -444,7 +377,7 @@ export async function seedWorkbenchSessions(
             details: message.details,
             display: true,
           });
-        } else append({ type: "message", message: persistedMessage(message) });
+        } else append({ type: "message", message: message });
       }
     }
     append({ type: "session_info", name });

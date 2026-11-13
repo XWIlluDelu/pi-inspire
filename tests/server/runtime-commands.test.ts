@@ -12,8 +12,8 @@ import {
   disposeRuntimeFixture,
   initializeRuntimeFixture,
   schedulingRuntime,
-  trackRuntime,
   startWorker,
+  trackRuntime,
 } from "./fixtures/runtime.js";
 
 beforeEach(initializeRuntimeFixture);
@@ -200,7 +200,7 @@ describe("native commands and worker-local catalogs", () => {
     try {
       await runtime.openSession("a");
       await startWorker(runtime);
-      const before = await runtime.snapshot();
+      const before = await runtime.snapshot("a");
       f.worker.responseOverrides.set(
         "prompt",
         async (command: Record<string, unknown>) => {
@@ -235,7 +235,7 @@ describe("native commands and worker-local catalogs", () => {
       );
       release();
       expect(await first).toEqual(await second);
-      const after = await runtime.snapshot();
+      const after = await runtime.snapshot("a");
       expect(after.active?.availableModels).toEqual([
         {
           provider: "test",

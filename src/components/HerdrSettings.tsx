@@ -18,6 +18,9 @@ export function HerdrSettings({
   onNavigateRestart: () => void;
 }) {
   const saved = useAppState((state) => state.prefs.herdrEnabled);
+  const desired = useAppState(
+    (state) => state.desiredPreferences?.herdrEnabled,
+  );
   const [status, setStatus] = useState<HerdrEnhancementStatus | null>(null);
   const [error, setError] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -60,9 +63,10 @@ export function HerdrSettings({
           : null);
 
   let statusNode: ReactNode = null;
-  if (error || issue || pending) {
+  if (error || issue || pending || desired !== undefined) {
     statusNode = (
       <div role="status">
+        {desired !== undefined ? <span>Saving…</span> : null}
         {error || issue ? (
           <div className="settings__field-status-block">
             <span>{error ? "Herdr status is unavailable." : issue}</span>
@@ -109,15 +113,16 @@ export function HerdrSettings({
   return (
     <SettingField
       label="Herdr enhancement"
+      layout="inline"
       description="Run Inspire's Pi sessions in Herdr. Requires a Host restart."
       status={statusNode}
     >
       <SettingsSwitch
         label="Herdr enhancement"
-        checked={saved}
+        checked={desired ?? saved}
         disabled={!saved && !canEnable}
         busy={loading}
-        onChange={(checked) => store.setHerdrEnabled(checked)}
+        onChange={(checked) => store.setPreference("herdrEnabled", checked)}
       />
     </SettingField>
   );

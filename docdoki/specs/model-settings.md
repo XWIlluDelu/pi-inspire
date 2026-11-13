@@ -135,7 +135,8 @@ reapply defaults; non-reasoning models disable thinking. If a chosen model's thi
 previewed before explicit new-folder creation, unmodified effort is left to native startup, not
 guessed; a manual effort choice remains explicit.
 
-One metadata query returns available choices and startup-default previews for the prospective cwd.
+One catalog inspection returns available choices, startup defaults and effective thinking
+preferences for the prospective cwd. Model selection uses that inspection's preferences.
 It includes global and already-trusted project extension registrations, using Pi's stored/inherited
 trust and global default trust rule. A saved project or inherited refusal takes precedence even
 when the directory has no trust-requiring resources. Metadata reads never change that decision.
@@ -148,10 +149,10 @@ session for commands and defaults. Validation uses a disposable in-memory sessio
 providers without waiting for credential availability.
 The short-lived SDK process writes no session file, emits no session-start event and makes no
 agent/model request.
-Refresh replaces an older preview without replacing explicit or inherited choices. Directory/catalog,
-inherited-selection and per-model thinking reads use bounded automatic recovery for transient failure.
-Each attempt stays bound to its directory, source, input intent and browser transport; changing these
-owners or unmounting retires old waits and responses. Successful reads clear their obsolete errors without creating a session or submitting a message.
+Refresh replaces an older preview while preserving explicit or inherited choices. The directory
+check and model picker share one catalog read, which includes unresolved inheritance from the same
+workspace. A source in a different workspace can resolve separately. Reads use bounded automatic
+recovery for transient failure and stay bound to their directory, source and browser connection.
 
 An unverified or known-invalid directory keeps Start unavailable until a successful check; an inherited
 or explicit model cannot bypass that check. A failed observation keeps a known missing/invalid
@@ -168,6 +169,8 @@ and limits. A model without an inherited API exposes its required API field; inh
 optional endpoint overrides stay compact. Custom API types are accepted.
 
 Forms keep untouched providers, model metadata, overrides and advanced fields under Pi's schema.
+Editable declaration fields share their patch schema and control metadata. API keys use explicit
+keep, replace and remove edits. The provider snapshot exposes only whether a key exists.
 Removing a declaration affects `models.json`, independently of built-in catalog entries and saved
 login credentials. Configured declarations and saved preferences remain editable when model discovery
 is unavailable; Settings reports the availability failure separately from file errors.
@@ -190,22 +193,27 @@ Pi still validates the complete candidate against the providers that loaded. Val
 model turn or persistent session and keeps factory errors and credentials out of responses. Publish
 only after revision and atomic-publication checks.
 
-Writes detect conflicting external edits, accept native file syntax and follow existing configuration
-symlinks under the same lock authority as native edits. Regular files take one native target lock
-and never double-lock a case/normalization alias; final symlinks keep lexical and target
-authorities. Target/revision checks remain mandatory before publication, including a file replaced by
-a symlink during the edit. After publication, a refresh/readback failure produces a warning and a
-recovery action without changing the save result.
+Model and MCP editors use the same native-file transaction and revision of the resolved target and
+exact source text. Writes detect conflicting external edits, accept native file syntax and follow
+existing configuration symlinks under the same lock authority as native edits. Regular files take
+one native target lock; final symlinks keep lexical and target authorities. Publication rechecks the
+target and revision. After publication, a readback failure produces a warning and a recovery action
+without changing the save result. Reload the files before the next edit.
 
 A configuration save invalidates cached workspace metadata. For an addressed session, it refreshes
 that worker only; other workspaces rediscover on demand. Without a session, it refreshes the edited
 workspace catalog. Refresh preserves ongoing work and the current selection. The explicit Refresh
 control rereads external changes while Settings remains open. Earlier catalog/settings reads cannot
 replace a newer published write snapshot in the picker or Common scope, including its error state.
-Only the current catalog observation may publish warnings or errors; an obsolete warmup cannot
-restore feedback after a configuration snapshot has been accepted.
+Settings opens and refreshes through a single read that requests both the native catalog and file
+configuration. A discovery failure preserves the last picker choices and reports the problem while
+keeping file edits available.
 
 ## Authentication
+
+Connected and available providers use the same list rows with one selected provider detail. The
+available list filters by provider name and ID. Authentication methods and credential removal stay
+in that detail, and each method can show its own remote login instructions.
 
 Provider methods come from the installed Pi, including native and extension API-key/OAuth flows.
 `/login` opens provider selection and may reveal an unambiguous provider's methods; authorization
@@ -238,10 +246,10 @@ Pi's saved credential; environment and `models.json` credentials are managed sep
 - `tests/server/model-metadata.integration.test.ts` exercises native global/trusted-project provider
   composition, inherited model declarations, unrelated-provider edits, an explicit agent-directory
   authority, and validation without a turn or persistent session.
-- `tests/server/model-settings.test.ts` covers revision conflicts, file/symlink authority, atomic
-  edits, preserved unedited declarations and protected credentials.
+- `tests/server/model-settings.test.ts` covers native file syntax, preserved unedited declarations
+  and protected credentials.
 - `tests/server/configuration-file.test.ts` covers shared publication, concurrent edits, changed
-  targets and lock release after cleanup failure; MCP uses the same transaction.
+  targets, invalid documents and lock release after cleanup failure. MCP uses the same transaction.
 - `tests/web/welcome-model-transition.test.tsx` covers New's effort ownership across model/directory
   changes, supported-level clamping, late discovery and the submitted startup selection.
 

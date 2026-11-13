@@ -388,5 +388,7 @@ through its original owner. Stop all old Hosts that share the same upload store.
 Start the updated Host and reload the browser. Use the launcher link or Pair form if pairing is
 needed. A stored generated token with an unsupported format requires explicit replacement and
 browser re-pairing.
+Before upgrading across a Host control format change, stop the running Host with its current
+launcher or installed service manager. Start Inspire with the new version after it exits.
 In a source checkout, `npm run inspire -- restart` rebuilds changed client inputs when restarting a
 current Host. Pi extension changes use [`/reload`](pi-commands.md#compaction-and-reload).

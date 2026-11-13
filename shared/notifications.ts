@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { CompletionAttentionPreference } from "./contracts.js";
 
 export type TaskOutcome = "completed" | "failed" | "ended";
@@ -58,3 +59,34 @@ export const initialTaskAlerts: TaskAlertState = {
   error: null,
   testResult: null,
 };
+
+/** A subscription is an outbound capability, not an arbitrary URL to fetch. */
+export const pushSubscriptionSchema = z
+  .object({
+    endpoint: z
+      .string()
+      .max(4096)
+      .url()
+      .refine((value) => {
+        const url = new URL(value);
+        return (
+          url.protocol === "https:" &&
+          !url.username &&
+          !url.password &&
+          !url.port &&
+          !url.hash &&
+          (url.hostname === "fcm.googleapis.com" ||
+            url.hostname === "updates.push.services.mozilla.com" ||
+            url.hostname === "web.push.apple.com" ||
+            url.hostname.endsWith(".push.apple.com") ||
+            url.hostname.endsWith(".notify.windows.com"))
+        );
+      }, "This browser's push service is not supported"),
+    keys: z
+      .object({
+        p256dh: z.string().regex(/^[A-Za-z0-9_-]{87}={0,1}$/),
+        auth: z.string().regex(/^[A-Za-z0-9_-]{22}={0,2}$/),
+      })
+      .strict(),
+  })
+  .strict();

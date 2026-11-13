@@ -28,12 +28,8 @@ export function useTranscriptViewport({
   );
   const userScrollIntentTimerRef = useRef<number | null>(null);
   const geometricFollowFrameRef = useRef<number | null>(null);
-  const anchoredLayoutFrameRef = useRef<number | null>(null);
   const lastScrollTopRef = useRef(0);
-  const viewportIntentRef = useRef(0);
   const projectionIdentity = `${sessionId}\u0000${viewId}`;
-  const projectionIdentityRef = useRef(projectionIdentity);
-  projectionIdentityRef.current = projectionIdentity;
 
   const pinnedRef = useRef(true);
   const [pinned, setPinned] = useState(true);
@@ -67,7 +63,6 @@ export function useTranscriptViewport({
 
   const markUserScrollIntent = useCallback(
     (direction: "history" | "latest" | "unknown" = "unknown") => {
-      viewportIntentRef.current += 1;
       userScrollIntentRef.current = direction;
       if (userScrollIntentTimerRef.current !== null)
         window.clearTimeout(userScrollIntentTimerRef.current);
@@ -102,7 +97,7 @@ export function useTranscriptViewport({
       setPinned(false);
       return;
     }
-    // Virtual-row measurement, Markdown reflow, and browser scroll anchoring
+    // Markdown reflow and browser scroll anchoring
     // also emit scroll events. They may maintain latest-follow while latest owns
     // the viewport, but they may never take ownership back from a user.
     if (!userScrollIntentRef.current) {
@@ -127,7 +122,6 @@ export function useTranscriptViewport({
   }, [followLatest, measureLatest, searchOwnsViewportRef]);
 
   const restoreGeometricFollow = useCallback(() => {
-    viewportIntentRef.current += 1;
     const element = scrollRef.current;
     const isPinned = element
       ? element.scrollHeight - element.scrollTop - element.clientHeight <= 1
@@ -138,83 +132,11 @@ export function useTranscriptViewport({
   }, [measureLatest]);
 
   const releaseLatestFollow = useCallback(() => {
-    viewportIntentRef.current += 1;
     pinnedRef.current = false;
     setPinned(false);
   }, []);
 
-  const preserveAnchorThroughLayout = useCallback(
-    (anchorElement: HTMLElement, alignment: "start" | "center" | "end") => {
-      const root = scrollRef.current;
-      if (!root?.contains(anchorElement)) return;
-      const rootBounds = root.getBoundingClientRect();
-      const anchorBounds = anchorElement.getBoundingClientRect();
-      // An async disclosure load must not reclaim the viewport after the user
-      // has moved away from the fold that initiated it.
-      if (
-        anchorBounds.bottom < rootBounds.top ||
-        anchorBounds.top > rootBounds.bottom
-      )
-        return;
-      viewportIntentRef.current += 1;
-
-      const coordinate = (bounds: DOMRect) => {
-        if (alignment === "start") return bounds.top;
-        if (alignment === "end") return bounds.bottom;
-        return (bounds.top + bounds.bottom) / 2;
-      };
-      const offset = coordinate(anchorBounds) - rootBounds.top;
-
-      // A disclosure gesture owns the viewport before its synchronous layout
-      // change. Otherwise ResizeObserver latest-follow can pull a historical
-      // fold to the end of the session as its height changes.
-      const restoreLatestAtBoundary =
-        pinnedRef.current && !searchOwnsViewportRef.current;
-      userScrollIntentRef.current = null;
-      if (userScrollIntentTimerRef.current !== null) {
-        window.clearTimeout(userScrollIntentTimerRef.current);
-        userScrollIntentTimerRef.current = null;
-      }
-      pinnedRef.current = false;
-      setPinned(false);
-
-      if (anchoredLayoutFrameRef.current !== null)
-        cancelAnimationFrame(anchoredLayoutFrameRef.current);
-      anchoredLayoutFrameRef.current = requestAnimationFrame(() => {
-        anchoredLayoutFrameRef.current = requestAnimationFrame(() => {
-          anchoredLayoutFrameRef.current = null;
-          const currentRoot = scrollRef.current;
-          if (
-            !anchorElement.isConnected ||
-            !currentRoot?.contains(anchorElement)
-          )
-            return;
-          const delta =
-            coordinate(anchorElement.getBoundingClientRect()) -
-            currentRoot.getBoundingClientRect().top -
-            offset;
-          if (Number.isFinite(delta) && Math.abs(delta) > 0.5)
-            currentRoot.scrollTop += delta;
-          lastScrollTopRef.current = currentRoot.scrollTop;
-          measureLatest();
-          if (
-            restoreLatestAtBoundary &&
-            currentRoot.scrollHeight -
-              currentRoot.scrollTop -
-              currentRoot.clientHeight <=
-              1
-          ) {
-            pinnedRef.current = true;
-            setPinned(true);
-          }
-        });
-      });
-    },
-    [measureLatest, searchOwnsViewportRef],
-  );
-
   const jumpToLatest = useCallback(() => {
-    viewportIntentRef.current += 1;
     userScrollIntentRef.current = null;
     pinnedRef.current = true;
     setPinned(true);
@@ -222,10 +144,6 @@ export function useTranscriptViewport({
   }, [followLatest]);
 
   useEffect(() => {
-    if (anchoredLayoutFrameRef.current !== null) {
-      cancelAnimationFrame(anchoredLayoutFrameRef.current);
-      anchoredLayoutFrameRef.current = null;
-    }
     if (geometricFollowFrameRef.current !== null) {
       cancelAnimationFrame(geometricFollowFrameRef.current);
       geometricFollowFrameRef.current = null;
@@ -241,8 +159,6 @@ export function useTranscriptViewport({
     () => () => {
       if (userScrollIntentTimerRef.current !== null)
         window.clearTimeout(userScrollIntentTimerRef.current);
-      if (anchoredLayoutFrameRef.current !== null)
-        cancelAnimationFrame(anchoredLayoutFrameRef.current);
     },
     [],
   );
@@ -278,13 +194,11 @@ export function useTranscriptViewport({
   return {
     scrollRef,
     contentRef,
-    viewportIntentRef,
     pinned,
     atLatest,
     markUserScrollIntent,
     onScroll,
     releaseLatestFollow,
-    preserveAnchorThroughLayout,
     restoreGeometricFollow,
     jumpToLatest,
   };

@@ -14,7 +14,6 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { InstanceHttpControl } from "../../server/instance-control.mjs";
 import {
   completeInstanceShutdown,
   consumeStopRequest,
@@ -31,6 +30,11 @@ import {
   watchInstanceShutdown,
   writeInstanceState,
 } from "../../server/instance-state.mjs";
+import {
+  closeHostApiFixture,
+  hostApiFixture,
+  token,
+} from "./fixtures/host-api.js";
 
 const temporaryDirectories: string[] = [];
 const servers: Server[] = [];
@@ -69,7 +73,6 @@ function state(port = 4587): InstanceState {
     token: "test-token-with-sufficient-entropy",
     startedAt: new Date().toISOString(),
     processStartTime: "test-process-start",
-    durableWorkerRelease: true,
   };
 }
 
@@ -165,73 +168,48 @@ describe("Inspire instance state", () => {
 
   it("recognizes only a verified process with a healthy authenticated host", async () => {
     const path = await temporaryStatePath();
-    const control = new InstanceHttpControl();
-    let owner: InstanceState;
-    let requests = 0;
-    const server = createServer(async (request, response) => {
-      requests++;
-      expect(request.headers.authorization).toBeUndefined();
-      const chunks: Buffer[] = [];
-      for await (const chunk of request) chunks.push(chunk);
-      const grant = control.accept(
-        owner,
-        JSON.parse(Buffer.concat(chunks).toString("utf8")),
-      );
-      if (!grant) {
-        response.writeHead(401).end();
-        return;
-      }
-      response.setHeader("Content-Type", "application/json");
-      response.end(
-        JSON.stringify(control.reply(grant, { appName: "inspire" })),
-      );
-    });
-    servers.push(server);
-    await new Promise<void>((resolve) =>
-      server.listen(0, "127.0.0.1", resolve),
-    );
-    const address = server.address();
-    if (!address || typeof address === "string")
-      throw new Error("Expected a TCP test server");
-    const value = state(address.port);
+    let owner: InstanceState | null = null;
+    const host = await hostApiFixture({ instanceState: () => owner });
+    const value = { ...state(Number(new URL(host.baseUrl).port)), token };
     value.processStartTime = await processStartIdentity(process.pid);
-    owner = { ...value };
-    await writeInstanceState(path, value);
+    owner = value;
     const expected = { root: value.root, host: value.host, port: value.port };
+    try {
+      await writeInstanceState(path, value);
+      await expect(inspectInstance(path, expected)).resolves.toMatchObject({
+        kind: "healthy",
+        state: value,
+      });
 
-    await expect(inspectInstance(path, expected)).resolves.toMatchObject({
-      kind: "healthy",
-      state: value,
-    });
+      await writeFile(path, JSON.stringify({ ...value, schemaVersion: 1 }), {
+        mode: 0o600,
+      });
+      await expect(inspectInstance(path, expected)).rejects.toThrow(
+        "Invalid Inspire instance state",
+      );
+      await expect(stopManagedInstance(path, expected)).rejects.toThrow(
+        "Invalid Inspire instance state",
+      );
+      await expect(stat(path + ".shutdown-request")).rejects.toMatchObject({
+        code: "ENOENT",
+      });
 
-    await writeFile(
-      path,
-      JSON.stringify({ ...value, durableWorkerRelease: undefined }),
-      { mode: 0o600 },
-    );
-    await expect(inspectInstance(path, expected)).resolves.toEqual({
-      kind: "unavailable",
-    });
-    await expect(stopManagedInstance(path, expected)).resolves.toEqual({
-      kind: "unavailable",
-    });
-    await expect(stat(path + ".shutdown-request")).rejects.toMatchObject({
-      code: "ENOENT",
-    });
-    expect(requests).toBe(1);
+      await writeInstanceState(path, value);
+      owner = null;
+      await expect(inspectInstance(path, expected)).resolves.toMatchObject({
+        kind: "unavailable",
+      });
 
-    await writeInstanceState(path, value);
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-    servers.splice(servers.indexOf(server), 1);
-    await expect(
-      inspectInstance(path, expected, { healthTimeoutMs: 50 }),
-    ).resolves.toMatchObject({ kind: "unavailable" });
-
-    value.processStartTime = `${value.processStartTime}-reused`;
-    await writeInstanceState(path, value);
-    await expect(inspectInstance(path, expected)).resolves.toEqual({
-      kind: "stale",
-    });
+      await writeInstanceState(path, {
+        ...value,
+        processStartTime: value.processStartTime + "-reused",
+      });
+      await expect(inspectInstance(path, expected)).resolves.toEqual({
+        kind: "stale",
+      });
+    } finally {
+      await closeHostApiFixture(host);
+    }
   }, 45_000);
 
   it("does not merge distinct case-sensitive roots even under Windows rules", async (context) => {

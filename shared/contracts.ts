@@ -1,7 +1,16 @@
+import type { hostEndpoints } from "./host-endpoints.js";
+import type { RequestInput } from "./json-endpoints.js";
 import type {
   PresentationAdapterInfo,
   ToolPresentationConfiguration,
 } from "./tool-presentation-config.js";
+
+type Body<K extends keyof typeof hostEndpoints> =
+  RequestInput<(typeof hostEndpoints)[K]["schemas"]> extends {
+    body: infer Input;
+  }
+    ? Input
+    : never;
 
 export const VISIBILITY_PREFERENCES = [
   "dynamic",
@@ -104,13 +113,7 @@ export interface ModelSelectionResponse {
   thinkingLevel: string;
 }
 
-export interface NewSessionOptions {
-  /** Explicit new-session action only; observational reads never create paths. */
-  createDirectory?: boolean;
-  name?: string;
-  model?: ModelIdentity;
-  thinkingLevel?: ThinkingLevel;
-}
+export type NewSessionOptions = Omit<Body<"newSession">, "cwd">;
 
 /** Pi's resolved startup choice for a new session in one canonical workspace.
  * This is a preflight projection; the creating worker remains authoritative. */
@@ -276,6 +279,12 @@ export interface InspirePreferences {
   navCollapsedGroups: string[];
 }
 
+export interface PreferencePublication {
+  preferences: InspirePreferences;
+  /** Monotonic within the Host authority that read or committed this snapshot. */
+  revision: number;
+}
+
 /** The complete user-facing Settings surface. Navigation curation and MRU
  * metadata deliberately stay outside bulk Restore defaults. */
 export const defaultInterfaceSettings = {
@@ -362,24 +371,17 @@ export interface SessionListResponse {
 
 export type SessionDeleteDisposition = "trashed" | "deleted";
 
-export interface SessionDeleteResponse {
-  sessionId: string;
-  disposition: SessionDeleteDisposition;
-  /** The file deletion remains successful when navigation-metadata cleanup
-   * fails; the browser keeps the warning visible instead of retrying a
-   * destructive operation whose outcome is already known. */
-  preferences?: InspirePreferences;
-  preferenceCleanupFailed?: true;
+export type SessionDeletionRequest = Body<"deleteSessions">;
+
+export interface SessionDeletionOutcome {
+  deleted: Array<{ sessionId: string; disposition: SessionDeleteDisposition }>;
+  failure?: { sessionId: string; message: string };
 }
 
-/** A confirmed deletion of the complete reviewed Hidden selection. A late
- * filesystem failure can follow earlier successful Trash operations; those
- * irreversible results are returned explicitly instead of retried. */
-export interface HiddenClearResponse {
-  deleted: Array<Pick<SessionDeleteResponse, "sessionId" | "disposition">>;
-  failure?: { sessionId: string; message: string };
-  preferences?: InspirePreferences;
-  preferenceCleanupFailed?: true;
+export interface SessionDeletionResponse extends SessionDeletionOutcome {
+  navigation:
+    | (PreferencePublication & { kind: "confirmed"; authorityId: string })
+    | { kind: "unavailable"; reason: string };
 }
 
 export type ResourceKind =
@@ -720,12 +722,7 @@ export interface PendingCopyContent {
   images?: Array<{ attachmentId: string } | { data: string; mimeType: string }>;
 }
 
-export interface PendingReadRequest {
-  sessionId: string;
-  viewId: string;
-  revision: number;
-  itemId?: string;
-}
+export type PendingReadRequest = Body<"pendingText">;
 
 export interface PendingQueues {
   /** Host observation sequence, not a Pi revision or mutation precondition. */
@@ -1094,14 +1091,7 @@ export interface BranchEntryResponse {
   images?: Array<{ index: number; mimeType: string }>;
 }
 
-export interface BranchNavigateRequest {
-  sessionId: string;
-  revision: number;
-  targetId: string;
-  mode: "switch" | "edit";
-  summarize?: boolean;
-  customInstructions?: string;
-}
+export type BranchNavigateRequest = Body<"navigateBranch">;
 
 export interface BranchNavigateResponse {
   snapshot: ActiveSnapshot;
@@ -1110,18 +1100,9 @@ export interface BranchNavigateResponse {
   cancelled?: boolean;
 }
 
-export interface BranchForkRequest {
-  sessionId: string;
-  viewId: string;
-  targetId: string;
-}
+export type BranchForkRequest = Body<"forkBranch">;
 
-export interface BranchCloneRequest {
-  sessionId: string;
-  viewId: string;
-  /** The endpoint selected at invocation; null explicitly copies an empty path. */
-  targetId: string | null;
-}
+export type BranchCloneRequest = Body<"cloneBranch">;
 
 export interface BranchForkResponse {
   sessionId: string;
@@ -1200,7 +1181,6 @@ export interface ActiveSnapshot {
     activeAssistantMessageKey?: string | null;
     /** Current native tool receipts, including bounded child activity, for reconnect. */
     toolActivity?: Record<string, import("./tool-activity.js").ActivityTool>;
-    isCompacting: boolean;
     transcriptPage: TranscriptPage;
     projectionHealth: ProjectionHealth;
     projectionConflict?: ProjectionConflict | null;
@@ -1259,6 +1239,7 @@ export interface BootstrapResponse {
    * authenticated view of this deployment. */
   updateStatus: HostUpdateStatus;
   preferences: InspirePreferences;
+  preferenceRevision: number;
   /** Present when an invalid saved preference projection is usable for this
    * bootstrap but the original file was left unchanged and writes are blocked. */
   preferencesWarning?: string;
@@ -1363,24 +1344,16 @@ export interface PromptRequest {
   behavior?: "steer" | "followUp";
 }
 
-export interface SessionExportRequest {
-  sessionId: string;
-  format: "html" | "jsonl";
-}
+export type SessionExportRequest = Body<"exportSession">;
 
 export interface SessionExportResponse {
   downloadId: string;
   fileName: string;
 }
 
-export type HostNativeCommandName = "compact" | "export" | "reload";
+export type HostNativeCommandName = HostNativeCommandRequest["command"];
 
-export interface HostNativeCommandRequest {
-  /** Native commands are session-owned just like prompts. */
-  sessionId: string;
-  command: HostNativeCommandName;
-  argument?: string;
-}
+export type HostNativeCommandRequest = Body<"nativeCommand">;
 
 export interface HostNativeCommandDetail {
   label: string;

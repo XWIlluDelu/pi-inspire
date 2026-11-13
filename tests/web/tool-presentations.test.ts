@@ -480,13 +480,13 @@ describe("unified tool patches", () => {
         "+new",
       ].join("\n"),
     );
-    expect(lines?.map(({ type }) => type)).toEqual([
+    expect(lines?.map(({ kind }) => kind)).toEqual([
       "meta",
       "meta",
       "meta",
       "hunk",
       "context",
-      "del",
+      "delete",
       "add",
       "meta",
       "meta",

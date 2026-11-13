@@ -1,13 +1,13 @@
 import { join } from "node:path";
-import type { ThinkingLevel } from "../shared/contracts.js";
 import {
   availableModelOptions,
   createModelPreview,
   defaultModelOption,
   modelOption,
   modelSettings,
-  modelSwitchThinkingLevel,
+  modelThinkingPreferences,
 } from "./model-catalog.js";
+import { modelQuerySchema } from "./model-metadata.js";
 import {
   createAgentSession,
   createAgentSessionServices,
@@ -92,6 +92,7 @@ async function discover(cwd: string, validationPath?: string) {
     return {
       models,
       enabledModelPatterns: settings.getEnabledModels() ?? [],
+      thinkingPreferences: modelThinkingPreferences(settings),
       // Use the same public registries as native get_commands, including Pi's
       // resolved invocation names for colliding extension commands.
       commands: [
@@ -127,13 +128,15 @@ function readSettings(cwd: string) {
   const settings = modelSettings(cwd);
   const project = settings.getProjectSettings();
   const errors = settings.drainErrors();
+  const thinkingPreferences = modelThinkingPreferences(settings);
   return {
     effective: {
       defaultProvider: settings.getDefaultProvider(),
       defaultModel: settings.getDefaultModel(),
-      defaultThinkingLevel: settings.getDefaultThinkingLevel(),
+      defaultThinkingLevel: thinkingPreferences.defaultLevel,
       enabledModels: settings.getEnabledModels(),
     },
+    thinkingPreferences,
     projectOverrides: [
       "defaultProvider",
       "defaultModel",
@@ -149,19 +152,13 @@ function readSettings(cwd: string) {
 // any factory-created descendants. IPC disconnect also retires an orphan query.
 process.on("disconnect", () => process.exit(0));
 try {
-  const [, , cwd, mode, ...args] = process.argv;
-  if (!cwd) throw new Error("Model worker workspace is required");
+  const [, , cwd, raw] = process.argv;
+  if (!cwd || !raw) throw new Error("Model worker query is required");
+  const query = modelQuerySchema.parse(JSON.parse(raw));
   const result =
-    mode === "settings"
+    query.kind === "settings"
       ? readSettings(cwd)
-      : mode === "thinking"
-        ? modelSwitchThinkingLevel(
-            cwd,
-            args[0]!,
-            args[1]!,
-            args[2] as ThinkingLevel,
-          )
-        : await discover(cwd, mode === "validate" ? args[0] : undefined);
+      : await discover(cwd, query.kind === "validate" ? query.path : undefined);
   process.send?.({ ok: true, result });
 } catch {
   // Factory errors may contain credentials. Keep the wire result diagnostic-only.

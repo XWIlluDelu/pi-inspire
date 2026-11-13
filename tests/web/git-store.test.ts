@@ -80,7 +80,7 @@ describe("Git inspection ownership and freshness", () => {
     });
     await act(async () => {
       await appStore.init();
-      FakeWebSocket.instances.at(-1)!.open();
+      FakeWebSocket.instances.at(-1)!.join(activeSnapshot());
     });
     const noop = () => {};
     render(
@@ -157,7 +157,7 @@ describe("Git inspection ownership and freshness", () => {
 
     transport = "replacement";
     await store.init();
-    FakeWebSocket.instances.at(-1)!.open();
+    FakeWebSocket.instances.at(-1)!.join(activeSnapshot());
     await vi.waitFor(() =>
       expect(store.getState()).toMatchObject({
         gitStatus: { head: { name: "replacement" } },

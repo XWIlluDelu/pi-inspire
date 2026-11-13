@@ -53,7 +53,7 @@ describe("native shell transcript", () => {
       __inspireBashRunning: true,
     };
     let reduced = reduceEvent(
-      { ...emptyEventSlice(), runState: "running", streaming: true },
+      { ...emptyEventSlice(), streaming: true },
       settled,
       {
         type: "message_start",
@@ -64,7 +64,6 @@ describe("native shell transcript", () => {
     );
     expect(reduced.slice).toMatchObject({
       bashRunning: true,
-      runState: "running",
       streaming: true,
     });
     reduced = reduceEvent(reduced.slice, settled, {
@@ -82,7 +81,6 @@ describe("native shell transcript", () => {
     expect(reduced.slice.messages).toHaveLength(1);
     expect(reduced.slice).toMatchObject({
       bashRunning: false,
-      runState: "running",
       streaming: true,
     });
     expect(reduced.slice.messages[0]).toMatchObject({

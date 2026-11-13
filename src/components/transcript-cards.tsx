@@ -44,6 +44,7 @@ import { toolResultImage } from "../tool-presentations/model";
 import { codeModeResultBlocks } from "../tool-presentations/pi-native";
 import { ChildCalls, childCallsSummary } from "./ChildCalls";
 import { CodeModeResult, codeModeDuration } from "./CodeModeResult";
+import { CodeRows, CodeView } from "./CodeView";
 import { CopyAction } from "./CopyAction";
 import { DetailSummary } from "./DetailSummary";
 import { ImageGallery } from "./ImageGallery";
@@ -128,7 +129,7 @@ export function CardHeader({
           text={copyText}
           getContent={getCopyContent}
           label={copyLabel}
-          className="card__copy"
+          className="activity-copy card__copy"
         />
       ) : null}
     </div>
@@ -475,22 +476,15 @@ function DiffView({ lines }: { lines: DiffLine[] }) {
     preview?.phase === "streaming",
   );
   return (
-    <pre
+    <CodeView
       className="card__mono diff"
       {...scroll.props}
       tabIndex={0}
       role="group"
       aria-label="Changes"
     >
-      <code className="diff__lines">
-        {lines.map((line, index) => (
-          <span key={index} className={`diff__line diff__line--${line.type}`}>
-            {line.text}
-            {"\n"}
-          </span>
-        ))}
-      </code>
-    </pre>
+      <CodeRows rows={lines} />
+    </CodeView>
   );
 }
 
@@ -701,7 +695,9 @@ export function ToolResultCard({
   const calls = result.__inspireCalls;
   const output =
     name === "codemode" ? (
-      <PresentationBlocks blocks={codeModeResultBlocks(result)} />
+      <PresentationBlocks
+        blocks={codeModeResultBlocks(result).map((block) => ({ block }))}
+      />
     ) : (
       <RawToolResult result={result} />
     );
@@ -816,38 +812,28 @@ function StructuredCode({
   );
   return (
     <>
-      <pre
+      <CodeView
         className="tool-code"
         {...scroll.props}
         tabIndex={0}
         role="group"
         aria-label="Code"
         data-language={language}
-        style={
-          {
-            "--tool-line-number-width": `${Math.max(3, String(startLine + visible.length - 1).length) + 1.5}ch`,
-          } as React.CSSProperties
-        }
       >
         {lineNumbers ? (
-          <span className="tool-code__lines">
-            {visible.map((line, index) => (
-              <span className="tool-code__line" key={index}>
-                <span className="tool-code__number" aria-hidden>
-                  {startLine + index}
-                </span>
-                <code className={language ? `language-${language}` : undefined}>
-                  {line || " "}
-                </code>
-              </span>
-            ))}
-          </span>
+          <CodeRows
+            rows={visible.map((line, index) => ({
+              text: line,
+              newLine: startLine + index,
+            }))}
+            gutter="numbered"
+          />
         ) : (
           <code className={language ? `language-${language}` : undefined}>
             {visible.join("\n")}
           </code>
         )}
-      </pre>
+      </CodeView>
       {disclosure}
     </>
   );
@@ -862,19 +848,18 @@ function ReplacementDiff({
     "replacement-all",
     [
       ...(block.oldText === undefined ? [] : block.oldText.split("\n")).map(
-        (text) => ({ type: "del" as const, text: `-${text}` }),
+        (text) => ({ kind: "delete" as const, text: `-${text}` }),
       ),
       ...(block.newText === undefined ? [] : block.newText.split("\n")).map(
-        (text) => ({ type: "add" as const, text: `+${text}` }),
+        (text) => ({ kind: "add" as const, text: `+${text}` }),
       ),
     ],
   );
   return (
-    <div className="tool-block">
-      <ToolBlockHeading label={block.label} path={block.path} />
+    <>
       <DiffView lines={lines} />
       {disclosure}
-    </div>
+    </>
   );
 }
 
@@ -914,32 +899,40 @@ function ToolImage({
 function ToolPresentationBlockView({
   block,
   readingKey = block.type,
+  diff,
 }: {
   block: ToolPresentationBlock;
   readingKey?: string;
+  diff?: DiffLine[];
 }) {
+  const body = renderToolBlock(block, diff);
   return (
     <ActivityReadingBlock name={readingKey}>
-      <ToolPresentationBlockContent block={block} />
+      {block.type === "image" ||
+      block.type === "notice" ||
+      block.type === "properties" ? (
+        body
+      ) : (
+        <div className="tool-block">
+          <ToolBlockHeading
+            label={block.type === "codemode-result" ? "Output" : block.label}
+            path={"path" in block ? block.path : undefined}
+          />
+          {body}
+        </div>
+      )}
     </ActivityReadingBlock>
   );
 }
 
-function ToolPresentationBlockContent({
-  block,
-}: {
-  block: ToolPresentationBlock;
-}) {
+function renderToolBlock(block: ToolPresentationBlock, diff?: DiffLine[]) {
   switch (block.type) {
     case "codemode-result":
       return (
-        <div className="tool-block">
-          <ToolBlockHeading label="Output" />
-          <CodeModeResult
-            result={block.result}
-            renderImage={(image) => <ToolImage block={image} />}
-          />
-        </div>
+        <CodeModeResult
+          result={block.result}
+          renderImage={(image) => <ToolImage block={image} />}
+        />
       );
     case "properties":
       return (
@@ -978,117 +971,93 @@ function ToolPresentationBlockContent({
       );
     case "code": {
       return (
-        <div className="tool-block">
-          <ToolBlockHeading label={block.label} path={block.path} />
-          <StructuredCode
-            text={block.text}
-            startLine={block.startLine}
-            lineNumbers={block.lineNumbers}
-            language={block.language}
-          />
-        </div>
+        <StructuredCode
+          text={block.text}
+          startLine={block.startLine}
+          lineNumbers={block.lineNumbers}
+          language={block.language}
+        />
       );
     }
-    case "diff": {
-      const lines = parseUnifiedDiff(block.text);
-      if (!lines) return null;
-      return (
-        <div className="tool-block">
-          <ToolBlockHeading label={block.label} path={block.path} />
-          <DiffView lines={lines} />
-        </div>
-      );
-    }
+    case "diff":
+      return diff ? <DiffView lines={diff} /> : null;
     case "terminal":
       return (
-        <div className="tool-block">
-          <ToolBlockHeading label={block.label} />
-          <ToolTerminal
-            text={block.text}
-            label={block.label}
-            error={block.error}
-          />
-        </div>
+        <ToolTerminal
+          text={block.text}
+          label={block.label}
+          error={block.error}
+        />
       );
     case "list":
-      return (
-        <div className="tool-block">
-          <ToolBlockHeading label={block.label} path={block.path} />
-          {block.items.length > 0 ? (
-            <ul className="tool-list">
-              {block.items.map((item, index) => (
-                <li key={`${item.label}:${index}`}>
-                  {item.kind === "directory" ? (
-                    <Folder size={14} aria-hidden />
-                  ) : (
-                    <FileText size={14} aria-hidden />
-                  )}
-                  {item.resourceRef ? (
-                    <FileRefButton
-                      reference={item.resourceRef}
-                      className="tool-list__resource"
-                      accessibleLabel={item.resourceRef}
-                    >
-                      <ResourcePathLabel path={item.label} />
-                    </FileRefButton>
-                  ) : (
-                    <code>{item.label}</code>
-                  )}
-                  {item.detail ? (
-                    <span className="tool-list__detail" title={item.detail}>
-                      {item.detail}
-                    </span>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <div className="tool-empty">{block.emptyText ?? "No results"}</div>
-          )}
-        </div>
+      return block.items.length > 0 ? (
+        <ul className="tool-list">
+          {block.items.map((item, index) => (
+            <li key={`${item.label}:${index}`}>
+              {item.kind === "directory" ? (
+                <Folder size={14} aria-hidden />
+              ) : (
+                <FileText size={14} aria-hidden />
+              )}
+              {item.resourceRef ? (
+                <FileRefButton
+                  reference={item.resourceRef}
+                  className="tool-list__resource"
+                  accessibleLabel={item.resourceRef}
+                >
+                  <ResourcePathLabel path={item.label} />
+                </FileRefButton>
+              ) : (
+                <code>{item.label}</code>
+              )}
+              {item.detail ? (
+                <span className="tool-list__detail" title={item.detail}>
+                  {item.detail}
+                </span>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <div className="tool-empty">{block.emptyText ?? "No results"}</div>
       );
     case "search":
-      return (
-        <div className="tool-block">
-          <ToolBlockHeading label={block.label} />
-          {block.groups.length > 0 ? (
-            <div className="tool-search-results">
-              {block.groups.map((group) => (
-                <section className="tool-search-group" key={group.path}>
-                  <header>
-                    <FileSearch size={14} aria-hidden />
-                    <code title={group.path}>
-                      <ResourcePathLabel path={group.path} />
-                    </code>
-                    <span>{formatCount(group.matches.length, "line")}</span>
-                  </header>
-                  <div
-                    className="tool-search-group__lines"
-                    tabIndex={0}
-                    role="group"
-                    aria-label={`${group.path} matches`}
-                  >
-                    <div className="tool-search-group__line-plane">
-                      {group.matches.map((match, index) => (
-                        <div
-                          className={`tool-search-line ${match.match ? "tool-search-line--match" : "tool-search-line--context"}`}
-                          key={`${match.line}:${index}`}
-                        >
-                          <span className="tool-search-line__number">
-                            {match.line}
-                          </span>
-                          <code>{match.text || " "}</code>
-                        </div>
-                      ))}
+      return block.groups.length > 0 ? (
+        <div className="tool-search-results">
+          {block.groups.map((group) => (
+            <section className="tool-search-group" key={group.path}>
+              <header>
+                <FileSearch size={14} aria-hidden />
+                <code title={group.path}>
+                  <ResourcePathLabel path={group.path} />
+                </code>
+                <span>{formatCount(group.matches.length, "line")}</span>
+              </header>
+              <div
+                className="tool-search-group__lines"
+                tabIndex={0}
+                role="group"
+                aria-label={`${group.path} matches`}
+              >
+                <div className="tool-search-group__line-plane">
+                  {group.matches.map((match, index) => (
+                    <div
+                      className={`tool-search-line ${match.match ? "tool-search-line--match" : "tool-search-line--context"}`}
+                      key={`${match.line}:${index}`}
+                    >
+                      <span className="tool-search-line__number">
+                        {match.line}
+                      </span>
+                      <code>{match.text || " "}</code>
                     </div>
-                  </div>
-                </section>
-              ))}
-            </div>
-          ) : (
-            <div className="tool-empty">{block.emptyText ?? "No matches"}</div>
-          )}
+                  ))}
+                </div>
+              </div>
+            </section>
+          ))}
         </div>
+      ) : (
+        <div className="tool-empty">{block.emptyText ?? "No matches"}</div>
       );
     case "replacement":
       return <ReplacementDiff block={block} />;
@@ -1111,54 +1080,60 @@ function ToolPresentationBlockContent({
       );
     case "markdown":
       return (
-        <div className="tool-block">
-          <ToolBlockHeading label={block.label} />
-          <div
-            className={`tool-markdown ${block.error ? "tool-markdown--error" : ""}`}
-            role="group"
-            aria-label={block.label ?? "Formatted output"}
-            tabIndex={0}
-          >
-            <RichText text={block.text} variant="extension" />
-          </div>
+        <div
+          className={`tool-markdown ${block.error ? "tool-markdown--error" : ""}`}
+          role="group"
+          aria-label={block.label ?? "Formatted output"}
+          tabIndex={0}
+        >
+          <RichText text={block.text} variant="extension" />
         </div>
       );
     case "text":
       return (
-        <div className="tool-block">
-          <ToolBlockHeading label={block.label} />
-          <pre className={`tool-text ${block.error ? "tool-text--error" : ""}`}>
-            {block.text}
-          </pre>
-        </div>
+        <pre className={`tool-text ${block.error ? "tool-text--error" : ""}`}>
+          {block.text}
+        </pre>
       );
   }
 }
 
+interface RenderedToolBlock {
+  block: ToolPresentationBlock;
+  diff?: DiffLine[];
+}
+
 function presentationBlocks(
   presentation: ToolPresentation,
-): ToolPresentationBlock[] | null {
-  let blocks: ToolPresentationBlock[] | null;
+): RenderedToolBlock[] | null {
   try {
-    blocks = presentation.blocks();
+    const blocks = presentation.blocks();
+    if (!blocks) return null;
+    const rendered: RenderedToolBlock[] = [];
+    for (const block of blocks) {
+      if (block.type !== "diff") rendered.push({ block });
+      else {
+        const diff = parseUnifiedDiff(block.text);
+        if (!diff) return null;
+        rendered.push({ block, diff });
+      }
+    }
+    return rendered;
   } catch {
     return null;
   }
-  if (
-    !blocks ||
-    blocks.some(
-      (block) => block.type === "diff" && !parseUnifiedDiff(block.text),
-    )
-  )
-    return null;
-  return blocks;
 }
 
-function PresentationBlocks({ blocks }: { blocks: ToolPresentationBlock[] }) {
-  return blocks.map((block, index) => {
+function PresentationBlocks({ blocks }: { blocks: RenderedToolBlock[] }) {
+  return blocks.map(({ block, diff }, index) => {
     const key = `${block.type}:${index}`;
     return (
-      <ToolPresentationBlockView key={key} readingKey={key} block={block} />
+      <ToolPresentationBlockView
+        key={key}
+        readingKey={key}
+        block={block}
+        diff={diff}
+      />
     );
   });
 }
@@ -1200,15 +1175,14 @@ function ToolTerminal({
     live || preview?.phase === "streaming",
   );
   return (
-    <pre
+    <CodeView
       {...scroll.props}
       className={`tool-terminal ${error ? "tool-terminal--error" : ""} ${live ? "tool-terminal--live" : ""}`}
       tabIndex={0}
       role="group"
       aria-label={label}
-    >
-      {stripTerminalSequences(text)}
-    </pre>
+      text={stripTerminalSequences(text)}
+    />
   );
 }
 

@@ -3,11 +3,9 @@ import type { OperationReceipt } from "./host-operations.js";
 
 export const HOST_RESTART_PATH = "/api/host/restart";
 
-/** `host` replaces owned Pi workers.
- * `all` also restarts terminals. `all-pi` closes current-user Pi processes,
- * including Herdr Pi only in enhanced mode, then restarts Host and terminals.
- * Keep `all` scoped for older clients. */
-export type HostRestartScope = "host" | "all" | "all-pi";
+/** `host` replaces owned Pi workers. `all-pi` also closes current-user Pi
+ * processes and project terminals, including Herdr Pi in enhanced mode. */
+export type HostRestartScope = "host" | "all-pi";
 
 export interface HostRestartOperation {
   id: string;
@@ -24,12 +22,10 @@ export interface HostRestartOperation {
 export interface HostRestartStatus {
   hostId: string;
   available: boolean;
-  allAvailable: boolean;
   allPiAvailable?: boolean;
   /** Effective Host mode, fixed until this Host is replaced. */
   allPiIncludesHerdr?: boolean;
   reason?: string;
-  allReason?: string;
   allPiReason?: string;
   operation: HostRestartOperation | null;
 }
@@ -38,7 +34,7 @@ export const hostRestartRequestSchema = z
   .object({
     hostId: z.string().uuid(),
     operationId: z.string().uuid(),
-    scope: z.enum(["host", "all", "all-pi"]),
+    scope: z.enum(["host", "all-pi"]),
     interruptWork: z.literal(true).optional(),
     skipAttachedStop: z.literal(true).optional(),
   })

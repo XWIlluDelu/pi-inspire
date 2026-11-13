@@ -10,13 +10,9 @@ const PREFIX = "inspire:workbench:v1:";
 const LAST_SESSION = `${PREFIX}last-session`;
 const NAV_COLLAPSED = `${PREFIX}nav-collapsed`;
 const NAV_DISCLOSURES = `${PREFIX}navigation-disclosures`;
-const NAV_DISCLOSURE_DEFAULTS = {
-  recentSessions: true,
-  hiddenSessions: false,
-  /** The session column shows only sessions waiting on you. */
-  needsYou: false,
-};
-type NavigationDisclosure = keyof typeof NAV_DISCLOSURE_DEFAULTS;
+const NAV_CATALOG = `${PREFIX}session-catalog`;
+type NavigationDisclosure = "recentSessions";
+export type SessionCatalogView = "all" | "needs-you" | "hidden";
 
 export interface FileReadingState {
   source: { current: { top: number; left: number } | null; save?: () => void };
@@ -88,9 +84,18 @@ export function saveNavCollapsed(collapsed: boolean): void {
   write(NAV_COLLAPSED, collapsed);
 }
 
+export function readSessionCatalogView(): SessionCatalogView {
+  const view = read(NAV_CATALOG);
+  return view === "needs-you" || view === "hidden" ? view : "all";
+}
+
+export function saveSessionCatalogView(view: SessionCatalogView): void {
+  write(NAV_CATALOG, view);
+}
+
 export function readNavigationDisclosure(name: NavigationDisclosure): boolean {
   const value = jsonRecord(read(NAV_DISCLOSURES))?.[name];
-  return typeof value === "boolean" ? value : NAV_DISCLOSURE_DEFAULTS[name];
+  return value !== false;
 }
 
 export function saveNavigationDisclosure(

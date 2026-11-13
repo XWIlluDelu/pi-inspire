@@ -2,14 +2,14 @@ import { createHmac, randomUUID } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import { basename, dirname } from "node:path";
 import webPush from "web-push";
-import { z } from "zod";
 import type { CompletionAttentionPreference } from "../shared/contracts.js";
-import type {
-  NotificationSubscription,
-  TaskAlertEvent,
-  TaskAlertSettings,
-  TaskNotification,
-  TaskNotificationGrouping,
+import {
+  type NotificationSubscription,
+  pushSubscriptionSchema,
+  type TaskAlertEvent,
+  type TaskAlertSettings,
+  type TaskNotification,
+  type TaskNotificationGrouping,
 } from "../shared/notifications.js";
 import { replacePrivateStateFile } from "./private-state-file.js";
 import { requestError } from "./request-error.js";
@@ -20,37 +20,6 @@ export interface NotificationPrincipal {
 }
 const LIFETIME = 15 * 60_000;
 const ACK_WAIT = 2_000;
-
-/** A subscription is an outbound capability, not an arbitrary URL to fetch. */
-export const pushSubscriptionSchema = z
-  .object({
-    endpoint: z
-      .string()
-      .max(4096)
-      .url()
-      .refine((value) => {
-        const url = new URL(value);
-        return (
-          url.protocol === "https:" &&
-          !url.username &&
-          !url.password &&
-          !url.port &&
-          !url.hash &&
-          (url.hostname === "fcm.googleapis.com" ||
-            url.hostname === "updates.push.services.mozilla.com" ||
-            url.hostname === "web.push.apple.com" ||
-            url.hostname.endsWith(".push.apple.com") ||
-            url.hostname.endsWith(".notify.windows.com"))
-        );
-      }, "This browser's push service is not supported"),
-    keys: z
-      .object({
-        p256dh: z.string().regex(/^[A-Za-z0-9_-]{87}={0,1}$/),
-        auth: z.string().regex(/^[A-Za-z0-9_-]{22}={0,2}$/),
-      })
-      .strict(),
-  })
-  .strict();
 
 interface Device {
   origin: string;

@@ -34,6 +34,7 @@ export function PresentationAdapterSettings() {
           <SettingField
             key={adapter.id}
             label={adapter.name}
+            layout="inline"
             status={
               adapter.warning ? (
                 <span role="alert">{adapter.warning}</span>

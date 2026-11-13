@@ -5,10 +5,12 @@ import {
   activeSnapshot,
   bootstrapPayload,
   deferred,
+  emptySnapshot,
   FakeWebSocket,
   installFakeWebSocket,
   jsonBody,
   type RouteResponse,
+  selectSession,
 } from "./helpers";
 import { initStore, installStoreRoutes } from "./store-fixture";
 
@@ -20,6 +22,15 @@ beforeEach(() => {
 afterEach(() => {
   vi.clearAllTimers();
   vi.useRealTimers();
+});
+
+const runtimeReady = (socket: FakeWebSocket, sessionId = "s1") =>
+  socket.emit({ type: "runtime_ready", sessionId });
+const openResponse = (init: RequestInit, thinkingLevel?: string) => ({
+  body: activeSnapshot({
+    sessionId: String(jsonBody(init).id),
+    ...(thinkingLevel ? { thinkingLevel } : {}),
+  }),
 });
 
 describe("completion-driven Pi operation observation", () => {
@@ -74,9 +85,9 @@ describe("completion-driven Pi operation observation", () => {
     await expect(navigating).resolves.toBe(true);
     expect(store.getState()).toMatchObject({
       transcriptViewId: "navigated-view",
-      editorText: { text: "Returned editor text" },
       branchActionId: null,
     });
+    expect(store.drafts.get("s1").text).toBe("Returned editor text");
     expect(
       fetch.mock.calls
         .map(([url]) => url)
@@ -275,25 +286,22 @@ describe("detail snapshots and selection intent", () => {
   });
 
   it.each(["create", "deselect"] as const)(
-    "only reopens the current session to supersede a pending %s",
+    "reopens the current session when %s has a pending selection",
     async (operation) => {
       const retired = deferred<RouteResponse>();
       const reopening = deferred<RouteResponse>();
-      let opens = 0;
+      const reopen = vi.fn(() => reopening.promise);
       let signal: AbortSignal | null | undefined;
       installStoreRoutes((url, init) => {
+        if (url === "/api/sessions/open") return reopen();
         if (url === "/api/sessions/new" || url === "/api/sessions/deselect") {
           signal = init.signal;
           return retired.promise;
         }
-        if (url === "/api/sessions/open") {
-          opens += 1;
-          return reopening.promise;
-        }
       });
       const { store } = await initStore();
       await store.openSession("s1");
-      expect(opens).toBe(0);
+      expect(reopen).not.toHaveBeenCalled();
 
       const previous =
         operation === "create"
@@ -302,16 +310,12 @@ describe("detail snapshots and selection intent", () => {
       const latest = store.openSession("s1");
       await previous;
       expect(signal?.aborted).toBe(true);
-      expect(opens).toBe(1);
+      expect(reopen).toHaveBeenCalledOnce();
       retired.resolve({
         body:
           operation === "create"
             ? activeSnapshot({ sessionId: "stale" })
-            : {
-                active: null,
-                runState: "idle",
-                sessionStatuses: {},
-              },
+            : emptySnapshot,
       });
       await vi.advanceTimersByTimeAsync(0);
       expect(store.getState()).toMatchObject({
@@ -319,9 +323,7 @@ describe("detail snapshots and selection intent", () => {
         openingSessionId: "s1",
         sessionSelectionPending: true,
       });
-      reopening.resolve({
-        body: activeSnapshot({ sessionId: "s1", sessionName: "Reopened" }),
-      });
+      reopening.resolve({ body: activeSnapshot({ sessionName: "Reopened" }) });
       await latest;
       expect(store.getState()).toMatchObject({
         sessionName: "Reopened",
@@ -331,17 +333,16 @@ describe("detail snapshots and selection intent", () => {
     },
   );
 
-  it.each(["open", "deselect"] as const)(
-    "keeps a pending %s when the previous detail interest synchronizes",
-    async (operation) => {
+  it.each(["s3", null])(
+    "keeps pending selection %s when previous detail synchronizes",
+    async (target) => {
       const pending = deferred<RouteResponse>();
       installStoreRoutes((url, init) => {
-        if (url === "/api/sessions/open") {
-          return jsonBody(init).id === "s2"
-            ? { body: activeSnapshot({ sessionId: "s2" }) }
-            : pending.promise;
-        }
         if (url === "/api/sessions/deselect") return pending.promise;
+        if (url === "/api/sessions/open")
+          return jsonBody(init).id === "s2"
+            ? openResponse(init)
+            : pending.promise;
       });
       const { store, socket } = await initStore();
       await store.openSession("s2");
@@ -350,45 +351,35 @@ describe("detail snapshots and selection intent", () => {
         sessionId: "s2",
         revision: 1,
       });
-
-      const selecting =
-        operation === "open"
-          ? store.openSession("s3")
-          : store.deselectSession();
-      expect(store.getState().sessionSelectionPending).toBe(true);
-      socket.emit({
-        type: "snapshot",
-        detailSessionId: "s2",
-        detailRevision: 1,
-        data: activeSnapshot({
-          sessionId: "s2",
-          sessionName: "Refreshed B",
-        }),
-      });
-      // Apply the detail, but keep the newer HTTP selection's owner.
+      const selecting = target
+        ? store.openSession(target)
+        : store.deselectSession();
+      socket.emitSnapshot(
+        activeSnapshot({ sessionId: "s2", sessionName: "Refreshed B" }),
+        {
+          detailSessionId: "s2",
+          detailRevision: 1,
+        },
+      );
       expect(store.getState()).toMatchObject({
         sessionId: "s2",
         sessionName: "Refreshed B",
         sessionSelectionPending: true,
-        openingSessionId: operation === "open" ? "s3" : null,
+        openingSessionId: target,
       });
 
       pending.resolve({
-        body:
-          operation === "deselect"
-            ? { active: null, runState: "idle", sessionStatuses: {} }
-            : activeSnapshot({ sessionId: "s3" }),
+        body: target ? activeSnapshot({ sessionId: target }) : emptySnapshot,
       });
       await selecting;
-      const sessionId = operation === "deselect" ? null : "s3";
       expect(store.getState()).toMatchObject({
-        sessionId,
+        sessionId: target,
         sessionSelectionPending: false,
         openingSessionId: null,
       });
       expect(JSON.parse(socket.sent.at(-1)!)).toEqual({
         type: "detail_interest",
-        sessionId,
+        sessionId: target,
         revision: 2,
       });
     },
@@ -415,17 +406,14 @@ describe("bootstrap snapshot ownership", () => {
             model: { provider: "provider", id: "new-model" },
           }),
         };
-      if (url === "/api/preferences")
-        return {
-          body: { ...bootstrapPayload().preferences, ...jsonBody(init) },
-        };
+      if (url === "/api/preferences") return { body: jsonBody(init) };
     });
     const { store } = await initStore();
     reconnecting = true;
     const initializing = store.init();
     await store.setModel("provider", "new-model");
     bootstrap.resolve({
-      body: bootstrapPayload({ snapshot: activeSnapshot() }),
+      body: bootstrapPayload({ startupSessionId: "s1" }),
     });
     await initializing;
     expect(store.getState().model).toMatchObject({
@@ -444,10 +432,7 @@ describe("bootstrap snapshot ownership", () => {
           return bootstrap.promise;
         if (url === "/api/sessions/new")
           return { body: activeSnapshot({ sessionId: "s2" }) };
-        if (url === "/api/sessions/deselect")
-          return {
-            body: { active: null, runState: "idle", sessionStatuses: {} },
-          };
+        if (url === "/api/sessions/deselect") return { body: emptySnapshot };
       });
       const { store } = await initStore();
       reconnecting = true;
@@ -458,15 +443,13 @@ describe("bootstrap snapshot ownership", () => {
       expect(store.getState().sessionId).toBe(sessionId);
 
       bootstrap.resolve({
-        body: bootstrapPayload({ snapshot: activeSnapshot() }),
+        body: bootstrapPayload({ startupSessionId: "s1" }),
       });
       await initializing;
       expect(store.getState().sessionId).toBe(sessionId);
       const socket = FakeWebSocket.instances.at(-1)!;
       const url = new URL(socket.url, window.location.href);
       expect(url.searchParams.get("detail")).toBe(sessionId ?? "");
-      // The old bootstrap digest cannot attest the retained newer selection.
-      expect(url.searchParams.has("snapshot")).toBe(false);
     },
   );
 });
@@ -491,10 +474,7 @@ describe("runtime control completion ownership", () => {
             ? snapshot.promise
             : { status: 503, body: { error: "Redundant refresh failed" } };
         }
-        if (url === "/api/sessions/open")
-          return {
-            body: activeSnapshot({ sessionId: String(jsonBody(init).id) }),
-          };
+        if (url === "/api/sessions/open") return openResponse(init);
       });
       const { store, socket } = await initStore();
       await store.sendPrompt("/compact");
@@ -507,15 +487,13 @@ describe("runtime control completion ownership", () => {
         await store.openSession("s2");
         await store.openSession("s1");
       } else {
-        socket.emit({
-          type: "snapshot",
-          detailSessionId: "s1",
-          detailRevision: 0,
-          data: activeSnapshot({ transcriptPage: { viewId: "next-view" } }),
-        });
+        socket.emitSnapshot(
+          activeSnapshot({ transcriptPage: { viewId: "next-view" } }),
+          { detailSessionId: "s1", detailRevision: 0 },
+        );
       }
       const viewId = store.getState().transcriptViewId!;
-      socket.emit({ type: "runtime_ready", sessionId: "s1" });
+      runtimeReady(socket);
       await vi.advanceTimersByTimeAsync(0);
       expect(snapshotReads).toBe(1);
 
@@ -565,17 +543,8 @@ describe("runtime control completion ownership", () => {
           reads += 1;
           return current.promise;
         }
-        if (url === "/api/sessions/open")
-          return {
-            body: activeSnapshot({
-              sessionId: String(jsonBody(init).id),
-              thinkingLevel: "low",
-            }),
-          };
-        if (url === "/api/preferences")
-          return {
-            body: { ...bootstrapPayload().preferences, ...jsonBody(init) },
-          };
+        if (url === "/api/sessions/open") return openResponse(init, "low");
+        if (url === "/api/preferences") return { body: jsonBody(init) };
       });
       const { store, socket } = await initStore();
       const changing =
@@ -585,7 +554,7 @@ describe("runtime control completion ownership", () => {
       await store.openSession("s2");
       if (outcome === "refused") await store.openSession("s1");
       const sessionId = store.getState().sessionId!;
-      socket.emit({ type: "runtime_ready", sessionId });
+      runtimeReady(socket, sessionId);
       await vi.advanceTimersByTimeAsync(0);
       expect(reads).toBe(1);
 
@@ -616,20 +585,17 @@ describe("resync failure ownership", () => {
   it.each([
     ["return to session", false],
     ["same-session view", false],
-    ["Host selection push", true],
+    ["explicit session selection", true],
   ] as const)(
     "keeps the current view and its error after an older resync settles across %s",
     async (transition, succeeds) => {
       const pending = deferred<RouteResponse>();
       const fetch = installStoreRoutes((url, init) => {
         if (url.startsWith("/api/snapshot")) return pending.promise;
-        if (url === "/api/sessions/open")
-          return {
-            body: activeSnapshot({ sessionId: String(jsonBody(init).id) }),
-          };
+        if (url === "/api/sessions/open") return openResponse(init);
       });
       const { store, socket } = await initStore();
-      socket.emit({ type: "runtime_ready", sessionId: "s1" });
+      runtimeReady(socket);
       await vi.advanceTimersByTimeAsync(0);
       expect(
         fetch.mock.calls.filter(([url]) =>
@@ -647,22 +613,18 @@ describe("resync failure ownership", () => {
         await store.openSession("s2");
         await store.openSession("s1");
       }
-      socket.emit({
-        type: "snapshot",
-        ...(transition === "same-session view"
-          ? { detailSessionId: "s1", detailRevision: 0 }
+      const current = activeSnapshot({
+        sessionId,
+        transcriptPage: {
+          viewId,
+          messages: [{ role: "assistant", content: "current", timestamp: 2 }],
+        },
+        ...(currentError
+          ? { projectionHealth: { status: "error", message: currentError } }
           : {}),
-        data: activeSnapshot({
-          sessionId,
-          transcriptPage: {
-            viewId,
-            messages: [{ role: "assistant", content: "current", timestamp: 2 }],
-          },
-          ...(currentError
-            ? { projectionHealth: { status: "error", message: currentError } }
-            : {}),
-        }),
       });
+      if (succeeds) await selectSession(store, current);
+      else socket.emitSnapshot(current);
       expect(store.getState().error).toBe(currentError);
       pending.resolve(
         succeeds
@@ -696,10 +658,7 @@ describe("resync failure ownership", () => {
         : { status: 503, body: { error: "Snapshot unavailable" } };
     });
     const { store, socket } = await initStore();
-    const refresh = () =>
-      socket.emit({ type: "runtime_ready", sessionId: "s1" });
-
-    refresh();
+    runtimeReady(socket);
     await vi.advanceTimersByTimeAsync(0);
     expect(store.getState()).toMatchObject({ connection: "open", error: null });
     reachable = true;
@@ -714,7 +673,7 @@ describe("resync failure ownership", () => {
     expect(reads).toBe(2);
 
     reachable = false;
-    refresh();
+    runtimeReady(socket);
     await vi.advanceTimersByTimeAsync(0);
     expect(store.getState()).toMatchObject({
       sessionName: "Reobserved",
@@ -737,7 +696,7 @@ describe("resync failure ownership", () => {
         return { body: activeSnapshot({ sessionId: "s2" }) };
     });
     const { store, socket } = await initStore();
-    socket.emit({ type: "runtime_ready", sessionId: "s1" });
+    runtimeReady(socket);
     await vi.advanceTimersByTimeAsync(0);
     await store.openSession("s2");
     pending.resolve({ status: 401, body: { error: "Pairing expired" } });

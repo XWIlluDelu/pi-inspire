@@ -18,13 +18,13 @@ import type { RuntimeBashController } from "./runtime-bash.js";
 import { newBridgeIdentity } from "./runtime-branch-bridge.js";
 import { parseRpcEntryChain } from "./runtime-entry-chain.js";
 import type { RuntimeExtensionUiController } from "./runtime-extension-ui.js";
-import { createWorkerView } from "./runtime-worker-view.js";
 import {
   type BranchBridgeIdentity,
   clearWorkerPresentation,
   type RuntimeSlot,
   workerOnSeparateBranch,
 } from "./runtime-slot.js";
+import { createWorkerView } from "./runtime-worker-view.js";
 import type {
   ProjectionReconcileResult,
   SessionProjectionView,
@@ -159,7 +159,8 @@ export class RuntimeWorkerLifecycle {
     void this.stop(slot).catch(() => undefined);
     slot.retry = null;
     slot.summarizationRetry = null;
-    slot.activeAssistantCorrelation = null;
+    slot.activeAssistantKey = null;
+    slot.activeTurnId = null;
     if (slot.conflict) {
       slot.runState = "conflict";
     } else {

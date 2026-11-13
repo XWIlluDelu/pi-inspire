@@ -74,7 +74,8 @@ function replacementRuntime({
   const spawn = vi.fn(() => {
     throw new Error("An external session must reuse its live Pi");
   });
-  const runtime = new RuntimeController(catalog([session]), attachments, {
+  const source = catalog([session]);
+  const runtime = new RuntimeController(source, attachments, {
     createProcess: spawn,
   })
     .setExternalSessionPresence((id, file, fresh, isAncestor) =>
@@ -92,7 +93,7 @@ function replacementRuntime({
     });
   cleanup.push(() => attachments.close());
   cleanup.push(() => runtime.close());
-  return { runtime, spawn };
+  return { runtime, spawn, catalog: source, attachments, cwd: root };
 }
 
 /** A real Pi with attach-control loaded, as a user's terminal Pi would be. */
@@ -392,10 +393,11 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
       timeout: 5_000,
     });
     try {
-      const { runtime } = replacementRuntime(fixture);
+      const services = replacementRuntime(fixture);
+      const { runtime } = services;
       await runtime.openSession(id);
       await runtime.takeOverSession(id);
-      const host = await hostApiFixture({ runtime });
+      const host = await hostApiFixture({ services });
       cleanup.push(() => closeHostApiFixture(host));
       for (const behavior of ["steer", "followUp"] as const) {
         await expect(
@@ -741,7 +743,10 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
     cleanup.push(() => attachments.close());
     cleanup.push(() => runtime.close());
     await expect(
-      runtime.clearHiddenSessions([first.id], [first.id], []),
+      runtime.deleteSessions(
+        { scope: "hidden", sessionIds: [first.id] },
+        { hiddenSessionIds: [first.id], hiddenProjectCwds: [] },
+      ),
     ).resolves.toEqual({
       deleted: [{ sessionId: first.id, disposition: "trashed" }],
     });

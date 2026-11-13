@@ -33,7 +33,7 @@ describe("native shell input", () => {
           .includes("NATIVE_INCLUDED"),
       ),
     ).toBe(true);
-    const snapshot = await f.runtime.snapshot();
+    const snapshot = await f.runtime.snapshot(f.sessionId);
     const bash = snapshot.active!.transcriptPage.messages.filter(
       (message) =>
         (message as Record<string, unknown>).role === "bashExecution",
@@ -68,8 +68,8 @@ describe("native shell input", () => {
       sessionId: f.sessionId,
       command: "reload",
     });
-    const reopened = (await f.runtime.snapshot()).active!.transcriptPage
-      .messages as Array<Record<string, unknown>>;
+    const reopened = (await f.runtime.snapshot(f.sessionId)).active!
+      .transcriptPage.messages as Array<Record<string, unknown>>;
     expect(
       reopened.filter((message) => message.role === "bashExecution"),
     ).toHaveLength(2);
@@ -90,7 +90,7 @@ describe("native shell input", () => {
     await f.api.prompt(f.delivery("!!fixture-hook"));
     await f.api.prompt(f.delivery("!fixture-ops"));
     await f.api.prompt(f.delivery("!head -c 80000 /dev/zero | tr '\\000' x"));
-    const snapshot = await f.runtime.snapshot();
+    const snapshot = await f.runtime.snapshot(f.sessionId);
     const messages = snapshot.active!.transcriptPage.messages as Array<
       Record<string, unknown>
     >;
@@ -158,7 +158,7 @@ describe("native shell input", () => {
     // original promise is still awaited below, so request failure still fails.
     void running.catch(() => {});
     await vi.waitFor(async () =>
-      expect((await f.runtime.snapshot()).bashRunning).toBe(true),
+      expect((await f.runtime.snapshot(f.sessionId)).bashRunning).toBe(true),
     );
     await expect(f.api.prompt(f.delivery("!echo second"))).rejects.toThrow(
       /already running/,
@@ -175,7 +175,7 @@ describe("native shell input", () => {
       ),
     ).toBe(false);
     expect(worker.stop).not.toHaveBeenCalled();
-    const snapshot = await f.runtime.snapshot();
+    const snapshot = await f.runtime.snapshot(f.sessionId);
     expect(snapshot.bashRunning).toBe(false);
     const cancelled = (
       snapshot.active!.transcriptPage.messages as Array<Record<string, unknown>>
@@ -193,10 +193,11 @@ describe("native shell input", () => {
     const first = f.api.prompt(f.delivery("!fixture-await-bash"));
     await vi.waitFor(async () =>
       expect(
-        (await f.runtime.snapshot()).pendingExtensionUiRequests,
+        (await f.runtime.snapshot(f.sessionId)).pendingExtensionUiRequests,
       ).toHaveLength(1),
     );
-    const dialog = (await f.runtime.snapshot()).pendingExtensionUiRequests![0]!;
+    const dialog = (await f.runtime.snapshot(f.sessionId))
+      .pendingExtensionUiRequests![0]!;
     await f.runtime.extensionUiResponse({
       sessionId: f.sessionId,
       id: dialog.id,
@@ -208,14 +209,16 @@ describe("native shell input", () => {
     void stopped.catch(() => {});
     await vi.waitFor(async () =>
       expect(
-        (await f.runtime.snapshot()).pendingExtensionUiRequests,
+        (await f.runtime.snapshot(f.sessionId)).pendingExtensionUiRequests,
       ).toHaveLength(1),
     );
     await f.api.abort(f.sessionId);
     await expect(stopped).rejects.toMatchObject({ outcomeUnknown: true });
     expect(f.workers[0]!.stop).toHaveBeenCalledWith("bash");
-    expect((await f.runtime.snapshot()).pendingExtensionUiRequests).toEqual([]);
-    const final = await f.runtime.snapshot();
+    expect(
+      (await f.runtime.snapshot(f.sessionId)).pendingExtensionUiRequests,
+    ).toEqual([]);
+    const final = await f.runtime.snapshot(f.sessionId);
     expect(final.bashRunning).toBe(false);
     const interrupted = (
       final.active!.transcriptPage.messages as Array<Record<string, unknown>>
@@ -263,7 +266,7 @@ describe("native shell input", () => {
     expect(pid).toEqual(expect.any(Number));
     process.kill(pid!, "SIGKILL"); // This fixture-created worker, never a live session.
     await expect(running).rejects.toMatchObject({ outcomeUnknown: true });
-    const snapshot = await f.runtime.snapshot();
+    const snapshot = await f.runtime.snapshot(f.sessionId);
     expect(snapshot.bashRunning).toBe(false);
     expect(
       (
@@ -293,9 +296,9 @@ describe("native shell input", () => {
     void shell.catch(() => {});
     try {
       await vi.waitFor(async () =>
-        expect((await f.runtime.snapshot()).bashRunning).toBe(true),
+        expect((await f.runtime.snapshot(f.sessionId)).bashRunning).toBe(true),
       );
-      expect((await f.runtime.snapshot()).runState).toBe("idle");
+      expect((await f.runtime.snapshot(f.sessionId)).runState).toBe("idle");
       await f.api.prompt(f.delivery("Explicit model input during shell."));
       await vi.waitFor(() => expect(f.modelRequests).toHaveLength(1));
       await f.api.abort(f.sessionId);
@@ -305,10 +308,10 @@ describe("native shell input", () => {
       expect(
         requests.mock.calls.some(([command]) => command.type === "abort_bash"),
       ).toBe(false);
-      expect((await f.runtime.snapshot()).bashRunning).toBe(true);
+      expect((await f.runtime.snapshot(f.sessionId)).bashRunning).toBe(true);
       await shell;
-      const messages = (await f.runtime.snapshot()).active!.transcriptPage
-        .messages as Array<Record<string, unknown>>;
+      const messages = (await f.runtime.snapshot(f.sessionId)).active!
+        .transcriptPage.messages as Array<Record<string, unknown>>;
       expect(
         messages.find((message) => message.role === "bashExecution"),
       ).toMatchObject({
@@ -332,16 +335,17 @@ describe("native shell input", () => {
       await f.api.prompt(f.delivery("Background model turn."));
       await vi.waitFor(() => expect(f.modelRequests).toHaveLength(1));
       await f.api.prompt(f.delivery("!printf 'WHILE_MODEL_ACTIVE'"));
-      expect((await f.runtime.snapshot()).runState).toBe("running");
+      expect((await f.runtime.snapshot(f.sessionId)).runState).toBe("running");
       expect(await readFile(f.sessionFile, "utf8")).not.toContain(
         "WHILE_MODEL_ACTIVE",
       );
       expect(
-        (await f.runtime.snapshot()).active!.transcriptPage.messages.some(
-          (message) =>
-            String((message as Record<string, unknown>).output).includes(
-              "WHILE_MODEL_ACTIVE",
-            ),
+        (
+          await f.runtime.snapshot(f.sessionId)
+        ).active!.transcriptPage.messages.some((message) =>
+          String((message as Record<string, unknown>).output).includes(
+            "WHILE_MODEL_ACTIVE",
+          ),
         ),
       ).toBe(true);
       release();
@@ -351,7 +355,9 @@ describe("native shell input", () => {
       );
       expect(f.modelRequests).toHaveLength(1);
       expect(
-        (await f.runtime.snapshot()).active!.transcriptPage.messages.filter(
+        (
+          await f.runtime.snapshot(f.sessionId)
+        ).active!.transcriptPage.messages.filter(
           (message) =>
             (message as Record<string, unknown>).role === "bashExecution",
         ),

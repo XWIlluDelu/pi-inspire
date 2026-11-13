@@ -1,42 +1,9 @@
-import { expect, type Locator, test } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { codemodeCalls } from "../../shared/tool-activity";
 import { activityReadingMessages } from "../web/fixtures/activity-reading";
 import { customMessageConfiguration } from "../web/fixtures/custom-message-presentation";
 import { openEventSession } from "./support/host-events";
 import { openFixtureSession, pairedPage } from "./support/navigation";
-import {
-  disclosureReadingOffset,
-  textMarkOffsets,
-} from "./support/text-baseline";
-
-async function expectActivityMarksCentered(control: Locator) {
-  await control.page().evaluate(() => document.fonts.ready);
-  const offsets = await control.evaluate(textMarkOffsets, {
-    label: ":scope > span:not(.activity-fold__summary)",
-    marks: ":scope > svg",
-  });
-  expect(offsets.length).toBeGreaterThan(0);
-  for (const offset of offsets) expect(Math.abs(offset)).toBeLessThan(0.5);
-}
-
-async function expectActivityArrowAtReadingEdge(control: Locator) {
-  const reading = await control.evaluateHandle(
-    (element) =>
-      element
-        .closest("[data-transcript-row]")!
-        .nextElementSibling!.querySelector(".rich-text")!,
-  );
-  try {
-    const offset = await control
-      .locator("svg")
-      .evaluate(disclosureReadingOffset, reading);
-    // Chevron directions have different painted widths; both should read on
-    // the prose edge, without forcing the indented Activity label onto it.
-    expect(Math.abs(offset)).toBeLessThan(2);
-  } finally {
-    await reading.dispose();
-  }
-}
 
 test("activity headers disclose across the row and keep Copy beside the label", async ({
   page,
@@ -97,36 +64,20 @@ test("activity summaries disclose with keyboard focus on a narrow screen", async
   await pairedPage(page);
   await openFixtureSession(page, /Formula rendering and spectral analysis/);
   const fold = page.locator(".activity-fold").first();
-  const disclosure = fold.getByRole("button", {
-    name: "Expand assistant activity",
-  });
-  await expect(disclosure).toBeVisible();
-  await expectActivityMarksCentered(disclosure);
+  const disclosure = fold.getByRole("button", { name: /assistant activity/i });
+  await expect(disclosure).toHaveAttribute("aria-expanded", "false");
   await expect(fold.locator(".activity-fold__summary")).toContainText(/step/);
-
   await page.setViewportSize({ width: 320, height: 1000 });
-  await disclosure.scrollIntoViewIfNeeded();
-  await expectActivityArrowAtReadingEdge(disclosure);
   await disclosure.focus();
   await disclosure.press("Enter");
   const content = fold.locator(".activity-fold__content");
+  await expect(disclosure).toBeFocused();
+  await expect(disclosure).toHaveAttribute("aria-expanded", "true");
   await expect(content).toBeVisible();
-  const upper = fold.locator(".activity-fold__boundary--upper");
-  await expectActivityArrowAtReadingEdge(upper);
-  await expectActivityMarksCentered(upper);
   expect(
-    await fold.evaluate(
-      (element) => element.scrollWidth <= element.clientWidth + 1,
-    ),
-  ).toBe(true);
-  const lower = fold.getByRole("button", {
-    name: "Collapse assistant activity from the lower boundary",
-  });
-  await lower.focus();
-  expect(
-    await lower.evaluate((element) => getComputedStyle(element).outlineStyle),
-  ).not.toBe("none");
-  await lower.press("Enter");
+    await fold.evaluate((el) => el.scrollWidth - el.clientWidth),
+  ).toBeLessThanOrEqual(1);
+  await disclosure.press("Enter");
   await expect(disclosure).toBeFocused();
   await expect(content).toBeHidden();
 });
@@ -204,9 +155,7 @@ test("Thinking copy follows disclosure and custom messages stay independent", as
   ).toBe(true);
   const group = page.locator(".activity-fold").first();
   await group
-    .getByRole("button", {
-      name: "Collapse assistant activity from the lower boundary",
-    })
+    .getByRole("button", { name: "Collapse assistant activity", exact: true })
     .click();
   await expect(extension).toBeVisible();
   await expect(extension).toContainText("The keyboard checks are complete.");

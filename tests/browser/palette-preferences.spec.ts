@@ -1,6 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { PALETTE_PREFERENCES } from "../../shared/contracts";
-import { PALETTE_LABELS } from "../../src/preference-labels";
+import { preferenceChoices } from "../../src/preference-labels";
 import { VISUAL_PREFERENCES_STORAGE_KEY } from "../../src/visual-preferences";
 import { renderedColors, resolvedColor } from "./support/colors";
 import {
@@ -33,10 +32,10 @@ test("palette settings stay independent of luminosity from first paint through H
   await expect(html).toHaveAttribute("data-theme", "dark");
 
   await page.setViewportSize({ width: 320, height: 900 });
-  for (const palette of PALETTE_PREFERENCES)
+  for (const { label } of preferenceChoices.palette.options)
     await expect(
       picker.getByRole("button", {
-        name: PALETTE_LABELS[palette],
+        name: label,
         exact: true,
       }),
     ).toBeVisible();
@@ -57,8 +56,7 @@ test("palette settings stay independent of luminosity from first paint through H
   const paletteSave = savePreference("palette");
   await wisteria.press("Enter");
   expect(await (await paletteSave).json()).toMatchObject({
-    palette: "wisteria",
-    theme: "dark",
+    preferences: { palette: "wisteria", theme: "dark" },
   });
   await expect(html).toHaveAttribute("data-palette", "wisteria");
   await expect(wisteria).toHaveAttribute("aria-pressed", "true");
@@ -72,8 +70,7 @@ test("palette settings stay independent of luminosity from first paint through H
   const lightSave = savePreference("theme");
   await settings.getByRole("button", { name: "Light", exact: true }).click();
   expect(await (await lightSave).json()).toMatchObject({
-    palette: "wisteria",
-    theme: "light",
+    preferences: { palette: "wisteria", theme: "light" },
   });
 
   await settings.getByRole("button", { name: "Close settings" }).click();

@@ -93,9 +93,10 @@ a fresh resource scan and package update results cannot establish current-worker
 
 ## Modal focus
 
-- The active modal traps Tab, suppresses background shell shortcuts, and restores its exact opener
-  on close. Nested modals keep this ownership even when they close out of order. Anchored portaled
-  controls belong to their containing modal's stacking, focus and logical tab order.
+- Native dialogs own the browser top layer and background inertness. Responsive workspace drawers
+  participate in the same modal ordering. The active modal traps Tab, suppresses background shell
+  shortcuts, and restores its exact opener on close, including when nested modals close out of order.
+  Anchored menus stay with their trigger in the containing modal's focus and tab order.
 - A nested menu consumes Escape before its containing modal. Otherwise, Escape belongs to the
   topmost modal; an attributed extension request yields it only for projection-conflict recovery.
 - Settings and Command Palette are mutually exclusive. An extension request takes modal ownership
@@ -108,11 +109,14 @@ a fresh resource scan and package update results cannot establish current-worker
 
 - Changes patch only their own fields through a serialized write path. Concurrent preference,
   session-pin, folder-pin, and hide changes preserve one another.
-- A refused write warns and rolls its fields back to the last Host-confirmed values. A newer local
-  change keeps ownership of its fields, including across a sequence of refused writes.
-- Full snapshots returned by other operations apply only to fields whose local owner has not
-  advanced since that operation began; deletion cleanup therefore preserves newer settings.
-- Palette identifiers and their legacy migration follow [[design-system]]. Theme and palette changes
+- Settings present a pending choice separately from the Host-confirmed value. Refusal retires only
+  the corresponding intent; a newer local choice keeps its ownership. If a write's response is
+  lost, check the saved value by reading it and keep an unresolved intent visible until observed
+  or the workbench reconnects.
+- The Host publishes bootstrap, preference changes and successful deletion metadata cleanup with
+  one ordered revision. Apply only newer publications from the current Host; a delayed deletion
+  response cannot displace newer settings.
+- Palette identifiers follow [[design-system]]. Theme and palette changes
   own separate fields; resetting preferences returns to Chimonanthus with System luminosity.
 - Missing stored fields receive migration defaults. Invalid fields use defaults in the displayed
   projection and produce a bootstrap warning; other settings remain editable. Field-scoped writes

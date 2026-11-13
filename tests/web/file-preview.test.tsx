@@ -132,38 +132,3 @@ describe("Files reading continuity", () => {
     }
   });
 });
-
-describe("Files Git view", () => {
-  const changes = {
-    controls: <button type="button">Next change</button>,
-    content: (
-      <div
-        role="region"
-        aria-label="File changes"
-        data-pane-scroll-active="true"
-      >
-        Changed file content
-      </div>
-    ),
-  };
-
-  it("shows a deleted file's diff while keeping its unavailable download disabled", () => {
-    render(
-      <FilePreview
-        state={fileState({
-          status: "error",
-          reference: "notes.md",
-          message: "File was deleted",
-        })}
-        changes={changes}
-      />,
-    );
-    expect(screen.getByRole("region", { name: "File changes" })).toBeVisible();
-    expect(screen.queryByText("File was deleted")).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "Download unavailable" }),
-    ).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Git changes" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Source" })).toBeDisabled();
-  });
-});

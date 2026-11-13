@@ -51,6 +51,9 @@ export async function openFixtureSession(
     exact: true,
   });
   if (searched) await search.fill(title.source);
+  const id = await row.evaluate((element) =>
+    element.closest("[data-session-id]")?.getAttribute("data-session-id"),
+  );
   await row.click();
   await expect(page.locator(".topbar__title-button")).toHaveText(title);
   if (searched) {
@@ -66,6 +69,8 @@ export async function openFixtureSession(
         .getByRole("button", { name: "Close navigation", exact: true })
         .click();
   }
+  if (!id) throw new Error("Fixture row has no session identity");
+  return id;
 }
 
 export async function pairAndOpen(page: Page) {
@@ -137,7 +142,9 @@ export async function openCommandPalette(page: Page) {
 
 /** Open an existing shell without the top-bar New terminal creation action. */
 export async function openProjectTerminal(page: Page) {
-  const existing = page.locator(".ctx__terminal-tabs [role=tab]").first();
+  const existing = page
+    .locator('[role=tab][data-dock-tab^="terminal:"]')
+    .first();
   if (await existing.count()) {
     await existing.click();
     return;

@@ -19,10 +19,10 @@ import {
 } from "../../server/project-files.js";
 import {
   openCanonicalResourceFile,
-  type ResourceContext,
   ResourceStore,
   referencePath,
 } from "../../server/resources.js";
+import type { ResourceDescriptor } from "../../shared/contracts.js";
 import { diagnosticResourceReference } from "../../shared/resource-references.js";
 
 const temporaryDirectories: string[] = [];
@@ -38,8 +38,36 @@ async function workspace() {
   return { root, project };
 }
 
-function resourceIdentity(viewId = "view-s1", revision = 1) {
-  return { sessionId: "s1", viewId, revision };
+function scope(cwd: string, revision = 1, viewId = "view-s1") {
+  return { sessionId: "s1", viewId, revision, cwd };
+}
+
+function context(
+  cwd: string,
+  messages: unknown[] = [],
+  revision = 1,
+  viewId = "view-s1",
+) {
+  return { ...scope(cwd, revision, viewId), messages };
+}
+
+function citation(text: string, role = "assistant") {
+  return { role, content: [{ type: "text", text }] };
+}
+
+function resourceByDescriptor({ id, sessionId, viewId }: ResourceDescriptor) {
+  return resources.get(id, sessionId, viewId);
+}
+
+async function readResource(descriptor: ResourceDescriptor) {
+  const { details, handle } = await resources.openForServing(
+    resourceByDescriptor(descriptor),
+  );
+  try {
+    return { text: await handle.readFile("utf8"), size: details.size };
+  } finally {
+    await handle.close();
+  }
 }
 
 beforeEach(() => {
@@ -70,30 +98,26 @@ describe("ResourceStore", () => {
           },
         ],
       },
-      ...Array.from({ length: 20 }, (_, index) => ({
-        role: "assistant",
-        content: [{ type: "text", text: `See \`file-${index}.md\`.` }],
-      })),
+      ...Array.from({ length: 20 }, (_, index) =>
+        citation(`See \`file-${index}.md\`.`),
+      ),
     ];
-    const context = {
-      sessionId: "s1",
-      viewId: "view-s1",
-      revision: 7,
-      cwd: project,
+    const source = {
+      ...scope(project, 7),
       loadMessages: async () => {
         messageLoads += 1;
         return messages;
       },
     };
 
-    const listed = await resources.list(context);
+    const listed = await resources.list(source);
     expect(listed.resources).toHaveLength(21);
     expect(listed.resources[0]?.reference).toBe("file-19.md");
     expect(listed.produced).toEqual([
       expect.objectContaining({ reference: "analysis.m", writes: true }),
     ]);
 
-    await resources.probe(context, ["file-19.md", "file-0.md"]);
+    await resources.probe(source, ["file-19.md", "file-0.md"]);
     expect(messageLoads).toBe(1);
   });
 
@@ -110,10 +134,7 @@ describe("ResourceStore", () => {
     let olderLoads = 0;
     let newerLoads = 0;
     const olderContext = {
-      sessionId: "s1",
-      viewId: "view-s1",
-      revision: 7,
-      cwd: project,
+      ...scope(project, 7),
       loadMessages: () => {
         olderLoads += 1;
         return olderMessages;
@@ -130,21 +151,11 @@ describe("ResourceStore", () => {
 
     const olderList = resources.list(olderContext);
     const newerList = resources.list(newerContext);
-    resolveNewer([
-      {
-        role: "assistant",
-        content: [{ type: "text", text: "See `newer.md`." }],
-      },
-    ]);
+    resolveNewer([citation("See `newer.md`.")]);
     await expect(newerList).resolves.toMatchObject({
       resources: [{ reference: "newer.md" }],
     });
-    resolveOlder([
-      {
-        role: "assistant",
-        content: [{ type: "text", text: "See `older.md`." }],
-      },
-    ]);
+    resolveOlder([citation("See `older.md`.")]);
     await expect(olderList).resolves.toMatchObject({
       resources: [{ reference: "older.md" }],
     });
@@ -174,38 +185,29 @@ describe("ResourceStore", () => {
       "ignored image",
     );
     await writeFile(join(root, "outside.png"), "outside image");
-    const context = {
-      ...resourceIdentity(),
-      cwd: project,
-      messages: [
-        {
-          role: "assistant",
-          content: [{ type: "text", text: "[Report](reports/README.md)" }],
-        },
-      ],
-    };
+    const source = context(project, [citation("[Report](reports/README.md)")]);
     await expect(
-      resources.resolve(context, "reports/README.md"),
+      resources.resolve(source, "reports/README.md"),
     ).resolves.toMatchObject({ kind: "markdown" });
     await expect(
-      resources.resolve(context, "./reports/curve.png"),
+      resources.resolve(source, "./reports/curve.png"),
     ).resolves.toMatchObject({
       workspacePath: "reports/curve.png",
       kind: "image",
     });
     await expect(
-      resources.resolve(context, "./reports/../node_modules/hidden.png"),
+      resources.resolve(source, "./reports/../node_modules/hidden.png"),
     ).resolves.toMatchObject({
       workspacePath: "node_modules/hidden.png",
       kind: "image",
     });
     await expect(
-      resources.resolve(context, "./reports/../../outside.png"),
+      resources.resolve(source, "./reports/../../outside.png"),
     ).rejects.toMatchObject({ status: 403 });
     for (const reference of ["./reports/missing.png", "./missing.png"])
-      await expect(resources.resolve(context, reference)).rejects.toMatchObject(
-        { status: 404 },
-      );
+      await expect(resources.resolve(source, reference)).rejects.toMatchObject({
+        status: 404,
+      });
   });
 
   it("opens native VS Code file URIs with escaped spaces and line/column suffixes", async () => {
@@ -219,16 +221,13 @@ describe("ResourceStore", () => {
       file,
     );
     await expect(
-      resources.resolve(
-        { ...resourceIdentity(), cwd: project, messages: [] },
-        reference,
-      ),
+      resources.resolve(context(project), reference),
     ).resolves.toMatchObject({ name: "my report.md" });
   });
 
   it("classifies supported source and document families without treating binary lookalikes as text", async () => {
     const { project } = await workspace();
-    const context = { ...resourceIdentity(), cwd: project, messages: [] };
+    const source = context(project);
     for (const [name, bytes, kind] of [
       ["query.sql", "select 1", "text"],
       ["Dockerfile", "FROM scratch", "text"],
@@ -244,7 +243,7 @@ describe("ResourceStore", () => {
     ] as const) {
       await writeFile(join(project, name), bytes);
       await expect(
-        resources.resolve(context, name),
+        resources.resolve(source, name),
         name,
       ).resolves.toMatchObject({ name, kind });
     }
@@ -253,15 +252,8 @@ describe("ResourceStore", () => {
   it("binds citation handles to one branch view while allowing same-view append revalidation", async () => {
     const { root, project } = await workspace();
     await writeFile(join(root, "branch-only.txt"), "branch A\n");
-    const citation = {
-      role: "assistant",
-      content: [{ type: "text", text: "[branch](../branch-only.txt)" }],
-    };
-    const contextA = {
-      ...resourceIdentity("view-a", 2),
-      cwd: project,
-      messages: [citation],
-    };
+    const branchCitation = citation("[branch](../branch-only.txt)");
+    const contextA = context(project, [branchCitation], 2, "view-a");
     await expect(
       resources.resolve(
         { ...contextA, revision: 1, messages: [] },
@@ -269,24 +261,20 @@ describe("ResourceStore", () => {
       ),
     ).rejects.toMatchObject({ status: 403 });
     const descriptor = await resources.resolve(contextA, "../branch-only.txt");
-    const resource = resources.get(descriptor.id, "s1", "view-a");
+    const resource = resourceByDescriptor(descriptor);
 
     await expect(
       resources.revalidate(resource, {
         ...contextA,
         revision: 3,
-        messages: [citation, { role: "assistant", content: "append" }],
+        messages: [branchCitation, citation("append")],
       }),
     ).resolves.toBeUndefined();
     expect(() => resources.get(descriptor.id, "s1", "view-b")).toThrow(
       "no longer available",
     );
     await expect(
-      resources.revalidate(resource, {
-        ...resourceIdentity("view-b"),
-        cwd: project,
-        messages: [],
-      }),
+      resources.revalidate(resource, context(project, [], 1, "view-b")),
     ).rejects.toMatchObject({ status: 409 });
   });
 
@@ -296,21 +284,15 @@ describe("ResourceStore", () => {
     await mkdir(join(project, "node_modules"));
     await writeFile(join(project, "node_modules", "hidden.md"), "hidden\n");
     let messageLoads = 0;
-    const context = {
-      ...resourceIdentity(),
-      cwd: project,
+    const source = {
+      ...scope(project),
       loadMessages: async () => {
         messageLoads += 1;
-        return [
-          {
-            role: "assistant",
-            content: [{ type: "text", text: "See `missing.md`." }],
-          },
-        ];
+        return [citation("See `missing.md`.")];
       },
     };
 
-    const results = await resources.probe(context, [
+    const results = await resources.probe(source, [
       "visible.md",
       "missing.md",
       "node_modules/hidden.md",
@@ -356,8 +338,7 @@ describe("ResourceStore", () => {
     await expect(
       resources.resolve(
         {
-          ...resourceIdentity(),
-          cwd: project,
+          ...scope(project),
           loadMessages: async () => {
             throw new Error("Transcript unavailable");
           },
@@ -372,44 +353,33 @@ describe("ResourceStore", () => {
     const report = join(project, "report.md");
     await writeFile(report, "# Result\n");
     await writeFile(join(root, "secret.txt"), "SECRET\n");
-    const messages = [
-      {
-        role: "assistant",
-        content: [{ type: "text", text: "[report](report.md)" }],
-      },
-    ];
     const descriptor = await resources.resolve(
-      { ...resourceIdentity(), cwd: project, messages },
+      context(project, [citation("[report](report.md)")]),
       "report.md",
     );
-    const resource = resources.get(descriptor.id, "s1", descriptor.viewId);
-    const opened = await resources.openForServing(resource);
-    expect(opened.details.size).toBe(BigInt("# Result\n".length));
-    expect(await opened.handle.readFile("utf8")).toBe("# Result\n");
-    await opened.handle.close();
+    expect(await readResource(descriptor)).toEqual({
+      text: "# Result\n",
+      size: 9n,
+    });
 
     await writeFile(report, "# Rewritten in place\n");
-    const rewritten = await resources.openForServing(resource);
-    expect(await rewritten.handle.readFile("utf8")).toBe(
+    expect((await readResource(descriptor)).text).toBe(
       "# Rewritten in place\n",
     );
-    await rewritten.handle.close();
 
     await rm(report);
     if (process.platform !== "win32") {
       // Swapping the file for a symlink to an outside secret is rejected before
       // following the link.
       await symlink(join(root, "secret.txt"), report);
-      await expect(resources.openForServing(resource)).rejects.toMatchObject({
+      await expect(readResource(descriptor)).rejects.toMatchObject({
         status: 409,
       });
       await rm(report);
     }
 
     await writeFile(report, "# Regenerated\n");
-    const regenerated = await resources.openForServing(resource);
-    expect(await regenerated.handle.readFile("utf8")).toBe("# Regenerated\n");
-    await regenerated.handle.close();
+    expect((await readResource(descriptor)).text).toBe("# Regenerated\n");
   });
 
   it("authorizes a complete spaced diagnostic path, never its existing sibling prefix", async () => {
@@ -419,106 +389,65 @@ describe("ResourceStore", () => {
     await mkdir(join(root, "Jane Doe"));
     await writeFile(outside, "correct report\n");
     await writeFile(wrongPrefix, "not cited\n");
-    const context = {
-      ...resourceIdentity(),
-      cwd: project,
-      messages: [
-        {
-          role: "toolResult",
-          content: [{ type: "text", text: outside + ":12:3: error: fixture" }],
-        },
-      ],
-    };
-    const listed = await resources.list(context);
+    const source = context(project, [
+      citation(`${outside}:12:3: error: fixture`, "toolResult"),
+    ]);
+    const listed = await resources.list(source);
     expect(listed.resources.map((item) => item.reference)).toEqual([
       diagnosticResourceReference(outside + ":12:3"),
     ]);
-    await expect(resources.resolve(context, outside)).resolves.toMatchObject({
+    await expect(resources.resolve(source, outside)).resolves.toMatchObject({
       name: "report.m",
       kind: "text",
     });
-    await expect(resources.resolve(context, wrongPrefix)).rejects.toMatchObject(
-      { status: 403 },
-    );
+    await expect(resources.resolve(source, wrongPrefix)).rejects.toMatchObject({
+      status: 403,
+    });
   });
 
   it("rejects malformed or non-image embedded blocks", async () => {
     const { project } = await workspace();
-    for (const data of ["not base64!", ""]) {
-      const invalidData = [
-        {
-          role: "toolResult",
-          content: [{ type: "image", data, mimeType: "image/png" }],
-        },
-      ];
+    for (const [data, mimeType] of [
+      ["not base64!", "image/png"],
+      ["", "image/png"],
+      [Buffer.from("html").toString("base64"), "text/html"],
+    ]) {
+      const message = {
+        role: "toolResult",
+        content: [{ type: "image", data, mimeType }],
+      };
       await expect(
-        resources.resolve(
-          { ...resourceIdentity(), cwd: project, messages: invalidData },
-          "pi-embedded://0/0",
-        ),
+        resources.resolve(context(project, [message]), "pi-embedded://0/0"),
       ).rejects.toMatchObject({ status: 404 });
     }
-
-    const invalidType = [
-      {
-        role: "toolResult",
-        content: [
-          {
-            type: "image",
-            data: Buffer.from("html").toString("base64"),
-            mimeType: "text/html",
-          },
-        ],
-      },
-    ];
-    await expect(
-      resources.resolve(
-        { ...resourceIdentity(), cwd: project, messages: invalidType },
-        "pi-embedded://0/0",
-      ),
-    ).rejects.toMatchObject({ status: 404 });
   });
 
   it("revalidates embedded handles against the current projection before serving", async () => {
     const { project } = await workspace();
-    const original = [
-      {
-        role: "toolResult",
-        __inspireMessageIndex: 3,
-        content: [
-          { type: "image", data: "b2xkLWltYWdl", mimeType: "image/png" },
-        ],
-      },
-    ];
+    const embedded = (text: string, mimeType: string) => ({
+      role: "toolResult",
+      __inspireMessageIndex: 3,
+      content: [
+        { type: "image", data: Buffer.from(text).toString("base64"), mimeType },
+      ],
+    });
     const descriptor = await resources.resolve(
-      { ...resourceIdentity("view-s1", 1), cwd: project, messages: original },
+      context(project, [embedded("old-image", "image/png")]),
       "pi-embedded://3/0",
     );
-    const resolved = resources.get(descriptor.id, "s1", "view-s1");
-    const rewritten = [
-      { role: "assistant", content: [{ type: "text", text: "replacement" }] },
-      {
-        role: "toolResult",
-        __inspireMessageIndex: 3,
-        content: [
-          { type: "image", data: "bmV3LWltYWdl", mimeType: "image/jpeg" },
-        ],
-      },
-    ];
-
-    const rewrittenContent = await resources.embeddedContent(resolved, {
-      ...resourceIdentity("view-s1", 2),
-      cwd: project,
-      messages: rewritten,
-    });
+    const resolved = resourceByDescriptor(descriptor);
+    const rewrittenContent = await resources.embeddedContent(
+      resolved,
+      context(
+        project,
+        [citation("replacement"), embedded("new-image", "image/jpeg")],
+        2,
+      ),
+    );
     expect(rewrittenContent.data.toString()).toBe("new-image");
     expect(rewrittenContent.mimeType).toBe("image/jpeg");
     await expect(
-      resources.embeddedContent(resolved, {
-        ...resourceIdentity("view-s1", 3),
-        cwd: project,
-        messages: [],
-      }),
+      resources.embeddedContent(resolved, context(project, [], 3)),
     ).rejects.toMatchObject({ status: 404 });
   });
 
@@ -555,26 +484,20 @@ describe("ResourceStore", () => {
       await writeFile(first, "first");
       await writeFile(second, "second");
       await symlink(first, selected);
-      const citation = {
-        role: "assistant",
-        content: "[linked](node_modules/linked.txt)",
-      };
-      const context = {
-        ...resourceIdentity(),
-        cwd: project,
-        messages: [citation],
-      };
+      const source = context(project, [
+        citation("[linked](node_modules/linked.txt)"),
+      ]);
       const descriptor = await resources.resolve(
-        context,
+        source,
         "node_modules/linked.txt",
       );
-      const resource = resources.get(descriptor.id, "s1", descriptor.viewId);
+      const resource = resourceByDescriptor(descriptor);
 
       await unlink(selected);
       await symlink(second, selected);
 
       await expect(
-        resources.revalidate(resource, context),
+        resources.revalidate(resource, source),
       ).resolves.toBeUndefined();
       await expect(resources.openForServing(resource)).rejects.toMatchObject({
         status: 409,
@@ -590,13 +513,13 @@ describe("ResourceStore", () => {
       await writeFile(join(root, "outside.txt"), "outside");
       await symlink("inside.txt", join(project, "internal-link.txt"));
       await symlink("../outside.txt", join(project, "external-link.txt"));
-      const context = { ...resourceIdentity(), cwd: project, messages: [] };
+      const source = context(project);
 
       await expect(
-        resources.resolve(context, "internal-link.txt"),
+        resources.resolve(source, "internal-link.txt"),
       ).resolves.toMatchObject({ workspacePath: "inside.txt" });
       await expect(
-        resources.resolve(context, "external-link.txt"),
+        resources.resolve(source, "external-link.txt"),
       ).rejects.toMatchObject({ status: 403 });
     },
   );
@@ -607,21 +530,21 @@ describe("ResourceStore", () => {
       const { project } = await workspace();
       const path = join(project, "gone.txt");
       await writeFile(path, "gone");
-      const context = { ...resourceIdentity(), cwd: project, messages: [] };
-      const descriptor = await resources.resolve(context, "gone.txt");
-      const resource = resources.get(descriptor.id, "s1", descriptor.viewId);
+      const source = context(project);
+      const descriptor = await resources.resolve(source, "gone.txt");
+      const resource = resourceByDescriptor(descriptor);
       expect(
         (await workspaceBasenameMatches(project, "gone.txt")).matches,
       ).toEqual(["gone.txt"]);
       await unlink(path);
       if (operation === "serve") {
-        await resources.revalidate(resource, context);
+        await resources.revalidate(resource, source);
         await expect(resources.openForServing(resource)).rejects.toMatchObject({
           status: 404,
         });
       } else {
         await expect(
-          resources.resolve(context, "gone.txt"),
+          resources.resolve(source, "gone.txt"),
         ).rejects.toMatchObject({ status: 404 });
       }
       expect(
@@ -639,17 +562,17 @@ describe("ResourceStore", () => {
     const discover = vi
       .spyOn(projectFiles, "workspaceBasenameMatches")
       .mockResolvedValue({ matches: ["docs/report.txt"], truncated: true });
-    const context = { ...resourceIdentity(), cwd: project, messages: [] };
-    await expect(
-      resources.resolve(context, "report.txt"),
-    ).rejects.toMatchObject({
-      status: 409,
-      matches: ["docs/report.txt"],
-    });
+    const source = context(project);
+    await expect(resources.resolve(source, "report.txt")).rejects.toMatchObject(
+      {
+        status: 409,
+        matches: ["docs/report.txt"],
+      },
+    );
     expect(discover).toHaveBeenCalledWith(project, "report.txt");
     discover.mockClear();
     await expect(
-      resources.resolve(context, "docs/report.txt"),
+      resources.resolve(source, "docs/report.txt"),
     ).resolves.toMatchObject({
       workspacePath: "docs/report.txt",
     });
@@ -660,40 +583,33 @@ describe("ResourceStore", () => {
     const { project } = await workspace();
     await mkdir(join(project, "src"));
     await writeFile(join(project, "src", "kernel.py"), "print('k')\n");
-    const messages = [
-      {
-        role: "assistant",
-        content: [{ type: "text", text: "the loop lives in `kernel.py`" }],
-      },
-    ];
-
-    const context = { ...resourceIdentity(), cwd: project, messages };
-    const descriptor = await resources.resolve(context, "kernel.py");
+    const source = context(project, [
+      citation("the loop lives in `kernel.py`"),
+    ]);
+    const descriptor = await resources.resolve(source, "kernel.py");
     // The descriptor reports where it actually resolved, never the shorthand.
     expect(descriptor).toMatchObject({
       name: "kernel.py",
       reference: "src/kernel.py",
     });
-    expect(resources.get(descriptor.id, "s1", descriptor.viewId).path).toBe(
+    expect(resourceByDescriptor(descriptor).path).toBe(
       join(project, "src", "kernel.py"),
     );
     // An explicit location or a tree selection cannot fall back to basename recovery.
     await expect(
-      resources.resolve(context, "docs/kernel.py"),
+      resources.resolve(source, "docs/kernel.py"),
     ).rejects.toMatchObject({ status: 404 });
     await expect(
-      resources.resolve(context, "kernel.py", "kernel.py"),
+      resources.resolve(source, "kernel.py", "kernel.py"),
     ).rejects.toMatchObject({ status: 404 });
 
     await mkdir(join(project, "other"));
     await writeFile(join(project, "other", "kernel.py"), "another script");
     invalidateProjectFiles(project);
-    await expect(resources.resolve(context, "kernel.py")).rejects.toMatchObject(
-      {
-        status: 409,
-        matches: expect.arrayContaining(["src/kernel.py", "other/kernel.py"]),
-      },
-    );
+    await expect(resources.resolve(source, "kernel.py")).rejects.toMatchObject({
+      status: 409,
+      matches: expect.arrayContaining(["src/kernel.py", "other/kernel.py"]),
+    });
   });
 
   it("treats a workspace selection as an exact filesystem path", async () => {
@@ -707,44 +623,28 @@ describe("ResourceStore", () => {
     await Promise.all(
       names.map((name) => writeFile(join(project, name), `${name}\n`)),
     );
-    const context = { ...resourceIdentity(), cwd: project, messages: [] };
+    const source = context(project);
 
     for (const name of names) {
-      const descriptor = await resources.resolve(context, name, name);
+      const descriptor = await resources.resolve(source, name, name);
       expect(descriptor).toMatchObject({
         reference: name,
         workspacePath: name,
         name,
       });
-      expect(resources.get(descriptor.id, "s1", descriptor.viewId).path).toBe(
-        join(project, name),
-      );
+      expect(resourceByDescriptor(descriptor).path).toBe(join(project, name));
     }
     const selected = "literal#L9";
     await writeFile(join(project, "literal"), "different file");
-    const descriptor = await resources.resolve(context, selected, selected);
-    const resource = resources.get(descriptor.id, "s1", descriptor.viewId);
+    const descriptor = await resources.resolve(source, selected, selected);
     await writeFile(join(project, ".gitignore"), `${selected}\n`);
     invalidateProjectFiles(project);
-    await resources.revalidate(resource, context);
-    const opened = await resources.openForServing(resource);
-    try {
-      expect(await opened.handle.readFile("utf8")).toBe(`${selected}\n`);
-    } finally {
-      await opened.handle.close();
-    }
+    await resources.revalidate(resourceByDescriptor(descriptor), source);
+    expect((await readResource(descriptor)).text).toBe(`${selected}\n`);
   });
 });
 
 describe("literal native paths and URL reference identity", () => {
-  function context(
-    cwd: string,
-    messages: unknown[],
-    revision = 1,
-  ): ResourceContext {
-    return { ...resourceIdentity(undefined, revision), cwd, messages };
-  }
-
   function toolPath(path: string) {
     return {
       role: "assistant",
@@ -753,24 +653,7 @@ describe("literal native paths and URL reference identity", () => {
   }
 
   function urlLink(url: string) {
-    return {
-      role: "assistant",
-      content: [{ type: "text", text: `[URL target](<${url}>)` }],
-    };
-  }
-
-  function resourceById(id: string) {
-    const { sessionId, viewId } = resourceIdentity();
-    return resources.get(id, sessionId, viewId);
-  }
-
-  async function bytes(id: string) {
-    const { handle } = await resources.openForServing(resourceById(id));
-    try {
-      return await handle.readFile("utf8");
-    } finally {
-      await handle.close();
-    }
+    return citation(`[URL target](<${url}>)`);
   }
 
   it("does not give a URL-looking literal tool path authority over an external URI target", async () => {
@@ -806,7 +689,9 @@ describe("literal native paths and URL reference identity", () => {
       expect(descriptor.workspacePath).toBe(
         scope === "inside" ? "C#/Program(12).cs" : undefined,
       );
-      expect(await bytes(descriptor.id)).toBe("NATIVE_HASH_AND_PARENTHESES");
+      expect((await readResource(descriptor)).text).toBe(
+        "NATIVE_HASH_AND_PARENTHESES",
+      );
     },
   );
 
@@ -831,7 +716,7 @@ describe("literal native paths and URL reference identity", () => {
     expect(reference).toContain("figure%2520draft.svg");
     const resolved = await resources.resolve(source, reference!);
     expect(resolved.name).toBe("figure%20draft.svg");
-    expect(await bytes(resolved.id)).toBe("<svg/>");
+    expect((await readResource(resolved)).text).toBe("<svg/>");
   });
 
   it("serves native and file-URL citations independently across a transcript revision", async () => {
@@ -865,15 +750,15 @@ describe("literal native paths and URL reference identity", () => {
     const urlDescriptor = await resources.resolve(before, url.reference!);
     expect(nativeDescriptor.name).toBe("report%20draft.md");
     expect(urlDescriptor.name).toBe("report draft.md");
-    expect(await bytes(nativeDescriptor.id)).toBe("LITERAL");
-    expect(await bytes(urlDescriptor.id)).toBe("URL");
+    expect((await readResource(nativeDescriptor)).text).toBe("LITERAL");
+    expect((await readResource(urlDescriptor)).text).toBe("URL");
 
     const after = context(project, [urlLink(urlTarget)], 3);
     await expect(
-      resources.revalidate(resourceById(nativeDescriptor.id), after),
+      resources.revalidate(resourceByDescriptor(nativeDescriptor), after),
     ).rejects.toMatchObject({ status: 403 });
     await expect(
-      resources.revalidate(resourceById(urlDescriptor.id), after),
+      resources.revalidate(resourceByDescriptor(urlDescriptor), after),
     ).resolves.toBeUndefined();
     await expect(
       resources.resolve(after, native.reference!),

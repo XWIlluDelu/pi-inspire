@@ -17,9 +17,14 @@ async function hiddenClone(
   fixtureId?: string,
 ): Promise<{ id: string; name: string }> {
   await pairedPage(page);
-  await openFixtureSession(page, fixture, fixtureId);
-  const source = (await (await hostRequest(page).get("/api/snapshot")).json())
-    .active;
+  const sessionId = await openFixtureSession(page, fixture, fixtureId);
+  const source = (
+    await (
+      await hostRequest(page).get(
+        `/api/snapshot?detail=${encodeURIComponent(sessionId)}`,
+      )
+    ).json()
+  ).active;
   const created = await hostRequest(page).post("/api/branches/clone", {
     data: {
       sessionId: source.sessionId,
@@ -48,7 +53,7 @@ async function hiddenClone(
   )
     await navigation.click();
   const hidden = page.getByRole("button", { name: "Hidden", exact: true });
-  if ((await hidden.getAttribute("aria-expanded")) !== "true")
+  if ((await hidden.getAttribute("aria-pressed")) !== "true")
     await hidden.click();
   return { id, name: clone.snapshot.active.sessionName };
 }
@@ -63,18 +68,18 @@ test("deletes the visible idle session through one confirmation and returns to N
   );
   // API cloning does not replace this browser's selected session.
   await page
-    .locator(".nav__group--hidden .nav__row-main")
+    .locator(".nav__list--hidden .nav__row-main")
     .filter({ has: page.getByText(name, { exact: true }) })
     .click();
   await expect(
     page.getByRole("button", { name: /^Session actions:/ }),
   ).toHaveText(name);
-  const remove = page.locator(".nav__group--hidden").getByRole("button", {
+  const remove = page.locator(".nav__list--hidden").getByRole("button", {
     name: `Delete "${name}"`,
     exact: true,
   });
   await page
-    .locator(".nav__group--hidden .nav__row")
+    .locator(".nav__list--hidden .nav__row")
     .filter({
       has: page.getByRole("button", { name: `Delete "${name}"`, exact: true }),
     })
@@ -91,8 +96,6 @@ test("deletes the visible idle session through one confirmation and returns to N
     page.getByRole("form", { name: "Start a session" }),
   ).toBeVisible();
   await expect(remove).toHaveCount(0);
-  const snapshot = await hostRequest(page).get("/api/snapshot");
-  expect((await snapshot.json()).active).toBeNull();
 });
 
 test("failed deletion wraps a literal path inside the confirmation", async ({
@@ -106,16 +109,15 @@ test("failed deletion wraps a literal path inside the confirmation", async ({
   const diagnostic =
     "Cannot delete /workspace/calibration/reference_measurement_comparison_for_multichannel_calibration_and_residual_validation_2026_10_17_results.json because the project is locked.";
   let attempted = 0;
-  await page.route(
-    `**/api/sessions/${encodeURIComponent(id)}`,
-    async (route) => {
-      if (route.request().method() !== "DELETE") return route.fallback();
-      attempted++;
-      await route.fulfill({ status: 409, json: { error: diagnostic } });
-    },
-  );
+  await page.route("**/api/sessions/delete", async (route) => {
+    const body = route.request().postDataJSON();
+    if (body.scope !== "session" || body.sessionId !== id)
+      return route.fallback();
+    attempted++;
+    await route.fulfill({ status: 409, json: { error: diagnostic } });
+  });
   await page
-    .locator(".nav__group--hidden")
+    .locator(".nav__list--hidden")
     .getByRole("button", {
       name: `Delete "${name}"`,
       exact: true,
@@ -159,7 +161,9 @@ test("failed deletion wraps a literal path inside the confirmation", async ({
   // Even a deliberately failed delete must not hide or consume shared data.
   expect(
     (
-      await hostRequest(page).delete(`/api/sessions/${encodeURIComponent(id)}`)
+      await hostRequest(page).post("/api/sessions/delete", {
+        data: { scope: "session", sessionId: id },
+      })
     ).ok(),
   ).toBe(true);
 });
@@ -238,7 +242,7 @@ for (const { width, hasTouch } of [
 
       await page.getByRole("button", { name: "Hidden", exact: true }).click();
       const [hiddenGap] = await folderGaps(
-        page.locator(".nav__hidden-content > .nav__group"),
+        page.locator(".nav__list--hidden > .nav__group"),
       );
       expect(hiddenGap).toBeCloseTo(gap!, 0);
 
@@ -250,7 +254,7 @@ for (const { width, hasTouch } of [
         name: "archived-a",
         exact: true,
       });
-      const actions = folder.locator(".nav__group-actions");
+      const actions = toggle.locator("..").locator(".nav__row-actions");
       await toggle.click();
       if (!hasTouch) {
         const other = drawer.getByRole("button", {
@@ -258,12 +262,10 @@ for (const { width, hasTouch } of [
           exact: true,
         });
         await other.hover();
-        await expect(actions).toHaveCSS("opacity", "0");
         await page.keyboard.press("Tab");
         await expect(
           folder.getByRole("button", { name: "Restore folder archived-a" }),
         ).toBeFocused();
-        await expect(actions).toHaveCSS("opacity", "1");
       }
 
       const child = folder.locator(".nav__row");

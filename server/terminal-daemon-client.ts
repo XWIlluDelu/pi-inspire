@@ -4,11 +4,14 @@ import {
   encodeTerminalInputFrame,
   type TerminalCatalogResponse,
   type TerminalClientControlMessage,
-  type TerminalMutationMethod,
-  type TerminalOperationIdentity,
   type TerminalServerControlMessage,
   type TerminalServiceSettings,
 } from "../shared/terminal-contracts.js";
+import type {
+  TerminalIntent,
+  TerminalOperation,
+  TerminalOperationResults,
+} from "../shared/terminal-operations.js";
 import type { TerminalDaemonInfo } from "./terminal-daemon-configuration.js";
 import {
   TERMINAL_DAEMON_PROTOCOL_VERSION,
@@ -140,12 +143,18 @@ export class TerminalDaemonClient implements TerminalService {
     return result.operationEpoch;
   }
 
-  operate<Result>(
-    method: TerminalMutationMethod,
-    params: unknown,
-    operation: TerminalOperationIdentity,
-  ): Promise<Result> {
-    return this.rpc(method, params, operation);
+  operate<I extends TerminalIntent>(
+    operation: TerminalOperation & { intent: I },
+    observeOnly = false,
+  ): Promise<TerminalOperationResults[I["command"]]> {
+    const command = operation.intent.command;
+    return this.rpc(
+      observeOnly ? "observeOperation" : "operate",
+      operation,
+      command === "remove" || command === "restart"
+        ? LIFECYCLE_RPC_TIMEOUT_MS
+        : RPC_TIMEOUT_MS,
+    );
   }
 
   list(projectCwd?: string): Promise<TerminalCatalogResponse> {
@@ -336,7 +345,7 @@ export class TerminalDaemonClient implements TerminalService {
   private rpc<Result>(
     method: TerminalDaemonRpcMethod,
     params: unknown,
-    operation?: TerminalOperationIdentity,
+    timeoutMs = RPC_TIMEOUT_MS,
   ): Promise<Result> {
     if (this.closed)
       return Promise.reject(
@@ -349,23 +358,18 @@ export class TerminalDaemonClient implements TerminalService {
     return new Promise<Result>((resolvePromise, rejectPromise) => {
       const socket = connectTerminalDaemon(this.address, this.token);
       const decoder = new TerminalIpcDecoder();
-      const requestId = operation?.id ?? randomUUID();
+      const requestId = randomUUID();
       let settled = false;
-      const timeout = setTimeout(
-        () => {
-          finish(
-            new TerminalServiceError(
-              "terminal_daemon_timeout",
-              503,
-              "The terminal service did not respond in time.",
-            ),
-          );
-          socket.destroy();
-        },
-        method === "remove" || method === "restart"
-          ? LIFECYCLE_RPC_TIMEOUT_MS
-          : RPC_TIMEOUT_MS,
-      );
+      const timeout = setTimeout(() => {
+        finish(
+          new TerminalServiceError(
+            "terminal_daemon_timeout",
+            503,
+            "The terminal service did not respond in time.",
+          ),
+        );
+        socket.destroy();
+      }, timeoutMs);
       timeout.unref();
 
       const finish = (error?: unknown, result?: Result): void => {
@@ -384,7 +388,6 @@ export class TerminalDaemonClient implements TerminalService {
             requestId,
             method,
             params,
-            ...(operation ? { operation } : {}),
           }),
         );
       });

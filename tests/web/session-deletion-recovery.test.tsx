@@ -22,36 +22,56 @@ import {
   jsonBody,
   type RouteResponse,
   sessionSummary,
+  TEST_HOST_AUTHORITY,
 } from "./helpers";
 import { baseRoutes } from "./store-fixture";
 
-async function setup() {
+let nextRevision = 0;
+
+async function setup(
+  preferences = { ...DEFAULT_PREFS, hiddenProjectCwds: ["/hidden"] },
+) {
   const model = {
     rows: ["s2", "s3"].map((id) => sessionSummary({ id, cwd: "/hidden" })),
-    preferences: { ...DEFAULT_PREFS, hiddenProjectCwds: ["/hidden"] },
+    preferences,
   };
   const clear = vi.fn<(ids: string[]) => Promise<RouteResponse>>();
   const remove = vi.fn<() => Promise<RouteResponse>>();
-  const preferencesRead = vi.fn(async () => model.preferences);
+  let revision = nextRevision;
+  nextRevision += 100;
+  const publication = () => ({
+    preferences: { ...model.preferences },
+    revision: ++revision,
+  });
+  const navigation = () => ({
+    kind: "confirmed" as const,
+    authorityId: TEST_HOST_AUTHORITY,
+    ...publication(),
+  });
+  const preferencesRead = vi.fn(async () => publication());
   const refresh = vi.fn();
   installFetch(async (url, init) => {
     if (url.startsWith("/api/bootstrap"))
       return {
         body: bootstrapPayload({
-          snapshot: activeSnapshot(),
+          startupSessionId: "s1",
           preferences: model.preferences,
+          preferenceRevision: ++revision,
         }),
       };
     if (url === "/api/preferences") {
       if (init.method === "PATCH") {
         model.preferences = { ...model.preferences, ...jsonBody(init) };
-        return { body: model.preferences };
+        return { body: publication() };
       }
       return { body: await preferencesRead() };
     }
-    if (url === "/api/sessions/clear-hidden")
-      return clear(jsonBody(init).sessionIds as string[]);
-    if (init.method === "DELETE") return remove();
+    if (url === "/api/sessions/delete") {
+      const request = jsonBody(init);
+      return request.scope === "hidden"
+        ? clear(request.sessionIds as string[])
+        : remove();
+    }
     if (url === "/api/sessions/refresh") {
       refresh();
       return { body: { ok: true } };
@@ -80,27 +100,35 @@ async function setup() {
   });
   store.clearSessionDeleteError();
   await store.init();
-  FakeWebSocket.instances.at(-1)!.open();
+  FakeWebSocket.instances.at(-1)!.join(activeSnapshot());
   await vi.waitFor(() => {
     expect(store.getState().sessions).toHaveLength(2);
     expect(store.getState().sessionListLoading).toBe(false);
     expect(store.getState().sessionListHydrating).toBe(false);
   });
-  return { model, clear, remove, preferencesRead, refresh };
+  return {
+    model,
+    clear,
+    remove,
+    preferencesRead,
+    refresh,
+    navigation,
+    publication,
+  };
 }
 
 describe("deletion review recovery", () => {
   beforeEach(() => installFakeWebSocket());
 
   it("retires a partial batch confirmation and confirms only remaining targets next time", async () => {
-    const { model, clear } = await setup();
+    const { model, clear, navigation } = await setup();
     clear.mockImplementationOnce(async () => {
       model.rows = model.rows.filter((row) => row.id !== "s2");
       return {
         body: {
           deleted: [{ sessionId: "s2", disposition: "trashed" }],
           failure: { sessionId: "s3", message: "file changed" },
-          preferences: model.preferences,
+          navigation: navigation(),
         },
       };
     });
@@ -134,7 +162,7 @@ describe("deletion review recovery", () => {
       return {
         body: {
           deleted: [{ sessionId: "s3", disposition: "trashed" }],
-          preferences: model.preferences,
+          navigation: navigation(),
         },
       };
     });
@@ -149,18 +177,22 @@ describe("deletion review recovery", () => {
   });
 
   it("keeps the Host's navigation preferences when a committed delete cannot save them", async () => {
-    const { model, remove } = await setup();
+    const { model, remove } = await setup({
+      ...DEFAULT_PREFS,
+      hiddenProjectCwds: ["/hidden"],
+      hiddenSessionIds: ["s2"],
+    });
     const target = model.rows[0]!;
-    const reviewed = { ...model.preferences, hiddenSessionIds: [target.id] };
-    model.preferences = reviewed;
-    await store.init();
     remove.mockImplementationOnce(async () => {
       model.rows = model.rows.filter((row) => row.id !== target.id);
       return {
         body: {
-          sessionId: target.id,
-          disposition: "trashed",
-          preferenceCleanupFailed: true,
+          deleted: [{ sessionId: target.id, disposition: "trashed" }],
+          navigation: {
+            kind: "unavailable",
+            reason:
+              "Deletion completed, but its navigation metadata could not be saved",
+          },
         },
       };
     });
@@ -178,8 +210,9 @@ describe("deletion review recovery", () => {
   it.each(["expanded", "empty"])(
     "refreshes %s Hidden membership without repeating the deletion",
     async (change) => {
-      const { model, clear, refresh, preferencesRead } = await setup();
-      const read = deferred<typeof model.preferences>();
+      const { model, clear, refresh, preferencesRead, publication } =
+        await setup();
+      const read = deferred<ReturnType<typeof publication>>();
       preferencesRead.mockReturnValueOnce(read.promise);
       clear.mockImplementationOnce(async () => {
         model.rows =
@@ -204,17 +237,18 @@ describe("deletion review recovery", () => {
       );
       await vi.waitFor(() => expect(preferencesRead).toHaveBeenCalledOnce());
       await act(async () => {
-        const stale = { ...model.preferences, theme: "light" as const };
-        store.setTheme("dark");
-        read.resolve(stale);
+        store.setPreference("theme", "dark");
+        read.resolve(publication());
       });
       await waitFor(() =>
         expect(
           screen.getByRole("button", { name: "Review Hidden" }),
         ).toBeEnabled(),
       );
-      expect(store.getState().sessions).toHaveLength(
-        change === "empty" ? 0 : 3,
+      await waitFor(() =>
+        expect(store.getState().sessions).toHaveLength(
+          change === "empty" ? 0 : 3,
+        ),
       );
       expect(store.getState().prefs.hiddenProjectCwds).toEqual(
         model.preferences.hiddenProjectCwds,

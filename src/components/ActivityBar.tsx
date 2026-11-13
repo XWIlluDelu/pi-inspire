@@ -1,5 +1,6 @@
 import { AlertTriangle } from "lucide-react";
 import { memo } from "react";
+import { selectedRunState } from "../app-state";
 import { shallowEqual, useAppState } from "../store";
 import { PiLoader } from "./PiLoader";
 
@@ -39,7 +40,7 @@ export const ActivityBar = memo(function ActivityBar({
 }) {
   const state = useAppState(
     (source) => ({
-      runState: source.runState,
+      runState: selectedRunState(source),
       retry: source.retry,
       summarizationRetry: source.summarizationRetry,
       queue: source.queue,

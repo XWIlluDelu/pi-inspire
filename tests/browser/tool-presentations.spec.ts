@@ -314,7 +314,6 @@ test.describe("narrow child-call reading", () => {
       callRow.getByRole("group", { name: "Call error" }),
     ).toContainText("Report is unavailable");
     // The next response lets Adaptive collapse unheld activity.
-    await page.waitForTimeout(3_200);
     await expect(callRow.locator("summary")).toBeInViewport();
     await expect.poll(readingPosition).toEqual(position);
     await expect(script).toBeFocused();
@@ -329,7 +328,7 @@ test.describe("narrow child-call reading", () => {
     const fold = page.locator(".activity-fold").filter({ has: card });
     await fold
       .getByRole("button", {
-        name: "Collapse assistant activity from the upper boundary",
+        name: "Collapse assistant activity",
       })
       .click();
     await expect(card).toHaveCount(0);
@@ -676,7 +675,7 @@ test("narrow tool content retains its geometry and contrast", async ({
     element.scrollLeft = element.scrollWidth;
   });
   const plane = (await source.boundingBox())!;
-  const number = source.locator(".tool-code__number").first();
+  const number = source.locator(".code-row__number").first();
   await expect(number).toHaveText("100000");
   expect(Math.abs((await number.boundingBox())!.x - plane.x)).toBeLessThan(3);
   await source.focus();

@@ -4,12 +4,14 @@ import { waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { selectedWorkspacePath } from "../../src/components/WorkspaceBrowser";
 import { inspectedPreview } from "../../src/resource-preview";
+import { fakeResourceDescriptor } from "./fixtures/resources";
 import {
   activeSnapshot,
   deferred,
   installFakeWebSocket,
   installFetch,
   jsonBody,
+  selectSession,
 } from "./helpers";
 import { baseRoutes, initStore } from "./store-fixture";
 
@@ -32,19 +34,20 @@ describe("selected file preview lifecycle", () => {
         requests.push(query);
         if (resolveError)
           return { status: 403, body: { error: "File no longer authorized" } };
-        const embedded = String(query.reference).startsWith("pi-embedded://");
+        const reference = String(query.reference);
+        const embedded = reference.startsWith("pi-embedded://");
         return {
-          body: {
-            id: `chart-${requests.length}`,
-            sessionId: "s1",
-            viewId,
-            reference: embedded ? query.reference : "plots/chart.png",
-            ...(embedded ? {} : { workspacePath: "plots/chart.png" }),
-            name: "chart.png",
-            mimeType: "image/png",
-            size: 5,
-            kind: "image",
-          },
+          body: fakeResourceDescriptor(
+            embedded ? reference : "plots/chart.png",
+            {
+              id: `chart-${requests.length}`,
+              viewId,
+              workspacePath: embedded ? undefined : "plots/chart.png",
+              name: "chart.png",
+              mimeType: "image/png",
+              kind: "image",
+            },
+          ),
         };
       }
       if (url.includes("/content"))
@@ -76,18 +79,7 @@ describe("selected file preview lifecycle", () => {
         if (url.startsWith("/api/resources/resolve")) {
           const { reference } = jsonBody(init);
           if (reference === "pending.txt") await pending.promise;
-          return {
-            body: {
-              id: reference,
-              sessionId: "s1",
-              viewId: "view-s1",
-              reference,
-              name: reference,
-              mimeType: "text/plain",
-              size: 5,
-              kind: "text",
-            },
-          };
+          return { body: fakeResourceDescriptor(String(reference)) };
         }
         if (url.includes("/content")) return { body: "Notes" };
         return baseRoutes(url, init);
@@ -101,18 +93,16 @@ describe("selected file preview lifecycle", () => {
       store.closeResourceTab("pending.txt");
       pending.resolve();
       await reading;
-      expect(store.getState().resourceTabs).toEqual(
-        anotherFileOpen ? [{ reference: "current.txt" }] : [],
-      );
-      expect(store.getState().fileInspection.reference).toBe(
-        anotherFileOpen ? "current.txt" : undefined,
-      );
-      expect(store.getState().fileInspection.kind).toBe(
-        anotherFileOpen ? "file" : "browse",
-      );
-      expect(
-        inspectedPreview(store.getState().fileInspection)?.reference ?? null,
-      ).toBe(anotherFileOpen ? "current.txt" : null);
+      expect(store.getState()).toMatchObject({
+        resourceTabs: anotherFileOpen ? [{ reference: "current.txt" }] : [],
+        fileInspection: anotherFileOpen
+          ? {
+              kind: "file",
+              reference: "current.txt",
+              preview: { reference: "current.txt" },
+            }
+          : { kind: "browse" },
+      });
     },
   );
 
@@ -143,18 +133,16 @@ describe("selected file preview lifecycle", () => {
         ).resolves.toMatchObject({
           accepted: true,
         });
-        socket.emit({
-          type: "snapshot",
-          data: activeSnapshot({ transcriptPage: { revision: 2 } }),
-        });
+        socket.emitSnapshot(
+          activeSnapshot({ transcriptPage: { revision: 2 } }),
+        );
         expect(inspectedPreview(store.getState().fileInspection)).toBe(preview);
         expect(requests).toHaveLength(1);
         expect(URL.revokeObjectURL).not.toHaveBeenCalled();
       }
       setView(viewId);
-      socket.emit({
-        type: "snapshot",
-        data: activeSnapshot({
+      socket.emitSnapshot(
+        activeSnapshot({
           transcriptPage: {
             revision: 3,
             appendFromRevision: 3,
@@ -162,7 +150,7 @@ describe("selected file preview lifecycle", () => {
             incarnation,
           },
         }),
-      });
+      );
       expect(store.getState()).toMatchObject({
         fileInspection: {
           kind: "file",
@@ -195,20 +183,21 @@ describe("selected file preview lifecycle", () => {
   it("keeps the file detail and reports failed reauthorization", async () => {
     const { store, socket, refuseResolve } = await openImage();
     refuseResolve();
-    socket.emit({
-      type: "snapshot",
-      data: activeSnapshot({
+    socket.emitSnapshot(
+      activeSnapshot({
         transcriptPage: { revision: 2, appendFromRevision: 2 },
       }),
-    });
+    );
     await waitFor(() =>
       expect(inspectedPreview(store.getState().fileInspection)).toMatchObject({
         status: "error",
         message: "File no longer authorized",
       }),
     );
-    expect(store.getState().fileInspection.kind).toBe("file");
-    expect(store.getState().fileInspection.reference).toBe("chart.png");
+    expect(store.getState().fileInspection).toMatchObject({
+      kind: "file",
+      reference: "chart.png",
+    });
     expect(selectedWorkspacePath(store.getState())).toBe("plots/chart.png");
   });
 
@@ -226,14 +215,13 @@ describe("selected file preview lifecycle", () => {
         reference,
         preview: { status: "ready" },
       });
-      socket.emit({
-        type: "snapshot",
-        data: activeSnapshot({ transcriptPage }),
+      socket.emitSnapshot(activeSnapshot({ transcriptPage }));
+      expect(store.getState()).toMatchObject({
+        fileInspection: { kind: "browse" },
+        resourceTabs: [
+          { reference: "chart.png", workspacePath: "plots/chart.png" },
+        ],
       });
-      expect(store.getState().fileInspection.kind).toBe("browse");
-      expect(store.getState().resourceTabs).toEqual([
-        { reference: "chart.png", workspacePath: "plots/chart.png" },
-      ]);
       expect(requests).toHaveLength(2);
     },
   );
@@ -242,10 +230,9 @@ describe("selected file preview lifecycle", () => {
     const { store, socket, requests } = await openImage();
     await store.openResource("other.png");
     store.showFileBrowser();
-    socket.emit({
-      type: "snapshot",
-      data: activeSnapshot({ transcriptPage: { viewId: "view-compacted" } }),
-    });
+    socket.emitSnapshot(
+      activeSnapshot({ transcriptPage: { viewId: "view-compacted" } }),
+    );
     expect(store.getState().fileInspection.kind).toBe("browse");
     expect(requests).toHaveLength(2);
 
@@ -269,10 +256,13 @@ describe("selected file preview lifecycle", () => {
     "retires the selected file when the %s changes",
     async (_owner, snapshot) => {
       const { store, socket, requests } = await openImage();
-      socket.emit({ type: "snapshot", data: activeSnapshot(snapshot) });
-      expect(store.getState().fileInspection.kind).toBe("browse");
-      expect(inspectedPreview(store.getState().fileInspection)).toBeNull();
-      expect(store.getState().resourceTabs).toEqual([]);
+      if (_owner === "session")
+        await selectSession(store, activeSnapshot(snapshot));
+      else socket.emitSnapshot(activeSnapshot(snapshot));
+      expect(store.getState()).toMatchObject({
+        fileInspection: { kind: "browse" },
+        resourceTabs: [],
+      });
       expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:chart");
       expect(requests).toHaveLength(1);
     },

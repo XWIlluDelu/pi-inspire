@@ -78,7 +78,7 @@ describe("Changes source projection", () => {
     ]);
     expect(rows.filter((row) => row.startsChange)).toHaveLength(2);
     rows.forEach((row) =>
-      expect(code(row.html).textContent).toBe(row.line.text.slice(1)),
+      expect(code(row.html).textContent).toBe(row.text.slice(1)),
     );
   });
 
@@ -124,7 +124,7 @@ describe("Changes source projection", () => {
       ]),
     );
     expect(rows[0].html).not.toContain("<span");
-    expect(code(rows[0].html).textContent).toBe(rows[0].line.text.slice(1));
+    expect(code(rows[0].html).textContent).toBe(rows[0].text.slice(1));
     expect(rows[1].html).toContain("hljs-keyword");
     expect(rows[2].html).toContain("hljs-keyword");
   });

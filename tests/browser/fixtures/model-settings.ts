@@ -8,8 +8,13 @@ import {
   modelSettingsSnapshot,
   pendingLogin,
 } from "../../web/fixtures/model-settings";
+import { routeSnapshots } from "../support/host-events";
 
-export async function modelSettingsScenario(page: Page, theme = "light") {
+export async function modelSettingsScenario(
+  page: Page,
+  theme = "light",
+  publishCatalog = false,
+) {
   await page.emulateMedia({ reducedMotion: "reduce" });
   let snapshot = modelSettingsSnapshot();
   let providers = [
@@ -34,24 +39,21 @@ export async function modelSettingsScenario(page: Page, theme = "light") {
     })),
   ].sort((a, b) => a.name.localeCompare(b.name));
   let attempt: ProviderLoginAttempt | null = null;
-  let authority = "";
   const modelChanges: unknown[] = [];
   const authOperations: Array<Record<string, unknown>> = [];
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  for (const pattern of [
-    "**/api/bootstrap**",
-    "**/api/snapshot**",
-    "**/api/sessions/open",
-  ])
-    await page.route(pattern, async (route) => {
-      const response = await route.fetch();
-      authority = response.headers()["x-inspire-authority"] ?? authority;
-      const payload = await response.json();
-      if (payload.preferences)
-        payload.preferences = { ...payload.preferences, theme };
-      await route.fulfill({ response, json: payload });
-    });
+  const transport = await routeSnapshots(page, {
+    socket: publishCatalog ? undefined : false,
+    bootstrap: (body) => {
+      body.preferences.theme = theme;
+      if (publishCatalog) body.availableModels = snapshot.models;
+    },
+    snapshot: (body) => {
+      if (publishCatalog && body.active)
+        body.active.availableModels = snapshot.models;
+    },
+  });
   await page.route("**/api/models**", (route) =>
     route.fulfill({
       json: { models: snapshot.models, commonModels: snapshot.commonModels },
@@ -112,7 +114,7 @@ export async function modelSettingsScenario(page: Page, theme = "light") {
       configRevision: "d".repeat(64),
     };
     await route.fulfill({
-      headers: { "X-Inspire-Authority": authority },
+      headers: { "X-Inspire-Authority": transport.authority() },
       json: { saved: true, snapshot },
     });
   });
@@ -165,7 +167,7 @@ export async function modelSettingsScenario(page: Page, theme = "light") {
           : provider,
       );
     await route.fulfill({
-      headers: { "X-Inspire-Authority": authority },
+      headers: { "X-Inspire-Authority": transport.authority() },
       json: {
         result:
           body.operation === "providers"

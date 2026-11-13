@@ -5,7 +5,10 @@ import { BrandLogo, Wordmark } from "./Wordmark";
 
 /** Browser-owned controls remain native; this is only the overlay's drag surface. */
 export function WindowTitlebar() {
-  const needlesActive = useAppState((state) => state.prefs.titlebarNeedles);
+  const needlesActive = useAppState(
+    (state) =>
+      state.desiredPreferences.titlebarNeedles ?? state.prefs.titlebarNeedles,
+  );
   const completion = useAppState((state) => state.completedRunSequence);
   const lastCompletion = useRef(completion);
   const titlebar = useRef<HTMLDivElement>(null);
@@ -51,7 +54,9 @@ export function WindowTitlebar() {
           <button
             type="button"
             className="window-titlebar__brand-button"
-            onClick={() => store.setTitlebarNeedles(!needlesActive)}
+            onClick={() =>
+              store.setPreference("titlebarNeedles", !needlesActive)
+            }
             aria-label="Inspire — Buffon's needles"
             aria-pressed={needlesActive}
             title={

@@ -37,7 +37,7 @@ beforeEach(() => {
     },
     ensureSessionVisible,
     applySnapshot: vi.fn(),
-    invalidateSelection: vi.fn(),
+    applyTranscript: () => {},
     recordRuntimeReady: vi.fn(),
     clearRuntimeReady: vi.fn(),
     refreshLoadedSessions: vi.fn(async () => {}),

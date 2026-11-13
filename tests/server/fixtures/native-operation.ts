@@ -335,7 +335,7 @@ export async function fixture(
   await runtime.setSteeringMode(sessionId, "one-at-a-time");
   await vi.waitFor(
     async () => {
-      const snapshot = await runtime.snapshot();
+      const snapshot = await runtime.snapshot(sessionId);
       expect(snapshot.active?.commands).toEqual(
         expect.arrayContaining([expect.objectContaining({ name: "await" })]),
       );
@@ -345,7 +345,7 @@ export async function fixture(
   );
   expect(piInstallation.commandPath).toBe(process.env.INSPIRE_PI_COMMAND);
   expect(workers).toHaveLength(1);
-  const initial = await runtime.snapshot();
+  const initial = await runtime.snapshot(sessionId);
   expect(initial.active?.availableModels).toEqual([
     expect.objectContaining({ provider: PROVIDER, id: MODEL }),
   ]);
@@ -385,7 +385,7 @@ export async function settled(
   await vi.waitFor(
     async () => {
       expect(eventsOf(f.runtimeEvents, "agent_settled")).toHaveLength(turns);
-      const snapshot = await f.runtime.snapshot();
+      const snapshot = await f.runtime.snapshot(f.sessionId);
       expect(snapshot.runState).toBe("idle");
       expect(snapshot.active?.projectionHealth.status).toBe("ok");
       expect(snapshot.active?.projectionConflict).toBeNull();

@@ -18,9 +18,9 @@ import { interruptAssistantToolCalls } from "../shared/assistant-stream.js";
 import {
   type BranchEntryResponse,
   type ComposerHistoryPage,
+  type HistoryMatch,
   type ModelOption,
   type NativeTurnPage,
-  type HistoryMatch,
   type ProjectionHealth,
   type SessionHistoryPages,
   type TranscriptPage,
@@ -192,6 +192,7 @@ export interface SessionProjectionView {
     overlay?: readonly unknown[],
     effectiveLeafId?: string | null,
     viewId?: string,
+    entryTurns?: ReadonlyMap<string, string>,
   ): TranscriptPage;
   historyPage<Q extends SessionHistoryQuery>(
     query: Q,
@@ -477,6 +478,9 @@ function boundedTranscriptItem(
           : {}),
         ...(typeof sourceRecord.__inspireLiveId === "string"
           ? { __inspireLiveId: sourceRecord.__inspireLiveId }
+          : {}),
+        ...(typeof sourceRecord.__inspireTurnId === "string"
+          ? { __inspireTurnId: sourceRecord.__inspireTurnId }
           : {}),
         ...(sourceRecord.__inspireUnconfirmed === true
           ? { __inspireUnconfirmed: true }
@@ -1020,10 +1024,17 @@ class SessionEntryIndex extends EventEmitter {
     overlay: readonly unknown[] = [],
     effectiveLeafId: string | null = this.currentLeafId,
     viewId = this.incarnation,
+    entryTurns?: ReadonlyMap<string, string>,
   ): TranscriptPage {
     const persisted = this.viewMessages(effectiveLeafId);
     const messages = overlay.length ? [...persisted, ...overlay] : persisted;
-    return this.buildPage(messages, persisted.length, effectiveLeafId, viewId);
+    return this.buildPage(
+      messages,
+      persisted.length,
+      effectiveLeafId,
+      viewId,
+      entryTurns,
+    );
   }
 
   private historyCursor(
@@ -1343,6 +1354,7 @@ class SessionEntryIndex extends EventEmitter {
     persistedLength: number,
     effectiveLeafId: string | null,
     viewId: string,
+    entryTurns?: ReadonlyMap<string, string>,
   ): TranscriptPage {
     const identity = {
       sessionId: this.sessionId,
@@ -1361,8 +1373,12 @@ class SessionEntryIndex extends EventEmitter {
     let start = source.length;
     while (start > 0 && builder.length < TRANSCRIPT_PAGE_MAX_MESSAGES) {
       const index = start - 1;
+      const raw = jsonRecord(source[index]);
+      const entryId = raw?.__inspireEntryId;
+      const turn =
+        typeof entryId === "string" ? entryTurns?.get(entryId) : undefined;
       const item = boundedTranscriptItem(
-        source[index],
+        turn ? { ...raw, __inspireTurnId: turn } : source[index],
         index < persistedLength ? index : undefined,
         this.fileNameForPath,
       );

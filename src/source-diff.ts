@@ -1,8 +1,7 @@
 import type { GitDiffLine, GitDiffResponse } from "../shared/contracts";
 import { highlightSourceLines, languageForFile } from "./syntax-highlighting";
 
-export interface SourceDiffRow {
-  line: GitDiffLine;
+export interface SourceDiffRow extends GitDiffLine {
   html: string;
   changeIndex: number | null;
   startsChange: boolean;
@@ -70,7 +69,7 @@ export function sourceDiffRows(
     const startsChange = changed && !insideChange;
     if (startsChange) changeIndex += 1;
     rows.push({
-      line,
+      ...line,
       // Context rows describe the selected (new) source; deletions belong to
       // the old source. Both indices advance on shared context.
       html:

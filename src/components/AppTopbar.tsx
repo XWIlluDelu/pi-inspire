@@ -17,7 +17,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { createPortal } from "react-dom";
 import {
   type ProjectionConflict,
   projectionConflictSeverity,
@@ -25,14 +24,15 @@ import {
   type RunState,
 } from "../../shared/contracts";
 import { userMessageTitle } from "../../shared/user-message";
+import { selectedRunState } from "../app-state";
 import { branchCopiesBlocked } from "../controllers/branch-controller";
 import { type ChatMessage } from "../events";
 import { gitChangeCount, gitHeadLabel } from "../git-presentation";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import { shallowEqual, store, useAppState } from "../store";
 import { useCopied } from "../use-copied";
-import { useModalFocus } from "../use-modal-focus";
 import { ExtensionStatus } from "./ExtensionDisplays";
+import { Modal } from "./Modal";
 import { NavigationToggle } from "./NavigationToggle";
 import { PiLoader } from "./PiLoader";
 import { SessionActionsMenu } from "./SessionActionsMenu";
@@ -170,7 +170,6 @@ function RenameSessionDialog({
   onClose: () => void;
 }) {
   const title = useId();
-  const ref = useModalFocus<HTMLFormElement>(true, sessionId, onClose);
   const input = useRef<HTMLInputElement>(null);
   const editRevision = useRef(0);
   const [value, setValue] = useState(initialName);
@@ -194,7 +193,7 @@ function RenameSessionDialog({
       if (
         saved &&
         revision === editRevision.current &&
-        ref.current &&
+        input.current &&
         store.getState().sessionId === sessionId
       )
         onClose();
@@ -203,17 +202,15 @@ function RenameSessionDialog({
     }
   };
 
-  return createPortal(
-    <div className="overlay" role="presentation" onClick={onClose}>
+  return (
+    <Modal
+      owner={sessionId}
+      aria-labelledby={title}
+      aria-busy={saving || undefined}
+      onDismiss={onClose}
+    >
       <form
         className="dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={title}
-        aria-busy={saving || undefined}
-        ref={ref}
-        tabIndex={-1}
-        onClick={(event) => event.stopPropagation()}
         onKeyDown={(event) => {
           if (
             event.key === "Enter" &&
@@ -257,8 +254,7 @@ function RenameSessionDialog({
           </button>
         </footer>
       </form>
-    </div>,
-    document.body,
+    </Modal>
   );
 }
 
@@ -449,7 +445,7 @@ export const AppTopbar = memo(function AppTopbar({
   const state = useAppState(
     (source) => ({
       sessionId: source.sessionId,
-      runState: source.runState,
+      runState: selectedRunState(source),
       projectionConflict: source.projectionConflict,
       connection: source.connection,
       connectionProblem: source.connectionProblem,

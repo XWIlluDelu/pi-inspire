@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
+
 import { expect, it, vi } from "vitest";
-import type { BootstrapResponse } from "../../shared/contracts";
-import { sessionDraft, setSessionDraft } from "../../src/session-drafts";
+import { selectedRunState } from "../../src/app-state";
 import { AppStore } from "../../src/store";
 import {
   disposeOperationFixture,
@@ -15,12 +15,12 @@ it("shares concurrent Stop requests and reclaims both lost handoffs while stoppi
   let f: Awaited<ReturnType<typeof fixture>> | undefined;
   let store: AppStore | undefined;
   let listener: ((event: Record<string, unknown>) => void) | undefined;
+  let releaseView: (() => void) | undefined;
   try {
     f = await fixture(false, 35_000, gate.promise);
     vi.stubGlobal("window", browserWindow);
     installFakeWebSocket();
     const bridge = fetch;
-    let bootstrap!: BootstrapResponse;
     let receiptsUnavailable = true;
     const recoverPath = "/api/pending/recover";
     const stopPath = "/api/control/abort";
@@ -34,8 +34,6 @@ it("shares concurrent Stop requests and reclaims both lost handoffs while stoppi
         await f!.api.prompt({ ...f!.delivery(between), behavior: "followUp" });
       }
       const response = await bridge(input, init);
-      if (url.startsWith("/api/bootstrap"))
-        bootstrap = await response.clone().json();
       if (url === stopPath || url === recoverPath) {
         const { operationId, sessionId, authorityId } = JSON.parse(
           String(init?.body),
@@ -53,12 +51,9 @@ it("shares concurrent Stop requests and reclaims both lost handoffs while stoppi
     store = new AppStore();
     await store.init();
     const socket = FakeWebSocket.instances.at(-1)!;
-    socket.readyState = 1;
-    socket.onopen?.({});
-    socket.emit({
-      type: "snapshot",
-      authorityId: bootstrap.authorityId,
-      data: await f.runtime.snapshot(f.sessionId),
+    releaseView = f.runtime.retainSessionView(f.sessionId);
+    socket.join(await f.runtime.snapshot(f.sessionId), {
+      authorityId: f.application.authorityId,
     });
     listener = (event) => socket.emit(event);
     f.runtime.on("event", listener);
@@ -79,10 +74,12 @@ it("shares concurrent Stop requests and reclaims both lost handoffs while stoppi
       behavior: "steer",
       attachmentIds: [image.id],
     });
-    setSessionDraft(f.sessionId, "newer draft");
+    store.drafts.setText(f.sessionId, "newer draft");
     await Promise.all([store.abort(), store.abort()]);
-    await vi.waitFor(() => expect(store!.getState().runState).toBe("aborted"));
-    expect(sessionDraft(f.sessionId)).toBe("newer draft");
+    await vi.waitFor(() =>
+      expect(selectedRunState(store!.getState())).toBe("aborted"),
+    );
+    expect(store.drafts.get(f.sessionId).text).toBe("newer draft");
     expect(store.getState().notices).toContainEqual(
       expect.objectContaining({
         text: expect.stringContaining("Pending recovery failed"),
@@ -92,17 +89,21 @@ it("shares concurrent Stop requests and reclaims both lost handoffs while stoppi
     receiptsUnavailable = false;
     await f.api.prompt(f.delivery("Second isolated run"));
     await vi.waitFor(() => expect(f!.modelRequests).toHaveLength(2));
-    expect(store.getState().runState).toBe("running");
+    expect(selectedRunState(store.getState())).toBe("running");
     await store.abort();
     await vi.waitFor(async () =>
-      expect((await f!.runtime.snapshot()).runState).toBe("aborted"),
+      expect((await f!.runtime.snapshot(f!.sessionId)).runState).toBe(
+        "aborted",
+      ),
     );
     await vi.waitFor(() => {
-      const draft = sessionDraft(f!.sessionId).split("\n\n");
+      const draft = store!.drafts.get(f!.sessionId).text.split("\n\n");
       expect(draft.pop()).toBe("newer draft");
       expect(draft.sort()).toEqual([before, between].sort());
       expect(
-        store!.getState().attachments.map(({ uploadedId }) => uploadedId),
+        store!.drafts
+          .get(store!.getState().sessionId)
+          .attachments.map(({ uploadedId }) => uploadedId),
       ).toEqual([image.id]);
     });
     expect(posts.map(({ path }) => path)).toEqual([
@@ -119,6 +120,7 @@ it("shares concurrent Stop requests and reclaims both lost handoffs while stoppi
       ),
     ).toHaveLength(2);
   } finally {
+    releaseView?.();
     if (f && listener) f.runtime.off("event", listener);
     (
       store as unknown as { connectionController: { stop(): void } } | undefined

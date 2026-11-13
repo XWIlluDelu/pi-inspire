@@ -1,7 +1,8 @@
 import {
-  type HiddenClearResponse,
-  type InspirePreferences,
+  type PreferencePublication,
   type SessionDeleteDisposition,
+  type SessionDeletionRequest,
+  type SessionDeletionResponse,
 } from "../../shared/contracts";
 import { type Api, ApiError } from "../api";
 import type { AppState } from "../app-state";
@@ -10,6 +11,7 @@ interface SessionManagementHost {
   state(): AppState;
   patch(patch: Partial<AppState>): void;
   api(): Api | null;
+  authorityId(): string | null;
   notify(kind: "info" | "warning" | "error", text: string): void;
   handleAuthFailure(): void;
   refreshLoadedSessions(): Promise<void>;
@@ -20,12 +22,7 @@ interface SessionManagementHost {
   ): Promise<void>;
   forgetSessions(sessionIds: ReadonlySet<string>): AppState["sessionStatuses"];
   pauseSessionReads(sessionIds: ReadonlySet<string>): () => void;
-  flushPreferences(): Promise<unknown>;
-  capturePreferenceOwners(): ReadonlyMap<keyof InspirePreferences, number>;
-  reconcilePreferences(
-    authoritative: InspirePreferences,
-    owners: ReadonlyMap<keyof InspirePreferences, number>,
-  ): InspirePreferences;
+  publishPreferences(publication: PreferencePublication): void;
 }
 
 export type CommandChangeResult =
@@ -100,6 +97,7 @@ export class SessionManagementController {
         "SESSION_FILE_MISSING",
         "SESSION_CATALOG_STALE",
         "HIDDEN_SELECTION_CHANGED",
+        "SESSION_CATALOG_INCOMPLETE",
       ].includes(error.code ?? "")
     );
   }
@@ -112,16 +110,13 @@ export class SessionManagementController {
     extent: readonly [query: string, offset: number, total: number],
   ): Promise<void> {
     this.host.patch({ sessionDeleteReviewRequired: true });
-    const owners = this.host.capturePreferenceOwners();
     try {
       const [preferences] = await Promise.all([
         api.preferences(),
         api.refreshSessions(),
       ]);
       if (!ownsTransport()) return;
-      this.host.patch({
-        prefs: this.host.reconcilePreferences(preferences, owners),
-      });
+      this.host.publishPreferences(preferences);
       await this.host.preserveLoadedSessions(...extent);
     } catch (error) {
       if (!ownsTransport()) return;
@@ -135,253 +130,139 @@ export class SessionManagementController {
     }
   }
 
-  private applyDeletionResult(
-    sessionStatuses: AppState["sessionStatuses"],
-    preferences: InspirePreferences | undefined,
-    owners: ReadonlyMap<keyof InspirePreferences, number>,
-  ): void {
-    this.host.patch({
-      sessionStatuses,
-      ...(preferences
-        ? { prefs: this.host.reconcilePreferences(preferences, owners) }
-        : {}),
-    });
-  }
-
   deleteSession = async (
     sessionId: string,
-  ): Promise<SessionDeleteDisposition | null> => {
-    const api = this.host.api();
-    const ownsTransport = (): boolean => this.host.api() === api;
-    const session = this.host
-      .state()
-      .sessions.find((candidate) => candidate.id === sessionId);
-    const hidden =
-      this.host.state().prefs.hiddenSessionIds.includes(sessionId) ||
-      (session !== undefined &&
-        this.host.state().prefs.hiddenProjectCwds.includes(session.cwd));
-    if (
-      !api ||
-      this.host.state().deletingSessionId ||
-      this.host.state().clearingHidden ||
-      this.host.state().sessionDeleteReviewRequired ||
-      !hidden
-    )
-      return null;
-    const preserveQuery = this.host.state().sessionQuery;
-    const preserveOffset = this.host.state().sessionListNextOffset;
-    const preserveTotal = this.host.state().sessionListTotal;
-    let resumeReads: (() => void) | undefined;
-    this.host.patch({ deletingSessionId: sessionId, sessionDeleteError: null });
-    try {
-      // Hiding is an optimistic preference write. Fence it before DELETE so a
-      // late PATCH cannot resurrect the deleted id in durable navigation data.
-      await this.host.flushPreferences();
-      if (!ownsTransport()) return null;
-      const current = this.host
-        .state()
-        .sessions.find((candidate) => candidate.id === sessionId);
-      const stillHidden =
-        this.host.state().prefs.hiddenSessionIds.includes(sessionId) ||
-        (current !== undefined &&
-          this.host.state().prefs.hiddenProjectCwds.includes(current.cwd));
-      if (!stillHidden) {
-        this.host.patch({
-          sessionDeleteError:
-            "The session must remain in Hidden before it can be deleted",
-          sessionDeleteReviewRequired: true,
-        });
-        return null;
-      }
-      const preferenceOwners = this.host.capturePreferenceOwners();
-      resumeReads = this.host.pauseSessionReads(new Set([sessionId]));
-      const result = await api.deleteSession(sessionId);
-      if (!ownsTransport()) return null;
-      const deleted = new Set([sessionId]);
-      const sessionStatuses = this.host.forgetSessions(deleted);
-      this.applyDeletionResult(
-        sessionStatuses,
-        result.preferences,
-        preferenceOwners,
-      );
-      this.host.notify(
-        "info",
-        result.disposition === "trashed"
-          ? "Session moved to Trash"
-          : "Session permanently deleted",
-      );
-      if (result.preferenceCleanupFailed) {
-        this.host.notify(
-          "warning",
-          "Session was deleted, but its navigation metadata could not be saved",
-        );
-      }
-      // Rebuild the already-consumed chronological extent under one fresh
-      // generation. The optimistic row removal keeps the destructive result
-      // immediate while offset-based pagination is repaired authoritatively.
-      void this.host.preserveLoadedSessions(
-        preserveQuery,
-        preserveOffset,
-        preserveTotal,
-      );
-      return result.disposition;
-    } catch (error) {
-      if (!ownsTransport()) return null;
-      if (error instanceof ApiError && error.status === 401) {
-        this.host.handleAuthFailure();
-      } else {
-        this.host.patch({
-          sessionDeleteError:
-            error instanceof Error ? error.message : "Failed to delete session",
-        });
-        if (this.needsFreshReview(error))
-          await this.refreshDeletionReview(api, ownsTransport, [
-            preserveQuery,
-            preserveOffset,
-            preserveTotal,
-          ]);
-      }
-      return null;
-    } finally {
-      if (ownsTransport() && this.host.state().deletingSessionId === sessionId)
-        this.host.patch({ deletingSessionId: null });
-      resumeReads?.();
-    }
-  };
+  ): Promise<SessionDeleteDisposition | null> =>
+    (await this.deleteReviewed({ scope: "session", sessionId }))?.deleted[0]
+      ?.disposition ?? null;
 
-  clearHiddenSessions = async (
-    sessionIds: string[],
-    projectCwd?: string,
-  ): Promise<HiddenClearResponse | null> => {
+  clearHiddenSessions = (sessionIds: string[], projectCwd?: string) =>
+    this.deleteReviewed({ scope: "hidden", sessionIds, projectCwd });
+
+  private async deleteReviewed(
+    request: SessionDeletionRequest,
+  ): Promise<SessionDeletionResponse | null> {
     const api = this.host.api();
-    const ownsTransport = (): boolean => this.host.api() === api;
+    const state = this.host.state();
     if (
       !api ||
-      sessionIds.length === 0 ||
-      this.host.state().deletingSessionId ||
-      this.host.state().clearingHidden ||
-      this.host.state().sessionDeleteReviewRequired ||
-      this.host.state().sessionQuery.trim() ||
-      this.host.state().sessionListLoading ||
-      this.host.state().sessionListLoadingOlder ||
-      this.host.state().sessionListHydrating ||
-      this.host.state().sessionListError ||
-      this.host.state().sessionListIssues.length > 0
+      state.deletingSessionId ||
+      state.clearingHidden ||
+      state.sessionDeleteReviewRequired ||
+      state.curationPending
     )
       return null;
-    const preserveQuery = this.host.state().sessionQuery;
-    const preserveOffset = this.host.state().sessionListNextOffset;
-    const preserveTotal = this.host.state().sessionListTotal;
-    let resumeReads: (() => void) | undefined;
-    this.host.patch({ clearingHidden: true, sessionDeleteError: null });
-    try {
-      // Hiding is optimistic. Fence every outstanding curation write before
-      // confirming that the reviewed ids still represent the complete Hidden
-      // selection (the whole drawer or one complete folder) sent to the host.
-      await this.host.flushPreferences();
-      if (!ownsTransport()) return null;
-      const currentPrefs = this.host.state().prefs;
-      const hiddenSessionIds =
-        projectCwd === undefined ? [...currentPrefs.hiddenSessionIds] : [];
-      const hiddenProjectCwds =
-        projectCwd === undefined
-          ? [...currentPrefs.hiddenProjectCwds]
-          : currentPrefs.hiddenProjectCwds.filter((cwd) => cwd === projectCwd);
-      const individualIds = new Set(hiddenSessionIds);
-      const projectCwds = new Set(hiddenProjectCwds);
-      const currentIds = this.host
-        .state()
-        .sessions.filter(
-          (session) =>
-            individualIds.has(session.id) || projectCwds.has(session.cwd),
-        )
-        .map((session) => session.id);
-      const reviewed = new Set(sessionIds);
+
+    const { prefs, sessions } = state;
+    const single = request.scope === "session";
+    const ids = new Set(single ? [request.sessionId] : request.sessionIds);
+    if (single) {
+      const session = sessions.find(({ id }) => id === request.sessionId);
       if (
-        reviewed.size !== sessionIds.length ||
-        currentIds.length !== reviewed.size ||
-        currentIds.some((sessionId) => !reviewed.has(sessionId))
-      ) {
-        this.host.patch({
-          sessionDeleteError: "Hidden changed; review it before clearing",
-        });
-        await this.refreshDeletionReview(api, ownsTransport, [
-          preserveQuery,
-          preserveOffset,
-          preserveTotal,
-        ]);
+        !prefs.hiddenSessionIds.includes(request.sessionId) &&
+        !(session && prefs.hiddenProjectCwds.includes(session.cwd))
+      )
         return null;
-      }
-
-      const preferenceOwners = this.host.capturePreferenceOwners();
-      resumeReads = this.host.pauseSessionReads(reviewed);
-      const result = await api.clearHiddenSessions(sessionIds, projectCwd);
-      if (!ownsTransport()) return null;
-      const deleted = new Set(
-        result.deleted.map((session) => session.sessionId),
-      );
-      const sessionStatuses = this.host.forgetSessions(deleted);
-      this.applyDeletionResult(
-        sessionStatuses,
-        result.preferences,
-        preferenceOwners,
-      );
-
-      if (result.deleted.length > 0) {
-        const count = result.deleted.length;
-        const allTrashed = result.deleted.every(
-          (session) => session.disposition === "trashed",
+    } else if (
+      ids.size === 0 ||
+      state.sessionQuery.trim() ||
+      state.sessionListLoading ||
+      state.sessionListLoadingOlder ||
+      state.sessionListHydrating ||
+      state.sessionListError ||
+      state.sessionListIssues.length
+    ) {
+      return null;
+    }
+    const extent = [
+      state.sessionQuery,
+      state.sessionListNextOffset,
+      state.sessionListTotal,
+    ] as const;
+    const ownsTransport = () => this.host.api() === api;
+    this.host.patch({
+      deletingSessionId: single ? request.sessionId : null,
+      clearingHidden: !single,
+      sessionDeleteError: null,
+    });
+    let resumeReads: (() => void) | undefined;
+    try {
+      if (!single) {
+        const current = sessions.filter(({ id, cwd }) =>
+          request.projectCwd === undefined
+            ? prefs.hiddenSessionIds.includes(id) ||
+              prefs.hiddenProjectCwds.includes(cwd)
+            : request.projectCwd === cwd &&
+              prefs.hiddenProjectCwds.includes(cwd),
         );
-        this.host.notify(
-          "info",
-          allTrashed
-            ? `${count} ${count === 1 ? "session" : "sessions"} moved to Trash`
-            : `${count} ${count === 1 ? "session" : "sessions"} deleted`,
-        );
-        if (!result.failure)
-          void this.host.preserveLoadedSessions(
-            preserveQuery,
-            preserveOffset,
-            preserveTotal,
+        if (
+          ids.size !== request.sessionIds.length ||
+          current.length !== ids.size ||
+          current.some(({ id }) => !ids.has(id))
+        ) {
+          throw new ApiError(
+            409,
+            "Hidden changed; review it before clearing",
+            undefined,
+            "HIDDEN_SELECTION_CHANGED",
           );
+        }
       }
-      if (result.preferenceCleanupFailed) {
-        this.host.notify(
-          "warning",
-          "Sessions were deleted, but their navigation metadata could not be saved",
-        );
-      }
-      if (result.failure) {
+      resumeReads = this.host.pauseSessionReads(ids);
+      const result = await api.deleteSessions(request);
+      if (!ownsTransport()) return null;
+      const { deleted, failure, navigation } = result;
+      if (deleted.length) {
         this.host.patch({
-          sessionDeleteError: `Deleted ${result.deleted.length} ${result.deleted.length === 1 ? "session" : "sessions"}; stopped at ${result.failure.sessionId}: ${result.failure.message}`,
+          sessionStatuses: this.host.forgetSessions(
+            new Set(deleted.map(({ sessionId }) => sessionId)),
+          ),
         });
-        await this.refreshDeletionReview(api, ownsTransport, [
-          preserveQuery,
-          preserveOffset,
-          preserveTotal,
-        ]);
+        const subject = single
+          ? "Session"
+          : `${deleted.length} ${deleted.length === 1 ? "session" : "sessions"}`;
+        const action = deleted.every(
+          ({ disposition }) => disposition === "trashed",
+        )
+          ? "moved to Trash"
+          : single
+            ? "permanently deleted"
+            : "deleted";
+        this.host.notify("info", `${subject} ${action}`);
       }
+      if (navigation.kind === "unavailable")
+        this.host.notify("warning", navigation.reason);
+      else if (navigation.authorityId === this.host.authorityId())
+        this.host.publishPreferences(navigation);
+      if (failure) {
+        this.host.patch({
+          sessionDeleteError: `Deleted ${deleted.length} ${deleted.length === 1 ? "session" : "sessions"}; stopped at ${failure.sessionId}: ${failure.message}`,
+        });
+        await this.refreshDeletionReview(api, ownsTransport, extent);
+      } else if (deleted.length)
+        void this.host.preserveLoadedSessions(...extent);
       return result;
     } catch (error) {
       if (!ownsTransport()) return null;
-      if (error instanceof ApiError && error.status === 401) {
+      if (error instanceof ApiError && error.status === 401)
         this.host.handleAuthFailure();
-      } else {
+      else {
         this.host.patch({
           sessionDeleteError:
-            error instanceof Error ? error.message : "Failed to clear Hidden",
+            error instanceof Error
+              ? error.message
+              : single
+                ? "Failed to delete session"
+                : "Failed to clear Hidden",
         });
         if (this.needsFreshReview(error))
-          await this.refreshDeletionReview(api, ownsTransport, [
-            preserveQuery,
-            preserveOffset,
-            preserveTotal,
-          ]);
+          await this.refreshDeletionReview(api, ownsTransport, extent);
       }
       return null;
     } finally {
-      if (ownsTransport()) this.host.patch({ clearingHidden: false });
+      if (ownsTransport())
+        this.host.patch({ deletingSessionId: null, clearingHidden: false });
       resumeReads?.();
     }
-  };
+  }
 }

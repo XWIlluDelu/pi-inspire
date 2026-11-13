@@ -25,6 +25,18 @@ afterEach(async () => {
 it("discovers native global/trusted-project registrations and resolves defaults over the same target without a session or model request", async () => {
   const f = await modelWorkflowFixture();
   roots.push(f.root);
+  const settingsFile = join(f.trusted, ".pi/settings.json");
+  const settings = JSON.parse(await readFile(settingsFile, "utf8"));
+  await writeFile(
+    settingsFile,
+    JSON.stringify({
+      ...settings,
+      modelThinkingLevels: {
+        "project-native/a": "medium",
+        "project-native/b": "invalid-value",
+      },
+    }),
+  );
   for (const [base, scope] of [
     [f.agent, "global"],
     [join(f.trusted, ".pi"), "project"],
@@ -110,6 +122,14 @@ it("discovers native global/trusted-project registrations and resolves defaults 
     expect(untrusted.defaults).toMatchObject({
       model: { provider: "global-router", id: "auto", virtual: true },
       thinkingLevel: "high",
+    });
+    expect(trusted.thinkingPreferences).toEqual({
+      defaultLevel: "low",
+      byModel: { "project-native/a": "medium" },
+    });
+    expect(untrusted.thinkingPreferences).toEqual({
+      defaultLevel: "high",
+      byModel: {},
     });
     expect(untrusted.warning).toContain("not trusted");
     expect(

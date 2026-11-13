@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { TerminalOperationIdentity } from "../shared/terminal-contracts.js";
+import type { TerminalOperation } from "../shared/terminal-operations.js";
 import { TerminalServiceError } from "./terminal-service.js";
 
 interface Receipt {
@@ -42,26 +42,18 @@ export class TerminalOperationReceipts {
   }
 
   run(
-    operation: TerminalOperationIdentity | undefined,
-    method: string,
-    params: unknown,
-    execute: () => Promise<unknown>,
+    operation: TerminalOperation,
+    execute?: () => Promise<unknown>,
   ): Promise<unknown> {
     this.prune();
-    if (
-      !operation ||
-      typeof operation.id !== "string" ||
-      typeof operation.epoch !== "string" ||
-      !/^[A-Za-z0-9_-]{1,80}$/u.test(operation.id) ||
-      !/^[A-Za-z0-9_-]{1,80}$/u.test(operation.epoch)
-    )
-      return this.refuse(
-        "terminal_operation_required",
-        "A terminal operation identity is required.",
-      );
-    const key = `${operation.epoch}:${operation.id}`;
+    const {
+      executor: { epoch },
+      operationId,
+      intent,
+    } = operation;
+    const key = `${epoch}:${operationId}`;
     const fingerprint = createHash("sha256")
-      .update(canonical([method, params]))
+      .update(canonical(intent))
       .digest("hex");
     const prior = this.receipts.get(key);
     if (prior) {
@@ -78,10 +70,15 @@ export class TerminalOperationReceipts {
         )
       );
     }
-    if (operation.epoch !== this.epoch)
+    if (epoch !== this.epoch)
       return this.refuse(
         "terminal_operation_epoch_changed",
         "The terminal receipt epoch changed. The previous outcome is unknown; inspect the catalog before starting a new intent.",
+      );
+    if (!execute)
+      return this.refuse(
+        "terminal_operation_missing",
+        "The daemon has no receipt for this operation. No terminal control was sent.",
       );
     if (this.receipts.size >= (this.options.limit ?? 2_048)) {
       // Never evict running work. Fence admission before reclaiming settled

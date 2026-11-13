@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from "vitest";
 import { processStartIdentity } from "../../server/instance-state.mjs";
 import type { TerminalDaemonInfo } from "../../server/terminal-daemon-configuration.js";
 import { TERMINAL_DAEMON_PROTOCOL_VERSION } from "../../server/terminal-daemon-protocol.js";
-import type { TerminalDescriptor } from "../../shared/terminal-contracts.js";
+import type { TerminalIntent } from "../../shared/terminal-operations.js";
 import { terminalDaemonFixture } from "./fixtures/terminal-daemon.js";
 
 describe("terminal daemon", () => {
@@ -139,11 +139,16 @@ describe("terminal daemon", () => {
     const { client, directory, manager, spawns } = fixture;
     try {
       const epoch = await client.operationEpoch();
-      const identity = () => ({ id: randomUUID(), epoch });
-      const terminal = await client.operate<TerminalDescriptor>(
-        "create",
-        { request: { cwd: directory } },
-        identity(),
+      const operation = <I extends TerminalIntent>(intent: I) => ({
+        executor: { kind: "terminal" as const, epoch },
+        operationId: randomUUID(),
+        intent,
+      });
+      const terminal = await client.operate(
+        operation({
+          command: "create",
+          params: { request: { cwd: directory } },
+        }),
       );
       const id = terminal.id;
       const pty = spawns[0]!.pty;
@@ -153,18 +158,22 @@ describe("terminal daemon", () => {
       });
       vi.spyOn(pty, "kill").mockImplementation(markStopping);
       const restart = vi.spyOn(manager, "restart");
-      const failedOperation = identity();
-      const resend = () => client.operate("restart", { id }, failedOperation);
+      const restartIntent = { command: "restart", params: { id } } as const;
+      const failedOperation = operation(restartIntent);
       vi.useFakeTimers();
 
       const failure = { code: "terminal_stop_timeout", status: 503 };
-      const first = expect(resend()).rejects.toMatchObject(failure);
+      const first = expect(
+        client.operate(failedOperation),
+      ).rejects.toMatchObject(failure);
       await stopping;
       await vi.advanceTimersByTimeAsync(7_000);
       await first;
       pty.emitExit(0);
 
-      await expect(resend()).rejects.toMatchObject(failure);
+      await expect(client.operate(failedOperation, true)).rejects.toMatchObject(
+        failure,
+      );
       expect(restart).toHaveBeenCalledOnce();
       expect(spawns).toHaveLength(1);
       expect((await client.list(directory)).terminals).toMatchObject([
@@ -172,7 +181,7 @@ describe("terminal daemon", () => {
       ]);
 
       await expect(
-        client.operate("restart", { id }, identity()),
+        client.operate(operation(restartIntent)),
       ).resolves.toMatchObject({
         id,
         status: "running",
@@ -190,7 +199,7 @@ describe("terminal daemon", () => {
       });
       let settled = false;
       const result = client
-        .operate("remove", { id, force: false }, identity())
+        .operate(operation({ command: "remove", params: { id, force: false } }))
         .finally(() => {
           settled = true;
         });

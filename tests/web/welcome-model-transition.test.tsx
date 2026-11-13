@@ -7,11 +7,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type {
-  ModelOption,
-  NewSessionDefaults,
-  ThinkingLevel,
-} from "../../shared/contracts";
+import type { ModelOption, NewSessionDefaults } from "../../shared/contracts";
 import type { ModelCatalogResponse } from "../../shared/model-settings";
 import { ApiError } from "../../src/api";
 import { Welcome } from "../../src/components/Welcome";
@@ -48,27 +44,21 @@ const inherit = {
   thinkingLevel: "max",
   commands: [],
 };
-let thinking: (
-  query: URLSearchParams,
-) => Promise<ThinkingLevel> | ThinkingLevel;
+let thinkingPreferences: ModelCatalogResponse["thinkingPreferences"];
 let catalog: () => Promise<ModelOption[]> | ModelOption[];
 let defaults: NewSessionDefaults;
 beforeEach(async () => {
   installFakeWebSocket();
   mockModelMenuLayout();
-  thinking = (query) => query.get("current") as ThinkingLevel;
+  thinkingPreferences = undefined;
   catalog = () => models;
   defaults = { cwd: "/one", model: ordinary, thinkingLevel: "high" };
   installFetch(async (url) => {
     if (url.startsWith("/api/bootstrap"))
       return { body: bootstrapPayload({ availableModels: models }) };
     if (url.startsWith("/api/models"))
-      return { body: { models: await catalog(), defaults } };
-    if (url.startsWith("/api/new-session/thinking"))
       return {
-        body: {
-          level: await thinking(new URL(url, "http://fixture").searchParams),
-        },
+        body: { models: await catalog(), defaults, thinkingPreferences },
       };
     return undefined;
   });
@@ -149,11 +139,13 @@ it("retains confirmed readiness and choices when an optional catalog refresh sta
   );
 });
 
-it("recovers a transient effort preview and clamps it to the selected model", async () => {
-  vi.useFakeTimers();
-  vi.spyOn(store, "resolveNewSessionThinking")
-    .mockRejectedValueOnce(new ApiError(503, "Thinking preview unavailable"))
-    .mockResolvedValue("max");
+it("uses native candidate effort from the workspace catalog and preserves the choice on refresh", async () => {
+  const start = vi.spyOn(store, "newSession").mockResolvedValue(null);
+  defaults = { cwd: "/one", model: extended, thinkingLevel: "low" };
+  thinkingPreferences = {
+    defaultLevel: "low",
+    byModel: { "fixture/ordinary": "max" },
+  };
   render(
     <Welcome
       showRecent={false}
@@ -163,17 +155,26 @@ it("recovers a transient effort preview and clamps it to the selected model", as
   fireEvent.change(screen.getByRole("textbox", { name: "First message" }), {
     target: { value: "Use the selected effort" },
   });
-  await act(() => vi.advanceTimersByTimeAsync(300));
+  const button = screen.getByRole("button", { name: "Start session" });
+  await waitFor(() => expect(button).toBeEnabled());
   pick("ordinary");
-  await act(() => vi.advanceTimersByTimeAsync(0));
-  const start = screen.getByRole("button", { name: "Start session" });
-  expect(start).toBeDisabled();
-
-  await act(() => vi.advanceTimersByTimeAsync(2_000));
   expect(screen.getByRole("combobox", { name: "Thinking level" })).toHaveValue(
     "high",
   );
-  expect(start).toBeEnabled();
+  thinkingPreferences = { defaultLevel: "minimal", byModel: {} };
+  await act(async () =>
+    fireEvent.click(screen.getByRole("button", { name: "Model" })),
+  );
+  fireEvent.keyDown(screen.getByRole("combobox", { name: "Search models" }), {
+    key: "Escape",
+  });
+  fireEvent.click(button);
+  await waitFor(() =>
+    expect(start).toHaveBeenCalledWith("/one", {
+      model: { provider: "fixture", id: "ordinary" },
+      thinkingLevel: "high",
+    }),
+  );
 });
 
 it("waits for inherited selection before starting or creating a directory", async () => {
@@ -206,7 +207,14 @@ it("waits for inherited selection before starting or creating a directory", asyn
   fireEvent.change(screen.getByRole("textbox", { name: "First message" }), {
     target: { value: "Keep inherited choices" },
   });
-  await waitFor(() => expect(queries).toHaveBeenCalledWith("source", "/one"));
+  await waitFor(() =>
+    expect(queries).toHaveBeenCalledExactlyOnceWith(
+      "source",
+      "/one",
+      true,
+      expect.any(AbortSignal),
+    ),
+  );
   expect(screen.getByRole("button", { name: "Start session" })).toBeDisabled();
   fireEvent.change(screen.getByRole("textbox", { name: "Project directory" }), {
     target: { value: "/missing" },
@@ -326,7 +334,6 @@ it.each([
 ])(
   "keeps manual $chosen effort on a model switch, clamping only unsupported levels",
   async ({ chosen, effective, shown }) => {
-    vi.spyOn(store, "resolveNewSessionThinking").mockResolvedValue("medium");
     const start = vi.spyOn(store, "newSession").mockResolvedValue(null);
     render(
       <Welcome
@@ -361,27 +368,22 @@ it.each([
     );
   },
 );
-it("settles model readiness when manual effort supersedes policy, including across directory changes", async () => {
-  const pending = deferred<ThinkingLevel>();
-  const policy = vi.fn(() => pending.promise);
-  thinking = policy;
+it("keeps the selected model and manual effort when the target catalog changes", async () => {
   const start = vi.spyOn(store, "newSession").mockResolvedValue(null);
   render(<Welcome showRecent={false} inherited={inherit} />);
   fireEvent.change(screen.getByRole("textbox", { name: "First message" }), {
     target: { value: "Use manual effort" },
   });
+  defaults = { cwd: "/one", model: extended, thinkingLevel: "max" };
   pick("ordinary");
-  await waitFor(() => expect(policy).toHaveBeenCalledTimes(1));
-  expect(screen.getByRole("button", { name: "Start session" })).toBeDisabled();
   fireEvent.change(screen.getByRole("combobox", { name: "Thinking level" }), {
     target: { value: "low" },
   });
-  expect(screen.getByRole("button", { name: "Start session" })).toBeEnabled();
   fireEvent.change(screen.getByRole("textbox", { name: "Project directory" }), {
     target: { value: "/two" },
   });
-  await act(async () => pending.resolve("medium"));
   catalog = () => [{ provider: "fixture", id: "fresh", reasoning: true }];
+  thinkingPreferences = { defaultLevel: "medium", byModel: {} };
   fireEvent.click(screen.getByRole("button", { name: "Model" }));
   await screen.findByRole("option", { name: /^fresh/ });
   expect(screen.getByRole("button", { name: "Model" })).toHaveTextContent(
@@ -401,36 +403,6 @@ it("settles model readiness when manual effort supersedes policy, including acro
     }),
   );
 });
-it.each(["model", "directory"] as const)(
-  "ignores an old thinking preview after the %s changes",
-  async (change) => {
-    const pending = deferred<ThinkingLevel>();
-    const read = vi.fn((query: URLSearchParams) =>
-      query.get("cwd") === "/one" && query.get("modelId") === "ordinary"
-        ? pending.promise
-        : "minimal",
-    );
-    thinking = read;
-    render(<Welcome showRecent={false} inherited={inherit} />);
-    pick("ordinary");
-    await waitFor(() => expect(read).toHaveBeenCalled());
-    const effort = screen.getByRole("combobox", { name: "Thinking level" });
-    if (change === "model") {
-      pick("plain");
-      expect(effort).toBeDisabled();
-    } else {
-      fireEvent.change(
-        screen.getByRole("textbox", { name: "Project directory" }),
-        {
-          target: { value: "/two" },
-        },
-      );
-      await waitFor(() => expect(effort).toHaveValue("minimal"));
-    }
-    await act(async () => pending.resolve("high"));
-    expect(effort).toHaveValue(change === "model" ? "" : "minimal");
-  },
-);
 it("keeps a same-cwd catalog read alive across equivalent inheritance and effort input", async () => {
   vi.useFakeTimers();
   const pending = deferred<ModelOption[]>();
@@ -444,7 +416,12 @@ it("keeps a same-cwd catalog read alive across equivalent inheritance and effort
   );
   const view = render(surface());
   await act(() => vi.advanceTimersByTimeAsync(220));
-  expect(refresh).toHaveBeenCalledExactlyOnceWith("current", "/one");
+  expect(refresh).toHaveBeenCalledExactlyOnceWith(
+    "current",
+    "/one",
+    false,
+    expect.any(AbortSignal),
+  );
   fireEvent.change(screen.getByRole("combobox", { name: "Thinking level" }), {
     target: { value: "xhigh" },
   });

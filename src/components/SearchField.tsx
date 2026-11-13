@@ -1,6 +1,7 @@
 import { Search, X } from "lucide-react";
 import {
   type ComponentPropsWithoutRef,
+  type ReactNode,
   type Ref,
   useImperativeHandle,
   useRef,
@@ -14,7 +15,8 @@ type SearchFieldProps = Omit<
   inputRef?: Ref<HTMLInputElement>;
   value: string;
   onValueChange: (value: string) => void;
-  clearLabel: string;
+  clearLabel?: string;
+  action?: ReactNode;
   iconSize?: number;
   loading?: boolean;
   loadingLabel?: string;
@@ -26,6 +28,7 @@ export function SearchField({
   value,
   onValueChange,
   clearLabel,
+  action,
   className = "",
   iconSize = 14,
   loading = false,
@@ -60,7 +63,7 @@ export function SearchField({
         value={value}
         onChange={(event) => onValueChange(event.target.value)}
       />
-      {value ? (
+      {value && clearLabel ? (
         <button
           type="button"
           className="search-field__clear"
@@ -76,6 +79,7 @@ export function SearchField({
           <X size={12} aria-hidden />
         </button>
       ) : null}
+      {action}
     </div>
   );
 }

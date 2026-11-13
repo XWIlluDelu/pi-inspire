@@ -1,4 +1,3 @@
-import { assistantOutcome } from "../shared/assistant-outcome";
 import {
   applyAssistantMessageDelta,
   assistantStreamTextLength,
@@ -12,7 +11,6 @@ import {
   type ExtensionUiRequest,
   emptyPendingQueues,
   isBusyRunState,
-  isSessionRuntimeStatus,
   MAX_EXTENSION_DISPLAYS,
   MAX_EXTENSION_KEY_CHARS,
   MAX_EXTENSION_WIDGET_LINES,
@@ -24,6 +22,7 @@ import {
   parseRetryInfo,
   type RetryInfo,
   type RunState,
+  type SessionRuntimeStatus,
 } from "../shared/contracts";
 import { structuralMessageIdentity } from "../shared/message-identity";
 import {
@@ -66,6 +65,7 @@ export interface ChatMessage {
    * owning Pi entry. */
   __inspireMessageId?: string;
   __inspireLiveId?: string;
+  __inspireTurnId?: string;
   /** Monotonic within one live assistant projection; reconnect overlap may
    * never replace a newer partial with an older cumulative message. */
   __inspireStreamRevision?: number;
@@ -177,6 +177,7 @@ export interface WireEvent {
   type: string;
   message?: unknown;
   data?: unknown;
+  sessionStatus?: SessionRuntimeStatus;
   [key: string]: unknown;
 }
 
@@ -205,7 +206,6 @@ export interface EventSlice {
    * survives that message's end event through tool execution and is replaced
    * only when the next LLM call starts. */
   activeAssistantMessageKey: string | null;
-  runState: RunState;
   tools: Record<string, ActivityTool>;
   retry: RetryInfo | null;
   pendingRetryError: string | null;
@@ -216,7 +216,6 @@ export interface EventSlice {
   extensionDisplays: ExtensionDisplay[];
   notices: Notice[];
   statuses: Record<string, string>;
-  editorText: { text: string; nonce: number; draftRevision?: number } | null;
   windowTitle: string | null;
   nextNoticeId: number;
 }
@@ -227,7 +226,6 @@ export function emptyEventSlice(): EventSlice {
     streaming: false,
     bashRunning: false,
     activeAssistantMessageKey: null,
-    runState: "idle",
     tools: {},
     retry: null,
     pendingRetryError: null,
@@ -238,7 +236,6 @@ export function emptyEventSlice(): EventSlice {
     extensionDisplays: [],
     notices: [],
     statuses: {},
-    editorText: null,
     windowTitle: null,
     nextNoticeId: 1,
   };
@@ -399,6 +396,7 @@ export function reduceEvent(
   current: EventSlice,
   settledKeys: ReadonlySet<string>,
   event: WireEvent,
+  previousRunState: RunState = "idle",
 ): ReduceResult {
   const slice: EventSlice = { ...current };
   const settle: string[] = [];
@@ -431,7 +429,6 @@ export function reduceEvent(
       if (message.role === "assistant") {
         slice.streaming = true;
         slice.activeAssistantMessageKey = key;
-        slice.runState = "running";
       }
       break;
     }
@@ -521,15 +518,12 @@ export function reduceEvent(
       if (key) settle.push(key);
       if (message.role === "assistant") {
         slice.streaming = false;
-        const outcome = assistantOutcome(message);
-        if (outcome)
-          slice.runState = outcome === "stopped" ? "aborted" : "failed";
         // A completed call observed in this turn is queued until execution
         // starts. History and reconnect snapshots do not establish that state.
         if (
           key &&
           key === current.activeAssistantMessageKey &&
-          isBusyRunState(current.runState) &&
+          isBusyRunState(previousRunState) &&
           message.stopReason !== "error" &&
           message.stopReason !== "aborted"
         ) {
@@ -559,7 +553,6 @@ export function reduceEvent(
       slice.summarizationRetry = null;
       slice.streaming = true;
       slice.activeAssistantMessageKey = null;
-      slice.runState = "running";
       slice.retry = null;
       changed = true;
       break;
@@ -568,14 +561,6 @@ export function reduceEvent(
       slice.summarizationRetry = null;
       slice.streaming = false;
       slice.activeAssistantMessageKey = null;
-      if (event.aborted === true && slice.runState !== "conflict")
-        slice.runState = "aborted";
-      else if (
-        slice.runState !== "failed" &&
-        slice.runState !== "aborted" &&
-        slice.runState !== "conflict"
-      )
-        slice.runState = "idle";
       if (event.aborted !== true && slice.pendingRetryError)
         pushNotice(slice, "error", `Retry failed: ${slice.pendingRetryError}`);
       slice.pendingRetryError = null;
@@ -587,7 +572,6 @@ export function reduceEvent(
     }
     case "compaction_start": {
       slice.summarizationRetry = null;
-      slice.runState = "compacting";
       changed = true;
       break;
     }
@@ -673,7 +657,6 @@ export function reduceEvent(
       break;
     }
     case "auto_retry_start": {
-      slice.runState = "retrying";
       changed = true;
       slice.retry = parseRetryInfo({
         attempt: event.attempt,
@@ -683,17 +666,11 @@ export function reduceEvent(
       break;
     }
     case "auto_retry_end": {
-      slice.retry = null;
-      slice.pendingRetryError = null;
+      slice.pendingRetryError =
+        !event.success && typeof event.finalError === "string"
+          ? event.finalError
+          : null;
       changed = true;
-      if (event.success) {
-        slice.runState = "running";
-      } else {
-        slice.runState = "failed";
-        if (typeof event.finalError === "string" && event.finalError) {
-          slice.pendingRetryError = event.finalError;
-        }
-      }
       break;
     }
     case "queue_update": {
@@ -722,8 +699,6 @@ export function reduceEvent(
       slice.activeAssistantMessageKey = null;
       slice.tools = {};
       slice.retry = null;
-      if (slice.runState !== "failed" && slice.runState !== "conflict")
-        slice.runState = "idle";
       const reason = String(event.reason);
       const what =
         reason === "exited"
@@ -750,7 +725,6 @@ export function reduceEvent(
     }
     case "runtime_error": {
       slice.pendingRetryError = null;
-      slice.runState = "failed";
       // A dead worker cannot produce the missing agent_settled event. Clear
       // browser-only liveness without fabricating a message or tool outcome;
       // the runtime notice and next authoritative snapshot retain the cause.
@@ -798,14 +772,6 @@ export function reduceEvent(
         slice.windowTitle =
           typeof event.title === "string" && event.title ? event.title : null;
         changed = true;
-      } else if (method === "set_editor_text") {
-        if (typeof event.text === "string") {
-          slice.editorText = {
-            text: event.text,
-            nonce: (current.editorText?.nonce ?? 0) + 1,
-          };
-          changed = true;
-        }
       } else {
         if (
           !EXTENSION_ONE_WAY_METHODS.has(method) &&
@@ -846,19 +812,10 @@ export function reduceEvent(
       break;
   }
 
-  // Event kinds carry message/phase detail; the Host's explicit current state
-  // outranks inferred transitions. In particular a failed message/settlement
-  // must not look running/idle until a later snapshot happens to correct it.
+  const runState = event.sessionStatus?.runState ?? previousRunState;
   if (
-    isSessionRuntimeStatus(event.sessionStatus) &&
-    slice.runState !== event.sessionStatus.runState
-  ) {
-    slice.runState = event.sessionStatus.runState;
-    changed = true;
-  }
-  if (
-    isSessionRuntimeStatus(event.sessionStatus) &&
-    !isBusyRunState(event.sessionStatus.runState) &&
+    event.sessionStatus &&
+    !isBusyRunState(runState) &&
     Object.values(slice.tools).some(
       (tool) => tool.phase === "running" || tool.phase === "queued",
     )
@@ -872,11 +829,11 @@ export function reduceEvent(
     );
     changed = true;
   }
-  if (!isBusyRunState(slice.runState) && slice.summarizationRetry !== null) {
+  if (!isBusyRunState(runState) && slice.summarizationRetry !== null) {
     slice.summarizationRetry = null;
     changed = true;
   }
-  if (slice.runState !== "retrying" && slice.retry !== null) {
+  if (runState !== "retrying" && slice.retry !== null) {
     slice.retry = null;
     changed = true;
   }

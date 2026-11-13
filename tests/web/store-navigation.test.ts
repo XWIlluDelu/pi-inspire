@@ -6,11 +6,12 @@ import {
   bootstrapPayload,
   DEFAULT_PREFS,
   deferred,
+  emptySnapshot,
   installFakeWebSocket,
   installFetch,
   jsonBody,
-  type RouteHandler,
   type RouteResponse,
+  selectSession,
   sessionSummary,
 } from "./helpers";
 import { baseRoutes, initStore } from "./store-fixture";
@@ -75,14 +76,12 @@ describe("session switching guard", () => {
     installFetch((url, init) => {
       if (url.startsWith("/api/bootstrap"))
         return {
-          body: bootstrapPayload({
-            snapshot: { active: null, runState: "idle", sessionStatuses: {} },
-          }),
+          body: bootstrapPayload(),
         };
       if (url === "/api/sessions/new") creating();
       return baseRoutes(url, init);
     });
-    const { store } = await initStore();
+    const { store } = await initStore(emptySnapshot);
     await expect(store.newSession()).resolves.toBeNull();
     expect(creating).not.toHaveBeenCalled();
     expect(store.getState().notices.at(-1)).toMatchObject({
@@ -98,23 +97,6 @@ describe("navigation curation", () => {
   const patchPreferences = (init: RequestInit) => ({
     body: { ...DEFAULT_PREFS, ...jsonBody(init) },
   });
-  const curationRoutes =
-    (refused = false): RouteHandler =>
-    (url, init) => {
-      if (url === "/api/preferences" && init.method === "PATCH")
-        return refused
-          ? { status: 500, body: { error: "preference write rejected" } }
-          : patchPreferences(init);
-      if (url.startsWith("/api/sessions?"))
-        return {
-          body: sessionPage(
-            [sessionSummary({ id: "s7", title: "Pin target" })],
-            1,
-          ),
-        };
-      return baseRoutes(url, init);
-    };
-
   const recent = sessionSummary({ id: "recent", cwd: "/work/other" });
   const folder = sessionSummary({ id: "off-page", cwd: "/work/demo" });
   const sessionIds = (store: Awaited<ReturnType<typeof initStore>>["store"]) =>
@@ -123,7 +105,7 @@ describe("navigation curation", () => {
   it("prunes a restored off-page row after confirmation without refetching the catalog", async () => {
     const write = deferred<void>();
     let lists = 0;
-    installCatalog(
+    const { store } = await installCatalog(
       () => {
         lists++;
         return { body: sessionPage([recent], 2) };
@@ -140,7 +122,6 @@ describe("navigation curation", () => {
         },
       },
     );
-    const { store } = await initStore();
     await vi.waitFor(() =>
       expect(sessionIds(store)).toEqual([recent.id, folder.id]),
     );
@@ -160,21 +141,23 @@ describe("navigation curation", () => {
     const delayed = deferred<void>();
     const started = deferred<void>();
     let folderReads = 0;
-    installCatalog(() => ({ body: sessionPage([recent], 2) }), {
-      preferences: { hiddenProjectCwds: [folder.cwd] },
-      routes: async (url, init) => {
-        if (url === "/api/preferences") return patchPreferences(init);
-        if (url === "/api/sessions/refresh") return { body: { ok: true } };
-        if (url === "/api/sessions/by-cwd") {
-          if (++folderReads === 2) {
-            started.resolve();
-            await delayed.promise;
+    const { store } = await installCatalog(
+      () => ({ body: sessionPage([recent], 2) }),
+      {
+        preferences: { hiddenProjectCwds: [folder.cwd] },
+        routes: async (url, init) => {
+          if (url === "/api/preferences") return patchPreferences(init);
+          if (url === "/api/sessions/refresh") return { body: { ok: true } };
+          if (url === "/api/sessions/by-cwd") {
+            if (++folderReads === 2) {
+              started.resolve();
+              await delayed.promise;
+            }
+            return { body: { sessions: [folder] } };
           }
-          return { body: { sessions: [folder] } };
-        }
+        },
       },
-    });
-    const { store } = await initStore();
+    );
     await vi.waitFor(() =>
       expect(sessionIds(store)).toEqual([recent.id, folder.id]),
     );
@@ -187,138 +170,123 @@ describe("navigation curation", () => {
     expect(sessionIds(store)).toEqual([recent.id]);
   });
 
-  it.each([false, true])(
-    "hydrates the confirmed curated folder without replacing the chronological list (refused removal=%s)",
-    async (refuseRemoval) => {
-      const hydration = deferred<void>();
-      const requested = deferred<void>();
-      let lists = 0;
-      let writes = 0;
-      installCatalog(
-        () => {
-          lists++;
-          return { body: sessionPage([recent], 8) };
+  it("hydrates the confirmed curated folder without replacing the chronological list", async () => {
+    let lists = 0;
+    const { store } = await installCatalog(
+      () => {
+        lists++;
+        return { body: sessionPage([recent], 8) };
+      },
+      {
+        routes: (url, init) => {
+          if (url === "/api/preferences") return patchPreferences(init);
+          if (url === "/api/sessions/by-cwd")
+            return { body: { sessions: [folder] } };
         },
-        {
-          routes: async (url, init) => {
-            if (url === "/api/preferences") {
-              if (++writes === 2)
-                return { status: 500, body: { error: "removal rejected" } };
-              return patchPreferences(init);
-            }
-            if (url === "/api/sessions/by-cwd") {
-              requested.resolve();
-              await hydration.promise;
-              return { body: { sessions: [folder] } };
-            }
-          },
-        },
-      );
-      const { store } = await initStore();
-      await vi.waitFor(() => expect(sessionIds(store)).toEqual([recent.id]));
-      store.toggleProjectHidden(folder.cwd);
-      if (refuseRemoval) {
-        store.toggleProjectHidden(folder.cwd);
-        expect(store.getState().prefs.hiddenProjectCwds).toEqual([]);
-      }
-      await requested.promise;
-      await vi.waitFor(() =>
-        expect(store.getState().prefs.hiddenProjectCwds).toEqual([folder.cwd]),
-      );
-      expect(store.getState()).toMatchObject({
-        sessionListLoading: false,
-        sessionListNextOffset: 1,
-        sessionListTotal: 8,
-      });
-      hydration.resolve();
-      await vi.waitFor(() =>
-        expect(sessionIds(store)).toEqual([recent.id, folder.id]),
-      );
-      expect(lists).toBe(1);
-    },
-  );
-
-  it("rolls a refused curation write back and reports it", async () => {
-    installFetch(curationRoutes(true));
-    const { store } = await initStore();
-
-    store.toggleSessionPin("s7");
-    expect(store.getState().prefs.pinnedSessionIds).toEqual(["s7"]);
-
-    await vi.waitFor(() =>
-      expect(
-        store
-          .getState()
-          .notices.some(
-            (notice) =>
-              notice.kind === "warning" &&
-              notice.text === "preference write rejected",
-          ),
-      ).toBe(true),
+      },
     );
-    expect(store.getState().prefs.pinnedSessionIds).toEqual([]);
+    await vi.waitFor(() => expect(sessionIds(store)).toEqual([recent.id]));
+    store.toggleProjectHidden(folder.cwd);
+    expect(store.getState().prefs.hiddenProjectCwds).toEqual([]);
+    await vi.waitFor(() =>
+      expect(sessionIds(store)).toEqual([recent.id, folder.id]),
+    );
+    expect(store.getState()).toMatchObject({
+      prefs: { hiddenProjectCwds: [folder.cwd] },
+      sessionListLoading: false,
+      sessionListNextOffset: 1,
+      sessionListTotal: 8,
+    });
+    expect(lists).toBe(1);
   });
 
-  it("keeps a pending preference visible across transport replacement and rolls back to the new host baseline", async () => {
-    const pendingPatch = deferred<RouteResponse>();
-    const { promise: started, resolve: patchStarted } = deferred<void>();
-    let theme: "light" | "system" = "system";
+  it("does not publish a refused curation write", async () => {
+    const { store } = await installCatalog(
+      () => ({ body: sessionPage([recent], 1) }),
+      {
+        routes: (url) =>
+          url === "/api/preferences"
+            ? { status: 409, body: { error: "preference write rejected" } }
+            : undefined,
+      },
+    );
+    store.toggleSessionPin(recent.id);
+    expect(store.getState()).toMatchObject({
+      prefs: { pinnedSessionIds: [] },
+      curationPending: true,
+    });
+    await vi.waitFor(() =>
+      expect(store.getState().curationPending).toBe(false),
+    );
+    expect(store.getState().prefs.pinnedSessionIds).toEqual([]);
+    expect(store.getState().notices.at(-1)?.text).toBe(
+      "preference write rejected",
+    );
+  });
+
+  it("keeps the replacement Host's baseline when an older write returns", async () => {
+    const oldWrite = deferred<RouteResponse>();
+    const started = deferred<void>();
+    let replaced = false;
     installFetch((url, init) => {
-      if (url.startsWith("/api/bootstrap")) {
+      if (url.startsWith("/api/bootstrap"))
         return {
-          body: bootstrapPayload({
-            preferences: {
-              ...DEFAULT_PREFS,
-              theme,
-            },
-          }),
+          body: bootstrapPayload(
+            replaced
+              ? {
+                  authorityId: "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb",
+                  preferences: { ...DEFAULT_PREFS, theme: "light" },
+                  preferenceRevision: 1,
+                }
+              : {},
+          ),
         };
-      }
-      if (url.startsWith("/api/preferences") && init.method === "PATCH") {
-        patchStarted();
-        return pendingPatch.promise;
+      if (url === "/api/preferences") {
+        started.resolve();
+        return oldWrite.promise;
       }
       return baseRoutes(url, init);
     });
     const { store } = await initStore();
-
-    store.setTheme("dark");
-    await started;
-    theme = "light";
+    store.setPreference("theme", "dark");
+    await started.promise;
+    replaced = true;
     await store.init();
-    expect(store.getState().prefs.theme).toBe("dark");
-
-    pendingPatch.resolve({
-      status: 500,
-      body: { error: "preference write rejected" },
+    expect(store.getState().desiredPreferences).toEqual({});
+    oldWrite.resolve({
+      body: { preferences: { ...DEFAULT_PREFS, theme: "dark" }, revision: 500 },
     });
-    await vi.waitFor(() => expect(store.getState().prefs.theme).toBe("light"));
+    await oldWrite.promise;
+    expect(store.getState().prefs.theme).toBe("light");
   });
 
-  it("keeps the newest owner when a refused preference write has the same value", async () => {
+  it("reads a same-Host write that settles after bootstrap without replaying it", async () => {
+    const write = deferred<void>();
+    const started = deferred<void>();
     let writes = 0;
-    const patches: Record<string, unknown>[] = [];
-    installFetch((url, init) => {
-      if (url.startsWith("/api/preferences") && init.method === "PATCH") {
-        writes += 1;
-        patches.push(jsonBody(init));
-        if (writes === 1) {
-          return { status: 500, body: { error: "preference write rejected" } };
-        }
+    let theme = DEFAULT_PREFS.theme;
+    installFetch(async (url, init) => {
+      if (url === "/api/bootstrap")
         return {
-          body: { ...bootstrapPayload().preferences, ...jsonBody(init) },
+          body: bootstrapPayload({ preferences: { ...DEFAULT_PREFS, theme } }),
         };
+      if (url !== "/api/preferences") return baseRoutes(url, init);
+      if (init.method === "PATCH") {
+        writes++;
+        started.resolve();
+        await write.promise;
+        theme = "dark";
       }
-      return curationRoutes()(url, init);
+      return { body: { ...DEFAULT_PREFS, theme } };
     });
     const { store } = await initStore();
-
-    store.setTheme("dark");
-    store.setTheme("light");
-    store.setTheme("dark");
-    await vi.waitFor(() => expect(patches).toHaveLength(3));
-
-    expect(store.getState().prefs.theme).toBe("dark");
+    store.setPreference("theme", "dark");
+    await started.promise;
+    await store.init();
+    expect(store.getState().prefs.theme).toBe("system");
+    write.resolve();
+    await vi.waitFor(() => expect(store.getState().prefs.theme).toBe("dark"));
+    expect(writes).toBe(1);
   });
 
   it("retries a child restore when the hidden folder's membership becomes available", async () => {
@@ -326,17 +294,19 @@ describe("navigation curation", () => {
     const child = sessionSummary({ id: "child", cwd, title: "Restore me" });
     const sibling = sessionSummary({ id: "sibling", cwd });
     let failLookup = false;
-    installCatalog(() => ({ body: sessionPage([child], 1) }), {
-      preferences: { hiddenProjectCwds: [cwd] },
-      routes: (url, init) => {
-        if (url === "/api/sessions/by-cwd")
-          return failLookup
-            ? { status: 503, body: { error: "Folder lookup failed" } }
-            : { body: { sessions: [child, sibling] } };
-        if (url === "/api/preferences") return patchPreferences(init);
+    const { store } = await installCatalog(
+      () => ({ body: sessionPage([child], 1) }),
+      {
+        preferences: { hiddenProjectCwds: [cwd] },
+        routes: (url, init) => {
+          if (url === "/api/sessions/by-cwd")
+            return failLookup
+              ? { status: 503, body: { error: "Folder lookup failed" } }
+              : { body: { sessions: [child, sibling] } };
+          if (url === "/api/preferences") return patchPreferences(init);
+        },
       },
-    });
-    const { store } = await initStore();
+    );
     await store.loadSessions("Restore me");
     expect(sessionIds(store)).toEqual([child.id]);
 
@@ -361,37 +331,6 @@ describe("navigation curation", () => {
       }),
     );
   });
-
-  it("adopts untouched authoritative fields as the rollback baseline for successive refusals", async () => {
-    let writes = 0;
-    installFetch((url, init) => {
-      if (url === "/api/preferences" && init.method === "PATCH") {
-        if (++writes > 1)
-          return { status: 500, body: { error: "preference write rejected" } };
-        return {
-          body: { ...patchPreferences(init).body, palette: "hydrangea" },
-        };
-      }
-      return curationRoutes()(url, init);
-    });
-    const { store } = await initStore();
-
-    store.setTheme("dark");
-    await vi.waitFor(() =>
-      expect(store.getState().prefs.palette).toBe("hydrangea"),
-    );
-    store.setPalette("chimonanthus");
-    store.setPalette("lycoris");
-    expect(store.getState().prefs.palette).toBe("lycoris");
-    await vi.waitFor(() =>
-      expect(store.getState().prefs.palette).toBe("hydrangea"),
-    );
-    expect(store.getState().error).toBeNull();
-    expect(store.getState().notices.at(-1)).toMatchObject({
-      kind: "warning",
-      text: "preference write rejected",
-    });
-  });
 });
 
 describe("async completion ownership", () => {
@@ -408,13 +347,13 @@ describe("async completion ownership", () => {
       }
       return baseRoutes(url, init);
     });
-    const { store, socket } = await initStore();
+    const { store } = await initStore();
 
     const renaming = store.renameSession("s1", "Renamed A");
-    socket.emit({
-      type: "snapshot",
-      data: activeSnapshot({ sessionId: "s2", sessionName: "Session B" }),
-    });
+    await selectSession(
+      store,
+      activeSnapshot({ sessionId: "s2", sessionName: "Session B" }),
+    );
     releaseRename();
     await expect(renaming).resolves.toBe(true);
     expect(renameBody).toEqual({ sessionId: "s1", name: "Renamed A" });
@@ -426,7 +365,7 @@ describe("async completion ownership", () => {
 describe("selection race ownership", () => {
   beforeEach(() => installFakeWebSocket());
 
-  it("an authoritative push invalidates an in-flight open response", async () => {
+  it("an addressed refresh preserves a newer explicit selection", async () => {
     const { promise: openGate, resolve: releaseOpen } = deferred<void>();
     installFetch(async (url, init) => {
       if (url.startsWith("/api/sessions/open")) {
@@ -438,13 +377,13 @@ describe("selection race ownership", () => {
     const { store, socket } = await initStore();
 
     const opening = store.openSession("s-A");
-    socket.emit({
-      type: "snapshot",
-      data: activeSnapshot({ sessionId: "s-B", sessionName: "B" }),
+    socket.emitSnapshot(activeSnapshot({ sessionName: "Refreshed" }));
+    expect(store.getState()).toMatchObject({
+      sessionName: "Refreshed",
+      openingSessionId: "s-A",
     });
-    expect(store.getState().sessionId).toBe("s-B");
     releaseOpen();
     await opening;
-    expect(store.getState().sessionId).toBe("s-B");
+    expect(store.getState().sessionId).toBe("s-A");
   });
 });

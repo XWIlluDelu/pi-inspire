@@ -128,17 +128,14 @@ describe("SessionProjection framing and last-good state", () => {
     const path = join(cwd, "legacy.jsonl");
     const id = "legacy";
     const timestamp = new Date(0);
-    const original =
-      [
-        { type: "session", id, cwd, timestamp },
-        {
-          type: "message",
-          timestamp,
-          message: { role: "user", content: "legacy", timestamp: 0 },
-        },
-      ]
-        .map((entry) => JSON.stringify(entry))
-        .join("\n") + "\n";
+    const original = jsonl(
+      { type: "session", id, cwd, timestamp },
+      {
+        type: "message",
+        timestamp,
+        message: { role: "user", content: "legacy", timestamp: 0 },
+      },
+    );
     await writeFile(path, original);
     const projection = await openProjection({
       id,
@@ -916,21 +913,16 @@ describe("SessionProjection replacement and Pi context semantics", () => {
 
 describe("SessionProjection bounded paging", () => {
   it("pages more than 10 MiB of history within the transcript byte budget", async () => {
-    const lines: unknown[] = [];
-    let parent: string | null = null;
-    for (let index = 0; index < 24; index += 1) {
-      const id = `m${index}`;
-      lines.push(
-        message(
-          id,
-          parent,
-          index % 2 ? "assistant" : "user",
-          "z".repeat(480_000),
-          index + 1,
-        ),
-      );
-      parent = id;
-    }
+    const body = "z".repeat(480_000);
+    const lines = Array.from({ length: 24 }, (_, index) =>
+      message(
+        `m${index}`,
+        index ? `m${index - 1}` : null,
+        index % 2 ? "assistant" : "user",
+        body,
+        index + 1,
+      ),
+    );
     const { projection } = await fixture(lines);
     let page = projection.historyPage({ kind: "page" });
     const firstRevision = page.revision;
@@ -1013,32 +1005,25 @@ describe("SessionProjection bounded paging", () => {
     ];
     const { projection, record } = await fixture(lines);
     await projection.close();
-    const reopened = await SessionProjection.open(record);
-    try {
-      const page = reopened.historyPage({ kind: "page", entryId: "u1" });
-      expect(page.messages).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            role: "toolResult",
-            toolCallId: "read-call",
-          }),
-          expect.objectContaining({
-            stopReason: "error",
-            errorMessage: "fetch failed",
-          }),
-          expect.objectContaining({
-            stopReason: "aborted",
-            errorMessage: "interrupted",
-          }),
-          expect.objectContaining({
-            role: "custom",
-            content: "Visible extension review",
-          }),
-        ]),
-      );
-    } finally {
-      await reopened.close();
-    }
+    const reopened = await openProjection(record);
+    const page = reopened.historyPage({ kind: "page", entryId: "u1" });
+    expect(page.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ role: "toolResult", toolCallId: call.id }),
+        expect.objectContaining({
+          stopReason: "error",
+          errorMessage: "fetch failed",
+        }),
+        expect.objectContaining({
+          stopReason: "aborted",
+          errorMessage: "interrupted",
+        }),
+        expect.objectContaining({
+          role: "custom",
+          content: "Visible extension review",
+        }),
+      ]),
+    );
   });
 
   it("keeps equal-timestamp tool results distinct across native pages", async () => {
@@ -1144,33 +1129,27 @@ describe("chronological compaction projection", () => {
         timestamp: 0,
       },
     });
-    await appendFile(path, JSON.stringify(compact("c1", "a2", "u2")) + "\n");
+    await appendFile(path, jsonl(compact("c1", "a2", "u2")));
     await projection.reconcile(true);
     expect(ids(projection.messages)).toEqual(["u2", "a2", "c1"]);
     await appendFile(
       path,
-      [
+      jsonl(
         message("u3", "c1", "user", "after compaction", 5),
         message("a3", "u3", "assistant", "new answer", 6),
-      ]
-        .map((entry) => JSON.stringify(entry))
-        .join("\n") + "\n",
+      ),
     );
     await projection.reconcile(true);
     expect(ids(projection.messages)).toEqual(["u2", "a2", "c1", "u3", "a3"]);
-    const reopened = await SessionProjection.open(record);
-    try {
-      expect(ids(reopened.messages)).toEqual(ids(projection.messages));
-      expect(reopened.messages[2]).toMatchObject({
-        role: "compactionSummary",
-        __inspireCompactionSource: "magic-context",
-        tokensBefore: 1000,
-      });
-      expect(reopened.messages[2]).not.toHaveProperty("details");
-    } finally {
-      await reopened.close();
-    }
-    await appendFile(path, JSON.stringify(compact("c2", "a3", "u3")) + "\n");
+    const reopened = await openProjection(record);
+    expect(ids(reopened.messages)).toEqual(ids(projection.messages));
+    expect(reopened.messages[2]).toMatchObject({
+      role: "compactionSummary",
+      __inspireCompactionSource: "magic-context",
+      tokensBefore: 1000,
+    });
+    expect(reopened.messages[2]).not.toHaveProperty("details");
+    await appendFile(path, jsonl(compact("c2", "a3", "u3")));
     await projection.reconcile(true);
     expect(ids(projection.messages)).toEqual(["u3", "a3", "c2"]);
     expect(ids(projection.viewMessages("a3"))).toEqual([
@@ -1189,15 +1168,9 @@ describe("chronological compaction projection", () => {
         [{ type: "toolCall", id: "call", name: "read", arguments: {} }],
         7,
       ),
-      {
-        ...message("result", "tool", "toolResult", "tool output", 8),
-        message: {
-          role: "toolResult",
-          content: "tool output",
-          toolCallId: "call",
-          timestamp: 8,
-        },
-      },
+      message("result", "tool", "toolResult", "tool output", 8, {
+        toolCallId: "call",
+      }),
     );
     await appendFile(path, branch);
     await projection.reconcile(true);

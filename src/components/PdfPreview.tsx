@@ -594,7 +594,7 @@ export function PdfPreview({ blob, name }: { blob: Blob; name: string }) {
     >
       {loaded && findOpen ? (
         <div
-          className="pdf-preview__toolbar pdf-preview__toolbar--find"
+          className="pane-toolbar pdf-preview__toolbar pdf-preview__toolbar--find"
           role="search"
           aria-label="Find in PDF"
         >
@@ -658,7 +658,7 @@ export function PdfPreview({ blob, name }: { blob: Blob; name: string }) {
       {loaded ? (
         <>
           <div
-            className="pdf-preview__toolbar"
+            className="pane-toolbar pdf-preview__toolbar"
             role="group"
             aria-label="PDF controls"
             style={findOpen ? { display: "none" } : undefined}

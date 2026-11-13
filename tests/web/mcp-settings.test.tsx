@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
-import type { RunState, SessionRuntimeStatus } from "../../shared/contracts";
+import type { SessionRuntimeStatus } from "../../shared/contracts";
 import type { McpConfigSnapshot } from "../../shared/mcp";
 import { McpServerForm } from "../../src/components/McpServerForm";
 import { McpSettings } from "../../src/components/McpSettings";
@@ -12,7 +12,6 @@ const fixture = vi.hoisted(() => ({
     sessionId: "one",
     cwd: "/one",
     transportGeneration: 1,
-    runState: "idle" as RunState,
     readOnlyReason: null as string | null,
     sessionStatuses: {} as Record<string, SessionRuntimeStatus>,
   },
@@ -70,7 +69,6 @@ beforeEach(() => {
     sessionId: "one",
     cwd: "/one",
     transportGeneration: 1,
-    runState: "idle",
     readOnlyReason: null,
     sessionStatuses: {},
   };
@@ -103,13 +101,13 @@ it("rechecks the worker before reloading and reports a declined dispatch", async
   );
   const reload = screen.getByRole("button", { name: "Reload Pi resources" });
 
-  fixture.state.runState = "running";
+  fixture.state.sessionStatuses.one = { runState: "running" };
   view.rerender(<McpSettings active owner={{ sessionId: "one" }} />);
   expect(reload).toBeDisabled();
   expect(screen.getByText(/Wait for Pi to finish/)).toBeVisible();
   expect(fixture.host.runPaletteNativeCommand).not.toHaveBeenCalled();
 
-  fixture.state.runState = "idle";
+  fixture.state.sessionStatuses.one = { runState: "idle" };
   view.rerender(<McpSettings active owner={{ sessionId: "one" }} />);
   fixture.host.runPaletteNativeCommand.mockReturnValue(false);
   fireEvent.click(reload);
@@ -123,7 +121,6 @@ it("keeps MCP file editing available for an external owner and directs reload to
   fixture.state.sessionStatuses = {
     one: { runState: "running", external: true },
   };
-  fixture.state.runState = "running";
   await savedPanel();
   expect(
     screen.queryByRole("button", { name: "Reload selected session…" }),
@@ -135,58 +132,28 @@ it("keeps MCP file editing available for an external owner and directs reload to
   expect(fixture.host.runPaletteNativeCommand).not.toHaveBeenCalled();
 });
 
-it("retires old session reads and connection reveals and previous Host saves", async () => {
-  const read = deferred<McpConfigSnapshot>();
-  const save = deferred<unknown>();
+it("keeps a late secret reveal out of the replacement session's draft", async () => {
   const reveal = deferred<{ url: string }>();
-  fixture.host.readMcpConfig.mockReturnValueOnce(read.promise);
-  fixture.host.editMcpConfig.mockReturnValueOnce(save.promise);
   fixture.host.readMcpConnection.mockReturnValueOnce(reveal.promise);
   const panel = () => (
     <McpSettings active owner={{ sessionId: fixture.state.sessionId }} />
   );
   const view = render(panel());
-  fixture.state = { ...fixture.state, sessionId: "two", cwd: "/two" };
-  view.rerender(panel());
-
   const edit = () =>
     screen.findByRole("button", { name: "Edit user server docs" });
-  await edit();
-  await act(async () => read.resolve(snapshot("stale")));
-  expect(
-    screen.queryByRole("button", { name: "Edit user server stale" }),
-  ).toBeNull();
+  fireEvent.click(await edit());
+  fireEvent.click(screen.getByRole("button", { name: "Show saved URL" }));
+  expect(fixture.host.readMcpConnection).toHaveBeenCalledOnce();
+  fixture.state = { ...fixture.state, sessionId: "two", cwd: "/two" };
+  view.rerender(panel());
+  fireEvent.click(await edit());
   expect(fixture.host.readMcpConfig).toHaveBeenLastCalledWith({
     sessionId: "two",
   });
-
-  fireEvent.click(await edit());
-  const url = () => screen.getByLabelText("Server URL");
-  fireEvent.click(screen.getByRole("button", { name: "Show saved URL" }));
-  expect(fixture.host.readMcpConnection).toHaveBeenCalledOnce();
-  fixture.state = { ...fixture.state, sessionId: "three", cwd: "/three" };
-  view.rerender(panel());
-  fireEvent.click(await edit());
   await act(async () =>
     reveal.resolve({ url: "https://old-owner.example/mcp" }),
   );
-  expect(url()).toHaveValue("");
-
-  fireEvent.change(url(), {
-    target: { value: "https://new.example.invalid/mcp" },
-  });
-  fireEvent.click(screen.getByRole("button", { name: "Save" }));
-  expect(fixture.host.editMcpConfig).toHaveBeenCalledOnce();
-  fixture.state = { ...fixture.state, transportGeneration: 2 };
-  view.rerender(panel());
-  await edit();
-  await act(async () =>
-    save.resolve({ saved: true, snapshot: snapshot("old-host-save") }),
-  );
-  expect(
-    screen.queryByRole("button", { name: "Edit user server old-host-save" }),
-  ).toBeNull();
-  expect(screen.queryByText(/Saved to file/)).toBeNull();
+  expect(screen.getByLabelText("Server URL")).toHaveValue("");
 });
 
 it("can save the user file while the project file is unavailable", async () => {

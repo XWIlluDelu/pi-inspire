@@ -15,6 +15,8 @@ function createHarness(initial: Partial<BranchControllerState> = {}) {
   let state: BranchControllerState = {
     sessionId: "s1",
     transcriptViewId: "view-1",
+    transcriptIncarnation: "incarnation-1",
+    composerHistoryVersion: "history-1",
     transcriptDurableLeafId: "a1",
     transcriptEffectiveLeafId: "a1",
     transcriptNavigationLeased: false,

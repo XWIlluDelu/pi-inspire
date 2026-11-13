@@ -12,6 +12,7 @@ import {
   verifyInstanceControlResponse,
 } from "../../server/instance-control.mjs";
 import {
+  INSTANCE_STATE_VERSION,
   type InstanceState,
   inspectInstance,
   instanceLaunchUrl,
@@ -47,7 +48,7 @@ afterEach(async () => {
 
 function state(): InstanceState {
   return {
-    schemaVersion: 1,
+    schemaVersion: INSTANCE_STATE_VERSION,
     root: process.cwd(),
     host: "127.0.0.1",
     port: 1234,
@@ -55,7 +56,6 @@ function state(): InstanceState {
     processStartTime: "fixture-birth",
     startedAt: "2026-10-19T00:00:00.000Z",
     token: randomBytes(64).toString("base64url"),
-    durableWorkerRelease: true,
   };
 }
 

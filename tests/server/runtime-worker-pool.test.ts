@@ -14,9 +14,9 @@ import {
   preview,
   record,
   schedulingRuntime,
+  startWorker,
   trackedAttachmentStore,
   trackRuntime,
-  startWorker,
 } from "./fixtures/runtime.js";
 
 beforeEach(initializeRuntimeFixture);
@@ -137,7 +137,9 @@ describe("worker and projection retention", () => {
           ids.filter((id) => id !== "idle" && id !== "current"),
         ),
       );
-      expect((await runtime.snapshot()).sessionStatuses.queued).toMatchObject({
+      expect(
+        (await runtime.snapshot(null)).sessionStatuses.queued,
+      ).toMatchObject({
         runState: "queued",
         indicator: "running",
       });

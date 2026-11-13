@@ -15,11 +15,22 @@ export interface PiCommand {
   execution?: PiNativeCommandExecution;
 }
 
+type CommandSurface =
+  | "settings"
+  | "history"
+  | "changelog"
+  | "hotkeys"
+  | "new"
+  | "sessions";
+
 interface PiNativeCommandDescriptor {
   name: string;
   description: string;
   argumentHint?: string;
   execution: PiNativeCommandExecution;
+  surface?: CommandSurface;
+  terminalGuidance?: string;
+  requiresIdleOwnedPi?: true;
   /** Can be used while the retained session's project folder is unavailable. */
   availableWithoutWorkspace?: boolean;
 }
@@ -32,6 +43,7 @@ interface PiNativeCommandDescriptor {
 export const PI_NATIVE_COMMANDS = [
   {
     name: "settings",
+    surface: "settings",
     availableWithoutWorkspace: true,
     description: "Open INSΠRE and Pi runtime settings",
     execution: "surface",
@@ -44,6 +56,7 @@ export const PI_NATIVE_COMMANDS = [
   },
   {
     name: "tree",
+    surface: "history",
     availableWithoutWorkspace: true,
     description: "Open conversation history and branches",
     execution: "surface",
@@ -68,17 +81,22 @@ export const PI_NATIVE_COMMANDS = [
   },
   {
     name: "import",
+    terminalGuidance:
+      "Use /import in Pi's terminal. It can replace the current session.",
     description: "Import a session from a path in Pi's terminal flow",
     argumentHint: "<path>",
     execution: "terminal",
   },
   {
     name: "share",
+    terminalGuidance:
+      "Use /share in Pi's terminal to confirm publishing this conversation.",
     description: "Publish the session with Pi's share flow",
     execution: "terminal",
   },
   {
     name: "bug",
+    terminalGuidance: "Run this command in Pi's terminal.",
     description: "Review and report a bug in Pi's terminal flow",
     argumentHint: "[description]",
     execution: "terminal",
@@ -103,18 +121,21 @@ export const PI_NATIVE_COMMANDS = [
   },
   {
     name: "changelog",
+    surface: "changelog",
     availableWithoutWorkspace: true,
     description: "Read the installed Pi version's release notes",
     execution: "surface",
   },
   {
     name: "hotkeys",
+    surface: "hotkeys",
     availableWithoutWorkspace: true,
     description: "Show browser keyboard shortcuts",
     execution: "informational",
   },
   {
     name: "fork",
+    surface: "history",
     description: "Open History to fork from a user message",
     execution: "surface",
   },
@@ -126,6 +147,8 @@ export const PI_NATIVE_COMMANDS = [
   },
   {
     name: "trust",
+    terminalGuidance:
+      "Change trust with /trust in Pi's terminal, then run /reload here.",
     description: "Manage project trust in Pi's terminal flow",
     execution: "terminal",
   },
@@ -143,24 +166,28 @@ export const PI_NATIVE_COMMANDS = [
   },
   {
     name: "new",
+    surface: "new",
     availableWithoutWorkspace: true,
     description: "Start a new session",
     execution: "surface",
   },
   {
     name: "compact",
+    requiresIdleOwnedPi: true,
     description: "Compact the current context",
     argumentHint: "[instructions]",
     execution: "host",
   },
   {
     name: "resume",
+    surface: "sessions",
     availableWithoutWorkspace: true,
     description: "Find and resume another session",
     execution: "surface",
   },
   {
     name: "reload",
+    requiresIdleOwnedPi: true,
     description: "Reload Pi extensions, skills, prompts, and context files",
     execution: "host",
   },
@@ -172,7 +199,9 @@ export const PI_NATIVE_COMMANDS = [
   },
 ] as const satisfies readonly PiNativeCommandDescriptor[];
 
-const nativeByName = new Map<string, PiNativeCommandDescriptor>(
+type NativeCommand = (typeof PI_NATIVE_COMMANDS)[number] &
+  PiNativeCommandDescriptor;
+const nativeByName = new Map<string, NativeCommand>(
   PI_NATIVE_COMMANDS.map((command) => [command.name, command]),
 );
 
@@ -214,15 +243,13 @@ export function parseCommandInvocation(
   };
 }
 
-export function nativeCommand(
-  name: string,
-): PiNativeCommandDescriptor | undefined {
+export function nativeCommand(name: string): NativeCommand | undefined {
   return nativeByName.get(name);
 }
 
 export function parseNativeCommand(
   input: string,
-): (CommandInvocation & { descriptor: PiNativeCommandDescriptor }) | null {
+): (CommandInvocation & { descriptor: NativeCommand }) | null {
   const invocation = parseCommandInvocation(input);
   if (!invocation) return null;
   const descriptor = nativeCommand(invocation.name);

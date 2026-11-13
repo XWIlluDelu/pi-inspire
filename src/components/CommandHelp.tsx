@@ -2,9 +2,9 @@ import { AlertTriangle, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { isMacKeyboardPlatform } from "../keyboard-input";
 import { store, useAppState } from "../store";
-import { useModalFocus } from "../use-modal-focus";
 import { modelCycleShortcut } from "../workbench-keyboard";
 import { ContextPaneState } from "./ContextPaneState";
+import { Modal } from "./Modal";
 import { PiLoader } from "./PiLoader";
 import { ProgressiveRichText } from "./ProgressiveRichText";
 
@@ -38,7 +38,6 @@ export function CommandHelp({
   mode: "hotkeys" | "changelog";
   onClose: () => void;
 }) {
-  const ref = useModalFocus<HTMLDivElement>(true, "command-help", onClose);
   const sendKey = useAppState((state) => state.prefs.desktopSendKey);
   const [release, setRelease] = useState<{
     version: string;
@@ -165,16 +164,11 @@ export function CommandHelp({
     },
   ];
   return (
-    <div className="overlay" role="presentation" onClick={onClose}>
-      <div
-        ref={ref}
-        className="dialog dialog--wide command-help"
-        role="dialog"
-        aria-modal="true"
-        aria-label={mode === "hotkeys" ? "Keyboard shortcuts" : "Pi changelog"}
-        tabIndex={-1}
-        onClick={(event) => event.stopPropagation()}
-      >
+    <Modal
+      aria-label={mode === "hotkeys" ? "Keyboard shortcuts" : "Pi changelog"}
+      onDismiss={onClose}
+    >
+      <div className="dialog dialog--wide command-help">
         <div className="command-help__header">
           <h2>
             {mode === "hotkeys"
@@ -262,6 +256,6 @@ export function CommandHelp({
           )}
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

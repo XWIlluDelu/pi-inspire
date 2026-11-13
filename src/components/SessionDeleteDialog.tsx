@@ -2,8 +2,8 @@ import { AlertTriangle, Trash2, X } from "lucide-react";
 import { isBusyRunState, type SessionSummary } from "../../shared/contracts";
 import type { AppState } from "../app-state";
 import { shallowEqual, store, useAppState } from "../store";
-import { useModalFocus } from "../use-modal-focus";
 import { ButtonLabel } from "./ButtonLabel";
+import { Modal } from "./Modal";
 import { PiLoader } from "./PiLoader";
 
 /** A live worker, terminal Pi, or busy run is closed by moving its file. */
@@ -50,34 +50,25 @@ export function TrashConfirmDialog({
   onConfirm: () => void;
   onClose: () => void;
 }) {
-  const { error, reviewRequired } = useAppState(
+  const { error, reviewRequired, curationPending } = useAppState(
     (state) => ({
       error: state.sessionDeleteError,
       reviewRequired: state.sessionDeleteReviewRequired,
+      curationPending: state.curationPending,
     }),
     shallowEqual,
   );
-  const dialogRef = useModalFocus<HTMLDivElement>(true, focusKey, () => {
-    if (!deleting) onClose();
-  });
   const label = reviewRequired ? "Review Hidden" : confirmLabel;
 
   return (
-    <div
-      className="overlay"
-      role="presentation"
-      onClick={deleting ? undefined : onClose}
+    <Modal
+      owner={focusKey}
+      role="alertdialog"
+      aria-labelledby={`${id}-title`}
+      aria-describedby={`${id}-description${warning ? ` ${id}-warning` : ""}`}
+      onDismiss={deleting ? undefined : onClose}
     >
-      <div
-        ref={dialogRef}
-        className="dialog session-delete"
-        role="alertdialog"
-        aria-modal="true"
-        aria-labelledby={`${id}-title`}
-        aria-describedby={`${id}-description${warning ? ` ${id}-warning` : ""}`}
-        tabIndex={-1}
-        onClick={(event) => event.stopPropagation()}
-      >
+      <div className="dialog session-delete">
         <header className="session-delete__header">
           <span className="session-delete__icon" aria-hidden>
             <Trash2 size={17} />
@@ -133,8 +124,8 @@ export function TrashConfirmDialog({
             type="button"
             className={`button ${reviewRequired ? "button--primary" : "button--danger"}`}
             onClick={reviewRequired ? onClose : onConfirm}
-            disabled={deleting}
-            aria-busy={deleting}
+            disabled={deleting || (curationPending && !reviewRequired)}
+            aria-busy={deleting || curationPending}
           >
             {deleting ? (
               <PiLoader size={14} aria-hidden />
@@ -147,7 +138,7 @@ export function TrashConfirmDialog({
           </button>
         </footer>
       </div>
-    </div>
+    </Modal>
   );
 }
 

@@ -223,7 +223,7 @@ enabled state; disabled styling takes precedence over local action styles.
   and tinted surfaces. By default, `--error-ink` mixes 70% palette error with 30% primary ink.
   Carbon & Silicon Dark mixes in more primary ink to keep danger menu text legible on hover
   while keeping its original red marks and fills. Outlined, quiet and menu danger actions and
-  activity-fold loading failures keep `--error-ink` through hover, press and focus. Danger borders
+  activity failure counts keep `--error-ink` through hover, press and focus. Danger borders
   and tints use `--error`. Successful command badges use `--activity-success-ink`. Status icons,
   borders and tints keep their semantic color. Text contrast, including faint text, holds on its
   actual surface in every interaction state.
@@ -261,8 +261,8 @@ Latin core faces load with the shell. The complete checksum-pinned CJK registry 
 authoritative bootstrap so it does not compete with first render, and fetches only used Unicode
 subsets. Structural labels (`--font-label`: resource tabs, Settings section headings and command-palette
 group headings) share IBM Plex Sans SC in authored sentence case without tracking, using 500 (600
-for Settings sections, selected resource tabs and palette groups). Activity headers, boundaries and
-Earlier activity are an ornament, not content: Flux Mono SC eyebrows at 11.5px and 400, uppercase
+for Settings sections, selected resource tabs and palette groups). Activity headings use Flux Mono
+SC at 11.5px and 400, uppercase
 with 0.08em tracking, never louder than the 12.5px tool rows they contain. The expanded summary's
 counts and tool names stay in authored case. Code-block language labels share that eyebrow.
 Reply headings use balanced wrapping and prose uses pretty wrapping, so no heading or paragraph
@@ -318,9 +318,9 @@ pressed states. Settings, pickers, History, Files/Changes, document previews and
 scrolling inherit this treatment. Chromium/WebKit use an 8px track with a 6px visible thumb and no
 arrow buttons; Firefox uses its native thin geometry. High-contrast mode retains system colors.
 
-Terminal's own slider uses the same color roles and visible thickness while retaining its drag target
-and scroll handling. Navigation/conversation boundary rails and deliberately hidden tab-strip bars
-keep their existing behavior. Embedded documents retain their own styles.
+Terminal's own slider uses the same color roles and visible thickness while retaining its drag
+target and scroll handling. Navigation, conversation and editor activity docks use native scroll
+areas. Tab strips hide their scrollbars. Embedded documents retain their own styles.
 
 ## Pane and navigation presentation
 
@@ -350,7 +350,7 @@ New, Search, folder and session titles share a text axis. Status marks use the e
 folder icon slot at every width; working, completion, error and attention states never shift or
 narrow the title. Folder counts stay at the trailing edge, and folder and session actions share
 trailing columns. [[workbench]]
-owns one- and two-line session row layouts and action visibility. In Hidden, individual sessions
+owns session row layout and action visibility. In Hidden, individual sessions
 precede folders and keep the shared text axis. Narrow/coarse-pointer
 New/Search rows are 36px high with 14px labels; icon-only rail/close actions retain 44px targets.
 WebKit uses 16px editing text to avoid focus zoom, retaining compact resting labels.
@@ -788,24 +788,19 @@ Message/content action assignments:
 | Surface | Type | Activation |
 | --- | --- | --- |
 | User-message Copy and adjacent Fork | Revealed | Hover or visible keyboard focus within the whole message |
-| Tool, Thinking and CodeMode header Copy | Revealed | Expanded content only; hover or visible keyboard focus within that item's header |
-| Branch/compaction summary Copy | Revealed | Expanded content only; hover or visible keyboard focus in its header |
-| Displayed custom-message Copy | Revealed | Hover or visible keyboard focus within the message header |
+| Tool, Thinking, CodeMode and branch/compaction header Copy | Constant | Expanded content |
+| Custom-message header Copy | Constant | Message header |
 | Extension text-widget Copy | Revealed | Hover or visible keyboard focus within the whole widget |
 | Assistant-response footer Copy | Revealed with a fine pointer; Emphasized (0.75) on touch | Whole-message hover or visible keyboard focus |
 | All Pending Copy, Return and Clear controls | Emphasized | Whole-panel hover/focus changes effective opacity from 0.75 to 1 |
 | Selected History entry, image-viewer Copy, system error/update information, code blocks, direct Shell results, file/project paths and Terminal text-reader Copy | Constant | Visibility and opacity stay unchanged |
 
-Pointer-retained focus alone does not latch Revealed actions on screen. Navigation folder and
-session action columns use the same hover/visible-keyboard-focus distinction, with counts/ages
-restored when actions recede. Keyboard focus is not forcibly blurred or restricted to the hovered
-row; simultaneous hover and genuine keyboard focus may reveal both rows. Touch actions stay visible.
+Pointer-retained focus alone does not latch Revealed actions on screen. Keyboard focus stays
+independent of the hovered row. Navigation keeps folder and session actions visible beside the
+counts and ages.
 
-Collapsible activity/context content mounts Copy only while expanded, without a closed-state gap
-or tab stop. Within that expanded state, Revealed actions keep layout space and keyboard access.
-On devices without hover they are visible at 0.75 opacity; focus reveals them fully. Message-footer
-actions also use 0.75 touch opacity. Icon colors keep their surface roles: full opacity does not
-replace the deliberately subdued glyph color.
+Collapsible activity and context content mounts Copy only while expanded. Revealed message-footer
+actions use 0.75 touch opacity. Icon colors keep their surface roles.
 
 Pending uses 0.75 panel opacity, a transparent background and a quiet border at rest. Hover or focus
 within restores full opacity, the shared surface and normal hairline. All actions stay locally opaque

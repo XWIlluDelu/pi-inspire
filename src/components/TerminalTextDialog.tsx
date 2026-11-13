@@ -1,9 +1,9 @@
 import { MessageSquareQuote, TextSelect, X } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
 import { useCopied } from "../use-copied";
-import { useModalFocus } from "../use-modal-focus";
 import { ButtonLabel } from "./ButtonLabel";
 import { CopyFeedback } from "./CopyFeedback";
+import { Modal } from "./Modal";
 
 export function TerminalTextDialog({
   text,
@@ -16,11 +16,6 @@ export function TerminalTextDialog({
   onClose: () => void;
   onSendToComposer?: (value: string) => void;
 }) {
-  const dialogRef = useModalFocus<HTMLDivElement>(
-    true,
-    "terminal-text",
-    onClose,
-  );
   const textRef = useRef<HTMLTextAreaElement>(null);
   const [hasSelection, setHasSelection] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -45,21 +40,12 @@ export function TerminalTextDialog({
   };
 
   return (
-    <div
-      className="overlay terminal-text-overlay"
-      role="presentation"
-      onClick={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
+    <Modal
+      overlayClassName="terminal-text-overlay"
+      aria-label="Select terminal text"
+      onDismiss={onClose}
     >
-      <div
-        ref={dialogRef}
-        className="dialog terminal-text-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Select terminal text"
-        tabIndex={-1}
-      >
+      <div className="dialog terminal-text-dialog">
         <header className="terminal-text-dialog__header">
           <h2>Select text</h2>
           <button
@@ -76,6 +62,7 @@ export function TerminalTextDialog({
           ref={textRef}
           className="terminal-text-dialog__text"
           aria-label="Terminal output"
+          data-modal-autofocus
           value={text}
           readOnly
           inputMode="none"
@@ -141,6 +128,6 @@ export function TerminalTextDialog({
           </div>
         </footer>
       </div>
-    </div>
+    </Modal>
   );
 }

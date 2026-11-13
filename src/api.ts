@@ -1,47 +1,27 @@
 import type {
-  ActiveSnapshot,
-  BootstrapResponse,
   BranchCloneRequest,
   BranchForkRequest,
-  BranchForkResponse,
   BranchImageRequest,
   BranchNavigateRequest,
-  BranchNavigateResponse,
-  GitDiffResponse,
-  GitStatusResponse,
-  HiddenClearResponse,
-  HostDirListing,
+  CompletionAttentionPreference,
   HostNativeCommandRequest,
-  HostNativeCommandResponse,
-  HostRootsResponse,
-  HostUpdateStatus,
   InspirePreferences,
-  InspireUpdateCheckResult,
-  ModelSelectionResponse,
   NewSessionOptions,
-  PendingCopyContent,
   PendingOperationIdentity,
   PendingOperationRequest,
   PendingReadRequest,
   PendingRecovery,
   PiMessageDeliveryMode,
-  PiUpdateCheckResult,
-  ProjectDirEntry,
   PromptAcceptedResponse,
   PromptDeliveryRequest,
-  ResourceDescriptor,
-  ResourceProbeResponse,
-  SessionDeleteResponse,
+  SessionDeletionRequest,
   SessionExportRequest,
-  SessionExportResponse,
   SessionHistoryPages,
-  SessionListResponse,
   ThinkingLevel,
   UploadedAttachment,
 } from "../shared/contracts";
-import { SESSION_HISTORY_PATH } from "../shared/contracts";
-import type { HerdrEnhancementStatus } from "../shared/herdr";
 import type { SessionHistoryQuery } from "../shared/history-query";
+import { hostEndpoints as routes } from "../shared/host-endpoints";
 import {
   type HostOperationCommand,
   type HostOperationIdentity,
@@ -51,61 +31,37 @@ import {
   matchOperationReceipt,
 } from "../shared/host-operations";
 import {
-  HOST_RESTART_PATH,
-  restartReceiptIdentity,
   type HostRestartOperation,
   type HostRestartRequest,
-  type HostRestartStatus,
+  restartReceiptIdentity,
 } from "../shared/host-restart";
-import type { HtmlPreviewResponse } from "../shared/html-preview";
+import type {
+  JsonEndpoint,
+  RequestInput,
+  RequestSchemas,
+} from "../shared/json-endpoints";
 import { isJsonRecord } from "../shared/json-record";
+import type { McpConfigEdit, McpConnectionRead } from "../shared/mcp";
 import type {
-  McpConfigEdit,
-  McpConfigSnapshot,
-  McpConfigWriteResult,
-  McpConnectionRead,
-  McpConnectionValues,
-} from "../shared/mcp";
-import type {
-  ModelCatalogResponse,
   ModelConfigEdit,
   ModelPreferencesPatch,
-  ModelSettingsSnapshot,
-  ModelSettingsWriteResult,
+  ModelSettingsOwner,
 } from "../shared/model-settings";
+import type { TaskNotificationGrouping } from "../shared/notifications";
+import type { ProviderAuthOperation } from "../shared/provider-auth-bridge";
 import type {
-  ProviderAuthOperation,
-  ProviderAuthResult,
-} from "../shared/provider-auth-bridge";
-import type { SessionResourceListResponse } from "../shared/resource-references";
-import type {
-  TerminalAttachTicketResponse,
-  TerminalCatalogResponse,
   TerminalCreateRequest,
   TerminalRenameRequest,
   TerminalReorderRequest,
-  TerminalServiceSettings,
   TerminalServiceSettingsPatch,
 } from "../shared/terminal-contracts";
-import type {
-  PresentationAdapterInfo,
-  ToolPresentationConfiguration,
-} from "../shared/tool-presentation-config";
 import { terminalOperations } from "./controllers/terminal-operation-controller";
 import { withTransportMeasure } from "./transport-performance";
 
-export interface ProjectFileSearchResult {
-  files: ProjectFileResult[];
-  truncated?: boolean;
-}
-
-export interface ProjectFileResult {
-  path: string;
-  name: string;
-  /** Canonical workspace identity for pre-session results. Session-bound
-   * results omit it because their runtime slot already owns the root. */
-  workspaceCwd?: string;
-}
+export type {
+  ProjectFileResult,
+  ProjectFileSearchResult,
+} from "../shared/host-endpoints";
 
 import {
   authenticatedFetch,
@@ -305,7 +261,9 @@ async function request<T>(
       });
       if (!response.ok)
         return (await ensureOk(response, options.readErrorBody)) as T;
-      return responseJson<T>(response);
+      return response.status === 204
+        ? (undefined as T)
+        : responseJson<T>(response);
     },
   );
 }
@@ -412,9 +370,9 @@ async function uploadFiles(
       if (signal.aborted)
         await Promise.all(
           result.attachments.map((item) =>
-            request(`/api/attachments/${encodeURIComponent(item.id)}`, {
-              method: "DELETE",
-            }).catch(() => undefined),
+            call(routes.deleteAttachment, { params: { id: item.id } }).catch(
+              () => undefined,
+            ),
           ),
         );
       return result;
@@ -470,13 +428,8 @@ async function hostOperation<Command extends HostOperationCommand>(
     if (valid)
       return receipt as HostOperationReceipt<Command> & { state: "completed" };
   }
-  const detail = receipt.error;
-  if (
-    (receipt.state === "unknown" || receipt.state === "rejected") &&
-    isJsonRecord(detail) &&
-    typeof detail.message === "string" &&
-    typeof detail.status === "number"
-  )
+  if (receipt.state === "unknown" || receipt.state === "rejected") {
+    const detail = receipt.error;
     throw new ApiError(
       detail.status,
       detail.message,
@@ -491,6 +444,7 @@ async function hostOperation<Command extends HostOperationCommand>(
         : undefined,
       typeof detail.recoveryId === "string" ? detail.recoveryId : undefined,
     );
+  }
   throw new ApiTransportError("response", true);
 }
 
@@ -528,27 +482,31 @@ function waitForPromptPoll(delay: number, signal?: AbortSignal): Promise<void> {
 }
 
 async function deliverPrompt(
-  body: PromptDeliveryRequest,
+  identity: HostOperationIdentity & { fingerprint?: string },
   signal?: AbortSignal,
-  observeOnly = false,
+  body?: PromptDeliveryRequest,
 ): Promise<PromptAcceptedResponse> {
-  const receiptPath = `${INPUT_OPERATION_PATHS.prompt}/${encodeURIComponent(body.operationId)}?authorityId=${encodeURIComponent(body.authorityId)}`;
-  let first = !observeOnly;
+  const query = new URLSearchParams({ authorityId: identity.authorityId });
+  if (identity.fingerprint) query.set("fingerprint", identity.fingerprint);
+  const receiptPath = `${INPUT_OPERATION_PATHS.prompt}/${encodeURIComponent(identity.operationId)}?${query}`;
+  let submit = body !== undefined;
   let failures = 0;
   const retryDelays = [250, 1_000, 3_000];
   for (;;) {
+    let delay: number;
     try {
       const receipt = await hostOperation(
         "prompt",
-        body,
-        first ? INPUT_OPERATION_PATHS.prompt : receiptPath,
-        first ? body : undefined,
+        identity,
+        submit ? INPUT_OPERATION_PATHS.prompt : receiptPath,
+        submit ? body : undefined,
         signal,
         PROMPT_CONFIRMATION_TIMEOUT_MS,
       );
       if (receipt.state === "completed")
         return { accepted: true, historyEntry: receipt.result };
       failures = 0;
+      delay = 250;
     } catch (error) {
       if (
         error instanceof ApiError
@@ -557,76 +515,83 @@ async function deliverPrompt(
           : !(error instanceof ApiTransportError) || error.phase === "response"
       )
         throw error;
-      const delay = retryDelays[failures++];
-      if (delay === undefined || signal?.aborted) throw error;
-      first = false;
-      await waitForPromptPoll(delay, signal);
-      continue;
+      const retry = retryDelays[failures++];
+      if (retry === undefined || signal?.aborted) throw error;
+      delay = retry;
     }
-    first = false;
-    await waitForPromptPoll(250, signal);
+    submit = false;
+    await waitForPromptPoll(delay, signal);
   }
 }
 
-function settingsQuery(owner: { sessionId?: string; cwd?: string }): string {
-  return new URLSearchParams({
-    ...(owner.sessionId !== undefined ? { sessionId: owner.sessionId } : {}),
-    ...(owner.cwd !== undefined ? { cwd: owner.cwd } : {}),
-  }).toString();
+function call<S extends RequestSchemas, T>(
+  route: JsonEndpoint<S, T>,
+  input: RequestInput<NoInfer<S>>,
+  signal?: AbortSignal,
+  options?: ObservationOptions,
+): Promise<T> {
+  const { params, query, body } = input as {
+    params?: Record<string, string>;
+    query?: Record<string, unknown>;
+    body?: unknown;
+  };
+  let path: string = route.path;
+  if (params)
+    path = path.replace(/:(\w+)/g, (_match, key: string) =>
+      encodeURIComponent(params[key]!),
+    );
+  if (query) {
+    const search = new URLSearchParams();
+    for (const [key, value] of Object.entries(query))
+      if (value !== undefined) search.set(key, String(value));
+    if (search.size) path += `?${search}`;
+  }
+  return request<T>(
+    path,
+    {
+      ...(route.method !== "get" ? { method: route.method.toUpperCase() } : {}),
+      signal,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    },
+    {
+      mutation: route.mutation ?? route.method !== "get",
+      timeoutMs: route.timeoutMs,
+      ...options,
+    },
+  );
+}
+
+function flag(value: boolean | undefined) {
+  return value ? "1" : undefined;
 }
 
 export function createApi() {
   return {
-    taskAlertSettings: () =>
-      request<import("../shared/notifications").TaskAlertSettings>(
-        "/api/notifications",
-        { signal: AbortSignal.timeout(10_000) },
-      ),
+    taskAlertSettings: () => call(routes.taskAlertSettings, {}),
     configureTaskAlerts: (
-      mode:
-        | import("../shared/contracts").CompletionAttentionPreference
-        | undefined,
+      mode: CompletionAttentionPreference | undefined,
       subscription?: PushSubscriptionJSON | null,
-      grouping?: import("../shared/notifications").TaskNotificationGrouping,
+      grouping?: TaskNotificationGrouping,
     ) =>
-      request<import("../shared/notifications").TaskAlertSettings>(
-        "/api/notifications",
-        {
-          method: "PUT",
-          body: JSON.stringify({
-            mode,
-            grouping,
-            subscription: subscription
-              ? { endpoint: subscription.endpoint, keys: subscription.keys }
-              : subscription,
-          }),
-          signal: AbortSignal.timeout(10_000),
+      call(routes.configureTaskAlerts, {
+        body: {
+          mode,
+          grouping,
+          subscription: subscription
+            ? {
+                endpoint: subscription.endpoint!,
+                keys: subscription.keys as { p256dh: string; auth: string },
+              }
+            : subscription,
         },
-      ),
+      }),
     acknowledgeTaskAlert: (id: string) =>
-      request<{ ok: true }>("/api/notifications/ack", {
-        method: "POST",
-        body: JSON.stringify({ id }),
-        signal: AbortSignal.timeout(10_000),
-      }),
-    testTaskAlert: () =>
-      request<{ transport: "push" | "page" }>("/api/notifications/test", {
-        method: "POST",
-        body: "{}",
-        signal: AbortSignal.timeout(15_000),
-      }),
-    herdrStatus: () =>
-      request<HerdrEnhancementStatus>("/api/host/herdr", {
-        signal: AbortSignal.timeout(10_000),
-      }),
-    hostRestartStatus: () =>
-      request<HostRestartStatus>(HOST_RESTART_PATH, {
-        signal: AbortSignal.timeout(10_000),
-      }),
+      call(routes.acknowledgeTaskAlert, { body: { id } }),
+    testTaskAlert: () => call(routes.testTaskAlert, {}),
+    herdrStatus: () => call(routes.herdrStatus, {}),
+    hostRestartStatus: () => call(routes.hostRestartStatus, {}),
     restartHost: async (intent: HostRestartRequest) => {
-      const value = await post<unknown>(HOST_RESTART_PATH, intent, {
-        signal: AbortSignal.timeout(10_000),
-      });
+      const value = await call(routes.restartHost, { body: intent });
       const receipt = matchOperationReceipt(
         value,
         restartReceiptIdentity(intent),
@@ -649,48 +614,35 @@ export function createApi() {
     },
     bootstrap: (signal?: AbortSignal) =>
       withTransportMeasure("bootstrap-metadata", () =>
-        request<BootstrapResponse>("/api/bootstrap", { signal }),
+        call(routes.bootstrap, {}, signal),
       ),
     update: (refresh = false) =>
-      request<InspireUpdateCheckResult>(
-        `/api/update${refresh ? "?refresh=1" : ""}`,
-      ),
+      call(routes.update, { query: { refresh: refresh ? "1" : undefined } }),
     piUpdate: (refresh = false) =>
-      request<PiUpdateCheckResult>(
-        `/api/pi-update${refresh ? "?refresh=1" : ""}`,
-      ),
+      call(routes.piUpdate, { query: { refresh: refresh ? "1" : undefined } }),
     snoozeUpdate: (identity: string) =>
-      post<HostUpdateStatus>("/api/update/snooze", { identity }),
-    snapshot: (sessionId?: string | null) =>
-      request<ActiveSnapshot>(`/api/snapshot${detailQuery(sessionId)}`),
+      call(routes.snoozeUpdate, { body: { identity } }),
+    snapshot: (sessionId: string | null) =>
+      call(routes.snapshot, {
+        query: { detail: sessionId === null ? "" : sessionId },
+      }),
     sessionHistory: <Q extends SessionHistoryQuery>(
       sessionId: string,
       viewId: string,
       query: Q,
       signal?: AbortSignal,
-    ) => {
-      const params = new URLSearchParams({
-        kind: query.kind,
-        sessionId,
-        viewId,
-      });
-      for (const [key, value] of Object.entries(query))
-        if (key !== "kind" && value !== undefined)
-          params.set(key, String(value));
-      return request<SessionHistoryPages[Q["kind"]]>(
-        `${SESSION_HISTORY_PATH}?${params}`,
-        { signal },
-      );
-    },
+    ) =>
+      call(
+        routes.sessionHistory,
+        { query: { ...query, sessionId, viewId } },
+        signal,
+      ) as Promise<SessionHistoryPages[Q["kind"]]>,
     lastAssistantText: (
       sessionId: string,
       viewId: string,
       signal?: AbortSignal,
     ) =>
-      request<{ text: string | null }>(
-        `/api/transcript/assistant-text?sessionId=${encodeURIComponent(sessionId)}&viewId=${encodeURIComponent(viewId)}`,
-        { signal },
-      ),
+      call(routes.lastAssistantText, { query: { sessionId, viewId } }, signal),
     branchImage: (
       body: BranchImageRequest,
       index: number,
@@ -712,179 +664,86 @@ export function createApi() {
         return response.blob();
       }),
     cloneBranch: (body: BranchCloneRequest) =>
-      post<BranchForkResponse>(
-        "/api/branches/clone",
-        body,
-        {},
-        { timeoutMs: LONG_HTTP_OBSERVATION_TIMEOUT_MS },
-      ),
+      call(routes.cloneBranch, { body }),
     navigateBranch: (body: BranchNavigateRequest, signal?: AbortSignal) =>
-      post<BranchNavigateResponse>(
-        "/api/branches/navigate",
-        body,
-        { signal },
-        { timeoutMs: null },
-      ),
-    forkBranch: (body: BranchForkRequest) =>
-      post<BranchForkResponse>(
-        "/api/branches/fork",
-        body,
-        {},
-        {
-          timeoutMs: LONG_HTTP_OBSERVATION_TIMEOUT_MS,
-        },
-      ),
-    sessions: (query: string, offset = 0, limit = 40, signal?: AbortSignal) =>
-      request<SessionListResponse>(
-        `/api/sessions?q=${encodeURIComponent(query)}&offset=${offset}&limit=${limit}`,
-        { signal },
-      ),
-    refreshSessions: () => post<{ ok: boolean }>("/api/sessions/refresh"),
+      call(routes.navigateBranch, { body }, signal),
+    forkBranch: (body: BranchForkRequest) => call(routes.forkBranch, { body }),
+    sessions: (q: string, offset = 0, limit = 40, signal?: AbortSignal) =>
+      call(routes.sessions, { query: { q, offset, limit } }, signal),
+    refreshSessions: () => call(routes.refreshSessions, {}),
     sessionsByIds: (ids: string[], signal?: AbortSignal) =>
-      post<{ sessions: SessionListResponse["sessions"] }>(
-        "/api/sessions/by-id",
-        { ids },
-        { signal },
-        { mutation: false },
-      ),
+      call(routes.sessionsByIds, { body: { ids } }, signal),
     sessionsByCwds: (cwds: string[]) =>
-      post<{ sessions: SessionListResponse["sessions"] }>(
-        "/api/sessions/by-cwd",
-        { cwds },
-        {},
-        { mutation: false },
-      ),
+      call(routes.sessionsByCwds, { body: { cwds } }),
     openSession: (id: string, signal?: AbortSignal) =>
-      post<ActiveSnapshot>("/api/sessions/open", { id }, { signal }),
-    selectBranch: (sessionId: string, leafId: string) =>
-      post<ActiveSnapshot>("/api/branches/select", {
-        sessionId,
-        leafId,
-      }),
+      call(routes.openSession, { body: { id } }, signal),
     takeOverSession: (sessionId: string) =>
-      post<ActiveSnapshot>("/api/sessions/takeover", { sessionId }),
+      call(routes.takeOverSession, { body: { sessionId } }),
     resumeCommand: (sessionId: string) =>
-      request<{ command: string; projectDirectoryMissing?: boolean }>(
-        `/api/sessions/resume-command?sessionId=${encodeURIComponent(sessionId)}`,
-      ),
+      call(routes.resumeCommand, { query: { sessionId } }),
     deselectSession: (signal?: AbortSignal) =>
-      post<ActiveSnapshot>("/api/sessions/deselect", undefined, {
-        signal,
-      }),
+      call(routes.deselectSession, {}, signal),
     newSession: (
       cwd: string,
       options: NewSessionOptions = {},
       signal?: AbortSignal,
+    ) => call(routes.newSession, { body: { cwd, ...options } }, signal),
+    refreshModels: (
+      sessionId?: string,
+      cwd?: string,
+      inherit = false,
+      signal?: AbortSignal,
     ) =>
-      post<ActiveSnapshot>(
-        "/api/sessions/new",
-        { cwd, ...options },
-        { signal },
+      call(
+        routes.refreshModels,
         {
-          timeoutMs: LONG_HTTP_OBSERVATION_TIMEOUT_MS,
+          query: {
+            sessionId: sessionId || undefined,
+            cwd: cwd || undefined,
+            inherit: inherit ? "1" : undefined,
+          },
         },
+        signal,
       ),
-    refreshModels: (sessionId?: string, cwd?: string, inherit = false) =>
-      request<ModelCatalogResponse>(
-        `/api/models?${new URLSearchParams({
-          ...(sessionId ? { sessionId } : {}),
-          ...(cwd ? { cwd } : {}),
-          ...(inherit ? { inherit: "1" } : {}),
-        })}`,
-      ),
-    mcpConfig: (owner: { sessionId?: string; cwd?: string }) =>
-      request<McpConfigSnapshot>(`/api/mcp-config?${settingsQuery(owner)}`),
-    mcpConnection: (
-      owner: { sessionId?: string; cwd?: string },
-      input: McpConnectionRead,
-    ) =>
-      request<McpConnectionValues>(
-        `/api/mcp-config/connection?${settingsQuery(owner)}`,
-        { method: "POST", body: JSON.stringify(input) },
-      ),
-    editMcpConfig: (
-      owner: { sessionId?: string; cwd?: string },
-      edit: McpConfigEdit,
-    ) =>
-      request<McpConfigWriteResult>(
-        `/api/mcp-config?${settingsQuery(owner)}`,
-        { method: "PATCH", body: JSON.stringify(edit) },
-        { mutation: true },
-      ),
-    modelSettings: (owner: { sessionId?: string; cwd?: string }) =>
-      request<ModelSettingsSnapshot>(
-        `/api/model-settings?${settingsQuery(owner)}`,
-      ),
+    mcpConfig: (query: ModelSettingsOwner) => call(routes.mcpConfig, { query }),
+    mcpConnection: (query: ModelSettingsOwner, body: McpConnectionRead) =>
+      call(routes.mcpConnection, { query, body }),
+    editMcpConfig: (query: ModelSettingsOwner, body: McpConfigEdit) =>
+      call(routes.editMcpConfig, { query, body }),
+    modelSettings: (owner: ModelSettingsOwner, refresh = false) =>
+      call(routes.modelSettings, {
+        query: { ...owner, refresh: refresh ? "1" : undefined },
+      }),
     saveModelPreferences: (
-      owner: { sessionId?: string; cwd?: string },
+      query: ModelSettingsOwner,
       revision: string,
       patch: ModelPreferencesPatch,
     ) =>
-      request<ModelSettingsWriteResult>(
-        `/api/model-settings?${settingsQuery(owner)}`,
-        { method: "PATCH", body: JSON.stringify({ revision, patch }) },
-        { mutation: true },
-      ),
+      call(routes.saveModelPreferences, { query, body: { revision, patch } }),
     editModelConfig: (
-      owner: { sessionId?: string; cwd?: string },
+      query: ModelSettingsOwner,
       revision: string,
       edit: ModelConfigEdit,
-    ) =>
-      request<ModelSettingsWriteResult>(
-        `/api/model-settings/config?${settingsQuery(owner)}`,
-        { method: "PATCH", body: JSON.stringify({ revision, edit }) },
-        { mutation: true },
-      ),
-    providerAuth: (
-      owner: { sessionId?: string; cwd?: string },
-      operation: ProviderAuthOperation,
-    ) =>
-      post<{ result: ProviderAuthResult }>(
-        `/api/provider-auth?${settingsQuery(owner)}`,
-        operation,
-        {},
-        {
-          mutation:
-            operation.operation !== "providers" &&
-            operation.operation !== "status",
-        },
-      ),
-    newSessionThinking: (
-      cwd: string,
-      provider: string,
-      modelId: string,
-      current: ThinkingLevel,
-    ) =>
-      request<{ level: ThinkingLevel }>(
-        `/api/new-session/thinking?${new URLSearchParams({ cwd, provider, modelId, current })}`,
-      ),
+    ) => call(routes.editModelConfig, { query, body: { revision, edit } }),
+    providerAuth: (query: ModelSettingsOwner, body: ProviderAuthOperation) =>
+      call(routes.providerAuth, { query, body }, undefined, {
+        mutation: body.operation !== "providers" && body.operation !== "status",
+      }),
     searchNewSessionFiles: (
       cwd: string,
-      query: string,
+      q: string,
       limit = 50,
       showHidden = false,
     ) =>
-      request<ProjectFileSearchResult & { cwd: string }>(
-        `/api/new-session/files?cwd=${encodeURIComponent(cwd)}&q=${encodeURIComponent(query)}&limit=${limit}${showHidden ? "&showHidden=1" : ""}`,
-      ),
-    renameSession: (sessionId: string, name: string) =>
-      post<{ ok: boolean }>("/api/sessions/rename", { sessionId, name }),
-    deleteSession: (sessionId: string) =>
-      request<SessionDeleteResponse>(
-        `/api/sessions/${encodeURIComponent(sessionId)}`,
-        { method: "DELETE" },
-      ),
-    clearHiddenSessions: (sessionIds: string[], projectCwd?: string) =>
-      post<HiddenClearResponse>("/api/sessions/clear-hidden", {
-        sessionIds,
-        projectCwd,
+      call(routes.searchNewSessionFiles, {
+        query: { cwd, q, limit, showHidden: flag(showHidden) },
       }),
+    renameSession: (sessionId: string, name: string) =>
+      call(routes.renameSession, { body: { sessionId, name } }),
+    deleteSessions: (body: SessionDeletionRequest) =>
+      call(routes.deleteSessions, { body }),
     terminals: (cwd?: string) =>
-      request<TerminalCatalogResponse>(
-        cwd
-          ? `/api/terminals?cwd=${encodeURIComponent(cwd)}`
-          : "/api/terminals",
-      ),
+      call(routes.terminals, { query: { cwd: cwd || undefined } }),
     retryTerminalOperation: (key: string) => terminalOperations.retry(key),
     createTerminal: (request: TerminalCreateRequest) =>
       terminalOperations.run({ command: "create", params: { request } }),
@@ -900,13 +759,8 @@ export function createApi() {
     removeTerminal: (id: string, force = false) =>
       terminalOperations.run({ command: "remove", params: { id, force } }),
     terminalAttachTicket: (id: string, signal?: AbortSignal) =>
-      post<TerminalAttachTicketResponse>(
-        `/api/terminals/${encodeURIComponent(id)}/attach-ticket`,
-        undefined,
-        { signal },
-      ),
-    terminalSettings: () =>
-      request<TerminalServiceSettings>("/api/terminal-settings"),
+      call(routes.terminalAttachTicket, { params: { id } }, signal),
+    terminalSettings: () => call(routes.terminalSettings, {}),
     updateTerminalSettings: (patch: TerminalServiceSettingsPatch) =>
       terminalOperations.run({ command: "updateSettings", params: { patch } }),
     clearTerminalHistory: async () => {
@@ -915,24 +769,20 @@ export function createApi() {
     prompt: (
       body: PromptDeliveryRequest,
       signal?: AbortSignal,
-      observeOnly = false,
+      fingerprint?: string,
     ) =>
       withTransportMeasure("prompt-confirmation", () =>
-        deliverPrompt(body, signal, observeOnly),
+        deliverPrompt({ ...body, fingerprint }, signal, body),
       ),
+    observePrompt: (
+      identity: HostOperationIdentity & { fingerprint?: string },
+      signal?: AbortSignal,
+    ) => deliverPrompt(identity, signal),
     nativeCommand: (body: HostNativeCommandRequest, signal?: AbortSignal) =>
-      post<HostNativeCommandResponse>(
-        "/api/control/native-command",
-        body,
-        { signal },
-        { timeoutMs: null },
-      ),
-    piChangelog: () =>
-      request<{ version: string; markdown: string }>("/api/pi/changelog"),
+      call(routes.nativeCommand, { body }, signal),
+    piChangelog: () => call(routes.piChangelog, {}),
     exportSession: (body: SessionExportRequest) =>
-      post<SessionExportResponse>("/api/sessions/export", body, undefined, {
-        timeoutMs: null,
-      }),
+      call(routes.exportSession, { body }),
     exportDownload: (sessionId: string, id: string) =>
       observeRequest(
         undefined,
@@ -969,50 +819,23 @@ export function createApi() {
         `${INPUT_OPERATION_PATHS.pending}/${encodeURIComponent(operationId)}?${new URLSearchParams(query)}`,
       ),
     pendingText: (body: PendingReadRequest, signal?: AbortSignal) =>
-      post<PendingCopyContent>(
-        "/api/pending/text",
-        body,
-        { signal },
-        { mutation: false },
-      ),
+      call(routes.pendingText, { body }, signal),
     clearPending: (sessionId: string) =>
-      post<{ ok: boolean }>("/api/pending/clear", { sessionId }),
+      call(routes.clearPending, { body: { sessionId } }),
     cycleModel: (sessionId: string, direction: 1 | -1) =>
-      post<unknown>("/api/control/model-cycle", {
-        sessionId,
-        direction,
-      }),
+      call(routes.cycleModel, { body: { sessionId, direction } }),
     setModel: (sessionId: string, provider: string, modelId: string) =>
-      post<ModelSelectionResponse>("/api/control/model", {
-        sessionId,
-        provider,
-        modelId,
-      }),
-    setThinkingLevel: (sessionId: string, level: string) =>
-      post<ModelSelectionResponse>("/api/control/thinking", {
-        sessionId,
-        level,
-      }),
+      call(routes.setModel, { body: { sessionId, provider, modelId } }),
+    setThinkingLevel: (sessionId: string, level: ThinkingLevel) =>
+      call(routes.setThinkingLevel, { body: { sessionId, level } }),
     setAutoCompaction: (sessionId: string, enabled: boolean) =>
-      post<{ ok: boolean }>("/api/control/auto-compaction", {
-        sessionId,
-        enabled,
-      }),
+      call(routes.setAutoCompaction, { body: { sessionId, enabled } }),
     setAutoRetry: (sessionId: string, enabled: boolean) =>
-      post<{ ok: boolean }>("/api/control/auto-retry", {
-        sessionId,
-        enabled,
-      }),
+      call(routes.setAutoRetry, { body: { sessionId, enabled } }),
     setSteeringMode: (sessionId: string, mode: PiMessageDeliveryMode) =>
-      post<{ ok: boolean }>("/api/control/steering-mode", {
-        sessionId,
-        mode,
-      }),
+      call(routes.setSteeringMode, { body: { sessionId, mode } }),
     setFollowUpMode: (sessionId: string, mode: PiMessageDeliveryMode) =>
-      post<{ ok: boolean }>("/api/control/follow-up-mode", {
-        sessionId,
-        mode,
-      }),
+      call(routes.setFollowUpMode, { body: { sessionId, mode } }),
     uploadAttachments: (files: File[], signal?: AbortSignal) =>
       uploadFiles(files, signal),
     attachmentPreview: (id: string, signal?: AbortSignal) =>
@@ -1027,19 +850,18 @@ export function createApi() {
         return response.blob();
       }),
     deleteAttachment: (id: string) =>
-      request<{ ok: boolean }>(`/api/attachments/${encodeURIComponent(id)}`, {
-        method: "DELETE",
-      }),
+      call(routes.deleteAttachment, { params: { id } }),
     searchFiles: (
       sessionId: string,
-      query: string,
+      q: string,
       limit = 50,
       signal?: AbortSignal,
       showHidden = false,
     ) =>
-      request<ProjectFileSearchResult>(
-        `/api/files?sessionId=${encodeURIComponent(sessionId)}&q=${encodeURIComponent(query)}&limit=${limit}${showHidden ? "&showHidden=1" : ""}`,
-        { signal },
+      call(
+        routes.searchFiles,
+        { query: { sessionId, q, limit, showHidden: flag(showHidden) } },
+        signal,
       ),
     listFiles: (
       sessionId: string,
@@ -1050,64 +872,45 @@ export function createApi() {
         showHidden?: boolean;
       } = {},
     ) =>
-      request<{ entries: ProjectDirEntry[]; truncated?: boolean }>(
-        `/api/files/list?sessionId=${encodeURIComponent(sessionId)}&dir=${encodeURIComponent(dir)}${options.refresh ? "&refresh=1" : ""}${options.showHidden ? "&showHidden=1" : ""}`,
-        { signal: options.signal },
+      call(
+        routes.listFiles,
+        {
+          query: {
+            sessionId,
+            dir,
+            refresh: flag(options.refresh),
+            showHidden: flag(options.showHidden),
+          },
+        },
+        options.signal,
       ),
     gitStatus: (sessionId: string, signal?: AbortSignal) =>
-      request<GitStatusResponse>(
-        `/api/git/status?sessionId=${encodeURIComponent(sessionId)}`,
-        { signal },
-      ),
+      call(routes.gitStatus, { query: { sessionId } }, signal),
     gitDiff: (sessionId: string, pathId: string, signal?: AbortSignal) =>
-      post<GitDiffResponse>(
-        "/api/git/diff",
-        { sessionId, pathId },
-        { signal },
-        { mutation: false },
-      ),
-    browseHostRoots: () => request<HostRootsResponse>("/api/host/roots"),
-    browseHostDirs: (path?: string, showHidden = false) => {
-      const query = new URLSearchParams();
-      if (path) query.set("path", path);
-      if (showHidden) query.set("showHidden", "1");
-      return request<HostDirListing>(
-        `/api/host/dirs${query.size ? `?${query}` : ""}`,
-      );
-    },
+      call(routes.gitDiff, { body: { sessionId, pathId } }, signal),
+    browseHostRoots: () => call(routes.browseHostRoots, {}),
+    browseHostDirs: (path?: string, showHidden = false) =>
+      call(routes.browseHostDirs, {
+        query: { path: path || undefined, showHidden: flag(showHidden) },
+      }),
     listResources: (sessionId: string, signal?: AbortSignal) =>
-      post<SessionResourceListResponse>(
-        "/api/resources/list",
-        { sessionId },
-        { signal },
-        { mutation: false },
-      ),
+      call(routes.listResources, { body: { sessionId } }, signal),
     probeResources: (
       sessionId: string,
       references: string[],
       signal?: AbortSignal,
     ) =>
-      post<ResourceProbeResponse>(
-        "/api/resources/probe",
-        { sessionId, references },
-        { signal },
-        { mutation: false },
-      ),
+      call(routes.probeResources, { body: { sessionId, references } }, signal),
     resolveResource: (
       sessionId: string,
       reference: string,
       signal?: AbortSignal,
       workspacePath?: string,
     ) =>
-      post<ResourceDescriptor>(
-        "/api/resources/resolve",
-        {
-          sessionId,
-          reference,
-          ...(workspacePath !== undefined ? { workspacePath } : {}),
-        },
-        { signal },
-        { mutation: false },
+      call(
+        routes.resolveResource,
+        { body: { sessionId, reference, workspacePath } },
+        signal,
       ),
     showInFileManager: (
       sessionId: string,
@@ -1115,56 +918,42 @@ export function createApi() {
       workspacePath?: string,
       directory = false,
     ) =>
-      post<{ ok: true }>("/api/resources/show-in-file-manager", {
-        sessionId,
-        reference,
-        ...(workspacePath !== undefined ? { workspacePath } : {}),
-        directory,
+      call(routes.showInFileManager, {
+        body: { sessionId, reference, workspacePath, directory },
       }),
     createHtmlPreview: (id: string, sessionId: string, html: string) =>
-      post<HtmlPreviewResponse>(
-        `/api/resources/${encodeURIComponent(id)}/interactive`,
-        { sessionId, html },
-      ),
+      call(routes.createHtmlPreview, {
+        params: { id },
+        body: { sessionId, html },
+      }),
     deleteHtmlPreview: (id: string, sessionId: string) =>
-      request<void>(
-        `/api/html-previews/${encodeURIComponent(id)}?sessionId=${encodeURIComponent(sessionId)}`,
-        { method: "DELETE" },
-      ),
+      call(routes.deleteHtmlPreview, { params: { id }, query: { sessionId } }),
     resourceDownloadTicket: (
       id: string,
       sessionId: string,
       signal: AbortSignal,
     ) =>
-      post<{ ticket: string; expiresAt: number }>(
-        `/api/resources/${encodeURIComponent(id)}/download-ticket`,
-        { sessionId },
-        { signal },
-        { mutation: false },
+      call(
+        routes.resourceDownloadTicket,
+        { params: { id }, body: { sessionId } },
+        signal,
       ),
     resourceContent: (
       id: string,
       sessionId: string,
       options?: ResourceContentOptions,
     ) => fetchResourceContent(id, sessionId, options),
-    respondExtensionUi: (payload: Record<string, unknown>) =>
-      post<{ ok: boolean }>("/api/extension-ui", payload),
+    respondExtensionUi: (
+      body: RequestInput<typeof routes.respondExtensionUi.schemas>["body"],
+    ) => call(routes.respondExtensionUi, { body }),
     setPresentationAdapterEnabled: (id: string, enabled: boolean) =>
-      request<{
-        configuration: ToolPresentationConfiguration;
-        adapters?: PresentationAdapterInfo[];
-        warning?: string;
-        preferences: InspirePreferences;
-      }>("/api/presentation-adapters/" + encodeURIComponent(id), {
-        method: "PATCH",
-        body: JSON.stringify({ enabled }),
+      call(routes.setPresentationAdapterEnabled, {
+        params: { id },
+        body: { enabled },
       }),
-    preferences: () => request<InspirePreferences>("/api/preferences"),
-    savePreferences: (patch: Partial<InspirePreferences>) =>
-      request<InspirePreferences>("/api/preferences", {
-        method: "PATCH",
-        body: JSON.stringify(patch),
-      }),
+    preferences: () => call(routes.preferences, {}),
+    savePreferences: (body: Partial<InspirePreferences>) =>
+      call(routes.savePreferences, { body }),
   };
 }
 
@@ -1173,12 +962,6 @@ export type Api = ReturnType<typeof createApi>;
 export function terminalUrl(ticket: string): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   return `${protocol}//${window.location.host}/terminal?${new URLSearchParams({ ticket, build: browserBuildId() })}`;
-}
-
-function detailQuery(sessionId: string | null | undefined): string {
-  return sessionId === undefined
-    ? ""
-    : `?detail=${encodeURIComponent(sessionId ?? "")}`;
 }
 
 export function eventsUrl(ticket: string, sessionId: string | null): string {

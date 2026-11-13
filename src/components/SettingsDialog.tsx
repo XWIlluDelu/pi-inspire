@@ -1,8 +1,7 @@
 import { AlertTriangle, X } from "lucide-react";
 import type { ReactNode } from "react";
-import { createPortal } from "react-dom";
-import { useModalFocus } from "../use-modal-focus";
 import { ContextPaneState } from "./ContextPaneState";
+import { Modal } from "./Modal";
 import { PiLoader } from "./PiLoader";
 
 export function SettingsConfirmation({
@@ -20,19 +19,14 @@ export function SettingsConfirmation({
   onClose: () => void;
   onConfirm: () => void;
 }) {
-  const ref = useModalFocus<HTMLDivElement>(true, id, onClose);
-  return createPortal(
-    <div className="overlay" role="presentation" onClick={onClose}>
-      <div
-        ref={ref}
-        className="dialog settings-confirmation"
-        role="alertdialog"
-        aria-modal="true"
-        aria-labelledby={`${id}-title`}
-        aria-describedby={`${id}-description`}
-        tabIndex={-1}
-        onClick={(event) => event.stopPropagation()}
-      >
+  return (
+    <Modal
+      role="alertdialog"
+      aria-labelledby={`${id}-title`}
+      aria-describedby={`${id}-description`}
+      onDismiss={onClose}
+    >
+      <div className="dialog settings-confirmation">
         <h2 className="dialog__title" id={`${id}-title`}>
           {title}
         </h2>
@@ -56,8 +50,7 @@ export function SettingsConfirmation({
           </button>
         </div>
       </div>
-    </div>,
-    document.body,
+    </Modal>
   );
 }
 
@@ -134,32 +127,14 @@ export function SettingsDialog({
   onClose: () => void;
   children: ReactNode;
 }) {
-  // Retain the lower modal owner and its outside opener while a native
-  // question hides this shell and temporarily owns the top of the focus stack.
-  const ref = useModalFocus<HTMLDivElement>(
-    true,
-    "settings",
-    onClose,
-    "dialog",
-    !suspended,
-  );
   return (
-    <div
-      className="overlay settings-overlay"
-      role="presentation"
-      style={suspended ? { display: "none" } : undefined}
-      aria-hidden={suspended || undefined}
-      onClick={onClose}
+    <Modal
+      active={!suspended}
+      overlayClassName="settings-overlay"
+      aria-label="Settings"
+      onDismiss={onClose}
     >
-      <div
-        ref={ref}
-        className="dialog settings"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Settings"
-        tabIndex={-1}
-        onClick={(event) => event.stopPropagation()}
-      >
+      <div className="dialog settings">
         <header className="settings__header">
           <h2 className="settings__title">Settings</h2>
           <button
@@ -174,6 +149,6 @@ export function SettingsDialog({
         </header>
         {children}
       </div>
-    </div>
+    </Modal>
   );
 }

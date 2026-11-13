@@ -18,7 +18,10 @@ test.describe("narrow touch screen", () => {
     await pairAndOpen(page);
     const draft = page.getByRole("textbox", { name: "Message", exact: true });
     const model = page.getByRole("button", { name: "Model", exact: true });
-    await expect(model).toHaveText("Offline model");
+    await expect(model).toHaveAttribute(
+      "title",
+      /^(Offline model|offline) — workbench$/,
+    );
 
     await draft.fill("/login copilot");
     await page
@@ -40,7 +43,7 @@ test.describe("narrow touch screen", () => {
       { exact: true },
     );
     await expect(instruction).toBeHidden();
-    await settings.getByRole("button", { name: "About remote login" }).tap();
+    await settings.getByText("Remote login", { exact: true }).tap();
     await expect(instruction).toBeVisible();
     await settings.getByRole("button", { name: "Back to providers" }).click();
     await expect(search).toHaveValue("copilot");
@@ -97,9 +100,7 @@ test.describe("narrow touch screen", () => {
       exact: true,
     });
     await authorize.click();
-    await login
-      .getByRole("button", { name: "About remote login" })
-      .press("Enter");
+    await login.getByText("Remote login", { exact: true }).press("Enter");
     await expect(
       login.getByText(/paste the authorization code here/),
     ).toBeVisible();
@@ -176,7 +177,10 @@ test.describe("narrow touch screen", () => {
 
     await settings.getByRole("button", { name: "Close settings" }).click();
     await expect(draft).toHaveValue("Keep my auth-task draft");
-    await expect(model).toHaveText("Offline model");
+    await expect(model).toHaveAttribute(
+      "title",
+      /^(Offline model|offline) — workbench$/,
+    );
     expect(scenario.modelChanges).toEqual([]);
     expect(scenario.errors).toEqual([]);
   });

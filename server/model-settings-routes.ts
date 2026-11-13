@@ -1,8 +1,13 @@
 import type { Express } from "express";
-import { z } from "zod";
-import { type ModelOption, THINKING_LEVELS } from "../shared/contracts.js";
-import type { ProviderAuthOperation } from "../shared/provider-auth-bridge.js";
+import type { ModelOption } from "../shared/contracts.js";
+import { hostEndpoints as routes } from "../shared/host-endpoints.js";
+import type { ModelSettingsOwner } from "../shared/model-settings.js";
+import type {
+  ProviderAuthOperation,
+  ProviderAuthResult,
+} from "../shared/provider-auth-bridge.js";
 import { savedConfiguration } from "./configuration-file.js";
+import { jsonRoute } from "./json-route.js";
 import { modelOption } from "./model-catalog.js";
 import type { ModelMetadataCatalog } from "./model-metadata.js";
 import type { ModelSettingsService } from "./model-settings.js";
@@ -11,82 +16,6 @@ import type { ProviderAuthService } from "./provider-auth.js";
 import { requestError } from "./request-error.js";
 import type { RuntimeController } from "./runtime.js";
 
-const token = z.string().min(1).max(256);
-const querySchema = z.object({
-  sessionId: token.optional(),
-  cwd: z.string().min(1).max(4_096).optional(),
-});
-const revision = z.string().regex(/^[a-f0-9]{64}$/);
-const preferences = z
-  .object({
-    defaultModel: z
-      .object({ provider: token, id: z.string().min(1).max(512) })
-      .nullable()
-      .optional(),
-    defaultThinkingLevel: z.enum(THINKING_LEVELS).nullable().optional(),
-    enabledModels: z.array(z.string().min(1).max(512)).max(512).optional(),
-  })
-  .strict();
-const providerValues = z
-  .object({
-    baseUrl: z.string().max(4_096).nullable().optional(),
-    api: token.nullable().optional(),
-    apiKey: z.string().max(16_384).nullable().optional(),
-  })
-  .strict();
-const modelValues = z
-  .object({
-    id: z.string().min(1).max(512),
-    name: z.string().max(512).nullable().optional(),
-    api: token.nullable().optional(),
-    baseUrl: z.string().max(4_096).nullable().optional(),
-    reasoning: z.boolean().nullable().optional(),
-    input: z.array(z.string().max(100)).max(8).nullable().optional(),
-    contextWindow: z.number().nullable().optional(),
-    maxTokens: z.number().nullable().optional(),
-    type: token.nullable().optional(),
-  })
-  .strict();
-const configEdit = z.discriminatedUnion("kind", [
-  z
-    .object({ kind: z.literal("provider"), id: token, values: providerValues })
-    .strict(),
-  z.object({ kind: z.literal("remove-provider"), id: token }).strict(),
-  z
-    .object({
-      kind: z.literal("model"),
-      provider: token,
-      originalId: z.string().max(512).optional(),
-      originalType: token.optional(),
-      values: modelValues,
-    })
-    .strict(),
-  z
-    .object({
-      kind: z.literal("remove-model"),
-      provider: token,
-      id: z.string().min(1).max(512),
-      type: token.optional(),
-    })
-    .strict(),
-]);
-const authOperation = z.discriminatedUnion("operation", [
-  z.object({ operation: z.literal("providers") }),
-  z.object({
-    operation: z.literal("start"),
-    provider: token,
-    type: z.enum(["api_key", "oauth"]),
-  }),
-  z.object({ operation: z.literal("status"), id: token }),
-  z.object({
-    operation: z.literal("answer"),
-    id: token,
-    promptId: token,
-    value: z.string().max(32_768),
-  }),
-  z.object({ operation: z.literal("cancel"), id: token }),
-  z.object({ operation: z.literal("logout"), provider: token }),
-]);
 export function registerModelSettingsRoutes(
   app: Express,
   deps: {
@@ -104,8 +33,7 @@ export function registerModelSettingsRoutes(
     modelMetadata?: ModelMetadataCatalog["read"];
   },
 ): void {
-  async function context(query: unknown) {
-    const { sessionId, cwd } = querySchema.parse(query);
+  async function context({ sessionId, cwd }: ModelSettingsOwner) {
     const root = sessionId
       ? deps.runtime.sessionCwd(sessionId)
       : cwd
@@ -118,17 +46,26 @@ export function registerModelSettingsRoutes(
   async function modelsFor(
     owner: { sessionId?: string; cwd: string },
     refresh = false,
-  ): Promise<{ models: ModelOption[]; modelsWarning?: string }> {
+  ): Promise<{
+    models: ModelOption[];
+    modelsWarning?: string;
+    modelDiscoveryFailed?: true;
+  }> {
     try {
       if (!owner.sessionId) {
+        const metadata = await deps.modelMetadata?.(owner.cwd, refresh);
         return {
-          models:
-            (await deps.modelMetadata?.(owner.cwd, refresh))?.models ?? [],
+          models: metadata?.models ?? [],
+          modelsWarning: metadata?.warning,
         };
       }
       if (refresh) {
+        const { models, warning } = await deps.runtime.refreshModels(
+          owner.sessionId,
+        );
         return {
-          models: (await deps.runtime.refreshModels(owner.sessionId)).models,
+          models,
+          modelsWarning: warning,
         };
       }
       const snapshot = await deps.runtime.snapshot(owner.sessionId);
@@ -140,66 +77,64 @@ export function registerModelSettingsRoutes(
     } catch {
       return {
         models: [],
+        modelDiscoveryFailed: true,
         modelsWarning:
           "Model availability could not load. Saved configuration is still editable; refresh models to retry.",
       };
     }
   }
+  const configuration = () => {
+    if (!deps.modelSettings)
+      throw requestError("Model settings are unavailable on this Host", 503);
+    return deps.modelSettings;
+  };
   async function readSettings(
     service: ModelSettingsService,
     owner: Awaited<ReturnType<typeof context>>,
     refresh = false,
   ) {
-    const { models, modelsWarning } = await modelsFor(owner, refresh);
+    const { models, ...discovery } = await modelsFor(owner, refresh);
     return {
       ...(await service.read(owner.cwd, models)),
-      ...(modelsWarning ? { modelsWarning } : {}),
+      ...discovery,
     };
   }
-  const saveWarning =
-    "Saved to Pi. Model settings could not reload; reload settings before the next edit.";
-  app.get("/api/model-settings", async (request, response) => {
-    response.setHeader("Cache-Control", "no-store");
-    if (!deps.modelSettings)
-      throw requestError("Model settings are unavailable on this Host", 503);
-    response.json(
-      await readSettings(deps.modelSettings, await context(request.query)),
-    );
-  });
-  app.patch("/api/model-settings", async (request, response) => {
-    const body = z
-      .object({ revision, patch: preferences })
-      .strict()
-      .parse(request.body);
-    const service = deps.modelSettings;
-    if (!service) throw requestError("Model settings are unavailable", 503);
-    const owner = await context(request.query);
-    await service.savePreferences(body.revision, body.patch);
+  async function save(
+    query: ModelSettingsOwner,
+    apply: (service: ModelSettingsService, cwd: string) => Promise<void>,
+    refresh: boolean,
+  ) {
+    const service = configuration();
+    const owner = await context(query);
+    await apply(service, owner.cwd);
     deps.invalidateModels?.();
-    response.json(
-      await savedConfiguration(() => readSettings(service, owner), saveWarning),
+    return savedConfiguration(
+      () => readSettings(service, owner, refresh),
+      "Saved to Pi. Model settings could not reload; reload settings before the next edit.",
     );
-  });
-  app.patch("/api/model-settings/config", async (request, response) => {
-    const body = z
-      .object({ revision, edit: configEdit })
-      .strict()
-      .parse(request.body);
-    const service = deps.modelSettings;
-    if (!service) throw requestError("Model settings are unavailable", 503);
-    const owner = await context(request.query);
-    await service.saveConfig(owner.cwd, body.revision, body.edit);
-    deps.invalidateModels?.();
-    // Refresh the edited reader; invalidated workspace catalogs reload on demand.
-    response.json(
-      await savedConfiguration(
-        () => readSettings(service, owner, true),
-        saveWarning,
-      ),
-    );
-  });
+  }
+  jsonRoute(
+    app,
+    routes.modelSettings,
+    async ({ query: { refresh, ...owner } }) =>
+      readSettings(configuration(), await context(owner), refresh === "1"),
+  );
+  jsonRoute(app, routes.saveModelPreferences, ({ query, body }) =>
+    save(
+      query,
+      (service) => service.savePreferences(body.revision, body.patch),
+      false,
+    ),
+  );
+  jsonRoute(app, routes.editModelConfig, ({ query, body }) =>
+    save(
+      query,
+      (service, cwd) => service.saveConfig(cwd, body.revision, body.edit),
+      true,
+    ),
+  );
   type AuthEndpoint = {
-    request(operation: ProviderAuthOperation): Promise<unknown>;
+    request(operation: ProviderAuthOperation): Promise<ProviderAuthResult>;
     isCurrent(): boolean;
     stopLogin(id: string): Promise<void>;
   };
@@ -209,7 +144,7 @@ export function registerModelSettingsRoutes(
   };
   const authOwners = new Map<string, OwnedAttempt>();
   const authAttempts = new Map<string, OwnedAttempt>();
-  const authWrites = new Map<string, Promise<unknown>>();
+  const authWrites = new Map<string, Promise<ProviderAuthResult>>();
   async function dispatchAuth(
     owner: { sessionId?: string },
     operation: ProviderAuthOperation,
@@ -241,10 +176,10 @@ export function registerModelSettingsRoutes(
       stopLogin: lease.cancelLogin,
     };
   }
-  function record(attempt: OwnedAttempt, value: unknown) {
-    if (!value || typeof value !== "object" || !("status" in value)) return;
+  function record(attempt: OwnedAttempt, value: ProviderAuthResult) {
+    if (!value || Array.isArray(value)) return;
     if (attempt.state.status !== "pending" && attempt.endpoint === null) return;
-    attempt.state = value as OwnedAttempt["state"];
+    attempt.state = value;
     if (attempt.state.status !== "pending") {
       if (attempt.state.status === "completed") deps.invalidateModels?.();
       attempt.endpoint = null;
@@ -290,11 +225,7 @@ export function registerModelSettingsRoutes(
     record(attempt, value);
     return attempt.state;
   }
-  app.post("/api/provider-auth", async (request, response) => {
-    response.setHeader("Cache-Control", "no-store");
-    const operation = authOperation.parse(
-      request.body,
-    ) as ProviderAuthOperation;
+  jsonRoute(app, routes.providerAuth, async ({ query, body: operation }) => {
     if (
       operation.operation === "status" ||
       operation.operation === "answer" ||
@@ -302,21 +233,15 @@ export function registerModelSettingsRoutes(
     ) {
       const attempt = authAttempts.get(operation.id);
       if (!attempt) {
-        if (operation.operation === "cancel") {
-          response.json({ result: null });
-          return;
-        }
+        if (operation.operation === "cancel") return { result: null };
         throw requestError("That login is no longer available", 404);
       }
-      response.json({ result: await observe(attempt, operation) });
-      return;
+      return { result: await observe(attempt, operation) };
     }
-    const owner = await context(request.query);
+    const owner = await context(query);
     const selected = endpoint(operation.operation === "logout" ? {} : owner);
-    if (operation.operation === "providers") {
-      response.json({ result: await selected.request(operation) });
-      return;
-    }
+    if (operation.operation === "providers")
+      return { result: await selected.request(operation) };
     // Global credentials share one write boundary across browser/worker/Host owners.
     const provider = operation.provider;
     const previousWrite = authWrites.get(provider) ?? Promise.resolve();
@@ -332,10 +257,9 @@ export function registerModelSettingsRoutes(
         const result = await selected.request(operation);
         if (operation.operation === "logout") deps.invalidateModels?.();
         if (operation.operation === "start") {
-          const attempt = {
-            state: result as OwnedAttempt["state"],
-            endpoint: selected,
-          };
+          if (!result || Array.isArray(result))
+            throw requestError("Pi returned no authentication attempt", 502);
+          const attempt = { state: result, endpoint: selected };
           authAttempts.set(attempt.state.id, attempt);
           authOwners.set(provider, attempt);
           record(attempt, result);
@@ -344,7 +268,7 @@ export function registerModelSettingsRoutes(
       });
     authWrites.set(provider, write);
     try {
-      response.json({ result: await write });
+      return { result: await write };
     } finally {
       if (authWrites.get(provider) === write) authWrites.delete(provider);
     }

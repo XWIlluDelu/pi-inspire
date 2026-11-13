@@ -335,7 +335,7 @@ export default function (pi) {
       .filter((name) => name.startsWith("inspire_branch_"))
       .sort((a, b) => a.length - b.length);
     expect(command).toBeDefined();
-    const snapshot = await runtime.snapshot();
+    const snapshot = await runtime.snapshot(SESSION_ID);
     expect(snapshot.active?.commands).toContainEqual(
       expect.objectContaining({ name: "fixture-visible" }),
     );
@@ -499,7 +499,7 @@ export default function (pi) {
     const sourcePid = workers[0]?.pid;
     await model!.started;
     await vi.waitFor(async () =>
-      expect((await runtime.snapshot()).runState).toBe("running"),
+      expect((await runtime.snapshot(SESSION_ID)).runState).toBe("running"),
     );
     const sourceView = (await runtime.snapshot(SESSION_ID)).active!;
     const viewId = sourceView.transcriptPage.viewId;
@@ -551,7 +551,8 @@ export default function (pi) {
     await vi.waitFor(
       async () =>
         expect(
-          (await runtime.snapshot()).sessionStatuses[SESSION_ID]?.runState,
+          (await runtime.snapshot(SESSION_ID)).sessionStatuses[SESSION_ID]
+            ?.runState,
         ).toBe("idle"),
       { timeout: 10_000 },
     );

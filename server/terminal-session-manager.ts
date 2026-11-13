@@ -23,15 +23,17 @@ import {
   type TerminalCatalogResponse,
   type TerminalCreateRequest,
   type TerminalDescriptor,
-  type TerminalMutationMethod,
-  type TerminalOperationIdentity,
   type TerminalRemoveResponse,
   type TerminalRenameRequest,
   type TerminalServerControlMessage,
   type TerminalServiceSettings,
   type TerminalServiceSettingsPatch,
 } from "../shared/terminal-contracts.js";
-import { dispatchTerminalMutation } from "./terminal-operation-dispatch.js";
+import type {
+  TerminalIntent,
+  TerminalOperation,
+  TerminalOperationResults,
+} from "../shared/terminal-operations.js";
 import { TerminalOperationReceipts } from "./terminal-operation-receipts.js";
 import { terminalDirectoryFromUrl } from "./terminal-paths.js";
 import {
@@ -353,15 +355,39 @@ export class TerminalSessionManager implements TerminalService {
     return this.operations.getEpoch();
   }
 
-  operate<Result>(
-    method: TerminalMutationMethod,
-    params: unknown,
-    operation: TerminalOperationIdentity,
-  ): Promise<Result> {
-    // The PTY owner retains the receipts for the same lifetime in either mode.
-    return this.operations.run(operation, method, params, () =>
-      dispatchTerminalMutation(this, method, params),
-    ) as Promise<Result>;
+  operate<I extends TerminalIntent>(
+    operation: TerminalOperation & { intent: I },
+    observeOnly = false,
+  ): Promise<TerminalOperationResults[I["command"]]> {
+    const { intent } = operation;
+    return this.operations.run(
+      operation,
+      observeOnly
+        ? undefined
+        : () => {
+            switch (intent.command) {
+              case "create":
+                return this.create(intent.params.request);
+              case "rename":
+                return this.rename(intent.params.id, {
+                  title: intent.params.title,
+                });
+              case "reorder":
+                return this.reorder(
+                  intent.params.projectCwd,
+                  intent.params.ids,
+                );
+              case "restart":
+                return this.restart(intent.params.id);
+              case "remove":
+                return this.remove(intent.params.id, intent.params.force);
+              case "updateSettings":
+                return this.updateSettings(intent.params.patch);
+              case "clearHistory":
+                return this.clearHistory().then(() => null);
+            }
+          },
+    ) as Promise<TerminalOperationResults[I["command"]]>;
   }
 
   list(cwd?: string): TerminalCatalogResponse {

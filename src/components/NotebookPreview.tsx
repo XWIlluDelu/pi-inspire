@@ -1,7 +1,7 @@
-import { memo, useContext, useMemo } from "react";
+import { useContext, useMemo } from "react";
 import { jsonRecord } from "../../shared/json-record";
 import { stripTerminalSequences } from "../ansi";
-import { highlightSource } from "../syntax-highlighting";
+import { CodeView } from "./CodeView";
 import {
   DocumentResourceContext,
   MarkdownAttachmentsContext,
@@ -265,34 +265,12 @@ function NotebookOutputView({
             alt="Notebook output"
           />
         ) : (
-          <pre>{output.text}</pre>
+          <CodeView text={output.text} />
         )}
       </div>
     </div>
   );
 }
-
-const NotebookSource = memo(function NotebookSource({
-  source,
-  language,
-}: {
-  source: string;
-  language: string;
-}) {
-  const highlighted = useMemo(
-    () => highlightSource(source, language),
-    [source, language],
-  );
-  return (
-    <pre tabIndex={0}>
-      <code
-        className={`hljs language-${language}`}
-        // highlight.js escapes the input and emits span elements only.
-        dangerouslySetInnerHTML={{ __html: highlighted }}
-      />
-    </pre>
-  );
-});
 
 export function NotebookPreview({ text }: { text: string }) {
   const notebook = useMemo(() => parseNotebook(text), [text]);
@@ -336,8 +314,9 @@ export function NotebookPreview({ text }: { text: string }) {
                 <RichText text={cell.source} variant="assistant" />
               </MarkdownAttachmentsContext.Provider>
             ) : (
-              <NotebookSource
-                source={cell.source}
+              <CodeView
+                tabIndex={0}
+                text={cell.source}
                 language={
                   cell.kind === "code" ? notebook.language : "plaintext"
                 }

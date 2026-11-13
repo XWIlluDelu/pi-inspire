@@ -8,7 +8,6 @@ import { deferred } from "./helpers";
 
 const host = vi.hoisted(() => ({
   providerAuth: vi.fn(),
-  refreshModels: vi.fn(),
 }));
 vi.mock("../../src/store", () => ({ store: host }));
 
@@ -43,7 +42,6 @@ async function start(method = "Claude authorization") {
 }
 beforeEach(() => {
   host.providerAuth.mockReset();
-  host.refreshModels.mockReset().mockResolvedValue(undefined);
   refresh.mockClear();
 });
 afterEach(() => vi.useRealTimers());
@@ -115,8 +113,7 @@ describe("login attempt ownership", () => {
       throw new Error("503 temporarily unavailable");
     });
 
-    const modelsRefreshed = vi.fn(async () => {});
-    const view = render(panel({ onModelsRefreshed: modelsRefreshed }));
+    const view = render(panel());
     await start();
     const login = within(
       screen.getByRole("group", { name: "Login to anthropic" }),
@@ -135,9 +132,7 @@ describe("login attempt ownership", () => {
       "503 temporarily unavailable",
     );
     const reconnected = vi.fn(async () => {});
-    view.rerender(
-      panel({ onRefresh: reconnected, onModelsRefreshed: modelsRefreshed }),
-    );
+    view.rerender(panel({ onRefresh: reconnected }));
     expect(login.getByLabelText("Authorization code")).toBeEnabled();
     await nextPoll(750);
 
@@ -150,10 +145,6 @@ describe("login attempt ownership", () => {
     ).toEqual(["start", "status", "status"]);
     expect(refresh).not.toHaveBeenCalled();
     expect(reconnected).toHaveBeenCalledOnce();
-    expect(host.refreshModels).toHaveBeenCalledExactlyOnceWith({
-      sessionId: "one",
-    });
-    expect(modelsRefreshed).toHaveBeenCalledOnce();
   });
 
   it("preserves typed input on a fresh poll and never restores an old prompt after an answer", async () => {

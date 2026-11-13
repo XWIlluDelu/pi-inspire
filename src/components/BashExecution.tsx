@@ -5,8 +5,9 @@ import {
   isResourceReferenceText,
 } from "../../shared/resource-references";
 import { stripTerminalSequences } from "../ansi";
-import { shellCommand, shellCopyText } from "../shell-record";
 import type { ChatMessage } from "../events";
+import { shellCommand, shellCopyText } from "../shell-record";
+import { CodeView } from "./CodeView";
 import { CopyAction } from "./CopyAction";
 import { PiLoader } from "./PiLoader";
 
@@ -74,17 +75,13 @@ export const BashExecution = memo(function BashExecution({
           <CopyAction
             text={copy}
             label="shell result"
-            className="shell-execution__copy"
+            className="activity-copy"
           />
         )}
       </div>
-      <pre className="shell-execution__command">
-        <code>{command}</code>
-      </pre>
+      <CodeView className="shell-execution__command" text={command} />
       {output ? (
-        <pre className="shell-execution__output">
-          <code>{output}</code>
-        </pre>
+        <CodeView className="shell-execution__output" text={output} />
       ) : null}
       {previewTruncated || message.truncated ? (
         <p className="shell-execution__note">

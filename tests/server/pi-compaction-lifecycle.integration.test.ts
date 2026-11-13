@@ -4,9 +4,9 @@ import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  fixture,
-  eventsOf,
   disposeOperationFixture,
+  eventsOf,
+  fixture,
 } from "./fixtures/native-operation.js";
 
 afterEach(disposeOperationFixture);
@@ -60,9 +60,9 @@ describe("native manual compaction cancellation", () => {
       if (pending) {
         void pending.catch(() => {});
         await vi.waitFor(async () =>
-          expect((await f.runtime.snapshot()).pendingQueues?.totalCount).toBe(
-            1,
-          ),
+          expect(
+            (await f.runtime.snapshot(f.sessionId)).pendingQueues?.totalCount,
+          ).toBe(1),
         );
       }
       expect(await f.api.abort(f.sessionId)).toEqual({
@@ -77,7 +77,7 @@ describe("native manual compaction cancellation", () => {
         command: "compact",
         outcome: "cancelled",
       });
-      const cancelled = await f.runtime.snapshot();
+      const cancelled = await f.runtime.snapshot(f.sessionId);
       expect(cancelled.runState).toBe("aborted");
       expect(cancelled.active?.projectionConflict).toBeNull();
       expect(cancelled.pendingQueues?.totalCount).toBe(0);
@@ -108,7 +108,7 @@ describe("native manual compaction cancellation", () => {
         }),
       ).resolves.toMatchObject({ outcome: "completed" });
       expect(
-        (await f.runtime.snapshot()).extensionStatuses?.[
+        (await f.runtime.snapshot(f.sessionId)).extensionStatuses?.[
           "pi-operation-compaction-count"
         ],
       ).toBe(String(previousCompactions + 2));
@@ -135,7 +135,7 @@ describe("native manual compaction cancellation", () => {
     });
     await vi.waitFor(async () =>
       expect(
-        (await f.runtime.snapshot()).extensionStatuses?.[
+        (await f.runtime.snapshot(f.sessionId)).extensionStatuses?.[
           "pi-operation-compaction-count"
         ],
       ).toBe("1"),
@@ -152,8 +152,10 @@ describe("native manual compaction cancellation", () => {
     expect(worker.stop).toHaveBeenCalledWith("compact");
     expect(worker.available).toBe(false);
     expect(worker.pid).toBeNull();
-    expect((await f.runtime.snapshot()).runState).toBe("aborted");
-    expect((await f.runtime.snapshot()).active?.projectionConflict).toBeNull();
+    expect((await f.runtime.snapshot(f.sessionId)).runState).toBe("aborted");
+    expect(
+      (await f.runtime.snapshot(f.sessionId)).active?.projectionConflict,
+    ).toBeNull();
     expect(await readFile(f.sessionFile, "utf8")).not.toContain(
       '"type":"compaction"',
     );
@@ -184,7 +186,7 @@ describe("native manual compaction cancellation", () => {
     );
     await f.api.abort(f.sessionId);
     await expect(compacting).resolves.toMatchObject({ outcome: "completed" });
-    expect((await f.runtime.snapshot()).runState).toBe("idle");
+    expect((await f.runtime.snapshot(f.sessionId)).runState).toBe("idle");
     expect(eventsOf(f.runtimeEvents, "compaction_end").at(-1)).toMatchObject({
       result: {},
     });

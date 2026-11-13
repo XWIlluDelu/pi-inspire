@@ -25,6 +25,7 @@ import {
 import {
   memo,
   type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -86,12 +87,11 @@ import { TerminalTextDialog } from "./TerminalTextDialog";
 import { TerminalTouchKeys } from "./TerminalTouchKeys";
 
 interface TerminalViewProps {
+  toolbar?: (controls: ReactNode, actions: ReactNode) => ReactNode;
   api: Api;
   terminal: TerminalDescriptor;
   active: boolean;
   settings: TerminalUiSettings;
-  toolbarHost: HTMLElement | null;
-  menuHost: HTMLElement | null;
   onDescriptor(terminal: TerminalDescriptor): void;
   onBackgroundOutput(id: string): void;
   onBell(terminal: TerminalDescriptor): void;
@@ -201,8 +201,7 @@ export const TerminalView = memo(function TerminalView({
   terminal: descriptor,
   active,
   settings,
-  toolbarHost,
-  menuHost,
+  toolbar,
   onDescriptor,
   onBackgroundOutput,
   onBell,
@@ -837,11 +836,14 @@ export const TerminalView = memo(function TerminalView({
     const xterm = xtermRef.current;
     if (xterm) void copy(terminalBufferText(xterm.buffer.active));
   };
-  const selectText = () => {
+  const selectText = (opener: HTMLButtonElement) => {
     const buffer = xtermRef.current?.buffer.active;
     if (!buffer) return;
     clearModifiers();
-    menuHost?.closest("details")?.querySelector("summary")?.focus();
+    opener
+      .closest("details[data-terminal-menu]")
+      ?.querySelector("summary")
+      ?.focus();
     setTextSnapshot({
       text: terminalBufferText(buffer),
       scrollRatio: buffer.baseY > 0 ? buffer.viewportY / buffer.baseY : 0,
@@ -929,123 +931,111 @@ export const TerminalView = memo(function TerminalView({
       aria-label={`Terminal ${descriptor.title}`}
       aria-hidden={!active}
     >
-      {active && toolbarHost
-        ? createPortal(
-            <>
-              <span
-                className={`terminal-view__status terminal-view__status--${transport}`}
-                role="status"
-                aria-label={statusLabel}
-                title={`${statusLabel} · ${transport}`}
-              >
-                {descriptor.status === "exited" ? (
-                  <Square size={12} aria-hidden />
-                ) : transport !== "connected" ? (
-                  transport === "offline" ? (
-                    <Circle size={16} aria-hidden />
-                  ) : (
-                    <PiLoader size={16} aria-hidden />
-                  )
-                ) : writable ? (
-                  <button
-                    type="button"
-                    className="icon-button terminal-view__keyboard"
-                    aria-label="Focus terminal input"
-                    title="Focus terminal input"
-                    disabled={!ready}
-                    onPointerDown={(event) => event.preventDefault()}
-                    onClick={() => {
-                      const pending = modifiersRef.current;
-                      xtermRef.current?.blur();
-                      xtermRef.current?.focus();
-                      updateModifiers(pending);
-                    }}
-                  >
-                    <Keyboard size={16} aria-hidden />
-                  </button>
+      {active &&
+        toolbar?.(
+          <div className="terminal-view-controls">
+            <span
+              className={`terminal-view__status terminal-view__status--${transport}`}
+              role="status"
+              aria-label={statusLabel}
+              title={`${statusLabel} · ${transport}`}
+            >
+              {descriptor.status === "exited" ? (
+                <Square size={12} aria-hidden />
+              ) : transport !== "connected" ? (
+                transport === "offline" ? (
+                  <Circle size={16} aria-hidden />
                 ) : (
-                  <Eye size={16} aria-hidden />
-                )}
-              </span>
-              <button
-                type="button"
-                className="icon-button"
-                onClick={() => {
-                  if (search.open) closeSearch(false);
-                  else setSearch((current) => ({ ...current, open: true }));
-                }}
-                aria-label="Search terminal output"
-                aria-expanded={search.open}
-                title="Search terminal output"
-              >
-                <Search size={16} aria-hidden />
-              </button>
-            </>,
-            toolbarHost,
-          )
-        : null}
-      {active && menuHost
-        ? createPortal(
-            <>
-              <button
-                type="button"
-                onClick={() => void pasteClipboard()}
-                disabled={
-                  !writable || !ready || descriptor.status !== "running"
-                }
-                aria-label="Paste into terminal"
-              >
-                <ClipboardPaste size={14} aria-hidden /> Paste
-              </button>
-              <button type="button" onClick={copyAll}>
-                <Copy size={14} aria-hidden /> Copy all
-              </button>
-              <button type="button" onClick={selectText}>
-                <TextSelect size={14} aria-hidden /> Select text
-              </button>
-              <button
-                type="button"
-                disabled={!lastOutput}
-                title="Copy the last completed command output"
-                onClick={copyLastCommandOutput}
-              >
-                <Copy size={14} aria-hidden /> Copy last output
-              </button>
-              <details
-                className="terminal-menu__group"
-                data-terminal-menu-group
-              >
-                <summary>
-                  <Monitor size={14} aria-hidden /> Display
-                  <ChevronRight
-                    className="terminal-menu__chevron"
-                    size={13}
-                    aria-hidden
-                  />
-                </summary>
-                <div>
-                  <button
-                    type="button"
-                    onClick={() => xtermRef.current?.clear()}
-                  >
-                    <Eraser size={14} aria-hidden /> Clear local scrollback
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      clearCommandOutput();
-                      xtermRef.current?.reset();
-                      connectionRef.current?.forceSnapshot();
-                    }}
-                  >
-                    <RotateCcw size={14} aria-hidden /> Reset terminal display
-                  </button>
-                </div>
-              </details>
-            </>,
-            menuHost,
-          )
-        : null}
+                  <PiLoader size={16} aria-hidden />
+                )
+              ) : writable ? (
+                <button
+                  type="button"
+                  className="icon-button terminal-view__keyboard"
+                  aria-label="Focus terminal input"
+                  title="Focus terminal input"
+                  disabled={!ready}
+                  onPointerDown={(event) => event.preventDefault()}
+                  onClick={() => {
+                    const pending = modifiersRef.current;
+                    xtermRef.current?.blur();
+                    xtermRef.current?.focus();
+                    updateModifiers(pending);
+                  }}
+                >
+                  <Keyboard size={16} aria-hidden />
+                </button>
+              ) : (
+                <Eye size={16} aria-hidden />
+              )}
+            </span>
+            <button
+              type="button"
+              className="icon-button"
+              onClick={() => {
+                if (search.open) closeSearch(false);
+                else setSearch((current) => ({ ...current, open: true }));
+              }}
+              aria-label="Search terminal output"
+              aria-expanded={search.open}
+              title="Search terminal output"
+            >
+              <Search size={16} aria-hidden />
+            </button>
+          </div>,
+          <div className="terminal-menu__view">
+            <button
+              type="button"
+              onClick={() => void pasteClipboard()}
+              disabled={!writable || !ready || descriptor.status !== "running"}
+              aria-label="Paste into terminal"
+            >
+              <ClipboardPaste size={14} aria-hidden /> Paste
+            </button>
+            <button type="button" onClick={copyAll}>
+              <Copy size={14} aria-hidden /> Copy all
+            </button>
+            <button
+              type="button"
+              onClick={(event) => selectText(event.currentTarget)}
+            >
+              <TextSelect size={14} aria-hidden /> Select text
+            </button>
+            <button
+              type="button"
+              disabled={!lastOutput}
+              title="Copy the last completed command output"
+              onClick={copyLastCommandOutput}
+            >
+              <Copy size={14} aria-hidden /> Copy last output
+            </button>
+            <details className="terminal-menu__group" data-terminal-menu-group>
+              <summary>
+                <Monitor size={14} aria-hidden /> Display
+                <ChevronRight
+                  className="terminal-menu__chevron"
+                  size={13}
+                  aria-hidden
+                />
+              </summary>
+              <div>
+                <button type="button" onClick={() => xtermRef.current?.clear()}>
+                  <Eraser size={14} aria-hidden /> Clear local scrollback
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearCommandOutput();
+                    xtermRef.current?.reset();
+                    connectionRef.current?.forceSnapshot();
+                  }}
+                >
+                  <RotateCcw size={14} aria-hidden /> Reset terminal display
+                </button>
+              </div>
+            </details>
+          </div>,
+        )}
       <div className="terminal-view__stage">
         <div ref={hostRef} className="terminal-view__xterm" />
         <div className="terminal-view__overlays">

@@ -1,6 +1,5 @@
 import { ChevronDown } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import {
   type ModelIdentity,
   type ModelOption,
@@ -11,7 +10,6 @@ import {
   type FloatingMenuConstraints,
   useFloatingMenuPlacement,
 } from "../use-floating-menu";
-import { useModalPortal } from "../use-modal-focus";
 import { ModelList } from "./ModelList";
 import { PiLoader } from "./PiLoader";
 
@@ -81,7 +79,6 @@ export function ModelSelector({
     resolveMenuTarget,
     MODEL_MENU_CONSTRAINTS,
   );
-  useModalPortal(Boolean(open && placement), triggerRef, menuRef);
   const show = useCallback(
     (query = "") => {
       if (isDisabled) return;
@@ -207,68 +204,65 @@ export function ModelSelector({
           <ChevronDown size={11} aria-hidden />
         )}
       </button>
-      {open && placement
-        ? createPortal(
-            <div
-              ref={menuRef}
-              className="model-picker__menu"
-              data-placement={placement.direction}
-              aria-busy={refreshing && models.length === 0}
-              style={{
-                left: placement.left,
-                top: placement.top,
-                bottom: placement.bottom,
-                width: placement.width,
-                maxHeight: placement.maxHeight,
+      {open && placement ? (
+        <div
+          ref={menuRef}
+          className="model-picker__menu"
+          data-placement={placement.direction}
+          aria-busy={refreshing && models.length === 0}
+          style={{
+            left: placement.left,
+            top: placement.top,
+            bottom: placement.bottom,
+            width: placement.width,
+            maxHeight: placement.maxHeight,
+          }}
+        >
+          <ModelList
+            key={openRequest?.id}
+            models={models}
+            value={value}
+            recent={recent}
+            common={common}
+            initialQuery={initialQuery}
+            status={
+              refreshStatus ??
+              (refreshing && !models.length ? "Loading models…" : null)
+            }
+            onSelect={pick}
+            onKeyDown={onMenuKey}
+            autoFocus
+          />
+          {onManageModels ? (
+            <button
+              type="button"
+              className="model-picker__manage"
+              onClick={() => {
+                if (isDisabled) return;
+                setOpen(false);
+                onManageModels();
+              }}
+              onKeyDown={(event) => {
+                if (
+                  event.key === "Escape" &&
+                  !isComposingKeyboardEvent(event.nativeEvent)
+                ) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setOpen(false);
+                  restoreTriggerFocus();
+                }
+                if (event.key === "Tab" && !event.shiftKey) {
+                  setOpen(false);
+                  triggerRef.current?.focus({ preventScroll: true });
+                }
               }}
             >
-              <ModelList
-                key={openRequest?.id}
-                models={models}
-                value={value}
-                recent={recent}
-                common={common}
-                initialQuery={initialQuery}
-                status={
-                  refreshStatus ??
-                  (refreshing && !models.length ? "Loading models…" : null)
-                }
-                onSelect={pick}
-                onKeyDown={onMenuKey}
-                autoFocus
-              />
-              {onManageModels ? (
-                <button
-                  type="button"
-                  className="model-picker__manage"
-                  onClick={() => {
-                    if (isDisabled) return;
-                    setOpen(false);
-                    onManageModels();
-                  }}
-                  onKeyDown={(event) => {
-                    if (
-                      event.key === "Escape" &&
-                      !isComposingKeyboardEvent(event.nativeEvent)
-                    ) {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      setOpen(false);
-                      restoreTriggerFocus();
-                    }
-                    if (event.key === "Tab" && !event.shiftKey) {
-                      setOpen(false);
-                      triggerRef.current?.focus({ preventScroll: true });
-                    }
-                  }}
-                >
-                  Manage models
-                </button>
-              ) : null}
-            </div>,
-            triggerRef.current?.closest(".overlay") ?? document.body,
-          )
-        : null}
+              Manage models
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createInspireServer } from "../../server/app";
 import { PreferencesStore } from "../../server/preferences";
 import { ResourceStore } from "../../server/resources";
-import { deleteSessionDraft } from "../../src/session-drafts";
 import { token } from "../server/fixtures/host-api";
 import {
   catalog,
@@ -13,9 +12,9 @@ import {
   initializeRuntimeFixture,
   record,
   schedulingRuntime,
+  startWorker,
   trackedAttachmentStore,
   upload,
-  startWorker,
 } from "../server/fixtures/runtime";
 import {
   bootstrapPayload,
@@ -30,7 +29,6 @@ import { forwardHostRequests } from "./host-requests";
 beforeEach(async () => {
   await initializeRuntimeFixture();
   installFakeWebSocket();
-  deleteSessionDraft("a");
 });
 afterEach(disposeRuntimeFixture);
 
@@ -70,7 +68,9 @@ describe("Host-deferred image recovery", () => {
       const forward = forwardHostRequests(application);
       const waitForQueuedInput = () =>
         vi.waitFor(async () =>
-          expect((await runtime.snapshot()).pendingQueues?.totalCount).toBe(1),
+          expect((await runtime.snapshot("a")).pendingQueues?.totalCount).toBe(
+            1,
+          ),
         );
       try {
         await runtime.openSession("a");
@@ -88,12 +88,7 @@ describe("Host-deferred image recovery", () => {
         installStoreRoutes(async (url, init) => {
           if (url.startsWith("/api/bootstrap"))
             return {
-              body: bootstrapPayload({
-                snapshot: {
-                  ...(await runtime.snapshot()),
-                  runState: "compacting",
-                },
-              }),
+              body: bootstrapPayload({ startupSessionId: "a" }),
             };
           if (url === "/api/attachments")
             return { body: { attachments: [image] } };
@@ -119,9 +114,13 @@ describe("Host-deferred image recovery", () => {
             return response;
           }
         });
-        const { store: sender } = await initStore();
+        const snapshot = {
+          ...(await runtime.snapshot("a")),
+          runState: "compacting" as const,
+        };
+        const { store: sender } = await initStore(snapshot);
         const store =
-          observer === "sender" ? sender : (await initStore()).store;
+          observer === "sender" ? sender : (await initStore(snapshot)).store;
         await sender.addFiles([
           new File(["pixels"], "intent.png", { type: "image/png" }),
         ]);
@@ -132,9 +131,14 @@ describe("Host-deferred image recovery", () => {
         await waitForQueuedInput();
         expect(await store.recoverPending()).toBe(true);
         await vi.waitFor(() =>
-          expect(store.getState().attachments[0]?.previewLoading).toBe(false),
+          expect(
+            store.drafts.get(store.getState().sessionId).attachments[0]
+              ?.previewLoading,
+          ).toBe(false),
         );
-        expect(store.getState().attachments[0]).toMatchObject({
+        expect(
+          store.drafts.get(store.getState().sessionId).attachments[0],
+        ).toMatchObject({
           uploadedId: image.id,
           status: "ready",
         });
@@ -157,12 +161,14 @@ describe("Host-deferred image recovery", () => {
           await finishOriginalPrompt();
           for (const observerStore of new Set([sender, store])) {
             expect(
-              observerStore
-                .getState()
+              observerStore.drafts
+                .get("a")
                 .attachments.map(({ uploadedId }) => uploadedId),
             ).toEqual([image.id]);
           }
-          expect((await runtime.snapshot()).pendingQueues?.totalCount).toBe(0);
+          expect((await runtime.snapshot("a")).pendingQueues?.totalCount).toBe(
+            0,
+          );
           expect(await attachments.resolveForPrompt([image.id])).toMatchObject({
             images: [{ data: original.bytes.toString("base64") }],
           });
@@ -176,7 +182,7 @@ describe("Host-deferred image recovery", () => {
             aborted: true,
           });
           await vi.waitFor(async () =>
-            expect((await runtime.snapshot()).runState).toBe("aborted"),
+            expect((await runtime.snapshot("a")).runState).toBe("aborted"),
           );
         };
         if (action === "send") {
@@ -194,14 +200,21 @@ describe("Host-deferred image recovery", () => {
           expect(await store.recoverPending()).toBe(true);
           expect(await next).toBe(false);
           expect(
-            store.getState().attachments.map((item) => item.uploadedId),
+            store.drafts
+              .get(store.getState().sessionId)
+              .attachments.map((item) => item.uploadedId),
           ).toEqual([image.id]);
         }
         if (action !== "send") {
-          store.removeAttachment(store.getState().attachments[0]!.localId);
+          store.removeAttachment(
+            store.drafts.get(store.getState().sessionId).attachments[0]!
+              .localId,
+          );
         }
         await vi.waitFor(() =>
-          expect(store.getState().attachments).toEqual([]),
+          expect(
+            store.drafts.get(store.getState().sessionId).attachments,
+          ).toEqual([]),
         );
         await vi.waitFor(async () =>
           expect(attachments.imagePreview(image.id)).rejects.toMatchObject({
@@ -209,7 +222,9 @@ describe("Host-deferred image recovery", () => {
           }),
         );
         await finishOriginalPrompt();
-        expect(store.getState().attachments).toEqual([]);
+        expect(
+          store.drafts.get(store.getState().sessionId).attachments,
+        ).toEqual([]);
         if (action !== "send") await finishCompaction();
         expect(await store.sendPrompt("plain text afterwards")).toMatchObject({
           accepted: true,

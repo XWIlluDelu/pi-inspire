@@ -2,8 +2,8 @@ import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer } from "ws";
 import { z } from "zod";
-import { BROWSER_UPGRADE_CLOSE } from "../shared/browser-build.mjs";
 import { MAX_ASSISTANT_STREAM_BATCH_EVENTS } from "../shared/assistant-stream.js";
+import { BROWSER_UPGRADE_CLOSE } from "../shared/browser-build.mjs";
 import {
   isSessionRuntimeStatus,
   MAX_SESSION_ID_CHARS,
@@ -25,7 +25,7 @@ const sessionIdField = z.string().min(1).max(MAX_SESSION_ID_CHARS);
 interface RuntimeEventSocketOptions {
   runtime: Pick<
     RuntimeController,
-    "on" | "off" | "snapshot" | "eventSnapshotCut" | "retainSessionView"
+    "on" | "off" | "snapshot" | "retainSessionView"
   >;
   updateCoordinator: Pick<UpdateCoordinator, "status" | "subscribe">;
   authorityId: string;
@@ -360,6 +360,17 @@ export function createRuntimeEventSockets({
       // Do not even serialize a session body nobody subscribed to.
       if (![...peers.values()].some((peer) => wantsDetail(peer, sessionId)))
         return;
+      if (
+        (record.type === "session_projection_changed" ||
+          record.type === "branch_changed") &&
+        !record.transcript
+      ) {
+        closeProjectionDestinations(
+          "Session view could not be projected",
+          destinations,
+        );
+        return;
+      }
     }
     const streamDelta =
       record?.type === "message_update" &&
@@ -513,7 +524,7 @@ export function createRuntimeEventSockets({
           if (socket.readyState !== WebSocket.OPEN) return;
           if (missingDetail)
             setDetailInterest(peer, { ...interest, sessionId: null });
-          const cut = runtime.eventSnapshotCut(snapshot);
+          const cut = snapshot.runtimeSequence;
           let message: string;
           try {
             message = JSON.stringify({

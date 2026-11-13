@@ -38,7 +38,6 @@ export function ContextPaneShell({
         return false;
       if (!dismissTerminalMenu(ref.current, event.target)) onClose();
     },
-    "drawer",
   );
   // The same host element also preserves readers and terminals across layouts.
   return isModal ? (

@@ -75,13 +75,19 @@ progress, without letting an old completion clear newer progress.
 
 Each replacement page, route list or body belongs to one cancellable read. Failures leave the last
 confirmed page visible and offer Retry. Entry and image reads use bounded backoff for transient
-failures. Recovery never repeats navigation, Fork, Clone or clipboard copying.
+failures. Leaving a view aborts its page, route, entry, image, copy and saved-input observations
+together.
+Recovery never repeats navigation, Fork, Clone or clipboard copying.
 
 ## Same-file navigation
 
 Use supported Pi operations for naming, switching, compaction and navigation. Native edit moves
 before the selected entry and returns its text without submitting, including a root user's null
 parent and native custom-message targets. Successful targets need not become the resulting leaf.
+
+Watch uses the same addressed navigation command and carries the inspected branch revision. It
+selects a readable saved route and can observe an external Pi while leaving an unstarted local
+worker cold. Switch and Edit retain their native mutation admission and use the inspected revision.
 
 Navigation requires an idle, fresh, conflict-free worker with no queued input or pre-existing dialog.
 Reject native shell requests while navigation is pending, including while an extension hook awaits

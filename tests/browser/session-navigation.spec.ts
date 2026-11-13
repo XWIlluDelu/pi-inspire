@@ -13,7 +13,9 @@ import {
 } from "./support/navigation";
 
 async function preserveCuration(page: Page) {
-  const before = await (await hostRequest(page).get("/api/preferences")).json();
+  const { preferences: before } = await (
+    await hostRequest(page).get("/api/preferences")
+  ).json();
   return async () => {
     const restored = await hostRequest(page).patch("/api/preferences", {
       data: {
@@ -300,19 +302,17 @@ test.describe("touch session drawer", () => {
       await action("Pin").tap();
       await expect(drawer.locator(".nav__group--pinned")).toContainText(title);
       await action("Hide").tap();
-      const hidden = drawer.locator(".nav__group--hidden");
-      const hiddenToggle = hidden.getByRole("button", {
+      await drawer.getByRole("button", { name: "Hidden", exact: true }).tap();
+      const hidden = drawer.getByRole("region", {
         name: "Hidden",
         exact: true,
       });
-      if ((await hiddenToggle.getAttribute("aria-expanded")) === "false")
-        await hiddenToggle.tap();
       const hiddenRow = hidden.locator(`[data-session-id="${sessionId}"]`);
       await expect(hiddenRow).toBeVisible();
       await expect(hiddenRow.locator('[aria-current="page"]')).toBeVisible();
       await action("Restore").tap();
       await expect(hiddenRow).toHaveCount(0);
-      // Hiding clears the pin; restoring returns a regular session row.
+      await drawer.getByRole("button", { name: "All", exact: true }).tap();
       await expect(action("Pin")).toBeVisible();
       await expect(input).toHaveValue("Keep this touch draft");
       await row.locator(".nav__row-main").tap();
@@ -394,7 +394,10 @@ test("Needs you receives live attention and remembers its mode across reload", a
   await page.reload();
   await expect(bell).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByText("Nothing needs you")).toBeVisible();
-  await bell.click();
+  await page
+    .locator(".nav")
+    .getByRole("button", { name: "All", exact: true })
+    .click();
   await expect(bell).toHaveAttribute("aria-pressed", "false");
   await expect(pinned).toBeVisible();
 });

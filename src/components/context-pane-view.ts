@@ -20,8 +20,7 @@ export type ContextPaneView = Pick<
   | "cwd"
   | "gitStatus"
   | "gitStatusError"
-  | "gitStatusLoading"
-  | "gitStatusRefreshing"
+  | "gitStatusPending"
   | "gitDiff"
 >;
 
@@ -42,8 +41,7 @@ export function selectContextPaneView(state: AppState): ContextPaneView {
     cwd: state.cwd,
     gitStatus: state.gitStatus,
     gitStatusError: state.gitStatusError,
-    gitStatusLoading: state.gitStatusLoading,
-    gitStatusRefreshing: state.gitStatusRefreshing,
+    gitStatusPending: state.gitStatusPending,
     gitDiff: state.gitDiff,
   };
 }

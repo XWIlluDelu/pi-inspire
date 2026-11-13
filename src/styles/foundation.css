@@ -34,8 +34,8 @@
   --app-height: calc(100dvh - var(--window-titlebar-height));
   --activity-row-h: 30px;
   --reading-width-max: 820px;
-  --content-max: var(--reading-width-max);
-  --composer-max: var(--reading-width-max);
+  --content-max: min(var(--reading-width-max), clamp(680px, 70vw, 980px));
+  --composer-max: var(--content-max);
   --font-sans: "IBM Plex Sans SC", system-ui, sans-serif;
   /* Structural labels share the interface face: two type voices only. */
   --font-label: var(--font-sans);
@@ -948,46 +948,48 @@ input[type="search"]::-webkit-search-cancel-button:hover {
   box-shadow: 0 0 0 3px var(--accent-tint);
 }
 
-/* Reserve the same native scrollbar slot on both pane lists, including short lists. */
-.files-browser__scroll,
-.branch-tree__rows {
+.files-browser__scroll {
   scrollbar-gutter: stable;
 }
 
 /* Pane searches share controls, while each owner retains its width and margins. */
-.search-field:is(.workspace-search, .branch-tree__search) {
+.search-field {
   display: flex;
   min-width: 0;
-  height: 34px;
-  min-height: 34px;
+  height: var(--search-height, 34px);
   align-items: center;
   gap: var(--space-2);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-control);
-  background: var(--bg-surface);
-  padding: 0 var(--space-3);
+  border: 1px solid var(--search-border, var(--hairline));
+  border-radius: var(--search-radius, var(--radius-control));
+  background: var(--search-surface, var(--bg-surface));
+  padding: 0 var(--search-inset, var(--space-3));
   color: var(--muted);
   transition:
     border-color var(--dur-micro) var(--ease-standard),
     color var(--dur-micro) var(--ease-standard);
 }
 
-.search-field:is(.workspace-search, .branch-tree__search):hover {
-  border-color: var(--line);
+@media (hover: hover) {
+  .search-field:hover {
+    background: var(--search-active-surface, var(--search-surface, var(--bg-surface)));
+    border-color: var(--search-hover-border, var(--line));
+    color: var(--ink);
+  }
+}
+
+.search-field:focus-within {
+  background: var(--search-active-surface, var(--search-surface, var(--bg-surface)));
+  border-color: var(--search-focus-border, var(--accent-focus));
+  box-shadow: var(--search-focus-ring, none);
   color: var(--ink);
 }
 
-.search-field:is(.workspace-search, .branch-tree__search):focus-within {
-  border-color: var(--accent-focus);
-  color: var(--ink);
-}
-
-.search-field:is(.workspace-search, .branch-tree__search) svg {
+.search-field svg {
   flex: 0 0 auto;
   color: inherit;
 }
 
-.search-field:is(.workspace-search, .branch-tree__search) input {
+.search-field input {
   flex: 1 1 auto;
   min-width: 0;
   border: 0;
@@ -998,7 +1000,7 @@ input[type="search"]::-webkit-search-cancel-button:hover {
   font: var(--text-sm)/var(--leading-ui) var(--font-sans);
 }
 
-.search-field:is(.workspace-search, .branch-tree__search) input::placeholder {
+.search-field input::placeholder {
   color: var(--muted);
   opacity: 1;
 }
@@ -1046,10 +1048,98 @@ input[type="search"]::-webkit-search-cancel-button:hover {
 }
 
 @media (max-width: 900px) {
-  .search-field:is(.workspace-search, .branch-tree__search) {
-    height: 40px;
-    min-height: 40px;
+  .workspace-search {
+    --search-height: 40px;
   }
+}
+
+.code-view,
+.code-lines {
+  margin: 0;
+  color: var(--body);
+  font: var(--text-reading-code)/var(--leading-mono) var(--font-mono);
+  white-space: pre;
+}
+
+.code-lines {
+  --code-gutter-size: calc((var(--code-line-digits) + 1.5) * 1ch);
+  display: block;
+  width: max-content;
+  min-width: 100%;
+}
+
+.code-row {
+  display: grid;
+  min-height: 1lh;
+  grid-template-columns: auto minmax(max-content, 1fr);
+  align-items: start;
+  background: var(--code-line-fill, transparent);
+}
+
+.code-row__gutter {
+  position: sticky;
+  inset-inline-start: 0;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: var(--code-gutter-size);
+  align-self: stretch;
+  align-items: baseline;
+  background: var(--code-line-fill, var(--code-line-surface, var(--bg-inset)));
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+  user-select: none;
+}
+
+.code-lines[data-gutter="diff"] .code-row__gutter {
+  grid-template-columns: repeat(2, var(--code-gutter-size)) 16px;
+}
+
+.code-row__number {
+  padding-inline: var(--space-1);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.code-row__mark {
+  color: var(--code-change-ink, var(--muted));
+  text-align: center;
+}
+
+.code-row__mark:empty::before {
+  content: "0";
+  visibility: hidden;
+}
+
+.code-row > code {
+  padding-inline: var(--space-2);
+  font: inherit;
+}
+
+.code-row[data-kind="add"] {
+  --code-change-ink: var(--success);
+}
+
+.code-row[data-kind="delete"] {
+  --code-change-ink: var(--error);
+}
+
+.code-row:is([data-kind="add"], [data-kind="delete"]) {
+  --code-line-fill: color-mix(
+    in srgb, var(--code-change-ink) 10%, var(--code-line-surface, var(--bg-inset))
+  );
+}
+
+.code-row[data-kind="hunk"] {
+  color: var(--muted);
+}
+
+.code-row[data-kind="meta"] {
+  color: var(--faint);
+}
+
+.code-row[data-active="true"] > .code-row__gutter {
+  box-shadow: inset 2px 0 var(--accent);
 }
 
 .app-error {

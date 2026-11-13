@@ -28,17 +28,18 @@ and behavior rather than moving all layers onto one text origin.
 Deletion is a second-tier action inside Hidden. Confirmation names the exact targets and explains
 Trash, the permanent-delete fallback, and that project files and separate session copies stay.
 Warn when deletion closes a session in use and stops work in progress.
-The browser submits bounded session identities; the Host resolves and validates their files.
+The browser submits bounded session identities through one reviewed deletion command. The Host
+checks current Hidden curation, reserves the reviewed identities and validates their files.
 
 Confirmed deletion ends the Host's workers and every attach-control-discovered Pi using the exact
 session, across all branches, before moving its file. Running, queued and input-blocked work does
 not disable deletion. The existing confirmation authorizes stopping that work; no second takeover
 or Stop action is required. Instances using other sessions remain running.
 
-The Host reserves the targets against new local operations, accounts for admitted worker startup, and
-ends Pi before draining commands that may be waiting on it. It then suspends projection reads in
-the deletion lane. Selection, creation and fork operations must finish before admission. Local
-reservation never prevents an independent Pi from opening a session.
+The Host reserves the targets against new local operations and refuses targets still opening,
+being created or being forked. It ends Pi before draining commands that may be waiting on it and
+then suspends projection reads in the deletion lane. Local reservation cannot prevent an
+independent Pi from opening a session.
 
 An external shutdown request rechecks the instance's current session. Wait for that process
 incarnation to exit; a reply or vanished presence record alone is insufficient. If it cannot be
@@ -57,7 +58,7 @@ and version must remain unchanged through validation.
 
 ### Clear Hidden
 
-The top-level Hidden section offers a count-bearing Clear action over the complete hydrated union of
+The Hidden catalog view offers a count-bearing Clear action over the complete hydrated union of
 individually hidden sessions and sessions whose exact cwd is a hidden folder. Search and incomplete
 curation hydration cannot authorize clearing.
 
@@ -69,8 +70,9 @@ appends, including shutdown-hook appends, are allowed; each file's final version
 instances exit and is checked at the destructive commit boundary.
 
 A later filesystem failure reports the exact committed subset. Full success removes the reviewed
-session and folder curation; partial success removes only committed session identities and keeps
-folder curation for the remaining sessions.
+session and folder curation. Partial success removes only committed session identities and keeps
+folder curation for the remaining sessions. Every outcome includes stamped navigation preferences
+from its Host or a reason they are unavailable.
 
 ## File commit and outcomes
 
@@ -106,11 +108,12 @@ partial batch failure, without leaving a stale refresh banner. Authentication fa
 transport-wide.
 
 A changed reviewed set, missing/replaced source, or partial batch result retires the confirmation.
-Refresh the catalog and authoritative curation while preserving newer field-owned preference edits
-and the consumed chronological extent. Offer review of the refreshed Hidden targets before another
+Only confirmed curation can authorize deletion. Wait for pending navigation edits to settle
+before reviewing deletion. Refresh the catalog and stamped curation while preserving newer
+preference publications and the consumed chronological extent. Offer review of the refreshed Hidden targets before another
 target-naming confirmation. An already absent session disappears without claiming a Trash or
-permanent-delete outcome. Recovery never repeats DELETE or Clear automatically; ordinary ownership
-refusals leave the retained files available for review.
+permanent-delete outcome. Recovery refreshes the review and leaves destructive execution to a new
+explicit confirmation. Ordinary ownership refusals leave the retained files available for review.
 
 ## Native Trash and original-path recovery
 

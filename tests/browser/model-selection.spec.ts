@@ -12,7 +12,11 @@ test("model labels and selection retain text contrast in light and dark", async 
   await page.emulateMedia({ reducedMotion: "reduce" });
   await pairAndOpen(page);
   await page.getByRole("button", { name: "Model", exact: true }).click();
-  await expect(page.getByRole("option", { selected: true })).toBeVisible();
+  await expect(
+    page
+      .getByRole("listbox", { name: "Available models" })
+      .getByRole("option", { selected: true }),
+  ).toBeVisible();
   for (const [palette, theme] of [
     ["chimonanthus", "light"],
     ["hydrangea", "dark"],

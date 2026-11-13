@@ -26,10 +26,7 @@ import {
   parsePendingExtensionUiRequest,
   parseRetryInfo,
 } from "../shared/contracts.js";
-import {
-  messageFallbackCorrelation,
-  structuralMessageIdentity,
-} from "../shared/message-identity.js";
+import { structuralMessageIdentity } from "../shared/message-identity.js";
 import type { TaskOutcome } from "../shared/notifications.js";
 import { PROVIDER_AUTH_SUFFIX } from "../shared/provider-auth-bridge.js";
 import {
@@ -387,14 +384,6 @@ export class RuntimeEventController {
             ? { previous: previousMessage, event: record.assistantMessageEvent }
             : undefined,
         );
-        if (
-          record.type === "message_start" &&
-          projectedMessage &&
-          typeof projectedMessage === "object" &&
-          (projectedMessage as Record<string, unknown>).role === "assistant"
-        )
-          slot.activeAssistantCorrelation =
-            messageFallbackCorrelation(projectedMessage);
         const streamMessageKey = structuralMessageIdentity(projectedMessage);
         const delta = record.assistantMessageEvent as
           | Record<string, unknown>
@@ -608,7 +597,8 @@ export class RuntimeEventController {
         slot.summarizationRetry = null;
         slot.runState = "running";
         slot.compactionReturnState = null;
-        slot.activeAssistantCorrelation = null;
+        slot.activeAssistantKey = null;
+        slot.activeTurnId = null;
         slot.attention = null;
         break;
       case "compaction_start":
@@ -695,7 +685,8 @@ export class RuntimeEventController {
               ? "aborted"
               : "idle";
         slot.compactionReturnState = null;
-        slot.activeAssistantCorrelation = null;
+        slot.activeAssistantKey = null;
+        slot.activeTurnId = null;
         slot.attention = outcome;
         if (slot.activeTask === "agent") this.host.finishTask(slot, outcome);
         // Native display captions can outlive consumption and settlement.

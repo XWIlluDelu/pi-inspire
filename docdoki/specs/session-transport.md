@@ -8,10 +8,10 @@ covers:
   - src/controllers/pending-recovery-controller.ts
   - tests/integration/pending-{recovery-lifecycle,stop-native.integration}.test.ts
   - server/runtime-worker-pool.ts
-  - shared/{contracts,assistant-stream,tool-argument-updates}.ts
+  - shared/{contracts,host-endpoints,json-endpoints,assistant-stream,tool-argument-updates}.ts
   - server/{tool-argument-stream,tool-argument-batches,runtime-stream-budget}.ts
   - src/{api,events,store,snapshot-transition,transport-performance,recovery-backoff}.ts
-  - src/controllers/{connection,session-selection,runtime-event,transcript-data}-controller.ts
+  - src/controllers/{connection,session-selection,runtime-event,branch}-controller.ts
   - tests/server/{app-events,app-input-operations,runtime-worker-pool}.test.ts
   - tests/integration/session-detail-confirmation.test.ts
   - tests/web/{events,store,store-transcript,store-navigation,store-async-ownership}.test.ts
@@ -46,12 +46,12 @@ follows [[session-persistence]]. It does not prevent explicit deletion. Host-res
 restore history and input without a page refresh, and without repeatedly reclaiming/rebuilding the
 visible conversation when dependent reads fail.
 
-Foreground and navigation state use the Host's explicit `sessionStatus`. The browser acknowledges
-the outcome ID it has viewed without clearing another browser's indication. Infer transitions from
-event names only for unannotated events; failed messages and settlement must not briefly appear
-running/idle while awaiting a correcting snapshot. Bounded Host-owned retry details accompany
-addressed snapshots and live events and retire outside retry phases. Missing/malformed details
-neither hide valid `retrying` state nor invent attempt counts.
+Foreground and navigation derive run state from one Host status per session. Live events carry the
+explicit status through wire validation. Message and lifecycle events still update transient content
+and request presentation. The browser acknowledges the outcome ID it viewed without clearing
+another browser's indication. Bounded Host-owned retry details accompany addressed snapshots and
+live events and retire outside retry phases. A valid `retrying` state remains visible if its detail
+is unavailable.
 
 ## Snapshot synchronization and reconnect
 
@@ -66,6 +66,9 @@ the snapshot. The socket replays only queued runtime events newer than that cut.
 After a socket loss, attempt bounded WebSocket resume with the current address. A failed resume
 falls back to metadata bootstrap; a newer selection replaces the socket's interest and invalidates
 any previous projection still in flight. HTTP open remains an explicit selection operation.
+
+HTTP snapshot reads also carry an explicit session ID or an empty detail address. The last-opened
+hint is used only to choose a new tab's starting address.
 
 ### Recovery triggers and deadlines
 
@@ -102,10 +105,11 @@ are never replayed; persistent synchronization loss follows [[workbench]].
 ### Latest-wins ownership
 
 Open/new/deselect responses require the original API client and explicit selection owner; each
-transport replacement installs a new client. A newer open, new-session, deselection, unaddressed selection push, bootstrap or transport
-replacement supersedes the previous operation without serializing navigation. Addressed stream
-snapshots refresh existing detail interest without retiring a newer HTTP selection. Successful
-new-session selection clears the previous opener; stale completion/cleanup cannot clear a newer one.
+transport replacement installs a new client. A newer open, new-session, deselection or transport
+replacement supersedes the previous operation without serializing navigation. Every stream snapshot
+names its detail subscription and revision. It refreshes that subscription while preserving a
+newer HTTP selection intent. Successful new-session selection clears the previous opener. Each
+operation can clear only its own opening state.
 Every open/new endpoint finishes fallible projection and runtime-metadata reads before committing
 selection or identity.
 
@@ -119,9 +123,9 @@ The read keeps that address through completion even if another request changes t
 HTTP resync success and failure share these fences, including same-session view replacement and
 A → B → A navigation. A current-API 401 remains transport-wide; a replaced API's error is stale.
 Obsolete operation completions cannot start a resync that invalidates the current pending read.
-Abort error publication and optimistic thinking rollback also require their original selection
-generation. Rename/prompt completions remain bound to their originating session and cannot change
-another session's title, draft or visible error.
+Abort error publication and native setting intents remain bound to their original selection
+generation. Rename and prompt completions stay with the originating session's title, draft and
+feedback.
 
 ### Selection and commit effects
 
@@ -140,6 +144,10 @@ blocking writes. Incomplete persistence, projection failure and acceptance-unkno
 red blocking errors.
 
 ## HTTP observation ownership
+
+Browser and Host share a closed contract for ordinary JSON queries and commands, including method,
+address, input validation, typed response and observation policy. Authentication, origin checks,
+native domain checks and byte transfers keep their own boundaries.
 
 | Operation | Observation limit |
 | --- | --- |
@@ -179,9 +187,11 @@ the browser observation while execution continues.
 The browser API confirms a result only from a retained receipt with matching Host authority,
 command and operation ID. Transport failures and unavailable or unknown receipts leave delivery
 unconfirmed.
-[[composer]] restores the input and retains the original id and payload to recognize an unchanged-draft retry
-on the same Host, including after a delivery-mode change. After a Host restart, Inspire asks the
-user to inspect refreshed history before resending.
+[[composer]] tracks the operation before dispatch. Retry delivery observes the same id even when
+the draft or delivery selection has changed. Same-version tab reload restores the original
+identity and request fingerprint for receipt observation. Unsupported records can be explicitly
+retired. The stored record contains the proof used for observation and has no replayable input. After a Host
+restart, the old result remains unknown and the user can inspect history before starting new input.
 
 ## Pending handoff observations
 
@@ -240,6 +250,10 @@ text/argument previews grow. Coalesce adjacent updates to one tool while preserv
 and its original revision span, including through render-window batching and the 2,048-source-event
 ceiling. Invalid identity, reconstructed length, serialization or size state requires an
 authoritative snapshot instead of guessing across a gap.
+
+An observed projection or branch change publishes its native rows, branch ownership and
+diagnostics in one stamped detail frame. A rejected replacement recovers through a new addressed
+snapshot on the stream.
 
 Browser-only bounded Performance timeline measures expose bootstrap/prompt confirmation, WebSocket
 handshake phase, snapshot characters and event-window frame/character rates, without persistent

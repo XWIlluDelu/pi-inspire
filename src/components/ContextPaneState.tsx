@@ -1,3 +1,4 @@
+import { RotateCw } from "lucide-react";
 import type { ReactNode } from "react";
 
 export function ContextPaneState({
@@ -7,6 +8,7 @@ export function ContextPaneState({
   children,
   className,
   role = "status",
+  onRetry,
 }: {
   icon: ReactNode;
   title: string;
@@ -14,6 +16,7 @@ export function ContextPaneState({
   children?: ReactNode;
   className?: string;
   role?: "status" | "alert";
+  onRetry?: () => void;
 }) {
   return (
     <div
@@ -24,6 +27,15 @@ export function ContextPaneState({
       <p className="res__state-title">{title}</p>
       {hint ? <p className="res__state-hint">{hint}</p> : null}
       {children}
+      {onRetry && (
+        <button
+          type="button"
+          className="res__more button--quiet res__state-action"
+          onClick={onRetry}
+        >
+          <RotateCw size={12} aria-hidden /> Retry
+        </button>
+      )}
     </div>
   );
 }

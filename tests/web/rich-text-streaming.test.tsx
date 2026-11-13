@@ -131,7 +131,7 @@ describe("bounded expensive-leaf reuse", () => {
     expect(container.querySelector(".katex")).toBe(firstMath);
     expect(container.querySelector("pre code")).toBe(firstCode);
     fireEvent.click(
-      container.querySelector<HTMLButtonElement>(".code-block__copy")!,
+      container.querySelector<HTMLButtonElement>('[aria-label="Copy code"]')!,
     );
     await waitFor(() =>
       expect(container.querySelector('[aria-label="Copied"]')).toBeTruthy(),

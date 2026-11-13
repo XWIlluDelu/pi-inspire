@@ -125,7 +125,7 @@ async function initialized(
       );
     if (url.startsWith("/api/bootstrap"))
       return {
-        body: bootstrapPayload({ snapshot: activeSnapshot() }),
+        body: bootstrapPayload({ startupSessionId: "s1" }),
       };
     if (url.startsWith("/api/sessions/open"))
       return open
@@ -153,7 +153,7 @@ async function initialized(
   // instead supply the real stream settings-before-offer sequence below.
   if (refresh) await store.refreshTaskAlerts();
   const socket = FakeWebSocket.instances.at(-1)!;
-  socket.open();
+  socket.join(activeSnapshot());
   return { store, socket };
 }
 function outcome(socket: FakeWebSocket, id = "outcome-one", sessionId = "bg") {
@@ -485,7 +485,7 @@ describe("device-local task alerts", () => {
     });
     await store.init();
     const replacement = FakeWebSocket.instances.at(-1)!;
-    replacement.open();
+    replacement.join(activeSnapshot());
     outcome(replacement, "outcome-two");
     await vi.waitFor(() => expect(acknowledgments).toContain("outcome-two"));
     expect(workerMessages).toHaveLength(2);
@@ -544,7 +544,7 @@ describe("device-local task alerts", () => {
     );
     unavailable = false;
     await store.init();
-    FakeWebSocket.instances.at(-1)!.open();
+    FakeWebSocket.instances.at(-1)!.join(activeSnapshot());
     await vi.waitFor(() => expect(store.getState().sessionId).toBe("bg"));
 
     click("slow");

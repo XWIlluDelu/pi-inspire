@@ -7,6 +7,7 @@ import {
   THINKING_LEVELS,
   type ThinkingLevel,
 } from "../shared/contracts.js";
+import type { ModelThinkingPreferences } from "../shared/model-settings.js";
 import {
   createAgentSessionFromServices,
   getAgentDir,
@@ -85,20 +86,23 @@ export function modelSettings(cwd: string, agentDir = getAgentDir()) {
   return settings;
 }
 
-/** Same precedence as AgentSession.setModel, before capability clamping. It
- * reads public settings only, including for extension-only model identities. */
-export function modelSwitchThinkingLevel(
-  cwd: string,
-  provider: string,
-  id: string,
-  current: ThinkingLevel,
-): ThinkingLevel {
-  const settings = modelSettings(cwd);
-  return (
-    settings.getModelThinkingLevel(provider, id) ??
-    settings.getDefaultThinkingLevel() ??
-    current
-  );
+/** Project only model identities and supported levels from native settings. */
+export function modelThinkingPreferences(
+  settings: ReturnType<typeof modelSettings>,
+): ModelThinkingPreferences {
+  const defaultLevel = settings.getDefaultThinkingLevel();
+  return {
+    defaultLevel:
+      defaultLevel && THINKING_LEVELS.includes(defaultLevel)
+        ? defaultLevel
+        : undefined,
+    byModel: Object.fromEntries(
+      Object.entries(settings.getAllModelThinkingLevels()).filter(
+        ([identity, level]) =>
+          identity.includes("/") && THINKING_LEVELS.includes(level),
+      ),
+    ),
+  };
 }
 
 /** Build one native preview after the service factory has registered providers.

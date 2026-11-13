@@ -7,7 +7,7 @@ import type {
   ExternalSessionState,
 } from "../../server/external-session.js";
 import { HostRestartController } from "../../server/host-restart.js";
-import type { PiRpcProcess } from "../../server/pi-rpc.js";
+import type { PiRpcOptions, PiRpcProcess } from "../../server/pi-rpc.js";
 import {
   RuntimeController,
   type RuntimeControllerOptions,
@@ -32,6 +32,7 @@ import {
   trackRuntime,
   upload,
 } from "./fixtures/runtime.js";
+import { jsonl, messageEntry } from "./fixtures/session-jsonl.js";
 
 const directProjections: Awaited<ReturnType<typeof preview>>[] = [];
 
@@ -60,6 +61,7 @@ function nativeState(
 
 function nativeFixture() {
   let state: ExternalSessionRead = nativeState();
+  const selection = { model: null, thinkingLevel: "off" as const };
   const native: ExternalSessionConnection = {
     read: vi.fn(async () => state),
     prompt: vi.fn(async () => {
@@ -71,19 +73,9 @@ function nativeFixture() {
     abort: vi.fn(async () => {
       if (!("ended" in state)) state = { ...state, activity: "idle" };
     }),
-    models: vi.fn(async () => ({
-      model: null,
-      thinkingLevel: "off" as const,
-      models: [],
-    })),
-    setModel: vi.fn(async () => ({
-      model: null,
-      thinkingLevel: "off" as const,
-    })),
-    setThinkingLevel: vi.fn(async () => ({
-      model: null,
-      thinkingLevel: "off" as const,
-    })),
+    models: vi.fn(async () => ({ ...selection, models: [] })),
+    setModel: vi.fn(async () => selection),
+    setThinkingLevel: vi.fn(async () => selection),
   };
   return {
     native,
@@ -97,14 +89,23 @@ function nativeFixture() {
   };
 }
 
-function branchMessage(id: string, parentId: string): string {
-  return `${JSON.stringify({
-    type: "message",
-    id,
-    parentId,
-    timestamp: "2026-11-10T15:00:00.000Z",
-    message: { role: "assistant", content: [{ type: "text", text: id }] },
-  })}\n`;
+const branchMessage = (id: string, parentId: string) =>
+  jsonl(
+    messageEntry(id, parentId, {
+      role: "assistant",
+      content: [{ type: "text", text: id }],
+      timestamp: Date.parse("2026-11-10T15:00:00.000Z"),
+    }),
+  );
+
+function workerFactory() {
+  const workers: FakeRpc[] = [];
+  const createProcess = vi.fn((options: PiRpcOptions) => {
+    const worker = new FakeRpc(options);
+    workers.push(worker);
+    return worker as unknown as PiRpcProcess;
+  });
+  return { workers, createProcess };
 }
 
 /** RuntimeExternalSessions driven directly on one idle slot "a". */
@@ -181,12 +182,14 @@ function runtimeFor(
   options: RuntimeControllerOptions = {},
   store = trackedAttachmentStore(),
 ) {
-  return new RuntimeController(catalog(sessions), store, {
+  const runtime = new RuntimeController(catalog(sessions), store, {
     createProcess: () => {
       throw new Error("must not launch Pi");
     },
     ...options,
   });
+  trackRuntime(runtime);
+  return runtime;
 }
 
 /** A runtime over session "a" where a live Pi continues the branch. Owned
@@ -234,10 +237,10 @@ describe("continue an externally owned Pi", () => {
     const dispatch = vi.fn();
     let startsAfterReservation = true;
     const controller = new HostRestartController(runtime, {
-      inspect: async () => ({ host: true, all: true }),
+      inspect: async () => ({ host: true }),
       prepare: async () => {},
       request: async (scope, commit) => {
-        expect(scope).toBe("all");
+        expect(scope).toBe("host");
         const before = vi.mocked(f.native.read).mock.calls.length;
         if (startsAfterReservation) {
           // The TUI starts work after reservation while its last poll is idle.
@@ -259,7 +262,7 @@ describe("continue an externally owned Pi", () => {
       controller.start({
         hostId: (await controller.status()).hostId,
         operationId: "busy-before-commit",
-        scope: "all",
+        scope: "host",
       });
       await vi.waitFor(async () =>
         expect((await controller.status()).operation).toMatchObject({
@@ -274,7 +277,7 @@ describe("continue an externally owned Pi", () => {
       controller.start({
         hostId: (await controller.status()).hostId,
         operationId: "forced-before-poll",
-        scope: "all",
+        scope: "host",
         interruptWork: true,
       });
       await vi.waitFor(async () =>
@@ -298,7 +301,6 @@ describe("continue an externally owned Pi", () => {
       new Error("No Stop receipt"),
     );
     const runtime = attachedRuntime(async () => f.native);
-    trackRuntime(runtime);
     await openAttached(runtime, "a");
     await expect(runtime.stopAttachedPiWork()).rejects.toThrow(
       "Could not confirm Stop for a. Work may still be running.",
@@ -361,9 +363,7 @@ describe("continue an externally owned Pi", () => {
   it("keeps a cold addressed view read-only when an apparently idle Pi is already working", async () => {
     const f = nativeFixture();
     f.setState({ activity: "working", leafId: "u1" });
-    const createProcess = vi.fn(() => {
-      throw new Error("must not launch Pi");
-    });
+    const { createProcess } = workerFactory();
     const runtime = runtimeFor([await persistedRecord("a")], { createProcess })
       .setExternalSessionPresence(async () => ["u1"])
       .setExternalSessionConnector(async (_id, _file, _match, idleOnly) =>
@@ -392,16 +392,13 @@ describe("continue an externally owned Pi", () => {
   it("opens the current branch when the live Pi confirms it is still on an older node", async () => {
     const session = await persistedRecord("a");
     await appendFile(session.path, branchMessage("saved-current", "u1"));
-    const create = vi.fn(
-      (options) => new FakeRpc(options) as unknown as PiRpcProcess,
-    );
+    const { createProcess: create } = workerFactory();
     const runtime = runtimeFor([session], {
       createProcess: create,
     }).setExternalSessionPresence(async (_id, _file, _fresh, isAncestor) => {
       expect(isAncestor("u1")).toBe(true);
       return ["u1"];
     });
-    trackRuntime(runtime);
     const preview = await runtime.openSession("a");
     expect(preview.active?.effectiveLeafId).toBe("saved-current");
     expect(create).not.toHaveBeenCalled();
@@ -417,9 +414,7 @@ describe("continue an externally owned Pi", () => {
     async (leaf) => {
       const presence = vi.fn(async () => [leaf]);
       const connect = vi.fn(async () => null);
-      const create = vi.fn(
-        (options) => new FakeRpc(options) as unknown as PiRpcProcess,
-      );
+      const { createProcess: create } = workerFactory();
       const runtime = attachedRuntime(connect, {
         createProcess: create,
       }).setExternalSessionPresence(presence);
@@ -447,15 +442,12 @@ describe("continue an externally owned Pi", () => {
   );
 
   it("does not start a writer when live ownership could not be observed", async () => {
-    const create = vi.fn(
-      (options) => new FakeRpc(options) as unknown as PiRpcProcess,
-    );
+    const { createProcess: create } = workerFactory();
     const runtime = attachedRuntime(async () => null, {
       createProcess: create,
     }).setExternalSessionPresence(async () => {
       throw new Error("Cannot read registry");
     });
-    trackRuntime(runtime);
     await runtime.snapshot("a");
     await expect(
       runtime.prompt({ sessionId: "a", message: "First input" }),
@@ -464,13 +456,9 @@ describe("continue an externally owned Pi", () => {
   });
 
   it("fences a new external leaf reported during writer preparation", async () => {
-    const workers: FakeRpc[] = [];
+    const { createProcess, workers } = workerFactory();
     const runtime = attachedRuntime(async () => null, {
-      createProcess: (options) => {
-        const worker = new FakeRpc(options);
-        workers.push(worker);
-        return worker as unknown as PiRpcProcess;
-      },
+      createProcess,
     }).setExternalSessionPresence(
       vi
         .fn()
@@ -494,18 +482,13 @@ describe("continue an externally owned Pi", () => {
 
   it("rechecks a merely viewed session on entry but keeps a worked-on session editable", async () => {
     let live: (string | null)[] = [];
-    const workers: FakeRpc[] = [];
+    const { createProcess, workers } = workerFactory();
     const runtime = runtimeFor([record("a", "/tmp"), record("b", "/tmp")], {
-      createProcess: (options) => {
-        const worker = new FakeRpc(options);
-        workers.push(worker);
-        return worker as unknown as PiRpcProcess;
-      },
+      createProcess,
       openSessionProjection: (session) => preview(session, []),
     })
       .setExternalSessionPresence(async () => live)
       .setExternalSessionConnector(async () => null);
-    trackRuntime(runtime);
     await runtime.openSession("a");
     await runtime.openSession("b");
     expect(workers).toHaveLength(0);
@@ -534,7 +517,6 @@ describe("continue an externally owned Pi", () => {
     const runtime = attachedRuntime(async () => f.native);
     const outcomes = vi.fn();
     runtime.on("task_outcome", outcomes);
-    trackRuntime(runtime);
     await openAttached(runtime, "a");
     expect(outcomes).not.toHaveBeenCalled();
     const failed = {
@@ -562,7 +544,6 @@ describe("continue an externally owned Pi", () => {
     const f = nativeFixture();
     const runtime = attachedRuntime(async () => f.native);
     const read = vi.mocked(f.native.read);
-    trackRuntime(runtime);
     read.mockRejectedValue(new Error("Control endpoint unavailable"));
     await expect(openAttached(runtime, "a")).rejects.toThrow(
       "Control endpoint unavailable",
@@ -613,16 +594,10 @@ describe("continue an externally owned Pi", () => {
       beforeSend?.();
       f.setState({ activity: "working", leafId: "u1" });
     });
-    const workers: FakeRpc[] = [];
+    const { createProcess, workers } = workerFactory();
     const runtime = runtimeFor(
       [await persistedRecord("a"), await persistedRecord("b")],
-      {
-        createProcess: (options) => {
-          const worker = new FakeRpc(options);
-          workers.push(worker);
-          return worker as unknown as PiRpcProcess;
-        },
-      },
+      { createProcess },
     )
       .setExternalSessionPresence(async (id) => (id === "a" ? ["u1"] : []))
       .setExternalSessionConnector(async (id) =>
@@ -679,11 +654,8 @@ describe("continue an externally owned Pi", () => {
         .fn()
         .mockResolvedValueOnce(first.native)
         .mockResolvedValue(replacement.native);
-      const create = vi.fn(
-        (options) => new FakeRpc(options) as unknown as PiRpcProcess,
-      );
+      const { createProcess: create } = workerFactory();
       const runtime = attachedRuntime(connect, { createProcess: create });
-      trackRuntime(runtime);
       await openAttached(runtime, "a");
       first.setState({ ended: "exited" });
       const mutate = {
@@ -707,14 +679,8 @@ describe("continue an externally owned Pi", () => {
     const scanning = deferredSignal();
     const finish = deferredSignal();
     let pause = false;
-    const workers: FakeRpc[] = [];
-    const runtime = runtimeFor([session], {
-      createProcess: (options) => {
-        const worker = new FakeRpc(options);
-        workers.push(worker);
-        return worker as unknown as PiRpcProcess;
-      },
-    })
+    const { createProcess, workers } = workerFactory();
+    const runtime = runtimeFor([session], { createProcess })
       .setExternalSessionPresence(async () => {
         if (pause) {
           pause = false;
@@ -736,7 +702,12 @@ describe("continue an externally owned Pi", () => {
       const oldView = (await runtime.snapshot("a")).active!;
       expect(oldView.effectiveLeafId).toBe("old-branch");
       pause = true;
-      const select = runtime.selectBranch("a", "other-branch");
+      const select = runtime.navigateBranch({
+        sessionId: "a",
+        targetId: "other-branch",
+        revision: oldView.branchRevision!,
+        mode: "watch",
+      });
       await scanning.promise;
       const send = expect(
         runtime.prompt({ sessionId: "a", message: "For old branch" }),
@@ -783,7 +754,14 @@ describe("continue an externally owned Pi", () => {
       );
     trackRuntime(runtime);
     await openAttached(runtime, "a");
-    await expect(runtime.selectBranch("a", "other")).rejects.toMatchObject({
+    await expect(
+      runtime.navigateBranch({
+        sessionId: "a",
+        targetId: "other",
+        revision: (await runtime.snapshot("a")).active!.branchRevision!,
+        mode: "watch",
+      }),
+    ).rejects.toMatchObject({
       status: 409,
     });
     expect(await runtime.snapshot("a")).toMatchObject({
@@ -838,9 +816,7 @@ describe("continue an externally owned Pi", () => {
     const entered = deferredSignal();
     const proceed = deferredSignal();
     let retired = false;
-    const worker = vi.fn(
-      (options) => new FakeRpc(options) as unknown as PiRpcProcess,
-    );
+    const { createProcess: worker } = workerFactory();
     const runtime = attachedRuntime(async () => (retired ? null : f.native), {
       createProcess: worker,
     }).setExternalSessionPresence(async () => (retired ? [] : [null]));
@@ -897,7 +873,6 @@ describe("continue an externally owned Pi", () => {
       );
     const events: Array<{ type: string; sessionId: string }> = [];
     runtime.on("event", (event) => events.push(event));
-    trackRuntime(runtime);
     const attached = await openAttached(runtime, "a");
     expect(attached.sessionStatuses.a?.external).toBe(true);
     const replyId = "native-reply";
@@ -1083,7 +1058,10 @@ describe("continue an externally owned Pi", () => {
           kind: "busy",
         });
         runtime.setExternalSessionTerminator(terminated);
-        await runtime.deleteSession("a");
+        await runtime.deleteSessions(
+          { scope: "session", sessionId: "a" },
+          { hiddenSessionIds: ["a"], hiddenProjectCwds: [] },
+        );
         await sending;
         expect(terminated).toHaveBeenCalledOnce();
         expect(remove).toHaveBeenCalledOnce();
@@ -1379,7 +1357,6 @@ describe("continue an externally owned Pi", () => {
       .mockResolvedValueOnce(first.native)
       .mockResolvedValue(next.native);
     const runtime = attachedRuntime(connect);
-    trackRuntime(runtime);
     await openAttached(runtime, "a");
     await runtime.prompt({ sessionId: "a", message: "First" });
     first.setState({ ended: "exited" });

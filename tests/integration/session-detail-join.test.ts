@@ -1,121 +1,99 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
+import { AppStore } from "../../src/store";
 import {
   closeHostApiFixture,
   hostApiFixture,
   observeEventSocket,
+  token,
 } from "../server/fixtures/host-api";
-import {
-  deferred,
-  installFakeWebSocket,
-  TEST_HOST_AUTHORITY,
-} from "../web/helpers";
-import { initStore, installStoreRoutes } from "../web/store-fixture";
-import { forwardHostRequests } from "./host-requests";
+import { deferred, FakeWebSocket, installFakeWebSocket } from "../web/helpers";
 
 let fixture: Awaited<ReturnType<typeof hostApiFixture>> | undefined;
 afterEach(async () => {
   if (fixture) await closeHostApiFixture(fixture);
 });
 
-it("delivers the addressed projection before new events despite already-sent detail from another session", async () => {
+it("changes the addressed view through the Host without mixing old detail and queued events", async () => {
   installFakeWebSocket();
-  const { application, baseUrl, runtime } = (fixture = await hostApiFixture());
-  const forward = forwardHostRequests(application);
+  const { baseUrl, runtime } = (fixture = await hostApiFixture());
   const previous = "fixture-active";
   const next = "fixture-history";
   await runtime.openSession(previous);
-  await runtime.openSession(next);
-  await vi.waitFor(async () => {
-    for (const id of [previous, next])
-      expect(
-        (await runtime.snapshot(id)).active?.runtimeSettings,
-      ).toBeDefined();
+  const http = fetch;
+  vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) => {
+    const headers = new Headers(init?.headers);
+    headers.set("Authorization", `Bearer ${token}`);
+    return http(new URL(String(input), baseUrl), { ...init, headers });
   });
-  const window = await runtime.snapshot(next);
-  const message = {
-    role: "user",
-    content: "current detail",
-    timestamp: 1,
-  };
-  window.active!.transcriptPage.messages = [message];
+  const store = new AppStore();
+  await store.init();
+  const socket = FakeWebSocket.instances.at(-1)!;
+  socket.open();
   const { socket: hostSocket, frames } = observeEventSocket(
     `${baseUrl.replace("http", "ws")}/events?detail=${previous}`,
   );
-  const readStarted = deferred<void>();
-  const releaseRead = deferred<void>();
+  const release = deferred<void>();
+  const read = deferred<void>();
+  const originalSnapshot = runtime.snapshot.bind(runtime);
   try {
     await vi.waitFor(() => expect(frames[0]?.type).toBe("snapshot"));
+    socket.emit(frames[0]);
+    expect(store.getState()).toMatchObject({
+      sessionId: previous,
+      connection: "open",
+    });
     runtime.emit("event", {
       type: "message_update",
       sessionId: previous,
-      message: { role: "assistant", timestamp: 2, content: "Old detail" },
+      message: { role: "assistant", content: "Old detail", timestamp: 2 },
     });
-    const oldFrame = await vi.waitFor(() => {
-      const frame = frames.find(({ type }) => type === "message_update");
-      expect(frame).toBeDefined();
-      return frame!;
-    });
-    frames.length = 0;
-
-    vi.spyOn(runtime, "openSession").mockResolvedValue(window);
-    vi.spyOn(runtime, "snapshot")
-      .mockResolvedValue(window)
-      .mockImplementationOnce(async () => {
-        readStarted.resolve();
-        await releaseRead.promise;
-        return window;
-      });
-    installStoreRoutes(async (url, init) => {
-      if (url !== "/api/sessions/open") return;
-      const response = await forward(url, init);
-      expect(response.status).toBe(200);
-      return response;
-    });
-    const { store, socket } = await initStore();
+    await vi.waitFor(() => expect(frames[1]?.type).toBe("message_update"));
+    const [oldSnapshot, oldMessage] = frames.splice(0);
     await store.openSession(next);
-    const interest = JSON.parse(socket.sent.at(-1)!);
-    expect(interest).toMatchObject({
+    const messages = store.getState().messages;
+    expect(messages.length).toBeGreaterThan(0);
+
+    vi.spyOn(runtime, "snapshot").mockImplementation(async (id) => {
+      if (id === next) {
+        read.resolve();
+        await release.promise;
+      }
+      return originalSnapshot(id);
+    });
+    const interest = socket.sent.at(-1)!;
+    expect(JSON.parse(interest)).toEqual({
       type: "detail_interest",
       sessionId: next,
+      revision: 1,
     });
-    const messages = store.getState().messages;
-    expect(messages).toMatchObject([message]);
-    const send = () => hostSocket.send(JSON.stringify(interest));
-    const incoming = () =>
-      frames.filter(
-        (frame) =>
-          frame.detailRevision === interest.revision ||
-          (frame.sessionId === next && frame.type === "agent_start"),
-      );
-    send();
-    await readStarted.promise;
+    hostSocket.send(interest);
+    await read.promise;
     runtime.emit("event", {
       type: "agent_start",
       sessionId: next,
       sessionStatus: { runState: "running" },
     });
-    expect(incoming()).toEqual([]);
-    releaseRead.resolve();
-    await vi.waitFor(() => expect(incoming()).toHaveLength(2));
-    const [confirmation, event] = incoming();
-    expect(confirmation).toMatchObject({
-      detailRevision: interest.revision,
-      data: { active: { sessionId: next } },
-    });
-    expect(event?.type).toBe("agent_start");
+    expect(frames).toEqual([]);
+    release.resolve();
+    await vi.waitFor(() => expect(frames).toHaveLength(2));
+    expect(frames.map(({ type }) => type)).toEqual(["snapshot", "agent_start"]);
 
-    socket.emit(oldFrame);
-    socket.emit({ ...confirmation, authorityId: TEST_HOST_AUTHORITY });
-    socket.emit(event!);
+    socket.emit(oldSnapshot);
+    socket.emit(oldMessage!);
+    expect(store.getState().sessionId).toBe(next);
+    expect(store.getState().messages).toEqual(messages);
+
+    socket.emit(frames[0]);
+    socket.emit(frames[1]!);
     expect(store.getState()).toMatchObject({
       sessionId: next,
       connection: "open",
-      runState: "running",
+      sessionStatuses: { [next]: { runState: "running" } },
     });
     expect(store.getState().messages).toEqual(messages);
   } finally {
-    releaseRead.resolve();
+    release.resolve();
     hostSocket.close();
   }
 }, 15_000);

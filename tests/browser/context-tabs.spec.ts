@@ -46,7 +46,7 @@ test("finds an open tab by name and keeps it reachable in the narrow workbench @
   });
   await expect(selected).toHaveAttribute("aria-selected", "true");
   await expect(selected).toBeFocused();
-  const strip = dialog.locator(".ctx__file-tabs");
+  const strip = dialog.locator(".dock-tabs__scroll");
   const active = (await selected.locator("..").boundingBox())!;
   const bounds = (await strip.boundingBox())!;
   expect(active.x).toBeGreaterThanOrEqual(bounds.x - 1);
@@ -66,7 +66,7 @@ test("shared terminal tabs reactivate the same shell and keep rename editing in 
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
   const pane = page.locator(".ctx");
   await pane.getByRole("button", { name: "New terminal", exact: true }).click();
-  const tab = pane.locator(".ctx__terminal-tabs [role=tab]").first();
+  const tab = pane.locator('[role=tab][data-dock-tab^="terminal:"]').first();
   await expect(tab).toBeVisible();
   const id = (await tab.getAttribute("id"))!.slice("terminal-tab-".length);
   try {
@@ -116,7 +116,7 @@ test("shared terminal tabs reactivate the same shell and keep rename editing in 
       await page.evaluate(() => document.fonts.ready);
       // Resize changes CSS before React transfers the pane into its drawer.
       await tab.hover();
-      const label = (await tab.locator(".terminal-tab__label").boundingBox())!;
+      const label = (await tab.locator(".dock-tab__label").boundingBox())!;
       await tab.dblclick();
       const editor = pane.getByRole("textbox", {
         name: "Terminal name",
@@ -125,7 +125,7 @@ test("shared terminal tabs reactivate the same shell and keep rename editing in 
       await expect(editor).toBeFocused();
       const geometry = await editor.evaluate((el) => {
         const box = el.getBoundingClientRect();
-        const parent = el.closest(".ctx__file-tab")!.getBoundingClientRect();
+        const parent = el.closest(".dock-tab")!.getBoundingClientRect();
         const style = getComputedStyle(el);
         return {
           textLeft:

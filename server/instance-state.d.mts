@@ -1,7 +1,9 @@
-export const INSTANCE_STATE_VERSION: 1;
+import { INSTANCE_STATE_VERSION } from "./instance-control.mjs";
+
+export { INSTANCE_STATE_VERSION };
 
 export interface InstanceState {
-  schemaVersion: 1;
+  schemaVersion: typeof INSTANCE_STATE_VERSION;
   pid: number;
   root: string;
   host: string;
@@ -9,8 +11,6 @@ export interface InstanceState {
   token: string;
   startedAt: string;
   processStartTime: string;
-  /** Compatibility marker for the signed instance control protocol. */
-  durableWorkerRelease: true;
   systemdInvocationId?: string;
 }
 
@@ -34,6 +34,17 @@ export function processStartIdentity(
   pid: number,
   signal?: AbortSignal,
 ): Promise<string>;
+type ProcessIncarnation = Pick<InstanceState, "pid" | "processStartTime">;
+export function observeProcessExit(
+  owner: ProcessIncarnation,
+  timeoutMs: number,
+): Promise<boolean>;
+export function processMayBeLive(
+  owner: ProcessIncarnation,
+  signal?: AbortSignal,
+): Promise<boolean>;
+export function readInstanceState(path: string): Promise<InstanceState | null>;
+export function assertInstanceTarget(path: string, target: InstanceState): Promise<void>;
 export function writeInstanceState(
   path: string,
   state: InstanceState,
@@ -57,6 +68,7 @@ export function stopManagedInstance(
   expected: ExpectedInstance,
   options?: {
     timeoutMs?: number;
+    target?: InstanceState;
   },
 ): Promise<StopResult>;
 export function portAvailable(host: string, port: number): Promise<boolean>;

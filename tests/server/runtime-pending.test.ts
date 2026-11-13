@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PiRpcProcess } from "../../server/pi-rpc.js";
-import { projectPendingQueues } from "../../server/runtime-pending.js";
 import { RuntimeController } from "../../server/runtime.js";
+import { projectPendingQueues } from "../../server/runtime-pending.js";
 import { ATTACHMENT_CONTEXT_HEADING } from "../../shared/attachment-context.js";
 import {
   MAX_PENDING_MESSAGES,
@@ -18,10 +18,10 @@ import {
   preview,
   record,
   schedulingRuntime,
+  startWorker,
   trackedAttachmentStore,
   trackRuntime,
   upload,
-  startWorker,
   waitForReady,
 } from "./fixtures/runtime.js";
 
@@ -139,7 +139,9 @@ describe("RuntimeController Pending input and recovery", () => {
         })
         .catch((error) => error);
       await vi.waitFor(async () =>
-        expect((await f.runtime.snapshot()).pendingQueues?.totalCount).toBe(1),
+        expect((await f.runtime.snapshot("a")).pendingQueues?.totalCount).toBe(
+          1,
+        ),
       );
       const metadata = vi.spyOn(attachments, "pendingImageAttachments");
       if (unavailable)
@@ -150,7 +152,9 @@ describe("RuntimeController Pending input and recovery", () => {
         await expect(f.runtime.recoverPending("a")).rejects.toThrow(
           "image unavailable",
         );
-        expect((await f.runtime.snapshot()).pendingQueues?.totalCount).toBe(1);
+        expect((await f.runtime.snapshot("a")).pendingQueues?.totalCount).toBe(
+          1,
+        );
         metadata.mockRestore();
       }
       const receipt =
@@ -171,7 +175,7 @@ describe("RuntimeController Pending input and recovery", () => {
           recoveredAttachments: [image],
         });
       }
-      expect((await f.runtime.snapshot()).pendingQueues?.totalCount).toBe(0);
+      expect((await f.runtime.snapshot("a")).pendingQueues?.totalCount).toBe(0);
       expect((await attachments.imagePreview(image.id)).bytes.toString()).toBe(
         "payload",
       );
@@ -197,7 +201,7 @@ describe("RuntimeController Pending input and recovery", () => {
         ),
       );
 
-      const page = (await runtime.snapshot()).active!.transcriptPage;
+      const page = (await runtime.snapshot("a")).active!.transcriptPage;
       const queueSavedImage = () =>
         runtime
           .prompt({
@@ -215,7 +219,7 @@ describe("RuntimeController Pending input and recovery", () => {
           .catch((error: unknown) => error);
       const waitForQueue = (count: number) =>
         vi.waitFor(async () => {
-          const { pendingQueues } = await runtime.snapshot();
+          const { pendingQueues } = await runtime.snapshot("a");
           expect(pendingQueues?.totalCount).toBe(count);
           return pendingQueues!;
         });
@@ -328,7 +332,7 @@ describe("RuntimeController Pending input and recovery", () => {
       await runtime.openSession("a");
       await startWorker(runtime);
       const { worker } = f;
-      await runtime.snapshot();
+      await runtime.snapshot("a");
       worker.responseOverrides.set("get_state", () => ({
         sessionId: "a",
         sessionFile: worker.sessionPath,
@@ -356,7 +360,7 @@ describe("RuntimeController Pending input and recovery", () => {
         behavior: "steer",
       });
       await vi.waitFor(async () =>
-        expect((await runtime.snapshot()).pendingQueues?.totalCount).toBe(1),
+        expect((await runtime.snapshot("a")).pendingQueues?.totalCount).toBe(1),
       );
       await runtime.clearPending("a");
       await expect(queued).rejects.toMatchObject({ code: "PROMPT_CLEARED" });
@@ -374,7 +378,7 @@ describe("RuntimeController Pending input and recovery", () => {
         behavior: "followUp",
       });
       await vi.waitFor(async () =>
-        expect((await runtime.snapshot()).pendingQueues?.totalCount).toBe(2),
+        expect((await runtime.snapshot("a")).pendingQueues?.totalCount).toBe(2),
       );
       streaming = true;
       worker.emit("event", { type: "agent_start" });
@@ -391,7 +395,7 @@ describe("RuntimeController Pending input and recovery", () => {
         { message: "more", streamingBehavior: "followUp" },
       ]);
       await runtime.clearPending("a");
-      expect((await runtime.snapshot()).runState).toBe("running");
+      expect((await runtime.snapshot("a")).runState).toBe("running");
       steeringGate.resolve();
       await Promise.all([steering, following]);
       extensionGate.resolve();
@@ -419,7 +423,7 @@ describe("RuntimeController Pending input and recovery", () => {
       steering,
       followUp: ["hidden follow"],
     });
-    const snapshot = await runtime.snapshot();
+    const snapshot = await runtime.snapshot("a");
     const firstRow = snapshot.pendingQueues!.steering[0]!;
     const request = {
       sessionId: "a",
@@ -440,7 +444,7 @@ describe("RuntimeController Pending input and recovery", () => {
     const { text: all } = await runtime.pendingText(request);
     expect(all).toContain(longText.replace(/\n/g, "\n   "));
     expect(all).toContain("1003. hidden follow");
-    expect((await runtime.snapshot()).pendingQueues).toEqual(
+    expect((await runtime.snapshot("a")).pendingQueues).toEqual(
       snapshot.pendingQueues,
     );
     f.worker.emit("event", {
@@ -448,7 +452,7 @@ describe("RuntimeController Pending input and recovery", () => {
       steering: ["unverified"],
       followUp: [42],
     });
-    expect((await runtime.snapshot()).pendingQueues).toEqual(
+    expect((await runtime.snapshot("a")).pendingQueues).toEqual(
       snapshot.pendingQueues,
     );
     await expect(runtime.pendingText(request)).rejects.toThrow(
@@ -467,7 +471,7 @@ describe("RuntimeController Pending input and recovery", () => {
     );
     f.worker.emit("event", { type: "agent_settled", messages: [] });
     await settled;
-    expect((await runtime.snapshot()).pendingQueues).toMatchObject({
+    expect((await runtime.snapshot("a")).pendingQueues).toMatchObject({
       totalCount: 1002,
     });
     f.worker.emit("event", {
@@ -476,9 +480,9 @@ describe("RuntimeController Pending input and recovery", () => {
       followUp: [],
     });
     await expect(readFirst()).rejects.toThrow("Pending input changed");
-    const current = await runtime.snapshot();
+    const current = await runtime.snapshot("a");
     f.worker.emit("exit", new Error("replacement required"));
-    expect((await runtime.snapshot()).pendingQueues!.totalCount).toBe(0);
+    expect((await runtime.snapshot("a")).pendingQueues!.totalCount).toBe(0);
     await expect(
       runtime.pendingText({
         ...request,
@@ -555,7 +559,8 @@ describe("RuntimeController Pending input and recovery", () => {
           steering: [],
           followUp: [],
         });
-        if (settled) expect((await f.runtime.snapshot()).runState).toBe("idle");
+        if (settled)
+          expect((await f.runtime.snapshot("a")).runState).toBe("idle");
         expect(
           f.worker.commands.filter(({ type }) => type === "abort"),
         ).toHaveLength(1);
@@ -647,7 +652,7 @@ describe("RuntimeController Pending input and recovery", () => {
       behavior: "followUp",
       attachmentIds: [image.id],
     });
-    const pending = (await f.runtime.snapshot()).pendingQueues!;
+    const pending = (await f.runtime.snapshot("a")).pendingQueues!;
     expect(pending.followUp[0]).toEqual({
       id: "text-followUp-0",
       textPreview: "still pending",
@@ -659,7 +664,7 @@ describe("RuntimeController Pending input and recovery", () => {
     expect((await f.store.imagePreview(image.id)).bytes.toString()).toBe(
       "payload",
     );
-    const snapshot = await f.runtime.snapshot();
+    const snapshot = await f.runtime.snapshot("a");
     expect(
       await f.runtime.pendingText({
         sessionId: "a",
@@ -670,7 +675,7 @@ describe("RuntimeController Pending input and recovery", () => {
       text: "1. still pending",
       imageAttachmentIds: [image.id],
     });
-    expect((await f.runtime.snapshot()).pendingQueues).toEqual(pending);
+    expect((await f.runtime.snapshot("a")).pendingQueues).toEqual(pending);
     f.worker.responseOverrides.set("clear_queue", () => {
       const input = structuredClone(f.queue);
       f.queue.steering = [];
@@ -838,7 +843,7 @@ describe("RuntimeController Pending input and recovery", () => {
       } else {
         await runtime.clearPending("a");
       }
-      expect(await runtime.snapshot()).toMatchObject({
+      expect(await runtime.snapshot("a")).toMatchObject({
         runState: "running",
         pendingQueues: {
           totalCount: 1,

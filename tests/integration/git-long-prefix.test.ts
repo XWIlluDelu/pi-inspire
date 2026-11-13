@@ -55,10 +55,10 @@ describe("native Git diff and source projection", () => {
         expect(diff.lines.length).toBeLessThan(30);
         const { rows, changes } = sourceDiffRows(diff);
         expect(changes).toBe(1);
-        const changed = rows.find((row) => row.line.kind === "add")!;
+        const changed = rows.find((row) => row.kind === "add")!;
         expect(changed).toMatchObject({
           changeIndex: 0,
-          line: { newLine: 2200 },
+          newLine: 2200,
         });
         const code = document.createElement("code");
         code.innerHTML = changed.html;

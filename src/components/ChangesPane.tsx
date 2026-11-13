@@ -5,7 +5,6 @@ import {
   FileText,
   GitBranch,
   History,
-  RotateCw,
 } from "lucide-react";
 import {
   type CSSProperties,
@@ -29,6 +28,7 @@ import {
 import { type SourceDiffProjection, sourceDiffRows } from "../source-diff";
 import { store } from "../store";
 import type { FileReadingState } from "../workbench-session";
+import { CodeRows } from "./CodeView";
 import { ContextPaneState } from "./ContextPaneState";
 import type { ContextPaneView } from "./context-pane-view";
 import { PiLoader } from "./PiLoader";
@@ -51,19 +51,6 @@ function SourceDiffView({
   containerRef: RefObject<HTMLDivElement | null>;
   onScroll: (node: HTMLDivElement) => void;
 }) {
-  const lineDigits = useMemo(
-    () =>
-      projection.rows.reduce(
-        (digits, { line }) =>
-          Math.max(
-            digits,
-            String(line.oldLine ?? "").length,
-            String(line.newLine ?? "").length,
-          ),
-        1,
-      ),
-    [projection],
-  );
   return (
     <div
       className="source-diff source-reader"
@@ -74,52 +61,23 @@ function SourceDiffView({
       onScroll={(event) => onScroll(event.currentTarget)}
       data-pane-scroll-active="true"
     >
-      <div
-        className="source-diff__lines"
-        style={{ "--diff-line-digits": lineDigits } as CSSProperties}
-      >
-        {projection.rows.map(
-          ({ line, html, changeIndex, startsChange }, index) => (
-            <div
-              key={`${line.kind}-${line.oldLine ?? ""}-${line.newLine ?? ""}-${index}`}
-              className={`source-diff__line source-diff__line--${line.kind} ${changeIndex !== null && changeIndex === activeChange ? "source-diff__line--active" : ""}`}
-              {...(startsChange ? { "data-change-index": changeIndex } : {})}
-            >
-              <span className="source-diff__gutter" aria-hidden>
-                <span className="source-diff__number">
-                  {line.oldLine ?? ""}
-                </span>
-                <span className="source-diff__number">
-                  {line.newLine ?? ""}
-                </span>
-                <span className="source-diff__mark">
-                  {line.kind === "add"
-                    ? "+"
-                    : line.kind === "delete"
-                      ? "−"
-                      : ""}
-                </span>
-              </span>
-              <code
-                // Highlighting escapes source and emits only balanced token spans.
-                dangerouslySetInnerHTML={{ __html: html }}
-              />
-            </div>
-          ),
-        )}
-      </div>
+      <CodeRows
+        rows={projection.rows}
+        gutter="diff"
+        activeChange={activeChange}
+      />
       {diff.truncated ? (
-        <div className="source-diff__boundary" role="status">
+        <div className="source-boundary" role="status">
           Source truncated
         </div>
       ) : null}
       {diff.contextLimited && !diff.truncated ? (
-        <div className="source-diff__boundary" role="status">
+        <div className="source-boundary" role="status">
           Showing changed regions; source context limited
         </div>
       ) : null}
       {diff.encodingLossy ? (
-        <div className="source-diff__boundary" role="status">
+        <div className="source-boundary" role="status">
           Invalid UTF-8 replaced
         </div>
       ) : null}
@@ -203,7 +161,7 @@ const ChangeRow = memo(function ChangeRow({
   return (
     <button
       type="button"
-      className={`res__row ${selected ? "res__row--active" : ""}`}
+      className="file-row res__row"
       aria-current={selected || undefined}
       data-git-path={change.path.id}
       aria-label={[pathName(change), facet?.label, sourceLabel]
@@ -275,49 +233,44 @@ function ChangeGroup({
 
 function ChangesIndex({ state }: { state: ContextPaneView }) {
   const status = state.gitStatus;
-  if (!status && state.gitStatusLoading)
+  if (!status) {
+    const error =
+      state.gitStatusPending && !state.gitStatus ? null : state.gitStatusError;
     return (
       <ContextPaneState
-        icon={<PiLoader size={17} aria-hidden />}
-        title="Reading Git status"
+        icon={
+          error ? (
+            <AlertTriangle size={17} aria-hidden />
+          ) : (
+            <PiLoader size={17} aria-hidden />
+          )
+        }
+        title={error ? "Git status unavailable" : "Reading Git status"}
+        hint={error ?? undefined}
       />
     );
-  if (state.gitStatusError && !status)
+  }
+  if (status.kind === "not-repository" || status.files.length === 0) {
+    const incomplete = status.kind === "repository" && status.truncated;
     return (
       <ContextPaneState
-        icon={<AlertTriangle size={17} aria-hidden />}
-        title="Git status unavailable"
-        hint={state.gitStatusError}
+        icon={
+          incomplete ? (
+            <AlertTriangle size={17} aria-hidden />
+          ) : (
+            <History size={17} aria-hidden />
+          )
+        }
+        title={
+          status.kind === "not-repository"
+            ? "No Git repository"
+            : incomplete
+              ? "Git status incomplete"
+              : "Working tree clean"
+        }
       />
     );
-  if (!status)
-    return (
-      <ContextPaneState
-        icon={<PiLoader size={17} aria-hidden />}
-        title="Reading Git status"
-      />
-    );
-  if (status.kind === "not-repository")
-    return (
-      <ContextPaneState
-        icon={<History size={17} aria-hidden />}
-        title="No Git repository"
-      />
-    );
-  if (status.files.length === 0 && status.truncated)
-    return (
-      <ContextPaneState
-        icon={<AlertTriangle size={17} aria-hidden />}
-        title="Git status incomplete"
-      />
-    );
-  if (status.files.length === 0)
-    return (
-      <ContextPaneState
-        icon={<History size={17} aria-hidden />}
-        title="Working tree clean"
-      />
-    );
+  }
   const conflicts = status.files.filter((file) => file.conflict);
   const changes = status.files.filter((file) => !file.conflict);
   const selectedPathId = inspectedGitChange(state, status)?.path.id ?? null;
@@ -378,14 +331,14 @@ function ChangesIndexHeader({ state }: { state: ContextPaneView }) {
   );
 }
 
-export function ChangesDetail({
+export function useFileChanges({
   state,
   readingState,
-  render,
+  enabled,
 }: {
   state: ContextPaneView;
   readingState?: FileReadingState;
-  render: (controls: ReactNode, content: ReactNode) => ReactNode;
+  enabled: boolean;
 }) {
   const sourceRef = useRef<HTMLDivElement>(null);
   const localReading = useRef<FileReadingState>({
@@ -393,7 +346,9 @@ export function ChangesDetail({
     rendered: { current: null },
   });
   const reading = readingState ?? localReading.current;
-  const change = inspectedGitChange(state, state.gitStatus);
+  const change = enabled
+    ? inspectedGitChange(state, state.gitStatus)
+    : undefined;
   const pathId = change?.path.id ?? null;
   const hasComparison = change !== undefined;
   const pending = state.gitDiff;
@@ -419,18 +374,18 @@ export function ChangesDetail({
     state.sessionId,
     state.cwd,
     state.fileInspection.reference,
+    state.transportGeneration,
   ]);
-  const statusScope = JSON.stringify([scope, state.transportGeneration]);
   const confirmedStatusScope = useRef<string | null>(null);
-  const statusPending = state.gitStatusLoading || state.gitStatusRefreshing;
+  const statusPending = state.gitStatusPending;
   const waitingForStatus =
-    statusPending && confirmedStatusScope.current !== statusScope;
+    statusPending && confirmedStatusScope.current !== scope;
   useLayoutEffect(() => {
-    if (!state.gitStatus || confirmedStatusScope.current !== statusScope)
+    if (!enabled || !state.gitStatus || confirmedStatusScope.current !== scope)
       confirmedStatusScope.current = null;
-    if (state.gitStatus && !statusPending && !state.gitStatusError)
-      confirmedStatusScope.current = statusScope;
-  }, [state.gitStatus, state.gitStatusError, statusPending, statusScope]);
+    if (enabled && state.gitStatus && !statusPending && !state.gitStatusError)
+      confirmedStatusScope.current = scope;
+  }, [enabled, state.gitStatus, state.gitStatusError, statusPending, scope]);
   const readingKey = pathId ? JSON.stringify([scope, pathId]) : null;
   const readingOwner = useRef({ reading, scope });
   const sameReadingScope =
@@ -520,8 +475,8 @@ export function ChangesDetail({
         ?.scrollIntoView({ block: "center" });
     });
   };
-  const previousDisabled = count === 0 || activeChange === 0;
-  const nextDisabled = count === 0 || activeChange === count - 1;
+  if (!enabled) return null;
+
   const noComparison = !hasComparison
     ? waitingForStatus
       ? "Reading Git status"
@@ -563,15 +518,8 @@ export function ChangesDetail({
         icon={<AlertTriangle size={17} aria-hidden />}
         title="Source unavailable"
         hint={diffView.message}
-      >
-        <button
-          type="button"
-          className="res__more button--quiet res__state-action"
-          onClick={() => void store.openGitDiff(diffView.pathId)}
-        >
-          <RotateCw size={12} aria-hidden /> Retry
-        </button>
-      </ContextPaneState>
+        onRetry={() => void store.openGitDiff(diffView.pathId)}
+      />
     );
   } else if (textResult && projection?.rows.length) {
     content = (
@@ -606,26 +554,24 @@ export function ChangesDetail({
         role="group"
         aria-label="Change navigation"
       >
-        <button
-          type="button"
-          className="icon-button"
-          aria-label="Previous change"
-          title="Previous change"
-          disabled={previousDisabled}
-          onClick={() => moveChange(-1)}
-        >
-          <ChevronUp size={16} aria-hidden />
-        </button>
-        <button
-          type="button"
-          className="icon-button"
-          aria-label="Next change"
-          title="Next change"
-          disabled={nextDisabled}
-          onClick={() => moveChange(1)}
-        >
-          <ChevronDown size={16} aria-hidden />
-        </button>
+        {(
+          [
+            [-1, "Previous change", ChevronUp, 0],
+            [1, "Next change", ChevronDown, count - 1],
+          ] as const
+        ).map(([direction, label, Icon, edge]) => (
+          <button
+            key={direction}
+            type="button"
+            className="icon-button"
+            aria-label={label}
+            title={label}
+            disabled={count === 0 || activeChange === edge}
+            onClick={() => moveChange(direction)}
+          >
+            <Icon size={16} aria-hidden />
+          </button>
+        ))}
         <span
           className="changes__position"
           role="status"
@@ -642,18 +588,20 @@ export function ChangesDetail({
       </div>
     </>
   );
-  return render(
+  return {
     controls,
-    <>
-      {diffView?.status === "ready" && diffView.refreshError ? (
-        <p className="changes__projection-note" role="status">
-          Source refresh failed; showing the last known source.{" "}
-          {diffView.refreshError}
-        </p>
-      ) : null}
-      {content}
-    </>,
-  );
+    content: (
+      <>
+        {diffView?.status === "ready" && diffView.refreshError ? (
+          <p className="changes__projection-note" role="status">
+            Source refresh failed; showing the last known source.{" "}
+            {diffView.refreshError}
+          </p>
+        ) : null}
+        {content}
+      </>
+    ),
+  };
 }
 
 export function ChangesPane({

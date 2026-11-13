@@ -235,7 +235,7 @@ test("project terminals and a lost create response survive browser reload", {
   let foreignId: string | undefined;
   const deliveries: unknown[] = [];
   const check = Promise.withResolvers<void>();
-  const routePattern = "**/api/terminal-operations";
+  const routePattern = /\/api\/terminal-operations(?:\?observe=1)?$/;
   try {
     const visibleTerminalOutput = page.locator(
       ".terminal-views__item:not([hidden]) .xterm-accessibility-tree",
@@ -275,7 +275,10 @@ test("project terminals and a lost create response survive browser reload", {
         request.postDataJSON()?.intent?.command !== "create"
       )
         return route.continue();
-      deliveries.push(request.postDataJSON());
+      deliveries.push({
+        body: request.postDataJSON(),
+        observing: new URL(request.url()).searchParams.get("observe") === "1",
+      });
       const response = await route.fetch();
       if (deliveries.length === 1 && response.ok()) {
         terminalIds.push((await response.json()).result.id);
@@ -343,7 +346,11 @@ test("project terminals and a lost create response survive browser reload", {
     check.resolve();
     await expect(pending).toHaveCount(0);
     expect(deliveries).toHaveLength(2);
-    expect(deliveries[1]).toEqual(deliveries[0]);
+    expect(deliveries[0]).toMatchObject({ observing: false });
+    expect(deliveries[1]).toEqual({
+      ...(deliveries[0] as object),
+      observing: true,
+    });
     expect((await readTerminals()).terminals.map(({ id }) => id)).toEqual(
       terminalIds,
     );
@@ -1248,8 +1255,9 @@ test.describe("touch terminal", () => {
         document.documentElement.style.setProperty("--safe-right", "36px");
         document.documentElement.dataset.theme = "dark";
       });
-      await expect(dialog).toBeInViewport({ ratio: 1 });
-      const bounds = (await dialog.boundingBox())!;
+      const surface = dialog.locator(".terminal-text-dialog");
+      await expect(surface).toBeInViewport({ ratio: 1 });
+      const bounds = (await surface.boundingBox())!;
       expect(bounds.x).toBeGreaterThanOrEqual(36);
       expect(bounds.x + bounds.width).toBeLessThanOrEqual(700 - 36);
       const accessibility = await new AxeBuilder({ page })

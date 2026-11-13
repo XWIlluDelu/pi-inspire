@@ -4,6 +4,7 @@ import { TerminalDaemonServer } from "../../server/terminal-daemon-server.js";
 import { TerminalOperationReceipts } from "../../server/terminal-operation-receipts.js";
 import { TerminalSessionManager } from "../../server/terminal-session-manager.js";
 import type { TerminalDescriptor } from "../../shared/terminal-contracts.js";
+import type { TerminalOperation } from "../../shared/terminal-operations.js";
 import { terminalDaemonFixture } from "./fixtures/terminal-daemon.js";
 
 function deferred<T>() {
@@ -31,16 +32,15 @@ describe("terminal control receipts over isolated IPC", () => {
         committed.resolve();
         return reply.promise;
       });
-    const operation = {
-      id: randomUUID(),
-      epoch: await f.client.operationEpoch(),
-    };
-    const params = { request: { cwd: f.directory, cols: 90 } };
+    const operation = createIntent(
+      await f.client.operationEpoch(),
+      f.directory,
+    );
     let daemon: TerminalDaemonServer | undefined;
     try {
       vi.useFakeTimers();
       const first = f.client
-        .operate("create", params, operation)
+        .operate(operation)
         .catch((error: unknown) => error);
       await committed.promise;
       await vi.advanceTimersByTimeAsync(5_001);
@@ -49,16 +49,21 @@ describe("terminal control receipts over isolated IPC", () => {
       // Neither closing the old Host connection nor two simultaneous delivery
       // attempts may dispatch the daemon mutation again.
       await f.client.close();
-      const second = host.operate("create", params, operation);
+      const second = host.operate(operation, true);
       const concurrent = host.operate(
-        "create",
-        { request: { cols: 90, cwd: f.directory } },
-        operation,
+        {
+          ...operation,
+          intent: {
+            command: "create",
+            params: { request: { cols: 90, cwd: f.directory } },
+          },
+        },
+        true,
       );
       reply.resolve(result);
       expect(await second).toEqual(result);
       expect(await concurrent).toEqual(result);
-      expect(await host.operate("create", params, operation)).toEqual(result);
+      expect(await host.operate(operation, true)).toEqual(result);
       expect(mutation).toHaveBeenCalledOnce();
 
       await f.server.stop();
@@ -70,9 +75,9 @@ describe("terminal control receipts over isolated IPC", () => {
         replacementManager,
       );
       await daemon.start();
-      await expect(
-        host.operate("create", params, operation),
-      ).rejects.toMatchObject({ code: "terminal_operation_epoch_changed" });
+      await expect(host.operate(operation, true)).rejects.toMatchObject({
+        code: "terminal_operation_epoch_changed",
+      });
       expect(create).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
@@ -84,27 +89,33 @@ describe("terminal control receipts over isolated IPC", () => {
   });
 });
 
+function createIntent(epoch: string, cwd = "/fixture") {
+  return {
+    executor: { kind: "terminal", epoch },
+    operationId: randomUUID(),
+    intent: { command: "create", params: { request: { cwd, cols: 90 } } },
+  } as const satisfies TerminalOperation;
+}
+
 describe("bounded terminal receipts", () => {
   it("snapshots results and tombstones byte-budget evictions without replaying work", async () => {
     const receipts = new TerminalOperationReceipts();
-    const first = { id: randomUUID(), epoch: receipts.getEpoch() };
+    const first = createIntent(receipts.getEpoch());
     const source = { id: "original", payload: "x".repeat(255 * 1024) };
     const execute = vi.fn(async () => source);
-    await receipts.run(first, "create", {}, execute);
+    await receipts.run(first, execute);
     source.id = "changed";
-    expect(await receipts.run(first, "create", {}, execute)).toMatchObject({
+    expect(await receipts.run(first)).toMatchObject({
       id: "original",
     });
     for (let index = 0; index < 66; index++)
       await receipts.run(
-        { ...first, id: randomUUID() },
-        "create",
-        {},
+        { ...first, operationId: randomUUID() },
         async () => source,
       );
-    await expect(
-      receipts.run(first, "create", {}, execute),
-    ).rejects.toMatchObject({ code: "terminal_operation_expired" });
+    await expect(receipts.run(first)).rejects.toMatchObject({
+      code: "terminal_operation_expired",
+    });
     expect(execute).toHaveBeenCalledOnce();
   });
 
@@ -116,30 +127,28 @@ describe("bounded terminal receipts", () => {
       tombstoneTtlMs: 20,
       limit: 1,
     });
-    const operation = { id: randomUUID(), epoch: receipts.getEpoch() };
+    const operation = createIntent(receipts.getEpoch());
     const gate = deferred<{ id: string }>();
     const execute = vi.fn(() => gate.promise);
-    const send = () =>
-      receipts.run(operation, "create", { a: 1, b: 2 }, execute);
-    const first = send();
+    const observe = () => receipts.run(operation);
+    await expect(observe()).rejects.toMatchObject({
+      code: "terminal_operation_missing",
+    });
+    expect(execute).not.toHaveBeenCalled();
+    const first = receipts.run(operation, execute);
     await expect(
-      receipts.run({ ...operation, id: randomUUID() }, "create", {}, execute),
+      receipts.run({ ...operation, operationId: randomUUID() }, execute),
     ).rejects.toMatchObject({ code: "terminal_operation_capacity" });
-    const duplicate = receipts.run(
-      operation,
-      "create",
-      { b: 2, a: 1 },
-      execute,
-    );
+    const duplicate = observe();
     const result = { id: "one" };
     gate.resolve(result);
     expect(await Promise.all([first, duplicate])).toEqual([result, result]);
     now = 10;
-    await expect(send()).rejects.toMatchObject({
+    await expect(observe()).rejects.toMatchObject({
       code: "terminal_operation_expired",
     });
     now = 20;
-    await expect(send()).rejects.toMatchObject({
+    await expect(observe()).rejects.toMatchObject({
       code: "terminal_operation_epoch_changed",
     });
     expect(execute).toHaveBeenCalledOnce();

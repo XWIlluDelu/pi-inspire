@@ -20,31 +20,29 @@ import {
   preparePackagedLauncher,
 } from "../fixtures/packaged-launcher.mjs";
 
-function fixture(options = {}) {
+const refused = { code: 1, issued: false };
+
+function fixture(t, options = {}) {
   const parent = new EventEmitter();
   const child = new EventEmitter();
   const state = { stopping: false, committed: false };
   parent.connected = child.connected = true;
-  child.send = (message, callback) => {
+  const deliver = (peer) => (message, callback) => {
     queueMicrotask(() => {
-      parent.emit("message", message);
+      peer.emit("message", message);
       callback?.(null);
     });
     return true;
   };
-  parent.send = (message, callback) => {
-    queueMicrotask(() => {
-      child.emit("message", message);
-      callback?.(null);
-    });
-    return true;
-  };
+  child.send = deliver(parent);
+  parent.send = deliver(child);
   const supervisor = createLauncherRestartSupervisor(parent, {
     enabled: options.enabled ?? true,
     isStopping: () => state.stopping,
     assertOwned: options.assertOwned ?? (async () => {}),
   });
   const client = createLauncherRestartClient(child, options.timeoutMs ?? 500);
+  t.after(supervisor.close);
   return {
     parent,
     child,
@@ -55,13 +53,11 @@ function fixture(options = {}) {
       state.committed = true;
       return true;
     },
-    close: () => supervisor.close(),
   };
 }
 
 test("only accepted handoff plus a clean restart exit authorizes replacement", async (t) => {
-  const f = fixture();
-  t.after(f.close);
+  const f = fixture(t);
   assert.equal(await f.client.inspect(), true);
   assert.equal(f.supervisor.shouldRestart(HOST_RESTART_EXIT_CODE, null), false);
   assert.deepEqual(await f.client.request(f.commit), { code: 0, issued: true });
@@ -74,22 +70,15 @@ test("only accepted handoff plus a clean restart exit authorizes replacement", a
   ])
     assert.equal(f.supervisor.shouldRestart(code, signal), false);
   // Another identity cannot overwrite the accepted intent.
-  assert.deepEqual(await f.client.request(f.commit), {
-    code: 1,
-    issued: false,
-  });
+  assert.deepEqual(await f.client.request(f.commit), refused);
   f.state.stopping = true;
   assert.equal(f.supervisor.shouldRestart(HOST_RESTART_EXIT_CODE, null), false);
 });
 
 test("unsupported, disconnected, and ownerless channels never acquire restart authority", async (t) => {
-  const f = fixture({ enabled: false });
-  t.after(f.close);
+  const f = fixture(t, { enabled: false });
   assert.equal(await f.client.inspect(), false);
-  assert.deepEqual(await f.client.request(f.commit), {
-    code: 1,
-    issued: false,
-  });
+  assert.deepEqual(await f.client.request(f.commit), refused);
   assert.equal(f.state.committed, false);
   f.child.connected = false;
   assert.equal(await f.client.inspect(), false);
@@ -107,100 +96,82 @@ test("unsupported, disconnected, and ownerless channels never acquire restart au
   assert.equal(ownerless.listenerCount("disconnect"), 0);
 });
 
-test("never asks the supervisor to replace the Host after failed commit or pre-send disconnect", async (t) => {
-  for (const disconnect of [false, true]) {
-    const f = fixture();
-    t.after(f.close);
-    const result = await f.client.request(async () => {
-      if (disconnect) f.child.connected = false;
-      return disconnect;
+test("refuses dispatch after commit refusal, early disconnect, lease loss or a racing stop", async (t) => {
+  for (const failure of ["commit", "disconnect", "lease", "stop"]) {
+    await t.test(failure, async (t) => {
+      const checking = Promise.withResolvers();
+      const release = Promise.withResolvers();
+      const f = fixture(t, {
+        assertOwned: async () => {
+          assert.equal(f.state.committed, true);
+          if (failure === "lease") throw new Error("lease lost");
+          if (failure === "stop") {
+            checking.resolve();
+            await release.promise;
+          }
+        },
+      });
+      const result = f.client.request(() => {
+        if (failure === "commit") return false;
+        if (failure === "disconnect") f.child.connected = false;
+        return f.commit();
+      });
+      if (failure === "stop") {
+        await checking.promise;
+        f.state.stopping = true;
+        release.resolve();
+      }
+      assert.deepEqual(await result, refused);
+      assert.equal(
+        f.supervisor.shouldRestart(HOST_RESTART_EXIT_CODE, null),
+        false,
+      );
     });
-    assert.deepEqual(result, { code: 1, issued: false });
-    assert.equal(
-      f.supervisor.shouldRestart(HOST_RESTART_EXIT_CODE, null),
-      false,
-    );
   }
 });
 
-test("ownership is checked after commit and failed ownership proves non-issuance", async (t) => {
-  let f;
-  f = fixture({
-    assertOwned: async () => {
+test("lost post-commit confirmation remains uncertain without retrying", async (t) => {
+  for (const mode of ["reply", "disconnect"]) {
+    await t.test(mode, async (t) => {
+      const f = fixture(t, { timeoutMs: 50 });
+      let delayedReply;
+      let requests = 0;
+      const send = f.child.send;
+      f.child.send = (message, callback) => {
+        if (message.action === "restart") {
+          requests++;
+          if (mode === "disconnect") {
+            f.child.connected = false;
+            queueMicrotask(() => f.child.emit("disconnect"));
+            return true;
+          }
+        }
+        return send(message, callback);
+      };
+      const reply = f.parent.send;
+      f.parent.send = (message, callback) => {
+        if (!f.state.committed) return reply(message, callback);
+        delayedReply = message;
+        callback?.(null);
+        return true;
+      };
+      await assert.rejects(
+        f.client.request(f.commit),
+        mode === "reply" ? /did not confirm/ : /disconnected/,
+      );
       assert.equal(f.state.committed, true);
-      throw new Error("lease lost");
-    },
-  });
-  t.after(f.close);
-  assert.deepEqual(await f.client.request(f.commit), {
-    code: 1,
-    issued: false,
-  });
-  assert.equal(f.supervisor.shouldRestart(HOST_RESTART_EXIT_CODE, null), false);
-});
-
-test("a stop racing the asynchronous ownership check wins", async (t) => {
-  let release;
-  let entered;
-  const checking = new Promise((resolve) => {
-    entered = resolve;
-  });
-  const f = fixture({
-    assertOwned: () => {
-      entered();
-      return new Promise((resolve) => {
-        release = resolve;
-      });
-    },
-  });
-  t.after(f.close);
-  const result = f.client.request(f.commit);
-  await checking;
-  f.state.stopping = true;
-  release();
-  assert.deepEqual(await result, { code: 1, issued: false });
-  assert.equal(f.supervisor.shouldRestart(HOST_RESTART_EXIT_CODE, null), false);
-});
-
-test("lost acceptance stays uncertain, retires listeners, and cannot turn a later stop into restart", async (t) => {
-  let delayedReply;
-  const f = fixture({ timeoutMs: 30 });
-  t.after(f.close);
-  const send = f.parent.send;
-  f.parent.send = (message, callback) => {
-    if (f.state.committed) {
-      delayedReply = message;
-      callback?.(null);
-      return true;
-    }
-    return send(message, callback);
-  };
-  await assert.rejects(f.client.request(f.commit), /did not confirm/);
-  assert.equal(f.state.committed, true);
-  assert.equal(f.child.listenerCount("message"), 0);
-  assert.equal(f.child.listenerCount("disconnect"), 0);
-  f.child.emit("message", delayedReply);
-  assert.equal(f.supervisor.shouldRestart(0, null), false);
-});
-
-test("channel loss after commit is uncertain and is never retried automatically", async (t) => {
-  const f = fixture();
-  t.after(f.close);
-  let requests = 0;
-  const send = f.child.send;
-  f.child.send = (message, callback) => {
-    if (message.action === "restart") {
-      requests++;
-      f.child.connected = false;
-      queueMicrotask(() => f.child.emit("disconnect"));
-      return true;
-    }
-    return send(message, callback);
-  };
-  await assert.rejects(f.client.request(f.commit), /disconnected/);
-  assert.equal(requests, 1);
-  assert.equal(f.child.listenerCount("message"), 0);
-  assert.equal(f.supervisor.shouldRestart(HOST_RESTART_EXIT_CODE, null), false);
+      assert.equal(requests, 1);
+      for (const event of ["message", "disconnect"])
+        assert.equal(f.child.listenerCount(event), 0);
+      if (delayedReply) f.child.emit("message", delayedReply);
+      assert.equal(f.supervisor.shouldRestart(0, null), false);
+      if (mode === "disconnect")
+        assert.equal(
+          f.supervisor.shouldRestart(HOST_RESTART_EXIT_CODE, null),
+          false,
+        );
+    });
+  }
 });
 
 async function launcherFixture(t, mode) {

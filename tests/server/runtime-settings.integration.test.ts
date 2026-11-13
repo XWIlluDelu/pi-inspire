@@ -270,7 +270,8 @@ describe("native effective retry settings", () => {
       await runtime.openSession(overridden.id);
       await runtime.setAutoRetry(overridden.id, false);
       expect(
-        (await runtime.snapshot()).active?.runtimeSettings?.autoRetryEnabled,
+        (await runtime.snapshot(overridden.id)).active?.runtimeSettings
+          ?.autoRetryEnabled,
       ).toBe(false);
       expect(
         (await runtime.snapshot(ordinary.id)).active?.runtimeSettings

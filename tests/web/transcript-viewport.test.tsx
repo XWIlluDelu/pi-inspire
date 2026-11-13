@@ -91,14 +91,6 @@ function ViewportHarness({
         <button type="button" onClick={viewport.jumpToLatest}>
           Jump to latest
         </button>
-        <button
-          type="button"
-          onClick={(event) =>
-            viewport.preserveAnchorThroughLayout(event.currentTarget, "end")
-          }
-        >
-          Resize row
-        </button>
       </div>
     </div>
   );
@@ -318,51 +310,4 @@ describe("transcript viewport geometry", () => {
     fireEvent.scroll(log);
     expect(log).toHaveAttribute("data-at-latest", "false");
   });
-
-  it.each([
-    {
-      name: "releases latest-follow away from the boundary",
-      nextScrollHeight: 1_000,
-      expectedPinned: "false",
-    },
-    {
-      name: "retains latest-follow when the disclosure stays at latest",
-      nextScrollHeight: 800,
-      expectedPinned: "true",
-    },
-  ])(
-    "anchors a disclosure edge and $name",
-    ({ nextScrollHeight, expectedPinned }) => {
-      render(<ViewportHarness />);
-      const log = screen.getByRole("log");
-      const anchor = screen.getByRole("button", { name: "Resize row" });
-      setScrollGeometry(log, { clientHeight: 400, scrollTop: 600 });
-      vi.spyOn(log, "getBoundingClientRect").mockReturnValue({
-        top: 100,
-      } as DOMRect);
-      let anchorBottom = 500;
-      vi.spyOn(anchor, "getBoundingClientRect").mockImplementation(
-        () =>
-          ({
-            top: anchorBottom - 40,
-            bottom: anchorBottom,
-          }) as DOMRect,
-      );
-
-      fireEvent.click(anchor);
-      expect(log).toHaveAttribute("data-pinned", "false");
-      anchorBottom = 300;
-      Object.defineProperty(log, "scrollHeight", {
-        configurable: true,
-        value: nextScrollHeight,
-      });
-      act(() => {
-        flushAnimationFrames();
-        flushAnimationFrames();
-      });
-
-      expect(log.scrollTop).toBe(400);
-      expect(log).toHaveAttribute("data-pinned", expectedPinned);
-    },
-  );
 });

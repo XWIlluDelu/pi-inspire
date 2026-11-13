@@ -6,6 +6,7 @@ import {
   decodeTerminalInputFrame,
   type TerminalClientControlMessage,
 } from "../shared/terminal-contracts.js";
+import { terminalOperationSchema } from "../shared/terminal-operations.js";
 import { ensurePrivateDirectory } from "./private-directory.js";
 import type { TerminalDaemonInfo } from "./terminal-daemon-configuration.js";
 import {
@@ -30,7 +31,6 @@ import {
   TerminalIpcDecoder,
   type TerminalIpcFrame,
 } from "./terminal-ipc.js";
-import { stringParam } from "./terminal-operation-dispatch.js";
 import type {
   TerminalAttachment,
   TerminalAttachOptions,
@@ -316,10 +316,12 @@ export class TerminalDaemonServer {
           protocolVersion: TERMINAL_DAEMON_PROTOCOL_VERSION,
           operationEpoch: await this.terminals.operationEpoch(),
         };
-      case "getCatalog":
-        return this.terminals.list(
-          stringParam(asRecord(request.params), "projectCwd"),
-        );
+      case "getCatalog": {
+        const { projectCwd } = asRecord(request.params);
+        if (typeof projectCwd !== "string")
+          throw new Error("projectCwd must be a string");
+        return this.terminals.list(projectCwd);
+      }
       case "getGlobalCatalog":
         return this.terminals.list();
       case "getSettings":
@@ -334,19 +336,33 @@ export class TerminalDaemonServer {
           );
         if (request.method === "getDaemonInfo") return this.lifecycle.info();
         const values = asRecord(request.params);
-        if (typeof values.force !== "boolean")
-          throw new Error("force must be a boolean");
-        this.lifecycle.shutdown(
-          stringParam(values, "instanceId"),
-          values.force,
-        );
+        if (
+          typeof values.force !== "boolean" ||
+          typeof values.instanceId !== "string"
+        )
+          throw new Error("Invalid shutdown parameters");
+        this.lifecycle.shutdown(values.instanceId, values.force);
         return null;
       }
-      default:
+      case "operate":
+      case "observeOperation": {
+        const operation = terminalOperationSchema.safeParse(request.params);
+        if (!operation.success)
+          throw new TerminalServiceError(
+            "terminal_method_invalid",
+            400,
+            "Invalid terminal operation.",
+          );
         return this.terminals.operate(
-          request.method,
-          request.params,
-          request.operation,
+          operation.data,
+          request.method === "observeOperation",
+        );
+      }
+      default:
+        throw new TerminalServiceError(
+          "terminal_method_invalid",
+          400,
+          "Unknown terminal operation.",
         );
     }
   }

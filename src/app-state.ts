@@ -8,6 +8,7 @@ import {
   type ProjectionConflict,
   type ProjectionHealth,
   type ResourceProbeResult,
+  type RunState,
   type SessionCatalogIssue,
   type SessionReadOnlyReason,
   type SessionRuntimeStatus,
@@ -21,7 +22,6 @@ import {
 } from "../shared/notifications";
 import type { ExternalSessionActivities } from "../shared/session-activity";
 import type { PiCommand } from "./composer-completion";
-import type { PendingAttachment } from "./controllers/composer-controller";
 import type {
   ManagedConnectionProblem,
   ManagedConnectionState,
@@ -37,7 +37,7 @@ import type { FileInspectionState } from "./resource-preview";
 /** Context-window occupancy from Pi's session stats. `tokens`/`percent` are
  * null right after a compaction until the next assistant response reports
  * fresh usage; the whole value is null when Pi provides no usable stats. */
-export interface ContextUsage {
+interface ContextUsage {
   tokens: number | null;
   contextWindow: number;
   percent: number | null;
@@ -54,12 +54,9 @@ export type NativeCommandActivityStatus =
 export interface NativeCommandActivity {
   id: number;
   sessionId: string;
-  input: string;
   command: string;
   status: NativeCommandActivityStatus;
-  title: string;
   message: string;
-  createdAt?: number;
   details?: Array<{ id?: string; label: string; value: string }>;
   download?: { id: string; fileName: string };
   action?:
@@ -158,6 +155,8 @@ export interface AppState
   availableUpdateIdentity: string | null;
   updateSnoozedUntil: number | null;
   prefs: InspirePreferences;
+  desiredPreferences: Partial<InspirePreferences>;
+  curationPending: boolean;
   sessionId: string | null;
   sessionName: string;
   sessionFile: string | null;
@@ -173,7 +172,6 @@ export interface AppState
   availableModels: ModelOption[];
   commonModels: import("../shared/model-settings").CommonModelOption[];
   commands: PiCommand[];
-  contextUsage: ContextUsage | null;
   /** Ephemeral command lifecycle receipts are partitioned by session. */
   commandActivities: Record<string, NativeCommandActivity[]>;
   nativeCommandUiRequest: NativeCommandUiRequest | null;
@@ -189,7 +187,6 @@ export interface AppState
   transcriptNavigationLeased: boolean;
   composerHistoryVersion: string | null;
   hasOlderMessages: boolean;
-  /** Sparse, branch-bound user-turn outline pages backing Prompt Map. */
   projectionHealth: ProjectionHealth;
   projectionConflict: ProjectionConflict | null;
   projectionError: string | null;
@@ -235,13 +232,6 @@ export interface AppState
   deletingSessionId: string | null;
   /** Whether the complete Hidden selection is awaiting its host result. */
   clearingHidden: boolean;
-  /** The visible session's composer slice. Authoritative copies live in
-   * per-session partitions inside the store; a session switch swaps the
-   * slice, so staged work never leaks across sessions. */
-  attachments: PendingAttachment[];
-  projectFiles: string[];
-  /** Failed inputs retained for explicit restoration without replacing a draft. */
-  failedDeliveryCount: number;
   /** Pending queue mutation currently awaiting the Host. */
   pendingAction: "clear" | "recover" | null;
   /** Files/resources pane visibility (Ctrl+.). */
@@ -254,14 +244,25 @@ export interface AppState
   branchActionId: string | null;
   gitStatus: GitStatusResponse | null;
   gitStatusError: string | null;
-  gitStatusLoading: boolean;
-  gitStatusRefreshing: boolean;
+  gitStatusPending: boolean;
   gitDiff: GitDiffView | null;
   /** Preflight standing for the bounded Files-pane references. A textual
    * mention stays unverified until the host classifies it for this branch
    * view; only a successful resolve grants a separate content handle. */
   resourceStanding: Record<string, ResourceProbeResult>;
   error: string | null;
+}
+
+export function selectedRunState({
+  sessionId,
+  sessionStatuses,
+  projectionConflict,
+}: Pick<
+  AppState,
+  "sessionId" | "sessionStatuses" | "projectionConflict"
+>): RunState {
+  if (projectionConflict) return "conflict";
+  return (sessionId && sessionStatuses[sessionId]?.runState) || "idle";
 }
 
 export function emptyResourceInspectionState(): Pick<
@@ -298,6 +299,8 @@ export function createInitialAppState(): AppState {
     availableUpdateIdentity: null,
     updateSnoozedUntil: null,
     prefs: defaultPreferences,
+    desiredPreferences: {},
+    curationPending: false,
     sessionId: null,
     sessionName: "",
     sessionFile: null,
@@ -313,7 +316,6 @@ export function createInitialAppState(): AppState {
     availableModels: [],
     commonModels: [],
     commands: [],
-    contextUsage: null,
     commandActivities: {},
     nativeCommandUiRequest: null,
     nextNativeCommandId: 1,
@@ -353,9 +355,6 @@ export function createInitialAppState(): AppState {
     sessionSelectionPending: false,
     deletingSessionId: null,
     clearingHidden: false,
-    attachments: [],
-    projectFiles: [],
-    failedDeliveryCount: 0,
     pendingAction: null,
     resourcesOpen: false,
     contextMode: "files",
@@ -365,8 +364,7 @@ export function createInitialAppState(): AppState {
     branchActionId: null,
     gitStatus: null,
     gitStatusError: null,
-    gitStatusLoading: false,
-    gitStatusRefreshing: false,
+    gitStatusPending: false,
     gitDiff: null,
     error: null,
   };

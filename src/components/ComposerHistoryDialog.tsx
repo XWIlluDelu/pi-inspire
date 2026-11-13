@@ -1,9 +1,8 @@
 import { useEffect, useId, useState } from "react";
-import { createPortal } from "react-dom";
 import type { ComposerHistoryEntry } from "../../shared/contracts";
 import type { ComposerHistoryScope } from "../composer-history";
 import { store } from "../store";
-import { useModalFocus } from "../use-modal-focus";
+import { Modal } from "./Modal";
 
 export function ComposerHistoryDialog({
   scope,
@@ -17,22 +16,22 @@ export function ComposerHistoryDialog({
   onClose: () => void;
 }) {
   const id = useId();
-  const ref = useModalFocus<HTMLElement>(true, id, onClose);
   const [saved, setSaved] = useState<ComposerHistoryEntry[] | null>();
   const [attempt, setAttempt] = useState(0);
   const [selection, setSelection] = useState<ComposerHistoryEntry | null>(null);
   const [draftChanged, setDraftChanged] = useState(false);
   const { sessionId, viewId, incarnation, historyVersion } = scope;
   useEffect(() => {
-    let active = true;
+    const read = new AbortController();
     void store
-      .loadComposerHistory(sessionId, viewId, incarnation, historyVersion)
+      .loadComposerHistory(
+        { sessionId, viewId, incarnation, historyVersion },
+        read.signal,
+      )
       .then((entries) => {
-        if (active) setSaved(entries);
+        if (!read.signal.aborted) setSaved(entries);
       });
-    return () => {
-      active = false;
-    };
+    return () => read.abort();
   }, [sessionId, viewId, incarnation, historyVersion, attempt]);
 
   const groups = [
@@ -44,18 +43,9 @@ export function ComposerHistoryDialog({
       ? selection
       : null;
 
-  return createPortal(
-    <div className="overlay" role="presentation" onClick={onClose}>
-      <section
-        className="dialog input-history"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={id}
-        tabIndex={-1}
-        data-modal-autofocus
-        ref={ref}
-        onClick={(event) => event.stopPropagation()}
-      >
+  return (
+    <Modal aria-labelledby={id} owner={id} focusSurface onDismiss={onClose}>
+      <section className="dialog input-history">
         <h2 className="dialog__title" id={id}>
           Input history
         </h2>
@@ -137,7 +127,6 @@ export function ComposerHistoryDialog({
           </button>
         </footer>
       </section>
-    </div>,
-    document.body,
+    </Modal>
   );
 }

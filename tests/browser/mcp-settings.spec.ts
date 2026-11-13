@@ -5,6 +5,7 @@ import { expect, type Page, test } from "@playwright/test";
 import { McpConfigService } from "../../server/mcp-config";
 import type { McpConfigEdit, McpConnectionRead } from "../../shared/mcp";
 import { expectConfigurationField } from "./support/configuration-form";
+import { routeSnapshots } from "./support/host-events";
 import { openSettings, pairAndOpen } from "./support/navigation";
 
 async function scenario(page: Page) {
@@ -50,14 +51,12 @@ async function scenario(page: Page) {
   );
   const service = new McpConfigService(agent),
     reveals: McpConnectionRead[] = [];
-  let authority = "",
-    writes = 0,
+  let writes = 0,
     reloads = 0;
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await page.route("**/api/bootstrap**", async (route) => {
-    const response = await route.fetch();
-    authority = response.headers()["x-inspire-authority"] ?? "";
-    await route.fulfill({ response });
+  const transport = await routeSnapshots(page, { socket: false });
+  const authorityHeaders = () => ({
+    "X-Inspire-Authority": transport.authority(),
   });
   await page.route("**/api/mcp-config**", async (route) => {
     try {
@@ -75,13 +74,13 @@ async function scenario(page: Page) {
         payload = { saved: true, snapshot: await service.read(cwd) };
       } else payload = await service.read(cwd);
       await route.fulfill({
-        headers: { "X-Inspire-Authority": authority },
+        headers: authorityHeaders(),
         json: payload,
       });
     } catch (error) {
       await route.fulfill({
         status: 409,
-        headers: { "X-Inspire-Authority": authority },
+        headers: authorityHeaders(),
         json: { error: (error as Error).message },
       });
     }
@@ -89,7 +88,7 @@ async function scenario(page: Page) {
   await page.route("**/api/control/native-command", async (route) => {
     reloads++;
     await route.fulfill({
-      headers: { "X-Inspire-Authority": authority },
+      headers: authorityHeaders(),
       json: { outcome: "completed", message: "Reloaded fixture" },
     });
   });
@@ -122,7 +121,7 @@ test("MCP reveals saved connection values on request, keeps edits scoped, and re
       .getByRole("button", { name: "Edit user server docs" })
       .click();
     const url = settings.getByLabel("Server URL", { exact: true });
-    await expectConfigurationField(url);
+    await expect(url).toBeFocused();
     await expect(url).toHaveValue("");
     expect(fixture.reveals).toEqual([]);
     await settings.getByRole("button", { name: "Show saved URL" }).click();

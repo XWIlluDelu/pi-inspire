@@ -13,10 +13,8 @@ import {
 } from "../../shared/contracts";
 import { fileIconForPath } from "../file-icons";
 import { gitDecorationForChange, presentGitFacet } from "../git-presentation";
-import { inspectedFileTab } from "../resource-preview";
 import type { ResourceRow } from "../resources";
 import { gitChangeForWorkspacePath, store } from "../store";
-import { ChangesDetail } from "./ChangesPane";
 import type { ContextPaneView } from "./context-pane-view";
 import { FilePreview, type FileReadingState } from "./FilePreview";
 import { PiLoader } from "./PiLoader";
@@ -72,7 +70,7 @@ const RecentFileRow = memo(function RecentFileRow({
   return (
     <button
       type="button"
-      className={`recent-file ${selected ? "recent-file--active" : ""} ${unavailable ? "recent-file--unavailable" : ""} ${missing ? "recent-file--missing" : ""}`}
+      className={`file-row recent-file ${unavailable ? "recent-file--unavailable" : ""} ${missing ? "recent-file--missing" : ""}`}
       aria-current={selected || undefined}
       aria-label={[
         displayPath,
@@ -293,30 +291,14 @@ export function FilesPane({
         />
       </div>
     );
-  const changes = inspectedFileTab(state)?.view === "changes";
   return (
     <div className="res__body res__body--files res__body--file-tab">
-      {changes ? (
-        <ChangesDetail
-          key={fileInspection.reference}
-          state={state}
-          readingState={readingState}
-          render={(controls, content) => (
-            <FilePreview
-              state={state}
-              readingState={readingState}
-              changes={{ controls, content }}
-            />
-          )}
-        />
-      ) : (
-        <FilePreview
-          key={fileInspection.reference}
-          state={state}
-          readingState={readingState}
-          onQuote={onQuote}
-        />
-      )}
+      <FilePreview
+        key={fileInspection.reference}
+        state={state}
+        readingState={readingState}
+        onQuote={onQuote}
+      />
     </div>
   );
 }

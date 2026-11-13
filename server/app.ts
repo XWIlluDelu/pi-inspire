@@ -17,17 +17,12 @@ import {
   type BootstrapResponse,
   MAX_ATTACHMENT_FILE_BYTES,
   MAX_ATTACHMENTS,
-  MAX_CURATED_SESSION_RESULTS,
-  MAX_SESSION_CWD_HYDRATION_CWDS,
-  MAX_SESSION_ID_CHARS,
-  MAX_SESSION_ID_HYDRATION_IDS,
-  MAX_SESSION_LIST_PAGE_SIZE,
-  SESSION_HISTORY_PATH,
-  THINKING_LEVELS,
+  type SessionDeletionResponse,
   type UploadedAttachment,
 } from "../shared/contracts.js";
 import type { HerdrEnhancementStatus } from "../shared/herdr.js";
-import { historyAddress, historyQuerySchema } from "../shared/history-query.js";
+import { historyAddress } from "../shared/history-query.js";
+import { hostEndpoints, sessionIdField } from "../shared/host-endpoints.js";
 import {
   type HostOperationCommand,
   type HostOperationIdentity,
@@ -37,18 +32,11 @@ import {
   INPUT_OPERATION_PATHS,
   pendingOperationRequestSchema,
   pendingOperationSchema,
+  promptFingerprintInput,
+  promptObservationSchema,
   promptSchema,
 } from "../shared/host-operations.js";
-import {
-  HOST_RESTART_PATH,
-  hostRestartRequestSchema,
-  restartObservation,
-} from "../shared/host-restart.js";
-import { HTML_PREVIEW_BYTES } from "../shared/html-preview.js";
-import {
-  MAX_RESOURCE_PROBE_REFERENCES,
-  MAX_RESOURCE_REFERENCE_LENGTH,
-} from "../shared/resource-references.js";
+import { restartObservation } from "../shared/host-restart.js";
 import { emptyToolPresentationConfiguration } from "../shared/tool-presentation-config.js";
 import type { AttachmentStore } from "./attachments.js";
 import {
@@ -69,10 +57,11 @@ import { listHostDirectories, listHostRoots } from "./host-dirs.js";
 import { serveHtmlPreview } from "./html-preview.js";
 import { InstanceHttpControl } from "./instance-control.mjs";
 import { type InstanceState, instanceUrl } from "./instance-state.mjs";
+import { jsonRoute } from "./json-route.js";
 import type { MaintenanceRestartController } from "./maintenance-restart.js";
 import type { McpConfigService } from "./mcp-config.js";
 import { registerMcpConfigRoutes } from "./mcp-config-routes.js";
-import { queryModelThinkingLevel } from "./model-metadata.js";
+import type { NativeModelCatalog } from "./model-metadata.js";
 import type { ModelSettingsService } from "./model-settings.js";
 import { commonModelOptions } from "./model-settings.js";
 import { registerModelSettingsRoutes } from "./model-settings-routes.js";
@@ -100,232 +89,28 @@ import type { SessionCatalogLike } from "./session-catalog.js";
 import { staticWebAssets } from "./static-web-assets.js";
 import {
   type NotificationPrincipal,
-  pushSubscriptionSchema,
   TaskNotifications,
 } from "./task-notifications.js";
 import { createTerminalGateway } from "./terminal-gateway.js";
-import type { TerminalService } from "./terminal-service.js";
+import type {
+  TerminalConnection,
+  TerminalService,
+} from "./terminal-service.js";
 import type {
   ToolPresentationConfigStore,
   ToolPresentationConfigurationState,
 } from "./tool-presentation-config.js";
 import { UpdateCoordinator } from "./update-coordinator.js";
 
-const updateSnoozeSchema = z
-  .object({
-    identity: z
-      .string()
-      .min(1)
-      .max(64 * 1024),
-  })
-  .strict();
-const openSchema = z.object({
-  id: z.string().min(1).max(MAX_SESSION_ID_CHARS),
-});
-const deleteSessionParamsSchema = z.object({
-  sessionId: z.string().min(1).max(MAX_SESSION_ID_CHARS),
-});
-const clearHiddenSchema = z
-  .object({
-    sessionIds: z
-      .array(z.string().min(1).max(MAX_SESSION_ID_CHARS))
-      .min(1)
-      .max(MAX_CURATED_SESSION_RESULTS),
-    projectCwd: z.string().min(1).max(4_096).optional(),
-  })
-  .strict();
-const newSchema = z
-  .object({
-    cwd: z.string().min(1).max(4_096),
-    createDirectory: z.boolean().optional(),
-    name: z.string().max(160).optional(),
-    model: z
-      .object({
-        provider: z.string().min(1).max(120),
-        id: z.string().min(1).max(240),
-      })
-      .strict()
-      .optional(),
-    thinkingLevel: z.enum(THINKING_LEVELS).optional(),
-  })
-  .strict();
-const sessionIdField = z.string().min(1).max(MAX_SESSION_ID_CHARS);
-const nativeCommandSchema = z
-  .object({
-    sessionId: sessionIdField,
-    command: z.enum(["compact", "export", "reload"]),
-    argument: z
-      .string()
-      .max(64 * 1024)
-      .optional(),
-  })
-  .strict();
-const runtimeBooleanSchema = z
-  .object({
-    sessionId: sessionIdField,
-    enabled: z.boolean(),
-  })
-  .strict();
-const runtimeDeliveryModeSchema = z
-  .object({
-    sessionId: sessionIdField,
-    mode: z.enum(["all", "one-at-a-time"]),
-  })
-  .strict();
-const clearPendingSchema = z.object({ sessionId: sessionIdField }).strict();
-const pendingReadSchema = z
-  .object({
-    sessionId: sessionIdField,
-    viewId: z.string().min(1).max(256),
-    revision: z.number().int().nonnegative(),
-    itemId: z.string().min(1).max(128).optional(),
-  })
-  .strict();
-const renameSchema = z.object({
-  sessionId: sessionIdField,
-  name: z.string().max(160),
-});
-const modelSchema = z.object({
-  sessionId: sessionIdField,
-  provider: z.string().min(1).max(120),
-  modelId: z.string().min(1).max(240),
-});
-const thinkingSchema = z.object({
-  sessionId: sessionIdField,
-  level: z.enum(THINKING_LEVELS),
-});
-const extensionSchema = z
-  .object({
-    sessionId: sessionIdField,
-    id: z.string().min(1).max(200),
-  })
-  .passthrough();
-const sessionQuerySchema = z.object({
-  q: z.string().max(200).default(""),
-  offset: z.coerce
-    .number()
-    .int()
-    .min(0)
-    .max(Number.MAX_SAFE_INTEGER)
-    .default(0),
-  limit: z.coerce
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_SESSION_LIST_PAGE_SIZE)
-    .default(40),
-});
-const showHiddenField = z
-  .enum(["0", "1"])
-  .default("0")
-  .transform((value) => value === "1");
-const fileQuerySchema = z.object({
-  showHidden: showHiddenField,
-  sessionId: sessionIdField,
-  q: z.string().max(200).default(""),
-  limit: z.coerce.number().int().min(1).max(100).default(50),
-});
-const newSessionFileQuerySchema = z.object({
-  showHidden: showHiddenField,
-  cwd: z.string().min(1).max(4_096),
-  q: z.string().max(200).default(""),
-  limit: z.coerce.number().int().min(1).max(100).default(50),
-});
-const fileListSchema = z.object({
-  showHidden: showHiddenField,
-  sessionId: sessionIdField,
-  dir: z
-    .string()
-    .max(4_096)
-    .default("")
-    .refine(
-      (value) => !value.split("/").includes(".."),
-      "dir must stay inside the project",
-    ),
-  refresh: z.literal("1").optional(),
-});
-const hostDirsSchema = z.object({
-  showHidden: z
-    .enum(["0", "1"])
-    .default("0")
-    .transform((value) => value === "1"),
-  path: z
-    .string()
-    .min(1)
-    .max(4_096)
-    .refine(isAbsolute, "path must be absolute")
-    .optional(),
-});
-// Hydration unions can also contain selected/live identities, so the browser
-// chunks the deduplicated union to this explicit per-request contract.
-const sessionIdsSchema = z.object({
-  ids: z
-    .array(z.string().min(1).max(MAX_SESSION_ID_CHARS))
-    .max(MAX_SESSION_ID_HYDRATION_IDS),
-});
-const sessionCwdsSchema = z.object({
-  cwds: z
-    .array(z.string().min(1).max(4_096))
-    .max(MAX_SESSION_CWD_HYDRATION_CWDS),
-});
 const attachmentIdSchema = z.string().uuid();
-const resourceListSchema = z.object({ sessionId: sessionIdField });
-const resourceResolveSchema = z
-  .object({
-    sessionId: sessionIdField,
-    reference: z.string().min(1).max(MAX_RESOURCE_REFERENCE_LENGTH),
-    workspacePath: z.string().min(1).max(8_192).optional(),
-  })
-  .strict();
-const resourceProbeSchema = z.object({
-  sessionId: sessionIdField,
-  references: z
-    .array(z.string().min(1).max(MAX_RESOURCE_REFERENCE_LENGTH))
-    .max(MAX_RESOURCE_PROBE_REFERENCES),
-});
 const resourceContentSchema = z.object({
   sessionId: sessionIdField,
   download: z.literal("1").optional(),
 });
-const assistantTextSchema = z
-  .object({
-    sessionId: sessionIdField,
-    viewId: z.string().min(1).max(512),
-  })
-  .strict();
 const branchImageSchema = z.strictObject({
   ...historyAddress,
   targetId: z.string().min(1).max(200),
   index: z.coerce.number().int().min(0),
-});
-const branchNavigateSchema = z
-  .object({
-    sessionId: sessionIdField,
-    revision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
-    targetId: z.string().min(1).max(200),
-    mode: z.enum(["switch", "edit"]),
-    summarize: z.boolean().optional(),
-    customInstructions: z.string().max(2000).optional(),
-  })
-  .strict();
-const branchForkSchema = z
-  .object({
-    sessionId: sessionIdField,
-    viewId: z.string().min(1).max(200),
-    targetId: z.string().min(1).max(200),
-  })
-  .strict();
-const branchCloneSchema = branchForkSchema.extend({
-  targetId: z.string().min(1).max(200).nullable(),
-});
-const gitStatusSchema = z.object({ sessionId: sessionIdField });
-const gitDiffSchema = z.object({
-  sessionId: sessionIdField,
-  pathId: z
-    .string()
-    .min(1)
-    .max(16_384)
-    .regex(/^[A-Za-z0-9_-]+$/),
 });
 const PROMPT_OBSERVATION_WINDOW_MS = 20_000;
 const WEBSOCKET_HEARTBEAT_INTERVAL_MS = 20_000;
@@ -374,7 +159,7 @@ interface AppDependencies {
   requireBrowserBuild?: boolean;
   /** The persistent PTY authority. Production connects to the terminal
    * daemon; tests may supply an in-process implementation. */
-  terminal?: TerminalService;
+  terminal?: TerminalService | Pick<TerminalConnection, "run" | "close">;
   /** Internal cadence override used by the transport liveness test. */
   websocketHeartbeatIntervalMs?: number;
 }
@@ -617,6 +402,8 @@ export function createInspireServer(deps: AppDependencies): {
   // the original HTTPS protocol, but arbitrary network hops never gain trust.
   app.set("trust proxy", "loopback");
   app.disable("x-powered-by");
+  const routes = hostEndpoints;
+
   app.use((_request, response, next) => {
     response.set({
       "X-Content-Type-Options": "nosniff",
@@ -853,91 +640,62 @@ export function createInspireServer(deps: AppDependencies): {
       );
     return { id, origin };
   };
-  app.get("/api/notifications", async (request, response) =>
-    response.json(
-      await taskNotifications.settings(
-        notificationPrincipal(request, response),
-      ),
+  jsonRoute(app, routes.taskAlertSettings, (_input, request, response) =>
+    taskNotifications.settings(notificationPrincipal(request, response)),
+  );
+  jsonRoute(app, routes.configureTaskAlerts, ({ body }, request, response) =>
+    taskNotifications.configure(
+      notificationPrincipal(request, response),
+      body.mode,
+      body.subscription,
+      body.grouping,
     ),
   );
-  app.put("/api/notifications", async (request, response) => {
-    const principal = notificationPrincipal(request, response);
-    const body = z
-      .object({
-        mode: z.enum(["off", "title", "desktop"]).optional(),
-        grouping: z.enum(["session", "project"]).optional(),
-        subscription: pushSubscriptionSchema.nullable().optional(),
-      })
-      .strict()
-      .refine(
-        (body) =>
-          body.mode !== undefined ||
-          body.subscription !== undefined ||
-          body.grouping !== undefined,
-        "Provide a mode, subscription or grouping update",
-      )
-      .parse(request.body);
-    response.json(
-      await taskNotifications.configure(
-        principal,
-        body.mode,
-        body.subscription,
-        body.grouping,
-      ),
-    );
-  });
-  app.post("/api/notifications/ack", async (request, response) => {
-    const principal = notificationPrincipal(request, response);
-    const { id } = z
-      .object({ id: z.string().min(1).max(256) })
-      .strict()
-      .parse(request.body);
-    await taskNotifications.acknowledge(principal, id);
-    response.json({ ok: true });
-  });
-  app.post("/api/notifications/test", async (request, response) =>
-    response.json(
-      await taskNotifications.test(notificationPrincipal(request, response)),
-    ),
+  jsonRoute(
+    app,
+    routes.acknowledgeTaskAlert,
+    async ({ body }, request, response) => {
+      await taskNotifications.acknowledge(
+        notificationPrincipal(request, response),
+        body.id,
+      );
+      return { ok: true };
+    },
+  );
+  jsonRoute(app, routes.testTaskAlert, (_input, request, response) =>
+    taskNotifications.test(notificationPrincipal(request, response)),
   );
 
   app.get("/api/health", (_request, response) => {
     response.json({ appName: "inspire" });
   });
 
-  app.get("/api/host/herdr", async (_request, response) => {
+  jsonRoute(app, routes.herdrStatus, async () => {
     if (!deps.getHerdrStatus)
       throw requestError(
         "Herdr enhancement status is unavailable for this Host.",
         503,
       );
-    response.json(await deps.getHerdrStatus());
+    return deps.getHerdrStatus();
   });
 
-  app.get(HOST_RESTART_PATH, async (_request, response) => {
-    response.json(
-      deps.hostRestart
-        ? await deps.hostRestart.status()
-        : {
-            hostId: authorityId,
-            available: false,
-            allAvailable: false,
-            allPiAvailable: false,
-            allPiReason: "Restart all is unavailable for this Host.",
-            allReason:
-              "Restart with terminals requires this Host's installed Linux systemd services.",
-            reason: "Page restart is unavailable for this Host.",
-            operation: null,
-          },
-    );
-  });
-  app.post(HOST_RESTART_PATH, (request, response) => {
-    const intent = hostRestartRequestSchema.parse(request.body);
+  jsonRoute(app, routes.hostRestartStatus, async () =>
+    deps.hostRestart
+      ? deps.hostRestart.status()
+      : {
+          hostId: authorityId,
+          available: false,
+          allPiAvailable: false,
+          allPiReason: "Restart all is unavailable for this Host.",
+          reason: "Page restart is unavailable for this Host.",
+          operation: null,
+        },
+  );
+  jsonRoute(app, routes.restartHost, ({ body: intent }, _request, response) => {
     if (!deps.hostRestart)
       throw requestError("Page restart is unavailable for this Host.", 503);
-    response
-      .status(202)
-      .json(restartObservation(intent, deps.hostRestart.start(intent)));
+    response.status(202);
+    return restartObservation(intent, deps.hostRestart.start(intent));
   });
 
   const terminalGateway = createTerminalGateway(
@@ -947,44 +705,34 @@ export function createInspireServer(deps: AppDependencies): {
     currentBrowserBuild,
   );
 
-  app.get("/api/update", async (request, response) => {
+  jsonRoute(app, routes.update, async ({ query }) => {
     const updateStatus = await updateCoordinator.checkInspire(
-      request.query.refresh === "1",
+      query.refresh === "1",
     );
-    response.json({
-      ...(updateStatus.inspireUpdateCheck ?? { kind: "unavailable" }),
+    return {
+      ...(updateStatus.inspireUpdateCheck ?? { kind: "unavailable" as const }),
       updateStatus,
-    });
+    };
   });
 
-  app.get("/api/pi-update", async (request, response) => {
-    const updateStatus = await updateCoordinator.checkPi(
-      request.query.refresh === "1",
-    );
-    response.json({
+  jsonRoute(app, routes.piUpdate, async ({ query }) => {
+    const updateStatus = await updateCoordinator.checkPi(query.refresh === "1");
+    return {
       ...(updateStatus.piUpdateCheck ?? {
         currentVersion: deps.piVersion,
         installedVersion: null,
-        pi: { kind: "unavailable" },
-        extensions: { kind: "unavailable" },
+        pi: { kind: "unavailable" as const },
+        extensions: { kind: "unavailable" as const },
       }),
       updateStatus,
-    });
+    };
   });
 
-  app.post("/api/update/snooze", async (request, response) => {
-    const { identity } = updateSnoozeSchema.parse(request.body);
-    response.json(await updateCoordinator.dismiss(identity));
-  });
+  jsonRoute(app, routes.snoozeUpdate, ({ body }) =>
+    updateCoordinator.dismiss(body.identity),
+  );
 
-  const requestedDetail = (value: unknown): string | null | undefined =>
-    value === undefined
-      ? undefined
-      : value === ""
-        ? null
-        : sessionIdField.parse(value);
-
-  app.get("/api/bootstrap", async (_request, response) => {
+  jsonRoute(app, routes.bootstrap, async (_input, _request, response) => {
     const startedAt = performance.now();
     const preferenceRead = deps.preferences.inspect();
     const [preferenceState, toolPresentationState, updateStatus] =
@@ -1007,6 +755,7 @@ export function createInspireServer(deps: AppDependencies): {
       piVersion: deps.piVersion,
       updateStatus,
       preferences: preferenceState.preferences,
+      preferenceRevision: preferenceState.revision,
       ...(preferenceState.warning
         ? { preferencesWarning: preferenceState.warning }
         : {}),
@@ -1023,201 +772,135 @@ export function createInspireServer(deps: AppDependencies): {
       "Server-Timing",
       `inspire-bootstrap;dur=${(performance.now() - startedAt).toFixed(1)}`,
     );
-    response.json(body);
+    return body;
   });
 
-  app.get("/api/sessions", async (request, response) => {
-    const { q, offset, limit } = sessionQuerySchema.parse(request.query);
-    const observer = new AbortController();
-    const cancel = () => observer.abort();
-    response.once("close", cancel);
-    try {
-      const page = await deps.catalog.list({
-        query: q,
-        offset,
-        limit,
-        signal: observer.signal,
-      });
-      if (!observer.signal.aborted) response.json(page);
-    } catch (error) {
-      if (!observer.signal.aborted) throw error;
-    } finally {
-      response.off("close", cancel);
-    }
-  });
-  app.post("/api/sessions/refresh", async (_request, response) => {
+  jsonRoute(
+    app,
+    routes.sessions,
+    ({ query: { q, offset, limit } }, request, response) =>
+      withRequestSignal(request, response, (signal) =>
+        deps.catalog.list({ query: q, offset, limit, signal }),
+      ),
+  );
+  jsonRoute(app, routes.refreshSessions, async () => {
     await deps.catalog.refresh(true);
-    response.json({ ok: true });
+    return { ok: true };
   });
-  app.post("/api/sessions/by-id", async (request, response) => {
-    const { ids } = sessionIdsSchema.parse(request.body);
-    response.json({ sessions: await deps.catalog.listByIds(ids) });
-  });
-  app.post("/api/sessions/by-cwd", async (request, response) => {
-    const { cwds } = sessionCwdsSchema.parse(request.body);
-    response.json({ sessions: await deps.catalog.listByCwds(cwds) });
-  });
-  app.post("/api/sessions/open", async (request, response) => {
-    const { id } = openSchema.parse(request.body);
-    const snapshot = await deps.runtime.openSession(id);
-    response.json({
-      ...snapshot,
-      runtimeSequence: deps.runtime.eventSnapshotCut(snapshot),
-    });
-  });
-  app.post("/api/sessions/deselect", async (_request, response) => {
-    response.json(await deps.runtime.deselectSession());
-  });
-  app.post("/api/sessions/new", async (request, response) => {
-    const { cwd, ...options } = newSchema.parse(request.body);
-    response.json(await deps.runtime.newSession(cwd, options));
-  });
+  jsonRoute(app, routes.sessionsByIds, async ({ body }) => ({
+    sessions: await deps.catalog.listByIds(body.ids),
+  }));
+  jsonRoute(app, routes.sessionsByCwds, async ({ body }) => ({
+    sessions: await deps.catalog.listByCwds(body.cwds),
+  }));
+  jsonRoute(app, routes.openSession, ({ body }) =>
+    deps.runtime.openSession(body.id),
+  );
+  jsonRoute(app, routes.deselectSession, () => deps.runtime.deselectSession());
+  jsonRoute(app, routes.newSession, ({ body: { cwd, ...options } }) =>
+    deps.runtime.newSession(cwd, options),
+  );
   registerModelSettingsRoutes(app, deps);
   registerMcpConfigRoutes(app, deps);
-  app.get("/api/models", async (request, response) => {
-    const {
-      sessionId,
-      cwd: requestedCwd,
-      inherit,
-    } = z
-      .object({
-        sessionId: sessionIdField.optional(),
-        cwd: z.string().min(1).max(4_096).optional(),
-        inherit: z.literal("1").optional(),
-      })
-      .parse(request.query);
-    const cwd = sessionId
-      ? undefined
-      : requestedCwd
+  jsonRoute(
+    app,
+    routes.refreshModels,
+    async ({ query: { sessionId, cwd: requestedCwd, inherit } }) => {
+      const cwd = requestedCwd
         ? await resolveProjectDirectory(requestedCwd)
         : process.cwd();
-    const result = sessionId
-      ? await deps.runtime.refreshModels(sessionId, inherit === "1")
-      : ((await deps.modelMetadata?.(cwd!, true)) ?? { models: [] });
-    const catalogCwd = sessionId ? deps.runtime.sessionCwd(sessionId) : cwd;
-    const commonModels =
-      "enabledModelPatterns" in result &&
-      Array.isArray(result.enabledModelPatterns)
-        ? await commonModelOptions(result.enabledModelPatterns, result.models)
-        : deps.modelSettings && catalogCwd
-          ? await deps.modelSettings.readCommonModels(catalogCwd, result.models)
-          : [];
-    response.json({
-      models: result.models,
-      ...("commands" in result ? { commands: result.commands } : {}),
-      ...("defaults" in result ? { defaults: result.defaults } : {}),
-      ...("selection" in result ? { selection: result.selection } : {}),
-      ...("warning" in result && result.warning
-        ? { warning: result.warning }
-        : {}),
-      commonModels,
-    });
+      const result: NativeModelCatalog = sessionId
+        ? await deps.runtime.refreshModels(sessionId, inherit === "1")
+        : ((await deps.modelMetadata?.(cwd, true)) ?? { models: [] });
+      const { models, commands, defaults, selection, warning } = result;
+      const catalogCwd = sessionId ? deps.runtime.sessionCwd(sessionId) : cwd;
+      const preferences =
+        result.enabledModelPatterns === undefined && catalogCwd && models.length
+          ? await deps.modelSettings?.readCatalogPreferences(catalogCwd)
+          : undefined;
+      return {
+        models,
+        commands,
+        defaults,
+        selection,
+        warning,
+        thinkingPreferences:
+          result.thinkingPreferences ?? preferences?.thinkingPreferences,
+        commonModels: await commonModelOptions(
+          result.enabledModelPatterns ??
+            preferences?.enabledModelPatterns ??
+            [],
+          models,
+        ),
+      };
+    },
+  );
+  jsonRoute(
+    app,
+    routes.searchNewSessionFiles,
+    async ({ query: { cwd, q, limit, showHidden } }) => {
+      const root = await resolveProjectDirectory(cwd);
+      return {
+        cwd: root,
+        ...(await searchProjectFiles(root, q, limit, showHidden)),
+      };
+    },
+  );
+  jsonRoute(app, routes.renameSession, async ({ body }) => {
+    await deps.runtime.rename(body.sessionId, body.name);
+    return { ok: true };
   });
-  app.get("/api/new-session/thinking", async (request, response) => {
-    const query = z
-      .object({
-        cwd: z.string().min(1).max(4_096),
-        provider: z.string().min(1).max(256),
-        modelId: z.string().min(1).max(512),
-        current: z.enum(THINKING_LEVELS),
-      })
-      .parse(request.query);
-    const cwd = await resolveProjectDirectory(query.cwd);
-    response.json({
-      level: await queryModelThinkingLevel(
-        cwd,
-        query.provider,
-        query.modelId,
-        query.current,
-      ),
-    });
-  });
-  app.get("/api/new-session/files", async (request, response) => {
-    const { cwd, q, limit, showHidden } = newSessionFileQuerySchema.parse(
-      request.query,
-    );
-    const root = await resolveProjectDirectory(cwd);
-    response.json({
-      cwd: root,
-      ...(await searchProjectFiles(root, q, limit, showHidden)),
-    });
-  });
-  app.post("/api/sessions/rename", async (request, response) => {
-    const { sessionId, name } = renameSchema.parse(request.body);
-    await deps.runtime.rename(sessionId, name);
-    response.json({ ok: true });
-  });
-  app.delete("/api/sessions/:sessionId", async (request, response) => {
-    const { sessionId } = deleteSessionParamsSchema.parse(request.params);
-    const result = await deps.runtime.deleteSession(sessionId);
-    deps.resources.forgetSession(sessionId);
-    try {
-      const preferences = await deps.preferences.removeSession(sessionId);
-      response.json({ ...result, preferences });
-    } catch (error) {
-      // The destructive result is already known. Never turn a metadata-write
-      // failure into a retryable DELETE whose second execution is ambiguous.
-      console.error(
-        `[session ${sessionId}] navigation metadata cleanup failed`,
-        error,
-      );
-      response.json({ ...result, preferenceCleanupFailed: true });
-    }
-  });
-  app.post("/api/sessions/clear-hidden", async (request, response) => {
-    const { sessionIds, projectCwd } = clearHiddenSchema.parse(request.body);
-    const current = await deps.preferences.inspect();
-    if (
-      projectCwd !== undefined &&
-      !current.preferences.hiddenProjectCwds.includes(projectCwd)
-    ) {
-      return response.status(409).json({
-        error: "The folder is no longer hidden; review it before deleting",
-        code: "HIDDEN_SELECTION_CHANGED",
-      });
-    }
-    // The optional scope is an existing Hidden folder, never an arbitrary cwd
-    // or a client-supplied subset of the catalog. Runtime validates every id.
-    const reviewedHiddenSessionIds =
-      projectCwd === undefined ? current.preferences.hiddenSessionIds : [];
-    const reviewedHiddenProjectCwds =
-      projectCwd === undefined
-        ? current.preferences.hiddenProjectCwds
-        : [projectCwd];
-    if (
-      reviewedHiddenSessionIds.length === 0 &&
-      reviewedHiddenProjectCwds.length === 0
-    ) {
-      return response.status(409).json({
-        error: "Hidden must remain non-empty before it can be cleared",
-      });
-    }
-    const result = await deps.runtime.clearHiddenSessions(
-      sessionIds,
-      reviewedHiddenSessionIds,
-      reviewedHiddenProjectCwds,
-    );
-    for (const session of result.deleted)
-      deps.resources.forgetSession(session.sessionId);
-    if (result.deleted.length === 0) return response.json(result);
-    try {
-      const preferences = await deps.preferences.removeClearedHidden(
-        result.deleted.map((session) => session.sessionId),
-        reviewedHiddenSessionIds,
-        reviewedHiddenProjectCwds,
-        !result.failure,
-      );
-      response.json({ ...result, preferences });
-    } catch (error) {
-      // Earlier files are already in Trash (or permanently removed). Return
-      // that committed subset and never turn it into a retryable batch.
-      console.error(
-        `[Hidden] navigation metadata cleanup failed after deleting ${result.deleted.length} sessions`,
-        error,
-      );
-      response.json({ ...result, preferenceCleanupFailed: true });
-    }
-  });
+  jsonRoute(
+    app,
+    routes.deleteSessions,
+    async ({ body }): Promise<SessionDeletionResponse> => {
+      const { preferences, revision } = await deps.preferences.inspect();
+      const projectCwd = body.scope === "hidden" ? body.projectCwd : undefined;
+      if (
+        projectCwd !== undefined &&
+        !preferences.hiddenProjectCwds.includes(projectCwd)
+      )
+        throw requestError(
+          "The folder is no longer hidden; review it before deleting",
+          409,
+          {
+            code: "HIDDEN_SELECTION_CHANGED",
+          },
+        );
+      const curation =
+        projectCwd === undefined
+          ? preferences
+          : { hiddenSessionIds: [], hiddenProjectCwds: [projectCwd] };
+      const result = await deps.runtime.deleteSessions(body, curation);
+      const deletedIds = result.deleted.map(({ sessionId }) => sessionId);
+      for (const id of deletedIds) deps.resources.forgetSession(id);
+      try {
+        const publication = deletedIds.length
+          ? await deps.preferences.removeDeletedSessions(
+              deletedIds,
+              body.scope === "hidden" && !result.failure ? curation : undefined,
+            )
+          : { preferences, revision };
+        return {
+          ...result,
+          navigation: { kind: "confirmed", authorityId, ...publication },
+        };
+      } catch (error) {
+        console.error(
+          "[session deletion] navigation metadata cleanup failed",
+          error,
+        );
+        return {
+          ...result,
+          navigation: {
+            kind: "unavailable",
+            reason:
+              "Deletion completed, but its navigation metadata could not be saved",
+          },
+        };
+      }
+    },
+  );
 
   const upload = multer({
     defParamCharset: "utf8",
@@ -1244,9 +927,9 @@ export function createInspireServer(deps: AppDependencies): {
     );
     response.type(image.mimeType).send(image.bytes);
   });
-  app.delete("/api/attachments/:id", async (request, response) => {
-    await deps.attachments.remove(attachmentIdSchema.parse(request.params.id));
-    response.json({ ok: true });
+  jsonRoute(app, routes.deleteAttachment, async ({ params: { id } }) => {
+    await deps.attachments.remove(id);
+    return { ok: true };
   });
 
   app.post(INPUT_OPERATION_PATHS.prompt, async (request, response) => {
@@ -1261,7 +944,7 @@ export function createInspireServer(deps: AppDependencies): {
       );
 
     const fingerprint = createHash("sha256")
-      .update(JSON.stringify(prompt))
+      .update(promptFingerprintInput(prompt))
       .digest("hex");
     const operation = promptOperations.get(prompt.operationId);
     if (operation && operation.fingerprint !== fingerprint)
@@ -1287,8 +970,16 @@ export function createInspireServer(deps: AppDependencies): {
   app.get(
     `${INPUT_OPERATION_PATHS.prompt}/:operationId`,
     async (request, response) => {
-      const operationId = z.string().uuid().parse(request.params.operationId);
-      if (request.query.authorityId !== authorityId)
+      const {
+        operationId,
+        authorityId: expected,
+        fingerprint,
+      } = promptObservationSchema.parse({
+        operationId: request.params.operationId,
+        authorityId: request.query.authorityId,
+        fingerprint: request.query.fingerprint,
+      });
+      if (expected !== authorityId)
         throw requestError("The prompt receipt belongs to another Host", 409, {
           code: "HOST_AUTHORITY_CHANGED",
           outcomeUnknown: true,
@@ -1303,24 +994,25 @@ export function createInspireServer(deps: AppDependencies): {
             outcomeUnknown: true,
           },
         );
+      if (fingerprint !== undefined && fingerprint !== operation.fingerprint)
+        throw requestError(
+          "The prompt receipt belongs to different content",
+          409,
+          {
+            code: "PROMPT_OPERATION_MISMATCH",
+            outcomeUnknown: true,
+          },
+        );
       await observePrompt(operationId, operation.result, response);
     },
   );
-  app.get("/api/pi/changelog", async (_request, response) => {
-    response.json(await installedPiChangelog());
-  });
-  app.post("/api/sessions/takeover", async (request, response) => {
-    const { sessionId } = z
-      .object({ sessionId: sessionIdField })
-      .parse(request.body);
-    response.json(await deps.runtime.takeOverSession(sessionId));
-  });
+  jsonRoute(app, routes.piChangelog, installedPiChangelog);
+  jsonRoute(app, routes.takeOverSession, ({ body }) =>
+    deps.runtime.takeOverSession(body.sessionId),
+  );
   /** A command that resumes this session in a terminal Pi. Copying it changes
    * nothing: Inspire and terminal Pi instances can share a session. */
-  app.get("/api/sessions/resume-command", async (request, response) => {
-    const { sessionId } = z
-      .object({ sessionId: sessionIdField })
-      .parse(request.query);
+  jsonRoute(app, routes.resumeCommand, async ({ query: { sessionId } }) => {
     const session = await deps.catalog.get(sessionId);
     if (!session) throw requestError("Session not found", 404);
     const quote = (value: string) =>
@@ -1337,29 +1029,19 @@ export function createInspireServer(deps: AppDependencies): {
     );
     const changeDirectory =
       process.platform === "win32" ? "Set-Location -LiteralPath" : "cd --";
-    response.json(
-      projectDirectoryMissing
-        ? { command, projectDirectoryMissing }
-        : { command: `${changeDirectory} ${quote(session.cwd)} && ${command}` },
-    );
+    return projectDirectoryMissing
+      ? { command, projectDirectoryMissing }
+      : { command: `${changeDirectory} ${quote(session.cwd)} && ${command}` };
   });
-  app.post("/api/sessions/export", async (request, response) => {
-    const { sessionId, format } = z
-      .object({
-        sessionId: sessionIdField,
-        format: z.enum(["html", "jsonl"]),
-      })
-      .parse(request.body);
-    response.json(
-      await generatedExports.create(sessionId, format, (path) =>
-        deps.runtime.nativeCommand({
-          sessionId,
-          command: "export",
-          argument: `"${path}"`,
-        }),
-      ),
-    );
-  });
+  jsonRoute(app, routes.exportSession, ({ body: { sessionId, format } }) =>
+    generatedExports.create(sessionId, format, (path) =>
+      deps.runtime.nativeCommand({
+        sessionId,
+        command: "export",
+        argument: `"${path}"`,
+      }),
+    ),
+  );
   app.get(
     "/api/sessions/:sessionId/exports/:exportId",
     async (request, response, next) => {
@@ -1383,8 +1065,7 @@ export function createInspireServer(deps: AppDependencies): {
       );
     },
   );
-  app.post("/api/control/native-command", async (request, response) => {
-    const command = nativeCommandSchema.parse(request.body);
+  jsonRoute(app, routes.nativeCommand, async ({ body: command }) => {
     const result = await deps.runtime.nativeCommand(command);
     if (result.export) {
       try {
@@ -1409,7 +1090,7 @@ export function createInspireServer(deps: AppDependencies): {
         ];
       }
     }
-    response.json(result);
+    return result;
   });
   const assertPendingAuthority = (expected: string): void => {
     if (expected !== authorityId)
@@ -1463,69 +1144,53 @@ export function createInspireServer(deps: AppDependencies): {
       );
     });
   }
-  app.post("/api/pending/text", async (request, response) => {
-    response.json(
-      await deps.runtime.pendingText(pendingReadSchema.parse(request.body)),
-    );
+  jsonRoute(app, routes.pendingText, ({ body }) =>
+    deps.runtime.pendingText(body),
+  );
+  jsonRoute(app, routes.clearPending, async ({ body }) => {
+    await deps.runtime.clearPending(body.sessionId);
+    return { ok: true };
   });
-  app.post("/api/pending/clear", async (request, response) => {
-    const { sessionId } = clearPendingSchema.parse(request.body);
-    await deps.runtime.clearPending(sessionId);
-    response.json({ ok: true });
-  });
-  app.post("/api/control/model-cycle", async (request, response) => {
-    const { sessionId, direction } = z
-      .object({
-        sessionId: z.string().min(1),
-        direction: z.union([z.literal(1), z.literal(-1)]),
-      })
-      .strict()
-      .parse(request.body);
-    if (direction !== 1)
-      throw requestError(
-        "This Pi version exposes only forward model cycling over RPC. Select a model in the picker instead.",
-        409,
-        { code: "PI_CAPABILITY_UNAVAILABLE" },
-      );
-    response.json((await deps.runtime.cycleModel(sessionId)) ?? null);
-  });
-  app.post("/api/control/model", async (request, response) => {
-    const value = modelSchema.parse(request.body);
-    response.json(
-      await deps.runtime.setModel(
-        value.sessionId,
-        value.provider,
-        value.modelId,
-      ),
-    );
-  });
-  app.post("/api/control/thinking", async (request, response) => {
-    const { sessionId, level } = thinkingSchema.parse(request.body);
-    response.json(await deps.runtime.setThinkingLevel(sessionId, level));
-  });
-  app.post("/api/control/auto-compaction", async (request, response) => {
-    const { sessionId, enabled } = runtimeBooleanSchema.parse(request.body);
-    await deps.runtime.setAutoCompaction(sessionId, enabled);
-    response.json({ ok: true });
-  });
-  app.post("/api/control/auto-retry", async (request, response) => {
-    const { sessionId, enabled } = runtimeBooleanSchema.parse(request.body);
-    await deps.runtime.setAutoRetry(sessionId, enabled);
-    response.json({ ok: true });
-  });
-  app.post("/api/control/steering-mode", async (request, response) => {
-    const { sessionId, mode } = runtimeDeliveryModeSchema.parse(request.body);
-    await deps.runtime.setSteeringMode(sessionId, mode);
-    response.json({ ok: true });
-  });
-  app.post("/api/control/follow-up-mode", async (request, response) => {
-    const { sessionId, mode } = runtimeDeliveryModeSchema.parse(request.body);
-    await deps.runtime.setFollowUpMode(sessionId, mode);
-    response.json({ ok: true });
-  });
-  app.post("/api/extension-ui", async (request, response) => {
-    await deps.runtime.extensionUiResponse(extensionSchema.parse(request.body));
-    response.json({ ok: true });
+  jsonRoute(
+    app,
+    routes.cycleModel,
+    async ({ body: { sessionId, direction } }) => {
+      if (direction !== 1)
+        throw requestError(
+          "This Pi version exposes only forward model cycling over RPC. Select a model in the picker instead.",
+          409,
+          { code: "PI_CAPABILITY_UNAVAILABLE" },
+        );
+      return (await deps.runtime.cycleModel(sessionId)) ?? null;
+    },
+  );
+  jsonRoute(app, routes.setModel, ({ body }) =>
+    deps.runtime.setModel(body.sessionId, body.provider, body.modelId),
+  );
+  jsonRoute(app, routes.setThinkingLevel, ({ body }) =>
+    deps.runtime.setThinkingLevel(body.sessionId, body.level),
+  );
+  for (const [route, apply] of [
+    [routes.setAutoCompaction, "setAutoCompaction"],
+    [routes.setAutoRetry, "setAutoRetry"],
+  ] as const) {
+    jsonRoute(app, route, async ({ body }) => {
+      await deps.runtime[apply](body.sessionId, body.enabled);
+      return { ok: true };
+    });
+  }
+  for (const [route, apply] of [
+    [routes.setSteeringMode, "setSteeringMode"],
+    [routes.setFollowUpMode, "setFollowUpMode"],
+  ] as const) {
+    jsonRoute(app, route, async ({ body }) => {
+      await deps.runtime[apply](body.sessionId, body.mode);
+      return { ok: true };
+    });
+  }
+  jsonRoute(app, routes.respondExtensionUi, async ({ body }) => {
+    await deps.runtime.extensionUiResponse(body);
+    return { ok: true };
   });
 
   const openSessionCwd = (sessionId: string): string => {
@@ -1534,151 +1199,131 @@ export function createInspireServer(deps: AppDependencies): {
     return cwd;
   };
 
-  app.get("/api/files", async (request, response) => {
-    const { sessionId, q, limit, showHidden } = fileQuerySchema.parse(
-      request.query,
-    );
-    const cwd = openSessionCwd(sessionId);
-    response.json(await searchProjectFiles(cwd, q, limit, showHidden));
-  });
-  app.get("/api/files/list", async (request, response) => {
-    const { sessionId, dir, refresh, showHidden } = fileListSchema.parse(
-      request.query,
-    );
-    const cwd = openSessionCwd(sessionId);
-    if (refresh) invalidateProjectFiles(cwd);
-    response.json(await listProjectDirectory(cwd, dir, showHidden));
-  });
-  app.get("/api/git/status", async (request, response) => {
-    const { sessionId } = gitStatusSchema.parse(request.query);
-    const cwd = openSessionCwd(sessionId);
-    response.json(
-      await withRequestSignal(request, response, (signal) =>
-        deps.git.status(cwd, signal),
-      ),
-    );
-  });
-  app.post("/api/git/diff", async (request, response) => {
-    const { sessionId, pathId } = gitDiffSchema.parse(request.body);
-    const cwd = openSessionCwd(sessionId);
-    response.json(
-      await withRequestSignal(request, response, (signal) =>
-        deps.git.diff(cwd, pathId, signal),
-      ),
-    );
-  });
+  jsonRoute(
+    app,
+    routes.searchFiles,
+    ({ query: { sessionId, q, limit, showHidden } }) =>
+      searchProjectFiles(openSessionCwd(sessionId), q, limit, showHidden),
+  );
+  jsonRoute(
+    app,
+    routes.listFiles,
+    ({ query: { sessionId, dir, refresh, showHidden } }) => {
+      const cwd = openSessionCwd(sessionId);
+      if (refresh) invalidateProjectFiles(cwd);
+      return listProjectDirectory(cwd, dir, showHidden);
+    },
+  );
+  jsonRoute(app, routes.gitStatus, ({ query }, request, response) =>
+    withRequestSignal(request, response, (signal) =>
+      deps.git.status(openSessionCwd(query.sessionId), signal),
+    ),
+  );
+  jsonRoute(app, routes.gitDiff, ({ body }, request, response) =>
+    withRequestSignal(request, response, (signal) =>
+      deps.git.diff(openSessionCwd(body.sessionId), body.pathId, signal),
+    ),
+  );
 
-  // Session-independent: the picker browses the host filesystem before any
-  // session exists. The bearer token is the guard, as everywhere else.
-  app.get("/api/host/roots", async (_request, response) => {
-    response.json(await listHostRoots());
-  });
+  jsonRoute(app, routes.browseHostRoots, () => listHostRoots());
+  jsonRoute(
+    app,
+    routes.browseHostDirs,
+    async ({ query: { path, showHidden } }) => {
+      if (path && !isAbsolute(path))
+        throw requestError("path must be absolute", 400);
+      try {
+        return await listHostDirectories(path, showHidden);
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException)?.code;
+        if (code === "ENOENT" || code === "ENOTDIR")
+          throw requestError("No such directory on the host", 404);
+        if (code === "EACCES" || code === "EPERM")
+          throw requestError("The host cannot read that directory", 403);
+        throw error;
+      }
+    },
+  );
 
-  app.get("/api/host/dirs", async (request, response) => {
-    const { path, showHidden } = hostDirsSchema.parse(request.query);
-    try {
-      response.json(await listHostDirectories(path, showHidden));
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException)?.code;
-      if (code === "ENOENT" || code === "ENOTDIR")
-        throw requestError("No such directory on the host", 404);
-      if (code === "EACCES" || code === "EPERM")
-        throw requestError("The host cannot read that directory", 403);
-      throw error;
-    }
-  });
-
-  app.post("/api/resources/list", async (request, response) => {
-    const { sessionId } = resourceListSchema.parse(request.body);
+  jsonRoute(app, routes.listResources, async ({ body: { sessionId } }) => {
     const context = await deps.runtime.resourceContext(sessionId);
-    const page = await deps.resources.list(context);
-    response.json({
+    return {
       sessionId,
       viewId: context.viewId,
       revision: context.revision,
-      ...page,
-    });
+      ...(await deps.resources.list(context)),
+    };
   });
-  app.post("/api/resources/probe", async (request, response) => {
-    const { sessionId, references } = resourceProbeSchema.parse(request.body);
-    const context = await deps.runtime.resourceContext(sessionId);
-    response.json({
-      sessionId,
-      viewId: context.viewId,
-      revision: context.revision,
-      results: await deps.resources.probe(context, references),
-    });
-  });
-  app.post("/api/resources/resolve", async (request, response) => {
-    const { sessionId, reference, workspacePath } = resourceResolveSchema.parse(
-      request.body,
-    );
-    const context = await deps.runtime.resourceContext(sessionId);
-    response.json(
-      await deps.resources.resolve(context, reference, workspacePath),
-    );
-  });
-  app.post("/api/resources/show-in-file-manager", async (request, response) => {
-    const { sessionId, reference, workspacePath, directory } =
-      resourceResolveSchema
-        .extend({ directory: z.boolean().default(false) })
-        .parse(request.body);
-    const context = await deps.runtime.resourceContext(sessionId);
-    const path = await deps.resources.fileManagerPath(
-      context,
-      reference,
-      workspacePath,
-      directory,
-    );
-    await showInFileManager(path, directory);
-    response.json({ ok: true });
-  });
-  app.post("/api/resources/:id/interactive", async (request, response) => {
-    const { sessionId, html } = z
-      .object({
-        sessionId: z.string().min(1),
-        html: z.string().max(HTML_PREVIEW_BYTES),
-      })
-      .strict()
-      .parse(request.body);
-    const context = await deps.runtime.resourceContext(sessionId);
-    const preview = await deps.resources.createHtmlPreview(
-      request.params.id,
-      context,
-      html,
-    );
-    if (response.destroyed)
-      deps.resources.removeHtmlPreview(preview.id, sessionId);
-    else response.json(preview);
-  });
-  app.delete("/api/html-previews/:id", (request, response) => {
-    const { sessionId } = z
-      .object({ sessionId: z.string().min(1) })
-      .strict()
-      .parse(request.query);
-    deps.resources.removeHtmlPreview(request.params.id, sessionId);
-    response.status(204).end();
-  });
-  app.post("/api/resources/:id/download-ticket", async (request, response) => {
-    const { sessionId } = z
-      .object({ sessionId: sessionIdField })
-      .strict()
-      .parse(request.body);
-    const context = await deps.runtime.resourceContext(sessionId);
-    const resource = deps.resources.get(
-      request.params.id,
-      sessionId,
-      context.viewId,
-    );
-    await deps.resources.revalidate(resource, context);
-    response.json(
-      browserAuth.downloadTicket(
-        requestOrigin(request),
-        request.params.id,
+  jsonRoute(
+    app,
+    routes.probeResources,
+    async ({ body: { sessionId, references } }) => {
+      const context = await deps.runtime.resourceContext(sessionId);
+      return {
         sessionId,
-      ),
-    );
-  });
+        viewId: context.viewId,
+        revision: context.revision,
+        results: await deps.resources.probe(context, references),
+      };
+    },
+  );
+  jsonRoute(
+    app,
+    routes.resolveResource,
+    async ({ body: { sessionId, reference, workspacePath } }) => {
+      const context = await deps.runtime.resourceContext(sessionId);
+      return deps.resources.resolve(context, reference, workspacePath);
+    },
+  );
+  jsonRoute(
+    app,
+    routes.showInFileManager,
+    async ({ body: { sessionId, reference, workspacePath, directory } }) => {
+      const context = await deps.runtime.resourceContext(sessionId);
+      const path = await deps.resources.fileManagerPath(
+        context,
+        reference,
+        workspacePath,
+        directory,
+      );
+      await showInFileManager(path, directory);
+      return { ok: true };
+    },
+  );
+  jsonRoute(
+    app,
+    routes.createHtmlPreview,
+    async (
+      { params: { id }, body: { sessionId, html } },
+      _request,
+      response,
+    ) => {
+      const context = await deps.runtime.resourceContext(sessionId);
+      const preview = await deps.resources.createHtmlPreview(id, context, html);
+      if (response.destroyed)
+        deps.resources.removeHtmlPreview(preview.id, sessionId);
+      return preview;
+    },
+  );
+  jsonRoute(
+    app,
+    routes.deleteHtmlPreview,
+    ({ params: { id }, query: { sessionId } }) => {
+      deps.resources.removeHtmlPreview(id, sessionId);
+    },
+  );
+  jsonRoute(
+    app,
+    routes.resourceDownloadTicket,
+    async ({ params: { id }, body: { sessionId } }, request) => {
+      const context = await deps.runtime.resourceContext(sessionId);
+      await deps.resources.revalidate(
+        deps.resources.get(id, sessionId, context.viewId),
+        context,
+      );
+      return browserAuth.downloadTicket(requestOrigin(request), id, sessionId);
+    },
+  );
   app.get("/api/resources/:id/content", async (request, response) => {
     const { sessionId, download } = resourceContentSchema.parse(request.query);
     await sendResourceContent(
@@ -1746,55 +1391,45 @@ export function createInspireServer(deps: AppDependencies): {
     }
   }
 
-  app.patch("/api/presentation-adapters/:id", async (request, response) => {
-    const { enabled } = z
-      .object({ enabled: z.boolean() })
-      .strict()
-      .parse(request.body);
-    const current = await deps.toolPresentations?.inspect();
-    if (!current?.adapters?.some((adapter) => adapter.id === request.params.id))
-      throw requestError("The adapter is not configured", 404);
-    const preferences = await deps.preferences.patch({
-      adapterEnabled: { [request.params.id]: enabled },
-    });
-    const state = await deps.toolPresentations!.inspect(
-      preferences.adapterEnabled,
-    );
-    response.json({ ...state, preferences });
-  });
-
-  app.get("/api/preferences", async (_request, response) =>
-    response.json(await deps.preferences.read()),
+  jsonRoute(
+    app,
+    routes.setPresentationAdapterEnabled,
+    async ({ params: { id }, body: { enabled } }) => {
+      const current = await deps.toolPresentations?.inspect();
+      if (!current?.adapters?.some((adapter) => adapter.id === id))
+        throw requestError("The adapter is not configured", 404);
+      const { preferences, revision } = await deps.preferences.patch({
+        adapterEnabled: { [id]: enabled },
+      });
+      const state = await deps.toolPresentations!.inspect(
+        preferences.adapterEnabled,
+      );
+      return { ...state, preferences, preferenceRevision: revision };
+    },
   );
-  app.patch("/api/preferences", async (request, response) => {
-    const preferences = await deps.preferences.patch(request.body);
-    if (
-      Object.hasOwn(request.body, "pinnedProjectCwds") ||
-      Object.hasOwn(request.body, "hiddenProjectCwds")
-    ) {
+
+  jsonRoute(app, routes.preferences, async () => {
+    const { preferences, revision } = await deps.preferences.inspect();
+    return { preferences, revision };
+  });
+  jsonRoute(app, routes.savePreferences, async ({ body }) => {
+    const publication = await deps.preferences.patch(body);
+    if (body.pinnedProjectCwds || body.hiddenProjectCwds)
       deps.catalog.invalidate();
-    }
-    response.json(preferences);
+    return publication;
   });
-  app.get("/api/snapshot", async (request, response) => {
-    const snapshot = await deps.runtime.snapshot(
-      requestedDetail(request.query.detail),
-    );
-    response.json({
-      ...snapshot,
-      runtimeSequence: deps.runtime.eventSnapshotCut(snapshot),
-    });
-  });
-  app.get(SESSION_HISTORY_PATH, async (request, response) => {
-    const { sessionId, viewId, ...query } = historyQuerySchema.parse(
-      request.query,
-    );
-    response.json(await deps.runtime.sessionHistory(sessionId, viewId, query));
-  });
-  app.get("/api/transcript/assistant-text", async (request, response) => {
-    const { sessionId, viewId } = assistantTextSchema.parse(request.query);
-    response.json(await deps.runtime.lastAssistantText(sessionId, viewId));
-  });
+  jsonRoute(app, routes.snapshot, ({ query: { detail } }) =>
+    deps.runtime.snapshot(detail === "" ? null : detail),
+  );
+  jsonRoute(
+    app,
+    routes.sessionHistory,
+    ({ query: { sessionId, viewId, ...query } }) =>
+      deps.runtime.sessionHistory(sessionId, viewId, query),
+  );
+  jsonRoute(app, routes.lastAssistantText, ({ query }) =>
+    deps.runtime.lastAssistantText(query.sessionId, query.viewId),
+  );
   app.get("/api/branches/image", async (request, response) => {
     const { index, ...address } = branchImageSchema.parse(request.query);
     const image = await deps.runtime.branchImage(address, index);
@@ -1808,29 +1443,15 @@ export function createInspireServer(deps: AppDependencies): {
     );
     response.send(image.data);
   });
-  app.post("/api/branches/select", async (request, response) => {
-    const { sessionId, leafId } = z
-      .object({ sessionId: sessionIdField, leafId: z.string().min(1).max(200) })
-      .parse(request.body);
-    response.json(await deps.runtime.selectBranch(sessionId, leafId));
-  });
-  app.post("/api/branches/clone", async (request, response) => {
-    response.json(
-      await deps.runtime.cloneBranch(branchCloneSchema.parse(request.body)),
-    );
-  });
-  app.post("/api/branches/navigate", async (request, response) => {
-    response.json(
-      await deps.runtime.navigateBranch(
-        branchNavigateSchema.parse(request.body),
-      ),
-    );
-  });
-  app.post("/api/branches/fork", async (request, response) => {
-    response.json(
-      await deps.runtime.forkBranch(branchForkSchema.parse(request.body)),
-    );
-  });
+  jsonRoute(app, routes.cloneBranch, ({ body }) =>
+    deps.runtime.cloneBranch(body),
+  );
+  jsonRoute(app, routes.navigateBranch, ({ body }) =>
+    deps.runtime.navigateBranch(body),
+  );
+  jsonRoute(app, routes.forkBranch, ({ body }) =>
+    deps.runtime.forkBranch(body),
+  );
 
   // Unknown API paths are protocol errors, never client-side routes. Keep
   // them out of the SPA fallback so a typo cannot return index.html as 200.

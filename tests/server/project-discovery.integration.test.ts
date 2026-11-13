@@ -145,7 +145,10 @@ describe("Host project discovery continuity", () => {
           expect(
             await readFile(created.body.active.sessionFile, "utf8"),
           ).toContain("offline answer");
-          expect((await current.runtime.snapshot()).runState).toBe("idle");
+          expect(
+            (await current.runtime.snapshot(created.body.active.sessionId))
+              .runState,
+          ).toBe("idle");
         },
         { timeout: 10_000 },
       );
@@ -165,7 +168,10 @@ describe("Host project discovery continuity", () => {
           expect(
             await readFile(created.body.active.sessionFile, "utf8"),
           ).toContain("continue after reconstruction");
-          expect((await current.runtime.snapshot()).runState).toBe("idle");
+          expect(
+            (await current.runtime.snapshot(created.body.active.sessionId))
+              .runState,
+          ).toBe("idle");
         },
         { timeout: 10_000 },
       );

@@ -10,6 +10,7 @@ import {
   FakeWebSocket,
   installFakeWebSocket,
   installFetch,
+  selectSession,
 } from "./helpers";
 import { baseRoutes } from "./store-fixture";
 
@@ -17,7 +18,7 @@ beforeEach(async () => {
   installFakeWebSocket();
   installFetch(baseRoutes);
   await act(async () => store.init());
-  FakeWebSocket.instances.at(-1)?.open();
+  FakeWebSocket.instances.at(-1)?.join(activeSnapshot());
 });
 
 afterEach(() => {
@@ -30,7 +31,7 @@ function emit(event: Record<string, unknown>) {
   );
 }
 
-it("keeps machine status out of the header and scopes expanded status to its session", () => {
+it("keeps machine status out of the header and scopes expanded status to its session", async () => {
   configurePresentationAdapters({
     ...emptyToolPresentationConfiguration(),
     controls: [
@@ -60,12 +61,9 @@ it("keeps machine status out of the header and scopes expanded status to its ses
   const status = screen.getByRole("dialog", { name: "Extension status" });
   expect(within(status).getByText("Fast tier Second line")).toBeVisible();
 
-  emit({
-    type: "snapshot",
-    data: {
-      ...activeSnapshot({ sessionId: "s2" }),
-      extensionStatuses: { status: "Other session\nSecond line" },
-    },
+  await selectSession(store, {
+    ...activeSnapshot({ sessionId: "s2" }),
+    extensionStatuses: { status: "Other session\nSecond line" },
   });
   expect(screen.queryByRole("dialog", { name: "Extension status" })).toBeNull();
   expect(screen.getByText("Other session Second line")).toBeVisible();

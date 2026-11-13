@@ -2,7 +2,9 @@
 .choice-panel__body,
 .model-picker__menu,
 .session-actions-menu,
-.terminal-menu__popover {
+.terminal-menu__popover,
+.completion,
+.picker {
   padding: var(--space-1);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-md);
@@ -10,6 +12,13 @@
   box-shadow: var(--shadow-2);
   overscroll-behavior: contain;
   animation: float-in var(--dur-standard) var(--ease-standard);
+}
+
+@keyframes float-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
 }
 
 .choice-panel__body button,

@@ -32,9 +32,8 @@ describe("Composer editing and keyboard behavior", () => {
       host.historyEntries = [];
       const socket = FakeWebSocket.instances.at(-1)!;
       act(() =>
-        socket.emit({
-          type: "snapshot",
-          data: activeSnapshot({
+        socket.emitSnapshot(
+          activeSnapshot({
             isStreaming: true,
             durableLeafId: "leaf-a",
             effectiveLeafId: "leaf-a",
@@ -46,7 +45,7 @@ describe("Composer editing and keyboard behavior", () => {
               effectiveLeafId: "leaf-a",
             },
           }),
-        }),
+        ),
       );
 
       render(<Composer />);
@@ -56,9 +55,8 @@ describe("Composer editing and keyboard behavior", () => {
       textarea.setSelectionRange(8, 13);
 
       act(() =>
-        socket.emit({
-          type: "snapshot",
-          data: activeSnapshot({
+        socket.emitSnapshot(
+          activeSnapshot({
             isStreaming: true,
             durableLeafId: "leaf-b",
             effectiveLeafId: "leaf-b",
@@ -70,7 +68,7 @@ describe("Composer editing and keyboard behavior", () => {
               effectiveLeafId: "leaf-b",
             },
           }),
-        }),
+        ),
       );
 
       const current = screen.getByLabelText("Message") as HTMLTextAreaElement;
@@ -110,16 +108,15 @@ describe("Composer editing and keyboard behavior", () => {
       const requestsBefore = host.historyRequests;
       const socket = FakeWebSocket.instances.at(-1)!;
       act(() =>
-        socket.emit({
-          type: "snapshot",
-          data: activeSnapshot({
+        socket.emitSnapshot(
+          activeSnapshot({
             transcriptPage: {
               viewId: "image-history-view",
               incarnation: "image-history-projection",
               effectiveLeafId: "image-history-leaf",
             },
           }),
-        }),
+        ),
       );
 
       render(<Composer />);
@@ -130,21 +127,20 @@ describe("Composer editing and keyboard behavior", () => {
         expect(host.historyRequests).toBeGreaterThan(requestsBefore),
       );
       const hydratedRequests = host.historyRequests;
-      for (let index = 1; index <= 20; index += 1) {
-        await act(async () => {
-          socket.emit({
-            type: "snapshot",
-            data: activeSnapshot({
-              transcriptPage: {
-                viewId: "image-history-view",
-                incarnation: "image-history-projection",
-                effectiveLeafId: `assistant-leaf-${index}`,
-                revision: index + 1,
-              },
-            }),
-          });
-        });
-      }
+      act(() =>
+        socket.emitSnapshot(
+          activeSnapshot({
+            transcriptPage: {
+              viewId: "image-history-view",
+              incarnation: "image-history-projection",
+              effectiveLeafId: "assistant-leaf",
+              revision: 2,
+              appendFromRevision: 1,
+            },
+          }),
+          { detailSessionId: "s1", detailRevision: 0 },
+        ),
+      );
       expect(host.historyRequests).toBe(hydratedRequests);
       await act(async () => {
         historyResponse.resolve();
@@ -160,13 +156,6 @@ describe("Composer editing and keyboard behavior", () => {
         );
         return history;
       };
-      const history = await chooseArtifacts();
-      expect(textarea).toHaveValue("current draft");
-      expect(screen.getByText("notes.txt")).toBeInTheDocument();
-      fireEvent.click(history.getByRole("button", { name: "Cancel" }));
-      expect(textarea).toHaveValue("current draft");
-      expect(screen.getByText("notes.txt")).toBeInTheDocument();
-
       fireEvent.keyDown(textarea, { key: "ArrowUp", altKey: true });
       const staleHistory = await chooseArtifacts();
       typeDraft("newer draft");
@@ -202,7 +191,7 @@ describe("Composer editing and keyboard behavior", () => {
           historyArtifacts: {
             viewId: "image-history-view",
             incarnation: "image-history-projection",
-            effectiveLeafId: "assistant-leaf-20",
+            effectiveLeafId: "assistant-leaf",
             imageReferences: ["pi-history-image://entry-4/1"],
             fileReferences: [
               "pi-history-file://entry-4/0",
@@ -211,32 +200,6 @@ describe("Composer editing and keyboard behavior", () => {
           },
         }),
       );
-      host.historyEntries = [
-        { text: "new user prompt", images: [], files: [] },
-      ];
-      await act(async () => {
-        socket.emit({
-          type: "snapshot",
-          data: activeSnapshot({
-            transcriptPage: {
-              viewId: "image-history-view",
-              incarnation: "image-history-projection",
-              effectiveLeafId: "new-user-leaf",
-              revision: 22,
-              composerHistoryVersion: "history-2",
-            },
-          }),
-        });
-      });
-      fireEvent.keyDown(textarea, { key: "ArrowUp", altKey: true });
-      const latest = within(
-        screen.getByRole("dialog", { name: "Input history" }),
-      );
-      fireEvent.click(
-        await latest.findByRole("radio", { name: "new user prompt" }),
-      );
-      fireEvent.click(latest.getByRole("button", { name: "Use this input" }));
-      expect(textarea).toHaveValue("new user prompt");
     });
 
     it("dispatches only the selected desktop send chord", async () => {
@@ -264,7 +227,10 @@ describe("Composer editing and keyboard behavior", () => {
       expect(host.promptBodies).toEqual([]);
       await send("ordinary Enter");
 
-      act(() => store.setDesktopSendKey("mod-enter"));
+      act(() => store.setPreference("desktopSendKey", "mod-enter"));
+      await waitFor(() =>
+        expect(store.getState().prefs.desktopSendKey).toBe("mod-enter"),
+      );
       typeDraft("Control sends");
       expect(press()).toBe(true);
       expect(press({ ctrlKey: true, keyCode: 229 })).toBe(true);

@@ -391,7 +391,7 @@ it("reconciles Host update state from the stream and closes it on an invalid sta
           version: "0.3.0",
           piVersion: "0.84.2",
           updateStatus: authoritative,
-          snapshot: activeSnapshot(),
+          startupSessionId: "s1",
         }),
       };
     }
@@ -409,8 +409,7 @@ it("reconciles Host update state from the stream and closes it on an invalid sta
     availableUpdateIdentity: '[["pi","0.84.3"]]',
     updateSnoozedUntil: 4_000_000,
   });
-  FakeWebSocket.bootstrapUpdateStatus = authoritative;
-  socket.open(activeSnapshot());
+  socket.join(activeSnapshot(), { updateStatus: authoritative });
   expect(store.getState().updateSnoozedUntil).toBe(4_000_000);
 
   vi.useFakeTimers();

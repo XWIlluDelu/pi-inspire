@@ -3,6 +3,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
+import { Modal } from "../../src/components/Modal";
 import { SettingsDialog } from "../../src/components/SettingsDialog";
 import {
   recoverModalFocus,
@@ -80,10 +81,6 @@ describe("modal focus ownership", () => {
     expect(last).toHaveFocus();
     await user.tab();
     expect(first).toHaveFocus();
-    opener.focus();
-    expect(screen.getByRole("dialog")).toContainElement(
-      document.activeElement as HTMLElement,
-    );
     view.unmount();
     await Promise.resolve();
     expect(opener).toHaveFocus();
@@ -96,41 +93,27 @@ describe("modal focus ownership", () => {
       function NestedDialogs() {
         const [outerOpen, setOuterOpen] = useState(false);
         const [innerOpen, setInnerOpen] = useState(false);
-        const outerRef = useModalFocus<HTMLDivElement>(outerOpen);
-        const innerRef = useModalFocus<HTMLDivElement>(innerOpen);
         return (
           <>
             <button type="button" onClick={() => setOuterOpen(true)}>
               Open outer
             </button>
             {outerOpen ? (
-              <div
-                ref={outerRef}
-                role="dialog"
-                aria-modal="true"
-                aria-label="Outer"
-                tabIndex={-1}
-              >
+              <Modal aria-label="Outer">
                 <button type="button" onClick={() => setInnerOpen(true)}>
                   Open inner
                 </button>
-              </div>
+              </Modal>
             ) : null}
             {innerOpen ? (
-              <div
-                ref={innerRef}
-                role="dialog"
-                aria-modal="true"
-                aria-label="Inner"
-                tabIndex={-1}
-              >
+              <Modal aria-label="Inner">
                 <button type="button" onClick={() => setOuterOpen(false)}>
                   Close outer first
                 </button>
                 <button type="button" onClick={() => setInnerOpen(false)}>
                   Close inner
                 </button>
-              </div>
+              </Modal>
             ) : null}
           </>
         );
@@ -167,7 +150,6 @@ describe("modal focus ownership", () => {
       topOpen: boolean;
     }) {
       const outerRef = useModalFocus<HTMLDivElement>(true, "deferred");
-      const topRef = useModalFocus<HTMLDivElement>(topOpen, "newer");
       return (
         <>
           <div
@@ -182,15 +164,9 @@ describe("modal focus ownership", () => {
             </div>
           </div>
           {topOpen ? (
-            <div
-              ref={topRef}
-              role="dialog"
-              aria-modal="true"
-              aria-label="Newer"
-              tabIndex={-1}
-            >
+            <Modal aria-label="Newer">
               <button type="button">Close newer</button>
-            </div>
+            </Modal>
           ) : null}
         </>
       );

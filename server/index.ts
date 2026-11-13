@@ -66,10 +66,7 @@ import {
   connectExistingTerminalDaemon,
   launchTerminalDaemon,
 } from "./terminal-daemon-launcher.js";
-import {
-  LazyTerminalService,
-  type TerminalService,
-} from "./terminal-service.js";
+import { TerminalConnection } from "./terminal-service.js";
 import { TerminalSessionManager } from "./terminal-session-manager.js";
 import {
   defaultToolPresentationConfigPath,
@@ -227,22 +224,22 @@ const toolPresentations = new ToolPresentationConfigStore(
 );
 const resources = new ResourceStore();
 const git = new GitInspectionService();
-let terminal: TerminalService;
-if (process.env.INSPIRE_TERMINAL_IN_PROCESS === "1") {
-  terminal = new TerminalSessionManager();
-} else {
-  terminal = await launchTerminalDaemon({ root, host, port }).catch((error) => {
-    const message =
-      error instanceof Error ? error.message : "Terminal service unavailable";
-    diagnostics.record("warning", "terminal_daemon_unavailable", {
-      errorName: error instanceof Error ? error.name : typeof error,
-    });
-    console.error(`Terminal service unavailable: ${message}`);
-    return new LazyTerminalService(() =>
-      connectExistingTerminalDaemon({ root, host, port }),
-    );
-  });
-}
+const connectTerminal = () =>
+  connectExistingTerminalDaemon({ root, host, port });
+const terminal = new TerminalConnection(
+  connectTerminal,
+  process.env.INSPIRE_TERMINAL_IN_PROCESS === "1"
+    ? new TerminalSessionManager()
+    : await launchTerminalDaemon({ root, host, port }).catch((error) => {
+        diagnostics.record("warning", "terminal_daemon_unavailable", {
+          errorName: error instanceof Error ? error.name : typeof error,
+        });
+        console.error(
+          `Terminal service unavailable: ${error instanceof Error ? error.message : "Terminal service unavailable"}`,
+        );
+        return null;
+      }),
+);
 const modelRuntime = await ModelRuntime.create({
   refreshOnCreate: false,
 }).catch((error) => {
@@ -396,7 +393,6 @@ async function announceStarted(): Promise<void> {
     token,
     startedAt: new Date().toISOString(),
     processStartTime: await processStartIdentity(process.pid),
-    durableWorkerRelease: true,
     ...(/^[a-f0-9]{32}$/u.test(process.env.INVOCATION_ID ?? "")
       ? { systemdInvocationId: process.env.INVOCATION_ID }
       : {}),

@@ -1,7 +1,7 @@
 ---
 purpose: Shared streaming Markdown, mathematics, code, tables, and links for Pi content.
 covers:
-  - src/components/RichText.tsx
+  - src/components/{RichText,CodeView}.tsx
   - src/{rich-text-parser,rich-text-parser-client,rich-text-worker}.ts
   - vite.config.ts
   - package.json
@@ -54,6 +54,8 @@ thinking, documents, and extension Markdown share one rendering authority with d
 - Code blocks preserve whitespace, identify their language when available, highlight syntax, and
   copy the original source. Parsed `pre` structure determines block identity: unlabeled, indented,
   and incomplete fences keep block/copy behavior. Only inline code can become a file-reference button.
+  Markdown fences, notebook code, file source and tool output share a code surface. Git and tool
+  diffs use the same line renderer with optional number gutters and change markers.
 - Final rendering equals a fresh render of the complete source. Parse the whole document so later
   reference definitions, footnotes, and open fence/list/math structure can update earlier content.
 - Reuse unchanged math and code subtrees without delaying source updates. Reuse stays bounded by
@@ -95,6 +97,7 @@ pending reader, even if other readers keep completed trees. The last reader also
 worker. Valid streaming updates coalesce instead of restarting active parsing on every update.
 
 Sanitized `code`/`pre` renderers pass primitive source and mode/language props to memoized leaves.
+Markdown fences, notebook cells and file source share one escaped syntax-highlight renderer.
 `RichTextMath` runs trust-disabled rehype-katex and HAST-to-React conversion when an expression changes;
 `CodeBlock` keeps highlighting through unrelated updates and clipboard feedback.
 

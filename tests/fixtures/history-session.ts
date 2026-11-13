@@ -1,11 +1,16 @@
 import { resolve } from "node:path";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 
 export const HISTORY_FIXTURE_SESSION_ID = "fixture-calibration-history";
 const timestamp = "2026-10-01T10:00:00.000Z";
-const response = (text: string) => ({
+export const savedAssistant = (
+  content: string | AssistantMessage["content"],
+  overrides: Partial<Omit<AssistantMessage, "role" | "content">> = {},
+): AssistantMessage => ({
   role: "assistant",
-  content: [{ type: "text", text }],
+  content:
+    typeof content === "string" ? [{ type: "text", text: content }] : content,
   timestamp: 1,
   api: "openai-completions",
   provider: "workbench",
@@ -19,6 +24,7 @@ const response = (text: string) => ({
     totalTokens: 0,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
   },
+  ...overrides,
 });
 
 /** Saved history with a long response, alternate branch, images and tool results. */
@@ -35,7 +41,10 @@ export function historyFixtureEntries(
       };
   const entries: SessionEntry[] = [];
   let parentId: string | null = null;
-  const append = (id: string, message: Record<string, unknown>) => {
+  const append = (
+    id: string,
+    message: Record<string, unknown> | AssistantMessage,
+  ) => {
     entries.push({
       type: "message",
       id,
@@ -63,7 +72,7 @@ export function historyFixtureEntries(
     if (turn === 599) break;
     append(
       `history-a-${turn}`,
-      response(
+      savedAssistant(
         turn === 0
           ? `# Original calibration record\n\n${"The reference measurement separates sensor drift from the calibration residual. Preserve the complete record for later comparisons.\n\n".repeat(550)}\nThe cobalt baseline is the complete old-history search marker.\n\n完整测量记录。`
           : `Run ${turn} keeps the reference measurement stable. Inspect the residual before changing the calibration.`,
@@ -87,7 +96,7 @@ export function historyFixtureEntries(
         id: "history-alternate-answer",
         parentId: "history-alternate",
         timestamp,
-        message: response(
+        message: savedAssistant(
           "The amber reference is retained on this alternate route, not the current conversation.",
         ),
       } as SessionEntry);
@@ -115,7 +124,7 @@ export function historyFixtureEntries(
   for (let step = 0; step < 70; step++) {
     const id = `history-call-${step}`;
     append(`history-tool-call-${step}`, {
-      ...response(`Inspect calibration artifact ${step}.`),
+      ...savedAssistant(`Inspect calibration artifact ${step}.`),
       content: [
         {
           type: "toolCall",
@@ -141,7 +150,7 @@ export function historyFixtureEntries(
   }
   append(
     "history-latest",
-    response(
+    savedAssistant(
       "The current calibration run is complete. The reference remains stable across all inspected artifacts.",
     ),
   );

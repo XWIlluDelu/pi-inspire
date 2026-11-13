@@ -7,7 +7,10 @@ import request from "supertest";
 import { vi } from "vitest";
 import { type ClientOptions, WebSocket } from "ws";
 import { createInspireServer } from "../../../server/app.js";
-import { AttachmentStore } from "../../../server/attachments.js";
+import {
+  type HostRestartBackend,
+  HostRestartController,
+} from "../../../server/host-restart.js";
 import { PreferencesStore } from "../../../server/preferences.js";
 import { ResourceStore } from "../../../server/resources.js";
 import { ToolPresentationConfigStore } from "../../../server/tool-presentation-config.js";
@@ -16,7 +19,9 @@ import type {
   ActiveSnapshot,
   SessionRuntimeStatus,
 } from "../../../shared/contracts.js";
+import { hostServices } from "../../fixtures/host-services.js";
 import { workbenchFixture } from "../../fixtures/workbench.js";
+import { seedWorkbenchSessions } from "../../fixtures/workbench-sessions.js";
 
 type DetailFrame = Record<string, unknown> & {
   type: string;
@@ -95,24 +100,43 @@ const fixtureModel = {
   reasoning: true,
 };
 
-export async function hostApiFixture(
-  options: {
-    token?: string;
-    activeHerdrMode?: boolean;
-    maintenanceRestart?: Parameters<
-      typeof createInspireServer
-    >[0]["maintenanceRestart"];
-    instanceState?: () =>
-      | import("../../../server/instance-state.mjs").InstanceState
-      | null;
-    websocketHeartbeatIntervalMs?: number;
-    promptObservationWindowMs?: number;
-    runtime?: Parameters<typeof createInspireServer>[0]["runtime"];
-    distDir?: string;
-    terminal?: Parameters<typeof createInspireServer>[0]["terminal"];
-    developmentBrowserBuild?: string;
-  } = {},
-) {
+type HostDependencies = Parameters<typeof createInspireServer>[0];
+type HostFixtureServices = Pick<
+  HostDependencies,
+  "runtime" | "catalog" | "attachments"
+> & { cwd: string };
+type ConfigurationOptions = Partial<
+  Pick<
+    HostDependencies,
+    | "modelSettings"
+    | "mcpConfig"
+    | "modelMetadata"
+    | "providerAuth"
+    | "invalidateModels"
+  >
+>;
+type HostFixtureOptions = ConfigurationOptions &
+  Partial<
+    Pick<
+      HostDependencies,
+      | "token"
+      | "activeHerdrMode"
+      | "maintenanceRestart"
+      | "instanceState"
+      | "getHerdrStatus"
+      | "websocketHeartbeatIntervalMs"
+      | "promptObservationWindowMs"
+      | "distDir"
+      | "terminal"
+      | "developmentBrowserBuild"
+    >
+  > & { services?: HostFixtureServices; restartBackend?: HostRestartBackend };
+
+export async function hostApiFixture({
+  services,
+  restartBackend,
+  ...options
+}: HostFixtureOptions = {}) {
   const temporary = await realpath(
     await mkdtemp(join(tmpdir(), "inspire-test-")),
   );
@@ -121,15 +145,16 @@ export async function hostApiFixture(
     sessions: process.env.PI_CODING_AGENT_SESSION_DIR,
   };
   const resources = new ResourceStore();
-  const attachments = new AttachmentStore(join(temporary, "uploads"));
-  const workbench = await workbenchFixture(join(temporary, ".host"), {
-    attachments,
-    rich: false,
-  });
-  process.env.PI_CODING_AGENT_DIR = workbench.agent;
-  process.env.PI_CODING_AGENT_SESSION_DIR = workbench.sessions;
-  const runtime = options.runtime ?? workbench.runtime;
-  const git: Parameters<typeof createInspireServer>[0]["git"] = {
+  if (!services) {
+    const workbench = await workbenchFixture(join(temporary, ".host"), {
+      rich: false,
+    });
+    process.env.PI_CODING_AGENT_DIR = workbench.agent;
+    process.env.PI_CODING_AGENT_SESSION_DIR = workbench.sessions;
+    services = workbench;
+  }
+  const { cwd, runtime, catalog, attachments } = services;
+  const git: HostDependencies["git"] = {
     status: vi.fn(async () => ({ kind: "not-repository" as const })),
     diff: vi.fn(async (_cwd, pathId) => ({
       kind: "empty" as const,
@@ -144,10 +169,12 @@ export async function hostApiFixture(
   };
   const application = createInspireServer({
     token,
-    activeHerdrMode: options.activeHerdrMode,
     runtime,
-    catalog: workbench.catalog,
+    catalog,
     attachments,
+    hostRestart: restartBackend
+      ? new HostRestartController(runtime, restartBackend)
+      : undefined,
     preferences: new PreferencesStore(join(temporary, "preferences.json")),
     toolPresentations: new ToolPresentationConfigStore(
       join(temporary, "tool-presentations.json"),
@@ -208,8 +235,8 @@ export async function hostApiFixture(
   return {
     temporary,
     previousEnvironment,
-    cwd: workbench.cwd,
-    catalog: workbench.catalog,
+    cwd,
+    catalog,
     resources,
     attachments,
     runtime,
@@ -234,4 +261,16 @@ export async function closeHostApiFixture(
     else process.env[key] = value;
   }
   await rm(fixture.temporary, { recursive: true, force: true, maxRetries: 3 });
+}
+
+export async function configurationHost(
+  root: string,
+  cwd: string,
+  options: ConfigurationOptions,
+) {
+  await seedWorkbenchSessions(join(root, "sessions"), cwd, undefined, false);
+  return hostApiFixture({
+    ...options,
+    services: { cwd, ...hostServices(root, { cwd }) },
+  });
 }

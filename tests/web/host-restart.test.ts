@@ -8,12 +8,13 @@ import type {
 import { HostRestartClient } from "../../src/controllers/host-restart-controller";
 import { deferred } from "./helpers";
 
+const recoveryKey = "inspire:host-restart:v1";
 beforeEach(() => sessionStorage.clear());
+
 function fixture() {
   const status: HostRestartStatus = {
     hostId: crypto.randomUUID(),
     available: true,
-    allAvailable: true,
     allPiAvailable: true,
     operation: null,
   };
@@ -27,80 +28,81 @@ function fixture() {
       }),
     ),
   };
-  return { status, api, client: new HostRestartClient(api) };
+  const client = new HostRestartClient(api);
+  const observe = async () => {
+    await client.refresh();
+    return client.snapshot();
+  };
+  return { status, api, client, observe };
 }
 
 describe("browser restart delivery", () => {
-  it("shows the accepted receipt while an older status read is still pending", async () => {
-    const f = fixture();
-    f.status.operation = {
-      id: crypto.randomUUID(),
-      scope: "host",
-      phase: "rejected",
-      busyReason: "active-work",
-    };
-    await f.client.refresh();
-    const staleStatus = structuredClone(f.status);
-    const stale = deferred<HostRestartStatus>();
-    f.api.hostRestartStatus.mockReturnValueOnce(stale.promise);
-    void f.client.refresh();
-    const observed: Array<ReturnType<HostRestartClient["snapshot"]>> = [];
-    f.client.subscribe(() => observed.push(f.client.snapshot()));
-    f.api.restartHost.mockImplementation(async (request) => {
-      f.status.operation = {
-        id: request.operationId,
-        scope: request.scope,
-        phase: "preparing",
+  it.each(["status", "receipt"] as const)(
+    "keeps newer restart evidence when %s arrives late",
+    async (delayed) => {
+      const { status, api, client, observe } = fixture();
+      const historical: HostRestartOperation = {
+        id: crypto.randomUUID(),
+        scope: "host",
+        phase: "rejected",
+        busyReason: "active-work",
       };
-      return f.status.operation;
-    });
+      status.operation = historical;
+      await observe();
+      const pendingStatus = deferred<HostRestartStatus>();
+      const pendingReceipt = deferred<HostRestartOperation>();
+      let reading: Promise<unknown> | undefined;
+      if (delayed === "status") {
+        api.hostRestartStatus.mockReturnValueOnce(pendingStatus.promise);
+        reading = observe();
+      } else api.restartHost.mockReturnValueOnce(pendingReceipt.promise);
 
-    const sending = f.client.start("host", f.status.hostId);
-    expect(observed.find((state) => state.pending)?.sending).toBe(true);
-    await vi.waitFor(() =>
-      expect(f.client.snapshot().status?.operation).toEqual(f.status.operation),
-    );
-    observed.length = 0;
-    stale.resolve(staleStatus);
-    await sending;
-    expect(observed.map((state) => state.status?.operation)).not.toContainEqual(
-      staleStatus.operation,
-    );
-    expect(f.client.snapshot().status?.operation).toEqual(f.status.operation);
-  });
-
-  it("keeps a later observed phase when the initial receipt arrives late", async () => {
-    const f = fixture();
-    await f.client.refresh();
-    const receipt = deferred<HostRestartOperation>();
-    f.api.restartHost.mockReturnValueOnce(receipt.promise);
-    const sending = f.client.start("host", f.status.hostId);
-    const request = f.api.restartHost.mock.calls[0]![0];
-    const operation = { id: request.operationId, scope: request.scope };
-    f.status.operation = { ...operation, phase: "submitted" };
-    await f.client.refresh();
-    const observed: Array<HostRestartOperation["phase"] | undefined> = [];
-    f.client.subscribe(() =>
-      observed.push(f.client.snapshot().status?.operation?.phase),
-    );
-    receipt.resolve({ ...operation, phase: "preparing" });
-    await sending;
-    expect(observed).not.toContain("preparing");
-    expect(f.client.snapshot().status?.operation?.phase).toBe("submitted");
-  });
+      const seen: Array<HostRestartOperation | null | undefined> = [];
+      const unsubscribe = client.subscribe(() =>
+        seen.push(client.snapshot().status?.operation),
+      );
+      const sending = client.start("host", status.hostId);
+      const request = api.restartHost.mock.calls[0]![0];
+      expect(client.snapshot().sending).toBe(true);
+      const operation = { id: request.operationId, scope: request.scope };
+      const accepted = { ...operation, phase: "preparing" as const };
+      const newer =
+        delayed === "status"
+          ? accepted
+          : { ...operation, phase: "submitted" as const };
+      status.operation = newer;
+      if (delayed === "status") {
+        await vi.waitFor(() =>
+          expect(client.snapshot().status?.operation).toEqual(accepted),
+        );
+        seen.length = 0;
+        pendingStatus.resolve({ ...status, operation: historical });
+      } else {
+        await observe();
+        seen.length = 0;
+        pendingReceipt.resolve(accepted);
+      }
+      await Promise.all([sending, reading]);
+      expect(seen).not.toContainEqual(
+        delayed === "status" ? historical : accepted,
+      );
+      expect(client.snapshot().status?.operation).toEqual(status.operation);
+      unsubscribe();
+    },
+  );
 
   it.each([
-    { scope: "all", interruptWork: undefined, initial: "lost" },
-    { scope: "all-pi", interruptWork: true, initial: "lost" },
-    { scope: "host", interruptWork: true, initial: "accepted" },
+    { scope: "all-pi", initial: "lost" },
+    { scope: "host", initial: "accepted" },
   ] as const)(
     "recovers $initial $scope delivery by retrying only the persisted identity and grant",
-    async ({ scope, interruptWork, initial }) => {
+    async ({ scope, initial }) => {
       const f = fixture();
+      const interruptWork = true;
       f.api.restartHost.mockImplementationOnce(async (request) => {
-        expect(
-          JSON.parse(sessionStorage.getItem("inspire:host-restart:v1")!),
-        ).toEqual(request);
+        expect(JSON.parse(sessionStorage.getItem(recoveryKey)!)).toEqual(
+          request,
+        );
         if (initial === "lost") throw new Error("lost");
         return {
           id: request.operationId,
@@ -133,11 +135,9 @@ describe("browser restart delivery", () => {
         phase: "rejected" as const,
         error: "Build failed",
       };
-      if (interruptWork) {
-        f.status.operation = rejection;
-        await reloaded.refresh();
-        expect(reloaded.snapshot().pending).toEqual(request);
-      }
+      f.status.operation = rejection;
+      await reloaded.refresh();
+      expect(reloaded.snapshot().pending).toEqual(request);
       f.status.operation = { ...rejection, interruptWork };
       await reloaded.refresh();
       expect(reloaded.snapshot().pending).toBeNull();
@@ -149,7 +149,7 @@ describe("browser restart delivery", () => {
     const f = fixture();
     await f.client.refresh();
     const oldHostId = f.status.hostId;
-    await f.client.start("all", oldHostId);
+    await f.client.start("host", oldHostId);
     f.status.hostId = crypto.randomUUID();
     await f.client.refresh();
     expect(f.client.snapshot().pending).toBeNull();
@@ -159,45 +159,15 @@ describe("browser restart delivery", () => {
     expect(f.api.restartHost).toHaveBeenCalledOnce();
   });
 
-  it("does not dispatch an unavailable scope while ordinary restart is supported", async () => {
-    const f = fixture();
-    f.status.allAvailable = false;
-    await f.client.refresh();
-    await f.client.start("all", f.status.hostId);
-    expect(f.api.restartHost).not.toHaveBeenCalled();
-    expect(f.client.snapshot().pending).toBeNull();
-    await f.client.start("host", f.status.hostId);
-    expect(f.api.restartHost).toHaveBeenCalledOnce();
-  });
-
-  it("requires the new global capability and explicit interruption without changing legacy all scope", async () => {
+  it("requires global capability and explicit interruption while ordinary restart remains available", async () => {
     const f = fixture();
     await f.client.refresh();
     await f.client.start("all-pi", f.status.hostId);
-    expect(f.api.restartHost).not.toHaveBeenCalled();
     f.status.allPiAvailable = false;
     await f.client.refresh();
     await f.client.start("all-pi", f.status.hostId, true);
     expect(f.api.restartHost).not.toHaveBeenCalled();
-    await f.client.start("all", f.status.hostId);
-    expect(f.api.restartHost).toHaveBeenCalledWith(
-      expect.objectContaining({ scope: "all" }),
-    );
-  });
-
-  it("keeps Host observation independent of broken local recovery and unblocks after repair", async () => {
-    const f = fixture();
-    sessionStorage.setItem("inspire:host-restart:v1", "{broken}");
-    await f.client.refresh();
-    expect(f.client.snapshot().status).toEqual(f.status);
-    expect(f.client.snapshot().blocked).toBe(true);
-    expect(f.client.snapshot().recoveryInvalid).toBe(true);
-    await f.client.start("host", f.status.hostId);
-    expect(f.api.restartHost).not.toHaveBeenCalled();
-    sessionStorage.removeItem("inspire:host-restart:v1");
-    await f.client.refresh();
-    expect(f.client.snapshot().blocked).toBe(false);
-    expect(f.client.snapshot().recoveryInvalid).toBe(false);
+    expect(f.client.snapshot().pending).toBeNull();
     await f.client.start("host", f.status.hostId);
     expect(f.api.restartHost).toHaveBeenCalledOnce();
   });
@@ -206,11 +176,11 @@ describe("browser restart delivery", () => {
     const f = fixture();
     f.status.operation = {
       id: crypto.randomUUID(),
-      scope: "all",
+      scope: "host",
       phase: "submitted",
     };
     sessionStorage.setItem(
-      "inspire:host-restart:v1",
+      recoveryKey,
       JSON.stringify({
         hostId: f.status.hostId,
         operationId: f.status.operation.id,
@@ -227,7 +197,7 @@ describe("browser restart delivery", () => {
       pending: null,
       status: f.status,
     });
-    expect(sessionStorage.getItem("inspire:host-restart:v1")).toBeNull();
+    expect(sessionStorage.getItem(recoveryKey)).toBeNull();
     expect(f.api.restartHost).not.toHaveBeenCalled();
   });
 
@@ -273,28 +243,38 @@ describe("browser restart delivery", () => {
     expect(f.api.restartHost).toHaveBeenCalledOnce();
   });
 
-  it("retries unavailable storage automatically without treating it as invalid data", async () => {
-    const f = fixture();
-    let unavailable = true;
-    const client = new HostRestartClient(f.api, () => {
-      if (unavailable) throw new Error("storage unavailable");
-      return sessionStorage;
-    });
-    await client.refresh();
-    expect(client.snapshot()).toMatchObject({
-      blocked: true,
-      recoveryInvalid: false,
-      status: f.status,
-    });
-    unavailable = false;
-    await client.refresh();
-    expect(client.snapshot()).toMatchObject({
-      blocked: false,
-      recoveryInvalid: false,
-      error: null,
-    });
-    expect(f.api.restartHost).not.toHaveBeenCalled();
-  });
+  it.each(["malformed", "unavailable"] as const)(
+    "observes Host and blocks dispatch until %s storage recovers",
+    async (problem) => {
+      const { status, api } = fixture();
+      let available = problem !== "unavailable";
+      if (problem === "malformed")
+        sessionStorage.setItem(recoveryKey, "{broken}");
+      const client = new HostRestartClient(api, () => {
+        if (!available) throw new Error("storage unavailable");
+        return sessionStorage;
+      });
+      await client.refresh();
+      expect(client.snapshot()).toMatchObject({
+        blocked: true,
+        recoveryInvalid: problem === "malformed",
+        status,
+      });
+      await client.start("host", status.hostId);
+      expect(api.restartHost).not.toHaveBeenCalled();
+
+      available = true;
+      sessionStorage.removeItem(recoveryKey);
+      await client.refresh();
+      expect(client.snapshot()).toMatchObject({
+        blocked: false,
+        recoveryInvalid: false,
+        error: null,
+      });
+      await client.start("host", status.hostId);
+      expect(api.restartHost).toHaveBeenCalledOnce();
+    },
+  );
 
   it("does not dispatch when it cannot persist the request", async () => {
     const f = fixture();
@@ -309,7 +289,7 @@ describe("browser restart delivery", () => {
         }) as unknown as Storage,
     );
     await client.refresh();
-    await client.start("all", f.status.hostId);
+    await client.start("host", f.status.hostId);
     expect(client.snapshot().blocked).toBe(true);
     expect(client.snapshot().recoveryInvalid).toBe(false);
     expect(f.api.restartHost).not.toHaveBeenCalled();

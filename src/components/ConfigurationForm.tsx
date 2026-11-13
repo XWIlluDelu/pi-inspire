@@ -1,4 +1,15 @@
-import { type ReactNode, useLayoutEffect, useRef } from "react";
+import { Eye, EyeOff } from "lucide-react";
+import {
+  type ComponentProps,
+  type ReactNode,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import type {
+  ConfigurationControl,
+  SecretEdit,
+} from "../../shared/configuration-fields";
 import { ButtonLabel } from "./ButtonLabel";
 
 function revealField(body: HTMLDivElement, input: Element | null) {
@@ -98,5 +109,102 @@ export function ConfigurationForm({
         </button>
       </div>
     </form>
+  );
+}
+
+export function ConfigurationInput({
+  label,
+  wide,
+  after,
+  ...props
+}: ComponentProps<"input"> & {
+  label: string;
+  wide?: boolean;
+  after?: ReactNode;
+}) {
+  return (
+    <label className={wide ? "models-form__wide" : undefined}>
+      {label}
+      {after ? (
+        <div className="models-secret-input">
+          <input {...props} />
+          {after}
+        </div>
+      ) : (
+        <input {...props} />
+      )}
+    </label>
+  );
+}
+
+/** A blank protected input keeps its stored value. Null is an explicit removal. */
+export function ProtectedConfigurationInput({
+  control,
+  value,
+  stored,
+  busy,
+  showValue,
+  onChange,
+}: {
+  control: ConfigurationControl;
+  value: string | number | null | undefined;
+  stored?: boolean;
+  busy: boolean;
+  showValue?: true;
+  onChange: (edit: SecretEdit<string | number>) => void;
+}) {
+  const [show, setShow] = useState(false);
+  const { label, wide, type, ...input } = control;
+  const Icon = show ? EyeOff : Eye;
+  return (
+    <div className={wide ? "models-form__wide" : "models-form__field"}>
+      <ConfigurationInput
+        {...input}
+        label={label}
+        type={show ? "text" : type}
+        value={value ?? ""}
+        autoComplete="new-password"
+        disabled={busy || value === null}
+        placeholder={stored ? "Stored · leave blank to keep" : "Optional"}
+        onChange={({ currentTarget: field }) =>
+          onChange(
+            field.value
+              ? {
+                  kind: "replace",
+                  value: type === "number" ? field.valueAsNumber : field.value,
+                }
+              : { kind: "keep" },
+          )
+        }
+        after={
+          showValue && (
+            <button
+              type="button"
+              className="models-icon-button"
+              disabled={busy || value === null}
+              aria-label={`${show ? "Hide" : "Show"} ${label}`}
+              aria-pressed={show}
+              onClick={() => setShow(!show)}
+            >
+              <Icon size={16} aria-hidden />
+            </button>
+          )
+        }
+      />
+      {stored && (
+        <label className="models-checkbox">
+          <input
+            type="checkbox"
+            className="choice-input"
+            disabled={busy || (showValue && Boolean(value))}
+            checked={value === null}
+            onChange={(event) =>
+              onChange({ kind: event.target.checked ? "remove" : "keep" })
+            }
+          />
+          Remove {showValue ? label : label.toLowerCase()}
+        </label>
+      )}
+    </div>
   );
 }

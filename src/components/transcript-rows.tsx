@@ -46,7 +46,6 @@ import { ImageGallery } from "./ImageGallery";
 import { ImagePreview, TranscriptImage } from "./ImagePreview";
 import { PiLoader } from "./PiLoader";
 import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
-import { ActivityItemBoundary } from "./transcript-activity-visibility";
 import {
   CardHeader,
   GenericCard,
@@ -287,84 +286,60 @@ export type AssistantActivityContent =
     }
   | { kind: "generic"; item: object; title: string };
 
-type AssistantActivityItem = AssistantActivityContent & { key: string };
-
-export function AssistantActivity({
-  items,
-  streaming,
+export function AssistantActivityCard({
+  item,
+  live,
   dynamicActive,
   thinkingVisibility,
   toolVisibility,
 }: {
-  items: readonly AssistantActivityItem[];
-  streaming: boolean;
+  item: AssistantActivityContent;
+  live: boolean;
   dynamicActive: boolean;
   thinkingVisibility: VisibilityPreference;
   toolVisibility: ToolVisibilityPreference;
 }) {
   const visibility = toolVisibility === "expanded" ? "expanded" : "collapsed";
-  const renderedItems = items.map((item) => {
-    const card =
-      item.kind === "thinking" ? (
+  switch (item.kind) {
+    case "thinking":
+      return (
         <ThinkingCard
           text={item.text}
           visibility={thinkingVisibility}
           dynamicActive={dynamicActive}
         />
-      ) : item.kind === "generic" ? (
+      );
+    case "generic":
+      return (
         <GenericCard
           item={item.item}
           title={item.title}
           visibility={visibility}
         />
-      ) : (
+      );
+    case "tool":
+      return (
         <ToolCard
           call={item.call}
           result={item.result}
           activity={item.activity}
-          live={streaming}
+          live={live}
           visibility={visibility}
           dynamic={toolVisibility === "dynamic"}
           dynamicActive={dynamicActive}
         />
       );
-    return (
-      <ActivityItemBoundary key={item.key} id={item.key}>
-        {card}
-      </ActivityItemBoundary>
-    );
-  });
-
-  return (
-    <AssistantRow streaming={streaming}>
-      {streaming && !items.length ? (
-        <div className="assistant-activity" role="status">
-          <PiLoader size={14} aria-hidden />
-          <span>Working…</span>
-        </div>
-      ) : (
-        renderedItems
-      )}
-    </AssistantRow>
-  );
+  }
 }
 
 export const UnpairedToolResultRow = memo(function UnpairedToolResultRow({
-  activityItemId = "unpaired-tool-result",
   message,
   visibility,
 }: {
-  activityItemId?: string;
   message: ChatMessage;
   visibility: StaticVisibility;
 }) {
-  return (
-    <div className="turn">
-      <ActivityItemBoundary id={activityItemId}>
-        <ToolResultCard result={message} visibility={visibility} />
-      </ActivityItemBoundary>
-    </div>
-  );
+  return <ToolResultCard result={message} visibility={visibility} />;
 });
 
 export const ContextCheckpointRow = memo(function ContextCheckpointRow({
@@ -430,27 +405,6 @@ export const ContextCheckpointRow = memo(function ContextCheckpointRow({
           ) : null}
         </div>
       </div>
-    </div>
-  );
-});
-
-export const UnknownRoleRow = memo(function UnknownRoleRow({
-  activityItemId = "unknown-activity",
-  message,
-  visibility,
-}: {
-  activityItemId?: string;
-  message: ChatMessage;
-  visibility: StaticVisibility;
-}) {
-  return (
-    <div className="turn">
-      <ActivityItemBoundary id={activityItemId}>
-        <GenericCard
-          item={{ ...message, type: message.role }}
-          visibility={visibility}
-        />
-      </ActivityItemBoundary>
     </div>
   );
 });

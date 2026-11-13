@@ -275,27 +275,23 @@ test("keeps long line numbers aligned and navigation preserves diff colors", {
   const source = await selectChange(pane);
   await expect(source).toContainText("1000");
   await page.evaluate(() => document.fonts.ready);
-  const geometry = await source
-    .locator(".source-diff__line")
-    .evaluateAll((rows) =>
-      rows.map((row) => ({
-        code: row.querySelector("code")!.getBoundingClientRect().left,
-        numbersFit: [...row.querySelectorAll(".source-diff__number")].every(
-          (el) => {
-            if (!el.textContent) return true;
-            const range = document.createRange();
-            range.selectNodeContents(el);
-            const text = range.getBoundingClientRect();
-            const box = el.getBoundingClientRect();
-            return text.left >= box.left - 0.5 && text.right <= box.right + 0.5;
-          },
-        ),
-      })),
-    );
+  const geometry = await source.locator(".code-row").evaluateAll((rows) =>
+    rows.map((row) => ({
+      code: row.querySelector("code")!.getBoundingClientRect().left,
+      numbersFit: [...row.querySelectorAll(".code-row__number")].every((el) => {
+        if (!el.textContent) return true;
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        const text = range.getBoundingClientRect();
+        const box = el.getBoundingClientRect();
+        return text.left >= box.left - 0.5 && text.right <= box.right + 0.5;
+      }),
+    })),
+  );
   const starts = geometry.map((row) => row.code);
   expect(Math.max(...starts) - Math.min(...starts)).toBeLessThanOrEqual(0.5);
   expect(geometry.every((row) => row.numbersFit)).toBe(true);
-  const gutter = source.locator(".source-diff__gutter").first();
+  const gutter = source.locator(".code-row__gutter").first();
   const scroll = (left: number) =>
     source.evaluate((element, x) => {
       element.scrollLeft = x;
@@ -314,7 +310,7 @@ test("keeps long line numbers aligned and navigation preserves diff colors", {
   expect(await scroll(160)).toBeGreaterThan(offset);
   await expect.poll(gutterInset).toBeLessThanOrEqual(1);
   const lines = source.locator(
-    ".source-diff__line--add, .source-diff__line--delete",
+    '.code-row:is([data-kind="add"], [data-kind="delete"])',
   );
   const colors = () =>
     lines.evaluateAll((rows) =>
@@ -377,7 +373,7 @@ test.describe("touch source navigation", () => {
     const position = () =>
       source.evaluate((node) => [node.scrollTop, node.scrollLeft]);
     const saved = await position();
-    const addition = source.locator(".source-diff__line--add code");
+    const addition = source.locator('.code-row[data-kind="add"] code');
     const old = await addition.innerText();
     failRefresh = true;
     await page.clock.fastForward(4_001);

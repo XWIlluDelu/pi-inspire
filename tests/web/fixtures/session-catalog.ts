@@ -1,27 +1,14 @@
-import type { SessionSummary } from "../../../shared/contracts";
 import {
   bootstrapPayload,
+  DEFAULT_PREFS,
+  emptySnapshot,
   installFetch,
   type RouteHandler,
   type RouteResponse,
 } from "../helpers";
+import { initStore } from "../store-fixture";
 
-// Keep the server cursor/count independent of rendered or curated identities.
-export function sessionPage(
-  sessions: SessionSummary[],
-  total: number,
-  offset = 0,
-  limit = 40,
-) {
-  return { sessions, total, offset, limit };
-}
-
-function emptyBootstrap(preferences = bootstrapPayload().preferences) {
-  return bootstrapPayload({
-    preferences,
-    snapshot: { active: null, runState: "idle", sessionStatuses: {} },
-  });
-}
+export { sessionPage } from "../store-fixture";
 
 export interface PageRequest {
   query: string;
@@ -36,16 +23,15 @@ export function installCatalog(
     preferences,
     routes,
   }: {
-    preferences?: Partial<ReturnType<typeof bootstrapPayload>["preferences"]>;
+    preferences?: Partial<typeof DEFAULT_PREFS>;
     routes?: RouteHandler;
   } = {},
 ) {
   installFetch((url, init) => {
     if (url.startsWith("/api/bootstrap"))
       return {
-        body: emptyBootstrap({
-          ...bootstrapPayload().preferences,
-          ...preferences,
+        body: bootstrapPayload({
+          preferences: { ...DEFAULT_PREFS, ...preferences },
         }),
       };
     if (!url.startsWith("/api/sessions?")) return routes?.(url, init);
@@ -57,4 +43,5 @@ export function installCatalog(
       signal: init.signal,
     });
   });
+  return initStore(emptySnapshot);
 }

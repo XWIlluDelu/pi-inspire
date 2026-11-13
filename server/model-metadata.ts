@@ -1,47 +1,68 @@
 import { fork } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { PiCommand } from "../shared/commands.js";
+import { z } from "zod";
+import type { ModelOption, NewSessionDefaults } from "../shared/contracts.js";
 import {
-  type ModelOption,
-  type NewSessionDefaults,
-  THINKING_LEVELS,
-  type ThinkingLevel,
-} from "../shared/contracts.js";
+  type ModelCatalogResponse,
+  modelThinkingPreferencesSchema,
+} from "../shared/model-settings.js";
 import { getAgentDir, piInstallation } from "./pi-runtime.js";
 import { isolatedProcessOptions, signalProcessTree } from "./process-tree.mjs";
 
-export interface ModelMetadata {
-  models: ModelOption[];
-  commands?: PiCommand[];
+export interface NativeModelCatalog extends ModelCatalogResponse {
+  enabledModelPatterns?: string[];
+}
+
+export interface ModelMetadata extends NativeModelCatalog {
   defaults: NewSessionDefaults;
   /** Registered definitions, including routers whose physical provider lacks auth. */
   virtualModels: ModelOption[];
-  enabledModelPatterns?: string[];
-  warning?: string;
 }
 
-interface NativeModelSettingsRead {
-  effective: Record<string, unknown>;
-  projectOverrides: string[];
-  globalError: boolean;
-  projectError: boolean;
-}
+export const modelQuerySchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("catalog") }),
+  z.object({ kind: z.literal("settings") }),
+  z.object({ kind: z.literal("validate"), path: z.string() }),
+]);
+type ModelQuery = z.infer<typeof modelQuerySchema>;
+const queryResults = {
+  catalog: z.custom<ModelMetadata>((value) => {
+    const metadata = value as Partial<ModelMetadata> | null | undefined;
+    return (
+      typeof metadata?.defaults?.cwd === "string" &&
+      Array.isArray(metadata.models) &&
+      Array.isArray(metadata.virtualModels) &&
+      modelThinkingPreferencesSchema.safeParse(metadata.thinkingPreferences)
+        .success
+    );
+  }),
+  settings: z.object({
+    effective: z.record(z.string(), z.unknown()),
+    thinkingPreferences: modelThinkingPreferencesSchema,
+    projectOverrides: z.array(z.string()),
+    globalError: z.boolean(),
+    projectError: z.boolean(),
+  }),
+  validate: z.null(),
+};
+type ModelQueryResult = {
+  [Kind in keyof typeof queryResults]: z.infer<(typeof queryResults)[Kind]>;
+};
 
-async function queryModelWorker<Result>(
+async function queryModelWorker<Query extends ModelQuery>(
   cwd: string,
   agentDir: string,
-  args: string[],
-  accept: (result: unknown) => result is Result,
-  processCwd = cwd,
-): Promise<Result> {
+  query: Query,
+): Promise<ModelQueryResult[Query["kind"]]> {
+  type Result = ModelQueryResult[Query["kind"]];
   const ownPath = fileURLToPath(import.meta.url);
   const source = ownPath.endsWith(".ts");
   const child = fork(
     join(dirname(ownPath), `model-metadata-worker.${source ? "ts" : "js"}`),
-    [cwd, ...args],
+    [cwd, JSON.stringify(query)],
     {
-      cwd: processCwd,
+      cwd: query.kind === "settings" ? process.cwd() : cwd,
       execArgv: source ? ["--import", import.meta.resolve("tsx")] : [],
       env: {
         ...process.env,
@@ -64,7 +85,15 @@ async function queryModelWorker<Result>(
       void retire();
     }, 15_000);
     child.on("message", (message: { ok?: boolean; result?: unknown }) => {
-      if (message.ok && accept(message.result)) result = message.result;
+      if (message.ok) {
+        const parsed = queryResults[query.kind].safeParse(message.result);
+        if (
+          parsed.success &&
+          (query.kind !== "catalog" ||
+            (parsed.data as ModelMetadata).defaults.cwd === cwd)
+        )
+          result = parsed.data as Result;
+      }
       if (typeof message.ok === "boolean") void retire();
     });
     child.once("error", (error) => {
@@ -87,57 +116,12 @@ async function queryModelWorker<Result>(
   });
 }
 
-export async function queryModelMetadata(cwd: string): Promise<ModelMetadata> {
-  return queryModelWorker(
-    cwd,
-    getAgentDir(),
-    ["catalog"],
-    (result): result is ModelMetadata => {
-      const metadata = result as Partial<ModelMetadata> | null | undefined;
-      return (
-        metadata?.defaults?.cwd === cwd &&
-        Array.isArray(metadata.models) &&
-        Array.isArray(metadata.virtualModels)
-      );
-    },
-  );
+export function queryModelMetadata(cwd: string) {
+  return queryModelWorker(cwd, getAgentDir(), { kind: "catalog" });
 }
 
-export function readNativeModelSettings(
-  cwd: string,
-  agentDir: string,
-): Promise<NativeModelSettingsRead> {
-  return queryModelWorker(
-    cwd,
-    agentDir,
-    ["settings"],
-    (result): result is NativeModelSettingsRead => {
-      const settings = result as
-        | Partial<NativeModelSettingsRead>
-        | null
-        | undefined;
-      return Boolean(
-        settings?.effective && Array.isArray(settings.projectOverrides),
-      );
-    },
-    process.cwd(),
-  );
-}
-
-export function queryModelThinkingLevel(
-  cwd: string,
-  provider: string,
-  modelId: string,
-  current: ThinkingLevel,
-): Promise<ThinkingLevel> {
-  return queryModelWorker(
-    cwd,
-    getAgentDir(),
-    ["thinking", provider, modelId, current],
-    (result): result is ThinkingLevel =>
-      THINKING_LEVELS.includes(result as ThinkingLevel),
-    process.cwd(),
-  );
+export function readNativeModelSettings(cwd: string, agentDir: string) {
+  return queryModelWorker(cwd, agentDir, { kind: "settings" });
 }
 
 /** Validate a candidate with the same native resources and trust as discovery. */
@@ -146,12 +130,7 @@ export async function validateModelConfig(
   agentDir: string,
   path: string,
 ): Promise<void> {
-  await queryModelWorker(
-    cwd,
-    agentDir,
-    ["validate", path],
-    (result): result is null => result === null,
-  );
+  await queryModelWorker(cwd, agentDir, { kind: "validate", path });
 }
 
 /** Catalog and default previews share one native query per actual target cwd.

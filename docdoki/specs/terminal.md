@@ -127,8 +127,10 @@ receives no POSIX signal argument.
 ## Identified controls and recovery
 
 Browser mutations carry one immutable operation identity to the PTY manager, which owns the receipt
-epoch in both the daemon and the in-process development Host. Same-content retries share the running
-operation or retained result. The owner refuses reuse with different parameters. Lost
+epoch in both the daemon and the in-process development Host. The browser, Host and daemon use the
+same typed terminal intent. Same-content checks share the running operation or retained result.
+Observation with a missing identity leaves the outcome unknown and cannot admit a command. The
+owner refuses reuse with different parameters. Lost
 responses, deadlines, and disconnects leave the outcome unresolved; they do not cancel work.
 Read-only catalog/settings reads and attachment/input continuity remain independent. A confirmed
 completion or rejection remains authoritative even if the browser cannot remove its recovery record.
@@ -226,14 +228,16 @@ polling remains limited to the active terminal surface.
 Profile choice, connection and control state, search, focus and More stay in a toolbar above
 terminal output. In the shared dock, the toolbar uses the same 28px desktop and 32px touch/narrow
 button tier as file actions, with 16px glyphs. A foreign-project context row stays above the tools
-and keeps Back to current project available. The status, focus and search slots are reserved
-before the view mounts. Writable terminals expose control state in an accessible name and tooltip.
+and keeps Back to current project available. The selected view supplies search and display
+controls directly to the toolbar. The toolbar also provides profile, focus and catalog actions
+while no view is open. Writable terminals expose control state in an accessible name and tooltip.
 Non-writable terminals keep connection feedback, the ownership message and Take control where
 ready. Search, selection actions, copy confirmation and connection errors have their own output
 overlays. The Terminal shortcut creates a default terminal and the toolbar profile chooser offers
 named alternatives.
 At pane widths up to 480px, Focus remains in More. Focus mode and same-origin focused windows
-attach the existing terminal and retain their own accessible tab strip.
+attach the existing terminal and display the tab strip above the toolbar. Changing the active
+terminal keeps the tab strip mounted and preserves its keyboard focus and rename target.
 
 Rename, drag/keyboard ordering, close/force-close confirmation, recent-close recreation,
 status/unread/bell indicators and the all-project navigator keep their behavior. Closing a

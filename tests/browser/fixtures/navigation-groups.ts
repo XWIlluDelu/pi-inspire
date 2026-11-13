@@ -44,6 +44,7 @@ export async function navigationGroupsFixture(page: Page) {
     messageCount: 1,
   }));
   let preferences: Record<string, unknown>;
+  let revision = 0;
   const transport = await routeSnapshots(page, {
     bootstrap: (body) => {
       if (!preferences)
@@ -60,6 +61,7 @@ export async function navigationGroupsFixture(page: Page) {
           navCollapsedGroups: [...new Set(records.map((record) => record.cwd))],
         };
       Object.assign(body.preferences, preferences);
+      body.preferenceRevision = ++revision;
     },
     snapshot: (snapshot) => {
       const record = records.find(
@@ -78,7 +80,7 @@ export async function navigationGroupsFixture(page: Page) {
     Object.assign(preferences, route.request().postDataJSON());
     await route.fulfill({
       headers: { "X-Inspire-Authority": transport.authority() },
-      json: preferences,
+      json: { preferences, revision: ++revision },
     });
   });
   await page.route(/\/api\/sessions(?:\?|$)/, async (route) => {

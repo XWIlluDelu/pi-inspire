@@ -206,15 +206,18 @@ for (const width of [980, 390]) {
           cwd: directory,
           createDirectory: true,
         });
-        expect((await prompted).postDataJSON().message).toBe(
-          "Review the new project",
-        );
+        const { sessionId, message: promptText } = (
+          await prompted
+        ).postDataJSON();
+        expect(promptText).toBe("Review the new project");
         await expect(
           page.getByRole("textbox", { name: "Message", exact: true }),
         ).toBeVisible();
         expect((await stat(directory)).isDirectory()).toBe(true);
         const snapshot = await (
-          await hostRequest(page).get("/api/snapshot")
+          await hostRequest(page).get(
+            `/api/snapshot?detail=${encodeURIComponent(sessionId)}`,
+          )
         ).json();
         expect(snapshot.active.cwd).toBe(await realpath(directory));
       } finally {

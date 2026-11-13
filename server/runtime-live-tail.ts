@@ -1,9 +1,6 @@
 import { createHash } from "node:crypto";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
-import {
-  messageFallbackCorrelation,
-  structuralMessageIdentity,
-} from "../shared/message-identity.js";
+import { messageFallbackCorrelation } from "../shared/message-identity.js";
 import type { RuntimeSlot } from "./runtime-slot.js";
 import {
   assistantDeltaProjectionBytes,
@@ -12,6 +9,7 @@ import {
 import {
   boundedTranscriptProjection,
   TRANSCRIPT_ITEM_MAX_BYTES,
+  TRANSCRIPT_PAGE_MAX_MESSAGES,
   TRANSIENT_OVERLAY_MAX_BYTES,
 } from "./session-projection.js";
 
@@ -179,11 +177,19 @@ export class RuntimeLiveTail {
       delete live.__inspireMessageId;
       delete live.__inspireEntryId;
     }
+    if (live?.role === "user" && phase === "start") slot.activeTurnId = liveId;
+    if (live?.role === "assistant") {
+      slot.activeTurnId ??= liveId;
+      slot.activeAssistantKey = `live:${liveId}`;
+    }
+    if (live && slot.activeTurnId) live.__inspireTurnId = slot.activeTurnId;
     const projected = live ?? bounded;
     const next = [...slot.overlay];
     const itemBytes = [...slot.overlayItemBytes];
     const projectedBytes =
-      phase === "update" && boundedRecord?.__inspireLiveId === liveId
+      phase === "update" &&
+      boundedRecord?.__inspireLiveId === liveId &&
+      boundedRecord.__inspireTurnId === live?.__inspireTurnId
         ? boundedProjection.bytes
         : overlayItemBytes(projected);
     if (phase === "end" && message && typeof message === "object")
@@ -217,41 +223,19 @@ export class RuntimeLiveTail {
   clearOverlay(slot: RuntimeSlot): void {
     slot.overlay = [];
     recountOverlay(slot);
-    slot.activeAssistantCorrelation = null;
+    slot.activeAssistantKey = null;
+    slot.activeTurnId = null;
     slot.activeOverlayIds.clear();
     slot.workerView?.finishedMessages.clear();
   }
 
   activeAssistantOverlayMessage(slot: RuntimeSlot): unknown {
-    const correlation = slot.activeAssistantCorrelation;
-    if (!correlation) return null;
-    const liveId = slot.activeOverlayIds.get(correlation);
-    if (!liveId) return null;
     return (
       slot.overlay.find(
-        (message) => this.overlayIdentity(message) === liveId,
+        (message) =>
+          `live:${this.overlayIdentity(message)}` === slot.activeAssistantKey,
       ) ?? null
     );
-  }
-
-  activeAssistantSnapshotKey(
-    slot: RuntimeSlot,
-    messages: unknown[],
-  ): string | null {
-    const correlation = slot.activeAssistantCorrelation;
-    if (!correlation) return null;
-    for (let index = messages.length - 1; index >= 0; index -= 1) {
-      const message = messages[index];
-      if (
-        !message ||
-        typeof message !== "object" ||
-        (message as Record<string, unknown>).role !== "assistant" ||
-        messageFallbackCorrelation(message) !== correlation
-      )
-        continue;
-      return structuralMessageIdentity(message);
-    }
-    return null;
   }
 
   markUnconfirmed(slot: RuntimeSlot): void {
@@ -268,9 +252,10 @@ export class RuntimeLiveTail {
   seal(slot: RuntimeSlot, entries: readonly SessionEntry[]): boolean {
     const worker = slot.workerView;
     if (!worker) return false;
-    const candidates = entries
-      .map(entryEvidence)
-      .filter((value) => value !== undefined);
+    const candidates = entries.map((entry) => ({
+      entry,
+      evidence: entryEvidence(entry),
+    }));
     let next = 0;
     let changed = false;
     slot.overlay = slot.overlay.filter((item) => {
@@ -279,7 +264,7 @@ export class RuntimeLiveTail {
       if (!id || !seen) return true;
       worker.finishedMessages.delete(id);
       const match = candidates.findIndex(
-        (value, index) =>
+        ({ evidence: value }, index) =>
           index >= next &&
           (typeof seen === "string"
             ? seen === value
@@ -295,6 +280,18 @@ export class RuntimeLiveTail {
         changed = true;
         return true;
       }
+      const { entry } = candidates[match]!;
+      const turn = (item as Record<string, unknown>).__inspireTurnId;
+      if (typeof turn === "string") {
+        worker.entryTurns.set(entry.id, turn);
+        // The registry serves the bounded Live page only. History always uses native IDs.
+        if (worker.entryTurns.size > TRANSCRIPT_PAGE_MAX_MESSAGES) {
+          const oldest = worker.entryTurns.keys().next().value;
+          if (oldest !== undefined) worker.entryTurns.delete(oldest);
+        }
+      }
+      if (slot.activeAssistantKey === `live:${id}`)
+        slot.activeAssistantKey = `persisted:${entry.id}:0`;
       next = match + 1;
       changed = true;
       return false;

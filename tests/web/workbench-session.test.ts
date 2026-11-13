@@ -12,6 +12,7 @@ import {
   activeSnapshot,
   bootstrapPayload,
   deferred,
+  emptySnapshot,
   FakeWebSocket,
   installFakeWebSocket,
   installFetch,
@@ -92,10 +93,9 @@ describe("browser workbench restoration", () => {
     const socket = FakeWebSocket.instances.at(-1)!;
     const id = new URL(socket.url).searchParams.get("detail") || null;
     subscribedDetails.push(id);
-    socket.open(
-      id ? activeSnapshot({ sessionId: id, cwd }) : bootstrapPayload().snapshot,
+    socket.join(id ? activeSnapshot({ sessionId: id, cwd }) : emptySnapshot, {
       authorityId,
-    );
+    });
   }
 
   async function reload() {

@@ -11,7 +11,6 @@ import type { RuntimeController } from "./runtime.js";
 export interface HostRestartBackend {
   inspect(): Promise<{
     host: boolean;
-    all: boolean;
     allPi?: boolean;
     includeHerdr?: boolean;
   }>;
@@ -24,8 +23,6 @@ export interface HostRestartBackend {
 
 const UNAVAILABLE =
   "Page restart requires the Inspire launcher or this Host's installed Linux systemd services.";
-const ALL_UNAVAILABLE =
-  "Restart with terminals requires this Host's installed Linux systemd services.";
 const ALL_PI_UNAVAILABLE =
   "Restart all requires this Host's installed Linux services and Pi process control.";
 const WORK_BUSY =
@@ -55,7 +52,7 @@ export class HostRestartController {
     // Timed-out HTTP observers cannot accumulate unbounded systemctl reads.
     this.availability ??= this.backend
       .inspect()
-      .catch(() => ({ host: false, all: false }))
+      .catch(() => ({ host: false }))
       .finally(() => {
         this.availability = null;
       });
@@ -63,12 +60,10 @@ export class HostRestartController {
     return {
       hostId: this.hostId,
       available: available.host,
-      allAvailable: available.all,
       allPiAvailable: available.allPi === true,
       allPiIncludesHerdr: available.includeHerdr === true,
       ...(!available.allPi ? { allPiReason: ALL_PI_UNAVAILABLE } : {}),
       ...(!available.host ? { reason: UNAVAILABLE } : {}),
-      ...(!available.all ? { allReason: ALL_UNAVAILABLE } : {}),
       operation: this.operation ? { ...this.operation } : null,
     };
   }
@@ -127,20 +122,9 @@ export class HostRestartController {
     let mayHaveIssued = false;
     try {
       const available = await this.backend.inspect();
-      const capability =
-        operation.scope === "all-pi"
-          ? "allPi"
-          : operation.scope === "all"
-            ? "all"
-            : "host";
-      if (!available[capability])
-        throw new Error(
-          operation.scope === "all-pi"
-            ? ALL_PI_UNAVAILABLE
-            : operation.scope === "all"
-              ? ALL_UNAVAILABLE
-              : UNAVAILABLE,
-        );
+      const global = operation.scope === "all-pi";
+      if (!(global ? available.allPi : available.host))
+        throw new Error(global ? ALL_PI_UNAVAILABLE : UNAVAILABLE);
       await this.backend.prepare();
       // Preparation can be slow. Acquire the authoritative admission fence
       // afterwards, not from an earlier observation of active work.

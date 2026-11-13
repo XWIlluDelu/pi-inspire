@@ -1,40 +1,32 @@
 import { createHash } from "node:crypto";
 import { userInfo } from "node:os";
 import { join, posix, win32 } from "node:path";
-import type {
-  TerminalMutationMethod,
-  TerminalOperationIdentity,
-} from "../shared/terminal-contracts.js";
 import {
   inspireRuntimeDirectory,
   inspireStateDirectory,
   installationKey,
 } from "./platform-paths.mjs";
 
-export const TERMINAL_DAEMON_PROTOCOL_VERSION = 4;
+export const TERMINAL_DAEMON_PROTOCOL_VERSION = 5;
 export const TERMINAL_DAEMON_READY_TYPE = "terminal_daemon_ready";
 
-type TerminalDaemonControl = "getDaemonInfo" | "shutdownDaemon";
-type TerminalDaemonQuery =
+export type TerminalDaemonRpcMethod =
   | "ping"
   | "getCatalog"
   | "getGlobalCatalog"
-  | "getSettings";
+  | "getSettings"
+  | "getDaemonInfo"
+  | "shutdownDaemon"
+  | "operate"
+  | "observeOperation";
 
-export type TerminalDaemonRpcMethod =
-  | TerminalDaemonQuery
-  | TerminalDaemonControl
-  | TerminalMutationMethod;
-
-export type TerminalDaemonRpcRequest = {
+export interface TerminalDaemonRpcRequest {
   protocolVersion: number;
   mode: "rpc";
   requestId: string;
+  method: TerminalDaemonRpcMethod;
   params: unknown;
-} & (
-  | { method: TerminalDaemonQuery | TerminalDaemonControl }
-  | { method: TerminalMutationMethod; operation: TerminalOperationIdentity }
-);
+}
 
 export interface TerminalDaemonAttachRequest {
   protocolVersion: number;

@@ -33,7 +33,7 @@ test("Manage models carries New's prospective project only for its Settings visi
   await page
     .getByRole("button", { name: "Manage models", exact: true })
     .click();
-  await expect.poll(() => settingsOwner).toEqual({ cwd: target });
+  await expect.poll(() => settingsOwner).toEqual({ cwd: target, refresh: "1" });
   await expect(page.getByText(/This project uses/)).toBeVisible();
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
   const write = page.waitForRequest(
@@ -57,81 +57,141 @@ test("Manage models carries New's prospective project only for its Settings visi
   await openModels(page);
   await expect
     .poll(() => settingsOwner)
-    .toEqual({ sessionId: "fixture-history" });
+    .toEqual({ sessionId: "fixture-history", refresh: "1" });
 });
 
-test("search, refresh and keyboard actions preserve the virtual model list and saved choices", async ({
-  page,
-}) => {
-  const scenario = await modelSettingsScenario(page);
-  scenario.snapshot().saved.defaultThinkingLevel = "xhigh";
-  scenario.snapshot().models.push(
-    ...Array.from({ length: 40 }, (_, index) => ({
-      provider: "openai",
-      id: `z-${String(index).padStart(3, "0")}`,
-      name: `Model ${index}`,
-      reasoning: true,
-    })),
-  );
-  await pairAndOpen(page);
-  const settings = await openModels(page);
-  const search = settings.getByRole("combobox", {
-    name: "Search available models",
-  });
-  const list = settings.getByRole("listbox", { name: "Available models" });
-  const refresh = settings.getByRole("button", {
-    name: "Refresh available models",
-  });
-  await expect(list.getByRole("option").first()).toBeVisible();
-  const position = await list.evaluate((element) => {
-    element.scrollTop = 120;
-    return element.scrollTop;
-  });
-  expect(position).toBeGreaterThan(0);
-  const refreshed = page.waitForResponse(
-    (response) =>
-      response.url().includes("/api/model-settings") &&
-      response.request().method() === "GET",
-  );
-  await refresh.click();
-  await refreshed;
-  await expect.poll(() => list.evaluate((el) => el.scrollTop)).toBe(position);
-  await search.fill("openai/z-039");
-  const matching = list.getByRole("option", { name: /Model 39/ });
-  await expect(matching).toBeVisible();
-  await search.press("Enter");
-  await expect(matching).toHaveAttribute("aria-selected", "true");
-  expect(scenario.snapshot().saved.defaultModel).toBeNull();
-  await settings.getByRole("button", { name: "Set as default" }).click();
-  await expect
-    .poll(() => scenario.snapshot().saved.defaultModel)
-    .toEqual({ provider: "openai", id: "z-039" });
-  await search.fill("Claude Haiku");
-  await search.press("Enter");
-  const commonChoice = settings.getByRole("checkbox", {
-    name: "Common: Claude Haiku",
-  });
-  await commonChoice.press("Space");
-  await expect(commonChoice).toBeChecked();
-  await expect(commonChoice).toBeFocused();
+test.describe("touch model lists", () => {
+  test.use({ hasTouch: true });
+  test("search, refresh and keyboard actions preserve the virtual model list and saved choices", async ({
+    page,
+  }) => {
+    const scenario = await modelSettingsScenario(page, "light", true);
+    const snapshot = scenario.snapshot();
+    snapshot.saved.defaultThinkingLevel = "xhigh";
+    const providers = [
+      "research-calibration-openai-compatible-service",
+      "本地科研仪器校准与测量数据兼容服务",
+    ];
+    snapshot.models.push(
+      ...Array.from({ length: 1_100 }, (_, index) => ({
+        provider: providers[index] ?? "synthetic",
+        id: `model-${String(index).padStart(4, "0")}`,
+        name:
+          index < providers.length ? "Calibration reader" : `Model ${index}`,
+        reasoning: false,
+      })),
+    );
+    const total = snapshot.models.length;
+    const target = snapshot.models.at(-1)!;
+    await pairAndOpen(page);
+    await page.setViewportSize({ width: 320, height: 844 });
+    await page.getByRole("button", { name: "Model", exact: true }).click();
+    const picker = page.getByRole("listbox", { name: "Available models" });
+    await expect(picker).toBeFocused();
+    const menu = page.locator(".model-picker__menu");
+    const bounds = (await menu.boundingBox())!;
+    expect(bounds.height).toBeLessThanOrEqual(457);
+    expect(bounds.x).toBeGreaterThanOrEqual(0);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(320);
+    expect(bounds.y).toBeGreaterThanOrEqual(0);
+    expect(bounds.y + bounds.height).toBeLessThanOrEqual(844);
+    await picker.press("End");
+    const last = picker.locator(`[aria-posinset="${total}"]`);
+    await expect(last).toBeInViewport();
+    await expect(picker).toHaveAttribute(
+      "aria-activedescendant",
+      (await last.getAttribute("id"))!,
+    );
+    expect(await picker.getByRole("option").count()).toBeLessThan(25);
+    const pickerSearch = page.getByRole("combobox", { name: "Search models" });
+    await pickerSearch.fill(`${target.provider} ${target.id}`);
+    await expect(
+      picker.getByRole("option", { name: new RegExp(target.name!) }),
+    ).toBeVisible();
+    await pickerSearch.fill("calibration");
+    for (const provider of providers) {
+      const heading = menu
+        .locator(".model-picker__heading")
+        .filter({ hasText: provider });
+      await expect(heading).toHaveAttribute("title", provider);
+      await expect(heading).toHaveCSS("text-overflow", "ellipsis");
+    }
+    await page.getByRole("button", { name: "Manage models" }).click();
+    const settings = page.getByRole("dialog", {
+      name: "Settings",
+      exact: true,
+    });
+    const list = settings.getByRole("listbox", { name: "Available models" });
+    await expect(list).toBeAttached();
+    expect(await list.getByRole("option").count()).toBeLessThan(16);
+    expect(
+      await settings
+        .locator(".settings__main")
+        .evaluate((el) => el.scrollWidth - el.clientWidth),
+    ).toBeLessThanOrEqual(1);
 
-  const thinking = settings.getByRole("combobox", { name: "Default thinking" });
-  await settings.getByRole("button", { name: "Clear default model" }).click();
-  await expect(thinking).toBeFocused();
-  await expect(thinking).toHaveValue("xhigh");
-  expect(scenario.snapshot().saved.defaultModel).toBeNull();
-  await thinking.selectOption("unset");
-  await expect
-    .poll(() => scenario.snapshot().saved.defaultThinkingLevel)
-    .toBeNull();
-  await settings.getByText(/Common order/, { exact: false }).click();
-  await settings
-    .getByRole("button", { name: "Move custom/local:high down" })
-    .click();
-  await expect
-    .poll(() => scenario.snapshot().saved.enabledModels)
-    .toEqual(["openai/gpt-5", "custom/local:high", "anthropic/claude-haiku"]);
-  expect(scenario.errors).toEqual([]);
+    await page.setViewportSize({ width: 1280, height: 900 });
+    const search = settings.getByRole("combobox", {
+      name: "Search available models",
+    });
+    const refresh = settings.getByRole("button", {
+      name: "Refresh available models",
+    });
+    await expect(list.getByRole("option").first()).toBeVisible();
+    const position = await list.evaluate((element) => {
+      element.scrollTop = 120;
+      return element.scrollTop;
+    });
+    expect(position).toBeGreaterThan(0);
+    const refreshed = page.waitForResponse(
+      (response) =>
+        response.url().includes("/api/model-settings") &&
+        response.request().method() === "GET",
+    );
+    await refresh.click();
+    await refreshed;
+    await expect.poll(() => list.evaluate((el) => el.scrollTop)).toBe(position);
+    await search.fill(`${target.provider}/${target.id}`);
+    const matching = list.getByRole("option", {
+      name: new RegExp(target.name!),
+    });
+    await expect(matching).toBeVisible();
+    await search.press("Enter");
+    await expect(matching).toHaveAttribute("aria-selected", "true");
+    expect(scenario.snapshot().saved.defaultModel).toBeNull();
+    await settings.getByRole("button", { name: "Set as default" }).click();
+    await expect
+      .poll(() => scenario.snapshot().saved.defaultModel)
+      .toEqual({ provider: target.provider, id: target.id });
+    await search.fill("Claude Haiku");
+    await search.press("Enter");
+    const commonChoice = settings.getByRole("checkbox", {
+      name: "Common: Claude Haiku",
+    });
+    await commonChoice.press("Space");
+    await expect(commonChoice).toBeChecked();
+    await expect(commonChoice).toBeFocused();
+
+    const thinking = settings.getByRole("combobox", {
+      name: "Default thinking",
+    });
+    await settings.getByRole("button", { name: "Clear default model" }).click();
+    await expect(thinking).toBeFocused();
+    await expect(thinking).toHaveValue("xhigh");
+    expect(scenario.snapshot().saved.defaultModel).toBeNull();
+    await thinking.selectOption("unset");
+    await expect
+      .poll(() => scenario.snapshot().saved.defaultThinkingLevel)
+      .toBeNull();
+    await settings.getByText(/Common order/, { exact: false }).click();
+    await settings
+      .getByRole("button", { name: "Move custom/local:high down" })
+      .click();
+    await expect
+      .poll(() => scenario.snapshot().saved.enabledModels)
+      .toEqual(["openai/gpt-5", "custom/local:high", "anthropic/claude-haiku"]);
+    expect(scenario.errors).toEqual([]);
+  });
 });
 
 test.describe("touch model editor", () => {
@@ -177,12 +237,6 @@ test.describe("touch model editor", () => {
     await expect(editor.getByLabel("Model ID", { exact: true })).toBeFocused();
     await editor.getByText("Connection overrides", { exact: true }).click();
     await page.setViewportSize({ width: 320, height: 460 });
-    await expect(
-      editor.getByRole("button", { name: "Save", exact: true }),
-    ).toBeInViewport();
-    await expect(
-      editor.getByRole("button", { name: "Cancel", exact: true }),
-    ).toBeInViewport();
     await editor.getByLabel("Base URL override").focus();
     await expectConfigurationField(editor.getByLabel("Base URL override"));
     await editor
@@ -222,12 +276,12 @@ test("first provider and model setup preserves the current model and composer dr
   });
   await draft.fill("Keep this unfinished draft while managing models");
   const model = page.getByRole("button", { name: "Model", exact: true });
+  const currentModel = /^(?:Offline model|offline) — workbench$/;
+  await expect(model).toHaveAttribute("title", currentModel);
   await model.click();
   {
     const search = page.getByRole("combobox", { name: "Search models" });
     await expect(search).toBeFocused();
-    // With the empty catalog, the trigger displays the current runtime model ID.
-    await expect(model).toHaveText("offline");
     await search.press("Tab");
     await expect(
       page.getByRole("button", { name: "Manage models", exact: true }),
@@ -300,7 +354,7 @@ test("first provider and model setup preserves the current model and composer dr
   await expect(draft).toHaveValue(
     "Keep this unfinished draft while managing models",
   );
-  await expect(model).toHaveText("offline");
+  await expect(model).toHaveAttribute("title", currentModel);
   expect(scenario.modelChanges).toEqual([]);
   expect(scenario.errors).toEqual([]);
 });

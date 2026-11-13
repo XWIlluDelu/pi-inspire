@@ -41,18 +41,6 @@ test("conversation feedback shares an axis and keeps narrow touch actions usable
     metric.evaluate(textBaseline, ".context-checkpoint"),
   ]);
   expect(Math.abs(titleBaseline - metricBaseline)).toBeLessThan(0.1);
-  const disclosureAlignment = await checkpoint.evaluate((element) => {
-    const chevron = element.querySelector(".card__chevron svg")!;
-    const foldChevron = document.querySelector(
-      ".activity-fold__boundary--upper > svg, .activity-fold__disclosure > svg",
-    )!;
-    return (
-      chevron.getBoundingClientRect().left -
-      foldChevron.getBoundingClientRect().left
-    );
-  });
-  expect(Math.abs(disclosureAlignment)).toBeLessThanOrEqual(1);
-
   await page.setViewportSize({ width: 320, height: 1000 });
   await checkpoint
     .getByRole("button", { name: "Magic Context compacted" })

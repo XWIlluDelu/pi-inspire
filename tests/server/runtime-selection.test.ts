@@ -11,8 +11,8 @@ import {
   preview,
   record,
   schedulingRuntime,
-  trackRuntime,
   startWorker,
+  trackRuntime,
 } from "./fixtures/runtime.js";
 
 beforeEach(initializeRuntimeFixture);
@@ -84,50 +84,44 @@ describe("session selection and addressed reads", () => {
     await runtime.close();
   });
 
-  it.each([undefined, "a"])(
-    "pins snapshot interest %s before another browser opens a different session",
-    async (interest) => {
-      const { runtime, workers } = schedulingRuntime({
-        sessions: [record("a", "/project"), record("b", "/project")],
-      });
-      const restored = await runtime.snapshot("a");
-      expect(restored.active?.sessionId).toBe("a");
-      expect(runtime.startupSessionHint).toBeNull();
-      expect(workers).toHaveLength(0);
-      await runtime.openSession("a");
-      await startWorker(runtime);
+  it("keeps the addressed snapshot while another browser opens a different session", async () => {
+    const { runtime, workers } = schedulingRuntime({
+      sessions: [record("a", "/project"), record("b", "/project")],
+    });
+    const restored = await runtime.snapshot("a");
+    expect(restored.active?.sessionId).toBe("a");
+    expect(runtime.startupSessionHint).toBeNull();
+    expect(workers).toHaveLength(0);
+    await runtime.openSession("a");
+    await startWorker(runtime);
 
-      const { promise: gate, resolve: releaseSnapshot } = deferredSignal();
-      const { promise: started, resolve: snapshotStarted } = deferredSignal();
-      const workerA = workers[0]!;
-      const request = workerA.request.bind(workerA);
-      workerA.request = async <T>(
-        command: Record<string, unknown>,
-      ): Promise<T> => {
-        if (command.type === "get_state") {
-          snapshotStarted();
-          await gate;
-        }
-        return request<T>(command);
-      };
+    const { promise: gate, resolve: releaseSnapshot } = deferredSignal();
+    const { promise: started, resolve: snapshotStarted } = deferredSignal();
+    const workerA = workers[0]!;
+    const request = workerA.request.bind(workerA);
+    workerA.request = async <T>(
+      command: Record<string, unknown>,
+    ): Promise<T> => {
+      if (command.type === "get_state") {
+        snapshotStarted();
+        await gate;
+      }
+      return request<T>(command);
+    };
 
-      const snapshotting = runtime.snapshot(interest);
-      await started;
-      await runtime.openSession("b");
-      releaseSnapshot();
+    const snapshotting = runtime.snapshot("a");
+    await started;
+    await runtime.openSession("b");
+    releaseSnapshot();
 
-      const snapshot = await snapshotting;
-      expect(snapshot.active?.sessionId).toBe("a");
-      const globalOnly = await runtime.snapshot(null);
-      expect(globalOnly.active).toBeNull();
-      expect(Object.keys(globalOnly.sessionStatuses).sort()).toEqual([
-        "a",
-        "b",
-      ]);
-      expect(runtime.startupSessionHint).toBe("b");
-      await runtime.close();
-    },
-  );
+    const snapshot = await snapshotting;
+    expect(snapshot.active?.sessionId).toBe("a");
+    const globalOnly = await runtime.snapshot(null);
+    expect(globalOnly.active).toBeNull();
+    expect(Object.keys(globalOnly.sessionStatuses).sort()).toEqual(["a", "b"]);
+    expect(runtime.startupSessionHint).toBe("b");
+    await runtime.close();
+  });
 
   it("publishes and restores needs-input status for an independently observed worker", async () => {
     const { runtime, workers } = schedulingRuntime({
@@ -177,25 +171,50 @@ describe("session selection and addressed reads", () => {
     expect(runtime.startupSessionHint).toBe("b");
   });
 
-  it("single-flights concurrent opens of the same session", async () => {
-    const { promise: previewGate, resolve: releasePreview } = deferredSignal();
-    let previewCalls = 0;
-    const { runtime, workers } = fakeRuntime({
-      openSessionProjection: async (session) => {
-        previewCalls += 1;
-        await previewGate;
-        return preview(session);
-      },
+  it("shares cold opens, keeps the newest startup hint, and starts only the addressed writer", async () => {
+    const gate = deferredSignal();
+    const load = vi.fn(async (session: ReturnType<typeof record>) => {
+      if (session.id === "a") await gate.promise;
+      return preview(session);
     });
-
+    const { runtime, workers } = fakeRuntime({
+      sessions: [record("a", "/project/one"), record("b", "/project/two")],
+      openSessionProjection: load,
+    });
+    const release = runtime.retainSessionView("a");
     const first = runtime.openSession("a");
     const second = runtime.openSession("a");
-    await vi.waitFor(() => expect(previewCalls).toBe(1));
-    releasePreview();
-    await Promise.all([first, second]);
-    expect(workers).toHaveLength(0);
+    try {
+      await vi.waitFor(() => expect(load).toHaveBeenCalledOnce());
+      await runtime.openSession("b");
+      gate.resolve();
+      const snapshots = await Promise.all([first, second]);
+      expect(load.mock.calls.map(([session]) => session.id)).toEqual([
+        "a",
+        "b",
+      ]);
+      for (const { active } of snapshots) {
+        expect(active).toMatchObject({
+          sessionId: "a",
+          transcriptPage: { messages: [{ content: "preview:a" }] },
+        });
+      }
+      expect(workers).toHaveLength(0);
+      expect(runtime.startupSessionHint).toBe("b");
 
-    await runtime.close();
+      await runtime.prompt({
+        sessionId: "a",
+        expectedViewId: snapshots[0].active!.transcriptPage.viewId,
+        message: "Continue in this view",
+      });
+      expect(workers.map(({ sessionId }) => sessionId)).toEqual(["a"]);
+      expect(runtime.startupSessionHint).toBe("b");
+    } finally {
+      gate.resolve();
+      await Promise.allSettled([first, second]);
+      release();
+      await runtime.close();
+    }
   });
 
   it("publishes conflict status independently of the startup hint", async () => {
@@ -223,7 +242,7 @@ describe("session selection and addressed reads", () => {
     };
     a.runState = "conflict";
     a.attention = null;
-    expect((await runtime.snapshot()).sessionStatuses.a).toEqual({
+    expect((await runtime.snapshot(null)).sessionStatuses.a).toEqual({
       runState: "conflict",
       indicator: "attention",
     });
@@ -239,7 +258,7 @@ describe("session selection and addressed reads", () => {
       message: "damaged projection",
       revision: 3,
     };
-    expect((await runtime.snapshot()).sessionStatuses.a).toEqual({
+    expect((await runtime.snapshot(null)).sessionStatuses.a).toEqual({
       runState: "conflict",
       indicator: "failed",
     });
@@ -259,7 +278,7 @@ describe("session selection and addressed reads", () => {
     await runtime.openSession("b");
     await startWorker(runtime, "b");
     workers[0]!.emit("event", { type: "agent_start" });
-    expect((await runtime.snapshot()).sessionStatuses.a).toEqual({
+    expect((await runtime.snapshot(null)).sessionStatuses.a).toEqual({
       runState: "running",
       indicator: "running",
     });

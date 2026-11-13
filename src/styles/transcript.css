@@ -263,9 +263,7 @@
   align-items: stretch;
 }
 
-.activity-fold__disclosure,
-.activity-fold__boundary,
-.activity-fold__omission {
+.activity-fold__disclosure {
   display: flex;
   /* Hang the hit row into the reading gutter: the 4px button inset and
      chevron's own blank side must not indent its visible stroke twice. */
@@ -292,9 +290,7 @@
 
 /* Activity headings are an ornament, not content: a small tracked mono
    eyebrow in regular weight, so the conversation's prose stays the voice. */
-.activity-fold__disclosure,
-.activity-fold__boundary,
-.activity-fold__omission {
+.activity-fold__disclosure {
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   font-weight: 400;
@@ -302,9 +298,7 @@
   text-transform: uppercase;
 }
 
-.activity-fold__disclosure > svg,
-.activity-fold__boundary > svg,
-.activity-fold__omission > svg {
+.activity-fold__disclosure > svg {
   flex-shrink: 0;
 }
 
@@ -328,33 +322,17 @@
   color: var(--error-ink);
 }
 
-/* Center chevrons and the 3x3 matrix against the 13px Flux Mono label's
-   optical center; hit areas and reading-gutter guides remain unchanged. */
-.activity-fold__disclosure > svg,
-.activity-fold__boundary > svg,
-.activity-fold__omission > svg {
-  transform: translateY(-0.1px);
-}
-
-:is(
-  .activity-fold__disclosure,
-  .activity-fold__boundary,
-  .activity-fold__omission
-):active {
+.activity-fold__disclosure:active {
   color: var(--ink);
 }
 
 @media (hover: hover) {
-  :is(.activity-fold__disclosure, .activity-fold__boundary, .activity-fold__omission):hover {
+  .activity-fold__disclosure:hover {
     color: var(--ink);
   }
 }
 
-:is(
-  .activity-fold__disclosure,
-  .activity-fold__boundary,
-  .activity-fold__omission
-):focus-visible {
+.activity-fold__disclosure:focus-visible {
   outline: 2px solid var(--accent-focus);
   outline-offset: -2px;
   color: var(--ink);
@@ -372,12 +350,6 @@
   padding: 2px 0 2px 12px;
 }
 
-/* Message boundaries no longer carry turn chrome or a different activity rhythm.
-   Keep prose/detail spacing outside this activity-only wrapper unchanged. */
-.activity-fold__content .assistant-doc {
-  gap: var(--space-1);
-}
-
 .activity-fold__content[hidden] {
   display: none;
 }
@@ -385,17 +357,23 @@
 .activity-item-boundary {
   display: contents;
 }
-.activity-item-boundary[hidden] {
-  display: none;
+.activity-fold__pages {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  color: var(--muted);
+  font-size: var(--text-xs);
 }
 
-/* Keep the error role through the generic hover, pressed and focus ink treatment. */
-
+.activity-fold__pages button {
+  min-height: 28px;
+  color: inherit;
+}
 
 @media (pointer: coarse) {
   .activity-fold__disclosure,
-  .activity-fold__boundary,
-  .activity-fold__omission {
+  .activity-fold__pages button {
     min-height: 32px;
   }
 }
@@ -651,32 +629,6 @@
   font-size: var(--text-xs);
   overflow-wrap: anywhere;
 }
-.custom-message__copy.icon-button {
-  width: 24px;
-  height: 24px;
-  color: var(--muted);
-  border-radius: var(--radius-control);
-  opacity: 0;
-  transition:
-    opacity var(--dur-micro) var(--ease-standard),
-    color var(--dur-micro) var(--ease-standard),
-    background var(--dur-micro) var(--ease-standard);
-}
-.custom-message__head:hover .custom-message__copy,
-.custom-message__head:has(:focus-visible) .custom-message__copy {
-  opacity: 1;
-}
-@media (hover: none) {
-  .custom-message__copy.icon-button {
-    opacity: 0.75;
-  }
-}
-@media (hover: hover) {
-  .custom-message__copy.icon-button:hover:where(:not(:disabled)) {
-    color: var(--ink);
-    background: var(--bg-inset);
-  }
-}
 .custom-message__body,
 .custom-message__details {
   min-width: 0;
@@ -709,8 +661,7 @@
 .custom-message__details > summary:active {
   color: var(--ink);
 }
-.custom-message__details > summary:focus-visible,
-.custom-message__copy.icon-button:focus-visible {
+.custom-message__details > summary:focus-visible {
   outline: 2px solid var(--accent-focus);
   outline-offset: 2px;
 }
@@ -728,12 +679,6 @@
   color: var(--body);
 }
 @media (pointer: coarse) {
-  .custom-message__copy.icon-button {
-    width: 32px;
-    height: 32px;
-    /* The card padding accommodates the hit area without a taller header. */
-    margin-block: calc(-1 * var(--space-1));
-  }
   .custom-message__details > summary {
     min-height: 32px;
     align-content: center;
@@ -772,12 +717,6 @@
   font-weight: 500;
   line-height: var(--leading-ui);
   color: var(--error-ink);
-}
-
-.assistant-error__copy.icon-button {
-  width: 24px;
-  height: 24px;
-  color: var(--muted);
 }
 
 .assistant-error__message {
@@ -857,12 +796,6 @@
 }
 
 @media (pointer: coarse) {
-  .assistant-error__copy.icon-button {
-    width: 32px;
-    height: 32px;
-    margin-block: calc(-1 * var(--space-1));
-  }
-
   .assistant-error__disclosure {
     min-height: 32px;
   }

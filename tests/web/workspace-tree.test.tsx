@@ -23,6 +23,7 @@ import {
   installFakeWebSocket,
   installFetch,
   type RouteResponse,
+  selectSession,
 } from "./helpers";
 
 async function workspaceHarness() {
@@ -46,7 +47,7 @@ async function workspaceHarness() {
     if (url.startsWith("/api/bootstrap"))
       return {
         body: bootstrapPayload({
-          snapshot: activeSnapshot({ sessionId: "s1", cwd: "/project" }),
+          startupSessionId: "s1",
         }),
       };
     if (url.startsWith("/api/files/list"))
@@ -58,14 +59,9 @@ async function workspaceHarness() {
   });
   await store.init();
   const socket = FakeWebSocket.instances.at(-1)!;
-  socket.open();
+  socket.join(activeSnapshot({ cwd: "/project" }));
   const openProject = (sessionId: string, cwd: string) =>
-    act(() =>
-      socket.emit({
-        type: "snapshot",
-        data: activeSnapshot({ sessionId, cwd }),
-      }),
-    );
+    selectSession(store, activeSnapshot({ sessionId, cwd }));
   return { directory, search, openProject };
 }
 
@@ -137,7 +133,7 @@ it("preserves displayed files through a failed refresh and clears its warnings o
   expect(screen.getByText("Search unavailable")).toBeVisible();
   expect(screen.getByRole("button", { name: "nested.ts" })).toBeVisible();
 
-  harness.openProject("other", "/other");
+  await harness.openProject("other", "/other");
   await screen.findByText("Directory unavailable");
   expect(screen.queryByRole("button", { name: "nested.ts" })).toBeNull();
   harness.directory.mockImplementation((dir) => ({
@@ -150,7 +146,7 @@ it("preserves displayed files through a failed refresh and clears its warnings o
   harness.search.mockReturnValue({
     body: { files: [{ name: "new.ts", path: "src/new.ts" }] },
   });
-  harness.openProject("s1", "/project");
+  await harness.openProject("s1", "/project");
   await waitFor(() =>
     expect(screen.getAllByRole("button", { name: /^new\.ts/ })).toHaveLength(2),
   );
@@ -189,7 +185,7 @@ it("rolls up only authorized Git paths and decorates the exact file, not a basen
     if (url.startsWith("/api/bootstrap"))
       return {
         body: bootstrapPayload({
-          snapshot: activeSnapshot({ sessionId: "alpha", cwd: "/work/alpha" }),
+          startupSessionId: "alpha",
         }),
       };
     if (url.startsWith("/api/git/status"))

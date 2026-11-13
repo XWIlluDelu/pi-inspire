@@ -13,12 +13,6 @@ import {
 } from "./app-state";
 import { asMessage, type ChatMessage } from "./events";
 
-export interface ResyncOptions {
-  /** Ignore a snapshot older than the revision that requested this read. */
-  minimumRevision?: number;
-  /** A user-requested refresh reports failure instead of retrying quietly. */
-  explicit?: boolean;
-}
 type SnapshotTransitionKind =
   | "same-projection"
   | "append"
@@ -105,7 +99,7 @@ export function deriveSnapshotTransition(
   };
 }
 
-export function projectionDiagnostic(
+function projectionDiagnostic(
   health: ProjectionHealth,
   conflict: ProjectionConflict | null,
 ) {
@@ -210,7 +204,6 @@ export function snapshotLifecyclePatch(
             ],
           ),
         ),
-        editorText: null,
         pendingRetryError: null,
         pendingAction: null,
         windowTitle: null,
@@ -221,8 +214,7 @@ export function snapshotLifecyclePatch(
         ...emptyResourceInspectionState(),
         gitStatus: null,
         gitStatusError: null,
-        gitStatusLoading: false,
-        gitStatusRefreshing: false,
+        gitStatusPending: false,
         gitDiff: null,
       };
     case "view-changed":

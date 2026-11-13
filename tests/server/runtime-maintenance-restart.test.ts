@@ -13,8 +13,8 @@ import {
   initializeRuntimeFixture,
   preview,
   schedulingRuntime,
-  TEST_CWD,
   startWorker,
+  TEST_CWD,
 } from "./fixtures/runtime.js";
 
 beforeEach(initializeRuntimeFixture);
@@ -56,7 +56,7 @@ describe("maintenance restart admission", () => {
         }),
       );
       const controller = new HostRestartController(runtime, {
-        inspect: async () => ({ host: true, all: true }),
+        inspect: async () => ({ host: true }),
         prepare: async () => {},
         request: submit,
       });
@@ -115,72 +115,47 @@ describe("maintenance restart admission", () => {
     },
   );
 
-  it("rejects an expired lease even after a fresh owner prepares", async () => {
+  it("fences expired, released and foreign identities and keeps a committed drain", async () => {
     vi.useFakeTimers();
     const runtime = idleRuntime();
-    const old = runtime.reserveMaintenanceRestart();
-    if (old.kind !== "ready") throw new Error("Expected idle lease");
+    const reserve = () => {
+      const lease = runtime.reserveMaintenanceRestart();
+      if (lease.kind !== "ready") throw new Error("Expected idle lease");
+      return lease.leaseId;
+    };
+    const expired = reserve();
     vi.advanceTimersByTime(30_000);
-    expect(runtime.commitMaintenanceRestart(old.leaseId)).toEqual({
+    expect(runtime.commitMaintenanceRestart(expired)).toEqual({
       kind: "skipped",
       reason: "lease-invalid",
     });
-    const fresh = runtime.reserveMaintenanceRestart();
-    if (fresh.kind !== "ready") throw new Error("Expected fresh lease");
-    expect(fresh.leaseId).not.toBe(old.leaseId);
-    expect(runtime.releaseMaintenanceRestart(old.leaseId).kind).toBe("skipped");
-    expect(runtime.commitMaintenanceRestart(old.leaseId).kind).toBe("skipped");
-    expect(runtime.commitMaintenanceRestart(fresh.leaseId).kind).toBe(
-      "committed",
-    );
-    await runtime.close();
-  });
 
-  it("never expires a committed drain and rejects duplicate or foreign commits", async () => {
-    vi.useFakeTimers();
-    const runtime = idleRuntime();
-    const lease = runtime.reserveMaintenanceRestart();
-    if (lease.kind !== "ready") throw new Error("Expected idle lease");
-    expect(runtime.commitMaintenanceRestart("foreign").kind).toBe("skipped");
-    expect(runtime.commitMaintenanceRestart(lease.leaseId)).toEqual({
-      kind: "committed",
-      leaseId: lease.leaseId,
+    const released = reserve();
+    expect(runtime.releaseMaintenanceRestart(released).kind).toBe("released");
+    const current = reserve();
+    expect(new Set([expired, released, current]).size).toBe(3);
+    for (const retired of [expired, released, "foreign"]) {
+      expect(runtime.releaseMaintenanceRestart(retired).kind).toBe("skipped");
+      expect(runtime.commitMaintenanceRestart(retired).kind).toBe("skipped");
+    }
+    await expect(runtime.newSession(TEST_CWD)).rejects.toMatchObject({
+      status: 503,
     });
-    expect(runtime.commitMaintenanceRestart(lease.leaseId)).toEqual({
+    expect(runtime.commitMaintenanceRestart(current)).toEqual({
+      kind: "committed",
+      leaseId: current,
+    });
+    expect(runtime.commitMaintenanceRestart(current)).toEqual({
       kind: "skipped",
       reason: "lease-already-committed",
     });
     vi.advanceTimersByTime(24 * 60 * 60 * 1_000);
-    await expect(runtime.newSession(TEST_CWD)).rejects.toMatchObject({
-      status: 503,
-    });
-    expect(runtime.releaseMaintenanceRestart("foreign").kind).toBe("skipped");
     expect(runtime.reserveMaintenanceRestart().kind).toBe("busy");
-    expect(runtime.releaseMaintenanceRestart(lease.leaseId)).toEqual({
-      kind: "released",
-    });
-    expect(runtime.reserveMaintenanceRestart().kind).toBe("ready");
-    await runtime.close();
-  });
-
-  it("release cancels a reordered commit and cannot release the next owner", async () => {
-    const runtime = idleRuntime();
-    const lease = runtime.reserveMaintenanceRestart();
-    if (lease.kind !== "ready") throw new Error("Expected idle lease");
-    expect(runtime.releaseMaintenanceRestart(lease.leaseId).kind).toBe(
-      "released",
-    );
-    expect(runtime.commitMaintenanceRestart(lease.leaseId).kind).toBe(
-      "skipped",
-    );
-    const next = runtime.reserveMaintenanceRestart();
-    expect(next.kind).toBe("ready");
-    expect(runtime.releaseMaintenanceRestart(lease.leaseId).kind).toBe(
-      "skipped",
-    );
     await expect(runtime.newSession(TEST_CWD)).rejects.toMatchObject({
       status: 503,
     });
+    expect(runtime.releaseMaintenanceRestart(current).kind).toBe("released");
+    reserve();
     await runtime.close();
   });
 

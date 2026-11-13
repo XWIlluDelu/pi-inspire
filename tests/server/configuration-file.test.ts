@@ -2,7 +2,11 @@ import * as fs from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { editConfigurationFile } from "../../server/configuration-file.js";
+import {
+  editConfigurationDocument,
+  editConfigurationFile,
+  readConfigurationFile,
+} from "../../server/configuration-file.js";
 
 vi.mock("node:fs/promises", async (importOriginal) => ({
   ...(await importOriginal<typeof import("node:fs/promises")>()),
@@ -11,10 +15,14 @@ vi.mock("node:fs/promises", async (importOriginal) => ({
 let root: string;
 const original = '{"value":"original"}\n';
 const replacement = '{"value":"replacement"}\n';
-const revision = (source: string | undefined) => source ?? "missing";
-const edit = (path: string, expectedRevision = original) =>
+const revision = async (path: string) =>
+  (await readConfigurationFile({ path })).revision;
+const edit = async (
+  path: string,
+  expectedRevision = undefined as string | undefined,
+) =>
   editConfigurationFile(
-    { path, expectedRevision, revision },
+    { path, expectedRevision: expectedRevision ?? (await revision(path)) },
     async () => replacement,
   );
 beforeEach(async () => {
@@ -47,30 +55,31 @@ describe("Pi configuration editing", () => {
     const file = join(root, "config.json");
     const target = join(root, "managed", "config.json");
     await fs.symlink(target, file);
-    await edit(file, "missing");
+    await edit(file);
     expect((await fs.lstat(file)).isSymbolicLink()).toBe(true);
     expect(await fs.readFile(target, "utf8")).toBe(replacement);
   });
 
-  it.each(["regular", "symlink"])(
-    "rejects a %s file retargeted during its save even with identical contents",
-    async (kind) => {
+  it.each(["before save", "during save"] as const)(
+    "rejects a reviewed path retargeted %s even with identical contents",
+    async (when) => {
       const file = join(root, "config.json");
       const initialTarget = join(root, "original.json");
       const changedTarget = join(root, "changed.json");
       await fs.writeFile(initialTarget, original);
       await fs.writeFile(changedTarget, original);
-      if (kind === "symlink") await fs.symlink(initialTarget, file);
-      else await fs.writeFile(file, original);
+      await fs.symlink(initialTarget, file);
+      const expectedRevision = await revision(file);
+      const retarget = async () => {
+        await fs.rm(file);
+        await fs.symlink(changedTarget, file);
+      };
+      if (when === "before save") await retarget();
       await expect(
-        editConfigurationFile(
-          { path: file, expectedRevision: original, revision },
-          async () => {
-            await fs.rm(file);
-            await fs.symlink(changedTarget, file);
-            return replacement;
-          },
-        ),
+        editConfigurationFile({ path: file, expectedRevision }, async () => {
+          if (when === "during save") await retarget();
+          return replacement;
+        }),
       ).rejects.toMatchObject({ status: 409 });
       expect((await fs.lstat(file)).isSymbolicLink()).toBe(true);
       expect(await fs.readFile(changedTarget, "utf8")).toBe(original);
@@ -81,6 +90,24 @@ describe("Pi configuration editing", () => {
         });
     },
   );
+
+  it("refuses a malformed reviewed document before applying a patch", async () => {
+    const path = join(root, "config.json");
+    await fs.writeFile(path, "{broken");
+    const transform = vi.fn(() => ({ value: "replacement" }));
+    await expect(
+      editConfigurationDocument(
+        { path, expectedRevision: await revision(path) },
+        { invalid: "Repair the invalid document" },
+        transform,
+      ),
+    ).rejects.toMatchObject({
+      status: 409,
+      message: "Repair the invalid document",
+    });
+    expect(transform).not.toHaveBeenCalled();
+    expect(await fs.readFile(path, "utf8")).toBe("{broken");
+  });
 
   it("recovers an abandoned native-compatible lock", async () => {
     const file = join(root, "config.json");
@@ -96,7 +123,11 @@ describe("Pi configuration editing", () => {
   it("allows only one competing save from the same reviewed revision", async () => {
     const file = join(root, "config.json");
     await fs.writeFile(file, original);
-    const results = await Promise.allSettled([edit(file), edit(file)]);
+    const expected = await revision(file);
+    const results = await Promise.allSettled([
+      edit(file, expected),
+      edit(file, expected),
+    ]);
     expect(
       results.filter((result) => result.status === "fulfilled"),
     ).toHaveLength(1);
@@ -121,8 +152,7 @@ describe("Pi configuration editing", () => {
       editConfigurationFile(
         {
           path: file,
-          expectedRevision: original,
-          revision,
+          expectedRevision: await revision(file),
           alsoLock: [{ path: related }],
         },
         async () => {
@@ -141,6 +171,6 @@ describe("Pi configuration editing", () => {
       await expect(fs.access(`${path}.lock`)).rejects.toMatchObject({
         code: "ENOENT",
       });
-    await Promise.all([edit(file, external), edit(related)]);
+    await Promise.all([edit(file), edit(related)]);
   });
 });

@@ -8,6 +8,7 @@ import {
   installFetch,
   jsonBody,
   type RouteResponse,
+  selectSession,
 } from "./helpers";
 import { baseRoutes, initStore } from "./store-fixture";
 
@@ -80,15 +81,15 @@ describe("feedback scope", () => {
         };
       installFetch((url, init) => {
         if (url.startsWith("/api/bootstrap"))
-          return { body: bootstrapPayload({ snapshot }) };
+          return { body: bootstrapPayload({ startupSessionId: "s1" }) };
         if (url.startsWith("/api/snapshot"))
           return { status: 503, body: { error: "Snapshot unavailable" } };
         return baseRoutes(url, init);
       });
-      const { store, socket } = await initStore();
+      const { store, socket } = await initStore(snapshot);
       await store.refreshSession();
       expect(store.getState().error).toBeTruthy();
-      socket.emit({ type: "snapshot", data: snapshot });
+      socket.emitSnapshot(snapshot);
       expect(store.getState().error).toBe(
         brokenProjection ? "Broken projection" : null,
       );
@@ -139,7 +140,7 @@ describe("feedback scope", () => {
             title: "Question B",
           },
         ];
-        socket.emit({ type: "snapshot", data: next });
+        await selectSession(store, next);
       }
 
       response.resolve(

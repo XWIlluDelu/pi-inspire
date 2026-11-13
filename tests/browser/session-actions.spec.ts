@@ -110,7 +110,7 @@ for (const touch of [false, true]) {
       const { title, composer } = await namedSession(page);
       const preferences = hostRequest(page);
       const savedOrder = async () =>
-        (await (await preferences.get("/api/preferences")).json())
+        (await (await preferences.get("/api/preferences")).json()).preferences
           .sessionActionOrder;
       const original = await savedOrder();
       try {

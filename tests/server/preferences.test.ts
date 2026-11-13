@@ -110,10 +110,10 @@ describe("PreferencesStore validation", () => {
     await expect(
       store.patch({ projectDisplay: "path" }),
     ).resolves.toMatchObject({
-      projectDisplay: "path",
-      toolVisibility: "dynamic",
+      preferences: { projectDisplay: "path", toolVisibility: "dynamic" },
+      revision: expect.any(Number),
     });
-    await store.removeSession("session-a");
+    await store.removeDeletedSessions(["session-a"]);
     expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({
       toolVisibility: "impossible",
       futurePreference: { retained: true },
@@ -184,7 +184,7 @@ describe("PreferencesStore validation", () => {
     await writeFile(store.projectDirectories.path, invalidRegistry);
 
     await store.patch({ theme: "dark" });
-    await store.removeSession("old");
+    await store.removeDeletedSessions(["old"]);
     await expect(store.patch({ pinnedProjectCwds: [] })).rejects.toThrow();
     expect(await store.read()).toMatchObject({
       theme: "dark",

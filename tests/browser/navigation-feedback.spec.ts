@@ -25,7 +25,7 @@ function navigationRowBounds(row: Locator) {
   });
 }
 
-test("desktop session actions replace the trailing age without shifting the title", async ({
+test("desktop session actions stay beside the title and age and take keyboard focus", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -36,31 +36,24 @@ test("desktop session actions replace the trailing age without shifting the titl
   const title = row.locator(".nav__row-name");
   const meta = row.locator(".nav__row-meta");
   const actions = row.locator(".nav__row-actions");
+  await page.mouse.move(1000, 300);
   const titleBox = (await title.boundingBox())!;
   const metaBox = (await meta.boundingBox())!;
-  const middle = (box: { y: number; height: number }) => box.y + box.height / 2;
-  // One line: the age trails the title on its own axis, at the row's end.
-  expect(Math.abs(middle(metaBox) - middle(titleBox))).toBeLessThanOrEqual(1.5);
-  expect(metaBox.x).toBeGreaterThanOrEqual(titleBox.x + titleBox.width);
-  await page.mouse.move(1000, 300);
-  await expect(actions).toHaveCSS("opacity", "0");
+  const actionsBox = (await actions.boundingBox())!;
+  expect(metaBox.y).toBeGreaterThanOrEqual(titleBox.y + titleBox.height);
+  expect(titleBox.x + titleBox.width).toBeLessThanOrEqual(actionsBox.x);
+  await expect(actions.getByRole("button").first()).toBeVisible();
   await row.hover();
-  await expect(actions).toHaveCSS("opacity", "1");
-  // Pin/Hide take the age's place; the title keeps its width and fades.
-  await expect(meta).toHaveCSS("visibility", "hidden");
-  expect((await title.boundingBox())!.width).toBeCloseTo(titleBox.width, 2);
+  await expect(meta).toBeVisible();
+  expect(await title.boundingBox()).toEqual(titleBox);
   for (const action of await actions.getByRole("button").all()) {
-    const box = (await action.boundingBox())!;
-    const icon = (await action.locator("svg").boundingBox())!;
-    expect(Math.abs(middle(icon) - middle(titleBox))).toBeLessThanOrEqual(1.5);
-    expect(box.width).toBeGreaterThanOrEqual(24);
+    expect(await action.boundingBox()).toMatchObject({ width: 24, height: 24 });
   }
   await page.mouse.move(1000, 300);
   await row.locator(".nav__row-main").focus();
   await page.keyboard.press("Tab");
   await expect(actions.getByRole("button").first()).toBeFocused();
-  await expect(actions).toHaveCSS("opacity", "1");
-  await expect(meta).toHaveCSS("visibility", "hidden");
+  await expect(meta).toBeVisible();
 });
 
 test.describe("touch navigation", () => {
@@ -143,6 +136,7 @@ test("Welcome Recent hides curated sessions and preserves its disclosure through
   page,
 }) => {
   let preferences: Record<string, unknown>;
+  let revision = 0;
   await page.route("**/api/bootstrap**", async (route) => {
     const response = await route.fetch();
     const body = await response.json();
@@ -154,11 +148,12 @@ test("Welcome Recent hides curated sessions and preserves its disclosure through
         pinnedSessionIds: [],
       },
     );
+    body.preferenceRevision = ++revision;
     await route.fulfill({ response, json: body });
   });
   await page.route("**/api/preferences", async (route) => {
     Object.assign(preferences, route.request().postDataJSON());
-    await route.fulfill({ json: preferences });
+    await route.fulfill({ json: { preferences, revision: ++revision } });
   });
   await pairedPage(page);
   const welcome = async () => {
@@ -216,7 +211,7 @@ for (const viewport of [
       serviceWorkers: "block",
     });
 
-    test("Hidden preserves focus and keeps both sections reachable", async ({
+    test("switches the catalog view without losing focus in a short window", async ({
       page,
     }) => {
       await navigationGroupsFixture(page);
@@ -242,11 +237,11 @@ for (const viewport of [
         0,
       );
       await hidden.press("Enter");
-      await expect(hidden).toHaveAttribute("aria-expanded", "true");
+      await expect(hidden).toHaveAttribute("aria-pressed", "true");
       await expect(hidden).toBeFocused();
       expect(await hidden.evaluate(focusRingClipping)).toBeLessThanOrEqual(0.5);
 
-      const body = nav.locator(".nav__hidden-content");
+      const body = nav.getByRole("region", { name: "Hidden", exact: true });
       const group = body.getByRole("button", {
         name: "archived-b",
         exact: true,
@@ -264,7 +259,11 @@ for (const viewport of [
       await group.focus();
       if ((await group.getAttribute("aria-expanded")) !== "true")
         await group.press("Enter");
-      const session = body.locator(".nav__row-main").last();
+      await expect(group).toHaveAttribute("aria-expanded", "true");
+      const session = body
+        .getByRole("region", { name: /archived-b/ })
+        .locator(".nav__row-main")
+        .last();
       await session.focus();
       await expect(session).toBeFocused();
       const visible = await navigationRowBounds(session);
@@ -275,8 +274,9 @@ for (const viewport of [
         Math.min(visible.viewport.bottom, visible.scrollport.bottom) + 1,
       );
 
-      await hidden.press("Enter");
-      await expect(hidden).toBeFocused();
+      const all = nav.getByRole("button", { name: "All", exact: true });
+      await all.press("Enter");
+      await expect(all).toBeFocused();
       await expect(body).toHaveCount(0);
       const catalog = nav.locator(".nav__list");
       const folder = catalog.getByRole("button", {
@@ -285,7 +285,10 @@ for (const viewport of [
       });
       if ((await folder.getAttribute("aria-expanded")) !== "true")
         await folder.press("Enter");
-      const catalogRow = catalog.locator(".nav__row-main").first();
+      const catalogRow = catalog
+        .getByRole("region", { name: /calibration/ })
+        .locator(".nav__row-main")
+        .first();
       await catalogRow.focus();
       await expect(catalogRow).toBeFocused();
       const bounds = await navigationRowBounds(catalogRow);

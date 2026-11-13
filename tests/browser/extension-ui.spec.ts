@@ -210,7 +210,7 @@ test("Escape cancels an extension question during work and aborts during a proje
     aborts++;
     return completeOperation(route, "abort", { steering: [], followUp: [] });
   });
-  demo.emit({ type: "agent_start" });
+  demo.emit({ type: "agent_start", sessionStatus: { runState: "running" } });
   await expect(
     page.getByRole("button", { name: "Abort running task" }),
   ).toBeVisible();
@@ -338,7 +338,11 @@ test("keeps a failed editor response in its dialog and offers a cancellable unsu
   const editor = dialog.getByRole("textbox", { name: title, exact: true });
   await expect(editor).toHaveValue("Original notes.\nCompare the residuals.");
   await expect
-    .poll(() => dialog.evaluate((el) => el.scrollWidth - el.clientWidth))
+    .poll(() =>
+      dialog
+        .locator(".extension-dialog")
+        .evaluate((el) => el.scrollWidth - el.clientWidth),
+    )
     .toBe(0);
   await editor.fill("Keep this draft.");
   const save = dialog.getByRole("button", { name: "Save" });

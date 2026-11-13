@@ -17,34 +17,6 @@ export function textBaseline(element: Element, relativeTo?: string): number {
   return baseline;
 }
 
-/** Compare painted disclosure strokes with the first visible letter in one layout snapshot. */
-export function disclosureReadingOffset(
-  chevron: Element,
-  reading: Element,
-): number {
-  const svg = chevron as SVGSVGElement;
-  const path = svg.querySelector("path")!;
-  const stroke =
-    (Number.parseFloat(getComputedStyle(path).strokeWidth) *
-      svg.getBoundingClientRect().width) /
-    svg.viewBox.baseVal.width;
-  const walker = document.createTreeWalker(reading, NodeFilter.SHOW_TEXT);
-  let text = walker.nextNode()!;
-  while (!text.textContent!.trim()) text = walker.nextNode()!;
-  const start = text.textContent!.search(/\S/);
-  const range = document.createRange();
-  range.setStart(text, start);
-  range.setEnd(text, start + 1);
-  const style = getComputedStyle(text.parentElement!);
-  const context = document.createElement("canvas").getContext("2d")!;
-  context.font =
-    style.font || `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
-  const letter = context.measureText(text.textContent![start]!);
-  const readingEdge =
-    range.getBoundingClientRect().left - letter.actualBoundingBoxLeft;
-  return path.getBoundingClientRect().left - stroke / 2 - readingEdge;
-}
-
 /** Range/Canvas baseline estimates can round each font size independently,
  * particularly in WebKit/CoreText. Compare their difference within one CSS px;
  * exact DOM edges, columns and padding keep their own tighter tolerances. */

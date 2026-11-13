@@ -304,7 +304,7 @@ describe("native Pi tool cards", () => {
     expect(screen.queryByRole("group", { name: "Code" })).toBeNull();
     expect(screen.getByLabelText("generating arguments")).toBeVisible();
     rerender(preview("expanded", true));
-    expect(container.querySelectorAll(".tool-code__line")).toHaveLength(400);
+    expect(container.querySelectorAll(".code-row")).toHaveLength(400);
     expect(screen.getByText("Argument preview truncated")).toBeInTheDocument();
     expect(screen.getByText("Showing first 400 lines")).toBeInTheDocument();
     rerender(preview("expanded", false));
@@ -421,11 +421,14 @@ describe("native edit cards", () => {
         true,
       );
     const { container, rerender, unmount } = render(preview({}));
-    const added = () => container.querySelectorAll(".diff__line--add");
+    const added = () =>
+      container.querySelectorAll('.code-row[data-kind="add"]');
     expect(added()).toHaveLength(2);
     rerender(preview({ oldText: "second before" }));
     expect(added()).toHaveLength(2);
-    expect(container.querySelectorAll(".diff__line--del")).toHaveLength(3);
+    expect(
+      container.querySelectorAll('.code-row[data-kind="delete"]'),
+    ).toHaveLength(3);
     rerender(preview({ oldText: "second before", newText: "" }));
     expect(added()).toHaveLength(3);
     expect(added()[0]).toHaveTextContent("after one");
@@ -448,7 +451,7 @@ describe("native edit cards", () => {
     expect(
       interrupted.container
         .querySelectorAll(".diff")[1]
-        ?.querySelectorAll(".diff__line"),
+        ?.querySelectorAll(".code-row"),
     ).toHaveLength(400);
   });
 
@@ -466,9 +469,9 @@ describe("native edit cards", () => {
       ),
     );
     expect(screen.getByText("Applied changes")).toBeVisible();
-    expect(container.querySelector(".diff__line--add")).toHaveTextContent(
-      "+applied after",
-    );
+    expect(
+      container.querySelector('.code-row[data-kind="add"]'),
+    ).toHaveTextContent("+applied after");
     fireEvent.click(screen.getByRole("button", { name: path }));
     expect(open).toHaveBeenCalledExactlyOnceWith(path);
     rerender(card(request, result("edit rejected", undefined, true)));

@@ -28,9 +28,9 @@ import {
   richTextParser,
 } from "../rich-text-parser-client";
 import { store } from "../store";
-import { highlightSource } from "../syntax-highlighting";
 import { queueTerminalInsertion } from "../terminal-actions";
 import { useCopied } from "../use-copied";
+import { CodeView } from "./CodeView";
 import { CopyFeedback } from "./CopyFeedback";
 import { DocumentImage, DocumentResourceContext } from "./DocumentPreview";
 import {
@@ -54,10 +54,6 @@ const CodeBlock = memo(function CodeBlock({
     scope: code,
     onError: store.reportCopyError,
   });
-  const highlighted = useMemo(
-    () => highlightSource(code, language),
-    [code, language],
-  );
   return (
     <div className="code-block">
       <div className="code-block__bar">
@@ -65,7 +61,7 @@ const CodeBlock = memo(function CodeBlock({
         <div className="code-block__actions">
           <button
             type="button"
-            className="code-block__terminal"
+            className="icon-button"
             onClick={() => {
               queueTerminalInsertion(code, store.getState().cwd);
               store.setContextMode("terminal");
@@ -78,7 +74,7 @@ const CodeBlock = memo(function CodeBlock({
           </button>
           <button
             type="button"
-            className="code-block__copy"
+            className="icon-button"
             onClick={() => void copy(code)}
             aria-label={copied ? "Copied" : "Copy code"}
             title={copied ? "Copied" : "Copy code"}
@@ -87,13 +83,12 @@ const CodeBlock = memo(function CodeBlock({
           </button>
         </div>
       </div>
-      <pre className="code-block__pre" tabIndex={0}>
-        {/* highlight.js escapes its input; generated markup contains only span tags. */}
-        <code
-          className={language ? `hljs language-${language}` : "hljs"}
-          dangerouslySetInnerHTML={{ __html: highlighted }}
-        />
-      </pre>
+      <CodeView
+        className="code-block__pre"
+        tabIndex={0}
+        text={code}
+        language={language}
+      />
     </div>
   );
 });

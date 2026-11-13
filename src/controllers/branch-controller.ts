@@ -1,20 +1,30 @@
+import {
+  COMPOSER_HISTORY_FILE_REFERENCE,
+  COMPOSER_HISTORY_IMAGE_REFERENCE,
+} from "../../shared/composer-artifact-references";
 import type {
   BranchEntryResponse,
   BranchForkResponse,
   BranchNavigateRequest,
   BranchNavigateResponse,
+  ComposerHistoryEntry,
   ProjectionConflict,
   ProjectionHealth,
   SessionReadOnlyReason,
 } from "../../shared/contracts";
+import { MAX_COMPOSER_HISTORY_ENTRIES } from "../../shared/contracts";
+import type { SessionHistoryQuery } from "../../shared/history-query";
 import { type Api, ApiError } from "../api";
+import type { ComposerHistoryScope } from "../composer-history";
 import type { CopyContent } from "../content-copy";
-import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
+import { RecoveryBackoff } from "../recovery-backoff";
 import { shellCopyText } from "../shell-record";
 
 export interface BranchControllerState {
   sessionId: string | null;
   transcriptViewId: string | null;
+  transcriptIncarnation: string | null;
+  composerHistoryVersion: string | null;
   transcriptDurableLeafId: string | null;
   transcriptEffectiveLeafId: string | null;
   transcriptNavigationLeased: boolean;
@@ -89,13 +99,13 @@ interface BranchControllerHost {
 /** Fences native branch actions and saved-entry reads to their original view. */
 export class BranchController {
   private actionRequest = 0;
-  private inspectionRequests = new Set<AbortController>();
+  private inspection = new AbortController();
 
   constructor(private readonly host: BranchControllerHost) {}
 
   invalidate({ preserveError = false, preserveAction = false } = {}): void {
-    for (const request of this.inspectionRequests) request.abort();
-    this.inspectionRequests.clear();
+    this.inspection.abort();
+    this.inspection = new AbortController();
     if (!preserveAction) this.actionRequest += 1;
     this.host.patch({
       ...(!preserveAction ? { branchActionId: null } : {}),
@@ -103,39 +113,133 @@ export class BranchController {
     });
   }
 
-  async readEntry(
-    targetId: string,
-    offset = 0,
+  history<Q extends SessionHistoryQuery>(
+    sessionId: string,
+    viewId: string,
+    query: Q,
     signal?: AbortSignal,
-  ): Promise<BranchEntryResponse | null> {
-    const viewId = this.host.state().transcriptViewId;
-    if (!viewId) return null;
+    retry = false,
+  ) {
+    const current = this.host.state();
+    if (current.sessionId !== sessionId || current.transcriptViewId !== viewId)
+      return Promise.resolve(null);
     return this.read(
-      (api, sessionId, signal) =>
-        api.sessionHistory(
-          sessionId,
-          viewId,
-          { kind: "entry", targetId, offset },
-          signal,
-        ),
-      "view",
-      { signal },
+      (api, signal) => api.sessionHistory(sessionId, viewId, query, signal),
+      signal,
+      retry,
     );
   }
 
-  async readImage(
-    targetId: string,
-    index: number,
-    signal?: AbortSignal,
-  ): Promise<Blob | null> {
-    const viewId = this.host.state().transcriptViewId;
-    if (!viewId) return null;
-    return this.read(
-      (api, sessionId, signal) =>
-        api.branchImage({ sessionId, viewId, targetId }, index, signal),
-      "view",
-      { signal },
-    );
+  async composerHistory(
+    {
+      sessionId,
+      viewId,
+      incarnation,
+      historyVersion,
+    }: Omit<ComposerHistoryScope, "effectiveLeafId">,
+    signal: AbortSignal,
+  ): Promise<ComposerHistoryEntry[] | null> {
+    const matches = () => {
+      const state = this.host.state();
+      return (
+        state.sessionId === sessionId &&
+        state.transcriptViewId === viewId &&
+        state.transcriptIncarnation === incarnation &&
+        state.composerHistoryVersion === historyVersion
+      );
+    };
+    if (!matches()) return null;
+    try {
+      return await this.read(async (api, signal) => {
+        // User appends can shift newest-first offsets. Restart the read once
+        // when the complete input history identity changes between pages.
+        for (let pass = 0; pass < 2; pass += 1) {
+          const entries: ComposerHistoryEntry[] = [];
+          let identity: string | undefined;
+          while (matches()) {
+            const start = entries.length;
+            const page = await api.sessionHistory(
+              sessionId,
+              viewId,
+              { kind: "composer", start },
+              signal,
+            );
+            if (
+              !matches() ||
+              page.sessionId !== sessionId ||
+              page.viewId !== viewId ||
+              (page.incarnation ?? null) !== incarnation ||
+              page.composerHistoryVersion !== historyVersion
+            )
+              return null;
+            if (
+              page.start !== start ||
+              !Number.isSafeInteger(page.total) ||
+              page.total < 0 ||
+              page.total > MAX_COMPOSER_HISTORY_ENTRIES ||
+              !Array.isArray(page.entries) ||
+              start + page.entries.length > page.total ||
+              !page.entries.every(validComposerEntry)
+            )
+              throw new Error("The Host returned invalid composer history");
+            const stamp = JSON.stringify([page.historyId, page.total]);
+            if (identity !== undefined && identity !== stamp) break;
+            identity = stamp;
+            entries.push(...page.entries);
+            if (page.nextStart === null) {
+              if (entries.length !== page.total)
+                throw new Error(
+                  "The Host returned incomplete composer history",
+                );
+              return entries;
+            }
+            if (page.nextStart !== entries.length || page.nextStart <= start)
+              throw new Error(
+                "The Host returned invalid composer history paging",
+              );
+          }
+        }
+        return null;
+      }, signal);
+    } catch (error) {
+      if (matches() && !(error instanceof ApiError && error.status === 409))
+        this.host.notify(
+          "warning",
+          error instanceof Error
+            ? `Prompt history could not be loaded: ${error.message}`
+            : "Prompt history could not be loaded",
+        );
+      return null;
+    }
+  }
+
+  readEntry(targetId: string, offset = 0, signal?: AbortSignal) {
+    const { sessionId, transcriptViewId } = this.host.state();
+    return sessionId && transcriptViewId
+      ? this.history(
+          sessionId,
+          transcriptViewId,
+          { kind: "entry", targetId, offset },
+          signal,
+          true,
+        )
+      : Promise.resolve(null);
+  }
+
+  readImage(targetId: string, index: number, signal?: AbortSignal) {
+    const { sessionId, transcriptViewId } = this.host.state();
+    return sessionId && transcriptViewId
+      ? this.read(
+          (api, signal) =>
+            api.branchImage(
+              { sessionId, viewId: transcriptViewId, targetId },
+              index,
+              signal,
+            ),
+          signal,
+          true,
+        )
+      : Promise.resolve(null);
   }
 
   async copyContent(
@@ -143,9 +247,9 @@ export class BranchController {
     signal: AbortSignal,
     format?: "message",
   ): Promise<CopyContent | null> {
-    const viewId = this.host.state().transcriptViewId;
-    if (!viewId) return null;
-    return this.read(async (api, sessionId) => {
+    const { sessionId, transcriptViewId: viewId } = this.host.state();
+    if (!sessionId || !viewId) return null;
+    return this.read(async (api, signal) => {
       let offset = 0;
       const chunks: string[] = [];
       let shell: BranchEntryResponse["shell"];
@@ -177,65 +281,52 @@ export class BranchController {
       }
       const text = chunks.join("");
       return { text: shell ? shellCopyText(shell, text) : text, images };
-    }, "view");
+    }, signal);
   }
 
   private async read<T>(
-    perform: (api: Api, sessionId: string, signal?: AbortSignal) => Promise<T>,
-    ownership: "position" | "view" = "position",
-    recovery?: { signal?: AbortSignal },
+    perform: (api: Api, signal: AbortSignal) => Promise<T>,
+    external?: AbortSignal,
+    retry = false,
   ): Promise<T | null> {
     const api = this.host.api();
     const state = this.host.state();
     if (!api || !state.sessionId) return null;
     const ticket = this.viewTicket(state);
-    // Only mounted read-only inspection opts in. A command or Copy gesture
-    // keeps its existing single admission and never enters this retry loop.
-    const request = recovery ? new AbortController() : null;
-    const backoff = new RecoveryBackoff();
-    const abort = () => request?.abort();
-    recovery?.signal?.addEventListener("abort", abort, { once: true });
-    if (recovery?.signal?.aborted) abort();
-    if (request) this.inspectionRequests.add(request);
+    const signal = external
+      ? AbortSignal.any([this.inspection.signal, external])
+      : this.inspection.signal;
     const owns = () =>
-      !request?.signal.aborted &&
+      !signal.aborted &&
       this.host.api() === api &&
-      this.ownsView(ticket, ownership);
+      this.ownsView(ticket, "view");
+    if (!owns()) return null;
     try {
-      while (owns()) {
-        try {
-          const result = await perform(api, state.sessionId, request?.signal);
-          return owns() ? result : null;
-        } catch (error) {
-          if (this.host.api() !== api) return null;
-          if (error instanceof ApiError && error.status === 401) {
-            this.host.handleAuthFailure();
-            return null;
-          }
-          if (!owns()) return null;
-          if (
-            request &&
-            isTransientFailure(error) &&
-            (await backoff.wait(request.signal))
+      const result = retry
+        ? await new RecoveryBackoff().read(
+            () => perform(api, signal),
+            signal,
+            owns,
           )
-            continue;
-          if (!owns()) return null;
-          throw error;
-        }
-      }
+        : await perform(api, signal);
+      return owns() ? result : null;
+    } catch (error) {
+      if (
+        this.host.api() === api &&
+        error instanceof ApiError &&
+        error.status === 401
+      )
+        this.host.handleAuthFailure();
+      else if (owns()) throw error;
       return null;
-    } finally {
-      backoff.reset();
-      recovery?.signal?.removeEventListener("abort", abort);
-      if (request) this.inspectionRequests.delete(request);
     }
   }
 
   async navigate(
     targetId: string,
-    mode: "switch" | "edit",
+    mode: BranchNavigateRequest["mode"],
     options: Pick<
-      BranchNavigateRequest,
+      Exclude<BranchNavigateRequest, { mode: "watch" }>,
       "summarize" | "customInstructions"
     > = {},
     revision = this.host.state().branchRevision,
@@ -247,7 +338,7 @@ export class BranchController {
       !api ||
       !sessionId ||
       revision === null ||
-      state.readOnlyReason ||
+      (state.readOnlyReason && mode !== "watch") ||
       branchCopiesBlocked(state)
     )
       return false;
@@ -262,7 +353,7 @@ export class BranchController {
           revision,
           targetId,
           mode,
-          ...options,
+          ...(mode !== "watch" ? options : {}),
         }),
       (response) => {
         if (response.cancelled) {
@@ -462,4 +553,29 @@ export class BranchController {
       this.host.selectionRequest() === ticket.selectionRequest
     );
   }
+}
+
+function validComposerEntry(entry: ComposerHistoryEntry): boolean {
+  return (
+    !!entry &&
+    typeof entry.text === "string" &&
+    Array.isArray(entry.images) &&
+    entry.images.every(
+      (image) =>
+        !!image &&
+        COMPOSER_HISTORY_IMAGE_REFERENCE.test(image.reference) &&
+        typeof image.mimeType === "string" &&
+        Number.isSafeInteger(image.size) &&
+        image.size >= 0,
+    ) &&
+    Array.isArray(entry.files) &&
+    entry.files.every(
+      (file) =>
+        !!file &&
+        COMPOSER_HISTORY_FILE_REFERENCE.test(file.reference) &&
+        typeof file.fileName === "string" &&
+        file.fileName.length > 0 &&
+        (file.kind === "attachment" || file.kind === "project"),
+    )
+  );
 }

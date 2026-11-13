@@ -73,7 +73,7 @@ describe("native prompt admission and extension dialogs", () => {
         expect(slot.overlay).toEqual([]);
       });
       const checkHistory = async (turns: number) => {
-        const snapshot = await f.runtime.snapshot();
+        const snapshot = await f.runtime.snapshot(f.sessionId);
         const written = (await readFile(f.sessionFile, "utf8"))
           .trim()
           .split("\n")
@@ -132,7 +132,7 @@ describe("native prompt admission and extension dialogs", () => {
     ).resolves.toMatchObject({ accepted: true });
     expect(f.modelRequests).toHaveLength(0);
     expect(eventsOf(f.piEvents, "agent_start")).toHaveLength(0);
-    expect((await f.runtime.snapshot()).runState).toBe("idle");
+    expect((await f.runtime.snapshot(f.sessionId)).runState).toBe("idle");
     const path = join(
       await f.attachments.uploadDirectory(),
       `${file.id}-${file.fileName}`,
@@ -168,10 +168,12 @@ describe("native prompt admission and extension dialogs", () => {
     };
     const following = f.api.prompt(follow);
     await vi.waitFor(async () =>
-      expect((await f.runtime.snapshot()).pendingQueues?.totalCount).toBe(1),
+      expect(
+        (await f.runtime.snapshot(f.sessionId)).pendingQueues?.totalCount,
+      ).toBe(1),
     );
     await f.api.prompt(f.delivery("!!printf 'WHILE_COMPACTING'"));
-    const during = await f.runtime.snapshot();
+    const during = await f.runtime.snapshot(f.sessionId);
     expect(during.runState).toBe("compacting");
     expect(during.pendingQueues?.totalCount).toBe(1);
     expect(f.modelRequests).toHaveLength(0);
@@ -180,7 +182,7 @@ describe("native prompt admission and extension dialogs", () => {
     await vi.waitFor(
       async () => {
         expect(f.modelRequests).toHaveLength(2);
-        expect((await f.runtime.snapshot()).runState).toBe("idle");
+        expect((await f.runtime.snapshot(f.sessionId)).runState).toBe("idle");
       },
       { timeout: 10_000 },
     );
@@ -199,7 +201,7 @@ describe("native prompt admission and extension dialogs", () => {
     });
     expect(userTexts.slice(-2)).toEqual([first.message, follow.message]);
     expect(
-      (await f.runtime.snapshot()).active?.transcriptPage.messages,
+      (await f.runtime.snapshot(f.sessionId)).active?.transcriptPage.messages,
     ).toContainEqual(
       expect.objectContaining({
         role: "bashExecution",
@@ -229,17 +231,17 @@ describe("native prompt admission and extension dialogs", () => {
       void command.catch(() => {});
       await vi.waitFor(async () =>
         expect(
-          (await f.runtime.snapshot()).pendingExtensionUiRequests,
+          (await f.runtime.snapshot(f.sessionId)).pendingExtensionUiRequests,
         ).toHaveLength(1),
       );
-      const dialog = (await f.runtime.snapshot())
+      const dialog = (await f.runtime.snapshot(f.sessionId))
         .pendingExtensionUiRequests![0]!;
       releaseModel();
       await settled(f, 1);
       expect(f.workers[0]!.hasPendingRequest("prompt")).toBe(true);
-      expect((await f.runtime.snapshot()).pendingExtensionUiRequests).toEqual([
-        dialog,
-      ]);
+      expect(
+        (await f.runtime.snapshot(f.sessionId)).pendingExtensionUiRequests,
+      ).toEqual([dialog]);
       expect(eventsOf(f.runtimeEvents, "extension_ui_clear")).toEqual([]);
       await f.runtime.extensionUiResponse({
         sessionId: f.sessionId,
@@ -247,9 +249,9 @@ describe("native prompt admission and extension dialogs", () => {
         confirmed: true,
       });
       await expect(command).resolves.toMatchObject({ accepted: true });
-      expect((await f.runtime.snapshot()).pendingExtensionUiRequests).toEqual(
-        [],
-      );
+      expect(
+        (await f.runtime.snapshot(f.sessionId)).pendingExtensionUiRequests,
+      ).toEqual([]);
       expect(f.workers).toHaveLength(1);
       expect(f.workers[0]!.stop).not.toHaveBeenCalled();
       expect(eventsOf(f.runtimeEvents, "runtime_error")).toEqual([]);
@@ -275,7 +277,7 @@ describe("native prompt admission and extension dialogs", () => {
     await vi.waitFor(() =>
       expect(f.observations[0]?.receipt).toMatchObject({ state: "pending" }),
     );
-    const pending = await f.runtime.snapshot();
+    const pending = await f.runtime.snapshot(f.sessionId);
     expect(pending.runState).toBe("queued");
     expect(pending.pendingExtensionUiRequests).toHaveLength(1);
     const dialog = pending.pendingExtensionUiRequests![0]!;
@@ -287,7 +289,7 @@ describe("native prompt admission and extension dialogs", () => {
       confirmed: true,
     });
     await expect(answered).resolves.toMatchObject({ accepted: true });
-    expect((await f.runtime.snapshot()).runState).toBe("idle");
+    expect((await f.runtime.snapshot(f.sessionId)).runState).toBe("idle");
     expect(worker.pid).toBe(pid);
     expect(worker.stop).not.toHaveBeenCalled();
     expect(f.modelRequests).toHaveLength(0);
@@ -296,7 +298,7 @@ describe("native prompt admission and extension dialogs", () => {
     void stopped.catch(() => {}); // The explicit Stop may reject before we await it.
     await vi.waitFor(async () => {
       expect(
-        (await f.runtime.snapshot()).pendingExtensionUiRequests,
+        (await f.runtime.snapshot(f.sessionId)).pendingExtensionUiRequests,
       ).toHaveLength(1);
     });
     await f.runtime.abort(f.sessionId);
@@ -305,7 +307,7 @@ describe("native prompt admission and extension dialogs", () => {
     expect(worker.available).toBe(false);
     expect(worker.pid).toBeNull();
     expect(f.workers).toHaveLength(1);
-    const final = await f.runtime.snapshot();
+    const final = await f.runtime.snapshot(f.sessionId);
     expect(final.pendingExtensionUiRequests).toEqual([]);
     expect(final.runState).not.toBe("queued");
     expect(f.modelRequests).toHaveLength(0);
