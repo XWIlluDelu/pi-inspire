@@ -65,11 +65,11 @@ attachment-retention and PDF experiments are outside the main plan.
   confirmation restores the result once.
 - `inspire pi` runs the native Pi terminal with its public SDK and returns the individual queue
   disposition for remote Steer and Follow up. A regular terminal Pi does not return that
-  disposition from the extension API; its browser refuses busy input before dispatch.
+  disposition from the extension API; the browser and Host refuse busy input before dispatch.
 - The Host publishes and serves only the current asset manifest. Browser build mismatch blocks
   requests and subscriptions; an open draft remains visible for manual reload. The previous
-  asset cache and literal palette and manifest-hash checks were removed with their old tests.
-- Counted source is 237,844 lines, 14,097 below the handbook baseline and 448 above the previous
+  asset cache, retired palette/menu identifiers and redundant literal checks were removed.
+- Counted source is 237,832 lines, 14,109 below the handbook baseline and 436 above the previous
   pass. The build cleanup removes code, while the native queue path, receipt boundary and
   regression coverage add code. The handbook's full deletion estimate has not been realized.
 

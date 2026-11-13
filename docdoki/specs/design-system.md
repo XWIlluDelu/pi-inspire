@@ -170,6 +170,8 @@ both this glow and wordmark color transitions.
   and spans the full picker row. The selected choice has a border and pressed state, not color alone.
 - Semantic role mappings stay consistent across palettes while botanical and classic families
   retain their distinct character. Roles may share a color value.
+- The first-paint cache recognizes current palette identifiers. A retired saved identifier falls
+  back to the default palette; Settings can repair the affected field without changing other values.
 - Decorative accents and readable ink are separate roles. The current values
   live in [the foundation stylesheet](../../src/styles/foundation.css).
 

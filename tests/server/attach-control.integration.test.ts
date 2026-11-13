@@ -33,6 +33,7 @@ import { PiRpcProcess } from "../../server/pi-rpc.js";
 import { RuntimeController } from "../../server/runtime.js";
 import type { SessionRecord } from "../../server/session-catalog.js";
 import { deleteSessionFile } from "../../server/session-delete.js";
+import { closeHostApiFixture, hostApiFixture } from "./fixtures/host-api.js";
 import { isolatedTestEnvironment } from "./fixtures/isolated-environment.js";
 import { catalog } from "./fixtures/runtime.js";
 
@@ -385,6 +386,11 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
       timeout: 5_000,
     });
     try {
+      const { runtime } = replacementRuntime(fixture);
+      await runtime.openSession(id);
+      await runtime.takeOverSession(id);
+      const host = await hostApiFixture({ runtime });
+      cleanup.push(() => closeHostApiFixture(host));
       for (const behavior of ["steer", "followUp"] as const) {
         await expect(
           requestAttachControl(record.endpoint, {
@@ -400,6 +406,23 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
           disposition: "queued",
           state: { sessionId: id, activity: "working" },
         });
+        const operation = host.promptDelivery({
+          sessionId: id,
+          behavior,
+          message: `from browser ${behavior}`,
+        });
+        await host.localRequest
+          .post("/api/prompt")
+          .send(operation)
+          .expect(202)
+          .expect(({ body }) =>
+            expect(body).toMatchObject({
+              command: "prompt",
+              operationId: operation.operationId,
+              executor: { authorityId: operation.authorityId },
+              state: "completed",
+            }),
+          );
       }
       await expect(
         access(join(root, "gated run.release")),

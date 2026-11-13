@@ -27,10 +27,10 @@ import {
   persistedRecord,
   preview,
   record,
+  startWorker,
   trackedAttachmentStore,
   trackRuntime,
   upload,
-  startWorker,
 } from "./fixtures/runtime.js";
 
 const directProjections: Awaited<ReturnType<typeof preview>>[] = [];
@@ -588,6 +588,17 @@ describe("continue an externally owned Pi", () => {
     read.mockResolvedValue(nativeState());
     await runtime.prompt({ sessionId: "a", message: "Still attached" });
     expect(f.native.prompt).toHaveBeenCalledOnce();
+  });
+
+  it("does not call a busy receiver without native queue receipts", async () => {
+    const f = nativeFixture();
+    const runtime = attachedRuntime(async () => f.native);
+    await openAttached(runtime, "a");
+    f.setState({ activity: "working" });
+    await expect(
+      runtime.prompt({ sessionId: "a", message: "queue", behavior: "steer" }),
+    ).rejects.toMatchObject({ code: "ATTACH_CONTROL_QUEUE_ACK_UNAVAILABLE" });
+    expect(f.native.prompt).not.toHaveBeenCalled();
   });
 
   it("keeps an in-flight send and its Stop addressed to the attached Pi after switching sessions", async () => {

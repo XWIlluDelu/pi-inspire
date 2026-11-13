@@ -525,6 +525,15 @@ export class RuntimeExternalSessions {
     if (!(await this.refreshConnection(slot, connection)))
       throw requestError("The external Pi connection has ended.", 409);
     assertView();
+    if (
+      connection.state.activity === "working" &&
+      connection.state.queueAdmission !== true
+    )
+      throw requestError(
+        "Queue input in the original Pi terminal. This connection cannot confirm Steer or Follow up.",
+        409,
+        { code: "ATTACH_CONTROL_QUEUE_ACK_UNAVAILABLE" },
+      );
     const originalIds = request.attachmentIds ?? [];
     const prepared = await this.attachments.resolveForPrompt(originalIds);
     const copied: string[] = [];
