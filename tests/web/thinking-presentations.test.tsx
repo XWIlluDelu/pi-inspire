@@ -6,12 +6,12 @@ import {
   toolPresentationConfigurationSchema,
 } from "../../shared/tool-presentation-config";
 import { ThinkingCard } from "../../src/components/transcript-cards";
-import { configureToolPresentationRegistry } from "../../src/tool-presentations/registry";
+import { configurePresentationAdapters } from "../../src/presentation-adapters";
 
 function configureThinking(
   thinking: NonNullable<ToolPresentationConfiguration["thinking"]>,
 ) {
-  configureToolPresentationRegistry({
+  configurePresentationAdapters({
     version: 1,
     rules: {},
     mappings: {},
@@ -20,7 +20,7 @@ function configureThinking(
 }
 
 afterEach(() => {
-  configureToolPresentationRegistry();
+  configurePresentationAdapters();
 });
 
 describe("empty Thinking disclosure", () => {

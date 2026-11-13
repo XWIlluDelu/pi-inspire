@@ -2,11 +2,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { toolPresentationConfigurationSchema } from "../../shared/tool-presentation-config";
 import { createCustomMessagePresentationRegistry } from "../../src/custom-message-presentations";
 import {
-  configureToolPresentationRegistry,
-  customMessagePresentationRegistry,
-  thinkingPresentationRegistry,
-  toolPresentationRegistry,
-} from "../../src/tool-presentations/registry";
+  configurePresentationAdapters,
+  presentationGeneration,
+} from "../../src/presentation-adapters";
 import {
   customMessageConfiguration,
   incomingRelay,
@@ -16,7 +14,7 @@ const resolve = createCustomMessagePresentationRegistry(
   customMessageConfiguration.customMessages,
 ).resolve;
 
-afterEach(() => configureToolPresentationRegistry());
+afterEach(() => configurePresentationAdapters());
 
 describe("custom-message reading projections", () => {
   it("uses exact structured text without editing, summarizing, or truncating the body", () => {
@@ -83,21 +81,18 @@ describe("custom-message reading projections", () => {
   });
 
   it("loads and clears custom-message rules with the existing tool and Thinking bootstrap generation", () => {
-    configureToolPresentationRegistry({
+    configurePresentationAdapters({
       ...customMessageConfiguration,
       thinking: {
         summary: [{ value: { path: "thinking.text", format: "first-line" } }],
         blocks: [{ type: "markdown", source: { path: "thinking.text" } }],
       },
     });
+    const generation = presentationGeneration();
+    expect(generation.customMessages.resolve(incomingRelay())).not.toBeNull();
+    expect(generation.thinking.resolve("Reasoning\n\nBody")).not.toBeNull();
     expect(
-      customMessagePresentationRegistry.resolve(incomingRelay()),
-    ).not.toBeNull();
-    expect(
-      thinkingPresentationRegistry.resolve("Reasoning\n\nBody"),
-    ).not.toBeNull();
-    expect(
-      toolPresentationRegistry.resolve({
+      generation.tools.resolve({
         call: {
           type: "toolCall",
           id: "read",
@@ -106,11 +101,13 @@ describe("custom-message reading projections", () => {
         },
       }),
     ).not.toBeNull();
-    configureToolPresentationRegistry();
+    configurePresentationAdapters();
+    expect(presentationGeneration()).not.toBe(generation);
+    expect(generation.customMessages.resolve(incomingRelay())).not.toBeNull();
     expect(
-      customMessagePresentationRegistry.resolve(incomingRelay()),
+      presentationGeneration().customMessages.resolve(incomingRelay()),
     ).toBeNull();
-    expect(thinkingPresentationRegistry.resolve("Reasoning")).toBeNull();
+    expect(presentationGeneration().thinking.resolve("Reasoning")).toBeNull();
   });
 });
 

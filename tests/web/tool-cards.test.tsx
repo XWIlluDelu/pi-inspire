@@ -6,11 +6,11 @@ import { Transcript } from "../../src/components/Transcript";
 import { ToolCard } from "../../src/components/transcript-cards";
 import { UnpairedToolResultRow } from "../../src/components/transcript-rows";
 import type { ChatMessage, ToolCallContent } from "../../src/events";
-import { store } from "../../src/store";
 import {
-  configureToolPresentationRegistry,
-  toolPresentationRegistry,
-} from "../../src/tool-presentations/registry";
+  configurePresentationAdapters,
+  presentationGeneration,
+} from "../../src/presentation-adapters";
+import { store } from "../../src/store";
 
 function call(name: string, args: Record<string, unknown>): ToolCallContent {
   return { type: "toolCall", id: `${name}-1`, name, arguments: args };
@@ -24,7 +24,7 @@ function result(
   return { role: "toolResult", content, details, isError };
 }
 
-afterEach(() => configureToolPresentationRegistry());
+afterEach(() => configurePresentationAdapters());
 
 function card(
   toolCall: ToolCallContent,
@@ -237,7 +237,7 @@ describe("native Pi tool cards", () => {
     "merges overlapping %s search context without losing match emphasis or changed text",
     (format) => {
       if (format === "configured")
-        configureToolPresentationRegistry(
+        configurePresentationAdapters(
           toolPresentationConfigurationSchema.parse({
             version: 1,
             rules: {
@@ -314,7 +314,7 @@ describe("native Pi tool cards", () => {
     ).toBeInTheDocument();
   });
   it("uses sanitized Markdown for a matching override and raw output when it cannot render", async () => {
-    configureToolPresentationRegistry(
+    configurePresentationAdapters(
       toolPresentationConfigurationSchema.parse({
         version: 1,
         rules: {
@@ -486,7 +486,7 @@ describe("native edit cards", () => {
     { path: "a", newText: 5 },
   ])("rejects wrongly typed fields during streaming: %j", (args) => {
     expect(
-      toolPresentationRegistry.resolve({ call: streaming(args) }),
+      presentationGeneration().tools.resolve({ call: streaming(args) }),
     ).toBeNull();
   });
 
@@ -499,7 +499,7 @@ describe("native edit cards", () => {
     "rejects completed edits that never received the required fields: %j",
     (args) => {
       expect(
-        toolPresentationRegistry.resolve({ call: call("edit", args) }),
+        presentationGeneration().tools.resolve({ call: call("edit", args) }),
       ).toBeNull();
     },
   );

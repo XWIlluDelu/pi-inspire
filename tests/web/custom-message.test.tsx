@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { CustomMessage } from "../../src/components/CustomMessage";
 import { Transcript } from "../../src/components/Transcript";
 import type { ChatMessage } from "../../src/events";
-import { configureToolPresentationRegistry } from "../../src/tool-presentations/registry";
+import { configurePresentationAdapters } from "../../src/presentation-adapters";
 import {
   customMessageConfiguration,
   incomingRelay,
@@ -29,7 +29,7 @@ const component = (message: ChatMessage) => (
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
-  configureToolPresentationRegistry();
+  configurePresentationAdapters();
 });
 
 describe("extension context messages", () => {
@@ -37,7 +37,7 @@ describe("extension context messages", () => {
     const message = incomingRelay();
     const { container } = render(component(message));
     fireEvent.click(screen.getByText("Details"));
-    act(() => configureToolPresentationRegistry(customMessageConfiguration));
+    act(() => configurePresentationAdapters(customMessageConfiguration));
     expect(
       screen.getByRole("article", { name: "Inspire: composer editing" }),
     ).toBeVisible();
@@ -46,13 +46,13 @@ describe("extension context messages", () => {
       JSON.parse(container.querySelector(".custom-message__raw")!.textContent!)
         .content,
     ).toBe(message.content);
-    act(() => configureToolPresentationRegistry());
+    act(() => configurePresentationAdapters());
     expect(screen.getByText("Relay message")).toBeVisible();
     expect(container.querySelector("details")).toHaveAttribute("open");
   });
 
   it("retains the original unverified external attribution when a guard fails", async () => {
-    configureToolPresentationRegistry(customMessageConfiguration);
+    configurePresentationAdapters(customMessageConfiguration);
     const message = incomingRelay();
     message.content =
       "**From remote@other-host · unverified cross-machine**\n\nExternal body";
@@ -76,7 +76,7 @@ describe("extension context messages", () => {
   });
 
   it("falls back to the original mixed blocks when a projection cannot apply", async () => {
-    configureToolPresentationRegistry(customMessageConfiguration);
+    configurePresentationAdapters(customMessageConfiguration);
     const message = incomingRelay();
     message.content = [
       { type: "text", text: "**Original block**" },

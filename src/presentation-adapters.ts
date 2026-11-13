@@ -7,33 +7,65 @@ import {
   type ToolPresentationConfiguration,
 } from "../shared/tool-presentation-config";
 import { resolveCommandInventory } from "./composer-completion";
+import { createCustomMessagePresentationRegistry } from "./custom-message-presentations";
 import type { ChatMessage } from "./events";
+import { compileToolPresentationRules } from "./tool-presentations/declarative";
+import {
+  createThinkingPresentationRegistry,
+  createToolPresentationRegistry,
+} from "./tool-presentations/registry";
 
-let current = {
-  configuration: emptyToolPresentationConfiguration(),
-  adapters: [] as PresentationAdapterInfo[],
-};
+interface PresentationGeneration {
+  readonly configuration: ToolPresentationConfiguration;
+  readonly adapters: readonly PresentationAdapterInfo[];
+  readonly tools: ReturnType<typeof createToolPresentationRegistry>;
+  readonly thinking: ReturnType<typeof createThinkingPresentationRegistry>;
+  readonly customMessages: ReturnType<
+    typeof createCustomMessagePresentationRegistry
+  >;
+}
+
+function compileGeneration(
+  configuration = emptyToolPresentationConfiguration(),
+  adapters: readonly PresentationAdapterInfo[] = [],
+): PresentationGeneration {
+  return Object.freeze({
+    configuration,
+    adapters,
+    tools: createToolPresentationRegistry({
+      userRules: compileToolPresentationRules(configuration),
+      userMappings: configuration.mappings,
+    }),
+    thinking: createThinkingPresentationRegistry(configuration.thinking),
+    customMessages: createCustomMessagePresentationRegistry(
+      configuration.customMessages,
+    ),
+  });
+}
+
+let current = compileGeneration();
 const listeners = new Set<() => void>();
-export function subscribePresentationAdapters(listener: () => void) {
+
+function subscribe(listener: () => void) {
   listeners.add(listener);
   return () => {
     listeners.delete(listener);
   };
 }
-function getPresentationAdapters() {
+
+export function presentationGeneration() {
   return current;
 }
+
 export function usePresentationAdapters() {
-  return useSyncExternalStore(
-    subscribePresentationAdapters,
-    getPresentationAdapters,
-  );
+  return useSyncExternalStore(subscribe, presentationGeneration);
 }
+
 export function configurePresentationAdapters(
-  configuration: ToolPresentationConfiguration,
-  adapters: PresentationAdapterInfo[] = [],
+  configuration?: ToolPresentationConfiguration,
+  adapters?: readonly PresentationAdapterInfo[],
 ) {
-  current = { configuration, adapters };
+  current = compileGeneration(configuration, adapters);
   for (const listener of listeners) listener();
 }
 
@@ -102,11 +134,14 @@ export function controlState(control: StatusControlDeclaration, text?: string) {
   }
 }
 
-export function checkpointPresentation(message: ChatMessage) {
+export function checkpointPresentation(
+  message: ChatMessage,
+  configuration: ToolPresentationConfiguration,
+) {
   const compacted = message.role === "compactionSummary";
   const summary = typeof message.summary === "string" ? message.summary : "";
   const declaration = compacted
-    ? current.configuration.checkpoints?.find((rule) => {
+    ? configuration.checkpoints?.find((rule) => {
         if (message.__inspireCompactionSource)
           return message.__inspireCompactionSource === rule.source;
         const prefix = rule.legacySummaryPrefix;

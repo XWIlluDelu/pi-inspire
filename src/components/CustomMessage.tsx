@@ -1,9 +1,8 @@
 import { Package } from "lucide-react";
-import { memo, useId, useState, useSyncExternalStore } from "react";
+import { memo, useId, useState } from "react";
 import { type ChatMessage, messageText } from "../events";
 import { messageCopyLoader } from "../message-copy";
-import { subscribePresentationAdapters } from "../presentation-adapters";
-import { getCustomMessagePresentationRegistry } from "../tool-presentations/registry";
+import { usePresentationAdapters } from "../presentation-adapters";
 import { CopyAction } from "./CopyAction";
 import { DetailSummary } from "./DetailSummary";
 import { ImageGallery } from "./ImageGallery";
@@ -34,11 +33,8 @@ export const CustomMessage = memo(function CustomMessage({
     (typeof message.customType === "string" &&
       message.customType.trim().slice(0, 80)) ||
     "custom";
-  const registry = useSyncExternalStore(
-    subscribePresentationAdapters,
-    getCustomMessagePresentationRegistry,
-  );
-  const presentation = registry.resolve(message);
+  const { customMessages } = usePresentationAdapters();
+  const presentation = customMessages.resolve(message);
   const title =
     presentation?.title ??
     (type === "custom"

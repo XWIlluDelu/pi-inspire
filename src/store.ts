@@ -100,7 +100,10 @@ import { WorkspaceController } from "./controllers/workspace-controller";
 import { appendNotice, type Notice, parseExtensionDisplays } from "./events";
 import { resolveModelMetadata, supportedThinkingLevels } from "./model-options";
 import { TaskNotificationController } from "./notifications";
-import { controlState } from "./presentation-adapters";
+import {
+  configurePresentationAdapters,
+  controlState,
+} from "./presentation-adapters";
 import { isTransientFailure, RecoveryBackoff } from "./recovery-backoff";
 import {
   type FileSourceJump,
@@ -118,7 +121,6 @@ import {
   snapshotLifecyclePatch,
   transcriptPatch,
 } from "./snapshot-transition";
-import { configureToolPresentationRegistry } from "./tool-presentations/registry";
 import {
   forgetFileReading,
   lastWorkbenchSession,
@@ -828,7 +830,7 @@ export class AppStore {
         boot.preferences,
         preferenceOwners,
       );
-      configureToolPresentationRegistry(
+      configurePresentationAdapters(
         boot.toolPresentations,
         boot.presentationAdapters,
       );
@@ -3316,7 +3318,7 @@ export class AppStore {
         adapterEnabled: result.preferences.adapterEnabled,
       },
     });
-    configureToolPresentationRegistry(result.configuration, result.adapters);
+    configurePresentationAdapters(result.configuration, result.adapters);
     if (result.warning) this.notify("warning", result.warning);
   };
 

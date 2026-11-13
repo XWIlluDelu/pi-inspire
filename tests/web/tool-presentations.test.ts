@@ -7,8 +7,9 @@ import { toolPresentationSummaryText } from "../../src/tool-presentations/model"
 import {
   createThinkingPresentationRegistry,
   createToolPresentationRegistry,
-  toolPresentationRegistry,
 } from "../../src/tool-presentations/registry";
+
+const toolPresentationRegistry = createToolPresentationRegistry();
 
 function call(name: string, args: Record<string, unknown>): ToolCallContent {
   return { type: "toolCall", id: `${name}-1`, name, arguments: args };

@@ -1,11 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   type BranchEntryResponse,
-  type SessionHistoryPages,
   isBusyRunState,
   type NativeTurnPage,
+  type SessionHistoryPages,
 } from "../../shared/contracts";
 import { stripTerminalSequences } from "../ansi";
+import { copyLoader } from "../content-copy";
+import { branchCopiesBlocked } from "../controllers/branch-controller";
 import {
   asMessage,
   messageKey,
@@ -13,16 +15,14 @@ import {
   userMessageDisplayContent,
   userMessageFileName,
 } from "../events";
-import { copyLoader } from "../content-copy";
-import { HistoryImage } from "./HistoryImage";
 import { resourceReferenceFromEventTarget } from "../resources";
 import { sessionDraft } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
-import { PiLoader } from "./PiLoader";
-import { RichText } from "./RichText";
 import { BashExecution } from "./BashExecution";
 import { CopyAction } from "./CopyAction";
-import { branchCopiesBlocked } from "../controllers/branch-controller";
+import { HistoryImage } from "./HistoryImage";
+import { PiLoader } from "./PiLoader";
+import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
 
 type Location = {
   entryId: string;

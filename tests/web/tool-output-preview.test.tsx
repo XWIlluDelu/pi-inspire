@@ -11,7 +11,7 @@ import {
   type ToolCallContent,
   type WireEvent,
 } from "../../src/events";
-import { configureToolPresentationRegistry } from "../../src/tool-presentations/registry";
+import { configurePresentationAdapters } from "../../src/presentation-adapters";
 
 const call: ToolCallContent = {
   type: "toolCall",
@@ -45,11 +45,11 @@ function card(state: EventSlice, toolCall = call, result?: ChatMessage) {
     />
   );
 }
-afterEach(() => configureToolPresentationRegistry());
+afterEach(() => configurePresentationAdapters());
 
 describe("execution output previews", () => {
   it("keeps a declared tool's live output separate from its rule's final result", () => {
-    configureToolPresentationRegistry(
+    configurePresentationAdapters(
       toolPresentationConfigurationSchema.parse({
         version: 1,
         mappings: { declared_extension: "user.output" },

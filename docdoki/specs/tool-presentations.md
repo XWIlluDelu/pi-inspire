@@ -38,6 +38,9 @@ expanded body. [[conversation]] owns independently readable custom messages.
 
 ## Rule selection
 
+- The browser publishes one presentation generation after compiling tool, Thinking and
+  custom-message readers. Checkpoints and status controls use the configuration from that
+  same generation. A successful adapter change replaces the generation in one notification.
 - Namespaced rule definitions are separate from exact tool-name mappings. User mappings take
   precedence over shipped mappings; shipped `inspire.*` definitions are reserved.
 - Select one mapping. A missing, failing, or shape-incompatible selected rule returns directly to

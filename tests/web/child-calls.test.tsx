@@ -14,7 +14,7 @@ import {
   type ToolCallContent,
   toolResultText,
 } from "../../src/events";
-import { configureToolPresentationRegistry } from "../../src/tool-presentations/registry";
+import { configurePresentationAdapters } from "../../src/presentation-adapters";
 
 const call: ToolCallContent = {
   type: "toolCall",
@@ -50,7 +50,7 @@ const final: ChatMessage = {
   details: { calls: finishedCalls },
   __inspireCalls: codemodeCalls({ calls: finishedCalls }),
 };
-afterEach(() => configureToolPresentationRegistry());
+afterEach(() => configurePresentationAdapters());
 
 it("expands the child-call summary and copies the complete original tool block", async () => {
   const result = {
@@ -240,7 +240,7 @@ it("distinguishes omitted arguments from unfinished child calls", async () => {
 });
 
 it("shows generic child calls when the selected Codemode mapping is missing", async () => {
-  configureToolPresentationRegistry({
+  configurePresentationAdapters({
     version: 1,
     rules: {},
     mappings: { codemode: "user.missing" },

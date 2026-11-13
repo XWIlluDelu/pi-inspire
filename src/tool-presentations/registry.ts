@@ -1,14 +1,5 @@
-import type {
-  PresentationAdapterInfo,
-  ThinkingPresentationRuleDeclaration,
-  ToolPresentationConfiguration,
-} from "../../shared/tool-presentation-config";
-import { createCustomMessagePresentationRegistry } from "../custom-message-presentations";
-import { configurePresentationAdapters } from "../presentation-adapters";
-import {
-  compileThinkingPresentationRule,
-  compileToolPresentationRules,
-} from "./declarative";
+import type { ThinkingPresentationRuleDeclaration } from "../../shared/tool-presentation-config";
+import { compileThinkingPresentationRule } from "./declarative";
 import type {
   ResolvedToolPresentation,
   ToolPresentation,
@@ -87,39 +78,4 @@ export function createThinkingPresentationRegistry(
       }
     },
   };
-}
-
-export let toolPresentationRegistry = createToolPresentationRegistry();
-export let thinkingPresentationRegistry = createThinkingPresentationRegistry();
-export let customMessagePresentationRegistry: ReturnType<
-  typeof createCustomMessagePresentationRegistry
-> = createCustomMessagePresentationRegistry();
-
-export function getCustomMessagePresentationRegistry(): typeof customMessagePresentationRegistry {
-  return customMessagePresentationRegistry;
-}
-
-/** Replace the user-owned generation after an authoritative host bootstrap.
- * Existing shells and shipped definitions stay immutable; user declarations
- * replace only the projected summary and expanded body. */
-export function configureToolPresentationRegistry(
-  configuration?: ToolPresentationConfiguration,
-  adapters?: PresentationAdapterInfo[],
-): void {
-  const resolved: ToolPresentationConfiguration = configuration ?? {
-    version: 1,
-    rules: {},
-    mappings: {},
-  };
-  toolPresentationRegistry = createToolPresentationRegistry({
-    userRules: compileToolPresentationRules(resolved),
-    userMappings: resolved.mappings,
-  });
-  thinkingPresentationRegistry = createThinkingPresentationRegistry(
-    resolved.thinking,
-  );
-  customMessagePresentationRegistry = createCustomMessagePresentationRegistry(
-    resolved.customMessages,
-  );
-  configurePresentationAdapters(resolved, adapters);
 }

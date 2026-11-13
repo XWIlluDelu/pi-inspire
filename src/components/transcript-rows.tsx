@@ -372,7 +372,7 @@ export const ContextCheckpointRow = memo(function ContextCheckpointRow({
 }: {
   message: ChatMessage;
 }) {
-  usePresentationAdapters();
+  const { configuration } = usePresentationAdapters();
   const {
     compacted,
     summary,
@@ -380,7 +380,7 @@ export const ContextCheckpointRow = memo(function ContextCheckpointRow({
     title,
     tokensLabel,
     tokensDescription,
-  } = checkpointPresentation(message);
+  } = checkpointPresentation(message, configuration);
   const tokens =
     compacted &&
     typeof message.tokensBefore === "number" &&

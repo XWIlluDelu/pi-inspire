@@ -42,10 +42,6 @@ import type {
 } from "../tool-presentations/model";
 import { toolResultImage } from "../tool-presentations/model";
 import { codeModeResultBlocks } from "../tool-presentations/pi-native";
-import {
-  thinkingPresentationRegistry,
-  toolPresentationRegistry,
-} from "../tool-presentations/registry";
 import { ChildCalls, childCallsSummary } from "./ChildCalls";
 import { CodeModeResult, codeModeDuration } from "./CodeModeResult";
 import { CopyAction } from "./CopyAction";
@@ -228,12 +224,12 @@ export function ThinkingCard({
 }) {
   // Stored thinking can carry terminal color sequences; clean only here, at
   // the display boundary, for both the summary line and the card body.
-  usePresentationAdapters();
+  const { thinking } = usePresentationAdapters();
   const clean = stripTerminalSequences(text);
   const firstLine = clean.split("\n").find((line) => line.trim()) ?? "";
   const presentation = useMemo(
-    () => thinkingPresentationRegistry.resolve(clean),
-    [clean, thinkingPresentationRegistry],
+    () => thinking.resolve(clean),
+    [clean, thinking],
   );
   const hasContent = Boolean(clean.trim()) || presentation !== null;
   const resolvedVisibility: StaticVisibility =
@@ -1574,13 +1570,13 @@ export function ToolCard({
   dynamic?: boolean;
   dynamicActive?: boolean;
 }) {
-  usePresentationAdapters();
+  const { tools } = usePresentationAdapters();
   const owner = useContext(TranscriptImageOwnerContext);
   const status = toolStatus(result, activity, live, call);
   const complete = toolComplete(result, activity) || dynamicActive === false;
   const presentation = useMemo(
-    () => toolPresentationRegistry.resolve({ call, result }),
-    [call, result, toolPresentationRegistry],
+    () => tools.resolve({ call, result }),
+    [call, result, tools],
   );
   return (
     <ToolArgumentPreviewContext value={call.__inspireToolCall}>

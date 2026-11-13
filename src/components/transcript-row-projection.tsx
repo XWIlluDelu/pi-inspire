@@ -345,7 +345,10 @@ export function useTranscriptRows({
         message.role === "branchSummary"
       ) {
         flushActivity(true);
-        const { displaySummary } = checkpointPresentation(message);
+        const { displaySummary } = checkpointPresentation(
+          message,
+          presentationConfiguration,
+        );
         built.push({
           key,
           node: <ContextCheckpointRow message={message} />,
