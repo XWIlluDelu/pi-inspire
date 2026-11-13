@@ -173,16 +173,15 @@ Neither action sends a model prompt or transfers the source's unsent draft/artif
 
 ### Snapshot and publication
 
-Capture a fresh conflict-free committed source prefix and retained endpoint. A bounded one-shot
-process copies and verifies exactly that complete JSONL prefix in a private same-directory container,
-then opens only the snapshot with installed Pi `SessionManager`. It creates no AgentSession/resource
-loader and neither commands nor pauses, aborts, rebinds or writes through the source worker. Source
-models, tools, extensions, queues, dialogs and work continue unchanged. The real canonical source
-path supplies parent provenance; materialize header-only or otherwise deferred no-assistant output.
-Appends and partial trailing writes beyond the admitted prefix never enter the copy.
+Capture a fresh conflict-free committed source prefix and retained endpoint. A worker thread reads
+and hashes exactly that prefix through the shared JSONL reader, applies Pi's entry migration in
+memory, and runs the installed Pi's in-memory `SessionManager` branch operation. The real source
+path supplies parent provenance. The thread writes the complete destination into private staging,
+including header-only output. Source work and pending input continue while the copy runs.
+Appends and partial trailing writes beyond the admitted prefix stay outside the copy.
 
-Before publication, open the private projection and reserve the generated id/final path. Publish the
-complete JSONL atomically without replacement, reopen under that reservation, and attach a processless
+Before publication, open the private projection, reserve the generated id/final path, and recheck
+the source view. Publish the complete JSONL atomically without replacement, reopen under that reservation, and attach a processless
 destination before normal configured warmup. Concurrent open/create/delete shares the reservation;
 catalog-driven opens wait for it. Destination attachment is independent of Host selection.
 

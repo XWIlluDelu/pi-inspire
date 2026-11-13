@@ -182,34 +182,31 @@ export class SessionDocumentReader {
     ) => void,
     onFrame?: (frame: Buffer) => void,
     onChunk?: (chunk: Buffer, offset: number) => void | Promise<void>,
+    limit = Number(this.source.size),
   ) {
     const decoder = new JsonlObjectDecoder(onFrame);
-    let header: SessionHeader | null = null;
-    const end = await this.readBytes(
-      start,
-      Number(this.source.size),
-      async (chunk, offset) => {
-        if (onChunk) await onChunk(chunk, offset);
-        for (const entry of decoder.push(chunk)) {
-          if (start === 0 && header === null) {
-            if (!isSessionHeader(entry))
-              throw new PersistedJsonlError(
-                "Persisted session has an invalid Pi session header",
-              );
-            header = entry;
-            visit(entry, header);
-          } else {
-            if (entry.type === "session")
-              throw new PersistedJsonlError(
-                "Persisted session contains a second session header",
-              );
-            visit(entry, null);
-          }
+    const result: { header: SessionHeader | null } = { header: null };
+    const end = await this.readBytes(start, limit, async (chunk, offset) => {
+      if (onChunk) await onChunk(chunk, offset);
+      for (const entry of decoder.push(chunk)) {
+        if (start === 0 && result.header === null) {
+          if (!isSessionHeader(entry))
+            throw new PersistedJsonlError(
+              "Persisted session has an invalid Pi session header",
+            );
+          result.header = entry;
+          visit(entry, entry);
+        } else {
+          if (entry.type === "session")
+            throw new PersistedJsonlError(
+              "Persisted session contains a second session header",
+            );
+          visit(entry, null);
         }
-      },
-    );
+      }
+    });
     return {
-      header,
+      header: result.header,
       completeBytes: start + decoder.completeBytes,
       end,
       tail: () => decoder.tail(),

@@ -4046,6 +4046,7 @@ export class RuntimeController extends EventEmitter {
         sourceSessionId: source.id,
         sourceCommittedBytes: projection.committedBytes,
         sourceFingerprint: projection.fingerprint,
+        sourceIdentity: projection.sourceIdentity ?? undefined,
         targetId,
         targetParentId: node?.parentId ?? null,
         mode,
@@ -4139,6 +4140,9 @@ export class RuntimeController extends EventEmitter {
           );
         }
 
+        await this.reconcileSlot(source, true);
+        this.throwIfConflicted(source);
+        this.requireHistoryView(source, request.viewId);
         await publishStagedSessionFork(staged);
         published = true;
         const destinationRecord: SessionRecord = {
