@@ -163,7 +163,7 @@ export class RuntimeProjectionCoordinator {
     return (
       isBusyRunState(slot.runState) ||
       Boolean(slot.nativeBash) ||
-      slot.pendingExtensionUiRequests.size > 0 ||
+      slot.pendingExtensionDialogs.size > 0 ||
       slot.persistenceExpectations.length > 0 ||
       Boolean(slot.pendingPartialPersistence) ||
       Boolean(slot.navigationLease) ||

@@ -19,6 +19,12 @@ import type { PendingImageRecovery } from "./runtime-pending-images.js";
 import type { ActiveSessionSnapshot } from "./session-preview.js";
 import type { SessionProjectionView } from "./session-projection.js";
 
+export interface PendingExtensionDialog {
+  request: ExtensionUiRequest;
+  process: PiRpcProcess;
+  timer?: ReturnType<typeof setTimeout>;
+}
+
 type CompletionAttention = "completed" | "failed";
 
 export type PersistenceMatcher = (entry: SessionEntry) => boolean;
@@ -220,9 +226,7 @@ export interface RuntimeSlot {
   retry: RetryInfo | null;
   summarizationRetry: RetryInfo | null;
   attention: CompletionAttention | null;
-  pendingExtensionUiRequests: Map<string, ExtensionUiRequest>;
-  pendingExtensionUiOwners: Map<string, PiRpcProcess>;
-  pendingExtensionUiTimers: Map<string, ReturnType<typeof setTimeout>>;
+  pendingExtensionDialogs: Map<string, PendingExtensionDialog>;
   extensionResponseQueue: RuntimeOperationQueue;
   pendingQueues: PendingQueues;
   /** Native queue text, or null when the observation was incomplete. */
@@ -316,9 +320,7 @@ export function createRuntimeSlot(seed: RuntimeSlotSeed): RuntimeSlot {
     retry: null,
     summarizationRetry: null,
     attention: null,
-    pendingExtensionUiRequests: new Map(),
-    pendingExtensionUiOwners: new Map(),
-    pendingExtensionUiTimers: new Map(),
+    pendingExtensionDialogs: new Map(),
     extensionResponseQueue: emptyOperationQueue(),
     pendingQueues: emptyPendingQueues(),
     piPendingInput: { steering: [], followUp: [] },

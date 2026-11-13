@@ -140,7 +140,7 @@ export class RuntimeWorkerPool {
       !isBusyRunState(slot.runState) &&
       slot.runState !== "failed" &&
       slot.runState !== "conflict" &&
-      slot.pendingExtensionUiRequests.size === 0 &&
+      slot.pendingExtensionDialogs.size === 0 &&
       slot.pendingQueues.totalCount === 0 &&
       !slot.conflict &&
       !slot.navigationLease &&
@@ -161,7 +161,7 @@ export class RuntimeWorkerPool {
       slot.process &&
         slot.ready &&
         !isBusyRunState(slot.runState) &&
-        slot.pendingExtensionUiRequests.size === 0 &&
+        slot.pendingExtensionDialogs.size === 0 &&
         slot.pendingQueues.totalCount === 0 &&
         !slot.conflict &&
         !slot.navigationLease &&

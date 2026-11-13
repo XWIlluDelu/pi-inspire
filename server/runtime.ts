@@ -515,16 +515,23 @@ export class RuntimeController extends EventEmitter {
         });
         this.scheduleIdleWorkerEviction();
       },
-      hasSelectionReservation: (sessionId) =>
-        this.selectionReservations.has(sessionId),
-      opening: (sessionId) => this.opening.get(sessionId),
-      loadingSlot: (sessionId) => this.loadingSlots.get(sessionId),
-      loadingPath: (path) => this.loadingPaths.get(path),
-      hasProvisionalReservation: (sessionId, path) =>
-        Boolean(this.provisionalReservation(sessionId, path)),
-      hasForkReservation: (sessionId, path) =>
+      selectionReserved: (sessionId) =>
+        this.selectionReservations.has(sessionId) ||
+        Boolean(this.provisionalReservation(sessionId)),
+      loading: (sessionId, path) =>
+        [
+          this.opening.get(sessionId),
+          this.loadingSlots.get(sessionId),
+          path ? this.loadingPaths.get(path) : undefined,
+        ].filter((task) => task !== undefined),
+      changing: (sessionId, path) =>
+        this.selectionReservations.has(sessionId) ||
+        this.opening.has(sessionId) ||
+        this.loadingSlots.has(sessionId) ||
+        (path !== undefined && this.loadingPaths.has(path)) ||
+        Boolean(this.provisionalReservation(sessionId, path)) ||
         this.forkReservationsById.has(sessionId) ||
-        this.forkReservationsByPath.has(path),
+        (path !== undefined && this.forkReservationsByPath.has(path)),
       slot: (sessionId) => this.slots.get(sessionId),
       removeSlot: (sessionId, expected) => {
         this.externalSessions?.detach(expected);
@@ -854,7 +861,7 @@ export class RuntimeController extends EventEmitter {
         !this.externalSessions?.has(slot) &&
         (isBusyRunState(slot.runState) ||
           slot.runState === "conflict" ||
-          slot.pendingExtensionUiRequests.size > 0 ||
+          slot.pendingExtensionDialogs.size > 0 ||
           slot.pendingQueues.totalCount > 0),
     );
   }
@@ -2938,12 +2945,8 @@ export class RuntimeController extends EventEmitter {
       projection.resumeReconciliation();
       // Extensions may have asked for input while the slot still carried its
       // provisional id; preserve order while rebinding every request.
-      slot.pendingExtensionUiRequests = new Map(
-        [...slot.pendingExtensionUiRequests].map(([id, request]) => [
-          id,
-          { ...request, sessionId },
-        ]),
-      );
+      for (const dialog of slot.pendingExtensionDialogs.values())
+        dialog.request = { ...dialog.request, sessionId };
       const extras = await this.readRuntimeExtras(slot, rpc);
       this.assertNotClosing();
       if (slot.process !== rpc || !slot.ready || !rpc.available) {
@@ -3661,7 +3664,7 @@ export class RuntimeController extends EventEmitter {
       slot.runState === "conflict" ||
       slot.stoppingInput ||
       Boolean(slot.nativeBash) ||
-      slot.pendingExtensionUiRequests.size > 0 ||
+      slot.pendingExtensionDialogs.size > 0 ||
       slot.pendingQueues.totalCount > 0
     ) {
       throw requestError(
@@ -4553,7 +4556,7 @@ export class RuntimeController extends EventEmitter {
       slot.inputStopEpoch += 1;
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
-        if (slot.pendingExtensionUiRequests.size > 0) {
+        if (slot.pendingExtensionDialogs.size > 0) {
           // A suspended hook has not installed Pi's Bash abort controller yet.
           await this.stopWriter(slot, "bash");
           this.extensionUi.clear(slot, "aborted");
@@ -4651,7 +4654,7 @@ export class RuntimeController extends EventEmitter {
         }
         if (
           slot.pendingBranchBridge?.summarize &&
-          slot.pendingExtensionUiRequests.size === 0
+          slot.pendingExtensionDialogs.size === 0
         ) {
           // Generic abort acknowledges before native summarization finishes.
           // Wait for this handler, not acknowledgement; an uncooperative hook

@@ -15,12 +15,9 @@ interface RuntimeSessionDeletionHost {
   assertNotClosing(): void;
   withMaintenance<T>(operation: () => Promise<T>): Promise<T>;
   clearSelection(sessionId: string): void;
-  hasSelectionReservation(sessionId: string): boolean;
-  opening(sessionId: string): Promise<RuntimeSlot> | undefined;
-  loadingSlot(sessionId: string): Promise<RuntimeSlot> | undefined;
-  loadingPath(path: string): Promise<RuntimeSlot> | undefined;
-  hasProvisionalReservation(sessionId: string, path?: string): boolean;
-  hasForkReservation(sessionId: string, path: string): boolean;
+  selectionReserved(sessionId: string): boolean;
+  loading(sessionId: string, path?: string): Array<Promise<RuntimeSlot>>;
+  changing(sessionId: string, path?: string): boolean;
   slot(sessionId: string): RuntimeSlot | undefined;
   removeSlot(sessionId: string, expected: RuntimeSlot): void;
   mutateSlot<T>(slot: RuntimeSlot, operation: () => Promise<T>): Promise<T>;
@@ -34,36 +31,51 @@ interface RuntimeSessionDeletionHost {
   deleteSessionRecord: DeleteSessionRecord;
 }
 
+type DeletionReservation =
+  | { kind: "single"; task: Promise<SessionDeleteResponse> }
+  | { kind: "batch"; task: Promise<HiddenClearResponse> };
+
 /** Owns single-session and reviewed Hidden deletion reservations, admission,
  * quiescence checks, and exact catalog-record destruction. */
 export class RuntimeSessionDeletionController {
-  private readonly deleting = new Map<string, Promise<SessionDeleteResponse>>();
+  private readonly reserved = new Map<string, DeletionReservation>();
   private clearingHidden: Promise<HiddenClearResponse> | null = null;
-  private readonly hiddenDeletionIds = new Set<string>();
 
   constructor(private readonly host: RuntimeSessionDeletionHost) {}
 
   isDeleting(sessionId: string): boolean {
-    return (
-      this.deleting.has(sessionId) || this.hiddenDeletionIds.has(sessionId)
-    );
+    return this.reserved.has(sessionId);
   }
 
   hasInFlight(): boolean {
-    return this.deleting.size > 0 || this.clearingHidden !== null;
+    return this.reserved.size > 0 || this.clearingHidden !== null;
   }
 
   settled(): Promise<unknown>[] {
-    return [
-      ...this.deleting.values(),
-      ...(this.clearingHidden ? [this.clearingHidden] : []),
-    ];
+    const pending = new Set(
+      Array.from(this.reserved.values(), ({ task }) => task),
+    );
+    if (this.clearingHidden) pending.add(this.clearingHidden);
+    return [...pending];
   }
 
   clear(): void {
-    this.deleting.clear();
+    this.reserved.clear();
     this.clearingHidden = null;
-    this.hiddenDeletionIds.clear();
+  }
+
+  private reserve<T extends DeletionReservation>(
+    ids: readonly string[],
+    entry: T,
+  ): T["task"] {
+    for (const id of ids) this.reserved.set(id, entry);
+    const release = () => {
+      for (const id of ids) {
+        if (this.reserved.get(id) === entry) this.reserved.delete(id);
+      }
+    };
+    void entry.task.then(release, release);
+    return entry.task;
   }
 
   private async deletionCatalogRecord(
@@ -77,52 +89,13 @@ export class RuntimeSessionDeletionController {
     return session;
   }
 
-  private isSessionOpeningOrChanging(sessionId: string, path: string): boolean {
-    return Boolean(
-      this.host.hasSelectionReservation(sessionId) ||
-        this.host.loadingSlot(sessionId) ||
-        this.host.loadingPath(path) ||
-        this.host.opening(sessionId) ||
-        this.host.hasProvisionalReservation(sessionId, path) ||
-        this.host.hasForkReservation(sessionId, path),
-    );
-  }
-
-  private async deleteSessionInside(
-    sessionId: string,
-    authorizedSession?: SessionRecord,
+  private async deleteRecord(
+    initial: SessionRecord,
   ): Promise<HiddenClearResponse["deleted"][number]> {
-    if (
-      this.host.hasSelectionReservation(sessionId) ||
-      this.host.hasProvisionalReservation(sessionId)
-    ) {
-      throw requestError(
-        "Wait for the session to finish opening before deleting it",
-        409,
-      );
-    }
-    // Preview selection can finish before its worker startup. Await that
-    // already-owned warmup instead of reporting an opening conflict for an
-    // otherwise idle session. Explicit selection reservations still fence it.
-    await this.host.opening(sessionId)?.catch(() => undefined);
-    await this.host.loadingSlot(sessionId)?.catch(() => undefined);
-    if (
-      this.host.hasSelectionReservation(sessionId) ||
-      this.host.hasProvisionalReservation(sessionId)
-    ) {
-      throw requestError(
-        "The session became active while deletion was waiting for startup",
-        409,
-      );
-    }
-
-    const initial =
-      authorizedSession ?? (await this.deletionCatalogRecord(sessionId));
+    const { id: sessionId } = initial;
     const path = resolve(initial.path);
-    await this.host.loadingPath(path)?.catch(() => undefined);
-    if (this.isSessionOpeningOrChanging(sessionId, path)) {
+    if (this.host.changing(sessionId, path))
       throw requestError("The session is still being opened or changed", 409);
-    }
 
     const slot = this.host.slot(sessionId);
     let projection: RuntimeSlot["projection"] = null;
@@ -147,7 +120,7 @@ export class RuntimeSessionDeletionController {
         });
       }
 
-      if (this.isSessionOpeningOrChanging(sessionId, path))
+      if (this.host.changing(sessionId, path))
         throw requestError(
           "The session changed while deletion was being prepared",
           409,
@@ -174,16 +147,29 @@ export class RuntimeSessionDeletionController {
   deleteSession(sessionId: string): Promise<SessionDeleteResponse> {
     return this.host.withMaintenance(() => {
       this.host.assertNotClosing();
-      const pending = this.deleting.get(sessionId);
-      if (pending) return pending;
-      if (this.hiddenDeletionIds.has(sessionId))
-        throw requestError("That session is being deleted", 409);
-      const deletion = this.deleteSessionInside(sessionId).finally(() => {
-        if (this.deleting.get(sessionId) === deletion)
-          this.deleting.delete(sessionId);
-      });
-      this.deleting.set(sessionId, deletion);
-      return deletion;
+      const pending = this.reserved.get(sessionId);
+      if (pending?.kind === "single") return pending.task;
+      if (pending) throw requestError("That session is being deleted", 409);
+      const operation = async () => {
+        if (this.host.selectionReserved(sessionId))
+          throw requestError(
+            "Wait for the session to finish opening before deleting it",
+            409,
+          );
+        await Promise.allSettled(this.host.loading(sessionId));
+        if (this.host.selectionReserved(sessionId))
+          throw requestError(
+            "The session became active while deletion was waiting for startup",
+            409,
+          );
+        const record = await this.deletionCatalogRecord(sessionId);
+        await Promise.allSettled(
+          this.host.loading(sessionId, resolve(record.path)),
+        );
+        return this.deleteRecord(record);
+      };
+      const task = Promise.resolve().then(operation);
+      return this.reserve([sessionId], { kind: "single", task });
     });
   }
 
@@ -208,19 +194,6 @@ export class RuntimeSessionDeletionController {
       this.clearingHidden = deletion;
       return deletion;
     });
-  }
-
-  private assertHiddenClearReady(records: readonly SessionRecord[]): void {
-    for (const session of records) {
-      const sessionId = session.id;
-      const path = resolve(session.path);
-      if (this.isSessionOpeningOrChanging(sessionId, path)) {
-        throw requestError(
-          "Wait for every session in Hidden to finish opening or changing before clearing it",
-          409,
-        );
-      }
-    }
   }
 
   private async clearHiddenSessionsInside(
@@ -262,19 +235,21 @@ export class RuntimeSessionDeletionController {
     if (records.some((session) => this.isDeleting(session.id))) {
       throw requestError("A session in Hidden is being deleted", 409);
     }
-    for (const session of records) this.hiddenDeletionIds.add(session.id);
-    const deleted: HiddenClearResponse["deleted"] = [];
-    try {
-      // Reserve and validate the complete reviewed set before ending Pi or
-      // moving files. Session creation/fork operations must settle first.
-      this.assertHiddenClearReady(records);
+    const operation = async (): Promise<HiddenClearResponse> => {
+      for (const session of records)
+        if (this.host.changing(session.id, resolve(session.path)))
+          throw requestError(
+            "Wait for every session in Hidden to finish opening or changing before clearing it",
+            409,
+          );
+      const deleted: HiddenClearResponse["deleted"] = [];
       // Validate the complete reviewed set before moving the first file. Each
       // delete validates again at its commit boundary because files may still
       // change after this all-or-nothing admission witness.
       for (const session of records) await validateSessionFile(session);
       for (const session of records) {
         try {
-          deleted.push(await this.deleteSessionInside(session.id, session));
+          deleted.push(await this.deleteRecord(session));
         } catch (error) {
           return {
             deleted,
@@ -289,8 +264,8 @@ export class RuntimeSessionDeletionController {
         }
       }
       return { deleted };
-    } finally {
-      for (const session of records) this.hiddenDeletionIds.delete(session.id);
-    }
+    };
+    const task = Promise.resolve().then(operation);
+    return this.reserve([...ids], { kind: "batch", task });
   }
 }
