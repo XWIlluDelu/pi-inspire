@@ -74,6 +74,20 @@ describe("terminal daemon peer authentication", () => {
         ),
       );
       await closed;
+      const mismatched = connectTerminalDaemon(f.address, secret);
+      mismatched.on("error", () => {});
+      const retired = once(mismatched, "close");
+      await once(mismatched, "secureConnect");
+      mismatched.write(
+        encodeTerminalIpcJson({
+          protocolVersion: TERMINAL_DAEMON_PROTOCOL_VERSION - 1,
+          mode: "rpc",
+          requestId: "old-daemon-client",
+          method: "shutdownDaemon",
+          params: { instanceId: randomUUID(), force: true },
+        }),
+      );
+      await retired;
       await expect(hostAuthority.getSettings()).rejects.toThrow();
       expect(read).not.toHaveBeenCalled();
       await trusted.probe();

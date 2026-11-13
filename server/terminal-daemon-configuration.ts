@@ -3,6 +3,7 @@ import {
   defaultTerminalDaemonAddress,
   defaultTerminalDaemonStatePath,
   defaultTerminalDaemonTokenPath,
+  type TERMINAL_DAEMON_PROTOCOL_VERSION,
 } from "./terminal-daemon-protocol.js";
 
 export interface TerminalDaemonConfiguration {
@@ -64,7 +65,7 @@ export function sameTerminalDaemonConfiguration(
 }
 
 export interface TerminalDaemonInfo {
-  lifecycleVersion: 1;
+  protocolVersion: typeof TERMINAL_DAEMON_PROTOCOL_VERSION;
   instanceId: string;
   pid: number;
   processStartTime: string;

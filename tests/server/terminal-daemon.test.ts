@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
 import { processStartIdentity } from "../../server/instance-state.mjs";
 import type { TerminalDaemonInfo } from "../../server/terminal-daemon-configuration.js";
+import { TERMINAL_DAEMON_PROTOCOL_VERSION } from "../../server/terminal-daemon-protocol.js";
 import type { TerminalDescriptor } from "../../shared/terminal-contracts.js";
 import { terminalDaemonFixture } from "./fixtures/terminal-daemon.js";
 
@@ -19,7 +20,7 @@ describe("terminal daemon", () => {
     let descendantsRetired = false;
     try {
       info = {
-        lifecycleVersion: 1,
+        protocolVersion: TERMINAL_DAEMON_PROTOCOL_VERSION,
         instanceId: randomUUID(),
         pid: process.pid,
         processStartTime: await processStartIdentity(process.pid),

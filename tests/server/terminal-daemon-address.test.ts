@@ -16,22 +16,19 @@ vi.mock("node:os", async (importOriginal) => ({
   userInfo: () => account,
 }));
 
-import {
-  defaultTerminalDaemonAddress,
-  legacyTerminalDaemonAddress,
-} from "../../server/terminal-daemon-protocol.js";
+import { defaultTerminalDaemonAddress } from "../../server/terminal-daemon-protocol.js";
 import { TerminalDaemonServer } from "../../server/terminal-daemon-server.js";
 import { TerminalSessionManager } from "../../server/terminal-session-manager.js";
 
 describe("native terminal IPC addresses", () => {
-  it("keeps a short existing POSIX address stable", () => {
+  it("keeps the current short POSIX address in the private runtime root", () => {
     const paths = {
       platform: "linux" as const,
       environment: { XDG_RUNTIME_DIR: "/run/user/1000" },
     };
-    expect(defaultTerminalDaemonAddress("/app", "127.0.0.1", 4587, paths)).toBe(
-      legacyTerminalDaemonAddress("/app", "127.0.0.1", 4587, paths),
-    );
+    expect(
+      defaultTerminalDaemonAddress("/app", "127.0.0.1", 4587, paths),
+    ).toMatch(/^\/run\/user\/1000\/inspire\/[a-f0-9]{24}\.terminal\.sock$/);
   });
 
   it.each([

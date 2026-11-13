@@ -41,8 +41,8 @@ is a newly generated private secret, separate from any potentially disclosed pla
 Windows machine-wide pipe names include the OS account and state-directory identity as well as the
 installation. Unix socket addresses stay within the native byte limit, including long and Unicode
 temporary roots; shortening does not relax current-user ownership or private-directory checks.
-A still-listening legacy address blocks automatic replacement rather than stranding its PTYs.
-The daemon wire protocol gates data access. On-demand recovery only reconnects and shares one
+An unverified listener at the configured address blocks automatic replacement.
+The current daemon wire protocol gates data access and maintenance. On-demand recovery only reconnects and shares one
 initialization across requests. It leaves dispatched controls and input untouched. Closing fences
 late initialization and releases the client. Only the owner that bound a socket removes it.
 An existing non-private POSIX parent is rejected rather than chmodded, so a custom socket, token or
@@ -51,8 +51,8 @@ state address cannot change permissions on a shared or system directory.
 `inspire terminal status|stop|restart` supplies portable, instance-scoped maintenance without
 restarting the Host/Pi. Stop/restart run from an external OS terminal; a
 managed-terminal environment is refused before stopping work, so the command cannot kill its own
-coordinator midway through replacement. Status stays available there. Maintenance has a stable
-authenticated protocol so the launcher can still control a detached daemon across a Host update.
+coordinator midway through replacement. Status stays available there. Maintenance uses the same authenticated version as terminal data.
+Stop the previous daemon with its installed launcher before a protocol-changing upgrade.
 The caller verifies root, Host, port, configured IPC/state/token paths, process birth and daemon
 incarnation before requesting stop. Shutdown targets that incarnation; an old target cannot stop a
 replacement. Status never creates or rotates authority and reports missing listeners without

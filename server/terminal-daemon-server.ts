@@ -12,7 +12,6 @@ import {
   TERMINAL_DAEMON_PROTOCOL_VERSION,
   TERMINAL_DAEMON_READY_TYPE,
   type TerminalDaemonAttachRequest,
-  type TerminalDaemonLifecycleRequest,
   type TerminalDaemonRpcRequest,
   type TerminalDaemonRpcResponse,
 } from "./terminal-daemon-protocol.js";
@@ -227,22 +226,23 @@ export class TerminalDaemonServer {
           if (frame.kind !== TERMINAL_IPC_JSON_FRAME)
             throw new Error("Terminal daemon handshake must be JSON");
           const message = asRecord(decodeTerminalIpcJson(frame.payload));
-          if (this.stopping && message.mode !== "lifecycle")
-            throw new Error("Terminal service is stopping");
-          if (
-            message.mode === "lifecycle"
-              ? message.lifecycleVersion !== 1
-              : message.protocolVersion !== TERMINAL_DAEMON_PROTOCOL_VERSION
-          )
+          if (message.protocolVersion !== TERMINAL_DAEMON_PROTOCOL_VERSION)
             throw new Error("Terminal daemon protocol is not compatible");
+          if (
+            this.stopping &&
+            !(
+              message.mode === "rpc" &&
+              (message.method === "getDaemonInfo" ||
+                message.method === "shutdownDaemon")
+            )
+          )
+            throw new Error("Terminal service is stopping");
           authenticated = true;
           clearTimeout(handshakeTimeout);
-          if (message.mode === "rpc" || message.mode === "lifecycle") {
+          if (message.mode === "rpc") {
             void this.handleRpc(
               socket,
-              message as unknown as
-                | TerminalDaemonRpcRequest
-                | TerminalDaemonLifecycleRequest,
+              message as unknown as TerminalDaemonRpcRequest,
             );
           } else if (message.mode === "attach") {
             attaching = true;
@@ -292,40 +292,14 @@ export class TerminalDaemonServer {
 
   private async handleRpc(
     socket: Socket,
-    request: TerminalDaemonRpcRequest | TerminalDaemonLifecycleRequest,
+    request: TerminalDaemonRpcRequest,
   ): Promise<void> {
     const response: TerminalDaemonRpcResponse = {
       requestId: request.requestId,
       ok: false,
     };
     try {
-      if (request.mode === "lifecycle") {
-        if (!this.lifecycle)
-          throw new TerminalServiceError(
-            "terminal_lifecycle_unavailable",
-            503,
-            "This daemon has no lifecycle owner.",
-          );
-        const values = asRecord(request.params);
-        switch (request.method) {
-          case "getDaemonInfo":
-            response.result = this.lifecycle.info();
-            break;
-          case "shutdownDaemon":
-            if (typeof values.force !== "boolean")
-              throw new Error("force must be a boolean");
-            this.lifecycle.shutdown(
-              stringParam(values, "instanceId"),
-              values.force,
-            );
-            response.result = null;
-            break;
-          default:
-            throw new Error("Unknown terminal lifecycle method");
-        }
-      } else {
-        response.result = await this.dispatchRpc(request);
-      }
+      response.result = await this.dispatchRpc(request);
       response.ok = true;
     } catch (error) {
       response.error = errorPayload(error);
@@ -351,10 +325,23 @@ export class TerminalDaemonServer {
       case "getSettings":
         return this.terminals.getSettings();
       case "getDaemonInfo":
-      case "shutdownDaemon":
-        throw new Error(
-          "Daemon lifecycle requires its independent control protocol",
+      case "shutdownDaemon": {
+        if (!this.lifecycle)
+          throw new TerminalServiceError(
+            "terminal_lifecycle_unavailable",
+            503,
+            "This daemon has no lifecycle owner.",
+          );
+        if (request.method === "getDaemonInfo") return this.lifecycle.info();
+        const values = asRecord(request.params);
+        if (typeof values.force !== "boolean")
+          throw new Error("force must be a boolean");
+        this.lifecycle.shutdown(
+          stringParam(values, "instanceId"),
+          values.force,
         );
+        return null;
+      }
       default:
         return this.terminals.operate(
           request.method,

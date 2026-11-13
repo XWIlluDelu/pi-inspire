@@ -13,7 +13,7 @@ import {
   type TerminalDaemonLaunchOptions,
 } from "./terminal-daemon-configuration.js";
 import { launchTerminalDaemon } from "./terminal-daemon-launcher.js";
-import { legacyTerminalDaemonAddress } from "./terminal-daemon-protocol.js";
+import { TERMINAL_DAEMON_PROTOCOL_VERSION } from "./terminal-daemon-protocol.js";
 import { addressAcceptsConnections } from "./terminal-daemon-socket.js";
 import { readTerminalDaemonSecret } from "./terminal-daemon-tls.js";
 import { TerminalServiceError } from "./terminal-service.js";
@@ -21,7 +21,7 @@ import { prepareTerminalStateDirectory } from "./terminal-state-store.js";
 
 const execFile = promisify(execFileCallback);
 const STOP_TIMEOUT_MS = 20_000;
-const LEGACY_GUIDANCE =
+const CONNECTION_GUIDANCE =
   "A terminal endpoint is listening, but its authenticated maintenance connection could not be verified. This does not establish whether normal terminal data is compatible. Existing terminal processes were left running. Inspect the owning service and connection error before deciding whether replacement is needed; replacing that daemon ends its live terminals.";
 
 type TerminalDaemonStatus =
@@ -34,7 +34,7 @@ function validInfo(
   config: TerminalDaemonConfiguration,
 ): boolean {
   return (
-    info?.lifecycleVersion === 1 &&
+    info?.protocolVersion === TERMINAL_DAEMON_PROTOCOL_VERSION &&
     typeof info.instanceId === "string" &&
     /^[0-9a-f-]{36}$/.test(info.instanceId) &&
     Number.isSafeInteger(info.pid) &&
@@ -91,19 +91,10 @@ export async function inspectTerminalDaemon(
       error.code === "terminal_scope_mismatch"
     )
       return { kind: "unavailable", message: error.message };
-    const legacy = legacyTerminalDaemonAddress(
-      config.root,
-      config.host,
-      config.port,
-      { environment: options.environment ?? process.env },
-    );
-    if (
-      (await addressAcceptsConnections(config.address)) ||
-      (legacy !== config.address && (await addressAcceptsConnections(legacy)))
-    )
+    if (await addressAcceptsConnections(config.address))
       return {
         kind: "unavailable",
-        message: LEGACY_GUIDANCE,
+        message: CONNECTION_GUIDANCE,
       };
     // A missing listener is not proof of exit. A control request keeps its
     // captured process identity until confirmed below; status grants no stop.

@@ -379,12 +379,8 @@ export class TerminalDaemonClient implements TerminalService {
       socket.once("secureConnect", () => {
         socket.write(
           encodeTerminalIpcJson({
-            ...(method === "getDaemonInfo" || method === "shutdownDaemon"
-              ? { lifecycleVersion: 1, mode: "lifecycle" }
-              : {
-                  protocolVersion: TERMINAL_DAEMON_PROTOCOL_VERSION,
-                  mode: "rpc",
-                }),
+            protocolVersion: TERMINAL_DAEMON_PROTOCOL_VERSION,
+            mode: "rpc",
             requestId,
             method,
             params,

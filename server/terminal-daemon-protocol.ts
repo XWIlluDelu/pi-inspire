@@ -11,9 +11,10 @@ import {
   installationKey,
 } from "./platform-paths.mjs";
 
-export const TERMINAL_DAEMON_PROTOCOL_VERSION = 3;
+export const TERMINAL_DAEMON_PROTOCOL_VERSION = 4;
 export const TERMINAL_DAEMON_READY_TYPE = "terminal_daemon_ready";
 
+type TerminalDaemonControl = "getDaemonInfo" | "shutdownDaemon";
 type TerminalDaemonQuery =
   | "ping"
   | "getCatalog"
@@ -22,8 +23,8 @@ type TerminalDaemonQuery =
 
 export type TerminalDaemonRpcMethod =
   | TerminalDaemonQuery
-  | TerminalMutationMethod
-  | TerminalDaemonLifecycleRequest["method"];
+  | TerminalDaemonControl
+  | TerminalMutationMethod;
 
 export type TerminalDaemonRpcRequest = {
   protocolVersion: number;
@@ -31,18 +32,9 @@ export type TerminalDaemonRpcRequest = {
   requestId: string;
   params: unknown;
 } & (
-  | { method: TerminalDaemonQuery | TerminalDaemonLifecycleRequest["method"] }
+  | { method: TerminalDaemonQuery | TerminalDaemonControl }
   | { method: TerminalMutationMethod; operation: TerminalOperationIdentity }
 );
-
-/** Maintenance is versioned separately from terminal data RPC/attachments. */
-export interface TerminalDaemonLifecycleRequest {
-  lifecycleVersion: 1;
-  mode: "lifecycle";
-  requestId: string;
-  method: "getDaemonInfo" | "shutdownDaemon";
-  params: unknown;
-}
 
 export interface TerminalDaemonAttachRequest {
   protocolVersion: number;
@@ -66,20 +58,6 @@ type AddressOptions = NonNullable<
   Parameters<typeof inspireRuntimeDirectory>[0]
 >;
 
-/** Observe old addresses only to avoid stranding a listening pre-TLS owner.
- * Never send the former plaintext token handshake to an old endpoint. */
-export function legacyTerminalDaemonAddress(
-  root: string,
-  host: string,
-  port: number,
-  options: AddressOptions = {},
-): string {
-  const key = installationKey(root, host, port).slice(0, 24);
-  if ((options.platform ?? process.platform) === "win32")
-    return "\\\\.\\pipe\\inspire-terminal-" + key;
-  return posix.join(inspireRuntimeDirectory(options), key + ".terminal.sock");
-}
-
 export function defaultTerminalDaemonAddress(
   root: string,
   host: string,
@@ -100,8 +78,11 @@ export function defaultTerminalDaemonAddress(
     return "\\\\.\\pipe\\inspire-terminal-" + user + "-" + key;
   }
   const maximum = platform === "darwin" ? 103 : 107;
-  const legacy = legacyTerminalDaemonAddress(root, host, port, options);
-  if (Buffer.byteLength(legacy) <= maximum) return legacy;
+  const standard = posix.join(
+    inspireRuntimeDirectory(options),
+    key + ".terminal.sock",
+  );
+  if (Buffer.byteLength(standard) <= maximum) return standard;
   const shorter = posix.join(inspireRuntimeDirectory(options), key + ".sock");
   if (Buffer.byteLength(shorter) <= maximum) return shorter;
   // TMPDIR can itself exceed sun_path on macOS. /tmp is the OS-provided

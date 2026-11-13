@@ -8,7 +8,6 @@ import {
   resolveTerminalDaemonConfiguration,
   type TerminalDaemonLaunchOptions,
 } from "./terminal-daemon-configuration.js";
-import { legacyTerminalDaemonAddress } from "./terminal-daemon-protocol.js";
 import {
   addressAcceptsConnections,
   TERMINAL_DAEMON_OWNER_CONFLICT_EXIT_CODE,
@@ -86,23 +85,6 @@ function daemonCommand(): { command: string; prefix: string[]; entry: string } {
   };
 }
 
-async function terminalEndpointListening(
-  options: TerminalDaemonLaunchOptions,
-): Promise<boolean> {
-  const { root, address } = resolveTerminalDaemonConfiguration(options);
-  const environment = options.environment ?? process.env;
-  const legacyAddress = environment.INSPIRE_TERMINAL_DAEMON_ADDRESS
-    ? address
-    : legacyTerminalDaemonAddress(root, options.host, options.port, {
-        environment,
-      });
-  return (
-    (await addressAcceptsConnections(address)) ||
-    (legacyAddress !== address &&
-      (await addressAcceptsConnections(legacyAddress)))
-  );
-}
-
 function terminalConnectionFailure(
   error: unknown,
   listening: boolean,
@@ -144,7 +126,7 @@ export async function connectExistingTerminalDaemon(
     await client?.close();
     throw terminalConnectionFailure(
       error,
-      await terminalEndpointListening(options),
+      await addressAcceptsConnections(address),
     );
   }
 }
@@ -168,7 +150,7 @@ export async function launchTerminalDaemon(
   // A failed probe does not grant authority to stop an independently owned
   // daemon and its PTYs. In particular, an old protocol's replace handshake
   // can terminate active shells. Leave a listening owner untouched.
-  if (await terminalEndpointListening(options)) {
+  if (await addressAcceptsConnections(address)) {
     await client.close();
     throw terminalConnectionFailure(probeError, true);
   }
