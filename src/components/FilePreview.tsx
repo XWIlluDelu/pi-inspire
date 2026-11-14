@@ -23,12 +23,11 @@ import {
 } from "../resource-preview";
 import { store } from "../store";
 import { languageForFile } from "../syntax-highlighting";
-import { useCopied } from "../use-copied";
 import type { FileReadingState } from "../workbench-session";
 import { useFileChanges } from "./ChangesPane";
-import { CodeView } from "./CodeView";
+import { CodeView, SourceReader } from "./CodeView";
 import { ContextPaneState } from "./ContextPaneState";
-import { CopyFeedback } from "./CopyFeedback";
+import { CopyAction } from "./CopyAction";
 import type { ContextPaneView } from "./context-pane-view";
 import { DocumentOutline } from "./DocumentOutline";
 import { DocumentPreview } from "./DocumentPreview";
@@ -41,21 +40,14 @@ import { ReaderQuoteAction } from "./ReaderQuoteAction";
 import { TablePreview } from "./TablePreview";
 
 export function PathCopyButton({ path }: { path: string }) {
-  const { copied, copying, copy } = useCopied({
-    scope: path,
-    onError: store.reportCopyError,
-  });
   return (
-    <button
-      type="button"
-      className={`icon-button file-path-action ${copied ? "file-path-action--copied" : ""}`}
-      onClick={() => void copy(path, store.copyOwnership())}
-      aria-label={copied ? "Path copied" : `Copy path ${path}`}
-      aria-busy={copying}
-      title={copied ? "Copied" : `Copy path\n${path}`}
-    >
-      <CopyFeedback copied={copied} copying={copying} size={16} />
-    </button>
+    <CopyAction
+      text={path}
+      label="Path"
+      copyLabel={`Copy path ${path}`}
+      className="file-path-action"
+      iconSize={16}
+    />
   );
 }
 
@@ -96,12 +88,11 @@ function SourceCodePreview({
   truncated?: boolean;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
-  const lines = useMemo(() => text.split("\n"), [text]);
-  const targetLine = jump ? Math.min(lines.length, jump.line) : null;
   const lineNumbers = useMemo(
-    () => lines.map((_, index) => index + 1).join("\n"),
-    [lines],
+    () => text.split("\n").map((_, index) => index + 1),
+    [text],
   );
+  const targetLine = jump ? Math.min(lineNumbers.length, jump.line) : null;
   useLayoutEffect(() => {
     const root = rootRef.current;
     if (!root) return;
@@ -128,8 +119,9 @@ function SourceCodePreview({
     );
   }, [jump, readingPosition, targetLine]);
   return (
-    <div
-      className="source-view source-reader"
+    <SourceReader
+      className="source-view"
+      label="File source"
       ref={rootRef}
       onScroll={(event) => {
         if (readingPosition) {
@@ -140,19 +132,17 @@ function SourceCodePreview({
           readingPosition.save?.();
         }
       }}
-      tabIndex={0}
-      role="region"
-      data-pane-scroll-active="true"
-      aria-label="File source"
     >
-      <div className="source-view__gutter" aria-hidden>
-        <pre>{lineNumbers}</pre>
-      </div>
+      <CodeView
+        className="source-view__gutter"
+        aria-hidden
+        text={lineNumbers.join("\n")}
+      />
       <CodeView className="source-view__pre" text={text} language={language} />
       {truncated ? (
         <div className="source-boundary">Preview ends here</div>
       ) : null}
-    </div>
+    </SourceReader>
   );
 }
 

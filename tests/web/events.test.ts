@@ -210,7 +210,14 @@ it.each([false, true])(
       streaming: true,
       activeAssistantMessageKey: "live:active",
       queue,
-      tools: { call: { id: "call", name: "bash", phase: "running" } },
+      tools: {
+        call: {
+          id: "call",
+          name: "bash",
+          phase: "running",
+          outputPreview: { text: "working", truncated: false },
+        },
+      },
     });
     const before = emit("auto_retry_start", {
       sessionStatus: { runState: "retrying" },
@@ -227,6 +234,12 @@ it.each([false, true])(
       resync: true,
       slice: before,
     });
+    expect(
+      reduce(before, {
+        type: "status",
+        sessionStatus: { runState: "aborted" },
+      }).slice.tools,
+    ).toEqual({});
     expect(
       emit("auto_retry_end", {
         sessionStatus: { runState: "failed" },

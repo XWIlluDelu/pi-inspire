@@ -347,7 +347,7 @@ const ConversationStage = memo(function ConversationStage({
       transcriptViewId: source.view.viewId,
       transcriptIncarnation: source.view.incarnation,
       queue: source.live.queue,
-      pendingAction: source.pendingAction,
+      pendingAction: source.pendingAction?.action ?? null,
       extensionDisplays: source.live.extensionDisplays,
       thinkingVisibility: source.prefs.thinkingVisibility,
       toolVisibility: source.prefs.toolVisibility,

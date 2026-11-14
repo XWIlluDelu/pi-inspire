@@ -66,19 +66,6 @@ describe("HTTP resource and upload authority", () => {
     return body.active.sessionId;
   }
 
-  async function openFile(reference: string, bytes: string) {
-    const path = join(temporary, reference);
-    await writeFile(path, bytes);
-    const api = resourceHttp(local, await openProject());
-    const descriptor = await api.descriptor(reference);
-    return {
-      path,
-      descriptor,
-      url: api.contentPath(descriptor.id),
-      read: () => api.content(descriptor.id),
-    };
-  }
-
   it("allows URI escaping overhead without enlarging the literal workspace-path budget", async () => {
     await writeFile(join(temporary, "long-url.md"), "LONG_LINK_BYTES");
     const api = resourceHttp(local, await openProject());
@@ -410,23 +397,14 @@ describe("HTTP resource and upload authority", () => {
     await otherContent(savedImage.id).expect(404);
   });
 
-  it("uses the current resource size after resolve when a file grows or shrinks", async () => {
-    const { path, read, descriptor } = await openFile(
-      "changing.md",
-      "initial\n",
-    );
-    expect(descriptor.size).toBe(8);
-    for (const bytes of ["grown-content\n", "new\n"]) {
-      await writeFile(path, bytes);
-      await read()
-        .set("Range", "bytes=0-262143")
-        .expect("Content-Range", `bytes 0-${bytes.length - 1}/${bytes.length}`)
-        .expect(206, bytes);
-    }
-  });
-
-  it("refuses stale range continuation and serves the atomic replacement on refresh", async () => {
-    const { path, read } = await openFile("document.pdf", "%PDF-old-body");
+  it("reads the latest file size, refuses stale Range continuation, and closes on client abort", async () => {
+    const name = "document.pdf";
+    const path = join(temporary, name);
+    await writeFile(path, "%PDF-old-body");
+    const api = resourceHttp(local, await openProject());
+    const descriptor = await api.descriptor(name);
+    const read = () => api.content(descriptor.id);
+    expect(descriptor.size).toBe(13);
     const first = await read().set("Range", "bytes=0-7").expect(206);
     expect(first.body.toString()).toBe("%PDF-old");
     const version = first.headers.etag ?? "";
@@ -442,10 +420,16 @@ describe("HTTP resource and upload authority", () => {
     const refreshed = await read().set("Range", "bytes=0-7").expect(206);
     expect(refreshed.body.toString()).toBe("%PDF-new");
     expect(refreshed.headers.etag).not.toBe(version);
-  });
 
-  it("closes an opened file when the client aborts during authorization", async () => {
-    const { url } = await openFile("slow.md", "slow preview\n");
+    for (const bytes of ["%PDF-grown-content", "%PDF-new"]) {
+      await writeFile(path, bytes);
+      const result = await read()
+        .set("Range", "bytes=0-262143")
+        .expect("Content-Range", `bytes 0-${bytes.length - 1}/${bytes.length}`)
+        .expect(206);
+      expect(result.body.toString()).toBe(bytes);
+    }
+
     const gate = deferredSignal();
     const opened = deferredSignal();
     let handle:
@@ -461,7 +445,7 @@ describe("HTTP resource and upload authority", () => {
     };
 
     const controller = new AbortController();
-    const fetching = fetch(baseUrl + url, {
+    const fetching = fetch(baseUrl + api.contentPath(descriptor.id), {
       headers: { Authorization: `Bearer ${token}` },
       signal: controller.signal,
     });

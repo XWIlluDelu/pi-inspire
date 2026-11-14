@@ -26,15 +26,15 @@ const BACKGROUNDS = ["Checkerboard", "White", "Black"] as const;
 
 export function ImageLightbox({
   image,
-  index = 0,
-  count = 1,
+  index,
+  count,
   onNavigate,
   onClose,
 }: {
   image: PreviewImage;
-  index?: number;
-  count?: number;
-  onNavigate?: (index: number) => void;
+  index: number;
+  count: number;
+  onNavigate: (index: number) => void;
   onClose: () => void;
 }) {
   const instructions = useId();
@@ -59,7 +59,7 @@ export function ImageLightbox({
     // Two figures can share one document-owned URL. Navigation still resets the
     // view, without refetching/redecoding the same bytes or changing background.
     viewport.fit();
-    onNavigate?.(next);
+    onNavigate(next);
   };
 
   return (

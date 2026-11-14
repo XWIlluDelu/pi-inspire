@@ -16,37 +16,7 @@ import { baseRoutes, initStore } from "./store-fixture";
 describe("Pi native command dispatch", () => {
   beforeEach(() => installFakeWebSocket());
 
-  it("keeps unsupported slash input and /bug out of prompt delivery", async () => {
-    let dispatchCount = 0;
-    installFetch((url, init) => {
-      if (
-        url.startsWith("/api/prompt") ||
-        url.startsWith("/api/control/native-command")
-      )
-        dispatchCount += 1;
-      return baseRoutes(url, init);
-    });
-    const { store } = await initStore();
-    await expect(store.sendPrompt("/does-not-exist")).resolves.toBe(false);
-    expect(store.getState().commandActivities.s1?.at(-1)).toMatchObject({
-      command: "does-not-exist",
-      status: "error",
-    });
-    await expect(
-      store.sendPrompt("/bug unexpected response"),
-    ).resolves.toMatchObject({ accepted: true });
-    expect(dispatchCount).toBe(0);
-    expect(store.getState().commandActivities.s1?.at(-1)).toMatchObject({
-      command: "bug",
-      status: "warning",
-      action: {
-        kind: "open-terminal",
-        value: "/bug unexpected response",
-      },
-    });
-  });
-
-  it("does not evict an in-flight Host receipt from bounded command history", async () => {
+  it("keeps Compact's pending receipt while handling unknown and terminal-only input locally", async () => {
     const native = deferred<RouteResponse>();
     const calls = installFetch((url, init) =>
       url === "/api/control/native-command"
@@ -54,6 +24,26 @@ describe("Pi native command dispatch", () => {
         : baseRoutes(url, init),
     );
     const { store } = await initStore();
+    const latest = () => store.getState().commandActivities.s1?.at(-1);
+    await expect(store.sendPrompt("/does-not-exist")).resolves.toBe(false);
+    expect(latest()).toMatchObject({
+      command: "does-not-exist",
+      status: "error",
+    });
+    await expect(
+      store.sendPrompt("/bug unexpected response"),
+    ).resolves.toMatchObject({ accepted: true });
+    expect(latest()).toMatchObject({
+      command: "bug",
+      status: "warning",
+      action: { kind: "open-terminal", value: "/bug unexpected response" },
+    });
+    expect(
+      calls.mock.calls.filter(
+        ([url]) =>
+          url === "/api/prompt" || url === "/api/control/native-command",
+      ),
+    ).toEqual([]);
 
     await expect(
       store.sendPrompt("/compact focus on decisions"),
@@ -113,7 +103,7 @@ describe("Pi native command dispatch", () => {
     ).toBe(false);
   });
 
-  it("opens the model picker from both surfaces before discovery, reserving native names", async () => {
+  it("uses the same native destinations from Composer and the palette before model discovery", async () => {
     const prompts: unknown[] = [];
     const calls = installFetch((url, init) => {
       if (url === "/api/prompt") {
@@ -133,12 +123,22 @@ describe("Pi native command dispatch", () => {
       }),
     );
     for (const run of [store.sendPrompt, store.runPaletteNativeCommand]) {
-      const previous = store.getState().nativeCommandUiRequest?.id;
-      await run("/model");
-      expect(store.getState().nativeCommandUiRequest).toMatchObject({
-        action: "model",
-      });
-      expect(store.getState().nativeCommandUiRequest?.id).not.toBe(previous);
+      for (const [input, action, modelSettingsFocus, query] of [
+        ["/model", "model"],
+        ["/login provider", "models", "credentials", "provider"],
+        ["/logout", "models", "credentials"],
+        ["/scoped-models", "models", "common"],
+        ["/fork", "history"],
+      ] as const) {
+        const previous = store.getState().nativeCommandUiRequest?.id;
+        await run(input);
+        expect(store.getState().nativeCommandUiRequest).toMatchObject({
+          action,
+          ...(modelSettingsFocus && { modelSettingsFocus }),
+          ...(query && { query }),
+        });
+        expect(store.getState().nativeCommandUiRequest?.id).not.toBe(previous);
+      }
     }
     await store.sendPrompt("/model\tmissing");
     expect(store.getState().commandActivities.s1?.at(-1)).toMatchObject({

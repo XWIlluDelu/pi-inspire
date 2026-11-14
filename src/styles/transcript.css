@@ -582,8 +582,7 @@
   gap: var(--space-3);
 }
 
-.pending-groups,
-.extension-surface {
+.pending-groups {
   border: 1px solid var(--hairline);
   border-radius: var(--radius-surface);
   background: var(--bg-surface);
@@ -591,7 +590,6 @@
 }
 
 .pending-groups__head,
-.extension-surface__head,
 .pending-groups__lead,
 .pending-groups__actions,
 .pending-groups__confirm {
@@ -600,8 +598,7 @@
   gap: var(--space-1);
 }
 
-.pending-groups__head,
-.extension-surface__head {
+.pending-groups__head {
   flex-wrap: wrap;
   padding: var(--space-1) var(--space-3);
   border-bottom: 1px solid var(--hairline);
@@ -653,10 +650,6 @@
   color: var(--muted);
   font-size: var(--text-xs);
   font-weight: 500;
-}
-
-.extension-surface__head {
-  justify-content: flex-start;
 }
 
 .pending-group__list {
@@ -750,20 +743,6 @@
 .pending-group__item pre.is-placeholder {
   color: var(--muted);
   font-style: italic;
-}
-
-.extension-surface__item {
-  border-top: 1px solid var(--hairline);
-}
-
-.extension-surface__item:first-of-type {
-  border-top: 0;
-}
-
-.extension-surface__item summary { padding-inline: var(--space-3); }
-
-.extension-surface__item summary code {
-  color: var(--ink);
 }
 
 .empty-state--conversation {

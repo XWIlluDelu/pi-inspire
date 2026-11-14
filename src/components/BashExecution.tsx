@@ -14,8 +14,8 @@ import {
   shellStatus,
 } from "../shell-record";
 import { CodeView } from "./CodeView";
-import { CopyAction } from "./CopyAction";
 import { PiLoader } from "./PiLoader";
+import { ActivityHeader, ActivityText } from "./transcript-activity-visibility";
 
 /** Pi's direct shell result is user activity, not an assistant tool call. */
 export const BashExecution = memo(function BashExecution({
@@ -43,12 +43,26 @@ export const BashExecution = memo(function BashExecution({
       className="activity-surface shell-execution"
       aria-label={history ? "Shell record preview" : "Shell command"}
     >
-      <div className="activity-surface__head shell-execution__header">
-        {running ? (
-          <PiLoader size={14} aria-hidden />
-        ) : (
-          <SquareTerminal size={14} aria-hidden />
-        )}
+      <ActivityHeader
+        className="shell-execution__header"
+        icon={
+          running ? (
+            <PiLoader size={14} aria-hidden />
+          ) : (
+            <SquareTerminal size={14} aria-hidden />
+          )
+        }
+        copy={
+          history
+            ? undefined
+            : {
+                getContent: copyLoader(async () =>
+                  shellCopyText(message, message.output ?? ""),
+                ),
+                label: "shell result",
+              }
+        }
+      >
         <span>Shell</span>
         <span
           className="shell-execution__status"
@@ -60,25 +74,17 @@ export const BashExecution = memo(function BashExecution({
         <span className="shell-execution__context">
           {shellContext(message)}
         </span>
-        {!history && (
-          <CopyAction
-            getContent={copyLoader(async () =>
-              shellCopyText(message, message.output ?? ""),
-            )}
-            label="shell result"
-            className="activity-copy"
-          />
-        )}
-      </div>
-      <CodeView className="activity-reader" text={shellCommand(message)} />
+      </ActivityHeader>
+      <CodeView
+        className="activity-reader shell-execution__command"
+        text={shellCommand(message)}
+      />
       {output ? (
-        <CodeView
-          className="activity-reader shell-execution__output"
-          style={{ maxHeight: history ? "none" : "24rem" }}
+        <ActivityText
+          className="shell-execution__output"
+          scrollable={!history}
+          label="Shell output"
           text={output}
-          tabIndex={history ? undefined : 0}
-          role={history ? undefined : "group"}
-          aria-label={history ? undefined : "Shell output"}
         />
       ) : null}
       {previewTruncated || message.truncated ? (
@@ -86,7 +92,7 @@ export const BashExecution = memo(function BashExecution({
           {previewTruncated
             ? "Showing the latest streamed output."
             : "Pi truncated the recorded output."}
-          {fullOutput && isResourceReferenceText(fullOutput) ? (
+          {fullOutput && isResourceReferenceText(fullOutput) && (
             <button
               type="button"
               className="tool-notice__action"
@@ -96,12 +102,10 @@ export const BashExecution = memo(function BashExecution({
             >
               View full output
             </button>
-          ) : null}
+          )}
         </div>
       ) : null}
-      {error ? (
-        <div className="tool-notice tool-notice--error">{error}</div>
-      ) : null}
+      {error && <div className="tool-notice tool-notice--error">{error}</div>}
     </section>
   );
 });

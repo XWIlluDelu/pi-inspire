@@ -10,10 +10,8 @@ import {
   useState,
 } from "react";
 import { store } from "../store";
-import { useImageHistory } from "../use-image-history";
 import { useImageUrl } from "../use-image-url";
-import { ImageGalleryContext } from "./ImageGallery";
-import { ImageLightbox } from "./ImageLightbox";
+import { ImageGallery, ImageGalleryContext } from "./ImageGallery";
 import { PiLoader } from "./PiLoader";
 
 interface TranscriptImageOwner {
@@ -61,7 +59,18 @@ export function messageImage(
 /** Authored image links keep navigation semantics without nested buttons. */
 export const ImageLinkContext = createContext(false);
 
-export function ImagePreview({
+export function ImagePreview(props: Parameters<typeof Thumbnail>[0]) {
+  const gallery = useContext(ImageGalleryContext);
+  return gallery ? (
+    <Thumbnail {...props} />
+  ) : (
+    <ImageGallery>
+      <Thumbnail {...props} />
+    </ImageGallery>
+  );
+}
+
+function Thumbnail({
   src,
   alt = "Attached image",
   name,
@@ -89,17 +98,11 @@ export function ImagePreview({
   const id = useId();
   const buttonRef = useRef<HTMLButtonElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
-  const [openedSource, setOpenedSource] = useState<string | null>(null);
   const [failedSource, setFailedSource] = useState<string | null>(null);
   const [inlineWidth, setInlineWidth] = useState<{
     src: string;
     width: number;
   } | null>(null);
-  const open = Boolean(src && openedSource === src);
-  const close = useImageHistory(open, () => setOpenedSource(null));
-  useLayoutEffect(() => {
-    if (openedSource && openedSource !== src) setOpenedSource(null);
-  }, [openedSource, src]);
   const decodeError = src && failedSource === src;
   const failure =
     error ||
@@ -111,11 +114,8 @@ export function ImagePreview({
     const element = linked ? imageRef.current : buttonRef.current;
     if (!gallery || !src || !element) return;
     gallery.register({ id, src, alt, name, element });
+    return () => gallery.unregister(id);
   }, [gallery, id, src, alt, name, linked]);
-  useLayoutEffect(() => () => gallery?.unregister(id), [gallery, id]);
-  useLayoutEffect(() => {
-    if (!src) gallery?.unregister(id);
-  }, [gallery, id, src]);
 
   const image = src ? (
     <img
@@ -143,43 +143,33 @@ export function ImagePreview({
 
   if (linked) return image;
   return (
-    <>
-      <button
-        ref={buttonRef}
-        type="button"
-        className={`image-preview ${inline ? "image-preview--inline" : ""} ${className}`}
-        disabled={!src}
-        style={
-          inline && inlineWidth && inlineWidth.src === src
-            ? { width: inlineWidth.width }
-            : undefined
-        }
-        onClick={() => {
-          if (src) {
-            if (gallery) gallery.open(id);
-            else setOpenedSource(src);
-          }
-        }}
-        aria-label={
-          src
-            ? `Preview ${name || (alt === "Attached image" ? "attached image" : alt) || "image"}`
-            : error
-              ? `${alt} unavailable`
-              : `${alt} loading`
-        }
-        title={
-          failure || title || (src ? "Open image preview" : "Loading image")
-        }
-        data-image-error={decodeError || undefined}
-      >
-        {image}
-        {!src && loading ? <PiLoader size={16} aria-hidden /> : null}
-        {failure ? <AlertTriangle size={16} aria-hidden /> : null}
-      </button>
-      {open && src ? (
-        <ImageLightbox image={{ src, alt, name }} onClose={close} />
-      ) : null}
-    </>
+    <button
+      ref={buttonRef}
+      type="button"
+      className={`image-preview ${inline ? "image-preview--inline" : ""} ${className}`}
+      disabled={!src}
+      style={
+        inline && inlineWidth && inlineWidth.src === src
+          ? { width: inlineWidth.width }
+          : undefined
+      }
+      onClick={() => {
+        if (src) gallery?.open({ id, src });
+      }}
+      aria-label={
+        src
+          ? `Preview ${name || (alt === "Attached image" ? "attached image" : alt) || "image"}`
+          : error
+            ? `${alt} unavailable`
+            : `${alt} loading`
+      }
+      title={failure || title || (src ? "Open image preview" : "Loading image")}
+      data-image-error={decodeError || undefined}
+    >
+      {image}
+      {!src && loading ? <PiLoader size={16} aria-hidden /> : null}
+      {failure ? <AlertTriangle size={16} aria-hidden /> : null}
+    </button>
   );
 }
 

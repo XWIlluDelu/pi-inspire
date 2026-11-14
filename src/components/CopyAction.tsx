@@ -1,15 +1,16 @@
-import { type CopyLoader, copyLoader } from "../content-copy";
+import type { CopyLoader } from "../content-copy";
 import { store } from "../store";
 import { useCopied } from "../use-copied";
 import { CopyFeedback } from "./CopyFeedback";
 
 interface CopyActionProps {
   text?: string;
-  getText?: () => Promise<string | null>;
   getContent?: CopyLoader;
   label: string;
   className: string;
   iconSize?: number;
+  copiedLabel?: string;
+  copyLabel?: string;
   disabled?: boolean;
   onError?: (message: string) => void;
 }
@@ -17,11 +18,12 @@ interface CopyActionProps {
 /** Shared content action; availability never depends on a text-only projection. */
 export function CopyAction({
   text,
-  getText,
   getContent,
   label,
   className,
   iconSize = 13,
+  copiedLabel = `${label} copied`,
+  copyLabel = `Copy ${label.toLowerCase()}`,
   disabled = false,
   onError = store.reportCopyError,
 }: CopyActionProps) {
@@ -29,7 +31,7 @@ export function CopyAction({
     onError,
     scope: text,
   });
-  if (!text && !getText && !getContent) return null;
+  if (text === undefined && !getContent) return null;
   return (
     <button
       type="button"
@@ -38,19 +40,12 @@ export function CopyAction({
         copying
           ? `Loading ${label.toLowerCase()}`
           : copied
-            ? `${label} copied`
-            : `Copy ${label.toLowerCase()}`
+            ? copiedLabel
+            : copyLabel
       }
-      title={
-        copying ? "Loading" : copied ? "Copied" : `Copy ${label.toLowerCase()}`
-      }
+      title={copying ? "Loading" : copied ? "Copied" : copyLabel}
       disabled={disabled || copying}
-      onClick={() =>
-        void copy(
-          getContent ?? (getText ? copyLoader(getText) : (text ?? "")),
-          store.copyOwnership(),
-        )
-      }
+      onClick={() => void copy(getContent ?? text ?? "", store.copyOwnership())}
     >
       <CopyFeedback copied={copied} copying={copying} size={iconSize} />
     </button>

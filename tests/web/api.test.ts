@@ -5,11 +5,7 @@ import {
   type HostRestartRequest,
   restartObservation,
 } from "../../shared/host-restart";
-import {
-  ApiRequestCancelledError,
-  ApiTransportError,
-  createApi,
-} from "../../src/api";
+import { ApiRequestCancelledError, createApi } from "../../src/api";
 import { deferred } from "./helpers";
 
 const prompt = {
@@ -32,6 +28,15 @@ const rejection = {
   state: "rejected",
   error: { status: 409, message: "Pi refused prompt" },
 };
+
+function transport(...replies: Array<Response | Error>) {
+  const fetch = vi.fn<typeof globalThis.fetch>();
+  for (const reply of replies)
+    if (reply instanceof Error) fetch.mockRejectedValueOnce(reply);
+    else fetch.mockResolvedValueOnce(reply);
+  vi.stubGlobal("fetch", fetch);
+  return fetch;
+}
 
 afterEach(() => {
   vi.useRealTimers();
@@ -64,27 +69,20 @@ describe("prompt delivery transport", () => {
   });
 
   it.each([
-    { status: 200, result: accepted },
-    {
-      status: 409,
-      result: { code: "PROMPT_OPERATION_NOT_FOUND", outcomeUnknown: true },
-    },
-    { status: 401, result: { error: "Pairing expired" } },
-  ])(
-    "observes the original receipt after a lost or pending POST ($status)",
-    async ({ status, result }) => {
+    [200, accepted, true],
+    [409, { code: "PROMPT_OPERATION_NOT_FOUND", outcomeUnknown: true }, false],
+    [401, { error: "Pairing expired" }, false],
+  ] as const)(
+    "observes the original receipt after a lost or pending POST (%s)",
+    async (status, result, relayFailure) => {
       vi.useFakeTimers();
-      const fetch = vi.fn<typeof globalThis.fetch>();
-      if (status === 401) fetch.mockResolvedValueOnce(Response.json(pending));
-      else
-        fetch.mockRejectedValueOnce(new TypeError("Lost submission response"));
-      if (status === 200)
-        fetch.mockResolvedValueOnce(
-          Response.json({ error: "Proxy unavailable" }, { status: 503 }),
-        );
-      fetch.mockResolvedValueOnce(Response.json(result, { status }));
-      vi.stubGlobal("fetch", fetch);
-
+      const fetch = transport(
+        status === 401
+          ? Response.json(pending)
+          : new TypeError("Lost submission response"),
+        ...(relayFailure ? [Response.json({}, { status: 503 })] : []),
+        Response.json(result, { status }),
+      );
       const delivery = createApi().prompt(prompt);
       const outcome =
         status === 200
@@ -104,7 +102,7 @@ describe("prompt delivery transport", () => {
       ).toEqual([
         ["/api/prompt", "POST"],
         [receiptPath, undefined],
-        ...(status === 200 ? [[receiptPath, undefined]] : []),
+        ...(relayFailure ? [[receiptPath, undefined]] : []),
       ]);
     },
   );
@@ -116,16 +114,22 @@ describe("prompt delivery transport", () => {
       { ...rejection, executor: { kind: "host", authorityId: "another-host" } },
       true,
     ],
+    [{ ...accepted, result: {} }, true],
   ] as const)(
     "checks only the original receipt and requires matching rejection proof (%#)",
     async (result, outcomeUnknown) => {
-      const fetch = vi.fn(async () => Response.json(result, { status: 409 }));
-      vi.stubGlobal("fetch", fetch);
+      const fetch = transport(
+        Response.json(result, {
+          status: result.state === "completed" ? 200 : 409,
+        }),
+      );
       await expect(createApi().observePrompt(prompt)).rejects.toMatchObject({
         outcomeUnknown,
-        ...(outcomeUnknown
-          ? {}
-          : { status: 409, message: rejection.error.message }),
+        ...(result.state === "completed" && { name: "ApiTransportError" }),
+        ...(!outcomeUnknown && {
+          status: 409,
+          message: rejection.error.message,
+        }),
       });
       expect(fetch).toHaveBeenCalledExactlyOnceWith(
         receiptPath,
@@ -177,17 +181,6 @@ describe("prompt delivery transport", () => {
     await rejected;
     expect(fetch).toHaveBeenCalledTimes(1);
   });
-
-  it("rejects a malformed prompt result after matching the operation", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => Response.json({ ...accepted, result: {} })),
-    );
-    await expect(createApi().prompt(prompt)).rejects.toMatchObject({
-      name: ApiTransportError.name,
-      outcomeUnknown: true,
-    });
-  });
 });
 
 it("matches only a complete receipt from the original executor and operation", () => {
@@ -226,16 +219,9 @@ it("requires a restart receipt to confirm the routed interruption grant", async 
     phase: "submitted",
   } as const;
   const accepted = { ...operation, skipAttachedStop: true } as const;
-  vi.stubGlobal(
-    "fetch",
-    vi
-      .fn()
-      .mockResolvedValueOnce(
-        Response.json(restartObservation(intent, operation)),
-      )
-      .mockResolvedValueOnce(
-        Response.json(restartObservation(intent, accepted)),
-      ),
+  transport(
+    Response.json(restartObservation(intent, operation)),
+    Response.json(restartObservation(intent, accepted)),
   );
   await expect(createApi().restartHost(intent)).rejects.toMatchObject({
     outcomeUnknown: true,
@@ -248,8 +234,7 @@ describe("ordinary HTTP observation", () => {
     vi.useFakeTimers();
     const response = new Response("", { status: 401 });
     vi.spyOn(response, "json").mockReturnValue(new Promise<never>(() => {}));
-    const fetch = vi.fn<typeof globalThis.fetch>(async () => response);
-    vi.stubGlobal("fetch", fetch);
+    const fetch = transport(response);
     const rejected = expect(
       createApi().openSession("s1"),
     ).rejects.toMatchObject({
@@ -348,15 +333,11 @@ describe("ordinary HTTP observation", () => {
   );
 
   it("preserves non-JSON HTTP status and relay markers for ordinary error presentation", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(
-        async () =>
-          new Response("<html>Bad gateway</html>", {
-            status: 502,
-            headers: { "X-Inspire-Edge": "ssh-reverse" },
-          }),
-      ),
+    transport(
+      new Response("<html>Bad gateway</html>", {
+        status: 502,
+        headers: { "X-Inspire-Edge": "ssh-reverse" },
+      }),
     );
     await expect(createApi().bootstrap()).rejects.toMatchObject({
       name: "ApiError",
@@ -375,8 +356,7 @@ describe("transfer observation", () => {
     vi.useFakeTimers();
     const response = new Response("");
     vi.spyOn(response, "blob").mockReturnValue(new Promise<Blob>(() => {}));
-    const fetch = vi.fn<typeof globalThis.fetch>(async () => response);
-    vi.stubGlobal("fetch", fetch);
+    const fetch = transport(response);
     const settled = vi.fn();
     const reading = createApi().resourceContent("resource", "session", {
       byteLimit: transferBytes,
@@ -429,8 +409,9 @@ describe("transfer observation", () => {
 });
 
 it("preserves explicit settings owners and omits missing ones", async () => {
-  const fetch = vi.fn<typeof globalThis.fetch>(async () => Response.json({}));
-  vi.stubGlobal("fetch", fetch);
+  const fetch = transport(
+    ...Array.from({ length: 3 }, () => Response.json({})),
+  );
   const api = createApi();
   const cwd = "C:\\Users\\中文 & demo\\project";
   await api.mcpConfig({ cwd });

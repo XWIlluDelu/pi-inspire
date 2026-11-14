@@ -2,7 +2,6 @@ import { FolderSearch, X } from "lucide-react";
 import {
   type KeyboardEvent,
   type RefObject,
-  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -11,15 +10,10 @@ import {
 import type { ProjectFileResult, ProjectFileSearchResult } from "../api";
 import { rankProjectFiles } from "../composer-completion";
 import { fileIconForPath } from "../file-icons";
-import { isComposingKeyboardEvent } from "../keyboard-input";
 import { recoverableRead } from "../recovery-backoff";
 import { store, useAppState } from "../store";
-import {
-  type FloatingMenuConstraints,
-  useFloatingMenuDismissal,
-  useFloatingMenuPlacement,
-} from "../use-floating-menu";
-import { useSearchFocus } from "../use-search-focus";
+import type { FloatingMenuConstraints } from "../use-floating-menu";
+import { AnchoredPanel } from "./ChoicePanel";
 import { HiddenFilesToggle } from "./HiddenFilesToggle";
 import { type ListOption, OptionList, useOptionList } from "./OptionList";
 import { parentPath, ResourcePathLabel } from "./ResourcePathLabel";
@@ -30,10 +24,8 @@ export function ProjectFileLabel({
   path,
   name,
   query,
-  captionClass,
 }: Pick<ProjectFileResult, "path" | "name"> & {
   query: string;
-  captionClass: string;
 }) {
   const Icon = fileIconForPath(path);
   const directory = parentPath(path);
@@ -54,11 +46,57 @@ export function ProjectFileLabel({
         <ResourcePathLabel
           path={directory}
           title={path}
-          className={captionClass}
+          className="picker__path"
           matches={matches}
         />
       )}
     </>
+  );
+}
+
+export function projectFileOption(file: ProjectFileResult) {
+  return {
+    key: file.path,
+    value: file,
+    title: file.path,
+    label: `${file.name}, ${file.path}`,
+  };
+}
+
+export function ProjectFileFeedback({
+  empty,
+  status,
+  truncated,
+  partialText = "Partial search results",
+  emptyText = "No matching files",
+  loadingText = "Searching…",
+}: {
+  empty: boolean;
+  status: "loading" | "ready" | "error";
+  truncated: boolean;
+  partialText?: string;
+  emptyText?: string;
+  loadingText?: string;
+}) {
+  const message = truncated
+    ? partialText
+    : !empty
+      ? null
+      : status === "loading"
+        ? loadingText
+        : status === "error"
+          ? "Project file search failed"
+          : emptyText;
+  return (
+    message && (
+      <div
+        className="picker__empty"
+        data-error={status === "error"}
+        role="status"
+      >
+        {message}
+      </div>
+    )
   );
 }
 
@@ -232,38 +270,14 @@ function ProjectFilePicker({
   } = useProjectFileSearch(search, query, scope, showHidden, 200);
   const list = useOptionList<ProjectFileResult>();
   const { reset } = list;
-  const menuRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const resolveTarget = useCallback(() => {
-    const anchor = anchorRef.current;
-    return anchor
-      ? {
-          context: anchor,
-          anchor: anchor.getBoundingClientRect(),
-          positioningRoot: anchor.closest<HTMLElement>(".overlay"),
-          observe: [anchor, ...(anchor.form ? [anchor.form] : [])],
-        }
-      : null;
-  }, [anchorRef]);
-  const placement = useFloatingMenuPlacement(
-    true,
-    resolveTarget,
-    PICKER_CONSTRAINTS,
-  );
-  useSearchFocus(Boolean(placement), inputRef, menuRef);
-
-  useFloatingMenuDismissal(Boolean(placement), anchorRef, menuRef, onClose);
   const options = useMemo(
     () =>
       results.map((file): ListOption<ProjectFileResult> => {
         const added = selected.includes(file.path);
         return {
-          key: file.path,
-          value: file,
+          ...projectFileOption(file),
           disabled: disabled || added,
           selected: added,
-          title: file.path,
-          label: `${file.name}, ${file.path}`,
         };
       }),
     [results, disabled, selected],
@@ -277,40 +291,21 @@ function ProjectFilePicker({
 
   useEffect(() => reset(), [results, reset]);
 
-  if (!placement) return null;
   return (
-    <div
-      ref={menuRef}
-      className="picker picker--files"
-      role="dialog"
-      aria-label="Add project files"
-      tabIndex={-1}
-      data-placement={placement.direction}
-      style={{
-        left: placement.left,
-        top: placement.top,
-        bottom: placement.bottom,
-        width: placement.width,
-        maxHeight: placement.maxHeight,
-      }}
+    <AnchoredPanel
+      open
+      label="Add project files"
+      anchorRef={anchorRef}
+      constraints={PICKER_CONSTRAINTS}
+      searchable
+      onClose={onClose}
       onKeyDown={(event) => {
-        if (isComposingKeyboardEvent(event.nativeEvent)) return;
-        if (event.key === "Escape") {
-          event.preventDefault();
-          event.stopPropagation();
-          onClose();
-          anchorRef.current?.focus({ preventScroll: true });
-        } else if (
-          event.target === event.currentTarget &&
-          event.key !== "Tab"
-        ) {
+        if (event.target === event.currentTarget && event.key !== "Tab")
           navigate(event);
-        }
       }}
     >
       <div className="file-search-controls">
         <SearchField
-          inputRef={inputRef}
           iconSize={13}
           role="combobox"
           value={query}
@@ -328,11 +323,6 @@ function ProjectFilePicker({
           onChange={onShowHiddenChange}
         />
       </div>
-      {truncated ? (
-        <div className="picker__empty" role="status">
-          Partial results. Browse for more files.
-        </div>
-      ) : null}
       <OptionList
         list={list}
         options={options}
@@ -343,24 +333,16 @@ function ProjectFilePicker({
         optionButtons
         plain
         renderOption={({ value: file }) => (
-          <ProjectFileLabel
-            path={file.path}
-            name={file.name}
-            query={query}
-            captionClass="picker__path"
-          />
+          <ProjectFileLabel path={file.path} name={file.name} query={query} />
         )}
       >
-        {results.length === 0 ? (
-          <div className="picker__empty" role="status">
-            {status === "loading"
-              ? "Searching…"
-              : status === "error"
-                ? "Project file search failed"
-                : "No matching files"}
-          </div>
-        ) : null}
+        <ProjectFileFeedback
+          status={status}
+          empty={!options.length}
+          truncated={truncated}
+          partialText="Partial results. Browse for more files."
+        />
       </OptionList>
-    </div>
+    </AnchoredPanel>
   );
 }

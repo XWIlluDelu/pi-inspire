@@ -3,16 +3,14 @@ import type {
   PendingRecovery,
 } from "../../shared/contracts";
 import { type Api, ApiError, ApiTransportError } from "../api";
-import { ReceiptRead } from "../operation-observer";
+import { deferredReceipt, ReceiptRead } from "../operation-observer";
 
 interface Handoff {
   intent: string;
   request: PendingOperationRequest;
   observation: ReceiptRead<Api, boolean>;
   confirmed?: PendingRecovery;
-  settled: Promise<boolean>;
-  complete: (value: boolean) => void;
-  reject: (error: unknown) => void;
+  completion: ReturnType<typeof deferredReceipt<boolean>>;
 }
 interface PendingRecoveryHost {
   api(): Api | null;
@@ -21,31 +19,13 @@ interface PendingRecoveryHost {
   handleAuthFailure(): void;
 }
 
-function createHandoff(
-  intent: string,
-  request: PendingOperationRequest,
-): Handoff {
-  let complete!: Handoff["complete"];
-  let reject!: Handoff["reject"];
-  const settled = new Promise<boolean>((resolve, refuse) => {
-    complete = resolve;
-    reject = refuse;
-  });
-  return {
-    intent,
-    request,
-    observation: new ReceiptRead(),
-    settled,
-    complete,
-    reject,
-  };
-}
-
 /** Retains unclaimed handoff identities, not Pending input or execution order. */
 export class PendingRecoveryController {
   private readonly handoffs = new Map<string, Handoff>();
-  private readonly runs = new Map<string, number>();
-  private readonly queues = new Map<string, number>();
+  private readonly revisions = new Map<
+    string,
+    { run: number; queue: number }
+  >();
   constructor(private readonly host: PendingRecoveryHost) {}
 
   async run(
@@ -56,25 +36,29 @@ export class PendingRecoveryController {
     const authorityId = this.host.authorityId();
     const api = this.host.api();
     if (!authorityId || !api) return false;
+    const revision = this.revisions.get(sessionId);
     const intent = JSON.stringify([
       authorityId,
       sessionId,
       action,
       expectedViewId,
-      this.runs.get(sessionId) ?? 0,
-      action === "recover" ? (this.queues.get(sessionId) ?? 0) : null,
+      revision?.run ?? 0,
+      action === "recover" ? (revision?.queue ?? 0) : null,
     ]);
     const previous = this.handoffs.get(intent);
-    const handoff =
-      previous ??
-      createHandoff(intent, {
+    const handoff: Handoff = previous ?? {
+      intent,
+      request: {
         sessionId,
         action,
         authorityId,
         expectedViewId,
         operationId: crypto.randomUUID(),
-      });
-    if (!previous) this.handoffs.set(intent, handoff);
+      },
+      observation: new ReceiptRead(),
+      completion: deferredReceipt<boolean>(),
+    };
+    this.handoffs.set(intent, handoff);
     this.resume(handoff);
     return this.observe(handoff, api, !previous);
   }
@@ -84,7 +68,8 @@ export class PendingRecoveryController {
     api: Api,
     dispatch = false,
   ): Promise<boolean> {
-    const { intent, request, observation, settled, complete, reject } = handoff;
+    const { intent, request, observation, completion } = handoff;
+    const { promise: settled, resolve: complete, reject } = completion;
     const { authorityId, operationId, sessionId, action } = request;
     const current = () => this.handoffs.get(intent) === handoff;
     const rejected = (error: unknown): boolean =>
@@ -138,12 +123,20 @@ export class PendingRecoveryController {
   }
 
   startRun(sessionId: string): void {
-    this.runs.set(sessionId, (this.runs.get(sessionId) ?? 0) + 1);
+    const revision = this.revisions.get(sessionId);
+    this.revisions.set(sessionId, {
+      run: (revision?.run ?? 0) + 1,
+      queue: revision?.queue ?? 0,
+    });
   }
 
   updateQueue(sessionId: string, revision: number, totalCount: number): void {
     // Our own clear is not a new Return intent. Newly admitted input is.
-    if (totalCount > 0) this.queues.set(sessionId, revision);
+    if (totalCount > 0)
+      this.revisions.set(sessionId, {
+        run: this.revisions.get(sessionId)?.run ?? 0,
+        queue: revision,
+      });
   }
 
   /** Reconnect and later intent only observe older receipts; never redispatch them. */
@@ -152,7 +145,7 @@ export class PendingRecoveryController {
       if (handoff === except) continue;
       if (handoff.request.authorityId !== this.host.authorityId()) {
         this.handoffs.delete(handoff.intent);
-        handoff.complete(false);
+        handoff.completion.resolve(false);
         continue;
       }
       const api = this.host.api();

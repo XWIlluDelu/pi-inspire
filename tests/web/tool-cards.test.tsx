@@ -10,7 +10,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { toolPresentationConfigurationSchema } from "../../shared/tool-presentation-config";
 import { Transcript } from "../../src/components/Transcript";
 import { ToolCard } from "../../src/components/transcript-cards";
-import type { ChatMessage, ToolCallContent } from "../../src/events";
+import type {
+  ActivityTool,
+  ChatMessage,
+  ToolCallContent,
+} from "../../src/events";
 import {
   configurePresentationAdapters,
   presentationGeneration,
@@ -36,12 +40,13 @@ function card(
   toolResult?: ChatMessage,
   visibility: "expanded" | "collapsed" = "expanded",
   live = false,
+  activity?: ActivityTool,
 ) {
   return (
     <ToolCard
       call={toolCall}
       result={toolResult}
-      activity={undefined}
+      activity={activity}
       live={live}
       visibility={visibility}
     />
@@ -332,12 +337,33 @@ describe("native Pi tool cards", () => {
         mappings: { grep: "user.example.markdown" },
       }),
     );
+    const declared = call("grep", {
+      pattern: "needle",
+      query: "Inspect evidence",
+    });
+    const running = {
+      id: declared.id,
+      name: declared.name,
+      phase: "running" as const,
+      outputPreview: { text: "Live progress", truncated: false },
+    };
     const { rerender } = render(
+      card(declared, undefined, "expanded", true, running),
+    );
+    expect(
+      screen.getByRole("group", { name: "Live output" }),
+    ).toHaveTextContent("Live progress");
+    expect(screen.queryByRole("group", { name: "Result" })).toBeNull();
+    rerender(
       card(
-        call("grep", { pattern: "needle", query: "Inspect evidence" }),
+        declared,
         result("## Finding\n\n**Supported** [unsafe](javascript:alert(1))"),
+        "expanded",
+        false,
+        running,
       ),
     );
+    expect(screen.queryByRole("group", { name: "Live output" })).toBeNull();
 
     expect(
       await screen.findByRole("heading", { name: "Finding" }),
@@ -460,6 +486,20 @@ describe("native edit cards", () => {
     const request = call("edit", { path, edits: [edits[0]] });
     const patch = `--- ${path}\n+++ ${path}\n@@ -1 +1 @@\n-applied before\n+applied after\n`;
     const { container, rerender } = render(
+      card(request, undefined, "expanded", true, {
+        id: request.id,
+        name: request.name,
+        phase: "running",
+        outputPreview: { text: patch, truncated: false },
+      }),
+    );
+    expect(screen.getByText("Requested replacement")).toBeVisible();
+    expect(screen.queryByText("Applied changes")).toBeNull();
+    expect(screen.getByRole("group", { name: "Live output" }).textContent).toBe(
+      patch,
+    );
+
+    rerender(
       card(
         request,
         result("done", {

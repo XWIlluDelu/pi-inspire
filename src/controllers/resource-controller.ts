@@ -79,7 +79,6 @@ export class ResourceController {
   private resourceProbeKey: string | null = null;
   private probeRecovery = new RecoveryBackoff();
   private resourceProbedReferences = new Set<string>();
-  private referenceGenerations = new Map<string, number>();
 
   constructor(private readonly host: ResourceControllerHost) {}
 
@@ -100,7 +99,6 @@ export class ResourceController {
     this.resourceProbeRequest = null;
     this.resourceProbeKey = null;
     this.resourceProbedReferences.clear();
-    this.referenceGenerations.clear();
     if (clearStanding && Object.keys(this.host.state().resourceStanding).length)
       this.host.patch({ resourceStanding: {} });
   }
@@ -139,20 +137,12 @@ export class ResourceController {
     });
   }
 
-  private referenceGeneration(reference: string): number {
-    return this.referenceGenerations.get(reference) ?? 0;
-  }
-
   private recordResolution(
     result: ResourceProbeResult,
     tabPatch?: ResourceControllerPatch,
   ): void {
     // A probe started before this resolve cannot overwrite its standing.
     const reference = result.reference;
-    this.referenceGenerations.set(
-      reference,
-      this.referenceGeneration(reference) + 1,
-    );
     this.host.patch({
       ...tabPatch,
       resourceStanding: {
@@ -258,14 +248,15 @@ export class ResourceController {
           offset,
           offset + MAX_RESOURCE_PROBE_REFERENCES,
         );
-        const generations = new Map(
+        const before = new Map(
           batch.map((reference) => [
             reference,
-            this.referenceGeneration(reference),
+            this.host.state().resourceStanding[reference],
           ]),
         );
-        const generationIsCurrent = (reference: string): boolean =>
-          generations.get(reference) === this.referenceGeneration(reference);
+        const stillUnchanged = (reference: string) =>
+          before.get(reference) ===
+          this.host.state().resourceStanding[reference];
         try {
           const response = await request.read((signal) =>
             api.probeResources(sessionId, batch, signal),
@@ -276,21 +267,20 @@ export class ResourceController {
             response.revision !== revision
           )
             return;
-          const expected = new Set(batch);
           const received = new Set<string>();
           const resourceStanding = { ...this.host.state().resourceStanding };
           for (const result of response.results) {
             if (
-              !expected.has(result.reference) ||
+              !before.has(result.reference) ||
               received.has(result.reference) ||
-              !generationIsCurrent(result.reference)
+              !stillUnchanged(result.reference)
             )
               continue;
             received.add(result.reference);
             resourceStanding[result.reference] = result;
           }
           for (const reference of batch) {
-            if (!generationIsCurrent(reference)) continue;
+            if (!stillUnchanged(reference)) continue;
             if (received.has(reference)) {
               this.resourceProbedReferences.add(reference);
             } else {
@@ -307,7 +297,7 @@ export class ResourceController {
           // A failed observation cannot revoke the last confirmed file standing.
           const resourceStanding = { ...this.host.state().resourceStanding };
           for (const reference of batch) {
-            if (generationIsCurrent(reference) && !resourceStanding[reference])
+            if (stillUnchanged(reference) && !resourceStanding[reference])
               resourceStanding[reference] = unknownResourceAvailability(
                 reference,
                 error,

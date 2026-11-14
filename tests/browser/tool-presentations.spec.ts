@@ -12,7 +12,11 @@ import { observeClipboardWrites } from "./support/clipboard";
 import { renderedColors } from "./support/colors";
 import { openEventSession, routeSnapshots } from "./support/host-events";
 import { hostRequest } from "./support/host-request";
-import { pairedPage, reloadSession } from "./support/navigation";
+import {
+  openFixtureSession,
+  pairedPage,
+  reloadSession,
+} from "./support/navigation";
 
 test.use({ serviceWorkers: "block" });
 
@@ -254,7 +258,9 @@ function toolActivity(
 ) {
   return {
     type:
-      update.phase === "done" ? "tool_execution_end" : "tool_execution_update",
+      update.phase === "done" || update.phase === "error"
+        ? "tool_execution_end"
+        : "tool_execution_update",
     toolActivity: {
       [call.id]: {
         id: call.id,
@@ -301,7 +307,9 @@ function toolCard(page: Page, name: string) {
 
 test("live output and partial arguments follow the reader until native completion", async ({
   page,
+  context,
 }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   const send = await openReview(page, { toolVisibility: "dynamic" });
   const shell = tool("bash", { command: "npm run build" });
   const path = "src/stream.ts";
@@ -310,8 +318,8 @@ test("live output and partial arguments follow the reader until native completio
     (_, i) => `export const line_${i} = ${i};`,
   ).join("\n");
   const write = tool("write", { path, content });
-  const progress = (text: string) =>
-    toolActivity(shell, { outputPreview: { text, truncated: false } });
+  const progress = (text: string, truncated = false) =>
+    toolActivity(shell, { outputPreview: { text, truncated } });
   const bottomGap = (el: Element) =>
     el.scrollHeight - el.scrollTop - el.clientHeight;
   const log = "Building module\n".repeat(150);
@@ -320,13 +328,21 @@ test("live output and partial arguments follow the reader until native completio
     { type: "agent_start" },
     { type: "message_start", message },
     { type: "message_end", message },
-    progress(log),
+    progress(`\u001b[32m${log}\u001b[0m`, true),
   );
   const bash = toolCard(page, "bash");
   const output = bash.getByRole("group", { name: "Live output" });
   await expect(output).toContainText("Building module");
   await expect(bash.getByLabel("running", { exact: true })).toBeVisible();
   await expect.poll(() => output.evaluate(bottomGap)).toBeLessThan(2);
+  await expect(output).not.toContainText("\u001b[32m");
+  await observeClipboardWrites(page);
+  await bash
+    .getByRole("button", { name: "Copy bash live output preview" })
+    .click();
+  await expect
+    .poll(() => page.evaluate(() => window.gestureClipboardWrites.at(-1)?.text))
+    .toContain(`Output (live preview, truncated)\n\n${log}`);
   await output.evaluate((el) => {
     el.scrollTop = 0;
     el.dispatchEvent(new Event("scroll"));
@@ -341,14 +357,13 @@ test("live output and partial arguments follow the reader until native completio
   send(progress(`${log}Follow again`));
   await expect(output).toContainText("Follow again");
   await expect.poll(() => output.evaluate(bottomGap)).toBeLessThan(2);
-  send(
-    toolActivity(shell, { phase: "done" }),
-    completed(shell, "Build completed"),
-  );
-  await expect(bash.getByLabel("finished", { exact: true })).toBeVisible();
+  send(toolActivity(shell, { phase: "error" }));
+  await expect(bash.getByLabel("failed", { exact: true })).toBeVisible();
   await expect(output).toHaveCount(0);
   await bash.getByRole("button", { name: "Expand bash tool" }).click();
-  await expect(bash).toContainText("Build completed");
+  await expect(bash).toContainText("Finalizing result…");
+  send(completed(shell, "Build failed", true));
+  await expect(bash).toContainText("Build failed");
 
   const partial = (text: string): ToolCallContent => ({
     ...write,
@@ -558,7 +573,11 @@ test("saved tool images survive presentation changes and full logs open in the n
       data: {},
     });
     expect(refresh.ok()).toBe(true);
-    await reloadSession(page, sessionId);
+    await page.reload();
+    const selected = await openFixtureSession(
+      page,
+      /Inspect the saved image and shell output/,
+    );
     await expect(
       toolCard(page, "read").locator(
         '[data-tool-rule="inspire.pi.read"] .tool-image-block__image',
@@ -567,7 +586,7 @@ test("saved tool images survive presentation changes and full logs open in the n
 
     fallback = true;
     await page.setViewportSize({ width: 390, height: 844 });
-    await reloadSession(page, sessionId);
+    await reloadSession(page, selected);
     const detail = toolCard(page, "read");
     await detail.getByRole("button", { name: "Expand read tool" }).click();
     const argumentsSummary = detail

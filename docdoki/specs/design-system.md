@@ -457,8 +457,8 @@ including when recovery is the sole action.
 
 Command feedback uses neutral surfaces and semantic icons/text, without panel-wide status washes or
 competing running glows. Failed receipts are unframed, wrapping inline feedback with a compact Dismiss
-action; action-rich results may use local containers. Extension widgets have a small identity/Copy
-header and readable preformatted content in Pi's above/below-editor placement. Extension questions
+action; action-rich results may use local containers. Extension widgets show preformatted content and
+a visible Copy action in Pi's above/below-editor placement. Extension questions
 remain distinct attributed forms with directly selectable options.
 
 ## Feedback and notices
@@ -760,7 +760,7 @@ when their text and actions need more room.
 
 Message Copy, Fork and Pending actions stay visible with the same targets on desktop and touch.
 Tool, Thinking, CodeMode and checkpoint Copy are available while their details are open. Extension
-text-widget Copy still appears on hover or visible keyboard focus. Pending uses a shared surface and
+text-widget Copy stays visible. Pending uses a shared surface and
 keeps Copy, Return and the explicit Clear confirmation visible. [[conversation]] and [[composer]]
 own the content and operation behavior.
 

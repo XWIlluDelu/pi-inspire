@@ -1,7 +1,9 @@
 import type { ExtensionUiRequest } from "../../shared/contracts";
-import { CodeView } from "./CodeView";
-import { DetailSummary } from "./DetailSummary";
 import { PromptChoices, PromptInput } from "./PromptFields";
+import {
+  ActivityDetails,
+  ActivityText,
+} from "./transcript-activity-visibility";
 
 export function ExtensionDialogContent({
   request,
@@ -66,15 +68,22 @@ export function ExtensionDialogContent({
           <p className="dialog__message">
             Inspire can't handle this extension request.
           </p>
-          <details className="dialog__details">
-            <DetailSummary>Request details</DetailSummary>
-            <code>{request.method}</code>
-            <CodeView
-              className="activity-reader"
-              tabIndex={0}
-              text={JSON.stringify(request.payload, null, 2)}
-            />
-          </details>
+          <ActivityDetails
+            reader="extension-request"
+            label="Request details"
+            className="dialog__details"
+            key={request.id}
+          >
+            {() => (
+              <>
+                <code>{request.method}</code>
+                <ActivityText
+                  label="Request payload"
+                  text={JSON.stringify(request.payload, null, 2)}
+                />
+              </>
+            )}
+          </ActivityDetails>
         </>
       ) : request.method === "select" ? (
         <PromptChoices

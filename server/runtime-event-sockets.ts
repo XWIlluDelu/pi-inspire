@@ -55,7 +55,14 @@ export function createRuntimeEventSockets({
     },
   });
   type DetailInterest = { sessionId: string | null; revision: number };
-  type SnapshotBacklog = { messages: string[]; bytes: number };
+  interface EventFrame {
+    message: string;
+    bytes: number;
+    sequence?: number;
+    sessionId?: string;
+    background?: string;
+  }
+  type SnapshotBacklog = { frames: EventFrame[]; bytes: number };
   type Peer = {
     responsive: boolean;
     interest: DetailInterest;
@@ -79,11 +86,7 @@ export function createRuntimeEventSockets({
   };
   const wantsDetail = (peer: Peer, sessionId: string) =>
     peer.interest.sessionId === sessionId;
-  interface EventDestinations {
-    joining: boolean;
-    established: boolean;
-    sessionId?: string;
-  }
+  type Audience = "all" | "joining" | "established";
   interface PendingStreamBatch {
     key: string;
     events: unknown[];
@@ -111,12 +114,13 @@ export function createRuntimeEventSockets({
       socket.terminate();
     }
   };
-  const sendBounded = (socket: WebSocket, message: string): boolean => {
+  const sendBounded = (
+    socket: WebSocket,
+    message: string,
+    bytes = Buffer.byteLength(message),
+  ): boolean => {
     if (socket.readyState !== WebSocket.OPEN) return false;
-    if (
-      socket.bufferedAmount + Buffer.byteLength(message) >
-      MAX_SOCKET_BUFFERED_BYTES
-    ) {
+    if (socket.bufferedAmount + bytes > MAX_SOCKET_BUFFERED_BYTES) {
       closeLaggingSocket(socket, "Client fell behind");
       return false;
     }
@@ -170,59 +174,55 @@ export function createRuntimeEventSockets({
   }, heartbeatIntervalMs);
   heartbeatInterval.unref();
 
-  const queueOrSend = (
-    socket: WebSocket,
-    peer: Peer,
-    message: string,
-    bytes: number,
-  ) => {
+  const queueOrSend = (socket: WebSocket, peer: Peer, frame: EventFrame) => {
     const queue = peer.backlog;
-    if (!queue) {
-      sendBounded(socket, message);
-    } else if (queue.bytes + bytes > MAX_JOINING_EVENT_BYTES) {
+    if (!queue) sendBounded(socket, frame.message, frame.bytes);
+    else if (queue.bytes + frame.bytes > MAX_JOINING_EVENT_BYTES)
       closeLaggingSocket(socket, "Snapshot backlog exceeded");
-    } else {
-      queue.messages.push(message);
-      queue.bytes += bytes;
+    else {
+      queue.frames.push(frame);
+      queue.bytes += frame.bytes;
     }
   };
 
-  const broadcastEncoded = (
-    message: string,
-    messageBytes: number,
-    destinations: EventDestinations,
-  ): void => {
-    for (const [socket, peer] of peers) {
-      if (destinations.sessionId && !wantsDetail(peer, destinations.sessionId))
-        continue;
-      if (peer.backlog ? destinations.joining : destinations.established)
-        queueOrSend(socket, peer, message, messageBytes);
-    }
-  };
-  const serializeRuntimeEvent = (
+  const encode = (
     event: unknown,
-  ): { message: string; bytes: number } | null => {
+    sequence?: number,
+    sessionId?: string,
+    background?: string,
+  ): EventFrame | undefined => {
     try {
       const message = JSON.stringify(event);
-      if (message === undefined) return null;
-      return { message, bytes: Buffer.byteLength(message) };
+      if (message !== undefined)
+        return {
+          message,
+          bytes: Buffer.byteLength(message),
+          sequence,
+          sessionId,
+          background,
+        };
     } catch {
-      return null;
+      // Projection errors close affected sockets without interrupting the runtime.
     }
   };
-  const closeProjectionDestinations = (
-    reason: string,
-    destinations: EventDestinations,
+
+  const isAudience = (peer: Peer, audience: Audience, sessionId?: string) =>
+    (!sessionId || wantsDetail(peer, sessionId)) &&
+    (audience === "all" || Boolean(peer.backlog) === (audience === "joining"));
+
+  const publish = (
+    frame: EventFrame | undefined,
+    audience: Audience,
+    sessionId?: string,
+    reason = frame
+      ? "Runtime event exceeded projection budget"
+      : "Runtime event was not serializable",
   ): void => {
     for (const [socket, peer] of peers) {
-      if (destinations.sessionId && !wantsDetail(peer, destinations.sessionId))
-        continue;
-      const isJoining = peer.backlog !== undefined;
-      if (
-        (isJoining && destinations.joining) ||
-        (!isJoining && destinations.established)
-      )
-        closeLaggingSocket(socket, reason);
+      if (!isAudience(peer, audience, sessionId)) continue;
+      if (frame && frame.bytes <= MAX_RUNTIME_EVENT_BYTES)
+        queueOrSend(socket, peer, frame);
+      else closeLaggingSocket(socket, reason);
     }
   };
   const flushStreamBatch = (): void => {
@@ -231,34 +231,14 @@ export function createRuntimeEventSockets({
     const pending = pendingStreamBatch;
     pendingStreamBatch = null;
     if (!pending) return;
-    const batch: Record<string, unknown> = { ...pending.latest };
-    delete batch.message;
-    delete batch.assistantMessageEvent;
-    delete batch.streamDelta;
-    batch.type = "message_update_batch";
-    batch.assistantMessageEvents = compactToolArgumentEvents(pending.events);
-    batch.sourceEventCount = pending.events.length;
-    const destinations = {
-      joining: false,
-      established: true,
-      sessionId: String(batch.sessionId),
+    const batch = {
+      ...pending.latest,
+      type: "message_update_batch",
+      assistantMessageEvent: undefined,
+      assistantMessageEvents: compactToolArgumentEvents(pending.events),
+      sourceEventCount: pending.events.length,
     };
-    const encoded = serializeRuntimeEvent(batch);
-    if (!encoded) {
-      closeProjectionDestinations(
-        "Runtime event was not serializable",
-        destinations,
-      );
-      return;
-    }
-    if (encoded.bytes > MAX_RUNTIME_EVENT_BYTES) {
-      closeProjectionDestinations(
-        "Runtime event exceeded projection budget",
-        destinations,
-      );
-      return;
-    }
-    broadcastEncoded(encoded.message, encoded.bytes, destinations);
+    publish(encode(batch), "established", String(pending.latest.sessionId));
   };
   const scheduleStreamBatch = (): void => {
     if (streamBatchTimer) return;
@@ -282,7 +262,7 @@ export function createRuntimeEventSockets({
   const compactStatus = (
     record: Record<string, unknown>,
     sessionId: string,
-  ): string | null => {
+  ) => {
     const sourceStatus = record.sessionStatus;
     const status = isSessionRuntimeStatus(sourceStatus)
       ? {
@@ -303,147 +283,122 @@ export function createRuntimeEventSockets({
         }
       : undefined;
     const lifecycle = globalLifecycle.has(String(record.type));
-    if (!status && !lifecycle) return null;
-    return JSON.stringify({
-      type: lifecycle ? record.type : "session_status",
-      sessionId,
-      runtimeSequence: record.runtimeSequence,
-      ...(status ? { sessionStatus: status } : {}),
-      ...(record.type === "compaction_start"
-        ? { reason: record.reason === "manual" ? "manual" : "auto" }
-        : {}),
-      ...(record.type === "compaction_end"
-        ? {
-            result: record.result == null ? null : {},
-            aborted: record.aborted === true,
-            ...(typeof record.errorMessage === "string" &&
-            record.errorMessage.trim()
-              ? { errorMessage: "Compaction failed" }
-              : {}),
-          }
-        : {}),
-    });
+    if (!status && !lifecycle) return;
+    return {
+      lifecycle,
+      status,
+      event: {
+        type: lifecycle ? record.type : "session_status",
+        sessionId,
+        runtimeSequence: record.runtimeSequence,
+        ...(status ? { sessionStatus: status } : {}),
+        ...(record.type === "compaction_start"
+          ? { reason: record.reason === "manual" ? "manual" : "auto" }
+          : {}),
+        ...(record.type === "compaction_end"
+          ? {
+              result: record.result == null ? null : {},
+              aborted: record.aborted === true,
+              ...(typeof record.errorMessage === "string" &&
+              record.errorMessage.trim()
+                ? { errorMessage: "Compaction failed" }
+                : {}),
+            }
+          : {}),
+      },
+    };
   };
   const publishBackgroundStatus = (
     record: Record<string, unknown>,
     sessionId: string,
-  ): void => {
+    sequence?: number,
+  ): string | undefined => {
     const compact = compactStatus(record, sessionId);
     if (!compact) return;
-    const lifecycle = globalLifecycle.has(String(record.type));
-    const statusKey = isSessionRuntimeStatus(record.sessionStatus)
-      ? JSON.stringify(record.sessionStatus)
-      : undefined;
-    const bytes = Buffer.byteLength(compact);
+    const frame = encode(compact.event, sequence);
+    if (!frame) return;
+    const { lifecycle, status } = compact;
+    const statusKey = status && JSON.stringify(status);
     for (const [socket, peer] of peers) {
       if (wantsDetail(peer, sessionId)) continue;
       const statuses = peer.backgroundStatuses;
-      if (
-        !lifecycle &&
-        (statusKey === undefined || statuses.get(sessionId) === statusKey)
-      )
-        continue;
+      if (!lifecycle && statuses.get(sessionId) === statusKey) continue;
       if (statusKey !== undefined) statuses.set(sessionId, statusKey);
-      queueOrSend(socket, peer, compact, bytes);
+      queueOrSend(socket, peer, frame);
     }
+    return frame.message;
   };
+
   const publishRuntimeEvent = (event: unknown): void => {
     const record =
       event && typeof event === "object" && !Array.isArray(event)
         ? (event as Record<string, unknown>)
-        : null;
+        : undefined;
     const sessionId =
       typeof record?.sessionId === "string" ? record.sessionId : undefined;
-    const destinations = { joining: true, established: true, sessionId };
-    if (sessionId && record) {
-      publishBackgroundStatus(record, sessionId);
-      // Do not even serialize a session body nobody subscribed to.
-      if (![...peers.values()].some((peer) => wantsDetail(peer, sessionId)))
-        return;
-      if (
-        (record.type === "session_projection_changed" ||
-          record.type === "branch_changed") &&
-        !record.transcript
-      ) {
-        closeProjectionDestinations(
-          "Session view could not be projected",
-          destinations,
-        );
-        return;
-      }
-    }
-    const streamDelta =
-      record?.type === "message_update" &&
-      record.streamDelta === true &&
-      typeof record.sessionId === "string" &&
-      typeof record.streamMessageKey === "string" &&
-      record.assistantMessageEvent !== undefined;
-    if (!streamDelta || !record) {
-      const encoded = serializeRuntimeEvent(event);
-      if (!encoded) {
-        // A transport projection failure must not throw back through the
-        // runtime operation that emitted it. Re-bootstrap every client.
-        closeProjectionDestinations(
-          "Runtime event was not serializable",
-          destinations,
-        );
-        return;
-      }
-      if (encoded.bytes > MAX_RUNTIME_EVENT_BYTES) {
-        // The next bootstrap snapshot is the recovery authority. Never enqueue
-        // one exceptional object into every browser socket.
-        closeProjectionDestinations(
-          "Runtime event exceeded projection budget",
-          destinations,
-        );
-        return;
-      }
-      flushStreamBatch();
-      broadcastEncoded(encoded.message, encoded.bytes, destinations);
+    const sequence =
+      typeof record?.runtimeSequence === "number"
+        ? record.runtimeSequence
+        : undefined;
+    const background =
+      sessionId && record
+        ? publishBackgroundStatus(record, sessionId, sequence)
+        : undefined;
+    // Avoid serializing a session body nobody subscribed to.
+    if (![...peers.values()].some((peer) => isAudience(peer, "all", sessionId)))
       return;
-    }
-
-    if (peers.size === 0) return;
-
-    const compact = { ...record };
-    delete compact.message;
-    delete compact.streamDelta;
-    const compactEncoded = serializeRuntimeEvent(compact);
-    if (!compactEncoded || compactEncoded.bytes > MAX_RUNTIME_EVENT_BYTES) {
-      closeProjectionDestinations(
-        compactEncoded
-          ? "Runtime event exceeded projection budget"
-          : "Runtime event was not serializable",
-        destinations,
+    if (
+      (record?.type === "session_projection_changed" ||
+        record?.type === "branch_changed") &&
+      !record.transcript
+    ) {
+      publish(
+        undefined,
+        "all",
+        sessionId,
+        "Session view could not be projected",
       );
       return;
     }
-    // Keep each fragment separately in a joining backlog so a cut in the
-    // middle of a transport batch cannot duplicate an already captured delta.
     if (
-      [...peers.values()].some(
-        (peer) => peer.backlog && wantsDetail(peer, String(sessionId)),
-      )
+      !record ||
+      record.type !== "message_update" ||
+      record.streamDelta !== true ||
+      !sessionId ||
+      typeof record.streamMessageKey !== "string" ||
+      record.assistantMessageEvent === undefined
     ) {
-      const joining = serializeRuntimeEvent({
+      const frame = encode(event, sequence, sessionId, background);
+      if (frame && frame.bytes <= MAX_RUNTIME_EVENT_BYTES) flushStreamBatch();
+      publish(frame, "all", sessionId);
+      return;
+    }
+
+    const { message: _, streamDelta: __, ...compact } = record;
+    const delta = encode(
+      {
         ...compact,
         type: "message_update_batch",
         assistantMessageEvent: undefined,
-        assistantMessageEvents: [compact.assistantMessageEvent],
+        assistantMessageEvents: [record.assistantMessageEvent],
         sourceEventCount: 1,
-      })!;
-      broadcastEncoded(joining.message, joining.bytes, {
-        joining: true,
-        established: false,
-        sessionId,
-      });
+      },
+      sequence,
+      sessionId,
+      background,
+    );
+    if (!delta || delta.bytes > MAX_RUNTIME_EVENT_BYTES) {
+      publish(delta, "all", sessionId);
+      return;
     }
+    // An addressed join can capture the middle of a coalesced batch.
+    // Buffer fragments individually so the snapshot sequence can cut within it.
+    publish(delta, "joining", sessionId);
     if (
       ![...peers].some(
         ([socket, peer]) =>
-          !peer.backlog &&
           socket.readyState === WebSocket.OPEN &&
-          wantsDetail(peer, String(sessionId)),
+          isAudience(peer, "established", sessionId),
       )
     )
       return;
@@ -452,7 +407,7 @@ export function createRuntimeEventSockets({
       pendingStreamBatch &&
       (pendingStreamBatch.key !== key ||
         pendingStreamBatch.events.length >= MAX_ASSISTANT_STREAM_BATCH_EVENTS ||
-        pendingStreamBatch.approximateBytes + compactEncoded.bytes >
+        pendingStreamBatch.approximateBytes + delta.bytes >
           MAX_RUNTIME_EVENT_BYTES)
     )
       flushStreamBatch();
@@ -466,7 +421,7 @@ export function createRuntimeEventSockets({
     }
     pendingStreamBatch.events.push(record.assistantMessageEvent);
     pendingStreamBatch.latest = compact;
-    pendingStreamBatch.approximateBytes += compactEncoded.bytes;
+    pendingStreamBatch.approximateBytes += delta.bytes;
     scheduleStreamBatch();
   };
   const unsubscribeUpdateStatus = updateCoordinator.subscribe((status) =>
@@ -501,11 +456,13 @@ export function createRuntimeEventSockets({
         return { snapshot: await runtime.snapshot(null), missingDetail: true };
       }
     };
-    const synchronize = (): void => {
+    const synchronize = (next?: DetailInterest): void => {
+      // Flush under the old audience before buffering the new view.
       flushStreamBatch();
+      if (next) setDetailInterest(peer, next);
       const previous = peer.backlog;
       const queue = {
-        messages: previous?.messages ?? [],
+        frames: previous?.frames ?? [],
         bytes: previous?.bytes ?? 0,
       };
       peer.backlog = queue;
@@ -547,23 +504,19 @@ export function createRuntimeEventSockets({
               peer.principal,
               (event) => sendBounded(socket, JSON.stringify(event)),
             );
-          for (const message of queued.messages) {
-            // A superseded read may have queued detail for the previous owner.
-            // Retain its global lifecycle evidence, never replay its body.
-            const record = JSON.parse(message) as Record<string, unknown>;
+          for (const frame of queued.frames) {
             if (
               cut !== undefined &&
-              typeof record.runtimeSequence === "number" &&
-              record.runtimeSequence <= cut
+              frame.sequence !== undefined &&
+              frame.sequence <= cut
             )
               continue;
-            const id =
-              typeof record.sessionId === "string" ? record.sessionId : null;
-            const projected =
-              id && !wantsDetail(peer, id)
-                ? compactStatus(record, id)
-                : message;
-            if (projected && !sendBounded(socket, projected)) break;
+            // A superseded detail read may have queued former-view frames.
+            const message =
+              frame.sessionId && !wantsDetail(peer, frame.sessionId)
+                ? frame.background
+                : frame.message;
+            if (message && !sendBounded(socket, message)) break;
           }
         },
         () => {
@@ -590,11 +543,7 @@ export function createRuntimeEventSockets({
           .parse(JSON.parse(data.toString()));
         if (interest.revision <= peer.interest.revision)
           throw new Error("Stale interest");
-        // Flush under the OLD audience, then begin the NEW snapshot queue
-        // synchronously, before any asynchronous runtime read can yield.
-        flushStreamBatch();
-        setDetailInterest(peer, interest);
-        synchronize();
+        synchronize(interest);
       } catch {
         socket.close(1008, "Invalid detail interest");
       }

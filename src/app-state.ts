@@ -228,7 +228,10 @@ export interface AppState extends WorkspaceBrowserState, FileInspectionState {
    * than competing with transcript integrity errors in the topbar. */
   sessionActionError: string | null;
   /** Downloads outlive their dialog; reopening observes the same pending export. */
-  exportingSessions: Record<string, "html" | "jsonl">;
+  exportingSessions: Record<
+    string,
+    { format: "html" | "jsonl"; promise: Promise<void> }
+  >;
   /** Destructive-action failures stay inside the confirmation dialog. */
   sessionDeleteError: string | null;
   sessionDeleteReviewRequired: boolean;
@@ -251,7 +254,7 @@ export interface AppState extends WorkspaceBrowserState, FileInspectionState {
   /** Whether the complete Hidden selection is awaiting its host result. */
   clearingHidden: boolean;
   /** Pending queue mutation currently awaiting the Host. */
-  pendingAction: "clear" | "recover" | null;
+  pendingAction: { action: "clear" | "recover" } | null;
   /** Files/resources pane visibility (Ctrl+.). */
   resourcesOpen: boolean;
   contextMode: "files" | "changes" | "terminal";

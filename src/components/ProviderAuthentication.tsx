@@ -16,6 +16,7 @@ import { ConfigurationConfirmation } from "./ConfigurationForm";
 import { PromptChoices, PromptInput } from "./PromptFields";
 import { SearchField } from "./SearchField";
 import { SearchMatchText, searchMatchRanges } from "./SearchMatchText";
+import { SettingsCardMessage } from "./SettingsSection";
 
 type Owner = { sessionId?: string; cwd?: string };
 type ProviderView = { kind: "saved" | "connect"; provider?: string };
@@ -373,33 +374,22 @@ function AuthenticationPanel({
       : attempt?.message;
   return (
     <div className="models-auth" id="model-provider-credentials">
-      {error ? (
-        <p className="models-status" role="alert">
-          {error}
-        </p>
-      ) : null}
+      {error ? <SettingsCardMessage error>{error}</SettingsCardMessage> : null}
       {loadError ? (
-        <p className="models-status" role="alert">
+        <SettingsCardMessage
+          error
+          retry={{
+            disabled: loading,
+            run: () =>
+              void onRefresh().catch((error) => setError(messageOf(error))),
+          }}
+        >
           {loaded ? "Provider refresh failed" : "Failed to load providers"}:{" "}
           {loadError}
-        </p>
+        </SettingsCardMessage>
       ) : null}
       {loading && !loaded ? (
-        <p className="models-status" role="status">
-          Loading providers…
-        </p>
-      ) : null}
-      {loadError ? (
-        <button
-          type="button"
-          className="button button--quiet"
-          disabled={loading}
-          onClick={() =>
-            void onRefresh().catch((error) => setError(messageOf(error)))
-          }
-        >
-          Retry
-        </button>
+        <SettingsCardMessage loading>Loading providers…</SettingsCardMessage>
       ) : null}
       {attempt ? (
         <div

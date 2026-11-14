@@ -3,12 +3,14 @@ import { memo, useId } from "react";
 import type { ChatMessage } from "../events";
 import { messageCopyLoader } from "../message-copy";
 import { usePresentationAdapters } from "../presentation-adapters";
-import { CodeView } from "./CodeView";
-import { CopyAction } from "./CopyAction";
 import { ImageGallery } from "./ImageGallery";
 import { messageImage } from "./ImagePreview";
 import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
-import { ActivityDetails } from "./transcript-activity-visibility";
+import {
+  ActivityDetails,
+  ActivityHeader,
+  ActivityText,
+} from "./transcript-activity-visibility";
 
 function inspect(value: unknown): string {
   return typeof value === "string"
@@ -73,8 +75,15 @@ export const CustomMessage = memo(function CustomMessage({
       className="activity-surface custom-message"
       aria-labelledby={titleId}
     >
-      <div className="activity-surface__head custom-message__head">
-        <Package size={14} aria-hidden />
+      <ActivityHeader
+        className="custom-message__head"
+        icon={<Package size={14} aria-hidden />}
+        copy={{
+          getContent: messageCopyLoader(message, copyText, owner),
+          label: `${title} block`,
+          className: "custom-message__copy",
+        }}
+      >
         <div className="custom-message__identity">
           <span id={titleId} className="custom-message__title">
             {title}
@@ -85,12 +94,7 @@ export const CustomMessage = memo(function CustomMessage({
             </span>
           ) : null}
         </div>
-        <CopyAction
-          getContent={messageCopyLoader(message, copyText, owner)}
-          label={`${title} block`}
-          className="activity-copy custom-message__copy"
-        />
-      </div>
+      </ActivityHeader>
       <ImageGallery>
         <div className="custom-message__body">
           {parts.map((part: unknown, index) => {
@@ -114,10 +118,9 @@ export const CustomMessage = memo(function CustomMessage({
                   index,
                   owner,
                 )) || (
-                <CodeView
+                <ActivityText
                   key={index}
-                  className="activity-reader"
-                  tabIndex={0}
+                  label="Extension content"
                   text={inspect(part)}
                 />
               )
@@ -132,9 +135,8 @@ export const CustomMessage = memo(function CustomMessage({
           className="custom-message__details"
         >
           {() => (
-            <CodeView
-              className="activity-reader"
-              tabIndex={0}
+            <ActivityText
+              label="Extension details"
               text={inspect({
                 customType: message.customType,
                 ...(presentation && { content }),

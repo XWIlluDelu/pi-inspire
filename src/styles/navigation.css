@@ -640,31 +640,6 @@
   color: var(--muted);
 }
 
-.workspace-tree__file-label {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  flex-direction: column;
-  justify-content: center;
-}
-
-.workspace-tree__name,
-.workspace-tree__path {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.workspace-tree__name {
-  flex: 1;
-}
-
-.workspace-tree__path {
-  color: var(--faint);
-  font: var(--text-xs)/var(--leading-ui) var(--font-mono);
-}
-
 .workspace-tree--results .search-match {
   font-weight: 600;
 }

@@ -1,8 +1,4 @@
-import type {
-  ModelSettingsSnapshot,
-  ProviderLoginAttempt,
-  ProviderLoginOption,
-} from "../../../shared/model-settings";
+import type { ModelSettingsSnapshot } from "../../../shared/model-settings";
 
 const modelChoices = [
   {
@@ -70,58 +66,6 @@ export function modelSettingsSnapshot(
         ],
       },
     ],
-    ...overrides,
-  };
-}
-export function loginProviders(): ProviderLoginOption[] {
-  return [
-    {
-      id: "anthropic",
-      name: "Anthropic",
-      stored: "api_key",
-      methods: [
-        { type: "api_key", label: "Anthropic API key" },
-        { type: "oauth", label: "Claude authorization" },
-      ],
-    },
-    {
-      id: "github-copilot",
-      name: "GitHub Copilot",
-      stored: null,
-      methods: [
-        {
-          type: "oauth",
-          label: "GitHub authorization",
-          remoteHelp:
-            "Open the sign-in link on this device and enter the displayed code.",
-        },
-      ],
-    },
-  ];
-}
-export function pendingLogin(
-  overrides: Partial<ProviderLoginAttempt> = {},
-): ProviderLoginAttempt {
-  return {
-    id: "browser-fixture-login",
-    provider: "anthropic",
-    type: "oauth",
-    status: "pending",
-    events: [],
-    prompt: {
-      id: "method",
-      type: "select",
-      message: "Choose a login method",
-      options: [
-        { id: "browser", label: "Browser callback" },
-        {
-          id: "copy_code",
-          label: "Copy authorization code",
-          remoteHelp:
-            "Open the sign-in link on this device, then paste the authorization code here.",
-        },
-      ],
-    },
     ...overrides,
   };
 }

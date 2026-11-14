@@ -1,16 +1,22 @@
 .models-settings-layout,
 .models-browse { display: flex; flex-direction: column; gap: var(--space-4); }
 .models-browse[hidden] { display: none; }
-.settings__page:has(.models-editor),
-.models-settings-layout:has(> .models-editor) { flex: 1; min-height: 0; }
-.models-settings.models-editor { container: settings-card / inline-size; padding: 0; flex: 1; min-height: 0; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: var(--radius-surface); background: var(--bg-surface); overflow: hidden; }
+.models-settings.models-editor { container: settings-card / inline-size; padding: 0; min-block-size: 100cqb; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: var(--radius-surface); background: var(--bg-surface); overflow: clip; }
 .models-editor__header { flex: none; padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--line); }
 .models-editor__header > .button { margin-left: calc(-1 * var(--space-3)); margin-bottom: var(--space-2); }
 .models-editor__header .models-subheading { margin: 0; }
 .models-editor__header h3 { margin: 0; font-size: var(--text-base); font-weight: 500; }
 .models-editor__header code { display: block; margin-top: var(--space-1); color: var(--muted); font-size: var(--text-xs); overflow-wrap: anywhere; }
-.models-form__body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: var(--space-4); }
-.models-form__actions { flex: none; padding: var(--space-3) var(--space-4); border-top: 1px solid var(--line); }
+.models-form { flex: 1 0 auto; display: flex; flex-direction: column; }
+.models-form__body { flex: 1; padding: var(--space-4); }
+.models-form__actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--line);
+  background: var(--bg-surface);
+}
 .models-settings,
 .models-auth {
   position: relative;
@@ -19,16 +25,10 @@
 .settings__card > .models-settings {
   padding: 0;
 }
-.models-settings > :is(.settings__error, .settings__field-help) {
-  margin: 0;
-  padding: var(--set-row-pad);
-}
-.models-settings > .button {
-  margin: 0 14px var(--space-2);
-}
 .settings__card > .models-auth {
   padding: 0 14px;
 }
+.models-auth .settings__card-message { padding-inline: 0; }
 .models-advanced-providers {
   padding-inline: 14px;
 }
@@ -160,7 +160,6 @@
 .models-form__optional summary { cursor: pointer; color: var(--muted); padding: var(--space-2) 0; }
 .models-form__optional summary:focus-visible { outline: 2px solid var(--accent-focus); }
 .models-form__optional .models-form__grid { margin-top: var(--space-2); }
-.models-form { flex: 1; min-height: 0; display: flex; flex-direction: column; margin: 0; }
 .models-form__wide { grid-column: 1 / -1; }
 .models-form label { display: flex; flex-direction: column; gap: var(--space-1); font-size: var(--text-sm); color: var(--ink); }
 .models-settings input:where(:not([type=checkbox], [type=radio], .search-field input)),
@@ -230,26 +229,10 @@
   .models-auth__back { min-height: 44px; }
 }
 
-/* Keep short windows usable without compressing the editor's input viewport. */
-@media (max-height: 500px) {
-  .settings__page:has(.models-editor),
-  .models-settings-layout:has(> .models-editor),
-  .models-settings.models-editor,
-  .models-form,
-  .models-form__body { flex: none; }
-  .models-settings.models-editor { overflow: clip; }
-  .models-form__body { overflow-y: visible; }
-  .models-form__actions {
-    position: sticky;
-    bottom: 0;
-    z-index: 1;
-    background: var(--bg-surface);
-  }
-  .settings__content:has(.models-editor) {
-    padding-bottom: 0;
-    /* Reserve the touch action, padding, border and focus inset. */
-    scroll-padding-block: var(--space-2) calc(44px + 2 * var(--space-3) + 1px + var(--space-2));
-  }
+.settings__content:has(.models-editor) {
+  padding-bottom: 0;
+  /* Reserve the touch action, padding, border and focus inset. */
+  scroll-padding-block: var(--space-2) calc(44px + 2 * var(--space-3) + 1px + var(--space-2));
 }
 
 @container settings-card (max-width: 420px) {

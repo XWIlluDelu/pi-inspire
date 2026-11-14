@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { nullDiagnosticLogger } from "../../server/diagnostics.js";
 import {
   createInstanceControlRequest,
   InstanceHttpControl,
@@ -19,6 +20,11 @@ import {
   processStartIdentity,
   writeInstanceState,
 } from "../../server/instance-state.mjs";
+import {
+  type InspireSourceIdentity,
+  MaintenanceRestartController,
+} from "../../server/maintenance-restart.js";
+import { workbenchFixture } from "../fixtures/workbench.js";
 import {
   closeHostApiFixture,
   hostApiFixture,
@@ -352,23 +358,33 @@ describe("readiness at an untrusted port", () => {
 describe("Host local-control ingress", () => {
   it("uses only current owned identity, authenticates actions once, and preserves API/origin gates", async () => {
     let owner: InstanceState | null = null;
-    const leaseId = "a".repeat(43);
-    const maintenance = {
-      reserve: vi.fn(async () => ({
-        kind: "ready" as const,
-        leaseId,
-        expiresAt: Date.now() + 30_000,
-        updates: ["inspire" as const],
-      })),
-      commit: vi.fn((leaseId: string) => ({
-        kind: "committed" as const,
-        leaseId,
-      })),
-      release: vi.fn((_leaseId: string) => ({ kind: "released" as const })),
-    };
+    const root = await mkdtemp(join(tmpdir(), "inspire-local-control-"));
+    directories.push(root);
+    const services = await workbenchFixture(root, { seed: false });
+    const clean = { kind: "source", revision: "old" } as const;
+    const dirty = { kind: "source", revision: null } as const;
+    const unknown = { kind: "unknown" } as const;
+    let current: InspireSourceIdentity = clean;
+    let piVersion = "1.5.0";
+    const maintenance = (runningSource: InspireSourceIdentity) =>
+      new MaintenanceRestartController({
+        runtime: services.runtime,
+        root,
+        runningSource,
+        piVersion: "1.5.0",
+        diagnostics: nullDiagnosticLogger(),
+        inspectPiVersion: async () => piVersion,
+        inspectSource: async () => current,
+      });
+    let controller = maintenance(clean);
     const f = await hostApiFixture({
+      services,
       instanceState: () => owner,
-      maintenanceRestart: maintenance,
+      maintenanceRestart: {
+        reserve: () => controller.reserve(),
+        commit: (id) => controller.commit(id),
+        release: (id) => controller.release(id),
+      },
       activeHerdrMode: true,
     });
     const api = request(f.application.server);
@@ -419,18 +435,57 @@ describe("Host local-control ingress", () => {
       await expect(
         instanceLaunchUrl(owner, "https://foreign.invalid"),
       ).resolves.toBeNull();
-      await expect(
-        requestInstanceControl(owner, "maintenance-prepare"),
-      ).resolves.toMatchObject({ leaseId });
-      await expect(
-        requestInstanceControl(owner, "maintenance-commit", { leaseId }),
-      ).resolves.toEqual({ kind: "committed", leaseId });
-      expect(maintenance.reserve).toHaveBeenCalledOnce();
-      expect(maintenance.commit).toHaveBeenCalledExactlyOnceWith(leaseId);
-      await expect(
-        requestInstanceControl(owner, "maintenance-release", { leaseId }),
-      ).resolves.toEqual({ kind: "released" });
-      expect(maintenance.release).toHaveBeenCalledExactlyOnceWith(leaseId);
+      const liveOwner = owner;
+      const prepare = () =>
+        requestInstanceControl(liveOwner, "maintenance-prepare");
+      await expect(prepare()).resolves.toEqual({
+        kind: "skipped",
+        reason: "no-update",
+      });
+      piVersion = "1.5.1";
+      for (const [running, installed, reason] of [
+        [unknown, clean, "inspire-identity-unavailable"],
+        [clean, unknown, "inspire-identity-unavailable"],
+        [dirty, clean, "inspire-source-not-clean"],
+        [clean, dirty, "inspire-source-not-clean"],
+      ] as const) {
+        controller = maintenance(running);
+        current = installed;
+        await expect(prepare()).resolves.toEqual({ kind: "skipped", reason });
+      }
+      const assertLease = async (updates: string[]) => {
+        const lease = await prepare();
+        expect(lease).toMatchObject({
+          kind: "ready",
+          updates,
+          expiresAt: expect.any(Number),
+        });
+        if (
+          typeof lease !== "object" ||
+          !lease ||
+          !("leaseId" in lease) ||
+          typeof lease.leaseId !== "string"
+        )
+          throw new Error("Expected a maintenance lease");
+        const { leaseId } = lease;
+        await expect(prepare()).resolves.toEqual({
+          kind: "skipped",
+          reason: "restart-pending",
+        });
+        await expect(
+          requestInstanceControl(liveOwner, "maintenance-commit", { leaseId }),
+        ).resolves.toEqual({ kind: "committed", leaseId });
+        await expect(
+          requestInstanceControl(liveOwner, "maintenance-release", { leaseId }),
+        ).resolves.toEqual({ kind: "released" });
+      };
+      controller = maintenance(clean);
+      current = { kind: "source", revision: "new" };
+      await assertLease(["pi", "inspire"]);
+      piVersion = "1.5.0";
+      controller = maintenance({ kind: "package", version: "0.1.0" });
+      current = { kind: "package", version: "0.2.0" };
+      await assertLease(["inspire"]);
       const previousMode = createInstanceControlRequest(owner, "restart-mode");
       const previousOwner = owner;
       owner = null;

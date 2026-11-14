@@ -1,9 +1,15 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import AxeBuilder from "@axe-core/playwright";
-import { expect, test } from "@playwright/test";
+import { expect, type Request, type Route, test } from "@playwright/test";
+import type { ProviderAuthOperation } from "../../shared/provider-auth-bridge";
 import { browserFixtureHome } from "./fixtures/workspace.mjs";
 import { openCommandPalette, pairAndOpen } from "./support/navigation";
+
+function loginRequest(request: Request): ProviderAuthOperation | undefined {
+  if (new URL(request.url()).pathname === "/api/provider-auth")
+    return request.postDataJSON();
+}
 
 test.use({
   serviceWorkers: "block",
@@ -18,11 +24,45 @@ test("updates and removes real provider credentials through /login while preserv
   const original = await readFile(auth);
   const stored = async () => JSON.parse(await readFile(auth, "utf8")).anthropic;
   await page.emulateMedia({ reducedMotion: "reduce" });
+  const unavailable = (route: Route) =>
+    route.fulfill({
+      status: 503,
+      json: { error: "Provider service unavailable" },
+    });
+  let directoryFault = false;
+  let discardCancelReply = false;
+  let holdStartReply = false;
+  const directoryReply = Promise.withResolvers<void>();
+  const created = Promise.withResolvers<{ owner: string | null; id: string }>();
+  const releaseStart = Promise.withResolvers<void>();
+  await page.route("**/api/provider-auth**", async (route) => {
+    const request = loginRequest(route.request());
+    if (request?.operation === "providers" && directoryFault) {
+      await directoryReply.promise;
+      return unavailable(route);
+    }
+    if (request?.operation === "cancel" && discardCancelReply) {
+      const cancelled = await route.fetch();
+      expect(cancelled.ok()).toBe(true);
+      return unavailable(route);
+    }
+    if (request?.operation === "start" && holdStartReply) {
+      holdStartReply = false;
+      const response = await route.fetch();
+      const { result } = await response.json();
+      created.resolve({
+        owner: new URL(route.request().url()).searchParams.get("sessionId"),
+        id: result.id,
+      });
+      await releaseStart.promise;
+      return route.fulfill({ response });
+    }
+    await route.fallback();
+  });
   try {
     await writeFile(
       auth,
       JSON.stringify({
-        ...JSON.parse(original.toString("utf8")),
         anthropic: { type: "api_key", key: "synthetic" },
       }),
     );
@@ -54,11 +94,28 @@ test("updates and removes real provider credentials through /login while preserv
     await draft.fill("Keep my auth-task draft");
     const palette = await openCommandPalette(page);
     await palette.getByLabel("Filter commands").fill("/login");
+    directoryFault = true;
     await palette.getByRole("option", { name: /^\/login/ }).click();
     await expect(search).toBeFocused();
     await settings
       .getByRole("button", { name: "Back to connected providers" })
       .click();
+    const credentials = settings.getByRole("region", {
+      name: "Login & API keys",
+    });
+    const retry = credentials.getByRole("button", { name: "Retry" });
+    const connect = credentials.getByRole("button", {
+      name: "Connect provider",
+    });
+    await expect(credentials.getByText("Loading providers…")).toBeVisible();
+    await expect(connect).toBeDisabled();
+    directoryReply.resolve();
+    await expect(credentials.getByRole("alert")).toContainText(
+      "Failed to load providers",
+    );
+    await expect(connect).toBeDisabled();
+    directoryFault = false;
+    await retry.click();
     const manage = settings.getByRole("button", {
       name: "Manage Anthropic",
       exact: true,
@@ -73,9 +130,13 @@ test("updates and removes real provider credentials through /login while preserv
     await expect(secret).toHaveAttribute("type", "text");
     await settings.getByRole("button", { name: "Hide credential" }).click();
     await expect(secret).toHaveAttribute("type", "password");
+    discardCancelReply = true;
     await settings
       .getByRole("button", { name: "Cancel login", exact: true })
       .click();
+    await expect(credentials.getByText("Login cancelled.")).toBeVisible();
+    await expect(credentials.getByRole("alert")).toHaveCount(0);
+    discardCancelReply = false;
     const dismiss = settings.getByRole("button", {
       name: "Dismiss",
       exact: true,
@@ -85,6 +146,7 @@ test("updates and removes real provider credentials through /login while preserv
 
     await method.click();
     await secret.fill("SYNTHETIC_API_KEY");
+    directoryFault = true;
     await settings
       .getByRole("button", { name: "Continue", exact: true })
       .click();
@@ -95,6 +157,13 @@ test("updates and removes real provider credentials through /login while preserv
       .poll(stored)
       .toEqual({ type: "api_key", key: "SYNTHETIC_API_KEY" });
     await dismiss.click();
+    await expect(credentials.getByRole("alert")).toContainText(
+      "Provider refresh failed",
+    );
+    await expect(manage).toBeEnabled();
+    directoryFault = false;
+    await retry.click();
+    await expect(credentials.getByRole("alert")).toHaveCount(0);
     await manage.click();
     await settings
       .getByRole("button", {
@@ -106,6 +175,9 @@ test("updates and removes real provider credentials through /login while preserv
       .getByRole("button", { name: "Remove saved credentials", exact: true })
       .click();
     await expect.poll(stored).toBeUndefined();
+    await expect(
+      credentials.getByText("No connected providers."),
+    ).toBeVisible();
 
     await settings
       .getByRole("button", { name: "Connect provider", exact: true })
@@ -122,10 +194,27 @@ test("updates and removes real provider credentials through /login while preserv
         ({ impact }) => impact === "critical" || impact === "serious",
       ),
     ).toEqual([]);
+    await search.fill("anthropic");
+    await settings.getByRole("button", { name: "Set up Anthropic" }).click();
+    holdStartReply = true;
+    await method.click();
+    const old = await created.promise;
     await settings.getByRole("button", { name: "Close settings" }).click();
+    const cancelled = page.waitForResponse((response) => {
+      const request = loginRequest(response.request());
+      return request?.operation === "cancel" && request.id === old.id;
+    });
+    releaseStart.resolve();
+    const receipt = await cancelled;
+    expect(new URL(receipt.url()).searchParams.get("sessionId")).toBe(
+      old.owner,
+    );
+    expect((await receipt.json()).result.status).toBe("cancelled");
     await expect(draft).toHaveValue("Keep my auth-task draft");
     await expect(model).toHaveAttribute("title", current);
   } finally {
+    directoryReply.resolve();
+    releaseStart.resolve();
     await writeFile(auth, original);
   }
 });

@@ -3,6 +3,7 @@ import request from "supertest";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { HostRestartBackend } from "../../server/host-restart.js";
 import type { HerdrEnhancementStatus } from "../../shared/herdr.js";
+import type { HostRestartRequest } from "../../shared/host-restart.js";
 import { closeHostApiFixture, hostApiFixture } from "./fixtures/host-api.js";
 
 let host: Awaited<ReturnType<typeof hostApiFixture>> | undefined;
@@ -28,47 +29,75 @@ async function fixture(
   };
 }
 
+async function restartFixture() {
+  const restart = vi.fn<HostRestartBackend["request"]>(
+    async (_scope, commit) => ({
+      code: (await commit()) ? 0 : 1,
+    }),
+  );
+  const prepare = vi.fn<HostRestartBackend["prepare"]>(async () => {});
+  const inspect = vi.fn<HostRestartBackend["inspect"]>(async () => ({
+    host: true,
+    allPi: true,
+    includeHerdr: true,
+  }));
+  const { runtime, guest, local } = await fixture({
+    restart: { request: restart, prepare, inspect },
+  });
+  const path = "/api/host/restart";
+  const observe = () =>
+    local.get(path).expect("Cache-Control", "no-store").expect(200);
+  const status = (await observe()).body;
+  const intent = (
+    patch: Partial<HostRestartRequest> = {},
+  ): HostRestartRequest => ({
+    hostId: status.hostId,
+    operationId: randomUUID(),
+    scope: "host",
+    ...patch,
+  });
+  return {
+    runtime,
+    guest,
+    path,
+    status,
+    intent,
+    inspect,
+    prepare,
+    restart,
+    submit: (value: object) => local.post(path).send(value),
+    settle: (expected: object) =>
+      vi.waitFor(async () => {
+        expect((await observe()).body.operation).toMatchObject(expected);
+      }),
+  };
+}
+
 describe("Host administration API", () => {
-  it("authenticates restart, deduplicates preparation, and retains a failed receipt without restarting", async () => {
-    const restart = vi.fn(async () => ({ code: 0 }));
+  it("authenticates restart, deduplicates preparation, and only drains after a supported retry", async () => {
+    const f = await restartFixture();
     const preparation = Promise.withResolvers<void>();
-    const prepare = vi.fn(() => preparation.promise);
-    const { runtime, guest, local } = await fixture({
-      restart: {
-        inspect: async () => ({ host: true, allPi: true, includeHerdr: true }),
-        prepare,
-        request: restart,
-      },
-    });
-    const reserve = vi.spyOn(runtime, "reserveMaintenanceRestart");
-    const path = "/api/host/restart";
-    const submit = (intent: object) => local.post(path).send(intent);
-    await guest.get(path).expect(401);
-    await guest.post(path).send({}).expect(401);
-    const observe = () =>
-      local.get(path).expect("Cache-Control", "no-store").expect(200);
-    const { body: status } = await observe();
-    expect(status).toMatchObject({
+    f.prepare.mockReturnValueOnce(preparation.promise);
+    const reserve = vi.spyOn(f.runtime, "reserveMaintenanceRestart");
+    const attached = vi.spyOn(f.runtime, "checkAttachedRestartWork");
+    await f.guest.get(f.path).expect(401);
+    await f.guest.post(f.path).send({}).expect(401);
+    expect(f.status).toMatchObject({
       allPiAvailable: true,
       allPiIncludesHerdr: true,
     });
-    const intent = {
-      hostId: status.hostId,
-      operationId: randomUUID(),
-      scope: "all-pi",
-      interruptWork: true,
-    };
-    await submit(intent).set("Origin", "https://foreign.example").expect(403);
+    const intent = f.intent({ scope: "all-pi", interruptWork: true });
+    await f.submit(intent).set("Origin", "https://foreign.example").expect(403);
     for (const patch of [
       { scope: "arbitrary-service" },
       { scope: "all" },
       { interruptWork: false },
       { interruptWork: undefined },
     ])
-      await submit({ ...intent, ...patch }).expect(400);
-    await submit({ ...intent, hostId: randomUUID() }).expect(409);
-    expect(prepare).not.toHaveBeenCalled();
-    const admitted = await submit(intent).expect(202);
+      await f.submit({ ...intent, ...patch }).expect(400);
+    await f.submit({ ...intent, hostId: randomUUID() }).expect(409);
+    expect(f.prepare).not.toHaveBeenCalled();
+    const admitted = await f.submit(intent).expect(202);
     expect(admitted.body).toMatchObject({
       executor: { kind: "lifecycle", hostId: intent.hostId },
       operationId: intent.operationId,
@@ -76,30 +105,128 @@ describe("Host administration API", () => {
       state: "pending",
       result: { phase: "preparing" },
     });
-    await submit(intent).expect(202);
-    await submit({ ...intent, scope: "host" }).expect(409);
-    const late = await observe();
-    expect(late.body.operation).toMatchObject({
+    await f.submit(intent).expect(202);
+    await f.submit({ ...intent, scope: "host" }).expect(409);
+    await f.submit(f.intent()).expect(409);
+    await f.settle({
       id: intent.operationId,
       scope: "all-pi",
       phase: "preparing",
     });
+    expect(reserve).not.toHaveBeenCalled();
     preparation.reject(new Error("Synthetic preparation failure"));
-    await vi.waitFor(async () => {
-      const { body } = await local.get(path).expect(200);
-      expect(body.operation).toMatchObject({
-        phase: "rejected",
-        error: "Synthetic preparation failure",
-      });
+    await f.settle({
+      phase: "rejected",
+      error: "Synthetic preparation failure",
     });
-    expect((await submit(intent).expect(202)).body).toMatchObject({
+    expect((await f.submit(intent).expect(202)).body).toMatchObject({
       state: "rejected",
       result: { phase: "rejected" },
     });
-    expect(prepare).toHaveBeenCalledOnce();
+    f.inspect.mockResolvedValue({ host: true, allPi: false });
+    const unsupported = f.intent({ scope: intent.scope, interruptWork: true });
+    await f.submit(unsupported).expect(202);
+    await f.settle({
+      id: unsupported.operationId,
+      phase: "rejected",
+      error: expect.stringContaining("Linux services"),
+    });
+    expect(f.prepare).toHaveBeenCalledOnce();
     expect(reserve).not.toHaveBeenCalled();
-    expect(restart).not.toHaveBeenCalled();
+    expect(f.restart).not.toHaveBeenCalled();
+
+    await f.submit(f.intent()).expect(202);
+    await f.settle({ phase: "submitted" });
+    expect(reserve).toHaveBeenCalledExactlyOnceWith(false, true);
+    expect(attached).toHaveBeenCalledOnce();
+    expect(f.restart).toHaveBeenCalledExactlyOnceWith(
+      "host",
+      expect.any(Function),
+    );
   });
+
+  it("requires a fresh interruption grant and validates the real lease before stopping attached work", async () => {
+    const f = await restartFixture();
+    const stop = vi
+      .spyOn(f.runtime, "stopAttachedPiWork")
+      .mockRejectedValueOnce(new Error("Could not confirm Stop for session A"));
+    const lease = f.runtime.reserveMaintenanceRestart();
+    if (lease.kind !== "ready") throw new Error("Expected idle Host");
+    await f.submit(f.intent({ interruptWork: true })).expect(202);
+    await f.settle({ phase: "rejected", busyReason: "restart-pending" });
+    expect(stop).not.toHaveBeenCalled();
+    f.runtime.releaseMaintenanceRestart(lease.leaseId);
+
+    const reserve = vi.spyOn(f.runtime, "reserveMaintenanceRestart");
+    reserve.mockReturnValueOnce({ kind: "busy", reason: "active-work" });
+    const request = f.intent();
+    await f.submit(request).expect(202);
+    await f.settle({
+      id: request.operationId,
+      phase: "rejected",
+      busyReason: "active-work",
+    });
+    await f.submit({ ...request, interruptWork: true }).expect(409);
+    const anyway = f.intent({ interruptWork: true, skipAttachedStop: true });
+    await f.submit(anyway).expect(409);
+    await f.submit(f.intent({ interruptWork: true })).expect(202);
+    await f.settle({
+      phase: "rejected",
+      stopUnconfirmed: true,
+      error: "Could not confirm Stop for session A",
+    });
+    expect(f.restart).not.toHaveBeenCalled();
+    await f.submit(anyway).expect(202);
+    await f.settle({ phase: "submitted" });
+    await f.submit({ ...anyway, skipAttachedStop: undefined }).expect(409);
+    expect(stop).toHaveBeenCalledOnce();
+    expect(f.restart).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    "active-work",
+    "in-flight-operation",
+    "not-issued",
+    "failed",
+    "lost",
+  ] as const)(
+    "fences %s at commit or submission and never replays the same receipt",
+    async (fault) => {
+      const f = await restartFixture();
+      const commit = vi.spyOn(f.runtime, "commitMaintenanceRestart");
+      const veto = fault === "active-work" || fault === "in-flight-operation";
+      if (veto) commit.mockReturnValueOnce({ kind: "skipped", reason: fault });
+      else
+        f.restart.mockImplementationOnce(async (_scope, admit) => {
+          expect(await admit()).toBe(true);
+          if (fault === "lost") throw new Error("IPC lost");
+          return fault === "not-issued"
+            ? { code: 1, issued: false }
+            : { code: 1 };
+        });
+      const uncertain = fault === "failed" || fault === "lost";
+      const phase = uncertain ? "unknown" : "rejected";
+      const intent = f.intent();
+      await f.submit(intent).expect(202);
+      await f.settle({
+        phase,
+        ...(veto
+          ? {
+              busyReason: fault,
+              error: expect.stringContaining("Stop work and restart"),
+            }
+          : {}),
+      });
+      expect(f.runtime.reserveMaintenanceRestart().kind).toBe(
+        uncertain ? "busy" : "ready",
+      );
+      if (uncertain) await f.submit(f.intent()).expect(409);
+      expect((await f.submit(intent).expect(202)).body.result.phase).toBe(
+        phase,
+      );
+      expect(f.restart).toHaveBeenCalledOnce();
+    },
+  );
 
   it("authenticates Herdr status and reports missing integration as unavailable", async () => {
     const { guest, local } = await fixture();

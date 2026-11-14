@@ -196,31 +196,6 @@
 .topbar__extension-status:has(button:hover) { background: var(--bg-inset); }
 .topbar__extension-toggle:focus-visible { outline: 2px solid var(--accent-focus); outline-offset: -2px; }
 
-.extension-status-popover {
-  position: fixed;
-  z-index: 45;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding: var(--space-3);
-  border: 1px solid var(--hairline-strong);
-  border-radius: var(--radius-overlay);
-  background: var(--bg-surface);
-  box-shadow: var(--shadow-overlay);
-  color: var(--ink);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  line-height: var(--leading-ui);
-}
-
-.extension-status-popover > p {
-  margin: 0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.extension-status-popover > p + p { margin-top: var(--space-2); }
-.extension-status-popover:focus-visible { outline: 2px solid var(--accent-focus); outline-offset: -2px; }
-
 .topbar > .icon-button,
 .topbar__actions {
   align-self: center;

@@ -29,6 +29,9 @@ interface PiNativeCommandDescriptor {
   argumentHint?: string;
   execution: PiNativeCommandExecution;
   surface?: CommandSurface;
+  modelSettingsFocus?: "credentials" | "common";
+  selectionHint?: string;
+  palette?: "prepare" | "export";
   terminalGuidance?: string;
   requiresIdleOwnedPi?: true;
   /** Can be used while the retained session's project folder is unavailable. */
@@ -69,12 +72,14 @@ export const PI_NATIVE_COMMANDS = [
   },
   {
     name: "scoped-models",
+    modelSettingsFocus: "common",
     availableWithoutWorkspace: true,
     description: "Manage common models and their cycle order",
     execution: "surface",
   },
   {
     name: "export",
+    palette: "export",
     description: "Export session HTML or current-branch JSONL",
     argumentHint: "[path.html|path.jsonl]",
     execution: "host",
@@ -136,6 +141,7 @@ export const PI_NATIVE_COMMANDS = [
   {
     name: "fork",
     surface: "history",
+    selectionHint: "Choose a user message in History, then select Fork",
     description: "Open History to fork from a user message",
     execution: "surface",
   },
@@ -154,12 +160,14 @@ export const PI_NATIVE_COMMANDS = [
   },
   {
     name: "login",
+    modelSettingsFocus: "credentials",
     description: "Log in to a provider on this Host",
     argumentHint: "[provider]",
     execution: "surface",
   },
   {
     name: "logout",
+    modelSettingsFocus: "credentials",
     description: "Manage saved provider credentials on this Host",
     argumentHint: "[provider]",
     execution: "surface",
@@ -174,6 +182,7 @@ export const PI_NATIVE_COMMANDS = [
   {
     name: "compact",
     requiresIdleOwnedPi: true,
+    palette: "prepare",
     description: "Compact the current context",
     argumentHint: "[instructions]",
     execution: "host",

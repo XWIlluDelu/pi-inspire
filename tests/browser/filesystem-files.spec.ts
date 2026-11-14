@@ -257,8 +257,8 @@ test("hidden inline references send unchanged text; only explicit picker selecti
     const query = new URL(route.request().url()).searchParams.get("q");
     if (query === "offline-catalog")
       return route.fulfill({
-        status: 503,
-        json: { error: "Catalog unavailable" },
+        status: 422,
+        json: { error: "Catalog query refused" },
       });
     if (query === "config") await scan.promise;
     await route.continue();
@@ -286,7 +286,7 @@ test("hidden inline references send unchanged text; only explicit picker selecti
     exact: true,
   });
   await expect(
-    hiddenOption.locator(".completion__hint .resource-path__visible"),
+    hiddenOption.locator(".picker__path .resource-path__visible"),
   ).toHaveText(".settings");
   await hiddenOption.click();
   const text = 'Read @".settings/config.txt" ';

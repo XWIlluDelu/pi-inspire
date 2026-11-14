@@ -11,7 +11,7 @@ covers:
   - tests/server/{model-settings,model-catalog,model-metadata.integration,model-workflow.integration,provider-auth,provider-auth-bridge.integration}.test.ts
   - tests/server/configuration-file.test.ts
   - tests/integration/model-cycle-native.test.ts
-  - tests/web/{configuration-document,model-settings,model-store,model-selector,modal-focus,provider-authentication,welcome-model-transition}.test.ts*
+  - tests/web/{configuration-document,model-store,model-selector,modal-focus,provider-authentication,welcome-model-transition}.test.ts*
   - tests/browser/{model-selection,model-settings*,model-workflow,provider-authentication}.spec.ts
 progress: in-progress
 ---
@@ -253,8 +253,9 @@ Pi's saved credential; environment and `models.json` credentials are managed sep
   targets, invalid documents, committed saves with failed readback and lock release after cleanup
   failure. MCP uses the same transaction.
 - `tests/browser/model-settings.spec.ts` uses native declarations to prove provider setup, rejected
-  candidates, global default saves and Common updates from New's prospective project. A later
-  Settings visit uses the selected saved session's owner.
+  candidates, global default saves and direct and wildcard Common edits from New's prospective
+  project. It also checks unavailable preferences, catalog failures and the identity of typed
+  declarations. A later Settings visit uses the selected saved session's owner.
 - `tests/browser/model-workflow.spec.ts` covers trusted extension defaults, native explicit and
   inherited startup choices, and confirmed project controls before first input.
 - `tests/web/welcome-model-transition.test.tsx` covers blocked or failed inheritance, stale

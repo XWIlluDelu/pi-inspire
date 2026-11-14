@@ -2,6 +2,23 @@ import { type ComponentPropsWithRef, type CSSProperties, useMemo } from "react";
 import type { GitDiffLine } from "../../shared/contracts";
 import { highlightSource } from "../syntax-highlighting";
 
+export function SourceReader({
+  className,
+  label,
+  ...props
+}: ComponentPropsWithRef<"div"> & { label: string }) {
+  return (
+    <div
+      {...props}
+      className={`source-reader ${className}`}
+      role="region"
+      aria-label={label}
+      tabIndex={0}
+      data-pane-scroll-active="true"
+    />
+  );
+}
+
 export function CodeView({
   text,
   language,

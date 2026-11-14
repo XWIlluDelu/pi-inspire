@@ -1,3 +1,13 @@
+export function deferredReceipt<Result>() {
+  let resolve!: (result: Result) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<Result>((accept, refuse) => {
+    resolve = accept;
+    reject = refuse;
+  });
+  return { promise, resolve, reject };
+}
+
 /** One in-flight observation of a receipt or lifecycle record. */
 export class ReceiptRead<Owner, Result> {
   private active?: {
@@ -28,16 +38,11 @@ export class ReceiptRead<Owner, Result> {
     if (previous && previous.owner === owner) return previous.task;
     this.cancel();
     const controller = new AbortController();
-    let resolve!: (result: Result) => void;
-    let reject!: (error: unknown) => void;
-    const result = new Promise<Result>((accept, refuse) => {
-      resolve = accept;
-      reject = refuse;
-    });
+    const { promise, resolve, reject } = deferredReceipt<Result>();
     const active = {
       owner,
       controller,
-      task: result.finally(() => {
+      task: promise.finally(() => {
         if (this.active === active) this.active = undefined;
       }),
     };

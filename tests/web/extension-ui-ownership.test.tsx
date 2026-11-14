@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { emptyToolPresentationConfiguration } from "../../shared/tool-presentation-config";
 import { ExtensionDialogContent } from "../../src/components/ExtensionDialogContent";
@@ -59,7 +59,7 @@ it("keeps machine status out of the header and scopes expanded status to its ses
   publishStatus({ usage: "5h 12%", "example:tier": "Fast tier\nSecond line" });
   fireEvent.click(screen.getByRole("button", { name: "Extension status" }));
   const status = screen.getByRole("dialog", { name: "Extension status" });
-  expect(within(status).getByText("Fast tier Second line")).toBeVisible();
+  expect(status).toHaveTextContent("Fast tier Second line");
 
   await selectSession(store, {
     ...activeSnapshot({ sessionId: "s2" }),

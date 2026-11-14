@@ -90,7 +90,7 @@ test("@cross-browser keeps compact Changes rows readable through refresh and nav
   const source = row.locator(".changes__source");
   await expect(source).toBeVisible();
   expect((await source.boundingBox())!.y).toBeGreaterThan(
-    (await row.locator(".res__row-name").boundingBox())!.y,
+    (await row.locator(".file-row__name").boundingBox())!.y,
   );
   const sourceBounds = (await source.boundingBox())!;
   const rowBounds = (await row.boundingBox())!;

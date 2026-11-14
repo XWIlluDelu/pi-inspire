@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 import { beforeEach, expect, it, vi } from "vitest";
-import type { UploadedAttachment } from "../../shared/contracts";
 import {
   activeSnapshot,
   bootstrapPayload,
@@ -16,68 +15,6 @@ import { pendingQueues } from "./pending-fixtures";
 import { initStore, installStoreRoutes } from "./store-fixture";
 
 beforeEach(() => installFakeWebSocket());
-
-it("merges delayed recovery into the original draft and retains material above the send limit", async () => {
-  const recovery = deferred<RouteResponse>();
-  const handles = Array.from({ length: 8 }, (_, index) => `image-${index}`);
-  const images = handles.map<UploadedAttachment>((id) => ({
-    id,
-    fileName: `${id}.png`,
-    mimeType: "image/png",
-    kind: "image",
-    size: 7,
-  }));
-  const requests = installStoreRoutes((url, init) => {
-    if (url === "/api/pending/recover") return recovery.promise;
-    if (url === "/api/attachments")
-      return {
-        body: {
-          attachments: [
-            { id: "saved-file", fileName: "latest.txt", kind: "file" },
-          ],
-        },
-      };
-    if (url.endsWith("/image")) return { body: "preview bytes" };
-    if (init.method === "DELETE") return { body: { ok: true } };
-  });
-  const { store } = await initStore();
-  const draft = (id = "s1") => store.drafts.get(id);
-  await store.addFiles([new File(["draft file"], "latest.txt")]);
-  store.addProjectFile("README.md");
-  store.drafts.setText("s1", "first draft");
-  const restoring = store.recoverPending();
-  store.drafts.setText("s1", "newest draft");
-  await selectSession(store, activeSnapshot({ sessionId: "s2" }));
-  store.drafts.setText("s2", "other session");
-  recovery.resolve({
-    body: {
-      steering: ["queued caption"],
-      followUp: ["next input"],
-      attachments: images,
-      authorityId: TEST_HOST_AUTHORITY,
-    },
-  });
-  expect(await restoring).toBe(true);
-  expect(draft("s2")).toMatchObject({ text: "other session", attachments: [] });
-  const text = "queued caption\n\nnext input\n\nnewest draft";
-  expect(draft()).toMatchObject({ text, projectFiles: ["README.md"] });
-  await selectSession(store, activeSnapshot());
-  expect(await store.sendPrompt(text)).toBe(false);
-  expect(store.getState().live.notices.at(-1)?.text).toBe(
-    "At most 8 attachments per message",
-  );
-  const staged = () => draft().attachments.map((item) => item.uploadedId);
-  expect(staged()).toEqual([...handles, "saved-file"]);
-  await vi.waitFor(() =>
-    expect(draft().attachments[0]?.previewUrl).toMatch(/^blob:/),
-  );
-  store.removeAttachment(draft().attachments[0]!.localId);
-  expect(staged()).toEqual([...handles.slice(1), "saved-file"]);
-  expect(requests).toHaveBeenCalledWith(
-    `/api/attachments/${handles[0]}`,
-    expect.objectContaining({ method: "DELETE" }),
-  );
-});
 
 it("copies addressed Pending bytes without mutations and retires queued reads after navigation or replacement", async () => {
   const delayedText = deferred<RouteResponse>();

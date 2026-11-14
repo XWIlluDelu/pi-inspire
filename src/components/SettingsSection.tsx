@@ -4,16 +4,31 @@ import { type ReactNode, useId } from "react";
 export function SettingsCardMessage({
   children,
   error = false,
+  loading = false,
+  retry,
 }: {
   children: ReactNode;
   error?: boolean;
+  loading?: boolean;
+  retry?: { run: () => void; label?: string; disabled?: boolean };
 }) {
   return (
-    <div
-      className={`settings__card-message${error ? " settings__error" : ""}`}
-      role={error ? "alert" : undefined}
-    >
-      {children}
+    <div className={`settings__card-message${error ? " settings__error" : ""}`}>
+      {children && (
+        <span role={error ? "alert" : loading ? "status" : undefined}>
+          {children}
+        </span>
+      )}
+      {retry && (
+        <button
+          type="button"
+          className="button button--quiet"
+          onClick={retry.run}
+          disabled={retry.disabled}
+        >
+          {retry.label ?? "Retry"}
+        </button>
+      )}
     </div>
   );
 }

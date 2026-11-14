@@ -58,16 +58,16 @@ export class HostRestartClient {
     try {
       const raw = this.storage().getItem(KEY);
       recordRead = true;
-      if (raw !== null) {
-        if (raw.length > 512) throw new Error();
-        this.patch({
-          pending: hostRestartRequestSchema.parse(JSON.parse(raw)),
-        });
-      } else {
-        this.patch({ pending: null });
-      }
+      if (raw !== null && raw.length > 512) throw new Error();
+      const pending =
+        raw === null ? null : hostRestartRequestSchema.parse(JSON.parse(raw));
       this.loaded = true;
-      this.patch({ blocked: false, recoveryInvalid: false, error: null });
+      this.patch({
+        pending,
+        blocked: false,
+        recoveryInvalid: false,
+        error: null,
+      });
     } catch {
       this.patch({
         blocked: true,
@@ -79,11 +79,21 @@ export class HostRestartClient {
       throw new Error("Restart storage unavailable");
     }
   }
-  private persist(pending: HostRestartRequest | null): void {
+  private persist(
+    pending: HostRestartRequest | null,
+    patch?: Partial<State>,
+  ): void {
     try {
       if (pending) this.storage().setItem(KEY, JSON.stringify(pending));
       else this.storage().removeItem(KEY);
-      this.patch({ blocked: false, recoveryInvalid: false, error: null });
+      this.loaded = true;
+      this.patch({
+        pending,
+        blocked: false,
+        recoveryInvalid: false,
+        error: null,
+        ...patch,
+      });
     } catch {
       this.loaded = false;
       this.patch({
@@ -98,13 +108,12 @@ export class HostRestartClient {
     this.observation.observe("status", () => this.observe());
   private async observe(): Promise<void> {
     const receiptRevision = this.receiptRevision;
-    let restored = false;
     try {
       this.restore();
-      restored = true;
     } catch {
       // Recovery bookkeeping cannot prevent a read of the actual Host state.
     }
+    const restored = this.loaded;
     try {
       const status = await this.api.hostRestartStatus();
       // A pre-POST read of the same Host can still describe the last attempt.
@@ -117,15 +126,13 @@ export class HostRestartClient {
       if (!restored) return;
       const pending = this.state.pending;
       if (pending && pending.hostId !== status.hostId) {
-        this.persist(null);
-        this.patch({ pending: null, notice: "Host reconnected." });
+        this.persist(null, { notice: "Host reconnected." });
       } else if (
         pending &&
         status.operation?.phase === "rejected" &&
         matchesRestartIntent(status.operation, pending)
       ) {
         this.persist(null);
-        this.patch({ pending: null });
       }
     } catch {
       if (!this.state.blocked && receiptRevision === this.receiptRevision)
@@ -136,10 +143,7 @@ export class HostRestartClient {
   clearRecovery = async (): Promise<void> => {
     if (this.state.sending) return;
     try {
-      this.persist(null);
-      this.loaded = true;
-      this.patch({
-        pending: null,
+      this.persist(null, {
         notice:
           "Saved restart status cleared. Any requested restart can still run.",
       });
@@ -174,8 +178,7 @@ export class HostRestartClient {
         ...(interruptWork ? { interruptWork: true } : {}),
         ...(skipAttachedStop ? { skipAttachedStop: true } : {}),
       };
-      this.persist(pending);
-      this.patch({ pending, sending: true, notice: null });
+      this.persist(pending, { sending: true, notice: null });
       await this.send(pending);
     } catch {
       /* Storage errors are already visible and never dispatch. */
@@ -215,9 +218,7 @@ export class HostRestartClient {
         this.patch({ status: { ...status, operation: receipt } });
       }
       if (receipt.phase === "rejected") {
-        this.persist(null);
-        this.patch({
-          pending: null,
+        this.persist(null, {
           notice: receipt.error ?? "Restart was not issued.",
         });
       }

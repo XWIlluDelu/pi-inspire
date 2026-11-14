@@ -12,7 +12,7 @@ import {
   sessionSummary,
   TEST_HOST_AUTHORITY,
 } from "./helpers";
-import { baseRoutes, initStore } from "./store-fixture";
+import { baseRoutes, initStore, installStoreRoutes } from "./store-fixture";
 
 function committed(sessionId: string, preferences = DEFAULT_PREFS) {
   return {
@@ -28,6 +28,110 @@ function committed(sessionId: string, preferences = DEFAULT_PREFS) {
 
 describe("session deletion ownership", () => {
   beforeEach(() => installFakeWebSocket());
+
+  it("applies a committed deletion even when confirmed curation could not be saved", async () => {
+    const preferences = { ...DEFAULT_PREFS, hiddenSessionIds: ["s2"] };
+    const remove = vi.fn(() => ({
+      body: {
+        deleted: [{ sessionId: "s2", disposition: "trashed" }],
+        navigation: {
+          kind: "unavailable",
+          reason: "Deletion metadata could not be saved",
+        },
+      },
+    }));
+    installStoreRoutes((url) => {
+      if (url === "/api/bootstrap")
+        return {
+          body: bootstrapPayload({ startupSessionId: "s1", preferences }),
+        };
+      if (url === "/api/sessions/delete") return remove();
+    });
+    const { store } = await initStore();
+    store.drafts.setText("s2", "discard deleted draft");
+    await expect(store.deleteSession("s2")).resolves.toBe("trashed");
+    expect(store.getState().prefs.hiddenSessionIds).toEqual(["s2"]);
+    expect(store.drafts.get("s2").text).toBe("");
+    expect(store.getState().live.notices.at(-1)?.text).toContain(
+      "metadata could not be saved",
+    );
+    expect(remove).toHaveBeenCalledOnce();
+  });
+
+  it.each(["expanded", "empty"] as const)(
+    "refreshes %s Hidden membership without repeating deletion or losing a concurrent preference",
+    async (change) => {
+      let ids = ["s1", "s2"];
+      const preferenceRead = deferred<{
+        preferences: typeof DEFAULT_PREFS;
+        revision: number;
+      }>();
+      const refreshed = vi.fn();
+      const submitted = vi.fn();
+      let preferences = { ...DEFAULT_PREFS, hiddenSessionIds: ids };
+      let revision = 10;
+      const publish = () => ({ preferences, revision: ++revision });
+      installStoreRoutes((url, init) => {
+        if (url === "/api/bootstrap")
+          return {
+            body: bootstrapPayload({
+              startupSessionId: "s1",
+              preferences,
+              preferenceRevision: revision,
+            }),
+          };
+        if (url === "/api/preferences") {
+          if (init.method !== "PATCH")
+            return preferenceRead.promise.then((body) => ({ body }));
+          preferences = { ...preferences, ...jsonBody(init) };
+          return { body: publish() };
+        }
+        if (url === "/api/sessions/delete") {
+          submitted(jsonBody(init));
+          ids = change === "empty" ? [] : [...ids, "s3"];
+          preferences = { ...preferences, hiddenSessionIds: ids };
+          return {
+            status: change === "empty" ? 404 : 409,
+            body: { error: "Hidden changed", code: "HIDDEN_SELECTION_CHANGED" },
+          };
+        }
+        if (url === "/api/sessions/refresh") {
+          refreshed();
+          return { body: { ok: true } };
+        }
+        const rows = ids.map((id) => sessionSummary({ id }));
+        if (url === "/api/sessions/by-id") return { body: { sessions: rows } };
+        if (url.startsWith("/api/sessions?"))
+          return { body: sessionPage(rows, rows.length) };
+      });
+      const { store } = await initStore();
+      await vi.waitFor(() =>
+        expect(store.getState()).toMatchObject({
+          sessionListLoading: false,
+          sessionListHydrating: false,
+          sessions: expect.arrayContaining([
+            expect.objectContaining({ id: "s2" }),
+          ]),
+        }),
+      );
+      const pending = store.clearHiddenSessions(ids);
+      await vi.waitFor(() => expect(refreshed).toHaveBeenCalledOnce());
+      const oldPublication = publish();
+      store.setPreference("theme", "dark");
+      await vi.waitFor(() => expect(preferences.theme).toBe("dark"));
+      preferenceRead.resolve(oldPublication);
+      await expect(pending).resolves.toBeNull();
+      expect(store.getState().sessionDeleteReviewRequired).toBe(true);
+      await store.clearHiddenSessions(ids);
+      expect(submitted).toHaveBeenCalledExactlyOnceWith({
+        scope: "hidden",
+        sessionIds: ["s1", "s2"],
+      });
+      expect(store.getState().sessions.map(({ id }) => id)).toEqual(ids);
+      expect(store.getState().prefs.hiddenSessionIds).toEqual(ids);
+      expect(store.getState().prefs.theme).toBe("dark");
+    },
+  );
 
   it.each(["success", "failure", "newer-selection", "opening"] as const)(
     "deletes the visible session with %s ownership",

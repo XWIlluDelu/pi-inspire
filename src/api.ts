@@ -27,7 +27,7 @@ import {
   type HostOperationIdentity,
   type HostOperationReceipt,
   hostReceipt,
-  INPUT_OPERATION_PATHS,
+  inputOperationEndpoints as inputRoutes,
   matchOperationReceipt,
 } from "../shared/host-operations";
 import {
@@ -380,23 +380,11 @@ async function uploadFiles(
   );
 }
 
-async function hostOperation<Command extends HostOperationCommand>(
+function confirmedHostReceipt<Command extends HostOperationCommand>(
   command: Command,
   identity: HostOperationIdentity,
-  path: string,
-  body?: unknown,
-  signal?: AbortSignal,
-  timeoutMs?: number | null,
-): Promise<
-  Extract<HostOperationReceipt<Command>, { state: "pending" | "completed" }>
-> {
-  const value = await request<unknown>(
-    path,
-    body === undefined
-      ? { signal }
-      : { method: "POST", signal, body: JSON.stringify(body) },
-    { mutation: true, timeoutMs, readErrorBody: true },
-  );
+  value: unknown,
+): Extract<HostOperationReceipt<Command>, { state: "pending" | "completed" }> {
   const receipt = matchOperationReceipt(value, hostReceipt(command, identity));
   if (!receipt) throw new ApiTransportError("response", true);
   if (receipt.state === "pending")
@@ -434,18 +422,30 @@ async function hostOperation<Command extends HostOperationCommand>(
 }
 
 async function pendingHandoff(
-  action: "abort" | "recover",
-  identity: PendingOperationIdentity,
-  path: string,
-  body?: unknown,
+  { action, operationId, ...query }: PendingOperationRequest,
+  submit = false,
 ): Promise<PendingRecovery> {
-  const receipt = await hostOperation(
+  const options = { mutation: true, readErrorBody: true };
+  const value = submit
+    ? await call(
+        inputRoutes[action],
+        { body: { operationId, ...query } },
+        undefined,
+        {
+          ...options,
+          timeoutMs: null,
+        },
+      )
+    : await call(
+        inputRoutes.observePending,
+        { params: { operationId }, query: { action, ...query } },
+        undefined,
+        options,
+      );
+  const receipt = confirmedHostReceipt(
     action,
-    identity,
-    path,
-    body,
-    undefined,
-    body === undefined ? undefined : null,
+    { operationId, authorityId: query.authorityId },
+    value,
   );
   if (receipt.state !== "completed")
     throw new ApiTransportError("response", true);
@@ -471,23 +471,26 @@ async function deliverPrompt(
   signal?: AbortSignal,
   body?: PromptDeliveryRequest,
 ): Promise<PromptAcceptedResponse> {
-  const query = new URLSearchParams({ authorityId: identity.authorityId });
-  if (identity.fingerprint) query.set("fingerprint", identity.fingerprint);
-  const receiptPath = `${INPUT_OPERATION_PATHS.prompt}/${encodeURIComponent(identity.operationId)}?${query}`;
-  let submit = body !== undefined;
+  const { operationId, authorityId, fingerprint } = identity;
+  const observation = {
+    params: { operationId },
+    query: { authorityId, fingerprint: fingerprint || undefined },
+  };
+  const options = {
+    mutation: true,
+    readErrorBody: true,
+    timeoutMs: PROMPT_CONFIRMATION_TIMEOUT_MS,
+  };
   let failures = 0;
   const retryDelays = [250, 1_000, 3_000];
   for (;;) {
     let delay: number;
     try {
-      const receipt = await hostOperation(
-        "prompt",
-        identity,
-        submit ? INPUT_OPERATION_PATHS.prompt : receiptPath,
-        submit ? body : undefined,
-        signal,
-        PROMPT_CONFIRMATION_TIMEOUT_MS,
-      );
+      const value =
+        body === undefined
+          ? await call(inputRoutes.observePrompt, observation, signal, options)
+          : await call(inputRoutes.prompt, { body }, signal, options);
+      const receipt = confirmedHostReceipt("prompt", identity, value);
       if (receipt.state === "completed")
         return { accepted: true, historyEntry: receipt.result };
       failures = 0;
@@ -504,7 +507,7 @@ async function deliverPrompt(
       if (retry === undefined || signal?.aborted) throw error;
       delay = retry;
     }
-    submit = false;
+    body = undefined;
     await waitForPromptPoll(delay, signal);
   }
 }
@@ -771,25 +774,11 @@ export function createApi() {
         )
       ).blob,
     abort: (sessionId: string, identity: PendingOperationIdentity) =>
-      pendingHandoff("abort", identity, INPUT_OPERATION_PATHS.abort, {
-        sessionId,
-        operationId: identity.operationId,
-        authorityId: identity.authorityId,
-        expectedViewId: identity.expectedViewId,
-      }),
+      pendingHandoff({ ...identity, sessionId, action: "abort" }, true),
     recoverPending: (sessionId: string, identity: PendingOperationIdentity) =>
-      pendingHandoff("recover", identity, INPUT_OPERATION_PATHS.recover, {
-        sessionId,
-        operationId: identity.operationId,
-        authorityId: identity.authorityId,
-        expectedViewId: identity.expectedViewId,
-      }),
-    pendingOperation: ({ operationId, ...query }: PendingOperationRequest) =>
-      pendingHandoff(
-        query.action,
-        { operationId, authorityId: query.authorityId },
-        `${INPUT_OPERATION_PATHS.pending}/${encodeURIComponent(operationId)}?${new URLSearchParams(query)}`,
-      ),
+      pendingHandoff({ ...identity, sessionId, action: "recover" }, true),
+    pendingOperation: (intent: PendingOperationRequest) =>
+      pendingHandoff(intent),
     pendingText: (body: PendingReadRequest, signal?: AbortSignal) =>
       call(routes.pendingText, { body }, signal),
     clearPending: (sessionId: string) =>

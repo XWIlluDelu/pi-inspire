@@ -31,7 +31,9 @@ covers:
   - tests/web/startup-restoration.test.tsx
   - tests/restart-launcher.test.ts
   - tests/server/{runtime-worker-lifecycle,runtime-worker-pool,runtime-maintenance-restart,pi-startup.integration}.test.ts
-  - tests/{server,web}/host-restart*.{ts,tsx}
+  - tests/server/host-administration-api.test.ts
+  - tests/web/host-restart.test.ts
+  - tests/browser/{settings-layout,extension-ui}.spec.ts
   - server/{file-lock,current-web-build,instance-state}.mjs
   - server/instance-state.d.mts
   - server/instance-control.{mjs,d.mts}

@@ -16,11 +16,18 @@ import {
 } from "./helpers";
 import { installStoreRoutes } from "./store-fixture";
 
+const positionalImage = "pi-embedded://0/0";
+const isImage = (reference: string) =>
+  reference.endsWith(".png") || reference === positionalImage;
+
 function fixture() {
   const host = {
     authorityId: TEST_HOST_AUTHORITY,
     cwd: "/project",
     missing: "",
+    imageView: "view-s1",
+    refuseImage: false,
+    pendingImage: undefined as Promise<void> | undefined,
     offline: false,
     bootstrap: undefined as Promise<void> | undefined,
   };
@@ -38,19 +45,28 @@ function fixture() {
           };
     }
     if (url === "/api/resources/resolve") {
-      const { sessionId, reference } = jsonBody(init);
-      reads.push(String(reference));
+      const { sessionId, reference: rawReference } = jsonBody(init);
+      const reference = String(rawReference);
+      reads.push(reference);
+      if (reference === "pending.png") await host.pendingImage;
+      const image = isImage(reference);
+      if (image && host.refuseImage)
+        return { status: 403, body: { error: "File no longer authorized" } };
       return reference === host.missing
         ? { status: 404, body: { error: "File was deleted" } }
         : {
-            body: fakeResourceDescriptor(String(reference), {
-              id: `temporary-${reads.length}`,
+            body: fakeResourceDescriptor(reference, {
+              id: image ? `image-${reads.length}` : `temporary-${reads.length}`,
               sessionId: String(sessionId),
-              viewId: `view-${sessionId}`,
-              workspacePath: String(reference),
+              viewId: image ? host.imageView : `view-${sessionId}`,
+              workspacePath:
+                reference === positionalImage ? undefined : reference,
+              ...(image ? { kind: "image", mimeType: "image/png" } : {}),
             }),
           };
     }
+    if (url.includes("/resources/image-") && url.includes("/content"))
+      return new Response("png", { headers: { "Content-Type": "image/png" } });
     if (url.includes("/content")) return { body: "PRIVATE FILE BODY" };
     if (url.startsWith("/api/files/list")) return { body: { entries: [] } };
     if (url.startsWith("/api/files?"))
@@ -132,6 +148,105 @@ it("restores only named navigation in its session and workspace and reauthorizes
   expect(reopened.fileReadingState("readme.md").source.current).toBeNull();
   host.cwd = "/another-project";
   expect(fileRefs(await connect())).toEqual([]);
+});
+
+it("retains named image tabs through updates, reacquires authority, and revokes retired image bytes", async () => {
+  const { host, connect, reads } = fixture();
+  const store = await connect();
+  const socket = FakeWebSocket.instances.at(-1)!;
+  const snapshot = (
+    transcriptPage: NonNullable<
+      Parameters<typeof activeSnapshot>[0]
+    >["transcriptPage"],
+  ) => {
+    const next = activeSnapshot({ cwd: host.cwd, transcriptPage });
+    host.imageView = next.active!.transcriptPage.viewId;
+    socket.emitSnapshot(next);
+  };
+  vi.spyOn(URL, "createObjectURL")
+    .mockReturnValue("blob:restored")
+    .mockReturnValueOnce("blob:before")
+    .mockReturnValueOnce("blob:rewrite")
+    .mockReturnValueOnce("blob:branch")
+    .mockReturnValueOnce("blob:incarnation")
+    .mockReturnValueOnce("blob:positional");
+  const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+  const pending = deferred<void>();
+  host.pendingImage = pending.promise;
+  const reading = store.openResource("pending.png");
+  store.closeResourceTab("pending.png");
+  await store.openResource("chart.png");
+  pending.resolve();
+  await reading;
+  expect(fileRefs(store)).toEqual(["chart.png"]);
+  expect(preview(store)).toMatchObject({
+    status: "ready",
+    objectUrl: "blob:before",
+  });
+  const ready = preview(store);
+  snapshot({ revision: 2 });
+  expect(preview(store)).toBe(ready);
+  expect(reads).toEqual(["pending.png", "chart.png"]);
+  for (const [transcriptPage, objectUrl] of [
+    [{ revision: 3, appendFromRevision: 3 }, "blob:rewrite"],
+    [
+      { viewId: "other-branch", revision: 4, appendFromRevision: 3 },
+      "blob:branch",
+    ],
+    [
+      {
+        viewId: "other-branch",
+        incarnation: "new-projection",
+        revision: 5,
+        appendFromRevision: 4,
+      },
+      "blob:incarnation",
+    ],
+  ] as const) {
+    snapshot(transcriptPage);
+    await vi.waitFor(() =>
+      expect(preview(store)).toMatchObject({
+        status: "ready",
+        descriptor: { viewId: host.imageView },
+        objectUrl,
+      }),
+    );
+  }
+  expect(reads.slice(1)).toEqual(Array(4).fill("chart.png"));
+  await store.openResource(positionalImage);
+  expect(preview(store)).toMatchObject({
+    status: "ready",
+    objectUrl: "blob:positional",
+  });
+  snapshot({
+    viewId: "other-branch",
+    incarnation: "new-projection",
+    revision: 6,
+    appendFromRevision: 6,
+  });
+  expect(fileRefs(store)).toEqual(["chart.png"]);
+  expect(preview(store)).toBeNull();
+  expect(revoke.mock.calls.flat()).toEqual([
+    "blob:before",
+    "blob:rewrite",
+    "blob:branch",
+    "blob:incarnation",
+    "blob:positional",
+  ]);
+  await store.openResource(positionalImage);
+  snapshot({ viewId: "third-branch", revision: 7 });
+  expect(fileRefs(store)).toEqual(["chart.png"]);
+  expect(preview(store)).toBeNull();
+  await store.openResource("chart.png");
+  host.refuseImage = true;
+  snapshot({ viewId: "third-branch", revision: 8, appendFromRevision: 8 });
+  await vi.waitFor(() =>
+    expect(preview(store)).toMatchObject({
+      status: "error",
+      message: "File no longer authorized",
+    }),
+  );
+  expect(fileRefs(store)).toEqual(["chart.png"]);
 });
 
 it.each(["terminal", "closed"] as const)(

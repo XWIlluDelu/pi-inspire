@@ -1,4 +1,5 @@
 import { COMPOSER_HISTORY_IMAGE_REFERENCE } from "./composer-artifact-references.js";
+import type { ResourceProbeResult } from "./contracts.js";
 
 const FILE_ARGUMENT_KEYS = new Set([
   "archivePath",
@@ -286,15 +287,41 @@ export const MAX_RESOURCE_PROBE_REFERENCES = 16;
 export const MAX_RESOURCE_PATH_LENGTH = 8_192;
 export const MAX_RESOURCE_REFERENCE_LENGTH = MAX_RESOURCE_PATH_LENGTH * 9;
 
-/** The newest page of one branch view's complete reference projection. */
+/** The newest references and writes from one branch view. */
 export interface SessionResourceListResponse {
   sessionId: string;
   viewId: string;
   revision: number;
   resources: SessionResourceReference[];
-  /** Written files from the whole view, newest first, so Produced is
-   * complete even when writes fall outside the page. */
-  produced: SessionResourceReference[];
+}
+
+export function resourceRefusal(
+  reference: string,
+  error: unknown,
+): ResourceProbeResult | null {
+  if (!error || typeof error !== "object" || !("status" in error)) return null;
+  const { status, message, matches } = error as {
+    status: unknown;
+    message?: unknown;
+    matches?: unknown;
+  };
+  const detail = typeof message === "string" && message ? { message } : {};
+  if (status === 409 && Array.isArray(matches))
+    return {
+      reference,
+      availability: "ambiguous",
+      ...detail,
+      matches: matches.map(String),
+    };
+  const availability =
+    status === 404
+      ? "missing"
+      : status === 403
+        ? "unavailable"
+        : status === 400
+          ? "invalid"
+          : null;
+  return availability ? { reference, availability, ...detail } : null;
 }
 
 function trimReference(value: string): string {

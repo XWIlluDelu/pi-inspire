@@ -373,42 +373,21 @@ export class BranchController {
     return forked;
   }
 
-  async fork(targetId: string): Promise<boolean> {
-    const api = this.host.api();
-    const state = this.host.state();
-    const sessionId = state.sessionId;
-    const viewId = state.view.viewId;
-    if (!api || !sessionId || !viewId || branchCopiesBlocked(state))
-      return false;
-    const selectionRequest = this.host.beginForkSelection();
-    return this.runAction(
-      `fork:${targetId}`,
-      api,
-      { ...this.viewTicket(state), selectionRequest },
-      () =>
-        api.forkBranch({
-          sessionId,
-          viewId,
-          targetId,
-        }),
-      (response) => {
-        this.host.applyFork(response);
-        this.host.refreshSessionCatalog();
-      },
-      "Fork failed",
-      "view",
-      async (response) => {
-        await Promise.allSettled(
-          (response.editorAttachments ?? []).map((item) =>
-            api.deleteAttachment(item.id),
-          ),
-        );
-      },
-    );
+  fork(targetId: string): Promise<boolean> {
+    return this.copyBranch({ kind: "fork", targetId });
   }
 
-  async clone(
+  clone(
     targetId?: string,
+    onFailure?: (message: string) => void,
+  ): Promise<boolean> {
+    return this.copyBranch({ kind: "clone", targetId }, onFailure);
+  }
+
+  private async copyBranch(
+    copy:
+      | { kind: "fork"; targetId: string }
+      | { kind: "clone"; targetId?: string },
     onFailure?: (message: string) => void,
   ): Promise<boolean> {
     const api = this.host.api();
@@ -421,25 +400,33 @@ export class BranchController {
       onFailure?.(blocked);
       return false;
     }
-    const endpoint = targetId ?? state.view.effectiveLeafId;
+    const address = { sessionId, viewId };
     const selectionRequest = this.host.beginForkSelection();
     return this.runAction(
-      `clone:${targetId ?? "current"}`,
+      `${copy.kind}:${copy.targetId ?? "current"}`,
       api,
       { ...this.viewTicket(state), selectionRequest },
       () =>
-        api.cloneBranch({
-          sessionId,
-          viewId,
-          targetId: endpoint,
-        }),
+        copy.kind === "fork"
+          ? api.forkBranch({ ...address, targetId: copy.targetId })
+          : api.cloneBranch({
+              ...address,
+              targetId: copy.targetId ?? state.view.effectiveLeafId,
+            }),
       (response) => {
         this.host.applyFork(response);
         this.host.refreshSessionCatalog();
       },
-      "Clone failed",
+      copy.kind === "fork" ? "Fork failed" : "Clone failed",
       "view",
-      undefined,
+      async (response) => {
+        if (copy.kind === "fork")
+          await Promise.allSettled(
+            (response.editorAttachments ?? []).map(({ id }) =>
+              api.deleteAttachment(id),
+            ),
+          );
+      },
       onFailure,
     );
   }
@@ -451,7 +438,7 @@ export class BranchController {
     perform: () => Promise<T>,
     commit: (response: T) => boolean | void | Promise<boolean | void>,
     fallbackError: string,
-    ownership: "position" | "view" | "navigation" = "position",
+    ownership: "view" | "navigation",
     discard?: (response: T) => Promise<void>,
     onFailure?: (message: string) => void,
   ): Promise<boolean> {

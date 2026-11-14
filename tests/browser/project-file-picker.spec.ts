@@ -115,24 +115,42 @@ for (const touch of [false, true]) {
   });
 }
 
-test("keeps the project-file search field still while results refresh @cross-browser", async ({
+test("keeps the project-file search field still and rejects a superseded response @cross-browser", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.emulateMedia({ reducedMotion: "reduce" });
-  let release!: () => void;
-  const pending = new Promise<void>((resolve) => {
-    release = resolve;
-  });
+  const requested = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const finished = Promise.withResolvers<void>();
   const files = Array.from({ length: 24 }, (_, index) => ({
     name: `candidate-${index}.ts`,
     path: `src/candidate-${index}.ts`,
     kind: "file",
   }));
+  let denied = 0;
   await page.route("**/api/files?**", async (route) => {
-    if (new URL(route.request().url()).searchParams.get("q") === "candidate")
-      await pending;
-    await route.fulfill({ json: { files, truncated: false } });
+    const query = new URL(route.request().url()).searchParams.get("q");
+    if (query === "denied") {
+      denied++;
+      return route.fulfill({ status: 403, json: { error: "Access denied" } });
+    }
+    if (query !== "retired")
+      return route.fulfill({ json: { files, truncated: false } });
+    requested.resolve();
+    await release.promise;
+    try {
+      await route.fulfill({
+        json: {
+          files: [{ name: "retired.ts", path: "retired.ts", kind: "file" }],
+          truncated: false,
+        },
+      });
+    } catch {
+      // Closing or superseding the owner may cancel its HTTP request.
+    } finally {
+      finished.resolve();
+    }
   });
   await pairedPage(page);
   await openFixtureSession(page, /Review extension event lifecycle/);
@@ -146,16 +164,24 @@ test("keeps the project-file search field still while results refresh @cross-bro
   await expect(options).toHaveCount(files.length);
   const initialTop = (await search.boundingBox())!.y;
   try {
-    await search.fill("candidate");
+    await search.fill("retired");
+    await requested.promise;
     await expect(menu.getByText("Searching…", { exact: true })).toBeVisible();
     await expect(options).toHaveCount(0);
     expect(Math.abs((await search.boundingBox())!.y - initialTop)).toBeLessThan(
       1,
     );
     await expect(search).toBeFocused();
+    await search.fill("denied");
+    await expect(menu.getByText("Project file search failed")).toBeVisible();
+    await search.fill("candidate");
+    await expect(options).toHaveCount(files.length);
   } finally {
-    release();
+    release.resolve();
   }
+  await finished.promise;
+  await expect(menu.getByText("retired.ts")).toHaveCount(0);
+  expect(denied).toBe(1);
   await expect(options).toHaveCount(files.length);
   expect(Math.abs((await search.boundingBox())!.y - initialTop)).toBeLessThan(
     1,

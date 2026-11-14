@@ -22,6 +22,7 @@ import { shallowEqual, store, useAppState } from "../store";
 import { BashExecution } from "./BashExecution";
 import { CopyAction } from "./CopyAction";
 import { HistoryImage } from "./HistoryImage";
+import { ImageGallery } from "./ImageGallery";
 import { PiLoader } from "./PiLoader";
 import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
 import { SearchField } from "./SearchField";
@@ -564,13 +565,17 @@ export function NativeTurnReader({
                       </div>
                     )}
                     {expanded.offset === 0 &&
-                      expanded.result.images?.map((image) => (
-                        <HistoryImage
-                          key={image.index}
-                          targetId={id}
-                          index={image.index}
-                        />
-                      ))}
+                      Boolean(expanded.result.images?.length) && (
+                        <ImageGallery>
+                          {expanded.result.images?.map(({ index }) => (
+                            <HistoryImage
+                              key={index}
+                              targetId={id}
+                              index={index}
+                            />
+                          ))}
+                        </ImageGallery>
+                      )}
                     {(
                       [
                         [

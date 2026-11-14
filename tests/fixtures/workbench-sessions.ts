@@ -198,6 +198,18 @@ const resourceFixtureMessages = [
     })),
     { timestamp: now - 40_000 },
   ),
+  savedAssistant(
+    [
+      {
+        type: "text",
+        text: [
+          "[Open an invalid path](./tests/browser/fixtures/file-previews)",
+          "[Open document line three](./tests/browser/fixtures/file-previews/document.md#L3)",
+        ].join("\n\n"),
+      },
+    ],
+    { timestamp: now - 39_000 },
+  ),
 ];
 
 function messagesForFixture(id: string, image?: string): unknown[] {

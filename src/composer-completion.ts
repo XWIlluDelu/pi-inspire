@@ -3,6 +3,7 @@ import {
   nativeCommand,
   PI_NATIVE_COMMANDS,
   type PiCommand,
+  parseCommandInvocation,
 } from "../shared/commands";
 import type { ModelOption } from "../shared/contracts";
 import type { ProjectFileResult } from "./api";
@@ -285,6 +286,20 @@ export function resolveCommandInventory(
     byName.set(command.name, command);
   }
   return [...byName.values()];
+}
+
+export function resolveCommandInput(
+  input: string,
+  commands: readonly PiCommand[],
+) {
+  const invocation = parseCommandInvocation(input, (name) =>
+    commands.some((command) => command.name === name),
+  );
+  if (!invocation) return null;
+  return {
+    ...invocation,
+    command: commands.find(({ name }) => name === invocation.name),
+  };
 }
 
 export function rankCommands(

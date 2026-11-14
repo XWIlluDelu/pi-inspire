@@ -419,71 +419,64 @@ describe("Host HTTP workflows", () => {
     });
   });
 
-  it.each(["folder", "all"] as const)(
-    "clears reviewed Hidden %s and retains unrelated navigation curation",
-    async (scope) => {
-      const target = join(temporary, "target");
-      const other = join(temporary, "other");
-      const outside = join(temporary, "visible");
-      const sessionIds = ["folder-entry", "individual-entry"];
-      const hiddenSessions = ["individual-entry"];
-      const hiddenFolders = [target, other];
-      await local
-        .patch("/api/preferences")
-        .send({
-          pinnedSessionIds: [...sessionIds, "unrelated"],
-          hiddenSessionIds: hiddenSessions,
-          hiddenProjectCwds: hiddenFolders,
-          pinnedProjectCwds: [...hiddenFolders, outside],
-          navCollapsedGroups: [...hiddenFolders, outside],
-        })
-        .expect(200);
-
-      const ids = scope === "folder" ? sessionIds.slice(0, 1) : sessionIds;
-      const deleted = ids.map((sessionId) => ({
-        sessionId,
-        disposition: "trashed" as const,
-      }));
-      const clear = vi
-        .spyOn(runtime, "deleteSessions")
-        .mockResolvedValue({ deleted });
-      const forget = vi.spyOn(resources, "forgetSession");
-      const submit = (projectCwd?: string) =>
-        local
-          .post("/api/sessions/delete")
-          .send({ scope: "hidden", sessionIds: ids, projectCwd });
-
-      await submit(outside)
-        .expect(409)
-        .expect(({ body }) => {
-          expect(body.code).toBe("HIDDEN_SELECTION_CHANGED");
-        });
-      expect(clear).not.toHaveBeenCalled();
-
-      const folders = scope === "folder" ? [other] : [];
-      const { body } = await submit(
-        scope === "folder" ? target : undefined,
-      ).expect(200);
-      expect(clear).toHaveBeenCalledOnce();
-      expect(body).toMatchObject({
-        deleted,
-        navigation: {
-          kind: "confirmed",
-          preferences: {
-            pinnedSessionIds:
-              scope === "folder"
-                ? ["individual-entry", "unrelated"]
-                : ["unrelated"],
-            hiddenSessionIds: scope === "folder" ? hiddenSessions : [],
-            hiddenProjectCwds: folders,
-            pinnedProjectCwds: [...folders, outside],
-            navCollapsedGroups: [...folders, outside],
-          },
-        },
+  it("clears a reviewed Hidden folder and then the remaining Hidden catalog", async () => {
+    const ids = ["fixture-active", "fixture-history"];
+    const [folder, other] = await Promise.all(
+      ids.map(async (id) => (await fixture.catalog.get(id))!.cwd),
+    );
+    const outside = join(temporary, "visible");
+    const submit = (sessionIds: string[], projectCwd?: string) =>
+      local
+        .post("/api/sessions/delete")
+        .send({ scope: "hidden", sessionIds, projectCwd });
+    await local
+      .patch("/api/preferences")
+      .send({
+        pinnedSessionIds: [...ids, "unrelated"],
+        hiddenSessionIds: [ids[1]],
+        hiddenProjectCwds: [folder, other],
+        pinnedProjectCwds: [folder, other, outside],
+        navCollapsedGroups: [folder, other, outside],
+      })
+      .expect(200);
+    await submit(ids.slice(0, 1), outside)
+      .expect(409)
+      .expect(({ body }) => {
+        expect(body.code).toBe("HIDDEN_SELECTION_CHANGED");
       });
-      expect(forget.mock.calls).toEqual(ids.map((id) => [id]));
-    },
-  );
+    const afterFolder = (await submit(ids.slice(0, 1), folder).expect(200))
+      .body;
+    expect(afterFolder).toMatchObject({
+      deleted: [{ sessionId: ids[0], disposition: "trashed" }],
+      navigation: {
+        kind: "confirmed",
+        preferences: {
+          pinnedSessionIds: [ids[1], "unrelated"],
+          hiddenSessionIds: [ids[1]],
+          hiddenProjectCwds: [other],
+          pinnedProjectCwds: [other, outside],
+          navCollapsedGroups: [other, outside],
+        },
+      },
+    });
+    const afterAll = (await submit(ids.slice(1)).expect(200)).body;
+    expect(afterAll).toMatchObject({
+      deleted: [{ sessionId: ids[1], disposition: "trashed" }],
+      navigation: {
+        kind: "confirmed",
+        preferences: {
+          pinnedSessionIds: ["unrelated"],
+          hiddenSessionIds: [],
+          hiddenProjectCwds: [],
+          pinnedProjectCwds: [outside],
+          navCollapsedGroups: [outside],
+        },
+      },
+    });
+    expect(
+      (await local.get("/api/sessions").expect(200)).body.sessions,
+    ).toEqual([]);
+  });
 
   it("deletes a deselected session and removes its navigation identities", async () => {
     await local

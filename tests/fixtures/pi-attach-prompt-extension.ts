@@ -28,13 +28,14 @@ export default function attachPromptFixture(pi: ExtensionAPI) {
       );
     });
   pi.on("input", async (event, ctx) => {
+    const name = event.text.split("\n", 1)[0];
     if (
       event.source !== "extension" ||
-      (event.text !== "gated input" && event.text !== "lost auth")
+      (name !== "gated input" && name !== "lost auth")
     )
       return;
-    await gate(ctx.cwd, event.text);
-    if (event.text === "lost auth") {
+    await gate(ctx.cwd, name);
+    if (name === "lost auth") {
       delete process.env.INSPIRE_TEST_ATTACH_API_KEY;
       await ctx.modelRegistry.refresh();
     }

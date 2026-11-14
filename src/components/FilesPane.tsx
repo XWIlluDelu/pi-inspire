@@ -11,11 +11,11 @@ import {
   projectNameFromCwd,
   type ResourceProbeResult,
 } from "../../shared/contracts";
-import { fileIconForPath } from "../file-icons";
-import { gitDecorationForChange, presentGitFacet } from "../git-presentation";
+import { presentGitFacet } from "../git-presentation";
 import type { ResourceRow } from "../resources";
 import { gitChangeForWorkspacePath, store } from "../store";
 import type { ContextPaneView } from "./context-pane-view";
+import { FileIndexRow } from "./FileIndexRow";
 import { FilePreview, type FileReadingState } from "./FilePreview";
 import { PiLoader } from "./PiLoader";
 import { parentPath, ResourcePathLabel } from "./ResourcePathLabel";
@@ -55,7 +55,6 @@ const RecentFileRow = memo(function RecentFileRow({
   availability: ResourceStanding;
   change: ReturnType<typeof gitChangeForWorkspacePath>;
 }) {
-  const Icon = fileIconForPath(workspacePath ?? row.name);
   const parent = parentPath(displayPath);
   const selected = workspacePath
     ? selectedPath === workspacePath
@@ -66,11 +65,35 @@ const RecentFileRow = memo(function RecentFileRow({
     availability.availability !== "unknown";
   const missing = availability?.availability === "missing";
   const facet = presentGitFacet(change);
-  const decoration = gitDecorationForChange(change);
   return (
-    <button
-      type="button"
-      className={`file-row recent-file ${unavailable ? "recent-file--unavailable" : ""} ${missing ? "recent-file--missing" : ""}`}
+    <FileIndexRow
+      file={workspacePath ?? row.name}
+      name={row.name}
+      context={parent && <ResourcePathLabel path={parent} />}
+      change={change}
+      className={`recent-file ${unavailable ? "recent-file--unavailable" : ""} ${missing ? "recent-file--missing" : ""}`}
+      mark={
+        row.writes && (
+          <span
+            className="recent-file__produced"
+            title="Written or edited in this chat"
+          >
+            <PenLine size={11} aria-hidden />
+          </span>
+        )
+      }
+      unavailable={
+        unavailable && (
+          <AlertTriangle
+            size={12}
+            aria-label={
+              availability.availability === "ambiguous"
+                ? `File reference ambiguous: ${availability.message ?? "choose a match"}`
+                : `File unavailable: ${availability.message ?? availability.availability}`
+            }
+          />
+        )
+      }
       aria-current={selected || undefined}
       aria-label={[
         displayPath,
@@ -88,48 +111,7 @@ const RecentFileRow = memo(function RecentFileRow({
           void store.showInFileManager(reference, workspacePath);
         else void store.openResource(reference);
       }}
-    >
-      <Icon size={13} aria-hidden />
-      <span
-        className={`recent-file__name ${decoration ? `git-deco--${decoration}` : ""}`}
-      >
-        {row.name}
-      </span>
-      {row.writes ? (
-        <span
-          className="recent-file__produced"
-          title="Written or edited in this chat"
-        >
-          <PenLine size={11} aria-hidden />
-        </span>
-      ) : null}
-      {parent ? (
-        <span className="recent-file__path">
-          <ResourcePathLabel path={parent} />
-        </span>
-      ) : null}
-      {facet ? (
-        <span
-          className={`git-mark ${decoration ? `git-deco--${decoration}` : ""}`}
-          role="img"
-          aria-label={facet.label}
-          title={facet.label}
-        >
-          {facet.mark}
-        </span>
-      ) : unavailable ? (
-        <span className="recent-file__warning">
-          <AlertTriangle
-            size={12}
-            aria-label={
-              availability.availability === "ambiguous"
-                ? `File reference ambiguous: ${availability.message ?? "choose a match"}`
-                : `File unavailable: ${availability.message ?? availability.availability}`
-            }
-          />
-        </span>
-      ) : null}
-    </button>
+    />
   );
 });
 
@@ -252,7 +234,7 @@ function FileBrowser({
             </section>
             <section className="files-browser__section files-browser__section--workspace">
               <h2 title={state.cwd ?? projectLabel}>{projectLabel}</h2>
-              <WorkspaceTree revealRequests />
+              <WorkspaceTree />
             </section>
           </>
         )}

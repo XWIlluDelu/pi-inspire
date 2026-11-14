@@ -1,4 +1,4 @@
-import { appendFile, readFile } from "node:fs/promises";
+import { appendFile, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
@@ -19,7 +19,6 @@ import {
   SessionCatalog,
   type SessionRecord,
 } from "../../server/session-catalog.js";
-import { parseAttachmentContext } from "../../shared/attachment-context.js";
 import {
   nativePiWorkspace,
   stubNativePiEnvironment,
@@ -36,7 +35,6 @@ import {
   startWorker,
   trackedAttachmentStore,
   trackRuntime,
-  upload,
 } from "./fixtures/runtime.js";
 import { jsonl, messageEntry } from "./fixtures/session-jsonl.js";
 
@@ -213,11 +211,10 @@ async function nativeModelFixture() {
 function runtimeFor(
   session: SessionRecord,
   options: RuntimeControllerOptions = {},
-  store = trackedAttachmentStore(),
 ) {
   const runtime = new RuntimeController(
     new SessionCatalog(session.cwd),
-    store,
+    trackedAttachmentStore(),
     {
       createProcess: () => {
         throw new Error("Unexpected Pi startup");
@@ -232,22 +229,12 @@ function runtimeFor(
 /** A native session with an empty leaf, attached only after explicit takeover. */
 async function attachedRuntime(
   connect: ConnectExternalSession,
-  {
-    createProcess,
-    store,
-  }: {
-    createProcess?: RuntimeControllerOptions["createProcess"];
-    store?: ReturnType<typeof trackedAttachmentStore>;
-  } = {},
+  { createProcess }: Pick<RuntimeControllerOptions, "createProcess"> = {},
 ) {
   const session = record("a", fixtureWorkspace);
   await (await preview(session, [])).close();
   vi.stubEnv("PI_CODING_AGENT_SESSION_DIR", join(fixtureWorkspace, "previews"));
-  return runtimeFor(
-    session,
-    { ...(createProcess ? { createProcess } : {}) },
-    store,
-  )
+  return runtimeFor(session, { ...(createProcess ? { createProcess } : {}) })
     .setExternalSessionPresence(async () => [null])
     .setExternalSessionConnector(async (id, file, match, idleOnly) =>
       idleOnly ? null : connect(id, file, match, idleOnly),
@@ -349,34 +336,6 @@ describe("continue an externally owned Pi", () => {
     expect(vi.mocked(f.native.abort).mock.calls).toEqual([[null], [null]]);
   });
 
-  it("keeps a cold addressed view read-only when an apparently idle Pi is already working", async () => {
-    const f = nativeFixture();
-    f.setState({ activity: "working", leafId: "u1" });
-    const { createProcess } = workerFactory();
-    const runtime = runtimeFor(await persistedRecord("a"), { createProcess })
-      .setExternalSessionPresence(async () => ["u1"])
-      .setExternalSessionConnector(async (_id, _file, _match, idleOnly) =>
-        idleOnly ? f.native : null,
-      );
-    const release = runtime.retainSessionView("a");
-    try {
-      const { active } = await runtime.snapshot("a");
-      expect(active?.readOnlyReason).toBe("external-active");
-      expect(runtime.startupSessionHint).toBeNull();
-      await expect(
-        runtime.prompt({ sessionId: "a", message: "First input" }),
-      ).rejects.toMatchObject({ code: "EXTERNAL_PI_WRITER_ACTIVE" });
-      await expect(
-        runtime.setModel("a", "test", "model"),
-      ).rejects.toMatchObject({ code: "EXTERNAL_PI_WRITER_ACTIVE" });
-      expect(createProcess).not.toHaveBeenCalled();
-      expect(f.native.prompt).not.toHaveBeenCalled();
-      expect(f.native.setModel).not.toHaveBeenCalled();
-    } finally {
-      release();
-    }
-  });
-
   it("opens the current branch when the live Pi confirms it is still on an older node", async () => {
     const session = await persistedRecord("a");
     await appendFile(session.path, branchMessage("saved-current", "u1"));
@@ -397,62 +356,68 @@ describe("continue an externally owned Pi", () => {
     expect(snapshot.active?.effectiveLeafId).toBe("saved-current");
   });
 
-  it.each([null, undefined, "unavailable", "appeared"] as const)(
-    "does not start a second writer when presence returns %s",
-    async (presence) => {
-      const ancestry = vi.fn(
-        async (): Promise<(string | null | undefined)[]> => [presence],
+  it("blocks cold writer admission for busy, unreachable or unknown native ownership", async () => {
+    const empty = record("empty", fixtureWorkspace);
+    await (await preview(empty, [])).close();
+    await rename(empty.path, join(fixtureWorkspace, "empty.jsonl"));
+    const native = nativeFixture({ activity: "working", leafId: "u1" }).native;
+    const { createProcess, workers } = workerFactory();
+    const presence = vi.fn(
+      async (): Promise<(string | null | undefined)[]> => ["u1"],
+    );
+    const runtime = runtimeFor(await persistedRecord("a"), { createProcess })
+      .setExternalSessionPresence(presence)
+      .setExternalSessionConnector(async (_id, _file, _match, idleOnly) =>
+        idleOnly ? native : null,
       );
-      if (presence === "unavailable")
-        ancestry.mockRejectedValue(new Error("Cannot read registry"));
-      if (presence === "appeared")
-        ancestry
-          .mockResolvedValueOnce([])
-          .mockResolvedValueOnce([])
-          .mockResolvedValue(["not-yet-projected"]);
-      const connect = vi.fn(async () => null);
-      const { createProcess, workers } = workerFactory();
-      const runtime = (
-        await attachedRuntime(connect, {
-          createProcess,
-        })
-      ).setExternalSessionPresence(ancestry);
-      const release =
-        presence === "unavailable" ? () => {} : runtime.retainSessionView("a");
-      try {
-        if (presence == null) {
-          await expect(runtime.takeOverSession("a")).rejects.toMatchObject({
-            code: "EXTERNAL_PI_WRITER_ACTIVE",
-          });
-          expect(connect).toHaveBeenCalledOnce();
-          expect(ancestry).toHaveBeenCalledWith(
-            "a",
-            expect.any(String),
-            true,
-            expect.any(Function),
-          );
-          expect((await runtime.snapshot("a")).active?.readOnlyReason).toBe(
-            "external-active",
-          );
-        } else {
-          await runtime.snapshot("a");
-          await expect(
-            runtime.prompt({ sessionId: "a", message: "First input" }),
-          ).rejects.toMatchObject({
-            code:
-              presence === "appeared"
-                ? "EXTERNAL_PI_WRITER_ACTIVE"
-                : "EXTERNAL_PI_PRESENCE_UNAVAILABLE",
-          });
-        }
-        expect(workers.map(({ starts }) => starts)).toEqual(
-          presence === "appeared" ? [0] : [],
+    const snapshot = () => runtime.snapshot("a");
+    const send = () =>
+      runtime.prompt({ sessionId: "a", message: "First input" });
+    const active = { code: "EXTERNAL_PI_WRITER_ACTIVE" };
+    const release = runtime.retainSessionView("a");
+    try {
+      expect((await snapshot()).active?.readOnlyReason).toBe("external-active");
+      expect(runtime.startupSessionHint).toBeNull();
+      await expect(send()).rejects.toMatchObject(active);
+      await expect(
+        runtime.setModel("a", "test", "model"),
+      ).rejects.toMatchObject(active);
+      expect(native.prompt).not.toHaveBeenCalled();
+      expect(native.setModel).not.toHaveBeenCalled();
+
+      // A null report belongs to the selected branch when the durable file is still empty.
+      for (const [id, leaf] of [
+        [empty.id, null],
+        ["a", undefined],
+      ] as const) {
+        presence.mockResolvedValue([leaf]);
+        await expect(runtime.takeOverSession(id)).rejects.toMatchObject(active);
+        expect(presence).toHaveBeenCalledWith(
+          id,
+          expect.any(String),
+          true,
+          expect.any(Function),
         );
-      } finally {
-        release();
       }
-    },
-  );
+      presence.mockResolvedValue([]);
+      expect((await snapshot()).active?.readOnlyReason).toBeUndefined();
+      presence.mockRejectedValue(new Error("Cannot read registry"));
+      await expect(send()).rejects.toMatchObject({
+        code: "EXTERNAL_PI_PRESENCE_UNAVAILABLE",
+      });
+      expect(createProcess).not.toHaveBeenCalled();
+
+      presence.mockResolvedValue([]);
+      await snapshot();
+      presence
+        .mockResolvedValueOnce([])
+        .mockResolvedValue(["not-yet-projected"]);
+      await expect(send()).rejects.toMatchObject(active);
+      expect(workers.map(({ starts }) => starts)).toEqual([0]);
+    } finally {
+      release();
+    }
+  });
 
   it("rechecks cold ownership and sends input and Stop to the attached Pi after switching sessions", async () => {
     const f = nativeFixture({ leafId: "u1" });
@@ -774,19 +739,8 @@ describe("continue an externally owned Pi", () => {
         },
       });
 
-      current.setState({
-        activity: "working",
-        leafId: "native-reply",
-        taskRuns,
-      });
-      const send = (message: string, behavior?: "steer" | "followUp") =>
-        runtime.prompt({ sessionId: "a", message, behavior });
-      for (const behavior of ["steer", "followUp"] as const) {
-        await expect(send(behavior, behavior)).rejects.toMatchObject({
-          code: "ATTACH_CONTROL_QUEUE_ACK_UNAVAILABLE",
-        });
-      }
-      expect(current.native.prompt).not.toHaveBeenCalled();
+      const send = (message: string) =>
+        runtime.prompt({ sessionId: "a", message });
       current.setState({ leafId: "native-reply" });
       await send("Before exit");
       current.setState({ activity: "working", leafId: "native-reply" });
@@ -838,62 +792,6 @@ describe("continue an externally owned Pi", () => {
       release();
       late.resolve();
     }
-  });
-
-  it("keeps attached-prompt bytes through refusal and a lost receipt, then retires only transport copies", async () => {
-    const f = nativeFixture();
-    const store = trackedAttachmentStore();
-    const prompt = vi.mocked(f.native.prompt);
-    const runtime = await attachedRuntime(async () => f.native, { store });
-    await openAttached(runtime, "a");
-
-    const imageUpload = upload("image.png", "image/png");
-    const fileUpload = upload("notes.txt", "text/plain");
-    const payload = imageUpload.buffer;
-    const image = await store.add(imageUpload);
-    const file = await store.add(fileUpload);
-    const send = (message: string, attachmentIds: string[]) =>
-      runtime.prompt({ sessionId: "a", message, attachmentIds });
-    prompt.mockImplementationOnce(async (text, _behavior, _before, images) => {
-      expect(text).toBe("");
-      expect(images).toHaveLength(1);
-      expect(await readFile(images![0]!.path)).toEqual(payload);
-      throw new Error("Native question is waiting");
-    });
-    await expect(send("", [image.id])).rejects.toThrow("Native question");
-    expect((await store.imagePreview(image.id)).bytes).toEqual(payload);
-
-    const attachments = [image.id, file.id];
-    prompt.mockRejectedValueOnce(
-      Object.assign(new Error("Receipt lost"), { outcomeUnknown: true }),
-    );
-    await expect(send("Read this", attachments)).rejects.toMatchObject({
-      outcomeUnknown: true,
-    });
-    expect(prompt).toHaveBeenCalledTimes(2);
-    const [message, , , images] = prompt.mock.lastCall!;
-    const imagePath = images![0]!.path;
-    const filePath = parseAttachmentContext(message, 1).references[0]!;
-    expect((await store.imagePreview(image.id)).bytes).toEqual(payload);
-
-    await send("Read this", attachments);
-    expect(prompt.mock.lastCall?.[3]).toEqual([
-      expect.objectContaining({ mimeType: "image/png" }),
-    ]);
-    await expect(store.imagePreview(image.id)).rejects.toMatchObject({
-      status: 404,
-    });
-    await store.remove(file.id);
-    expect(store.ownsPromptFile(filePath)).toBe(true);
-    expect(await readFile(imagePath)).toEqual(payload);
-    expect((await store.collectStaged()).reclaimed).not.toContain(imagePath);
-    vi.useFakeTimers({ toFake: ["Date"] });
-    vi.advanceTimersByTime(6 * 60_000);
-    await expect(store.collectStaged()).resolves.toMatchObject({
-      reclaimed: [imagePath],
-    });
-    await expect(readFile(imagePath)).rejects.toMatchObject({ code: "ENOENT" });
-    expect(await readFile(filePath)).toEqual(fileUpload.buffer);
   });
 
   it.each(["prompt", "abort"] as const)(

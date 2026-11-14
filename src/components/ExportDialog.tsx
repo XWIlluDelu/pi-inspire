@@ -17,7 +17,7 @@ export function ExportDialog({
 }) {
   const [format, setFormat] = useState<"html" | "jsonl">("html");
   const pendingFormat = useAppState(
-    (state) => state.exportingSessions[sessionId],
+    (state) => state.exportingSessions[sessionId]?.format,
   );
   const selectedFormat = pendingFormat ?? (readOnly ? "jsonl" : format);
   const busy = pendingFormat !== undefined;

@@ -194,16 +194,13 @@ function revealField(body: HTMLDivElement, input: Element | null) {
   requestAnimationFrame(() => {
     if (!body.contains(input) || input.ownerDocument.activeElement !== input)
       return;
-    const viewport = body.closest<HTMLElement>(".settings__content");
-    const style = viewport && getComputedStyle(viewport);
-    const available = Math.min(
-      body.clientHeight,
-      viewport && style
-        ? viewport.clientHeight -
-            (Number.parseFloat(style.scrollPaddingTop) || 0) -
-            (Number.parseFloat(style.scrollPaddingBottom) || 0)
-        : body.clientHeight,
-    );
+    const viewport = body.closest<HTMLElement>(".settings__content") ?? body;
+    const { scrollPaddingTop, scrollPaddingBottom } =
+      getComputedStyle(viewport);
+    const available =
+      viewport.clientHeight -
+      (parseFloat(scrollPaddingTop) || 0) -
+      (parseFloat(scrollPaddingBottom) || 0);
     // A tall textarea can exceed the viewport; retain native caret scrolling.
     if (available <= 0 || field.getBoundingClientRect().height > available)
       return;

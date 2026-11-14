@@ -18,8 +18,9 @@ const MAX_PENDING = 128;
 const MAX_STORAGE_CHARS = MAX_PENDING * 32 * 1024;
 type RecoveryOutcome = "unknown" | "completed" | "rejected";
 interface TrackedOperation {
-  operation: TerminalOperation;
+  operation?: TerminalOperation;
   outcome?: RecoveryOutcome;
+  task?: Promise<unknown>;
 }
 
 function intentKey(intent: TerminalIntent): string {
@@ -59,8 +60,7 @@ function operationLabel(intent: TerminalIntent): string {
  * writes survive pane generations and page reload. Receipts settle results;
  * explicitly stopping tracking retires only the browser intent, not the work. */
 export class TerminalOperationController {
-  private pending = new Map<string, TrackedOperation>();
-  private readonly running = new Map<string, Promise<unknown>>();
+  private operations = new Map<string, TrackedOperation>();
   private readonly listeners = new Set<() => void>();
   private state: TerminalRecoveryRow[] = [];
   private loaded = false;
@@ -107,7 +107,7 @@ export class TerminalOperationController {
     }
     // Validate the whole set before publishing any recoverable identity. A bad
     // later entry must not allow an earlier entry (or a new intent) to dispatch.
-    this.pending = restored;
+    this.operations = restored;
     this.retiredRecords = retired !== null && retired !== "[]";
     this.loaded = true;
     this.publish();
@@ -131,43 +131,44 @@ export class TerminalOperationController {
 
   private dispatch<T>(intent: TerminalIntent): Promise<T> {
     const key = intentKey(intent);
-    const running = this.running.get(key);
-    if (running) return running as Promise<T>;
+    const tracked = this.operations.get(key) ?? {};
+    if (tracked.task) return tracked.task as Promise<T>;
+    if (!tracked.operation && this.operations.size >= MAX_PENDING)
+      return Promise.reject(
+        new Error(
+          "Too many unresolved terminal operations. Resolve existing operations first.",
+        ),
+      );
     // A confirmed result makes another click a new intent, not a replay.
     // Retire its stored recovery record before admitting that new intent.
-    const outcome = this.pending.get(key)?.outcome;
-    if (outcome && outcome !== "unknown") {
+    if (tracked.outcome && tracked.outcome !== "unknown") {
       try {
-        this.stopTracking(key);
+        this.removeOperation(tracked);
+        delete tracked.outcome;
       } catch (error) {
         return Promise.reject(error);
       }
     }
     const task = Promise.resolve()
-      .then(() => this.deliver<T>(key, intent))
+      .then(() => this.deliver<T>(tracked, intent))
       .finally(() => {
-        this.running.delete(key);
+        delete tracked.task;
+        if (!tracked.operation) this.operations.delete(key);
         this.publish();
       });
-    this.running.set(key, task);
+    tracked.task = task;
+    this.operations.set(key, tracked);
     this.publish();
     return task;
   }
 
-  retry(key: string): Promise<unknown> {
-    let pending: TrackedOperation | undefined;
-    try {
-      this.restore();
-      pending = this.pending.get(key);
-      if (pending?.outcome && pending.outcome !== "unknown") {
-        this.stopTracking(key);
-        return Promise.resolve();
-      }
-    } catch (error) {
-      return Promise.reject(error);
-    }
-    if (!pending) return Promise.resolve();
-    return this.dispatch(pending.operation.intent);
+  async retry(key: string): Promise<unknown> {
+    this.restore();
+    const tracked = this.operations.get(key);
+    if (tracked?.task) return tracked.task;
+    if (tracked?.outcome === "unknown")
+      return this.dispatch(tracked.operation!.intent);
+    if (tracked?.operation) this.stopTracking(key);
   }
 
   /** Retire a recovery record; never dispatch or claim cancellation. */
@@ -179,30 +180,34 @@ export class TerminalOperationController {
       this.publish();
       return;
     }
-    if (this.running.has(key))
+    const tracked = this.operations.get(key);
+    if (tracked?.task)
       throw new Error(
         "Wait for the current terminal operation check to finish.",
       );
-    const pending = this.pending.get(key);
-    if (!pending?.outcome) return;
-    this.pending.delete(key);
-    try {
-      this.persist();
-    } catch (error) {
-      this.pending.set(key, pending);
-      throw error;
-    }
+    if (!tracked?.operation) return;
+    this.removeOperation(tracked);
+    this.operations.delete(key);
     this.publish();
   }
 
-  private async deliver<T>(key: string, intent: TerminalIntent): Promise<T> {
-    let pending = this.pending.get(key);
-    const observeOnly = pending?.outcome === "unknown";
-    if (!pending) {
-      if (this.pending.size >= MAX_PENDING)
-        throw new Error(
-          "Too many unresolved terminal operations. Resolve existing operations first.",
-        );
+  private removeOperation(tracked: TrackedOperation): void {
+    const operation = tracked.operation;
+    delete tracked.operation;
+    try {
+      this.persist();
+    } catch (error) {
+      tracked.operation = operation;
+      throw error;
+    }
+  }
+
+  private async deliver<T>(
+    tracked: TrackedOperation,
+    intent: TerminalIntent,
+  ): Promise<T> {
+    const previous = tracked.operation;
+    if (!previous) {
       const response = await authenticatedFetch(
         TERMINAL_OPERATIONS_PATH,
         {
@@ -229,18 +234,19 @@ export class TerminalOperationController {
         throw new Error(
           "Terminal operation epoch is invalid. No terminal control was sent.",
         );
-      // Other distinct intents may have completed their epoch lookup meanwhile.
-      if (this.pending.size >= MAX_PENDING)
-        throw new Error("Too many unresolved terminal operations.");
-      pending = { operation: { ...identity.data, intent } };
-      this.pending.set(key, pending);
+      tracked.operation = { ...identity.data, intent };
+      try {
+        this.persist();
+      } catch (error) {
+        delete tracked.operation;
+        throw error;
+      }
     }
-    this.persist();
-    pending.outcome = "unknown";
-    const { operation } = pending;
+    tracked.outcome = "unknown";
+    const operation = tracked.operation!;
     try {
       const response = await authenticatedFetch(
-        observeOnly
+        previous
           ? `${TERMINAL_OPERATIONS_PATH}?observe=1`
           : TERMINAL_OPERATIONS_PATH,
         {
@@ -266,14 +272,12 @@ export class TerminalOperationController {
         receipt.error.status === response.status &&
         Boolean(message);
       if (completed || rejected) {
-        this.pending.delete(key);
         try {
-          this.persist();
+          this.removeOperation(tracked);
         } catch {
           // Local bookkeeping failure cannot undo the daemon's confirmed result.
           // Keep the identity for cleanup without reporting an unknown operation.
-          pending.outcome = completed ? "completed" : "rejected";
-          this.pending.set(key, pending);
+          tracked.outcome = completed ? "completed" : "rejected";
         }
         if (completed) return receipt.result as T;
         throw new TerminalDefiniteRefusal(message);
@@ -293,7 +297,9 @@ export class TerminalOperationController {
     this.storage().setItem(
       STORAGE_KEY,
       JSON.stringify(
-        [...this.pending.values()].map(({ operation }) => operation),
+        [...this.operations.values()].flatMap(({ operation }) =>
+          operation ? [operation] : [],
+        ),
       ),
     );
   }
@@ -309,12 +315,12 @@ export class TerminalOperationController {
           },
         ]
       : [];
-    for (const [key, { operation, outcome }] of this.pending) {
-      if (!outcome) continue;
+    for (const [key, { operation, outcome, task }] of this.operations) {
+      if (!operation || !outcome) continue;
       rows.push({
         key,
         label: operationLabel(operation.intent),
-        busy: this.running.has(key),
+        busy: Boolean(task),
         outcome,
         canRetry: true,
       });

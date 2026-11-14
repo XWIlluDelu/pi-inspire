@@ -102,7 +102,11 @@ test("native shell cards stream, stop, recall and fit the narrow composer withou
   await remove.click();
 
   modelBusy = true;
-  transport.send({ type: "agent_start", sessionId });
+  transport.send({
+    type: "agent_start",
+    sessionId,
+    sessionStatus: { runState: "running" },
+  });
   const delivery = page.getByRole("group", { name: "Message delivery" });
   await delivery.getByRole("button", { name: "Queue", exact: true }).click();
   await run.click();
@@ -131,7 +135,11 @@ test("native shell cards stream, stop, recall and fit the narrow composer withou
   await expect(delivery).toBeVisible();
 
   modelBusy = false;
-  transport.send({ type: "agent_settled", sessionId });
+  transport.send({
+    type: "agent_settled",
+    sessionId,
+    sessionStatus: { runState: "idle" },
+  });
   await expect(delivery).toBeHidden();
   await input.fill("!pwd");
   await expect(

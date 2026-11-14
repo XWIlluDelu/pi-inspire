@@ -1,10 +1,4 @@
-import { randomUUID } from "node:crypto";
-
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-import { HostRestartController } from "../../server/host-restart.js";
-import type { RuntimeSlot } from "../../server/runtime-slot.js";
-import type { HostRestartScope } from "../../shared/host-restart.js";
 
 import {
   nativePiWorkspace,
@@ -66,67 +60,28 @@ describe("maintenance restart admission", () => {
           };
         },
       });
-      const submit = vi.fn(
-        async (
-          _scope: HostRestartScope,
-          commit: () => boolean | Promise<boolean>,
-        ) => ({
-          code: (await commit()) ? 0 : 1,
-        }),
-      );
-      const controller = new HostRestartController(runtime, {
-        inspect: async () => ({ host: true }),
-        prepare: async () => {},
-        request: submit,
-      });
-      const rejected = { phase: "rejected", busyReason: "in-flight-operation" };
+      const busy = { kind: "busy", reason: "in-flight-operation" };
       try {
         await runtime.openSession("a");
-        void startWorker(runtime).catch(() => undefined);
+        const startup = startWorker(runtime).catch((error: unknown) => error);
         await stopStarted.promise;
-        const intent = {
-          hostId: (await controller.status()).hostId,
-          operationId: randomUUID(),
-          scope: "host" as const,
-        };
-        controller.start(intent);
-        await vi.waitFor(async () =>
-          expect((await controller.status()).operation).toMatchObject(rejected),
-        );
-        expect(submit).not.toHaveBeenCalled();
-
+        expect(runtime.reserveMaintenanceRestart(false, true)).toEqual(busy);
         stopGate.resolve();
-        const slot = (
-          runtime as unknown as { slots: Map<string, RuntimeSlot> }
-        ).slots.get("a")!;
-        await vi.waitFor(() => expect(slot.activeOperations).toBe(0));
+        expect(await startup).toBeInstanceOf(Error);
         if (retirement === "unconfirmed") {
-          await expect(slot.stopping).rejects.toThrow("Pi stop unconfirmed");
           await expect(runtime.openSession("a")).rejects.toThrow(
             "Pi stop unconfirmed",
           );
           expect(workers).toHaveLength(1);
+          expect(runtime.reserveMaintenanceRestart(false, true)).toEqual(busy);
         } else {
-          await vi.waitFor(() => expect(slot.stopping).toBeNull());
           expect(
             (await runtime.snapshot("a")).sessionStatuses["a"]?.runState,
           ).toBe("failed");
+          expect(runtime.reserveMaintenanceRestart(false, true).kind).toBe(
+            "ready",
+          );
         }
-
-        expect(controller.start(intent).phase).toBe("rejected");
-        const retry = { ...intent, operationId: randomUUID() };
-        controller.start(retry);
-        await vi.waitFor(async () =>
-          expect((await controller.status()).operation).toMatchObject({
-            id: retry.operationId,
-            ...(retirement === "unconfirmed"
-              ? rejected
-              : { phase: "submitted" }),
-          }),
-        );
-        expect(submit).toHaveBeenCalledTimes(
-          retirement === "unconfirmed" ? 0 : 1,
-        );
       } finally {
         stopGate.resolve();
         if (retirement === "unconfirmed")

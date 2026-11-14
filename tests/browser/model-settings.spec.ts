@@ -47,6 +47,16 @@ test.describe("touch model settings", () => {
         reasoning: false,
       })),
     );
+    snapshot.providers[0]!.models.push(
+      { id: "same ", type: "embedding", name: "Embedding model" },
+      {
+        id: "same ",
+        type: "chat",
+        name: "Chat model",
+        contextWindow: 0,
+        maxTokens: 0.5,
+      },
+    );
     await routeSnapshots(page, {
       snapshot: (body) => {
         if (body.active) body.active.availableModels = snapshot.models;
@@ -57,8 +67,25 @@ test.describe("touch model settings", () => {
         json: { models: snapshot.models, commonModels: snapshot.commonModels },
       }),
     );
+    let reading: "available" | "catalog failed" | "preferences failed" =
+      "available";
+    const warning =
+      "Model availability could not load. Saved configuration is still editable; refresh models to retry.";
     await page.route(/\/api\/model-settings\?/, (route) =>
-      route.fulfill({ json: snapshot }),
+      route.fulfill({
+        json: {
+          ...snapshot,
+          ...(reading === "catalog failed"
+            ? { models: [], modelsWarning: warning }
+            : {}),
+          ...(reading === "preferences failed"
+            ? { settingsError: "Invalid Pi settings" }
+            : {}),
+        },
+      }),
+    );
+    await page.route("**/api/model-settings/config?**", (route) =>
+      route.fulfill({ json: { saved: true, snapshot } }),
     );
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
@@ -182,6 +209,58 @@ test.describe("touch model settings", () => {
     await expect
       .poll(() => content.evaluate((el) => el.scrollTop))
       .toBeCloseTo(browsePosition, 0);
+    await page.setViewportSize(desktop);
+    reading = "catalog failed";
+    await refresh.click();
+    await expect(settings.getByText(warning, { exact: true })).toBeVisible();
+    const thinking = settings.getByRole("combobox", {
+      name: "Default thinking",
+    });
+    await expect(thinking).toBeEnabled();
+    await expect(
+      settings.getByRole("button", { name: "Add provider" }),
+    ).toBeEnabled();
+    reading = "preferences failed";
+    await refresh.click();
+    await expect(settings.getByText("Invalid Pi settings")).toBeVisible();
+    await expect(thinking).toBeDisabled();
+    await expect(
+      settings.getByRole("button", { name: "Set as default" }),
+    ).toBeDisabled();
+
+    await settings.getByLabel("Custom provider declarations").click();
+    const declaration = settings.getByRole("combobox", {
+      name: "Custom declaration",
+    });
+    const editModel = async (label: string) => {
+      await declaration.selectOption({ label });
+      await settings
+        .getByRole("button", { name: `Edit declared model ${label}` })
+        .click();
+    };
+    await editModel("custom/same (embedding)");
+    await editor.getByLabel("Display name").fill("Unsaved embedding edit");
+    await back.click();
+    await editModel("custom/same");
+    await expect(editor.getByLabel("Display name")).toHaveValue("Chat model");
+    for (const name of ["Context window", "Maximum output tokens"])
+      expect(
+        await editor
+          .getByLabel(name)
+          .evaluate((input: HTMLInputElement) => input.validity.valid),
+      ).toBe(true);
+    const edited = page.waitForRequest(
+      (request) =>
+        new URL(request.url()).pathname === "/api/model-settings/config",
+    );
+    await editor.getByRole("button", { name: "Save", exact: true }).click();
+    expect((await edited).postDataJSON().edit).toEqual({
+      kind: "model",
+      provider: "custom",
+      originalId: "same ",
+      originalType: "chat",
+      values: { id: "same " },
+    });
     expect(errors).toEqual([]);
   });
 });
@@ -218,7 +297,14 @@ test("New model settings save native declarations and defaults for the prospecti
     await mkdir(join(target, ".pi"));
     await writeFile(
       join(target, ".pi/settings.json"),
-      '{"defaultThinkingLevel":"low"}',
+      '{"defaultProvider":"workbench","defaultThinkingLevel":"low"}',
+    );
+    await writeFile(
+      preferences,
+      JSON.stringify({
+        ...(await savedPreferences()),
+        defaultProvider: "missing",
+      }),
     );
     await pairedPage(page);
     await page.getByRole("textbox", { name: "Project directory" }).fill(target);
@@ -252,6 +338,12 @@ test("New model settings save native declarations and defaults for the prospecti
       .toEqual({ cwd: target, refresh: "1" });
     await expect(
       settings.getByText("This project uses Low.", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      settings.getByTitle("missing/offline · Not currently available"),
+    ).toBeVisible();
+    await expect(
+      settings.getByText(/This project uses Offline model\./),
     ).toBeVisible();
     await settings
       .getByRole("button", { name: "Add provider", exact: true })
@@ -319,6 +411,49 @@ test("New model settings save native declarations and defaults for the prospecti
       owner: { cwd: target },
       patch: { defaultModel: { provider: "new-provider", id: "new-model" } },
     });
+    const refresh = settings.getByRole("button", {
+      name: "Refresh available models",
+    });
+    const setCommon = async (enabledModels: string[]) => {
+      await writeFile(
+        preferences,
+        JSON.stringify({ ...(await savedPreferences()), enabledModels }),
+      );
+      await refresh.click();
+    };
+    const pattern = settings.getByRole("button", {
+      name: "Edit common pattern for New available model",
+    });
+    await setCommon([
+      "new-provider/new-model:high",
+      "new-provider/*:high",
+      "new-provider/new-model",
+    ]);
+    await expect(common).toHaveCount(0);
+    await pattern.click();
+    const modelPattern = settings.getByRole("textbox", {
+      name: "Model pattern",
+    });
+    await expect(modelPattern).toHaveValue("new-provider/*:high");
+    await modelPattern.fill("new-provider/*:medium");
+    await settings.getByRole("button", { name: "Save", exact: true }).click();
+    await expect.poll(savedPreferences).toMatchObject({
+      enabledModels: [
+        "new-provider/new-model:high",
+        "new-provider/*:medium",
+        "new-provider/new-model",
+      ],
+    });
+    await setCommon([
+      "new-provider/new-model:high",
+      "workbench/*",
+      "new-provider/new-model",
+    ]);
+    await expect(common).toBeChecked();
+    await common.click();
+    await expect
+      .poll(savedPreferences)
+      .toMatchObject({ enabledModels: ["workbench/*"] });
     await settings
       .getByRole("button", { name: "Connect provider", exact: true })
       .click();

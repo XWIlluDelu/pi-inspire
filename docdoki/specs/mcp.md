@@ -11,7 +11,6 @@ covers:
   - src/styles/mcp-settings.css
   - tests/server/*mcp*.ts
   - tests/server/configuration-file.test.ts
-  - tests/web/*mcp*.tsx
   - tests/web/configuration-document.test.tsx
   - tests/browser/*mcp*.ts
 ---
@@ -164,9 +163,8 @@ Configured MCP tools and Codemode composition continue through Pi.
 ## Checks
 
 File tests cover native parsing, scoped policy and protected values. The shared configuration-file
-suite covers revision authority and publication. Component tests cover draft ownership and Reload
-admission. Browser tests cover the responsive editor,
-stored-value editing, and saving and removing project definitions and overrides.
+suite covers revision authority and publication. Browser tests cover draft ownership, Reload
+admission, responsive stored-value editing, and saving and removing project definitions and overrides.
 
 ## Related interfaces
 

@@ -413,7 +413,19 @@ test("terminal menus fit the narrow pane and Escape restores their individual ow
   await page.setViewportSize({ width: 320, height: 900 });
   await page.emulateMedia({ reducedMotion: "reduce" });
   await pairAndOpen(page);
-  await fixtures.create();
+  const terminal = await fixtures.create();
+  const projectTerminals = [
+    ["Atlas dev", "/Clients/Atlas", "make atlas"],
+    ["Atlas logs", "/Clients/Atlas", "bash"],
+    ["Atlas demo", "C:\\Samples\\Atlas", "bash"],
+    ["Orion dev", "/Clients/Orion", "bash"],
+  ].map(([title, projectCwd, currentCommand], index) => ({
+    ...terminal,
+    id: `navigator-${index}`,
+    title,
+    projectCwd,
+    currentCommand,
+  }));
   const defaultLabel = "CalibrationResearchEnvironmentShell";
   const profiles = [
     { id: "research", label: defaultLabel, available: true, isDefault: true },
@@ -428,7 +440,13 @@ test("terminal menus fit the narrow pane and Escape restores their individual ow
     route.fetch().then(async (response) =>
       route.fulfill({
         response,
-        json: { ...(await response.json()), profiles },
+        json: {
+          ...(await response.json()),
+          profiles,
+          ...(new URL(route.request().url()).searchParams.has("cwd")
+            ? {}
+            : { terminals: projectTerminals }),
+        },
       }),
     ),
   );
@@ -471,6 +489,23 @@ test("terminal menus fit the narrow pane and Escape restores their individual ow
   const filter = page.getByRole("searchbox", {
     name: "Find terminal or project",
   });
+  const navigator = page.locator(".terminal-menu__projects");
+  await expect(navigator.locator(".terminal-menu__project-context")).toHaveText(
+    ["@Clients", "@Samples"],
+  );
+  await filter.fill("ATLAS");
+  await expect(navigator.getByRole("button")).toHaveText([
+    "Atlas devmake atlas",
+    "Atlas logsbash",
+    "Atlas demobash",
+  ]);
+  await filter.fill("CLIENTS");
+  await expect(
+    navigator.getByRole("button", { name: /Orion dev/ }),
+  ).toBeVisible();
+  await expect(
+    navigator.getByRole("button", { name: /Atlas demo/ }),
+  ).toHaveCount(0);
   await filter.fill("NO_SUCH_TERMINAL");
   await expect(
     page.getByText("No matching terminals", { exact: true }),

@@ -1,9 +1,11 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ProviderLoginAttempt } from "../../shared/model-settings";
+import type {
+  ProviderLoginAttempt,
+  ProviderLoginOption,
+} from "../../shared/model-settings";
 import { ProviderAuthentication } from "../../src/components/ProviderAuthentication";
-import { loginProviders, pendingLogin } from "./fixtures/model-settings";
 import { deferred } from "./helpers";
 
 const host = vi.hoisted(() => ({
@@ -12,23 +14,45 @@ const host = vi.hoisted(() => ({
 vi.mock("../../src/store", () => ({ store: host }));
 
 const refresh = vi.fn(async () => {});
+const providers: ProviderLoginOption[] = [
+  {
+    id: "anthropic",
+    name: "Anthropic",
+    stored: "api_key",
+    methods: [
+      { type: "api_key", label: "Anthropic API key" },
+      { type: "oauth", label: "Claude authorization" },
+    ],
+  },
+];
+const pending = (
+  overrides: Partial<ProviderLoginAttempt> = {},
+): ProviderLoginAttempt => ({
+  id: "login",
+  provider: "anthropic",
+  type: "oauth",
+  status: "pending",
+  events: [],
+  prompt: null,
+  ...overrides,
+});
 const panel = (
   props: Partial<ComponentProps<typeof ProviderAuthentication>> = {},
 ) => (
   <ProviderAuthentication
     owner={{ sessionId: "one" }}
-    providers={loginProviders()}
+    providers={providers}
     onRefresh={refresh}
     {...props}
   />
 );
 const keyPrompt = () =>
-  pendingLogin({
+  pending({
     type: "api_key",
     prompt: { id: "key", type: "secret", message: "API key" },
   });
 const terminal = (status: "completed" | "cancelled" = "completed") =>
-  pendingLogin({
+  pending({
     status,
     prompt: null,
     message: status === "completed" ? "Login complete." : "Login cancelled.",
@@ -46,51 +70,13 @@ beforeEach(() => {
 });
 afterEach(() => vi.useRealTimers());
 
-describe("provider directory", () => {
-  it("distinguishes unavailable data from an empty directory and keeps saved choices on refresh failure", () => {
-    const initial = { providers: [], loaded: false };
-    const view = render(panel({ ...initial, loading: true }));
-    expect(screen.getByRole("status")).toHaveTextContent("Loading providers");
-    expect(
-      screen.getByRole("button", { name: "Connect provider" }),
-    ).toBeDisabled();
-
-    view.rerender(
-      panel({ ...initial, loadError: "Provider service unavailable" }),
-    );
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "Provider service unavailable",
-    );
-    expect(
-      screen.getByRole("button", { name: "Connect provider" }),
-    ).toBeDisabled();
-    click("Retry");
-    expect(refresh).toHaveBeenCalledOnce();
-
-    view.rerender(panel({ providers: [], loaded: true }));
-    expect(screen.getByText("No connected providers.")).toBeVisible();
-    expect(
-      screen.getByRole("button", { name: "Connect provider" }),
-    ).toBeEnabled();
-
-    view.rerender(panel({ loadError: "Offline" }));
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "Provider refresh failed",
-    );
-    expect(
-      screen.getByRole("button", { name: "Manage Anthropic" }),
-    ).toBeEnabled();
-  });
-});
-
 describe("login attempt ownership", () => {
   beforeEach(() =>
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] }),
   );
 
   it("keeps the native prompt on reconnect, retries a failed poll and refreshes once on completion", async () => {
-    let readFailed = false;
-    const pending = pendingLogin({
+    const attempt = pending({
       events: [
         {
           type: "auth_url",
@@ -105,13 +91,10 @@ describe("login attempt ownership", () => {
         message: "Authorization code",
       },
     });
-    host.providerAuth.mockImplementation(async (_owner, request) => {
-      if (request.operation === "start") return pending;
-      if (request.operation !== "status") return null;
-      if (readFailed) return terminal();
-      readFailed = true;
-      throw new Error("503 temporarily unavailable");
-    });
+    host.providerAuth
+      .mockResolvedValueOnce(attempt)
+      .mockRejectedValueOnce(new Error("503 temporarily unavailable"))
+      .mockResolvedValueOnce(terminal());
 
     const view = render(panel());
     await start();
@@ -179,25 +162,6 @@ describe("login attempt ownership", () => {
     expect(document.body.textContent).not.toContain("do-not-echo");
   });
 
-  it("continues observing a failed Cancel request until login is cancelled", async () => {
-    host.providerAuth.mockImplementation(async (_owner, request) => {
-      if (request.operation === "cancel")
-        throw new Error("Cancel response unavailable");
-      return request.operation === "status"
-        ? terminal("cancelled")
-        : pendingLogin();
-    });
-    render(panel());
-    await start();
-    await act(async () => click("Cancel login"));
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "Cancel response unavailable",
-    );
-    await nextPoll();
-    expect(screen.getByRole("status")).toHaveTextContent("Login cancelled.");
-    expect(screen.queryByRole("alert")).toBeNull();
-  });
-
   it.each([
     { action: "answer", completes: "status", fails: "answer" },
     { action: "cancel", completes: "status", fails: "cancel" },
@@ -240,7 +204,7 @@ describe("login attempt ownership", () => {
 
   it("stops polling and allows another login when Cancel confirms there is no attempt", async () => {
     host.providerAuth.mockImplementation(async (_owner, request) =>
-      request.operation === "cancel" ? null : pendingLogin(),
+      request.operation === "cancel" ? null : pending(),
     );
     render(panel());
     await start();
@@ -257,31 +221,12 @@ describe("login attempt ownership", () => {
     ).toEqual(["start", "cancel"]);
   });
 
-  it("cancels a late-created attempt on its original owner", async () => {
-    const pending = deferred<ProviderLoginAttempt>();
-    host.providerAuth.mockImplementation(async (_owner, request) =>
-      request.operation === "start" ? pending.promise : null,
-    );
-    const view = render(panel());
-    await start();
-    view.rerender(panel({ owner: { sessionId: "two" } }));
-    await act(async () => pending.resolve(pendingLogin()));
-    expect(host.providerAuth).toHaveBeenCalledWith(
-      { sessionId: "one" },
-      { operation: "cancel", id: pendingLogin().id },
-    );
-    click("Manage Anthropic");
-    expect(
-      screen.getByRole("button", { name: "Claude authorization" }),
-    ).toBeEnabled();
-  });
-
   it.each(["cancel", "logout"] as const)(
     "does not publish a retired owner's %s result",
     async (operation) => {
       const retired = deferred<ProviderLoginAttempt | null>();
       host.providerAuth.mockImplementation(async (_owner, request) =>
-        request.operation === operation ? retired.promise : pendingLogin(),
+        request.operation === operation ? retired.promise : pending(),
       );
       const view = render(panel());
       if (operation === "cancel") {

@@ -36,6 +36,7 @@ summary.disclosure-row::-webkit-details-marker { display: none; }
 }
 
 .activity-copy.icon-button {
+  flex: none;
   width: var(--activity-copy-size, 24px);
   height: var(--activity-copy-size, 24px);
 }
@@ -62,6 +63,8 @@ summary.disclosure-row::-webkit-details-marker { display: none; }
   display: grid;
   gap: var(--space-2);
 }
+.shell-execution__output { --reader-max-height: 24rem; }
+.shell-execution__output:not([tabindex]) { --reader-max-height: none; }
 .shell-execution__status[data-error] {
   color: var(--error-ink);
 }
@@ -80,15 +83,12 @@ summary.disclosure-row::-webkit-details-marker { display: none; }
   /* The full header is clickable without becoming a filled card. */
   -webkit-tap-highlight-color: transparent;
   position: relative;
-  display: flex;
-  align-items: center;
   gap: var(--space-1);
   /* Apply the same optical outdent within the group's title column. */
   width: calc(100% + var(--disclosure-outdent));
   margin-inline-start: calc(-1 * var(--disclosure-outdent));
   min-height: var(--disclosure-height, 28px);
   padding: 0 4px 0 0;
-  font-size: var(--text-sm);
   text-align: left;
   color: var(--muted);
   cursor: pointer;
@@ -368,12 +368,9 @@ details[open] > .detail-summary > .chev {
 }
 
 .tool-summary__separator {
-  flex: 0 0 auto;
-  white-space: pre;
-}
-
-.tool-summary__separator {
   color: var(--faint);
+  flex: none;
+  white-space: pre;
 }
 
 .tool-resource {
@@ -392,12 +389,12 @@ details[open] > .detail-summary > .chev {
 
 span.tool-resource { color: var(--muted); }
 
-.activity-fold :is(.card__summary--tool button.tool-resource, button.card__summary--tool.tool-resource) {
+.activity-fold .card__summary--tool button.tool-resource {
   color: var(--activity-tool);
 }
 
 @media (hover: hover) {
-  .activity-fold :is(.card__summary--tool button.tool-resource, button.card__summary--tool.tool-resource):hover {
+  .activity-fold .card__summary--tool button.tool-resource:hover {
     color: var(--ink);
   }
 
@@ -1030,14 +1027,12 @@ details > .activity-reader { margin-top: var(--space-1); }
 }
 
 .code-block__bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  gap: 2px;
   padding: var(--space-1) var(--space-2) 0 var(--space-3);
-  min-height: 28px;
 }
 
 .code-block__lang {
+  margin-inline-end: auto;
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   letter-spacing: 0.08em;
@@ -1045,35 +1040,18 @@ details > .activity-reader { margin-top: var(--space-1); }
   color: var(--muted);
 }
 
-.code-block__actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.code-block__actions > .icon-button {
-  width: 24px;
-  height: 24px;
+.code-block__bar > .icon-button {
   color: var(--faint);
 }
 
-.code-block__actions > .icon-button:focus-visible {
+.code-block__bar > .icon-button:focus-visible {
   outline-offset: -2px;
 }
 
 @media (pointer: coarse) {
   .code-block__bar {
-    min-height: 40px;
-    padding-right: var(--space-2);
-  }
-
-  .code-block__actions {
+    --activity-copy-size: 36px;
     gap: var(--space-2);
-  }
-
-  .code-block__actions > .icon-button {
-    width: 36px;
-    height: 36px;
   }
 }
 

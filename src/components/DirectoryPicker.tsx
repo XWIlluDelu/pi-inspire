@@ -183,31 +183,29 @@ export function DirectoryPicker({
             )}
           </button>
         </header>
-        <div className="dirpicker__path-field" data-path={path}>
-          <textarea
-            rows={1}
-            className="dirpicker__path"
-            aria-label="Project directory"
-            value={path}
-            placeholder="/path/to/project"
-            spellCheck={false}
-            readOnly={loading}
-            aria-busy={loading}
-            onChange={(event) => {
-              setDraftPath(event.target.value);
-              setError(null);
-            }}
-            onKeyDown={(event) => {
-              if (
-                event.key === "Enter" &&
-                !isComposingKeyboardEvent(event.nativeEvent)
-              ) {
-                event.preventDefault();
-                if (path.trim() && !loading) void navigate(path.trim());
-              }
-            }}
-          />
-        </div>
+        <textarea
+          rows={2}
+          className="dialog__editor dirpicker__path"
+          aria-label="Project directory"
+          value={path}
+          placeholder="/path/to/project"
+          spellCheck={false}
+          readOnly={loading}
+          aria-busy={loading}
+          onChange={(event) => {
+            setDraftPath(event.target.value);
+            setError(null);
+          }}
+          onKeyDown={(event) => {
+            if (
+              event.key !== "Enter" ||
+              isComposingKeyboardEvent(event.nativeEvent)
+            )
+              return;
+            event.preventDefault();
+            if (path.trim() && !loading) void navigate(path.trim());
+          }}
+        />
         {rootsUnavailable ? (
           <div className="dirpicker__note" role="status">
             Drive list unavailable. Enter a full path to browse another

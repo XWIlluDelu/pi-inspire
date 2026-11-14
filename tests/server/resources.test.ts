@@ -97,7 +97,7 @@ describe("ResourceStore", () => {
             },
           ],
         },
-        ...Array.from({ length: 20 }, (_, index) =>
+        ...Array.from({ length: 101 }, (_, index) =>
           citation(`See \`file-${index}.md\`.`),
         ),
       ]),
@@ -108,15 +108,14 @@ describe("ResourceStore", () => {
       loadMessages: loadOlder,
     });
     const listed = await resources.list(current);
-    expect(listed.resources).toHaveLength(21);
-    expect(listed.resources[0]?.reference).toBe("file-19.md");
-    expect(listed.produced).toMatchObject([
-      { reference: "analysis.m", writes: true },
-    ]);
-    older.resolve([citation("See \`older.md\`.")]);
-    await expect(pending).resolves.toMatchObject({
-      resources: [{ reference: "older.md" }],
+    expect(listed).toHaveLength(101);
+    expect(listed[0]?.reference).toBe("file-100.md");
+    expect(listed.at(-1)).toMatchObject({
+      reference: "analysis.m",
+      writes: true,
     });
+    older.resolve([citation("See \`older.md\`.")]);
+    await expect(pending).resolves.toMatchObject([{ reference: "older.md" }]);
     await resources.probe(current, ["file-19.md", "file-0.md"]);
     await expect(resources.list(current)).resolves.toEqual(listed);
     expect(current.loadMessages).toHaveBeenCalledOnce();
@@ -226,6 +225,7 @@ describe("ResourceStore", () => {
       "../outside-a.md",
       "../outside-b.md",
       "file://%",
+      "node_modules",
     ];
     await expect(
       resources.probe({ ...current, loadMessages }, references),
@@ -256,6 +256,11 @@ describe("ResourceStore", () => {
         availability: "invalid",
         message: "The file reference is not valid",
       },
+      {
+        reference: "node_modules",
+        availability: "invalid",
+        message: "The reference is not a file",
+      },
     ]);
     expect(loadMessages).toHaveBeenCalledOnce();
   });
@@ -271,7 +276,7 @@ describe("ResourceStore", () => {
       citation(`${outside}:12:3: error: fixture`, "toolResult"),
     ]);
     const listed = await resources.list(source);
-    expect(listed.resources.map((item) => item.reference)).toEqual([
+    expect(listed.map((item) => item.reference)).toEqual([
       diagnosticResourceReference(outside + ":12:3"),
     ]);
     await expect(resources.resolve(source, outside)).resolves.toMatchObject({
@@ -509,10 +514,7 @@ describe("literal native paths and URL reference identity", () => {
       await writeFile(path, "NATIVE_HASH_AND_PARENTHESES");
       const source = context(project, [toolPath(path)]);
       const list = await resources.list(source);
-      const descriptor = await resources.resolve(
-        source,
-        list.resources[0]!.reference!,
-      );
+      const descriptor = await resources.resolve(source, list[0]!.reference!);
       expect(descriptor.name).toBe("Program(12).cs");
       expect(descriptor.workspacePath).toBe(
         scope === "inside" ? "C#/Program(12).cs" : undefined,
@@ -536,7 +538,7 @@ describe("literal native paths and URL reference identity", () => {
     const urlTarget = pathToFileURL(decoded).href;
     const literalCitation = toolPath(literal);
     const nativeOnly = context(project, [literalCitation, toolPath(urlTarget)]);
-    const listed = (await resources.list(nativeOnly)).resources;
+    const listed = await resources.list(nativeOnly);
     const native = listed.find(({ label }) => label === literal)!.reference!;
     expect(listed.find(({ label }) => label === urlTarget)?.reference).toMatch(
       /^file%3A/u,

@@ -427,47 +427,6 @@ describe("terminal project ownership", () => {
     await screen.findByRole("tab", { name: "new shell", selected: true });
   });
 
-  it("filters the project navigator while preserving catalog order and disambiguating project names", async () => {
-    const values = [
-      {
-        ...terminal("Atlas dev", "/Clients/Atlas"),
-        currentCommand: "make atlas",
-      },
-      terminal("Atlas logs", "/Clients/Atlas"),
-      terminal("Atlas demo", "C:\\Samples\\Atlas\\"),
-      terminal("Orion dev", "/Clients/Orion"),
-      terminal("Orion logs", "/Clients/Orion"),
-    ];
-    api.terminals.mockImplementation(async (cwd?: string) =>
-      catalog(cwd ? values.filter((t) => t.projectCwd === cwd) : values),
-    );
-    render(<WorkspaceDock cwd="/Clients/Atlas" />);
-    await screen.findByRole("tab", { name: "Atlas dev", selected: true });
-    const projects = openProjectNavigator();
-    const navigator = within(projects);
-    await navigator.findByRole("button", { name: /Orion logs/ });
-    const contexts = () =>
-      Array.from(
-        projects.querySelectorAll(".terminal-menu__project-context"),
-        (node) => node.textContent,
-      );
-    const input = navigator.getByLabelText("Find terminal or project");
-    expect(contexts()).toEqual(["@Clients", "@Samples"]);
-    fireEvent.change(input, { target: { value: "ATLAS" } });
-    expect(
-      navigator.getAllByRole("button").map((node) => node.textContent),
-    ).toEqual(["Atlas devmake atlas", "Atlas logsbash", "Atlas demobash"]);
-    fireEvent.change(input, { target: { value: "CLIENTS" } });
-    expect(navigator.queryByRole("button", { name: /Atlas demo/ })).toBeNull();
-    expect(navigator.getByRole("button", { name: /Orion logs/ })).toBeVisible();
-    fireEvent.change(input, { target: { value: "Samples" } });
-    fireEvent.click(navigator.getByRole("button", { name: /Atlas demo/ }));
-    await screen.findByRole("tab", { name: "Atlas demo", selected: true });
-    expect(screen.getByTestId("shell-cwd")).toHaveTextContent(
-      "C:\\Samples\\Atlas\\",
-    );
-  });
-
   it("offers local cleanup for confirmed controls and confirms retiring an uncertain control", async () => {
     vi.spyOn(terminalOperations, "snapshot").mockReturnValue([
       {

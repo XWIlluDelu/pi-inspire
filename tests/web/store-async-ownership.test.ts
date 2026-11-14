@@ -117,7 +117,7 @@ it("does not finish or report failure for a replacement export when an old downl
   retired.resolve({ body: "old history" });
   await old;
   expect(store.getState()).toMatchObject({
-    exportingSessions: { s1: "jsonl" },
+    exportingSessions: { s1: { format: "jsonl" } },
     live: { notices: [] },
   });
   replacement.resolve({
@@ -247,7 +247,7 @@ it("requires a workspace and asks for confirmation only before repeating a possi
   expect(confirm).toHaveBeenCalledOnce();
 });
 
-it.each(["create", "deselect", "switch"] as const)(
+it.each(["create", "deselect", "switch", "clear"] as const)(
   "keeps explicit selection ownership across %s and an addressed update",
   async (gesture) => {
     const retired = deferred<RouteResponse>();
@@ -256,6 +256,8 @@ it.each(["create", "deselect", "switch"] as const)(
     let retiredSignal: RequestInit["signal"];
     installStoreRoutes((url, init) => {
       if (url === "/api/sessions/open") return open();
+      if (gesture === "clear" && url === "/api/sessions/deselect")
+        return selection.promise;
       if (url === "/api/sessions/new" || url === "/api/sessions/deselect") {
         retiredSignal = init.signal;
         return retired.promise;
@@ -264,14 +266,15 @@ it.each(["create", "deselect", "switch"] as const)(
     const { store, socket } = await initStore();
     await store.openSession("s1");
     expect(open).not.toHaveBeenCalled();
-    const target = gesture === "switch" ? "s2" : "s1";
+    const target =
+      gesture === "clear" ? null : gesture === "switch" ? "s2" : "s1";
     const previous =
       gesture === "create"
         ? store.newSession("/proj")
         : gesture === "deselect"
           ? store.deselectSession()
           : undefined;
-    const latest = store.openSession(target);
+    const latest = target ? store.openSession(target) : store.deselectSession();
     if (previous) {
       await previous;
       expect(retiredSignal?.aborted).toBe(true);
@@ -291,17 +294,19 @@ it.each(["create", "deselect", "switch"] as const)(
       openingSessionId: target,
     });
     selection.resolve({
-      body: activeSnapshot({ sessionId: target, sessionName: "Selected" }),
+      body: target
+        ? activeSnapshot({ sessionId: target, sessionName: "Selected" })
+        : emptySnapshot,
     });
     await latest;
-    expect(open).toHaveBeenCalledOnce();
+    expect(open).toHaveBeenCalledTimes(target ? 1 : 0);
     expect(store.getState()).toMatchObject({
       sessionId: target,
-      sessionName: "Selected",
+      ...(target ? { sessionName: "Selected" } : {}),
       sessionSelectionPending: false,
       openingSessionId: null,
     });
-    if (gesture === "switch")
+    if (target !== "s1")
       expect(JSON.parse(socket.sent.at(-1)!)).toEqual({
         type: "detail_interest",
         sessionId: target,
@@ -309,29 +314,6 @@ it.each(["create", "deselect", "switch"] as const)(
       });
   },
 );
-
-it("keeps a pending deselection when the previous addressed view synchronizes", async () => {
-  const selection = deferred<RouteResponse>();
-  installStoreRoutes((url) =>
-    url === "/api/sessions/deselect" ? selection.promise : undefined,
-  );
-  const { store, socket } = await initStore();
-  const deselecting = store.deselectSession();
-  socket.emitSnapshot(activeSnapshot({ sessionName: "Refreshed" }));
-  expect(store.getState()).toMatchObject({
-    sessionName: "Refreshed",
-    sessionSelectionPending: true,
-    openingSessionId: null,
-  });
-  selection.resolve({ body: emptySnapshot });
-  await expect(deselecting).resolves.toBe(true);
-  expect(store.getState().sessionId).toBeNull();
-  expect(JSON.parse(socket.sent.at(-1)!)).toEqual({
-    type: "detail_interest",
-    sessionId: null,
-    revision: 1,
-  });
-});
 
 it.each(["resync", "new", "deselect"] as const)(
   "keeps a %s committed while replacement bootstrap was in flight",

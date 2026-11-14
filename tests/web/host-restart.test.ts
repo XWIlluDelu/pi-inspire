@@ -131,21 +131,7 @@ describe("browser restart delivery", () => {
     expect(reloaded.snapshot().status?.operation?.error).toBe("Build failed");
   });
 
-  it("uses the new Host identity as reconnection evidence and never replays an old operation there", async () => {
-    const f = fixture();
-    await f.client.refresh();
-    const oldHostId = f.status.hostId;
-    await f.client.start("host", oldHostId);
-    f.status.hostId = crypto.randomUUID();
-    await f.client.refresh();
-    expect(f.client.snapshot().pending).toBeNull();
-    expect(f.client.snapshot().notice).toBe("Host reconnected.");
-    await f.client.retry();
-    await f.client.start("host", oldHostId);
-    expect(f.api.restartHost).toHaveBeenCalledOnce();
-  });
-
-  it("requires global capability and explicit interruption while ordinary restart remains available", async () => {
+  it("requires all-Pi authority, observes ordinary restart reconnection and rejects a retired address", async () => {
     const f = fixture();
     await f.client.refresh();
     await f.client.start("all-pi", f.status.hostId);
@@ -154,7 +140,16 @@ describe("browser restart delivery", () => {
     await f.client.start("all-pi", f.status.hostId, true);
     expect(f.api.restartHost).not.toHaveBeenCalled();
     expect(f.client.snapshot().pending).toBeNull();
-    await f.client.start("host", f.status.hostId);
+    const oldHostId = f.status.hostId;
+    await f.client.start("host", oldHostId);
+    f.status.hostId = crypto.randomUUID();
+    await f.client.refresh();
+    expect(f.client.snapshot()).toMatchObject({
+      pending: null,
+      notice: "Host reconnected.",
+    });
+    await f.client.retry();
+    await f.client.start("host", oldHostId);
     expect(f.api.restartHost).toHaveBeenCalledOnce();
   });
 

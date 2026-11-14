@@ -26,12 +26,13 @@ import { store } from "../store";
 import { transcriptProjectionKey } from "../transcript-projection-key";
 import { hasActiveModal } from "../use-modal-focus";
 import { EarlierBranchBanner } from "./EarlierBranchBanner";
+import { ExtensionDisplaySurface } from "./ExtensionDisplays";
 import { TranscriptImageOwnerContext } from "./ImagePreview";
 import { NativeTurnReader } from "./NativeTurnReader";
 import { handleRichTextCopy } from "./rich-text-copy";
 import { TranscriptUtilities } from "./TranscriptUtilities";
 import { useTranscriptRows } from "./transcript-row-projection";
-import { ExtensionDisplaySurface, PendingQueueGroups } from "./transcript-rows";
+import { PendingQueueGroups } from "./transcript-rows";
 import {
   TranscriptSearchReveal,
   useTranscriptSearch,

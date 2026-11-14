@@ -1,5 +1,5 @@
 import { useCallback, useRef, useSyncExternalStore } from "react";
-import { parseCommandInvocation, parseNativeCommand } from "../shared/commands";
+import { nativeCommand, parseNativeCommand } from "../shared/commands";
 import {
   type ActiveSnapshot,
   type BranchNavigateRequest,
@@ -56,7 +56,11 @@ import {
   transcriptDiagnostic,
 } from "./app-state";
 import { BrowserUpgradeRequired } from "./browser-auth";
-import { type PiCommand, resolveCommandInventory } from "./composer-completion";
+import {
+  type PiCommand,
+  resolveCommandInput,
+  resolveCommandInventory,
+} from "./composer-completion";
 import type { ComposerHistoryScope } from "./composer-history";
 import {
   type CopySource,
@@ -175,13 +179,6 @@ export class AppStore {
   private clearingWorkbench = false;
   private listeners = new Set<() => void>();
   private api: Api | null = null;
-  private readonly pendingExports = new Map<
-    string,
-    {
-      api: Api;
-      promise: Promise<void>;
-    }
-  >();
   private readonly notifications = new TaskNotificationController({
     state: () => this.state,
     patch: (patch) => this.set(patch),
@@ -506,7 +503,6 @@ export class AppStore {
   private resyncRequest = 0;
   private resyncRecovery = new RecoveryBackoff();
   private pausedSessionReads: ReadonlySet<string> | null = null;
-  private pendingActionRequest = 0;
   private thinkingLevelRequest = 0;
   private readonly runtimeSettingOwners = new Map<
     keyof PiRuntimeSettings,
@@ -588,16 +584,13 @@ export class AppStore {
     this.resyncRecovery.reset();
     this.resyncRequest += 1;
     this.pausedSessionReads = null;
-    this.pendingActionRequest += 1;
     const commandActivities = Object.fromEntries(
       Object.entries(this.state.commandActivities).map(
         ([sessionId, activities]) => [
           sessionId,
           activities.map((activity) =>
             activity.status === "running" &&
-            (activity.command === "compact" ||
-              activity.command === "export" ||
-              activity.command === "reload")
+            nativeCommand(activity.command)?.execution === "host"
               ? {
                   ...activity,
                   status: "warning" as const,
@@ -640,7 +633,6 @@ export class AppStore {
     // cannot schedule a retry with the superseded credential or API.
     this.connectionController.stop();
     this.afterInitialSnapshot = null;
-    this.pendingExports.clear();
     this.set({
       transportGeneration: this.state.transportGeneration + 1,
       exportingSessions: {},
@@ -976,10 +968,7 @@ export class AppStore {
     if (replaced) {
       this.selectionGeneration += 1;
       this.resyncRequest += 1;
-      if (sessionChanged) {
-        this.pendingActionRequest += 1;
-        this.branches.retireAction();
-      }
+      if (sessionChanged) this.branches.retireAction();
       this.branches.retireReads();
       this.resources.invalidate();
       if (sessionChanged) this.git.invalidateForTransportReplacement();
@@ -1286,6 +1275,8 @@ export class AppStore {
     sessionId: string,
     action: NonNullable<AppState["nativeCommandUiRequest"]>["action"],
     query?: string,
+    modelSettingsFocus?: "credentials" | "common",
+    modelSettingsOwner?: import("../shared/model-settings").ModelSettingsOwner,
   ): void {
     const id = this.state.nextNativeCommandId;
     this.set({
@@ -1295,6 +1286,8 @@ export class AppStore {
         sessionId,
         action,
         ...(query ? { query } : {}),
+        ...(modelSettingsFocus ? { modelSettingsFocus } : {}),
+        ...(modelSettingsOwner ? { modelSettingsOwner } : {}),
       },
     });
   }
@@ -1347,8 +1340,8 @@ export class AppStore {
   ): Promise<void> => {
     const api = this.api;
     if (!api) return Promise.reject(new Error("The Host is unavailable"));
-    const existing = this.pendingExports.get(sessionId);
-    if (existing?.api === api) return existing.promise;
+    const existing = this.state.exportingSessions[sessionId];
+    if (existing) return existing.promise;
     const promise: Promise<void> = Promise.resolve().then(async () => {
       try {
         const exported = await api.exportSession({ sessionId, format });
@@ -1368,19 +1361,17 @@ export class AppStore {
         }
         throw error;
       } finally {
-        if (this.pendingExports.get(sessionId)?.promise === promise) {
-          this.pendingExports.delete(sessionId);
+        if (this.state.exportingSessions[sessionId]?.promise === promise) {
           const exportingSessions = { ...this.state.exportingSessions };
           delete exportingSessions[sessionId];
           this.set({ exportingSessions });
         }
       }
     });
-    this.pendingExports.set(sessionId, { api, promise });
     this.set({
       exportingSessions: {
         ...this.state.exportingSessions,
-        [sessionId]: format,
+        [sessionId]: { format, promise },
       },
     });
     return promise;
@@ -1422,9 +1413,7 @@ export class AppStore {
       this.state.commandActivities[sessionId]?.some(
         (activity) =>
           activity.status === "running" &&
-          (activity.command === "compact" ||
-            activity.command === "reload" ||
-            activity.command === "export"),
+          nativeCommand(activity.command)?.execution === "host",
       )
     ) {
       this.notify("warning", "Wait for the active command to finish");
@@ -1530,15 +1519,6 @@ export class AppStore {
     return details;
   }
 
-  isNativeCommand = (input: string): boolean => {
-    const native = parseNativeCommand(input);
-    if (!native) return false;
-    const owner = resolveCommandInventory(this.state.commands).find(
-      (command) => command.name === native.name,
-    );
-    return native.name === "compact" || owner?.source === "builtin";
-  };
-
   /** Palette actions never borrow an unfinished message's artifacts. */
   runPaletteNativeCommand = (input: string): PromptAcceptedResponse | false => {
     const command = parseNativeCommand(input);
@@ -1549,17 +1529,21 @@ export class AppStore {
     input: string,
     behavior?: "steer" | "followUp",
   ): Promise<PromptAcceptedResponse | false> => {
-    const inventory = resolveCommandInventory(this.state.commands);
-    const invocation = parseCommandInvocation(input, (name) =>
-      inventory.some((command) => command.name === name),
+    const invocation = resolveCommandInput(
+      input,
+      resolveCommandInventory(this.state.commands),
     );
     if (!invocation) {
       this.notify("warning", "Enter a slash command to prepare");
       return false;
     }
-    if (parseNativeCommand(input)) return this.runPaletteNativeCommand(input);
-    const command = inventory.find((item) => item.name === invocation.name);
-    if (!command || command.source === "builtin") {
+    const native = nativeCommand(invocation.name);
+    if (native)
+      return this.executeNativeCommand(
+        { ...invocation, descriptor: native },
+        false,
+      );
+    if (!invocation.command || invocation.command.source === "builtin") {
       this.notify(
         "warning",
         "This command is no longer available in the selected session",
@@ -1567,8 +1551,8 @@ export class AppStore {
       return false;
     }
     return this.composer.send(
-      `/${invocation.name}${invocation.argument ? ` ${invocation.argument}` : ""}`,
-      command.source === "extension" ? undefined : behavior,
+      `/${invocation.name} ${invocation.argument}`.trimEnd(),
+      invocation.command.source === "extension" ? undefined : behavior,
       undefined,
       true,
     );
@@ -1653,12 +1637,15 @@ export class AppStore {
   };
 
   private executeNativeCommand(
-    command: NonNullable<ReturnType<typeof parseNativeCommand>>,
+    {
+      descriptor,
+      argument,
+      raw,
+    }: NonNullable<ReturnType<typeof parseNativeCommand>>,
     includeDraftArtifacts = true,
   ): PromptAcceptedResponse | false {
     const sessionId = this.state.sessionId;
     if (!sessionId) return false;
-    const { descriptor, argument, raw } = command;
     const { name } = descriptor;
     if (this.state.readOnlyReason && !descriptor.availableWithoutWorkspace)
       return false;
@@ -1723,18 +1710,12 @@ export class AppStore {
       return this.launchHostNativeCommand(sessionId, descriptor.name, argument);
     if (descriptor.surface) {
       this.requestNativeCommandUi(sessionId, descriptor.surface);
-      if (name === "fork")
-        this.notify(
-          "info",
-          "Choose a user message in History, then select Fork",
-        );
+      if (descriptor.selectionHint)
+        this.notify("info", descriptor.selectionHint);
       return ACCEPTED_NATIVE_COMMAND;
     }
-    if (["login", "logout", "scoped-models"].includes(name)) {
-      this.openModelSettings(
-        argument,
-        name === "scoped-models" ? "common" : "credentials",
-      );
+    if (descriptor.modelSettingsFocus) {
+      this.openModelSettings(argument, descriptor.modelSettingsFocus);
       return ACCEPTED_NATIVE_COMMAND;
     }
     if (name === "clone") {
@@ -1841,18 +1822,11 @@ export class AppStore {
       let noResponse = false;
       void writeCopyContent(
         copyLoader(async (signal) => {
-          let text: string | null;
-          try {
-            ({ text } = await api.lastAssistantText(sessionId, viewId, signal));
-          } catch (error) {
-            if (
-              this.api === api &&
-              error instanceof ApiError &&
-              error.status === 401
-            )
-              this.handleAuthFailure();
-            throw error;
-          }
+          const { text } = await api.lastAssistantText(
+            sessionId,
+            viewId,
+            signal,
+          );
           noResponse = text === null;
           return text;
         }),
@@ -1878,11 +1852,7 @@ export class AppStore {
           );
         })
         .catch((error: unknown) => {
-          if (
-            this.api === api &&
-            error instanceof ApiError &&
-            error.status === 401
-          )
+          if (current() && error instanceof ApiError && error.status === 401)
             this.handleAuthFailure();
           this.updateCommandActivity(sessionId, id, {
             status: "error",
@@ -1951,9 +1921,20 @@ export class AppStore {
       const receipt = this.composer.retryIfTracking(sessionId);
       if (receipt) return receipt;
     }
-    const native = parseNativeCommand(message);
-    if (native && this.isNativeCommand(message)) {
-      const result = this.executeNativeCommand(native);
+    if (message.trim().startsWith("!"))
+      return this.composer.send(message.trim(), undefined, editorDraft);
+    if (!message.trimStart().startsWith("/"))
+      return this.composer.send(message, behavior, editorDraft);
+    const invocation = resolveCommandInput(
+      message,
+      resolveCommandInventory(this.state.commands),
+    );
+    const native = invocation && nativeCommand(invocation.name);
+    if (invocation && native) {
+      const result = this.executeNativeCommand({
+        ...invocation,
+        descriptor: native,
+      });
       if (
         result &&
         sessionId &&
@@ -1964,39 +1945,27 @@ export class AppStore {
       return result;
     }
 
-    if (message.trim().startsWith("!"))
-      return this.composer.send(message.trim(), undefined, editorDraft);
-    const inventory = resolveCommandInventory(this.state.commands);
-    const invocation = parseCommandInvocation(message, (name) =>
-      inventory.some((command) => command.name === name),
-    );
-    if (invocation) {
-      const dynamic = inventory.find(
-        (command) => command.name === invocation.name,
-      );
-      if (!dynamic && this.state.modelDiscovery !== "loading") {
-        const sessionId = this.state.sessionId;
-        if (sessionId)
-          this.presentCommandActivity(
-            sessionId,
-            invocation.name,
-            "error",
-            `Unknown command /${invocation.name}. Type / to see available commands.`,
-          );
-        return false;
-      }
-      // Pi's extension dispatcher splits on a literal space. Normalize pasted
-      // tabs/newlines at the command boundary so a command the browser owns
-      // cannot fall through into an ordinary model prompt inside Pi.
-      return this.composer.send(
-        invocation.argument
-          ? `/${invocation.name} ${invocation.argument}`
-          : `/${invocation.name}`,
-        behavior,
-        editorDraft,
-      );
+    if (
+      invocation &&
+      !invocation.command &&
+      this.state.modelDiscovery !== "loading"
+    ) {
+      if (sessionId)
+        this.presentCommandActivity(
+          sessionId,
+          invocation.name,
+          "error",
+          `Unknown command /${invocation.name}. Type / to see available commands.`,
+        );
+      return false;
     }
-    return this.composer.send(message, behavior, editorDraft);
+    return this.composer.send(
+      invocation
+        ? `/${invocation.name} ${invocation.argument}`.trimEnd()
+        : message,
+      behavior,
+      editorDraft,
+    );
   };
 
   abort = async (): Promise<void> => {
@@ -2110,10 +2079,10 @@ export class AppStore {
     const api = this.api;
     if (!api || !sessionId || this.state.pendingAction) return false;
     const viewId = this.state.view.viewId ?? undefined;
-    const request = ++this.pendingActionRequest;
+    const pendingAction = { action };
     const current = () =>
-      this.api === api && request === this.pendingActionRequest;
-    this.set({ pendingAction: action });
+      this.api === api && this.state.pendingAction === pendingAction;
+    this.set({ pendingAction });
     try {
       if (action === "recover")
         return await this.pendingRecovery.run(sessionId, action, viewId);
@@ -2558,18 +2527,13 @@ export class AppStore {
     modelSettingsFocus?: "credentials" | "common",
     modelSettingsOwner?: import("../shared/model-settings").ModelSettingsOwner,
   ): void => {
-    const id = this.state.nextNativeCommandId;
-    this.set({
-      nextNativeCommandId: id + 1,
-      nativeCommandUiRequest: {
-        id,
-        sessionId: this.state.sessionId ?? "",
-        action: "models",
-        ...(query ? { query } : {}),
-        ...(modelSettingsFocus ? { modelSettingsFocus } : {}),
-        ...(modelSettingsOwner ? { modelSettingsOwner } : {}),
-      },
-    });
+    this.requestNativeCommandUi(
+      this.state.sessionId ?? "",
+      "models",
+      query,
+      modelSettingsFocus,
+      modelSettingsOwner,
+    );
   };
 
   cycleModel = (direction: 1 | -1): Promise<void> =>

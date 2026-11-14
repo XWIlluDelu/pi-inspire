@@ -180,7 +180,7 @@ describe("terminal Host and daemon transport", () => {
     expect(backend.spawns).toHaveLength(1);
   });
 
-  it("fences attachment and sends one sequenced input to the current writer", async () => {
+  it("fences attachment and sequenced input, then drains peers without stopping the terminal", async () => {
     const terminal = await backend.manager.create({ cwd: backend.directory });
     const { baseUrl } = host;
     const browserClient = await browser();
@@ -260,42 +260,37 @@ describe("terminal Host and daemon transport", () => {
       await contender.waitFor({ type: "input_ack", sequence: 1 });
       expect(pty.writes.map(String)).toEqual(["echo once\r", "echo current\r"]);
       expect(pty.resizes.at(-1)).toEqual([130, 50]);
+      const origin = { Origin: baseUrl };
+      const attached = await rawWebSocket(await browserClient.url(), origin);
+      let waiting: Awaited<ReturnType<typeof rawWebSocket>> | undefined;
+      try {
+        attached.send(
+          attach(await browserClient.attachTicket(terminal.id), "raw"),
+        );
+        await vi.waitFor(() =>
+          expect(attached.messages).toContainEqual(
+            expect.objectContaining({ type: "replay_complete" }),
+          ),
+        );
+        waiting = await rawWebSocket(await browserClient.url(), origin);
+        let shutdown: Promise<void> | undefined;
+        const close = () => (shutdown ??= host.application.close());
+        await Promise.all([
+          closeWithoutPeerAck(close, attached),
+          closeWithoutPeerAck(close, waiting),
+        ]);
+        expect(host.application.server.listening).toBe(false);
+        await vi.waitFor(() =>
+          expect(backend.manager.list().terminals).toMatchObject([
+            { id: terminal.id, viewerCount: 0, status: "running" },
+          ]),
+        );
+      } finally {
+        attached.destroy();
+        waiting?.destroy();
+      }
     } finally {
       for (const peer of peers) peer.terminate();
-    }
-  });
-
-  it("drains attached and preattach peers without waiting for close ACKs", async () => {
-    const terminal = await backend.manager.create({ cwd: backend.directory });
-    const { application, baseUrl } = host;
-    const client = await browser();
-    const attached = await rawWebSocket(await client.url(), {
-      Origin: baseUrl,
-    });
-    let waiting: Awaited<ReturnType<typeof rawWebSocket>> | undefined;
-    try {
-      attached.send(attach(await client.attachTicket(terminal.id)));
-      await vi.waitFor(() =>
-        expect(attached.messages).toContainEqual(
-          expect.objectContaining({ type: "replay_complete" }),
-        ),
-      );
-      waiting = await rawWebSocket(await client.url(), { Origin: baseUrl });
-      let shutdown: Promise<void> | undefined;
-      const close = () => (shutdown ??= application.close());
-      await Promise.all([
-        closeWithoutPeerAck(close, attached),
-        closeWithoutPeerAck(close, waiting),
-      ]);
-      expect(application.server.listening).toBe(false);
-      await vi.waitFor(() =>
-        expect(backend.manager.list().terminals).toMatchObject([
-          { id: terminal.id, viewerCount: 0, status: "running" },
-        ]),
-      );
-    } finally {
-      attached.destroy();
-      waiting?.destroy();
     }
   });
 });

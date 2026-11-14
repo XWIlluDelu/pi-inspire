@@ -110,7 +110,7 @@ async function openExample(page: Page, theme: "light" | "dark") {
   };
 }
 
-test("phone Back retries native cancellation and drains queued questions before closing Settings", async ({
+test("phone Back and Escape respect native question ownership during Settings, work and recovery", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 700 });
@@ -196,14 +196,7 @@ test("phone Back retries native cancellation and drains queued questions before 
   await page.goBack();
   await expect(settings).toHaveCount(0);
   await expect(draft).toHaveValue("Keep this draft through the questions");
-  await page.goBack();
-  await expect(page).toHaveURL("about:blank#outside-inspire");
-});
 
-test("Escape cancels an extension question during work and aborts during a projection conflict", async ({
-  page,
-}) => {
-  const demo = await openExample(page, "light");
   let aborts = 0;
   await page.route("**/api/control/abort", (route) => {
     aborts++;
@@ -222,7 +215,10 @@ test("Escape cancels an extension question during work and aborts during a proje
   await expect(normal).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(normal).toHaveCount(0);
-  expect(demo.responses).toMatchObject([{ id: "during-run", cancelled: true }]);
+  expect(demo.responses.at(-1)).toMatchObject({
+    id: "during-run",
+    cancelled: true,
+  });
   expect(aborts).toBe(0);
   demo.question({
     id: "during-conflict",
@@ -246,7 +242,15 @@ test("Escape cancels an extension question during work and aborts during a proje
   );
   await page.keyboard.press("Escape");
   await expect.poll(() => aborts).toBe(1);
-  expect(demo.responses).toHaveLength(1);
+  expect(demo.responses).toHaveLength(3);
+  demo.emit({
+    type: "extension_ui_remove",
+    id: "during-conflict",
+    reason: "aborted",
+  });
+  await expect(blocked).toHaveCount(0);
+  await page.goBack();
+  await expect(page).toHaveURL("about:blank#outside-inspire");
 });
 
 test.describe("narrow Settings interruption", () => {
@@ -269,11 +273,24 @@ test.describe("narrow Settings interruption", () => {
     await id.fill("pending-provider");
     const url = settings.getByLabel("Base URL", { exact: true });
     await url.fill("https://example.invalid/v1");
+    let restartRequests = 0;
+    await page.route("**/api/host/restart", (route) => {
+      if (route.request().method() !== "GET") restartRequests++;
+      return route.fulfill({
+        json: {
+          hostId: "settings-host",
+          available: true,
+          allPiAvailable: true,
+          operation: null,
+        },
+      });
+    });
+    await settings.getByRole("button", { name: "System", exact: true }).click();
     await settings
-      .getByRole("button", { name: "Reset preferences", exact: true })
+      .getByRole("button", { name: "Restart all", exact: true })
       .click();
-    const reset = page.getByRole("alertdialog", { name: "Reset preferences?" });
-    await expect(reset).toBeVisible();
+    const restart = page.getByRole("alertdialog", { name: "Restart all?" });
+    await expect(restart).toBeVisible();
     fixture.question({
       id: "interrupt-confirmation",
       method: "select",
@@ -286,9 +303,11 @@ test.describe("narrow Settings interruption", () => {
     await expect(native).toBeVisible();
     await page.keyboard.press("Tab");
     await expect(native.locator(":focus")).toBeVisible();
-    await expect(reset).toBeHidden();
+    await expect(restart).toBeHidden();
     await native.getByRole("option", { name: "Continue", exact: true }).click();
-    await reset.getByRole("button", { name: "Cancel", exact: true }).click();
+    await restart.getByRole("button", { name: "Cancel", exact: true }).click();
+    expect(restartRequests).toBe(0);
+    await settings.getByRole("button", { name: "Models", exact: true }).click();
     await expect(id).toHaveValue("pending-provider");
     await expect(url).toHaveValue("https://example.invalid/v1");
     await page.keyboard.press("Escape");
@@ -478,6 +497,14 @@ test("runs the real Pi UI example from the palette and restores the native deadl
   await page.keyboard.press("Escape");
   await expect(timed).toBeHidden();
   await expect(above).toContainText(summaryLines.join("\n"));
+  const retry = page.getByRole("button", {
+    name: "Retry delivery",
+    exact: true,
+  });
+  if (await retry.isVisible()) {
+    await retry.click();
+    await expect(retry).toHaveCount(0);
+  }
   await expect(draft).toHaveValue("Keep this unsent draft");
 
   await run("clear");
@@ -628,7 +655,7 @@ test.describe("narrow touch reading", () => {
       (
         await new AxeBuilder({ page })
           .include(".topbar__extension-status")
-          .include(".extension-status-popover")
+          .include(".choice-panel__body--reader")
           .analyze()
       ).violations,
     ).toEqual([]);

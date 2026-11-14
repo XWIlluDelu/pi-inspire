@@ -7,7 +7,8 @@ covers:
   - src/controllers/session-management-controller.ts
   - src/components/{HiddenClearDialog,SessionDeleteDialog}.tsx
   - tests/server/{session-delete,desktop-trash-native,native-session-trash-smoke,linux-trash,session-recovery,runtime-session-deletion}.test.ts
-  - tests/web/{store-deletion,session-deletion-recovery,nav-render}.test.ts*
+  - tests/web/{store-deletion,nav-render}.test.ts*
+  - tests/browser/hidden-folder-actions.spec.ts
 ---
 
 # Confirmed session deletion

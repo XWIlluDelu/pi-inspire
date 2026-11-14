@@ -112,50 +112,48 @@ describe("WebSocket observation and transport limits", () => {
     }
   }, 15_000);
 
-  it.each(["open", "already closing"] as const)(
-    "drains an %s event peer without waiting for a close ACK",
-    async (state) => {
-      await runtime.openSession("fixture-active");
-      const release = vi.fn();
-      Object.assign(runtime, { retainSessionView: vi.fn(() => release) });
-      const peer = await rawWebSocket(
-        `${baseUrl}/events?detail=fixture-active`,
-        {
-          Authorization: `Bearer ${token}`,
-        },
-      );
-      try {
-        await vi.waitFor(() =>
-          expect(peer.messages.some((frame) => frame.type === "snapshot")).toBe(
-            true,
-          ),
-        );
-        if (state === "already closing") {
-          peer.send({ type: "detail_interest", invalid: true });
-          await vi.waitFor(() => expect(peer.closeCodes).toEqual([1008]));
-        }
-        await closeWithoutPeerAck(() => application.close(), peer);
-        expect(release).toHaveBeenCalledOnce();
-        expect(application.server.listening).toBe(false);
-      } finally {
-        peer.destroy();
-      }
-    },
-  );
-
-  it("releases a retained view when the initial snapshot fails", async () => {
-    const release = vi.fn();
-    const retain = vi.fn(() => release);
+  it("releases failed joins and drains open and closing peers without a close ACK", async () => {
+    await runtime.openSession("fixture-active");
+    const releaseOpen = vi.fn();
+    const releaseClosing = vi.fn();
+    const releaseFailed = vi.fn();
+    const retain = vi
+      .fn()
+      .mockReturnValueOnce(releaseFailed)
+      .mockReturnValueOnce(releaseOpen)
+      .mockReturnValueOnce(releaseClosing);
     Object.assign(runtime, { retainSessionView: retain });
-    vi.spyOn(runtime, "snapshot").mockRejectedValue(
+    vi.spyOn(runtime, "snapshot").mockRejectedValueOnce(
       new Error("Session is gone"),
     );
-    const { socket } = observeEventSocket(
-      `${baseUrl.replace("http", "ws")}/events?detail=fixture-active`,
-    );
-    await new Promise<void>((resolve) => socket.once("close", () => resolve()));
+    const url = `${baseUrl}/events?detail=fixture-active`;
+    const { socket } = observeEventSocket(url.replace("http", "ws"));
+    await once(socket, "close");
     expect(retain).toHaveBeenCalledWith("fixture-active");
-    await vi.waitFor(() => expect(release).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(releaseFailed).toHaveBeenCalledOnce());
+
+    const auth = { Authorization: `Bearer ${token}` };
+    const open = await rawWebSocket(url, auth);
+    try {
+      const closing = await rawWebSocket(url, auth);
+      try {
+        await vi.waitFor(() => {
+          for (const peer of [open, closing])
+            expect(peer.messages[0]?.type).toBe("snapshot");
+        });
+        closing.send({ type: "detail_interest", invalid: true });
+        await vi.waitFor(() => expect(closing.closeCodes).toEqual([1008]));
+        await closeWithoutPeerAck(() => application.close(), open);
+        await closing.closed;
+        expect(releaseOpen).toHaveBeenCalledOnce();
+        expect(releaseClosing).toHaveBeenCalledOnce();
+        expect(application.server.listening).toBe(false);
+      } finally {
+        closing.destroy();
+      }
+    } finally {
+      open.destroy();
+    }
   });
 
   it("isolates socket detail while delivering global outcomes, needs-input and update acknowledgements", async () => {
@@ -288,12 +286,15 @@ describe("WebSocket observation and transport limits", () => {
     const originalSnapshot = runtime.snapshot.bind(runtime);
     const oldRead = deferredSignal();
     const newRead = deferredSignal();
+    const captured = deferredSignal();
+    const cut = 100;
     const snapshotSpy = vi
       .spyOn(runtime, "snapshot")
       .mockImplementation(async (sessionId) => {
         const snapshot = await originalSnapshot(sessionId);
+        if (sessionId === "fixture-history") captured.resolve();
         await (sessionId === "fixture-active" ? oldRead : newRead).promise;
-        return snapshot;
+        return { ...snapshot, runtimeSequence: cut };
       });
     const { socket, frames } = observeEventSocket(
       `${baseUrl.replace("http", "ws")}/events?detail=fixture-active`,
@@ -302,6 +303,7 @@ describe("WebSocket observation and transport limits", () => {
       await new Promise<void>((resolve) => socket.once("open", resolve));
       runtime.emit("event", {
         type: "agent_start",
+        runtimeSequence: cut + 1,
         sessionId: "fixture-active",
         sessionStatus: { runState: "running" },
       });
@@ -312,11 +314,23 @@ describe("WebSocket observation and transport limits", () => {
           revision: 1,
         }),
       );
-      await vi.waitFor(() =>
-        expect(snapshotSpy).toHaveBeenCalledWith("fixture-history"),
-      );
+      await captured.promise;
+      expect(snapshotSpy).toHaveBeenCalledWith("fixture-history");
       runtime.emit("event", {
         type: "message_update",
+        runtimeSequence: cut,
+        sessionId: "fixture-history",
+        streamDelta: true,
+        streamMessageKey: "new-assistant",
+        assistantMessageEvent: {
+          type: "text_delta",
+          contentIndex: 0,
+          delta: "already captured",
+        },
+      });
+      runtime.emit("event", {
+        type: "message_update",
+        runtimeSequence: cut + 2,
         sessionId: "fixture-history",
         streamDelta: true,
         streamMessageKey: "new-assistant",
@@ -334,6 +348,7 @@ describe("WebSocket observation and transport limits", () => {
       oldRead.resolve();
       runtime.emit("event", {
         type: "agent_settled",
+        runtimeSequence: cut + 3,
         sessionId: "fixture-active",
         messages: ["old-owner-body"],
         sessionStatus: { runState: "idle" },
@@ -353,27 +368,23 @@ describe("WebSocket observation and transport limits", () => {
         "message_update_batch",
         "agent_settled",
       ]);
+      expect(frames[2]).toMatchObject({
+        runtimeSequence: cut + 2,
+        assistantMessageEvents: [{ type: "text_delta", delta: "new-owner" }],
+      });
       expect(JSON.stringify(frames)).not.toContain("old-owner-body");
-      expect(snapshotSpy).toHaveBeenCalledWith("fixture-history");
-    } finally {
-      oldRead.resolve();
-      newRead.resolve();
-      socket.close();
-    }
-  });
-
-  it("settles a missing addressed session on the same socket without adopting another view", async () => {
-    await runtime.openSession("fixture-active");
-    const id = "missing";
-    const { socket, frames } = observeEventSocket(
-      `${baseUrl.replace("http", "ws")}/events?detail=${id}`,
-    );
-    try {
+      socket.send(
+        JSON.stringify({
+          type: "detail_interest",
+          sessionId: "missing",
+          revision: 2,
+        }),
+      );
       await vi.waitFor(() =>
-        expect(frames[0]).toMatchObject({
+        expect(frames.at(-1)).toMatchObject({
           type: "snapshot",
-          detailSessionId: id,
-          detailRevision: 0,
+          detailSessionId: "missing",
+          detailRevision: 2,
           missingDetail: true,
           data: { active: null },
         }),
@@ -382,17 +393,19 @@ describe("WebSocket observation and transport limits", () => {
         JSON.stringify({
           type: "detail_interest",
           sessionId: "fixture-active",
-          revision: 1,
+          revision: 3,
         }),
       );
       await vi.waitFor(() =>
-        expect(frames[1]).toMatchObject({
+        expect(frames.at(-1)).toMatchObject({
           type: "snapshot",
-          detailRevision: 1,
+          detailRevision: 3,
           data: { active: { sessionId: "fixture-active" } },
         }),
       );
     } finally {
+      oldRead.resolve();
+      newRead.resolve();
       socket.close();
     }
   });

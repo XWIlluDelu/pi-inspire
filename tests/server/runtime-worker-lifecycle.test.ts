@@ -161,30 +161,6 @@ describe("worker startup and retirement", () => {
     });
   });
 
-  it("rejects a new worker without a session path regardless of projection injection", async () => {
-    let worker!: FakeRpc;
-    const openProjection = vi.fn(preview);
-    const runtime = new RuntimeController(
-      catalog([]),
-      trackedAttachmentStore(),
-      {
-        createProcess: (options) => {
-          worker = new FakeRpc(options);
-          worker.sessionPath = null;
-          return worker as unknown as PiRpcProcess;
-        },
-        openSessionProjection: openProjection,
-      },
-    );
-    trackRuntime(runtime);
-    await expect(runtime.newSession(TEST_CWD)).rejects.toThrow(
-      "Pi did not report a session file",
-    );
-    expect(openProjection).not.toHaveBeenCalled();
-    expect(worker.stops).toBe(1);
-    expect(runtime.startupSessionHint).toBeNull();
-  });
-
   it.each([
     ["unexpected exit", "confirmed"],
     ["unexpected exit", "unconfirmed"],
@@ -333,33 +309,6 @@ describe("worker startup and retirement", () => {
       }
     },
   );
-
-  it("rejects a new Pi worker that reports a path owned by another slot", async () => {
-    const existing = record("a", "/tmp");
-    const store = trackedAttachmentStore();
-    const workers: FakeRpc[] = [];
-    const runtime = new RuntimeController(catalog([existing]), store, {
-      createProcess: (options) => {
-        const worker = new FakeRpc(options);
-        workers.push(worker);
-        if (workers.length === 2) {
-          worker.sessionId = "new-id";
-          worker.sessionPath = existing.path;
-        }
-        return worker as unknown as PiRpcProcess;
-      },
-      openSessionProjection: preview,
-    });
-    trackRuntime(runtime);
-    await runtime.openSession("a");
-    await startWorker(runtime);
-    expect(workers).toHaveLength(1);
-
-    await expect(runtime.newSession(TEST_CWD)).rejects.toThrow(
-      "Pi created a duplicate session path",
-    );
-    expect(workers[1]?.stops).toBeGreaterThan(0);
-  });
 
   it("rejects an open whose catalog lookup outlives runtime close", async () => {
     const base = catalog([record("a", "/project")]);
@@ -564,40 +513,70 @@ describe("worker startup and retirement", () => {
     },
   );
 
-  it("retires a failed new writer and binds the next writer's startup dialog to its final session", async () => {
-    const { runtime, workers } = schedulingRuntime({
-      sessions: [],
-      configure: (worker) => {
-        if (workers.length === 0) {
+  it("retires failed new writers and binds the next writer's startup dialog to its final session", async () => {
+    const existing = record("a", "/tmp");
+    const openProjection = vi.fn(preview);
+    const startupError = new Error("startup failed");
+    const rejected = [
+      {
+        configure: (worker: FakeRpc) => {
           worker.start = async () => {
-            throw new Error("startup failed");
+            throw startupError;
           };
-          return;
-        }
+        },
+        error: startupError.message,
+      },
+      {
+        configure: (worker: FakeRpc) => {
+          worker.sessionPath = null;
+        },
+        error: "Pi did not report a session file",
+      },
+      {
+        configure: (worker: FakeRpc) => {
+          worker.sessionPath = existing.path;
+        },
+        error: "Pi created a duplicate session path",
+      },
+    ];
+    const { runtime, workers } = schedulingRuntime({
+      sessions: [existing],
+      openSessionProjection: openProjection,
+      configure: (worker) => {
+        if (workers.length === 0) return;
+        const failure = rejected[workers.length - 1];
+        if (failure) return failure.configure(worker);
         const request = worker.request.bind(worker);
-        worker.request = async <T>(command: Record<string, unknown>) => {
-          if (command.type === "get_state") {
-            worker.request = request;
+        worker.responseOverrides.set(
+          "get_state",
+          (command: Record<string, unknown>) => {
+            worker.responseOverrides.delete("get_state");
             worker.emit("event", {
               type: "extension_ui_request",
               id: "trust-1",
               method: "confirm",
               title: "Trust?",
             });
-          }
-          return request<T>(command);
-        };
+            return request(command);
+          },
+        );
       },
     });
     const events: Array<Record<string, unknown>> = [];
     runtime.on("event", (event) => events.push(event));
     trackRuntime(runtime);
-    await expect(runtime.newSession(TEST_CWD)).rejects.toThrow(
-      "startup failed",
-    );
-    expect(runtime.startupSessionHint).toBeNull();
-    expect(runtime.ownWorkerTags()).toEqual(new Set());
-    expect(workers[0]?.stops).toBe(1);
+    await runtime.openSession("a");
+    await startWorker(runtime);
+    openProjection.mockClear();
+    const owned = runtime.ownWorkerTags();
+    for (const failure of rejected) {
+      await expect(runtime.newSession(TEST_CWD)).rejects.toThrow(failure.error);
+      expect(runtime.startupSessionHint).toBe("a");
+      expect(runtime.ownWorkerTags()).toEqual(owned);
+      expect(workers.at(-1)?.stops).toBe(1);
+    }
+    expect(openProjection).not.toHaveBeenCalled();
+    expect(workers[0]?.stops).toBe(0);
 
     const readiness = vi.fn((event: { type: string }) => {
       if (event.type === "runtime_ready") throw new Error("Observer failed");
@@ -627,8 +606,10 @@ describe("worker startup and retirement", () => {
       id: "trust-1",
       value: true,
     });
-    expect(workers[1]?.uiResponses).toEqual([{ id: "trust-1", value: true }]);
-    expect(workers[1]?.stops).toBe(0);
+    expect(workers.at(-1)?.uiResponses).toEqual([
+      { id: "trust-1", value: true },
+    ]);
+    expect(workers.at(-1)?.stops).toBe(0);
   });
 });
 

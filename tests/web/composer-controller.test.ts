@@ -395,19 +395,6 @@ it("restages only definitively expired handles and waits for another deliberate 
   ]);
 });
 
-it("reclaims incomplete upload results and prevents sending the unverified batch", async () => {
-  const f = fixture();
-  f.upload(uploaded("partial", "one.txt"));
-  await f.controller.addFiles([file("one.txt"), file("two.txt")]);
-  expect(f.deleteAttachment).toHaveBeenCalledExactlyOnceWith("partial");
-  expect(f.draft().attachments.map(({ status }) => status)).toEqual([
-    "error",
-    "error",
-  ]);
-  expect(await f.send("send")).toBe(false);
-  expect(f.prompt).not.toHaveBeenCalled();
-});
-
 it("retains local bytes through upload retry and cancels attempts after removal", async () => {
   vi.useFakeTimers();
   const f = fixture();
@@ -446,9 +433,13 @@ it("retains local bytes through upload retry and cancels attempts after removal"
   });
 });
 
-it.each(["withdrawal", "transport replacement"] as const)(
-  "retires the whole upload only when no current owner remains after %s",
-  async (action) => {
+it.each([
+  ["withdrawal", ["one", "two"], []],
+  ["transport replacement", ["one", "two"], ["uploading", "uploading"]],
+  ["partial response", ["one"], ["error", "error"]],
+] as const)(
+  "reclaims unpublishable upload handles after %s",
+  async (action, returned, statuses) => {
     const f = fixture();
     const reply = deferred<{ attachments: UploadedAttachment[] }>();
     f.uploadAttachments.mockReturnValue(reply.promise);
@@ -459,13 +450,15 @@ it.each(["withdrawal", "transport replacement"] as const)(
       f.controller.removeAttachment(first!.localId);
       expect(signal.aborted).toBe(false);
       f.controller.removeAttachment(second!.localId);
-    } else f.replaceTransport();
-    expect(signal.aborted).toBe(true);
-    reply.resolve({ attachments: [uploaded("one"), uploaded("two")] });
+    } else if (action === "transport replacement") f.replaceTransport();
+    expect(signal.aborted).toBe(action !== "partial response");
+    reply.resolve({ attachments: returned.map((id) => uploaded(id)) });
     await staging;
-    expect(f.deleteAttachment.mock.calls).toEqual([["one"], ["two"]]);
-    expect(f.draft().attachments.map(({ status }) => status)).toEqual(
-      action === "withdrawal" ? [] : ["uploading", "uploading"],
-    );
+    expect(f.deleteAttachment.mock.calls).toEqual(returned.map((id) => [id]));
+    expect(f.draft().attachments.map(({ status }) => status)).toEqual(statuses);
+    if (action === "partial response") {
+      expect(await f.send("send")).toBe(false);
+      expect(f.prompt).not.toHaveBeenCalled();
+    }
   },
 );

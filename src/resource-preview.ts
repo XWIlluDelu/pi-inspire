@@ -3,6 +3,7 @@ import type {
   ResourceProbeResult,
 } from "../shared/contracts";
 import { HTML_PREVIEW_BYTES } from "../shared/html-preview";
+import { resourceRefusal } from "../shared/resource-references";
 import { ApiError } from "./api";
 
 /** Text-like previews are range-capped; a body shorter than the file's
@@ -119,21 +120,12 @@ export function classifiedResourceFailure(
   error: unknown,
 ): ResourceProbeResult | null {
   if (!(error instanceof ApiError)) return null;
-  if (error.status === 409 && error.matches) {
-    return {
-      reference,
-      availability: "ambiguous",
-      message: error.message,
-      matches: error.matches,
-    };
-  }
-  if (error.status === 404)
-    return { reference, availability: "missing", message: error.message };
-  if (error.status === 403 || error.status === 409)
-    return { reference, availability: "unavailable", message: error.message };
-  if (error.status === 400)
-    return { reference, availability: "invalid", message: error.message };
-  return null;
+  return (
+    resourceRefusal(reference, error) ??
+    (error.status === 409
+      ? { reference, availability: "unavailable", message: error.message }
+      : null)
+  );
 }
 
 export function unknownResourceAvailability(

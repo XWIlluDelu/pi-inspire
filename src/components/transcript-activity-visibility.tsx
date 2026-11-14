@@ -1,5 +1,6 @@
 import {
   createContext,
+  type ComponentProps,
   type ReactNode,
   useCallback,
   useContext,
@@ -7,7 +8,36 @@ import {
   useRef,
   useState,
 } from "react";
+import { CodeView } from "./CodeView";
+import { CopyAction } from "./CopyAction";
 import { DetailSummary } from "./DetailSummary";
+
+export function ActivityHeader({
+  icon,
+  children,
+  copy,
+  className = "",
+}: {
+  icon?: ReactNode;
+  children: ReactNode;
+  copy?: Omit<ComponentProps<typeof CopyAction>, "className"> & {
+    className?: string;
+  };
+  className?: string;
+}) {
+  return (
+    <div className={`activity-surface__head ${className}`}>
+      {icon}
+      {children}
+      {copy && (
+        <CopyAction
+          {...copy}
+          className={`activity-copy ${copy.className ?? ""}`}
+        />
+      )}
+    </div>
+  );
+}
 
 interface ReaderScrollPosition {
   top: number;
@@ -160,6 +190,81 @@ export function useActivityReaderScroll<T extends HTMLElement>(
       },
     },
   };
+}
+
+export function ActivityCode({
+  reader,
+  label,
+  following,
+  scrollable = true,
+  className = "",
+  ...props
+}: ComponentProps<typeof CodeView> & {
+  reader: string;
+  label: string;
+  following?: boolean;
+  scrollable?: boolean;
+}) {
+  const scroll = useActivityReaderScroll<HTMLPreElement>(
+    reader,
+    props.text ?? props.children,
+    following,
+  );
+  return (
+    <CodeView
+      {...props}
+      {...scroll.props}
+      className={`activity-reader ${className}`}
+      tabIndex={scrollable ? 0 : undefined}
+      role={scrollable ? "group" : undefined}
+      aria-label={scrollable ? label : undefined}
+    />
+  );
+}
+
+export function ActivityText({
+  text,
+  label,
+  error,
+  following = false,
+  live = false,
+  preview,
+  scrollable = true,
+  className = "",
+}: {
+  text: string;
+  label: string;
+  error?: boolean;
+  following?: boolean;
+  live?: boolean;
+  preview?: number;
+  scrollable?: boolean;
+  className?: string;
+}) {
+  const [expanded, setExpanded] = useActivityReaderExpanded(`${label}-all`);
+  const truncated = preview !== undefined && text.length > preview;
+  return (
+    <>
+      <ActivityCode
+        reader={`${label}-scroll`}
+        label={label}
+        scrollable={scrollable}
+        following={live || following}
+        className={live ? `tool-terminal--live ${className}` : className}
+        data-error={error || undefined}
+        text={!expanded && truncated ? `${text.slice(0, preview)}…` : text}
+      />
+      {truncated && (
+        <button
+          type="button"
+          className="card__show-all"
+          onClick={() => setExpanded(!expanded)}
+        >
+          {expanded ? "Show less" : "Show all"}
+        </button>
+      )}
+    </>
+  );
 }
 
 /** Only a real Pi tool call carries its explicit choices across pages and checkpoints. */

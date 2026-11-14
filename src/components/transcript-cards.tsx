@@ -14,7 +14,6 @@ import {
 } from "lucide-react";
 import {
   createContext,
-  Fragment,
   useContext,
   useId,
   useLayoutEffect,
@@ -52,7 +51,6 @@ import { codeModeResultBlocks } from "../tool-presentations/pi-native";
 import { ChildCalls, childCallsSummary } from "./ChildCalls";
 import { CodeModeResult, codeModeDuration } from "./CodeModeResult";
 import { CodeRows, CodeView } from "./CodeView";
-import { CopyAction } from "./CopyAction";
 import { ImageGallery } from "./ImageGallery";
 import {
   ImagePreview,
@@ -64,91 +62,24 @@ import { PiStatus } from "./PiStatus";
 import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
 import { ResourcePathLabel } from "./ResourcePathLabel";
 import {
+  ActivityCode,
   ActivityDetails,
+  ActivityHeader,
   ActivityReadingBlock,
+  ActivityText,
   useActivityReaderExpanded,
-  useActivityReaderScroll,
 } from "./transcript-activity-visibility";
 import { TranscriptSearchReveal } from "./transcript-search";
 
 export type StaticVisibility = Exclude<VisibilityPreference, "dynamic">;
 
-interface CardHeaderProps {
-  expanded: boolean;
-  icon: React.ReactNode;
-  label: React.ReactNode;
-  toggleLabel: string;
-  onToggle: () => void;
-  summary?: React.ReactNode;
-  status?: React.ReactNode;
-  copyText?: string;
-  copyLabel?: string;
-  getCopyContent?: CopyLoader;
-  controlsId: string;
-  accessibleLabel?: string;
-  describedBy?: string;
-}
-
-/** A stretched native disclosure owns the header row. Independent copy and
- * resource controls are siblings above its hit area, never nested buttons. */
-function CardHeader({
-  expanded,
-  icon,
-  label,
-  toggleLabel,
-  onToggle,
-  summary,
-  status,
-  copyText,
-  copyLabel = `${toggleLabel} block`,
-  getCopyContent,
-  controlsId,
-  accessibleLabel,
-  describedBy,
-}: CardHeaderProps) {
-  const action = expanded ? "Collapse" : "Expand";
-  return (
-    <div className="card__header">
-      <button
-        type="button"
-        className="disclosure-row card__disclosure"
-        aria-label={accessibleLabel ?? `${action} ${toggleLabel}`}
-        aria-expanded={expanded}
-        aria-controls={controlsId}
-        aria-describedby={describedBy}
-        title={`${action} ${toggleLabel}`}
-        onClick={onToggle}
-      >
-        <span className="card__chevron">
-          <ChevronRight
-            size={14}
-            className={`chev ${expanded ? "chev--open" : ""}`}
-            aria-hidden
-          />
-        </span>
-        <span className="card__icon">{icon}</span>
-        <span className="card__label">{label}</span>
-        {status ? <span className="card__status">{status}</span> : null}
-      </button>
-      {summary}
-      {expanded && (copyText || getCopyContent) ? (
-        <CopyAction
-          text={copyText}
-          getContent={getCopyContent}
-          label={copyLabel}
-          className="activity-copy card__copy"
-        />
-      ) : null}
-    </div>
-  );
-}
-
 const CardInspectionContext = createContext<(() => void) | undefined>(
   undefined,
 );
 
-interface CardProps
-  extends Pick<CardHeaderProps, "accessibleLabel" | "describedBy"> {
+interface CardProps {
+  accessibleLabel?: string;
+  describedBy?: string;
   defaultVisibility: StaticVisibility;
   className: string;
   icon: React.ReactNode;
@@ -175,7 +106,7 @@ export function CollapsibleCard({
   summaryVisibleWhenOpen = false,
   status,
   copyText,
-  copyLabel,
+  copyLabel = `${toggleLabel} block`,
   getCopyContent,
   accessibleLabel,
   describedBy,
@@ -193,31 +124,45 @@ export function CollapsibleCard({
   if (defaultVisibility === "hidden") return null;
   const open = override ?? defaultVisibility === "expanded";
   const bodyId = id ?? generatedId;
+  const disclosureLabel = `${open ? "Collapse" : "Expand"} ${toggleLabel}`;
   return (
     <section className={`card ${className}`}>
-      <CardHeader
-        expanded={open}
-        icon={icon}
-        label={label}
-        toggleLabel={toggleLabel}
-        accessibleLabel={accessibleLabel}
-        describedBy={describedBy}
-        onToggle={() => setOverride(!open)}
-        summary={
-          (!open || summaryVisibleWhenOpen) && summary ? (
-            typeof summary === "string" ? (
-              <span className="card__summary">{summary}</span>
-            ) : (
-              summary
-            )
-          ) : undefined
+      <ActivityHeader
+        className="card__header"
+        copy={
+          open
+            ? {
+                text: copyText,
+                getContent: getCopyContent,
+                label: copyLabel,
+                className: "card__copy",
+              }
+            : undefined
         }
-        status={status}
-        copyText={copyText}
-        copyLabel={copyLabel}
-        getCopyContent={getCopyContent}
-        controlsId={bodyId}
-      />
+      >
+        <button
+          type="button"
+          className="disclosure-row card__disclosure"
+          aria-label={accessibleLabel ?? disclosureLabel}
+          aria-expanded={open}
+          aria-controls={bodyId}
+          aria-describedby={describedBy}
+          title={disclosureLabel}
+          onClick={() => setOverride(!open)}
+        >
+          <span className="card__chevron">
+            <ChevronRight
+              size={14}
+              className={open ? "chev chev--open" : "chev"}
+              aria-hidden
+            />
+          </span>
+          <span className="card__icon">{icon}</span>
+          <span className="card__label">{label}</span>
+          {status && <span className="card__status">{status}</span>}
+        </button>
+        {(!open || summaryVisibleWhenOpen) && summary}
+      </ActivityHeader>
       {open && (
         <div id={bodyId} className="card__body">
           <CardInspectionContext value={() => setOverride(true)}>
@@ -309,6 +254,7 @@ type ContentBlock =
   | Exclude<ToolPresentationBlock, { type: "diff" }>
   | (Extract<ToolPresentationBlock, { type: "diff" }> & { lines: DiffLine[] })
   | { type: "result"; text: string; error?: boolean }
+  | { type: "live"; label: string; text: string; truncated: boolean }
   | { type: "inspection"; data: object }
   | { type: "empty" };
 
@@ -392,21 +338,12 @@ function FileRefButton({
   );
 }
 
-function ToolSummary({ call }: { call: ToolCallContent }) {
+function fallbackSummary(call: ToolCallContent): ToolPresentationSummary {
   const reference = toolFileArguments(call)[0]?.value;
-  const summary = reference ?? toolSummary(call);
-  if (!summary) return null;
-  if (!reference)
-    return <span className="card__summary">{summary.slice(0, 90)}</span>;
-  return (
-    <FileRefButton
-      reference={reference}
-      className="card__summary card__summary--tool"
-      accessibleLabel={summary}
-    >
-      <ResourcePathLabel path={summary} />
-    </FileRefButton>
-  );
+  if (reference)
+    return { parts: [{ kind: "resource", text: reference, reference }] };
+  const text = toolSummary(call);
+  return { parts: text ? [{ kind: "text", text: text.slice(0, 90) }] : [] };
 }
 
 function PresentedSummary({ summary }: { summary: ToolPresentationSummary }) {
@@ -481,21 +418,15 @@ function statusIcon(status: ToolStatus) {
  * diff is the whole point of an edit result, so it is never truncated. */
 function DiffView({ lines }: { lines: DiffLine[] }) {
   const preview = useContext(ToolArgumentPreviewContext);
-  const scroll = useActivityReaderScroll<HTMLPreElement>(
-    "diff-scroll",
-    lines,
-    preview?.phase === "streaming",
-  );
   return (
-    <CodeView
-      className="activity-reader diff"
-      {...scroll.props}
-      tabIndex={0}
-      role="group"
-      aria-label="Changes"
+    <ActivityCode
+      className="diff"
+      reader="diff-scroll"
+      label="Changes"
+      following={preview?.phase === "streaming"}
     >
       <CodeRows rows={lines} />
-    </CodeView>
+    </ActivityCode>
   );
 }
 
@@ -529,7 +460,7 @@ function rawResultData(result: ChatMessage) {
 
 function JsonReader({ label, value }: { label: string; value: unknown }) {
   const text = useMemo(() => JSON.stringify(value, null, 2) ?? "", [value]);
-  return <ToolTextReader label={label} text={text} />;
+  return <ToolActivityText label={label} text={text} />;
 }
 
 function rawResultBlocks(result: ChatMessage): ContentBlock[] {
@@ -615,23 +546,17 @@ function StructuredCode({
   language?: string;
 }) {
   const partial = useContext(ToolArgumentPreviewContext);
-  const scroll = useActivityReaderScroll<HTMLPreElement>(
-    "code-scroll",
-    text,
-    partial?.phase === "streaming",
-  );
   const { lines: visible, disclosure } = useToolLinePreview(
     "code-all",
     text.split("\n"),
   );
   return (
     <>
-      <CodeView
-        {...scroll.props}
-        className="activity-reader tool-code"
-        tabIndex={0}
-        role="group"
-        aria-label="Code"
+      <ActivityCode
+        className="tool-code"
+        reader="code-scroll"
+        label="Code"
+        following={partial?.phase === "streaming"}
         data-language={language}
       >
         {lineNumbers ? (
@@ -647,7 +572,7 @@ function StructuredCode({
             {visible.join("\n")}
           </code>
         )}
-      </CodeView>
+      </ActivityCode>
       {disclosure}
     </>
   );
@@ -834,7 +759,7 @@ function renderToolBlock(block: ContentBlock) {
       return (
         <div className={`tool-notice tool-notice--${block.tone ?? "muted"}`}>
           {block.text}
-          {block.action ? (
+          {block.action && (
             <FileRefButton
               reference={block.action.reference}
               accessibleLabel={block.action.label}
@@ -842,7 +767,7 @@ function renderToolBlock(block: ContentBlock) {
             >
               {block.action.label}
             </FileRefButton>
-          ) : null}
+          )}
         </div>
       );
     case "markdown":
@@ -865,11 +790,26 @@ function renderToolBlock(block: ContentBlock) {
           {() => <JsonReader label="Result data" value={block.data} />}
         </ActivityDetails>
       );
+    case "live":
+      return (
+        <>
+          {block.truncated && (
+            <div className="card__pending">
+              Showing latest output · preview truncated
+            </div>
+          )}
+          <ToolActivityText
+            text={stripTerminalSequences(block.text)}
+            label="Live output"
+            live
+          />
+        </>
+      );
     case "result":
     case "text":
     case "terminal":
       return (
-        <ToolTextReader
+        <ToolActivityText
           text={
             block.type === "terminal"
               ? stripTerminalSequences(block.text)
@@ -879,10 +819,10 @@ function renderToolBlock(block: ContentBlock) {
             block.type === "result"
               ? "Result text"
               : (block.label ??
-                (block.type === "text" ? "Output text" : undefined))
+                (block.type === "text" ? "Output text" : "Output"))
           }
           error={block.error}
-          resultPreview={block.type === "result"}
+          preview={block.type === "result" ? 600 : undefined}
         />
       );
   }
@@ -915,39 +855,30 @@ function presentationBlocks(
   }
 }
 
-function PresentationBlocks({
-  blocks,
-  raw = false,
-}: {
-  blocks: ContentBlock[];
-  raw?: boolean;
-}) {
-  let rawImageIndex = 0;
-  return blocks.map((block, index) => {
-    if (raw && block.type !== "image" && block !== unavailableToolImage)
-      return <Fragment key={block.type}>{renderToolBlock(block)}</Fragment>;
-    const key = `${block.type}:${raw ? rawImageIndex++ : index}`;
-    const body = renderToolBlock(block);
+function PresentationBlocks({ blocks }: { blocks: ContentBlock[] }) {
+  const counts = new Map<string, number>();
+  return blocks.map((block) => {
+    const label =
+      block.type === "codemode-result"
+        ? "Output"
+        : "label" in block &&
+            block.type !== "image" &&
+            block.type !== "properties"
+          ? block.label
+          : undefined;
+    const path = "path" in block ? block.path : undefined;
+    const count = counts.get(block.type) ?? 0;
+    counts.set(block.type, count + 1);
+    const key = `${block.type}:${count}`;
     return (
       <ActivityReadingBlock key={key} name={key}>
-        {block.type === "image" ||
-        block.type === "notice" ||
-        block.type === "properties" ? (
-          body
-        ) : (
+        {label || path ? (
           <div className="tool-block">
-            <ToolBlockHeading
-              label={
-                block.type === "codemode-result"
-                  ? "Output"
-                  : "label" in block
-                    ? block.label
-                    : undefined
-              }
-              path={"path" in block ? block.path : undefined}
-            />
-            {body}
+            <ToolBlockHeading label={label} path={path} />
+            {renderToolBlock(block)}
           </div>
+        ) : (
+          renderToolBlock(block)
         )}
       </ActivityReadingBlock>
     );
@@ -970,73 +901,9 @@ function ThinkingDetails({
   );
 }
 
-function ToolTextReader({
-  text,
-  label = "Output",
-  error = false,
-  live = false,
-  resultPreview = false,
-}: {
-  text: string;
-  label?: string;
-  error?: boolean;
-  live?: boolean;
-  resultPreview?: boolean;
-}) {
+function ToolActivityText(props: React.ComponentProps<typeof ActivityText>) {
   const preview = useContext(ToolArgumentPreviewContext);
-  const [expanded, setExpanded] = useActivityReaderExpanded(`${label}-all`);
-  const scroll = useActivityReaderScroll<HTMLPreElement>(
-    `${label}-scroll`,
-    text,
-    live || preview?.phase === "streaming",
-  );
-  const truncated = resultPreview && text.length > 600;
-  return (
-    <>
-      <CodeView
-        {...scroll.props}
-        className={
-          live ? "activity-reader tool-terminal--live" : "activity-reader"
-        }
-        tabIndex={0}
-        role="group"
-        aria-label={label}
-        data-error={error || undefined}
-        text={!expanded && truncated ? `${text.slice(0, 600)}…` : text}
-      />
-      {truncated && (
-        <button
-          type="button"
-          className="card__show-all"
-          onClick={() => setExpanded(!expanded)}
-        >
-          {expanded ? "Show less" : "Show all"}
-        </button>
-      )}
-    </>
-  );
-}
-
-function LiveToolOutput({
-  preview,
-}: {
-  preview: NonNullable<ActivityTool["outputPreview"]>;
-}) {
-  return (
-    <div className="tool-block">
-      <ToolBlockHeading label="Output (live preview)" />
-      {preview.truncated ? (
-        <div className="card__pending">
-          Showing latest output · preview truncated
-        </div>
-      ) : null}
-      <ToolTextReader
-        text={stripTerminalSequences(preview.text)}
-        label="Live output"
-        live
-      />
-    </div>
-  );
+  return <ActivityText {...props} following={preview?.phase === "streaming"} />;
 }
 
 function PhaseToolDetails({
@@ -1139,11 +1006,14 @@ function ToolDetails({
   const preview =
     !result && status === "running" ? activity?.outputPreview : undefined;
   const calls = result ? result.__inspireCalls : activity?.calls;
-  const blocks = presentation
+  const formatted = presentation
     ? presentationBlocks(presentation)
     : codemode && !call && result
       ? codeModeResultBlocks(result)
       : null;
+  const blocks = formatted ?? (result ? rawResultBlocks(result) : []);
+  if (preview)
+    blocks.push({ type: "live", label: "Output (live preview)", ...preview });
   const phaseDetails = codemode || calls;
   const inlineArgs = !result && !phaseDetails;
   const pending = !result && !calls?.calls.length && (
@@ -1151,22 +1021,17 @@ function ToolDetails({
   );
   const body = (
     <>
-      {blocks ? (
+      {(blocks.length > 0 || pending) && (
         <div
           className="tool-presentation"
-          data-tool-rule={presentation?.ruleId}
+          data-tool-rule={formatted ? presentation?.ruleId : undefined}
         >
-          <PresentationBlocks blocks={blocks} />
           {pending}
+          <PresentationBlocks blocks={blocks} />
         </div>
-      ) : result ? (
-        <PresentationBlocks blocks={rawResultBlocks(result)} raw />
-      ) : (
-        pending
       )}
-      {preview ? <LiveToolOutput preview={preview} /> : null}
       {call &&
-        !blocks &&
+        !formatted &&
         (!inlineArgs ||
           !call.__inspireToolCall ||
           Object.keys(call.arguments ?? {}).length > 0) && (
@@ -1317,10 +1182,10 @@ export function ToolCard({
               result={result}
               calls={result ? result.__inspireCalls : activity?.calls}
             />
-          ) : presentation ? (
-            <PresentedSummary summary={presentation.summary} />
           ) : call ? (
-            <ToolSummary call={call} />
+            <PresentedSummary
+              summary={presentation?.summary ?? fallbackSummary(call)}
+            />
           ) : undefined
         }
         summaryVisibleWhenOpen={codemode}

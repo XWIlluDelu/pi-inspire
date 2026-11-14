@@ -472,7 +472,6 @@ body.pane-resizing .nav {
 .recent-file__produced {
   display: inline-flex;
   flex: 0 0 auto;
-  align-items: center;
   color: var(--faint);
 }
 
@@ -550,11 +549,11 @@ body.pane-resizing .nav {
   flex: 0 0 11px;
 }
 
-.recent-file--unavailable .recent-file__name {
+.recent-file--unavailable .file-row__name {
   color: var(--faint);
 }
 
-.recent-file--missing .recent-file__name {
+.recent-file--missing .file-row__name {
   text-decoration: line-through;
   text-decoration-color: var(--hairline-strong);
 }
@@ -566,7 +565,7 @@ body.pane-resizing .nav {
 
 /* Availability shares Git's trailing 16px status column, even without a path.
    Its icon must not shrink when a long filename and path compete for space. */
-.recent-file__warning {
+.file-row__warning {
   display: inline-flex;
   flex: 0 0 16px;
   align-items: center;
@@ -574,35 +573,44 @@ body.pane-resizing .nav {
   margin-left: auto;
 }
 
-.recent-file__name {
+.file-row__label {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--space-1);
   min-width: 0;
-  flex: 0 1 auto;
+}
+
+.file-row__label[data-stacked] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+}
+
+.file-row__name {
+  min-width: 0;
   overflow: hidden;
-  font-size: var(--text-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.recent-file__path {
-  min-width: 3rem;
-  flex: 1 1 auto;
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
+.file-row__context {
+  min-width: 0;
   overflow: hidden;
   color: var(--faint);
   font: var(--text-xs)/var(--leading-ui) var(--font-mono);
 }
 
-.recent-file__path::before {
-  content: "·";
-  flex: 0 0 auto;
-  margin-right: 2px;
-  color: var(--hairline-strong);
+.recent-file .file-row__context {
+  display: flex;
+  min-width: 3rem;
+  align-items: center;
+  gap: var(--space-1);
 }
 
-.recent-file__path .resource-path {
-  flex: 1 1 auto;
+.recent-file .file-row__context::before {
+  content: "·";
+  color: var(--hairline-strong);
 }
 
 .file-preview {
@@ -837,22 +845,13 @@ body.pane-resizing .nav {
   position: sticky;
   left: 0;
   z-index: 1;
-  border-right: none;
   background: var(--bg-surface);
-  padding: var(--space-3) 0 var(--space-3) var(--space-3);
+  min-width: calc(3ch + 2 * var(--space-3));
+  padding: var(--space-3);
   color: var(--muted);
+  font-variant-numeric: tabular-nums;
   text-align: right;
   user-select: none;
-}
-
-.source-view__gutter pre {
-  min-width: 3ch;
-  margin: 0;
-  padding-right: var(--space-3);
-  color: inherit;
-  font: inherit;
-  line-height: var(--leading-mono);
-  font-variant-numeric: tabular-nums;
 }
 
 .source-view__pre {
@@ -903,15 +902,6 @@ body.pane-resizing .nav {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.res__row-name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--text-sm);
 }
 
 .git-mark {
@@ -1007,9 +997,7 @@ body.pane-resizing .nav {
   padding: 2px 6px;
 }
 
-.res__row-name[data-has-origin] {
-  display: grid;
-  gap: 2px;
+.file-row--renamed .file-row__name {
   white-space: normal;
 }
 
@@ -1018,8 +1006,8 @@ body.pane-resizing .nav {
   font: var(--text-xs)/var(--leading-ui) var(--font-mono);
 }
 
-.res__row-name[data-has-origin] .resource-path__visible,
-.res__row-name[data-has-origin] .resource-path__visible > span {
+.file-row--renamed .resource-path__visible,
+.file-row--renamed .resource-path__visible > span {
   display: inline;
   direction: inherit;
   white-space: normal;

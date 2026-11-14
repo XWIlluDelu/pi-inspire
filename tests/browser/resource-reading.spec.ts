@@ -26,6 +26,15 @@ async function openReadingPane(page: Page, width = 1280, height = 900) {
 test("Recent retains a literal written file during refresh recovery and opens it", async ({
   page,
 }) => {
+  const invalidPath = "tests/browser/fixtures/not-a-file.txt";
+  await page.route("**/api/resources/probe", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    for (const result of body.results ?? [])
+      if (result.reference.endsWith("/not-a-file.txt"))
+        result.availability = "invalid";
+    await route.fulfill({ response, json: body });
+  });
   const pane = await openReadingPane(page);
   await pane.getByRole("tab", { name: "Files", exact: true }).click();
   const report = pane.getByRole("button", {
@@ -35,6 +44,47 @@ test("Recent retains a literal written file during refresh recovery and opens it
   const read = pane.getByRole("button", { name: /file-previews\/page\.html/ });
   await expect(read).toBeVisible();
   await expect(read).not.toHaveAccessibleName(/written in this chat/);
+  const folder = pane
+    .getByRole("region", { name: "Workspace file tree" })
+    .getByRole("button", { name: /^tests\b/ });
+  const reveals: unknown[] = [];
+  await page.route("**/api/resources/show-in-file-manager", (route) => {
+    const payload = route.request().postDataJSON();
+    reveals.push(payload);
+    return route.fulfill(
+      payload.directory
+        ? { json: { ok: true } }
+        : { status: 503, json: { error: "No desktop is available" } },
+    );
+  });
+  await folder.click({ modifiers: ["Control"] });
+  await expect(folder).toHaveAttribute("aria-expanded", "false");
+  await expect(
+    pane
+      .getByRole("button", { name: /unavailable-resource.*file unavailable/i })
+      .first(),
+  ).toBeVisible();
+  await report.click({ modifiers: ["Meta"] });
+  await expect(page.getByText(/No desktop is available/)).toBeVisible();
+  expect(reveals).toMatchObject([
+    {
+      sessionId: "fixture-resources",
+      reference: "tests",
+      workspacePath: "tests",
+      directory: true,
+    },
+    {
+      sessionId: "fixture-resources",
+      reference: "tests/browser/fixtures/file-previews/report%2520%20draft.md",
+      directory: false,
+    },
+  ]);
+  await expect(
+    pane.getByRole("tab", { name: "Files", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(
+    pane.getByRole("button", { name: new RegExp(invalidPath) }),
+  ).toHaveCount(0);
 
   const endpoint = "**/api/resources/list";
   const resumed = Promise.withResolvers<void>();
@@ -61,11 +111,42 @@ test("Recent retains a literal written file during refresh recovery and opens it
     (response) =>
       response.url().endsWith("/api/resources/list") && response.ok(),
   );
+  const gitRelease = Promise.withResolvers<void>();
+  await pane.getByRole("tab", { name: "Changes", exact: true }).click();
+  await expect(
+    pane.getByText("fixture/analysis", { exact: true }),
+  ).toBeVisible();
+  const refresh = pane.getByRole("button", { name: "Refresh context pane" });
+  const status = "**/api/git/status?**";
+  await page.route(
+    status,
+    async (route) => {
+      await gitRelease.promise;
+      await route.continue();
+    },
+    { times: 1 },
+  );
   try {
-    await pane.getByRole("button", { name: "Refresh context pane" }).click();
+    const git = page.waitForRequest(status);
+    await refresh.click();
+    await git;
+    await expect(refresh).toBeDisabled();
+    await pane.getByRole("tab", { name: "Files", exact: true }).click();
+    const workspace = page.waitForRequest((request) => {
+      const url = new URL(request.url());
+      return (
+        url.pathname === "/api/files/list" &&
+        url.searchParams.get("refresh") === "1"
+      );
+    });
+    await refresh.click();
+    await workspace;
     await resumed.promise;
     await expect(report).toBeEnabled();
+    gitRelease.resolve();
+    await expect(refresh).toBeDisabled();
   } finally {
+    gitRelease.resolve();
     delivery.resolve();
   }
   await refreshed;
@@ -73,6 +154,12 @@ test("Recent retains a literal written file during refresh recovery and opens it
   await expect(
     pane.getByRole("heading", { name: "Literal report from disk" }),
   ).toBeVisible();
+  await page.getByRole("link", { name: "Open an invalid path" }).click();
+  await expect(pane.getByText("Not a file", { exact: true })).toBeVisible();
+  await expect(pane.getByText("The reference is not a file")).toBeVisible();
+  await expect(
+    pane.getByRole("button", { name: "Retry", exact: true }),
+  ).toHaveCount(0);
 });
 
 for (const mode of ["Source", "Preview"] as const) {
@@ -91,8 +178,15 @@ for (const mode of ["Source", "Preview"] as const) {
       600,
     );
     await openPreviewFixture(pane, "document.md");
-    if (mode === "Source")
-      await pane.getByRole("button", { name: "Source", exact: true }).click();
+    if (mode === "Source") {
+      await pane.getByRole("tab", { name: "Files", exact: true }).click();
+      await page
+        .getByRole("link", { name: "Open document line three" })
+        .click();
+      await expect(
+        pane.getByRole("tab", { name: "document.md", exact: true }),
+      ).toHaveCount(1);
+    }
     const source =
       mode === "Source"
         ? pane.getByRole("region", { name: "File source" })

@@ -8,12 +8,7 @@ import {
   useRef,
 } from "react";
 import type { GitFileChange } from "../../shared/contracts";
-import { fileIconForPath } from "../file-icons";
-import {
-  gitDecorationForChange,
-  gitDecorationForDirectory,
-  presentGitFacet,
-} from "../git-presentation";
+import { gitDecorationForDirectory } from "../git-presentation";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import { inspectedFileTab } from "../resource-preview";
 import {
@@ -22,6 +17,7 @@ import {
   store,
   useAppState,
 } from "../store";
+import { FileIndexRow } from "./FileIndexRow";
 import { HiddenFilesToggle } from "./HiddenFilesToggle";
 import { PiLoader } from "./PiLoader";
 import { parentPath, ResourcePathLabel } from "./ResourcePathLabel";
@@ -114,16 +110,27 @@ const WorkspaceFileRow = memo(function WorkspaceFileRow({
   showPath?: boolean;
   query?: string;
 }) {
-  const Icon = fileIconForPath(path);
   const directory = showPath ? parentPath(path) : null;
   const matches = searchMatchRanges(path, query.trim().split(/\s+/));
   const selected = selectedPath === path;
-  const decoration = gitDecorationForChange(change);
-  const facet = presentGitFacet(change);
   return (
-    <button
-      type="button"
-      className={`file-row workspace-tree__row workspace-tree__row--file ${showPath ? "workspace-tree__row--result" : ""}`}
+    <FileIndexRow
+      file={path}
+      name={
+        <SearchMatchText
+          text={name}
+          ranges={matches}
+          offset={path.length - name.length}
+        />
+      }
+      context={
+        directory && (
+          <ResourcePathLabel path={directory} title={path} matches={matches} />
+        )
+      }
+      stacked={showPath}
+      change={change}
+      className={`workspace-tree__row workspace-tree__row--file ${showPath ? "workspace-tree__row--result" : ""}`}
       style={{ paddingLeft: `${8 + depth * 14}px` }}
       title={`${path}\nCtrl+click: Show in file manager`}
       aria-label={showPath ? `${name}, ${path}` : undefined}
@@ -134,49 +141,11 @@ const WorkspaceFileRow = memo(function WorkspaceFileRow({
           void store.showInFileManager(path, path);
         else void store.openWorkspaceFile(path);
       }}
-    >
-      <Icon size={13} aria-hidden />
-      <span className="workspace-tree__file-label">
-        <span
-          className={`workspace-tree__name ${decoration ? `git-deco--${decoration}` : ""}`}
-        >
-          <SearchMatchText
-            text={name}
-            ranges={matches}
-            offset={path.length - name.length}
-          />
-        </span>
-        {directory ? (
-          <ResourcePathLabel
-            path={directory}
-            title={path}
-            className="workspace-tree__path"
-            matches={matches}
-          />
-        ) : null}
-      </span>
-      {facet ? (
-        <span
-          className={`git-mark ${decoration ? `git-deco--${decoration}` : ""}`}
-          role="img"
-          aria-label={facet.label}
-          title={facet.label}
-        >
-          {facet.mark}
-        </span>
-      ) : null}
-    </button>
+    />
   );
 });
 
-/** The shared lazy tree rendered by both Files surfaces. */
-export function WorkspaceTree({
-  className = "",
-  revealRequests = false,
-}: {
-  className?: string;
-  revealRequests?: boolean;
-}) {
+export function WorkspaceTree() {
   const state = useAppState(
     (source) => ({
       sessionId: source.sessionId,
@@ -231,14 +200,14 @@ export function WorkspaceTree({
 
   useLayoutEffect(() => {
     const request = state.workspaceRevealRequest;
-    if (!revealRequests || !request) return;
+    if (!request) return;
     const escaped = CSS.escape(request.path);
     const target = rootRef.current?.querySelector<HTMLElement>(
       `[data-workspace-path="${escaped}"]`,
     );
     if (!target || !store.consumeWorkspaceRevealRequest(request.nonce)) return;
     target.scrollIntoView({ block: "nearest" });
-  }, [revealRequests, state.workspaceLevels, state.workspaceRevealRequest]);
+  }, [state.workspaceLevels, state.workspaceRevealRequest]);
 
   const renderLevel = (dir: string, depth: number): React.ReactNode => {
     const entries = state.workspaceLevels[dir];
@@ -323,7 +292,7 @@ export function WorkspaceTree({
                 />
                 <Folder size={13} aria-hidden />
                 <span
-                  className={`workspace-tree__name ${rollup ? `git-deco--${rollup}` : ""}`}
+                  className={`file-row__name ${rollup ? `git-deco--${rollup}` : ""}`}
                 >
                   {entry.name}
                 </span>
@@ -346,7 +315,7 @@ export function WorkspaceTree({
 
   return (
     <div
-      className={`workspace-tree ${className}`}
+      className="workspace-tree"
       role="region"
       aria-label="Workspace file tree"
       aria-busy={state.workspaceLoadingDirs.length > 0}
@@ -361,11 +330,7 @@ export function WorkspaceTree({
   );
 }
 
-export function WorkspaceSearchResults({
-  className = "",
-}: {
-  className?: string;
-}) {
+export function WorkspaceSearchResults() {
   const state = useAppState(
     (source) => ({
       workspaceQuery: source.workspaceQuery,
@@ -382,7 +347,7 @@ export function WorkspaceSearchResults({
   const { selectedPath } = state;
   return (
     <div
-      className={`workspace-tree workspace-tree--results ${className}`}
+      className="workspace-tree workspace-tree--results"
       role="region"
       aria-label="Workspace search results"
       aria-busy={state.workspaceSearchLoading}

@@ -5,7 +5,7 @@ covers:
   - src/use-inspection-history.ts
   - src/store.ts
   - src/controllers/{git,workspace}-controller.ts
-  - src/components/{AppTopbar,Nav,NavigationToggle,SessionActionsMenu,Composer,ExtensionDisplays,ContextPane,ContextPaneShell,FilesPane,ChangesPane,WorkspaceBrowser,BranchTree,PaneResizeHandle}.tsx
+  - src/components/{AppTopbar,Nav,NavigationToggle,SessionActionsMenu,Composer,ExtensionDisplays,ContextPane,ContextPaneShell,FilesPane,ChangesPane,FileIndexRow,WorkspaceBrowser,NativeTurnReader,PaneResizeHandle}.tsx
   - src/{git-presentation,source-diff,use-modal-focus,use-session-action-reorder}.ts
   - server/git-inspection.ts
   - shared/contracts.ts
@@ -110,16 +110,17 @@ desktop / 40px narrow height, aligning Changes with Recent without an empty plac
 surfaces use a 4px outer inset plus their own content padding; both lists reserve the same stable
 native-scrollbar gutter. In a compact Changes pane, renamed and copied paths put the destination
 above the quieter origin and allow both to wrap so their directories stay distinguishable.
+Recent, workspace search and Changes share the row layout, file icon and Git status marker. Each
+row keeps the path context and action of its owning list.
 Transcript and the complete Composer dock share the reading stage's height budget. A reading area
 is preserved while the draft and Pi's aboveEditor/belowEditor widgets yield through their own
 scrolling. Input text keeps its normal size; toolbars and Send/Stop keep their full targets. The
 minimum editor line and focusable widget scrollports bound compression, including on touch and in
 short landscape windows. Normal-height windows keep their spacing and natural widget heights.
 
-In short windows, widget cards spend their height on text instead of repeating the generic
-Extension heading; their accessible labels and Copy actions remain. Copy participates in the
-compact widget row's height, and each dock reserves room for the complete touch target and card
-padding. Transcript's vertical breathing space belongs inside its scroll content, so it cannot push
+Widgets keep an accessible label and place the visible Copy action alongside their text. In short
+windows, each dock reserves room for the complete touch target and card padding. Transcript's
+vertical breathing space belongs inside its scroll content, so it cannot push
 the scrollport across the dock boundary. The editor's Expand/Collapse, selection, draft and
 completion behavior are unchanged.
 

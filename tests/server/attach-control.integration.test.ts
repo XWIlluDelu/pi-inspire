@@ -3,6 +3,7 @@ import {
   access,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   realpath,
   rename,
@@ -38,6 +39,7 @@ import {
   stubNativePiEnvironment,
 } from "./fixtures/native-pi.js";
 import { writeOfflineModels } from "./fixtures/offline-model.js";
+import { upload } from "./fixtures/runtime.js";
 import { jsonl, messageEntry } from "./fixtures/session-jsonl.js";
 
 const cleanup: Array<() => Promise<unknown>> = [];
@@ -219,105 +221,196 @@ async function soleReceiver({
   );
 }
 
-async function promptFixture() {
-  const fixture = await livePi({}, [ATTACH_PROMPT]);
-  const { registry, root } = fixture;
-  const record = await soleReceiver(fixture);
-  const enter = async (name: string) => {
-    const release = () => writeFile(join(root, `${name}.release`), "");
-    cleanup.push(release);
-    await vi.waitFor(() => access(join(root, `${name}.entered`)), {
-      timeout: 5_000,
-    });
-    return release;
-  };
-  return {
-    ...fixture,
-    enter,
-    connection: new AttachControlConnection(registry, record),
-  };
+async function holdNativeInput(root: string, name: string) {
+  const release = () => writeFile(join(root, `${name}.release`), "");
+  cleanup.push(release);
+  await vi.waitFor(() => access(join(root, `${name}.entered`)), {
+    timeout: 5_000,
+  });
+  return release;
 }
 
-const UNKNOWN_OUTCOME = {
-  code: "ATTACH_CONTROL_OUTCOME_UNKNOWN",
-  outcomeUnknown: true,
-};
+async function attachedHost(
+  fixture: Awaited<ReturnType<typeof attachWorkspace>>,
+) {
+  const services = replacementRuntime(fixture);
+  const { runtime, spawn } = services;
+  await runtime.openSession(fixture.id);
+  const attached = await runtime.takeOverSession(fixture.id);
+  expect(spawn).not.toHaveBeenCalled();
+  expect(attached.sessionStatuses[fixture.id]?.external).toBe(true);
+  const host = await hostApiFixture({ services });
+  cleanup.push(() => closeHostApiFixture(host));
+  return { ...host, spawn, viewId: attached.active!.transcriptPage.viewId };
+}
+
+const UNKNOWN_OUTCOME = "ATTACH_CONTROL_OUTCOME_UNKNOWN";
 
 describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
-  it("witnesses ordinary input and reports unknown after Pi rejects a handed-off input", async () => {
-    const { pi, connection, enter, sessionFile } = await promptFixture();
-    await connection.prompt("normal attached input");
-    await vi.waitFor(async () => {
-      expect(await connection.read()).toMatchObject({ activity: "idle" });
-    });
-    const before = await readFile(sessionFile, "utf8");
-    expect(before).toContain("normal attached input");
+  it("observes actual native input, guards queue and Stop, and retains bytes only for an uncertain handoff", async () => {
+    const fixture = await livePi({}, [ATTACH_PROMPT]);
+    const { pi, root, sessionFile, id, registry } = fixture;
+    const connection = new AttachControlConnection(
+      registry,
+      await soleReceiver(fixture),
+    );
+    const host = await attachedHost(fixture);
+    const address = { sessionId: id, expectedViewId: host.viewId };
+    const prompt = (
+      message: string,
+      options: {
+        behavior?: "steer" | "followUp";
+        attachmentIds?: string[];
+      } = {},
+    ) => host.promptDelivery({ ...address, message, ...options });
+    const send = (request: ReturnType<typeof prompt>) =>
+      host.localRequest.post("/api/prompt").send(request);
+    const stop = () =>
+      host.localRequest
+        .post("/api/control/abort")
+        .send(host.promptDelivery(address));
+    const idle = () =>
+      vi.waitFor(() =>
+        expect(connection.read()).resolves.toMatchObject({ activity: "idle" }),
+      );
+    expect(
+      (await send(prompt("normal attached input")).expect(202)).body.state,
+    ).toBe("completed");
+    await idle();
+    expect(await readFile(sessionFile, "utf8")).toContain(
+      "normal attached input",
+    );
 
+    const run = pi.request({ type: "prompt", message: "gated run" });
+    void run.catch(() => {});
+    const releaseRun = await holdNativeInput(root, "gated run");
+    try {
+      for (const behavior of ["steer", "followUp"] as const) {
+        const code = "ATTACH_CONTROL_QUEUE_ACK_UNAVAILABLE";
+        expect(
+          (await send(prompt(behavior, { behavior })).expect(409)).body,
+        ).toMatchObject({ state: "rejected", error: { code } });
+      }
+      await expect(pi.request({ type: "get_state" })).resolves.toMatchObject({
+        pendingMessageCount: 0,
+      });
+    } finally {
+      await releaseRun();
+    }
+    await run;
+    await idle();
+
+    const providerRequests = join(root, "provider-requests");
+    const beforeStop = await readFile(providerRequests, "utf8");
+    const input = "gated input";
+    const sending = send(prompt(input))
+      .expect(202)
+      .then(({ body }) => body);
+    void sending.catch(() => {});
+    const releaseInput = await holdNativeInput(root, input);
+    try {
+      // A lexical match submitted independently to native Pi is no witness for this input.
+      await pi.request({ type: "prompt", message: input });
+      await vi.waitFor(async () => {
+        expect(await readFile(providerRequests, "utf8")).toBe(
+          beforeStop + "request\n",
+        );
+        expect(await connection.read()).toMatchObject({ activity: "idle" });
+      });
+      expect((await stop().expect(502)).body).toMatchObject({
+        state: "unknown",
+        error: { code: UNKNOWN_OUTCOME },
+      });
+    } finally {
+      await releaseInput();
+    }
+    await expect(sending).resolves.toMatchObject({ state: "completed" });
+    await idle();
+    expect(await readFile(providerRequests, "utf8")).toBe(
+      beforeStop + "request\n",
+    );
+    await stop().expect(200);
+
+    const store = host.attachments;
+    const imageUpload = upload("image.gif", "image/gif");
+    imageUpload.buffer = Buffer.from(
+      "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
+      "base64",
+    );
+    imageUpload.size = imageUpload.buffer.length;
+    const fileUpload = upload("notes.txt", "text/plain");
+    const image = await store.add(imageUpload);
+    const file = await store.add(fileUpload);
+    const attachmentIds = [image.id, file.id];
+    const uploadDirectory = await store.uploadDirectory();
+    const beforeSend = new Set(await readdir(uploadDirectory));
+    const beforeLost = await readFile(sessionFile, "utf8");
     const failures: unknown[] = [];
-    pi.on("event", (event) => {
+    const recordFailure = (event: {
+      type: string;
+      event?: string;
+      error?: unknown;
+    }) => {
       if (
         event.type === "extension_error" &&
         event.event === "send_user_message"
       )
         failures.push(event.error);
+    };
+    pi.on("event", recordFailure);
+    const operation = prompt("lost auth", { attachmentIds });
+    const unknown = send(operation)
+      .expect(502)
+      .then(({ body }) => body);
+    void unknown.catch(() => {});
+    const releaseLost = await holdNativeInput(root, "lost auth");
+    await releaseLost();
+    const receipt = await unknown;
+    expect(receipt).toMatchObject({
+      state: "unknown",
+      error: { code: UNKNOWN_OUTCOME },
     });
-    const result = expect(connection.prompt("lost auth")).rejects.toMatchObject(
-      UNKNOWN_OUTCOME,
-    );
-    const release = await enter("lost auth");
-    await release();
-    await result;
+    expect((await send(operation).expect(502)).body).toEqual(receipt);
+    pi.off("event", recordFailure);
     expect(failures).toEqual([expect.stringContaining("No API key found")]);
-    expect(await readFile(sessionFile, "utf8")).toBe(before);
-  }, 20_000);
+    expect(await readFile(sessionFile, "utf8")).toBe(beforeLost);
+    expect(host.spawn).not.toHaveBeenCalled();
 
-  it("reports an uncertain Stop during native preflight and aborts its matching late start", async () => {
-    const { pi, connection, enter, root } = await promptFixture();
-    const message = "gated input";
-    const result = connection.prompt(message);
-    void result.catch(() => {});
-    const release = await enter(message);
-
-    // An independent native submit with identical text is not the witness.
-    await pi.request({ type: "prompt", message });
-    const requests = join(root, "provider-requests");
-    await vi.waitFor(async () => {
-      expect(await readFile(requests, "utf8")).toBe("request\n");
-      expect(await connection.read()).toMatchObject({ activity: "idle" });
+    const copies = (await readdir(uploadDirectory)).filter(
+      (name) => !beforeSend.has(name) && !name.endsWith(".json"),
+    );
+    expect(copies).toHaveLength(1);
+    const imagePath = join(uploadDirectory, copies[0]!);
+    const filePath = join(uploadDirectory, `${file.id}-notes.txt`);
+    expect((await store.imagePreview(image.id)).bytes).toEqual(
+      imageUpload.buffer,
+    );
+    expect(
+      (await send(prompt("", { attachmentIds: [image.id] })).expect(409)).body,
+    ).toMatchObject({
+      state: "rejected",
+      error: { code: "ATTACH_CONTROL_AUTH_UNAVAILABLE" },
     });
-    await expect(connection.abort()).rejects.toMatchObject(UNKNOWN_OUTCOME);
-    await release();
-    await result;
-    await vi.waitFor(async () => {
-      expect(await connection.read()).toMatchObject({ activity: "idle" });
-    });
-    expect(await readFile(requests, "utf8")).toBe("request\n");
-    await connection.abort();
-  }, 20_000);
-
-  it("refuses unconfirmable Steer and Follow up before changing Pi's queue", async () => {
-    const { pi, connection, enter } = await promptFixture();
-    const run = pi.request({ type: "prompt", message: "gated run" });
-    void run.catch(() => {});
-    const release = await enter("gated run");
-    await Promise.all([
-      expect(
-        connection.prompt("next steering input", "steer"),
-      ).rejects.toMatchObject({
-        code: "ATTACH_CONTROL_QUEUE_ACK_UNAVAILABLE",
-      }),
-      expect(
-        connection.prompt("later follow up", "followUp"),
-      ).rejects.toMatchObject({
-        code: "ATTACH_CONTROL_QUEUE_ACK_UNAVAILABLE",
-      }),
-    ]);
-    await expect(pi.request({ type: "get_state" })).resolves.toMatchObject({
-      pendingMessageCount: 0,
-    });
-    await release();
-    await run;
-  }, 20_000);
+    expect((await store.imagePreview(image.id)).bytes).toEqual(
+      imageUpload.buffer,
+    );
+    await store.remove(image.id);
+    await store.remove(file.id);
+    expect(store.ownsPromptFile(filePath)).toBe(true);
+    expect(await readFile(imagePath)).toEqual(imageUpload.buffer);
+    expect((await store.collectStaged()).reclaimed).not.toContain(imagePath);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.advanceTimersByTime(6 * 60_000);
+      await expect(store.collectStaged()).resolves.toMatchObject({
+        reclaimed: [imagePath],
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+    await expect(readFile(imagePath)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(filePath)).toEqual(fileUpload.buffer);
+  }, 25_000);
 
   it("acknowledges Steer and Follow up through the native terminal before its current run can finish", async () => {
     const fixture = await attachWorkspace();
@@ -367,16 +460,9 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
       ).toContain("mcp"),
     );
     terminal.write("gated run\r");
-    await vi.waitFor(() => access(join(root, "gated run.entered")), {
-      timeout: 5_000,
-    });
+    const releaseRun = await holdNativeInput(root, "gated run");
     try {
-      const services = replacementRuntime(fixture);
-      const { runtime } = services;
-      await runtime.openSession(id);
-      await runtime.takeOverSession(id);
-      const host = await hostApiFixture({ services });
-      cleanup.push(() => closeHostApiFixture(host));
+      const host = await attachedHost(fixture);
       for (const behavior of ["steer", "followUp"] as const) {
         await expect(
           requestAttachControl(record.endpoint, {
@@ -419,7 +505,7 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
         1,
       );
     } finally {
-      await writeFile(join(root, "gated run.release"), "");
+      await releaseRun();
     }
   }, 30_000);
 

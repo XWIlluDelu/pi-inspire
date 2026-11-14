@@ -1,10 +1,10 @@
 import { SearchX } from "lucide-react";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { nativeCommand, parseCommandInvocation } from "../../shared/commands";
+import { nativeCommand } from "../../shared/commands";
 import { isAbortableRunState, isBusyRunState } from "../../shared/contracts";
 import { selectedRunState } from "../app-state";
 import {
-  type PiCommand,
+  resolveCommandInput,
   resolveCommandInventory,
 } from "../composer-completion";
 import { shouldSubmitComposerEnter } from "../composer-keyboard";
@@ -148,23 +148,16 @@ export const CommandPalette = memo(function CommandPalette({
   const [searchQuery, setSearchQuery] = useState("");
   const [preparation, setPreparation] = useState<{
     owner: string;
-    command: PiCommand;
+    name: string;
     text: string;
   } | null>(null);
   const commandInventory = useMemo(
     () => resolveCommandInventory(state.commands),
     [state.commands],
   );
-  const preparedInvocation = preparation
-    ? parseCommandInvocation(preparation.text, (name) =>
-        commandInventory.some((command) => command.name === name),
-      )
-    : null;
-  const preparedCommand = preparedInvocation
-    ? commandInventory.find(
-        (command) => command.name === preparedInvocation.name,
-      )
-    : undefined;
+  const preparedCommand =
+    preparation &&
+    resolveCommandInput(preparation.text, commandInventory)?.command;
   const [sendingLabel, setSendingLabel] = useState<string | null>(null);
   const preparationSending = sendingLabel !== null;
   const [delivery, setDelivery] = useState<"steer" | "followUp">("steer");
@@ -393,39 +386,36 @@ export const CommandPalette = memo(function CommandPalette({
 
     const handled = new Set(actions.flatMap(({ aliases }) => aliases ?? []));
     const commands: PaletteItem[] = sessionId
-      ? commandInventory
-          .filter(
-            (command) =>
-              (!state.readOnlyReason ||
-                (command.source === "builtin" &&
-                  (command.name === sessionActions.export.command ||
-                    nativeCommand(command.name)?.availableWithoutWorkspace))) &&
-              !handled.has(`/${command.name}`),
+      ? commandInventory.flatMap((command): PaletteItem[] => {
+          const descriptor =
+            command.source === "builtin"
+              ? nativeCommand(command.name)
+              : undefined;
+          const exportSession = descriptor?.palette === "export";
+          if (
+            handled.has(`/${command.name}`) ||
+            (state.readOnlyReason &&
+              !exportSession &&
+              !descriptor?.availableWithoutWorkspace)
           )
-          .map((command) => {
-            const prepare =
-              command.source !== "builtin" ||
-              (command.name === "compact" && !state.external);
-            const sessionAliases =
-              command.name === "session" ? ["cost", "tokens"] : [];
-            let humanTitle =
-              command.source === "builtin"
-                ? nativeTitles[command.name]
-                : undefined;
-            if (humanTitle && state.external) {
-              if (command.name === "compact")
-                humanTitle = "Compact in native Pi…";
-              if (command.name === "reload")
-                humanTitle = "Reload in native Pi…";
-            }
-            return {
+            return [];
+          const prepare =
+            command.source !== "builtin" ||
+            (descriptor?.palette === "prepare" && !state.external);
+          const humanTitle =
+            descriptor &&
+            (state.external && descriptor.requiresIdleOwnedPi
+              ? `${descriptor.name === "compact" ? "Compact" : "Reload"} in native Pi…`
+              : nativeTitles[descriptor.name]);
+          return [
+            {
               id: `cmd-${command.name}`,
               group: command.source === "builtin" ? "Actions" : "Pi resources",
               title: humanTitle ?? `/${command.name}`,
               aliases: [
                 command.name,
                 `/${command.name}`,
-                ...sessionAliases,
+                ...(command.name === "session" ? ["cost", "tokens"] : []),
                 ...(humanTitle && command.description
                   ? [command.description]
                   : []),
@@ -441,16 +431,13 @@ export const CommandPalette = memo(function CommandPalette({
                       : command.description,
               keepOpen: prepare,
               run: runInSession(() => {
-                if (
-                  command.source === "builtin" &&
-                  command.name === sessionActions.export.command
-                ) {
+                if (exportSession) {
                   onExportSession();
                 } else if (prepare) {
                   setDelivery("steer");
                   setPreparation({
                     owner: sessionId,
-                    command,
+                    name: command.name,
                     text: `/${command.name} `,
                   });
                 } else {
@@ -462,8 +449,9 @@ export const CommandPalette = memo(function CommandPalette({
                   );
                 }
               }),
-            };
-          })
+            },
+          ];
+        })
       : [];
 
     return [...actions, ...commands, ...sessions];
@@ -574,7 +562,7 @@ export const CommandPalette = memo(function CommandPalette({
               <p className="palette__hint">{preparedCommand.description}</p>
             ) : null}
             <ComposerInput
-              key={`${preparation.owner}:${preparation.command.name}`}
+              key={`${preparation.owner}:${preparation.name}`}
               value={preparation.text}
               onChange={(text) => setPreparation({ ...preparation, text })}
               commands={state.commands}

@@ -7,8 +7,10 @@ import {
   useRef,
 } from "react";
 import { createPortal } from "react-dom";
+import { isTouchFirstDevice } from "../input-device";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import {
+  type FloatingMenuConstraints,
   useFloatingMenuDismissal,
   useFloatingMenuPlacement,
 } from "../use-floating-menu";
@@ -82,7 +84,11 @@ export function AnchoredPanel({
   open,
   anchorRef,
   onClose,
+  constraints,
+  searchable = false,
+  onKeyDown,
   role = "dialog",
+  readOnly = false,
   children,
 }: {
   id?: string;
@@ -90,32 +96,47 @@ export function AnchoredPanel({
   open: boolean;
   anchorRef: RefObject<HTMLButtonElement | null>;
   onClose(): void;
+  constraints?: FloatingMenuConstraints;
+  searchable?: boolean;
+  onKeyDown?: React.KeyboardEventHandler<HTMLDivElement>;
   role?: "dialog" | "menu";
+  /** A scrollable reader is the focus target and portals out of clipped chrome. */
+  readOnly?: boolean;
   children: ReactNode;
 }) {
   const panel = useRef<HTMLDivElement>(null);
   const menu = role === "menu";
+  const portal = menu || readOnly;
   const target = useCallback(() => {
     const context = anchorRef.current;
     return (
       context && {
         context,
         anchor: context.getBoundingClientRect(),
-        positioningRoot: menu ? null : context.closest<HTMLElement>(".overlay"),
-        observe: [context],
-        preferredWidth: menu ? undefined : 270,
+        positioningRoot: portal
+          ? null
+          : context.closest<HTMLElement>(".overlay"),
+        observe: [
+          context,
+          ...(searchable && context.form ? [context.form] : []),
+        ],
+        preferredWidth: menu ? undefined : (constraints?.maxWidth ?? 270),
       }
     );
-  }, [anchorRef, menu]);
+  }, [anchorRef, menu, portal, searchable, constraints]);
   const placement = useFloatingMenuPlacement(
     open,
     target,
-    menu ? menuBounds : bounds,
+    constraints ?? (menu ? menuBounds : bounds),
   );
   const shown = open && placement !== null;
   useFloatingMenuDismissal(open, anchorRef, panel, onClose);
   useEffect(() => {
     if (!shown) return;
+    if (readOnly || (searchable && isTouchFirstDevice())) {
+      panel.current?.focus({ preventScroll: true });
+      return;
+    }
     const current = panel.current?.querySelector<HTMLElement>(
       '[aria-current="location"]',
     );
@@ -123,16 +144,24 @@ export function AnchoredPanel({
       ":is(input, select, button):enabled",
     );
     (current ?? first)?.focus({ preventScroll: !current });
-  }, [shown]);
+  }, [shown, searchable, readOnly]);
   const body = (
     // biome-ignore lint/a11y/useAriaPropsSupportedByRole: Both supported roles, menu and dialog, accept an accessible name.
     <div
       id={id}
       ref={panel}
-      className="choice-panel__body"
+      className={
+        searchable
+          ? "choice-panel__body choice-panel__body--search"
+          : readOnly
+            ? "choice-panel__body choice-panel__body--reader"
+            : "choice-panel__body"
+      }
       role={role}
       aria-label={label}
+      data-placement={placement?.direction}
       hidden={!shown}
+      tabIndex={readOnly ? 0 : searchable ? -1 : undefined}
       style={
         placement
           ? {
@@ -147,7 +176,7 @@ export function AnchoredPanel({
       }
       onKeyDown={(event) => {
         if (isComposingKeyboardEvent(event.nativeEvent)) return;
-        if (event.key === "Escape" || (menu && event.key === "Tab")) {
+        if (event.key === "Escape" || (portal && event.key === "Tab")) {
           if (event.key === "Escape") {
             event.preventDefault();
             event.stopPropagation();
@@ -156,6 +185,7 @@ export function AnchoredPanel({
           anchorRef.current?.focus({ preventScroll: true });
           return;
         }
+        onKeyDown?.(event);
         if (
           !menu ||
           !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)
@@ -183,5 +213,5 @@ export function AnchoredPanel({
       {children}
     </div>
   );
-  return menu ? shown && createPortal(body, document.body) : body;
+  return portal ? shown && createPortal(body, document.body) : body;
 }

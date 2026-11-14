@@ -14,14 +14,8 @@ import {
   MAX_PROMPT_CHARS,
   MAX_SESSION_ID_CHARS,
 } from "./contracts.js";
+import { endpoint } from "./json-endpoints.js";
 import { isJsonRecord } from "./json-record.js";
-
-export const INPUT_OPERATION_PATHS = {
-  prompt: "/api/prompt",
-  abort: "/api/control/abort",
-  recover: "/api/pending/recover",
-  pending: "/api/pending/operations",
-} as const;
 
 export const hostOperationIdentitySchema = z
   .object({ operationId: z.string().uuid(), authorityId: z.string().uuid() })
@@ -190,6 +184,24 @@ export type HostOperationReceipt<Command extends HostOperationCommand> =
     Command,
     HostOperationResults[Command]
   >;
+
+const receiptParams = hostOperationIdentitySchema.pick({ operationId: true });
+const pendingAdmission = { body: pendingOperationSchema };
+const promptReply = endpoint<HostOperationReceipt<"prompt">>();
+const pendingReply = endpoint<HostOperationReceipt<"abort" | "recover">>();
+export const inputOperationEndpoints = {
+  prompt: promptReply("post", "/api/prompt", { body: promptSchema }),
+  observePrompt: promptReply("get", "/api/prompt/:operationId", {
+    params: receiptParams,
+    query: promptObservationSchema.omit({ operationId: true }).strip(),
+  }),
+  abort: pendingReply("post", "/api/control/abort", pendingAdmission),
+  recover: pendingReply("post", "/api/pending/recover", pendingAdmission),
+  observePending: pendingReply("get", "/api/pending/operations/:operationId", {
+    params: receiptParams,
+    query: pendingOperationRequestSchema.omit({ operationId: true }),
+  }),
+};
 
 export function hostReceipt<Command extends HostOperationCommand>(
   command: Command,

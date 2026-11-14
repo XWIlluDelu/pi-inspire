@@ -211,6 +211,7 @@
 }
 
 .settings__content {
+  container: settings-content / size;
   min-height: 0;
   flex: 1 1 auto;
   overflow-y: auto;
@@ -360,6 +361,9 @@
 }
 
 .settings__card-message {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-1);
   padding: var(--set-row-pad);
   font-size: 12px;
   line-height: 1.4;
@@ -368,8 +372,8 @@
 }
 
 .settings__field {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-2) var(--space-3);
   min-height: var(--set-row-min-h);
@@ -389,20 +393,9 @@
 
 .settings__feedback {
   display: grid;
-  grid-auto-rows: max-content;
-  align-content: start;
   gap: var(--space-1);
   min-inline-size: 0;
   overflow-wrap: anywhere;
-}
-
-.settings__field[data-detailed] > .settings__field-info {
-  flex-basis: 180px;
-}
-
-.settings__field[data-layout="inline"] {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
 }
 
 .settings__field[data-detailed] .settings-switch {
@@ -431,23 +424,16 @@
   line-height: 17px;
 }
 
-.settings__field-status {
-  grid-column: 1;
+.settings__field-status,
+.settings__field-feedback {
   font-size: 12px;
   line-height: 1.4;
   color: var(--warning-ink);
   overflow-wrap: anywhere;
 }
 
-.settings__notification-control {
-  display: grid;
-  gap: var(--space-2);
-  width: 100%;
-}
-
-.settings__notification-status {
-  display: grid;
-  gap: var(--space-2);
+.settings__field-feedback {
+  grid-column: 1 / -1;
   color: var(--muted);
 }
 
@@ -460,8 +446,6 @@
 }
 
 .settings__field-info {
-  min-width: 0;
-  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -474,13 +458,9 @@
   justify-content: flex-end;
 }
 
-.settings__field-control > :is(.settings__notification-control, .native-select--field) {
+.settings__field-control > .native-select--field {
   width: var(--set-choice-w);
   max-width: 100%;
-}
-
-.settings__notification-control .native-select {
-  width: 100%;
 }
 
 .settings__field .native-select--field {
@@ -513,7 +493,6 @@
 
 @container settings-card (max-width: 439px) {
   .settings__field[data-layout="adaptive"] {
-    display: grid;
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -1479,50 +1458,6 @@
 
 /* --- Directory picker (session start) --- */
 
-.dirpicker__path-field {
-  display: grid;
-}
-
-/* A hidden copy sizes the row as text wraps, including on viewport resize. */
-.dirpicker__path-field::after {
-  content: attr(data-path) " ";
-  visibility: hidden;
-}
-
-.dirpicker__path {
-  resize: none;
-  overflow: hidden;
-  height: 100%;
-}
-
-.dirpicker__path,
-.dirpicker__path-field::after {
-  box-sizing: border-box;
-  grid-area: 1 / 1;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  line-height: 1.5;
-  min-width: 0;
-  width: 100%;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--bg-canvas);
-  font-family: var(--font-mono);
-  font-size: var(--text-sm);
-  color: var(--ink);
-  padding: var(--space-2);
-}
-
-.dirpicker__path::placeholder {
-  color: var(--faint);
-}
-
-.dirpicker__path:focus-visible {
-  outline: none;
-  border-color: var(--accent-focus);
-  box-shadow: inset 2px 0 0 0 var(--accent-focus);
-}
-
 .dirpicker__roots {
   display: flex;
   gap: var(--space-1);
@@ -1631,6 +1566,15 @@
   resize: vertical;
 }
 
+.dirpicker__path {
+  field-sizing: content;
+  min-height: calc(1lh + 2 * var(--space-2) + 2px);
+  max-height: 6lh;
+  overflow-wrap: anywhere;
+  overflow-y: auto;
+  resize: none;
+}
+
 .dialog__actions {
   display: flex;
   flex-wrap: wrap;
@@ -1729,7 +1673,6 @@
    beneath it instead of hiding its items. */
 :root:has(
     :is(
-      .extension-status-popover,
       .choice-panel__body:not([hidden]),
       .terminal-menu__popover
     )

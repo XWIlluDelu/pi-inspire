@@ -11,7 +11,6 @@ import {
   type MutableRefObject,
   memo,
   type ReactNode,
-  type RefObject,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -19,70 +18,19 @@ import {
 } from "react";
 import type { GitDiffResponse, GitFileChange } from "../../shared/contracts";
 import { inspectedGitChange } from "../controllers/git-controller";
-import { fileIconForPath } from "../file-icons";
-import {
-  gitDecorationForChange,
-  gitHeadLabel,
-  presentGitFacet,
-} from "../git-presentation";
-import { type SourceDiffProjection, sourceDiffRows } from "../source-diff";
+import { gitHeadLabel, presentGitFacet } from "../git-presentation";
+import { sourceDiffRows } from "../source-diff";
 import { store } from "../store";
 import type { FileReadingState } from "../workbench-session";
-import { CodeRows } from "./CodeView";
+import { CodeRows, SourceReader } from "./CodeView";
 import { ContextPaneState } from "./ContextPaneState";
 import type { ContextPaneView } from "./context-pane-view";
+import { FileIndexRow } from "./FileIndexRow";
 import { PiLoader } from "./PiLoader";
 import { ResourcePathLabel } from "./ResourcePathLabel";
 
 function pathName(change: GitFileChange): string {
   return change.path.utf8Path ?? change.path.display;
-}
-
-function SourceDiffView({
-  diff,
-  projection,
-  activeChange,
-  containerRef,
-  onScroll,
-}: {
-  diff: Extract<GitDiffResponse, { kind: "text" }>;
-  projection: SourceDiffProjection;
-  activeChange: number | null;
-  containerRef: RefObject<HTMLDivElement | null>;
-  onScroll: (node: HTMLDivElement) => void;
-}) {
-  return (
-    <div
-      className="source-diff source-reader"
-      role="region"
-      aria-label={`Source changes for ${diff.path.display}`}
-      tabIndex={0}
-      ref={containerRef}
-      onScroll={(event) => onScroll(event.currentTarget)}
-      data-pane-scroll-active="true"
-    >
-      <CodeRows
-        rows={projection.rows}
-        gutter="diff"
-        activeChange={activeChange}
-      />
-      {diff.truncated ? (
-        <div className="source-boundary" role="status">
-          Source truncated
-        </div>
-      ) : null}
-      {diff.contextLimited && !diff.truncated ? (
-        <div className="source-boundary" role="status">
-          Showing changed regions; source context limited
-        </div>
-      ) : null}
-      {diff.encodingLossy ? (
-        <div className="source-boundary" role="status">
-          Invalid UTF-8 replaced
-        </div>
-      ) : null}
-    </div>
-  );
 }
 
 function GitResultState({ result }: { result: GitDiffResponse }) {
@@ -150,18 +98,26 @@ const ChangeRow = memo(function ChangeRow({
   change: GitFileChange;
   selectedPathId: string | null;
 }) {
-  const Icon = fileIconForPath(pathName(change));
   const facet = presentGitFacet(change);
-  const decoration = gitDecorationForChange(change);
   const originalPath = change.worktree?.originalPath;
   const sourceLabel = originalPath
     ? `${change.worktree?.kind === "copied" ? "copied" : "renamed"} from ${originalPath.display}`
     : null;
   const selected = selectedPathId === change.path.id;
   return (
-    <button
-      type="button"
-      className="file-row res__row"
+    <FileIndexRow
+      file={pathName(change)}
+      name={<ResourcePathLabel path={pathName(change)} />}
+      context={
+        originalPath && (
+          <span className="changes__source" title={originalPath.display}>
+            from <ResourcePathLabel path={originalPath.display} />
+          </span>
+        )
+      }
+      stacked={Boolean(originalPath)}
+      change={change}
+      className={originalPath ? "file-row--renamed" : undefined}
       aria-current={selected || undefined}
       data-git-path={change.path.id}
       aria-label={[pathName(change), facet?.label, sourceLabel]
@@ -178,30 +134,7 @@ const ChangeRow = memo(function ChangeRow({
           void store.showInFileManager(workspacePath, workspacePath);
         else void store.openGitDiff(change.path.id);
       }}
-    >
-      <Icon size={13} aria-hidden />
-      <span
-        className={`res__row-name ${decoration ? `git-deco--${decoration}` : ""}`}
-        data-has-origin={Boolean(originalPath) || undefined}
-      >
-        <ResourcePathLabel path={pathName(change)} />
-        {originalPath ? (
-          <span className="changes__source" title={originalPath.display}>
-            from <ResourcePathLabel path={originalPath.display} />
-          </span>
-        ) : null}
-      </span>
-      {facet ? (
-        <span
-          className={`git-mark ${decoration ? `git-deco--${decoration}` : ""}`}
-          role="img"
-          aria-label={facet.label}
-          title={facet.label}
-        >
-          {facet.mark}
-        </span>
-      ) : null}
-    </button>
+    />
   );
 });
 
@@ -512,13 +445,33 @@ export function useFileChanges({
     );
   } else if (textResult && projection?.rows.length) {
     content = (
-      <SourceDiffView
-        diff={textResult}
-        projection={projection}
-        activeChange={activeChange}
-        containerRef={sourceRef}
-        onScroll={rememberPosition}
-      />
+      <SourceReader
+        className="source-diff"
+        label={`Source changes for ${textResult.path.display}`}
+        ref={sourceRef}
+        onScroll={(event) => rememberPosition(event.currentTarget)}
+      >
+        <CodeRows
+          rows={projection.rows}
+          gutter="diff"
+          activeChange={activeChange}
+        />
+        {[
+          textResult.truncated
+            ? "Source truncated"
+            : textResult.contextLimited
+              ? "Showing changed regions; source context limited"
+              : null,
+          textResult.encodingLossy ? "Invalid UTF-8 replaced" : null,
+        ].map(
+          (notice) =>
+            notice && (
+              <div key={notice} className="source-boundary" role="status">
+                {notice}
+              </div>
+            ),
+        )}
+      </SourceReader>
     );
   } else if (result) content = <GitResultState result={result} />;
   else content = null;

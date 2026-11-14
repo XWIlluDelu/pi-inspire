@@ -14,8 +14,8 @@ covers:
   - src/styles.css
   - src/styles/*.css
   - tests/server/{app-resources,app-auth,resources,resources-windows-paths,runtime-reads,git-inspection,git-configuration,runtime-selection}.test.ts
-  - tests/web/{resources,document-resources,resource-controller,git-controller,workspace-controller,store-preview-lifecycle}.test.ts
-  - tests/web/{document-preview,pdf-preview,file-preview,resources-pane,search-match-text,changes-pane,pane-resize,rich-text}.test.tsx
+  - tests/web/{resources,document-resources,resource-controller,git-controller,workspace-controller,workbench-session}.test.ts
+  - tests/web/{document-preview,pdf-preview,file-preview,search-match-text,changes-pane,pane-resize,rich-text}.test.tsx
   - tests/web/{source-presentation,reader-quote}.test.ts
   - tests/web/table-preview.test.tsx
   - tests/server/html-preview.test.ts
@@ -36,9 +36,9 @@ The Files tool tab shows up to five deduplicated **Recent in this chat** referen
 in the branch view named for writing (`write`, `edit`, patch/create/save-style names) carries
 `writes`; shell writes are not inferred. Inner calls that a code-running tool records as
 `details.calls[] { name, args, status }` (for example codemode) count under their inner name; a
-call whose status is not `ok` names a file but does not mark it written. The first page also
-carries `produced`, the view's newest 100 written references, so written files are marked even when
-they fall outside the page. Recent is one list: a written file shows a quiet pen after its name
+call whose status is not `ok` names a file but does not mark it written. The Host appends the
+view's newest written references that fall outside the page, up to 100 written references total.
+Recent is one list. A written file shows a quiet pen after its name
 ("Written or edited in this chat", also in its accessible name) rather than moving to another
 list. Spellings of one workspace file merge, and a write under any spelling marks the row. The list
 shows five rows and a `Show all N` / `Show fewer` text control. Search replaces both sections
@@ -122,6 +122,9 @@ citations. Remote URLs stay external, including paths inside their query strings
   containment within the session workspace's current realpath boundary. Outside-workspace symlink
   targets need their own exact transcript reference. Git state, hidden visibility, discovery
   results, and the five visible Recent rows neither grant nor revoke access.
+- A path that resolves to a directory or another non-file object is invalid for preview. The Host
+  keeps valid results from the same probe batch. If an already-open file is replaced by a
+  directory, its existing handle reports a changed target.
 - Filesystem containment follows actual directory semantics, not an OS-wide case-folding
   assumption. On POSIX and Windows, case/Unicode-normalization similarity only identifies possible
   aliases; nonidentical prefixes need a current directory-identity proof. Distinct roots and unknown

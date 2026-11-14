@@ -5,6 +5,7 @@ import { AttachmentStore } from "../../server/attachments.js";
 import { PiRpcProcess } from "../../server/pi-rpc.js";
 import { RuntimeController } from "../../server/runtime.js";
 import type { SessionRecord } from "../../server/session-catalog.js";
+import { savedAssistant } from "../fixtures/history-session.js";
 import {
   nativePiWorkspace,
   stubNativePiEnvironment,
@@ -14,6 +15,7 @@ import {
   writeOfflineModels,
 } from "./fixtures/offline-model.js";
 import { catalog, deferredSignal } from "./fixtures/runtime.js";
+import { jsonl, messageEntry } from "./fixtures/session-jsonl.js";
 
 const cleanups: Array<() => Promise<unknown>> = [];
 const SESSION_ID = "33333333-3333-4333-8333-333333333333";
@@ -29,7 +31,7 @@ function messages() {
   ];
 }
 
-function jsonl(bytes: string) {
+function readEntries(bytes: string) {
   return bytes
     .trim()
     .split("\n")
@@ -68,37 +70,13 @@ function message(
   text: string,
   timestamp: number,
 ) {
-  return {
-    type: "message",
+  return messageEntry(
     id,
     parentId,
-    timestamp: new Date(timestamp).toISOString(),
-    message:
-      role === "user"
-        ? { role, content: text, timestamp }
-        : {
-            role,
-            content: [{ type: "text", text }],
-            provider: "test",
-            model: "test",
-            usage: {
-              input: 0,
-              output: 0,
-              cacheRead: 0,
-              cacheWrite: 0,
-              totalTokens: 0,
-              cost: {
-                input: 0,
-                output: 0,
-                cacheRead: 0,
-                cacheWrite: 0,
-                total: 0,
-              },
-            },
-            stopReason: "stop",
-            timestamp,
-          },
-  };
+    role === "user"
+      ? { role, content: text, timestamp }
+      : savedAssistant(text, { provider: "test", model: "test", timestamp }),
+  );
 }
 
 async function fixture(
@@ -116,19 +94,16 @@ async function fixture(
   stubNativePiEnvironment(f.env);
   const model = stream ? await heldModel(f.agent) : undefined;
   const path = join(f.sessions, "source.jsonl");
-  const source =
-    [
-      {
-        type: "session",
-        version: 3,
-        id: SESSION_ID,
-        timestamp: "2026-08-01T00:00:00.000Z",
-        cwd: f.cwd,
-      },
-      ...entries,
-    ]
-      .map((entry) => JSON.stringify(entry))
-      .join("\n") + "\n";
+  const source = jsonl(
+    {
+      type: "session",
+      version: 3,
+      id: SESSION_ID,
+      timestamp: "2026-08-01T00:00:00.000Z",
+      cwd: f.cwd,
+    },
+    ...entries,
+  );
   await writeFile(path, source);
   const record: SessionRecord = {
     id: SESSION_ID,
@@ -190,6 +165,16 @@ async function fixture(
       customInstructions,
     });
   }
+  async function copy(kind: "fork" | "clone", targetId: string | null) {
+    const address = {
+      sessionId: SESSION_ID,
+      viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
+        .viewId,
+    };
+    return kind === "fork"
+      ? runtime.forkBranch({ ...address, targetId: targetId! })
+      : runtime.cloneBranch({ ...address, targetId });
+  }
   return {
     ...f,
     path,
@@ -200,6 +185,7 @@ async function fixture(
     model,
     open,
     navigate,
+    copy,
   };
 }
 
@@ -268,7 +254,7 @@ describe("native Pi History and branch workflows", () => {
   );
 
   it("isolates source navigation dialogs from shell delivery and fork destinations", async () => {
-    const { runtime, workers, open, navigate } = await fixture(
+    const { runtime, workers, path, open, navigate, copy } = await fixture(
       [
         message("u1", null, "user", "question one", 1),
         message("a1", "u1", "assistant", "answer one", 2),
@@ -286,8 +272,16 @@ describe("native Pi History and branch workflows", () => {
         extension: `
 export default function (pi) {
   pi.registerCommand("fixture-visible", { handler: async () => {} });
+  let recorded = false;
   pi.on("session_before_tree", async (_event, ctx) => {
     if (!await ctx.ui.confirm("Navigate branch?", "Confirm tree navigation")) return { cancel: true };
+  });
+  pi.on("session_tree", async (event, ctx) => {
+    if (recorded || event.newLeafId !== "a1" || ctx.sessionManager.getSessionId() !== ${JSON.stringify(SESSION_ID)}) return;
+    recorded = true;
+    pi.sendMessage({ customType: "branch-note", content: "Branch selected", display: true }, { triggerTurn: false });
+    await ctx.ui.confirm("Callback appended", "Finish navigation?");
+    pi.appendEntry("branch-complete", { leaf: event.newLeafId });
   });
   pi.on("session_before_fork", async (_event, ctx) => {
     if (await ctx.ui.input("Fork branch?", "Type continue") !== "continue") return { cancel: true };
@@ -298,10 +292,7 @@ export default function (pi) {
     );
     const dialogs: Array<Record<string, unknown>> = [];
     const responses: Promise<void>[] = [];
-    let receiveNavigationDialog!: () => void;
-    const navigationDialog = new Promise<void>((resolve) => {
-      receiveNavigationDialog = resolve;
-    });
+    const navigationDialog = deferredSignal();
     let holdNavigation = true;
     runtime.on("event", (event) => {
       const record = event as Record<string, unknown>;
@@ -312,7 +303,7 @@ export default function (pi) {
         return;
       dialogs.push(record);
       if (holdNavigation) {
-        receiveNavigationDialog();
+        navigationDialog.resolve();
         return;
       }
       responses.push(
@@ -354,7 +345,7 @@ export default function (pi) {
     // Wait for the real extension event within this integration case's budget,
     // and expose navigation errors instead of masking them as a polling timeout.
     await Promise.race([
-      navigationDialog,
+      navigationDialog.promise,
       navigating.then(() => {
         throw new Error("Navigation completed without its confirmation dialog");
       }),
@@ -386,22 +377,29 @@ export default function (pi) {
         { status: "fulfilled" },
         { status: "rejected", reason: { status: 409 } },
       ]);
-      await expect(navigating).resolves.toMatchObject({
-        snapshot: {
-          active: { effectiveLeafId: "a1" },
-          sessionStatuses: { [SESSION_ID]: { runState: "idle" } },
-        },
-      });
       shellRequests.mockRestore();
     }
+    const { snapshot: selected } = await navigating;
+    const [note, complete] = readEntries(await readFile(path, "utf8")).filter(
+      (entry) => entry.customType?.startsWith("branch-"),
+    );
+    expect(note).toMatchObject({ type: "custom_message", parentId: "a1" });
+    expect(complete).toMatchObject({
+      type: "custom",
+      parentId: note.id,
+      customType: "branch-complete",
+    });
+    expect(selected.active).toMatchObject({
+      effectiveLeafId: complete.id,
+      projectionConflict: null,
+    });
+    expect(selected.sessionStatuses[SESSION_ID]?.runState).toBe("idle");
+    expect(JSON.stringify(selected.active?.transcriptPage.messages)).toContain(
+      "Branch selected",
+    );
     await navigate("a2", "switch");
     const sourcePid = workers[0]?.pid;
-    const forked = await runtime.forkBranch({
-      sessionId: SESSION_ID,
-      viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
-        .viewId,
-      targetId: "u2",
-    });
+    const forked = await copy("fork", "u2");
     expect(forked.snapshot.active?.sessionName).toBe("Named source");
     const destinationTree = (await runtime.snapshot(forked.sessionId)).active!;
     await runtime.navigateBranch({
@@ -411,18 +409,19 @@ export default function (pi) {
       mode: "switch",
     });
     await Promise.all(responses);
+    await runtime.rename(SESSION_ID, "Still the same writable worker");
     expect(runtime.startupSessionHint).toBe(forked.sessionId);
     expect(workers).toHaveLength(2);
     expect(sourcePid).not.toBeNull();
     expect(workers[0]?.pid).toBe(sourcePid);
     expect(dialogs.filter((event) => event.method === "confirm")).toHaveLength(
-      3,
+      4,
     );
     expect(dialogs.filter((event) => event.method === "input")).toHaveLength(0);
   }, 30_000);
 
   it("opens and writes a first-turn fork after materializing its header-only Session", async () => {
-    const { runtime, attachments, path, open } = await fixture([
+    const { runtime, attachments, path, open, copy } = await fixture([
       {
         ...message("u1", null, "user", "question one", 1),
         message: {
@@ -437,12 +436,7 @@ export default function (pi) {
       message("a1", "u1", "assistant", "answer one", 2),
     ]);
     await open();
-    const forked = await runtime.forkBranch({
-      sessionId: SESSION_ID,
-      viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
-        .viewId,
-      targetId: "u1",
-    });
+    const forked = await copy("fork", "u1");
     expect(forked.editorText).toBe("question one");
     expect(forked.snapshot.active?.transcriptPage.messages).toEqual([]);
     expect(forked.editorAttachments).toHaveLength(1);
@@ -453,10 +447,7 @@ export default function (pi) {
     ).toBe("aW1hZ2U=");
 
     const destination = forked.snapshot.active!.sessionFile!;
-    const records = (await readFile(destination, "utf8"))
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line));
+    const records = readEntries(await readFile(destination, "utf8"));
     expect(records[0]).toMatchObject({
       type: "session",
       id: forked.sessionId,
@@ -471,7 +462,7 @@ export default function (pi) {
   }, 30_000);
 
   it("forks an active stock Pi run without interrupting its later completion", async () => {
-    const { runtime, workers, model, open, navigate } = await fixture(
+    const { runtime, workers, model, open, navigate, copy } = await fixture(
       messages(),
       {
         stream: true,
@@ -508,7 +499,6 @@ export default function (pi) {
       ).toBe("running"),
     );
     const sourceView = (await runtime.snapshot(SESSION_ID)).active!;
-    const viewId = sourceView.transcriptPage.viewId;
     const activePrompt = sourceView.transcriptPage.messages.find(
       (message) =>
         typeof message === "object" &&
@@ -518,11 +508,7 @@ export default function (pi) {
         JSON.stringify(message).includes("active question"),
     ) as { __inspireEntryId: string } | undefined;
     expect(activePrompt?.__inspireEntryId).toEqual(expect.any(String));
-    const forked = await runtime.forkBranch({
-      sessionId: SESSION_ID,
-      viewId,
-      targetId: activePrompt!.__inspireEntryId,
-    });
+    const forked = await copy("fork", activePrompt!.__inspireEntryId);
     expect(forked.editorText).toBe("active question");
     const destinationText = await readFile(
       forked.snapshot.active!.sessionFile!,
@@ -581,60 +567,6 @@ export default function (pi) {
     ).toBeDefined();
   }, 30_000);
 
-  it("attests a real session_tree callback including extension UI and a mixed persistence chain", async () => {
-    const target = "a1";
-    const { path, runtime, workers, open, navigate } = await fixture(
-      messages(),
-      {
-        extension: `export default pi => {
-      pi.on("session_tree", async (event, ctx) => {
-        pi.sendMessage({ customType: "branch-note", content: "Branch selected", display: true }, { triggerTurn: false });
-        await ctx.ui.confirm("Callback appended", "Finish navigation?");
-        pi.appendEntry("branch-complete", { leaf: event.newLeafId });
-      });
-    };`,
-      },
-    );
-    const answers: Promise<void>[] = [];
-    runtime.on("event", (event) => {
-      const value = event as Record<string, unknown>;
-      if (value.type === "extension_ui_request" && value.method === "confirm")
-        answers.push(
-          runtime.extensionUiResponse({
-            sessionId: SESSION_ID,
-            id: value.id,
-            confirmed: true,
-          }),
-        );
-    });
-    await open();
-    const result = await navigate(target, "switch");
-    await Promise.all(answers);
-    expect(answers).toHaveLength(1);
-    expect(workers).toHaveLength(1);
-    expect(workers[0]!.available).toBe(true);
-    expect(result.snapshot.active?.projectionConflict).toBeNull();
-    const entries = jsonl(await readFile(path, "utf8"));
-    const delta = entries.filter((entry: { customType?: string }) =>
-      entry.customType?.startsWith("branch-"),
-    );
-    expect(delta[0]).toMatchObject({
-      type: "custom_message",
-      parentId: target,
-    });
-    expect(delta[1]).toMatchObject({
-      type: "custom",
-      parentId: delta[0].id,
-      customType: "branch-complete",
-    });
-    expect(result.snapshot.active?.effectiveLeafId).toBe(delta[1].id);
-    expect(
-      JSON.stringify(result.snapshot.active?.transcriptPage.messages),
-    ).toContain("Branch selected");
-    await runtime.rename(SESSION_ID, "Still the same writable worker");
-    expect(workers).toHaveLength(1);
-  }, 20_000);
-
   it("executes native navigation, summary, Clone and both cancellation paths", async () => {
     const [u1, a1, u2, a2] = messages();
     const {
@@ -645,6 +577,7 @@ export default function (pi) {
       open,
       navigate,
       model,
+      copy,
     } = await fixture(
       [
         u1,
@@ -684,22 +617,18 @@ export default function (pi) {
     ).toMatchObject({ skipSummaryPrompt: true });
     const sourcePid = workers[0]!.pid;
     const beforeNavigation = await readFile(sourcePath, "utf8");
-    const beforeCount = jsonl(beforeNavigation).length;
+    const beforeCount = readEntries(beforeNavigation).length;
     const root = await navigate("u1", "edit");
     expect(root.editorText).toBe("question one");
     expect(root.snapshot.active?.effectiveLeafId).toBeNull();
     expect(root.snapshot.active?.transcriptPage.messages).toEqual([]);
-    const emptyTree = (await runtime.snapshot(SESSION_ID)).active!;
-    const emptyClone = await runtime.cloneBranch({
-      sessionId: SESSION_ID,
-      viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
-        .viewId,
-      targetId: emptyTree.effectiveLeafId ?? null,
-    });
+    const emptyClone = await copy("clone", null);
     expect(emptyClone.editorText).toBe("");
     expect(emptyClone.snapshot.active?.transcriptPage.messages).toEqual([]);
     expect(
-      jsonl(await readFile(emptyClone.snapshot.active!.sessionFile!, "utf8")),
+      readEntries(
+        await readFile(emptyClone.snapshot.active!.sessionFile!, "utf8"),
+      ),
     ).toHaveLength(1);
     expect(workers[0]!.pid).toBe(sourcePid);
     await runtime.openSession(SESSION_ID);
@@ -717,7 +646,7 @@ export default function (pi) {
       "Carry the earlier work",
     );
     expect(carried.editorText).toBe("question one");
-    const appended = jsonl(await readFile(sourcePath, "utf8")).slice(
+    const appended = readEntries(await readFile(sourcePath, "utf8")).slice(
       beforeCount,
     );
     expect(appended[0]).toMatchObject({
@@ -735,15 +664,9 @@ export default function (pi) {
     });
     expect(carried.snapshot.active?.effectiveLeafId).toBe(appended[1].id);
 
-    const tree = (await runtime.snapshot(SESSION_ID)).active!;
-    const cloned = await runtime.cloneBranch({
-      sessionId: SESSION_ID,
-      viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
-        .viewId,
-      targetId: tree.effectiveLeafId ?? null,
-    });
+    const cloned = await copy("clone", appended[1].id);
     expect(cloned.editorText).toBe("");
-    const clonedEntries = jsonl(
+    const clonedEntries = readEntries(
       await readFile(cloned.snapshot.active!.sessionFile!, "utf8"),
     );
     expect(clonedEntries[0]).toMatchObject({
@@ -782,7 +705,7 @@ export default function (pi) {
     );
     expect(again.cancelled).not.toBe(true);
     const finishedFile = await readFile(sourcePath, "utf8");
-    const finished = jsonl(finishedFile);
+    const finished = readEntries(finishedFile);
     expect(
       finished
         .slice(appended.length + beforeCount)

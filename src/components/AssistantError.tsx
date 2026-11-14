@@ -1,7 +1,7 @@
 import { ChevronRight, CircleAlert, Square } from "lucide-react";
 import { useContext, useId, useLayoutEffect, useState } from "react";
 import { CodeView } from "./CodeView";
-import { CopyAction } from "./CopyAction";
+import { ActivityHeader } from "./transcript-activity-visibility";
 import { TranscriptSearchReveal } from "./transcript-search";
 
 /** Cancellation keeps the outcome header, without diagnostics or actions. */
@@ -12,10 +12,13 @@ export function AssistantStopped() {
       role="group"
       aria-label="Stopped"
     >
-      <div className="activity-surface__head">
-        <Square size={14} className="assistant-error__icon" aria-hidden />
+      <ActivityHeader
+        icon={
+          <Square size={14} className="assistant-error__icon" aria-hidden />
+        }
+      >
         <span className="assistant-error__label">Stopped</span>
-      </div>
+      </ActivityHeader>
     </div>
   );
 }
@@ -49,15 +52,18 @@ export function AssistantError({ text }: { text: string }) {
       role="group"
       aria-label="Pi error"
     >
-      <div className="activity-surface__head">
-        <CircleAlert size={14} className="assistant-error__icon" aria-hidden />
+      <ActivityHeader
+        icon={
+          <CircleAlert
+            size={14}
+            className="assistant-error__icon"
+            aria-hidden
+          />
+        }
+        copy={{ text, label: "Error message" }}
+      >
         <span className="assistant-error__label">Pi error</span>
-        <CopyAction
-          text={text}
-          label="Error message"
-          className="activity-copy"
-        />
-      </div>
+      </ActivityHeader>
       <section
         id={detailsId}
         aria-label={expanded ? "Error details" : undefined}

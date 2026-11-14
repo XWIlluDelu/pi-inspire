@@ -20,7 +20,7 @@ import {
 } from "./ConfigurationForm";
 import { McpServerForm } from "./McpServerForm";
 import { NativeSelect } from "./NativeSelect";
-import { SettingsSection } from "./SettingsSection";
+import { SettingsCardMessage, SettingsSection } from "./SettingsSection";
 
 const serverKey = (scope: McpConfigScope, name: string) =>
   JSON.stringify([scope, name]);
@@ -269,14 +269,12 @@ function McpConfiguration({
         >
           <div className="models-settings mcp-config">
             {error ? (
-              <p className="settings__error" role="alert">
-                {error}
-              </p>
+              <SettingsCardMessage error>{error}</SettingsCardMessage>
             ) : null}
             {busy && !snapshot ? (
-              <p className="models-status" role="status">
+              <SettingsCardMessage loading>
                 Loading servers…
-              </p>
+              </SettingsCardMessage>
             ) : null}
             {saved ? (
               <div className="mcp-save-result" role="status">

@@ -504,20 +504,17 @@ export function TerminalSettingsDialog({
                   </button>
                 </SettingField>
               </>
-            ) : loadingService ? (
-              <SettingsCardMessage>
-                <span role="status">Loading Host settings…</span>
-              </SettingsCardMessage>
             ) : (
-              <SettingsCardMessage error>
-                {serviceError}{" "}
-                <button
-                  type="button"
-                  className="button button--quiet"
-                  onClick={() => setReadRevision((revision) => revision + 1)}
-                >
-                  Retry
-                </button>
+              <SettingsCardMessage
+                loading={loadingService}
+                error={!loadingService}
+                retry={
+                  loadingService
+                    ? undefined
+                    : { run: () => setReadRevision((revision) => revision + 1) }
+                }
+              >
+                {loadingService ? "Loading Host settings…" : serviceError}
               </SettingsCardMessage>
             )}
           </SettingsSection>

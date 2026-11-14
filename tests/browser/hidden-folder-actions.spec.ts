@@ -8,16 +8,7 @@ test.use({
   serviceWorkers: "block",
 });
 
-/** A disposable Hidden session cloned from a fixture, with the navigation
- * drawer and Hidden open. Destructive tests own their persisted session; the
- * shared fixtures must remain available to later tests and retries. */
-async function hiddenClone(
-  page: Page,
-  fixture: RegExp,
-  fixtureId?: string,
-): Promise<{ id: string; name: string }> {
-  await pairedPage(page);
-  const sessionId = await openFixtureSession(page, fixture, fixtureId);
+async function cloneSession(page: Page, sessionId: string) {
   const source = (
     await (
       await hostRequest(page).get(
@@ -34,11 +25,17 @@ async function hiddenClone(
   });
   expect(created.ok()).toBe(true);
   const clone = await created.json();
-  const id: string = clone.sessionId;
+  return {
+    id: clone.sessionId as string,
+    name: clone.snapshot.active.sessionName as string,
+  };
+}
+
+async function showHidden(page: Page, ids: string[]) {
   expect(
     (
       await hostRequest(page).patch("/api/preferences", {
-        data: { hiddenSessionIds: [id], hiddenProjectCwds: [] },
+        data: { hiddenSessionIds: ids, hiddenProjectCwds: [] },
       })
     ).ok(),
   ).toBe(true);
@@ -55,7 +52,17 @@ async function hiddenClone(
   const hidden = page.getByRole("button", { name: "Hidden", exact: true });
   if ((await hidden.getAttribute("aria-pressed")) !== "true")
     await hidden.click();
-  return { id, name: clone.snapshot.active.sessionName };
+}
+
+/** Only disposable native copies are mutated by these tests. */
+async function hiddenClone(page: Page, title: RegExp, id?: string) {
+  await pairedPage(page);
+  const clone = await cloneSession(
+    page,
+    await openFixtureSession(page, title, id),
+  );
+  await showHidden(page, [clone.id]);
+  return clone;
 }
 
 test("deletes the visible idle session through one confirmation and returns to New session", async ({
@@ -98,7 +105,7 @@ test("deletes the visible idle session through one confirmation and returns to N
   await expect(remove).toHaveCount(0);
 });
 
-test("failed deletion wraps a literal path inside the confirmation", async ({
+test("a refused deletion wraps its diagnostic, then an externally missing file requires new review", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 320, height: 900 });
@@ -114,7 +121,9 @@ test("failed deletion wraps a literal path inside the confirmation", async ({
     if (body.scope !== "session" || body.sessionId !== id)
       return route.fallback();
     attempted++;
-    await route.fulfill({ status: 409, json: { error: diagnostic } });
+    if (attempted === 1)
+      await route.fulfill({ status: 409, json: { error: diagnostic } });
+    else await route.continue();
   });
   await page
     .locator(".nav__list--hidden")
@@ -156,9 +165,7 @@ test("failed deletion wraps a literal path inside the confirmation", async ({
   expect(geometry.textFits).toBe(true);
   expect(geometry.scroll).toBeLessThanOrEqual(geometry.client);
   expect(attempted).toBe(1);
-  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
-  await expect(dialog).toHaveCount(0);
-  // Even a deliberately failed delete must not hide or consume shared data.
+  // A different client commits the file deletion while this review remains open.
   expect(
     (
       await hostRequest(page).post("/api/sessions/delete", {
@@ -166,6 +173,71 @@ test("failed deletion wraps a literal path inside the confirmation", async ({
       })
     ).ok(),
   ).toBe(true);
+  expect((await hostRequest(page).post("/api/sessions/refresh")).ok()).toBe(true);
+  await dialog
+    .getByRole("button", { name: "Delete session", exact: true })
+    .click();
+  await expect(dialog.getByRole("alert")).toHaveText(/Session not found/);
+  await expect(
+    dialog.getByRole("button", { name: "Delete session" }),
+  ).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Review Hidden" }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.locator(`[data-session-id="${id}"]`)).toHaveCount(0);
+  expect(attempted).toBe(2);
+});
+
+test("a partial Hidden deletion requires a fresh confirmation of the remaining native session", async ({
+  page,
+}) => {
+  await pairedPage(page);
+  const source = await openFixtureSession(
+    page,
+    /Calibration history fixture/,
+    "fixture-calibration-history",
+  );
+  const first = await cloneSession(page, source);
+  const remaining = await cloneSession(page, source);
+  await showHidden(page, [first.id, remaining.id]);
+  const reviews: string[][] = [];
+  await page.route("**/api/sessions/delete", async (route) => {
+    reviews.push(route.request().postDataJSON().sessionIds);
+    if (reviews.length > 1) return route.continue();
+    const native = await hostRequest(page).post("/api/sessions/delete", {
+      data: { scope: "session", sessionId: first.id },
+    });
+    expect(native.ok()).toBe(true);
+    await route.fulfill({
+      json: {
+        ...(await native.json()),
+        failure: {
+          sessionId: remaining.id,
+          message: "File changed during deletion",
+        },
+      },
+    });
+  });
+  const clear = page.getByRole("button", { name: "Clear Hidden", exact: true });
+  await clear.click();
+  const dialog = page.getByRole("alertdialog", { name: "Clear Hidden?" });
+  await dialog.getByRole("button", { name: "Delete 2 sessions" }).click();
+  await expect(dialog.getByRole("alert")).toContainText("Deleted 1 session");
+  await expect(
+    dialog.getByRole("button", { name: "Delete 2 sessions" }),
+  ).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Review Hidden" }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.locator(`[data-session-id="${first.id}"]`)).toHaveCount(0);
+  expect(reviews).toEqual([expect.arrayContaining([first.id, remaining.id])]);
+  await clear.click();
+  await dialog
+    .getByRole("button", { name: "Delete 1 session", exact: true })
+    .click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.locator(`[data-session-id="${remaining.id}"]`)).toHaveCount(
+    0,
+  );
+  expect(reviews[1]).toEqual([remaining.id]);
 });
 
 function folderGaps(folders: Locator) {

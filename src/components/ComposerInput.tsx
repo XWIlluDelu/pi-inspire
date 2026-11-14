@@ -28,7 +28,12 @@ import { isComposingKeyboardEvent } from "../keyboard-input";
 import { useFloatingMenuDismissal } from "../use-floating-menu";
 import { HiddenFilesToggle } from "./HiddenFilesToggle";
 import { type ListOption, OptionList, useOptionList } from "./OptionList";
-import { ProjectFileLabel, useProjectFileSearch } from "./ProjectFiles";
+import {
+  ProjectFileFeedback,
+  ProjectFileLabel,
+  projectFileOption,
+  useProjectFileSearch,
+} from "./ProjectFiles";
 
 type CompletionItem =
   | { kind: "file"; file: ProjectFileResult }
@@ -67,7 +72,6 @@ function CompletionMenu({
           path={item.file.path}
           name={item.file.name}
           query={token.query}
-          captionClass="completion__hint"
         />
       );
     const command = item.kind === "command" ? item.command : null;
@@ -131,26 +135,19 @@ function CompletionMenu({
         }
         loading={status === "loading"}
       >
-        {truncated ? (
+        {token.kind === "file" ? (
+          <ProjectFileFeedback
+            empty={!options.length}
+            status={status}
+            truncated={truncated}
+            loadingText="Searching project files…"
+            emptyText="No matching project files"
+          />
+        ) : !options.length ? (
           <div className="picker__empty" role="status">
-            Partial search results
-          </div>
-        ) : null}
-        {options.length === 0 ? (
-          <div
-            className="picker__empty"
-            data-error={status === "error"}
-            role="status"
-          >
-            {status === "loading"
-              ? "Searching project files…"
-              : status === "error"
-                ? "Project file search failed"
-                : token.kind === "file"
-                  ? "No matching project files"
-                  : token.kind === "argument"
-                    ? "No available candidates"
-                    : "No matching commands"}
+            {token.kind === "argument"
+              ? "No available candidates"
+              : "No matching commands"}
           </div>
         ) : null}
       </OptionList>
@@ -301,9 +298,7 @@ export function ComposerInput({
     if (!completion) return [];
     if (completion.kind === "file") {
       return completionFiles.map((file) => ({
-        key: file.path,
-        title: file.path,
-        label: `${file.name}, ${file.path}`,
+        ...projectFileOption(file),
         group: onShowHiddenFilesChange ? undefined : "Project files",
         value: { kind: "file", file },
       }));

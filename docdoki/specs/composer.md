@@ -9,11 +9,11 @@ covers:
   - tests/server/app-input-operations.test.ts
   - tests/integration/recovered-image-user-intent.test.ts
   - src/components/{ActivityBar,AttachmentList,Composer,ComposerInput,MessageEditor,ImagePreview,ImageLightbox,ImageGallery,ModelSelector,ProjectFiles,Transcript,transcript-rows,Welcome,DirectoryPicker,ExportDialog}.tsx
-  - src/{image-viewport,use-image-viewport,use-image-history}.ts
+  - src/{image-viewport,use-image-viewport,use-inspection-history}.ts
   - src/styles/*.css
   - tests/server/{attachments,attachment-retention,composer-history*,runtime-composer-artifacts,runtime-pending*,runtime-delivery,app}.test.ts
   - tests/integration/native/pi-{prompt,pending-recovery,shell,compaction}*.test.ts
-  - tests/web/{composer*,session-drafts,native-commands,readonly-session,content-copy,welcome*,directory-picker,project-file-picker,model-selector,model-store}.test.ts*
+  - tests/web/{composer*,session-drafts,native-commands,readonly-session,content-copy,welcome*,directory-picker,model-selector,model-store}.test.ts*
   - tests/web/{image-preview,attachments}.test.tsx
   - tests/browser/{composer,file-attachments,usage-facts,model-selection,model-workflow,project-directory,project-file-picker,pending-input,image-interactions}.spec.ts
 ---

@@ -28,14 +28,17 @@ async function preserveCuration(page: Page) {
   };
 }
 
-test("session search paginates unloaded results and keyboard selection preserves drafts", async ({
+test("search loads older sessions and protects active and New drafts through keyboard selection", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.emulateMedia({ reducedMotion: "reduce" });
   await pairedPage(page);
-  await openFixtureSession(page, /Review extension event lifecycle/);
-  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  const source = "Review extension event lifecycle";
+  const destination = "Formula rendering and spectral analysis";
+  await openFixtureSession(page, new RegExp(source), "fixture-history");
+  const composer = page.getByRole("form", { name: "Message composer" });
+  const input = composer.getByRole("textbox", { name: "Message", exact: true });
   await input.fill("SESSION_SEARCH_ACTIVE_DRAFT");
   await page.locator('input[type="file"]').setInputFiles({
     name: "search-draft.txt",
@@ -43,79 +46,62 @@ test("session search paginates unloaded results and keyboard selection preserves
     buffer: Buffer.from("retain draft artifact"),
   });
   await expect(page.locator(".attachment--ready")).toBeVisible();
-  await page.getByRole("button", { name: "New session", exact: true }).click();
-  const first = page.getByRole("textbox", { name: "First message" });
-  await first.fill("SESSION_SEARCH_START_DRAFT");
-  const response = await hostRequest(page).get(
-    "/api/sessions?q=&offset=0&limit=40",
-  );
-  const catalog = (await response.json()).sessions as Array<{ id: string }>;
-  const find = (id: string) => catalog.find((session) => session.id === id)!;
-  let releaseEmpty!: () => void;
-  const empty = new Promise<void>((resolve) => {
-    releaseEmpty = resolve;
-  });
-  // Keep real selectable sessions behind the controlled catalog responses.
+
+  const { sessions } = (await (
+    await hostRequest(page).get("/api/sessions?offset=0&limit=40")
+  ).json()) as SessionListResponse;
+  const releaseEmpty = Promise.withResolvers<void>();
   await page.route("**/api/sessions?**", async (route) => {
-    const params = new URL(route.request().url()).searchParams;
-    if (params.get("q") === "empty-fixture-query") {
-      await empty;
-      return route.fulfill({
-        json: { sessions: [], total: 0, offset: 0, limit: 40 },
-      });
+    const { searchParams } = new URL(route.request().url());
+    const offset = Number(searchParams.get("offset") ?? 0);
+    switch (searchParams.get("q")) {
+      case "empty-fixture-query":
+        await releaseEmpty.promise;
+        return route.fulfill({
+          json: { sessions: [], total: 0, offset: 0, limit: 40 },
+        });
+      case "failed-fixture-query":
+        return route.fulfill({
+          status: 503,
+          json: { error: "Search is unavailable" },
+        });
+      case "bodyneedle": {
+        const id = offset ? "fixture-active" : "fixture-history";
+        const row = sessions.find((session) => session.id === id);
+        return route.fulfill({
+          json: { sessions: [row], total: 2, offset, limit: 1 },
+        });
+      }
+      default:
+        return route.continue();
     }
-    if (params.get("q") === "failed-fixture-query") {
-      return route.fulfill({
-        status: 503,
-        json: { error: "Search is unavailable" },
-      });
-    }
-    if (params.get("q") !== "bodyneedle") return route.continue();
-    const offset = Number(params.get("offset") ?? 0);
-    await route.fulfill({
-      json: {
-        sessions: [
-          {
-            ...find(offset === 0 ? "fixture-history" : "fixture-active"),
-            modified:
-              offset === 0 ? "2026-07-22T00:01:00Z" : "2026-07-22T00:00:00Z",
-          },
-        ],
-        total: 2,
-        offset,
-        limit: 1,
-      },
-    });
   });
-  const findSession = async () => {
-    const palette = await openCommandPalette(page);
-    await palette.getByLabel("Filter commands").fill("/resume");
-    await palette.getByRole("option", { name: /Find a session/ }).click();
-    const search = page.getByRole("searchbox", { name: "Search sessions" });
-    await expect(search).toBeFocused();
-    return search;
-  };
-  const search = await findSession();
-  const emptyState = page.locator(".nav__list .empty-state");
+
+  const palette = await openCommandPalette(page);
+  await palette.getByLabel("Filter commands").fill("/resume");
+  await palette.getByRole("option", { name: /Find a session/ }).click();
+  const search = page.getByRole("searchbox", { name: "Search sessions" });
+  await expect(search).toBeFocused();
+  const empty = page.locator(".nav__list .empty-state");
   await search.fill("empty-fixture-query");
   try {
     await expect(page.locator(".nav__pagination .pi-loading")).toBeVisible();
-    await expect(emptyState).toBeHidden();
+    await expect(empty).toBeHidden();
   } finally {
-    releaseEmpty();
+    releaseEmpty.resolve();
   }
-  await expect(emptyState).toContainText("No sessions");
+  await expect(empty).toContainText("No sessions");
   await search.fill("failed-fixture-query");
   await expect(page.locator(".nav__pagination-status")).toContainText(
     "Search is unavailable",
   );
-  await expect(emptyState).toBeHidden();
+  await expect(empty).toBeHidden();
   await search.fill("bodyneedle");
   const rows = page.locator(".nav__row-name");
   await expect(rows).toHaveCount(1);
   await search.press("ArrowDown");
   const highlighted = page.locator(".nav__row--highlighted .nav__row-name");
-  await expect(highlighted).toHaveText("Review extension event lifecycle");
+  await expect(highlighted).toHaveText(source);
   const older = page.getByRole("button", {
     name: "Load older sessions",
     exact: true,
@@ -124,14 +110,12 @@ test("session search paginates unloaded results and keyboard selection preserves
   await expect(rows).toHaveCount(2);
   await expect(older).toHaveCount(0);
   await search.focus();
-  await expect(highlighted).toHaveText("Review extension event lifecycle");
+  await expect(highlighted).toHaveText(source);
   expect(
     (await new AxeBuilder({ page }).include(".nav").analyze()).violations,
   ).toEqual([]);
   await search.press("ArrowDown");
-  await expect(highlighted).toHaveText(
-    "Formula rendering and spectral analysis",
-  );
+  await expect(highlighted).toHaveText(destination);
   await search.dispatchEvent("compositionstart");
   await search.dispatchEvent("keydown", {
     key: "Enter",
@@ -140,12 +124,44 @@ test("session search paginates unloaded results and keyboard selection preserves
   });
   await search.dispatchEvent("compositionend");
   await expect(search).toHaveValue("bodyneedle");
-  await expect(first).toHaveValue("SESSION_SEARCH_START_DRAFT");
-  await search.press("Enter");
-  await expect(page.locator(".topbar__title-button")).toHaveText(
-    "Formula rendering and spectral analysis",
+  await expect(input).toHaveValue("SESSION_SEARCH_ACTIVE_DRAFT");
+
+  const open = Promise.withResolvers<void>();
+  await page.route(
+    "**/api/sessions/open",
+    async (route) => {
+      await open.promise;
+      await route.continue();
+    },
+    { times: 1 },
   );
+  const destinationRow = page.locator(
+    '[data-session-id="fixture-active"] .nav__row-main',
+  );
+  const title = destinationRow.locator(".nav__row-name");
+  const opacity = await destinationRow.evaluate(
+    (element) => getComputedStyle(element).opacity,
+  );
+  const x = (await title.boundingBox())!.x;
+  const opening = destinationRow.getByRole("status");
+  try {
+    await search.press("Enter");
+    await expect(composer).toHaveAttribute("aria-busy", "true");
+    await expect(input).toBeDisabled();
+    await expect(opening).toHaveText("Opening…");
+    await expect(destinationRow).toHaveCSS("opacity", opacity);
+    await expect(
+      destinationRow.getByRole("img", { name: "Working" }),
+    ).toBeHidden();
+    expect((await title.boundingBox())!.x).toBeCloseTo(x, 1);
+  } finally {
+    open.resolve();
+  }
+  const topbar = page.locator(".topbar__title-button");
+  await expect(topbar).toHaveText(destination);
+  await expect(input).toBeEnabled();
   await expect(input).toHaveValue("");
+  await expect(opening).toBeHidden();
   await search.press("Escape");
   await expect(search).toHaveValue("");
   await expect(search).toBeFocused();
@@ -156,15 +172,20 @@ test("session search paginates unloaded results and keyboard selection preserves
     .click();
   await expect(search).toBeHidden();
   await input.fill("/resume");
-  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  await composer
+    .getByRole("button", { name: "Send message", exact: true })
+    .click();
   await expect(search).toBeFocused();
-  await expect(page.locator(".topbar__title-button")).toHaveText(
-    "Formula rendering and spectral analysis",
-  );
-  await openFixtureSession(page, /Review extension event lifecycle/);
+  await expect(topbar).toHaveText(destination);
+
+  const create = page.getByRole("button", { name: "New session", exact: true });
+  await create.click();
+  const first = page.getByRole("textbox", { name: "First message" });
+  await first.fill("SESSION_SEARCH_START_DRAFT");
+  await openFixtureSession(page, new RegExp(source), "fixture-history");
   await expect(input).toHaveValue("SESSION_SEARCH_ACTIVE_DRAFT");
   await expect(page.locator(".attachment")).toContainText("search-draft.txt");
-  await page.getByRole("button", { name: "New session", exact: true }).click();
+  await create.click();
   await expect(first).toHaveValue("SESSION_SEARCH_START_DRAFT");
 });
 
@@ -215,59 +236,6 @@ test("catalog retries keep available sessions visible and clear recovered source
   await expect(recovered).toBeVisible();
   await expect(available).toBeVisible();
   await expect(diagnostics).toHaveCount(0);
-});
-
-test("session transitions cannot accept input for the previous session", async ({
-  page,
-}) => {
-  await pairedPage(page);
-  await openFixtureSession(page, /Formula rendering and spectral analysis/);
-
-  let releaseOpen!: () => void;
-  const openGate = new Promise<void>((resolve) => {
-    releaseOpen = resolve;
-  });
-  let confirmOpenStarted!: () => void;
-  const openStarted = new Promise<void>((resolve) => {
-    confirmOpenStarted = resolve;
-  });
-  await page.route(/\/api\/sessions\/open(?:\?|$)/, async (route) => {
-    confirmOpenStarted();
-    await openGate;
-    await route.continue();
-  });
-
-  const composer = page.getByRole("form", { name: "Message composer" });
-  const message = page.getByRole("textbox", { name: "Message" });
-  const target = page
-    .locator(".nav__row-main")
-    .filter({ hasText: /Review extension event lifecycle/ });
-  const opening = target.getByRole("status");
-  const titleInset = async () =>
-    (await target.locator(".nav__row-name").boundingBox())!.x;
-  const initialInset = await titleInset();
-  const initialOpacity = await target.evaluate(
-    (element) => getComputedStyle(element).opacity,
-  );
-  const switchSession = target.click();
-  try {
-    await openStarted;
-    await expect(composer).toHaveAttribute("aria-busy", "true");
-    await expect(message).toBeDisabled();
-    await expect(opening).toHaveText("Opening…");
-    await expect(target).toHaveCSS("opacity", initialOpacity);
-    await expect(target.getByRole("img", { name: "Working" })).toBeHidden();
-    expect(await titleInset()).toBeCloseTo(initialInset, 1);
-  } finally {
-    releaseOpen();
-    await switchSession;
-  }
-
-  await expect(page.locator(".topbar__title-button")).toHaveText(
-    /Review extension event lifecycle/,
-  );
-  await expect(message).toBeEnabled();
-  await expect(opening).toBeHidden();
 });
 
 test.describe("touch session drawer", () => {
@@ -444,23 +412,24 @@ test("catalog search follows curation and reviews the exact Hidden selection", a
   expect(requests[1]?.sessionIds).toHaveLength(4);
 });
 
-test("Needs you receives live attention and remembers its mode across reload", async ({
+test("live attention filters and counts the relevant sessions through rail, drawer and reload", async ({
   page,
 }) => {
-  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.emulateMedia({ reducedMotion: "reduce" });
   const older = "fixture-calibration-history";
   const newer = "fixture-errors";
   const hidden = "fixture-active";
   await page.route("**/api/sessions?**", async (route) => {
     const response = await route.fetch();
-    const body = await response.json();
+    const body = (await response.json()) as SessionListResponse;
     for (const row of body.sessions) {
       if (row.id === older) row.modified = "2026-07-20T10:00:00Z";
       if (row.id === newer) row.modified = "2026-07-24T10:00:00Z";
     }
     await route.fulfill({ response, json: body });
   });
+  const statuses: Record<string, SessionRuntimeStatus> = {};
   const transport = await routeSnapshots(page, {
     bootstrap: (body) =>
       Object.assign(body.preferences, {
@@ -469,69 +438,6 @@ test("Needs you receives live attention and remembers its mode across reload", a
         hiddenProjectCwds: [],
         navCollapsedGroups: [],
       }),
-    // Other tests share this Host; start from no session statuses.
-    snapshot: (snapshot) => {
-      snapshot.sessionStatuses = snapshot.active
-        ? { [snapshot.active.sessionId]: { runState: "idle" } }
-        : {};
-    },
-    event: (event) => {
-      if (event.type === "session_status") return false;
-    },
-  });
-  await pairedPage(page);
-  await openFixtureSession(
-    page,
-    /Review extension event lifecycle/,
-    "fixture-history",
-  );
-  await expect.poll(() => transport.ready("fixture-history")).toBe(true);
-  const bell = page.locator(".nav").getByRole("button", { name: /^Needs you/ });
-  await expect(bell).toHaveAttribute("aria-pressed", "false");
-  await expect(bell).toHaveAccessibleName("Needs you");
-
-  const pinned = page.getByRole("region", { name: "Pinned", exact: true });
-  await expect(pinned.locator(".nav__row")).toHaveAttribute(
-    "data-session-id",
-    older,
-  );
-  for (const sessionId of [newer, older, hidden]) {
-    transport.send({
-      type: "session_status",
-      sessionId,
-      sessionStatus: { runState: "idle", indicator: "completed" },
-    });
-  }
-
-  await expect(bell).toHaveAccessibleName("Needs you (2)");
-  await bell.click();
-  await expect(bell).toHaveAttribute("aria-pressed", "true");
-  const list = page.getByRole("region", { name: "Sessions that need you" });
-  const rows = list.locator(".nav__row");
-  await expect(rows).toHaveCount(2);
-  await expect(rows.nth(0)).toHaveAttribute("data-session-id", newer);
-  await expect(rows.nth(1)).toHaveAttribute("data-session-id", older);
-  await expect(pinned).toHaveCount(0);
-
-  await page.reload();
-  await expect(bell).toHaveAttribute("aria-pressed", "true");
-  await expect(page.getByText("Nothing needs you")).toBeVisible();
-  await page
-    .locator(".nav")
-    .getByRole("button", { name: "All", exact: true })
-    .click();
-  await expect(bell).toHaveAttribute("aria-pressed", "false");
-  await expect(pinned).toBeVisible();
-});
-
-test("navigation attention counts clear the glyph in the rail and drawer", async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await page.emulateMedia({ reducedMotion: "reduce" });
-  const statuses: Record<string, SessionRuntimeStatus> = {};
-  let attentionId = 0;
-  const transport = await routeSnapshots(page, {
     snapshot(snapshot) {
       const active = snapshot.active?.sessionId;
       snapshot.sessionStatuses = active
@@ -549,10 +455,10 @@ test("navigation attention counts clear the glyph in the rail and drawer", async
     "fixture-history",
   );
   await expect.poll(() => transport.ready("fixture-history")).toBe(true);
-
+  let attention = 0;
   const report = (id: string, completed: boolean) => {
     statuses[id] = completed
-      ? { runState: "idle", indicator: "completed", attentionId: ++attentionId }
+      ? { runState: "idle", indicator: "completed", attentionId: ++attention }
       : { runState: "idle" };
     transport.send({
       type: "session_status",
@@ -560,6 +466,46 @@ test("navigation attention counts clear the glyph in the rail and drawer", async
       sessionStatus: statuses[id],
     });
   };
+  const bell = page.locator(".nav").getByRole("button", { name: /^Needs you/ });
+  const pinned = page.getByRole("region", { name: "Pinned", exact: true });
+  await expect(bell).toHaveAccessibleName("Needs you");
+  await expect(pinned.locator(".nav__row")).toHaveAttribute(
+    "data-session-id",
+    older,
+  );
+  for (const id of [newer, older, hidden]) report(id, true);
+  await expect(bell).toHaveAccessibleName("Needs you (2)");
+  await bell.click();
+  await expect(bell).toHaveAttribute("aria-pressed", "true");
+  const rows = page
+    .getByRole("region", { name: "Sessions that need you" })
+    .locator(".nav__row");
+  const all = page
+    .locator(".nav")
+    .getByRole("button", { name: "All", exact: true });
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0)).toHaveAttribute("data-session-id", newer);
+  await expect(rows.nth(1)).toHaveAttribute("data-session-id", older);
+  await expect(pinned).toHaveCount(0);
+  for (const id of Object.keys(statuses)) delete statuses[id];
+  await page.reload();
+  await expect(bell).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByText("Nothing needs you")).toBeVisible();
+  await all.click();
+  await expect(bell).toHaveAttribute("aria-pressed", "false");
+  await expect(pinned).toBeVisible();
+
+  await expect.poll(() => transport.ready("fixture-history")).toBe(true);
+  report(newer, true);
+  const collapse = page.getByRole("button", {
+    name: "Collapse navigation",
+    exact: true,
+  });
+  const rail = page.getByRole("button", {
+    name: "Expand navigation",
+    exact: true,
+  });
+  await collapse.click();
   const check = async (toggle: Locator, count: string) => {
     const badge = toggle.locator(
       ".navigation-toggle__attention > [aria-hidden]",
@@ -567,43 +513,31 @@ test("navigation attention counts clear the glyph in the rail and drawer", async
     await expect(badge).toHaveText(count);
     await expect(badge).toBeInViewport({ ratio: 1 });
   };
-
-  report("fixture-prompt-map", true);
-  await page
-    .getByRole("button", { name: "Collapse navigation", exact: true })
-    .click();
-  const rail = page.getByRole("button", {
-    name: "Expand navigation",
-    exact: true,
-  });
   await check(rail, "1");
   await expect(rail).toHaveAccessibleDescription(
     "1 other session needs attention",
   );
-  const additional = Array.from(
-    { length: 10 },
-    (_, index) => `unseen-${index}`,
-  );
-  for (const id of additional) report(id, true);
+  const more = Array.from({ length: 10 }, (_, index) => `unseen-${index}`);
+  for (const id of more) report(id, true);
   await check(rail, "9+");
   await expect(rail).toHaveAccessibleDescription(
     "11 other sessions need attention",
   );
-
   await page.setViewportSize({ width: 390, height: 780 });
-  const narrow = page.getByRole("button", {
+  const drawer = page.getByRole("button", {
     name: "Toggle navigation",
     exact: true,
   });
-  await check(narrow, "9+");
-  for (const id of additional) report(id, false);
-  await check(narrow, "1");
+  await check(drawer, "9+");
+  for (const id of more) report(id, false);
+  await check(drawer, "1");
+
   await page.setViewportSize({ width: 1440, height: 900 });
-  await openFixtureSession(page, /Prompt map long-session fixture/);
+  await openFixtureSession(page, /Pi error display fixture/, newer);
   await expect(
     page.locator(".nav__row--active").getByRole("img", { name: "Completed" }),
   ).toBeHidden();
-  await page.getByRole("button", { name: "Collapse navigation" }).click();
+  await collapse.click();
   await expect(rail).not.toHaveAccessibleDescription(/need[s]? attention/);
   await page.unrouteAll({ behavior: "wait" });
 });

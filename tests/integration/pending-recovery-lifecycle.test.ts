@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MAX_ATTACHMENTS } from "../../shared/contracts";
 import {
   closeHostApiFixture,
   hostApiFixture,
 } from "../server/fixtures/host-api";
+import { upload } from "../server/fixtures/runtime";
 import {
   deferred,
   FakeWebSocket,
@@ -79,7 +81,7 @@ describe("Pending intent and receipt lifecycle", () => {
         await vi.waitFor(() => expect(receiptReads).toHaveBeenCalledOnce());
 
         if (receipt === "unavailable") {
-          expect(store.getState().pendingAction).toBe("recover");
+          expect(store.getState().pendingAction?.action).toBe("recover");
           expect(store.getState().live.notices).toEqual([]);
           release.resolve();
         }
@@ -195,9 +197,15 @@ describe("Pending intent and receipt lifecycle", () => {
   it.each(["Return", "Stop"] as const)(
     "keeps the original draft when $0 settles after selecting another session",
     async (delayed) => {
+      const attachments = await Promise.all(
+        Array.from({ length: MAX_ATTACHMENTS }, (_, index) =>
+          f.attachments.add(upload(`recovered-${index}.png`, "image/png")),
+        ),
+      );
       const recover = vi.spyOn(f.runtime, "recoverPending").mockResolvedValue({
         steering: ["first handoff"],
         followUp: [],
+        attachments,
       });
       const abort = vi
         .spyOn(f.runtime, "abort")
@@ -213,9 +221,27 @@ describe("Pending intent and receipt lifecycle", () => {
       const { store } = await connect();
       const nextSession = "fixture-history";
       store.drafts.setText(sessionId, "original draft");
+      const { id: saved, ...file } = await f.attachments.add(
+        upload("latest.txt", "text/plain"),
+      );
+      store.drafts.update(sessionId, {
+        attachments: [
+          {
+            localId: "existing-draft-file",
+            ...file,
+            uploadedId: saved,
+            uploadedAuthorityId: authority(),
+            status: "ready",
+          },
+        ],
+      });
+      store.addProjectFile("README.md");
+      const draft = () => store.drafts.get(sessionId);
       const stopping = store.abort();
       try {
         await delivered.promise;
+        if (delayed === "Return")
+          store.drafts.setText(sessionId, "edited during Return");
         await store.openSession(nextSession);
         store.drafts.setText(nextSession, "another draft");
         if (delayed === "Return") {
@@ -225,7 +251,7 @@ describe("Pending intent and receipt lifecycle", () => {
             .join(await snapshot(nextSession), { authorityId: authority() });
           await vi.waitFor(() =>
             expect(store.drafts.get(sessionId).text).toBe(
-              "first handoff\n\noriginal draft",
+              "first handoff\n\nedited during Return",
             ),
           );
         } else {
@@ -240,12 +266,37 @@ describe("Pending intent and receipt lifecycle", () => {
       expect(abort).toHaveBeenCalledTimes(delayed === "Return" ? 0 : 1);
       if (delayed === "Stop") expect(abort.mock.calls[0]?.[0]).toBe(sessionId);
       expect(store.getState().sessionId).toBe(nextSession);
-      expect(store.drafts.get(nextSession).text).toBe("another draft");
-      expect(store.drafts.get(sessionId).text).toBe(
+      expect(store.drafts.get(nextSession)).toMatchObject({
+        text: "another draft",
+        attachments: [],
+      });
+      expect(draft().text).toBe(
         delayed === "Return"
-          ? "first handoff\n\noriginal draft"
+          ? "first handoff\n\nedited during Return"
           : "late input\n\nedited during Stop",
       );
+      expect(draft().projectFiles).toEqual(["README.md"]);
+      expect(draft().attachments.map(({ uploadedId }) => uploadedId)).toEqual([
+        ...attachments.map(({ id }) => id),
+        saved,
+      ]);
+      if (delayed === "Return") {
+        await store.openSession(sessionId);
+        expect(await store.sendPrompt(draft().text)).toBe(false);
+        expect(store.getState().live.notices.at(-1)?.text).toBe(
+          `At most ${MAX_ATTACHMENTS} attachments per message`,
+        );
+        await vi.waitFor(() =>
+          expect(draft().attachments[0]?.previewUrl).toMatch(/^blob:/),
+        );
+        store.removeAttachment(draft().attachments[0]!.localId);
+        await vi.waitFor(async () =>
+          expect(
+            (await f.fetchHost(`/api/attachments/${attachments[0]!.id}/image`))
+              .status,
+          ).toBe(404),
+        );
+      }
     },
   );
 });

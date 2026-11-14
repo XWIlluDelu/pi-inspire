@@ -66,6 +66,7 @@ plain-text alternatives and clipboard failures follow [[design-system]].
 Copy and image reads bind to the selected immutable entry and transcript view throughout. Leaving
 the entry/source cancels copying. Image coordinates remain Host-resolved and cancellable; saved
 images use the shared viewer with pointer/keyboard opening, fit/zoom, close and focus return.
+Images from the same entry share a gallery in native part order.
 Render structured images separately from descriptive placeholders and preserve user-written text
 that resembles a placeholder.
 

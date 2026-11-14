@@ -1253,6 +1253,26 @@ export class RuntimeController extends EventEmitter {
     );
   }
 
+  private withDeliveryOwner<T>(
+    slot: RuntimeSlot,
+    action: string,
+    operation: (worker: PiRpcProcess | null) => Promise<T>,
+  ): Promise<T> {
+    const worker = this.readyForDelivery(slot) ? slot.process : null;
+    if (!worker) return this.mutateSlot(slot, () => operation(null));
+    const { viewId, incarnationId } = slot;
+    return this.deliverySlot(slot, () => {
+      if (
+        slot.process !== worker ||
+        slot.viewId !== viewId ||
+        slot.incarnationId !== incarnationId ||
+        !this.readyForDelivery(slot)
+      )
+        throw requestError(`Session or worker changed before ${action}`, 409);
+      return operation(worker);
+    });
+  }
+
   private piPendingContent(slot: RuntimeSlot) {
     const input = slot.piPendingInput;
     return input
@@ -4526,25 +4546,9 @@ export class RuntimeController extends EventEmitter {
   clearPending(sessionId: string): Promise<void> {
     return this.withMaintenanceOperation(async () => {
       const slot = this.requireSlot(sessionId);
-      const direct = this.readyForDelivery(slot);
-      const worker = slot.process;
-      const viewId = slot.viewId;
-      const incarnationId = slot.incarnationId;
-      const clear = async () => {
-        if (
-          direct &&
-          (slot.process !== worker ||
-            slot.viewId !== viewId ||
-            slot.incarnationId !== incarnationId ||
-            !this.readyForDelivery(slot))
-        )
-          throw requestError(
-            "Session or worker changed before clearing Pending",
-            409,
-          );
-        const ready = direct
-          ? slot
-          : await this.ensureFreshWriterInsideGate(slot);
+      await this.withDeliveryOwner(slot, "clearing Pending", async (worker) => {
+        const process =
+          worker ?? (await this.ensureFreshWriterInsideGate(slot)).process!;
         for (const item of slot.deferredPrompts)
           item.reject(
             requestError("Pending message was cleared", 409, {
@@ -4557,11 +4561,8 @@ export class RuntimeController extends EventEmitter {
         }
         // Consumption may race this request. queue_update, not the receipt,
         // owns the display; discard Pi's potentially large returned texts.
-        await this.clearNativePending(slot, ready.process!, false);
-      };
-      await (direct
-        ? this.deliverySlot(slot, clear)
-        : this.mutateSlot(slot, clear));
+        await this.clearNativePending(slot, process, false);
+      });
     });
   }
 
@@ -4636,52 +4637,36 @@ export class RuntimeController extends EventEmitter {
         if (outputPath)
           await assertExportDestination(outputPath, slot.sessionPath);
         const format = output?.endsWith(".jsonl") ? "jsonl" : "html";
-        const direct = this.readyForDelivery(slot);
-        const worker = slot.process;
-        const viewId = slot.viewId;
-        const incarnationId = slot.incarnationId;
-        const exportSession = async () => {
-          if (
-            direct &&
-            (slot.process !== worker ||
-              slot.viewId !== viewId ||
-              slot.incarnationId !== incarnationId ||
-              !this.readyForDelivery(slot))
-          )
-            throw requestError("Session or worker changed before export", 409);
-          if (format === "jsonl") {
-            await this.reconcileSlot(slot, false);
-            this.throwIfConflicted(slot);
-            let entries = slot.projection!.entriesAfter(null);
-            let leafId = effectiveRuntimeLeaf(slot);
-            // A saved branch is independently readable, even without its cwd
-            // or a writable Pi. Never launch a worker merely to export it.
-            if (slot.workerView) {
-              entries = slot.workerView.index.entriesAfter(null);
-              leafId = slot.workerView.index.leafId;
+        const result = await this.withDeliveryOwner(
+          slot,
+          "export",
+          async (worker) => {
+            if (format === "jsonl") {
+              await this.reconcileSlot(slot, false);
+              this.throwIfConflicted(slot);
+              // A saved branch is independently readable, even without its cwd
+              // or a writable Pi. Never launch a worker merely to export it.
+              const content = serializeBranchExport(slot.id, slot.cwd, {
+                entries: (
+                  slot.workerView?.index ?? slot.projection!
+                ).entriesAfter(null),
+                leafId: effectiveRuntimeLeaf(slot),
+              });
+              await assertExportDestination(outputPath!, slot.sessionPath);
+              await writeBranchExport(outputPath!, content);
+              return { path: outputPath! };
             }
-            const content = serializeBranchExport(slot.id, slot.cwd, {
-              entries,
-              leafId,
-            });
-            await assertExportDestination(outputPath!, slot.sessionPath);
-            await writeBranchExport(outputPath!, content);
-            return { path: outputPath! };
-          }
-          const ready = direct
-            ? slot
-            : await this.ensureFreshWriterInsideGate(slot);
-          return ready.process!.request<{ path?: unknown }>(
-            {
-              type: "export_html",
-              ...(outputPath ? { outputPath } : {}),
-            },
-            null,
-          );
-        };
-        const result = await (direct
-          ? this.deliverySlot(slot, exportSession)
-          : this.mutateSlot(slot, exportSession));
+            const process =
+              worker ?? (await this.ensureFreshWriterInsideGate(slot)).process!;
+            return process.request<{ path?: unknown }>(
+              {
+                type: "export_html",
+                ...(outputPath ? { outputPath } : {}),
+              },
+              null,
+            );
+          },
+        );
         if (!result || typeof result.path !== "string" || !result.path) {
           throw new Error("Pi did not report the exported file path");
         }

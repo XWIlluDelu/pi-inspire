@@ -3,13 +3,11 @@ import {
   CornerUpLeft,
   GitFork,
   Image as ImageIcon,
-  Package,
   Trash2,
   X,
 } from "lucide-react";
 import { memo, type Ref, useCallback, useEffect, useId, useState } from "react";
 import type {
-  GenericExtensionDisplay,
   PendingQueues,
   ToolVisibilityPreference,
   VisibilityPreference,
@@ -32,9 +30,7 @@ import {
 import { store } from "../store";
 import { useImageUrl } from "../use-image-url";
 import { hasActiveModal } from "../use-modal-focus";
-import { CodeView } from "./CodeView";
 import { CopyAction } from "./CopyAction";
-import { DetailSummary } from "./DetailSummary";
 import { ImageGallery } from "./ImageGallery";
 import { ImagePreview, messageImage } from "./ImagePreview";
 import { PiLoader } from "./PiLoader";
@@ -593,39 +589,6 @@ export function PendingQueueGroups({
             })}
           </ol>
         </section>
-      ))}
-    </section>
-  );
-}
-
-export function ExtensionDisplaySurface({
-  displays,
-}: {
-  displays: GenericExtensionDisplay[];
-}) {
-  if (displays.length === 0) return null;
-  return (
-    <section
-      className="extension-surface"
-      aria-label="Extension display content"
-    >
-      <div className="extension-surface__head">
-        <Package size={14} aria-hidden /> Extension display
-      </div>
-      {displays.map((display) => (
-        <details key={display.id} className="extension-surface__item">
-          <DetailSummary>
-            <code>{display.method}</code>
-            <span>
-              {display.source} · {display.label}
-            </span>
-          </DetailSummary>
-          <CodeView
-            className="activity-reader"
-            tabIndex={0}
-            text={JSON.stringify(display.payload, null, 2)}
-          />
-        </details>
       ))}
     </section>
   );

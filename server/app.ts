@@ -17,6 +17,7 @@ import {
   type BootstrapResponse,
   MAX_ATTACHMENT_FILE_BYTES,
   MAX_ATTACHMENTS,
+  type PendingOperationRequest,
   type SessionDeletionResponse,
   type UploadedAttachment,
 } from "../shared/contracts.js";
@@ -29,12 +30,8 @@ import {
   type HostOperationReceipt,
   type HostOperationResults,
   hostReceipt,
-  INPUT_OPERATION_PATHS,
-  pendingOperationRequestSchema,
-  pendingOperationSchema,
+  inputOperationEndpoints as inputRoutes,
   promptFingerprintInput,
-  promptObservationSchema,
-  promptSchema,
 } from "../shared/host-operations.js";
 import { restartObservation } from "../shared/host-restart.js";
 import { emptyToolPresentationConfiguration } from "../shared/tool-presentation-config.js";
@@ -76,11 +73,7 @@ import {
 } from "./project-files.js";
 import type { ProviderAuthService } from "./provider-auth.js";
 import { requestError } from "./request-error.js";
-import {
-  checkResourceVersion,
-  resourceByteRange,
-  sendResourceFile,
-} from "./resource-http.js";
+import { sendResourceBytes, sendResourceFile } from "./resource-http.js";
 import type { ResourceStore } from "./resources.js";
 import type { RuntimeController } from "./runtime.js";
 import { createRuntimeEventSockets } from "./runtime-event-sockets.js";
@@ -312,7 +305,7 @@ export function createInspireServer(deps: AppDependencies): {
     completion: Promise<HostOperationResults[Command]>,
     response: Response,
     windowMs?: number,
-  ): Promise<void> {
+  ): Promise<HostOperationReceipt<Command>> {
     const receipt = hostReceipt(command, identity);
     const completed = completion.then(
       (result): HostOperationReceipt<Command> => ({
@@ -360,16 +353,14 @@ export function createInspireServer(deps: AppDependencies): {
                 response.once("close", disconnected);
               }),
             ]);
-      if (!response.destroyed)
-        response
-          .status(
-            outcome.state === "unknown" || outcome.state === "rejected"
-              ? outcome.error.status
-              : command === "prompt"
-                ? 202
-                : 200,
-          )
-          .json(outcome);
+      response.status(
+        outcome.state === "unknown" || outcome.state === "rejected"
+          ? outcome.error.status
+          : command === "prompt"
+            ? 202
+            : 200,
+      );
+      return outcome;
     } finally {
       clearTimeout(timer);
       if (disconnected) response.off("close", disconnected);
@@ -424,7 +415,7 @@ export function createInspireServer(deps: AppDependencies): {
     next();
   });
   // JSON escapes can take six bytes per character of a valid prompt.
-  app.post(INPUT_OPERATION_PATHS.prompt, express.json({ limit: "4mb" }));
+  app.post(inputRoutes.prompt.path, express.json({ limit: "4mb" }));
   app.use(express.json({ limit: "2mb" }));
   const browserAuth = new BrowserAuth(deps.token);
   const taskNotifications = new TaskNotifications(
@@ -923,10 +914,7 @@ export function createInspireServer(deps: AppDependencies): {
     return { ok: true };
   });
 
-  app.post(INPUT_OPERATION_PATHS.prompt, async (request, response) => {
-    // Lets the browser distinguish a definitive Host refusal from an
-    // intermediary 5xx whose delivery outcome remains unknown.
-    const prompt = promptSchema.parse(request.body);
+  jsonRoute(app, inputRoutes.prompt, ({ body: prompt }, _request, response) => {
     if (prompt.authorityId !== authorityId)
       throw requestError(
         "The Host restarted before this prompt delivery could be confirmed",
@@ -951,26 +939,25 @@ export function createInspireServer(deps: AppDependencies): {
         return historyEntry;
       },
     );
-    await observePrompt(prompt.operationId, completion, response);
+    return observePrompt(prompt.operationId, completion, response);
   });
-  app.get(
-    `${INPUT_OPERATION_PATHS.prompt}/:operationId`,
-    async (request, response) => {
-      const {
-        operationId,
-        authorityId: expected,
-        fingerprint,
-      } = promptObservationSchema.parse({
-        operationId: request.params.operationId,
-        authorityId: request.query.authorityId,
-        fingerprint: request.query.fingerprint,
-      });
+  jsonRoute(
+    app,
+    inputRoutes.observePrompt,
+    (
+      {
+        params: { operationId },
+        query: { authorityId: expected, fingerprint },
+      },
+      _request,
+      response,
+    ) => {
       if (expected !== authorityId)
         throw requestError("The prompt receipt belongs to another Host", 409, {
           code: "HOST_AUTHORITY_CHANGED",
           outcomeUnknown: true,
         });
-      await observePrompt(
+      return observePrompt(
         operationId,
         promptOperations.observe(operationId, fingerprint),
         response,
@@ -1063,9 +1050,7 @@ export function createInspireServer(deps: AppDependencies): {
     }
     return result;
   });
-  const pendingFingerprint = (
-    operation: ReturnType<typeof pendingOperationRequestSchema.parse>,
-  ) => {
+  const pendingFingerprint = (operation: PendingOperationRequest) => {
     if (operation.authorityId !== authorityId)
       throw requestError("The Pending operation belongs to another Host", 409, {
         code: "HOST_AUTHORITY_CHANGED",
@@ -1077,14 +1062,12 @@ export function createInspireServer(deps: AppDependencies): {
       operation.expectedViewId,
     ]);
   };
-  app.get(
-    `${INPUT_OPERATION_PATHS.pending}/:operationId`,
-    async (request, response) => {
-      const operation = pendingOperationRequestSchema.parse({
-        ...request.query,
-        operationId: request.params.operationId,
-      });
-      await observeOperation(
+  jsonRoute(
+    app,
+    inputRoutes.observePending,
+    ({ params, query }, _request, response) => {
+      const operation = { ...query, ...params };
+      return observeOperation(
         operation.action,
         operation,
         pendingOperations.observe(
@@ -1095,28 +1078,28 @@ export function createInspireServer(deps: AppDependencies): {
       );
     },
   );
-  for (const [path, action] of [
-    [INPUT_OPERATION_PATHS.abort, "abort"],
-    [INPUT_OPERATION_PATHS.recover, "recover"],
-  ] as const) {
-    app.post(path, async (request, response) => {
-      const operation = pendingOperationSchema.parse(request.body);
-      const { operationId, sessionId, expectedViewId } = operation;
-      const completion = pendingOperations.run(
-        operationId,
-        pendingFingerprint({ ...operation, action }),
-        async () => {
-          const recovered =
-            action === "abort"
-              ? await deps.runtime.abort(sessionId, expectedViewId)
-              : await deps.runtime.recoverPending(sessionId, expectedViewId);
-          return recovered.attachments?.length
-            ? { ...recovered, authorityId }
-            : recovered;
-        },
-      );
-      await observeOperation(action, operation, completion, response);
-    });
+  for (const action of ["abort", "recover"] as const) {
+    jsonRoute(
+      app,
+      inputRoutes[action],
+      ({ body: operation }, _request, response) => {
+        const { operationId, sessionId, expectedViewId } = operation;
+        const completion = pendingOperations.run(
+          operationId,
+          pendingFingerprint({ ...operation, action }),
+          async () => {
+            const recovered =
+              action === "abort"
+                ? await deps.runtime.abort(sessionId, expectedViewId)
+                : await deps.runtime.recoverPending(sessionId, expectedViewId);
+            return recovered.attachments?.length
+              ? { ...recovered, authorityId }
+              : recovered;
+          },
+        );
+        return observeOperation(action, operation, completion, response);
+      },
+    );
   }
   jsonRoute(app, routes.pendingText, ({ body }) =>
     deps.runtime.pendingText(body),
@@ -1225,7 +1208,7 @@ export function createInspireServer(deps: AppDependencies): {
       sessionId,
       viewId: context.viewId,
       revision: context.revision,
-      ...(await deps.resources.list(context)),
+      resources: await deps.resources.list(context),
     };
   });
   jsonRoute(
@@ -1315,16 +1298,12 @@ export function createInspireServer(deps: AppDependencies): {
     sessionId: string,
     download: boolean,
   ): Promise<void> {
-    let closed = response.destroyed;
-    response.once("close", () => {
-      closed = true;
-    });
     // Handles are bound to the opaque branch view that authorized them. The
     // current authority is rechecked before any headers or bytes are sent.
     const context = await deps.runtime.resourceContext(sessionId);
     const resource = deps.resources.get(resourceId, sessionId, context.viewId);
     await deps.resources.revalidate(resource, context);
-    if (closed || response.destroyed) return;
+    if (response.destroyed) return;
     const setResourceHeaders = (
       mimeType = resource.descriptor.mimeType,
     ): void => {
@@ -1338,23 +1317,9 @@ export function createInspireServer(deps: AppDependencies): {
         resource,
         context,
       );
-      if (closed || response.destroyed) return;
-      const version =
-        '"' + createHash("sha256").update(data).digest("base64url") + '"';
-      checkResourceVersion(request, version);
-      const range = resourceByteRange(request, data.length);
-      setResourceHeaders(mimeType);
-      response.set({ "Accept-Ranges": "bytes", ETag: version });
-      if (range) {
-        response.status(206).set({
-          "Content-Range": `bytes ${range.start}-${range.end}/${data.length}`,
-          "Content-Length": String(range.end - range.start + 1),
-        });
-        response.send(data.subarray(range.start, range.end + 1));
-      } else {
-        response.set("Content-Length", String(data.length));
-        response.send(data);
-      }
+      sendResourceBytes(request, response, data, () =>
+        setResourceHeaders(mimeType),
+      );
     } else if (resource.path) {
       const opened = await deps.resources.openForServing(resource);
       await sendResourceFile(request, response, opened, setResourceHeaders);

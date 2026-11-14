@@ -14,10 +14,7 @@ import {
 import { gitChangeCount } from "../git-presentation";
 import { appendDraftBlock } from "../reader-quote";
 import { inspectedFileTab } from "../resource-preview";
-import {
-  resourceRows as toResourceRows,
-  withProducedResources,
-} from "../resources";
+import { resourceRows as toResourceRows } from "../resources";
 import { shallowEqual, store, useAppState } from "../store";
 import { queueTerminalAction } from "../terminal-actions";
 import { hasActiveModal } from "../use-modal-focus";
@@ -37,27 +34,40 @@ export const ContextPane = memo(function ContextPane({
   onClose?: () => void;
 } = {}) {
   const state = useAppState(selectContextPaneView, shallowEqual);
-  const transportGeneration = state.transportGeneration;
-  const [resourcePage, setResourcePage] = useState<
-    (SessionResourceListResponse & { clientTransportGeneration: number }) | null
-  >(null);
+  const {
+    sessionId,
+    cwd,
+    transcriptViewId,
+    transcriptRevision,
+    transportGeneration,
+  } = state;
+  const resourceOwner = useMemo(
+    () => ({
+      sessionId,
+      transcriptViewId,
+      transcriptRevision,
+      transportGeneration,
+    }),
+    [sessionId, transcriptViewId, transcriptRevision, transportGeneration],
+  );
+  const [resourcePage, setResourcePage] = useState<{
+    owner: typeof resourceOwner;
+    data: SessionResourceListResponse;
+  } | null>(null);
   const [resourceRead, setResourceRead] = useState<{
-    owner: string;
+    owner: typeof resourceOwner;
     error?: string;
   } | null>(null);
   const [terminalReloadKey, setTerminalReloadKey] = useState(0);
   const resourceRequest = useRef<AbortController | null>(null);
-  const changesScrollTop = useMemo(
-    () => ({ current: 0 }),
-    [state.sessionId, state.cwd],
-  );
+  const changesScrollTop = useMemo(() => ({ current: 0 }), [sessionId, cwd]);
   const fileReadings = useMemo(
     () => new Map<string, FileReadingState>(),
-    [state.sessionId, state.cwd, transportGeneration],
+    [sessionId, cwd, transportGeneration],
   );
   const browseScrollTop = useMemo(
     () => ({ current: 0 }),
-    [state.sessionId, state.cwd, transportGeneration],
+    [sessionId, cwd, transportGeneration],
   );
   useEffect(() => {
     for (const reference of fileReadings.keys())
@@ -78,28 +88,17 @@ export const ContextPane = memo(function ContextPane({
     : undefined;
   const recentRows = useMemo(
     () =>
-      resourcePage?.sessionId === state.sessionId &&
-      resourcePage.viewId === state.transcriptViewId
-        ? toResourceRows(withProducedResources(resourcePage))
+      resourcePage?.owner.sessionId === sessionId &&
+      resourcePage.owner.transcriptViewId === transcriptViewId
+        ? toResourceRows(resourcePage.data.resources)
         : [],
-    [resourcePage, state.sessionId, state.transcriptViewId],
+    [resourcePage, sessionId, transcriptViewId],
   );
   const browsingFiles =
     state.resourcesOpen &&
     state.contextMode === "files" &&
     fileInspection.kind === "browse";
-  const currentResourcePage =
-    resourcePage?.sessionId === state.sessionId &&
-    resourcePage.viewId === state.transcriptViewId &&
-    resourcePage.revision === state.transcriptRevision &&
-    resourcePage.clientTransportGeneration === transportGeneration;
-
-  const resourceOwner = JSON.stringify([
-    state.sessionId,
-    state.transcriptViewId,
-    state.transcriptRevision,
-    transportGeneration,
-  ]);
+  const currentResourcePage = resourcePage?.owner === resourceOwner;
   const loadResources = useCallback(async () => {
     resourceRequest.current?.abort();
     const request = new AbortController();
@@ -108,11 +107,7 @@ export const ContextPane = memo(function ContextPane({
     try {
       const response = await store.loadSessionResources(request.signal);
       if (request.signal.aborted) return;
-      if (response)
-        setResourcePage({
-          ...response,
-          clientTransportGeneration: transportGeneration,
-        });
+      if (response) setResourcePage({ owner: resourceOwner, data: response });
       setResourceRead(null);
     } catch (error) {
       if (!request.signal.aborted)
@@ -126,23 +121,18 @@ export const ContextPane = memo(function ContextPane({
     } finally {
       if (resourceRequest.current === request) resourceRequest.current = null;
     }
-  }, [resourceOwner, transportGeneration]);
+  }, [resourceOwner]);
 
   useEffect(() => {
-    if (
-      browsingFiles &&
-      state.sessionId &&
-      state.transcriptViewId &&
-      !currentResourcePage
-    )
+    if (browsingFiles && sessionId && transcriptViewId && !currentResourcePage)
       void loadResources();
     return () => resourceRequest.current?.abort();
   }, [
     browsingFiles,
     currentResourcePage,
     loadResources,
-    state.sessionId,
-    state.transcriptViewId,
+    sessionId,
+    transcriptViewId,
   ]);
 
   useEffect(() => {

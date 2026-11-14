@@ -11,7 +11,12 @@ import { join } from "node:path";
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { browserFixtureHome } from "./fixtures/workspace.mjs";
 import { expectConfigurationField } from "./support/configuration-form";
-import { openSettings, pairedPage } from "./support/navigation";
+import { routeSnapshots } from "./support/host-events";
+import {
+  openFixtureSession,
+  openSettings,
+  pairedPage,
+} from "./support/navigation";
 
 test.use({ serviceWorkers: "block", reducedMotion: "reduce" });
 
@@ -80,6 +85,15 @@ async function scenario(page: Page, session: "live" | "new") {
     let reveals = 0,
       writes = 0,
       reloads = 0;
+    let sessionId = "";
+    const transport =
+      session === "live"
+        ? await routeSnapshots(page, {
+            snapshot: ({ active }) => {
+              if (active) sessionId = active.sessionId;
+            },
+          })
+        : null;
     if (session === "live")
       page.on("request", (request) => {
         const path = new URL(request.url()).pathname;
@@ -106,17 +120,27 @@ async function scenario(page: Page, session: "live" | "new") {
         page.getByRole("button", { name: "Abort running task" }),
       ).toHaveCount(0);
     }
-    await openSettings(page);
     const settings = page.getByRole("dialog", {
       name: "Settings",
       exact: true,
     });
-    await settings.getByRole("button", { name: "MCP", exact: true }).click();
+    const open = async () => {
+      await openSettings(page);
+      await settings.getByRole("button", { name: "MCP", exact: true }).click();
+    };
+    await open();
     return {
       close,
       userFile,
       projectFile,
       settings,
+      open,
+      worker: (runState: "running" | "idle", external = false) =>
+        transport?.send({
+          type: "session_status",
+          sessionId,
+          sessionStatus: { runState, external },
+        }),
       reveals: () => reveals,
       writes: () => writes,
       reloads: () => reloads,
@@ -232,12 +256,42 @@ test("MCP reveals saved connection values on request, keeps edits scoped, and re
       name: "Reload Pi resources",
       exact: true,
     });
-    await expect(confirm).toBeVisible();
+    fixture.worker("running");
+    await expect(confirm).toBeDisabled();
+    await expect(settings.getByText(/Wait for Pi to finish/)).toBeVisible();
     expect(fixture.reloads()).toBe(0);
+    fixture.worker("idle");
+    await expect(confirm).toBeEnabled();
+    const dispatched = Promise.withResolvers<void>();
+    const reply = Promise.withResolvers<void>();
+    await page.route(
+      "**/api/control/native-command",
+      async (route) => {
+        const response = await route.fetch();
+        dispatched.resolve();
+        await reply.promise;
+        await route.fulfill({ response });
+      },
+      { times: 1 },
+    );
     const reloaded = page.waitForResponse((response) =>
       response.url().endsWith("/api/control/native-command"),
     );
-    await confirm.click();
+    try {
+      await confirm.click();
+      await dispatched.promise;
+      await settings
+        .getByRole("button", { name: "Reload selected session…" })
+        .click();
+      await confirm.click();
+      await expect(settings.getByRole("alert")).toContainText(
+        "Reload could not be started",
+      );
+      expect(fixture.reloads()).toBe(1);
+      await settings.getByRole("button", { name: "Cancel reload" }).click();
+    } finally {
+      reply.resolve();
+    }
     const reloadResult = await reloaded;
     expect(reloadResult.ok(), await reloadResult.text()).toBe(true);
     expect(fixture.reloads()).toBe(1);
@@ -276,6 +330,59 @@ test("MCP reveals saved connection values on request, keeps edits scoped, and re
       env: { TOKEN: "stored-env-secret" },
     });
     expect(project.toolExposure).toEqual({});
+    fixture.worker("idle", true);
+    await expect(
+      settings.getByText("Run /reload in the original Pi terminal."),
+    ).toBeVisible();
+    await expect(
+      settings.getByRole("button", { name: "Add server" }),
+    ).toBeEnabled();
+    await expect(
+      settings.getByRole("button", { name: "Reload selected session…" }),
+    ).toHaveCount(0);
+
+    // Retire the owner with an actual credential reveal in flight.
+    const requested = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const delivered = Promise.withResolvers<void>();
+    await page.route(
+      (url) => url.pathname === "/api/mcp-config/connection",
+      async (route) => {
+        const response = await route.fetch();
+        requested.resolve();
+        await release.promise;
+        try {
+          await route.fulfill({ response });
+        } catch {
+          /* The old owner's reveal may be canceled at the transport. */
+        } finally {
+          delivered.resolve();
+        }
+      },
+      { times: 1 },
+    );
+    await selectServer(settings, "docs", "user");
+    await edit("user").click();
+    await settings.getByRole("button", { name: "Show saved URL" }).click();
+    try {
+      await requested.promise;
+      await settings.getByRole("button", { name: "Close settings" }).click();
+      await expect(settings).toHaveCount(0);
+      await openFixtureSession(
+        page,
+        /Review extension event lifecycle/,
+        "fixture-history",
+      );
+      await fixture.open();
+      await selectServer(settings, "docs", "user");
+      await edit("user").click();
+    } finally {
+      release.resolve();
+    }
+    await delivered.promise;
+    await expect(
+      settings.getByLabel("Server URL", { exact: true }),
+    ).toHaveValue("");
   } finally {
     await fixture.close();
   }
@@ -320,6 +427,9 @@ test.describe("touch MCP editor", () => {
       await expectConfigurationField(name);
       await name.fill("project-tools");
       await choose("Configuration target", "This project");
+      const url = settings.getByLabel("Server URL", { exact: true });
+      const privateUrl = "https://user:http-secret@example.invalid/mcp";
+      await url.fill(privateUrl);
       await choose("Transport", "Stdio");
       await settings.getByLabel("Program", { exact: true }).fill("node");
       const addArgument = settings.getByRole("button", {
@@ -342,6 +452,12 @@ test.describe("touch MCP editor", () => {
       await settings
         .getByLabel("Environment variable value for API_TOKEN")
         .fill("${PROJECT_TOKEN}");
+      await choose("Transport", "Streamable HTTP");
+      await expect(url).toHaveValue(privateUrl);
+      await choose("Transport", "Stdio");
+      await expect(
+        settings.getByLabel("Environment variable value for API_TOKEN"),
+      ).toHaveValue("${PROJECT_TOKEN}");
       await choose("Tool exposure", "Deferred");
       await settings
         .getByRole("switch", { name: "Enabled in file" })

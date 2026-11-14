@@ -5,7 +5,7 @@ import { pipeline } from "node:stream/promises";
 import type { Request, Response } from "express";
 import { requestError } from "./request-error.js";
 
-export function resourceByteRange(
+function resourceByteRange(
   request: Request,
   size: number,
 ): { start: number; end: number } | null {
@@ -43,7 +43,7 @@ function versionConflict() {
   );
 }
 
-export function checkResourceVersion(request: Request, version: string): void {
+function checkResourceVersion(request: Request, version: string): void {
   const ifMatch = request.get("if-match");
   const ifRange = request.get("range") && request.get("if-range");
   if (
@@ -53,6 +53,49 @@ export function checkResourceVersion(request: Request, version: string): void {
     (ifRange && ifRange !== version)
   )
     throw versionConflict();
+}
+
+function prepareTransfer(
+  request: Request,
+  response: Response,
+  size: number,
+  version: string,
+) {
+  checkResourceVersion(request, version);
+  const range = resourceByteRange(request, size);
+  return {
+    range,
+    publish() {
+      response.set({
+        "Accept-Ranges": "bytes",
+        ETag: version,
+        "Content-Length": String(range ? range.end - range.start + 1 : size),
+      });
+      if (range)
+        response
+          .status(206)
+          .set("Content-Range", `bytes ${range.start}-${range.end}/${size}`);
+    },
+  };
+}
+
+export function sendResourceBytes(
+  request: Request,
+  response: Response,
+  data: Buffer,
+  headers: () => void,
+): void {
+  if (response.destroyed) return;
+  const version = `"${createHash("sha256").update(data).digest("base64url")}"`;
+  const { range, publish } = prepareTransfer(
+    request,
+    response,
+    data.length,
+    version,
+  );
+  headers();
+  publish();
+  response.send(range ? data.subarray(range.start, range.end + 1) : data);
 }
 
 /** The transfer owns its descriptor. Withhold the last chunk until the
@@ -69,8 +112,12 @@ export async function sendResourceFile(
       throw requestError("The referenced file is too large to preview", 413);
     const size = Number(details.size);
     const version = versionFromStats(details);
-    checkResourceVersion(request, version);
-    const range = resourceByteRange(request, size);
+    const { range, publish } = prepareTransfer(
+      request,
+      response,
+      size,
+      version,
+    );
     const checkVersion = async () => {
       const current = await handle.stat({ bigint: true });
       if (
@@ -83,15 +130,7 @@ export async function sendResourceFile(
     await checkVersion();
     if (response.destroyed) return;
     headers();
-    response.set({
-      "Accept-Ranges": "bytes",
-      ETag: version,
-      "Content-Length": String(range ? range.end - range.start + 1 : size),
-    });
-    if (range)
-      response
-        .status(206)
-        .set("Content-Range", `bytes ${range.start}-${range.end}/${size}`);
+    publish();
     if (size === 0 || request.method === "HEAD") {
       response.end();
       return;

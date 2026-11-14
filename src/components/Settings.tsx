@@ -27,7 +27,6 @@ import {
   type PiMessageDeliveryMode,
 } from "../../shared/contracts";
 import type { ModelSettingsDestination } from "../../shared/model-settings";
-import type { TaskNotificationGrouping } from "../../shared/notifications";
 import { notificationPermissionMessage } from "../browser-notifications";
 import {
   installAvailability,
@@ -220,6 +219,7 @@ export const SettingsContent = memo(function SettingsContent({
     void store.refreshTaskAlerts();
   }, []);
   const prefs = { ...state.prefs, ...state.desiredPreferences };
+  const alerts = state.taskAlerts;
   const install = useSyncExternalStore(
     subscribeInstallAvailability,
     installAvailability,
@@ -395,33 +395,16 @@ export const SettingsContent = memo(function SettingsContent({
             <SettingField
               label="Task alerts"
               description="This device · Notify when a background task finishes or stops with an error."
-            >
-              <div
-                className="settings__notification-control"
-                aria-busy={state.taskAlerts.busy}
-              >
-                <NativeSelect
-                  label="Task alerts"
-                  className="native-select--field"
-                  value={state.taskAlerts.mode}
-                  options={COMPLETION_ALERTS}
-                  onChange={(value) =>
-                    void store.setCompletionAttention(
-                      value as CompletionAttentionPreference,
-                    )
-                  }
-                />
-                {state.taskAlerts.mode === "desktop" ? (
-                  <div className="settings__field-status settings__notification-status">
+              feedback={
+                alerts.mode === "desktop" ? (
+                  <SettingsFeedback label="Notification status">
                     <div className="settings__field-status-block">
-                      {!state.taskAlerts.subscribed &&
-                      state.taskAlerts.permission !== "denied" ? (
+                      {!alerts.subscribed && alerts.permission !== "denied" && (
                         <button
                           type="button"
                           className="button button--small"
                           disabled={
-                            state.taskAlerts.busy ||
-                            state.taskAlerts.permission === "unavailable"
+                            alerts.busy || alerts.permission === "unavailable"
                           }
                           onClick={() =>
                             void store.setCompletionAttention("desktop")
@@ -429,97 +412,97 @@ export const SettingsContent = memo(function SettingsContent({
                         >
                           Enable notifications
                         </button>
-                      ) : null}
+                      )}
                       <button
                         type="button"
                         className="button button--small"
                         disabled={
-                          state.taskAlerts.busy ||
-                          state.taskAlerts.permission !== "granted"
+                          alerts.busy || alerts.permission !== "granted"
                         }
                         onClick={() => void store.testTaskNotification()}
                       >
                         Send test notification
                       </button>
                     </div>
-                    <SettingsFeedback label="Notification status">
-                      <span role="status">
-                        {notificationPermissionMessage(
-                          state.taskAlerts.permission,
-                        ) ??
-                          (state.taskAlerts.subscribed
-                            ? "Background notifications enabled"
-                            : "While Inspire is open")}
-                        {state.taskAlerts.permission === "unavailable"
-                          ? " On iPhone or iPad, add Inspire to the Home Screen and enable them there."
-                          : null}
-                      </span>
-                      {state.taskAlerts.error ? (
-                        <span className="settings__error" role="alert">
-                          {state.taskAlerts.error}
-                        </span>
-                      ) : null}
-                      {state.taskAlerts.testResult ? (
-                        <span role="status">{state.taskAlerts.testResult}</span>
-                      ) : null}
-                    </SettingsFeedback>
-                    {!state.taskAlerts.subscribed ? (
+                    <span role="status">
+                      {notificationPermissionMessage(alerts.permission) ??
+                        (alerts.subscribed
+                          ? "Background notifications enabled"
+                          : "While Inspire is open")}
+                      {alerts.permission === "unavailable"
+                        ? " On iPhone or iPad, add Inspire to the Home Screen and enable them there."
+                        : null}
+                    </span>
+                    {alerts.testResult && (
+                      <span role="status">{alerts.testResult}</span>
+                    )}
+                    {!alerts.subscribed && (
                       <span>
                         Background delivery uses your browser's push service. No
                         additional account is needed.
                       </span>
-                    ) : null}
-                  </div>
-                ) : state.taskAlerts.error ? (
-                  <span className="settings__error">
-                    {state.taskAlerts.error}
-                  </span>
-                ) : undefined}
-              </div>
+                    )}
+                    {alerts.error && (
+                      <span className="settings__error" role="alert">
+                        {alerts.error}
+                      </span>
+                    )}
+                  </SettingsFeedback>
+                ) : (
+                  alerts.error && (
+                    <span className="settings__error" role="alert">
+                      {alerts.error}
+                    </span>
+                  )
+                )
+              }
+            >
+              <NativeSelect
+                label="Task alerts"
+                className="native-select--field"
+                aria-busy={alerts.busy}
+                value={alerts.mode}
+                options={COMPLETION_ALERTS}
+                onChange={(value) => void store.setCompletionAttention(value)}
+              />
             </SettingField>
             <SettingField
               label="Notification grouping"
               description="This device · One notification per session or project. Changing this clears existing task notifications."
-            >
-              <div
-                className="settings__notification-control"
-                aria-busy={state.taskAlerts.groupingBusy}
-              >
-                <NativeSelect
-                  label="Notification grouping"
-                  className="native-select--field"
-                  value={state.taskAlerts.grouping}
-                  options={[
-                    { value: "session", label: "Session" },
-                    { value: "project", label: "Project" },
-                  ]}
-                  disabled={state.taskAlerts.groupingBusy}
-                  onChange={(value) =>
-                    void store.setTaskNotificationGrouping(
-                      value as TaskNotificationGrouping,
-                    )
-                  }
-                />
-                {state.taskAlerts.groupingError ? (
-                  <div className="settings__field-status settings__notification-status">
-                    <span className="settings__error" role="alert">
-                      {state.taskAlerts.groupingError}
-                    </span>
+              feedback={
+                alerts.groupingError && (
+                  <div className="settings__field-status-block">
                     <button
                       type="button"
                       className="button button--small"
-                      disabled={state.taskAlerts.groupingBusy}
+                      disabled={alerts.groupingBusy}
                       onClick={() =>
-                        void store.setTaskNotificationGrouping(
-                          state.taskAlerts.grouping,
-                        )
+                        void store.setTaskNotificationGrouping(alerts.grouping)
                       }
                     >
                       Retry
                     </button>
+                    <span className="settings__error" role="alert">
+                      {alerts.groupingError}
+                    </span>
                   </div>
-                ) : null}
-              </div>
+                )
+              }
+            >
+              <NativeSelect
+                label="Notification grouping"
+                className="native-select--field"
+                value={alerts.grouping}
+                options={[
+                  { value: "session", label: "Session" },
+                  { value: "project", label: "Project" },
+                ]}
+                disabled={alerts.groupingBusy}
+                aria-busy={alerts.groupingBusy}
+                onChange={(value) =>
+                  void store.setTaskNotificationGrouping(value)
+                }
+              />
             </SettingField>
           </Section>
 

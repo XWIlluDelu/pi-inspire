@@ -101,6 +101,7 @@ export function SettingField({
   description,
   children,
   status,
+  feedback,
   className,
   layout = "adaptive",
 }: {
@@ -108,6 +109,7 @@ export function SettingField({
   description?: ReactNode;
   children: ReactNode;
   status?: ReactNode;
+  feedback?: ReactNode;
   className?: string;
   layout?: "adaptive" | "inline";
 }) {
@@ -125,6 +127,7 @@ export function SettingField({
         {status ? <div className="settings__field-status">{status}</div> : null}
       </div>
       <div className="settings__field-control">{children}</div>
+      {feedback && <div className="settings__field-feedback">{feedback}</div>}
     </div>
   );
 }

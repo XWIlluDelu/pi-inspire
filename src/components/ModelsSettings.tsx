@@ -49,7 +49,7 @@ import { ModelList } from "./ModelList";
 import { NativeSelect } from "./NativeSelect";
 import { ProviderAuthentication } from "./ProviderAuthentication";
 import { SettingField } from "./SettingsControls";
-import { SettingsSection } from "./SettingsSection";
+import { SettingsCardMessage, SettingsSection } from "./SettingsSection";
 
 type DeclarationEditor =
   | { kind: "provider"; value: ProviderDeclaration | null }
@@ -604,10 +604,8 @@ export function ModelsSettings({
       <div className="models-browse" hidden={!configuration.browsing}>
         <SettingsSection id="models" icon={<Cpu size={14} />} title="Models">
           <div className="models-settings">
-            {visibleError ? (
-              <p className="settings__error" role="alert">
-                {visibleError}
-              </p>
+            {snapshot && visibleError ? (
+              <SettingsCardMessage error>{visibleError}</SettingsCardMessage>
             ) : null}
             {snapshot ? (
               <>
@@ -914,18 +912,18 @@ export function ModelsSettings({
                   </details>
                 ) : null}
               </>
-            ) : readFailed ? (
-              <button
-                type="button"
-                className="button button--quiet"
-                onClick={() => void load()}
-              >
-                Retry loading models
-              </button>
             ) : (
-              <p className="settings__field-help" role="status">
-                Loading models…
-              </p>
+              <SettingsCardMessage
+                loading={!readFailed}
+                error={readFailed}
+                retry={
+                  readFailed
+                    ? { run: () => void load(), label: "Retry loading models" }
+                    : undefined
+                }
+              >
+                {readFailed ? visibleError : "Loading models…"}
+              </SettingsCardMessage>
             )}
           </div>
         </SettingsSection>

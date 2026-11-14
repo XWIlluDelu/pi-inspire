@@ -184,8 +184,20 @@ describe.runIf(process.platform === "linux")(
       expect(() => f.run(["status"])).toThrow(/INSΠRE is not running/u);
     }, 30_000);
 
-    it("prepares before changing the services and keeps a failed preparation non-issuing", async () => {
+    it("admits only supported callers and scopes before preparing a service restart", async () => {
       const f = await fixture();
+      expect(() => f.run(["restart", "--host-only"])).toThrow(
+        /Use: inspire restart/,
+      );
+      f.env.FIXTURE_PI_ANCESTOR = "1";
+      expect(() => f.run(["restart", "--all"])).toThrow(/outside Pi/);
+      delete f.env.FIXTURE_PI_ANCESTOR;
+      f.env.INSPIRE_TERMINAL_ID = "project-terminal";
+      expect(() => f.run(["restart", "--all"])).toThrow(/external OS terminal/);
+      expect(await f.log()).not.toMatch(/preflight|stop-all-pi/);
+      expect(await f.mutations()).toEqual([]);
+
+      delete f.env.INSPIRE_TERMINAL_ID;
       f.env.FIXTURE_PREFLIGHT_FAIL = "1";
       expect(() => f.run(["restart", "--all"])).toThrow(
         /running Host was not stopped/,
@@ -199,6 +211,16 @@ describe.runIf(process.platform === "linux")(
       ]);
       expect(await f.log()).toMatch(
         /preflight\n[\s\S]*restart inspire-terminal.service inspire-host.service/,
+      );
+      // The manager fixture has two invocation IDs. Give the next
+      // transaction a fresh service start boundary.
+      await rm(join(f.root, "started"));
+      f.env.INSPIRE_TERMINAL_ID = "project-terminal";
+      expect(f.run(["restart"])).toContain(
+        "Restarted INSΠRE Host. Terminals remain running.",
+      );
+      expect((await f.mutations()).at(-1)).toBe(
+        "--user restart inspire-host.service",
       );
     });
 
@@ -248,40 +270,5 @@ describe.runIf(process.platform === "linux")(
         );
       },
     );
-
-    it("refuses a Pi-descended caller before preparation or service shutdown", async () => {
-      const f = await fixture();
-      f.env.FIXTURE_PI_ANCESTOR = "1";
-      expect(() => f.run(["restart", "--all"])).toThrow(/outside Pi/);
-      expect(await f.log()).not.toMatch(/preflight|stop-all-pi/);
-      expect(await f.mutations()).toEqual([]);
-    });
-    it("blocks terminal-ending restart inside a project terminal and keeps default Host restart on systemd", async () => {
-      const f = await fixture();
-      f.env.INSPIRE_TERMINAL_ID = "project-terminal";
-      expect(() => f.run(["restart", "--all"])).toThrow(/external OS terminal/);
-      // The child uses this fixture's runtime directory, not the real user instance.
-      f.env.XDG_RUNTIME_DIR = f.root;
-      f.env.INSPIRE_HOST = "127.0.0.1";
-      f.env.INSPIRE_PORT = "4587";
-      f.env.INSPIRE_STATE_PATH = join(
-        inspireRuntimeDirectory({ environment: f.env }),
-        `${installationKey(f.root, "127.0.0.1", 4587)}.json`,
-      );
-      const output = f.run(["restart"]);
-      expect(output).toContain(
-        "Restarted INSΠRE Host. Terminals remain running.",
-      );
-      expect(await f.mutations()).toEqual([
-        "--user restart inspire-host.service",
-      ]);
-    });
-    it("rejects the retired host-only flag", async () => {
-      const f = await fixture();
-      expect(() => f.run(["restart", "--host-only"])).toThrow(
-        /Use: inspire restart/,
-      );
-      expect(await f.mutations()).toEqual([]);
-    });
   },
 );

@@ -29,9 +29,8 @@ import {
 } from "../rich-text-parser-client";
 import { store } from "../store";
 import { queueTerminalInsertion } from "../terminal-actions";
-import { useCopied } from "../use-copied";
 import { CodeView } from "./CodeView";
-import { CopyFeedback } from "./CopyFeedback";
+import { CopyAction } from "./CopyAction";
 import { DocumentImage, DocumentResourceContext } from "./DocumentPreview";
 import {
   ImageLinkContext,
@@ -50,37 +49,28 @@ const CodeBlock = memo(function CodeBlock({
   language: string;
   code: string;
 }) {
-  const { copied, copying, copy } = useCopied({
-    scope: code,
-    onError: store.reportCopyError,
-  });
   return (
     <div className="code-block">
-      <div className="code-block__bar">
+      <div className="activity-surface__head code-block__bar">
         <span className="code-block__lang">{language}</span>
-        <div className="code-block__actions">
-          <button
-            type="button"
-            className="icon-button"
-            onClick={() => {
-              queueTerminalInsertion(code, store.getState().cwd);
-              store.openContextMode("terminal");
-            }}
-            aria-label="Insert code in terminal"
-            title="Insert in terminal for review"
-          >
-            <SquareTerminal size={13} aria-hidden />
-          </button>
-          <button
-            type="button"
-            className="icon-button"
-            onClick={() => void copy(code)}
-            aria-label={copied ? "Copied" : "Copy code"}
-            title={copied ? "Copied" : "Copy code"}
-          >
-            <CopyFeedback copied={copied} copying={copying} />
-          </button>
-        </div>
+        <button
+          type="button"
+          className="icon-button activity-copy"
+          onClick={() => {
+            queueTerminalInsertion(code, store.getState().cwd);
+            store.openContextMode("terminal");
+          }}
+          aria-label="Insert code in terminal"
+          title="Insert in terminal for review"
+        >
+          <SquareTerminal size={13} aria-hidden />
+        </button>
+        <CopyAction
+          text={code}
+          label="Code"
+          copiedLabel="Copied"
+          className="activity-copy"
+        />
       </div>
       <CodeView
         className="code-block__pre"

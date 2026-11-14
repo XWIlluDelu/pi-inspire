@@ -1,12 +1,12 @@
 import type { ChildCall, ChildCallList } from "../../shared/tool-activity";
 import { stripTerminalSequences } from "../ansi";
 import { childCallSummary, isModelCall } from "../child-call-summary";
-import { CodeView } from "./CodeView";
 import { PiLoader } from "./PiLoader";
 import { PiStatus } from "./PiStatus";
 import { ResourcePathLabel } from "./ResourcePathLabel";
 import {
   ActivityDetails,
+  ActivityText,
   useActivityReaderScroll,
 } from "./transcript-activity-visibility";
 
@@ -100,26 +100,19 @@ function CallRow({ call }: { call: ChildCall }) {
           {call.arguments !== undefined || (!model && call.argumentsPreview) ? (
             <>
               <div className="card__section-label">{argumentsLabel}</div>
-              <CodeView
-                className="activity-reader"
-                tabIndex={0}
-                role="group"
-                aria-label={argumentsLabel}
-              >
-                {stripTerminalSequences(
+              <ActivityText
+                label={argumentsLabel}
+                text={stripTerminalSequences(
                   call.argumentsPreview ??
                     JSON.stringify(call.arguments, null, 2),
                 )}
-              </CodeView>
+              />
             </>
           ) : null}
           {call.error ? (
-            <CodeView
-              className="activity-reader"
-              data-error
-              tabIndex={0}
-              role="group"
-              aria-label="Call error"
+            <ActivityText
+              error
+              label="Call error"
               text={stripTerminalSequences(call.error)}
             />
           ) : null}

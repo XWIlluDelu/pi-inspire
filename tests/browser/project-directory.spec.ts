@@ -12,11 +12,14 @@ test.use({ serviceWorkers: "block" });
 test("directory navigation keeps focus and never shows entries for a failed path", {
   tag: "@cross-browser",
 }, async ({ page }) => {
-  await page.route("**/api/host/roots", (route) =>
-    route.fulfill({ status: 403, json: { error: "Native probe unavailable" } }),
-  );
+  const late = Promise.withResolvers<void>();
+  const entered = Promise.withResolvers<void>();
   await page.route("**/api/host/dirs**", async (route) => {
     const path = new URL(route.request().url()).searchParams.get("path");
+    if (path === "/pending-directory") {
+      entered.resolve();
+      await late.promise;
+    }
     await route.fulfill(
       path?.includes("missing")
         ? { status: 400, json: { error: "Directory not found" } }
@@ -35,9 +38,13 @@ test("directory navigation keeps focus and never shows entries for a failed path
           },
     );
   });
+  await page.route("**/api/host/roots", (route) =>
+    route.fulfill({ status: 403, json: { error: "Native probe unavailable" } }),
+  );
   await pairedPage(page);
   await page.getByRole("button", { name: "New session", exact: true }).click();
-  await page.getByRole("button", { name: "Browse host directories" }).click();
+  const browse = page.getByRole("button", { name: "Browse host directories" });
+  await browse.click();
   const dialog = page.getByRole("dialog", { name: "Choose project directory" });
   await expect(dialog.getByRole("status")).toContainText(
     "Drive list unavailable",
@@ -66,6 +73,23 @@ test("directory navigation keeps focus and never shows entries for a failed path
   await expect(path).toBeFocused();
   await use.click();
   await expect(dialog).toHaveCount(0);
+  await expect(
+    page.getByRole("textbox", { name: "Project directory" }),
+  ).toHaveValue("/workspace/src");
+
+  await browse.click();
+  await expect(use).toBeEnabled();
+  await path.fill("/pending-directory");
+  try {
+    await use.click();
+    await entered.promise;
+    await expect(path).toHaveAttribute("readonly", "");
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  } finally {
+    late.resolve();
+  }
+  await expect(dialog).toHaveCount(0);
+  await page.unrouteAll({ behavior: "wait" });
   await expect(
     page.getByRole("textbox", { name: "Project directory" }),
   ).toHaveValue("/workspace/src");
@@ -120,9 +144,12 @@ test("directory picker preserves hidden visibility across opaque Host roots and 
   await roots.getByRole("button", { name: "Research drive" }).press("Enter");
   await expect(path).toHaveValue(drive);
   await expect(hidden).toHaveAttribute("aria-pressed", "false");
+  const typed = ` ${child} `;
+  await path.fill(typed);
   await hidden.press("Space");
   await expect(hidden).toHaveAttribute("aria-pressed", "true");
   await expect(hidden).toBeFocused();
+  await expect(path).toHaveValue(typed);
   await roots.getByRole("button", { name: "Research share" }).press("Enter");
   await expect(path).toHaveValue(share);
   await expect(research).toBeVisible();

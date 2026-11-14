@@ -113,31 +113,63 @@ test("busy Host restarts submit directly and keep narrow status stable", async (
   const readyStatus = (): HostRestartStatus => ({
     hostId: crypto.randomUUID(),
     available: true,
+    allPiAvailable: false,
+    allPiReason: "Restart all requires installed Linux systemd services.",
     operation: null,
   });
-  let status = readyStatus();
+  const ready = readyStatus();
+  let status: HostRestartStatus = {
+    ...ready,
+    available: false,
+    reason: "Installed service required.",
+  };
   const submitted: HostRestartRequest[] = [];
+  const statusReady = Promise.withResolvers<void>();
   const receiptReady = Promise.withResolvers<void>();
   await page.route("**/api/host/restart", async (route) => {
     if (route.request().method() === "GET") {
+      await statusReady.promise;
       return route.fulfill({ json: status });
     }
     expect(route.request().method()).toBe("POST");
     const request = route.request().postDataJSON() as HostRestartRequest;
     submitted.push(request);
-    const operation = {
+    const attempt = {
       id: request.operationId,
       scope: request.scope,
-      ...(request.interruptWork
-        ? { phase: "submitted" as const, interruptWork: true as const }
-        : {
-            phase: "rejected" as const,
-            busyReason: "in-flight-operation" as const,
-            error:
-              "Finish Pi work and pending operations before restarting, or choose Stop work and restart.",
-          }),
+      interruptWork: request.interruptWork,
     };
-    if (request.interruptWork) await receiptReady.promise;
+    let operation: NonNullable<HostRestartStatus["operation"]>;
+    if (submitted.length === 1)
+      operation = {
+        ...attempt,
+        phase: "rejected",
+        busyReason: "restart-pending",
+        error: "Restart unavailable",
+      };
+    else if (submitted.length === 2)
+      operation = {
+        ...attempt,
+        phase: "rejected",
+        busyReason: "in-flight-operation",
+        error: "A request is still in progress",
+      };
+    else if (submitted.length === 3)
+      operation = {
+        ...attempt,
+        phase: "rejected",
+        stopUnconfirmed: true,
+        error: "Could not confirm Stop for session A",
+      };
+    else if (submitted.length === 4) return route.abort("failed");
+    else {
+      await receiptReady.promise;
+      operation = {
+        ...attempt,
+        phase: "submitted",
+        skipAttachedStop: request.skipAttachedStop,
+      };
+    }
     status = { ...status, operation };
     await route.fulfill({ json: restartObservation(request, operation) });
   });
@@ -157,17 +189,44 @@ test("busy Host restarts submit directly and keep narrow status stable", async (
       name: "Restart",
       exact: true,
     });
-    await expect(restart).toBeEnabled();
-    const before = (await row.boundingBox())!.height;
-    const stable = async (phase: string) =>
-      expect((await row.boundingBox())!.height, phase).toBeCloseTo(before, 1);
-
-    await restart.click();
-    await dialog.getByRole("button", { name: "Restart", exact: true }).click();
+    const all = settings.getByRole("button", {
+      name: "Restart all",
+      exact: true,
+    });
     const force = settings.getByRole("button", {
       name: "Stop work and restart",
       exact: true,
     });
+    const retry = row.getByRole("button", { name: "Retry same request" });
+    await expect(restart).toBeDisabled();
+    await expect(all).toBeDisabled();
+    await expect(row.getByRole("status")).toHaveCount(0);
+    statusReady.resolve();
+    await expect(
+      settings.getByText("Installed service required."),
+    ).toBeVisible();
+    await expect(restart).toBeDisabled();
+    await expect(all).toBeDisabled();
+    status = ready;
+    await expect(restart).toBeEnabled();
+    await expect(settings.getByText(ready.allPiReason!)).toBeVisible();
+    await expect(all).toBeDisabled();
+    const before = (await row.boundingBox())!.height;
+    const stable = async (phase: string) =>
+      expect((await row.boundingBox())!.height, phase).toBeCloseTo(before, 1);
+
+    const confirmRestart = async () => {
+      await restart.click();
+      await dialog
+        .getByRole("button", { name: "Restart", exact: true })
+        .click();
+    };
+    await confirmRestart();
+    await expect(row.getByRole("alert")).toHaveText(
+      "Last restart attempt: Restart unavailable",
+    );
+    await expect(force).toHaveCount(0);
+    await confirmRestart();
     await expect(force).toBeVisible();
     const idleAttempt = submitted.at(-1)!;
     expect(idleAttempt.scope).toBe("host");
@@ -182,11 +241,31 @@ test("busy Host restarts submit directly and keep narrow status stable", async (
       hostId: idleAttempt.hostId,
     });
     expect(submitted.at(-1)?.operationId).not.toBe(idleAttempt.operationId);
+    await expect(row.getByRole("alert")).toContainText("session A");
+
+    const anyway = settings.getByRole("button", {
+      name: "Restart anyway",
+      exact: true,
+    });
+    await anyway.click();
+    await expect(retry).toBeVisible();
+    const unconfirmed = submitted.at(-1)!;
+    expect(unconfirmed).toMatchObject({
+      hostId: ready.hostId,
+      scope: "host",
+      interruptWork: true,
+      skipAttachedStop: true,
+    });
+    await expect(anyway).toBeDisabled();
+    await retry.click();
     await expect(message).toHaveText("Preparing restart…");
+    await expect.poll(() => submitted.length).toBe(5);
+    expect(submitted.at(-1)).toEqual(unconfirmed);
     await stable("sending");
 
     receiptReady.resolve();
     await expect(message).toHaveText("Restart requested.");
+    await expect(retry).toHaveCount(0);
     await stable("submitted");
 
     status = readyStatus();
@@ -194,10 +273,50 @@ test("busy Host restarts submit directly and keep narrow status stable", async (
     await expect(message).toHaveText("Host reconnected.");
     await expect(restart).toBeEnabled();
     await stable("reconnected");
+
+    status = {
+      ...status,
+      operation: { id: "another-restart", scope: "host", phase: "submitted" },
+    };
+    const storageKey = "inspire:host-restart:v1";
+    await page.evaluate(
+      (key) => sessionStorage.setItem(key, "unreadable"),
+      storageKey,
+    );
+    await page.reload();
+    const restored = await openSystemSettings(page);
+    const reset = restored.getByRole("button", {
+      name: "Reset restart recovery…",
+    });
+    await expect(
+      restored.getByText(/Can't read the saved restart status/),
+    ).toBeVisible();
+    await expect(
+      restored.getByRole("button", { name: "Recheck status" }),
+    ).toBeEnabled();
+    page.once("dialog", (dialog) => dialog.dismiss());
+    await reset.click();
+    expect(
+      await page.evaluate((key) => sessionStorage.getItem(key), storageKey),
+    ).toBe("unreadable");
+    const confirm = page.waitForEvent("dialog");
+    const clicking = reset.click();
+    const trackingDialog = await confirm;
+    expect(trackingDialog.message()).toContain(
+      "Any restart already requested can still run.",
+    );
+    await trackingDialog.accept();
+    await clicking;
+    await expect(restored.getByText("Restart requested.")).toBeVisible();
+    await expect(
+      restored.getByRole("button", { name: "Restart", exact: true }),
+    ).toBeDisabled();
+    await expect(reset).toHaveCount(0);
   } finally {
+    statusReady.resolve();
     receiptReady.resolve();
   }
-  expect(submitted).toHaveLength(2);
+  expect(submitted).toHaveLength(5);
 });
 
 for (const includeHerdr of [false, true]) {
@@ -238,7 +357,14 @@ for (const includeHerdr of [false, true]) {
         ? "All your Pi sessions, including Herdr sessions, will close."
         : "Your Pi sessions outside Herdr will close.",
     );
+    await expect(dialog).toContainText(
+      "Project terminals will close and running tasks will stop.",
+    );
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
     expect(submitted).toHaveLength(0);
+    await settings
+      .getByRole("button", { name: "Restart all", exact: true })
+      .click();
     await dialog
       .getByRole("button", { name: "Restart all", exact: true })
       .click();
