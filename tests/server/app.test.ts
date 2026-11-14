@@ -62,20 +62,18 @@ describe("Host HTTP workflows", () => {
   });
 
   it("requires local authentication for Inspire, Pi, and extension update status", async () => {
-    for (const path of ["/api/update", "/api/pi-update"]) {
-      await guest.get(path).expect(401);
-    }
-    const inspire = await local.get("/api/update").expect(200);
+    await guest.get("/api/update?kind=inspire").expect(401);
+    await local.get("/api/update?kind=tools").expect(400);
+    const inspire = await local.get("/api/update?kind=inspire").expect(200);
     expect(inspire.body).toMatchObject({
-      kind: "available",
-      update: { latestVersion: "0.2.0" },
-      updateStatus: { availableUpdateIdentity: '[["inspire","0.2.0"]]' },
+      inspireUpdateCheck: {
+        kind: "available",
+        update: { latestVersion: "0.2.0" },
+      },
+      availableUpdateIdentity: '[["inspire","0.2.0"]]',
     });
-    const pi = await local
-      .get("/api/pi-update")
-      .query({ refresh: "1" })
-      .expect(200);
-    expect(pi.body).toMatchObject({
+    const pi = await local.get("/api/update?kind=pi&refresh=1").expect(200);
+    expect(pi.body.piUpdateCheck).toMatchObject({
       pi: { kind: "available", latestVersion: "0.84.3" },
       extensions: {
         kind: "available",
@@ -215,7 +213,10 @@ describe("Host HTTP workflows", () => {
     const selected = "fixture-history";
     for (const id of [sessionId, selected]) {
       await runtime.openSession(id);
-      await runtime.setSteeringMode(id, "one-at-a-time");
+      await runtime.setRuntimeSetting(id, {
+        key: "steeringMode",
+        value: "one-at-a-time",
+      });
     }
     const settings = async (id: string) =>
       (await runtime.snapshot(id)).active?.runtimeSettings;

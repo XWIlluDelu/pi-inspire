@@ -18,19 +18,12 @@ import {
   fixtureWorkspace,
   initializeRuntimeFixture,
   persistedRecord,
-  preview,
-  record,
   startWorker,
   trackedAttachmentStore,
   trackRuntime,
   upload,
 } from "./fixtures/runtime.js";
-import { messageEntry } from "./fixtures/session-jsonl.js";
 
-const saved = {
-  data: Buffer.from("recalled pixels").toString("base64"),
-  mimeType: "image/png",
-};
 const trailer = `${ATTACHMENT_CONTEXT_HEADING}\n- "/demo/report.csv"`;
 const emptyInput = (): PendingInput => ({ steering: [], followUp: [] });
 
@@ -51,25 +44,11 @@ afterEach(async () => {
   }
 });
 
-async function fixture({ history = false, running = true, track = true } = {}) {
+async function fixture({ running = true, track = true } = {}) {
   const store = trackedAttachmentStore();
   const f = fakeRuntime({
     attachments: store,
-    sessions: [
-      history ? record("a", fixtureWorkspace) : await persistedRecord("a"),
-    ],
-    ...(history
-      ? {
-          openSessionProjection: (session: ReturnType<typeof record>) =>
-            preview(session, [
-              messageEntry("original", null, {
-                role: "user",
-                content: [{ type: "image", ...saved }],
-                timestamp: 1,
-              }),
-            ]),
-        }
-      : {}),
+    sessions: [await persistedRecord("a")],
   });
   if (track) trackRuntime(f.runtime);
   await f.runtime.openSession("a");
@@ -149,107 +128,6 @@ it.each(["Return", "Stop"] as const)(
     );
   },
 );
-
-it("copies mixed Host-held images exactly and restores recalled bytes during compaction", async () => {
-  const f = await fixture({ history: true, running: false });
-  const { runtime, worker, store } = f;
-  const gate = deferredSignal();
-  const entered = deferredSignal();
-  worker.responseOverrides.set("compact", () => {
-    entered.resolve();
-    return gate.promise;
-  });
-  const compacting = runtime.nativeCommand({
-    sessionId: "a",
-    command: "compact",
-  });
-  try {
-    await entered.promise;
-    const page = (await f.snapshot()).active!.transcriptPage;
-    const recall = () =>
-      runtime
-        .prompt({
-          sessionId: "a",
-          message: "",
-          behavior: "followUp",
-          historyArtifacts: {
-            viewId: page.viewId,
-            incarnation: page.incarnation ?? null,
-            effectiveLeafId: page.effectiveLeafId ?? null,
-            imageReferences: ["pi-history-image://original/0"],
-            fileReferences: [],
-          },
-        })
-        .catch((error: unknown) => error);
-    const first = recall();
-    await f.waitForQueue(1);
-    const receipt = await runtime.recoverPending("a");
-    const [returned] = receipt.attachments!;
-    expect(await first).toMatchObject({
-      code: "PROMPT_RECOVERED",
-      recoveredAttachments: [returned],
-    });
-    expect((await store.imagePreview(returned!.id)).bytes.toString()).toBe(
-      "recalled pixels",
-    );
-
-    const [a, b, file] = await store.addMany([
-      upload("a.png", "image/png"),
-      upload("b.png", "image/png"),
-      upload("notes.txt", "text/plain"),
-    ]);
-    const removed = [
-      runtime
-        .prompt({
-          sessionId: "a",
-          message: "Remove me",
-          behavior: "steer",
-          attachmentIds: [b!.id, file!.id, a!.id, b!.id],
-        })
-        .catch((error: unknown) => error),
-      recall(),
-    ];
-    const queue = await f.waitForQueue(2);
-    const read = await f.read();
-    await expect(runtime.pendingText(read)).resolves.toEqual({
-      text: "1. Remove me\n2. ",
-      images: [{ attachmentId: b!.id }, { attachmentId: a!.id }, saved],
-    });
-    await store.remove(b!.id);
-    await expect(runtime.pendingText(read)).rejects.toThrow(
-      "Original pending images are unavailable",
-    );
-    await expect(
-      runtime.pendingText({ ...read, itemId: queue.followUp[0]!.id }),
-    ).resolves.toEqual({ text: "", images: [saved] });
-    await runtime.clearPending("a");
-    for (const error of await Promise.all(removed))
-      expect(error).toMatchObject({ code: "PROMPT_CLEARED" });
-    await expect(runtime.pendingText(read)).rejects.toThrow(
-      "Pending input changed",
-    );
-
-    const next = runtime.prompt({
-      sessionId: "a",
-      message: "Fresh input",
-      behavior: "steer",
-    });
-    await f.waitForQueue(1);
-    worker.emit("event", {
-      type: "compaction_end",
-      reason: "manual",
-      result: {},
-    });
-    gate.resolve();
-    await Promise.all([compacting, next]);
-    expect(
-      worker.commands.filter(({ type }) => type === "prompt"),
-    ).toMatchObject([{ message: "Fresh input" }]);
-  } finally {
-    gate.resolve();
-    await compacting;
-  }
-});
 
 it("keeps bounded Pending visible but requires a complete current queue for Copy", async () => {
   const f = await fixture();

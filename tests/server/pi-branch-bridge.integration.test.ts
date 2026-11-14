@@ -132,7 +132,10 @@ async function fixture(
   });
   async function open() {
     await runtime.openSession(SESSION_ID);
-    await runtime.setSteeringMode(SESSION_ID, "one-at-a-time");
+    await runtime.setRuntimeSetting(SESSION_ID, {
+      key: "steeringMode",
+      value: "one-at-a-time",
+    });
     await vi.waitFor(() => expect(ready).toBe(true), { timeout: 10_000 });
   }
   async function navigate(
@@ -228,7 +231,10 @@ describe("native Pi History and branch workflows", () => {
       });
       expect(workers).toHaveLength(1);
       expect(workers[0]!.available).toBe(false);
-      await runtime.setAutoRetry(SESSION_ID, false);
+      await runtime.setRuntimeSetting(SESSION_ID, {
+        key: "autoRetryEnabled",
+        value: false,
+      });
       expect(workers).toHaveLength(2);
       expect(await workers[1]!.request({ type: "get_entries" })).toMatchObject({
         leafId: "saved",

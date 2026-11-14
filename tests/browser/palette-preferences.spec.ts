@@ -28,7 +28,9 @@ test("palette settings stay independent of luminosity from first paint through H
         field in response.request().postDataJSON(),
     );
 
-  await settings.getByRole("button", { name: "Dark", exact: true }).click();
+  await settings
+    .getByRole("combobox", { name: "Theme", exact: true })
+    .selectOption("dark");
   await expect(html).toHaveAttribute("data-theme", "dark");
 
   await page.setViewportSize({ width: 320, height: 900 });
@@ -68,7 +70,9 @@ test("palette settings stay independent of luminosity from first paint through H
   expect((await renderedColors(wisteria)).contrast).toBeGreaterThanOrEqual(4.5);
 
   const lightSave = savePreference("theme");
-  await settings.getByRole("button", { name: "Light", exact: true }).click();
+  await settings
+    .getByRole("combobox", { name: "Theme", exact: true })
+    .selectOption("light");
   expect(await (await lightSave).json()).toMatchObject({
     preferences: { palette: "wisteria", theme: "light" },
   });

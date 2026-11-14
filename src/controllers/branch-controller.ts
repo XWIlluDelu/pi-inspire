@@ -336,12 +336,14 @@ export class BranchController {
       api,
       this.viewTicket(state),
       () =>
-        api.navigateBranch({
-          sessionId,
-          revision,
-          targetId,
-          mode,
-          ...(mode !== "watch" ? options : {}),
+        api.json("navigateBranch", {
+          body: {
+            sessionId,
+            revision,
+            targetId,
+            mode,
+            ...(mode !== "watch" ? options : {}),
+          },
         }),
       (response) => {
         if (response.cancelled) {
@@ -408,10 +410,14 @@ export class BranchController {
       { ...this.viewTicket(state), selectionRequest },
       () =>
         copy.kind === "fork"
-          ? api.forkBranch({ ...address, targetId: copy.targetId })
-          : api.cloneBranch({
-              ...address,
-              targetId: copy.targetId ?? state.view.effectiveLeafId,
+          ? api.json("forkBranch", {
+              body: { ...address, targetId: copy.targetId },
+            })
+          : api.json("cloneBranch", {
+              body: {
+                ...address,
+                targetId: copy.targetId ?? state.view.effectiveLeafId,
+              },
             }),
       (response) => {
         this.host.applyFork(response);

@@ -62,8 +62,7 @@ export class RuntimeProjectionCoordinator {
     const writer = slot.process;
     const before = slot.conflict;
     if (result.changed) slot.branchRevision += 1;
-    if (!writer && result.messageChange === "replace")
-      this.host.renewView(slot);
+    if (!writer && result.replacesRows) this.host.renewView(slot);
     if (writer) {
       const live =
         isBusyRunState(slot.runState) ||
@@ -137,8 +136,7 @@ export class RuntimeProjectionCoordinator {
       : await projection.reconcile(force);
     if (slot.projection !== projection)
       throw requestError("Session projection changed while reconciling", 409);
-    if (startupAttestation && result.messageChange === "replace")
-      this.host.renewView(slot);
+    if (startupAttestation && result.replacesRows) this.host.renewView(slot);
     return result;
   }
 }

@@ -100,6 +100,10 @@ test.describe("narrow terminal settings", () => {
     await expect(stepperValue).toHaveText(
       `${DEFAULT_TERMINAL_UI_SETTINGS.fontSize + 1}px`,
     );
+    const cursor = settings.getByRole("combobox", {
+      name: "Terminal cursor shape",
+    });
+    await cursor.selectOption("bar");
     await page.setViewportSize({ width: 320, height: 460 });
     await category("Interaction").click();
     await body.evaluate((el) => (el.scrollTop = el.scrollHeight));
@@ -126,6 +130,7 @@ test.describe("narrow terminal settings", () => {
     await expect.poll(stored).toMatchObject({
       fontSize: DEFAULT_TERMINAL_UI_SETTINGS.fontSize + 1,
       pasteProtection: false,
+      cursorStyle: "bar",
     });
     expect(patches).toEqual([]);
     await category("Saved output").press("Enter");
@@ -179,6 +184,7 @@ test.describe("narrow terminal settings", () => {
     );
     await expect.poll(stored).toMatchObject({
       pasteProtection: DEFAULT_TERMINAL_UI_SETTINGS.pasteProtection,
+      cursorStyle: DEFAULT_TERMINAL_UI_SETTINGS.cursorStyle,
     });
     expect(service).toEqual({
       persistOutput: false,

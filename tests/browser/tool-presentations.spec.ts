@@ -5,7 +5,7 @@ import { expect, type Page, test } from "@playwright/test";
 import { piInstallation } from "../../server/pi-installation";
 import type { ActivityTool, ChildCallList } from "../../shared/tool-activity";
 import type { ToolPresentationConfiguration } from "../../shared/tool-presentation-config";
-import type { ToolCallContent } from "../../src/events";
+import type { ChatMessage, ToolCallContent } from "../../src/events";
 import { jsonl, messageEntry } from "../server/fixtures/session-jsonl";
 import { browserFixtureHome, browserWorkspace } from "./fixtures/workspace.mjs";
 import { observeClipboardWrites } from "./support/clipboard";
@@ -24,7 +24,7 @@ const configuration: ToolPresentationConfiguration = {
   version: 1,
   rules: {
     "review.markdown": {
-      summary: [{ value: { literal: "Documentation" } }],
+      summary: [{ value: { path: "args.query" } }],
       blocks: [{ type: "markdown", source: { path: "result.text" } }],
     },
   },
@@ -303,8 +303,12 @@ test.describe("narrow CodeMode details", () => {
   });
 });
 
-function tool(name: string, args: Record<string, unknown>): ToolCallContent {
-  return { type: "toolCall", id: `review-${name}`, name, arguments: args };
+function tool(
+  name: string,
+  args: Record<string, unknown>,
+  id = `review-${name}`,
+): ToolCallContent {
+  return { type: "toolCall", id, name, arguments: args };
 }
 
 function toolActivity(
@@ -327,15 +331,22 @@ function toolActivity(
   };
 }
 
-function completed(call: ToolCallContent, text: string, isError = false) {
+function completed(
+  call: ToolCallContent,
+  content: ChatMessage["content"],
+  fields: Partial<ChatMessage> = {},
+) {
   return {
     type: "message_end",
     message: {
       role: "toolResult",
       toolCallId: call.id,
       toolName: call.name,
-      isError,
-      content: [{ type: "text", text }],
+      content:
+        typeof content === "string"
+          ? [{ type: "text", text: content }]
+          : content,
+      ...fields,
     },
   };
 }
@@ -349,18 +360,35 @@ function assistant(calls: ToolCallContent[]) {
   };
 }
 
-function toolCard(page: Page, name: string) {
+function partialCall(
+  call: ToolCallContent,
+  args: Record<string, unknown> = {},
+  truncated = false,
+): ToolCallContent {
+  return {
+    ...call,
+    arguments: args,
+    __inspireToolCall: {
+      phase: "streaming",
+      characters: JSON.stringify(args).length,
+      truncated,
+    },
+  };
+}
+
+function toolCard(page: Page, name: string, resultOnly = false) {
+  const label = name === "codemode" ? "CodeMode" : name;
   return page
     .locator(".card--tool")
     .filter({
       has: page.locator(".card__tool-name", {
-        hasText: new RegExp(`^${name === "codemode" ? "CodeMode" : name}$`),
+        hasText: new RegExp(`^${label}${resultOnly ? " result" : ""}$`),
       }),
     })
     .last();
 }
 
-test("live output and partial arguments follow the reader until native completion", async ({
+test("live output and partial arguments follow the reader through native execution and interruption", async ({
   page,
   context,
 }) => {
@@ -369,7 +397,7 @@ test("live output and partial arguments follow the reader until native completio
   const shell = tool("bash", { command: "npm run build" });
   const path = "src/stream.ts";
   const content = Array.from(
-    { length: 150 },
+    { length: 450 },
     (_, i) => `export const line_${i} = ${i};`,
   ).join("\n");
   const write = tool("write", { path, content });
@@ -417,20 +445,11 @@ test("live output and partial arguments follow the reader until native completio
   await expect(output).toHaveCount(0);
   await bash.getByRole("button", { name: "Expand bash tool" }).click();
   await expect(bash).toContainText("Finalizing result…");
-  send(completed(shell, "Build failed", true));
+  send(completed(shell, "Build failed", { isError: true }));
   await expect(bash).toContainText("Build failed");
 
-  const partial = (text: string): ToolCallContent => ({
-    ...write,
-    arguments: { path, content: text },
-    __inspireToolCall: {
-      phase: "streaming",
-      characters: text.length,
-      truncated: false,
-    },
-  });
   const writing = {
-    ...assistant([partial("")]),
+    ...assistant([partialCall(write, { path, content: "" })]),
     __inspireMessageId: "review-streamed-write",
   };
   send({ type: "message_start", message: writing });
@@ -438,10 +457,15 @@ test("live output and partial arguments follow the reader until native completio
   await expect(card).toContainText("Generating arguments…");
   send({
     type: "message_update",
-    message: { ...writing, content: [partial(content)] },
+    message: {
+      ...writing,
+      content: [partialCall(write, { path, content }, true)],
+    },
   });
   const code = card.locator(".tool-code");
-  await expect(code).toContainText("line_149");
+  await expect(code).toContainText("line_399");
+  await expect(code).not.toContainText("line_400");
+  await expect(card.getByText("Showing first 400 lines")).toBeVisible();
   await expect.poll(() => code.evaluate(bottomGap)).toBeLessThan(2);
   const file = card.getByRole("button", { name: path, exact: true });
   await expect(file).toHaveCount(0);
@@ -454,6 +478,53 @@ test("live output and partial arguments follow the reader until native completio
   });
   await expect(card).toContainText("Waiting to execute");
   await expect(file).toBeVisible();
+
+  const first = {
+    oldText: "old row\nold continuation",
+    newText: "replacement",
+  };
+  const second = { oldText: "old second", newText: "" };
+  const edit = tool("edit", { path, edits: [first, second] });
+  const editing = {
+    ...assistant([partialCall(edit)]),
+    __inspireMessageId: "review-streamed-edit",
+  };
+  send({ type: "message_start", message: editing });
+  const edits = toolCard(page, "edit");
+  await expect(edits.getByText("Generating arguments…")).toBeVisible();
+  const updateEdit = (args: Record<string, unknown>, truncated = false) =>
+    send({
+      type: "message_update",
+      message: { ...editing, content: [partialCall(edit, args, truncated)] },
+    });
+  const added = edits.locator('.code-row[data-kind="add"]');
+  for (const item of [{}, { oldText: second.oldText }, second]) {
+    updateEdit({ path, edits: [first, item] });
+    await expect(added).toHaveCount("newText" in item ? 2 : 1);
+    await expect(edits.getByText("Generating arguments…")).toBeVisible();
+    await expect(
+      edits.getByRole("button", { name: path, exact: true }),
+    ).toHaveCount(0);
+  }
+  const oversized = partialCall(
+    edit,
+    {
+      path,
+      edits: [first, { oldText: "old line\n".repeat(1_000) }],
+    },
+    true,
+  );
+  send({
+    type: "message_end",
+    message: { ...editing, content: [oversized], stopReason: "aborted" },
+  });
+  await expect(edits.getByText("Not executed")).toBeVisible();
+  await expect(edits.getByText("Argument preview truncated")).toBeVisible();
+  await expect(edits.getByText("Showing first 400 lines")).toBeVisible();
+  await expect(edits.getByRole("button", { name: /Show all/ })).toHaveCount(0);
+  await expect(
+    edits.getByRole("button", { name: "Copy edit argument preview" }),
+  ).toBeVisible();
 });
 
 test("narrow tool content retains its geometry and contrast", async ({
@@ -465,14 +536,14 @@ test("narrow tool content retains its geometry and contrast", async ({
     "src/components/session-workbench/projection/lifecycle/SessionProjectionController.tsx";
   const calls = [
     tool("read", { path, offset: 100_000 }),
-    tool("review_markdown", {}),
+    tool("review_markdown", { query: "Runtime documentation" }),
   ];
   const results = [
     "const url = '" +
       "long-identifier-".repeat(80) +
       "';\n" +
       "const short = 1;\n".repeat(120),
-    "[Runtime guide](https://example.org/pi/runtime)\n\n" +
+    "[Runtime guide](https://example.org/pi/runtime) [unsafe](javascript:alert(1))\n\n" +
       "More tool documentation.\n\n".repeat(80),
   ];
   send(
@@ -519,6 +590,7 @@ test("narrow tool content retains its geometry and contrast", async ({
   await expect(markdown).toBeFocused();
   const link = markdown.getByRole("link", { name: "Runtime guide" });
   await expect(link).toBeVisible();
+  await expect(markdown.getByText("unsafe")).not.toHaveAttribute("href");
   expect((await renderedColors(link)).contrast).toBeGreaterThanOrEqual(4.5);
   await markdown.press("PageDown");
   await expect
@@ -528,6 +600,126 @@ test("narrow tool content retains its geometry and contrast", async ({
     .include(".card--tool")
     .analyze();
   expect(accessibility.violations).toEqual([]);
+
+  const missingQuery = tool(
+    "review_markdown",
+    { other: "unmatched" },
+    "unmatched-review",
+  );
+  const fallback = {
+    ...assistant([missingQuery]),
+    __inspireMessageId: "unmatched-review-markdown",
+  };
+  send(
+    { type: "message_end", message: fallback },
+    completed(missingQuery, "Raw extension output"),
+  );
+  const raw = toolCard(page, "review_markdown");
+  await expect(raw.getByRole("group", { name: "Result text" })).toHaveText(
+    "Raw extension output",
+  );
+  await raw.getByText("Arguments", { exact: true }).click();
+  await expect(raw.getByRole("group", { name: "Arguments" })).toContainText(
+    "unmatched",
+  );
+});
+
+test("generic results preserve opaque data, complete copies and valid images alongside malformed blocks", async ({
+  page,
+  context,
+}) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  const send = await openReview(page);
+  const placeholder = tool("extension_tool", {});
+  const generic = tool("extension_tool", {}, "generic-output");
+  const resultOnly = tool("imported_plot", {});
+  const output = `${"Useful output\n".repeat(1000)}Final result line`;
+  const png =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a5vQAAAAASUVORK5CYII=";
+  send(
+    { type: "message_end", message: assistant([placeholder]) },
+    completed(placeholder, ""),
+  );
+  await expect(
+    toolCard(page, "extension_tool").getByText("No output"),
+  ).toBeVisible();
+  send(
+    {
+      type: "message_end",
+      message: {
+        ...assistant([generic]),
+        __inspireMessageId: "generic-output",
+      },
+    },
+    completed(
+      generic,
+      [
+        { type: "text", text: output },
+        { type: "extensionData", line: 4 },
+      ],
+      { details: { tokens: 1024 } },
+    ),
+    completed(
+      resultOnly,
+      [
+        { type: "text", text: "Computed spectrum" },
+        { type: "image", mimeType: "image/png", data: png },
+        { type: "image", mimeType: "image/svg+xml", data: "c3Zn" },
+        { type: "image", mimeType: "image/png", data: "invalid<>" },
+        { type: "image" },
+      ],
+      { details: { peak: 12.4 } },
+    ),
+  );
+  const card = toolCard(page, "extension_tool");
+  const reader = card.getByRole("group", { name: "Result text" });
+  await expect(reader).toBeVisible();
+  await expect(reader).not.toContainText("Final result line");
+  await expect(card.getByRole("group", { name: "Result data" })).toHaveCount(0);
+  await observeClipboardWrites(page);
+  await card
+    .getByRole("button", { name: "Copy extension_tool tool block" })
+    .click();
+  const copied = () =>
+    page.evaluate(() => window.gestureClipboardWrites.at(-1)?.text);
+  await expect.poll(copied).toContain(output);
+  expect(await copied()).toContain('"tokens": 1024');
+  expect(await copied()).toContain('"type": "extensionData"');
+  await card.getByRole("button", { name: "Show all" }).click();
+  await expect(reader).toContainText("Final result line");
+  await card.getByText("Result details", { exact: true }).click();
+  await expect(card.getByRole("group", { name: "Result data" })).toContainText(
+    '"line": 4',
+  );
+  const opaque = tool("extension_tool", {}, "opaque-result");
+  send(
+    {
+      type: "message_end",
+      message: { ...assistant([opaque]), __inspireMessageId: "opaque-result" },
+    },
+    completed(opaque, { whole: "record" }),
+  );
+  await card.getByText("Result details", { exact: true }).click();
+  await expect(card.getByRole("group", { name: "Result data" })).toContainText(
+    '"whole": "record"',
+  );
+
+  const imported = toolCard(page, "imported_plot", true);
+  await expect(imported.getByText("Computed spectrum")).toBeVisible();
+  await expect(imported.getByText("Arguments", { exact: true })).toHaveCount(0);
+  await expect(imported).toContainText(
+    /Image unavailable.*Image unavailable.*Image unavailable/,
+  );
+  await imported.getByText("Result details", { exact: true }).click();
+  await expect(
+    imported.getByRole("group", { name: "Result data" }),
+  ).toContainText('"peak": 12.4');
+  await imported
+    .getByRole("button", { name: "Preview Tool result image 1" })
+    .click();
+  await expect(
+    page.getByRole("dialog", { name: "Image preview" }).locator("img"),
+  ).toHaveJSProperty("naturalWidth", 1);
 });
 
 // Native read/bash persist the artifacts offline; the real Runtime and Host
@@ -564,6 +756,14 @@ test("saved tool images survive presentation changes and full logs open in the n
     .execute(bashCall.id, bashArguments);
   const fullOutputPath = bashResult.details.fullOutputPath;
   expect(fullOutputPath).toBeDefined();
+  const orphan = tool("saved_plot", {});
+  const plot = readResult.content.find(({ type }) => type === "image")!;
+  const imageRequest: string[] = [];
+  await page.route("**/api/resources/resolve", (route) => {
+    const reference = route.request().postDataJSON().reference as string;
+    if (reference.startsWith("pi-embedded://")) imageRequest.push(reference);
+    return route.continue();
+  });
   try {
     const messages = [
       { role: "user", content: "Inspect the saved image and shell output." },
@@ -577,6 +777,7 @@ test("saved tool images survive presentation changes and full logs open in the n
         toolName: "read",
         toolCallId: readCall.id,
         ...readResult,
+        content: [...readResult.content, plot],
       },
       {
         role: "toolResult",
@@ -584,6 +785,8 @@ test("saved tool images survive presentation changes and full logs open in the n
         toolCallId: bashCall.id,
         ...bashResult,
       },
+      completed(orphan, [{ type: "text", text: "Saved plot" }, plot, plot])
+        .message,
     ];
     await writeFile(
       path,
@@ -668,8 +871,29 @@ test("saved tool images survive presentation changes and full logs open in the n
           .evaluate((image: HTMLImageElement) => image.naturalWidth),
       )
       .toBeGreaterThan(0);
+    const gallery = preview.getByRole("group", { name: "Image navigation" });
+    await expect(gallery).toContainText("1 / 2");
+    await gallery.getByRole("button", { name: "Next image" }).click();
+    await expect(gallery).toContainText("2 / 2");
     await page.keyboard.press("Escape");
     await expect(thumbnail).toBeFocused();
+    const savedPlot = toolCard(page, "saved_plot", true);
+    await savedPlot.getByRole("button", { name: /Expand/ }).click();
+    await savedPlot
+      .getByRole("button", { name: "Preview Tool result image 2" })
+      .click();
+    await expect(preview.locator("img")).toHaveJSProperty("naturalWidth", 720);
+    await expect(gallery).toContainText("2 / 2");
+    await page.keyboard.press("Escape");
+    const firstPart = readResult.content.indexOf(plot);
+    expect(imageRequest).toEqual(
+      expect.arrayContaining([
+        `pi-embedded://2/${firstPart}`,
+        `pi-embedded://2/${readResult.content.length}`,
+        "pi-embedded://4/1",
+        "pi-embedded://4/2",
+      ]),
+    );
 
     await page
       .context()

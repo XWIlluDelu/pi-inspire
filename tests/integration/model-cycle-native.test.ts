@@ -98,7 +98,10 @@ it.each([false, true])(
     let peer: WebSocket | undefined;
     try {
       await runtime.openSession(manager.getSessionId());
-      await runtime.setSteeringMode(manager.getSessionId(), "one-at-a-time");
+      await runtime.setRuntimeSetting(manager.getSessionId(), {
+        key: "steeringMode",
+        value: "one-at-a-time",
+      });
       host = await hostApiFixture({
         services: { runtime, catalog, attachments, cwd: f.cwd },
       });

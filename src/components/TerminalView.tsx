@@ -53,10 +53,7 @@ import {
   terminalTextInput,
   terminalTouchInput,
 } from "../terminal-input";
-import {
-  isMacTerminalBrowser,
-  terminalTabShortcutIndex,
-} from "../terminal-keyboard";
+import { isMacTerminalBrowser, terminalShortcut } from "../terminal-keyboard";
 import { terminalFileLinks, terminalFileReference } from "../terminal-links";
 import {
   type TerminalCommandOutput,
@@ -619,9 +616,7 @@ export const TerminalView = memo(function TerminalView({
         workbenchShortcut &&
         ((command && ["k", "b", "."].includes(event.key.toLowerCase())) ||
           (settingsRef.current.shortcutMode === "workbench" &&
-            ((command && ["PageUp", "PageDown"].includes(event.key)) ||
-              terminalTabShortcutIndex(event) !== null ||
-              (command && event.shiftKey && event.key === "`"))));
+            terminalShortcut(event) !== null));
       // Returning early leaves the DOM event available to the workbench-level
       // shortcut handlers instead of letting xterm stop its propagation.
       if (applicationShortcut) return false;

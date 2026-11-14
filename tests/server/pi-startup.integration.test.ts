@@ -61,7 +61,10 @@ it("attests native startup writes, keeps the worker usable, and admits an idle r
   `);
   await f.runtime.openSession(f.id);
   expect(f.workers).toHaveLength(0);
-  await f.runtime.setSteeringMode(f.id, "one-at-a-time");
+  await f.runtime.setRuntimeSetting(f.id, {
+    key: "steeringMode",
+    value: "one-at-a-time",
+  });
   await vi.waitFor(
     () =>
       expect(f.event).toHaveBeenCalledWith(
@@ -142,7 +145,10 @@ it.each([
     const f = await fixture(source);
     await f.runtime.openSession(f.id);
     await expect(
-      f.runtime.setSteeringMode(f.id, "one-at-a-time"),
+      f.runtime.setRuntimeSetting(f.id, {
+        key: "steeringMode",
+        value: "one-at-a-time",
+      }),
     ).rejects.toThrow(error);
     await vi.waitFor(
       () =>

@@ -253,9 +253,8 @@ test("Overlay chrome and needle colors respond to palette and luminosity, and re
     ["Dark", "Hydrangea"],
   ]) {
     await settings
-      .getByRole("group", { name: "Theme", exact: true })
-      .getByRole("button", { name: theme, exact: true })
-      .click();
+      .getByRole("combobox", { name: "Theme", exact: true })
+      .selectOption({ label: theme });
     await settings
       .getByRole("group", { name: "Color palette", exact: true })
       .getByRole("button", { name: palette, exact: true })

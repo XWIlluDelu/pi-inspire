@@ -35,10 +35,10 @@ function createHarness(initial: Partial<BranchControllerState> = {}) {
   const cloneBranch = vi.fn();
   const sessionHistory = vi.fn();
   const branchImage = vi.fn();
+  const commands = { navigateBranch, forkBranch, cloneBranch };
   let api = {
-    navigateBranch,
-    forkBranch,
-    cloneBranch,
+    json: (name: keyof typeof commands, { body }: { body: unknown }) =>
+      commands[name](body),
     sessionHistory,
     branchImage,
   } as unknown as Api;

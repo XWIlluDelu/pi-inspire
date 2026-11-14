@@ -526,9 +526,8 @@ test("reads current shortcuts and retries installed release notes without consum
         response.request().method() === "PATCH",
     );
     await settings
-      .getByRole("group", { name: "Send key" })
-      .getByRole("button", { name: label, exact: true })
-      .click();
+      .getByRole("combobox", { name: "Send key", exact: true })
+      .selectOption({ label: label });
     expect((await saved).ok()).toBe(true);
     await page.keyboard.press("Escape");
     await expect(settings).toBeHidden();

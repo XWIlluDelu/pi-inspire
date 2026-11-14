@@ -124,7 +124,10 @@ describe("native commands and worker-local catalogs", () => {
     });
     try {
       await runtime.openSession("a");
-      await runtime.setAutoRetry("a", true);
+      await runtime.setRuntimeSetting("a", {
+        key: "autoRetryEnabled",
+        value: true,
+      });
       expect((await runtime.snapshot("a")).active?.commands).toEqual([
         expect.objectContaining({ name: "old-command" }),
       ]);

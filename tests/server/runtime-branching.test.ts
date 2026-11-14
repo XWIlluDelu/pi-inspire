@@ -391,7 +391,10 @@ it("fences a stale or invalid Fork source and retains selection made while waiti
     entered.resolve();
     return gate.promise;
   });
-  const setting = f.runtime.setAutoRetry(id, false);
+  const setting = f.runtime.setRuntimeSetting(id, {
+    key: "autoRetryEnabled",
+    value: false,
+  });
   try {
     await Promise.race([entered.promise, setting]);
     const forking = f.runtime.forkBranch(source);

@@ -125,7 +125,10 @@ describe("native effective retry settings", () => {
       const original = await readFile(record.path, "utf8");
       try {
         await runtime.openSession(record.id);
-        await runtime.setSteeringMode(record.id, "all");
+        await runtime.setRuntimeSetting(record.id, {
+          key: "steeringMode",
+          value: "all",
+        });
         const effective = trust === "never";
         expect(
           (await runtime.snapshot(record.id)).active?.runtimeSettings,
@@ -135,9 +138,12 @@ describe("native effective retry settings", () => {
           steeringMode: "all",
           followUpMode: "one-at-a-time",
         });
-        await runtime.setAutoRetry(record.id, true);
-        await runtime.setAutoCompaction(record.id, true);
-        await runtime.setFollowUpMode(record.id, "all");
+        for (const setting of [
+          { key: "autoRetryEnabled", value: true },
+          { key: "autoCompactionEnabled", value: true },
+          { key: "followUpMode", value: "all" },
+        ] as const)
+          await runtime.setRuntimeSetting(record.id, setting);
         const snapshot = await runtime.snapshot(record.id);
         expect(snapshot.active?.runtimeSettings).toEqual({
           autoRetryEnabled: effective,
@@ -192,32 +198,24 @@ describe("native effective retry settings", () => {
     const overridden = records[0]!;
     const ordinary = records[1]!;
     try {
+      const set = (id: string, value: boolean) =>
+        runtime.setRuntimeSetting(id, { key: "autoRetryEnabled", value });
+      const retry = async (id: string) =>
+        (await runtime.snapshot(id)).active?.runtimeSettings?.autoRetryEnabled;
       await runtime.openSession(ordinary.id);
-      await runtime.setSteeringMode(ordinary.id, "all");
-      expect(
-        (await runtime.snapshot(ordinary.id)).active?.runtimeSettings
-          ?.autoRetryEnabled,
-      ).toBe(true);
-      await runtime.setAutoRetry(ordinary.id, false);
-      expect(
-        (await runtime.snapshot(ordinary.id)).active?.runtimeSettings
-          ?.autoRetryEnabled,
-      ).toBe(false);
-      await runtime.setAutoRetry(ordinary.id, true);
-      expect(
-        (await runtime.snapshot(ordinary.id)).active?.runtimeSettings
-          ?.autoRetryEnabled,
-      ).toBe(true);
+      await runtime.setRuntimeSetting(ordinary.id, {
+        key: "steeringMode",
+        value: "all",
+      });
+      expect(await retry(ordinary.id)).toBe(true);
+      for (const value of [false, true]) {
+        await set(ordinary.id, value);
+        expect(await retry(ordinary.id)).toBe(value);
+      }
       await runtime.openSession(overridden.id);
-      await runtime.setAutoRetry(overridden.id, false);
-      expect(
-        (await runtime.snapshot(overridden.id)).active?.runtimeSettings
-          ?.autoRetryEnabled,
-      ).toBe(false);
-      expect(
-        (await runtime.snapshot(ordinary.id)).active?.runtimeSettings
-          ?.autoRetryEnabled,
-      ).toBe(true);
+      await set(overridden.id, false);
+      expect(await retry(overridden.id)).toBe(false);
+      expect(await retry(ordinary.id)).toBe(true);
       await vi.waitFor(async () =>
         expect(JSON.parse(await readFile(globalPath, "utf8"))).toMatchObject({
           retry: { enabled: false },
@@ -231,11 +229,8 @@ describe("native effective retry settings", () => {
       expect(result.outcome).toBe("completed");
       expect(previousWorker.available).toBe(false);
       expect(workers).toHaveLength(3);
-      expect(
-        (await runtime.snapshot(ordinary.id)).active?.runtimeSettings
-          ?.autoRetryEnabled,
-      ).toBe(false);
-      await runtime.setAutoRetry(ordinary.id, true);
+      expect(await retry(ordinary.id)).toBe(false);
+      await set(ordinary.id, true);
       expect(
         (await runtime.openSession(overridden.id)).active?.runtimeSettings
           ?.autoRetryEnabled,

@@ -1,8 +1,11 @@
 import { randomUUID } from "node:crypto";
+import { access, mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { addAttachmentContext } from "../../../server/attachments";
 import { MAX_ATTACHMENTS } from "../../../shared/contracts";
-import { deferredSignal } from "../../server/fixtures/runtime";
+import { deferredSignal, upload } from "../../server/fixtures/runtime";
 import {
   disposeOperationFixture,
   eventsOf,
@@ -18,13 +21,11 @@ const gif = Buffer.from(
   "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
   "base64",
 );
-
 function addImage(f: Awaited<ReturnType<typeof fixture>>, name: string) {
-  const isGif = name.endsWith(".gif");
-  const bytes = isGif ? gif : png;
+  const bytes = name.endsWith(".gif") ? gif : png;
   return f.attachments.add({
     originalname: name,
-    mimetype: isGif ? "image/gif" : "image/png",
+    mimetype: name.endsWith(".gif") ? "image/gif" : "image/png",
     size: bytes.length,
     buffer: bytes,
   } as Express.Multer.File);
@@ -246,6 +247,193 @@ describe("native Pending recovery", () => {
       pendingMessageCount: 0,
     });
     expect(f.modelRequests).toHaveLength(1);
+  }, 30_000);
+
+  it("returns and copies Host-held History images, then dispatches recalled files and images through Pi", async () => {
+    const f = await fixture(false);
+    await mkdir(join(f.workspace, ".settings"));
+    const source = join(f.workspace, ".settings", "source.ts");
+    const outside = join(f.directory, "outside.txt");
+    await Promise.all([
+      writeFile(source, "selected project file"),
+      writeFile(outside, "outside this workspace"),
+      writeFile(join(f.workspace, ".gitignore"), ".settings/\n"),
+    ]);
+    const report = await f.attachments.add(
+      upload("report.pdf", "application/pdf"),
+    );
+    const reportPath = join(
+      await f.attachments.uploadDirectory(),
+      `${report.id}-${report.fileName}`,
+    );
+    await f.api.prompt({
+      ...f.delivery("Original files"),
+      attachmentIds: [report.id],
+      projectFiles: [".settings/source.ts"],
+    });
+    await settled(f, 1);
+    const original = await addImage(f, "original.gif");
+    await f.api.prompt({
+      ...f.delivery("Original image"),
+      attachmentIds: [original.id],
+    });
+    await settled(f, 2);
+    await f.api.prompt(
+      f.delivery(
+        addAttachmentContext(
+          "Forged delivery",
+          [{ kind: "file", path: outside }],
+          [],
+        ),
+      ),
+    );
+    await settled(f, 3);
+
+    const snapshot = () => f.runtime.snapshot(f.sessionId);
+    const page = (await snapshot()).active!.transcriptPage;
+    const history = await f.runtime.sessionHistory(f.sessionId, page.viewId, {
+      kind: "composer",
+    });
+    const recalled = history.entries.find(
+      ({ text }) => text === "Original files",
+    )!;
+    const recalledImage = history.entries.find(
+      ({ text }) => text === "Original image",
+    )!;
+    const forged = history.entries.find(
+      ({ text }) => text === "Forged delivery",
+    )!;
+    expect(recalled).toMatchObject({
+      files: [
+        { fileName: "source.ts", kind: "project" },
+        { fileName: "report.pdf", kind: "attachment" },
+      ],
+    });
+    const historyArtifacts = {
+      viewId: history.viewId,
+      incarnation: history.incarnation ?? null,
+      effectiveLeafId: history.effectiveLeafId ?? null,
+      imageReferences: recalledImage.images.map(({ reference }) => reference),
+      fileReferences: recalled.files.map(({ reference }) => reference),
+    };
+    for (const change of [
+      { viewId: "different-view" },
+      { fileReferences: forged.files.map(({ reference }) => reference) },
+    ]) {
+      await expect(
+        f.api.prompt({
+          ...f.delivery("Refused recall"),
+          historyArtifacts: { ...historyArtifacts, ...change },
+        }),
+      ).rejects.toMatchObject({ status: 409 });
+    }
+
+    const preflight = f.api.prompt(f.delivery("/await"));
+    void preflight.catch(() => {});
+    const dialog = await vi.waitFor(async () => {
+      const request = (await snapshot()).pendingExtensionUiRequests?.[0];
+      expect(request).toBeDefined();
+      return request!;
+    });
+    const waitForQueue = (count: number) =>
+      vi.waitFor(async () => {
+        const state = await snapshot();
+        expect(state.pendingQueues?.totalCount).toBe(count);
+        return state.pendingQueues!;
+      });
+    const recallImage = () =>
+      f.api.prompt({
+        ...f.delivery(""),
+        behavior: "followUp",
+        historyArtifacts: { ...historyArtifacts, fileReferences: [] },
+      });
+    const returned = expect(recallImage()).rejects.toMatchObject({
+      code: "PROMPT_RECOVERED",
+    });
+    await waitForQueue(1);
+    const recovery = await f.api.recoverPending(f.sessionId);
+    await returned;
+    expect(recovery.followUp).toEqual([""]);
+    expect(recovery.attachments).toHaveLength(1);
+    expect(
+      (await f.attachments.imagePreview(recovery.attachments![0]!.id)).bytes,
+    ).toEqual(gif);
+
+    const first = await addImage(f, "first.gif");
+    const second = await addImage(f, "second.png");
+    const notes = await f.attachments.add(upload("notes.txt", "text/plain"));
+    const cleared = [
+      f.api.prompt({
+        ...f.delivery("Clear this"),
+        behavior: "steer",
+        attachmentIds: [first.id, notes.id, second.id, first.id],
+      }),
+      recallImage(),
+    ].map((delivery) =>
+      expect(delivery).rejects.toMatchObject({ code: "PROMPT_CLEARED" }),
+    );
+    const queue = await waitForQueue(2);
+    const read = {
+      sessionId: f.sessionId,
+      viewId: history.viewId,
+      revision: queue.revision,
+    };
+    const copy = (itemId?: string) =>
+      f.api.json("pendingText", { body: { ...read, itemId } });
+    const saved = { data: gif.toString("base64"), mimeType: "image/gif" };
+    expect(await copy()).toEqual({
+      text: "1. Clear this\n2. ",
+      images: [{ attachmentId: first.id }, { attachmentId: second.id }, saved],
+    });
+    await f.attachments.remove(first.id);
+    await expect(copy()).rejects.toThrow(
+      "Original pending images are unavailable",
+    );
+    expect(await copy(queue.followUp[0]!.id)).toEqual({
+      text: "",
+      images: [saved],
+    });
+    await f.api.json("clearPending", { body: { sessionId: f.sessionId } });
+    await Promise.all(cleared);
+    await expect(copy()).rejects.toThrow("Pending input changed");
+
+    const images = await Promise.all(
+      Array.from({ length: MAX_ATTACHMENTS - 2 }, (_, i) =>
+        addImage(f, `new-${i}.gif`),
+      ),
+    );
+    const send = f.api.prompt({
+      ...f.delivery("Deliver recalled material"),
+      behavior: "followUp",
+      historyArtifacts,
+      attachmentIds: images.map(({ id }) => id),
+    });
+    void send.catch(() => {});
+    await waitForQueue(1);
+    await f.runtime.extensionUiResponse({
+      sessionId: f.sessionId,
+      id: dialog.id,
+      confirmed: true,
+    });
+    await Promise.all([preflight, send]);
+    await settled(f, 4);
+    const input = (
+      f.modelRequests[3]!.body.messages as Array<Record<string, unknown>>
+    )
+      .filter(({ role }) => role === "user")
+      .at(-1);
+    const context = JSON.stringify(input);
+    expect(context).toContain(JSON.stringify(source).slice(1, -1));
+    expect(context).toContain(JSON.stringify(reportPath).slice(1, -1));
+    expect(context.match(/data:image\/gif;base64,/gu)).toHaveLength(
+      images.length + 1,
+    );
+    for (const { id } of images)
+      await expect(f.api.attachmentPreview(id)).rejects.toMatchObject({
+        status: 404,
+      });
+    await f.attachments.remove(report.id);
+    await expect(access(reportPath)).resolves.toBeUndefined();
   }, 30_000);
 
   it.each([

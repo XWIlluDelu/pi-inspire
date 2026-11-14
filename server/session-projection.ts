@@ -101,16 +101,14 @@ export type InitialMaterializationAttestation =
   | "complete"
   | "mismatch";
 
-type ProjectionMessageChange = "none" | "append" | "replace";
-
 export interface ProjectionReconcileResult {
   changed: boolean;
   /** This observation belongs to the new-session file's first materialization. */
   initialMaterialization: boolean;
   /** Physical JSONL movement; distinct from the projected message view. */
   kind: "none" | "append" | "rewrite";
-  /** Whether the projected active-path message sequence stayed stable, grew by suffix, or was replaced. */
-  messageChange: ProjectionMessageChange;
+  /** The active row prefix no longer describes this revision. */
+  replacesRows: boolean;
   previousRevision: number;
   revision: number;
   previousFingerprint: string;
@@ -355,28 +353,6 @@ function composerHistoryAnchor(
     id = entry.parentId;
   }
   return null;
-}
-
-function projectedMessageId(value: unknown): string | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const id = (value as Record<string, unknown>).__inspireMessageId;
-  return typeof id === "string" ? id : null;
-}
-
-function projectedMessageChange(
-  physicalKind: ProjectionReconcileResult["kind"],
-  previous: readonly unknown[],
-  next: readonly unknown[],
-): ProjectionMessageChange {
-  if (physicalKind === "rewrite") return "replace";
-  if (previous.length > next.length) return "replace";
-  const prefixMatches = previous.every((message, index) => {
-    const previousId = projectedMessageId(message);
-    const nextId = projectedMessageId(next[index]);
-    return previousId !== null && previousId === nextId;
-  });
-  if (!prefixMatches) return "replace";
-  return previous.length === next.length ? "none" : "append";
 }
 
 interface BoundedTranscriptItem {
@@ -799,7 +775,7 @@ class SessionEntryIndex {
     leafId: string | null,
     suffix: readonly SessionEntry[],
     kind: ProjectionReconcileResult["kind"],
-  ): ProjectionMessageChange {
+  ): boolean {
     const linear =
       kind === "append" &&
       isLinearAppend(this.currentLeafId, suffix) &&
@@ -808,7 +784,15 @@ class SessionEntryIndex {
     const messages = linear
       ? appendContextMessages(previousMessages, suffix)
       : contextMessages(entries, leafId, byId);
-    const change = projectedMessageChange(kind, previousMessages, messages);
+    const replacesRows =
+      kind === "rewrite" ||
+      (!linear &&
+        (previousMessages.length > messages.length ||
+          previousMessages.some(
+            (row, index) =>
+              jsonRecord(row)?.__inspireMessageId !==
+              jsonRecord(messages[index])?.__inspireMessageId,
+          )));
     if (linear) {
       this.currentModelSelection = appendModelSelection(
         this.currentModelSelection,
@@ -835,8 +819,8 @@ class SessionEntryIndex {
     this.currentLeafId = leafId;
     this.currentMessages = messages;
     this.currentRevision += 1;
-    if (change === "replace") this.appendFromRevision = this.currentRevision;
-    return change;
+    if (replacesRows) this.appendFromRevision = this.currentRevision;
+    return replacesRows;
   }
 
   latestContinuation(leafId: string | null): string | null {
@@ -1703,7 +1687,7 @@ export class SessionProjection
     reconcile: () => void | Promise<
       | {
           kind: ProjectionReconcileResult["kind"];
-          messageChange: ProjectionMessageChange;
+          replacesRows: boolean;
           previousTailVerified: boolean;
         }
       | undefined
@@ -1722,7 +1706,7 @@ export class SessionProjection
       changed: previousRevision !== this.revision,
       initialMaterialization: this.initialMaterializationPending,
       kind: result?.kind ?? "none",
-      messageChange: result?.messageChange ?? "none",
+      replacesRows: result?.replacesRows ?? false,
       previousRevision,
       revision: this.revision,
       previousFingerprint,
@@ -1761,7 +1745,7 @@ export class SessionProjection
         this.currentIdentity !== null &&
         !sameSessionObject(candidate.identity, this.currentIdentity);
       let kind: ProjectionReconcileResult["kind"] = "none";
-      let messageChange: ProjectionMessageChange = "none";
+      let replacesRows = false;
       const previousTailVerified =
         this.uncommittedBytes === 0 ||
         candidate.previousTailFingerprint ===
@@ -1783,7 +1767,7 @@ export class SessionProjection
             previousTailVerified)
             ? "append"
             : "rewrite";
-        messageChange = this.publishEntries(
+        replacesRows = this.publishEntries(
           candidate.entries,
           candidate.entriesById,
           candidate.entries.at(-1)?.id ?? null,
@@ -1810,7 +1794,7 @@ export class SessionProjection
           : { status: "ok" };
       this.currentFailureStatus = null;
       this.currentFailureCode = undefined;
-      return { kind, messageChange, previousTailVerified };
+      return { kind, replacesRows, previousTailVerified };
     } catch (error) {
       if (
         this.initialMaterializationPending &&
@@ -1838,7 +1822,7 @@ export class SessionProjection
           : 422;
       return {
         kind: "none" as const,
-        messageChange: "none" as const,
+        replacesRows: false,
         previousTailVerified: false,
       };
     }

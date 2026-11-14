@@ -29,7 +29,7 @@ test.beforeAll(async () => {
   );
   await writeFile(resolve(root, ".gitignore"), "dist/\n");
   await writeFile(
-    resolve(root, "large-download.bin"),
+    resolve(root, "large-download.png"),
     Buffer.alloc(33 * 1024 * 1024 + 17, 7),
   );
   await writeFile(
@@ -223,13 +223,16 @@ test("Files works with a corrupt Git index and preserves its tabs and search whe
     await pane.getByRole("button", { name: "Clear workspace search" }).click();
     await expect(search).toHaveValue("");
     await expect(search).toBeFocused();
+    await expect(tree).toBeVisible();
+    await search.fill("report.md");
+    await expect(
+      pane.locator('[data-workspace-path="dist/report.md"]'),
+    ).toBeVisible();
   } finally {
     release.resolve();
   }
-  await expect(tree).toBeVisible();
   await expect(pane.getByText("Stale result")).toHaveCount(0);
   await expect(pane.getByLabel("Searching workspace")).toHaveCount(0);
-  await search.fill("report.md");
   await pane
     .getByRole("region", { name: "Workspace search results" })
     .locator('[data-workspace-path="dist/report.md"]')
@@ -329,24 +332,33 @@ test("native authenticated download streams complete bytes beyond the media prev
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
   await page.getByRole("tab", { name: "Files", exact: true }).click();
   const pane = page.locator(".ctx");
+  const contentRequests: string[] = [];
+  page.on("request", (request) => {
+    if (
+      /\/api\/resources\/[^/]+\/content$/u.test(new URL(request.url()).pathname)
+    )
+      contentRequests.push(request.url());
+  });
   await pane
     .getByRole("region", { name: "Workspace file tree" })
-    .getByRole("button", { name: "large-download.bin", exact: true })
+    .getByRole("button", { name: "large-download.png", exact: true })
     .click();
+  await expect(pane.getByText("File too large to preview")).toBeVisible();
   const downloadPromise = page.waitForEvent("download");
   await pane
-    .getByRole("button", { name: "Download large-download.bin" })
+    .getByRole("button", { name: "Download large-download.png" })
     .click();
   const download = await downloadPromise;
   expect(new URL(download.url()).pathname).toMatch(
     /^\/api\/resource-downloads\//u,
   );
   expect(await download.failure()).toBeNull();
-  expect(download.suggestedFilename()).toBe("large-download.bin");
+  expect(download.suggestedFilename()).toBe("large-download.png");
   const bytes = await readFile((await download.path())!);
   expect(
-    bytes.equals(await readFile(resolve(root, "large-download.bin"))),
+    bytes.equals(await readFile(resolve(root, "large-download.png"))),
   ).toBe(true);
+  expect(contentRequests).toEqual([]);
 });
 
 test("hidden inline references send unchanged text; only explicit picker selections deliver files", {

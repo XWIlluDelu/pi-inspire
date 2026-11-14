@@ -4,6 +4,7 @@ import type {
   GitStatusResponse,
 } from "../../shared/contracts";
 import { type Api, ApiError } from "../api";
+import { readScope } from "../recovery-backoff";
 import {
   type FileInspectionState,
   inspectedFileTab,
@@ -85,9 +86,7 @@ interface GitReadOwner {
   selectionGeneration: number;
 }
 
-interface GitChangeSelection extends GitReadOwner {
-  change: GitFileChange;
-}
+type GitChangeSelection = GitReadOwner & { change: GitFileChange };
 
 /**
  * Owns Git request, cancellation, and polling lifecycles. AppStore remains the
@@ -96,13 +95,13 @@ interface GitChangeSelection extends GitReadOwner {
  */
 export class GitController {
   private statusRead: {
-    controller: AbortController;
+    scope: ReturnType<typeof readScope>;
     task: Promise<void>;
     queued: boolean;
   } | null = null;
   private diffRead: {
-    selection: GitChangeSelection;
-    request: AbortController;
+    pathId: string;
+    scope: ReturnType<typeof readScope>;
     task: Promise<void>;
   } | null = null;
   private surfaces = new Set<string>();
@@ -146,25 +145,35 @@ export class GitController {
     return this.startStatusRefresh(false);
   }
 
-  private startStatusRefresh(periodic: boolean): Promise<void> {
+  private readOwner(): GitReadOwner | null {
     const api = this.host.api();
     const { sessionId, selectionGeneration } = this.host.state();
-    if (!this.pageVisible() || !api || !sessionId) return Promise.resolve();
+    return api && sessionId ? { api, sessionId, selectionGeneration } : null;
+  }
+
+  private owns({ api, sessionId, selectionGeneration }: GitReadOwner): boolean {
+    const state = this.host.state();
+    return (
+      this.host.api() === api &&
+      state.sessionId === sessionId &&
+      state.selectionGeneration === selectionGeneration
+    );
+  }
+
+  private startStatusRefresh(periodic: boolean): Promise<void> {
+    const owner = this.readOwner();
+    if (!owner || !this.pageVisible()) return Promise.resolve();
     if (this.statusRead) {
       this.statusRead.queued = true;
       return this.statusRead.task;
     }
     this.clearRefreshTimer();
     const request = {
-      controller: new AbortController(),
+      scope: readScope(() => this.owns(owner)),
       queued: false,
       task: Promise.resolve().then(async () => {
         try {
-          await this.runStatusRefresh(
-            request,
-            { api, sessionId, selectionGeneration },
-            periodic,
-          );
+          await this.runStatusRefresh(request, owner, periodic);
         } finally {
           if (this.statusRead === request) {
             this.statusRead = null;
@@ -182,74 +191,47 @@ export class GitController {
   private async resolveChange(
     pathId: string,
   ): Promise<GitChangeSelection | null> {
-    let state = this.host.state();
-    const api = this.host.api();
-    const sessionId = state.sessionId;
-    const selectionGeneration = state.selectionGeneration;
-    if (!api || !sessionId) return null;
-    let status = state.gitStatus;
-    if (!status) {
-      await this.refreshStatus();
-      state = this.host.state();
-      status = state.gitStatus;
-      if (
-        this.host.api() !== api ||
-        state.sessionId !== sessionId ||
-        state.selectionGeneration !== selectionGeneration
-      )
-        return null;
-    }
-    if (!status || status.kind !== "repository") return null;
-    const change = status.files.find(
-      (candidate) => candidate.path.id === pathId,
-    );
-    if (!change) return null;
-    return hasWorktreeChange(change)
-      ? {
-          api,
-          sessionId,
-          selectionGeneration,
-          change,
-        }
-      : null;
+    const owner = this.readOwner();
+    if (!owner) return null;
+    if (!this.host.state().gitStatus) await this.refreshStatus();
+    if (!this.owns(owner)) return null;
+    const status = this.host.state().gitStatus;
+    const change =
+      status?.kind === "repository"
+        ? status.files.find(
+            (file) => file.path.id === pathId && hasWorktreeChange(file),
+          )
+        : undefined;
+    return change ? { ...owner, change } : null;
   }
 
   private openResolvedDiff(selection: GitChangeSelection): Promise<void> {
-    const { api, sessionId, selectionGeneration, change } = selection;
+    const { api, sessionId, change } = selection;
     const pathId = change.path.id;
     const pending = this.diffRead;
-    if (
-      pending &&
-      pending.selection.api === api &&
-      pending.selection.sessionId === sessionId &&
-      pending.selection.selectionGeneration === selectionGeneration &&
-      pending.selection.change.path.id === pathId
-    )
+    if (pending && pending.scope.current() && pending.pathId === pathId)
       return pending.task;
 
     this.cancelDiff();
-    const request = new AbortController();
     const previous = this.host.state().gitDiff;
     const retained =
       previous?.status === "ready" && previous.result.path.id === pathId
         ? previous
         : null;
     if (!retained) this.host.patch({ gitDiff: { status: "loading", pathId } });
-    const current = (): boolean => {
+    const scope = readScope(() => {
       const currentState = this.host.state();
       return (
-        !request.signal.aborted &&
-        this.host.api() === api &&
-        currentState.sessionId === sessionId &&
-        currentState.selectionGeneration === selectionGeneration &&
+        this.owns(selection) &&
         inspectedGitChange(currentState, currentState.gitStatus)?.path.id ===
           pathId
       );
-    };
+    });
     const task = (async () => {
       try {
-        const result = await api.gitDiff(sessionId, pathId, request.signal);
-        if (!current()) return;
+        const result = await scope.read((signal) =>
+          api.gitDiff(sessionId, pathId, signal),
+        );
         if (result.path.id !== pathId)
           throw new Error("The Host returned a diff for another selection");
         // Unchanged polls must not rebuild source highlighting or reader geometry.
@@ -264,7 +246,7 @@ export class GitController {
             },
           });
       } catch (error) {
-        if (!current()) return;
+        if (!scope.current()) return;
         if (error instanceof ApiError && error.status === 401) {
           this.host.handleAuthFailure();
           return;
@@ -277,9 +259,9 @@ export class GitController {
         });
       }
     })().finally(() => {
-      if (this.diffRead?.request === request) this.diffRead = null;
+      if (this.diffRead?.scope === scope) this.diffRead = null;
     });
-    this.diffRead = { selection, request, task };
+    this.diffRead = { pathId, scope, task };
     return task;
   }
 
@@ -321,27 +303,18 @@ export class GitController {
 
   private async runStatusRefresh(
     request: NonNullable<GitController["statusRead"]>,
-    { api, sessionId, selectionGeneration }: GitReadOwner,
+    owner: GitReadOwner,
     periodic: boolean,
   ): Promise<void> {
-    const { signal } = request.controller;
-    const current = (): boolean => {
-      const state = this.host.state();
-      return (
-        !signal.aborted &&
-        this.host.api() === api &&
-        state.sessionId === sessionId &&
-        state.selectionGeneration === selectionGeneration
-      );
-    };
+    const { api, sessionId } = owner;
+    const { current, read } = request.scope;
     while (current()) {
       request.queued = false;
       const state = this.host.state();
       const refreshIntent = this.refreshIntent;
       const selectionEpoch = this.selectionEpoch;
       try {
-        const status = await api.gitStatus(sessionId, signal);
-        if (!current()) return;
+        const status = await read((signal) => api.gitStatus(sessionId, signal));
         const currentState = this.host.state();
         const selectedChange = inspectedGitChange(currentState, status);
         const selectionChanged =
@@ -361,9 +334,7 @@ export class GitController {
           // Await the selected read so hints coalesce behind the complete
           // inspection, and slow diffs cannot create an overlapping poll loop.
           await this.openResolvedDiff({
-            api,
-            sessionId,
-            selectionGeneration,
+            ...owner,
             change: selectedChange,
           });
           const nextDiff = this.host.state().gitDiff;
@@ -409,14 +380,14 @@ export class GitController {
 
   private cancelStatusRefresh(): void {
     this.resetRefreshCadence();
-    this.statusRead?.controller.abort();
+    this.statusRead?.scope.abort();
     this.statusRead = null;
     if (this.host.state().gitStatusPending)
       this.host.patch({ gitStatusPending: false });
   }
 
   private cancelDiff(): void {
-    this.diffRead?.request.abort();
+    this.diffRead?.scope.abort();
     this.diffRead = null;
   }
 

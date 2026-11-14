@@ -303,12 +303,16 @@ describe("local file references", () => {
 
   it("makes local images open the preview and remote images click-through links", () => {
     const { container } = render(
-      <RichText text="![chart](./chart.png) and ![logo](https://pi.dev/logo.png)" />,
+      <RichText text="![chart](./chart.png) ![logo](https://pi.dev/logo.png) ![Unknown](unrecognized-format)" />,
     );
     const local = screen.getByRole("button", { name: "Preview chart" });
     expect(local).toHaveAttribute("data-file-path", "./chart.png");
     // Remote images never auto-load; the reference becomes an explicit link.
     expect(container.querySelector("img")).toBeNull();
+    expect(screen.getByText("Unknown")).toHaveAttribute(
+      "title",
+      "Image unavailable",
+    );
     const remote = screen.getByRole("link", { name: /logo/ });
     expect(remote).toHaveAttribute("href", "https://pi.dev/logo.png");
     expect(remote).toHaveAttribute("rel", "noreferrer noopener");

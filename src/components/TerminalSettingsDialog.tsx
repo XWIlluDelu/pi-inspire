@@ -24,7 +24,6 @@ import {
 import { ButtonLabel } from "./ButtonLabel";
 import { DialogHeader, Modal } from "./Modal";
 import {
-  SegmentedField,
   SelectField,
   SettingField,
   SettingsFeedback,
@@ -284,7 +283,7 @@ export function TerminalSettingsDialog({
                     </button>
                   </div>
                 </SettingField>
-                <SegmentedField
+                <SelectField
                   label="Line height"
                   controlLabel="Terminal line height"
                   value={String(settings.lineHeight)}
@@ -295,7 +294,7 @@ export function TerminalSettingsDialog({
                   ]}
                   onChange={(value) => updateUi({ lineHeight: Number(value) })}
                 />
-                <SegmentedField
+                <SelectField
                   label="Cursor"
                   controlLabel="Terminal cursor shape"
                   value={settings.cursorStyle}
@@ -334,7 +333,7 @@ export function TerminalSettingsDialog({
                   checked={settings.pasteProtection}
                   onChange={(pasteProtection) => updateUi({ pasteProtection })}
                 />
-                <SegmentedField
+                <SelectField
                   label="Shortcut priority"
                   description="Where search, copy and paste shortcuts go."
                   controlLabel="Terminal shortcut priority"

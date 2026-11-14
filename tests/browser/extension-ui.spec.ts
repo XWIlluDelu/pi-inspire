@@ -253,157 +253,14 @@ test("phone Back and Escape respect native question ownership during Settings, w
   await expect(page).toHaveURL("about:blank#outside-inspire");
 });
 
-test.describe("narrow Settings interruption", () => {
-  test.use({ hasTouch: true });
-  test("returns to its unsaved provider form after the native question owns focus", async ({
-    page,
-  }) => {
-    await page.setViewportSize({ width: 390, height: 844 });
-    const fixture = await openExample(page, "dark");
-    await openSettings(page);
-    const settings = page.getByRole("dialog", {
-      name: "Settings",
-      exact: true,
-    });
-    await settings.getByRole("button", { name: "Models", exact: true }).click();
-    await settings
-      .getByRole("button", { name: "Add provider", exact: true })
-      .click();
-    const id = settings.getByLabel("Provider ID", { exact: true });
-    await id.fill("pending-provider");
-    const url = settings.getByLabel("Base URL", { exact: true });
-    await url.fill("https://example.invalid/v1");
-    let restartRequests = 0;
-    await page.route("**/api/host/restart", (route) => {
-      if (route.request().method() !== "GET") restartRequests++;
-      return route.fulfill({
-        json: {
-          hostId: "settings-host",
-          available: true,
-          allPiAvailable: true,
-          operation: null,
-        },
-      });
-    });
-    await settings.getByRole("button", { name: "System", exact: true }).click();
-    await settings
-      .getByRole("button", { name: "Restart all", exact: true })
-      .click();
-    const restart = page.getByRole("alertdialog", { name: "Restart all?" });
-    await expect(restart).toBeVisible();
-    fixture.question({
-      id: "interrupt-confirmation",
-      method: "select",
-      title: "Review before continuing",
-      options: ["Continue", "Stop"],
-    });
-    const native = page.getByRole("dialog", {
-      name: "Review before continuing",
-    });
-    await expect(native).toBeVisible();
-    await page.keyboard.press("Tab");
-    await expect(native.locator(":focus")).toBeVisible();
-    await expect(restart).toBeHidden();
-    await native.getByRole("option", { name: "Continue", exact: true }).click();
-    await restart.getByRole("button", { name: "Cancel", exact: true }).click();
-    expect(restartRequests).toBe(0);
-    await settings.getByRole("button", { name: "Models", exact: true }).click();
-    await expect(id).toHaveValue("pending-provider");
-    await expect(url).toHaveValue("https://example.invalid/v1");
-    await page.keyboard.press("Escape");
-    await expect(settings).toHaveCount(0);
-    await expect(
-      page.getByRole("button", {
-        name: "Toggle navigation",
-        exact: true,
-      }),
-    ).toBeFocused();
-    expect(fixture.responses).toMatchObject([
-      { id: "interrupt-confirmation", value: "Continue" },
-    ]);
-  });
-});
-
-const choice = {
-  method: "select" as const,
-  title: "Choose a review",
-  options: ["Documentation", "Code", "Tests"],
-};
-test("keeps a failed editor response in its dialog and offers a cancellable unsupported request", async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 320, height: 420 });
-  const fixture = await openExample(page, "dark");
-  await page.route(
-    "**/api/extension-ui",
-    (route) =>
-      route.fulfill({
-        status: 409,
-        json: { error: "The extension could not save these notes. Try again." },
-      }),
-    { times: 1 },
-  );
-  const title =
-    "Review /workspace/calibration/reference_measurement_comparison_for_multichannel_calibration_and_residual_validation_results.json";
-  fixture.question({
-    id: "retry-notes",
-    method: "editor",
-    title,
-    prefill: "Original notes.\nCompare the residuals.",
-  });
-  const dialog = page.getByRole("dialog", { name: title, exact: true });
-  const editor = dialog.getByRole("textbox", { name: title, exact: true });
-  await expect(editor).toHaveValue("Original notes.\nCompare the residuals.");
-  await expect
-    .poll(() =>
-      dialog
-        .locator(".extension-dialog")
-        .evaluate((el) => el.scrollWidth - el.clientWidth),
-    )
-    .toBe(0);
-  await editor.fill("Keep this draft.");
-  const save = dialog.getByRole("button", { name: "Save" });
-  await save.click();
-  const error = dialog.getByRole("alert");
-  await expect(error).toContainText("Try again");
-  await editor.press("Tab");
-  await expect(error).toBeFocused();
-  await expect(editor).toHaveValue("Keep this draft.");
-  await expect(page.locator(".notice--error, .notice--warning")).toHaveCount(0);
-  await save.press("Enter");
-  await expect(dialog).toHaveCount(0);
-  expect(fixture.responses.at(-1)).toMatchObject({
-    id: "retry-notes",
-    value: "Keep this draft.",
-  });
-
-  fixture.question({
-    id: "choose-files",
-    method: "chooseFiles",
-    title: "Choose files",
-    unsupported: true,
-    payload: { paths: ["report.md"] },
-  });
-  const unsupported = page.getByRole("dialog", { name: "Choose files" });
-  await expect(unsupported).toContainText(
-    "Inspire can't handle this extension request",
-  );
-  await unsupported.getByText("Request details", { exact: true }).click();
-  await expect(unsupported.getByText(/report\.md/)).toBeVisible();
-  await unsupported.getByRole("button", { name: "Cancel request" }).click();
-  await expect(unsupported).toHaveCount(0);
-  expect(fixture.responses.at(-1)).toMatchObject({
-    id: "choose-files",
-    cancelled: true,
-  });
-});
+const choiceTitle = "Choose a review";
 
 const summaryLines = [
   "Code: Shared interaction",
   "Run /ui-demo clear to remove the demo displays.",
 ];
 
-test("runs the real Pi UI example from the palette and restores the native deadline on reload", async ({
+test("real Pi questions preserve workbench edits and restore the native deadline on reload", async ({
   page,
   context,
 }, testInfo) => {
@@ -432,7 +289,7 @@ test("runs the real Pi UI example from the palette and restores the native deadl
   const draft = page.getByRole("textbox", { name: "Message", exact: true });
   await draft.fill("Keep this unsent draft");
   await run();
-  const choices = page.getByRole("listbox", { name: choice.title });
+  const choices = page.getByRole("listbox", { name: choiceTitle });
   await expect(
     choices.getByRole("option", { name: "Documentation" }),
   ).toBeFocused();
@@ -461,7 +318,26 @@ test("runs the real Pi UI example from the palette and restores the native deadl
   await moveCaretToEnd(editor);
   await editor.press("Enter");
   await editor.pressSequentially("Keep this note.");
-  await page.getByRole("button", { name: "Save", exact: true }).click();
+  const save = page.getByRole("button", { name: "Save", exact: true });
+  await page.route(
+    "**/api/extension-ui",
+    (route) =>
+      route.fulfill({
+        status: 409,
+        json: { error: "The extension could not save these notes. Try again." },
+      }),
+    { times: 1 },
+  );
+  await save.click();
+  const error = page
+    .getByRole("dialog", { name: "Review notes" })
+    .getByRole("alert");
+  await expect(error).toContainText("Try again");
+  await editor.press("Tab");
+  await expect(error).toBeFocused();
+  await expect(editor).toHaveValue(`${initialNotes}\nKeep this note.`);
+  await expect(page.locator(".notice--error, .notice--warning")).toHaveCount(0);
+  await save.press("Enter");
 
   const message = page.getByRole("article", { name: "Review prepared" });
   await expect(message.locator(".custom-message__body strong")).toHaveText(
@@ -480,6 +356,73 @@ test("runs the real Pi UI example from the palette and restores the native deadl
   await expect(below).toContainText("Keep this note.");
   await above.getByRole("button", { name: "Copy extension widget" }).click();
   await expect.poll(() => clipboardLines(page)).toEqual(summaryLines);
+  await expect(draft).toHaveValue("Keep this unsent draft");
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  let restartRequests = 0;
+  await page.route("**/api/host/restart", (route) => {
+    if (route.request().method() !== "GET") restartRequests++;
+    return route.fulfill({
+      json: {
+        hostId: "settings-host",
+        available: true,
+        allPiAvailable: true,
+        operation: null,
+      },
+    });
+  });
+  await openSettings(page);
+  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+  const models = settings.getByRole("button", { name: "Models", exact: true });
+  await models.click();
+  await settings
+    .getByRole("button", { name: "Add provider", exact: true })
+    .click();
+  const id = settings.getByLabel("Provider ID", { exact: true });
+  const url = settings.getByLabel("Base URL", { exact: true });
+  await id.fill("pending-provider");
+  await url.fill("https://example.invalid/v1");
+  await settings.getByRole("button", { name: "System", exact: true }).click();
+  await settings
+    .getByRole("button", { name: "Restart all", exact: true })
+    .click();
+  const restart = page.getByRole("alertdialog", { name: "Restart all?" });
+  await expect(restart).toBeVisible();
+
+  // Dispatch from another client while Settings owns browser focus.
+  const host = hostRequest(page);
+  const { authorityId } = await (await host.get("/api/bootstrap")).json();
+  const interruption = await host.post("/api/prompt", {
+    data: {
+      sessionId: active!.sessionId,
+      operationId: crypto.randomUUID(),
+      authorityId,
+      message: "/ui-demo",
+    },
+  });
+  expect(interruption.status()).toBe(202);
+  await expect(choices).toBeVisible();
+  await page.keyboard.press("Tab");
+  await expect(
+    page.getByRole("dialog", { name: choiceTitle }).locator(":focus"),
+  ).toBeVisible();
+  await expect(restart).toBeHidden();
+  await choices
+    .getByRole("option", { name: "Documentation", exact: true })
+    .click();
+  await expect(confirm).toBeVisible();
+  await page.goBack();
+  await expect(confirm).toBeHidden();
+  await restart.getByRole("button", { name: "Cancel", exact: true }).click();
+  expect(restartRequests).toBe(0);
+  await models.click();
+  await expect(id).toHaveValue("pending-provider");
+  await expect(url).toHaveValue("https://example.invalid/v1");
+  await page.keyboard.press("Escape");
+  await expect(settings).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Toggle navigation", exact: true }),
+  ).toBeFocused();
   await expect(draft).toHaveValue("Keep this unsent draft");
 
   await run("timeout 15000");
@@ -609,10 +552,11 @@ test.describe("narrow touch reading", () => {
       "Review this document: " + "documentation-reference-".repeat(6);
     fixture.question({
       id: "select-touch",
-      ...choice,
+      method: "select",
+      title: choiceTitle,
       options: [selected, "Code"],
     });
-    const question = page.getByRole("dialog", { name: choice.title });
+    const question = page.getByRole("dialog", { name: choiceTitle });
     await expect
       .poll(() => question.evaluate((el) => el.scrollWidth - el.clientWidth))
       .toBe(0);
@@ -622,6 +566,38 @@ test.describe("narrow touch reading", () => {
       id: "select-touch",
       value: selected,
     });
+    const unsupportedTitle =
+      "Choose files under /workspace/calibration/reference_measurement_comparison_for_multichannel_calibration_and_residual_validation_results.json";
+    fixture.question({
+      id: "choose-files",
+      method: "chooseFiles",
+      title: unsupportedTitle,
+      unsupported: true,
+      payload: { paths: ["report.md"] },
+    });
+    const unsupported = page.getByRole("dialog", {
+      name: unsupportedTitle,
+      exact: true,
+    });
+    await expect
+      .poll(() =>
+        unsupported
+          .locator(".extension-dialog")
+          .evaluate((el) => el.scrollWidth - el.clientWidth),
+      )
+      .toBe(0);
+    await expect(unsupported).toContainText(
+      "Inspire can't handle this extension request",
+    );
+    await unsupported.getByText("Request details", { exact: true }).click();
+    await expect(unsupported.getByText(/report\.md/)).toBeVisible();
+    await unsupported.getByRole("button", { name: "Cancel request" }).click();
+    await expect(unsupported).toHaveCount(0);
+    expect(fixture.responses.at(-1)).toMatchObject({
+      id: "choose-files",
+      cancelled: true,
+    });
+
     const status =
       "Code review ready: Shared interaction. " +
       "Check the shared keyboard and touch behavior. ".repeat(18) +

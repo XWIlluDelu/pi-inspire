@@ -334,31 +334,6 @@ it.each([
   },
 );
 
-it("withholds oversized media before requesting a preview while keeping original download available", async () => {
-  const f = fixture();
-  f.resolveResource.mockResolvedValueOnce({
-    ...image,
-    size: MAX_MEDIA_PREVIEW_BYTES + 1,
-  });
-  f.resourceDownloadTicket.mockResolvedValueOnce(downloadGrant);
-  await f.controller.openResource(image.reference);
-  expect(f.preview()).toMatchObject({
-    status: "ready",
-    contentUnavailable: "too-large",
-  });
-  expect(f.resourceContent).not.toHaveBeenCalled();
-  await f.controller.downloadResource();
-  expect(f.resourceDownloadTicket).toHaveBeenCalledExactlyOnceWith(
-    image.id,
-    "s1",
-    expect.any(AbortSignal),
-  );
-  expect(f.saveDownload).toHaveBeenCalledExactlyOnceWith(
-    `/api/resource-downloads/${ticket}`,
-    image.name,
-  );
-});
-
 it("aborts old content on a newer file choice and never installs its late body", async () => {
   const f = fixture();
   const started = deferred<AbortSignal>();

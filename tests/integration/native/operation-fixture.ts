@@ -31,12 +31,7 @@ const cleanups: Array<() => Promise<void>> = [];
 type ObservedEvent = Record<string, unknown> & { type: string };
 type NativeOperationApi = Pick<
   Api,
-  | "attachmentPreview"
-  | "json"
-  | "navigateBranch"
-  | "pendingOperation"
-  | "prompt"
-  | "snapshot"
+  "attachmentPreview" | "json" | "pendingOperation" | "prompt" | "snapshot"
 > &
   Record<
     "recoverPending" | "abort",
@@ -193,7 +188,10 @@ export async function fixture(
       ),
   };
   await runtime.openSession(sessionId);
-  await runtime.setSteeringMode(sessionId, "one-at-a-time");
+  await runtime.setRuntimeSetting(sessionId, {
+    key: "steeringMode",
+    value: "one-at-a-time",
+  });
   await vi.waitFor(
     async () => {
       const snapshot = await runtime.snapshot(sessionId);

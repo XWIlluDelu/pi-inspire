@@ -65,7 +65,7 @@ import {
 import { TerminalCatalogController } from "../terminal-catalog";
 import {
   isTerminalShortcutTarget,
-  terminalTabShortcutIndex,
+  terminalShortcut,
 } from "../terminal-keyboard";
 import { dismissTerminalMenu, TERMINAL_MENU_SELECTOR } from "../terminal-menus";
 import {
@@ -894,31 +894,32 @@ export const WorkspaceDock = memo(function WorkspaceDock({
       if (
         uiSettings.shortcutMode !== "workbench" ||
         event.defaultPrevented ||
-        isComposingKeyboardEvent(event) ||
-        event.getModifierState("AltGraph") ||
         !(event.target instanceof Element) ||
         !paneRef.current?.contains(event.target) ||
         !event.target.closest('.terminal-pane, [data-dock-tab^="terminal:"]') ||
         !isTerminalShortcutTarget(event.target)
       )
         return;
-      const modifier = !event.altKey && (event.ctrlKey || event.metaKey);
-      const tabIndex = terminalTabShortcutIndex(event);
-      let nextIndex: number | null = null;
-      if (modifier && event.key === "PageDown")
-        nextIndex = Math.max(0, terminals.indexOf(activeTerminal!) + 1);
-      else if (modifier && event.key === "PageUp")
-        nextIndex = terminals.indexOf(activeTerminal!) - 1;
-      else if (tabIndex !== null) nextIndex = tabIndex;
-      else if (modifier && event.shiftKey && event.code === "Backquote") {
+      const shortcut = terminalShortcut(event);
+      if (shortcut === null) return;
+      if (shortcut === "new") {
         event.preventDefault();
         void createTerminal();
         return;
       }
-      if (nextIndex === null || terminals.length === 0) return;
+      if (!terminals.length) return;
       event.preventDefault();
+      const index = activeTerminal ? terminals.indexOf(activeTerminal) : -1;
+      const target =
+        typeof shortcut === "number"
+          ? shortcut
+          : shortcut === "next"
+            ? index + 1
+            : index - 1;
       const terminal =
-        terminals[(nextIndex + terminals.length) % terminals.length];
+        terminals[
+          ((target % terminals.length) + terminals.length) % terminals.length
+        ];
       if (terminal) setActiveId(terminal.id);
     };
     window.addEventListener("keydown", handleShortcut, true);

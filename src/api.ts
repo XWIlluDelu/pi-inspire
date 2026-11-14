@@ -1,8 +1,5 @@
 import type {
-  BranchCloneRequest,
-  BranchForkRequest,
   BranchImageRequest,
-  BranchNavigateRequest,
   CompletionAttentionPreference,
   PendingOperationRequest,
   PendingRecovery,
@@ -597,12 +594,6 @@ export function createApi() {
       withTransportMeasure("bootstrap-metadata", () =>
         call(routes.bootstrap, {}, signal),
       ),
-    update: (refresh = false) =>
-      call(routes.update, { query: { refresh: refresh ? "1" : undefined } }),
-    piUpdate: (refresh = false) =>
-      call(routes.piUpdate, { query: { refresh: refresh ? "1" : undefined } }),
-    snoozeUpdate: (identity: string) =>
-      call(routes.snoozeUpdate, { body: { identity } }),
     snapshot: (sessionId: string | null) =>
       call(routes.snapshot, {
         query: { detail: sessionId === null ? "" : sessionId },
@@ -618,12 +609,6 @@ export function createApi() {
         { query: { ...query, sessionId, viewId } },
         signal,
       ) as Promise<SessionHistoryPages[Q["kind"]]>,
-    lastAssistantText: (
-      sessionId: string,
-      viewId: string,
-      signal?: AbortSignal,
-    ) =>
-      call(routes.lastAssistantText, { query: { sessionId, viewId } }, signal),
     branchImage: async (
       body: BranchImageRequest,
       index: number,
@@ -640,11 +625,6 @@ export function createApi() {
           { signal },
         )
       ).blob,
-    cloneBranch: (body: BranchCloneRequest) =>
-      call(routes.cloneBranch, { body }),
-    navigateBranch: (body: BranchNavigateRequest, signal?: AbortSignal) =>
-      call(routes.navigateBranch, { body }, signal),
-    forkBranch: (body: BranchForkRequest) => call(routes.forkBranch, { body }),
     sessions: (q: string, offset = 0, limit = 40, signal?: AbortSignal) =>
       call(routes.sessions, { query: { q, offset, limit } }, signal),
     sessionsByIds: (ids: string[], signal?: AbortSignal) =>

@@ -1282,17 +1282,6 @@ export interface HostUpdateStatus {
   updateSnoozedUntil: number | null;
 }
 
-/** Source-specific fields remain top-level so an already-loaded client from
- * the preceding release can still read a check while newer clients reconcile
- * the accompanying Host-wide projection. */
-export type InspireUpdateCheckResult = UpdateCheckResponse & {
-  updateStatus: HostUpdateStatus;
-};
-
-export type PiUpdateCheckResult = PiUpdateCheckResponse & {
-  updateStatus: HostUpdateStatus;
-};
-
 export interface UploadedAttachment {
   id: string;
   fileName: string;

@@ -286,160 +286,15 @@ it("retains the original terminal for queued Close and Restart", async () => {
   });
 });
 
-describe("terminal creation controls", () => {
-  it.each([
-    ["ctrlKey", "workbench"],
-    ["metaKey", "workbench"],
-    ["ctrlKey", "shell"],
-  ] as const)(
-    "routes Shift+Backquote with %s in %s mode",
-    async (modifier, shortcutMode) => {
-      saveTerminalUiSettings({ ...DEFAULT_TERMINAL_UI_SETTINGS, shortcutMode });
-      controls.create.mockResolvedValue(terminal("new shell"));
-      render(<WorkspaceDock cwd="/A" />);
-      const target = await screen.findByRole("tab", {
-        name: "A shell",
-        selected: true,
-      });
-      fireEvent.keyDown(target, {
-        key: "~",
-        code: "Backquote",
-        shiftKey: true,
-        [modifier]: true,
-      });
-      if (shortcutMode === "shell") {
-        expect(controls.create).not.toHaveBeenCalled();
-      } else {
-        await screen.findByRole("tab", { name: "new shell", selected: true });
-        expect(controls.create).toHaveBeenCalledExactlyOnceWith({
-          cwd: "/A",
-        });
-      }
-    },
-  );
-
-  const profiles = [
-    { id: "bash", label: "Bash", available: true, isDefault: true },
-    { id: "zsh", label: "Zsh", available: true, isDefault: false },
-  ];
-
-  it("opens profile selection on compact New without creating until a profile is chosen", async () => {
-    vi.spyOn(window, "matchMedia").mockReturnValue({
-      matches: true,
-    } as MediaQueryList);
-    api.terminals.mockResolvedValue({ ...catalog([]), profiles });
-    controls.create.mockResolvedValue(terminal("new zsh"));
-    render(<WorkspaceDock cwd="/A" />);
-    const empty = await screen.findByText("Project terminal", { exact: true });
-    fireEvent.click(
-      within(empty.closest(".terminal-empty")!).getByRole("button", {
-        name: "New terminal",
-      }),
-    );
-    const picker = screen.getByLabelText("Choose terminal profile");
-    expect(picker).toHaveFocus();
-    expect(controls.create).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Zsh" }));
-    await screen.findByRole("tab", { name: "new zsh", selected: true });
-    expect(controls.create).toHaveBeenCalledWith({
-      cwd: "/A",
-      profileId: "zsh",
-    });
-  });
-
-  it.each([
-    {
-      layout: "compact",
-      compact: true,
-      profiles: [profiles[0], { ...profiles[1], available: false }],
-    },
-    { layout: "desktop", compact: false, profiles },
-  ])(
-    "creates the default profile directly on $layout",
-    async ({ compact, profiles }) => {
-      vi.spyOn(window, "matchMedia").mockReturnValue({
-        matches: compact,
-      } as MediaQueryList);
-      api.terminals.mockResolvedValue({ ...catalog([]), profiles });
-      controls.create.mockResolvedValue(terminal("new bash"));
-      render(<WorkspaceDock cwd="/A" />);
-      fireEvent.click(
-        await screen.findByRole("button", { name: "New terminal" }),
-      );
-      await screen.findByRole("tab", { name: "new bash", selected: true });
-      expect(controls.create).toHaveBeenCalledExactlyOnceWith({ cwd: "/A" });
-    },
-  );
-});
-
 describe("terminal project ownership", () => {
-  it("keeps a running terminal when its close confirmation is cancelled", async () => {
-    const running = { ...terminal("busy A"), commandRunning: true };
-    api.terminals.mockResolvedValue(catalog([running]));
-    const confirm = vi.fn(() => false);
-    vi.stubGlobal("confirm", confirm);
-    render(<WorkspaceDock cwd="/A" />);
-    await screen.findByRole("tab", { name: "busy A", selected: true });
-    fireEvent.click(screen.getByRole("button", { name: "Close busy A" }));
-    expect(confirm).toHaveBeenCalledWith(
-      "Close “busy A” and terminate its running process?",
-    );
-    expect(controls.remove).not.toHaveBeenCalled();
-    expect(
-      screen.getByRole("tab", { name: "busy A", selected: true }),
-    ).toBeVisible();
-  });
-
-  it("retains the selected view while hidden without accepting terminal actions", async () => {
-    const view = render(<WorkspaceDock cwd="/A" />);
-    await screen.findByRole("tab", { name: "A shell", selected: true });
-    const second = screen.getByRole("tab", { name: "A second" });
-    fireEvent.click(second);
-    const panel = screen.getByRole("region", { name: "A second terminal" });
-    expect(second).toHaveAttribute(
-      "aria-controls",
-      panel.closest('[role="tabpanel"]')!.id,
-    );
-    const input = await within(panel).findByLabelText("Fixture terminal input");
-    fireEvent.change(input, { target: { value: "unfinished command" } });
-
-    view.rerender(<WorkspaceDock cwd="/A" active={false} />);
-    expect(input).toBeDisabled();
-    act(() => queueTerminalAction("close", "/A"));
-    act(() => queueTerminalAction("restart", "/A"));
-    fireEvent.keyDown(input, { key: "PageUp", ctrlKey: true });
-    expect(controls.remove).not.toHaveBeenCalled();
-    expect(controls.restart).not.toHaveBeenCalled();
-
-    view.rerender(<WorkspaceDock cwd="/A" active />);
-    await screen.findByRole("tab", { name: "A second", selected: true });
-    const reactivated = within(
-      screen.getByRole("region", { name: "A second terminal" }),
-    ).getByLabelText("Fixture terminal input");
-    expect(reactivated).toBeEnabled();
-    expect(reactivated).toHaveValue("unfinished command");
-    expect(controls.create).not.toHaveBeenCalled();
-    act(() => queueTerminalAction("focus", "/A"));
-    const reserved = new KeyboardEvent("keydown", {
-      key: "Escape",
-      ctrlKey: true,
-      shiftKey: true,
-      bubbles: true,
-      cancelable: true,
-    });
-    fireEvent(reactivated, reserved);
-    expect(reserved.defaultPrevented).toBe(false);
-    expect(
-      view.container.querySelector(".terminal-pane--focused"),
-    ).toBeTruthy();
-  });
-
   it("waits until the pane is shown before creating a terminal for queued insertion", async () => {
     api.terminals.mockResolvedValue(catalog([]));
     controls.create.mockResolvedValue(terminal("new shell", "/A", 2));
     const view = render(<WorkspaceDock cwd="/A" />);
     await screen.findByRole("button", { name: "New terminal" });
     view.rerender(<WorkspaceDock cwd="/A" active={false} />);
+    act(() => queueTerminalAction("close", "/A"));
+    act(() => queueTerminalAction("restart", "/A"));
     act(() => queueTerminalInsertion("pending command", "/A"));
     await act(async () => {});
     expect(controls.create).not.toHaveBeenCalled();
@@ -449,6 +304,8 @@ describe("terminal project ownership", () => {
       expect(controls.create).toHaveBeenCalledExactlyOnceWith({ cwd: "/A" }),
     );
     await screen.findByRole("tab", { name: "new shell", selected: true });
+    expect(controls.remove).not.toHaveBeenCalled();
+    expect(controls.restart).not.toHaveBeenCalled();
   });
 
   it("offers local cleanup for confirmed controls and confirms retiring an uncertain control", async () => {

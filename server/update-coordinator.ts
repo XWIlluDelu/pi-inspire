@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
@@ -11,7 +10,7 @@ import {
   type UpdateCheckResponse,
 } from "../shared/contracts.js";
 import type { DiagnosticLogger } from "./diagnostics.js";
-import { inspireStateDirectory } from "./platform-paths.mjs";
+import { inspireStateDirectory, installationKey } from "./platform-paths.mjs";
 import { replacePrivateStateFile } from "./private-state-file.js";
 import { requestError } from "./request-error.js";
 
@@ -73,16 +72,6 @@ function observation<T>(): UpdateObservation<T> {
   return { result: null, expiresAt: 0, flight: null, probing: false };
 }
 
-function deploymentKey(root: string, host: string, port: number): string {
-  return createHash("sha256")
-    .update(resolve(root))
-    .update("\0")
-    .update(host)
-    .update("\0")
-    .update(String(port))
-    .digest("hex");
-}
-
 /** Operational update state follows one stable Host deployment, not a browser
  * origin or the process-lifetime authority id. */
 export function defaultUpdateStatePath(
@@ -93,7 +82,7 @@ export function defaultUpdateStatePath(
   return join(
     inspireStateDirectory(),
     "updates",
-    `${deploymentKey(root, host, port)}.json`,
+    `${installationKey(resolve(root), host, port)}.json`,
   );
 }
 

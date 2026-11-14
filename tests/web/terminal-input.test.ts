@@ -15,7 +15,7 @@ import {
 } from "../../src/terminal-input";
 import {
   isTerminalShortcutTarget,
-  terminalTabShortcutIndex,
+  terminalShortcut,
 } from "../../src/terminal-keyboard";
 
 const ctrl = { ctrl: true, alt: false };
@@ -60,11 +60,15 @@ describe("terminal touch input", () => {
 describe("terminal tab shortcuts", () => {
   it("requires the generated digit to match its physical key", () => {
     const chord = (init: KeyboardEventInit) =>
-      terminalTabShortcutIndex(new KeyboardEvent("keydown", init));
+      terminalShortcut(new KeyboardEvent("keydown", init));
     expect(chord({ key: "9", code: "Digit9", altKey: true })).toBe(8);
     expect(chord({ key: "1", code: "Digit1" })).toBeNull();
     expect(chord({ key: "1", code: "Digit2", altKey: true })).toBeNull();
     expect(chord({ key: "|", code: "Digit7", altKey: true })).toBeNull();
+    expect(
+      chord({ key: "~", code: "Backquote", ctrlKey: true, shiftKey: true }),
+    ).toBe("new");
+    expect(chord({ key: "PageUp", metaKey: true })).toBe("previous");
   });
 
   it.each([
@@ -81,7 +85,7 @@ describe("terminal tab shortcuts", () => {
       altKey: true,
       ...modifiers,
     });
-    expect(terminalTabShortcutIndex(event)).toBeNull();
+    expect(terminalShortcut(event)).toBeNull();
   });
 
   it("leaves native editors and popup descendants in control of their keys", () => {

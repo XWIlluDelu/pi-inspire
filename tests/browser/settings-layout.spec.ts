@@ -44,9 +44,9 @@ test("narrow System keeps update actions stable and copies details while snoozed
     },
   });
   const responseReady = Promise.withResolvers<void>();
-  await page.route(/\/api\/(?:pi-)?update\?refresh=1$/, async (route) => {
+  await page.route("**/api/update?**", async (route) => {
     await responseReady.promise;
-    await route.fulfill({ json: { updateStatus: status } });
+    await route.fulfill({ json: status });
   });
   await page.setViewportSize({ width: 320, height: 900 });
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -542,7 +542,7 @@ test("narrow Settings keeps footer actions usable and preserves preferences afte
     0,
   );
   expect(await installed.evaluate(textOverflowsInlineBounds)).toBe(false);
-  const send = dialog.getByRole("group", { name: "Send key", exact: true });
+  const send = dialog.getByRole("combobox", { name: "Send key", exact: true });
   expect(await send.evaluate(textOverflowsInlineBounds)).toBe(false);
   await reset.click();
   await savePreference(() => confirm.click());

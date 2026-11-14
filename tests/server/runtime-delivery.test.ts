@@ -1,8 +1,6 @@
-import { access, mkdir, rm, writeFile } from "node:fs/promises";
+import { access, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { addAttachmentContext } from "../../server/attachments.js";
-import { MAX_ATTACHMENTS } from "../../shared/contracts.js";
 import {
   PiRpcCancelledError,
   PiRpcOutcomeUnknownError,
@@ -19,14 +17,11 @@ import {
   fixtureWorkspace,
   initializeRuntimeFixture,
   persistedRecord,
-  preview,
-  record,
   startWorker,
   trackedAttachmentStore,
   trackRuntime,
   upload,
 } from "./fixtures/runtime.js";
-import { messageEntry } from "./fixtures/session-jsonl.js";
 
 beforeEach(async () => {
   await initializeRuntimeFixture();
@@ -474,108 +469,4 @@ it("publishes only the owned shell request's bounded output and exact reply", as
   } finally {
     hold.resolve({});
   }
-});
-
-it("checks the recalled view and consumes a full set of attachments while preserving durable files", async () => {
-  const cwd = join(fixtureWorkspace, "project");
-  const store = trackedAttachmentStore();
-  const report = await store.add(upload("report.pdf", "application/pdf"));
-  const {
-    files: [file],
-  } = await store.resolveForPrompt([report.id]);
-  await store.releaseConsumed([report.id]);
-  // Hidden or newly ignored regular project paths retain their native authority.
-  await mkdir(join(cwd, ".settings"));
-  const selected = join(cwd, ".settings", "source.ts");
-  await writeFile(selected, "source");
-  await writeFile(join(cwd, ".gitignore"), ".settings/\n");
-  const forged = join(fixtureWorkspace, "outside-fixture.txt");
-  await writeFile(forged, "not authorized through this workspace");
-  const recalled = { type: "image", data: "cGl4ZWxz", mimeType: "image/png" };
-  const original = addAttachmentContext("original", [file!], [selected]);
-  const f = await fixture({
-    attachments: store,
-    sessions: [record("a", cwd)],
-    openSessionProjection: (session) =>
-      preview(session, [
-        messageEntry("original", null, {
-          role: "user",
-          timestamp: 1,
-          content: [
-            {
-              type: "text",
-              text:
-                original +
-                "\n\n[Image: original 2560x133, displayed at 2000x104. Multiply coordinates by 1.28 to map to original image.]",
-            },
-            recalled,
-          ],
-        }),
-        messageEntry("forged", "original", {
-          role: "user",
-          timestamp: 2,
-          content: addAttachmentContext(
-            "forged",
-            [{ kind: "file", path: forged }],
-            [],
-          ),
-        }),
-      ]),
-  });
-  trackRuntime(f.runtime);
-  await startWorker(f.runtime);
-  const view = (await f.runtime.snapshot("a")).active!.transcriptPage;
-  const history = await f.runtime.sessionHistory("a", view.viewId, {
-    kind: "composer",
-  });
-  const saved = history.entries.find(({ text }) => text === "original")!;
-  const outside = history.entries.find(({ text }) => text === "forged")!;
-  expect(saved.files.map(({ fileName, kind }) => [fileName, kind])).toEqual([
-    ["source.ts", "project"],
-    ["report.pdf", "attachment"],
-  ]);
-  const send = (
-    entry: typeof saved,
-    viewId = history.viewId,
-    attachmentIds?: string[],
-  ) =>
-    f.runtime.prompt({
-      sessionId: "a",
-      message: "again",
-      attachmentIds,
-      historyArtifacts: {
-        viewId,
-        incarnation: history.incarnation ?? null,
-        effectiveLeafId: history.effectiveLeafId ?? null,
-        imageReferences: entry.images.map(({ reference }) => reference),
-        fileReferences: entry.files.map(({ reference }) => reference),
-      },
-    });
-  await expect(send(saved, "different-view")).rejects.toMatchObject({
-    status: 409,
-  });
-  await expect(send(outside)).rejects.toMatchObject({ status: 409 });
-  const images = await store.addMany(
-    Array.from({ length: MAX_ATTACHMENTS - 2 }, (_, index) =>
-      upload(`image-${index}.png`, "image/png"),
-    ),
-  );
-  await send(
-    saved,
-    history.viewId,
-    images.map(({ id }) => id),
-  );
-  const delivery = f.workers[0]!.commands.filter(
-    ({ type }) => type === "prompt",
-  );
-  expect(delivery).toHaveLength(1);
-  expect(delivery[0]).toMatchObject({
-    message: addAttachmentContext("again", [file!], [selected]),
-    images: expect.arrayContaining([recalled]),
-  });
-  expect(delivery[0]!.images).toHaveLength(MAX_ATTACHMENTS - 1);
-  for (const { id } of images)
-    await expect(store.imagePreview(id)).rejects.toMatchObject({ status: 404 });
-  await store.remove(report.id);
-  await expect(access(file!.path)).resolves.toBeUndefined();
 });

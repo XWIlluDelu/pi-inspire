@@ -46,7 +46,6 @@ import {
   type PendingCopyContent,
   type PendingReadRequest,
   type PendingRecovery,
-  type PiMessageDeliveryMode,
   type ProjectionConflict,
   type PromptRequest,
   type SessionDeletionOutcome,
@@ -57,6 +56,7 @@ import {
   type UploadedAttachment,
 } from "../shared/contracts.js";
 import type { SessionHistoryQuery } from "../shared/history-query.js";
+import type { RuntimeSetting } from "../shared/host-endpoints.js";
 import type { TaskNotification, TaskOutcome } from "../shared/notifications.js";
 import {
   PROVIDER_AUTH_SUFFIX,
@@ -5032,49 +5032,24 @@ export class RuntimeController extends EventEmitter {
     );
   }
 
-  setAutoCompaction(sessionId: string, enabled: boolean): Promise<void> {
-    return this.setRuntimeOption(sessionId, {
-      type: "set_auto_compaction",
-      enabled,
-    });
-  }
-
-  setAutoRetry(sessionId: string, enabled: boolean): Promise<void> {
-    return this.setRuntimeOption(sessionId, {
-      type: "set_auto_retry",
-      enabled,
-    });
-  }
-
-  setSteeringMode(
-    sessionId: string,
-    mode: PiMessageDeliveryMode,
-  ): Promise<void> {
-    return this.setRuntimeOption(sessionId, {
-      type: "set_steering_mode",
-      mode,
-    });
-  }
-
-  setFollowUpMode(
-    sessionId: string,
-    mode: PiMessageDeliveryMode,
-  ): Promise<void> {
-    return this.setRuntimeOption(sessionId, {
-      type: "set_follow_up_mode",
-      mode,
-    });
-  }
-
-  private setRuntimeOption(
-    sessionId: string,
-    command:
-      | { type: "set_auto_compaction" | "set_auto_retry"; enabled: boolean }
-      | {
-          type: "set_steering_mode" | "set_follow_up_mode";
-          mode: PiMessageDeliveryMode;
-        },
-  ): Promise<void> {
+  setRuntimeSetting(sessionId: string, setting: RuntimeSetting): Promise<void> {
+    const { key, value } = setting;
+    const command =
+      key === "autoCompactionEnabled" || key === "autoRetryEnabled"
+        ? {
+            type:
+              key === "autoRetryEnabled"
+                ? "set_auto_retry"
+                : "set_auto_compaction",
+            enabled: value,
+          }
+        : {
+            type:
+              key === "steeringMode"
+                ? "set_steering_mode"
+                : "set_follow_up_mode",
+            mode: value,
+          };
     return this.withMaintenanceOperation(async () => {
       const slot = this.requireSlot(sessionId);
       await this.mutateSlot(slot, async () => {

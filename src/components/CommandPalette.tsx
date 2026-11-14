@@ -28,6 +28,7 @@ import {
   queueTerminalAction,
   type TerminalUiAction,
 } from "../terminal-actions";
+import { terminalShortcutLabel } from "../terminal-keyboard";
 import { useSearchFocus } from "../use-search-focus";
 import {
   modelCycleShortcut,
@@ -67,11 +68,10 @@ const workspaceActions = [
 const terminalActions: {
   action: TerminalUiAction;
   title: string;
-  hint?: string;
 }[] = [
-  { action: "new", title: "New terminal", hint: "Ctrl+Shift+`" },
-  { action: "next", title: "Next terminal", hint: "Ctrl+PageDown" },
-  { action: "previous", title: "Previous terminal", hint: "Ctrl+PageUp" },
+  { action: "new", title: "New terminal" },
+  { action: "next", title: "Next terminal" },
+  { action: "previous", title: "Previous terminal" },
   { action: "take-control", title: "Take control of terminal" },
   { action: "restart", title: "Restart terminal" },
   { action: "close", title: "Close terminal" },
@@ -262,11 +262,11 @@ export const CommandPalette = memo(function CommandPalette({
           }),
         ),
         ...terminalActions.map(
-          ({ action, title, hint }): PaletteItem => ({
+          ({ action, title }): PaletteItem => ({
             id: `terminal-${action}`,
             group: "Terminal",
             title,
-            hint,
+            hint: terminalShortcutLabel(action),
             run: runInSession(() => runTerminalAction(action)),
           }),
         ),
@@ -316,6 +316,7 @@ export const CommandPalette = memo(function CommandPalette({
       preferenceChoices,
     ) as (keyof typeof preferenceChoices)[]) {
       const field = preferenceChoices[key];
+      if ("settingsOnly" in field) continue;
       const title = "paletteLabel" in field ? field.paletteLabel : field.label;
       for (const option of field.options)
         actions.push({

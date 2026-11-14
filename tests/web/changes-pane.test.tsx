@@ -1,18 +1,11 @@
 // @vitest-environment jsdom
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  within,
-} from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   GitDiffResponse,
   GitStatusResponse,
 } from "../../shared/contracts";
 import { createInitialAppState } from "../../src/app-state";
-import { ChangesPane } from "../../src/components/ChangesPane";
 import type { ContextPaneView } from "../../src/components/context-pane-view";
 import { selectContextPaneView } from "../../src/components/context-pane-view";
 import { FilePreview } from "../../src/components/FilePreview";
@@ -90,105 +83,7 @@ function readings(): FileReadingState {
   };
 }
 
-it("distinguishes initial Git status loading and failure", () => {
-  const view = render(
-    <ChangesPane state={{ ...initial, gitStatusPending: true }} />,
-  );
-  expect(screen.getByText("Reading Git status")).toBeVisible();
-  view.rerender(
-    <ChangesPane state={{ ...initial, gitStatusError: "Git timed out" }} />,
-  );
-  expect(screen.getByText("Git status unavailable")).toBeVisible();
-});
-
-describe("File Changes rendering and navigation", () => {
-  const path = diff.path;
-
-  it("shows deleted file changes with Source and download disabled", () => {
-    const state = ready();
-    render(
-      <FilePreview
-        state={{
-          ...state,
-          fileInspection: {
-            kind: "file",
-            reference: "notes.md",
-            preview: {
-              status: "error",
-              reference: "notes.md",
-              message: "File was deleted",
-            },
-          },
-        }}
-      />,
-    );
-    expect(
-      screen.getByRole("region", { name: "Source changes for notes.md" }),
-    ).toBeVisible();
-    expect(screen.queryByText("File was deleted")).toBeNull();
-    expect(screen.getByRole("button", { name: "Source" })).toBeDisabled();
-    expect(
-      screen.getByRole("button", { name: "Download unavailable" }),
-    ).toBeDisabled();
-  });
-  const nonTextChanges: [string, GitDiffResponse, string][] = [
-    ["Binary change", { kind: "binary", path }, "no line-based source view"],
-    [
-      "No diff available",
-      { kind: "empty", path, reason: "no-changes" },
-      "Git no longer reports this comparison",
-    ],
-    [
-      "Unresolved conflict",
-      { kind: "conflict", path, code: "UU" },
-      "Conflict state UU",
-    ],
-    [
-      "Submodule change",
-      {
-        kind: "submodule",
-        path,
-        state: {
-          commitChanged: true,
-          trackedModified: false,
-          untracked: false,
-        },
-      },
-      "commit changed",
-    ],
-    [
-      "Source unavailable",
-      { kind: "unsupported", path, reason: "path-encoding" },
-      "cannot be represented as UTF-8",
-    ],
-  ];
-  it.each(nonTextChanges)(
-    "explains %s without showing a diff",
-    (title, result, hint) => {
-      render(<FilePreview state={ready(result)} />);
-      expect(screen.getByText(title)).toBeInTheDocument();
-      expect(screen.getByText(hint, { exact: false })).toBeInTheDocument();
-    },
-  );
-
-  it("distinguishes a truncated diff from omitted context", () => {
-    const renderDiff = (patch: GitDiffResponse) => (
-      <FilePreview state={ready(patch)} />
-    );
-    const { rerender } = render(renderDiff({ ...diff, contextLimited: true }));
-    const source = within(
-      screen.getByRole("region", { name: "Source changes for notes.md" }),
-    );
-    expect(source.getByRole("status")).toHaveTextContent(
-      "source context limited",
-    );
-    rerender(renderDiff({ ...diff, contextLimited: true, truncated: true }));
-    expect(source.getByRole("status")).toHaveTextContent("Source truncated");
-    expect(
-      screen.getByRole("region", { name: "Source changes for notes.md" }),
-    ).toHaveTextContent("New heading");
-  });
-
+describe("File Changes publication", () => {
   it("does not let a queued hunk jump target a newly selected file", () => {
     const callbacks: Array<() => void> = [];
     vi.stubGlobal("requestAnimationFrame", (callback: () => void) => {
@@ -214,9 +109,7 @@ describe("File Changes rendering and navigation", () => {
     expect(scroll).not.toHaveBeenCalled();
     expect(screen.getByLabelText("Change position")).toHaveTextContent("1/2");
   });
-});
 
-describe("Git evidence boundaries", () => {
   it("retains a confirmed empty comparison through refresh only for the same owner", () => {
     const state = { ...ready(), gitStatus: clean, gitDiff: null };
     const pending = { ...state, gitStatusPending: true };

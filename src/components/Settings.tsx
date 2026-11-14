@@ -2,14 +2,11 @@ import {
   Compass,
   Cpu,
   Laptop,
-  Monitor,
-  Moon,
   Palette,
   Puzzle,
   RefreshCw,
   ScrollText,
   Server,
-  Sun,
   Terminal,
 } from "lucide-react";
 import {
@@ -33,7 +30,7 @@ import {
   requestInstall,
   subscribeInstallAvailability,
 } from "../install-app";
-import { preferenceChoices, preferenceOptions } from "../preference-labels";
+import { preferenceChoices } from "../preference-labels";
 import { shallowEqual, store, useAppState } from "../store";
 import { HerdrSettings } from "./HerdrSettings";
 import { HostRestartSettings } from "./HostRestartSettings";
@@ -42,8 +39,6 @@ import { ModelsSettings } from "./ModelsSettings";
 import { PresentationAdapterSettings } from "./PresentationAdapterSettings";
 import { SessionActionsSettings } from "./SessionActionsSettings";
 import {
-  type SettingsChoice as Choice,
-  SegmentedField,
   SelectField,
   SettingField,
   SettingsFeedback,
@@ -55,67 +50,18 @@ import { SettingsConfirmation } from "./SettingsDialog";
 import { SettingsSection as Section } from "./SettingsSection";
 import { SystemVersionsCard } from "./SystemVersionsCard";
 
-const themeIcons = { light: Sun, dark: Moon, system: Monitor };
-const THEMES = preferenceChoices.theme.options.map((option) => {
-  const Icon = themeIcons[option.value];
-  return { ...option, icon: <Icon size={13} aria-hidden /> };
-});
-const CONVERSATION_CHOICES = [
-  "thinkingVisibility",
-  "toolVisibility",
-  "activityFoldVisibility",
-] as const;
+type ChoicePreference = Exclude<keyof typeof preferenceChoices, "palette">;
 
-const segmentedPreferences = {
-  theme: { label: preferenceChoices.theme.label, options: THEMES },
-  contentTextSize: {
-    label: "Content text size",
-    description: "Applies to messages, input, code and previews.",
-    options: preferenceOptions(["compact", "comfortable", "large"]),
-  },
-  readingWidth: {
-    label: "Reading width",
-    description: "Maximum width for messages and input.",
-    options: preferenceOptions(["narrow", "comfortable", "wide"]),
-  },
-  projectDisplay: {
-    label: "Project location",
-    description: "Project name or path in the workbench header.",
-    options: [
-      { value: "folder", label: "Folder name" },
-      { value: "path", label: "Full path" },
-    ],
-  },
-  desktopSendKey: {
-    label: "Send key",
-    description: "Desktop shortcut. Return adds a new line on touch keyboards.",
-    options: [
-      { value: "enter", label: "Enter" },
-      { value: "mod-enter", label: "Ctrl/⌘+Enter" },
-    ],
-  },
-} satisfies {
-  [Key in keyof InspirePreferences as InspirePreferences[Key] extends string
-    ? Key
-    : never]?: {
-    label: string;
-    description?: string;
-    options: readonly Choice<Extract<InspirePreferences[Key], string>>[];
-  };
-};
-
-type SegmentedPreference = keyof typeof segmentedPreferences;
-
-function PreferenceSegments({
+function PreferenceChoice({
   name,
   prefs,
 }: {
-  name: SegmentedPreference;
+  name: ChoicePreference;
   prefs: InspirePreferences;
 }) {
-  const field = segmentedPreferences[name];
+  const field = preferenceChoices[name];
   return (
-    <SegmentedField
+    <SelectField
       label={field.label}
       description={"description" in field ? field.description : undefined}
       value={prefs[name]}
@@ -125,7 +71,10 @@ function PreferenceSegments({
   );
 }
 
-const MESSAGE_DELIVERY_MODES: Choice<PiMessageDeliveryMode>[] = [
+const MESSAGE_DELIVERY_MODES: {
+  value: PiMessageDeliveryMode;
+  label: string;
+}[] = [
   { value: "one-at-a-time", label: "One at a time" },
   { value: "all", label: "All at once" },
 ];
@@ -286,7 +235,7 @@ export const SettingsContent = memo(function SettingsContent({
       >
         <SettingsPage hidden={activeCategory !== "display"}>
           <Section id="display" icon={<Palette size={14} />} title="Display">
-            <PreferenceSegments name="theme" prefs={prefs} />
+            <PreferenceChoice name="theme" prefs={prefs} />
 
             <SettingField label={preferenceChoices.palette.label}>
               <div
@@ -315,7 +264,7 @@ export const SettingsContent = memo(function SettingsContent({
             {(
               ["contentTextSize", "readingWidth", "projectDisplay"] as const
             ).map((name) => (
-              <PreferenceSegments key={name} name={name} prefs={prefs} />
+              <PreferenceChoice key={name} name={name} prefs={prefs} />
             ))}
 
             <SwitchField
@@ -335,34 +284,22 @@ export const SettingsContent = memo(function SettingsContent({
             icon={<ScrollText size={14} />}
             title="Conversation"
           >
-            {CONVERSATION_CHOICES.map((key) => {
-              const field = preferenceChoices[key];
-              return (
-                <SelectField
-                  key={key}
-                  label={field.label}
-                  description={
-                    "description" in field ? field.description : undefined
-                  }
-                  value={prefs[key]}
-                  options={field.options}
-                  onChange={(value) => store.setPreference(key, value)}
-                />
-              );
-            })}
-
-            <PreferenceSegments name="desktopSendKey" prefs={prefs} />
+            {(
+              [
+                "thinkingVisibility",
+                "toolVisibility",
+                "activityFoldVisibility",
+                "desktopSendKey",
+              ] as const
+            ).map((name) => (
+              <PreferenceChoice key={name} name={name} prefs={prefs} />
+            ))}
           </Section>
         </SettingsPage>
 
         <SettingsPage hidden={activeCategory !== "behavior"}>
           <Section id="behavior" icon={<Compass size={14} />} title="Behavior">
-            <SelectField
-              label={preferenceChoices.launch.label}
-              value={prefs.launch}
-              options={preferenceChoices.launch.options}
-              onChange={(value) => store.setPreference("launch", value)}
-            />
+            <PreferenceChoice name="launch" prefs={prefs} />
 
             <SelectField
               label="Task alerts"

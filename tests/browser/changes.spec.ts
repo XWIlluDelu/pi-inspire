@@ -53,6 +53,8 @@ test("@cross-browser keeps compact Changes rows readable through refresh and nav
   const destination = path(`packages/calibration/observations/${name}`);
   const originalPath = path(`packages/calibration/previous/${name}`);
   const deleted = path("deleted.txt");
+  const binary = path("binary.bin");
+  const submodule = path("dependency");
   const opaque = { id: "_w", display: "raw-�.txt" };
   const files = [
     {
@@ -63,6 +65,8 @@ test("@cross-browser keeps compact Changes rows readable through refresh and nav
     { path: path("new.txt"), worktree: { kind: "added" }, untracked: true },
     { path: path("merge.txt"), conflict: { code: "UU" }, untracked: false },
     { path: deleted, worktree: { kind: "deleted" }, untracked: false },
+    { path: binary, worktree: { kind: "modified" }, untracked: false },
+    { path: submodule, worktree: { kind: "modified" }, untracked: false },
     { path: opaque, worktree: { kind: "modified" }, untracked: false },
     ...Array.from({ length: 30 }, (_, index) => ({
       path: path(`updated-${index}.txt`),
@@ -70,7 +74,7 @@ test("@cross-browser keeps compact Changes rows readable through refresh and nav
       untracked: false,
     })),
   ];
-  let unavailable = false;
+  let unavailable = true;
   let clean = false;
   await page.route("**/api/git/status**", (route) =>
     unavailable
@@ -92,6 +96,10 @@ test("@cross-browser keeps compact Changes rows readable through refresh and nav
   const pane = await openResourceFixture(page);
   const tab = pane.getByRole("tab", { name: "Changes", exact: true });
   await tab.click();
+  await expect(pane.getByText("Git status unavailable")).toBeVisible();
+  const refresh = pane.getByRole("button", { name: "Refresh context pane" });
+  unavailable = false;
+  await refresh.click();
   const row = pane.getByRole("button", {
     name: `${destination.display}, renamed, renamed from ${originalPath.display}`,
   });
@@ -112,7 +120,6 @@ test("@cross-browser keeps compact Changes rows readable through refresh and nav
   await expect(
     pane.getByRole("button", { name: "merge.txt, conflict UU" }),
   ).toBeVisible();
-  const refresh = pane.getByRole("button", { name: "Refresh context pane" });
   const stale = pane
     .getByRole("status")
     .filter({ hasText: "Refresh failed; showing the last known status." });
@@ -144,33 +151,72 @@ test("@cross-browser keeps compact Changes rows readable through refresh and nav
     resolvedPaths.push(route.request().postDataJSON().reference);
     return route.continue();
   });
+  const cases = [
+    [
+      deleted,
+      {
+        kind: "text",
+        additions: 0,
+        deletions: 1,
+        truncated: false,
+        encodingLossy: false,
+        lines: [
+          { kind: "delete", text: "-Deleted text", oldLine: 1, newLine: null },
+        ],
+      },
+      "Deleted text",
+    ],
+    [binary, { kind: "binary" }, "Binary change"],
+    [
+      submodule,
+      {
+        kind: "submodule",
+        state: {
+          commitChanged: true,
+          trackedModified: false,
+          untracked: false,
+        },
+      },
+      "commit changed",
+    ],
+    [
+      files.find(({ conflict }) => conflict)!.path,
+      { kind: "conflict", code: "UU" },
+      "Conflict state UU",
+    ],
+    [destination, { kind: "empty", reason: "no-changes" }, "No diff available"],
+    [
+      opaque,
+      { kind: "unsupported", reason: "path-encoding" },
+      "This Git path cannot be represented as UTF-8.",
+    ],
+  ] as const;
   await page.route("**/api/git/diff", (route) => {
     const { pathId } = route.request().postDataJSON();
     requestedPaths.push(pathId);
-    return route.fulfill({
-      json:
-        pathId === opaque.id
-          ? { kind: "unsupported", reason: "path-encoding", path: opaque }
-          : { kind: "binary", path: deleted },
-    });
+    const match = cases.find(([path]) => path.id === pathId);
+    return match
+      ? route.fulfill({ json: { ...match[1], path: match[0] } })
+      : route.continue();
   });
-  for (const path of [deleted, opaque]) {
+  for (const [path, result, label] of cases) {
     await tab.click();
-    await pane.getByRole("button", { name: new RegExp(path.display) }).click();
+    await pane.locator(`[data-git-path=${JSON.stringify(path.id)}]`).click();
     await expect(
-      pane.getByRole("tab", { name: path.display, exact: true }),
-    ).toHaveAttribute("aria-selected", "true");
-    await expect(
-      pane.getByText(
-        path === opaque
-          ? "This Git path cannot be represented as UTF-8."
-          : "Binary change",
-        { exact: true },
-      ),
+      pane.getByText(label, { exact: result.kind !== "text" }),
     ).toBeVisible();
+    if (path === deleted) {
+      await expect(
+        pane.getByRole("button", { name: "Source", exact: true }),
+      ).toBeDisabled();
+      await expect(
+        pane.getByRole("button", { name: "Download unavailable" }),
+      ).toBeDisabled();
+    }
   }
-  expect(requestedPaths).toEqual([deleted.id, opaque.id]);
-  expect(resolvedPaths).toEqual([deleted.display]);
+  expect(requestedPaths).toEqual(cases.map(([path]) => path.id));
+  expect(resolvedPaths).toContain(deleted.display);
+  expect(resolvedPaths).not.toContain(opaque.display);
   await pane.getByRole("button", gitToggle).click();
   await expect(
     pane.getByText("This Git path has no readable workspace file."),
@@ -193,14 +239,21 @@ test.describe("narrow Changes controls", () => {
     page,
   }) => {
     let fail = true;
-    await page.route("**/api/git/diff", (route) =>
-      fail
-        ? route.fulfill({
-            status: 503,
-            json: { error: "Repository temporarily unavailable" },
-          })
-        : route.continue(),
-    );
+    let truncated = false;
+    await page.route("**/api/git/diff", async (route) => {
+      if (fail)
+        return route.fulfill({
+          status: 503,
+          json: { error: "Repository temporarily unavailable" },
+        });
+      const response = await route.fetch();
+      const diff = (await response.json()) as GitDiffResponse;
+      if (diff.kind === "text") {
+        diff.contextLimited = true;
+        diff.truncated = truncated;
+      }
+      await route.fulfill({ response, json: diff });
+    });
     const pane = await openResourceFixture(page);
     await openPreviewFixture(pane, "vector.svg");
     await selectBody(pane);
@@ -223,7 +276,12 @@ test.describe("narrow Changes controls", () => {
     await checkKeyboardFocus(retry);
     fail = false;
     await retry.press("Enter");
-    await expect(source).toBeVisible();
+    await expect(source.getByRole("status")).toContainText(
+      "source context limited",
+    );
+    truncated = true;
+    await pane.getByRole("button", { name: "Refresh context pane" }).click();
+    await expect(source.getByRole("status")).toContainText("Source truncated");
     const copy = pane.getByRole("button", {
       name: /^(Copy path |Path copied$)/,
     });

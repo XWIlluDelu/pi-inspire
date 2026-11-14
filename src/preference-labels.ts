@@ -18,6 +18,36 @@ export const preferenceChoices = {
     label: "Theme",
     options: preferenceOptions(["light", "dark", "system"]),
   },
+  contentTextSize: {
+    settingsOnly: true,
+    label: "Content text size",
+    description: "Applies to messages, input, code and previews.",
+    options: preferenceOptions(["compact", "comfortable", "large"]),
+  },
+  readingWidth: {
+    settingsOnly: true,
+    label: "Reading width",
+    description: "Maximum width for messages and input.",
+    options: preferenceOptions(["narrow", "comfortable", "wide"]),
+  },
+  projectDisplay: {
+    settingsOnly: true,
+    label: "Project location",
+    description: "Project name or path in the workbench header.",
+    options: [
+      { value: "folder", label: "Folder name" },
+      { value: "path", label: "Full path" },
+    ],
+  },
+  desktopSendKey: {
+    settingsOnly: true,
+    label: "Send key",
+    description: "Desktop shortcut. Return adds a new line on touch keyboards.",
+    options: [
+      { value: "enter", label: "Enter" },
+      { value: "mod-enter", label: "Ctrl/⌘+Enter" },
+    ],
+  },
   palette: {
     label: "Color palette",
     paletteLabel: "Palette",
@@ -74,6 +104,7 @@ export const preferenceChoices = {
     label: string;
     description?: string;
     paletteLabel?: string;
+    settingsOnly?: true;
     options: ReadonlyArray<{
       value: InspirePreferences[Key];
       label: string;

@@ -285,8 +285,16 @@ describe("ordinary HTTP observation", () => {
       const invoke = () =>
         reason === "deadline"
           ? api.json("openSession", { body: { id: "s1" } }, owner.signal)
-          : api.navigateBranch(
-              { sessionId: "s1", revision: 1, targetId: "t1", mode: "switch" },
+          : api.json(
+              "navigateBranch",
+              {
+                body: {
+                  sessionId: "s1",
+                  revision: 1,
+                  targetId: "t1",
+                  mode: "switch",
+                },
+              },
               owner.signal,
             );
       const result = expect(invoke()).rejects.toMatchObject(
@@ -319,10 +327,8 @@ describe("ordinary HTTP observation", () => {
       const result = (
         operation === "create"
           ? api.json("newSession", { body: { cwd: "/workspace" } })
-          : api.forkBranch({
-              sessionId: "s1",
-              viewId: "view-1",
-              targetId: "t1",
+          : api.json("forkBranch", {
+              body: { sessionId: "s1", viewId: "view-1", targetId: "t1" },
             })
       ).catch((error: unknown) => error);
       await vi.advanceTimersByTimeAsync(120_000);

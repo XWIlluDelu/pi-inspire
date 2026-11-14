@@ -11,7 +11,10 @@ import {
   openProjectTerminal,
   pairAndOpen,
 } from "./support/navigation";
-import { terminalWriteCommand } from "./support/terminal-command";
+import {
+  terminalNodeCommand,
+  terminalWriteCommand,
+} from "./support/terminal-command";
 import { terminalOperation } from "./support/terminal-operations";
 import {
   observeTerminalSocket,
@@ -408,34 +411,23 @@ test("project terminals and a lost create response survive browser reload", {
 
 test("terminal menus fit the narrow pane and Escape restores their individual owners", async ({
   page,
-  fixtures,
 }) => {
   await page.setViewportSize({ width: 320, height: 900 });
   await page.emulateMedia({ reducedMotion: "reduce" });
   await pairAndOpen(page);
-  const terminal = await fixtures.create();
-  const projectTerminals = [
-    ["Atlas dev", "/Clients/Atlas", "make atlas"],
-    ["Atlas logs", "/Clients/Atlas", "bash"],
-    ["Atlas demo", "C:\\Samples\\Atlas", "bash"],
-    ["Orion dev", "/Clients/Orion", "bash"],
-  ].map(([title, projectCwd, currentCommand], index) => ({
-    ...terminal,
-    id: `navigator-${index}`,
-    title,
-    projectCwd,
-    currentCommand,
-  }));
+  const { profiles: shellProfiles } = await terminalCatalog(page);
+  const shell = shellProfiles.find(
+    (profile) => profile.available && profile.isDefault,
+  )!;
   const defaultLabel = "CalibrationResearchEnvironmentShell";
+  const alternative = "光谱校准与测量不确定度分析专用交互环境";
   const profiles = [
     { id: "research", label: defaultLabel, available: true, isDefault: true },
-    {
-      id: "spectrometry",
-      label: "光谱校准与测量不确定度分析专用交互环境",
-      available: true,
-      isDefault: false,
-    },
+    { id: shell.id, label: alternative, available: true, isDefault: false },
   ];
+  let terminal:
+    | Awaited<ReturnType<typeof terminalCatalog>>["terminals"][number]
+    | undefined;
   await page.route(/\/api\/terminals(?:\?|$)/, (route) =>
     route.fetch().then(async (response) =>
       route.fulfill({
@@ -443,18 +435,49 @@ test("terminal menus fit the narrow pane and Escape restores their individual ow
         json: {
           ...(await response.json()),
           profiles,
-          ...(new URL(route.request().url()).searchParams.has("cwd")
+          ...(!terminal ||
+          new URL(route.request().url()).searchParams.has("cwd")
             ? {}
-            : { terminals: projectTerminals }),
+            : {
+                terminals: [
+                  ["Atlas dev", "/Clients/Atlas", "make atlas"],
+                  ["Atlas logs", "/Clients/Atlas", "bash"],
+                  ["Atlas demo", "C:\\Samples\\Atlas", "bash"],
+                  ["Orion dev", "/Clients/Orion", "bash"],
+                ].map(([title, projectCwd, currentCommand], index) => ({
+                  ...terminal,
+                  id: `navigator-${index}`,
+                  title,
+                  projectCwd,
+                  currentCommand,
+                })),
+              }),
         },
       }),
     ),
   );
   await openFixtureTerminal(page);
-  await expect(terminalStatus(page)).toBeVisible();
-
-  const actions = page.getByLabel("Terminal actions", { exact: true });
+  await page
+    .locator(".terminal-empty")
+    .getByRole("button", { name: "New terminal" })
+    .click();
   const picker = page.getByLabel("Choose terminal profile", { exact: true });
+  await expect(picker).toBeFocused();
+  expect((await terminalCatalog(page)).terminals).toEqual([]);
+  const create = page.waitForRequest(
+    (request) =>
+      request.method() === "POST" &&
+      new URL(request.url()).pathname === "/api/terminal-operations" &&
+      request.postDataJSON()?.intent?.command === "create",
+  );
+  await page.getByRole("button", { name: alternative }).click();
+  expect((await create).postDataJSON().intent.params.request).toEqual({
+    cwd: browserWorkspace,
+    profileId: shell.id,
+  });
+  await expect(terminalStatus(page)).toBeVisible();
+  [terminal] = (await terminalCatalog(page)).terminals;
+  const actions = page.getByLabel("Terminal actions", { exact: true });
   const projects = page.getByLabel("Terminals in all projects", {
     exact: true,
   });
@@ -539,6 +562,11 @@ test("terminal menus fit the narrow pane and Escape restores their individual ow
 
   await page.keyboard.press("Escape");
   await expect(page.locator(".ctx")).toHaveCount(0);
+  const removed = await terminalOperation(page, {
+    command: "remove",
+    params: { id: terminal!.id, force: true },
+  });
+  expect(removed.ok()).toBe(true);
 });
 
 // Playwright's physical chords cannot produce a character from a foreign
@@ -693,6 +721,58 @@ for (const platform of ["Win32", "MacIntel"]) {
     await expect.poll(bytes).toBe(initial + character);
     const firstTab = terminalTab(page, firstId);
     await expect(firstTab).toHaveAttribute("aria-selected", "true");
+
+    const chord = `${mac ? "Meta" : "Control"}+Shift+Backquote`;
+    const create = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/terminal-operations" &&
+        response.request().method() === "POST" &&
+        response.request().postDataJSON()?.intent?.command === "create",
+    );
+    await input.press(chord);
+    const response = await create;
+    expect(response.ok()).toBe(true);
+    expect(response.request().postDataJSON().intent.params.request).toEqual({
+      cwd: browserWorkspace,
+    });
+    const { result: created } = await response.json();
+    await expect(terminalTab(page, created.id)).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await firstTab.click();
+    const removed = await terminalOperation(page, {
+      command: "remove",
+      params: { id: created.id, force: true },
+    });
+    expect(removed.ok()).toBe(true);
+    const setShortcutPriority = async (name: "Shell" | "Workbench") => {
+      await (await terminalAction(page, "Settings")).click();
+      const dialog = page.getByRole("dialog", { name: "Terminal settings" });
+      await dialog
+        .getByRole("button", { name: "Interaction", exact: true })
+        .click();
+      await dialog
+        .getByRole("combobox", { name: "Terminal shortcut priority" })
+        .selectOption({ label: name });
+      await dialog
+        .getByRole("button", { name: "Close terminal settings" })
+        .click();
+    };
+    await setShortcutPriority("Shell");
+    expect(
+      await replayLayoutKey(firstTab, {
+        key: "~",
+        code: "Backquote",
+        shiftKey: true,
+        ctrlKey: !mac,
+        metaKey: mac,
+      }),
+    ).toBe(false);
+    expect((await terminalCatalog(page)).terminals.map(({ id }) => id)).toEqual(
+      secondId ? [firstId, secondId] : [firstId],
+    );
+    await setShortcutPriority("Workbench");
 
     if (secondId) {
       const beforeTabs = bytes();
@@ -904,6 +984,56 @@ test("terminal search, last output, and asynchronous paste follow the active tab
   await searchInput.press("Escape");
   await expect(searchInput).toBeHidden();
   await expect(input).toBeFocused();
+
+  const selected = terminalTab(page, firstId);
+  await expect(selected).toHaveAttribute(
+    "aria-controls",
+    (await activeTerminal(page)
+      .locator("xpath=ancestor::*[@role='tabpanel']")
+      .getAttribute("id"))!,
+  );
+  const draft = "UNFINISHED_TERMINAL_LINE";
+  await input.pressSequentially(draft);
+  const files = page.getByRole("tab", { name: "Files", exact: true });
+  await files.click();
+  await expect(input).toBeHidden();
+  await selectTab(firstId);
+  await expect(output).toContainText(draft);
+  expect((await terminalCatalog(page)).terminals.map(({ id }) => id)).toEqual([
+    firstId,
+    secondId,
+  ]);
+  await input.press(process.platform === "win32" ? "Escape" : "Control+u");
+  await input.pressSequentially(
+    terminalNodeCommand(
+      "process.stdout.write(String.fromCharCode(27)+']6973;C1;busy'+String.fromCharCode(7));console.log('Busy proces'+'s');setInterval(()=>{},1000)",
+    ),
+  );
+  await input.press("Enter");
+  await expect(output).toContainText("Busy process");
+  await expect
+    .poll(
+      async () =>
+        (await terminalCatalog(page)).terminals.find(({ id }) => id === firstId)
+          ?.commandRunning,
+    )
+    .toBe(true);
+  const refresh = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === "/api/terminals",
+  );
+  await page.getByRole("button", { name: "Refresh context pane" }).click();
+  await refresh;
+  await expect(terminalStatus(page)).toBeVisible();
+  const close = selected.locator("..").getByRole("button", { name: /^Close / });
+  let confirmation: string | undefined;
+  page.once("dialog", async (dialog) => {
+    confirmation = dialog.message();
+    await dialog.dismiss();
+  });
+  await close.click();
+  expect(confirmation).toMatch(/and terminate its running process/);
+  await expect(selected).toHaveAttribute("aria-selected", "true");
+  await expect(terminalStatus(page)).toBeVisible();
 });
 
 test.describe("touch terminal", () => {

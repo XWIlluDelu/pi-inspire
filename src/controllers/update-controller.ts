@@ -20,7 +20,7 @@ interface UpdateControllerState {
   updateSnoozedUntil: number | null;
 }
 
-type UpdateApi = Pick<Api, "update" | "piUpdate" | "snoozeUpdate">;
+type UpdateApi = Pick<Api, "json">;
 const UPDATE_KINDS = ["inspire", "pi"] as const;
 type UpdateKind = (typeof UPDATE_KINDS)[number];
 
@@ -114,11 +114,11 @@ export class UpdateController {
   }
 
   refreshInspire(): void {
-    this.check("inspire", (api) => api.update(true));
+    this.check("inspire");
   }
 
   refreshPi(): void {
-    this.check("pi", (api) => api.piUpdate(true));
+    this.check("pi");
   }
 
   snooze(): void {
@@ -129,7 +129,7 @@ export class UpdateController {
     this.snoozeIntent = intent;
     const owns = () => this.snoozeIntent === intent && api === this.host.api();
     void api
-      .snoozeUpdate(intent.identity)
+      .json("snoozeUpdate", { body: { identity } })
       .then((status) => {
         if (!owns()) return;
         this.applyStatus(checkedStatus(status));
@@ -148,10 +148,7 @@ export class UpdateController {
     this.checks.delete(kind);
   }
 
-  private check(
-    kind: UpdateKind,
-    perform: (api: UpdateApi) => Promise<{ updateStatus: HostUpdateStatus }>,
-  ): void {
+  private check(kind: UpdateKind): void {
     const api = this.host.api();
     const state = this.host.state();
     const pendingField = `${kind}UpdateRequestPending` as const;
@@ -166,9 +163,11 @@ export class UpdateController {
     const run = async () => {
       if (!owns()) return;
       try {
-        const result = await perform(api);
+        const result = await api.json("checkUpdates", {
+          query: { kind, refresh: "1" },
+        });
         if (!owns()) return;
-        const status = checkedStatus(result.updateStatus);
+        const status = checkedStatus(result);
         this.retireCheck(kind);
         patchRequest(false);
         this.applyStatus(status);

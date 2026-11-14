@@ -1,6 +1,5 @@
 /* Shared surface and action styles for compact menus. */
 .choice-panel__body,
-.model-picker__menu,
 .terminal-menu__popover,
 .completion {
   padding: var(--space-1);
@@ -20,13 +19,15 @@
 }
 .choice-panel__body[hidden] { display: none; }
 
-.choice-panel__body--search {
-  z-index: 42;
+.choice-panel__body--search,
+.choice-panel__body.model-picker__menu {
   display: flex;
   flex-direction: column;
   overflow: hidden;
   padding: 0;
 }
+
+.choice-panel__body--search { z-index: 42; }
 
 .choice-panel__body--reader {
   z-index: 45;

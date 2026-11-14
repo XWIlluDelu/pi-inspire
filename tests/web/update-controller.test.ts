@@ -2,12 +2,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   type HostUpdateStatus,
-  type InspireUpdateCheckResult,
   type PiUpdateCheckResponse,
-  type PiUpdateCheckResult,
   type UpdateCheckResponse,
 } from "../../shared/contracts";
-import { ApiError } from "../../src/api";
+import { type Api, ApiError } from "../../src/api";
 import { UpdateController } from "../../src/controllers/update-controller";
 import { AppStore } from "../../src/store";
 import { sessionPage } from "./fixtures/session-catalog";
@@ -73,27 +71,6 @@ function updateStatus(
   };
 }
 
-function inspireResult(
-  updateStatus: HostUpdateStatus,
-): InspireUpdateCheckResult {
-  return {
-    ...(updateStatus.inspireUpdateCheck ?? { kind: "unavailable" }),
-    updateStatus,
-  };
-}
-
-function piResult(updateStatus: HostUpdateStatus): PiUpdateCheckResult {
-  return {
-    ...(updateStatus.piUpdateCheck ?? {
-      currentVersion: "0.84.2",
-      installedVersion: null,
-      pi: { kind: "unavailable" },
-      extensions: { kind: "unavailable" },
-    }),
-    updateStatus,
-  };
-}
-
 function harness() {
   let state: State = {
     inspireUpdateCheck: null,
@@ -109,13 +86,26 @@ function harness() {
   };
   const notify = vi.fn();
   const api = {
-    update: vi.fn(async () =>
-      inspireResult(updateStatus(2, { inspireUpdateCheck: available() })),
+    update: vi.fn(async (_force?: boolean) =>
+      updateStatus(2, { inspireUpdateCheck: available() }),
     ),
-    piUpdate: vi.fn<(force?: boolean) => Promise<PiUpdateCheckResult>>(),
+    piUpdate: vi.fn<(force?: boolean) => Promise<HostUpdateStatus>>(),
     snoozeUpdate: vi.fn<(identity: string) => Promise<HostUpdateStatus>>(),
   };
-  let current = api;
+  const json = ((
+    name: string,
+    input: {
+      query?: { kind: string; refresh: string };
+      body?: { identity: string };
+    },
+  ) => {
+    if (name === "snoozeUpdate") return api.snoozeUpdate(input.body!.identity);
+    const query = input.query!;
+    return (query.kind === "pi" ? api.piUpdate : api.update)(
+      query.refresh === "1",
+    );
+  }) as Api["json"];
+  let current = { json };
   const controller = new UpdateController({
     state: () => state,
     patch: (patch) => {
@@ -133,7 +123,7 @@ function harness() {
       state = { ...state, ...controller.bootstrap(status) };
     },
     replaceTransport: () => {
-      current = { ...api };
+      current = { json };
       controller.invalidateForTransportReplacement();
     },
   };
@@ -188,12 +178,10 @@ describe("update status controller", () => {
     });
 
     test.api.piUpdate.mockResolvedValue(
-      piResult(
-        updateStatus(2, {
-          inspireUpdateCheck: previous,
-          piUpdateCheck: piAvailable(),
-        }),
-      ),
+      updateStatus(2, {
+        inspireUpdateCheck: previous,
+        piUpdateCheck: piAvailable(),
+      }),
     );
     test.controller.refreshPi();
     await vi.runAllTimersAsync();
@@ -216,7 +204,7 @@ describe("update status controller", () => {
   it("stops scheduled recovery and ignores lost HTTP replies once the Host observes execution", async () => {
     vi.useFakeTimers();
     const test = harness();
-    const pending = deferred<PiUpdateCheckResult>();
+    const pending = deferred<HostUpdateStatus>();
     test.api.update.mockRejectedValue(new ApiError(503, "Unavailable"));
     test.api.piUpdate.mockReturnValueOnce(pending.promise);
     test.controller.refreshInspire();
@@ -260,7 +248,7 @@ describe("update status controller", () => {
   it("retires a replaced transport's recovery and late reply while retaining observed Host work", async () => {
     vi.useFakeTimers();
     const test = harness();
-    const pending = deferred<PiUpdateCheckResult>();
+    const pending = deferred<HostUpdateStatus>();
     test.api.update.mockRejectedValueOnce(new ApiError(503, "Unavailable"));
     test.api.piUpdate.mockReturnValueOnce(pending.promise);
     test.controller.refreshInspire();
@@ -268,9 +256,7 @@ describe("update status controller", () => {
     await vi.advanceTimersByTimeAsync(0);
     test.controller.applySnapshot(updateStatus(1, { piUpdateChecking: true }));
     test.replaceTransport();
-    pending.resolve(
-      piResult(updateStatus(10, { piUpdateCheck: piAvailable() })),
-    );
+    pending.resolve(updateStatus(10, { piUpdateCheck: piAvailable() }));
     await vi.runAllTimersAsync();
 
     expect(test.api.update).toHaveBeenCalledOnce();
@@ -291,7 +277,7 @@ describe("update status controller", () => {
     vi.useFakeTimers();
     const test = harness();
     const initial = updateStatus(1);
-    const pending = deferred<InspireUpdateCheckResult>();
+    const pending = deferred<HostUpdateStatus>();
     test.bootstrap(initial);
     test.api.update.mockReturnValueOnce(pending.promise);
 
@@ -308,12 +294,10 @@ describe("update status controller", () => {
     });
     test.controller.applyEvent({ type: "update_status", updateStatus: newer });
     pending.resolve(
-      inspireResult(
-        updateStatus(7, {
-          inspireUpdateCheck: available(),
-          availableUpdateIdentity: "older-set",
-        }),
-      ),
+      updateStatus(7, {
+        inspireUpdateCheck: available(),
+        availableUpdateIdentity: "older-set",
+      }),
     );
     await vi.runAllTimersAsync();
     expect(test.state()).toMatchObject({

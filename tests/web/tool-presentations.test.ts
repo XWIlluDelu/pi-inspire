@@ -55,12 +55,12 @@ describe("declarative tool presentation rules", () => {
     },
     mappings: { grep: "user.fff.grep" },
   });
+  const registry = createToolPresentationRegistry({
+    userRules: compileToolPresentationRules(configuration),
+    userMappings: configuration.mappings,
+  });
 
   it("compiles an explicit override and parses grouped custom search output", () => {
-    const registry = createToolPresentationRegistry({
-      userRules: compileToolPresentationRules(configuration),
-      userMappings: configuration.mappings,
-    });
     const presentation = registry.resolve({
       call: call("grep", { pattern: "needle", path: "src" }),
       result: result(
@@ -102,10 +102,6 @@ describe("declarative tool presentation rules", () => {
   });
 
   it("bounds declarative structured output without discarding the selected rule", () => {
-    const registry = createToolPresentationRegistry({
-      userRules: compileToolPresentationRules(configuration),
-      userMappings: configuration.mappings,
-    });
     const output = [
       "src/large.ts",
       ...Array.from(
@@ -184,10 +180,6 @@ describe("declarative tool presentation rules", () => {
   });
 
   it("returns raw fallback when selected data does not match the declaration", () => {
-    const registry = createToolPresentationRegistry({
-      userRules: compileToolPresentationRules(configuration),
-      userMappings: configuration.mappings,
-    });
     expect(
       registry.resolve({ call: call("grep", { path: "src" }) }),
     ).toBeNull();
@@ -232,7 +224,7 @@ describe("declarative tool presentation rules", () => {
     ).toBe(false);
   });
 
-  it("rejects executable or expensive summary shapes at validation", () => {
+  it("rejects executable HTML at validation", () => {
     const unsafe = {
       version: 1,
       rules: {
@@ -411,6 +403,63 @@ describe("shipped Pi tool rules", () => {
     ]);
   });
 
+  it.each([
+    ["streaming", { path: 12, edits: [{ oldText: "", newText: "" }] }],
+    ["streaming", { path: "a", edits: null }],
+    ["streaming", { path: "a", edits: [7] }],
+    ["streaming", { path: "a", edits: [{ oldText: false }] }],
+    ["streaming", { path: "a", newText: 5 }],
+    ["completed", {}],
+    ["completed", { path: "a", edits: [] }],
+    ["completed", { path: "a", edits: [{ oldText: "a" }] }],
+    ["completed", { path: "a", newText: "b" }],
+  ] as const)(
+    "rejects malformed %s native edit arguments: %j",
+    (phase, args) => {
+      const toolCall = call("edit", args);
+      expect(
+        toolPresentationRegistry.resolve({
+          call:
+            phase === "streaming"
+              ? {
+                  ...toolCall,
+                  __inspireToolCall: { phase, characters: 0, truncated: false },
+                }
+              : toolCall,
+        }),
+      ).toBeNull();
+    },
+  );
+
+  it("shows applied edits only when the result carries an authoritative patch", () => {
+    const path = "src/experiment.ts";
+    const toolCall = call("edit", {
+      path,
+      edits: [{ oldText: "before", newText: "after" }],
+    });
+    const patch = `--- ${path}\n+++ ${path}\n@@ -1 +1 @@\n-applied before\n+applied after\n`;
+    const blocks = (output?: ChatMessage) =>
+      toolPresentationRegistry
+        .resolve({ call: toolCall, result: output })
+        ?.blocks();
+    const requested = {
+      type: "replacement",
+      label: "Requested replacement",
+      path,
+      oldText: "before",
+      newText: "after",
+    };
+    expect(blocks()).toEqual([requested]);
+    expect(
+      blocks(result("done", { diff: "-1 ignored\n+1 ignored", patch })),
+    ).toEqual([{ type: "diff", label: "Applied changes", path, text: patch }]);
+    expect(blocks(result("rejected", { patch }, true))).toEqual([
+      requested,
+      expect.objectContaining({ label: "Error", text: "rejected" }),
+    ]);
+    expect(blocks(result("done", { diff: "-1 a\n+1 b" }))).toBeNull();
+  });
+
   it("groups native grep matches and separates authoritative limit metadata", () => {
     const presentation = toolPresentationRegistry.resolve({
       call: call("grep", {
@@ -423,6 +472,8 @@ describe("shipped Pi tool rules", () => {
         [
           "a.ts-4- before",
           "a.ts:5: needle here",
+          "a.ts-5- needle here",
+          "a.ts-5- changed context",
           "a.ts-6- after",
           "b.ts:9: another needle",
           "",
@@ -440,6 +491,7 @@ describe("shipped Pi tool rules", () => {
           matches: [
             { line: 4, text: "before", match: false },
             { line: 5, text: "needle here", match: true },
+            { line: 5, text: "changed context", match: false },
             { line: 6, text: "after", match: false },
           ],
         },

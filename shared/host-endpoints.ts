@@ -11,7 +11,6 @@ import {
   type HostRootsResponse,
   type HostUpdateStatus,
   type InspirePreferences,
-  type InspireUpdateCheckResult,
   MAX_CURATED_SESSION_RESULTS,
   MAX_SESSION_CWD_HYDRATION_CWDS,
   MAX_SESSION_ID_CHARS,
@@ -19,7 +18,6 @@ import {
   MAX_SESSION_LIST_PAGE_SIZE,
   type ModelSelectionResponse,
   type PendingCopyContent,
-  type PiUpdateCheckResult,
   type PreferencePublication,
   type ProjectDirEntry,
   type ResourceDescriptor,
@@ -377,11 +375,11 @@ export const hostEndpoints = {
     { timeoutMs: 10_000 },
   ),
   bootstrap: endpoint<BootstrapResponse>()("get", "/api/bootstrap"),
-  update: endpoint<InspireUpdateCheckResult>()("get", "/api/update", {
-    query: z.object({ refresh: z.string().optional() }),
-  }),
-  piUpdate: endpoint<PiUpdateCheckResult>()("get", "/api/pi-update", {
-    query: z.object({ refresh: z.string().optional() }),
+  checkUpdates: endpoint<HostUpdateStatus>()("get", "/api/update", {
+    query: z.object({
+      kind: z.enum(["inspire", "pi"]),
+      refresh: z.literal("1").optional(),
+    }),
   }),
   snoozeUpdate: endpoint<HostUpdateStatus>()("post", "/api/update/snooze", {
     body: updateSnoozeSchema,

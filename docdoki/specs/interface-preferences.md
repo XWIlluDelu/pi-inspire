@@ -159,7 +159,8 @@ a fresh resource scan and package update results cannot establish current-worker
   endpoint and package-manager observation. INSΠRE distinguishes no published release from a failed
   check.
 - Available Pi, extension, and INSΠRE updates share one notice that opens Settings at System.
-  Host snapshots, status events, and results own execution state. Browser request-pending state
+  Both explicit checks return the same update status as Host snapshots and status events.
+  Browser request-pending state
   separately prevents duplicate clicks until Host execution is observed; the button uses one
   `Checking…` state throughout. Transient request failures recover with bounded backoff, keeping
   previous results. Observed Host execution ends request recovery, including when its HTTP response

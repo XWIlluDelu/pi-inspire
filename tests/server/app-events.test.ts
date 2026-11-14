@@ -159,12 +159,11 @@ describe("WebSocket observation and transport limits", () => {
   it("isolates socket detail while delivering global outcomes, needs-input and update acknowledgements", async () => {
     await runtime.openSession("fixture-active");
     await runtime.openSession("fixture-history");
-    await fixture.localRequest.get("/api/update").expect(200);
+    await fixture.localRequest.get("/api/update?kind=inspire").expect(200);
     const observed = await fixture.localRequest
-      .get("/api/pi-update")
+      .get("/api/update?kind=pi")
       .expect(200);
-    const identity = observed.body.updateStatus
-      .availableUpdateIdentity as string;
+    const identity = observed.body.availableUpdateIdentity as string;
     const a = await connect("detail=fixture-active");
     let secondSocket: WebSocket | undefined;
     try {

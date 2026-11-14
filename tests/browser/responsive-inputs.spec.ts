@@ -92,12 +92,8 @@ test("@cross-browser live text-size changes reflow the same draft across layouts
       .getByRole("button", { name: "Display", exact: true })
       .click();
     await settings
-      .getByRole("group", { name: "Content text size" })
-      .getByRole("button", {
-        name,
-        exact: true,
-      })
-      .click();
+      .getByRole("combobox", { name: "Content text size", exact: true })
+      .selectOption({ label: name });
     await page.keyboard.press("Escape");
     await expect(settings).toBeHidden();
   }

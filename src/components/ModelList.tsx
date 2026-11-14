@@ -96,7 +96,6 @@ export function ModelList({
   initialQuery = "",
   status,
   onSelect,
-  onKeyDown,
   autoFocus = false,
   searchAction,
   placeholder,
@@ -110,7 +109,6 @@ export function ModelList({
   initialQuery?: string;
   status?: string | null;
   onSelect?: (model: ModelOption) => void;
-  onKeyDown?: (event: KeyboardEvent) => void;
   autoFocus?: boolean;
   searchAction?: ReactNode;
   placeholder?: string;
@@ -177,8 +175,7 @@ export function ModelList({
   useSearchFocus(autoFocus, inputRef, list.scrollRef);
   const navigate = (event: KeyboardEvent) => {
     if (isComposingKeyboardEvent(event.nativeEvent)) return;
-    if (!list.navigate(event, options, pick, { edges: true }))
-      onKeyDown?.(event);
+    list.navigate(event, options, pick, { edges: true });
   };
   return (
     <>

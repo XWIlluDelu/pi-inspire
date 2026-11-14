@@ -25,14 +25,17 @@ describe("worker-confirmed retry observation", () => {
     trackRuntime(runtime);
     await runtime.openSession("a");
     await startWorker(runtime);
-    await runtime.setAutoRetry("a", false);
+    await runtime.setRuntimeSetting("a", {
+      key: "autoRetryEnabled",
+      value: false,
+    });
     expect(
       (await runtime.snapshot("a")).active?.runtimeSettings?.autoRetryEnabled,
     ).toBe(false);
     f.worker.confirmRetryState = false;
-    await expect(runtime.setAutoRetry("a", true)).rejects.toThrow(
-      "Pi did not confirm effective retry state",
-    );
+    await expect(
+      runtime.setRuntimeSetting("a", { key: "autoRetryEnabled", value: true }),
+    ).rejects.toThrow("Pi did not confirm effective retry state");
     expect(
       (await runtime.snapshot("a")).active?.runtimeSettings?.autoRetryEnabled,
     ).toBeNull();

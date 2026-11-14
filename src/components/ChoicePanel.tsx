@@ -89,10 +89,11 @@ export function AnchoredPanel({
   onKeyDown,
   role = "dialog",
   readOnly = false,
+  modelPicker,
   children,
 }: {
   id?: string;
-  label: string;
+  label?: string;
   open: boolean;
   anchorRef: RefObject<HTMLButtonElement | null>;
   onClose(): void;
@@ -102,10 +103,12 @@ export function AnchoredPanel({
   role?: "dialog" | "menu";
   /** A scrollable reader is the focus target and portals out of clipped chrome. */
   readOnly?: boolean;
+  modelPicker?: { busy: boolean };
   children: ReactNode;
 }) {
   const panel = useRef<HTMLDivElement>(null);
-  const menu = role === "menu";
+  const model = modelPicker !== undefined;
+  const menu = !model && role === "menu";
   const portal = menu || readOnly;
   const target = useCallback(() => {
     const context = anchorRef.current;
@@ -120,7 +123,7 @@ export function AnchoredPanel({
           context,
           ...(searchable && context.form ? [context.form] : []),
         ],
-        preferredWidth: menu ? undefined : (constraints?.maxWidth ?? 270),
+        preferredWidth: constraints || menu ? undefined : 270,
       }
     );
   }, [anchorRef, menu, portal, searchable, constraints]);
@@ -132,7 +135,7 @@ export function AnchoredPanel({
   const shown = open && placement !== null;
   useFloatingMenuDismissal(open, anchorRef, panel, onClose);
   useEffect(() => {
-    if (!shown) return;
+    if (!shown || model) return;
     if (readOnly || (searchable && isTouchFirstDevice())) {
       panel.current?.focus({ preventScroll: true });
       return;
@@ -144,21 +147,25 @@ export function AnchoredPanel({
       ":is(input, select, button):enabled",
     );
     (current ?? first)?.focus({ preventScroll: !current });
-  }, [shown, searchable, readOnly]);
+  }, [shown, searchable, readOnly, model]);
+  if (model && !shown) return null;
   const body = (
     // biome-ignore lint/a11y/useAriaPropsSupportedByRole: Both supported roles, menu and dialog, accept an accessible name.
     <div
       id={id}
       ref={panel}
       className={
-        searchable
-          ? "choice-panel__body choice-panel__body--search"
-          : readOnly
-            ? "choice-panel__body choice-panel__body--reader"
-            : "choice-panel__body"
+        model
+          ? "choice-panel__body model-picker__menu"
+          : searchable
+            ? "choice-panel__body choice-panel__body--search"
+            : readOnly
+              ? "choice-panel__body choice-panel__body--reader"
+              : "choice-panel__body"
       }
-      role={role}
+      role={model ? undefined : role}
       aria-label={label}
+      aria-busy={modelPicker?.busy}
       data-placement={placement?.direction}
       hidden={!shown}
       tabIndex={readOnly ? 0 : searchable ? -1 : undefined}
@@ -175,7 +182,11 @@ export function AnchoredPanel({
           : undefined
       }
       onKeyDown={(event) => {
-        if (isComposingKeyboardEvent(event.nativeEvent)) return;
+        if (
+          event.defaultPrevented ||
+          isComposingKeyboardEvent(event.nativeEvent)
+        )
+          return;
         if (event.key === "Escape" || (portal && event.key === "Tab")) {
           if (event.key === "Escape") {
             event.preventDefault();

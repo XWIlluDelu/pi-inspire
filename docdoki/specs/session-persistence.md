@@ -6,7 +6,7 @@ covers:
   - server/attach-control.ts
   - extensions/inspire-session-bridge.ts
   - server/pi-rpc.ts
-  - server/session-{projection,preview,jsonl,metadata,tree}.ts
+  - server/session-{projection,jsonl,metadata,tree,document-worker,search,search-worker,fork,fork-worker}.ts
   - server/persisted-json.ts
   - server/resources.ts
   - tests/server/runtime*.test.ts
@@ -146,6 +146,8 @@ restage the input. An observer timeout proves neither failure nor exit. Conflict
 
 Inspire never starts a second worker for a session it owns or modifies source JSONL while that
 runtime owns it. The fork helper uses only a private verified snapshot and a new destination.
+Saved search and branch copying run in bounded threads. The Host joins the copy thread's exit
+before releasing its staging directory.
 `RuntimeController` owns the registry, selection, mutation gates and command facade. Its bounded
 collaborators own slot construction, process identity, attestation, lifecycle, reclamation and
 reconciliation; none keeps a parallel catalog, projection authority or persistence lane.

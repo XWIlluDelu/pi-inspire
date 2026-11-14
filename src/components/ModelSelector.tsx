@@ -6,11 +6,8 @@ import {
   modelIdentityKey,
 } from "../../shared/contracts";
 import { isComposingKeyboardEvent } from "../keyboard-input";
-import {
-  type FloatingMenuConstraints,
-  useFloatingMenuDismissal,
-  useFloatingMenuPlacement,
-} from "../use-floating-menu";
+import type { FloatingMenuConstraints } from "../use-floating-menu";
+import { AnchoredPanel } from "./ChoicePanel";
 import { ModelList } from "./ModelList";
 import { PiLoader } from "./PiLoader";
 
@@ -53,9 +50,7 @@ export function ModelSelector({
   onManageModels?: () => void;
   selectCurrent?: boolean;
 }) {
-  const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
   const handledOpenRequest = useRef<number | null>(null);
   const [open, setOpen] = useState(false);
   const [initialQuery, setInitialQuery] = useState("");
@@ -63,22 +58,6 @@ export function ModelSelector({
   const refreshing = refreshStatus === undefined && Boolean(refreshModels);
   const isDisabled =
     disabled || (!models.length && !refreshModels && !onManageModels);
-  const resolveMenuTarget = useCallback(() => {
-    const root = rootRef.current,
-      trigger = triggerRef.current;
-    if (!root || !trigger) return null;
-    return {
-      context: root,
-      anchor: trigger.getBoundingClientRect(),
-      positioningRoot: trigger.closest<HTMLElement>(".overlay"),
-      observe: [trigger],
-    };
-  }, []);
-  const placement = useFloatingMenuPlacement(
-    open,
-    resolveMenuTarget,
-    MODEL_MENU_CONSTRAINTS,
-  );
   const show = useCallback(
     (query = "") => {
       if (isDisabled) return;
@@ -112,15 +91,13 @@ export function ModelSelector({
       current = false;
     };
   }, [open, isDisabled, refreshModels]);
-  useFloatingMenuDismissal(open, rootRef, menuRef, () => setOpen(false));
-  const restoreTriggerFocus = () =>
+  const close = () => setOpen(false);
+  const pick = (model: ModelOption) => {
+    if (isDisabled) return;
+    close();
     requestAnimationFrame(() =>
       triggerRef.current?.focus({ preventScroll: true }),
     );
-  const pick = (model: ModelOption) => {
-    if (isDisabled) return;
-    setOpen(false);
-    restoreTriggerFocus();
     if (
       selectCurrent ||
       !value ||
@@ -128,23 +105,9 @@ export function ModelSelector({
     )
       onChange(model.provider, model.id);
   };
-  const onMenuKey = (event: React.KeyboardEvent) => {
-    if (event.defaultPrevented || isComposingKeyboardEvent(event.nativeEvent))
-      return;
-    if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      setOpen(false);
-      restoreTriggerFocus();
-    } else if (event.key === "Tab") {
-      if (onManageModels && !event.shiftKey) return;
-      setOpen(false);
-      triggerRef.current?.focus({ preventScroll: true });
-    }
-  };
   const display = value?.name ?? value?.id ?? emptyLabel;
   return (
-    <div className="model-picker" ref={rootRef}>
+    <div className="model-picker">
       <button
         ref={triggerRef}
         type="button"
@@ -162,8 +125,21 @@ export function ModelSelector({
         }
         onClick={() => (open ? setOpen(false) : show())}
         onKeyDown={(event) => {
-          if (open) onMenuKey(event);
-          else if (["ArrowDown", "ArrowUp", "Enter", " "].includes(event.key)) {
+          if (isComposingKeyboardEvent(event.nativeEvent)) return;
+          if (open) {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              event.stopPropagation();
+              close();
+            } else if (
+              event.key === "Tab" &&
+              (!onManageModels || event.shiftKey)
+            ) {
+              close();
+            }
+          } else if (
+            ["ArrowDown", "ArrowUp", "Enter", " "].includes(event.key)
+          ) {
             event.preventDefault();
             show();
           }
@@ -178,65 +154,50 @@ export function ModelSelector({
           <ChevronDown size={11} aria-hidden />
         )}
       </button>
-      {open && placement ? (
-        <div
-          ref={menuRef}
-          className="model-picker__menu"
-          data-placement={placement.direction}
-          aria-busy={refreshing && models.length === 0}
-          style={{
-            left: placement.left,
-            top: placement.top,
-            bottom: placement.bottom,
-            width: placement.width,
-            maxHeight: placement.maxHeight,
-          }}
-        >
-          <ModelList
-            key={openRequest?.id}
-            models={models}
-            value={value}
-            recent={recent}
-            common={common}
-            initialQuery={initialQuery}
-            status={
-              refreshStatus ??
-              (refreshing && !models.length ? "Loading models…" : null)
-            }
-            onSelect={pick}
-            onKeyDown={onMenuKey}
-            autoFocus
-          />
-          {onManageModels ? (
-            <button
-              type="button"
-              className="model-picker__manage"
-              onClick={() => {
-                if (isDisabled) return;
-                setOpen(false);
-                onManageModels();
-              }}
-              onKeyDown={(event) => {
-                if (
-                  event.key === "Escape" &&
-                  !isComposingKeyboardEvent(event.nativeEvent)
-                ) {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  setOpen(false);
-                  restoreTriggerFocus();
-                }
-                if (event.key === "Tab" && !event.shiftKey) {
-                  setOpen(false);
-                  triggerRef.current?.focus({ preventScroll: true });
-                }
-              }}
-            >
-              Manage models
-            </button>
-          ) : null}
-        </div>
-      ) : null}
+      <AnchoredPanel
+        open={open}
+        anchorRef={triggerRef}
+        onClose={close}
+        constraints={MODEL_MENU_CONSTRAINTS}
+        modelPicker={{ busy: refreshing && !models.length }}
+        onKeyDown={(event) => {
+          if (event.key !== "Tab") return;
+          const onManage =
+            event.target instanceof Element &&
+            Boolean(event.target.closest(".model-picker__manage"));
+          if (onManageModels && onManage === event.shiftKey) return;
+          close();
+          triggerRef.current?.focus({ preventScroll: true });
+        }}
+      >
+        <ModelList
+          key={openRequest?.id}
+          models={models}
+          value={value}
+          recent={recent}
+          common={common}
+          initialQuery={initialQuery}
+          status={
+            refreshStatus ??
+            (refreshing && !models.length ? "Loading models…" : null)
+          }
+          onSelect={pick}
+          autoFocus
+        />
+        {onManageModels ? (
+          <button
+            type="button"
+            className="model-picker__manage"
+            onClick={() => {
+              if (isDisabled) return;
+              setOpen(false);
+              onManageModels();
+            }}
+          >
+            Manage models
+          </button>
+        ) : null}
+      </AnchoredPanel>
     </div>
   );
 }

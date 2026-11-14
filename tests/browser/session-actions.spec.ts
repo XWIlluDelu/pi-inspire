@@ -120,6 +120,17 @@ test.describe("phone session actions", () => {
       await page.reload();
       await openSettings(page);
       await page.getByRole("button", { name: "Behavior", exact: true }).tap();
+      const copyUp = page.getByRole("button", {
+        name: "Move Copy session ID up",
+      });
+      const copyDown = page.getByRole("button", {
+        name: "Move Copy session ID down",
+      });
+      await copyUp.press("Enter");
+      await expect(copyUp).toBeDisabled();
+      await expect(copyDown).toBeFocused();
+      await copyDown.press("Enter");
+      await expect(copyDown).toBeFocused();
       await page.getByRole("button", { name: "Move Export session… up" }).tap();
       await expect
         .poll(savedOrder)

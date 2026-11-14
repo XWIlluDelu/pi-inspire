@@ -6,12 +6,6 @@ import {
 } from "react";
 import { NativeSelect } from "./NativeSelect";
 
-export interface SettingsChoice<T extends string> {
-  value: T;
-  label: string;
-  icon?: ReactNode;
-}
-
 export function SettingsLayout<Category extends string>({
   label,
   categories,
@@ -186,39 +180,6 @@ export function SelectField<Value extends string>({
       {...{ label, description, status, feedback, className, layout }}
     >
       <NativeSelect label={controlLabel ?? label} {...select} />
-    </SettingField>
-  );
-}
-
-export function SegmentedField<T extends string>({
-  label,
-  controlLabel = label,
-  description,
-  value,
-  options,
-  onChange,
-}: Pick<FieldDetails, "label" | "description"> & {
-  controlLabel?: string;
-  value: T;
-  options: readonly SettingsChoice<T>[];
-  onChange: (value: T) => void;
-}) {
-  return (
-    <SettingField label={label} description={description}>
-      <div className="segmented" role="group" aria-label={controlLabel}>
-        {options.map((option) => (
-          <button
-            type="button"
-            key={option.value}
-            className={`segmented__item${value === option.value ? " segmented__item--active" : ""}`}
-            onClick={() => onChange(option.value)}
-            aria-pressed={value === option.value}
-          >
-            {option.icon}
-            <span>{option.label}</span>
-          </button>
-        ))}
-      </div>
     </SettingField>
   );
 }

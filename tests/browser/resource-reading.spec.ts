@@ -455,27 +455,6 @@ test("unavailable conversation image references keep their captions aligned", as
   }
 });
 
-test("file actions stay available above the narrow reader", async ({
-  page,
-}) => {
-  const pane = await openReadingPane(page, 320);
-  await openPreviewFixture(pane, "document.md");
-  const header = pane.getByRole("toolbar", { name: "File actions" });
-  const heading = pane.getByRole("heading", {
-    name: "Observation log · Station 07",
-  });
-  await expect(heading).toBeVisible();
-  await expect(
-    header.getByRole("button", { name: "Source", exact: true }),
-  ).toBeVisible();
-  const actions = (await header.boundingBox())!;
-  const opening = (await heading.boundingBox())!.y;
-  expect(opening).toBeGreaterThanOrEqual(actions.y + actions.height);
-  expect(
-    await pane.evaluate((el) => el.scrollWidth <= el.clientWidth + 1),
-  ).toBe(true);
-});
-
 test("Markdown and notebook prose follow reading size without scaling resource chrome", async ({
   page,
 }) => {
@@ -501,9 +480,8 @@ test("Markdown and notebook prose follow reading size without scaling resource c
         .getByRole("button", { name: "Display", exact: true })
         .click();
       await settings
-        .getByRole("group", { name: "Content text size", exact: true })
-        .getByRole("button", { name: label, exact: true })
-        .click();
+        .getByRole("combobox", { name: "Content text size", exact: true })
+        .selectOption({ label: label });
       await settings.press("Escape");
       for (const file of ["document.md", "notebook.ipynb"]) {
         await openPreviewFixture(pane, file);
@@ -523,7 +501,7 @@ test("Markdown and notebook prose follow reading size without scaling resource c
   }
 });
 
-test("a long failed download notice wraps without hiding its preview", async ({
+test("keeps the narrow file reader and toolbar usable after a long download refusal", async ({
   page,
 }) => {
   const pane = await openReadingPane(page, 320, 420);
@@ -540,6 +518,13 @@ test("a long failed download notice wraps without hiding its preview", async ({
     }),
   );
   await openPreviewFixture(pane, "document.md");
+  const header = pane.getByRole("toolbar", { name: "File actions" });
+  await expect(
+    header.getByRole("button", { name: "Source", exact: true }),
+  ).toBeVisible();
+  expect(
+    await pane.evaluate((el) => el.scrollWidth <= el.clientWidth + 1),
+  ).toBe(true);
   await pane
     .getByRole("button", { name: "Download document.md", exact: true })
     .click();
@@ -555,9 +540,10 @@ test("a long failed download notice wraps without hiding its preview", async ({
   });
   await expect(heading).toBeVisible();
   const bounds = (await notice.boundingBox())!;
-  expect((await heading.boundingBox())!.y).toBeGreaterThan(
-    bounds.y + bounds.height,
-  );
+  const opening = (await heading.boundingBox())!.y;
+  const actions = (await header.boundingBox())!;
+  expect(opening).toBeGreaterThan(bounds.y + bounds.height);
+  expect(opening).toBeGreaterThanOrEqual(actions.y + actions.height);
 });
 
 test("BOM text previews decode Unicode and download original bytes", {

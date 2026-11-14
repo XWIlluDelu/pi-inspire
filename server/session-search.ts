@@ -1,9 +1,9 @@
-import { Worker } from "node:worker_threads";
 import type { SessionCatalogIssue } from "../shared/contracts.js";
+import { runSessionDocumentWorker } from "./session-document-worker.js";
 import type { SessionRecord } from "./session-metadata.js";
 
 /** Full-body parsing and fuzzy/regex work must not monopolize the Host. */
-export function searchSessionRecords(
+export async function searchSessionRecords(
   sessions: readonly SessionRecord[],
   query: string,
   signal?: AbortSignal,
@@ -11,66 +11,23 @@ export function searchSessionRecords(
   /** Receives a bounded body excerpt for matches with a contiguous hit. */
   snippets?: Map<string, string>,
 ): Promise<SessionRecord[]> {
-  signal?.throwIfAborted();
-  const source = import.meta.url.endsWith(".ts");
-  const entry = new URL(
-    `./session-search-worker.${source ? "ts" : "js"}`,
-    import.meta.url,
-  );
-  const bootstrap = source
-    ? `import { register } from ${JSON.stringify(import.meta.resolve("tsx/esm/api"))}; register(); await import(${JSON.stringify(entry.href)});`
-    : `await import(${JSON.stringify(entry.href)});`;
-  const worker = new Worker(
-    new URL(`data:text/javascript,${encodeURIComponent(bootstrap)}`),
+  const result = await runSessionDocumentWorker<{
+    ids: string[];
+    issues: SessionCatalogIssue[];
+    snippets?: Record<string, string>;
+  }>(
+    "search",
+    { sessions, query, partial: Boolean(issues) },
     {
-      workerData: {
-        sessions,
-        query,
-        partial: Boolean(issues),
-      },
+      signal,
+      timeoutMs: 30_000,
+      timeoutMessage: "Session search exceeded 30 seconds; simplify the query",
     },
   );
-  return new Promise((resolve, reject) => {
-    const cancel = () =>
-      finish(signal?.reason ?? new Error("Session search cancelled"));
-    // A pathological regex is terminable even while matching is synchronous.
-    const timer = setTimeout(
-      () =>
-        finish(
-          new Error("Session search exceeded 30 seconds; simplify the query"),
-        ),
-      30_000,
-    );
-    const finish = (error?: unknown, ids?: string[]) => {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", cancel);
-      worker.removeAllListeners();
-      void worker.terminate();
-      if (error) reject(error);
-      else {
-        const matched = new Set(ids);
-        resolve(sessions.filter((session) => matched.has(session.id)));
-      }
-    };
-    signal?.addEventListener("abort", cancel, { once: true });
-    worker.once(
-      "message",
-      (result: {
-        ids: string[];
-        issues: SessionCatalogIssue[];
-        snippets?: Record<string, string>;
-      }) => {
-        issues?.push(...result.issues);
-        for (const [id, snippet] of Object.entries(result.snippets ?? {}))
-          snippets?.set(id, snippet);
-        finish(undefined, result.ids);
-      },
-    );
-    worker.once("error", (error) => finish(error));
-    worker.once("exit", (code) =>
-      finish(
-        new Error(`Session search worker exited without a result (${code})`),
-      ),
-    );
-  });
+  signal?.throwIfAborted();
+  issues?.push(...result.issues);
+  for (const [id, snippet] of Object.entries(result.snippets ?? {}))
+    snippets?.set(id, snippet);
+  const matched = new Set(result.ids);
+  return sessions.filter((session) => matched.has(session.id));
 }

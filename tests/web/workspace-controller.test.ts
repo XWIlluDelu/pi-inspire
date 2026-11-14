@@ -130,30 +130,6 @@ describe("WorkspaceController", () => {
     });
   });
 
-  it("publishes only the newest search", async () => {
-    const first = deferred<{ files: Array<{ name: string; path: string }> }>();
-    const second = deferred<{ files: Array<{ name: string; path: string }> }>();
-    const harness = createHarness();
-    harness.searchFiles
-      .mockReturnValueOnce(first.promise)
-      .mockReturnValueOnce(second.promise);
-
-    harness.controller.setQuery("old");
-    harness.controller.setQuery("new");
-    second.resolve({ files: [{ name: "new.ts", path: "src/new.ts" }] });
-    await second.promise;
-    await Promise.resolve();
-    first.resolve({ files: [{ name: "old.ts", path: "src/old.ts" }] });
-    await first.promise;
-    await Promise.resolve();
-
-    expect(harness.state()).toMatchObject({
-      workspaceQuery: "new",
-      workspaceMatches: [{ name: "new.ts", path: "src/new.ts" }],
-      workspaceSearchLoading: false,
-    });
-  });
-
   it("shares directory reads, reveals each ancestor and refreshes only the current tree", async () => {
     const harness = createHarness();
     harness.listFiles.mockResolvedValue({ entries: [] });
@@ -278,7 +254,7 @@ describe("WorkspaceController", () => {
     });
   });
 
-  it("retires queued retries on workspace, visibility, query and transport replacement", async () => {
+  it("retires queued retries on workspace, query and transport replacement", async () => {
     vi.useFakeTimers();
     const harness = createHarness();
     harness.listFiles.mockRejectedValue(new ApiError(503, "temporary"));
@@ -293,35 +269,29 @@ describe("WorkspaceController", () => {
     expect(harness.listFiles).toHaveBeenCalledTimes(1);
     expect(harness.searchFiles).toHaveBeenCalledTimes(1);
 
-    const hiddenRoot = harness.controller.loadDirectory("");
-    harness.controller.setQuery("hidden");
-    await vi.advanceTimersByTimeAsync(0);
-    harness.listFiles.mockResolvedValue({ entries: [] });
-    harness.searchFiles.mockResolvedValue({ files: [] });
-    harness.controller.setShowHidden(true);
-    await hiddenRoot;
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(harness.listFiles).toHaveBeenCalledTimes(3);
-    expect(harness.searchFiles).toHaveBeenCalledTimes(3);
-
-    harness.searchFiles.mockRejectedValueOnce(new ApiError(503, "old query"));
+    harness.searchFiles
+      .mockRejectedValueOnce(new ApiError(503, "old query"))
+      .mockResolvedValue({
+        files: [{ name: "current.ts", path: "current.ts" }],
+      });
     harness.controller.setQuery("old");
     await vi.advanceTimersByTimeAsync(0);
     harness.controller.setQuery("new");
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(harness.searchFiles).toHaveBeenCalledTimes(5);
+    expect(harness.searchFiles).toHaveBeenCalledTimes(3);
+    expect(harness.state().workspaceMatches).toEqual([
+      { name: "current.ts", path: "current.ts" },
+    ]);
 
-    harness.listFiles.mockRejectedValue(new ApiError(503, "old transport"));
     const oldTransport = harness.controller.loadDirectory("src");
     await vi.advanceTimersByTimeAsync(0);
     harness.replaceTransport();
     harness.controller.invalidateForTransportReplacement();
     await oldTransport;
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(harness.listFiles).toHaveBeenCalledTimes(4);
+    expect(harness.listFiles).toHaveBeenCalledTimes(2);
     expect(harness.state()).toMatchObject({
       ...emptyWorkspaceBrowserState(),
-      workspaceShowHidden: true,
       workspaceQuery: "new",
       workspaceSearchLoading: true,
     });

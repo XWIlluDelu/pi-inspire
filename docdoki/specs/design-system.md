@@ -585,18 +585,16 @@ with actions before feedback; meaningful feedback remains readable in normal flo
 blank space for routine progress. Cards and sections do not clip menus or focus. Checked switches use
 the shared accent fill/foreground pair, and category/palette selection retains explicit markers.
 
-Settings and Terminal settings share 32px mouse / 40px touch fields, switches, steppers and
-segmented controls. Native selects, segments and the palette grid share a choice-column width.
-Segments use a recessed group with a neutral selected surface and edge; named palettes use independent
-bordered tiles with an accent-tinted selected surface and accent border. Both keep stronger selected
-weight and theme-accent text. Palette names/hue markers stay visible; section icons use accent ink
-and headings stay neutral.
+Settings and Terminal settings share 32px mouse / 40px touch fields, switches and steppers.
+Ordinary finite choices use native selects. Selects and the palette grid share a choice-column
+width. Named palettes use independent bordered tiles with a tinted selected surface, accent
+border and stronger text. Palette names and hue markers stay visible; section icons use accent
+ink and headings stay neutral.
 
 Fields wrap controls according to available space and keep descriptions readable. Narrow cards let
-wrapped controls fill the row; switches, font steppers and model summaries remain compact, and segment
-labels never wrap. Neighboring segment rows stack alike in narrow Terminal cards. In narrow model
-settings, group labels align with model names and empty default values use their text width instead
-of reserving the choice column. Herdr availability/restart notes are unboxed, with each
+wrapped controls fill the row; switches, font steppers and model summaries remain compact. In
+narrow model settings, group labels align with model names and empty default values use their text
+width instead of reserving the choice column. Herdr availability/restart notes are unboxed, with each
 message and its associated action wrapping as separate items. Disabled controls remain legible and
 distinct from available choices.
 

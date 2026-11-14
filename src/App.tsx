@@ -885,7 +885,7 @@ export function App() {
         if (
           !store.getState().sessionId ||
           target?.closest(
-            ".xterm, .choice-panel__body, .model-picker__menu, [role=listbox], [role=menu]",
+            ".xterm, .choice-panel__body, [role=listbox], [role=menu]",
           ) ||
           (combobox &&
             (!draft || combobox.getAttribute("aria-expanded") !== "false")) ||
@@ -893,7 +893,7 @@ export function App() {
         )
           return;
         event.preventDefault();
-        runModelCycle(cycleAction);
+        void runModelCycle(cycleAction);
         return;
       }
       const action = workbenchShortcut(event);

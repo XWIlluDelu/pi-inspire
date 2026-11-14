@@ -687,29 +687,11 @@ export function createInspireServer(deps: AppDependencies): {
     currentBrowserBuild,
   );
 
-  jsonRoute(app, routes.update, async ({ query }) => {
-    const updateStatus = await updateCoordinator.checkInspire(
-      query.refresh === "1",
-    );
-    return {
-      ...(updateStatus.inspireUpdateCheck ?? { kind: "unavailable" as const }),
-      updateStatus,
-    };
-  });
-
-  jsonRoute(app, routes.piUpdate, async ({ query }) => {
-    const updateStatus = await updateCoordinator.checkPi(query.refresh === "1");
-    return {
-      ...(updateStatus.piUpdateCheck ?? {
-        currentVersion: deps.piVersion,
-        installedVersion: null,
-        pi: { kind: "unavailable" as const },
-        extensions: { kind: "unavailable" as const },
-      }),
-      updateStatus,
-    };
-  });
-
+  jsonRoute(app, routes.checkUpdates, ({ query: { kind, refresh } }) =>
+    kind === "inspire"
+      ? updateCoordinator.checkInspire(refresh === "1")
+      : updateCoordinator.checkPi(refresh === "1"),
+  );
   jsonRoute(app, routes.snoozeUpdate, ({ body }) =>
     updateCoordinator.dismiss(body.identity),
   );
@@ -1131,20 +1113,7 @@ export function createInspireServer(deps: AppDependencies): {
     app,
     routes.setRuntimeSetting,
     async ({ body: { sessionId, setting } }) => {
-      switch (setting.key) {
-        case "autoCompactionEnabled":
-          await deps.runtime.setAutoCompaction(sessionId, setting.value);
-          break;
-        case "autoRetryEnabled":
-          await deps.runtime.setAutoRetry(sessionId, setting.value);
-          break;
-        case "steeringMode":
-          await deps.runtime.setSteeringMode(sessionId, setting.value);
-          break;
-        case "followUpMode":
-          await deps.runtime.setFollowUpMode(sessionId, setting.value);
-          break;
-      }
+      await deps.runtime.setRuntimeSetting(sessionId, setting);
       return { ok: true };
     },
   );

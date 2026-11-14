@@ -1525,38 +1525,11 @@ export class AppStore {
     return command ? this.executeNativeCommand(command, false) : false;
   };
 
-  sendPreparedCommand = async (
+  sendPreparedCommand = (
     input: string,
     behavior?: "steer" | "followUp",
-  ): Promise<PromptAcceptedResponse | false> => {
-    const invocation = resolveCommandInput(
-      input,
-      resolveCommandInventory(this.state.commands),
-    );
-    if (!invocation) {
-      this.notify("warning", "Enter a slash command to prepare");
-      return false;
-    }
-    const native = nativeCommand(invocation.name);
-    if (native)
-      return this.executeNativeCommand(
-        { ...invocation, descriptor: native },
-        false,
-      );
-    if (!invocation.command || invocation.command.source === "builtin") {
-      this.notify(
-        "warning",
-        "This command is no longer available in the selected session",
-      );
-      return false;
-    }
-    return this.composer.send(
-      `/${invocation.name} ${invocation.argument}`.trimEnd(),
-      invocation.command.source === "extension" ? undefined : behavior,
-      undefined,
-      true,
-    );
-  };
+  ): Promise<PromptAcceptedResponse | false> =>
+    this.dispatchComposerInput(input, behavior, undefined, true);
 
   /** Shared confirmation boundary for both live controls and pre-session selections. */
   selectStatusControl = async (
@@ -1822,9 +1795,9 @@ export class AppStore {
       let noResponse = false;
       void writeCopyContent(
         copyLoader(async (signal) => {
-          const { text } = await api.lastAssistantText(
-            sessionId,
-            viewId,
+          const { text } = await api.json(
+            "lastAssistantText",
+            { query: { sessionId, viewId } },
             signal,
           );
           noResponse = text === null;
@@ -1921,20 +1894,38 @@ export class AppStore {
       const receipt = this.composer.retryIfTracking(sessionId);
       if (receipt) return receipt;
     }
-    if (message.trim().startsWith("!"))
-      return this.composer.send(message.trim(), undefined, editorDraft);
-    if (!message.trimStart().startsWith("/"))
-      return this.composer.send(message, behavior, editorDraft);
-    const invocation = resolveCommandInput(
-      message,
-      resolveCommandInventory(this.state.commands),
-    );
-    const native = invocation && nativeCommand(invocation.name);
-    if (invocation && native) {
-      const result = this.executeNativeCommand({
-        ...invocation,
-        descriptor: native,
-      });
+    return this.dispatchComposerInput(message, behavior, editorDraft);
+  };
+
+  private async dispatchComposerInput(
+    message: string,
+    behavior?: "steer" | "followUp",
+    editorDraft?: SessionDraft,
+    prepared = false,
+  ): Promise<PromptAcceptedResponse | false> {
+    const sessionId = this.state.sessionId;
+    const input = message.trimStart();
+    const invocation = input.startsWith("/")
+      ? resolveCommandInput(
+          message,
+          resolveCommandInventory(this.state.commands),
+        )
+      : null;
+    if (!invocation) {
+      if (prepared) {
+        this.notify("warning", "Enter a slash command to prepare");
+        return false;
+      }
+      return input.startsWith("!")
+        ? this.composer.send(input.trimEnd(), undefined, editorDraft)
+        : this.composer.send(message, behavior, editorDraft);
+    }
+    const descriptor = nativeCommand(invocation.name);
+    if (descriptor) {
+      const result = this.executeNativeCommand(
+        { ...invocation, descriptor },
+        !prepared,
+      );
       if (
         result &&
         sessionId &&
@@ -1944,12 +1935,17 @@ export class AppStore {
         this.drafts.setText(sessionId, "");
       return result;
     }
-
     if (
-      invocation &&
-      !invocation.command &&
-      this.state.modelDiscovery !== "loading"
+      prepared &&
+      (!invocation.command || invocation.command.source === "builtin")
     ) {
+      this.notify(
+        "warning",
+        "This command is no longer available in the selected session",
+      );
+      return false;
+    }
+    if (!invocation.command && this.state.modelDiscovery !== "loading") {
       if (sessionId)
         this.presentCommandActivity(
           sessionId,
@@ -1960,13 +1956,14 @@ export class AppStore {
       return false;
     }
     return this.composer.send(
-      invocation
-        ? `/${invocation.name} ${invocation.argument}`.trimEnd()
-        : message,
-      behavior,
+      `/${invocation.name} ${invocation.argument}`.trimEnd(),
+      prepared && invocation.command?.source === "extension"
+        ? undefined
+        : behavior,
       editorDraft,
+      prepared,
     );
-  };
+  }
 
   abort = async (): Promise<void> => {
     const sessionId = this.state.sessionId;

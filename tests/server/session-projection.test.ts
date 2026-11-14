@@ -541,7 +541,7 @@ describe("SessionProjection replacement and Pi context semantics", () => {
     );
     await expect(projection.reconcile(true)).resolves.toMatchObject({
       kind: "append",
-      messageChange: "append",
+      replacesRows: false,
     });
     expect(projection.messages[0]).toBe(prefix);
     expect(projection.leafId).toBe("s2");
@@ -672,6 +672,7 @@ describe("SessionProjection replacement and Pi context semantics", () => {
     }
     await expect(reconciling).resolves.toMatchObject({
       kind: "rewrite",
+      replacesRows: true,
       health: { status: "ok" },
     });
     expect(projection.messages[0]).toMatchObject({ content: "C".repeat(size) });

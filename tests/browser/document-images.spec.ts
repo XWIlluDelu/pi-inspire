@@ -4,6 +4,7 @@ import { openPreviewFixture, openResourceFixture } from "./support/navigation";
 test("Markdown and Notebook figures share scoped galleries while authored links and image authorization stay intact", async ({
   page,
 }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
   let remoteRequests = 0;
   await page.route("**://attacker.invalid/**", async (route) => {
     remoteRequests++;
@@ -11,6 +12,28 @@ test("Markdown and Notebook figures share scoped galleries while authored links 
   });
   const resources = await openResourceFixture(page);
   await openPreviewFixture(resources, "document-images.md");
+  const report = resources.locator(".res__preview-fill");
+  const headings = report.getByRole("heading", {
+    name: "训练结果",
+    exact: true,
+  });
+  await expect(headings.last()).toHaveAttribute(
+    "id",
+    "user-content-训练结果-1",
+  );
+  await report.getByRole("link", { name: "重复标题" }).click();
+  await expect(headings.last()).toBeInViewport();
+  const missing = report.getByText("Missing curve · Image unavailable", {
+    exact: true,
+  });
+  await expect(missing).toBeVisible();
+  await expect(
+    report.getByText("Corrupt curve · Image unavailable", { exact: true }),
+  ).toHaveAttribute("title", "Image could not be decoded");
+  await expect(
+    report.getByRole("link", { name: /Protocol-relative image/ }),
+  ).toHaveAttribute("rel", "noreferrer noopener");
+  await expect(report.locator("img[src^='data:']")).toHaveCount(0);
   await expect(
     resources.getByAltText("Validation curve", { exact: true }),
   ).toBeVisible();
@@ -55,12 +78,41 @@ test("Markdown and Notebook figures share scoped galleries while authored links 
     resources.getByRole("heading", { name: "Observation log · Station 07" }),
   ).toBeVisible();
 
-  await openPreviewFixture(resources, "document-images.ipynb");
+  await resources
+    .getByRole("tab", { name: "document-images.md", exact: true })
+    .click();
+  await report.getByRole("link", { name: "Notebook", exact: true }).click();
   const notebook = resources.getByRole("document", {
     name: "Notebook preview",
   });
+  await expect(
+    notebook.getByRole("heading", { name: "Output Markdown" }),
+  ).toBeInViewport();
+  await expect(notebook.getByAltText("Notebook output")).toHaveAttribute(
+    "loading",
+    "eager",
+  );
   await expect(notebook.getByAltText("Notebook file image")).toBeVisible();
-  await expect(notebook.getByAltText("Notebook attachment")).toBeVisible();
+  await expect(notebook.getByAltText("Notebook attachment")).toHaveAttribute(
+    "src",
+    /^data:image\/png;base64,/,
+  );
+  for (const name of ["Other cell", "Unsafe vector"]) {
+    await expect(
+      notebook.getByText(`${name} · Image unavailable`, { exact: true }),
+    ).toBeVisible();
+    await expect(notebook.getByAltText(name, { exact: true })).toHaveCount(0);
+  }
+  const code = notebook.locator(".notebook-preview__cell--code code");
+  const raw = notebook.locator(".notebook-preview__cell--raw code");
+  await expect(code).toHaveText('print("<unsafe>", 42)');
+  await expect(code.locator("span").first()).toBeAttached();
+  await expect(raw).toHaveText(await code.innerText());
+  await expect(raw.locator("span")).toHaveCount(0);
+  const trace = notebook.locator(".notebook-preview__output--error pre");
+  expect(await trace.textContent()).toBe(
+    'Traceback (most recent call last):\n  File "train.py", line 8\nValueError: invalid sample',
+  );
   await expect(notebook.getByAltText("Output pipeline")).toBeVisible();
   await notebook
     .getByRole("button", { name: "Preview curve.png", exact: true })
@@ -77,6 +129,25 @@ test("Markdown and Notebook figures share scoped galleries while authored links 
   await expect(
     resources.getByRole("region", { name: "File source" }),
   ).toContainText('"nbformat": 4');
+
+  await resources
+    .getByRole("tab", { name: "document-images.md", exact: true })
+    .click();
+  await report
+    .getByRole("link", { name: "Companion notes", exact: true })
+    .click();
+  await expect(
+    resources.getByRole("heading", { name: "Interpretation", exact: true }),
+  ).toBeInViewport();
+  await resources
+    .getByRole("tab", { name: "document-images.md", exact: true })
+    .click();
+  await report
+    .getByRole("button", { name: "./document.md", exact: true })
+    .click();
+  await expect(
+    resources.getByRole("heading", { name: "Observation log · Station 07" }),
+  ).toBeVisible();
 
   await openPreviewFixture(resources, "vector.svg");
   const vector = resources.getByAltText("vector.svg");

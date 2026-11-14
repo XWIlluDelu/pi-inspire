@@ -1,16 +1,10 @@
 // @vitest-environment jsdom
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ATTACHMENT_CONTEXT_HEADING } from "../../shared/attachment-context";
-import {
-  SESSION_ACTION_IDS,
-  type SessionActionId,
-} from "../../shared/contracts";
 import { createInitialAppState } from "../../src/app-state";
 import { AppTopbar } from "../../src/components/AppTopbar";
-import { SessionActionsSettings } from "../../src/components/SessionActionsSettings";
 import { sessionHeading } from "../../src/session-actions";
 import { store } from "../../src/store";
 import { deferred } from "./helpers";
@@ -135,34 +129,5 @@ describe("Session actions", () => {
       await screen.findByRole("menuitem", { name: "ID copied" }),
     ).toHaveFocus();
     expect(screen.getByRole("menu", { name: "Session actions" })).toBeVisible();
-  });
-
-  it("keeps focus on the moved action at the order boundary", async () => {
-    const user = userEvent.setup();
-    function Order() {
-      const [order, setOrder] = useState<SessionActionId[]>([
-        ...SESSION_ACTION_IDS,
-      ]);
-      return <SessionActionsSettings order={order} onChange={setOrder} />;
-    }
-    render(<Order />);
-    const up = screen.getByRole("button", { name: "Move Copy session ID up" });
-    const down = screen.getByRole("button", {
-      name: "Move Copy session ID down",
-    });
-    await user.click(up);
-    const rows = within(
-      screen.getByRole("list", { name: "Session action order" }),
-    ).getAllByRole("listitem");
-    expect(rows[0]).toHaveTextContent("Copy session ID");
-    expect(up).toBeDisabled();
-    expect(down).toHaveFocus();
-    await user.click(down);
-    expect(down).toHaveFocus();
-    expect(
-      within(
-        screen.getByRole("list", { name: "Session action order" }),
-      ).getAllByRole("listitem")[1],
-    ).toHaveTextContent("Copy session ID");
   });
 });

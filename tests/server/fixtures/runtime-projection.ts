@@ -356,7 +356,10 @@ export async function setup(
   runtimes.push(runtime);
   const opened = await runtime.openSession("session-a");
   const startup = expectWorker
-    ? runtime.setSteeringMode("session-a", "one-at-a-time")
+    ? runtime.setRuntimeSetting("session-a", {
+        key: "steeringMode",
+        value: "one-at-a-time",
+      })
     : null;
   void startup?.catch(() => undefined);
   if (expectWorker) await vi.waitFor(() => expect(workers).toHaveLength(1));

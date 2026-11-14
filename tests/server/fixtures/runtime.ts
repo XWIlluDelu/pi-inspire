@@ -345,7 +345,10 @@ export async function persistedRecord(
 
 /** Request a real worker via a native setting, without adding a conversation turn. */
 export const startWorker = (runtime: RuntimeController, id = "a") =>
-  runtime.setSteeringMode(id, "one-at-a-time");
+  runtime.setRuntimeSetting(id, {
+    key: "steeringMode",
+    value: "one-at-a-time",
+  });
 
 export async function preview(
   session: SessionRecord,

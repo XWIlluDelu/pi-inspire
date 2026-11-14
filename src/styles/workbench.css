@@ -315,8 +315,7 @@ body.pane-resizing .nav {
   background: var(--bg-inset);
 }
 
-.segmented button,
-.segmented__item {
+.segmented button {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
@@ -334,15 +333,12 @@ body.pane-resizing .nav {
     box-shadow var(--dur-micro) var(--ease-standard);
 }
 
-.segmented button:hover,
-.segmented__item:hover {
+.segmented button:hover {
   color: var(--ink);
 }
 
 .segmented button[aria-pressed="true"],
-.segmented button[aria-selected="true"],
-.segmented .segmented__item--active,
-.segmented__item--active {
+.segmented button[aria-selected="true"] {
   background: var(--bg-surface);
   box-shadow: var(--shadow-1);
   font-weight: 600;
@@ -350,13 +346,11 @@ body.pane-resizing .nav {
 
 /* One selected-ink rule for value choices and compact view-mode groups. */
 :is(.segmented, .palette-picker)
-  > button:is([aria-pressed="true"], [aria-selected="true"], .segmented__item--active):not(:disabled),
-.segmented__item--active:not(:disabled) {
+  > button:is([aria-pressed="true"], [aria-selected="true"]):not(:disabled) {
   color: var(--accent-deep);
 }
 
-.segmented button:disabled,
-.segmented__item:disabled {
+.segmented button:disabled {
   color: var(--faint);
   cursor: not-allowed;
 }

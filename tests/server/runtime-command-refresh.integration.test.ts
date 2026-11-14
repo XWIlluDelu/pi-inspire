@@ -126,7 +126,10 @@ it("refreshes commands and extension UI on native reload without replacing eithe
       );
     }
     await runtime.openSession(b.id);
-    await runtime.setSteeringMode(b.id, "one-at-a-time");
+    await runtime.setRuntimeSetting(b.id, {
+      key: "steeringMode",
+      value: "one-at-a-time",
+    });
     expect(await names(b.id)).toContain("reload-fixture");
     const pids = workers.map((worker) => worker.pid);
     await runtime.prompt({ sessionId: a.id, message: "/tmp/project/file" });

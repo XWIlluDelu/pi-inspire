@@ -69,9 +69,8 @@ test("Notebook and Changes gutters stay aligned as the shared reading size chang
         .getByRole("button", { name: "Display", exact: true })
         .click();
       await dialog
-        .getByRole("group", { name: "Content text size" })
-        .getByRole("button", { name: size, exact: true })
-        .click();
+        .getByRole("combobox", { name: "Content text size", exact: true })
+        .selectOption({ label: size });
       await expect(page.locator("html")).toHaveAttribute(
         "data-content-text-size",
         size.toLowerCase(),

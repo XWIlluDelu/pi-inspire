@@ -407,28 +407,6 @@
   height: var(--set-control-h);
 }
 
-.settings__field .segmented {
-  display: inline-grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(0, 1fr);
-  width: var(--set-choice-w);
-  max-width: 100%;
-  height: var(--set-control-h);
-  padding: 3px;
-  box-sizing: border-box;
-}
-
-.settings__field .segmented__item {
-  min-width: 0;
-  min-height: 0;
-  height: 100%;
-  padding: 0 var(--space-1);
-  white-space: nowrap;
-  font-size: var(--text-xs);
-  font-weight: 500;
-  justify-content: center;
-}
-
 @container settings-card (max-width: 439px) {
   .settings__field[data-layout="adaptive"] {
     grid-template-columns: minmax(0, 1fr);
@@ -484,24 +462,6 @@
   border-color: var(--accent-deep);
   font-weight: 600;
   box-shadow: 0 1px 2px rgb(0 0 0 / 4%);
-}
-
-/* Scope this choice grammar to settings, including MCP's inline mode choices. */
-.dialog:is(.settings, .terminal-settings) .segmented button {
-  border: 1px solid transparent;
-}
-
-.dialog:is(.settings, .terminal-settings)
-  .segmented
-  button[aria-pressed="true"] {
-  background: var(--bg-surface);
-  border-color: var(--hairline);
-  font-weight: 600;
-  box-shadow: var(--shadow-1);
-}
-
-.dialog:is(.settings, .terminal-settings) .segmented button:disabled {
-  color: var(--faint);
 }
 
 .palette-picker__swatch {
@@ -1771,10 +1731,13 @@
 }
 
 /* --- Terminal Settings stepper --- */
-.settings__field .terminal-settings__stepper {
-  grid-auto-columns: var(--stepper-button-size) 1fr var(--stepper-button-size);
+.terminal-settings__stepper {
   --stepper-button-size: calc(var(--set-control-h) - 8px);
+  display: grid;
+  grid-template-columns: var(--stepper-button-size) 1fr var(--stepper-button-size);
   width: 112px;
+  height: var(--set-control-h);
+  padding: 3px;
 }
 
 .terminal-settings__stepper .icon-button {
