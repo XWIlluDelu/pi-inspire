@@ -5,6 +5,7 @@ import {
   KeyRound,
   Pencil,
   Plus,
+  RefreshCw,
   Trash2,
   X,
 } from "lucide-react";
@@ -35,12 +36,12 @@ import { thinkingLevelLabel, thinkingLevelOptions } from "../model-options";
 import { shallowEqual, store, useAppState } from "../store";
 import { useConfigurationDocument } from "../use-configuration-document";
 import {
+  ConfigurationAction,
+  ConfigurationConfirmation,
+  ConfigurationDetail,
   ConfigurationEditor,
   ConfigurationForm,
   ConfigurationInput,
-  ConfigurationDetail,
-  ConfigurationRefresh,
-  ConfigurationRemoval,
 } from "./ConfigurationForm";
 import { DetailSummary } from "./DetailSummary";
 import { ModelForm, ProviderForm } from "./ModelDeclarationForms";
@@ -285,28 +286,29 @@ export function ModelsSettings({
     );
     if (saved) await refreshProviders();
   };
-  const knownModels = useMemo(
-    () =>
-      new Map(
-        [
-          ...(snapshot?.providers.flatMap((provider) =>
-            provider.models
-              .filter((model) => !model.type || model.type === "chat")
-              .map((model) => ({ ...model, provider: provider.id })),
-          ) ?? []),
-          ...(snapshot?.models ?? []),
-        ].map((model) => [modelIdentityKey(model), model]),
+  const models = useMemo(() => {
+    const declarations = new Map<string, ModelDeclaration>();
+    for (const { id: provider, models } of snapshot?.providers ?? [])
+      for (const model of models)
+        if (!model.type || model.type === "chat") {
+          const key = modelIdentityKey({ provider, id: model.id });
+          if (!declarations.has(key)) declarations.set(key, model);
+        }
+    return {
+      declarations,
+      available: new Map(
+        snapshot?.models.map((model) => [modelIdentityKey(model), model]),
       ),
-    [snapshot],
-  );
-  const savedModel: ModelOption | null = snapshot?.saved.defaultModel
-    ? (knownModels.get(modelIdentityKey(snapshot.saved.defaultModel)) ??
-      snapshot.saved.defaultModel)
-    : null;
+    };
+  }, [snapshot?.models, snapshot?.providers]);
+  const modelName = (model: ModelOption) => {
+    const key = modelIdentityKey(model);
+    const entry = models.available.get(key) ?? models.declarations.get(key);
+    return entry?.name ?? model.id;
+  };
+  const savedModel = snapshot?.saved.defaultModel;
   const savedKey = savedModel && modelIdentityKey(savedModel);
-  const savedAvailable = snapshot?.models.some(
-    (model) => modelIdentityKey(model) === savedKey,
-  );
+  const savedAvailable = Boolean(savedKey && models.available.has(savedKey));
   const preferencesUnavailable = readFailed || Boolean(snapshot?.settingsError);
   const configurationUnavailable = readFailed || Boolean(snapshot?.configError);
   const projectModelOverride = snapshot?.projectOverrides.some(
@@ -317,19 +319,9 @@ export function ModelsSettings({
     editor?.kind === "model"
       ? snapshot?.providers.find((provider) => provider.id === editor.provider)
       : undefined;
-  const inspectedModel =
-    snapshot?.models.find(
-      (model) => modelIdentityKey(model) === (selectedModelKey ?? savedKey),
-    ) ?? null;
-  const declaredModel =
-    inspectedModel &&
-    snapshot?.providers
-      .find((provider) => provider.id === inspectedModel.provider)
-      ?.models.find(
-        (entry) =>
-          entry.id === inspectedModel.id &&
-          (!entry.type || entry.type === "chat"),
-      );
+  const inspectedKey = selectedModelKey ?? savedKey ?? "";
+  const inspectedModel = models.available.get(inspectedKey) ?? null;
+  const declaredModel = models.declarations.get(inspectedKey);
   const commonRules = inspectedModel
     ? (snapshot?.savedCommonEntries.flatMap(({ pattern, models }) =>
         models.some(
@@ -494,6 +486,16 @@ export function ModelsSettings({
                   ? `declared model ${declarationIdentity}`
                   : `provider ${provider.id}`
               }
+              name={declared?.name || declared?.id || provider.id}
+              description={
+                <code>
+                  {declared
+                    ? declarationIdentity
+                    : [provider.baseUrl, provider.api]
+                        .filter(Boolean)
+                        .join(" · ")}
+                </code>
+              }
               disabled={busy || configurationUnavailable}
               edit={(event) =>
                 openEditor(
@@ -516,48 +518,36 @@ export function ModelsSettings({
                   event.currentTarget,
                 )
               }
-              extra={
-                !declared && (
-                  <button
-                    type="button"
-                    className="button"
-                    aria-label={`Add model to ${provider.id}`}
-                    ref={addModelRef}
-                    disabled={busy || configurationUnavailable}
-                    onClick={(event) =>
-                      openEditor(
-                        {
-                          kind: "model",
-                          provider: provider.id,
-                          value: null,
-                        },
-                        event.currentTarget,
-                      )
-                    }
-                  >
-                    <Plus size={13} aria-hidden /> Add model
-                  </button>
-                )
-              }
             >
-              <div>
-                <strong>{declared?.name || declared?.id || provider.id}</strong>
-                <br />
-                <code>
-                  {declared
-                    ? declarationIdentity
-                    : [provider.baseUrl, provider.api]
-                        .filter(Boolean)
-                        .join(" · ")}
-                </code>
-              </div>
+              {!declared && (
+                <button
+                  type="button"
+                  className="button"
+                  aria-label={`Add model to ${provider.id}`}
+                  ref={addModelRef}
+                  disabled={busy || configurationUnavailable}
+                  onClick={(event) =>
+                    openEditor(
+                      {
+                        kind: "model",
+                        provider: provider.id,
+                        value: null,
+                      },
+                      event.currentTarget,
+                    )
+                  }
+                >
+                  <Plus size={13} aria-hidden /> Add model
+                </button>
+              )}
             </ConfigurationDetail>
           )}
           {removing && (
-            <ConfigurationRemoval
-              busy={busy}
-              blocked={configurationUnavailable}
-              onRemove={() => void edit(removing)}
+            <ConfigurationConfirmation
+              confirmLabel="Remove configuration"
+              cancelDisabled={busy}
+              confirmDisabled={busy || configurationUnavailable}
+              onConfirm={() => void edit(removing)}
               onCancel={configuration.dismiss}
             >
               Remove the{" "}
@@ -565,7 +555,7 @@ export function ModelsSettings({
                 ? `provider ${removing.id}`
                 : `model ${declarationLabel(removing.provider, removing)}`}{" "}
               declaration?
-            </ConfigurationRemoval>
+            </ConfigurationConfirmation>
           )}
         </>
       )}
@@ -643,9 +633,10 @@ export function ModelsSettings({
                     searchLabel="Search available models"
                     placeholder="Search models"
                     searchAction={
-                      <ConfigurationRefresh
+                      <ConfigurationAction
                         label="Refresh available models"
-                        busy={busy}
+                        icon={RefreshCw}
+                        disabled={busy}
                         onClick={() => void load()}
                       />
                     }
@@ -664,99 +655,84 @@ export function ModelsSettings({
                     }
                   />
                   {inspectedModel && (
-                    <div
-                      className="models-detail"
-                      role="group"
-                      aria-label="Selected model"
+                    <ConfigurationDetail
+                      label="Selected model"
+                      name={inspectedModel.name ?? inspectedModel.id}
+                      description={<code>{identity}</code>}
                     >
-                      <div>
-                        <strong>
-                          {inspectedModel.name ?? inspectedModel.id}
-                        </strong>
-                        <br />
-                        <code>
-                          {inspectedModel.provider}/{inspectedModel.id}
-                        </code>
-                      </div>
-                      <div className="models-actions">
-                        {declaredModel && (
-                          <button
-                            type="button"
-                            className="button button--quiet"
-                            disabled={busy || configurationUnavailable}
-                            aria-label={`Edit model ${inspectedModel.provider}/${inspectedModel.id}`}
-                            onClick={(event) =>
-                              openEditor(
-                                {
-                                  kind: "model",
-                                  provider: inspectedModel.provider,
-                                  value: declaredModel,
-                                },
-                                event.currentTarget,
-                              )
-                            }
-                          >
-                            Edit
-                          </button>
-                        )}
-                        {commonPattern ? (
-                          <button
-                            type="button"
-                            className="button button--quiet"
-                            disabled={busy || preferencesUnavailable}
-                            aria-label={`Edit common pattern for ${inspectedModel.name ?? inspectedModel.id}`}
-                            onClick={(event) =>
-                              editCommon(commonPattern, event.currentTarget)
-                            }
-                          >
-                            Edit common rule
-                          </button>
-                        ) : (
-                          <label className="models-choice">
-                            <input
-                              type="checkbox"
-                              className="choice-input"
-                              aria-label={`Common: ${inspectedModel.name ?? inspectedModel.id}`}
-                              disabled={busy || preferencesUnavailable}
-                              checked={directCommon.length > 0}
-                              onChange={() =>
-                                void save({
-                                  enabledModels: directCommon.length
-                                    ? snapshot.saved.enabledModels.filter(
-                                        (entry) =>
-                                          !directCommon.includes(entry),
-                                      )
-                                    : [
-                                        ...snapshot.saved.enabledModels,
-                                        `${inspectedModel.provider}/${inspectedModel.id}`,
-                                      ],
-                                })
-                              }
-                            />{" "}
-                            Common
-                          </label>
-                        )}
+                      {declaredModel && (
                         <button
                           type="button"
                           className="button button--quiet"
-                          disabled={
-                            busy ||
-                            preferencesUnavailable ||
-                            savedKey === modelIdentityKey(inspectedModel)
-                          }
-                          onClick={() =>
-                            void save({
-                              defaultModel: {
+                          disabled={busy || configurationUnavailable}
+                          aria-label={`Edit model ${identity}`}
+                          onClick={(event) =>
+                            openEditor(
+                              {
+                                kind: "model",
                                 provider: inspectedModel.provider,
-                                id: inspectedModel.id,
+                                value: declaredModel,
                               },
-                            })
+                              event.currentTarget,
+                            )
                           }
                         >
-                          Set as default
+                          Edit
                         </button>
-                      </div>
-                    </div>
+                      )}
+                      {commonPattern ? (
+                        <button
+                          type="button"
+                          className="button button--quiet"
+                          disabled={busy || preferencesUnavailable}
+                          aria-label={`Edit common pattern for ${inspectedModel.name ?? inspectedModel.id}`}
+                          onClick={(event) =>
+                            editCommon(commonPattern, event.currentTarget)
+                          }
+                        >
+                          Edit common rule
+                        </button>
+                      ) : (
+                        <label className="models-choice">
+                          <input
+                            type="checkbox"
+                            className="choice-input"
+                            aria-label={`Common: ${inspectedModel.name ?? inspectedModel.id}`}
+                            disabled={busy || preferencesUnavailable}
+                            checked={directCommon.length > 0}
+                            onChange={() =>
+                              void save({
+                                enabledModels: directCommon.length
+                                  ? snapshot.saved.enabledModels.filter(
+                                      (entry) => !directCommon.includes(entry),
+                                    )
+                                  : [...snapshot.saved.enabledModels, identity],
+                              })
+                            }
+                          />{" "}
+                          Common
+                        </label>
+                      )}
+                      <button
+                        type="button"
+                        className="button button--quiet"
+                        disabled={
+                          busy ||
+                          preferencesUnavailable ||
+                          savedKey === inspectedKey
+                        }
+                        onClick={() =>
+                          void save({
+                            defaultModel: {
+                              provider: inspectedModel.provider,
+                              id: inspectedModel.id,
+                            },
+                          })
+                        }
+                      >
+                        Set as default
+                      </button>
+                    </ConfigurationDetail>
                   )}
                 </div>
 
@@ -773,7 +749,7 @@ export function ModelsSettings({
                                 ? "Saved, but not in the current model list."
                                 : null,
                               projectModelOverride && projectModel
-                                ? `This project uses ${knownModels.get(modelIdentityKey(projectModel))?.name ?? projectModel.id}.`
+                                ? `This project uses ${modelName(projectModel)}.`
                                 : null,
                             ]
                               .filter(Boolean)
@@ -790,7 +766,7 @@ export function ModelsSettings({
                       >
                         <span className="models-default-value__identity">
                           <span className="models-default-value__name">
-                            {savedModel.name ?? savedModel.id}
+                            {modelName(savedModel)}
                           </span>
                           <span className="models-default-value__id">
                             {savedModel.provider}/{savedModel.id}
@@ -801,16 +777,12 @@ export function ModelsSettings({
                             · Not available now
                           </span>
                         ) : null}
-                        <button
-                          type="button"
-                          className="models-icon-button"
-                          aria-label="Clear default model"
-                          title="Clear default model"
+                        <ConfigurationAction
+                          label="Clear default model"
+                          icon={X}
                           disabled={busy || preferencesUnavailable}
                           onClick={() => void save({ defaultModel: null })}
-                        >
-                          <X size={14} aria-hidden />
-                        </button>
+                        />
                       </div>
                     ) : (
                       <span className="models-default-result models-default-result--muted">
@@ -895,44 +867,34 @@ export function ModelsSettings({
                                 ) : null}
                               </span>
                               <div className="models-actions">
-                                <button
-                                  type="button"
-                                  className="models-icon-button"
+                                <ConfigurationAction
+                                  label={`Edit common entry ${value}`}
+                                  icon={Pencil}
                                   disabled={busy}
-                                  aria-label={`Edit common entry ${value}`}
                                   onClick={(event) =>
                                     editCommon(value, event.currentTarget)
                                   }
-                                >
-                                  <Pencil size={13} />
-                                </button>
-                                <button
-                                  type="button"
-                                  className="models-icon-button"
+                                />
+                                <ConfigurationAction
+                                  label={`Move ${value} up`}
+                                  icon={ArrowUp}
                                   disabled={busy || index === 0}
-                                  aria-label={`Move ${value} up`}
                                   onClick={() => move(index, -1)}
-                                >
-                                  <ArrowUp size={13} />
-                                </button>
-                                <button
-                                  type="button"
-                                  className="models-icon-button"
+                                />
+                                <ConfigurationAction
+                                  label={`Move ${value} down`}
+                                  icon={ArrowDown}
                                   disabled={
                                     busy ||
                                     index ===
                                       snapshot.saved.enabledModels.length - 1
                                   }
-                                  aria-label={`Move ${value} down`}
                                   onClick={() => move(index, 1)}
-                                >
-                                  <ArrowDown size={13} />
-                                </button>
-                                <button
-                                  type="button"
-                                  className="models-icon-button"
+                                />
+                                <ConfigurationAction
+                                  label={`Remove ${value} from common models`}
+                                  icon={Trash2}
                                   disabled={busy}
-                                  aria-label={`Remove ${value} from common models`}
                                   onClick={() =>
                                     void save({
                                       enabledModels:
@@ -941,9 +903,7 @@ export function ModelsSettings({
                                         ),
                                     })
                                   }
-                                >
-                                  <Trash2 size={13} />
-                                </button>
+                                />
                               </div>
                             </>
                           )}

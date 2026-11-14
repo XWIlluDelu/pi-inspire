@@ -2,12 +2,11 @@ import type { ChildCall, ChildCallList } from "../../shared/tool-activity";
 import { stripTerminalSequences } from "../ansi";
 import { childCallSummary, isModelCall } from "../child-call-summary";
 import { CodeView } from "./CodeView";
-import { DetailSummary } from "./DetailSummary";
 import { PiLoader } from "./PiLoader";
 import { PiStatus } from "./PiStatus";
 import { ResourcePathLabel } from "./ResourcePathLabel";
 import {
-  useActivityReaderExpanded,
+  ActivityDetails,
   useActivityReaderScroll,
 } from "./transcript-activity-visibility";
 
@@ -29,7 +28,6 @@ export function childCallsSummary(list?: ChildCallList): string {
 }
 
 function CallRow({ call }: { call: ChildCall }) {
-  const [open, setOpen] = useActivityReaderExpanded(`child-call:${call.key}`);
   const argumentsLabel =
     call.argumentsPreview !== undefined
       ? "Arguments preview"
@@ -78,14 +76,20 @@ function CallRow({ call }: { call: ChildCall }) {
       ) : null}
     </>
   );
-  return detail ? (
-    <details
+  if (!detail)
+    return (
+      <div className="disclosure-row child-call child-call__row">
+        <span className="detail-summary__label">{row}</span>
+      </div>
+    );
+  return (
+    <ActivityDetails
+      reader={`child-call:${call.key}`}
+      label={row}
       className="child-call"
-      open={open}
-      onToggle={(event) => setOpen(event.currentTarget.open)}
+      summaryClassName="child-call__row"
     >
-      <DetailSummary className="child-call__row">{row}</DetailSummary>
-      {open ? (
+      {() => (
         <div className="child-call__detail">
           {duration ? (
             <span className="child-call__duration">Duration · {duration}</span>
@@ -120,14 +124,8 @@ function CallRow({ call }: { call: ChildCall }) {
             />
           ) : null}
         </div>
-      ) : null}
-    </details>
-  ) : (
-    <div className="child-call">
-      <div className="disclosure-row child-call__row">
-        <span className="detail-summary__label">{row}</span>
-      </div>
-    </div>
+      )}
+    </ActivityDetails>
   );
 }
 

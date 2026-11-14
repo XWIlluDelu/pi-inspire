@@ -323,7 +323,7 @@
     padding: var(--space-3) var(--space-3) var(--space-5);
   }
 
-  .terminal-settings__footer {
+  .settings__footer.terminal-settings__footer {
     padding: var(--space-2) var(--space-3);
   }
 

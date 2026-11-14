@@ -61,7 +61,6 @@
 
 .ctx {
   --bg-context: var(--bg-stage);
-  container: context-pane / inline-size;
   width: var(--ctx-w);
   flex: 0 0 auto;
   background: var(--bg-context);
@@ -175,24 +174,15 @@ body.pane-resizing .nav {
 }
 
 .pane-toolbar.ctx__header {
-  min-height: calc(var(--pane-tool-size) + 4px);
-  flex-wrap: nowrap;
   padding-block: 0;
   padding-inline-start: 0;
   background: var(--bg-rail);
 }
 
-.ctx__tools,
-.dock-tabs,
-.dock-tabs__scroll {
-  display: flex;
-  align-items: stretch;
-  gap: 2px;
-}
-
 .ctx__tools {
-  flex: none;
+  display: flex;
   align-items: center;
+  gap: 2px;
   margin-inline-start: auto;
 }
 
@@ -201,22 +191,22 @@ body.pane-resizing .nav {
 
 .dock-tabs,
 .dock-tabs__scroll {
+  display: flex;
+  gap: 2px;
   flex: 1;
   min-width: 0;
 }
 
 .dock-tabs {
+  flex-basis: min(100%, calc(var(--dock-tab-width) + var(--pane-tool-size) + 2px));
   align-self: stretch;
+  min-height: var(--pane-tool-size);
 }
 
 .dock-tabs__scroll {
   overflow: auto hidden;
   scrollbar-width: none;
 }
-
-.dock-tabs__scroll::-webkit-scrollbar { display: none; }
-
-.dock-tabs > .choice-panel { align-items: center; }
 
 .dock-tab-option.picker__row {
   display: grid;
@@ -228,7 +218,7 @@ body.pane-resizing .nav {
 
 .dock-tab {
   flex: none;
-  width: clamp(132px, 45cqi, 180px);
+  width: var(--dock-tab-width);
   display: flex;
   align-items: stretch;
   color: var(--muted);
@@ -271,11 +261,7 @@ body.pane-resizing .nav {
 .dock-tab__select > svg { flex: none; }
 .dock-tab :is(button, input):focus-visible { outline-offset: -2px; }
 
-.dock-tab__icon {
-  display: grid;
-  flex: 0 0 13px;
-  place-items: center;
-}
+.dock-tab .terminal-tab__status { margin-inline: 3.5px; }
 
 .dock-tab__rename.text-field {
   flex: 1;
@@ -288,11 +274,8 @@ body.pane-resizing .nav {
   font-size: var(--text-sm);
 }
 
-.dock-tab__close.icon-button {
-  align-self: center;
-  width: var(--pane-tool-size, 24px);
-  height: var(--pane-tool-size, 24px);
-}
+.dock-tabs > .choice-panel,
+.dock-tab__close.icon-button { align-self: center; }
 
 .ctx__tools .ctx__mode[data-counted] {
   width: auto;
@@ -306,17 +289,9 @@ body.pane-resizing .nav {
   font-variant-numeric: tabular-nums;
 }
 
-@container context-pane (max-width: 400px) {
-  .pane-toolbar.ctx__header { flex-wrap: wrap; }
-  .ctx__header .dock-tabs {
-    flex-basis: 100%;
-    min-height: var(--pane-tool-size);
-    border-bottom: 1px solid var(--hairline);
-  }
-}
-
 .ctx__content,
-.workspace-dock {
+.workspace-dock,
+.terminal-pane {
   flex: 1;
   min-width: 0;
   min-height: 0;
@@ -325,7 +300,8 @@ body.pane-resizing .nav {
   overflow: hidden;
 }
 
-.ctx__content[hidden] { display: none; }
+.workspace-dock { --dock-tab-width: 156px; }
+.terminal-pane[hidden] { display: none; }
 .res__body--file-tab { min-height: 0; display: flex; flex-direction: column; }
 .res__body--file-tab > .file-preview { flex: 1; min-height: 0; }
 
@@ -650,6 +626,7 @@ body.pane-resizing .nav {
   gap: 2px;
   padding: 2px var(--space-2);
   border-bottom: 1px solid var(--hairline);
+  min-height: calc(var(--pane-tool-size) + 4px);
 }
 
 .pane-toolbar .icon-button {
@@ -670,74 +647,20 @@ body.pane-resizing .nav {
   background: var(--bg-file-surface);
 }
 
-/* One contents popover for readers: PDF bookmarks and document headings. */
-.reader-contents {
-  position: absolute;
-  z-index: 4;
-  width: min(320px, calc(100% - 2 * var(--space-3)));
-  max-height: min(60vh, 420px);
-  overflow: auto;
-  padding: 4px 0;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-md);
-  background: var(--bg-file-surface);
-  box-shadow: var(--shadow-overlay);
-}
-
-.reader-contents--document {
-  top: calc(var(--space-2) + 40px);
-  right: var(--space-3);
-}
-
 .reader-contents__entry {
-  display: flex;
   width: 100%;
-  align-items: baseline;
-  gap: var(--space-2);
-  padding: 5px 12px;
-  border: 0;
-  background: transparent;
-  color: var(--ink);
-  font: var(--text-sm) / var(--leading-ui) var(--font-sans);
-  text-align: left;
-  cursor: pointer;
 }
 
-.reader-contents__entry > span:first-child {
-  flex: 1 1 auto;
+.reader-contents__entry > span {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.reader-contents__meta {
-  flex: none;
-  color: var(--faint);
-  font-variant-numeric: tabular-nums;
-}
-
-.reader-contents__entry[aria-current="location"] {
-  color: var(--accent);
-}
-
-@media (hover: hover) {
-  .reader-contents__entry:hover {
-    background: var(--bg-inset);
-  }
-}
-
-.reader-contents__entry:focus-visible {
-  outline: 2px solid var(--accent-focus);
-  outline-offset: -2px;
-}
-
-@media (pointer: coarse) {
-  .reader-contents__entry {
-    min-height: 40px;
-    align-items: center;
-  }
-}
+.reader-contents__entry[aria-current="location"] { color: var(--accent); }
+.reader-contents__entry small { color: var(--muted); font-variant-numeric: tabular-nums; }
 
 /* The selection action stays next to the selected reader text. */
 .reader-quote {

@@ -102,6 +102,23 @@ for (const mode of ["Source", "Preview"] as const) {
     const refreshedHeading = "Observation log · Station 08";
     await expect(source).toContainText(originalHeading);
     await page.evaluate(() => document.fonts.ready);
+    if (mode === "Preview") {
+      const button = pane.getByRole("button", { name: "Document contents" });
+      const contents = pane.getByRole("dialog", { name: "Document contents" });
+      await button.press("Enter");
+      await expect(
+        contents.getByRole("button", { name: "Interpretation" }),
+      ).toBeVisible();
+      const scrollBefore = await source.evaluate(
+        (element) => element.scrollTop,
+      );
+      await contents.getByRole("button", { name: "Follow-up" }).click();
+      await expect(contents).toBeHidden();
+      await expect(button).toBeFocused();
+      await expect
+        .poll(() => source.evaluate((element) => element.scrollTop))
+        .toBeGreaterThan(scrollBefore);
+    }
     await source.evaluate((element, left) => {
       element.scrollTop = 100;
       element.scrollLeft = left;

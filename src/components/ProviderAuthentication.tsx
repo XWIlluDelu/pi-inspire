@@ -12,7 +12,9 @@ import type {
 } from "../../shared/model-settings";
 import type { ProviderAuthOperation } from "../../shared/provider-auth-bridge";
 import { store } from "../store";
+import { ConfigurationConfirmation } from "./ConfigurationForm";
 import { PromptChoices, PromptInput } from "./PromptFields";
+import { SearchField } from "./SearchField";
 import { SearchMatchText, searchMatchRanges } from "./SearchMatchText";
 
 type Owner = { sessionId?: string; cwd?: string };
@@ -337,41 +339,23 @@ function AuthenticationPanel({
       ))}
       {shownDetail.stored &&
         (removing === shownDetail.id ? (
-          <div
-            className="models-confirm"
-            role="group"
-            aria-label="Remove saved credential"
+          <ConfigurationConfirmation
+            label="Remove saved credential"
+            confirmLabel="Remove saved credentials"
+            confirmDisabled={busy}
+            onConfirm={() =>
+              void mutate({ operation: "logout", provider: shownDetail.id })
+            }
+            onCancel={() => setRemoving(null)}
           >
-            <p>
-              Remove the saved{" "}
-              {shownDetail.stored === "api_key" ? "API key" : "login"} for{" "}
-              {shownDetail.name}?
-            </p>
-            <div className="models-actions">
-              <button
-                type="button"
-                className="button button--danger"
-                disabled={busy}
-                onClick={() =>
-                  void mutate({ operation: "logout", provider: shownDetail.id })
-                }
-              >
-                Remove saved credentials
-              </button>
-              <button
-                type="button"
-                className="button button--quiet"
-                disabled={busy}
-                onClick={() => setRemoving(null)}
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
+            Remove the saved{" "}
+            {shownDetail.stored === "api_key" ? "API key" : "login"} for{" "}
+            {shownDetail.name}?
+          </ConfigurationConfirmation>
         ) : (
           <button
             type="button"
-            className="button models-remove-credential"
+            className="button button--danger-outline"
             disabled={busy}
             aria-label={`Remove saved credentials for ${shownDetail.name}`}
             onClick={() => setRemoving(shownDetail.id)}
@@ -541,15 +525,13 @@ function AuthenticationPanel({
               providerDetail
             ) : (
               <>
-                <label className="models-search">
-                  <input
-                    ref={searchRef}
-                    aria-label="Search providers"
-                    value={query}
-                    onChange={(event) => setQuery(event.target.value)}
-                    placeholder="Search providers…"
-                  />
-                </label>
+                <SearchField
+                  inputRef={searchRef}
+                  aria-label="Search providers"
+                  value={query}
+                  onValueChange={setQuery}
+                  placeholder="Search providers…"
+                />
                 {providerList}
               </>
             )}

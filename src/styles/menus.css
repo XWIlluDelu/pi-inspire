@@ -1,7 +1,6 @@
 /* Shared surface and action styles for compact menus. */
 .choice-panel__body,
 .model-picker__menu,
-.session-actions-menu,
 .terminal-menu__popover,
 .completion,
 .picker {
@@ -12,6 +11,35 @@
   box-shadow: var(--shadow-2);
   overscroll-behavior: contain;
   animation: float-in var(--dur-standard) var(--ease-standard);
+}
+
+.choice-panel { display: inline-flex; }
+.choice-panel__body {
+  position: fixed;
+  z-index: 40;
+  overflow: auto;
+}
+.choice-panel__body[hidden] { display: none; }
+
+.choice-panel__body[role="menu"] {
+  display: flex;
+  flex-direction: column;
+  z-index: 45;
+}
+
+.choice-panel__body [role="menuitem"] > :is(svg, .copy-feedback) {
+  flex: none;
+  color: var(--muted);
+}
+
+.choice-panel__body [role="menuitem"] .button-label { min-width: 0; }
+.choice-panel__body [role="menuitem"] .button-label > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 600px), (pointer: coarse) {
+  .choice-panel__body [role="menuitem"] { --menu-row-height: 44px; }
 }
 
 @keyframes float-in {
@@ -45,7 +73,7 @@
 }
 
 .picker__row,
-.session-actions-menu button,
+.choice-panel__body [role="menuitem"],
 .terminal-menu__popover button,
 .terminal-menu__group > summary,
 .dirpicker__row {
@@ -64,14 +92,15 @@
   -webkit-tap-highlight-color: transparent;
 }
 
-.session-actions-menu button,
+.choice-panel__body [role="menuitem"],
 .terminal-menu__popover button,
-.terminal-menu__group > summary { min-height: 32px; }
+.terminal-menu__group > summary { min-height: var(--menu-row-height, 32px); }
 
 .picker__row { padding: var(--space-2); }
 .picker__row[data-highlighted="true"] { background: var(--accent-tint); }
 
-:is(.session-actions-menu, .terminal-menu__popover, .dirpicker__list) button:disabled {
+.choice-panel__body [role="menuitem"]:disabled,
+:is(.terminal-menu__popover, .dirpicker__list) button:disabled {
   color: var(--faint);
 }
 
@@ -79,7 +108,6 @@
 
 .choice-panel__body button,
 .palette__row,
-.session-actions-menu button,
 .terminal-menu__popover button,
 .terminal-menu__group > summary {
   transition:
@@ -89,20 +117,20 @@
 
 @media (hover: hover) {
   [data-keyboard-active="false"] .picker__row:hover:where(:not(:disabled)),
-  .session-actions-menu button:hover:not(:disabled),
+  .choice-panel__body [role="menuitem"]:hover:not(:disabled),
   .terminal-menu__popover button:hover:not(:disabled),
   .terminal-menu__group > summary:hover {
     background: var(--accent-tint);
   }
 }
 
-.session-actions-menu button:active:not(:disabled),
+.choice-panel__body [role="menuitem"]:active:not(:disabled),
 .terminal-menu__popover button:active:not(:disabled),
 .terminal-menu__group > summary:active {
   background: var(--accent-tint);
 }
 
-.session-actions-menu button:focus-visible,
+.choice-panel__body [role="menuitem"]:focus-visible,
 .terminal-menu__popover button:focus-visible,
 .terminal-menu summary:focus-visible {
   outline: 2px solid var(--accent-focus);

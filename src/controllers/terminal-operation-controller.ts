@@ -5,18 +5,17 @@ import {
   type TerminalOperation,
   type TerminalOperationResults,
   terminalIntentSchema,
+  terminalOperationIdentitySchema,
   terminalOperationSchema,
   terminalReceiptIdentity,
 } from "../../shared/terminal-operations";
 import { authenticatedFetch } from "../browser-auth";
-import { ReceiptRead } from "../operation-observer";
 
 const STORAGE_KEY = "inspire:terminal-operations:v2";
 const RETIRED_STORAGE_KEY = "inspire:terminal-operations:v1";
 const MAX_PENDING = 128;
 // Allows maximum-length terminal names and fully JSON-escaped paths.
 const MAX_STORAGE_CHARS = MAX_PENDING * 32 * 1024;
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 type RecoveryOutcome = "unknown" | "completed" | "rejected";
 interface TrackedOperation {
   operation: TerminalOperation;
@@ -61,7 +60,7 @@ function operationLabel(intent: TerminalIntent): string {
  * explicitly stopping tracking retires only the browser intent, not the work. */
 export class TerminalOperationController {
   private pending = new Map<string, TrackedOperation>();
-  private readonly running = new Map<string, ReceiptRead<string, unknown>>();
+  private readonly running = new Map<string, Promise<unknown>>();
   private readonly listeners = new Set<() => void>();
   private state: TerminalRecoveryRow[] = [];
   private loaded = false;
@@ -132,7 +131,7 @@ export class TerminalOperationController {
 
   private dispatch<T>(intent: TerminalIntent): Promise<T> {
     const key = intentKey(intent);
-    const running = this.running.get(key)?.task;
+    const running = this.running.get(key);
     if (running) return running as Promise<T>;
     // A confirmed result makes another click a new intent, not a replay.
     // Retire its stored recovery record before admitting that new intent.
@@ -144,14 +143,13 @@ export class TerminalOperationController {
         return Promise.reject(error);
       }
     }
-    const receipt = new ReceiptRead<string, unknown>();
-    this.running.set(key, receipt);
-    const task = receipt.observe(key, (signal) =>
-      this.deliver<T>(key, intent, signal).finally(() => {
+    const task = Promise.resolve()
+      .then(() => this.deliver<T>(key, intent))
+      .finally(() => {
         this.running.delete(key);
         this.publish();
-      }),
-    ) as Promise<T>;
+      });
+    this.running.set(key, task);
     this.publish();
     return task;
   }
@@ -197,11 +195,7 @@ export class TerminalOperationController {
     this.publish();
   }
 
-  private async deliver<T>(
-    key: string,
-    intent: TerminalIntent,
-    signal: AbortSignal,
-  ): Promise<T> {
+  private async deliver<T>(key: string, intent: TerminalIntent): Promise<T> {
     let pending = this.pending.get(key);
     const observeOnly = pending?.outcome === "unknown";
     if (!pending) {
@@ -212,7 +206,7 @@ export class TerminalOperationController {
       const response = await authenticatedFetch(
         TERMINAL_OPERATIONS_PATH,
         {
-          signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
+          signal: AbortSignal.timeout(10_000),
         },
         this.transport,
       );
@@ -227,20 +221,18 @@ export class TerminalOperationController {
         throw new Error(`${reason} No terminal control was sent.`);
       }
       const { epoch } = (await response.json()) as { epoch?: unknown };
-      if (typeof epoch !== "string" || !UUID.test(epoch))
+      const identity = terminalOperationIdentitySchema.safeParse({
+        executor: { kind: "terminal", epoch },
+        operationId: crypto.randomUUID(),
+      });
+      if (!identity.success)
         throw new Error(
           "Terminal operation epoch is invalid. No terminal control was sent.",
         );
       // Other distinct intents may have completed their epoch lookup meanwhile.
       if (this.pending.size >= MAX_PENDING)
         throw new Error("Too many unresolved terminal operations.");
-      pending = {
-        operation: {
-          executor: { kind: "terminal", epoch },
-          operationId: crypto.randomUUID(),
-          intent,
-        },
-      };
+      pending = { operation: { ...identity.data, intent } };
       this.pending.set(key, pending);
     }
     this.persist();
@@ -255,7 +247,7 @@ export class TerminalOperationController {
           method: "POST",
           body: JSON.stringify(operation),
           headers: { "Content-Type": "application/json" },
-          signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]),
+          signal: AbortSignal.timeout(20_000),
         },
         this.transport,
       );

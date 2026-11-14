@@ -1,7 +1,5 @@
 import { useState } from "react";
-import type { z } from "zod";
 import {
-  type ConfigurationControl,
   type SecretEdit,
   secretValue,
 } from "../../shared/configuration-fields";
@@ -17,6 +15,7 @@ import {
   ConfigurationForm,
   ConfigurationInput,
   ProtectedConfigurationInput,
+  useConfigurationFields,
 } from "./ConfigurationForm";
 import { DetailSummary } from "./DetailSummary";
 
@@ -27,46 +26,9 @@ type FormProps = {
   error?: string | null;
 };
 
-function useDeclarationFields<
-  Fields extends Record<
-    string,
-    { control: ConfigurationControl; schema: z.ZodType }
-  >,
->(
-  fields: Fields,
-  declaration: Partial<Record<keyof Fields, string | number>> | null,
-  disabled: boolean,
-) {
-  type Field = keyof Fields & string;
-  const [initial] = useState(declaration);
-  const [draft, setDraft] = useState<Partial<Record<Field, string>>>({});
-  return {
-    bind: (field: Field) => ({
-      ...fields[field].control,
-      disabled,
-      value: draft[field] ?? declaration?.[field] ?? "",
-      onChange: ({ currentTarget }: React.ChangeEvent<HTMLInputElement>) =>
-        setDraft((current) => ({ ...current, [field]: currentTarget.value })),
-    }),
-    patch: () =>
-      Object.fromEntries(
-        (Object.keys(draft) as Field[]).flatMap((field) => {
-          const value = draft[field]!;
-          if (value === String(initial?.[field] ?? "")) return [];
-          return [
-            [
-              field,
-              value.trim()
-                ? fields[field].control.type === "number"
-                  ? Number(value)
-                  : value.trim()
-                : null,
-            ],
-          ];
-        }),
-      ) as { [Key in Field]?: z.infer<Fields[Key]["schema"]> },
-  };
-}
+const declarationTextEdit = (draft: string, initial: string) =>
+  draft === initial ? undefined : draft.trim() || null;
+
 export function ProviderForm({
   value,
   onSave,
@@ -79,7 +41,12 @@ export function ProviderForm({
   nativeApiProviders: string[];
 }) {
   const [id, setId] = useState(value?.id ?? "");
-  const fields = useDeclarationFields(providerDeclarationFields, value, busy);
+  const fields = useConfigurationFields(
+    providerDeclarationFields,
+    value,
+    busy,
+    declarationTextEdit,
+  );
   const [key, setKey] = useState<SecretEdit>({ kind: "keep" });
   const hasNativeApi = nativeApiProviders.includes(value?.id ?? id.trim());
   return (
@@ -146,7 +113,12 @@ export function ModelForm({
   hasInheritedApi: boolean;
 }) {
   const [id, setId] = useState(value?.id ?? "");
-  const fields = useDeclarationFields(modelDeclarationFields, value, busy);
+  const fields = useConfigurationFields(
+    modelDeclarationFields,
+    value,
+    busy,
+    declarationTextEdit,
+  );
   const [reasoning, setReasoning] = useState(value?.reasoning ?? false);
   const initialInput = value?.input ?? ["text"];
   const [input, setInput] = useState(initialInput);

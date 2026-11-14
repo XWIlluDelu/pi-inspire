@@ -5,7 +5,7 @@ import {
   VISIBILITY_PREFERENCES,
 } from "../shared/contracts";
 
-function choices<Value extends string>(
+export function preferenceOptions<const Value extends string>(
   values: readonly Value[],
   label: (value: Value) => string = (value) =>
     value === "dynamic" ? "Adaptive" : value[0]!.toUpperCase() + value.slice(1),
@@ -16,7 +16,7 @@ function choices<Value extends string>(
 export const preferenceChoices = {
   theme: {
     label: "Theme",
-    options: choices(["light", "dark", "system"] as const),
+    options: preferenceOptions(["light", "dark", "system"]),
   },
   palette: {
     label: "Color palette",
@@ -50,16 +50,16 @@ export const preferenceChoices = {
     label: "Reasoning detail",
     paletteLabel: "Reasoning details",
     description: "How much model thinking to show.",
-    options: choices(VISIBILITY_PREFERENCES),
+    options: preferenceOptions(VISIBILITY_PREFERENCES),
   },
   toolVisibility: {
     label: "Tool activity",
     description: "Detail shown for each tool call.",
-    options: choices(TOOL_VISIBILITY_PREFERENCES),
+    options: preferenceOptions(TOOL_VISIBILITY_PREFERENCES),
   },
   activityFoldVisibility: {
     label: "Activity groups",
-    options: choices(ACTIVITY_FOLD_VISIBILITIES).map((option) => ({
+    options: preferenceOptions(ACTIVITY_FOLD_VISIBILITIES).map((option) => ({
       ...option,
       description: {
         dynamic: "Opens with live activity and closes when it settles.",

@@ -184,9 +184,8 @@ describe("Host HTTP workflows", () => {
     runtimeClose.mockRestore();
   });
 
-  it("authenticates and validates addressed JSON before dispatch", async () => {
+  it("authenticates and validates native commands before dispatch", async () => {
     const sessionId = "fixture-active";
-    const viewId = "branch-1";
     const command = {
       sessionId,
       command: "compact",
@@ -209,36 +208,6 @@ describe("Host HTTP workflows", () => {
       .expect("Cache-Control", "no-store")
       .expect(200, compacted);
     expect(native).toHaveBeenCalledExactlyOnceWith(command);
-
-    const query = {
-      kind: "page",
-      entryId: "user-0",
-      cursor: "turn+cursor=",
-    } as const;
-    const address = { sessionId, viewId };
-    const response = {
-      ...address,
-      messages: [],
-      revision: 1,
-      incarnation: "source",
-      leafId: "leaf",
-      firstTurn: 1,
-      lastTurn: 1,
-      totalTurns: 1,
-      earlier: null,
-      later: null,
-    };
-    const read = vi
-      .spyOn(runtime, "sessionHistory")
-      .mockResolvedValue(response);
-    const get = (client: typeof local | typeof guest, value: object) =>
-      client.get("/api/history").query(value);
-    await get(guest, { ...address, ...query }).expect(401);
-    await get(local, { sessionId, ...query }).expect(400);
-    await get(local, { ...address, ...query, offset: 5 }).expect(400);
-    expect(read).not.toHaveBeenCalled();
-    await get(local, { ...address, ...query }).expect(200, response);
-    expect(read).toHaveBeenCalledExactlyOnceWith(sessionId, viewId, query);
   });
 
   it("changes native settings on their addressed Pi while another session is selected", async () => {
@@ -289,6 +258,17 @@ describe("Host HTTP workflows", () => {
       "Show me a formula-rich example and inspect the analysis steps.";
     const history = (query: object) =>
       local.get("/api/history").query({ ...address, ...query });
+    await guest
+      .get("/api/history")
+      .query({ ...address, kind: "page" })
+      .expect(401);
+    const read = vi.spyOn(runtime, "sessionHistory");
+    await local
+      .get("/api/history")
+      .query({ sessionId, kind: "page" })
+      .expect(400);
+    await history({ kind: "page", offset: 5 }).expect(400);
+    expect(read).not.toHaveBeenCalled();
     const { body: page } = await history({ kind: "page" }).expect(200);
     const user = page.messages.find(
       (message: { role?: string }) => message.role === "user",
@@ -299,6 +279,12 @@ describe("Host HTTP workflows", () => {
     const composer = (await history({ kind: "composer" }).expect(200)).body;
     expect(composer.entries[0].text).toBe(firstPrompt);
     await history({ ...entry, viewId: "old-branch" }).expect(409);
+    await history({ kind: "page", cursor: "turn+cursor=" }).expect(400);
+    expect(read).toHaveBeenCalledWith(
+      sessionId,
+      viewId,
+      expect.objectContaining({ kind: "page", cursor: "turn+cursor=" }),
+    );
     await local
       .get("/api/transcript/assistant-text")
       .query(address)

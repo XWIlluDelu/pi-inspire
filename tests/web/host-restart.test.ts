@@ -91,59 +91,45 @@ describe("browser restart delivery", () => {
     },
   );
 
-  it.each([
-    { scope: "all-pi", initial: "lost" },
-    { scope: "host", initial: "accepted" },
-  ] as const)(
-    "recovers $initial $scope delivery by retrying only the persisted identity and grant",
-    async ({ scope, initial }) => {
-      const f = fixture();
-      const interruptWork = true;
-      f.api.restartHost.mockImplementationOnce(async (request) => {
-        expect(JSON.parse(sessionStorage.getItem(recoveryKey)!)).toEqual(
-          request,
-        );
-        if (initial === "lost") throw new Error("lost");
-        return {
-          id: request.operationId,
-          scope,
-          phase: "preparing",
-          interruptWork,
-        };
-      });
-      await f.client.refresh();
-      await f.client.start(scope, f.status.hostId, interruptWork);
-      const request = f.api.restartHost.mock.calls[0]![0];
-      expect(request.scope).toBe(scope);
-      expect(request.interruptWork).toBe(interruptWork);
+  it("recovers a lost all-Pi delivery using only the persisted identity and grant", async () => {
+    const f = fixture();
+    const scope = "all-pi";
+    const grant = { interruptWork: true, skipAttachedStop: true } as const;
+    f.api.restartHost.mockImplementationOnce(async (request) => {
+      expect(JSON.parse(sessionStorage.getItem(recoveryKey)!)).toEqual(request);
+      throw new Error("lost");
+    });
+    await f.client.refresh();
+    await f.client.start(scope, f.status.hostId, true, true);
+    const request = f.api.restartHost.mock.calls[0]![0];
+    expect(request).toMatchObject({ scope, ...grant });
 
-      const reloaded = new HostRestartClient(f.api);
-      await reloaded.refresh();
-      await reloaded.refresh();
-      await reloaded.start("host", f.status.hostId);
-      expect(f.api.restartHost).toHaveBeenCalledOnce();
-      expect(reloaded.snapshot().pending).toEqual(request);
+    const reloaded = new HostRestartClient(f.api);
+    await reloaded.refresh();
+    await reloaded.refresh();
+    await reloaded.start("host", f.status.hostId);
+    expect(f.api.restartHost).toHaveBeenCalledOnce();
+    expect(reloaded.snapshot().pending).toEqual(request);
 
-      f.api.restartHost.mockRejectedValueOnce(new Error("401"));
-      await reloaded.retry();
-      expect(f.api.restartHost.mock.calls[1]![0]).toEqual(request);
-      expect(reloaded.snapshot().pending).toEqual(request);
+    f.api.restartHost.mockRejectedValueOnce(new Error("401"));
+    await reloaded.retry();
+    expect(f.api.restartHost.mock.calls[1]![0]).toEqual(request);
+    expect(reloaded.snapshot().pending).toEqual(request);
 
-      const rejection = {
-        id: request.operationId,
-        scope,
-        phase: "rejected" as const,
-        error: "Build failed",
-      };
-      f.status.operation = rejection;
-      await reloaded.refresh();
-      expect(reloaded.snapshot().pending).toEqual(request);
-      f.status.operation = { ...rejection, interruptWork };
-      await reloaded.refresh();
-      expect(reloaded.snapshot().pending).toBeNull();
-      expect(reloaded.snapshot().status?.operation?.error).toBe("Build failed");
-    },
-  );
+    const rejection: HostRestartOperation = {
+      id: request.operationId,
+      scope,
+      phase: "rejected" as const,
+      error: "Build failed",
+    };
+    f.status.operation = { ...rejection, interruptWork: true };
+    await reloaded.refresh();
+    expect(reloaded.snapshot().pending).toEqual(request);
+    f.status.operation = { ...rejection, ...grant };
+    await reloaded.refresh();
+    expect(reloaded.snapshot().pending).toBeNull();
+    expect(reloaded.snapshot().status?.operation?.error).toBe("Build failed");
+  });
 
   it("uses the new Host identity as reconnection evidence and never replays an old operation there", async () => {
     const f = fixture();

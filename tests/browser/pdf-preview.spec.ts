@@ -36,6 +36,21 @@ test("PDF scrolls continuously through selectable pages, preserves its reading p
   const scroll = pdf.getByRole("region", { name: "PDF pages", exact: true });
   await expect(first).toContainText("Experiment summary");
   await expect(first).toHaveAttribute("aria-busy", "false");
+  const contentsButton = pdf.getByRole("button", { name: /Show contents/ });
+  const contents = pdf.getByRole("dialog", { name: "PDF contents" });
+  await contentsButton.click();
+  await expect(
+    contents.getByRole("button", { name: /Experiment summary/ }),
+  ).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(contents).toBeHidden();
+  await expect(contentsButton).toBeFocused();
+  await contentsButton.press("Enter");
+  await contents.getByRole("button", { name: /Measurement details/ }).click();
+  await expect(contents).toBeHidden();
+  await expect(contentsButton).toHaveText("2 / 2");
+  await pdf.getByRole("button", { name: "Previous PDF page" }).click();
+  await expect(contentsButton).toHaveText("1 / 2");
   await expect(
     resources.getByRole("button", { name: "Download report.pdf" }),
   ).toBeEnabled();

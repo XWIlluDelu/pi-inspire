@@ -1,194 +1,155 @@
-// @vitest-environment jsdom
-
-import { waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { selectedWorkspacePath } from "../../src/components/WorkspaceBrowser";
+import { beforeEach, expect, it, vi } from "vitest";
 import { inspectedPreview } from "../../src/resource-preview";
 import { fakeResourceDescriptor } from "./fixtures/resources";
 import {
   activeSnapshot,
   deferred,
   installFakeWebSocket,
-  installFetch,
   jsonBody,
   selectSession,
 } from "./helpers";
-import { baseRoutes, initStore } from "./store-fixture";
+import { initStore, installStoreRoutes } from "./store-fixture";
 
 const chart = { reference: "chart.png", workspacePath: "plots/chart.png" };
 const embedded = "pi-embedded://0/0";
 
+beforeEach(() => {
+  installFakeWebSocket();
+  vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:chart");
+  vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+});
+
 async function fixture() {
   let viewId = "view-s1";
   let refused = false;
-  const requests: Record<string, unknown>[] = [];
   const pending = deferred<void>();
-  installFetch(async (url, init) => {
-    if (url === "/api/prompt")
-      return { body: { accepted: true, historyEntry: null } };
-    if (url === "/api/resources/resolve") {
-      const query = jsonBody(init);
-      requests.push(query);
-      const reference = String(query.reference);
-      if (reference === "pending.png") await pending.promise;
-      if (refused)
-        return { status: 403, body: { error: "File no longer authorized" } };
-      const workspacePath =
-        reference === embedded ? undefined : `plots/${reference}`;
-      return {
-        body: fakeResourceDescriptor(workspacePath ?? reference, {
-          id: `${reference}-${requests.length}`,
-          viewId,
-          workspacePath,
-          mimeType: "image/png",
-          kind: "image",
-        }),
-      };
-    }
-    if (url.includes("/content"))
-      return { body: "png", headers: { "Content-Type": "image/png" } };
-    return baseRoutes(url, init);
+  const resolve = vi.fn(async (request: Record<string, unknown>) => {
+    const reference = String(request.reference);
+    if (reference === "pending.png") await pending.promise;
+    if (refused)
+      return { status: 403, body: { error: "File no longer authorized" } };
+    return {
+      body: fakeResourceDescriptor(reference, {
+        id: `${reference}-${resolve.mock.calls.length}`,
+        viewId,
+        workspacePath:
+          reference === embedded ? undefined : `plots/${reference}`,
+        mimeType: "image/png",
+        kind: "image",
+      }),
+    };
+  });
+  installStoreRoutes((url, init) => {
+    if (url === "/api/resources/resolve") return resolve(jsonBody(init));
+    if (url.includes("/content?"))
+      return new Response("png", { headers: { "Content-Type": "image/png" } });
   });
   const { store, socket } = await initStore();
+  const state = () => store.getState();
   return {
     store,
-    requests,
+    state,
+    resolve,
     pending,
-    state: () => store.getState(),
-    preview: () => inspectedPreview(store.getState().fileInspection),
-    update: (overrides: Parameters<typeof activeSnapshot>[0]) => {
-      const snapshot = activeSnapshot(overrides);
-      viewId = snapshot.active!.transcriptPage.viewId;
-      socket.emitSnapshot(snapshot);
+    preview: () => inspectedPreview(state().fileInspection),
+    snapshot: (overrides: Parameters<typeof activeSnapshot>[0]) => {
+      const next = activeSnapshot(overrides);
+      viewId = next.active!.transcriptPage.viewId;
+      socket.emitSnapshot(next);
     },
-    refuseResolve: () => {
+    revokeAccess: () => {
       refused = true;
     },
   };
 }
 
-describe("selected file preview lifecycle", () => {
-  beforeEach(() => {
-    installFakeWebSocket();
-    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:chart");
-    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
-  });
-
-  it("does not revive a closed loading tab or displace its replacement", async () => {
-    const { store, state, pending } = await fixture();
-    const read = store.openResource("pending.png");
-    expect(state().resourceTabs).toEqual([{ reference: "pending.png" }]);
-    store.closeResourceTab("pending.png");
-    expect(state().fileInspection).toEqual({ kind: "browse" });
-    await store.openResource(chart.reference);
-    pending.resolve();
-    await read;
-    expect(state()).toMatchObject({
-      resourceTabs: [chart],
-      fileInspection: { kind: "file", ...chart, preview: { status: "ready" } },
-    });
-  });
-
-  it("keeps a preview through an append and reauthorizes it on a replaced view", async () => {
-    const { store, state, preview, requests, update, refuseResolve } =
-      await fixture();
-    await store.openResource(chart.reference);
-    const first = preview();
-    expect(first?.status).toBe("ready");
-    await expect(
-      store.sendPrompt("Explain this result"),
-    ).resolves.toMatchObject({
-      accepted: true,
-    });
-    update({ transcriptPage: { revision: 2 } });
-    expect(preview()).toBe(first);
-    expect(requests).toHaveLength(1);
-    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
-
-    const viewId = "view-compacted";
-    for (const transcriptPage of [
-      { revision: 3, viewId },
-      { revision: 4, viewId, appendFromRevision: 4 },
-      { revision: 4, viewId, incarnation: "projection-2" },
-    ]) {
-      const revokedBefore = vi.mocked(URL.revokeObjectURL).mock.calls.length;
-      update({ transcriptPage });
-      expect(preview()?.status).toBe("loading");
-      expect(selectedWorkspacePath(state())).toBe(chart.workspacePath);
-      expect(URL.revokeObjectURL).toHaveBeenCalledTimes(revokedBefore + 1);
-      await waitFor(() => expect(preview()?.status).toBe("ready"));
-      expect(requests.at(-1)).toMatchObject(chart);
-      expect(preview()).toMatchObject({ descriptor: { viewId } });
-      expect(state().resourceTabs).toEqual([chart]);
-    }
-    expect(requests).toHaveLength(4);
-
-    refuseResolve();
-    update({
+it.each(["rewrite", "view", "incarnation"] as const)(
+  "keeps ordinary appends and reauthorizes named files after a new %s",
+  async (change) => {
+    const f = await fixture();
+    await f.store.openResource(chart.reference);
+    const ready = f.preview();
+    expect(ready).toMatchObject({ status: "ready", objectUrl: "blob:chart" });
+    f.snapshot({ transcriptPage: { revision: 2 } });
+    expect(f.preview()).toBe(ready);
+    expect(f.resolve).toHaveBeenCalledOnce();
+    const view =
+      change === "view"
+        ? { viewId: "rewritten" }
+        : change === "incarnation"
+          ? { incarnation: "new-projection" }
+          : {};
+    f.snapshot({
       transcriptPage: {
-        revision: 5,
-        viewId,
-        incarnation: "projection-2",
-        appendFromRevision: 5,
+        ...view,
+        revision: 3,
+        appendFromRevision: change === "rewrite" ? 3 : 2,
       },
     });
-    await waitFor(() =>
-      expect(preview()).toMatchObject({
+    expect(URL.revokeObjectURL).toHaveBeenCalledExactlyOnceWith("blob:chart");
+    await vi.waitFor(() =>
+      expect(f.preview()).toMatchObject({
+        status: "ready",
+        descriptor: { viewId: f.state().view.viewId },
+      }),
+    );
+    expect(f.resolve).toHaveBeenLastCalledWith(expect.objectContaining(chart));
+    expect(f.state().resourceTabs).toEqual([chart]);
+
+    f.revokeAccess();
+    f.snapshot({
+      transcriptPage: { ...view, revision: 4, appendFromRevision: 4 },
+    });
+    await vi.waitFor(() =>
+      expect(f.preview()).toMatchObject({
         status: "error",
         message: "File no longer authorized",
       }),
     );
-    expect(state().fileInspection).toMatchObject({ kind: "file", ...chart });
-  });
+    expect(f.state().fileInspection).toMatchObject({ kind: "file", ...chart });
+  },
+);
 
-  it("retires positional tabs on rewrite or branch switch and keeps the named Files view", async () => {
-    const { store, state, preview, requests, update } = await fixture();
-    await store.openResource(chart.reference);
-    for (const transcriptPage of [
-      { revision: 2, appendFromRevision: 2 },
-      { viewId: "view-branch-b" },
-    ]) {
-      await store.openResource(embedded);
-      expect(preview()).toMatchObject({ status: "ready", reference: embedded });
-      update({ transcriptPage });
-      expect(state()).toMatchObject({
-        fileInspection: { kind: "browse" },
-        resourceTabs: [chart],
-      });
-    }
-    await store.openResource("other.png");
-    expect(state().resourceTabs).toHaveLength(2);
-    store.showFileBrowser();
-    update({ transcriptPage: { viewId: "view-branch-c" } });
-    store.closeResourceTab("other.png");
-    expect(state()).toMatchObject({
-      fileInspection: { kind: "browse" },
+it("retires closed and positional tabs while retaining named navigation only in its workspace", async () => {
+  const f = await fixture();
+  const reading = f.store.openResource("pending.png");
+  f.store.closeResourceTab("pending.png");
+  await f.store.openResource(chart.reference);
+  f.pending.resolve();
+  await reading;
+  expect(f.state()).toMatchObject({
+    resourceTabs: [chart],
+    fileInspection: { kind: "file", ...chart },
+  });
+  for (const transcriptPage of [
+    { revision: 2, appendFromRevision: 2 },
+    { viewId: "view-branch-b" },
+  ]) {
+    await f.store.openResource(embedded);
+    f.snapshot({ transcriptPage });
+    expect(f.state()).toMatchObject({
       resourceTabs: [chart],
+      fileInspection: { kind: "browse" },
     });
-    expect(requests).toHaveLength(4);
+  }
+  await f.store.openResource(chart.reference);
+  const urls = vi.mocked(URL.revokeObjectURL).mock.calls.length;
+  f.snapshot({
+    cwd: "/elsewhere",
+    transcriptPage: { viewId: "different-workspace" },
   });
-
-  it("discards the selected file and URL across workspace and session changes", async () => {
-    const { store, state, preview, requests, update } = await fixture();
-    const assertRetired = () =>
-      expect(state()).toMatchObject({
-        fileInspection: { kind: "browse" },
-        resourceTabs: [],
-      });
-    await store.openResource(chart.reference);
-    update({
-      cwd: "/another-project",
-      transcriptPage: { viewId: "view-other-project" },
-    });
-    assertRetired();
-    await store.openResource(chart.reference);
-    expect(preview()?.status).toBe("ready");
-    await selectSession(
-      store,
-      activeSnapshot({ sessionId: "s2", cwd: "/another-project" }),
-    );
-    assertRetired();
-    expect(URL.revokeObjectURL).toHaveBeenCalledTimes(2);
-    expect(requests).toHaveLength(2);
+  expect(f.state()).toMatchObject({
+    resourceTabs: [],
+    fileInspection: { kind: "browse" },
   });
+  await f.store.openResource(chart.reference);
+  await selectSession(
+    f.store,
+    activeSnapshot({ sessionId: "s2", cwd: "/elsewhere" }),
+  );
+  expect(f.state()).toMatchObject({
+    resourceTabs: [],
+    fileInspection: { kind: "browse" },
+  });
+  expect(URL.revokeObjectURL).toHaveBeenCalledTimes(urls + 2);
 });

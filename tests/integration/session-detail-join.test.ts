@@ -23,11 +23,12 @@ it("changes the addressed view and resumes it through the Host across an atomic 
   const next = "fixture-history";
   await runtime.openSession(previous);
   const http = fetch;
-  vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) => {
+  const request = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const headers = new Headers(init?.headers);
     headers.set("Authorization", `Bearer ${token}`);
     return http(new URL(String(input), baseUrl), { ...init, headers });
   });
+  vi.stubGlobal("fetch", request);
   const originalSnapshot = runtime.snapshot.bind(runtime);
   const observed = vi.spyOn(runtime, "snapshot");
   const bootstrap = (await localRequest.get("/api/bootstrap").expect(200)).body;
@@ -52,6 +53,7 @@ it("changes the addressed view and resumes it through the Host across an atomic 
   const release = deferred<void>();
   const read = deferred<void>();
   const capture = deferred<void>();
+  const open = deferred<void>();
   try {
     await vi.waitFor(() => expect(frames[0]?.type).toBe("snapshot"));
     expect(frames[0]).toMatchObject({
@@ -71,7 +73,25 @@ it("changes the addressed view and resumes it through the Host across an atomic 
     });
     await vi.waitFor(() => expect(frames[1]?.type).toBe("message_update"));
     const [oldSnapshot, oldMessage] = frames.splice(0);
-    await store.openSession(next);
+    const actualOpen = runtime.openSession.bind(runtime);
+    vi.spyOn(runtime, "openSession").mockImplementation(async (id) => {
+      expect(id).toBe(next);
+      await open.promise;
+      return actualOpen(id);
+    });
+    const opening = store.openSession(next);
+    await vi.waitFor(() =>
+      expect(runtime.openSession).toHaveBeenCalledWith(next),
+    );
+    runtime.emit("event", {
+      type: "runtime_ready",
+      sessionId: next,
+      sessionStatus: { runState: "idle" },
+    });
+    await vi.waitFor(() => expect(frames[0]?.type).toBe("runtime_ready"));
+    socket.emit(frames.shift()!);
+    open.resolve();
+    await opening;
     const messages = store.getState().live.messages;
     expect(messages.length).toBeGreaterThan(0);
     const view = (await originalSnapshot(next)).active!;
@@ -138,6 +158,11 @@ it("changes the addressed view and resumes it through the Host across an atomic 
     expect(store.getState().live.messages).toEqual(messages);
 
     for (const frame of frames) socket.emit(frame);
+    expect(
+      request.mock.calls.some(([url]) =>
+        String(url).startsWith("/api/snapshot"),
+      ),
+    ).toBe(false);
     expect(store.getState()).toMatchObject({
       sessionId: next,
       connection: "open",
@@ -169,6 +194,7 @@ it("changes the addressed view and resumes it through the Host across an atomic 
       live: { messages: current },
     });
   } finally {
+    open.resolve();
     capture.resolve();
     release.resolve();
     hostSocket.close();

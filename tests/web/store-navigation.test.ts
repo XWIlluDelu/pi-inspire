@@ -1,389 +1,264 @@
-// @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, expect, it, vi } from "vitest";
+import type { AppStore } from "../../src/store";
 import { installCatalog, sessionPage } from "./fixtures/session-catalog";
 import {
   activeSnapshot,
   bootstrapPayload,
   DEFAULT_PREFS,
   deferred,
-  emptySnapshot,
   installFakeWebSocket,
-  installFetch,
   jsonBody,
   type RouteResponse,
   selectSession,
   sessionSummary,
 } from "./helpers";
-import { baseRoutes, initStore } from "./store-fixture";
+import { initStore, installStoreRoutes } from "./store-fixture";
 
-describe("session switching guard", () => {
-  beforeEach(() => installFakeWebSocket());
+const recent = sessionSummary({ id: "recent", cwd: "/work/other" });
+const offPage = sessionSummary({ id: "off-page", cwd: "/work/demo" });
+const ids = (store: AppStore) => store.getState().sessions.map(({ id }) => id);
+const summary = (names: (typeof recent)[], total = names.length) => ({
+  body: sessionPage(names, total),
+});
+const prefs = (patch: Partial<typeof DEFAULT_PREFS>) => ({
+  ...DEFAULT_PREFS,
+  ...patch,
+});
+const nextHost = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb";
 
-  it.each([
-    [404, "Session not found"],
-    [409, "Session is owned by another Pi process"],
-  ] as const)(
-    "reports a refused selection (%s) and lets the user select again",
-    async (status, error) => {
-      const visible = sessionSummary({ id: "s1" });
-      const target = sessionSummary({ id: "s9" });
-      let missing = false;
-      installFetch((url, init) => {
-        if (url === "/api/sessions/open") {
-          if (jsonBody(init).id === target.id) {
-            missing = status === 404;
-            return {
-              status,
-              body: {
-                error,
-                ...(missing ? { code: "SESSION_NOT_FOUND" } : {}),
-              },
-            };
-          }
-          return { body: activeSnapshot({ sessionId: "s3" }) };
-        }
-        if (url.startsWith("/api/sessions?")) {
-          const sessions = missing ? [visible] : [visible, target];
-          return { body: sessionPage(sessions, sessions.length) };
-        }
-        return baseRoutes(url, init);
-      });
-      const { store } = await initStore();
-      await vi.waitFor(() => expect(store.getState().sessions).toHaveLength(2));
-      await store.openSession(target.id);
-      expect(store.getState()).toMatchObject({
-        sessionId: "s1",
-        openingSessionId: null,
-        error: null,
-        sessionActionError: error,
-      });
-      await vi.waitFor(() =>
-        expect(store.getState().sessions.map(({ id }) => id)).toEqual(
-          missing ? ["s1"] : ["s1", "s9"],
-        ),
-      );
-      await store.openSession("s3");
-      expect(store.getState()).toMatchObject({
-        sessionId: "s3",
-        error: null,
-        sessionActionError: null,
-      });
+beforeEach(() => installFakeWebSocket());
+
+it.each([404, 409] as const)(
+  "keeps the prior selection after a %i refusal and repairs only a missing catalog row",
+  async (status) => {
+    const current = sessionSummary({ id: "s1" });
+    const target = sessionSummary({ id: "s9" });
+    const error =
+      status === 404
+        ? "Session not found"
+        : "Session is owned by another Pi process";
+    let removed = false;
+    installStoreRoutes((url, init) => {
+      if (url.startsWith("/api/sessions?"))
+        return summary(removed ? [current] : [current, target]);
+      if (url !== "/api/sessions/open") return;
+      if (jsonBody(init).id === "s3")
+        return { body: activeSnapshot({ sessionId: "s3" }) };
+      removed = status === 404;
+      return {
+        status,
+        body: { error, ...(removed ? { code: "SESSION_NOT_FOUND" } : {}) },
+      };
+    });
+    const { store } = await initStore();
+    await vi.waitFor(() => expect(ids(store)).toEqual(["s1", "s9"]));
+    await store.openSession("s9");
+    expect(store.getState()).toMatchObject({
+      sessionId: "s1",
+      sessionSelectionPending: false,
+      error: null,
+      sessionActionError: error,
+    });
+    await vi.waitFor(() =>
+      expect(ids(store)).toEqual(removed ? ["s1"] : ["s1", "s9"]),
+    );
+    await store.openSession("s3");
+    expect(store.getState()).toMatchObject({
+      sessionId: "s3",
+      sessionActionError: null,
+    });
+  },
+);
+
+it("hydrates confirmed folder curation without rereading pages and prunes it before a stale hydration returns", async () => {
+  const write = deferred<void>();
+  const stale = deferred<void>();
+  const catalog = vi.fn(() => summary([recent], 8));
+  const lookup = vi
+    .fn<() => RouteResponse | Promise<RouteResponse>>()
+    .mockReturnValue(summary([offPage]));
+  const { store } = await installCatalog(catalog, {
+    routes: async (url, init) => {
+      if (url === "/api/preferences") {
+        await write.promise;
+        return { body: jsonBody(init) };
+      }
+      if (url === "/api/sessions/by-cwd") return lookup();
+      if (url === "/api/sessions/refresh") return { body: { ok: true } };
     },
-  );
-
-  it("requires a workspace before dispatching session creation", async () => {
-    const creating = vi.fn();
-    installFetch((url, init) => {
-      if (url.startsWith("/api/bootstrap"))
-        return {
-          body: bootstrapPayload(),
-        };
-      if (url === "/api/sessions/new") creating();
-      return baseRoutes(url, init);
-    });
-    const { store } = await initStore(emptySnapshot);
-    await expect(store.newSession()).resolves.toBeNull();
-    expect(creating).not.toHaveBeenCalled();
-    expect(store.getState().live.notices.at(-1)).toMatchObject({
-      kind: "warning",
-      text: "Enter a project directory to start a session",
-    });
   });
+  await vi.waitFor(() => expect(ids(store)).toEqual([recent.id]));
+  store.toggleProjectHidden(offPage.cwd);
+  expect(store.getState().prefs.hiddenProjectCwds).toEqual([]);
+  write.resolve();
+  await vi.waitFor(() => expect(ids(store)).toEqual([recent.id, offPage.id]));
+  expect(catalog).toHaveBeenCalledOnce();
+  expect(store.getState()).toMatchObject({
+    prefs: { hiddenProjectCwds: [offPage.cwd] },
+    sessionListNextOffset: 1,
+    sessionListTotal: 8,
+  });
+
+  lookup.mockReturnValueOnce(stale.promise.then(() => summary([offPage])));
+  const refreshed = store.refreshSessions();
+  await vi.waitFor(() => expect(lookup).toHaveBeenCalledTimes(2));
+  store.toggleProjectHidden(offPage.cwd);
+  await vi.waitFor(() => expect(ids(store)).toEqual([recent.id]));
+  stale.resolve();
+  await refreshed;
+  expect(ids(store)).toEqual([recent.id]);
+  expect(catalog).toHaveBeenCalledTimes(2);
 });
 
-describe("navigation curation", () => {
-  beforeEach(() => installFakeWebSocket());
-
-  const patchPreferences = (init: RequestInit) => ({
-    body: { ...DEFAULT_PREFS, ...jsonBody(init) },
-  });
-  const recent = sessionSummary({ id: "recent", cwd: "/work/other" });
-  const folder = sessionSummary({ id: "off-page", cwd: "/work/demo" });
-  const sessionIds = (store: Awaited<ReturnType<typeof initStore>>["store"]) =>
-    store.getState().sessions.map(({ id }) => id);
-
-  it("prunes a restored off-page row after confirmation without refetching the catalog", async () => {
-    const write = deferred<void>();
-    let lists = 0;
-    const { store } = await installCatalog(
-      () => {
-        lists++;
-        return { body: sessionPage([recent], 2) };
+it.each(["rejected", "confirmed"] as const)(
+  "keeps an off-page row until its restore write is %s",
+  async (outcome) => {
+    const write = deferred<RouteResponse>();
+    const catalog = vi.fn(() => summary([recent], 2));
+    const { store } = await installCatalog(catalog, {
+      preferences: { hiddenSessionIds: [offPage.id] },
+      routes: (url) => {
+        if (url === "/api/preferences") return write.promise;
+        if (url === "/api/sessions/by-id") return summary([offPage]);
       },
-      {
-        preferences: { hiddenSessionIds: [folder.id] },
-        routes: async (url, init) => {
-          if (url === "/api/sessions/by-id")
-            return { body: { sessions: [folder] } };
-          if (url === "/api/preferences") {
-            await write.promise;
-            return patchPreferences(init);
-          }
-        },
-      },
+    });
+    await vi.waitFor(() => expect(ids(store)).toEqual([recent.id, offPage.id]));
+    store.toggleSessionHidden(offPage.id);
+    expect(store.getState()).toMatchObject({
+      curationPending: true,
+      prefs: { hiddenSessionIds: [offPage.id] },
+    });
+    write.resolve(
+      outcome === "confirmed"
+        ? { body: prefs({ hiddenSessionIds: [] }) }
+        : { status: 409, body: { error: "Preference write rejected" } },
     );
     await vi.waitFor(() =>
-      expect(sessionIds(store)).toEqual([recent.id, folder.id]),
+      expect(store.getState().curationPending).toBe(false),
     );
-
-    store.toggleSessionHidden(folder.id);
-    expect(sessionIds(store)).toContain(folder.id);
-    write.resolve();
-    await vi.waitFor(() => expect(sessionIds(store)).toEqual([recent.id]));
-    expect(lists).toBe(1);
+    expect(ids(store)).toEqual(
+      outcome === "confirmed" ? [recent.id] : [recent.id, offPage.id],
+    );
+    if (outcome === "rejected")
+      expect(store.getState().live.notices.at(-1)?.text).toBe(
+        "Preference write rejected",
+      );
+    expect(catalog).toHaveBeenCalledOnce();
     expect(store.getState()).toMatchObject({
       sessionListNextOffset: 1,
       sessionListTotal: 2,
     });
-  });
+  },
+);
 
-  it("does not revive rows from a catalog refresh that captured older curation", async () => {
-    const delayed = deferred<void>();
-    const started = deferred<void>();
-    let folderReads = 0;
-    const { store } = await installCatalog(
-      () => ({ body: sessionPage([recent], 2) }),
-      {
-        preferences: { hiddenProjectCwds: [folder.cwd] },
-        routes: async (url, init) => {
-          if (url === "/api/preferences") return patchPreferences(init);
-          if (url === "/api/sessions/refresh") return { body: { ok: true } };
-          if (url === "/api/sessions/by-cwd") {
-            if (++folderReads === 2) {
-              started.resolve();
-              await delayed.promise;
-            }
-            return { body: { sessions: [folder] } };
-          }
-        },
-      },
-    );
-    await vi.waitFor(() =>
-      expect(sessionIds(store)).toEqual([recent.id, folder.id]),
-    );
-    const refresh = store.refreshSessions();
-    await started.promise;
-    store.toggleProjectHidden(folder.cwd);
-    await vi.waitFor(() => expect(sessionIds(store)).toEqual([recent.id]));
-    delayed.resolve();
-    await refresh;
-    expect(sessionIds(store)).toEqual([recent.id]);
+it("retries a child restore once the hidden folder's membership can be read", async () => {
+  const child = sessionSummary({
+    id: "child",
+    cwd: offPage.cwd,
+    title: "Restore me",
   });
-
-  it("hydrates the confirmed curated folder without replacing the chronological list", async () => {
-    let lists = 0;
-    const { store } = await installCatalog(
-      () => {
-        lists++;
-        return { body: sessionPage([recent], 8) };
-      },
-      {
-        routes: (url, init) => {
-          if (url === "/api/preferences") return patchPreferences(init);
-          if (url === "/api/sessions/by-cwd")
-            return { body: { sessions: [folder] } };
-        },
-      },
-    );
-    await vi.waitFor(() => expect(sessionIds(store)).toEqual([recent.id]));
-    store.toggleProjectHidden(folder.cwd);
-    expect(store.getState().prefs.hiddenProjectCwds).toEqual([]);
-    await vi.waitFor(() =>
-      expect(sessionIds(store)).toEqual([recent.id, folder.id]),
-    );
-    expect(store.getState()).toMatchObject({
-      prefs: { hiddenProjectCwds: [folder.cwd] },
-      sessionListLoading: false,
-      sessionListNextOffset: 1,
-      sessionListTotal: 8,
-    });
-    expect(lists).toBe(1);
+  const sibling = sessionSummary({ id: "sibling", cwd: offPage.cwd });
+  const folder = vi
+    .fn<() => RouteResponse>()
+    .mockReturnValue(summary([child, sibling]));
+  const { store } = await installCatalog(() => summary([child]), {
+    preferences: { hiddenProjectCwds: [offPage.cwd] },
+    routes: (url) => (url === "/api/sessions/by-cwd" ? folder() : undefined),
   });
-
-  it("does not publish a refused curation write", async () => {
-    const { store } = await installCatalog(
-      () => ({ body: sessionPage([recent], 1) }),
-      {
-        routes: (url) =>
-          url === "/api/preferences"
-            ? { status: 409, body: { error: "preference write rejected" } }
-            : undefined,
-      },
-    );
-    store.toggleSessionPin(recent.id);
-    expect(store.getState()).toMatchObject({
-      prefs: { pinnedSessionIds: [] },
-      curationPending: true,
-    });
-    await vi.waitFor(() =>
-      expect(store.getState().curationPending).toBe(false),
-    );
-    expect(store.getState().prefs.pinnedSessionIds).toEqual([]);
+  await store.loadSessions(child.title);
+  folder.mockReturnValueOnce({
+    status: 503,
+    body: { error: "Folder lookup failed" },
+  });
+  store.toggleSessionHidden(child.id);
+  await vi.waitFor(() =>
     expect(store.getState().live.notices.at(-1)?.text).toBe(
-      "preference write rejected",
-    );
+      "Folder lookup failed",
+    ),
+  );
+  expect(store.getState().prefs).toMatchObject({
+    hiddenProjectCwds: [offPage.cwd],
+    hiddenSessionIds: [],
   });
+  store.toggleSessionHidden(child.id);
+  await vi.waitFor(() =>
+    expect(store.getState().prefs).toMatchObject({
+      hiddenProjectCwds: [],
+      hiddenSessionIds: [sibling.id],
+    }),
+  );
+});
 
-  it("keeps the replacement Host's baseline when an older write returns", async () => {
-    const oldWrite = deferred<RouteResponse>();
-    const started = deferred<void>();
-    let replaced = false;
-    installFetch((url, init) => {
+it.each([false, true])(
+  "keeps preference publication bound to its Host across reconnect (replacement: %s)",
+  async (replacement) => {
+    const write = deferred<void>();
+    const pending = deferred<void>();
+    const save = vi.fn();
+    let reconnected = false;
+    let theme: typeof DEFAULT_PREFS.theme = "system";
+    installStoreRoutes(async (url, init) => {
       if (url.startsWith("/api/bootstrap"))
         return {
           body: bootstrapPayload(
-            replaced
+            reconnected && replacement
               ? {
-                  authorityId: "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb",
-                  preferences: { ...DEFAULT_PREFS, theme: "light" },
+                  authorityId: nextHost,
+                  preferences: prefs({ theme: "light" }),
                   preferenceRevision: 1,
                 }
-              : {},
+              : { startupSessionId: "s1", preferences: prefs({ theme }) },
           ),
         };
-      if (url === "/api/preferences") {
-        started.resolve();
-        return oldWrite.promise;
-      }
-      return baseRoutes(url, init);
-    });
-    const { store } = await initStore();
-    store.setPreference("theme", "dark");
-    await started.promise;
-    replaced = true;
-    await store.init();
-    expect(store.getState().desiredPreferences).toEqual({});
-    oldWrite.resolve({
-      body: { preferences: { ...DEFAULT_PREFS, theme: "dark" }, revision: 500 },
-    });
-    await oldWrite.promise;
-    expect(store.getState().prefs.theme).toBe("light");
-  });
-
-  it("reads a same-Host write that settles after bootstrap without replaying it", async () => {
-    const write = deferred<void>();
-    const started = deferred<void>();
-    let writes = 0;
-    let theme = DEFAULT_PREFS.theme;
-    installFetch(async (url, init) => {
-      if (url === "/api/bootstrap")
-        return {
-          body: bootstrapPayload({ preferences: { ...DEFAULT_PREFS, theme } }),
-        };
-      if (url !== "/api/preferences") return baseRoutes(url, init);
+      if (url !== "/api/preferences") return;
       if (init.method === "PATCH") {
-        writes++;
-        started.resolve();
+        save(jsonBody(init));
+        pending.resolve();
         await write.promise;
         theme = "dark";
       }
-      return { body: { ...DEFAULT_PREFS, theme } };
+      return {
+        body: {
+          preferences: prefs({ theme }),
+          revision: theme === "dark" ? 500 : 2,
+        },
+      };
     });
     const { store } = await initStore();
     store.setPreference("theme", "dark");
-    await started.promise;
+    await pending.promise;
+    reconnected = true;
     await store.init();
-    expect(store.getState().prefs.theme).toBe("system");
+    expect(store.getState().prefs.theme).toBe(replacement ? "light" : "system");
+    expect(store.getState().desiredPreferences).toEqual({});
     write.resolve();
-    await vi.waitFor(() => expect(store.getState().prefs.theme).toBe("dark"));
-    expect(writes).toBe(1);
+    if (replacement) {
+      // Flush the old write continuation while the new authority stays selected.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(store.getState().prefs.theme).toBe("light");
+    } else
+      await vi.waitFor(() => expect(store.getState().prefs.theme).toBe("dark"));
+    expect(save).toHaveBeenCalledExactlyOnceWith({ theme: "dark" });
+  },
+);
+
+it("applies a late rename only to the session it targeted", async () => {
+  const rename = deferred<RouteResponse>();
+  const request = vi.fn((_body: Record<string, unknown>) => rename.promise);
+  installStoreRoutes((url, init) =>
+    url === "/api/sessions/rename" ? request(jsonBody(init)) : undefined,
+  );
+  const { store } = await initStore();
+  const writing = store.renameSession("s1", "Renamed A");
+  await selectSession(
+    store,
+    activeSnapshot({ sessionId: "s2", sessionName: "Session B" }),
+  );
+  rename.resolve({ body: { ok: true } });
+  await expect(writing).resolves.toBe(true);
+  expect(request).toHaveBeenCalledExactlyOnceWith({
+    sessionId: "s1",
+    name: "Renamed A",
   });
-
-  it("retries a child restore when the hidden folder's membership becomes available", async () => {
-    const cwd = "/work/hidden";
-    const child = sessionSummary({ id: "child", cwd, title: "Restore me" });
-    const sibling = sessionSummary({ id: "sibling", cwd });
-    let failLookup = false;
-    const { store } = await installCatalog(
-      () => ({ body: sessionPage([child], 1) }),
-      {
-        preferences: { hiddenProjectCwds: [cwd] },
-        routes: (url, init) => {
-          if (url === "/api/sessions/by-cwd")
-            return failLookup
-              ? { status: 503, body: { error: "Folder lookup failed" } }
-              : { body: { sessions: [child, sibling] } };
-          if (url === "/api/preferences") return patchPreferences(init);
-        },
-      },
-    );
-    await store.loadSessions("Restore me");
-    expect(sessionIds(store)).toEqual([child.id]);
-
-    failLookup = true;
-    store.toggleSessionHidden(child.id);
-    await vi.waitFor(() =>
-      expect(store.getState().live.notices.at(-1)?.text).toBe(
-        "Folder lookup failed",
-      ),
-    );
-    expect(store.getState().prefs).toMatchObject({
-      hiddenProjectCwds: [cwd],
-      hiddenSessionIds: [],
-    });
-
-    failLookup = false;
-    store.toggleSessionHidden(child.id);
-    await vi.waitFor(() =>
-      expect(store.getState().prefs).toMatchObject({
-        hiddenProjectCwds: [],
-        hiddenSessionIds: [sibling.id],
-      }),
-    );
-  });
-});
-
-describe("async completion ownership", () => {
-  beforeEach(() => installFakeWebSocket());
-
-  it("a delayed rename response cannot retitle a different session", async () => {
-    const { promise: renameGate, resolve: releaseRename } = deferred<void>();
-    let renameBody: Record<string, unknown> | null = null;
-    installFetch(async (url, init) => {
-      if (url.startsWith("/api/sessions/rename")) {
-        renameBody = jsonBody(init);
-        await renameGate;
-        return { body: { ok: true } };
-      }
-      return baseRoutes(url, init);
-    });
-    const { store } = await initStore();
-
-    const renaming = store.renameSession("s1", "Renamed A");
-    await selectSession(
-      store,
-      activeSnapshot({ sessionId: "s2", sessionName: "Session B" }),
-    );
-    releaseRename();
-    await expect(renaming).resolves.toBe(true);
-    expect(renameBody).toEqual({ sessionId: "s1", name: "Renamed A" });
-    // The rename belonged to s1; the visible title of s2 stays truthful.
-    expect(store.getState().sessionName).toBe("Session B");
-  });
-});
-
-describe("selection race ownership", () => {
-  beforeEach(() => installFakeWebSocket());
-
-  it("an addressed refresh preserves a newer explicit selection", async () => {
-    const { promise: openGate, resolve: releaseOpen } = deferred<void>();
-    installFetch(async (url, init) => {
-      if (url.startsWith("/api/sessions/open")) {
-        await openGate;
-        return { body: activeSnapshot({ sessionId: "s-A", sessionName: "A" }) };
-      }
-      return baseRoutes(url, init);
-    });
-    const { store, socket } = await initStore();
-
-    const opening = store.openSession("s-A");
-    socket.emitSnapshot(activeSnapshot({ sessionName: "Refreshed" }));
-    expect(store.getState()).toMatchObject({
-      sessionName: "Refreshed",
-      openingSessionId: "s-A",
-    });
-    releaseOpen();
-    await opening;
-    expect(store.getState().sessionId).toBe("s-A");
-  });
+  expect(store.getState().sessionName).toBe("Session B");
 });

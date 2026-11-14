@@ -8,7 +8,6 @@ import {
   jsonBody,
   type RouteHandler,
   type RouteResponse,
-  savedInputNode,
 } from "./helpers";
 import { initStore, installStoreRoutes } from "./store-fixture";
 
@@ -45,7 +44,14 @@ describe("branch request view ownership", () => {
           body: {
             sessionId: "s1",
             revision: 1,
-            node: savedInputNode,
+            node: {
+              id: "u1",
+              leaf: false,
+              childCount: 1,
+              canEdit: true,
+              canFork: true,
+              toolResult: false,
+            },
             text: "saved input",
             nextOffset: null,
             totalChars: 11,

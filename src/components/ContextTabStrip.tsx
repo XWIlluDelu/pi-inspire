@@ -1,11 +1,5 @@
 import { Bell, FileText, MoreHorizontal, X } from "lucide-react";
-import {
-  type DragEvent,
-  type MouseEvent,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
+import { type DragEvent, useLayoutEffect, useRef, useState } from "react";
 import type { TerminalDescriptor } from "../../shared/terminal-contracts";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import { ChoicePanel } from "./ChoicePanel";
@@ -29,7 +23,7 @@ export type FileDockTab = DocumentTab & {
 
 export type TerminalDockTab = DocumentTab & {
   kind: "terminal";
-  terminal: TerminalDescriptor;
+  status: TerminalDescriptor["status"];
   unread: boolean;
   bell: boolean;
   rename?: {
@@ -62,7 +56,7 @@ function DockTabButton({
   tab: DockTab;
   drag(id: string): void;
   drop(tab: TerminalDockTab, event: DragEvent<HTMLDivElement>): void;
-  onClose(event: MouseEvent<HTMLButtonElement>): void;
+  onClose(hadFocus: boolean): void;
 }) {
   const terminal = tab.kind === "terminal" ? tab : null;
   const rename = terminal?.rename;
@@ -134,11 +128,10 @@ function DockTabButton({
           {!terminal ? (
             <FileText size={13} aria-hidden />
           ) : (
-            <span className="dock-tab__icon" aria-hidden>
-              <span
-                className={`terminal-tab__status terminal-tab__status--${terminal.terminal.status}`}
-              />
-            </span>
+            <span
+              className={`terminal-tab__status terminal-tab__status--${terminal.status}`}
+              aria-hidden
+            />
           )}
           <span className="dock-tab__label">{tab.label}</span>
           {terminal?.bell && (
@@ -154,7 +147,9 @@ function DockTabButton({
         className="icon-button dock-tab__close"
         aria-label={`Close ${tab.label}`}
         title={terminal ? "Close terminal" : `Close ${tab.label}`}
-        onClick={onClose}
+        onClick={(event) =>
+          onClose(document.activeElement === event.currentTarget)
+        }
       >
         <X size={13} aria-hidden />
       </button>
@@ -203,25 +198,6 @@ export function ContextTabStrip({ tabs }: { tabs: readonly DockTab[] }) {
     observer.observe(strip);
     return () => observer.disconnect();
   }, [activeSelector]);
-  const strip = (
-    <div className="dock-tabs__scroll" ref={stripRef}>
-      {tabs.map((tab) => (
-        <DockTabButton
-          key={tabKey(tab)}
-          tab={tab}
-          drag={drag}
-          drop={drop}
-          onClose={(event) => {
-            const restoreFocus =
-              tab.kind === "file" &&
-              document.activeElement === event.currentTarget;
-            tab.close();
-            if (restoreFocus) focusTab('[role="tab"][aria-selected="true"]');
-          }}
-        />
-      ))}
-    </div>
-  );
   if (!tabs.length) return null;
   const filter = query.trim().toLocaleLowerCase();
   const options = tabs
@@ -249,7 +225,21 @@ export function ContextTabStrip({ tabs }: { tabs: readonly DockTab[] }) {
   };
   return (
     <div className="dock-tabs">
-      {strip}
+      <div className="dock-tabs__scroll" ref={stripRef}>
+        {tabs.map((tab) => (
+          <DockTabButton
+            key={tabKey(tab)}
+            tab={tab}
+            drag={drag}
+            drop={drop}
+            onClose={(hadFocus) => {
+              tab.close();
+              if (tab.kind === "file" && hadFocus)
+                focusTab('[role="tab"][aria-selected="true"]');
+            }}
+          />
+        ))}
+      </div>
       {tabs.length > 1 && (
         <ChoicePanel
           label="Open tabs"

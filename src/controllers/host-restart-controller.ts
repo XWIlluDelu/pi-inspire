@@ -3,11 +3,13 @@ import {
   type HostRestartScope,
   type HostRestartStatus,
   hostRestartRequestSchema,
+  matchesRestartIntent,
 } from "../../shared/host-restart";
 import { createApi } from "../api";
 import { ReceiptRead } from "../operation-observer";
 
 const KEY = "inspire:host-restart:v1";
+
 interface State {
   status: HostRestartStatus | null;
   pending: HostRestartRequest | null;
@@ -119,12 +121,8 @@ export class HostRestartClient {
         this.patch({ pending: null, notice: "Host reconnected." });
       } else if (
         pending &&
-        status.operation?.id === pending.operationId &&
-        status.operation.scope === pending.scope &&
-        Boolean(status.operation.interruptWork) ===
-          Boolean(pending.interruptWork) &&
-        status.operation.skipAttachedStop === pending.skipAttachedStop &&
-        status.operation.phase === "rejected"
+        status.operation?.phase === "rejected" &&
+        matchesRestartIntent(status.operation, pending)
       ) {
         this.persist(null);
         this.patch({ pending: null });
@@ -198,10 +196,7 @@ export class HostRestartClient {
       if (
         this.state.pending !== pending ||
         status?.hostId !== pending.hostId ||
-        receipt.id !== pending.operationId ||
-        receipt.scope !== pending.scope ||
-        Boolean(receipt.interruptWork) !== Boolean(pending.interruptWork) ||
-        receipt.skipAttachedStop !== pending.skipAttachedStop
+        !matchesRestartIntent(receipt, pending)
       )
         return;
 

@@ -917,7 +917,7 @@ export const WorkspaceDock = memo(function WorkspaceDock({
   const tabs: TerminalDockTab[] = terminals.map((terminal) => ({
     kind: "terminal",
     id: terminal.id,
-    terminal,
+    status: terminal.status,
     panel: "context-terminal-content",
     label: terminalLabel(terminal),
     title: terminal.currentCwd,
@@ -999,7 +999,7 @@ export const WorkspaceDock = memo(function WorkspaceDock({
         <details
           ref={profileMenuRef}
           name={menuGroupName}
-          className="terminal-menu terminal-menu--profiles"
+          className="terminal-menu"
           data-terminal-menu
         >
           <summary
@@ -1030,9 +1030,10 @@ export const WorkspaceDock = memo(function WorkspaceDock({
         </details>
       ) : null}
       {currentView && (
-        <div className="terminal-view-controls">
+        <>
           <span
-            className={`terminal-view__status terminal-view__status--${currentView.transport}`}
+            className="terminal-view__status"
+            data-transport={currentView.transport}
             role="status"
             aria-label={currentView.statusLabel}
             title={currentView.statusLabel}
@@ -1042,7 +1043,7 @@ export const WorkspaceDock = memo(function WorkspaceDock({
             !currentView.exited ? (
               <button
                 type="button"
-                className="icon-button terminal-view__keyboard"
+                className="icon-button"
                 aria-label="Focus terminal input"
                 disabled={!currentView.ready}
                 onPointerDown={(event) => event.preventDefault()}
@@ -1066,7 +1067,7 @@ export const WorkspaceDock = memo(function WorkspaceDock({
           >
             <Search size={16} aria-hidden />
           </button>
-        </div>
+        </>
       )}
       <button
         type="button"
@@ -1082,7 +1083,7 @@ export const WorkspaceDock = memo(function WorkspaceDock({
         )}
       </button>
       <details
-        className="terminal-menu terminal-menu--more"
+        className="terminal-menu"
         name={menuGroupName}
         data-terminal-menu
         onToggle={(event) => {
@@ -1226,7 +1227,6 @@ export const WorkspaceDock = memo(function WorkspaceDock({
                   ) : null}
                 </div>
               </details>
-              <div className="terminal-menu__separator" />
             </>
           ) : null}
           <details
@@ -1370,12 +1370,13 @@ export const WorkspaceDock = memo(function WorkspaceDock({
         hidden={Boolean(context && !active)}
       >
         {cwd && sessionCwd && cwd !== sessionCwd ? (
-          <div className="terminal-project-context">
+          <div className="pane-toolbar terminal-project-context">
             <span>
               Viewing <strong>{projectLabel(cwd)}</strong>
             </span>
             <button
               type="button"
+              className="button button--quiet"
               onClick={() => {
                 setActiveId(null);
                 setCwd(sessionCwd);
@@ -1417,42 +1418,40 @@ export const WorkspaceDock = memo(function WorkspaceDock({
             </button>
           </ContextPaneState>
         ) : (
-          <div className="terminal-views">
-            {terminals
-              .filter(
-                (terminal) =>
-                  openedIds.has(terminal.id) ||
-                  (active && terminal.id === activeId),
-              )
-              .map((terminal) => (
-                <div
-                  id={`terminal-view-${terminal.id}`}
-                  key={`${terminal.id}:${terminal.outputEpoch}`}
-                  className="terminal-views__item"
-                  role="region"
-                  aria-label={`${terminalLabel(terminal)} terminal`}
-                  hidden={terminal.id !== activeId}
-                >
-                  <Suspense fallback={TERMINAL_LOADING}>
-                    <TerminalView
-                      api={api}
-                      terminal={terminal}
-                      active={active && terminal.id === activeId}
-                      settings={uiSettings}
-                      publishActions={setViewActions}
-                      onDescriptor={applyDescriptor}
-                      onBackgroundOutput={markBackgroundOutput}
-                      onBell={markBell}
-                      onOpenFile={cwd === sessionCwd ? onOpenFile : undefined}
-                      onSendToComposer={
-                        cwd === sessionCwd ? onSendToComposer : undefined
-                      }
-                      onCommandComplete={handleCommandComplete}
-                    />
-                  </Suspense>
-                </div>
-              ))}
-          </div>
+          terminals
+            .filter(
+              (terminal) =>
+                openedIds.has(terminal.id) ||
+                (active && terminal.id === activeId),
+            )
+            .map((terminal) => (
+              <div
+                id={`terminal-view-${terminal.id}`}
+                key={`${terminal.id}:${terminal.outputEpoch}`}
+                className="terminal-views__item"
+                role="region"
+                aria-label={`${terminalLabel(terminal)} terminal`}
+                hidden={terminal.id !== activeId}
+              >
+                <Suspense fallback={TERMINAL_LOADING}>
+                  <TerminalView
+                    api={api}
+                    terminal={terminal}
+                    active={active && terminal.id === activeId}
+                    settings={uiSettings}
+                    publishActions={setViewActions}
+                    onDescriptor={applyDescriptor}
+                    onBackgroundOutput={markBackgroundOutput}
+                    onBell={markBell}
+                    onOpenFile={cwd === sessionCwd ? onOpenFile : undefined}
+                    onSendToComposer={
+                      cwd === sessionCwd ? onSendToComposer : undefined
+                    }
+                    onCommandComplete={handleCommandComplete}
+                  />
+                </Suspense>
+              </div>
+            ))
         )}
 
         {active && settingsOpen
@@ -1470,9 +1469,13 @@ export const WorkspaceDock = memo(function WorkspaceDock({
           : null}
 
         {recentlyClosed && Date.now() - recentlyClosed.closedAt < 30_000 ? (
-          <div className="terminal-undo" role="status">
+          <div className="pane-toolbar terminal-undo" role="status">
             <span>Terminal closed</span>
-            <button type="button" onClick={() => void reopenClosed()}>
+            <button
+              className="button button--quiet"
+              type="button"
+              onClick={() => void reopenClosed()}
+            >
               <Undo2 size={13} aria-hidden /> Reopen
             </button>
             <button

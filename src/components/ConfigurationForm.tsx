@@ -2,40 +2,63 @@ import {
   ArrowLeft,
   Eye,
   EyeOff,
+  type LucideIcon,
   Pencil,
   RefreshCw,
   Trash2,
 } from "lucide-react";
 import {
   type ComponentProps,
-  type ReactNode,
   type MouseEventHandler,
+  type ReactNode,
   useId,
   useLayoutEffect,
   useRef,
   useState,
 } from "react";
+import type { z } from "zod";
 import type {
   ConfigurationControl,
   SecretEdit,
 } from "../../shared/configuration-fields";
 import { ButtonLabel } from "./ButtonLabel";
+import { NativeSelect } from "./NativeSelect";
+
+export function ConfigurationAction({
+  label,
+  icon: Icon,
+  ...props
+}: ComponentProps<"button"> & { label: string; icon: LucideIcon }) {
+  return (
+    <button
+      type="button"
+      className="models-icon-button"
+      aria-label={label}
+      title={label}
+      {...props}
+    >
+      <Icon size={14} aria-hidden />
+    </button>
+  );
+}
 
 /** One declaration detail is mounted for the selected identity. */
 export function ConfigurationDetail({
   label,
+  name,
+  description,
   children,
   edit,
   remove,
   disabled,
-  extra,
 }: {
   label: string;
-  children: ReactNode;
+  name: string;
+  description: ReactNode;
+  children?: ReactNode;
   edit?: MouseEventHandler<HTMLButtonElement>;
-  remove: MouseEventHandler<HTMLButtonElement>;
-  disabled: boolean;
-  extra?: ReactNode;
+  remove?: MouseEventHandler<HTMLButtonElement>;
+  disabled?: boolean;
 }) {
   const actions = [
     { name: "Edit", Icon: Pencil, run: edit },
@@ -43,47 +66,24 @@ export function ConfigurationDetail({
   ];
   return (
     <div className="models-detail" role="group" aria-label={label}>
-      {children}
+      <div>
+        <strong>{name}</strong>
+        {description}
+      </div>
       <div className="models-actions">
-        {actions.map(({ name, Icon, run }) => (
-          <button
-            key={name}
-            type="button"
-            className="models-icon-button"
-            aria-label={`${name} ${label}`}
-            title={`${name} ${label}`}
-            disabled={disabled || !run}
-            onClick={run}
-          >
-            <Icon size={14} aria-hidden />
-          </button>
-        ))}
-        {extra}
+        {remove &&
+          actions.map(({ name, Icon, run }) => (
+            <ConfigurationAction
+              key={name}
+              label={`${name} ${label}`}
+              icon={Icon}
+              disabled={disabled || !run}
+              onClick={run}
+            />
+          ))}
+        {children}
       </div>
     </div>
-  );
-}
-
-export function ConfigurationRefresh({
-  label,
-  busy,
-  onClick,
-}: {
-  label: string;
-  busy: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      className="models-icon-button"
-      aria-label={label}
-      title={label}
-      disabled={busy}
-      onClick={onClick}
-    >
-      <RefreshCw size={14} aria-hidden />
-    </button>
   );
 }
 
@@ -124,9 +124,10 @@ export function ConfigurationEditor({
             <h3 id={titleId}>{title}</h3>
             {identity && <code>{identity}</code>}
           </div>
-          <ConfigurationRefresh
+          <ConfigurationAction
             label={refresh.label}
-            busy={busy}
+            icon={RefreshCw}
+            disabled={busy}
             onClick={refresh.run}
           />
         </div>
@@ -136,42 +137,48 @@ export function ConfigurationEditor({
   );
 }
 
-export function ConfigurationRemoval({
+export function ConfigurationConfirmation({
   children,
-  busy,
-  blocked,
-  onRemove,
+  confirmLabel,
+  cancelLabel = "Cancel",
+  label = confirmLabel,
+  primary,
+  confirmDisabled,
+  cancelDisabled,
+  onConfirm,
   onCancel,
 }: {
   children: ReactNode;
-  busy: boolean;
-  blocked?: boolean;
-  onRemove: () => void;
+  confirmLabel: string;
+  cancelLabel?: string;
+  label?: string;
+  primary?: boolean;
+  confirmDisabled?: boolean;
+  cancelDisabled?: boolean;
+  onConfirm: () => void;
   onCancel: () => void;
 }) {
   return (
-    <div
-      className="models-confirm"
-      role="group"
-      aria-label="Remove configuration"
-    >
+    <div className="models-confirm" role="group" aria-label={label}>
       <p>{children}</p>
       <div className="models-actions">
         <button
           type="button"
-          className="button button--danger"
-          disabled={busy || blocked}
-          onClick={onRemove}
+          className={
+            primary ? "button button--primary" : "button button--danger"
+          }
+          disabled={confirmDisabled}
+          onClick={onConfirm}
         >
-          Remove configuration
+          {confirmLabel}
         </button>
         <button
           type="button"
           className="button button--quiet"
-          disabled={busy}
+          disabled={cancelDisabled}
           onClick={onCancel}
         >
-          Cancel
+          {cancelLabel}
         </button>
       </div>
     </div>
@@ -313,6 +320,63 @@ export function ConfigurationInput({
       ) : (
         <input {...props} />
       )}
+    </label>
+  );
+}
+
+export function useConfigurationFields<
+  Fields extends Record<
+    string,
+    { control: ConfigurationControl; schema: z.ZodType }
+  >,
+>(
+  fields: Fields,
+  current: Partial<Record<keyof Fields, string | number>> | null,
+  disabled: boolean,
+  textEdit?: (draft: string, initial: string) => string | null | undefined,
+) {
+  type Field = keyof Fields & string;
+  const [initial] = useState(current);
+  const [draft, setDraft] = useState<Partial<Record<Field, string>>>({});
+  return {
+    bind: (field: Field) => ({
+      ...fields[field].control,
+      disabled,
+      value: draft[field] ?? current?.[field] ?? "",
+      onChange: ({ currentTarget }: React.ChangeEvent<HTMLInputElement>) =>
+        setDraft((draft) => ({ ...draft, [field]: currentTarget.value })),
+    }),
+    patch: () =>
+      Object.fromEntries(
+        (Object.keys(draft) as Field[])
+          .map((field) => {
+            const text = draft[field]!;
+            const control = fields[field].control;
+            const value = textEdit
+              ? textEdit(text, String(initial?.[field] ?? ""))
+              : text || (control.required ? "" : null);
+            return [
+              field,
+              value && control.type === "number" ? Number(value) : value,
+            ];
+          })
+          .filter(([, value]) => value !== undefined),
+      ) as { [Key in Field]?: z.infer<Fields[Key]["schema"]> },
+  };
+}
+
+export function ConfigurationSelect<Value extends string>({
+  caption,
+  wide,
+  ...props
+}: ComponentProps<typeof NativeSelect<Value>> & {
+  caption?: string;
+  wide?: boolean;
+}) {
+  return (
+    <label className={wide ? "models-form__wide" : undefined}>
+      {caption ?? props.label}
+      <NativeSelect {...props} className="native-select--field" />
     </label>
   );
 }

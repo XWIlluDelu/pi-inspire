@@ -133,30 +133,7 @@
 
 .topbar :is(.button, .icon-button):focus-visible { outline-offset: -2px; }
 
-.session-actions-menu {
-  position: fixed;
-  z-index: 45;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-}
-
 .topbar__title-button { -webkit-tap-highlight-color: transparent; }
-
-.session-actions-menu button > svg,
-.session-actions-menu .copy-feedback {
-  flex: 0 0 auto;
-  color: var(--muted);
-}
-
-.session-actions-menu .button-label {
-  min-width: 0;
-}
-
-.session-actions-menu .button-label > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 
 .topbar__status {
   flex: none;
@@ -271,7 +248,6 @@
   .topbar__git.button { min-width: 32px; justify-content: center; }
   .topbar__actions { gap: 0; }
   .topbar .icon-button { width: 44px; height: 44px; }
-  .session-actions-menu button { min-height: 44px; }
 }
 
 /* --- Banners --- */

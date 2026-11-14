@@ -215,9 +215,61 @@ describe("worker startup and retirement", () => {
         const stopping = vi.spyOn(old, "stop").mockImplementation(() => stop);
         let reloading: Promise<unknown> | undefined;
         if (retirement === "unexpected exit") {
-          // No pending mutation response supplies an error.stopped fallback.
+          old.emit("event", {
+            type: "extension_ui_request",
+            id: "question",
+            method: "confirm",
+          });
+          old.emit("event", {
+            type: "extension_ui_request",
+            id: "widget",
+            method: "setWidget",
+            widgetKey: "plan",
+            widgetLines: ["one"],
+          });
+          old.emit("event", {
+            type: "extension_ui_request",
+            id: "status",
+            method: "setStatus",
+            statusKey: "usage",
+            statusText: "37%",
+          });
+          const before = await runtime.snapshot("0");
+          expect(before.extensionDisplays).toHaveLength(1);
+          expect(before.pendingExtensionUiRequests).toHaveLength(1);
+          const reported = vi.fn();
+          runtime.on("event", reported);
           old.emit("event", { type: "agent_start" });
           old.emit("exit", new Error("RPC disconnected"));
+          expect(await runtime.snapshot("0")).toMatchObject({
+            active: {
+              transcriptPage: {
+                messages: [
+                  expect.objectContaining({
+                    role: "user",
+                    content: "preview:0",
+                  }),
+                ],
+              },
+            },
+            pendingExtensionUiRequests: [],
+            extensionStatuses: {},
+            extensionDisplays: [],
+            sessionStatuses: {
+              "0": {
+                runState: "failed",
+                indicator: "failed",
+                attentionId: expect.any(Number),
+              },
+            },
+          });
+          expect(reported).toHaveBeenCalledWith(
+            expect.objectContaining({
+              type: "runtime_error",
+              extensionDisplays: [],
+              extensionStatuses: {},
+            }),
+          );
         } else if (retirement === "idle eviction") {
           for (const id of ids.slice(1)) {
             await runtime.openSession(id);
@@ -307,81 +359,6 @@ describe("worker startup and retirement", () => {
       "Pi created a duplicate session path",
     );
     expect(workers[1]?.stops).toBeGreaterThan(0);
-  });
-
-  it("returns the created session even if a readiness observer fails", async () => {
-    const { runtime } = schedulingRuntime({ sessions: [] });
-    const observer = vi.fn((event: { type: string }) => {
-      if (event.type === "runtime_ready") throw new Error("Observer failed");
-    });
-    runtime.on("event", observer);
-    try {
-      const created = await runtime.newSession(TEST_CWD);
-      expect(observer).toHaveBeenCalledWith(
-        expect.objectContaining({ type: "runtime_ready", sessionId: "new-id" }),
-      );
-      expect(created.active?.sessionId).toBe("new-id");
-      expect((await runtime.snapshot("new-id")).active?.sessionId).toBe(
-        "new-id",
-      );
-    } finally {
-      runtime.off("event", observer);
-      await runtime.close();
-    }
-  });
-
-  it("keeps a read-only recovery snapshot and clears stale extension UI after worker exit", async () => {
-    const store = trackedAttachmentStore();
-    const f = schedulingRuntime({ attachments: store });
-    const { runtime } = f;
-    const emitted: Array<Record<string, unknown>> = [];
-    runtime.on("event", (event) =>
-      emitted.push(event as Record<string, unknown>),
-    );
-
-    await runtime.openSession("a");
-    await startWorker(runtime);
-    f.worker.emit("event", {
-      type: "extension_ui_request",
-      id: "question-1",
-      method: "confirm",
-    });
-    f.worker.emit("event", {
-      type: "extension_ui_request",
-      id: "widget-1",
-      method: "setWidget",
-      widgetKey: "plan",
-      widgetLines: ["one"],
-    });
-    f.worker.emit("event", {
-      type: "extension_ui_request",
-      id: "status-1",
-      method: "setStatus",
-      statusKey: "usage",
-      statusText: "37%",
-    });
-    expect((await runtime.snapshot("a")).extensionDisplays).toHaveLength(1);
-    f.worker.emit("exit", new Error("worker crashed"));
-
-    const recovered = await runtime.snapshot("a");
-    expect(recovered.active?.transcriptPage.messages).toMatchObject([
-      { role: "user", content: "preview:a", timestamp: 1 },
-    ]);
-    expect(recovered.sessionStatuses.a?.runState).toBe("failed");
-    expect(recovered.pendingExtensionUiRequests).toEqual([]);
-    expect(recovered.extensionDisplays).toEqual([]);
-    expect(recovered.extensionStatuses).toEqual({});
-    expect(recovered.sessionStatuses.a).toMatchObject({
-      runState: "failed",
-      indicator: "failed",
-      attentionId: expect.any(Number),
-    });
-    expect(emitted.at(-1)).toMatchObject({
-      type: "runtime_error",
-      extensionDisplays: [],
-      extensionStatuses: {},
-    });
-    await runtime.close();
   });
 
   it("rejects an open whose catalog lookup outlives runtime close", async () => {
@@ -622,7 +599,16 @@ describe("worker startup and retirement", () => {
     expect(runtime.ownWorkerTags()).toEqual(new Set());
     expect(workers[0]?.stops).toBe(1);
 
+    const readiness = vi.fn((event: { type: string }) => {
+      if (event.type === "runtime_ready") throw new Error("Observer failed");
+    });
+    runtime.on("event", readiness);
     const created = await runtime.newSession(TEST_CWD);
+    expect(readiness).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "runtime_ready", sessionId: "new-id" }),
+    );
+    runtime.off("event", readiness);
+    expect((await runtime.snapshot("new-id")).active?.sessionId).toBe("new-id");
     expect(created.active?.sessionId).toBe("new-id");
     expect(created.pendingExtensionUiRequests).toEqual([
       expect.objectContaining({

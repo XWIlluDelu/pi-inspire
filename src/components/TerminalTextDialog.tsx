@@ -45,9 +45,9 @@ export function TerminalTextDialog({
       aria-label="Select terminal text"
       onDismiss={onClose}
     >
-      <div className="dialog terminal-text-dialog">
-        <header className="terminal-text-dialog__header">
-          <h2>Select text</h2>
+      <div className="dialog dialog--flush terminal-text-dialog">
+        <header className="dialog__header dialog__header--bar">
+          <h2 className="dialog__title">Select text</h2>
           <button
             type="button"
             className="icon-button"
@@ -77,7 +77,7 @@ export function TerminalTextDialog({
           </p>
         )}
         <footer
-          className="terminal-text-dialog__actions"
+          className="dialog__actions terminal-text-dialog__actions"
           onPointerDown={(event) => event.preventDefault()}
         >
           <button

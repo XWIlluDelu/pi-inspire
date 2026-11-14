@@ -55,72 +55,43 @@ describe("session selection and addressed reads", () => {
     expect(workers.map(({ stops }) => stops)).toEqual([0, 0]);
   });
 
-  it("does not change selection when a ready session's pre-commit snapshot fails", async () => {
+  it("keeps the addressed snapshot and latest startup hint across an overlapping open and a failed read", async () => {
     const { runtime, workers } = schedulingRuntime({
       sessions: [record("a", "/project"), record("b", "/project")],
     });
-    await runtime.openSession("a");
-    await startWorker(runtime);
-    const slots = (
-      runtime as unknown as { slots: Map<string, { ready: boolean }> }
-    ).slots;
-    await vi.waitFor(() => expect(slots.get("a")?.ready).toBe(true));
-    await runtime.openSession("b");
-
-    const workerA = workers.find((worker) => worker.sessionId === "a")!;
-    const request = workerA.request.bind(workerA);
-    workerA.request = async <T>(
-      command: Record<string, unknown>,
-    ): Promise<T> => {
-      if (command.type === "get_state")
-        throw new Error("snapshot failed before selection");
-      return request<T>(command);
-    };
-
-    await expect(runtime.openSession("a")).rejects.toThrow(
-      /snapshot failed before selection/,
-    );
-    expect(runtime.startupSessionHint).toBe("b");
-    await runtime.close();
-  });
-
-  it("keeps the addressed snapshot while another browser opens a different session", async () => {
-    const { runtime, workers } = schedulingRuntime({
-      sessions: [record("a", "/project"), record("b", "/project")],
-    });
-    const restored = await runtime.snapshot("a");
-    expect(restored.active?.sessionId).toBe("a");
+    trackRuntime(runtime);
+    expect((await runtime.snapshot("a")).active?.sessionId).toBe("a");
     expect(runtime.startupSessionHint).toBeNull();
-    expect(workers).toHaveLength(0);
     await runtime.openSession("a");
     await startWorker(runtime);
-
-    const { promise: gate, resolve: releaseSnapshot } = deferredSignal();
-    const { promise: started, resolve: snapshotStarted } = deferredSignal();
-    const workerA = workers[0]!;
-    const request = workerA.request.bind(workerA);
-    workerA.request = async <T>(
-      command: Record<string, unknown>,
-    ): Promise<T> => {
-      if (command.type === "get_state") {
-        snapshotStarted();
-        await gate;
-      }
-      return request<T>(command);
-    };
-
+    const worker = workers[0]!;
+    const read = deferredSignal();
+    const waiting = deferredSignal();
+    const failure = new Error("snapshot failed before selection");
+    let refuseRead = false;
+    worker.responseOverrides.set("get_state", async () => {
+      waiting.resolve();
+      await read.promise;
+      if (refuseRead) throw failure;
+      return { sessionId: "a", sessionFile: worker.sessionPath };
+    });
     const snapshotting = runtime.snapshot("a");
-    await started;
-    await runtime.openSession("b");
-    releaseSnapshot();
-
-    const snapshot = await snapshotting;
-    expect(snapshot.active?.sessionId).toBe("a");
-    const globalOnly = await runtime.snapshot(null);
-    expect(globalOnly.active).toBeNull();
-    expect(Object.keys(globalOnly.sessionStatuses).sort()).toEqual(["a", "b"]);
-    expect(runtime.startupSessionHint).toBe("b");
-    await runtime.close();
+    try {
+      await waiting.promise;
+      await runtime.openSession("b");
+      read.resolve();
+      expect((await snapshotting).active?.sessionId).toBe("a");
+      expect(await runtime.snapshot(null)).toMatchObject({
+        active: null,
+        sessionStatuses: { a: { runState: "idle" }, b: { runState: "idle" } },
+      });
+      refuseRead = true;
+      await expect(runtime.openSession("a")).rejects.toBe(failure);
+      expect(runtime.startupSessionHint).toBe("b");
+    } finally {
+      read.resolve();
+      await snapshotting.catch(() => {});
+    }
   });
 
   it("publishes and restores needs-input status for an independently observed worker", async () => {

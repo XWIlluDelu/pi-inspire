@@ -14,6 +14,7 @@ import { PreferencesStore } from "../../../server/preferences.js";
 import { ResourceStore } from "../../../server/resources.js";
 import { ToolPresentationConfigStore } from "../../../server/tool-presentation-config.js";
 import { UpdateCoordinator } from "../../../server/update-coordinator.js";
+import { SessionManager } from "../../../server/pi-runtime.js";
 import type {
   ActiveSnapshot,
   SessionRuntimeStatus,
@@ -21,7 +22,6 @@ import type {
 import type { ActivityTool } from "../../../shared/tool-activity.js";
 import { hostServices } from "../../fixtures/host-services.js";
 import { workbenchFixture } from "../../fixtures/workbench.js";
-import { seedWorkbenchSessions } from "../../fixtures/workbench-sessions.js";
 import { listenOnLoopback } from "./offline-model.js";
 
 type DetailFrame = Record<string, unknown> & {
@@ -107,7 +107,7 @@ type HostFixtureServices = Pick<
   HostDependencies,
   "runtime" | "catalog" | "attachments"
 > & { cwd: string };
-type ConfigurationOptions = Partial<
+type HostFixtureOptions = Partial<
   Pick<
     HostDependencies,
     | "modelSettings"
@@ -115,25 +115,19 @@ type ConfigurationOptions = Partial<
     | "modelMetadata"
     | "providerAuth"
     | "invalidateModels"
+    | "token"
+    | "activeHerdrMode"
+    | "maintenanceRestart"
+    | "instanceState"
+    | "getHerdrStatus"
+    | "websocketHeartbeatIntervalMs"
+    | "promptObservationWindowMs"
+    | "distDir"
+    | "terminal"
+    | "developmentBrowserBuild"
+    | "piVersion"
   >
->;
-type HostFixtureOptions = ConfigurationOptions &
-  Partial<
-    Pick<
-      HostDependencies,
-      | "token"
-      | "activeHerdrMode"
-      | "maintenanceRestart"
-      | "instanceState"
-      | "getHerdrStatus"
-      | "websocketHeartbeatIntervalMs"
-      | "promptObservationWindowMs"
-      | "distDir"
-      | "terminal"
-      | "developmentBrowserBuild"
-      | "piVersion"
-    >
-  > & { services?: HostFixtureServices; restartBackend?: HostRestartBackend };
+> & { services?: HostFixtureServices; restartBackend?: HostRestartBackend };
 
 export async function hostApiFixture({
   services,
@@ -275,13 +269,39 @@ export async function closeHostApiFixture(
 }
 
 export async function configurationHost(
-  root: string,
-  cwd: string,
-  options: ConfigurationOptions,
+  workspace: { root: string; cwd: string; sessions: string },
+  options: HostFixtureOptions,
 ) {
-  await seedWorkbenchSessions(join(root, "sessions"), cwd, undefined, false);
-  return hostApiFixture({
+  const { root, cwd, sessions } = workspace;
+  const saved = SessionManager.create(cwd, sessions);
+  saved.appendMessage({ role: "user", content: "Saved fixture", timestamp: 1 });
+  saved.appendMessage({
+    role: "assistant",
+    content: [{ type: "text", text: "Offline answer" }],
+    api: "openai-completions",
+    provider: "fixture",
+    model: "fixture",
+    stopReason: "stop",
+    timestamp: 2,
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+  });
+  const host = await hostApiFixture({
     ...options,
     services: { cwd, ...hostServices(root, { cwd }) },
   });
+  try {
+    const sessionId = saved.getSessionId();
+    await host.runtime.openSession(sessionId);
+    return { ...host, sessionId };
+  } catch (error) {
+    await closeHostApiFixture(host);
+    throw error;
+  }
 }

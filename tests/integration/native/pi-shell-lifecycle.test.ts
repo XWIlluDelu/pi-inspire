@@ -132,7 +132,7 @@ describe("native shell input", () => {
         targetId: matches.matches[0]!.entryId,
       });
       expect(detail.node).toMatchObject({
-        role: "shell",
+        toolResult: false,
         canEdit: false,
         canFork: false,
       });

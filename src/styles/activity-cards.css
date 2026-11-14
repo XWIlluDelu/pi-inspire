@@ -22,7 +22,10 @@ summary.disclosure-row::-webkit-details-marker { display: none; }
   align-items: center;
   gap: var(--space-2);
   min-height: var(--activity-copy-size, 24px);
+  font-size: var(--text-sm);
 }
+
+.activity-surface__head > svg { flex: none; }
 
 .activity-surface {
   min-width: 0;
@@ -65,7 +68,6 @@ summary.disclosure-row::-webkit-details-marker { display: none; }
 .shell-execution__header {
   flex-wrap: wrap;
   color: var(--muted);
-  font-size: var(--text-sm);
 }
 
 .shell-execution__status {
@@ -541,8 +543,6 @@ span.tool-resource { color: var(--muted); }
 }
 
 .tool-terminal--live { --reader-max-height: min(24rem, 45vh); }
-.shell-execution__output { --reader-max-height: 24rem; }
-.shell-execution--history .shell-execution__output { --reader-max-height: none; }
 
 .detail-summary {
   width: fit-content;
@@ -626,7 +626,7 @@ span.tool-resource { color: var(--muted); }
   color: var(--muted);
 }
 
-.child-call > div.child-call__row {
+.child-call.child-call__row {
   /* Rows without retained detail keep the same name axis. Status follows it. */
   padding-inline-start: 24px;
 }

@@ -44,19 +44,10 @@ interface PaletteItem {
   title: string;
   hint?: string;
   keepOpen?: boolean;
-  aliases?: string[];
+  aliases?: readonly string[];
   default?: boolean;
   run: () => void;
 }
-
-const preferenceActionKeys = {
-  theme: "theme",
-  palette: "palette",
-  launch: "launch",
-  thinkingVisibility: "thinking",
-  toolVisibility: "tools",
-  activityFoldVisibility: "activity-folds",
-} satisfies Record<keyof typeof preferenceChoices, string>;
 
 const workspaceActions = [
   { mode: "files", title: "Open Files", aliases: [] },
@@ -82,6 +73,18 @@ const terminalActions: {
   { action: "focus", title: "Toggle terminal focus" },
   { action: "settings", title: "Terminal settings" },
 ];
+
+const nativeTitles: Partial<Record<string, string>> = {
+  model: "Choose model",
+  thinking: "Choose thinking level",
+  [sessionActions.export.command]: sessionActions.export.title,
+  compact: "Compact context…",
+  copy: "Copy last response",
+  fork: "Fork from History",
+  session: "Session & usage",
+  reload: "Reload Pi resources",
+  quit: "Leave Inspire",
+};
 
 function runTerminalAction(action: TerminalUiAction): void {
   const projectCwd = store.getState().cwd;
@@ -191,46 +194,33 @@ export const CommandPalette = memo(function CommandPalette({
   }, [rename, state.sessionId]);
 
   const items = useMemo<PaletteItem[]>(() => {
+    const sessionId = state.sessionId;
+    const destinations = [
+      ["new", "New session", onNewSession, []],
+      ["resume", "Find a session", onFindSession, ["sessions"]],
+      ["settings", "Settings", onOpenSettings, ["preferences"]],
+      [
+        "hotkeys",
+        "Keyboard shortcuts",
+        () => onOpenHelp("hotkeys"),
+        ["shortcuts", "help"],
+      ],
+      [
+        "changelog",
+        "Pi changelog",
+        () => onOpenHelp("changelog"),
+        ["release notes"],
+      ],
+    ] as const;
     const actions: PaletteItem[] = [
-      {
-        id: "new",
+      ...destinations.map(([id, title, run, aliases]) => ({
+        id,
+        title,
+        run,
         group: "Actions",
-        title: "New session",
-        aliases: ["/new"],
-        default: true,
-        run: onNewSession,
-      },
-      {
-        id: "resume",
-        group: "Actions",
-        title: "Find a session",
-        aliases: ["/resume", "sessions"],
-        default: true,
-        run: onFindSession,
-      },
-      {
-        id: "settings",
-        group: "Actions",
-        title: "Settings",
-        aliases: ["/settings", "preferences"],
-        default: true,
-        run: onOpenSettings,
-      },
-      {
-        id: "hotkeys",
-        group: "Actions",
-        title: "Keyboard shortcuts",
-        aliases: ["/hotkeys", "shortcuts", "help"],
-        default: true,
-        run: () => onOpenHelp("hotkeys"),
-      },
-      {
-        id: "changelog",
-        group: "Actions",
-        title: "Pi changelog",
-        aliases: ["/changelog", "release notes"],
-        run: () => onOpenHelp("changelog"),
-      },
+        default: id !== "changelog",
+        aliases: [`/${id}`, ...aliases],
+      })),
       {
         id: "refresh",
         group: "Actions",
@@ -245,11 +235,10 @@ export const CommandPalette = memo(function CommandPalette({
         run: id === "nav" ? onToggleNav : onToggleCtx,
       })),
     ];
-    if (state.sessionId) {
-      const { sessionId } = state;
-      const runInSession = (run: () => void) => () => {
-        if (store.getState().sessionId === sessionId) run();
-      };
+    const runInSession = (run: () => void) => () => {
+      if (store.getState().sessionId === sessionId) run();
+    };
+    if (sessionId) {
       actions.push(
         {
           id: "copy-resume-command",
@@ -262,7 +251,7 @@ export const CommandPalette = memo(function CommandPalette({
             id: mode,
             group: "Workspace",
             title,
-            aliases: [...aliases],
+            aliases,
             default: true,
             run: runInSession(() => store.openContextMode(mode)),
           }),
@@ -298,14 +287,14 @@ export const CommandPalette = memo(function CommandPalette({
               group: "Models",
               title: "Next model",
               hint: modelCycleShortcut("next-model"),
-              run: () => void store.cycleModel(1),
+              run: runInSession(() => void store.cycleModel(1)),
             },
             {
               id: "model-previous",
               group: "Models",
               title: "Previous model",
               hint: modelCycleShortcut("previous-model"),
-              run: () => void store.cycleModel(-1),
+              run: runInSession(() => void store.cycleModel(-1)),
             },
           );
         actions.push({
@@ -313,7 +302,7 @@ export const CommandPalette = memo(function CommandPalette({
           group: "Models",
           title: "Cycle thinking level",
           hint: modelCycleShortcut("thinking"),
-          run: () => void store.cycleThinking(),
+          run: runInSession(() => void store.cycleThinking()),
         });
       }
       actions.push({
@@ -321,7 +310,7 @@ export const CommandPalette = memo(function CommandPalette({
         group: "Models",
         title: "Manage models",
         aliases: ["/scoped-models", "common models", "provider settings"],
-        run: () => store.openModelSettings(),
+        run: runInSession(() => store.openModelSettings()),
       });
       if (state.earlierContinuation) {
         actions.push({
@@ -330,42 +319,30 @@ export const CommandPalette = memo(function CommandPalette({
           title: "Restore latest saved position",
           aliases: ["Back to latest branch"],
           default: true,
-          run: () => void store.returnToLatestBranch(),
+          run: runInSession(() => void store.returnToLatestBranch()),
         });
       }
     }
-    if (state.sessionId && !state.copiesBlocked) {
+    if (sessionId && !state.copiesBlocked) {
       actions.push({
         id: "clone",
         group: "Workspace",
         title: sessionActions.clone.title,
         aliases: [`/${sessionActions.clone.command}`],
-        run: () => {
-          const current = store.getState();
-          if (
-            current.sessionId === state.sessionId &&
-            !branchCopiesBlocked(current)
-          )
-            void store.cloneCurrentBranch();
-        },
+        run: runInSession(() => void store.cloneCurrentBranch()),
       });
     }
-    if (state.sessionId && !state.readOnlyReason) {
+    if (sessionId && !state.readOnlyReason) {
       actions.push({
         id: "rename",
         group: "Actions",
         title: `${sessionActions.rename.title}…`,
         aliases: [`/${sessionActions.rename.command}`, "rename"],
         keepOpen: true,
-        run: () => {
-          const current = store.getState();
-          if (
-            state.sessionId &&
-            state.sessionId === current.sessionId &&
-            !current.readOnlyReason
-          )
-            setRename({ owner: state.sessionId, name: state.heading });
-        },
+        run: runInSession(() => {
+          if (!store.getState().readOnlyReason)
+            setRename({ owner: sessionId, name: state.heading });
+        }),
       });
     }
     if (abortable) {
@@ -375,17 +352,17 @@ export const CommandPalette = memo(function CommandPalette({
         title: "Abort running task",
         default: true,
         hint: "Esc",
-        run: () => void store.abort(),
+        run: runInSession(() => void store.abort()),
       });
     }
     for (const key of Object.keys(
-      preferenceActionKeys,
+      preferenceChoices,
     ) as (keyof typeof preferenceChoices)[]) {
       const field = preferenceChoices[key];
       const title = "paletteLabel" in field ? field.paletteLabel : field.label;
       for (const option of field.options)
         actions.push({
-          id: `${preferenceActionKeys[key]}-${option.value}`,
+          id: `${key}-${option.value}`,
           group: "Preferences",
           title: `${title}: ${"actionLabel" in option ? option.actionLabel : option.label}`,
           hint: state.prefs[key] === option.value ? "current" : undefined,
@@ -414,7 +391,8 @@ export const CommandPalette = memo(function CommandPalette({
       run: () => onOpenSession(session.id),
     }));
 
-    const commands: PaletteItem[] = state.sessionId
+    const handled = new Set(actions.flatMap(({ aliases }) => aliases ?? []));
+    const commands: PaletteItem[] = sessionId
       ? commandInventory
           .filter(
             (command) =>
@@ -422,33 +400,24 @@ export const CommandPalette = memo(function CommandPalette({
                 (command.source === "builtin" &&
                   (command.name === sessionActions.export.command ||
                     nativeCommand(command.name)?.availableWithoutWorkspace))) &&
-              !actions.some((action) =>
-                action.aliases?.includes(`/${command.name}`),
-              ),
+              !handled.has(`/${command.name}`),
           )
           .map((command) => {
             const prepare =
               command.source !== "builtin" ||
               (command.name === "compact" && !state.external);
-            const titles: Record<string, string> = {
-              model: "Choose model",
-              thinking: "Choose thinking level",
-              export: sessionActions.export.title,
-              compact: state.external
-                ? "Compact in native Pi…"
-                : "Compact context…",
-              copy: "Copy last response",
-              fork: "Fork from History",
-              session: "Session & usage",
-              reload: state.external
-                ? "Reload in native Pi…"
-                : "Reload Pi resources",
-              quit: "Leave Inspire",
-            };
             const sessionAliases =
               command.name === "session" ? ["cost", "tokens"] : [];
-            const humanTitle =
-              command.source === "builtin" ? titles[command.name] : undefined;
+            let humanTitle =
+              command.source === "builtin"
+                ? nativeTitles[command.name]
+                : undefined;
+            if (humanTitle && state.external) {
+              if (command.name === "compact")
+                humanTitle = "Compact in native Pi…";
+              if (command.name === "reload")
+                humanTitle = "Reload in native Pi…";
+            }
             return {
               id: `cmd-${command.name}`,
               group: command.source === "builtin" ? "Actions" : "Pi resources",
@@ -471,7 +440,7 @@ export const CommandPalette = memo(function CommandPalette({
                       ? (command.description ?? command.source ?? "Command")
                       : command.description,
               keepOpen: prepare,
-              run: () => {
+              run: runInSession(() => {
                 if (
                   command.source === "builtin" &&
                   command.name === sessionActions.export.command
@@ -480,18 +449,19 @@ export const CommandPalette = memo(function CommandPalette({
                 } else if (prepare) {
                   setDelivery("steer");
                   setPreparation({
-                    owner: state.sessionId!,
+                    owner: sessionId,
                     command,
                     text: `/${command.name} `,
                   });
                 } else {
                   // The palette must release modal focus before its native picker opens.
-                  requestAnimationFrame(() => {
-                    if (store.getState().sessionId === state.sessionId)
-                      store.runPaletteNativeCommand(`/${command.name}`);
-                  });
+                  requestAnimationFrame(
+                    runInSession(() =>
+                      store.runPaletteNativeCommand(`/${command.name}`),
+                    ),
+                  );
                 }
-              },
+              }),
             };
           })
       : [];

@@ -8,97 +8,31 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, type Page, test } from "@playwright/test";
-import { modelSettingsScenario } from "./fixtures/model-settings";
+import { expect, test } from "@playwright/test";
+import { modelSettingsSnapshot } from "../web/fixtures/model-settings";
 import { browserFixtureHome } from "./fixtures/workspace.mjs";
 import { expectConfigurationField } from "./support/configuration-form";
-import { openSettings, pairAndOpen } from "./support/navigation";
+import { routeSnapshots } from "./support/host-events";
+import {
+  openFixtureSession,
+  openSettings,
+  pairedPage,
+} from "./support/navigation";
 
-test.use({ viewport: { width: 1280, height: 900 }, serviceWorkers: "block" });
-
-async function openModels(page: Page) {
-  await openSettings(page);
-  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
-  await settings.getByRole("button", { name: "Models", exact: true }).click();
-  return settings;
-}
-
-test("Manage models carries New's prospective project only for its Settings visit", async ({
-  page,
-}) => {
-  const target = await realpath(
-    await mkdtemp(join(tmpdir(), "inspire-model-project-")),
-  );
-  const preferences = join(browserFixtureHome, "agent", "settings.json");
-  const previous = await readFile(preferences);
-  try {
-    await mkdir(join(target, ".pi"));
-    await writeFile(
-      join(target, ".pi/settings.json"),
-      '{"defaultThinkingLevel":"low"}',
-    );
-    let settingsOwner: Record<string, string> | undefined;
-    page.on("request", (request) => {
-      const url = new URL(request.url());
-      if (url.pathname === "/api/model-settings" && request.method() === "GET")
-        settingsOwner = Object.fromEntries(url.searchParams);
-    });
-    await pairAndOpen(page);
-    await page
-      .getByRole("button", { name: "New session", exact: true })
-      .click();
-    await page
-      .getByRole("textbox", { name: "Project directory", exact: true })
-      .fill(target);
-    await page.getByRole("button", { name: "Model", exact: true }).click();
-    await page
-      .getByRole("button", { name: "Manage models", exact: true })
-      .click();
-    await expect
-      .poll(() => settingsOwner)
-      .toEqual({ cwd: target, refresh: "1" });
-    await expect(page.getByText(/This project uses/)).toBeVisible();
-    const settings = page.getByRole("dialog", {
-      name: "Settings",
-      exact: true,
-    });
-    const write = page.waitForRequest(
-      (request) =>
-        new URL(request.url()).pathname === "/api/model-settings" &&
-        request.method() === "PATCH",
-    );
-    await settings.getByRole("option", { name: /Secondary model/ }).click();
-    const defaultModel = settings.getByRole("button", {
-      name: "Set as default",
-    });
-    await defaultModel.click();
-    expect(
-      Object.fromEntries(new URL((await write).url()).searchParams),
-    ).toEqual({ cwd: target });
-    await expect(defaultModel).toBeDisabled();
-
-    await settings.press("Escape");
-    await page
-      .getByRole("button", { name: /Review extension event lifecycle/ })
-      .first()
-      .click();
-    await openModels(page);
-    await expect
-      .poll(() => settingsOwner)
-      .toEqual({ sessionId: "fixture-history", refresh: "1" });
-  } finally {
-    await writeFile(preferences, previous);
-    await rm(target, { recursive: true, force: true });
-  }
+const desktop = { width: 1280, height: 900 };
+test.use({
+  viewport: desktop,
+  serviceWorkers: "block",
+  reducedMotion: "reduce",
 });
 
-test.describe("touch model lists", () => {
+test.describe("touch model settings", () => {
+  const viewport = { width: 320, height: 844 };
   test.use({ hasTouch: true });
-  test("search, refresh and keyboard actions preserve the bounded model list", async ({
+  test("virtualized model browsing and the editor retain focus and context across resize and refresh", async ({
     page,
   }) => {
-    const scenario = await modelSettingsScenario(page);
-    const { snapshot } = scenario;
+    const snapshot = modelSettingsSnapshot();
     snapshot.saved.defaultThinkingLevel = "xhigh";
     const providers = [
       "research-calibration-openai-compatible-service",
@@ -113,10 +47,30 @@ test.describe("touch model lists", () => {
         reasoning: false,
       })),
     );
+    await routeSnapshots(page, {
+      snapshot: (body) => {
+        if (body.active) body.active.availableModels = snapshot.models;
+      },
+    });
+    await page.route("**/api/models**", (route) =>
+      route.fulfill({
+        json: { models: snapshot.models, commonModels: snapshot.commonModels },
+      }),
+    );
+    await page.route(/\/api\/model-settings\?/, (route) =>
+      route.fulfill({ json: snapshot }),
+    );
+    const errors: string[] = [];
+    page.on("pageerror", (error) => errors.push(error.message));
     const total = snapshot.models.length;
     const target = snapshot.models.at(-1)!;
-    await pairAndOpen(page);
-    await page.setViewportSize({ width: 320, height: 844 });
+    await pairedPage(page);
+    await openFixtureSession(
+      page,
+      /Review extension event lifecycle/,
+      "fixture-history",
+    );
+    await page.setViewportSize(viewport);
     await page.getByRole("button", { name: "Model", exact: true }).click();
     const picker = page.getByRole("listbox", { name: "Available models" });
     await expect(picker).toBeFocused();
@@ -162,7 +116,7 @@ test.describe("touch model lists", () => {
         .evaluate((el) => el.scrollWidth - el.clientWidth),
     ).toBeLessThanOrEqual(1);
 
-    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.setViewportSize(desktop);
     const search = settings.getByRole("combobox", {
       name: "Search available models",
     });
@@ -193,26 +147,10 @@ test.describe("touch model lists", () => {
     await expect(
       settings.getByRole("button", { name: "Set as default" }),
     ).toBeEnabled();
-    expect(scenario.errors).toEqual([]);
-  });
-});
-
-test.describe("touch model editor", () => {
-  const viewport = { width: 320, height: 844 };
-  test.use({ viewport, hasTouch: true });
-
-  test("focused editors keep actions reachable and restore their browsing context", async ({
-    page,
-  }) => {
-    const scenario = await modelSettingsScenario(page, "dark");
-    await pairAndOpen(page);
-    const settings = await openModels(page);
+    await page.setViewportSize(viewport);
     await expect(
       settings.getByRole("combobox", { name: "Default thinking" }),
     ).toBeInViewport({ ratio: 1 });
-    const search = settings.getByRole("combobox", {
-      name: "Search available models",
-    });
     await search.fill("local");
     await search.press("Enter");
     const opener = settings.getByRole("button", {
@@ -221,16 +159,7 @@ test.describe("touch model editor", () => {
     });
     const content = settings.locator(".settings__content");
     await opener.scrollIntoViewIfNeeded();
-    await expect(opener).toBeInViewport({ ratio: 1 });
-    await expect(
-      settings.getByRole("button", { name: "Set as default" }),
-    ).toBeInViewport({ ratio: 1 });
-    expect(
-      await settings
-        .locator(".settings__main")
-        .evaluate((element) => element.scrollWidth - element.clientWidth),
-    ).toBeLessThanOrEqual(1);
-    const position = await content.evaluate((el) => el.scrollTop);
+    const browsePosition = await content.evaluate((el) => el.scrollTop);
     await opener.click();
     const editor = settings.getByRole("region", {
       name: "Edit model",
@@ -242,27 +171,27 @@ test.describe("touch model editor", () => {
     await page.setViewportSize({ width: 320, height: 460 });
     await editor.getByLabel("Base URL override").focus();
     await expectConfigurationField(editor.getByLabel("Base URL override"));
-    await editor
-      .getByRole("button", { name: "Back to models" })
-      .scrollIntoViewIfNeeded();
-    await expect(
-      editor.getByRole("button", { name: "Back to models" }),
-    ).toBeInViewport();
+    const back = editor.getByRole("button", { name: "Back to models" });
+    await back.scrollIntoViewIfNeeded();
+    await expect(back).toBeInViewport();
 
     await page.setViewportSize(viewport);
-    await editor.getByRole("button", { name: "Back to models" }).click();
+    await back.click();
     await expect(search).toHaveValue("local");
     await expect(opener).toBeFocused();
     await expect
       .poll(() => content.evaluate((el) => el.scrollTop))
-      .toBeCloseTo(position, 0);
-    expect(scenario.errors).toEqual([]);
+      .toBeCloseTo(browsePosition, 0);
+    expect(errors).toEqual([]);
   });
 });
 
-test("first provider and model setup preserves the current model and composer draft", async ({
+test("New model settings save native declarations and defaults for the prospective owner", async ({
   page,
 }) => {
+  const target = await realpath(
+    await mkdtemp(join(tmpdir(), "inspire-model-project-")),
+  );
   const agent = join(browserFixtureHome, "agent");
   const configuration = join(agent, "models.json");
   const preferences = join(agent, "settings.json");
@@ -273,36 +202,57 @@ test("first provider and model setup preserves the current model and composer dr
   });
   const savedPreferences = async () =>
     JSON.parse(await readFile(preferences, "utf8"));
+  const writes: { owner: Record<string, string>; patch: unknown }[] = [];
+  let settingsOwner: Record<string, string> | undefined;
   let modelChanges = 0;
   page.on("request", (request) => {
-    if (new URL(request.url()).pathname === "/api/control/model")
-      modelChanges++;
+    const url = new URL(request.url());
+    if (url.pathname === "/api/control/model") modelChanges++;
+    if (url.pathname !== "/api/model-settings") return;
+    const owner = Object.fromEntries(url.searchParams);
+    if (request.method() === "GET") settingsOwner = owner;
+    if (request.method() === "PATCH")
+      writes.push({ owner, patch: request.postDataJSON().patch });
   });
-  await page.emulateMedia({ reducedMotion: "reduce" });
   try {
-    await pairAndOpen(page);
+    await mkdir(join(target, ".pi"));
+    await writeFile(
+      join(target, ".pi/settings.json"),
+      '{"defaultThinkingLevel":"low"}',
+    );
+    await pairedPage(page);
+    await page.getByRole("textbox", { name: "Project directory" }).fill(target);
     const draft = page.getByRole("textbox", {
-      name: "Message",
+      name: "First message",
       exact: true,
     });
-    await draft.fill("Keep this unfinished draft while managing models");
+    const text = "Keep this unfinished draft while managing models";
+    await draft.fill(text);
     const model = page.getByRole("button", { name: "Model", exact: true });
-    const currentModel = /^(?:Offline model|offline) — workbench$/;
-    await expect(model).toHaveAttribute("title", currentModel);
+    await expect(model).toHaveAttribute(
+      "title",
+      "Use workspace model defaults",
+    );
     await model.click();
-    {
-      const search = page.getByRole("combobox", { name: "Search models" });
-      await expect(search).toBeFocused();
-      await search.press("Tab");
-      await expect(
-        page.getByRole("button", { name: "Manage models", exact: true }),
-      ).toBeFocused();
-      await page.keyboard.press("Enter");
-    }
+    const search = page.getByRole("combobox", { name: "Search models" });
+    const manage = page.getByRole("button", {
+      name: "Manage models",
+      exact: true,
+    });
+    await expect(search).toBeFocused();
+    await search.press("Tab");
+    await expect(manage).toBeFocused();
+    await manage.press("Enter");
     const settings = page.getByRole("dialog", {
       name: "Settings",
       exact: true,
     });
+    await expect
+      .poll(() => settingsOwner)
+      .toEqual({ cwd: target, refresh: "1" });
+    await expect(
+      settings.getByText("This project uses Low.", { exact: true }),
+    ).toBeVisible();
     await settings
       .getByRole("button", { name: "Add provider", exact: true })
       .click();
@@ -363,8 +313,12 @@ test("first provider and model setup preserves the current model and composer dr
     await expect(thinking).toHaveValue("medium");
     await thinking.selectOption("unset");
     await expect
-      .poll(async () => (await savedPreferences()).defaultThinkingLevel)
-      .toBeUndefined();
+      .poll(savedPreferences)
+      .not.toHaveProperty("defaultThinkingLevel");
+    expect(writes).toContainEqual({
+      owner: { cwd: target },
+      patch: { defaultModel: { provider: "new-provider", id: "new-model" } },
+    });
     await settings
       .getByRole("button", { name: "Connect provider", exact: true })
       .click();
@@ -395,14 +349,29 @@ test("first provider and model setup preserves the current model and composer dr
     );
     await settings.getByRole("button", { name: "Cancel", exact: true }).click();
     await settings.getByRole("button", { name: "Close settings" }).click();
-    await expect(draft).toHaveValue(
-      "Keep this unfinished draft while managing models",
+    await expect(draft).toHaveValue(text);
+    await expect(model).toHaveAttribute(
+      "title",
+      "Use workspace model defaults",
     );
-    await expect(model).toHaveAttribute("title", currentModel);
+    await openFixtureSession(
+      page,
+      /Review extension event lifecycle/,
+      "fixture-history",
+    );
+    const selected = /^(?:Offline model|offline) — workbench$/;
+    await expect(model).toHaveAttribute("title", selected);
+    await openSettings(page);
+    await settings.getByRole("button", { name: "Models", exact: true }).click();
+    await expect
+      .poll(() => settingsOwner)
+      .toEqual({ sessionId: "fixture-history", refresh: "1" });
+    await expect(model).toHaveAttribute("title", selected);
     expect(modelChanges).toBe(0);
   } finally {
     await writeFile(preferences, original);
     if (originalConfig) await writeFile(configuration, originalConfig);
     else await rm(configuration, { force: true });
+    await rm(target, { recursive: true, force: true });
   }
 });

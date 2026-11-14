@@ -452,8 +452,6 @@
   color: var(--activity-event);
 }
 
-.custom-message__head > svg { flex: none; }
-
 .custom-message__identity {
   display: flex;
   flex-wrap: wrap;
@@ -466,7 +464,6 @@
 }
 .custom-message__title {
   color: var(--ink);
-  font-size: var(--text-sm);
   font-weight: 600;
   overflow-wrap: anywhere;
 }

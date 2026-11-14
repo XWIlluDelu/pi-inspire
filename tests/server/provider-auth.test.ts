@@ -4,18 +4,16 @@ import { join } from "node:path";
 import express from "express";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createInspireServer } from "../../server/app.js";
 import { registerModelSettingsRoutes } from "../../server/model-settings-routes.js";
 import { ModelRuntime, piInstallation } from "../../server/pi-runtime.js";
-import { PreferencesStore } from "../../server/preferences.js";
 import {
   nativeOAuthDescriptors,
   ProviderAuthService,
 } from "../../server/provider-auth.js";
-import { ResourceStore } from "../../server/resources.js";
 import type { ProviderLoginAttempt } from "../../shared/model-settings.js";
 import type { ProviderAuthOperation } from "../../shared/provider-auth-bridge.js";
 import { hostServices } from "../fixtures/host-services.js";
+import { closeHostApiFixture, hostApiFixture } from "./fixtures/host-api.js";
 
 type NativeRuntime = Awaited<ReturnType<typeof ModelRuntime.create>>;
 let root: string;
@@ -473,36 +471,57 @@ describe("public native provider authentication", () => {
     }
   });
 
-  it("cancels a standalone native login when its Host closes", async () => {
-    const application = createInspireServer({
-      token: "fixture",
-      ...hostServices(root),
-      preferences: new PreferencesStore(join(root, "preferences.json")),
-      resources: new ResourceStore(),
-      git: {
-        status: async () => ({ kind: "not-repository" }),
-        diff: async () => {
-          throw new Error("unused");
-        },
-      },
-      providerAuth: service,
-      version: "fixture",
-      piVersion: piInstallation.version,
+  it("admits a new standalone provider without prior discovery and cancels login when its Host closes", async () => {
+    const modelsPath = join(root, "models.json");
+    const admission = new ProviderAuthService(
+      await ModelRuntime.create({
+        authPath,
+        modelsPath,
+        refreshOnCreate: false,
+      }),
+    );
+    const host = await hostApiFixture({
+      services: { cwd: root, ...hostServices(root) },
+      providerAuth: admission,
     });
     try {
-      const attempt = service.start("synthetic", "oauth");
-      await prompt(attempt, "select");
-      await application.close();
-      expect(service.snapshot(attempt.id)).toMatchObject({
+      await writeFile(
+        modelsPath,
+        JSON.stringify({
+          providers: {
+            configured: {
+              api: "openai-completions",
+              baseUrl: "https://example.invalid/v1",
+              models: [{ id: "configured-model" }],
+            },
+          },
+        }),
+      );
+      const { result } = (
+        await host.localRequest
+          .post("/api/provider-auth")
+          .query({ cwd: root })
+          .send({ operation: "start", provider: "configured", type: "api_key" })
+          .expect(200)
+      ).body;
+      await vi.waitFor(() =>
+        expect(admission.snapshot(result.id)).toMatchObject({
+          provider: "configured",
+          status: "pending",
+          prompt: { type: "secret" },
+        }),
+      );
+      await host.application.close();
+      expect(admission.snapshot(result.id)).toMatchObject({
         status: "cancelled",
         prompt: null,
       });
-      expect(JSON.parse(await readFile(authPath, "utf8"))).toEqual({});
-      expect(() => service.start("synthetic", "oauth")).toThrow(
+      expect(await readFile(authPath, "utf8")).toBe("{}");
+      expect(() => admission.start("configured", "api_key")).toThrow(
         "Provider authentication is closed",
       );
     } finally {
-      await application.close();
+      await closeHostApiFixture(host);
     }
   });
 

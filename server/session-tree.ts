@@ -1,10 +1,6 @@
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { isBranchEditTarget } from "../shared/branch-node-actions.js";
-import type {
-  BranchNodeRole,
-  BranchTreeNode,
-  SessionHistoryPages,
-} from "../shared/contracts.js";
+import type { SessionHistoryPages } from "../shared/contracts.js";
 import { userMessagePreviewText } from "../shared/user-message.js";
 import { requestError } from "./request-error.js";
 import { projectSafeValue } from "./safe-projection.js";
@@ -167,25 +163,10 @@ export function branchEntryText(
   return [...branchTextParts(entry, imagePresentation)].join("\n\n");
 }
 
-function entryRole(entry: SessionEntry): BranchNodeRole {
-  if (entry.type === "message") {
-    const role = entry.message.role;
-    if (role === "user" || role === "assistant") return role;
-    if (role === "toolResult") return "tool";
-    if (role === "bashExecution") return "shell";
-    return "system";
-  }
-  return entry.type === "custom_message" ? "system" : "metadata";
-}
-
 function previewPrefix(entry: SessionEntry): string {
-  const parts =
-    entry.type === "message" && entry.message.role === "bashExecution"
-      ? [branchEntryText(entry)]
-      : branchTextParts(entry, "describe", "preview");
   let text = "";
   let space = false;
-  for (const part of parts) {
+  for (const part of branchTextParts(entry, "describe", "preview")) {
     for (let index = 0; index < part.length; index++) {
       const char = part[index]!;
       if (/\s/u.test(char)) {
@@ -202,36 +183,11 @@ function previewPrefix(entry: SessionEntry): string {
   return text;
 }
 
-export function branchNode(
-  entry: SessionEntry,
-  active: boolean,
-  leaf: boolean,
-  text = previewPrefix(entry),
-): BranchTreeNode {
-  const role = entryRole(entry);
-  const snippet =
-    text.length > BRANCH_SNIPPET_CHARS
-      ? `${text.slice(0, BRANCH_SNIPPET_CHARS - 1)}…`
-      : text;
-  const target = {
-    ...entry,
-    role: entry.type === "message" ? entry.message.role : undefined,
-  };
-  const edit = isBranchEditTarget(target);
-  return {
-    id: entry.id,
-    parentId: entry.parentId,
-    depth: 0,
-    type: entry.type,
-    role,
-    label: snippet || entry.type.replaceAll("_", " "),
-    snippet,
-    timestamp: entry.timestamp,
-    active,
-    leaf,
-    canEdit: edit,
-    canFork: role === "user",
-  };
+export function branchRouteLabel(entry: SessionEntry): string {
+  const text = previewPrefix(entry);
+  if (text.length > BRANCH_SNIPPET_CHARS)
+    return `${text.slice(0, BRANCH_SNIPPET_CHARS - 1)}…`;
+  return text || entry.type.replaceAll("_", " ");
 }
 
 /** Only structure is cached with the immutable saved entry array. */
@@ -309,7 +265,7 @@ export function sessionRoutes(
   return {
     nodes: siblings.slice(start, end).map((entry) => ({
       id: entry.id,
-      label: labels.get(entry.id) ?? branchNode(entry, false, false).label,
+      label: labels.get(entry.id) ?? branchRouteLabel(entry),
       leafId: latestLeaf.get(entry.id)!,
       current: entry.id === current,
     })),

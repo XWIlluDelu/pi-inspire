@@ -3,7 +3,6 @@ import { vi } from "vitest";
 import {
   type ActiveSnapshot,
   type BootstrapResponse,
-  type BranchTreeNode,
   defaultPreferences,
   type HostUpdateStatus,
   type SessionSummary,
@@ -268,21 +267,6 @@ export const DEFAULT_PREFS = defaultPreferences;
 export const emptySnapshot: ActiveSnapshot = {
   active: null,
   sessionStatuses: {},
-};
-
-export const savedInputNode: BranchTreeNode = {
-  id: "u1",
-  parentId: null,
-  depth: 0,
-  type: "message",
-  role: "user",
-  label: "user",
-  snippet: "user",
-  timestamp: "2026-08-01",
-  active: true,
-  leaf: false,
-  canEdit: true,
-  canFork: true,
 };
 
 type ActiveSnapshotValue = NonNullable<ActiveSnapshot["active"]>;

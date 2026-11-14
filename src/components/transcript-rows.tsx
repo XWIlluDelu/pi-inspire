@@ -36,7 +36,7 @@ import { CodeView } from "./CodeView";
 import { CopyAction } from "./CopyAction";
 import { DetailSummary } from "./DetailSummary";
 import { ImageGallery } from "./ImageGallery";
-import { ImagePreview, TranscriptImage } from "./ImagePreview";
+import { ImagePreview, messageImage } from "./ImagePreview";
 import { PiLoader } from "./PiLoader";
 import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
 import {
@@ -110,39 +110,14 @@ export const UserBubble = memo(function UserBubble({
   const timestamp = message.timestamp;
   const sourceText = messageText(message);
   const { text, references } = userMessageDisplayContent(message);
-  const images: Array<
-    { key: string; reference: string } | { key: string; src: string }
-  > = [];
-  if (Array.isArray(message.content)) {
-    message.content.forEach((part, partIndex) => {
-      if (
-        !part ||
-        typeof part !== "object" ||
-        (part as { type?: unknown }).type !== "image"
-      )
-        return;
-      const image = part as { data?: unknown; mimeType?: unknown };
-      if (
-        Number.isSafeInteger(message.__inspireMessageIndex) &&
-        sessionId &&
-        viewId
-      ) {
-        images.push({
-          key: `persisted:${partIndex}`,
-          reference: `pi-embedded://${message.__inspireMessageIndex}/${partIndex}`,
-        });
-      } else if (
-        typeof image.data === "string" &&
-        typeof image.mimeType === "string" &&
-        /^image\//i.test(image.mimeType)
-      ) {
-        images.push({
-          key: `inline:${partIndex}`,
-          src: `data:${image.mimeType};base64,${image.data}`,
-        });
-      }
-    });
-  }
+  const owner = { sessionId, viewId, projectionKey };
+  const images = Array.isArray(message.content)
+    ? message.content
+        .map((part, index) =>
+          messageImage(part, message.__inspireMessageIndex, index, owner),
+        )
+        .filter((image) => image !== null)
+    : [];
   return (
     <div className="turn turn--user">
       <div
@@ -158,23 +133,7 @@ export const UserBubble = memo(function UserBubble({
               role="group"
               aria-label="Attached images"
             >
-              {images.map((image) =>
-                "reference" in image ? (
-                  <TranscriptImage
-                    key={image.key}
-                    sessionId={sessionId}
-                    viewId={viewId}
-                    projectionKey={projectionKey}
-                    reference={image.reference}
-                  />
-                ) : (
-                  <ImagePreview
-                    key={image.key}
-                    src={image.src}
-                    className="image-preview--message"
-                  />
-                ),
-              )}
+              {images}
             </div>
           </ImageGallery>
         ) : null}
@@ -202,11 +161,7 @@ export const UserBubble = memo(function UserBubble({
         text={sourceText}
         getContent={
           sourceText || images.length
-            ? messageCopyLoader(message, sourceText, {
-                sessionId,
-                viewId,
-                projectionKey,
-              })
+            ? messageCopyLoader(message, sourceText, owner)
             : undefined
         }
         forkEntryId={message.__inspireEntryId}

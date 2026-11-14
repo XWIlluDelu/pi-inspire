@@ -551,7 +551,7 @@ export function NativeTurnReader({
                     ) : (
                       <div className="native-history__body">
                         {expanded.result.totalChars <= 32_000 &&
-                        expanded.result.node.role !== "tool" ? (
+                        !expanded.result.node.toolResult ? (
                           <RichText
                             text={expanded.result.text}
                             variant={

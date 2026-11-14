@@ -33,6 +33,7 @@ import {
 import {
   type HostRestartOperation,
   type HostRestartRequest,
+  matchesRestartIntent,
   restartReceiptIdentity,
 } from "../shared/host-restart";
 import type {
@@ -379,23 +380,6 @@ async function uploadFiles(
   );
 }
 
-function post<T>(
-  path: string,
-  body?: unknown,
-  init: RequestInit = {},
-  options: ObservationOptions = {},
-): Promise<T> {
-  return request<T>(
-    path,
-    {
-      ...init,
-      method: "POST",
-      body: JSON.stringify(body ?? {}),
-    },
-    options,
-  );
-}
-
 async function hostOperation<Command extends HostOperationCommand>(
   command: Command,
   identity: HostOperationIdentity,
@@ -406,11 +390,13 @@ async function hostOperation<Command extends HostOperationCommand>(
 ): Promise<
   Extract<HostOperationReceipt<Command>, { state: "pending" | "completed" }>
 > {
-  const options = { mutation: true, timeoutMs, readErrorBody: true };
-  const init = { signal };
-  const value = await (body === undefined
-    ? request<unknown>(path, init, options)
-    : post<unknown>(path, body, init, options));
+  const value = await request<unknown>(
+    path,
+    body === undefined
+      ? { signal }
+      : { method: "POST", signal, body: JSON.stringify(body) },
+    { mutation: true, timeoutMs, readErrorBody: true },
+  );
   const receipt = matchOperationReceipt(value, hostReceipt(command, identity));
   if (!receipt) throw new ApiTransportError("response", true);
   if (receipt.state === "pending")
@@ -598,8 +584,7 @@ export function createApi() {
       const result = receipt?.result;
       if (
         !isJsonRecord(result) ||
-        result.id !== intent.operationId ||
-        result.scope !== intent.scope ||
+        !matchesRestartIntent(result, intent) ||
         !["preparing", "submitted", "unknown", "rejected"].includes(
           String(result.phase),
         ) ||

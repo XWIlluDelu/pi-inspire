@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
-import type {
-  HostRestartOperation,
-  HostRestartRequest,
-  HostRestartScope,
-  HostRestartStatus,
+import {
+  type HostRestartOperation,
+  type HostRestartRequest,
+  type HostRestartScope,
+  type HostRestartStatus,
+  matchesRestartIntent,
 } from "../shared/host-restart.js";
 import { requestError } from "./request-error.js";
 import type { RuntimeController } from "./runtime.js";
@@ -78,11 +79,7 @@ export class HostRestartController {
       );
     const previous = this.receipts.get(request.operationId);
     if (previous) {
-      if (
-        previous.scope !== request.scope ||
-        previous.interruptWork !== request.interruptWork ||
-        previous.skipAttachedStop !== request.skipAttachedStop
-      )
+      if (!matchesRestartIntent(previous, request))
         throw requestError("Restart operation does not match.", 409);
       return { ...previous };
     }

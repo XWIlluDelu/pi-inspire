@@ -21,131 +21,90 @@ async function drag(handle: Locator, offset: number) {
   await mouse.up();
 }
 
-test("desktop pane gutters remain pointer and keyboard resize targets", async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 1600, height: 1000 });
-  await page.emulateMedia({ reducedMotion: "reduce" });
-  await pairedPage(page);
-  await openFixtureSession(page, /Review extension event lifecycle/);
-  await page.getByRole("button", { name: "Toggle resources panel" }).click();
-  await expect(page.locator(".ctx")).toBeVisible();
-
-  for (const [label, selector, delta] of [
-    ["Resize navigation", ".nav", 48],
-    ["Resize files panel", ".ctx", -48],
-  ] as const) {
-    const handle = page.getByRole("separator", { name: label, exact: true });
-    const pane = page.locator(selector);
-    const initial = await width(pane);
-    await drag(handle, delta);
-    await expect.poll(() => width(pane)).toBeCloseTo(initial + 48, 0);
-
-    await handle.press(selector === ".nav" ? "ArrowRight" : "ArrowLeft");
-    const reported = Number(await handle.getAttribute("aria-valuenow"));
-    expect(reported).toBeGreaterThan(initial + 48);
-    await expect.poll(() => width(pane)).toBeCloseTo(reported, 0);
-  }
-
-  const widths = () =>
-    Promise.all(
-      [".nav", ".ctx"].map((selector) => width(page.locator(selector))),
-    );
-  const saved = await widths();
-  await page.reload();
-  // Reload restores the open pane as well as both independently saved widths.
-  await expect(
-    page.getByRole("button", { name: "Toggle resources panel" }),
-  ).toHaveAttribute("aria-expanded", "true");
-  await expect(page.locator(".ctx")).toBeVisible();
-  for (const [i, selector, label] of [
-    [0, ".nav", "Resize navigation"],
-    [1, ".ctx", "Resize files panel"],
-  ] as const) {
-    await expect
-      .poll(async () => (await page.locator(selector).boundingBox())!.width)
-      .toBeCloseTo(saved[i], 0);
-    await page
-      .getByRole("separator", { name: label, exact: true })
-      .dblclick({ position: { x: 4, y: 24 } });
-    await expect
-      .poll(async () => (await page.locator(selector).boundingBox())!.width)
-      .toBeLessThan(saved[i]);
-  }
-
-  const reset = await widths();
-  await page.reload();
-  await expect.poll(widths).toEqual(reset);
-
-  await page.setViewportSize({ width: 390, height: 844 });
-  await expect(
-    page.getByRole("separator", { name: "Resize files panel" }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByRole("separator", { name: "Resize navigation" }),
-  ).toHaveCount(0);
-});
-
-test("side panes preserve saved widths and leave the reading budget during resize", async ({
+test("side panes fit the reading budget and restore their independent widths", async ({
   page,
 }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await page.addInitScript(() => {
-    localStorage.setItem("inspire.nav-width", "460");
-    localStorage.setItem("inspire.ctx-width", "1200");
-  });
-  await page.setViewportSize({ width: 901, height: 900 });
+  await page.setViewportSize({ width: 2200, height: 900 });
   await pairedPage(page);
   await openFixtureSession(page, /Review extension event lifecycle/);
-  await page.getByRole("button", { name: "Toggle resources panel" }).click();
-  await expect(
-    page.getByRole("tab", { name: "Files", exact: true }),
-  ).toBeVisible();
-
+  const toggle = page.getByRole("button", { name: "Toggle resources panel" });
+  await toggle.click();
   const nav = page.locator(".nav");
   const ctx = page.locator(".ctx");
   const center = page.locator(".center");
+  const left = page.getByRole("separator", { name: "Resize navigation" });
+  const right = page.getByRole("separator", { name: "Resize files panel" });
+  const widths = () => Promise.all([width(nav), width(ctx)]);
+  await expect(
+    ctx.getByRole("tab", { name: "Files", exact: true }),
+  ).toBeVisible();
+  const [defaultNav, defaultContext] = await widths();
+
+  for (const [handle, pane, peer, offset, key] of [
+    [left, nav, ctx, 48, "ArrowRight"],
+    [right, ctx, nav, -48, "ArrowLeft"],
+  ] as const) {
+    const initial = await width(pane);
+    const peerWidth = await width(peer);
+    await drag(handle, offset);
+    await expect.poll(() => width(pane)).toBeCloseTo(initial + 48, 0);
+    await handle.press(key);
+    const reported = Number(await handle.getAttribute("aria-valuenow"));
+    expect(reported).toBeGreaterThan(initial + 48);
+    await expect.poll(() => width(pane)).toBeCloseTo(reported, 0);
+    expect(await width(peer)).toBeCloseTo(peerWidth, 0);
+  }
+
+  // Keep a real manually chosen right width above the former 760px cap.
+  await drag(right, (await width(ctx)) - 850);
+  await expect.poll(() => width(ctx)).toBeCloseTo(850, 0);
+  const saved = await widths();
+  await page.setViewportSize({ width: 901, height: 900 });
   await expect.poll(() => width(nav)).toBeGreaterThanOrEqual(220);
   expect(await width(ctx)).toBeGreaterThanOrEqual(320);
   expect(await width(center)).toBeGreaterThanOrEqual(344);
-
-  const left = page.getByRole("separator", {
-    name: "Resize navigation",
-    exact: true,
-  });
-  const right = page.getByRole("separator", {
-    name: "Resize files panel",
-    exact: true,
-  });
-  await page.setViewportSize({ width: 840, height: 900 });
+  await page.setViewportSize({ width: 390, height: 844 });
   await expect(
     page.getByRole("dialog", { name: "Context panel" }),
   ).toBeVisible();
+  await expect(left).toHaveCount(0);
   await expect(right).toHaveCount(0);
   await page.setViewportSize({ width: 2200, height: 900 });
-  await expect
-    .poll(() => Promise.all([width(nav), width(ctx)]))
-    .toEqual([460, 1200]);
+  await expect.poll(widths).toEqual(saved);
+  await page.reload();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect.poll(widths).toEqual(saved);
 
   await page.setViewportSize({ width: 1280, height: 900 });
   await expect.poll(() => width(center)).toBeGreaterThanOrEqual(400);
+  const previous = await width(ctx);
   const originalNav = await width(nav);
-  const originalContext = await width(ctx);
   await left.press("ArrowLeft");
   await expect.poll(() => width(nav)).toBeLessThan(originalNav);
-  const reducedNav = Number(await left.getAttribute("aria-valuenow"));
-  await expect.poll(() => width(nav)).toBeCloseTo(reducedNav, 0);
-  expect(await width(ctx)).toBeCloseTo(originalContext, 1);
+  expect(await width(ctx)).toBeCloseTo(previous, 0);
+  const leftWidth = await width(nav);
   const limit = Number(await right.getAttribute("aria-valuemax"));
-  expect(limit).toBeGreaterThan(originalContext);
-
+  expect(limit).toBeGreaterThan(previous);
   await drag(right, -400);
-  expect(await width(nav)).toBeCloseTo(reducedNav, 0);
-  expect(await width(center)).toBeGreaterThanOrEqual(400);
-  expect(await width(ctx)).toBeCloseTo(limit, 0);
+  await expect.poll(() => width(ctx)).toBeCloseTo(limit, 0);
   await left.press("ArrowRight");
+  expect(await width(nav)).toBeCloseTo(leftWidth, 0);
   expect(await width(ctx)).toBeCloseTo(limit, 0);
-  expect(await width(nav)).toBeCloseTo(reducedNav, 0);
+  expect(await width(center)).toBeGreaterThanOrEqual(400);
+
+  await page.setViewportSize({ width: 2200, height: 900 });
+  for (const [handle, pane, peer, defaultWidth] of [
+    [left, nav, ctx, defaultNav!],
+    [right, ctx, nav, defaultContext!],
+  ] as const) {
+    const peerWidth = await width(peer);
+    await handle.dblclick({ position: { x: 4, y: 24 } });
+    await expect.poll(() => width(pane)).toBeCloseTo(defaultWidth!, 0);
+    expect(await width(peer)).toBeCloseTo(peerWidth, 0);
+  }
+  await page.reload();
+  await expect.poll(widths).toEqual([defaultNav, defaultContext]);
 });
 
 test("sidebar owns desktop toggles and creation while phones keep a full drawer", async ({

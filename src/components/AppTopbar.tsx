@@ -8,14 +8,7 @@ import {
   PanelRight,
   Settings as SettingsIcon,
 } from "lucide-react";
-import {
-  memo,
-  type Ref,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { memo, type Ref, useEffect, useRef, useState } from "react";
 import {
   type ProjectionConflict,
   projectionConflictSeverity,
@@ -154,11 +147,9 @@ function GitSummary() {
 }
 
 const SessionIdent = memo(function SessionIdent({
-  show,
   onExport,
   onOpenHistory,
 }: {
-  show: boolean;
   onExport: () => void;
   onOpenHistory: () => void;
 }) {
@@ -196,13 +187,17 @@ const SessionIdent = memo(function SessionIdent({
   const [editing, setEditing] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const titleRef = useRef<HTMLButtonElement>(null);
-  const closeMenu = useCallback(() => setMenuOpen(false), []);
+  const closeMenu = (restoreFocus = false) => {
+    setMenuOpen(false);
+    if (restoreFocus) titleRef.current?.focus({ preventScroll: true });
+  };
+  const ownsMenu = () => store.getState().sessionId === sessionId;
   const { copied, copy } = useCopied({
     scope: cwd,
     onError: store.reportCopyError,
   });
 
-  if (!show || !sessionId) return null;
+  if (!sessionId) return null;
 
   return (
     <div className="topbar__ident">
@@ -240,28 +235,29 @@ const SessionIdent = memo(function SessionIdent({
           renameDisabled={Boolean(readOnlyReason)}
           onClose={closeMenu}
           onRename={() => {
-            titleRef.current?.focus({ preventScroll: true });
-            closeMenu();
+            if (!ownsMenu() || store.getState().readOnlyReason) return;
+            closeMenu(true);
             setEditing(true);
           }}
           onSwitchBranch={() => {
+            if (!ownsMenu()) return;
             closeMenu();
             onOpenHistory();
           }}
           onClone={() => {
+            if (!ownsMenu()) return;
             const trigger = document.activeElement;
             void store.cloneCurrentBranch().then((cloned) => {
               if (!cloned) return;
-              const returnFocus =
+              closeMenu(
                 document.activeElement === trigger ||
-                document.activeElement === document.body;
-              closeMenu();
-              if (returnFocus) titleRef.current?.focus({ preventScroll: true });
+                  document.activeElement === document.body,
+              );
             });
           }}
           onExport={() => {
-            closeMenu();
-            titleRef.current?.focus({ preventScroll: true });
+            if (!ownsMenu()) return;
+            closeMenu(true);
             onExport();
           }}
         />
@@ -369,7 +365,6 @@ export const AppTopbar = memo(function AppTopbar({
       ) : null}
       <SessionIdent
         key={state.sessionId}
-        show={Boolean(state.sessionId)}
         onExport={onExportSession}
         onOpenHistory={onOpenHistory}
       />

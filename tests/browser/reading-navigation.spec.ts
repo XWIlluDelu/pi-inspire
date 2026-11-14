@@ -85,14 +85,26 @@ test("@cross-browser retries a native page, keeps it apart from Live, and restor
   expect(await pageIds()).toEqual(earlier);
   await history.getByRole("button", { name: "Later", exact: true }).click();
   await expect(latest).toBeAttached();
+  await page.setViewportSize({ width: 390, height: 844 });
   await jump.click();
-  await expect(
-    page.getByRole("region", { name: "Pending input", exact: true }),
-  ).toBeFocused();
+  const pending = page.getByRole("region", {
+    name: "Pending input",
+    exact: true,
+  });
+  const live = page.getByRole("log");
+  const jumpToLatest = page.getByRole("button", { name: "Jump to latest" });
+  const distanceFromEnd = () =>
+    live.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight);
+  await expect(pending).toBeFocused();
+  await expect(pending).toBeInViewport();
   await expect(history).toHaveCount(0);
-  await expect(
-    page.getByRole("log").getByText("New live output"),
-  ).toBeVisible();
+  await expect(live.getByText("New live output")).toBeVisible();
+  await expect.poll(distanceFromEnd).toBeLessThanOrEqual(1);
+  await expect(jumpToLatest).toBeHidden();
+  const activity = await page.locator(".activity").boundingBox();
+  const composer = await page.locator(".composer").boundingBox();
+  expect(Math.abs(activity!.x - composer!.x)).toBeLessThanOrEqual(1);
+  expect(Math.abs(activity!.width - composer!.width)).toBeLessThanOrEqual(1);
 
   await openHistoryPane(page);
   await history

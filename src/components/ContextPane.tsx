@@ -156,19 +156,14 @@ export const ContextPane = memo(function ContextPane({
 
   useEffect(() => () => store.cancelResourceProbes(), []);
 
-  const gitDetailView = !state.resourcesOpen
-    ? null
-    : state.contextMode === "changes"
-      ? "changes"
-      : state.contextMode !== "files"
-        ? null
-        : fileInspection.kind === "browse"
-          ? "browse"
-          : inspectedFileTab(state)?.view === "changes"
-            ? "diff"
-            : null;
+  const gitDetailView =
+    state.resourcesOpen &&
+    (state.contextMode === "changes" ||
+      (state.contextMode === "files" &&
+        (fileInspection.kind === "browse" ||
+          inspectedFileTab(state)?.view === "changes")));
   useEffect(() => {
-    store.setGitSurfaceVisible("resources-pane", gitDetailView !== null);
+    store.setGitSurfaceVisible("resources-pane", gitDetailView);
     return () => store.setGitSurfaceVisible("resources-pane", false);
   }, [gitDetailView]);
 
@@ -176,16 +171,18 @@ export const ContextPane = memo(function ContextPane({
     void store.openResource(reference);
   }, []);
 
-  const handleReaderQuote = useCallback(
-    (markdown: string) => {
+  const insertInComposer = useCallback(
+    (text: string, quote: boolean) => {
       const sessionId = store.getState().sessionId;
       if (!sessionId) return;
+      const draft = store.drafts.get(sessionId).text;
+      const block = quote ? text : fencedMarkdown(text.trimEnd(), "text");
       store.drafts.setText(
         sessionId,
-        appendDraftBlock(store.drafts.get(sessionId).text, markdown),
+        quote
+          ? appendDraftBlock(draft, block)
+          : [draft, block].filter(Boolean).join("\n\n"),
       );
-      // On a narrow screen the drawer yields to the conversation; Back and the
-      // file tab keep the reader at the same place.
       if (isModal) onClose?.();
       requestAnimationFrame(() => {
         if (store.getState().sessionId !== sessionId || hasActiveModal())
@@ -193,27 +190,19 @@ export const ContextPane = memo(function ContextPane({
         const input =
           document.querySelector<HTMLTextAreaElement>(".composer__input");
         input?.focus();
-        input?.setSelectionRange(input.value.length, input.value.length);
+        if (quote)
+          input?.setSelectionRange(input.value.length, input.value.length);
       });
     },
     [isModal, onClose],
   );
-
-  const handleTerminalSelection = useCallback(
-    (text: string) => {
-      const sessionId = store.getState().sessionId;
-      if (!sessionId) return;
-      const current = store.drafts.get(sessionId).text;
-      const next = `${current}${current ? "\n\n" : ""}${fencedMarkdown(text.replace(/\s+$/u, ""), "text")}`;
-      store.drafts.setText(sessionId, next);
-      if (isModal) onClose?.();
-      // Both the selection dialog and the drawer release/restore focus first.
-      requestAnimationFrame(() => {
-        if (store.getState().sessionId === sessionId && !hasActiveModal())
-          document.querySelector<HTMLElement>(".composer__input")?.focus();
-      });
-    },
-    [isModal, onClose],
+  const quoteInComposer = useCallback(
+    (markdown: string) => insertInComposer(markdown, true),
+    [insertInComposer],
+  );
+  const terminalInComposer = useCallback(
+    (text: string) => insertInComposer(text, false),
+    [insertInComposer],
   );
 
   const handleTerminalCommandComplete = useCallback(
@@ -247,13 +236,10 @@ export const ContextPane = memo(function ContextPane({
       if (state.contextMode === "files") {
         store.cancelResourceProbes();
         await Promise.all([
+          store.refreshWorkspaceBrowser(),
           fileInspection.kind === "browse"
             ? loadResources()
-            : Promise.resolve(),
-          store.refreshWorkspaceBrowser(),
-          fileInspection.kind === "file"
-            ? store.refreshFileTab()
-            : Promise.resolve(),
+            : store.refreshFileTab(),
         ]);
       } else {
         await store.refreshGitStatus();
@@ -382,7 +368,7 @@ export const ContextPane = memo(function ContextPane({
           }
           browseScrollTop={browseScrollTop}
           readingState={fileReading}
-          onQuote={handleReaderQuote}
+          onQuote={quoteInComposer}
         />
       </div>
     ) : state.contextMode === "changes" ? (
@@ -403,7 +389,7 @@ export const ContextPane = memo(function ContextPane({
       active={state.resourcesOpen && state.contextMode === "terminal"}
       reloadKey={terminalReloadKey}
       onOpenFile={handleTerminalOpenFile}
-      onSendToComposer={handleTerminalSelection}
+      onSendToComposer={terminalInComposer}
       onCommandComplete={handleTerminalCommandComplete}
     />
   );

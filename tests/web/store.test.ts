@@ -1,8 +1,7 @@
-// @vitest-environment jsdom
-
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { createElement } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { HTTP_OBSERVATION_TIMEOUT_MS } from "../../src/api";
 import { AppStore, shallowEqual, store, useAppState } from "../../src/store";
 import {
   activeSnapshot,
@@ -19,620 +18,475 @@ import {
 import { pendingQueues } from "./pending-fixtures";
 import { initStore, installStoreRoutes } from "./store-fixture";
 
+const tick = (ms = 0) => vi.advanceTimersByTimeAsync(ms);
+const nextHost = "22222222-2222-4222-8222-222222222222";
+const latestSocket = () => FakeWebSocket.instances.at(-1)!;
+const textRows = (content: string) => [{ role: "assistant", content }];
+const bootstrapPath = "/api/bootstrap";
+const snapshotPath = "/api/snapshot";
+
 beforeEach(() => installFakeWebSocket());
 afterEach(() => {
-  if (!vi.isFakeTimers()) return;
-  vi.clearAllTimers();
+  if (vi.isFakeTimers()) vi.clearAllTimers();
   vi.useRealTimers();
 });
 
-describe("websocket lifecycle", () => {
-  it("compares HTTP and socket cuts within the current Host and accepts low sequences after a restart", async () => {
-    const nextHost = "22222222-2222-4222-8222-222222222222";
-    let authorityId = TEST_HOST_AUTHORITY;
-    const snapshot = activeSnapshot();
-    const confirmed = activeSnapshot({
-      pageMessages: [{ role: "assistant", content: "Already confirmed" }],
-    });
-    installStoreRoutes((url) => {
-      if (url.startsWith("/api/bootstrap"))
-        return {
-          body: bootstrapPayload({ authorityId, startupSessionId: "s1" }),
-        };
-      if (url.startsWith("/api/snapshot"))
-        return { body: { ...confirmed, runtimeSequence: 200 } };
-    });
-    const { store } = await initStore();
-    const publish = (
-      peer: FakeWebSocket,
-      runtimeSequence: number,
-      content: string,
-    ) =>
-      peer.emit({
-        type: "session_projection_changed",
-        sessionId: "s1",
-        runtimeSequence,
-        transcript: activeSnapshot({
-          transcriptPage: { messages: [{ role: "assistant", content }] },
-        }).active,
-      });
-    await store.init();
-    const waiting = FakeWebSocket.instances.at(-1)!;
-    waiting.open();
-    await store.refreshSession();
-    waiting.emitSnapshot(snapshot, { runtimeSequence: 199 });
-    expect(store.getState()).toMatchObject({
-      connection: "open",
-      live: {
-        messages: [{ content: "Already confirmed" }],
-      },
-    });
-    authorityId = nextHost;
-    await store.init();
-    const replacement = FakeWebSocket.instances.at(-1)!;
-    replacement.join(snapshot, { authorityId: nextHost });
-    publish(replacement, 2, "after restart");
-    expect(store.getState().live.messages.at(-1)?.content).toBe(
-      "after restart",
-    );
+it("publishes branch ownership with its rows and orders HTTP and socket cuts only within one Host", async () => {
+  let authorityId = TEST_HOST_AUTHORITY;
+  const answer = deferred<RouteResponse>();
+  const confirmed = {
+    ...activeSnapshot({ pageMessages: textRows("Confirmed") }),
+    runtimeSequence: 200,
+  };
+  const old = deferred<RouteResponse>();
+  const read = vi
+    .fn<() => Promise<RouteResponse>>()
+    .mockReturnValueOnce(answer.promise)
+    .mockReturnValueOnce(old.promise);
+  installStoreRoutes((url) => {
+    if (url.startsWith(bootstrapPath))
+      return {
+        body: bootstrapPayload({ authorityId, startupSessionId: "s1" }),
+      };
+    if (url.startsWith(snapshotPath)) return read();
+  });
+  const { store } = await initStore();
+  const draft = "keep this draft";
+  store.drafts.setText("s1", draft);
+  await store.init();
+  const waiting = latestSocket();
+  waiting.open();
+  const refreshing = store.refreshSession();
+  answer.resolve({ body: confirmed });
+  await refreshing;
+  waiting.emitSnapshot(activeSnapshot(), { runtimeSequence: 199 });
+  expect(store.getState()).toMatchObject({
+    connection: "open",
+    live: { messages: textRows("Confirmed") },
   });
 
-  it.each(["replacement", "deadline"] as const)(
-    "ignores a retired bootstrap response after %s",
-    async (boundary) => {
-      vi.useFakeTimers();
-      const retired = deferred<RouteResponse>();
-      let signal: AbortSignal | null | undefined;
-      const snapshot = activeSnapshot({ sessionId: "current-session" });
-      const current = bootstrapPayload({
-        version: "current-host",
-        preferences: { ...DEFAULT_PREFS, theme: "dark" },
-        startupSessionId: "current-session",
-      });
-      const fetch = installStoreRoutes((url, init) => {
-        if (!url.startsWith("/api/bootstrap")) return;
-        if (signal) return { body: current };
-        signal = init.signal;
-        return retired.promise;
-      });
-      const store = new AppStore();
-      const first = store.init();
-      if (boundary === "deadline") {
-        await vi.advanceTimersByTimeAsync(45_000);
-        await first;
-        expect(store.getState()).toMatchObject({
-          bootstrapped: false,
-          needsToken: false,
-          connection: "offline",
-          connectionProblem: { kind: "address-unreachable" },
-        });
-      }
-      await store.init();
-      await first;
-      expect(signal?.aborted).toBe(true);
-      const socket = FakeWebSocket.instances.at(-1)!;
-      socket.join(snapshot);
-      retired.resolve(
-        boundary === "deadline"
-          ? { status: 401, body: { error: "Expired pairing" } }
-          : {
-              body: bootstrapPayload({
-                version: "retired-host",
-                startupSessionId: "retired-session",
-              }),
-            },
-      );
-      await vi.advanceTimersByTimeAsync(0);
-      expect(store.getState()).toMatchObject({
-        connection: "open",
-        sessionId: "current-session",
-        version: "current-host",
-        prefs: { theme: "dark" },
-        needsToken: false,
-      });
-      expect(FakeWebSocket.instances).toEqual([socket]);
-      expect(
-        fetch.mock.calls.filter(([url]) =>
-          String(url).startsWith("/api/bootstrap"),
-        ),
-      ).toHaveLength(2);
-    },
-  );
-
-  it.each(["address-unreachable", "service-error"] as const)(
-    "reports %s without asking for pairing",
-    async (kind) => {
-      vi.useFakeTimers();
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(async () => {
-          if (kind === "address-unreachable")
-            throw new TypeError("Failed to fetch");
-          return new Response("not an Inspire response");
-        }),
-      );
-      const store = new AppStore();
-      await store.init();
-      expect(store.getState()).toMatchObject({
-        needsToken: false,
-        bootstrapped: false,
-        connection: "offline",
-        connectionProblem: { kind },
-      });
-    },
-  );
-
-  it.each(["committed", "pending"])(
-    "preserves a newer %s selection during missing-detail recovery",
-    async (phase) => {
-      const opening = deferred<RouteResponse>();
-      installStoreRoutes((url) =>
-        url === "/api/sessions/open" ? opening.promise : undefined,
-      );
-      const { store } = await initStore();
-      await store.init();
-      const socket = FakeWebSocket.instances.at(-1)!;
-      socket.open();
-      const selecting = store.openSession("s2");
-      const finish = () =>
-        opening.resolve({ body: activeSnapshot({ sessionId: "s2" }) });
-      if (phase === "committed") {
-        finish();
-        await selecting;
-      }
-      socket.emitSnapshot(emptySnapshot, {
-        detailSessionId: "s1",
-        detailRevision: 0,
-        missingDetail: true,
-      });
-      if (phase === "pending") {
-        expect(store.getState()).toMatchObject({
-          sessionId: null,
-          openingSessionId: "s2",
-          sessionSelectionPending: true,
-        });
-        finish();
-        await selecting;
-      }
-      expect(store.getState().sessionId).toBe("s2");
-      expect(store.getState().live.notices).not.toContainEqual(
-        expect.objectContaining({
-          text: expect.stringContaining("previous session no longer exists"),
-        }),
-      );
-    },
-  );
-
-  it("retains bootstrap model choices while an active preview has not loaded its worker catalog", async () => {
-    const models = [
-      { provider: "anthropic", id: "claude-sonnet-4", reasoning: true },
-    ];
-    installStoreRoutes((url) => {
-      if (url.startsWith("/api/bootstrap")) {
-        return {
-          body: bootstrapPayload({
-            availableModels: models,
-            startupSessionId: "s1",
-          }),
-        };
-      }
+  const seen: Array<[string | null, unknown]> = [];
+  const unsubscribe = store.subscribe(() => {
+    const { view, live } = store.getState();
+    seen.push([view.viewId, live.messages.at(-1)?.content]);
+  });
+  try {
+    const stale = store.refreshSession();
+    const native = activeSnapshot({
+      branchRevision: 2,
+      durableLeafId: "native-leaf",
+      transcriptPage: {
+        viewId: "new-view",
+        revision: 2,
+        effectiveLeafId: "native-leaf",
+        messages: textRows("Native text"),
+      },
     });
+    waiting.emit({
+      type: "branch_changed",
+      sessionId: "s1",
+      runtimeSequence: 202,
+      transcript: native.active,
+    });
+    old.resolve({ body: { ...confirmed, runtimeSequence: 201 } });
+    await stale;
+    expect(seen).toContainEqual(["new-view", "Native text"]);
+    for (const [view, content] of seen)
+      expect(view === "new-view").toBe(content === "Native text");
+    expect(store.getState().view).toMatchObject({
+      branchRevision: 2,
+      effectiveLeafId: "native-leaf",
+    });
+    expect(store.drafts.get("s1").text).toBe(draft);
+    expect(read).toHaveBeenCalledTimes(2);
+  } finally {
+    unsubscribe();
+  }
+
+  authorityId = nextHost;
+  await store.init();
+  const replacement = latestSocket();
+  replacement.join(activeSnapshot(), { authorityId });
+  replacement.emit({
+    type: "session_projection_changed",
+    sessionId: "s1",
+    runtimeSequence: 2,
+    transcript: activeSnapshot({ pageMessages: textRows("After restart") })
+      .active,
+  });
+  expect(store.getState().live.messages).toMatchObject(
+    textRows("After restart"),
+  );
+});
+
+it.each(["replacement", "deadline"] as const)(
+  "ignores bootstrap retired by %s and retains the replacement Host's choices",
+  async (reason) => {
+    vi.useFakeTimers();
+    const retired = deferred<RouteResponse>();
+    const current = bootstrapPayload({
+      authorityId: nextHost,
+      version: "current-host",
+      preferences: { ...DEFAULT_PREFS, theme: "dark" },
+      startupSessionId: "current-session",
+      availableModels: [
+        { provider: "anthropic", id: "claude-sonnet-4", reasoning: true },
+      ],
+    });
+    const bootstrap = vi
+      .fn<
+        (
+          signal: RequestInit["signal"],
+        ) => RouteResponse | Promise<RouteResponse>
+      >()
+      .mockReturnValueOnce(retired.promise)
+      .mockReturnValue({ body: current });
+    installStoreRoutes((url, init) =>
+      url.startsWith(bootstrapPath) ? bootstrap(init.signal) : undefined,
+    );
+    const store = new AppStore();
+    const first = store.init();
+    if (reason === "deadline") {
+      await tick(HTTP_OBSERVATION_TIMEOUT_MS);
+      await first;
+      expect(store.getState()).toMatchObject({
+        bootstrapped: false,
+        needsToken: false,
+        connection: "offline",
+        connectionProblem: { kind: "address-unreachable" },
+      });
+    }
+    await store.init();
+    await first;
+    expect(bootstrap.mock.calls[0]![0]?.aborted).toBe(true);
+    const socket = latestSocket();
+    socket.join(activeSnapshot({ sessionId: "current-session" }), {
+      authorityId: nextHost,
+    });
+    retired.resolve(
+      reason === "deadline"
+        ? { status: 401, body: { error: "Expired pairing" } }
+        : { body: bootstrapPayload({ startupSessionId: "retired-session" }) },
+    );
+    await tick();
+    expect(store.getState()).toMatchObject({
+      connection: "open",
+      sessionId: "current-session",
+      version: "current-host",
+      prefs: { theme: "dark" },
+      availableModels: current.availableModels,
+      needsToken: false,
+    });
+    expect(FakeWebSocket.instances).toEqual([socket]);
+    expect(bootstrap).toHaveBeenCalledTimes(2);
+  },
+);
+
+it.each(["address-unreachable", "service-error"] as const)(
+  "identifies %s without asking for pairing",
+  async (kind) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        if (kind === "address-unreachable")
+          throw new TypeError("Failed to fetch");
+        return new Response("not an Inspire response");
+      }),
+    );
+    const store = new AppStore();
+    await store.init();
+    expect(store.getState()).toMatchObject({
+      needsToken: false,
+      bootstrapped: false,
+      connection: "offline",
+      connectionProblem: { kind },
+    });
+  },
+);
+
+it.each(["committed", "pending"] as const)(
+  "preserves a newer %s selection through missing-detail recovery",
+  async (phase) => {
+    const open = deferred<RouteResponse>();
+    installStoreRoutes((url) =>
+      url === "/api/sessions/open" ? open.promise : undefined,
+    );
     const { store } = await initStore();
-    expect(store.getState().availableModels).toEqual(models);
+    await store.init();
+    const socket = latestSocket();
+    socket.open();
+    const selecting = store.openSession("s2");
+    const finish = () =>
+      open.resolve({ body: activeSnapshot({ sessionId: "s2" }) });
+    if (phase === "committed") {
+      finish();
+      await selecting;
+    }
+    socket.emitSnapshot(emptySnapshot, {
+      detailSessionId: "s1",
+      detailRevision: 0,
+      missingDetail: true,
+    });
+    if (phase === "pending") {
+      expect(store.getState()).toMatchObject({
+        sessionId: null,
+        openingSessionId: "s2",
+        sessionSelectionPending: true,
+      });
+      finish();
+      await selecting;
+    }
+    expect(store.getState().sessionId).toBe("s2");
+    expect(store.getState().live.notices).not.toContainEqual(
+      expect.objectContaining({
+        text: expect.stringContaining("previous session no longer exists"),
+      }),
+    );
+  },
+);
+
+it("restores selected live state while background work updates only the catalog and its own draft", async () => {
+  const fetch = installStoreRoutes(() => undefined);
+  const { store, socket } = await initStore();
+  const running = activeSnapshot({
+    isStreaming: true,
+    toolActivity: { read: { id: "read", name: "read", phase: "running" } },
+  });
+  const question = {
+    sessionId: "s1",
+    id: "question",
+    method: "confirm" as const,
+    title: "Proceed?",
+  };
+  const queue = pendingQueues(["correct the current answer"], [], {
+    revision: 2,
+  });
+  const publish = (type: string, fields: Record<string, unknown>) =>
+    socket.emit({ type, sessionId: "s1", ...fields });
+  socket.emitSnapshot({
+    ...running,
+    sessionStatuses: {
+      s1: { runState: "running" },
+      s2: { runState: "idle", indicator: "completed" },
+    },
+    pendingExtensionUiRequests: [question],
+    pendingQueues: queue,
+    extensionStatuses: { usage: "37%" },
+  });
+  expect(store.getState()).toMatchObject({
+    sessionStatuses: { s2: { indicator: "completed" } },
+    live: {
+      streaming: true,
+      extensionUiRequests: [question],
+      queue,
+      tools: running.active!.toolActivity,
+      statuses: { usage: "37%" },
+    },
+  });
+  socket.emitSnapshot(activeSnapshot());
+  expect(store.getState().live).toMatchObject({
+    streaming: false,
+    extensionUiRequests: [],
+    queue: pendingQueues(),
+    tools: {},
+    statuses: {},
+  });
+  publish("extension_ui_request", {
+    id: "title",
+    method: "setTitle",
+    title: "Session A title",
+  });
+  publish("extension_ui_request", {
+    id: "status",
+    method: "setStatus",
+    extensionStatuses: { worker: "indexing" },
+  });
+  publish("extension_ui_request", {
+    id: "editor",
+    method: "set_editor_text",
+    text: "Draft from A",
+  });
+  expect(store.getState().live).toMatchObject({
+    windowTitle: "Session A title",
+    statuses: { worker: "indexing" },
+  });
+  await selectSession(store, activeSnapshot({ sessionId: "s2" }));
+  expect(store.getState().live).toMatchObject({
+    windowTitle: null,
+    statuses: {},
+  });
+  expect(store.drafts.get("s1").text).toBe("Draft from A");
+  expect(store.drafts.get("s2").text).toBe("");
+
+  const listReads = () =>
+    fetch.mock.calls.filter(([url]) => String(url).startsWith("/api/sessions?"))
+      .length;
+  const before = listReads();
+  const busy = { runState: "running", indicator: "running" };
+  publish("message_start", {
+    message: textRows("background output")[0],
+    sessionStatus: busy,
+  });
+  expect(store.getState().sessionStatuses.s1).toEqual(busy);
+  const observed = vi.fn();
+  const unsubscribe = store.subscribe(observed);
+  try {
+    publish("message_update", {
+      message: textRows("more tokens")[0],
+      sessionStatus: busy,
+    });
+    expect(observed).not.toHaveBeenCalled();
+    for (const needsInput of [true, false]) {
+      publish("session_status", {
+        sessionStatus: { ...busy, indicator: "attention", needsInput },
+      });
+      expect(store.getState().sessionStatuses.s1.needsInput).toBe(needsInput);
+    }
+    publish("runtime_ready", { sessionStatus: { runState: "idle" } });
+    const completed = { runState: "idle", indicator: "completed" };
+    publish("agent_settled", { sessionStatus: completed });
+    await vi.waitFor(() => expect(listReads()).toBe(before + 1));
+    expect(
+      fetch.mock.calls.some(([url]) => String(url).startsWith(snapshotPath)),
+    ).toBe(false);
+    expect(store.getState()).toMatchObject({
+      sessionStatuses: { s1: completed },
+      live: { messages: [], streaming: false, extensionUiRequests: [] },
+    });
+  } finally {
+    unsubscribe();
+  }
+});
+
+it("keeps confirmed diagnostics through failed reads, ignores incomplete replacement and recovers on reconnect", async () => {
+  vi.useFakeTimers();
+  const denied = { status: 503, body: { error: "Snapshot unavailable" } };
+  const accepted = {
+    ...activeSnapshot({
+      pageMessages: textRows("Recovered"),
+      transcriptPage: { revision: 3, appendFromRevision: 2 },
+    }),
+    runtimeSequence: 3,
+  };
+  const refresh = vi
+    .fn<() => RouteResponse>()
+    .mockReturnValueOnce(denied)
+    .mockReturnValue({ body: accepted });
+  installStoreRoutes((url) =>
+    url.startsWith(snapshotPath) ? refresh() : undefined,
+  );
+  const { store, socket } = await initStore();
+  const conflict = {
+    kind: "projection-failure" as const,
+    message: "The projection changed on disk",
+    revision: 2,
+    incidentId: "incident-ownership",
+  };
+  socket.emit({
+    type: "session_projection_changed",
+    sessionId: "s1",
+    runtimeSequence: 2,
+    sessionStatus: { runState: "conflict" },
+    transcript: activeSnapshot({
+      projectionHealth: {
+        status: "error",
+        message: "malformed persisted line",
+      },
+      projectionConflict: conflict,
+      transcriptPage: { revision: 2, appendFromRevision: 2 },
+    }).active,
+  });
+  expect(store.getState()).toMatchObject({
+    error: conflict.message,
+    errorSeverity: "error",
+    view: { revision: 2, conflict },
+  });
+  expect(refresh).not.toHaveBeenCalled();
+  socket.emit({ type: "runtime_ready", sessionId: "s1", runtimeSequence: 3 });
+  await tick();
+  expect(refresh).toHaveBeenCalledOnce();
+  expect(store.getState().error).toBe(conflict.message);
+  await tick(1_000);
+  expect(store.getState()).toMatchObject({
+    error: null,
+    view: { revision: 3, health: { status: "ok" } },
+    live: { messages: textRows("Recovered") },
+  });
+
+  socket.emit({
+    type: "session_projection_changed",
+    sessionId: "s1",
+    health: { status: "error", message: "Invalid partial diagnostic" },
+  });
+  expect(store.getState()).toMatchObject({
+    connection: "reconnecting",
+    view: { revision: 3, health: { status: "ok" } },
+    error: null,
+  });
+  await tick(1_000);
+  latestSocket().join({
+    ...activeSnapshot({
+      pageMessages: textRows("Confirmed on reconnect"),
+      transcriptPage: { revision: 4 },
+    }),
+    runtimeSequence: 4,
+  });
+  expect(store.getState()).toMatchObject({
+    connection: "open",
+    live: { messages: textRows("Confirmed on reconnect") },
   });
 });
 
-describe("multi-session event routing", () => {
-  it("restores live state on an addressed snapshot and clears it when the Host retires it", async () => {
-    const { store, socket } = await initStore();
-    const running = activeSnapshot({
-      toolActivity: { read: { id: "read", name: "read", phase: "running" } },
-      isStreaming: true,
-    });
-    running.sessionStatuses.s2 = { runState: "idle", indicator: "completed" };
-    running.sessionStatuses.s1 = { runState: "running" };
-    running.pendingExtensionUiRequests = [
-      {
-        sessionId: "s1",
-        id: "question-1",
-        method: "confirm",
-        title: "Proceed?",
-      },
-    ];
-    running.pendingQueues = pendingQueues(["correct the current answer"], [], {
-      revision: 2,
-    });
-    running.extensionStatuses = { usage: "37%" };
-    const publish = (snapshot: ReturnType<typeof activeSnapshot>) =>
-      socket.emitSnapshot(snapshot, {
-        detailSessionId: "s1",
-        detailRevision: 0,
-      });
-
-    publish(running);
-    expect(store.getState()).toMatchObject({
-      sessionStatuses: running.sessionStatuses,
-      live: {
-        extensionUiRequests: running.pendingExtensionUiRequests,
-        queue: running.pendingQueues,
-        tools: running.active!.toolActivity,
-        statuses: { usage: "37%" },
-      },
-    });
-
-    const settled = activeSnapshot();
-    publish(settled);
-    expect(store.getState()).toMatchObject({
-      sessionStatuses: settled.sessionStatuses,
-      live: {
-        extensionUiRequests: [],
-        queue: pendingQueues(),
-        statuses: {},
-        tools: {},
-      },
-    });
+it("clears Pending once and preserves newer queue events when its receipt arrives", async () => {
+  const clear = deferred<RouteResponse>();
+  const fetch = installStoreRoutes((url) =>
+    url === "/api/pending/clear" ? clear.promise : undefined,
+  );
+  const { store, socket } = await initStore();
+  const queue = pendingQueues(["one"]);
+  socket.emitSnapshot({ ...activeSnapshot(), pendingQueues: queue });
+  const clearing = store.clearPending();
+  await expect(store.clearPending()).resolves.toBe(false);
+  expect(store.getState().live.queue).toEqual(queue);
+  const newer = pendingQueues(["arrived after clear"], [], { revision: 2 });
+  socket.emit({ type: "queue_update", sessionId: "s1", pendingQueues: newer });
+  clear.resolve({ body: { ok: true } });
+  await expect(clearing).resolves.toBe(true);
+  expect(
+    fetch.mock.calls.filter(([url]) => url === "/api/pending/clear"),
+  ).toEqual([
+    [
+      "/api/pending/clear",
+      expect.objectContaining({ body: JSON.stringify({ sessionId: "s1" }) }),
+    ],
+  ]);
+  expect(store.getState()).toMatchObject({
+    pendingAction: null,
+    live: { queue: newer },
   });
+});
 
-  it("clears selected-only extension presentation when switching sessions", async () => {
-    installStoreRoutes(() => undefined);
-    const { store, socket } = await initStore();
-    socket.emit({
-      type: "extension_ui_request",
-      sessionId: "s1",
-      id: "status-1",
-      method: "setStatus",
-      extensionStatuses: { worker: "indexing" },
-    });
-    socket.emit({
-      type: "extension_ui_request",
-      sessionId: "s1",
-      id: "title-1",
-      method: "setTitle",
-      title: "Session A title",
-    });
-    const publishDraft = (id: string) =>
-      socket.emit({
-        type: "extension_ui_request",
-        sessionId: "s1",
-        id,
-        method: "set_editor_text",
-        text: "draft from A",
-      });
-    publishDraft("editor-1");
-    publishDraft("editor-2");
-    expect(store.getState()).toMatchObject({
-      live: {
-        statuses: { worker: "indexing" },
-        windowTitle: "Session A title",
-      },
-    });
-    expect(store.drafts.get("s1").text).toBe("draft from A");
-
-    await selectSession(
-      store,
-      activeSnapshot({ sessionId: "s2", sessionName: "Session B" }),
+it("rerenders a shallow selection only when a selected value changes", () => {
+  const rendered = vi.fn();
+  function ResourceProbe() {
+    const { open } = useAppState(
+      (state) => ({ open: state.resourcesOpen, sessionId: state.sessionId }),
+      shallowEqual,
     );
-    expect(store.getState()).toMatchObject({
-      live: {
-        statuses: {},
-        windowTitle: null,
-      },
-    });
-    expect(store.drafts.get("s1").text).toBe("draft from A");
-    expect(store.drafts.get("s2").text).toBe("");
-  });
-
-  it("routes background work to the session list while leaving the selected transcript alone", async () => {
-    const fetch = installStoreRoutes(() => undefined);
-    const { store, socket } = await initStore();
-    const listReads = () =>
-      fetch.mock.calls.filter(([url]) =>
-        String(url).startsWith("/api/sessions?"),
-      );
-    const listsBefore = listReads().length;
-    const notify = vi.fn();
-    const unsubscribe = store.subscribe(notify);
-    const publish = (type: string, fields: Record<string, unknown>) =>
-      socket.emit({ type, sessionId: "bg", ...fields });
-    const running = { runState: "running", indicator: "running" };
-    const message = {
-      role: "assistant",
-      content: "background draft",
-      timestamp: 42,
-    };
-    try {
-      publish("message_start", { message, sessionStatus: running });
-      expect(store.getState().sessionStatuses.bg).toEqual(running);
-
-      notify.mockClear();
-      publish("message_update", {
-        message: { ...message, content: "more tokens" },
-        sessionStatus: running,
-      });
-      expect(notify).not.toHaveBeenCalled();
-
-      for (const needsInput of [true, false]) {
-        publish("session_status", {
-          sessionStatus: { ...running, indicator: "attention", needsInput },
-        });
-        expect(store.getState().sessionStatuses.bg.needsInput).toBe(needsInput);
-      }
-
-      publish("runtime_ready", { sessionStatus: { runState: "idle" } });
-      const completed = { runState: "idle", indicator: "completed" };
-      publish("agent_settled", { sessionStatus: completed });
-      await vi.waitFor(() => expect(listReads()).toHaveLength(listsBefore + 1));
-      expect(fetch.mock.calls).not.toContainEqual(
-        expect.arrayContaining([expect.stringMatching(/^\/api\/snapshot/)]),
-      );
-      expect(store.getState()).toMatchObject({
-        sessionStatuses: { bg: completed },
-        live: {
-          messages: [],
-          streaming: false,
-          extensionUiRequests: [],
-        },
-      });
-    } finally {
-      unsubscribe();
-    }
-  });
-
-  it("installs native rows and branch ownership together and fences an older HTTP read", async () => {
-    const old = deferred<RouteResponse>();
-    const fetch = installStoreRoutes((url) =>
-      url.startsWith("/api/snapshot") ? old.promise : undefined,
+    rendered();
+    return createElement(
+      "output",
+      null,
+      open ? "Resources open" : "Resources closed",
     );
-    const { store, socket } = await initStore();
-    store.drafts.setText("s1", "keep this draft");
-    const seen: Array<[string | null, unknown]> = [];
-    const unsubscribe = store.subscribe(() => {
-      const {
-        view: { viewId: transcriptViewId },
-        live: { messages },
-      } = store.getState();
-      seen.push([transcriptViewId, messages.at(-1)?.content]);
-    });
-    try {
-      const refresh = store.refreshSession();
-      await vi.waitFor(() =>
-        expect(
-          fetch.mock.calls.some(([url]) =>
-            String(url).startsWith("/api/snapshot"),
-          ),
-        ).toBe(true),
-      );
-      socket.emit({
-        type: "branch_changed",
-        sessionId: "s1",
-        runtimeSequence: 12,
-        transcript: activeSnapshot({
-          branchRevision: 2,
-          durableLeafId: "native-leaf",
-          transcriptPage: {
-            viewId: "new-view",
-            revision: 2,
-            effectiveLeafId: "native-leaf",
-            messages: [{ role: "assistant", content: "saved native text" }],
-          },
-        }).active,
-      });
-      old.resolve({ body: { ...activeSnapshot(), runtimeSequence: 11 } });
-      await refresh;
-      expect(seen).toContainEqual(["new-view", "saved native text"]);
-      for (const [view, text] of seen)
-        expect(view === "new-view").toBe(text === "saved native text");
-      expect(store.getState()).toMatchObject({
-        view: {
-          branchRevision: 2,
-          effectiveLeafId: "native-leaf",
-        },
-      });
-      expect(store.drafts.get("s1").text).toBe("keep this draft");
-      expect(
-        fetch.mock.calls.filter(([url]) =>
-          String(url).startsWith("/api/snapshot"),
-        ),
-      ).toHaveLength(1);
-    } finally {
-      unsubscribe();
-      store.drafts.setText("s1", "");
-    }
-  });
-
-  it("recovers an invalid detail replacement without publishing partial diagnostics", async () => {
-    vi.useFakeTimers();
-    const { store, socket } = await initStore();
-    socket.emit({
-      type: "session_projection_changed",
-      sessionId: "s1",
-      health: { status: "error", message: "Invalid partial diagnostic" },
-    });
-    expect(store.getState()).toMatchObject({
-      connection: "reconnecting",
-      view: {
-        health: { status: "ok" },
-      },
-    });
-    await vi.advanceTimersByTimeAsync(1_000);
-    FakeWebSocket.instances.at(-1)!.join(
-      activeSnapshot({
-        pageMessages: [
-          { role: "assistant", content: "Confirmed on reconnect" },
-        ],
-      }),
-    );
-    expect(store.getState()).toMatchObject({
-      connection: "open",
-      live: {
-        messages: [{ content: "Confirmed on reconnect" }],
-      },
-    });
-  });
-
-  it("keeps stamped projection diagnostics through a failed refresh and clears them on recovery", async () => {
-    vi.useFakeTimers();
-    const recovery = deferred<RouteResponse>();
-    const refresh = vi
-      .fn()
-      .mockReturnValueOnce({
-        status: 503,
-        body: { error: "snapshot unavailable" },
-      })
-      .mockReturnValueOnce(recovery.promise);
-    installStoreRoutes((url) =>
-      url.startsWith("/api/snapshot") ? refresh() : undefined,
-    );
-    const { store, socket } = await initStore();
-    const conflict = {
-      kind: "projection-failure" as const,
-      message: "The projection changed on disk",
-      revision: 2,
-      incidentId: "incident-ownership",
-    };
-    socket.emit({
-      type: "session_projection_changed",
-      sessionId: "s1",
-      runtimeSequence: 2,
-      sessionStatus: { runState: "conflict" },
-      transcript: activeSnapshot({
-        projectionHealth: {
-          status: "error",
-          message: "malformed persisted line",
-        },
-        projectionConflict: conflict,
-        transcriptPage: { revision: 2, appendFromRevision: 2 },
-      }).active,
-    });
-    expect(store.getState()).toMatchObject({
-      error: conflict.message,
-      errorSeverity: "error",
-      view: {
-        revision: 2,
-        conflict: conflict,
-      },
-    });
-    expect(refresh).not.toHaveBeenCalled();
-    socket.emit({ type: "runtime_ready", sessionId: "s1", runtimeSequence: 3 });
-    await vi.advanceTimersByTimeAsync(0);
-    expect(refresh).toHaveBeenCalledOnce();
-    expect(store.getState().error).toBe(conflict.message);
-    recovery.resolve({
-      body: {
-        ...activeSnapshot({
-          transcriptPage: { revision: 3, appendFromRevision: 2 },
-        }),
-        runtimeSequence: 3,
-      },
-    });
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(store.getState()).toMatchObject({
-      error: null,
-      view: {
-        revision: 3,
-        health: { status: "ok" },
-      },
-    });
-  });
-
-  it("clears Pending without replacing newer queue events with a receipt", async () => {
-    const clear = deferred<RouteResponse>();
-    const fetch = installStoreRoutes((url) =>
-      url === "/api/pending/clear" ? clear.promise : undefined,
-    );
-    const { store, socket } = await initStore();
-    const active = activeSnapshot();
-    active.pendingQueues = pendingQueues(["one"]);
-    socket.emitSnapshot(active);
-    const clearing = store.clearPending();
-    await vi.waitFor(() =>
-      expect(fetch).toHaveBeenCalledWith(
-        "/api/pending/clear",
-        expect.objectContaining({
-          body: JSON.stringify({ sessionId: "s1" }),
-        }),
-      ),
-    );
-    await expect(store.clearPending()).resolves.toBe(false);
-    expect(store.getState().live.queue).toEqual(active.pendingQueues);
-    const newer = pendingQueues(["arrived after clear"], [], { revision: 2 });
-    socket.emit({
-      type: "queue_update",
-      sessionId: "s1",
-      pendingQueues: newer,
-    });
-    clear.resolve({ body: { ok: true } });
-    await expect(clearing).resolves.toBe(true);
-    expect(store.getState().live.queue).toEqual(newer);
-    expect(store.getState().pendingAction).toBeNull();
-  });
-
-  it("joins the opened session's Live view after an early runtime_ready", async () => {
-    const release = deferred<void>();
-    const fetch = installStoreRoutes(async (url) => {
-      if (url === "/api/sessions/open") {
-        await release.promise;
-        return { body: activeSnapshot({ sessionId: "s2" }) };
-      }
-    });
-    const { store, socket } = await initStore();
-    const opening = store.openSession("s2");
-    await vi.waitFor(() =>
-      expect(fetch).toHaveBeenCalledWith(
-        "/api/sessions/open",
-        expect.anything(),
-      ),
-    );
-    socket.emit({
-      type: "runtime_ready",
-      sessionId: "s2",
-      sessionStatus: { runState: "idle" },
-    });
-    release.resolve();
-    await opening;
-    expect(JSON.parse(socket.sent.at(-1)!)).toEqual({
-      type: "detail_interest",
-      sessionId: "s2",
-      revision: 1,
-    });
-    socket.emitSnapshot(
-      activeSnapshot({
-        sessionId: "s2",
-        pageMessages: [{ role: "assistant", content: "live runtime" }],
-      }),
-    );
-    expect(store.getState().live.messages.at(-1)?.content).toBe("live runtime");
-    expect(
-      fetch.mock.calls.filter(([url]) =>
-        String(url).startsWith("/api/snapshot"),
-      ),
-    ).toHaveLength(0);
-  });
-
-  it("rerenders a shallow object selection only when a selected value changes", () => {
-    const rendered = vi.fn();
-    function ResourceProbe() {
-      const { open } = useAppState(
-        (state) => ({ open: state.resourcesOpen, sessionId: state.sessionId }),
-        shallowEqual,
-      );
-      rendered();
-      return createElement(
-        "output",
-        null,
-        open ? "Resources open" : "Resources closed",
-      );
-    }
-
-    render(createElement(ResourceProbe));
-    const initialRenders = rendered.mock.calls.length;
-    act(() => store.setWorkspaceQuery("notes"));
-    expect(rendered).toHaveBeenCalledTimes(initialRenders);
-
-    act(() => store.setResourcesOpen(true));
-    expect(screen.getByRole("status")).toHaveTextContent("Resources open");
-    cleanup();
-    store.setWorkspaceQuery("");
-    store.setResourcesOpen(false);
-  });
+  }
+  render(createElement(ResourceProbe));
+  const initial = rendered.mock.calls.length;
+  act(() => store.setWorkspaceQuery("notes"));
+  expect(rendered).toHaveBeenCalledTimes(initial);
+  act(() => store.setResourcesOpen(true));
+  expect(screen.getByRole("status")).toHaveTextContent("Resources open");
+  cleanup();
+  store.setWorkspaceQuery("");
+  store.setResourcesOpen(false);
 });

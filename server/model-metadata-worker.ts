@@ -24,6 +24,9 @@ async function discover(cwd: string, validationPath?: string) {
   const settings = modelSettings(cwd, agentDir);
   const runtime = await ModelRuntime.create({
     modelsPath: validationPath ?? join(agentDir, "models.json"),
+    ...(validationPath
+      ? { modelsStorePath: join(agentDir, "models-store.json") }
+      : {}),
     authPath: join(agentDir, "auth.json"),
     refreshOnCreate: false,
   });

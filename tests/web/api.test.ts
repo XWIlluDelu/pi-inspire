@@ -2,6 +2,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { matchOperationReceipt } from "../../shared/host-operations";
 import {
+  type HostRestartRequest,
+  restartObservation,
+} from "../../shared/host-restart";
+import {
   ApiRequestCancelledError,
   ApiTransportError,
   createApi,
@@ -205,6 +209,38 @@ it("matches only a complete receipt from the original executor and operation", (
   ]) {
     expect(matchOperationReceipt(value, receipt)).toBeNull();
   }
+});
+
+it("requires a restart receipt to confirm the routed interruption grant", async () => {
+  const intent: HostRestartRequest = {
+    hostId: crypto.randomUUID(),
+    operationId: crypto.randomUUID(),
+    scope: "all-pi",
+    interruptWork: true,
+    skipAttachedStop: true,
+  };
+  const operation = {
+    id: intent.operationId,
+    scope: intent.scope,
+    interruptWork: true,
+    phase: "submitted",
+  } as const;
+  const accepted = { ...operation, skipAttachedStop: true } as const;
+  vi.stubGlobal(
+    "fetch",
+    vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json(restartObservation(intent, operation)),
+      )
+      .mockResolvedValueOnce(
+        Response.json(restartObservation(intent, accepted)),
+      ),
+  );
+  await expect(createApi().restartHost(intent)).rejects.toMatchObject({
+    outcomeUnknown: true,
+  });
+  await expect(createApi().restartHost(intent)).resolves.toEqual(accepted);
 });
 
 describe("ordinary HTTP observation", () => {

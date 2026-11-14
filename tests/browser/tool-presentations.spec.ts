@@ -11,6 +11,7 @@ import { browserFixtureHome, browserWorkspace } from "./fixtures/workspace.mjs";
 import { observeClipboardWrites } from "./support/clipboard";
 import { renderedColors } from "./support/colors";
 import { openEventSession, routeSnapshots } from "./support/host-events";
+import { hostRequest } from "./support/host-request";
 import { pairedPage, reloadSession } from "./support/navigation";
 
 test.use({ serviceWorkers: "block" });
@@ -552,6 +553,11 @@ test("saved tool images survive presentation changes and full logs open in the n
       },
     });
     await pairedPage(page);
+    // A suite can seed the native file after another test populated the Host catalog.
+    const refresh = await hostRequest(page).post("/api/sessions/refresh", {
+      data: {},
+    });
+    expect(refresh.ok()).toBe(true);
     await reloadSession(page, sessionId);
     await expect(
       toolCard(page, "read").locator(

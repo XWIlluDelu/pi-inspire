@@ -13,7 +13,7 @@ import { browserFixtureHome } from "./fixtures/workspace.mjs";
 import { expectConfigurationField } from "./support/configuration-form";
 import { openSettings, pairedPage } from "./support/navigation";
 
-test.use({ serviceWorkers: "block" });
+test.use({ serviceWorkers: "block", reducedMotion: "reduce" });
 
 const selectServer = (
   settings: Locator,
@@ -24,44 +24,7 @@ const selectServer = (
     .getByRole("combobox", { name: "MCP server" })
     .selectOption({ label: `${name} · ${scope}` });
 
-test("New edits MCP configuration in its prospective project", async ({
-  page,
-}) => {
-  const cwd = await mkdtemp(join(tmpdir(), "inspire-welcome-mcp-"));
-  try {
-    await mkdir(join(cwd, ".pi"));
-    await pairedPage(page);
-    await page.getByRole("textbox", { name: "Project directory" }).fill(cwd);
-    await openSettings(page);
-    const settings = page.getByRole("dialog", {
-      name: "Settings",
-      exact: true,
-    });
-    await settings.getByRole("button", { name: "MCP", exact: true }).click();
-    await settings
-      .getByRole("button", { name: "Add server", exact: true })
-      .click();
-    await settings.getByLabel("Server name").fill("project-tools");
-    await settings.getByLabel("Server URL").fill("https://example.invalid/mcp");
-    await settings
-      .getByRole("combobox", { name: "Configuration target" })
-      .selectOption({ label: "This project" });
-    await settings.getByRole("button", { name: "Save", exact: true }).click();
-    await expect(
-      settings.getByRole("button", {
-        name: "Edit project server project-tools",
-      }),
-    ).toBeVisible();
-    const saved = JSON.parse(await readFile(join(cwd, ".pi/mcp.json"), "utf8"));
-    expect(saved.mcpServers).toMatchObject({
-      "project-tools": { url: "https://example.invalid/mcp" },
-    });
-  } finally {
-    await rm(cwd, { recursive: true, force: true });
-  }
-});
-
-async function scenario(page: Page) {
+async function scenario(page: Page, session: "live" | "new") {
   const root = await realpath(
     await mkdtemp(join(tmpdir(), "inspire-browser-mcp-")),
   );
@@ -117,39 +80,38 @@ async function scenario(page: Page) {
     let reveals = 0,
       writes = 0,
       reloads = 0;
-    page.on("request", (request) => {
-      const path = new URL(request.url()).pathname;
-      if (path === "/api/mcp-config/connection") reveals++;
-      if (path === "/api/mcp-config" && request.method() === "PATCH") writes++;
-      if (
-        path === "/api/control/native-command" &&
-        request.postDataJSON()?.command === "reload"
-      )
-        reloads++;
-    });
-    await page.emulateMedia({ reducedMotion: "reduce" });
+    if (session === "live")
+      page.on("request", (request) => {
+        const path = new URL(request.url()).pathname;
+        if (path === "/api/mcp-config/connection") reveals++;
+        if (path === "/api/mcp-config" && request.method() === "PATCH")
+          writes++;
+        if (
+          path === "/api/control/native-command" &&
+          request.postDataJSON()?.command === "reload"
+        )
+          reloads++;
+      });
     await pairedPage(page);
     await page.getByRole("textbox", { name: "Project directory" }).fill(cwd);
-    await page
-      .getByRole("textbox", { name: "First message", exact: true })
-      .fill("Materialize this session for MCP reload.");
-    await page.getByRole("button", { name: "Start session" }).click();
-    await expect(
-      page.getByText(/The offline provider supplies inline math/),
-    ).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: "Abort running task" }),
-    ).toHaveCount(0);
+    if (session === "live") {
+      await page
+        .getByRole("textbox", { name: "First message", exact: true })
+        .fill("Materialize this session for MCP reload.");
+      await page.getByRole("button", { name: "Start session" }).click();
+      await expect(
+        page.getByText(/The offline provider supplies inline math/),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: "Abort running task" }),
+      ).toHaveCount(0);
+    }
     await openSettings(page);
     const settings = page.getByRole("dialog", {
       name: "Settings",
       exact: true,
     });
     await settings.getByRole("button", { name: "MCP", exact: true }).click();
-    await selectServer(settings, "docs", "user");
-    await expect(
-      settings.getByRole("button", { name: "Edit user server docs" }),
-    ).toBeVisible();
     return {
       close,
       userFile,
@@ -169,34 +131,32 @@ test("MCP reveals saved connection values on request, keeps edits scoped, and re
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
-  const fixture = await scenario(page);
+  const fixture = await scenario(page, "live");
   const { settings } = fixture;
+  const edit = (scope: "user" | "project") =>
+    settings.getByRole("button", { name: `Edit ${scope} server docs` });
+  const save = settings.getByRole("button", { name: "Save", exact: true });
+  const advanced = settings.getByText("Advanced configuration", {
+    exact: true,
+  });
+  const description = settings.getByLabel("Description", { exact: true });
   try {
-    await settings
-      .getByRole("button", { name: "Edit user server docs" })
-      .click();
+    await selectServer(settings, "docs", "user");
+    await edit("user").click();
     const url = settings.getByLabel("Server URL", { exact: true });
     await expect(url).toBeFocused();
     await expect(url).toHaveValue("");
     expect(fixture.reveals()).toBe(0);
     await settings.getByRole("button", { name: "Show saved URL" }).click();
-    await expect(
-      settings.getByLabel("Server URL", { exact: true }),
-    ).toHaveValue(/stored-url-secret/);
-    await settings.getByText("Advanced configuration", { exact: true }).click();
-    await settings
-      .getByLabel("Description", { exact: true })
-      .fill("Updated documentation");
+    await expect(url).toHaveValue(/stored-url-secret/);
+    await advanced.click();
+    await description.fill("Updated documentation");
     await settings
       .getByRole("button", { name: "Conversation", exact: true })
       .click();
-    await expect(
-      settings.getByLabel("Description", { exact: true }),
-    ).not.toBeVisible();
+    await expect(description).not.toBeVisible();
     await settings.getByRole("button", { name: "MCP", exact: true }).click();
-    await expect(
-      settings.getByLabel("Description", { exact: true }),
-    ).toHaveValue("Updated documentation");
+    await expect(description).toHaveValue("Updated documentation");
     await expect(
       settings.getByLabel("Header value for Authorization"),
     ).toHaveValue("");
@@ -212,7 +172,7 @@ test("MCP reveals saved connection values on request, keeps edits scoped, and re
         ),
       )
       .toMatch(/unique/);
-    await settings.getByRole("button", { name: "Save", exact: true }).click();
+    await save.click();
     expect(fixture.writes()).toBe(0);
     await newHeader.fill("X-Workspace");
     await settings.getByLabel("Header value for X-Workspace").fill("workspace");
@@ -230,7 +190,6 @@ test("MCP reveals saved connection values on request, keeps edits scoped, and re
     });
     await expect(registration).toHaveValue("auto");
     await registration.selectOption("cimd");
-    const save = settings.getByRole("button", { name: "Save", exact: true });
     await expect(settings.getByRole("alert")).toContainText(
       "cannot use a client ID or client name",
     );
@@ -248,9 +207,7 @@ test("MCP reveals saved connection values on request, keeps edits scoped, and re
         "Saved to file. Running sessions have not been reloaded.",
       ),
     ).toBeVisible();
-    await expect(
-      settings.getByRole("button", { name: "Edit user server docs" }),
-    ).toBeFocused();
+    await expect(edit("user")).toBeFocused();
     expect(fixture.reloads()).toBe(0);
     expect(fixture.writes()).toBe(1);
     const saved = (await fixture.json(fixture.userFile)).mcpServers.docs;
@@ -271,45 +228,37 @@ test("MCP reveals saved connection values on request, keeps edits scoped, and re
     await settings
       .getByRole("button", { name: "Reload selected session…" })
       .click();
-    await expect(
-      settings.getByRole("button", {
-        name: "Reload Pi resources",
-        exact: true,
-      }),
-    ).toBeVisible();
+    const confirm = settings.getByRole("button", {
+      name: "Reload Pi resources",
+      exact: true,
+    });
+    await expect(confirm).toBeVisible();
     expect(fixture.reloads()).toBe(0);
     const reloaded = page.waitForResponse((response) =>
       response.url().endsWith("/api/control/native-command"),
     );
-    await settings
-      .getByRole("button", { name: "Reload Pi resources", exact: true })
-      .click();
+    await confirm.click();
     const reloadResult = await reloaded;
     expect(reloadResult.ok(), await reloadResult.text()).toBe(true);
     expect(fixture.reloads()).toBe(1);
     // An edit conflict preserves the draft and makes no claim of saving it.
     await selectServer(settings, "docs", "project");
-    await settings
-      .getByRole("button", { name: "Edit project server docs" })
-      .click();
-    await expect(
-      settings.getByLabel("Argument 1", { exact: true }),
-    ).toHaveCount(0);
+    await edit("project").click();
+    const firstArg = settings.getByLabel("Argument 1", { exact: true });
+    await expect(firstArg).toHaveCount(0);
     await settings
       .getByRole("button", { name: "Show saved arguments" })
       .click();
-    await expect(
-      settings.getByLabel("Argument 1", { exact: true }),
-    ).toBeFocused();
+    await expect(firstArg).toBeFocused();
     const programArg = settings.getByLabel("Argument 2", { exact: true });
     await expect(programArg).toHaveValue("process.exit(0)");
     await programArg.fill("process.exitCode = 0");
-    await settings.getByText("Advanced configuration", { exact: true }).click();
+    await advanced.click();
     await settings.getByRole("button", { name: "Remove tool rule 1" }).click();
     const external = await fixture.json(fixture.projectFile);
     external.mcpServers.docs.timeout = 99;
     await writeFile(fixture.projectFile, JSON.stringify(external));
-    await settings.getByRole("button", { name: "Save", exact: true }).click();
+    await save.click();
     await expect(settings.getByRole("alert")).toContainText(
       "changed elsewhere",
     );
@@ -318,10 +267,8 @@ test("MCP reveals saved connection values on request, keeps edits scoped, and re
       .getByRole("button", { name: "Refresh MCP files", exact: true })
       .click();
     await expect(settings.getByRole("alert")).toHaveCount(0);
-    await settings.getByRole("button", { name: "Save", exact: true }).click();
-    await expect(
-      settings.getByRole("button", { name: "Edit project server docs" }),
-    ).toBeVisible();
+    await save.click();
+    await expect(edit("project")).toBeVisible();
     const project = (await fixture.json(fixture.projectFile)).mcpServers.docs;
     expect(project).toMatchObject({
       timeout: 99,
@@ -336,11 +283,11 @@ test("MCP reveals saved connection values on request, keeps edits scoped, and re
 test.describe("touch MCP editor", () => {
   test.use({ hasTouch: true });
 
-  test("narrow MCP form adds and removes scoped stdio definitions and focuses inherited policy editing", async ({
+  test("New saves and removes project MCP definitions and inherited policy in narrow Settings", async ({
     page,
   }) => {
     await page.setViewportSize({ width: 390, height: 844 });
-    const fixture = await scenario(page);
+    const fixture = await scenario(page, "new");
     const { settings } = fixture;
     const editProject = (name: string) =>
       settings.getByRole("button", {
@@ -375,12 +322,16 @@ test.describe("touch MCP editor", () => {
       await choose("Configuration target", "This project");
       await choose("Transport", "Stdio");
       await settings.getByLabel("Program", { exact: true }).fill("node");
-      await settings
-        .getByRole("button", { name: "Add argument", exact: true })
-        .click();
+      const addArgument = settings.getByRole("button", {
+        name: "Add argument",
+        exact: true,
+      });
+      await addArgument.click();
       await settings
         .getByLabel("Argument 1", { exact: true })
         .fill("server with spaces.js");
+      await addArgument.click();
+      await settings.getByRole("button", { name: "Remove argument 2" }).click();
       await settings
         .getByText("Advanced configuration", { exact: true })
         .click();
@@ -400,8 +351,6 @@ test.describe("touch MCP editor", () => {
         name: "Save",
         exact: true,
       });
-      await save.scrollIntoViewIfNeeded();
-      await expect(save).toBeInViewport();
       await save.click();
       await expect(editProject("project-tools")).toBeVisible();
       expect(

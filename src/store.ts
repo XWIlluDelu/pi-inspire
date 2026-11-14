@@ -2099,35 +2099,47 @@ export class AppStore {
     return !recovered.error;
   }
 
-  recoverPending = async (): Promise<boolean> => {
+  recoverPending = (): Promise<boolean> => this.runPendingAction("recover");
+
+  clearPending = (): Promise<boolean> => this.runPendingAction("clear");
+
+  private async runPendingAction(
+    action: "recover" | "clear",
+  ): Promise<boolean> {
     const sessionId = this.state.sessionId;
     const api = this.api;
     if (!api || !sessionId || this.state.pendingAction) return false;
+    const viewId = this.state.view.viewId ?? undefined;
     const request = ++this.pendingActionRequest;
-    this.set({ pendingAction: "recover" });
+    const current = () =>
+      this.api === api && request === this.pendingActionRequest;
+    this.set({ pendingAction: action });
     try {
-      return await this.pendingRecovery.run(
-        sessionId,
-        "recover",
-        this.state.view.viewId ?? undefined,
-      );
+      if (action === "recover")
+        return await this.pendingRecovery.run(sessionId, action, viewId);
+      await api.clearPending(sessionId);
+      // Queue events carry the truth after Clear, including newly queued input.
+      return current();
     } catch (error) {
-      if (this.api !== api) return false;
+      if (this.api !== api || (action === "clear" && !current())) return false;
       if (error instanceof ApiError && error.status === 401)
         this.handleAuthFailure();
-      else if (this.state.sessionId === sessionId)
+      else if (action === "clear" || this.state.sessionId === sessionId) {
+        const message = error instanceof Error ? error.message : undefined;
         this.notify(
           "warning",
-          error instanceof Error
-            ? error.message
-            : "Failed to recover Pending input",
+          action === "clear"
+            ? message === undefined
+              ? "Failed to clear Pending input"
+              : `Failed to clear Pending input: ${message}`
+            : (message ?? "Failed to recover Pending input"),
         );
+      }
       return false;
     } finally {
-      if (this.api === api && request === this.pendingActionRequest)
-        this.set({ pendingAction: null });
+      if (current()) this.set({ pendingAction: null });
     }
-  };
+  }
 
   reportCopyError = (message: string) => this.notify("warning", message);
 
@@ -2205,41 +2217,6 @@ export class AppStore {
             : "Failed to copy Pending input",
         );
       return null;
-    }
-  };
-
-  clearPending = async (): Promise<boolean> => {
-    const sessionId = this.state.sessionId;
-    const api = this.api;
-    const ownsTransport = (): boolean => this.api === api;
-    if (!api || !sessionId || this.state.pendingAction) {
-      return false;
-    }
-    const request = ++this.pendingActionRequest;
-    this.set({ pendingAction: "clear" });
-    try {
-      await api.clearPending(sessionId);
-      if (!ownsTransport() || request !== this.pendingActionRequest)
-        return false;
-      // Only queue events/snapshots update the display: new work may already
-      // have arrived after Pi cleared its queue.
-      return true;
-    } catch (error) {
-      if (!ownsTransport() || request !== this.pendingActionRequest)
-        return false;
-      if (error instanceof ApiError && error.status === 401)
-        this.handleAuthFailure();
-      else
-        this.notify(
-          "warning",
-          error instanceof Error
-            ? `Failed to clear Pending input: ${error.message}`
-            : "Failed to clear Pending input",
-        );
-      return false;
-    } finally {
-      if (ownsTransport() && request === this.pendingActionRequest)
-        this.set({ pendingAction: null });
     }
   };
 
@@ -2640,35 +2617,27 @@ export class AppStore {
       await this.setThinkingLevel(levels[(index + 1) % levels.length]!);
     });
 
-  readMcpConfig = (owner: { sessionId?: string; cwd?: string }) => {
-    if (!this.api) return Promise.reject(new Error("The Host is unavailable"));
-    return this.api.mcpConfig(owner);
-  };
+  readMcpConfig = async (owner: { sessionId?: string; cwd?: string }) =>
+    this.settingsApi().mcpConfig(owner);
 
-  readMcpConnection = (
+  readMcpConnection = async (
     owner: { sessionId?: string; cwd?: string },
     input: import("../shared/mcp").McpConnectionRead,
-  ) => {
-    if (!this.api) return Promise.reject(new Error("The Host is unavailable"));
-    return this.api.mcpConnection(owner, input);
-  };
+  ) => this.settingsApi().mcpConnection(owner, input);
 
-  editMcpConfig = (
+  editMcpConfig = async (
     owner: { sessionId?: string; cwd?: string },
     edit: import("../shared/mcp").McpConfigEdit,
-  ) => {
-    if (!this.api) return Promise.reject(new Error("The Host is unavailable"));
-    return this.api.editMcpConfig(owner, edit);
-  };
+  ) => this.settingsApi().editMcpConfig(owner, edit);
 
   // Publishing a settings-write snapshot retires earlier catalog reads.
   private modelSettingsRevision = 0;
   private modelCatalogRead = 0;
 
-  private modelSettingsApi = (): Api => {
+  private settingsApi(): Api {
     if (!this.api) throw new Error("The Host is unavailable");
     return this.api;
-  };
+  }
 
   private ownsModelSettings = (owner: {
     sessionId?: string;
@@ -2678,23 +2647,36 @@ export class AppStore {
       ? owner.sessionId === this.state.sessionId
       : !this.state.sessionId && (!owner.cwd || owner.cwd === this.state.cwd);
 
+  private modelSettingsOperation(owner: { sessionId?: string; cwd?: string }) {
+    const api = this.settingsApi();
+    const selection = this.selectionGeneration;
+    const current = () =>
+      api === this.api &&
+      selection === this.selectionGeneration &&
+      this.ownsModelSettings(owner);
+    return { api, current };
+  }
+
+  private modelSettingsRead(owner: { sessionId?: string; cwd?: string }) {
+    const { api, current } = this.modelSettingsOperation(owner);
+    const revision = this.modelSettingsRevision;
+    const read = current() ? ++this.modelCatalogRead : -1;
+    return {
+      api,
+      current: () =>
+        current() &&
+        read === this.modelCatalogRead &&
+        revision === this.modelSettingsRevision,
+    };
+  }
+
   readModelSettings = async (
     owner: { sessionId?: string; cwd?: string },
     refresh = false,
   ): Promise<ModelSettingsSnapshot> => {
-    const api = this.modelSettingsApi();
-    const selection = this.selectionGeneration;
-    const revision = this.modelSettingsRevision;
-    const read = this.ownsModelSettings(owner) ? ++this.modelCatalogRead : -1;
+    const { api, current } = this.modelSettingsRead(owner);
     const snapshot = await api.modelSettings(owner, refresh);
-    if (
-      api === this.api &&
-      selection === this.selectionGeneration &&
-      this.ownsModelSettings(owner) &&
-      read === this.modelCatalogRead &&
-      !snapshot.modelDiscoveryFailed &&
-      revision === this.modelSettingsRevision
-    )
+    if (current() && !snapshot.modelDiscoveryFailed)
       this.set({
         ...(refresh ? { availableModels: snapshot.models } : {}),
         commonModels: snapshot.commonModels,
@@ -2707,15 +2689,9 @@ export class AppStore {
     revision: string,
     patch: ModelPreferencesPatch,
   ) => {
-    const api = this.modelSettingsApi();
-    const selection = this.selectionGeneration;
+    const { api, current } = this.modelSettingsOperation(owner);
     const result = await api.saveModelPreferences(owner, revision, patch);
-    if (
-      result.snapshot &&
-      api === this.api &&
-      selection === this.selectionGeneration &&
-      this.ownsModelSettings(owner)
-    ) {
+    if (result.snapshot && current()) {
       this.modelSettingsRevision++;
       this.set({ commonModels: result.snapshot.commonModels });
     }
@@ -2727,15 +2703,9 @@ export class AppStore {
     revision: string,
     edit: ModelConfigEdit,
   ) => {
-    const api = this.modelSettingsApi();
-    const selection = this.selectionGeneration;
+    const { api, current } = this.modelSettingsOperation(owner);
     const result = await api.editModelConfig(owner, revision, edit);
-    if (
-      result.snapshot &&
-      api === this.api &&
-      selection === this.selectionGeneration &&
-      this.ownsModelSettings(owner)
-    ) {
+    if (result.snapshot && current()) {
       this.modelSettingsRevision++;
       this.set({
         availableModels: result.snapshot.models,
@@ -2745,34 +2715,19 @@ export class AppStore {
     return result;
   };
 
-  providerAuth = (
+  providerAuth = async (
     owner: { sessionId?: string; cwd?: string },
     operation: ProviderAuthOperation,
-  ) =>
-    this.modelSettingsApi()
-      .providerAuth(owner, operation)
-      .then((response) => response.result);
+  ) => (await this.settingsApi().providerAuth(owner, operation)).result;
 
   refreshModels = async (owner?: {
     sessionId?: string;
     cwd?: string;
   }): Promise<string | undefined> => {
-    const api = this.api;
-    const selection = this.selectionGeneration;
     const requested = owner ?? { sessionId: this.state.sessionId ?? undefined };
-    if (!api) throw new Error("The Host is unavailable");
-    const revision = this.modelSettingsRevision;
-    const read = this.ownsModelSettings(requested)
-      ? ++this.modelCatalogRead
-      : -1;
+    const { api, current } = this.modelSettingsRead(requested);
     const result = await api.refreshModels(requested.sessionId, requested.cwd);
-    if (
-      this.api === api &&
-      this.selectionGeneration === selection &&
-      this.ownsModelSettings(requested) &&
-      read === this.modelCatalogRead &&
-      revision === this.modelSettingsRevision
-    )
+    if (current())
       this.set({
         availableModels: result.models,
         commonModels: result.commonModels ?? [],

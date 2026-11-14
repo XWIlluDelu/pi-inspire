@@ -8,8 +8,6 @@ import {
   TRANSCRIPT_ITEM_MAX_BYTES,
   TRANSIENT_OVERLAY_MAX_BYTES,
 } from "../../server/session-projection.js";
-import { compactToolArgumentEvents } from "../../server/tool-argument-batches.js";
-import { applyAssistantMessageDelta } from "../../shared/assistant-stream.js";
 
 function setup(incremental = true) {
   const rpc = {} as PiRpcProcess;
@@ -28,7 +26,6 @@ function setup(incremental = true) {
   slot.ready = true;
   const ownership = new RuntimeLiveTail(() => null);
   let forwarded: Record<string, unknown> = {};
-  const forwardedEvents: Record<string, unknown>[] = [];
   const events = new RuntimeEventController({
     updateBash: () => false,
     finishTask: () => {},
@@ -50,7 +47,6 @@ function setup(incremental = true) {
     resumeDeferredPrompts: () => {},
     emitSlotEvent: (_owner, event) => {
       forwarded = event as Record<string, unknown>;
-      forwardedEvents.push(forwarded);
     },
     reconcileSlot: async () => {},
     setProjectionConflict: () => {
@@ -78,7 +74,6 @@ function setup(incremental = true) {
     start,
     delta,
     forwarded: () => forwarded,
-    forwardedEvents,
   };
 }
 
@@ -91,12 +86,7 @@ function expectExactBudget(slot: ReturnType<typeof setup>["slot"]) {
   );
 }
 
-function measureWork(events: number, incremental: boolean) {
-  const fixture = setup(incremental);
-  fixture.start([
-    { type: "text", text: "" },
-    { type: "thinking", thinking: "" },
-  ]);
+function measureSerialization(emit: () => void) {
   const stringify = JSON.stringify;
   let fullMessages = 0;
   let bytes = 0;
@@ -109,32 +99,37 @@ function measureWork(events: number, incremental: boolean) {
       return encoded;
     });
   try {
-    for (let index = 0; index < events; index++) {
-      fixture.delta(
-        index % 2 ? "thinking_delta" : "text_delta",
-        index % 2,
-        "x".repeat(32),
-      );
-    }
+    emit();
   } finally {
     spy.mockRestore();
   }
-  expectExactBudget(fixture.slot);
-  return { fullMessages, bytes, message: fixture.slot.overlay.at(-1) };
+  return { fullMessages, bytes };
 }
 
-describe("runtime assistant stream byte budget", () => {
-  it("serializes only appended fragments, with linear work across valid event counts", () => {
+it.each(["text", "thinking", "toolcall"] as const)(
+  "serializes %s fragments with linear cost and no growing message copy",
+  (kind) => {
+    const args = kind === "toolcall";
+    const fragment = args ? "abcdefgh" : "x".repeat(32);
     for (const count of [1000, 2000]) {
-      const baseline = measureWork(count, false);
-      const incremental = measureWork(count, true);
-      expect(incremental.message).toEqual(baseline.message);
-      expect(baseline.fullMessages).toBe(count);
-      expect(incremental.fullMessages).toBe(0);
-      expect(incremental.bytes).toBe(count * 34);
+      const fixture = setup();
+      fixture.start(args ? [] : [{ type: kind, [kind]: "" }]);
+      if (args) {
+        startTool(fixture);
+        fixture.delta("toolcall_delta", 0, '{"content":"');
+      }
+      expect(
+        measureSerialization(() => {
+          for (let n = 0; n < count; n++)
+            fixture.delta(`${kind}_delta`, 0, fragment);
+        }),
+      ).toEqual({ fullMessages: 0, bytes: count * (fragment.length + 2) });
+      expectExactBudget(fixture.slot);
     }
-  });
+  },
+);
 
+describe("runtime assistant stream byte budget", () => {
   it("counts escaping, Unicode, split surrogates, revisions, and the 64k cap exactly", () => {
     const fixture = setup();
     fixture.start([
@@ -273,11 +268,12 @@ function startTool(
 }
 
 describe("runtime tool argument streaming", () => {
-  it("creates an early typed shell and keeps browser deltas and reconnect snapshots identical", () => {
+  it("publishes a redacted typed argument preview from partial fields", () => {
     const fixture = setup();
     fixture.start();
     startTool(fixture);
-    expect(fixture.slot.overlay.at(-1)).toMatchObject({
+    const before = fixture.slot.overlay.at(-1);
+    expect(before).toMatchObject({
       content: [
         {
           type: "toolCall",
@@ -288,9 +284,6 @@ describe("runtime tool argument streaming", () => {
         },
       ],
     });
-    const snapshot = fixture.slot.overlay.at(-1);
-    let reconstructed: unknown = snapshot;
-    const offset = fixture.forwardedEvents.length;
     for (const fragment of [
       '{"path":"src/file.ts","content":"one',
       "\\n",
@@ -301,22 +294,9 @@ describe("runtime tool argument streaming", () => {
     ]) {
       fixture.delta("toolcall_delta", 0, fragment);
       expectExactBudget(fixture.slot);
+      expect(JSON.stringify(fixture.forwarded())).not.toContain("NEVER-SEND");
     }
-    const frames = fixture.forwardedEvents.slice(offset);
-    expect(JSON.stringify(frames)).not.toContain("NEVER-SEND");
-    const last = frames.at(-1)!;
-    const compact = compactToolArgumentEvents(
-      frames.map((frame) => frame.assistantMessageEvent),
-    );
-    for (const delta of compact)
-      reconstructed = applyAssistantMessageDelta(reconstructed, delta);
-    reconstructed = {
-      ...(reconstructed as Record<string, unknown>),
-      __inspireStreamRevision: last.streamRevision,
-    };
-    expect(reconstructed).toEqual(fixture.slot.overlay.at(-1));
-    expect(compact).toHaveLength(1);
-    expect(reconstructed).toMatchObject({
+    expect(fixture.slot.overlay.at(-1)).toMatchObject({
       content: [
         {
           arguments: {
@@ -327,7 +307,7 @@ describe("runtime tool argument streaming", () => {
         },
       ],
     });
-    expect(snapshot).toMatchObject({ content: [{ arguments: {} }] });
+    expect(before).toMatchObject({ content: [{ arguments: {} }] });
   });
 
   it("does not reset a live tool parser for interleaved extension messages or a second call", () => {
@@ -431,51 +411,30 @@ describe("runtime tool argument streaming", () => {
     expectExactBudget(fixture.slot);
   });
 
-  it("serializes append fragments rather than cumulative bodies, including split-surrogate JSON growth", () => {
-    for (const count of [1000, 2000]) {
-      const fixture = setup();
-      fixture.start();
-      startTool(fixture);
-      fixture.delta("toolcall_delta", 0, '{"content":"');
-      const stringify = JSON.stringify;
-      let fullMessages = 0;
-      let bytes = 0;
-      const spy = vi
-        .spyOn(JSON, "stringify")
-        .mockImplementation((value, replacer, space) => {
-          const encoded = stringify(value, replacer, space);
-          if (value?.role === "assistant") fullMessages++;
-          bytes += Buffer.byteLength(encoded ?? "null");
-          return encoded;
-        });
-      try {
-        for (let n = 0; n < count; n++)
-          fixture.delta("toolcall_delta", 0, "abcdefgh");
-      } finally {
-        spy.mockRestore();
-      }
-      expect(fullMessages).toBe(0);
-      expect(bytes).toBe(count * 10);
-      for (const delta of [
-        "\\uD83D",
-        "\\uDE00",
-        "\\n",
-        "\\u0000",
-        '\\"',
-        "\\\\",
-        "中文",
-      ]) {
-        fixture.delta("toolcall_delta", 0, delta);
-        expectExactBudget(fixture.slot);
-      }
-      fixture.delta("toolcall_delta", 0, "x".repeat(40_000));
+  it("bounds escaped and split-surrogate argument growth and suppresses updates past the cap", () => {
+    const fixture = setup();
+    fixture.start();
+    startTool(fixture);
+    fixture.delta("toolcall_delta", 0, '{"content":"');
+    for (const fragment of [
+      "\\uD83D",
+      "\\uDE00",
+      "\\n",
+      "\\u0000",
+      '\\"',
+      "\\\\",
+      "中文",
+    ]) {
+      fixture.delta("toolcall_delta", 0, fragment);
       expectExactBudget(fixture.slot);
-      expect(fixture.slot.overlay.at(-1)).toMatchObject({
-        content: [{ __inspireToolCall: { truncated: true } }],
-      });
-      const capped = fixture.forwarded();
-      fixture.delta("toolcall_delta", 0, "x".repeat(1_000_000));
-      expect(fixture.forwarded()).toBe(capped);
     }
+    fixture.delta("toolcall_delta", 0, "x".repeat(40_000));
+    expectExactBudget(fixture.slot);
+    expect(fixture.slot.overlay.at(-1)).toMatchObject({
+      content: [{ __inspireToolCall: { truncated: true } }],
+    });
+    const capped = fixture.forwarded();
+    fixture.delta("toolcall_delta", 0, "x".repeat(1_000_000));
+    expect(fixture.forwarded()).toBe(capped);
   });
 });

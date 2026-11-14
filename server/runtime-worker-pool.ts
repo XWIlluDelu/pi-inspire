@@ -19,9 +19,7 @@ interface RuntimeWorkerPoolHost {
   isObserved(sessionId: string): boolean;
   isExternal(slot: RuntimeSlot): boolean;
   slots(): Iterable<RuntimeSlot>;
-  isLoading(sessionId: string): boolean;
-  hasSelectionReservation(sessionId: string): boolean;
-  hasForkReservation(sessionId: string, sessionPath: string | null): boolean;
+  isReserved(slot: RuntimeSlot): boolean;
   stopWorker(slot: RuntimeSlot): Promise<void>;
   removeSlot(slot: RuntimeSlot): void;
   logRuntimeError(sessionId: string, error: unknown, event?: string): void;
@@ -100,9 +98,7 @@ export class RuntimeWorkerPool {
       !this.host.isObserved(slot.id) &&
       slot.activeOperations === 0 &&
       slot.projection?.health.status !== "pending" &&
-      !this.host.isLoading(slot.id) &&
-      !this.host.hasSelectionReservation(slot.id) &&
-      !this.host.hasForkReservation(slot.id, slot.sessionPath)
+      !this.host.isReserved(slot)
     );
   }
 

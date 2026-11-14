@@ -43,7 +43,8 @@ describe("extension context messages", () => {
     ).toBeVisible();
     expect(container.querySelector("details")).toHaveAttribute("open");
     expect(
-      JSON.parse(container.querySelector("details pre")!.textContent!).content,
+      JSON.parse((await screen.findByText(/"customType"/)).textContent!)
+        .content,
     ).toBe(message.content);
     act(() => configurePresentationAdapters());
     expect(screen.getByText("Relay message")).toBeVisible();
@@ -168,6 +169,8 @@ it("keeps custom details open when its live message adopts a durable timestamp",
   );
   const details = container.querySelector(".custom-message__details")!;
   fireEvent.click(within(details as HTMLElement).getByText("Details"));
+  fireEvent(details, new Event("toggle"));
+  expect(details.querySelector("pre")).toHaveTextContent('"source": "peer"');
   expect(details).toHaveAttribute("open");
 
   rerender(

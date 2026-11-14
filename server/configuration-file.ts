@@ -104,6 +104,8 @@ interface ConfigurationEdit extends ConfigurationAuthority {
   expectedRevision: string;
   /** Related files whose namespace participates in this edit. */
   alsoLock?: ConfigurationAuthority[];
+  /** Validate the exact candidate before it replaces the reviewed file. */
+  validate?: (candidatePath: string) => Promise<void>;
 }
 
 type ConfigurationObject = Record<string, unknown>;
@@ -114,17 +116,17 @@ function revisionOf(source: string | undefined, target: string) {
     .digest("hex");
 }
 
-function resolveAuthority(file: ConfigurationAuthority) {
-  return file.resolveTarget ?? (() => configurationFileTarget(file.path));
+function resolveAuthority(file: ConfigurationAuthority): Promise<string> {
+  return file.resolveTarget?.() ?? configurationFileTarget(file.path);
 }
 
 export async function readConfigurationFile(file: ConfigurationAuthority) {
-  const target = await resolveAuthority(file)();
+  const target = await resolveAuthority(file);
   const source = await readConfigurationText(target);
   return { source, revision: revisionOf(source, target) };
 }
 
-export function parseConfigurationObject(
+function parseConfigurationObject(
   source: string | undefined,
   { invalid, comments }: JsonDocument,
 ): ConfigurationObject {
@@ -141,19 +143,21 @@ export function parseConfigurationObject(
   throw requestError(invalid, 409);
 }
 
+/** Inspect reports malformed files. An explicit reveal must match the reviewed
+ * revision before returning any protected values. */
 export async function readConfigurationDocument(
   file: ConfigurationAuthority,
   recipe: JsonDocument,
+  expected?: { revision: string; stale: string },
 ) {
   const { source, revision } = await readConfigurationFile(file);
+  if (expected && revision !== expected.revision)
+    throw requestError(expected.stale, 409);
   try {
     return { value: parseConfigurationObject(source, recipe), revision };
   } catch (error) {
-    return {
-      value: {},
-      revision,
-      error: error instanceof Error ? error.message : recipe.invalid,
-    };
+    if (expected) throw error;
+    return { value: {}, revision, error: recipe.invalid };
   }
 }
 
@@ -162,18 +166,12 @@ export function applyConfigurationPatch(
   current: ConfigurationObject,
   patch: ConfigurationObject,
 ): ConfigurationObject {
-  const next = { ...current };
+  const next: ConfigurationObject = { __proto__: null, ...current };
   for (const [key, value] of Object.entries(patch)) {
     if (value === null) delete next[key];
-    else if (value !== undefined)
-      Object.defineProperty(next, key, {
-        value,
-        enumerable: true,
-        configurable: true,
-        writable: true,
-      });
+    else if (value !== undefined) next[key] = value;
   }
-  return next;
+  return { ...next };
 }
 
 export function editConfigurationDocument(
@@ -198,10 +196,10 @@ export async function editConfigurationFile(
   transform: (source: string | undefined) => Promise<string>,
 ): Promise<void> {
   const authorities = await Promise.all(
-    [edit, ...(edit.alsoLock ?? [])].map(async (file) => {
-      const resolveTarget = resolveAuthority(file);
-      return { ...file, resolveTarget, target: await resolveTarget() };
-    }),
+    [edit, ...(edit.alsoLock ?? [])].map(async (file) => ({
+      ...file,
+      target: await resolveAuthority(file),
+    })),
   );
   const target = authorities[0]!.target;
   const lockPaths: string[] = [];
@@ -242,9 +240,10 @@ export async function editConfigurationFile(
     const source = await readConfigurationText(target);
     if (revisionOf(source, target) !== edit.expectedRevision) throw changed();
     await replacePrivateStateFile(target, await transform(source), {
-      beforeReplace: async () => {
+      beforeReplace: async (candidate) => {
+        await edit.validate?.(candidate);
         for (const file of authorities)
-          if ((await file.resolveTarget()) !== file.target) throw changed();
+          if ((await resolveAuthority(file)) !== file.target) throw changed();
         const current = await readConfigurationText(target);
         if (
           compromised ||

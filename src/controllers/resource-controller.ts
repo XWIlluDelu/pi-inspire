@@ -690,113 +690,80 @@ export class ResourceController {
       if (!request.current()) return;
       if (workspacePath && workspacePath !== knownWorkspacePath)
         this.host.revealWorkspacePath(workspacePath);
-      if (descriptor.kind === "binary") {
-        this.publishPreview({
-          status: "ready",
-          reference: tabReference,
-          descriptor,
-        });
-        return;
-      }
+      const { kind } = descriptor;
+      const ready = {
+        status: "ready" as const,
+        reference: tabReference,
+        descriptor,
+      };
       const textLike =
-        descriptor.kind === "text" ||
-        descriptor.kind === "markdown" ||
-        descriptor.kind === "notebook" ||
-        descriptor.kind === "html";
+        kind === "text" ||
+        kind === "markdown" ||
+        kind === "notebook" ||
+        kind === "html";
       const svg = descriptor.mimeType === "image/svg+xml";
-      if (!textLike && !svg && descriptor.size > MAX_MEDIA_PREVIEW_BYTES) {
-        this.publishPreview({
-          status: "ready",
-          reference: tabReference,
-          descriptor,
-          contentUnavailable: "too-large",
-        });
+      if (kind === "binary") {
+        this.publishPreview(ready);
         return;
       }
+      if (!textLike && !svg && descriptor.size > MAX_MEDIA_PREVIEW_BYTES) {
+        this.publishPreview({ ...ready, contentUnavailable: "too-large" });
+        return;
+      }
+      const textLimit =
+        kind === "notebook" ? NOTEBOOK_PREVIEW_BYTES : TEXT_PREVIEW_BYTES;
       const content = await request.read(
         (signal) =>
           api.resourceContent(descriptor.id, sessionId, {
             byteLimit:
-              descriptor.kind === "notebook"
-                ? NOTEBOOK_PREVIEW_BYTES
-                : textLike || (svg && descriptor.size > MAX_MEDIA_PREVIEW_BYTES)
-                  ? TEXT_PREVIEW_BYTES
-                  : MAX_MEDIA_PREVIEW_BYTES + 1,
+              textLike || (svg && descriptor.size > MAX_MEDIA_PREVIEW_BYTES)
+                ? textLimit
+                : MAX_MEDIA_PREVIEW_BYTES + 1,
             signal,
           }),
         backoff,
       );
-      const blob = content.blob;
-      // Resolve metadata authorizes discovery only. Once bytes arrive, the
-      // content response's current total is the sole size authority for both
-      // the descriptor shown to the user and truncation decisions.
-      const currentDescriptor =
-        content.totalSize === descriptor.size
-          ? descriptor
-          : { ...descriptor, size: content.totalSize };
-      const ready = {
-        status: "ready" as const,
-        reference: tabReference,
-        descriptor: currentDescriptor,
-        ...(sourceLine !== undefined
-          ? { sourceJump: { line: sourceLine } }
-          : {}),
-      };
-      if (textLike) {
-        const text = decodeTextPreview(
-          new Uint8Array(await blob.arrayBuffer()),
-          blob.size < content.totalSize,
-        );
-        if (!request.current()) return;
-        const objectUrl =
-          descriptor.kind === "html"
-            ? URL.createObjectURL(
-                new Blob([injectHtmlPreviewCsp(text)], {
-                  type: "text/html;charset=utf-8",
-                }),
-              )
-            : undefined;
-        this.publishPreview({
-          ...ready,
-          text,
-          // A 206 also answers full-coverage ranges; judge actual coverage.
-          truncated: blob.size < content.totalSize,
-          ...(objectUrl ? { objectUrl } : {}),
-        });
-        return;
-      }
-      const svgText = svg
+      const { blob, totalSize } = content;
+      const textBlob = textLike ? blob : svg ? blob.slice(0, textLimit) : null;
+      const truncated = Boolean(textBlob && textBlob.size < totalSize);
+      const text = textBlob
         ? decodeTextPreview(
-            new Uint8Array(
-              await blob.slice(0, TEXT_PREVIEW_BYTES).arrayBuffer(),
-            ),
-            Math.min(blob.size, TEXT_PREVIEW_BYTES) < content.totalSize,
+            new Uint8Array(await textBlob.arrayBuffer()),
+            truncated,
           )
         : undefined;
       if (!request.current()) return;
-      if (
-        content.totalSize > MAX_MEDIA_PREVIEW_BYTES ||
-        blob.size > MAX_MEDIA_PREVIEW_BYTES
-      ) {
-        this.publishPreview({
-          ...ready,
-          ...(svgText !== undefined ? { text: svgText, truncated: true } : {}),
-          contentUnavailable: "too-large",
-        });
-        return;
-      }
-      const objectUrl =
-        descriptor.kind === "pdf" ? undefined : URL.createObjectURL(blob);
+      const tooLarge =
+        !textLike &&
+        (totalSize > MAX_MEDIA_PREVIEW_BYTES ||
+          blob.size > MAX_MEDIA_PREVIEW_BYTES);
+      const html =
+        kind === "html" && text !== undefined
+          ? new Blob([injectHtmlPreviewCsp(text)], {
+              type: "text/html;charset=utf-8",
+            })
+          : null;
+      const objectUrl = html
+        ? URL.createObjectURL(html)
+        : !tooLarge && !textLike && kind !== "pdf"
+          ? URL.createObjectURL(blob)
+          : undefined;
+      // Resolve metadata authorizes discovery only. Once bytes arrive, the
+      // content response's current total is the sole size authority for both
+      // the descriptor shown to the user and truncation decisions.
       this.publishPreview({
         ...ready,
-        ...(descriptor.kind === "pdf" ? { pdfBlob: blob } : {}),
-        ...(svgText !== undefined
-          ? {
-              text: svgText,
-              truncated: content.totalSize > TEXT_PREVIEW_BYTES,
-            }
+        descriptor:
+          totalSize === descriptor.size
+            ? descriptor
+            : { ...descriptor, size: totalSize },
+        ...(sourceLine !== undefined
+          ? { sourceJump: { line: sourceLine } }
           : {}),
+        ...(textBlob ? { text, truncated: truncated || tooLarge } : {}),
+        ...(tooLarge ? { contentUnavailable: "too-large" } : {}),
         ...(objectUrl ? { objectUrl } : {}),
+        ...(!tooLarge && kind === "pdf" ? { pdfBlob: blob } : {}),
       });
     } catch (error) {
       if (!request.current() || this.authFailed(error, request)) return;

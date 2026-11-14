@@ -253,7 +253,8 @@ Pi's saved credential; environment and `models.json` credentials are managed sep
   targets, invalid documents, committed saves with failed readback and lock release after cleanup
   failure. MCP uses the same transaction.
 - `tests/browser/model-settings.spec.ts` uses native declarations to prove provider setup, rejected
-  candidates, global default saves and Common updates while browsing a cold session.
+  candidates, global default saves and Common updates from New's prospective project. A later
+  Settings visit uses the selected saved session's owner.
 - `tests/browser/model-workflow.spec.ts` covers trusted extension defaults, native explicit and
   inherited startup choices, and confirmed project controls before first input.
 - `tests/web/welcome-model-transition.test.tsx` covers blocked or failed inheritance, stale

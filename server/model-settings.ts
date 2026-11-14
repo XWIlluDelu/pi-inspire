@@ -1,5 +1,3 @@
-import { randomUUID } from "node:crypto";
-import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ModelRuntime as NativeModelRuntime } from "@earendil-works/pi-coding-agent";
 import { type ModelOption, THINKING_LEVELS } from "../shared/contracts.js";
@@ -37,6 +35,8 @@ const modelsDocument = {
   invalid: "models.json is invalid. Repair the file before saving.",
   comments: true,
 };
+const invalidDeclaration =
+  "Pi rejected this declaration. Check its endpoint, API, model fields and extensions.";
 function preferences(value: JsonObject): PiModelPreferences {
   return {
     defaultModel:
@@ -57,8 +57,9 @@ function preferences(value: JsonObject): PiModelPreferences {
   };
 }
 function declarationProjection(config: JsonObject): ProviderDeclaration[] {
-  if (!isJsonRecord(config.providers)) return [];
-  return Object.entries(config.providers).flatMap(([id, provider]) => {
+  return Object.entries(
+    isJsonRecord(config.providers) ? config.providers : {},
+  ).flatMap(([id, provider]) => {
     if (!isJsonRecord(provider)) return [];
     return [
       {
@@ -74,6 +75,24 @@ function declarationProjection(config: JsonObject): ProviderDeclaration[] {
       },
     ];
   });
+}
+
+function applyModelEdit(
+  current: JsonObject,
+  edit: ModelConfigEdit,
+): JsonObject {
+  const { providers = {} } = current;
+  if (!isJsonRecord(providers))
+    throw requestError("models.json providers must be an object", 409);
+  const id = "provider" in edit ? edit.provider : edit.id;
+  const updated =
+    edit.kind === "remove-provider"
+      ? null
+      : editProvider(Object.hasOwn(providers, id) ? providers[id] : {}, edit);
+  return {
+    ...current,
+    providers: applyConfigurationPatch(providers, { [id]: updated }),
+  };
 }
 
 export async function commonModelOptions(
@@ -192,112 +211,77 @@ export class ModelSettingsService {
         }),
     );
   }
-  async saveConfig(
+  saveConfig(
     cwd: string,
     expected: string,
     edit: ModelConfigEdit,
   ): Promise<void> {
-    await editConfigurationDocument(
-      { path: join(this.agentDir, "models.json"), expectedRevision: expected },
-      modelsDocument,
-      async (current) => {
-        if (current.providers !== undefined && !isJsonRecord(current.providers))
-          throw requestError("models.json providers must be an object", 409);
-        const providers = (current.providers ??= {}) as JsonObject;
-        const providerId = "provider" in edit ? edit.provider : edit.id;
-        if (edit.kind === "remove-provider") delete providers[providerId];
-        else {
-          const provider = Object.hasOwn(providers, providerId)
-            ? providers[providerId]
-            : {};
-          if (!isJsonRecord(provider))
-            throw requestError(
-              "Repair this provider declaration before saving",
-              409,
-            );
-          if (edit.kind === "provider") {
-            current.providers = {
-              ...providers,
-              [providerId]: applyConfigurationPatch(provider, edit.values),
-            };
-          } else {
-            if (
-              provider.models !== undefined &&
-              !Array.isArray(provider.models)
-            )
-              throw requestError(
-                "Repair this provider's models list before saving",
-                409,
-              );
-            const models = (provider.models ??= []) as unknown[];
-            const id = edit.kind === "model" ? edit.originalId : edit.id;
-            const originalType =
-              edit.kind === "model"
-                ? (edit.originalType ?? edit.values.type ?? "chat")
-                : (edit.type ?? "chat");
-            const index =
-              id === undefined
-                ? -1
-                : models.findIndex((model) =>
-                    isModelDeclaration(model, id, originalType),
-                  );
-            if (edit.kind === "remove-model") {
-              if (index < 0)
-                throw requestError("That declaration no longer exists", 409);
-              models.splice(index, 1);
-            } else {
-              if (id !== undefined && index < 0)
-                throw requestError("That declaration no longer exists", 409);
-              const prior = models[index];
-              const model = applyConfigurationPatch(
-                isJsonRecord(prior) ? prior : {},
-                edit.values,
-              );
-              if (
-                models.some(
-                  (candidate, i) =>
-                    i !== index &&
-                    isModelDeclaration(
-                      candidate,
-                      edit.values.id,
-                      model.type ?? "chat",
-                    ),
-                )
-              )
-                throw requestError("A model with that ID already exists", 400);
-              models[index < 0 ? models.length : index] = model;
-            }
-            current.providers = { ...providers, [providerId]: provider };
-          }
-        }
-        // Bind the same trusted provider registrations as Pi before validating.
-        // The disposable metadata worker never starts a turn or persistent session.
-        const validationPath = join(
-          this.agentDir,
-          `.inspire-validate-${randomUUID()}.json`,
-        );
-        await writeFile(validationPath, JSON.stringify(current), {
-          mode: 0o600,
-          flag: "wx",
-        });
-        try {
-          await validateModelConfig(cwd, this.agentDir, validationPath);
-        } catch {
-          throw requestError(
-            "Pi rejected this declaration. Check its endpoint, API, model fields and extensions.",
-            400,
-          );
-        } finally {
-          await rm(validationPath, { force: true }).catch(() => undefined);
-        }
-        return current;
+    return editConfigurationDocument(
+      {
+        path: join(this.agentDir, "models.json"),
+        expectedRevision: expected,
+        validate: (path) =>
+          validateModelConfig(cwd, this.agentDir, path).catch(() => {
+            throw requestError(invalidDeclaration, 400);
+          }),
       },
+      modelsDocument,
+      (current) => applyModelEdit(current, edit),
     );
   }
 }
 
-function isModelDeclaration(model: unknown, id: string, type: unknown) {
+function editProvider(
+  raw: unknown,
+  edit: Exclude<ModelConfigEdit, { kind: "remove-provider" }>,
+): JsonObject {
+  if (!isJsonRecord(raw))
+    throw requestError("Repair this provider declaration before saving", 409);
+  if (edit.kind === "provider")
+    return applyConfigurationPatch(raw, edit.values);
+  const models = raw.models === undefined ? [] : raw.models;
+  if (!Array.isArray(models))
+    throw requestError("Repair this provider's models list before saving", 409);
+
+  const removing = edit.kind === "remove-model";
+  const original = removing ? edit.id : edit.originalId;
+  const type =
+    (removing ? edit.type : (edit.originalType ?? edit.values.type)) ?? "chat";
+  const index = models.findIndex((model) =>
+    isModelDeclaration(model, original, type),
+  );
+  if (original !== undefined && index < 0)
+    throw requestError("That declaration no longer exists", 409);
+  if (removing) {
+    models.splice(index, 1);
+  } else {
+    const previous = models[index];
+    const model = applyConfigurationPatch(
+      isJsonRecord(previous) ? previous : {},
+      edit.values,
+    );
+    if (
+      models.some(
+        (candidate, i) =>
+          i !== index &&
+          isModelDeclaration(candidate, edit.values.id, model.type ?? "chat"),
+      )
+    )
+      throw requestError("A model with that ID already exists", 400);
+    models[index < 0 ? models.length : index] = model;
+  }
+  return { ...raw, models };
+}
+
+function isModelDeclaration(
+  model: unknown,
+  id: string | undefined,
+  type: unknown,
+) {
   return (
-    isJsonRecord(model) && model.id === id && (model.type ?? "chat") === type
+    id !== undefined &&
+    isJsonRecord(model) &&
+    model.id === id &&
+    (model.type ?? "chat") === type
   );
 }

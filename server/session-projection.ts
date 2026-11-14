@@ -14,6 +14,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { assistantOutcome } from "../shared/assistant-outcome.js";
 import { interruptAssistantToolCalls } from "../shared/assistant-stream.js";
+import { isBranchEditTarget } from "../shared/branch-node-actions.js";
 import {
   type BranchEntryResponse,
   type ComposerHistoryPage,
@@ -64,7 +65,6 @@ import {
   branchEntryContent,
   branchEntryText,
   branchMessageSource,
-  branchNode,
   indexSessionEntries,
   sessionChildCount,
   sessionRoutes,
@@ -945,6 +945,7 @@ class SessionEntryIndex {
   ): BranchEntryResponse {
     const entry = this.currentEntriesById.get(id);
     if (!entry) throw requestError("History point no longer exists", 404);
+    const role = entry.type === "message" ? entry.message.role : undefined;
     const shell =
       entry.type === "message" && entry.message.role === "bashExecution"
         ? entry.message
@@ -966,7 +967,11 @@ class SessionEntryIndex {
       sessionId: this.sessionId,
       revision: this.revision,
       node: {
-        ...branchNode(entry, false, id === effectiveLeafId),
+        id,
+        leaf: id === effectiveLeafId,
+        canEdit: isBranchEditTarget({ ...entry, role }),
+        canFork: role === "user",
+        toolResult: role === "toolResult",
         childCount: sessionChildCount(this.currentEntries, id),
       },
       ...(shell && offset === 0
@@ -1079,50 +1084,37 @@ class SessionEntryIndex {
     });
   }
 
-  private validatedCursor(
-    cursor: string,
-    expectedKind: ParsedCursor["kind"],
+  private validateCursorAuthority(
+    cursor: ParsedCursor,
     effectiveLeafId: string | null,
     viewId: string,
-    length: number,
-  ): ParsedCursor {
-    const decoded = parseCursor(cursor);
-    if (decoded.kind !== expectedKind) {
-      throw requestError("Transcript cursor has the wrong purpose", 400);
-    }
-    if (decoded.sessionId !== this.sessionId) {
+  ): void {
+    if (cursor.sessionId !== this.sessionId) {
       throw requestError("Transcript cursor belongs to another session", 409);
     }
-    if (decoded.incarnation !== this.incarnation) {
+    if (cursor.incarnation !== this.incarnation) {
       throw requestError(
         "Transcript cursor belongs to an expired projection incarnation",
         409,
       );
     }
-    if (decoded.viewId !== viewId) {
+    if (cursor.viewId !== viewId) {
       throw requestError(
         "Transcript cursor belongs to another branch view",
         409,
       );
     }
-    if (!this.continues(effectiveLeafId, decoded.effectiveLeafId))
-      throw requestError(
-        "Transcript cursor is stale or belongs to another branch view",
-        409,
-      );
+    if (!this.continues(effectiveLeafId, cursor.effectiveLeafId))
+      throw requestError("History is no longer on the selected branch", 409);
     if (
-      decoded.sourceGeneration !== this.historySourceGeneration ||
-      decoded.revision > this.revision
+      cursor.sourceGeneration !== this.historySourceGeneration ||
+      cursor.revision > this.revision
     ) {
       throw requestError(
         "Transcript cursor is stale; refresh the session",
         409,
       );
     }
-    if (decoded.before > length) {
-      throw requestError("Transcript cursor is invalid", 400);
-    }
-    return decoded;
   }
 
   historyPage<Q extends SessionHistoryQuery>(
@@ -1214,10 +1206,11 @@ class SessionEntryIndex {
   ): NativeTurnPage {
     const cursor = query.cursor ? parseCursor(query.cursor) : null;
     // Cursor positions belong to a fixed leaf, even while Pi continues it.
+    if (cursor) this.validateCursorAuthority(cursor, leafId, viewId);
     const pinnedLeaf = cursor ? cursor.effectiveLeafId : leafId;
-    if (cursor && !this.continues(leafId, pinnedLeaf))
-      throw requestError("History is no longer on the selected branch", 409);
     const { messages, entries, turns } = this.nativeHistory(pinnedLeaf);
+    if (cursor && cursor.before > messages.length)
+      throw requestError("Transcript cursor is invalid", 400);
     const boundary = (at: number, direction: "before" | "after") =>
       this.historyCursor(
         direction === "before" ? "native-before" : "native-after",
@@ -1244,17 +1237,6 @@ class SessionEntryIndex {
       earlier: start > 0 ? boundary(start, "before") : null,
       later: end < messages.length ? boundary(end, "after") : null,
     });
-    if (cursor) {
-      if (cursor.kind !== "native-before" && cursor.kind !== "native-after")
-        throw requestError("History cursor has the wrong purpose", 400);
-      this.validatedCursor(
-        query.cursor!,
-        cursor.kind,
-        leafId,
-        viewId,
-        messages.length,
-      );
-    }
     const anchor =
       query.entryId === undefined ? undefined : entries.get(query.entryId);
     if (query.entryId !== undefined && anchor === undefined)

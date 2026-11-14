@@ -144,15 +144,3 @@
   border-radius: 2px;
   background: color-mix(in srgb, var(--warning) 38%, transparent);
 }
-
-/* The shared contents popover (workbench.css) opens below the PDF controls. */
-.reader-contents--pdf {
-  top: 52px;
-  left: var(--space-3);
-}
-
-@container context-pane (max-width: 420px) {
-  .reader-contents--pdf {
-    top: 89px;
-  }
-}

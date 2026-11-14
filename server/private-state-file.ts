@@ -9,12 +9,15 @@ export async function replacePrivateStateFile(
   {
     beforeReplace,
     flush,
-  }: { beforeReplace?: () => void | Promise<void>; flush?: boolean } = {},
+  }: {
+    beforeReplace?: (candidatePath: string) => void | Promise<void>;
+    flush?: boolean;
+  } = {},
 ): Promise<void> {
   const temporary = `${path}.${randomUUID()}.tmp`;
   try {
     await writeFile(temporary, serialized, { mode: 0o600, flag: "wx", flush });
-    await beforeReplace?.();
+    await beforeReplace?.(temporary);
     await rename(temporary, path);
   } finally {
     // A failed cleanup must not hide the write/authority error or turn an

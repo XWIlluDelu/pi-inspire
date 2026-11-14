@@ -20,26 +20,28 @@ import {
   mcpServerFields,
 } from "../../shared/mcp";
 import {
+  ConfigurationAction,
   ConfigurationForm,
   ConfigurationInput,
+  ConfigurationSelect,
   ProtectedConfigurationInput,
+  useConfigurationFields,
 } from "./ConfigurationForm";
 import { DetailSummary } from "./DetailSummary";
-import { NativeSelect } from "./NativeSelect";
 import { SettingsSwitch } from "./SettingsControls";
 
 const exposureOptions = MCP_EXPOSURES.map((value) => ({
   value,
   label: value[0]!.toUpperCase() + value.slice(1),
 }));
-type MapRow<Value> = {
+type FieldRow<Value> = {
   id: number;
-  key: string;
+  key?: string;
   value: Value;
   stored?: boolean;
 };
 
-function mapRows<Value>(entries: Record<string, Value>): MapRow<Value>[] {
+function mapRows<Value>(entries: Record<string, Value>): FieldRow<Value>[] {
   return Object.entries(entries).map(([key, value], id) => ({
     id,
     key,
@@ -47,13 +49,13 @@ function mapRows<Value>(entries: Record<string, Value>): MapRow<Value>[] {
   }));
 }
 
-type SecretRow = MapRow<SecretEdit>;
+type SecretRow = FieldRow<SecretEdit>;
 const keepSecret = { kind: "keep" } as const;
 function storedSecrets(keys: string[]): SecretRow[] {
   return keys.map((key, id) => ({ id, key, value: keepSecret, stored: true }));
 }
 
-function MapFields<Value>({
+function CollectionFields<Value>({
   label,
   keyLabel,
   addLabel,
@@ -61,32 +63,42 @@ function MapFields<Value>({
   initialValue,
   busy,
   hint,
+  wide,
+  children,
   onChange,
   remove,
   valueInput,
 }: {
   label: string;
-  keyLabel: string;
+  keyLabel?: string;
   addLabel: string;
-  rows: MapRow<Value>[];
+  rows?: FieldRow<Value>[];
   initialValue: Value;
   busy: boolean;
   hint?: string;
-  onChange: (rows: MapRow<Value>[]) => void;
+  wide?: boolean;
+  children?: ReactNode;
+  onChange: (rows: FieldRow<Value>[]) => void;
   remove: (
-    row: MapRow<Value>,
+    row: FieldRow<Value>,
     index: number,
   ) => {
     label: string;
     restore?: boolean;
     value?: Value;
   };
-  valueInput: (row: MapRow<Value>, update: (value: Value) => void) => ReactNode;
+  valueInput: (
+    row: FieldRow<Value>,
+    update: (value: Value) => void,
+    index: number,
+  ) => ReactNode;
 }) {
   const fieldset = useRef<HTMLFieldSetElement>(null);
   useLayoutEffect(() => {
+    if (!keyLabel || !rows) return;
     const counts = new Map<string, number>();
-    for (const row of rows) counts.set(row.key, (counts.get(row.key) ?? 0) + 1);
+    for (const { key = "" } of rows)
+      counts.set(key, (counts.get(key) ?? 0) + 1);
     for (const input of fieldset.current?.querySelectorAll<HTMLInputElement>(
       "input[data-map-key]",
     ) ?? [])
@@ -95,57 +107,67 @@ function MapFields<Value>({
           ? "Names must be unique within this list."
           : "",
       );
-  }, [rows]);
-  const change = (id: number, fields: Partial<MapRow<Value>>) =>
-    onChange(rows.map((row) => (row.id === id ? { ...row, ...fields } : row)));
+  }, [keyLabel, rows]);
   return (
-    <fieldset className="mcp-fields" ref={fieldset}>
+    <fieldset
+      className={wide ? "mcp-fields models-form__wide" : "mcp-fields"}
+      ref={fieldset}
+    >
       <legend>{label}</legend>
       {hint && <p className="models-status">{hint}</p>}
-      {rows.map((row, index) => {
+      {rows?.map((row, index) => {
+        const change = (fields: Partial<FieldRow<Value>>) =>
+          onChange(
+            rows.map((item) =>
+              item.id === row.id ? { ...item, ...fields } : item,
+            ),
+          );
         const action = remove(row, index);
-        const Icon = action.restore ? Undo2 : Trash2;
         return (
-          <div className="mcp-pair" key={row.id}>
-            <ConfigurationInput
-              label={keyLabel}
-              aria-label={keyLabel}
-              data-map-key
-              value={row.key}
-              required
-              disabled={busy || row.stored}
-              onChange={(event) => change(row.id, { key: event.target.value })}
-            />
-            {valueInput(row, (value) => change(row.id, { value }))}
-            <button
-              type="button"
-              className="models-icon-button"
-              aria-label={action.label}
+          <div
+            className={keyLabel ? "mcp-row mcp-row--keyed" : "mcp-row"}
+            key={row.id}
+          >
+            {keyLabel && (
+              <ConfigurationInput
+                label={keyLabel}
+                data-map-key
+                value={row.key ?? ""}
+                required
+                disabled={busy || row.stored}
+                onChange={(event) => change({ key: event.target.value })}
+              />
+            )}
+            {valueInput(row, (value) => change({ value }), index)}
+            <ConfigurationAction
+              label={action.label}
+              icon={action.restore ? Undo2 : Trash2}
               disabled={busy}
               onClick={() =>
                 action.value === undefined
                   ? onChange(rows.filter((item) => item.id !== row.id))
-                  : change(row.id, { value: action.value })
+                  : change({ value: action.value })
               }
-            >
-              <Icon size={14} aria-hidden />
-            </button>
+            />
           </div>
         );
       })}
-      <button
-        type="button"
-        className="models-text-button"
-        disabled={busy}
-        onClick={() =>
-          onChange([
-            ...rows,
-            { id: (rows.at(-1)?.id ?? -1) + 1, key: "", value: initialValue },
-          ])
-        }
-      >
-        <Plus size={13} aria-hidden /> {addLabel}
-      </button>
+      {rows && (
+        <button
+          type="button"
+          className="models-text-button"
+          disabled={busy}
+          onClick={() =>
+            onChange([
+              ...rows,
+              { id: (rows.at(-1)?.id ?? -1) + 1, value: initialValue },
+            ])
+          }
+        >
+          <Plus size={13} aria-hidden /> {addLabel}
+        </button>
+      )}
+      {children}
     </fieldset>
   );
 }
@@ -162,7 +184,7 @@ function SecretMap({
   busy: boolean;
 }) {
   return (
-    <MapFields<SecretEdit>
+    <CollectionFields<SecretEdit>
       label={label}
       keyLabel={`${label} name`}
       addLabel={`Add ${label.toLowerCase()}`}
@@ -285,6 +307,7 @@ export function McpServerForm({
     };
   }, [file.revision]);
   const args = patch.args ?? connection?.args ?? [];
+  const argsHidden = Boolean(entry && !connection && patch.args === undefined);
   const [toolRules, setToolRules] = useState(
     mapRows(entry?.toolExposure ?? {}),
   );
@@ -300,27 +323,7 @@ export function McpServerForm({
     key: K,
     value: McpConfigValues[K],
   ) => setPatch((current) => ({ ...current, [key]: value }));
-  const fields = <Key extends keyof typeof mcpServerFields>(key: Key) => {
-    const { control } = mcpServerFields[key];
-    return {
-      ...control,
-      disabled: busy,
-      value: patch[key] === null ? "" : (patch[key] ?? entry?.[key] ?? ""),
-      onChange: ({
-        currentTarget: field,
-      }: React.ChangeEvent<HTMLInputElement>) =>
-        change(
-          key,
-          (field.value
-            ? control.type === "number"
-              ? field.valueAsNumber
-              : field.value
-            : control.required
-              ? ""
-              : null) as McpConfigValues[Key],
-        ),
-    };
-  };
+  const fields = useConfigurationFields(mcpServerFields, entry, busy);
   async function showConnection() {
     if (!entry) return;
     setConnectionStatus("loading");
@@ -383,27 +386,19 @@ export function McpServerForm({
   const blocked = Boolean(
     readingConnection || readFailed || file.error || oauthError,
   );
+  const toolExposure = Object.fromEntries(
+    toolRules.flatMap(({ key, value }) => (key ? [[key, value]] : [])),
+  );
+  const toolExposureChanged =
+    JSON.stringify(toolExposure) !== JSON.stringify(entry?.toolExposure ?? {});
   const unchangedPolicy =
-    Boolean(policyName) && !Object.values(patch).some((value) => value != null);
-  const rulesChanged = (rules: typeof toolRules) => {
-    setToolRules(rules);
-    const toolExposure = Object.fromEntries(
-      rules.filter((rule) => rule.key).map((rule) => [rule.key, rule.value]),
-    );
-    setPatch((current) => {
-      const next = { ...current };
-      if (
-        JSON.stringify(toolExposure) ===
-        JSON.stringify(entry?.toolExposure ?? {})
-      )
-        delete next.toolExposure;
-      else next.toolExposure = toolExposure;
-      return next;
-    });
-  };
+    Boolean(policyName) &&
+    !toolExposureChanged &&
+    !Object.values(patch).some((value) => value != null);
   const submit = () => {
     if (busy || blocked || unchangedPolicy) return;
-    const values = { ...patch };
+    const values = { ...fields.patch(), ...patch };
+    if (toolExposureChanged) values.toolExposure = toolExposure;
     const editedSecrets = Object.fromEntries(
       secrets[secretKey].flatMap(({ key, value, stored }) => {
         const change = secretValue(value);
@@ -457,23 +452,17 @@ export function McpServerForm({
               autoFocus
               placeholder="project-tools"
             />
-            <div className="models-form__field">
-              <span>Configuration target</span>
-              <NativeSelect<McpConfigScope>
-                className="native-select--field"
-                label="Configuration target"
-                value={scope}
-                disabled={busy}
-                options={snapshot.files.map((file) => ({
-                  value: file.scope,
-                  label:
-                    file.scope === "user"
-                      ? "User · all projects"
-                      : "This project",
-                }))}
-                onChange={setScope}
-              />
-            </div>
+            <ConfigurationSelect<McpConfigScope>
+              label="Configuration target"
+              value={scope}
+              disabled={busy}
+              options={snapshot.files.map(({ scope }) => ({
+                value: scope,
+                label:
+                  scope === "user" ? "User · all projects" : "This project",
+              }))}
+              onChange={setScope}
+            />
           </>
         )}
         <p className="models-status models-form__wide mcp-path">{file.path}</p>
@@ -484,22 +473,17 @@ export function McpServerForm({
           </p>
         ) : null}
         {!entry && !policyName && (
-          <div className="models-form__field models-form__wide">
-            <span>Transport</span>
-            <NativeSelect<"http" | "stdio">
-              className="native-select--field"
-              label="Transport"
-              value={transport}
-              disabled={busy}
-              options={
-                [
-                  { value: "http", label: "Streamable HTTP" },
-                  { value: "stdio", label: "Stdio" },
-                ] as const
-              }
-              onChange={setTransport}
-            />
-          </div>
+          <ConfigurationSelect<"http" | "stdio">
+            wide
+            label="Transport"
+            value={transport}
+            disabled={busy}
+            options={[
+              { value: "http", label: "Streamable HTTP" },
+              { value: "stdio", label: "Stdio" },
+            ]}
+            onChange={setTransport}
+          />
         )}
         {policyOnly ? null : transport === "http" ? (
           <div className="models-form__field models-form__wide">
@@ -531,69 +515,48 @@ export function McpServerForm({
         ) : (
           <>
             <ConfigurationInput
-              {...fields("command")}
+              {...fields.bind("command")}
               autoFocus={Boolean(entry)}
             />
-            <fieldset className="mcp-fields models-form__wide">
-              <legend>Arguments</legend>
-              {entry && !connection && patch.args === undefined ? (
-                <>
-                  <p className="models-status">
-                    {entry.argumentCount} saved arguments
-                  </p>
-                  {revealConnection("arguments")}
-                </>
-              ) : (
-                <>
-                  {entry ? (
-                    <p className="models-status">
-                      Edit individual arguments below. An empty list removes
-                      them all.
-                    </p>
-                  ) : null}
-                  {args.map((arg, index) => (
-                    <div className="mcp-argument" key={index}>
-                      <ConfigurationInput
-                        label={`Argument ${index + 1}`}
-                        type="text"
-                        autoComplete="off"
-                        ref={index === 0 ? connectionInput : undefined}
-                        value={arg}
-                        disabled={busy}
-                        onChange={(event) =>
-                          change(
-                            "args",
-                            args.map((value, i) =>
-                              i === index ? event.target.value : value,
-                            ),
-                          )
-                        }
-                      />
-                      <button
-                        type="button"
-                        className="models-icon-button"
-                        aria-label={`Remove argument ${index + 1}`}
-                        disabled={busy}
-                        onClick={() =>
-                          change(
-                            "args",
-                            args.filter((_, i) => i !== index),
-                          )
-                        }
-                      >
-                        <Trash2 size={14} aria-hidden />
-                      </button>
-                    </div>
-                  ))}
-                  <button
-                    type="button"
-                    className="models-text-button"
-                    disabled={busy}
-                    onClick={() => change("args", [...args, ""])}
-                  >
-                    Add argument
-                  </button>
-                  {entry ? (
+            <CollectionFields
+              wide
+              label="Arguments"
+              addLabel="Add argument"
+              rows={
+                argsHidden
+                  ? undefined
+                  : args.map((value, id) => ({ id, value }))
+              }
+              hint={
+                entry && argsHidden
+                  ? `${entry.argumentCount} saved arguments`
+                  : entry
+                    ? "Edit individual arguments below. An empty list removes them all."
+                    : undefined
+              }
+              initialValue=""
+              busy={busy}
+              onChange={(rows) =>
+                change(
+                  "args",
+                  rows.map(({ value }) => value),
+                )
+              }
+              remove={(_, index) => ({ label: `Remove argument ${index + 1}` })}
+              valueInput={({ value }, update, index) => (
+                <ConfigurationInput
+                  label={`Argument ${index + 1}`}
+                  autoComplete="off"
+                  ref={index === 0 ? connectionInput : undefined}
+                  value={value}
+                  disabled={busy}
+                  onChange={(event) => update(event.target.value)}
+                />
+              )}
+            >
+              {argsHidden
+                ? revealConnection("arguments")
+                : entry && (
                     <button
                       type="button"
                       className="models-text-button"
@@ -605,10 +568,8 @@ export function McpServerForm({
                     >
                       Keep stored arguments
                     </button>
-                  ) : null}
-                </>
-              )}
-            </fieldset>
+                  )}
+            </CollectionFields>
           </>
         )}
       </div>
@@ -624,65 +585,60 @@ export function McpServerForm({
         <div className="models-form__grid">
           {!policyOnly ? (
             <>
-              <ConfigurationInput {...fields("description")} />
-              <ConfigurationInput {...fields("timeout")} />
+              <ConfigurationInput {...fields.bind("description")} />
+              <ConfigurationInput {...fields.bind("timeout")} />
             </>
           ) : null}
-          <div className="models-form__field">
-            <span>Tool exposure</span>
-            <NativeSelect
-              className="native-select--field"
-              label="Tool exposure"
-              autoFocus={policyOnly}
-              value={exposure ?? (policyOnly ? "inherit" : "codemode")}
-              options={
-                policyOnly
-                  ? [
-                      { value: "inherit", label: "Inherit from user" },
-                      ...exposureOptions,
-                    ]
-                  : exposureOptions
+          <ConfigurationSelect
+            label="Tool exposure"
+            autoFocus={policyOnly}
+            value={exposure ?? (policyOnly ? "inherit" : "codemode")}
+            options={
+              policyOnly
+                ? [
+                    { value: "inherit", label: "Inherit from user" },
+                    ...exposureOptions,
+                  ]
+                : exposureOptions
+            }
+            disabled={busy}
+            onChange={(value) =>
+              change("exposure", value === "inherit" ? null : value)
+            }
+          />
+          {policyOnly ? (
+            <ConfigurationSelect
+              label="Enabled in this project"
+              value={
+                enabled == null ? "inherit" : enabled ? "enabled" : "disabled"
               }
+              options={[
+                { value: "inherit", label: "Inherit from user" },
+                { value: "enabled", label: "Enabled" },
+                { value: "disabled", label: "Disabled" },
+              ]}
               disabled={busy}
               onChange={(value) =>
-                change("exposure", value === "inherit" ? null : value)
+                change(
+                  "enabled",
+                  value === "inherit" ? null : value === "enabled",
+                )
               }
             />
-          </div>
-          <div className="models-form__field">
-            <span>
-              {policyOnly ? "Enabled in this project" : "Enabled in file"}
-            </span>
-            {policyOnly ? (
-              <NativeSelect
-                className="native-select--field"
-                label="Enabled in this project"
-                value={
-                  enabled == null ? "inherit" : enabled ? "enabled" : "disabled"
-                }
-                options={[
-                  { value: "inherit", label: "Inherit from user" },
-                  { value: "enabled", label: "Enabled" },
-                  { value: "disabled", label: "Disabled" },
-                ]}
-                disabled={busy}
-                onChange={(value) =>
-                  change(
-                    "enabled",
-                    value === "inherit" ? null : value === "enabled",
-                  )
-                }
-              />
-            ) : (
+          ) : (
+            <div className="models-form__field">
+              <span>Enabled in file</span>
               <SettingsSwitch
                 label="Enabled in file"
                 checked={enabled ?? true}
                 disabled={busy}
                 onChange={(value) => change("enabled", value)}
               />
-            )}
-          </div>
-          {transport === "stdio" && <ConfigurationInput {...fields("cwd")} />}
+            </div>
+          )}
+          {transport === "stdio" && (
+            <ConfigurationInput {...fields.bind("cwd")} />
+          )}
         </div>
         {!policyOnly && (
           <SecretMap
@@ -702,22 +658,16 @@ export function McpServerForm({
               these only when the server needs them; saving does not sign in.
             </p>
             <div className="models-form__grid">
-              <div className="models-form__field models-form__wide">
-                <span>Client registration</span>
-                <NativeSelect
-                  className="native-select--field"
-                  label="Client registration"
-                  value={registration}
-                  disabled={busy}
-                  options={oauthRegistrationOptions}
-                  onChange={(value) =>
-                    change("oauth", {
-                      ...patch.oauth,
-                      clientRegistration: value,
-                    })
-                  }
-                />
-              </div>
+              <ConfigurationSelect
+                wide
+                label="Client registration"
+                value={registration}
+                disabled={busy}
+                options={oauthRegistrationOptions}
+                onChange={(clientRegistration) =>
+                  change("oauth", { ...patch.oauth, clientRegistration })
+                }
+              />
               {registration === "cimd" ? (
                 <p className="models-status models-form__wide">
                   Uses Pi's client metadata document instead of a client ID or
@@ -751,7 +701,7 @@ export function McpServerForm({
             </div>
           </details>
         )}
-        <MapFields
+        <CollectionFields
           label="Per-tool exposure"
           keyLabel="Tool name or pattern"
           hint="Use exact tool names or * patterns. Exact names win; patterns match in order."
@@ -759,20 +709,17 @@ export function McpServerForm({
           rows={toolRules}
           initialValue="codemode"
           busy={busy}
-          onChange={rulesChanged}
+          onChange={setToolRules}
           remove={(_, index) => ({ label: `Remove tool rule ${index + 1}` })}
           valueInput={(rule, change) => (
-            <div className="models-form__field">
-              <span>Exposure</span>
-              <NativeSelect
-                className="native-select--field"
-                label={`Exposure for ${rule.key || "new rule"}`}
-                value={rule.value}
-                options={exposureOptions}
-                disabled={busy}
-                onChange={change}
-              />
-            </div>
+            <ConfigurationSelect
+              caption="Exposure"
+              label={`Exposure for ${rule.key || "new rule"}`}
+              value={rule.value}
+              options={exposureOptions}
+              disabled={busy}
+              onChange={change}
+            />
           )}
         />
       </details>

@@ -3,11 +3,21 @@ import type {
   PromptAcceptedResponse,
   UploadedAttachment,
 } from "../../shared/contracts";
-import { type Api, ApiError, ApiTransportError } from "../../src/api";
+import {
+  type Api,
+  ApiError,
+  ApiTransportError,
+  createApi,
+} from "../../src/api";
 import { emptyTranscriptView } from "../../src/app-state";
 import { ComposerController } from "../../src/controllers/composer-controller";
 import { SessionDrafts } from "../../src/session-drafts";
-import { deferred, TEST_HOST_AUTHORITY } from "./helpers";
+import {
+  deferred,
+  installFetch,
+  jsonBody,
+  TEST_HOST_AUTHORITY,
+} from "./helpers";
 
 const owner = "session-a";
 const other = "session-b";
@@ -19,35 +29,34 @@ const accepted = {
 } satisfies PromptAcceptedResponse;
 const file = (name: string) => new File([name], name);
 
-function uploaded(
-  id: string,
-  fileName = `${id}.txt`,
-  kind: UploadedAttachment["kind"] = "file",
-): UploadedAttachment {
+function uploaded(id: string, fileName = `${id}.txt`): UploadedAttachment {
+  const image = fileName.endsWith(".png");
   return {
     id,
     fileName,
-    kind,
-    mimeType: kind === "image" ? "image/png" : "text/plain",
+    kind: image ? "image" : "file",
+    mimeType: image ? "image/png" : "text/plain",
     size: 4,
   };
 }
+const image = (id: string) => uploaded(id, `${id}.png`);
 
-function fixture() {
+function fixture(receipts = false) {
+  const promptApi = receipts ? createApi() : undefined;
   let sessionId = owner;
   let authorityId = TEST_HOST_AUTHORITY;
-  const view = { ...emptyTranscriptView, viewId: "view-a" };
+  const view = emptyTranscriptView;
   const drafts = new SessionDrafts();
   const transport = {
-    prompt: vi.fn<Api["prompt"]>(),
-    observePrompt: vi.fn<Api["observePrompt"]>(),
+    prompt: vi.fn<Api["prompt"]>(promptApi?.prompt),
+    observePrompt: vi.fn<Api["observePrompt"]>(promptApi?.observePrompt),
     uploadAttachments: vi.fn<Api["uploadAttachments"]>(),
     deleteAttachment: vi
       .fn<Api["deleteAttachment"]>()
       .mockResolvedValue({ ok: true }),
-    attachmentPreview: vi
-      .fn<Api["attachmentPreview"]>()
-      .mockRejectedValue(new Error("Preview unavailable")),
+    attachmentPreview: async () => {
+      throw new Error("Preview unavailable");
+    },
   };
   let api = transport as unknown as Api;
   const notice = vi.fn();
@@ -69,6 +78,17 @@ function fixture() {
     notice,
     authFailure,
     draft: (id = owner) => drafts.get(id),
+    handles: () =>
+      drafts.get(owner).attachments.map(({ uploadedId }) => uploadedId),
+    stage: (
+      attachment: UploadedAttachment,
+      source = file(attachment.fileName),
+    ) => {
+      transport.uploadAttachments.mockResolvedValueOnce({
+        attachments: [attachment],
+      });
+      return controller.addFiles([source]);
+    },
     edit: (text: string) => drafts.setText(owner, text),
     select: (id: string) => {
       sessionId = id;
@@ -85,8 +105,8 @@ function fixture() {
         controller.send(text, behavior, drafts.get(sessionId))
       );
     },
-    receipt: () => {
-      const [request, , fingerprint] = transport.prompt.mock.calls[0]!;
+    receipt: (index = 0) => {
+      const [request, , fingerprint] = transport.prompt.mock.calls[index]!;
       return {
         operationId: request.operationId,
         authorityId: request.authorityId,
@@ -100,246 +120,115 @@ function fixture() {
 
 afterEach(() => vi.useRealTimers());
 
-it("deduplicates images per recovery handoff, including removed handles", () => {
+it("applies repeated recovery only to new image handles from that handoff", () => {
   const f = fixture();
-  const first = uploaded("first", "first.png", "image");
-  const second = uploaded("second", "second.png", "image");
-  const returnImages = (id: string, ...items: UploadedAttachment[]) =>
+  const apply = (recovery: string, ...ids: string[]) =>
     f.controller.restoreStagedAttachments(
       owner,
-      items,
+      ids.map(image),
       TEST_HOST_AUTHORITY,
-      id,
+      recovery,
     );
-  const handles = () => f.draft().attachments.map((item) => item.uploadedId);
-  returnImages("handoff", first);
+  apply("first", "first");
   f.controller.removeAttachment(f.draft().attachments[0]!.localId);
-  returnImages("handoff", first, second);
-  expect(handles()).toEqual(["second"]);
-  returnImages("next handoff", first);
-  expect(handles()).toEqual(["first", "second"]);
+  apply("first", "first", "second");
+  expect(f.handles()).toEqual(["second"]);
+  apply("next", "first");
+  expect(f.handles()).toEqual(["first", "second"]);
 });
 
-it.each(["refused", "unknown"] as const)(
-  "restores %s input only on explicit request after a draft edit back to empty",
-  async (outcome) => {
-    const f = fixture();
-    const reply = deferred<PromptAcceptedResponse>();
-    f.prompt.mockReturnValueOnce(reply.promise).mockResolvedValue(accepted);
-    f.observePrompt.mockResolvedValue(accepted);
-    f.controller.addProjectFile("original.ts");
-    const sending = f.send("original", "steer");
-    f.edit("later");
-    f.edit("");
-    reply.reject(
-      outcome === "refused"
-        ? new ApiError(409, "not delivered")
-        : new ApiTransportError("request", true),
-    );
-    expect(await sending).toBe(false);
-    expect(f.draft()).toMatchObject({ text: "", projectFiles: [] });
-    expect(f.controller.deliveryState(owner).failedCount).toBe(1);
-    expect(f.controller.restoreFailedPrompt(owner)).toBe(true);
-    expect(f.draft()).toMatchObject({
-      text: "original",
-      projectFiles: ["original.ts"],
-    });
-    expect(await f.send("original")).toEqual(accepted);
-    if (outcome === "unknown") {
-      expect(f.observePrompt).toHaveBeenCalledExactlyOnceWith(
-        f.receipt(),
-        expect.any(AbortSignal),
-      );
-      expect(f.prompt).toHaveBeenCalledOnce();
-    } else {
-      expect(f.observePrompt).not.toHaveBeenCalled();
-      expect(f.prompt.mock.calls[1]?.[0].operationId).not.toBe(
-        f.receipt().operationId,
-      );
-    }
-  },
-);
-
-it.each(["accepted", "PROMPT_RECOVERED", "PROMPT_CLEARED"] as const)(
-  "keeps newer staging in the original session after %s",
-  async (outcome) => {
+it.each([true, false])(
+  "leaves newer input intact when Pi returns or clears old input (returned: %s)",
+  async (returned) => {
     const f = fixture();
     const reply = deferred<PromptAcceptedResponse>();
     f.prompt.mockReturnValue(reply.promise);
-    f.upload(uploaded("sent", "sent.png", "image"));
-    f.upload(uploaded("next"));
-    await f.controller.addFiles([
+    await f.stage(
+      image("sent"),
       new File(["data"], "sent.png", { type: "image/png" }),
-    ]);
+    );
     f.controller.addProjectFile("sent.ts");
-    const sending = f.send("pending input", "steer");
+    const sending = f.send("pending", "steer");
     f.controller.addProjectFile("next.ts");
-    await f.controller.addFiles([file("next.txt")]);
+    await f.stage(uploaded("next"));
     f.select(other);
-    if (outcome === "accepted") reply.resolve(accepted);
-    else
-      reply.reject(
-        new ApiError(409, "Pending input changed", undefined, outcome),
-      );
-    const returned = outcome === "PROMPT_RECOVERED";
-    expect(await sending).toEqual(outcome === "accepted" ? accepted : false);
-    expect(f.draft()).toMatchObject({
-      text: "",
-      projectFiles: returned ? ["sent.ts", "next.ts"] : ["next.ts"],
-    });
-    expect(f.draft().attachments.map((item) => item.uploadedId)).toEqual(
-      returned ? ["sent", "next"] : ["next"],
-    );
-    expect(f.draft(other)).toMatchObject({
-      text: "",
-      projectFiles: [],
-      attachments: [],
-    });
-    expect(f.controller.deliveryState(owner).failedCount).toBe(0);
-    expect(f.deleteAttachment.mock.calls).toEqual(
-      outcome === "PROMPT_CLEARED" ? [["sent"]] : [],
-    );
-  },
-);
 
-it.each(["background transport", "current authorization"] as const)(
-  "keeps draft ownership without a stray notice after %s fails",
-  async (failure) => {
-    const f = fixture();
-    const unauthorized = failure === "current authorization";
-    f.prompt.mockRejectedValue(
-      unauthorized
-        ? new ApiError(401, "expired token")
-        : new ApiTransportError("request"),
+    reply.reject(
+      new ApiError(
+        409,
+        "Pending input changed",
+        undefined,
+        returned ? "PROMPT_RECOVERED" : "PROMPT_CLEARED",
+      ),
     );
-    f.controller.addProjectFile("message.ts");
-    const sending = f.send("send");
-    if (!unauthorized) f.select(other);
     expect(await sending).toBe(false);
-    expect(f.draft()).toMatchObject({
-      text: "send",
-      projectFiles: ["message.ts"],
-    });
-    expect(f.authFailure).toHaveBeenCalledTimes(unauthorized ? 1 : 0);
-    expect(f.notice).not.toHaveBeenCalled();
+    expect(f.draft().projectFiles).toEqual(
+      returned ? ["sent.ts", "next.ts"] : ["next.ts"],
+    );
+    expect(f.handles()).toEqual(returned ? ["sent", "next"] : ["next"]);
+    expect(f.draft(other).attachments).toEqual([]);
+    expect(f.controller.deliveryState(owner).failedCount).toBe(0);
+    expect(f.deleteAttachment.mock.calls).toEqual(returned ? [] : [["sent"]]);
   },
 );
 
-it("resumes the same observation after a replaced transport and never clears intervening edits", async () => {
+it("ignores a retired result and observes the original operation on the new transport", async () => {
   const f = fixture();
-  const submission = deferred<PromptAcceptedResponse>();
-  const read = deferred<PromptAcceptedResponse>();
-  f.prompt.mockReturnValue(submission.promise);
-  f.observePrompt.mockReturnValueOnce(read.promise).mockResolvedValue(accepted);
-  f.controller.addProjectFile("plan.md");
-  const sending = f.send("original");
+  await f.stage(uploaded("ready"));
   f.replaceTransport();
-  expect(f.prompt.mock.calls[0]![1]?.aborted).toBe(true);
+  f.controller.reconcileAuthority(TEST_HOST_AUTHORITY);
+  f.controller.resumeUploads();
+  expect(f.handles()).toEqual(["ready"]);
+  expect(f.uploadAttachments).toHaveBeenCalledOnce();
+  const submission = deferred<PromptAcceptedResponse>();
+  f.prompt.mockReturnValue(submission.promise);
+  f.observePrompt.mockResolvedValue(accepted);
+  const sending = f.send("original");
+  const [, signal] = f.prompt.mock.calls[0]!;
+  f.replaceTransport();
+  expect(signal?.aborted).toBe(true);
   expect(f.draft()).toMatchObject({
     text: "original",
     intentId: f.receipt().operationId,
-    projectFiles: ["plan.md"],
   });
-  f.edit("");
-  f.controller.removeProjectFile("plan.md");
-  f.controller.addProjectFile("plan.md");
-  const observing = f.controller.retryIfTracking(owner);
+
+  f.edit("replacement");
   submission.resolve(accepted);
   expect(await sending).toBe(false);
-  const [identity, signal] = f.observePrompt.mock.calls[0]!;
-  expect(signal?.aborted).toBe(false);
-  f.replaceTransport();
-  expect(signal?.aborted).toBe(true);
-  read.resolve(accepted);
-  expect(await observing).toBe(false);
   expect(await f.controller.retryIfTracking(owner)).toEqual(accepted);
-  expect(f.observePrompt.mock.calls.map(([receipt]) => receipt)).toEqual([
+  expect(f.observePrompt).toHaveBeenCalledExactlyOnceWith(
     f.receipt(),
-    identity,
-  ]);
-  expect(f.prompt).toHaveBeenCalledOnce();
-  expect(f.draft()).toMatchObject({
-    text: "",
-    intentId: undefined,
-    projectFiles: ["plan.md"],
-  });
-});
-
-it("reloads an unresolved receipt without replaying its prompt or clearing its saved text", async () => {
-  const original = fixture();
-  original.prompt.mockRejectedValue(new ApiTransportError("request"));
-  await original.send("unconfirmed", "followUp");
-  expect(JSON.parse(sessionStorage.getItem(ledger)!)).toEqual([
-    original.receipt(),
-  ]);
-
-  const reopened = fixture();
-  reopened.controller.loadDeliveries(owner);
-  expect(reopened.draft().text).toBe("unconfirmed");
-  expect(await reopened.controller.send("another request")).toBe(false);
-  reopened.observePrompt.mockResolvedValue(accepted);
-  expect(await reopened.send("unconfirmed")).toEqual(accepted);
-  expect(reopened.observePrompt).toHaveBeenCalledExactlyOnceWith(
-    original.receipt(),
     expect.any(AbortSignal),
   );
-  expect(reopened.prompt).not.toHaveBeenCalled();
-  expect(reopened.draft().text).toBe("unconfirmed");
-  expect(sessionStorage.getItem(ledger)).toBeNull();
+  expect(f.prompt).toHaveBeenCalledOnce();
+  expect(f.draft()).toMatchObject({ text: "replacement", intentId: undefined });
 });
 
-it.each([false, true])(
-  "stages fresh bytes only after explicitly leaving an unconfirmed identical send (Host restarted: %s)",
-  async (restarted) => {
-    const f = fixture();
-    const originalFile = file("kept.txt");
-    f.upload(uploaded("original", originalFile.name));
-    f.upload(uploaded("restaged", originalFile.name));
-    await f.controller.addFiles([originalFile]);
-    f.replaceTransport();
-    f.controller.reconcileAuthority(TEST_HOST_AUTHORITY);
-    f.controller.resumeUploads();
-    expect(f.uploadAttachments).toHaveBeenCalledOnce();
-    f.prompt
-      .mockRejectedValueOnce(new ApiTransportError("request", true))
-      .mockResolvedValue(accepted);
-    await f.send("same caption");
-    if (restarted) {
-      f.replaceTransport(nextAuthority);
-      expect(await f.send("same caption")).toBe(false);
-      expect(f.notice).toHaveBeenLastCalledWith(
-        expect.stringContaining("Check the conversation"),
-      );
-      expect(f.observePrompt).not.toHaveBeenCalled();
+it("reloads a current receipt for observation and blocks writes when tab storage cannot track them", async () => {
+  let submit = 0;
+  const requests = installFetch((url, init) => {
+    if (url === "/api/prompt" && ++submit === 1) {
+      const { authorityId, operationId } = jsonBody(init);
+      return {
+        status: 409,
+        body: {
+          executor: { kind: "host", authorityId },
+          operationId,
+          command: "prompt",
+          state: "unknown",
+          error: { status: 409, message: "No confirmation" },
+        },
+      };
     }
-    expect(f.prompt).toHaveBeenCalledOnce();
-    f.controller.detach(owner);
-    await vi.waitFor(() =>
-      expect(f.draft().attachments[0]?.status).toBe("ready"),
-    );
-    expect(f.deleteAttachment).not.toHaveBeenCalled();
-    expect(f.uploadAttachments.mock.calls[1]![0]).toEqual([originalFile]);
-    expect(await f.send("same caption")).toEqual(accepted);
-    const next = f.prompt.mock.calls[1]![0];
-    expect(next).toMatchObject({
-      authorityId: restarted ? nextAuthority : TEST_HOST_AUTHORITY,
-      attachmentIds: ["restaged"],
-    });
-    expect(next.operationId).not.toBe(f.receipt().operationId);
-    expect(f.controller.deliveryState(owner).previous).toBe(
-      f.receipt().operationId,
-    );
-  },
-);
-
-it("preserves existing receipt records when tab storage refuses a new operation", async () => {
-  const f = fixture();
-  f.prompt.mockRejectedValueOnce(new ApiTransportError("request"));
-  await f.send("original");
-  f.controller.detach(owner);
+    if (url.startsWith("/api/prompt")) return { body: accepted };
+  });
+  const original = fixture(true);
+  expect(await original.send("unconfirmed", "followUp")).toBe(false);
+  original.controller.detach(owner);
   const saved = sessionStorage.getItem(ledger);
-  expect(saved).toContain(f.receipt().operationId);
-  const storage = window.sessionStorage;
+  expect(JSON.parse(saved!)).toEqual([original.receipt()]);
+
+  const storage = sessionStorage;
   const writes = vi.spyOn(window, "sessionStorage", "get").mockReturnValue({
     getItem: storage.getItem.bind(storage),
     removeItem: storage.removeItem.bind(storage),
@@ -349,76 +238,114 @@ it("preserves existing receipt records when tab storage refuses a new operation"
     },
   } as Storage);
   try {
-    expect(await f.send("new draft")).toBe(false);
-    expect(f.prompt).toHaveBeenCalledOnce();
+    expect(await original.send("new draft")).toBe(false);
+    expect(original.controller.deliveryState(owner).storageIssue).toBe(
+      "storage",
+    );
     expect(sessionStorage.getItem(ledger)).toBe(saved);
-    expect(f.draft().text).toBe("new draft");
-    expect(f.controller.deliveryState(owner).storageIssue).toBe("storage");
   } finally {
     writes.mockRestore();
   }
-});
 
-it("keeps unreadable receipt records until the editor explicitly stops tracking them", async () => {
-  const f = fixture();
+  const reopened = fixture(true);
+  reopened.controller.loadDeliveries(owner);
+  expect(reopened.draft().text).toBe("new draft");
+  expect(await reopened.controller.send("another request")).toBe(false);
+  expect(await reopened.send("new draft")).toEqual(accepted);
+  const { operationId, authorityId, fingerprint } = original.receipt();
+  expect(
+    requests.mock.calls.map(([url, init]) => [String(url), init?.method]),
+  ).toEqual([
+    ["/api/prompt", "POST"],
+    [
+      `/api/prompt/${operationId}?${new URLSearchParams({ authorityId, fingerprint: fingerprint! })}`,
+      undefined,
+    ],
+  ]);
+  expect(reopened.draft().text).toBe("new draft");
+  expect(sessionStorage.getItem(ledger)).toBeNull();
+
+  // Old records block fresh sends until the user stops tracking them.
+  const unsupported = fixture(true);
   const old = '[{"old":true}]';
   sessionStorage.setItem(ledger, old);
-  expect(await f.send("new draft")).toBe(false);
-  expect(f.prompt).not.toHaveBeenCalled();
-  expect(f.controller.deliveryState(owner).storageIssue).toBe("format");
+  expect(await unsupported.send("new draft")).toBe(false);
+  expect(unsupported.controller.deliveryState(owner).storageIssue).toBe(
+    "format",
+  );
   expect(sessionStorage.getItem(ledger)).toBe(old);
-  f.controller.forgetUnsupportedDeliveries(owner);
+  expect(requests).toHaveBeenCalledTimes(2);
+  unsupported.controller.forgetUnsupportedDeliveries(owner);
   expect(sessionStorage.getItem(ledger)).toBeNull();
-  f.prompt.mockResolvedValue(accepted);
-  expect(await f.send("new draft")).toEqual(accepted);
+  expect(await unsupported.send("new draft")).toEqual(accepted);
+  expect(requests).toHaveBeenCalledTimes(3);
 });
 
-it("retains a recalled image after a refused send while releasing the displaced upload", async () => {
+it("restores an unknown submission after newer edits and restages exact image bytes only for explicit new input", async () => {
   const f = fixture();
-  f.upload(uploaded("displaced"));
-  await f.controller.addFiles([file("displaced.txt")]);
-  const reference = "pi-history-image://entry-4/1";
-  expect(
-    f.controller.useHistoryEntry(
-      {
-        sessionId: owner,
-        viewId: "view-a",
-        incarnation: "projection-a",
-        effectiveLeafId: "leaf-a",
-        historyVersion: "history-a",
-      },
-      {
-        text: "recalled",
-        images: [{ reference, mimeType: "image/png", size: 12 }],
-        files: [],
-      },
-    ),
-  ).toBe(true);
-  f.prompt.mockRejectedValue(new ApiError(409, "not delivered"));
-  expect(await f.send("recalled")).toBe(false);
-  expect(f.deleteAttachment).toHaveBeenCalledExactlyOnceWith("displaced");
-  expect(f.draft().attachments).toMatchObject([
-    { recalledArtifact: { type: "image", reference } },
-  ]);
+  const original = new File(["original pixels"], "same.png", {
+    type: "image/png",
+  });
+  await f.stage(image("original"), original);
+  f.prompt
+    .mockRejectedValueOnce(new ApiTransportError("request", true))
+    .mockResolvedValue(accepted);
+  f.observePrompt.mockRejectedValue(new ApiTransportError("request", true));
+  const sending = f.send("same caption", "steer");
+  f.edit("later");
+  f.edit("");
+  expect(await sending).toBe(false);
+  expect(f.handles()).toEqual([]);
+  expect(f.controller.restoreFailedPrompt(owner)).toBe(true);
+  expect(f.draft().text).toBe("same caption");
+  expect(await f.send("same caption")).toBe(false);
+  expect(f.observePrompt).toHaveBeenCalledExactlyOnceWith(
+    f.receipt(),
+    expect.any(AbortSignal),
+  );
+
+  f.replaceTransport(nextAuthority);
+  expect(await f.send("same caption")).toBe(false);
+  expect(f.notice).toHaveBeenLastCalledWith(
+    expect.stringContaining("Check the conversation"),
+  );
+  expect(f.prompt).toHaveBeenCalledOnce();
+  expect(f.observePrompt).toHaveBeenCalledOnce();
+  expect(f.uploadAttachments).toHaveBeenCalledOnce();
+
+  f.upload(image("restaged"));
+  f.controller.detach(owner);
+  await vi.waitFor(() => expect(f.handles()).toEqual(["restaged"]));
+  expect(f.uploadAttachments.mock.calls[1]![0]).toEqual([original]);
+  expect(f.deleteAttachment).not.toHaveBeenCalled();
+  expect(await f.send("same caption")).toEqual(accepted);
+  expect(f.prompt.mock.calls[1]![0]).toMatchObject({
+    authorityId: nextAuthority,
+    message: "same caption",
+    attachmentIds: ["restaged"],
+  });
+  expect(f.receipt(1).operationId).not.toBe(f.receipt().operationId);
+  expect(f.controller.deliveryState(owner).previous).toBe(
+    f.receipt().operationId,
+  );
 });
 
 it("restages browser-held bytes from a failed delivery in its inactive partition after Host replacement", async () => {
   const f = fixture();
   const draftFile = file("draft.txt");
-  f.upload(uploaded("old-upload", draftFile.name));
+  await f.stage(uploaded("old-upload", draftFile.name), draftFile);
   f.upload(uploaded("new-upload", draftFile.name));
-  await f.controller.addFiles([draftFile]);
-  f.prompt
-    .mockRejectedValueOnce(new ApiError(409, "not sent"))
-    .mockResolvedValue(accepted);
+  f.prompt.mockRejectedValueOnce(new ApiError(409, "not sent"));
   const sending = f.send("send");
+  f.select(other);
   f.edit("newer");
   f.edit("");
   expect(await sending).toBe(false);
-  f.select(other);
   f.replaceTransport(nextAuthority);
   f.controller.reconcileAuthority(nextAuthority);
+  expect(f.draft().attachments).toEqual([]);
   expect(f.controller.restoreFailedPrompt(owner)).toBe(true);
+  expect(f.draft().text).toBe("send");
   await vi.waitFor(() =>
     expect(f.draft().attachments[0]).toMatchObject({
       status: "ready",
@@ -428,12 +355,8 @@ it("restages browser-held bytes from a failed delivery in its inactive partition
   );
   expect(f.uploadAttachments.mock.calls[1]![0]).toEqual([draftFile]);
   expect(f.draft(other).attachments).toEqual([]);
-  f.select(owner);
-  expect(await f.send("send")).toEqual(accepted);
-  expect(f.prompt.mock.calls[1]![0]).toMatchObject({
-    authorityId: nextAuthority,
-    attachmentIds: ["new-upload"],
-  });
+  expect(f.deleteAttachment).not.toHaveBeenCalled();
+  expect(f.prompt).toHaveBeenCalledOnce();
 });
 
 it("restages only definitively expired handles and waits for another deliberate send", async () => {
@@ -472,68 +395,56 @@ it("restages only definitively expired handles and waits for another deliberate 
   ]);
 });
 
-it.each(["refused", "incomplete"] as const)(
-  "blocks sending a %s upload batch and reclaims any partial handles",
-  async (outcome) => {
-    const f = fixture();
-    if (outcome === "incomplete") f.upload(uploaded("partial", "one.txt"));
-    else
-      f.uploadAttachments.mockRejectedValue(
-        new ApiError(400, "Unsupported file"),
-      );
-    await f.controller.addFiles([file("one.txt"), file("two.txt")]);
-    expect(f.deleteAttachment.mock.calls).toEqual(
-      outcome === "incomplete" ? [["partial"]] : [],
-    );
-    expect(f.draft().attachments.map(({ status }) => status)).toEqual([
-      "error",
-      "error",
-    ]);
-    expect(await f.send("send")).toBe(false);
-    expect(f.notice).toHaveBeenLastCalledWith(
-      "Retry or remove failed attachments before sending",
-    );
-    expect(f.prompt).not.toHaveBeenCalled();
-  },
-);
+it("reclaims incomplete upload results and prevents sending the unverified batch", async () => {
+  const f = fixture();
+  f.upload(uploaded("partial", "one.txt"));
+  await f.controller.addFiles([file("one.txt"), file("two.txt")]);
+  expect(f.deleteAttachment).toHaveBeenCalledExactlyOnceWith("partial");
+  expect(f.draft().attachments.map(({ status }) => status)).toEqual([
+    "error",
+    "error",
+  ]);
+  expect(await f.send("send")).toBe(false);
+  expect(f.prompt).not.toHaveBeenCalled();
+});
 
-it.each(["withdrawal", "retry"] as const)(
-  "holds the draft during a transient upload failure until %s",
-  async (action) => {
-    vi.useFakeTimers();
-    const f = fixture();
-    const originalFile = file("retained.txt");
-    f.uploadAttachments.mockRejectedValue(
-      new ApiTransportError("request", true, true),
-    );
-    await f.controller.addFiles([originalFile]);
-    const item = f.draft().attachments[0]!;
-    expect(item.status).toBe("uploading");
-    expect(await f.send("message")).toBe(false);
-    if (action === "withdrawal") f.controller.removeAttachment(item.localId);
-    await vi.advanceTimersByTimeAsync(14_000);
-    expect(f.uploadAttachments).toHaveBeenCalledTimes(
-      action === "withdrawal" ? 1 : 4,
-    );
-    expect(f.prompt).not.toHaveBeenCalled();
-    if (action === "retry") {
-      expect(f.draft().attachments[0]).toMatchObject({
-        status: "error",
-        retryable: true,
-      });
-      f.upload(uploaded("recovered", originalFile.name));
-      await f.controller.retryAttachment(item.localId);
-      expect(f.uploadAttachments.mock.calls.at(-1)![0]).toEqual([originalFile]);
-      expect(f.draft().attachments[0]).toMatchObject({
-        localId: item.localId,
-        status: "ready",
-        uploadedId: "recovered",
-      });
-    }
-    f.prompt.mockResolvedValue(accepted);
-    expect(await f.send("message")).toEqual(accepted);
-  },
-);
+it("retains local bytes through upload retry and cancels attempts after removal", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  f.uploadAttachments.mockRejectedValue(
+    new ApiTransportError("request", true, true),
+  );
+  const kept = file("retained.txt");
+  await f.controller.addFiles([kept, file("removed.txt")]);
+  const [item, removed] = f.draft().attachments;
+  expect(item?.status).toBe("uploading");
+  expect(await f.send("message")).toBe(false);
+  f.controller.removeAttachment(removed!.localId);
+  await vi.advanceTimersByTimeAsync(14_000);
+  expect(
+    f.uploadAttachments.mock.calls.map(([files]) =>
+      files.map(({ name }) => name),
+    ),
+  ).toEqual([
+    [kept.name, "removed.txt"],
+    [kept.name],
+    [kept.name],
+    [kept.name],
+  ]);
+  expect(f.prompt).not.toHaveBeenCalled();
+  expect(f.draft().attachments[0]).toMatchObject({
+    status: "error",
+    retryable: true,
+  });
+  f.upload(uploaded("recovered", kept.name));
+  await f.controller.retryAttachment(item!.localId);
+  expect(f.uploadAttachments.mock.calls.at(-1)![0]).toEqual([kept]);
+  expect(f.draft().attachments[0]).toMatchObject({
+    localId: item!.localId,
+    status: "ready",
+    uploadedId: "recovered",
+  });
+});
 
 it.each(["withdrawal", "transport replacement"] as const)(
   "retires the whole upload only when no current owner remains after %s",

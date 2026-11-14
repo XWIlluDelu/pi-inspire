@@ -10,7 +10,6 @@ import {
   Copy,
   Keyboard,
   MessageSquareQuote,
-  Search,
   X,
 } from "lucide-react";
 import {
@@ -72,6 +71,7 @@ import {
 } from "../terminal-theme";
 import { useCopied } from "../use-copied";
 import { NoticeCard } from "./NoticeCard";
+import { SearchField } from "./SearchField";
 import { TerminalTextDialog } from "./TerminalTextDialog";
 import { TerminalTouchKeys } from "./TerminalTouchKeys";
 
@@ -1035,12 +1035,13 @@ export const TerminalView = memo(function TerminalView({
                 closeSearch(true);
               }}
             >
-              <Search size={13} aria-hidden />
-              <input
+              <SearchField
+                className="terminal-search__field"
+                iconSize={13}
+                role="textbox"
                 autoFocus
                 value={search.query}
-                onChange={(event) => {
-                  const query = event.target.value;
+                onValueChange={(query) => {
                   setSearch((current) => ({ ...current, query }));
                   if (query)
                     searchRef.current?.findNext(query, {
@@ -1055,7 +1056,7 @@ export const TerminalView = memo(function TerminalView({
               />
               <button
                 type="button"
-                className="terminal-search__option"
+                className="icon-button terminal-search__option"
                 aria-pressed={search.caseSensitive}
                 aria-label="Match case"
                 title="Match case"
@@ -1065,7 +1066,7 @@ export const TerminalView = memo(function TerminalView({
               </button>
               <button
                 type="button"
-                className="terminal-search__option"
+                className="icon-button terminal-search__option"
                 aria-pressed={search.wholeWord}
                 aria-label="Match whole word"
                 title="Match whole word"
@@ -1075,7 +1076,7 @@ export const TerminalView = memo(function TerminalView({
               </button>
               <button
                 type="button"
-                className="terminal-search__option"
+                className="icon-button terminal-search__option"
                 aria-pressed={search.regex}
                 aria-label="Use regular expression"
                 title="Use regular expression"
@@ -1126,6 +1127,7 @@ export const TerminalView = memo(function TerminalView({
             >
               <button
                 type="button"
+                className="button button--quiet"
                 onClick={copySelection}
                 aria-label="Copy terminal selection"
               >
@@ -1134,7 +1136,7 @@ export const TerminalView = memo(function TerminalView({
               {onSendToComposer ? (
                 <button
                   type="button"
-                  className="terminal-selection__quote"
+                  className="button button--quiet terminal-selection__quote"
                   onClick={() => {
                     const selection = xtermRef.current?.getSelection();
                     if (selection) onSendToComposerRef.current?.(selection);
@@ -1168,7 +1170,7 @@ export const TerminalView = memo(function TerminalView({
             {ready ? (
               <button
                 type="button"
-                className="terminal-view__control"
+                className="button terminal-view__control"
                 onClick={() => {
                   const dimensions = currentDimensions();
                   connectionRef.current?.takeControl(

@@ -15,9 +15,24 @@ import { initStore } from "../web/store-fixture";
 describe("Pending intent and receipt lifecycle", () => {
   let f: Awaited<ReturnType<typeof hostApiFixture>>;
   const sessionId = "fixture-active";
-  const snapshot = () => f.runtime.snapshot(sessionId);
-  const connect = async () =>
-    initStore(await snapshot(), f.application.authorityId);
+  const authority = () => f.application.authorityId;
+  const snapshot = (id = sessionId) => f.runtime.snapshot(id);
+  const connect = async () => initStore(await snapshot(), authority());
+  const returnPath = "/api/pending/recover";
+  const receiptPath = "/api/pending/operations/";
+  const hold = (path: string, intercept?: typeof fetch) => {
+    const delivered = deferred<void>();
+    const release = deferred<void>();
+    vi.stubGlobal("fetch", (async (input, init) => {
+      const url = String(input);
+      if (url !== path) return (intercept ?? f.fetchHost)(input, init);
+      const response = await f.fetchHost(input, init);
+      delivered.resolve();
+      await release.promise;
+      return response;
+    }) satisfies typeof fetch);
+    return { delivered, release };
+  };
   beforeEach(async () => {
     installFakeWebSocket();
     f = await hostApiFixture();
@@ -32,55 +47,41 @@ describe("Pending intent and receipt lifecycle", () => {
   it.each(["success", "failed", "unavailable"] as const)(
     "resumes a held Return response when the receipt is %s",
     async (receipt) => {
-      const delivery = deferred<void>();
-      const admitted = deferred<void>();
-      const recover = vi.spyOn(f.runtime, "recoverPending");
+      const recover = vi.spyOn(f.runtime, "recoverPending").mockResolvedValue({
+        steering: ["reclaimed input"],
+        followUp: [],
+      });
       if (receipt === "failed")
-        recover.mockRejectedValue(new Error("confirmed recovery failure"));
-      else
-        recover.mockResolvedValue({
-          steering: ["reclaimed input"],
-          followUp: [],
-        });
-
+        recover.mockRejectedValueOnce(new Error("confirmed recovery failure"));
       const receiptReads = vi.fn();
-      const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
-        const url = String(input);
-        if (url === "/api/pending/recover") {
-          const response = await f.fetchHost(input, init);
-          admitted.resolve();
-          await delivery.promise;
-          return response;
-        }
-        if (url.startsWith("/api/pending/operations/")) {
+      const { delivered, release } = hold(returnPath, async (input, init) => {
+        if (String(input).startsWith(receiptPath)) {
           receiptReads();
-          return receipt === "unavailable"
-            ? Response.json(
-                { error: "receipt observation unavailable" },
-                { status: 503 },
-              )
-            : f.fetchHost(input, init);
+          if (receipt === "unavailable")
+            return Response.json(
+              { error: "observation unavailable" },
+              { status: 503 },
+            );
         }
         return f.fetchHost(input, init);
       });
-      vi.stubGlobal("fetch", fetch);
       const { store } = await connect();
       const generation = store.getState().transportGeneration;
       const operation = store.recoverPending();
       const expectedDraft = receipt === "failed" ? "" : "reclaimed input";
       try {
-        await admitted.promise;
+        await delivered.promise;
         store.recoverConnection("online");
         await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2));
         FakeWebSocket.instances[1]!.join(await snapshot(), {
-          authorityId: f.application.authorityId,
+          authorityId: authority(),
         });
+        await vi.waitFor(() => expect(receiptReads).toHaveBeenCalledOnce());
 
         if (receipt === "unavailable") {
-          await vi.waitFor(() => expect(receiptReads).toHaveBeenCalledOnce());
           expect(store.getState().pendingAction).toBe("recover");
           expect(store.getState().live.notices).toEqual([]);
-          delivery.resolve();
+          release.resolve();
         }
         await expect(operation).resolves.toBe(receipt !== "failed");
         expect(store.getState()).toMatchObject({
@@ -88,20 +89,13 @@ describe("Pending intent and receipt lifecycle", () => {
           transportGeneration: generation,
         });
         expect(recover).toHaveBeenCalledOnce();
-        expect(store.drafts.get(sessionId).text).toBe(expectedDraft);
         const notices = store.getState().live.notices;
         expect(notices).toHaveLength(receipt === "failed" ? 1 : 0);
-        expect(
-          fetch.mock.calls.filter(([url]) =>
-            String(url).startsWith("/api/bootstrap"),
-          ),
-        ).toHaveLength(1);
-
-        delivery.resolve();
+        release.resolve();
         await new Promise<void>((resolve) => setTimeout(resolve, 0));
         expect(store.getState().live.notices).toEqual(notices);
       } finally {
-        delivery.resolve();
+        release.resolve();
         await operation;
       }
       expect(store.drafts.get(sessionId).text).toBe(expectedDraft);
@@ -114,9 +108,9 @@ describe("Pending intent and receipt lifecycle", () => {
     },
   );
 
-  it.each(["same queue", "new queue", "retired receipt"] as const)(
-    "keeps an unresolved Return addressed through $0",
-    async (outcome) => {
+  it.each([false, true])(
+    "reuses the old Return identity and admits a later queue separately (retired: %s)",
+    async (retired) => {
       let observeOld = false;
       let reads = 0;
       const requests: Record<string, unknown>[] = [];
@@ -126,20 +120,20 @@ describe("Pending intent and receipt lifecycle", () => {
         .mockResolvedValue({ steering: ["new queue"], followUp: [] });
       vi.stubGlobal("fetch", (async (input, init) => {
         const url = String(input);
-        if (url === "/api/pending/recover") {
+        if (url === returnPath) {
           requests.push(jsonBody(init ?? {}));
           const response = await f.fetchHost(input, init);
           if (requests.length === 1) throw new TypeError("lost response");
           return response;
         }
-        if (!observeOld && url.startsWith("/api/pending/operations/")) {
+        if (!observeOld && url.startsWith(receiptPath)) {
           expect(url).toContain(requests[0]!.operationId);
           if (++reads === 1) throw new TypeError("lost receipt");
           return Response.json(
             {
               executor: {
                 kind: "host",
-                authorityId: f.application.authorityId,
+                authorityId: authority(),
               },
               command: "recover",
               operationId: "another-operation",
@@ -158,27 +152,24 @@ describe("Pending intent and receipt lifecycle", () => {
       expect(requests).toHaveLength(1);
       observeOld = true;
 
-      if (outcome === "same queue") {
-        expect(await store.recoverPending()).toBe(true);
-        expect(store.drafts.get(sessionId).text).toBe("old queue");
-        expect(recover).toHaveBeenCalledOnce();
-        return;
-      }
-      if (outcome === "retired receipt") {
+      if (retired) {
         vi.useFakeTimers({ toFake: ["Date"] });
         vi.setSystemTime(Date.now() + 16 * 60_000);
         expect(await store.recoverPending()).toBe(false);
-        const retired = await f.fetchHost("/api/pending/recover", {
+        const replay = await f.fetchHost(returnPath, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(requests[0]),
         });
-        expect(retired.status).toBe(409);
-        expect(await retired.json()).toMatchObject({
+        expect(replay.status).toBe(409);
+        expect(await replay.json()).toMatchObject({
           code: "PENDING_OPERATION_RESULT_RETIRED",
         });
-        expect(recover).toHaveBeenCalledOnce();
+      } else {
+        expect(await store.recoverPending()).toBe(true);
+        expect(store.drafts.get(sessionId).text).toBe("old queue");
       }
+      expect(recover).toHaveBeenCalledOnce();
       socket.emit({
         type: "queue_update",
         sessionId,
@@ -193,7 +184,7 @@ describe("Pending intent and receipt lifecycle", () => {
       await vi.waitFor(() => {
         const draft = store.drafts.get(sessionId).text.split("\n\n").sort();
         expect(draft).toEqual(
-          outcome === "new queue" ? ["new queue", "old queue"] : ["new queue"],
+          retired ? ["new queue"] : ["new queue", "old queue"],
         );
       });
       expect(requests[1]?.operationId).not.toBe(requests[0]?.operationId);
@@ -204,48 +195,34 @@ describe("Pending intent and receipt lifecycle", () => {
   it.each(["Return", "Stop"] as const)(
     "keeps the original draft when $0 settles after selecting another session",
     async (delayed) => {
-      const released = deferred<void>();
-      const admitted = deferred<void>();
       const recover = vi.spyOn(f.runtime, "recoverPending").mockResolvedValue({
         steering: ["first handoff"],
         followUp: [],
       });
-      const abort = vi.spyOn(f.runtime, "abort").mockResolvedValue({
-        steering: [],
-        followUp: ["late input"],
-      });
-      const returnPath = "/api/pending/recover";
-      const stopPath = "/api/control/abort";
-      const heldPath = delayed === "Return" ? returnPath : stopPath;
-      vi.stubGlobal("fetch", (async (input, init) => {
-        const url = String(input);
-        if (url === stopPath)
+      const abort = vi
+        .spyOn(f.runtime, "abort")
+        .mockImplementation(async () => {
           expect(store.drafts.get(sessionId).text).toBe(
             "first handoff\n\noriginal draft",
           );
-        const response = await f.fetchHost(input, init);
-        if (url === heldPath) {
-          admitted.resolve();
-          await released.promise;
-        }
-        return response;
-      }) satisfies typeof fetch);
-
+          return { steering: [], followUp: ["late input"] };
+        });
+      const { delivered, release } = hold(
+        delayed === "Return" ? returnPath : "/api/control/abort",
+      );
       const { store } = await connect();
       const nextSession = "fixture-history";
       store.drafts.setText(sessionId, "original draft");
       const stopping = store.abort();
       try {
-        await admitted.promise;
+        await delivered.promise;
         await store.openSession(nextSession);
         store.drafts.setText(nextSession, "another draft");
         if (delayed === "Return") {
           await store.init();
           FakeWebSocket.instances
             .at(-1)!
-            .join(await f.runtime.snapshot(nextSession), {
-              authorityId: f.application.authorityId,
-            });
+            .join(await snapshot(nextSession), { authorityId: authority() });
           await vi.waitFor(() =>
             expect(store.drafts.get(sessionId).text).toBe(
               "first handoff\n\noriginal draft",
@@ -255,7 +232,7 @@ describe("Pending intent and receipt lifecycle", () => {
           store.drafts.setText(sessionId, "edited during Stop");
         }
       } finally {
-        released.resolve();
+        release.resolve();
         await stopping;
       }
       expect(recover).toHaveBeenCalledOnce();

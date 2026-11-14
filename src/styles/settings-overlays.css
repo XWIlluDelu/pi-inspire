@@ -1729,7 +1729,6 @@
    beneath it instead of hiding its items. */
 :root:has(
     :is(
-      .session-actions-menu,
       .extension-status-popover,
       .choice-panel__body:not([hidden]),
       .terminal-menu__popover
@@ -1891,43 +1890,20 @@
 }
 
 /* --- Terminal Settings stepper --- */
-.terminal-settings__stepper {
-  display: inline-flex;
-  align-items: center;
-  height: var(--set-control-h);
+.settings__field .terminal-settings__stepper {
+  grid-auto-columns: var(--stepper-button-size) 1fr var(--stepper-button-size);
+  --stepper-button-size: calc(var(--set-control-h) - 8px);
   width: 112px;
-  border: 1px solid var(--hairline-strong);
-  border-radius: var(--radius-sm);
-  background: var(--bg-control);
-  overflow: hidden;
-  box-sizing: border-box;
 }
 
-.terminal-settings__stepper-btn {
-  width: 32px;
+.terminal-settings__stepper .icon-button {
+  width: 100%;
   height: 100%;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-  background: transparent;
-  color: var(--ink);
-  cursor: pointer;
   padding: 0;
-  transition: background var(--dur-micro) var(--ease-standard);
+  justify-content: center;
 }
 
-.terminal-settings__stepper-btn:hover:not(:disabled) {
-  background: var(--bg-inset);
-}
-
-.terminal-settings__stepper-btn:disabled {
-  opacity: 0.35;
-  cursor: not-allowed;
-}
-
-.terminal-settings__stepper-val {
-  flex: 1 1 auto;
+.terminal-settings__stepper-value {
   text-align: center;
   font-family: var(--font-mono);
   font-size: var(--text-xs);

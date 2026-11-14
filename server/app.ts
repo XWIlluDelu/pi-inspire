@@ -1063,12 +1063,19 @@ export function createInspireServer(deps: AppDependencies): {
     }
     return result;
   });
-  const assertPendingAuthority = (expected: string): void => {
-    if (expected !== authorityId)
+  const pendingFingerprint = (
+    operation: ReturnType<typeof pendingOperationRequestSchema.parse>,
+  ) => {
+    if (operation.authorityId !== authorityId)
       throw requestError("The Pending operation belongs to another Host", 409, {
         code: "HOST_AUTHORITY_CHANGED",
         outcomeUnknown: true,
       });
+    return JSON.stringify([
+      operation.sessionId,
+      operation.action,
+      operation.expectedViewId,
+    ]);
   };
   app.get(
     `${INPUT_OPERATION_PATHS.pending}/:operationId`,
@@ -1077,17 +1084,12 @@ export function createInspireServer(deps: AppDependencies): {
         ...request.query,
         operationId: request.params.operationId,
       });
-      assertPendingAuthority(operation.authorityId);
       await observeOperation(
         operation.action,
         operation,
         pendingOperations.observe(
           operation.operationId,
-          JSON.stringify([
-            operation.sessionId,
-            operation.action,
-            operation.expectedViewId,
-          ]),
+          pendingFingerprint(operation),
         ),
         response,
       );
@@ -1099,11 +1101,10 @@ export function createInspireServer(deps: AppDependencies): {
   ] as const) {
     app.post(path, async (request, response) => {
       const operation = pendingOperationSchema.parse(request.body);
-      assertPendingAuthority(operation.authorityId);
       const { operationId, sessionId, expectedViewId } = operation;
       const completion = pendingOperations.run(
         operationId,
-        JSON.stringify([sessionId, action, expectedViewId]),
+        pendingFingerprint({ ...operation, action }),
         async () => {
           const recovered =
             action === "abort"

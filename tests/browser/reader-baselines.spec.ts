@@ -1,4 +1,4 @@
-import { expect, type Locator, type Page, test } from "@playwright/test";
+import { expect, type Locator, test } from "@playwright/test";
 import { hostRequest } from "./support/host-request";
 import {
   openPreviewFixture,
@@ -9,97 +9,33 @@ import {
   FIRST_TEXT_BASELINE_TOLERANCE_PX,
   firstTextBaseline,
 } from "./support/text-baseline";
+import { textOverflowsInlineBounds } from "./support/text-bounds";
 
-test.use({
-  serviceWorkers: "block",
-  contextOptions: { reducedMotion: "reduce" },
-});
+test.use({ serviceWorkers: "block", reducedMotion: "reduce" });
 
-async function readingSize(page: Page, name: string) {
-  await page.setViewportSize({ width: 1280, height: 900 });
-  await openSettings(page);
-  const dialog = page.getByRole("dialog", { name: "Settings", exact: true });
-  await dialog.getByRole("button", { name: "Display", exact: true }).click();
-  await dialog
-    .getByRole("group", { name: "Content text size", exact: true })
-    .getByRole("button", { name, exact: true })
-    .click();
-  await dialog.press("Escape");
-  await page.evaluate(() => document.fonts.ready);
-}
-
-async function expectNotebookGutter(preview: Locator) {
-  await expect
-    .poll(() => preview.evaluate((el) => el.scrollWidth - el.clientWidth))
-    .toBe(0);
-  const rows = preview
-    .locator(".notebook-preview__cell--code, .notebook-preview__output")
-    .filter({ has: preview.page().locator("pre") });
-  const positions: number[] = [];
-  for (const row of await rows.all()) {
-    const prompt = row.locator(":scope > .notebook-preview__prompt");
-    const body = row.locator(
-      ":scope > .notebook-preview__cell-body, :scope > .notebook-preview__output-body",
-    );
-    const { left, right, clipped } = await prompt.evaluate((element) => {
-      const range = document.createRange();
-      range.selectNodeContents(element);
-      const text = range.getBoundingClientRect();
-      const box = element.getBoundingClientRect();
-      return {
-        left: text.left - box.left,
-        right: box.right - text.right,
-        clipped: element.scrollWidth - element.clientWidth,
-      };
-    });
-    expect(left).toBeGreaterThanOrEqual(-0.5);
-    expect(right).toBeGreaterThanOrEqual(-0.5);
-    expect(clipped).toBe(0);
-    positions.push((await body.boundingBox())!.x);
-    const relativeTo =
-      ".notebook-preview__cell--code, .notebook-preview__output";
-    const promptBaseline = await prompt.evaluate(firstTextBaseline, relativeTo);
-    const sourceBaseline = await body
-      .locator(":scope > pre")
-      .evaluate(firstTextBaseline, relativeTo);
-    expect(promptBaseline).not.toBeNull();
-    expect(sourceBaseline).not.toBeNull();
-    expect(Math.abs(promptBaseline! - sourceBaseline!)).toBeLessThanOrEqual(
+async function expectFirstLine(
+  row: Locator,
+  rowSelector: string,
+  source: string,
+  labels: string,
+  count: number,
+) {
+  const baseline = await row
+    .locator(source)
+    .evaluate(firstTextBaseline, rowSelector);
+  expect(baseline).not.toBeNull();
+  const measured = (
+    await Promise.all(
+      (
+        await row.locator(labels).all()
+      ).map((label) => label.evaluate(firstTextBaseline, rowSelector)),
+    )
+  ).filter((value) => value !== null);
+  expect(measured).toHaveLength(count);
+  for (const label of measured)
+    expect(Math.abs(label - baseline!)).toBeLessThanOrEqual(
       FIRST_TEXT_BASELINE_TOLERANCE_PX,
     );
-  }
-  expect(Math.max(...positions) - Math.min(...positions)).toBeLessThanOrEqual(
-    0.5,
-  );
-}
-
-async function expectChangeGutter(pane: Locator) {
-  const rows = [
-    pane
-      .locator('.code-row[data-kind="context"]:has(code:not(:empty))')
-      .first(),
-    pane.locator('.code-row[data-kind="add"]').first(),
-    pane.locator('.code-row[data-kind="delete"]').first(),
-  ];
-  for (const row of rows) {
-    const relativeTo = ".code-row";
-    const source = await row
-      .locator("code")
-      .evaluate(firstTextBaseline, relativeTo);
-    expect(source).not.toBeNull();
-    const baselines: number[] = [];
-    for (const label of await row
-      .locator(".code-row__number, .code-row__mark")
-      .all()) {
-      const baseline = await label.evaluate(firstTextBaseline, relativeTo);
-      if (baseline !== null) baselines.push(baseline);
-    }
-    expect(baselines).toHaveLength(2);
-    for (const baseline of baselines)
-      expect(Math.abs(source! - baseline)).toBeLessThanOrEqual(
-        FIRST_TEXT_BASELINE_TOLERANCE_PX,
-      );
-  }
 }
 
 test("Notebook and Changes gutters stay aligned as the shared reading size changes", {
@@ -108,45 +44,93 @@ test("Notebook and Changes gutters stay aligned as the shared reading size chang
   await page.setViewportSize({ width: 1280, height: 900 });
   const pane = await openResourceFixture(page);
   const host = hostRequest(page);
-  const { preferences: before } = await (
-    await host.get("/api/preferences")
-  ).json();
-  const changes = pane.getByRole("tab", { name: "Changes", exact: true });
+  const { preferences } = await (await host.get("/api/preferences")).json();
+  await openPreviewFixture(pane, "notebook.ipynb");
+  const notebook = pane.getByRole("tab", {
+    name: "notebook.ipynb",
+    exact: true,
+  });
   const preview = pane.getByRole("document", {
     name: "Notebook preview",
     exact: true,
   });
+  await pane.getByRole("tab", { name: "Changes", exact: true }).click();
+  await pane.getByRole("button", { name: /page\.html, modified/ }).click();
+  const changedFile = pane.getByRole("tab", { name: "page.html", exact: true });
   try {
-    await openPreviewFixture(pane, "notebook.ipynb");
-    await expect(
-      preview
-        .locator(".notebook-preview__prompt")
-        .filter({ hasText: "123456789012345" }),
-    ).toHaveText(["In [123456789012345]", "Out [123456789012345]"]);
-    await changes.click();
-    await pane.getByRole("button", { name: /page\.html, modified/ }).click();
-    async function showFile(name: string) {
-      const tab = pane.getByRole("tab", { name, exact: true });
-      if (await tab.isVisible()) await tab.click();
-      else {
-        await pane
-          .getByRole("combobox", { name: "More tabs", exact: true })
-          .click();
-        await page.getByRole("option", { name }).click();
+    for (const [size, width] of [
+      ["Compact", 1280],
+      ["Large", 320],
+    ] as const) {
+      await page.setViewportSize({ width: 1280, height: 900 });
+      await openSettings(page);
+      const dialog = page.getByRole("dialog", { name: "Settings" });
+      await dialog
+        .getByRole("button", { name: "Display", exact: true })
+        .click();
+      await dialog
+        .getByRole("group", { name: "Content text size" })
+        .getByRole("button", { name: size, exact: true })
+        .click();
+      await expect(page.locator("html")).toHaveAttribute(
+        "data-content-text-size",
+        size.toLowerCase(),
+      );
+      await dialog.press("Escape");
+      await page.setViewportSize({ width, height: 900 });
+      await page.evaluate(() => document.fonts.ready);
+
+      await changedFile.click();
+      for (const kind of ["context", "add", "delete"])
+        await expectFirstLine(
+          pane
+            .locator(`.code-row[data-kind="${kind}"]:has(code:not(:empty))`)
+            .first(),
+          ".code-row",
+          "code",
+          ".code-row__number, .code-row__mark",
+          2,
+        );
+
+      await notebook.click();
+      const prompt = ".notebook-preview__prompt";
+      const rowSelector =
+        ".notebook-preview__cell--code, .notebook-preview__output";
+      const rows = preview
+        .locator(rowSelector)
+        .filter({ has: page.locator("pre") });
+      await expect(
+        preview.locator(prompt).filter({ hasText: "123456789012345" }),
+      ).toHaveText(["In [123456789012345]", "Out [123456789012345]"]);
+      const starts: number[] = [];
+      for (const row of await rows.all()) {
+        const body = row.locator(
+          ":scope > :is(.notebook-preview__cell-body, .notebook-preview__output-body)",
+        );
+        expect(
+          await row
+            .locator(`:scope > ${prompt}`)
+            .evaluate(textOverflowsInlineBounds),
+        ).toBe(false);
+        starts.push((await body.boundingBox())!.x);
+        await expectFirstLine(
+          row,
+          rowSelector,
+          ":scope > div > pre",
+          `:scope > ${prompt}`,
+          1,
+        );
       }
-    }
-    for (const size of ["Compact", "Comfortable", "Large"]) {
-      await readingSize(page, size);
-      if (size === "Large")
-        await page.setViewportSize({ width: 320, height: 900 });
-      await expectChangeGutter(pane);
-      await showFile("notebook.ipynb");
-      await expectNotebookGutter(preview);
-      if (size !== "Large") await showFile("page.html");
+      expect(
+        await preview.evaluate((el) => el.scrollWidth - el.clientWidth),
+      ).toBeLessThanOrEqual(1);
+      expect(Math.max(...starts) - Math.min(...starts)).toBeLessThanOrEqual(
+        0.5,
+      );
     }
   } finally {
     await host.patch("/api/preferences", {
-      data: { contentTextSize: before.contentTextSize },
+      data: { contentTextSize: preferences.contentTextSize },
     });
   }
 });

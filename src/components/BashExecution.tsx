@@ -7,7 +7,12 @@ import {
 import { stripTerminalSequences } from "../ansi";
 import { copyLoader } from "../content-copy";
 import type { ChatMessage } from "../events";
-import { shellCommand, shellCopyText } from "../shell-record";
+import {
+  shellCommand,
+  shellContext,
+  shellCopyText,
+  shellStatus,
+} from "../shell-record";
 import { CodeView } from "./CodeView";
 import { CopyAction } from "./CopyAction";
 import { PiLoader } from "./PiLoader";
@@ -23,37 +28,19 @@ export const BashExecution = memo(function BashExecution({
   const running = message.__inspireBashRunning === true;
   const error = message.__inspireBashError;
   const interrupted = message.__inspireBashInterrupted === true;
-  const contextLabel = message.excludeFromContext
-    ? "Excluded from context"
-    : error
-      ? "Context unconfirmed"
-      : "Included in context";
   const failed =
     Boolean(error) ||
     (!running &&
       !message.cancelled &&
       message.exitCode !== undefined &&
       message.exitCode !== 0);
-  const status = running
-    ? "Running"
-    : interrupted
-      ? "Interrupted"
-      : error
-        ? "Failed"
-        : message.cancelled
-          ? "Cancelled"
-          : message.exitCode !== undefined
-            ? `Exit ${message.exitCode}`
-            : "Finished";
-  const shell = { ...message, command: message.command ?? "" };
-  const command = shellCommand(shell);
   const output = stripTerminalSequences(message.output ?? "");
   const previewTruncated =
     (running || interrupted) && message.__inspireBashPreviewTruncated;
   const fullOutput = message.fullOutputPath;
   return (
     <section
-      className={`activity-surface shell-execution${history ? " shell-execution--history" : ""}`}
+      className="activity-surface shell-execution"
       aria-label={history ? "Shell record preview" : "Shell command"}
     >
       <div className="activity-surface__head shell-execution__header">
@@ -68,33 +55,26 @@ export const BashExecution = memo(function BashExecution({
           data-error={failed || undefined}
           role="status"
         >
-          {status}
+          {shellStatus(message)}
         </span>
-        <span className="shell-execution__context">{contextLabel}</span>
+        <span className="shell-execution__context">
+          {shellContext(message)}
+        </span>
         {!history && (
           <CopyAction
             getContent={copyLoader(async () =>
-              [
-                shellCopyText(
-                  shell,
-                  message.output ?? "",
-                  status,
-                  contextLabel,
-                ),
-                error,
-              ]
-                .filter(Boolean)
-                .join("\n"),
+              shellCopyText(message, message.output ?? ""),
             )}
             label="shell result"
             className="activity-copy"
           />
         )}
       </div>
-      <CodeView className="activity-reader" text={command} />
+      <CodeView className="activity-reader" text={shellCommand(message)} />
       {output ? (
         <CodeView
           className="activity-reader shell-execution__output"
+          style={{ maxHeight: history ? "none" : "24rem" }}
           text={output}
           tabIndex={history ? undefined : 0}
           role={history ? undefined : "group"}

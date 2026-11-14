@@ -40,7 +40,7 @@ test("a failed clone leaves its action menu available instead of silently dismis
   await clone.click();
   await expect(menu).toBeVisible();
   await expect(
-    page.getByText("Clone is unavailable", { exact: true }),
+    page.getByRole("status").filter({ hasText: "Clone is unavailable" }),
   ).toBeVisible();
   await expect(clone).toBeEnabled();
   expect(attempts).toBe(1);

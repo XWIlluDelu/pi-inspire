@@ -23,11 +23,8 @@ import {
 } from "react";
 import {
   type CompletionAttentionPreference,
-  type ContentTextSizePreference,
-  type DesktopSendKeyPreference,
+  type InspirePreferences,
   type PiMessageDeliveryMode,
-  type ProjectDisplayPreference,
-  type ReadingWidthPreference,
 } from "../../shared/contracts";
 import type { ModelSettingsDestination } from "../../shared/model-settings";
 import type { TaskNotificationGrouping } from "../../shared/notifications";
@@ -37,7 +34,7 @@ import {
   requestInstall,
   subscribeInstallAvailability,
 } from "../install-app";
-import { preferenceChoices } from "../preference-labels";
+import { preferenceChoices, preferenceOptions } from "../preference-labels";
 import { shallowEqual, store, useAppState } from "../store";
 import { HerdrSettings } from "./HerdrSettings";
 import { HostRestartSettings } from "./HostRestartSettings";
@@ -69,27 +66,68 @@ const CONVERSATION_CHOICES = [
   "activityFoldVisibility",
 ] as const;
 
-const CONTENT_TEXT_SIZES: Choice<ContentTextSizePreference>[] = [
-  { value: "compact", label: "Compact" },
-  { value: "comfortable", label: "Comfortable" },
-  { value: "large", label: "Large" },
-];
+const segmentedPreferences = {
+  theme: { label: preferenceChoices.theme.label, options: THEMES },
+  contentTextSize: {
+    label: "Content text size",
+    description: "Applies to messages, input, code and previews.",
+    options: preferenceOptions(["compact", "comfortable", "large"]),
+  },
+  readingWidth: {
+    label: "Reading width",
+    description: "Maximum width for messages and input.",
+    options: preferenceOptions(["narrow", "comfortable", "wide"]),
+  },
+  projectDisplay: {
+    label: "Project location",
+    description: "Project name or path in the workbench header.",
+    options: [
+      { value: "folder", label: "Folder name" },
+      { value: "path", label: "Full path" },
+    ],
+  },
+  desktopSendKey: {
+    label: "Send key",
+    description: "Desktop shortcut. Return adds a new line on touch keyboards.",
+    options: [
+      { value: "enter", label: "Enter" },
+      { value: "mod-enter", label: "Ctrl/⌘+Enter" },
+    ],
+  },
+} satisfies {
+  [Key in keyof InspirePreferences as InspirePreferences[Key] extends string
+    ? Key
+    : never]?: {
+    label: string;
+    description?: string;
+    options: readonly Choice<Extract<InspirePreferences[Key], string>>[];
+  };
+};
 
-const READING_WIDTHS: Choice<ReadingWidthPreference>[] = [
-  { value: "narrow", label: "Narrow" },
-  { value: "comfortable", label: "Comfortable" },
-  { value: "wide", label: "Wide" },
-];
+type SegmentedPreference = keyof typeof segmentedPreferences;
 
-const PROJECT_DISPLAYS: Choice<ProjectDisplayPreference>[] = [
-  { value: "folder", label: "Folder name" },
-  { value: "path", label: "Full path" },
-];
-
-const DESKTOP_SEND_KEYS: Choice<DesktopSendKeyPreference>[] = [
-  { value: "enter", label: "Enter" },
-  { value: "mod-enter", label: "Ctrl/⌘+Enter" },
-];
+function PreferenceSegments({
+  name,
+  prefs,
+}: {
+  name: SegmentedPreference;
+  prefs: InspirePreferences;
+}) {
+  const field = segmentedPreferences[name];
+  return (
+    <SettingField
+      label={field.label}
+      description={"description" in field ? field.description : undefined}
+    >
+      <SegmentedControl
+        label={field.label}
+        value={prefs[name]}
+        options={field.options}
+        onChange={(value) => store.setPreference(name, value)}
+      />
+    </SettingField>
+  );
+}
 
 const MESSAGE_DELIVERY_MODES: Choice<PiMessageDeliveryMode>[] = [
   { value: "one-at-a-time", label: "One at a time" },
@@ -255,14 +293,7 @@ export const SettingsContent = memo(function SettingsContent({
           hidden={activeCategory !== "display"}
         >
           <Section id="display" icon={<Palette size={14} />} title="Display">
-            <SettingField label={preferenceChoices.theme.label}>
-              <SegmentedControl
-                label={preferenceChoices.theme.label}
-                value={prefs.theme}
-                options={THEMES}
-                onChange={(value) => store.setPreference("theme", value)}
-              />
-            </SettingField>
+            <PreferenceSegments name="theme" prefs={prefs} />
 
             <SettingField label={preferenceChoices.palette.label}>
               <div
@@ -288,45 +319,11 @@ export const SettingsContent = memo(function SettingsContent({
               </div>
             </SettingField>
 
-            <SettingField
-              label="Content text size"
-              description="Applies to messages, input, code and previews."
-            >
-              <SegmentedControl
-                label="Content text size"
-                value={prefs.contentTextSize}
-                options={CONTENT_TEXT_SIZES}
-                onChange={(value) =>
-                  store.setPreference("contentTextSize", value)
-                }
-              />
-            </SettingField>
-
-            <SettingField
-              label="Reading width"
-              description="Maximum width for messages and input."
-            >
-              <SegmentedControl
-                label="Reading width"
-                value={prefs.readingWidth}
-                options={READING_WIDTHS}
-                onChange={(value) => store.setPreference("readingWidth", value)}
-              />
-            </SettingField>
-
-            <SettingField
-              label="Project location"
-              description="Project name or path in the workbench header."
-            >
-              <SegmentedControl
-                label="Project location"
-                value={prefs.projectDisplay}
-                options={PROJECT_DISPLAYS}
-                onChange={(value) =>
-                  store.setPreference("projectDisplay", value)
-                }
-              />
-            </SettingField>
+            {(
+              ["contentTextSize", "readingWidth", "projectDisplay"] as const
+            ).map((name) => (
+              <PreferenceSegments key={name} name={name} prefs={prefs} />
+            ))}
 
             <SettingField
               label="Titlebar needles"
@@ -375,19 +372,7 @@ export const SettingsContent = memo(function SettingsContent({
               );
             })}
 
-            <SettingField
-              label="Send key"
-              description="Desktop shortcut. Return adds a new line on touch keyboards."
-            >
-              <SegmentedControl
-                label="Send key"
-                value={prefs.desktopSendKey}
-                options={DESKTOP_SEND_KEYS}
-                onChange={(value) =>
-                  store.setPreference("desktopSendKey", value)
-                }
-              />
-            </SettingField>
+            <PreferenceSegments name="desktopSendKey" prefs={prefs} />
           </Section>
         </div>
 
@@ -593,55 +578,48 @@ export const SettingsContent = memo(function SettingsContent({
               );
             })}
 
-            <SettingField
-              label="Automatic context compaction"
-              layout="inline"
-              description="Summarize older messages when approaching the context limit."
-              status={
-                state.pendingRuntimeSettings.autoCompactionEnabled
-                  ? "Saving…"
-                  : !state.sessionId ||
-                      state.runtimeSettings?.autoCompactionEnabled == null
-                    ? "Unavailable"
-                    : undefined
-              }
-            >
-              <SettingsSwitch
-                label="Automatic context compaction"
-                checked={state.runtimeSettings?.autoCompactionEnabled === true}
-                disabled={
-                  state.pendingRuntimeSettings.autoCompactionEnabled === true ||
-                  !state.sessionId ||
-                  state.runtimeSettings?.autoCompactionEnabled == null
-                }
-                onChange={(checked) => void store.setAutoCompaction(checked)}
-              />
-            </SettingField>
-
-            <SettingField
-              label="Automatic retry"
-              layout="inline"
-              description="Retry temporary provider errors."
-              status={
-                state.pendingRuntimeSettings.autoRetryEnabled
-                  ? "Saving…"
-                  : !state.sessionId ||
-                      state.runtimeSettings?.autoRetryEnabled == null
-                    ? "Unavailable"
-                    : undefined
-              }
-            >
-              <SettingsSwitch
-                label="Automatic retry"
-                checked={state.runtimeSettings?.autoRetryEnabled === true}
-                disabled={
-                  state.pendingRuntimeSettings.autoRetryEnabled === true ||
-                  !state.sessionId ||
-                  state.runtimeSettings?.autoRetryEnabled == null
-                }
-                onChange={(checked) => void store.setAutoRetry(checked)}
-              />
-            </SettingField>
+            {(
+              [
+                [
+                  "autoCompactionEnabled",
+                  "Automatic context compaction",
+                  "Summarize older messages when approaching the context limit.",
+                  store.setAutoCompaction,
+                ],
+                [
+                  "autoRetryEnabled",
+                  "Automatic retry",
+                  "Retry temporary provider errors.",
+                  store.setAutoRetry,
+                ],
+              ] as const
+            ).map(([key, label, description, setValue]) => {
+              const value = state.runtimeSettings?.[key];
+              const pending = state.pendingRuntimeSettings[key];
+              const unavailable = !state.sessionId || value == null;
+              return (
+                <SettingField
+                  key={key}
+                  label={label}
+                  layout="inline"
+                  description={description}
+                  status={
+                    pending
+                      ? "Saving…"
+                      : unavailable
+                        ? "Unavailable"
+                        : undefined
+                  }
+                >
+                  <SettingsSwitch
+                    label={label}
+                    checked={value === true}
+                    disabled={pending || unavailable}
+                    onChange={(checked) => void setValue(checked)}
+                  />
+                </SettingField>
+              );
+            })}
           </Section>
         </div>
 

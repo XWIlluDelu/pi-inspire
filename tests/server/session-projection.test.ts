@@ -60,34 +60,41 @@ const message = (
   fields: Record<string, unknown> = {},
 ) => messageEntry(id, parentId, { role, content, timestamp, ...fields });
 
-async function fixture(
-  lines: unknown[],
-  id = "session-a",
-  readHooks?: SessionProjectionReadHooks,
-  fileNameForPath?: (path: string) => string | null,
-) {
+async function sessionFile() {
   const directory = await mkdtemp(join(tmpdir(), "inspire-projection-"));
   directories.push(directory);
   const path = join(directory, "session.jsonl");
-  const bytes = jsonl(header(id), ...lines);
-  await writeFile(path, bytes);
   const record: SessionRecord = {
-    id,
+    id: "session-a",
     path,
     source: null,
     cwd: "/project",
-    name: "Projection",
     created: new Date(),
     modified: new Date(),
-    messageCount: lines.length,
+    messageCount: 0,
     firstMessage: "",
   };
+  return { directory, path, record };
+}
+
+async function fixture(
+  lines: unknown[],
+  options: {
+    readHooks?: SessionProjectionReadHooks;
+    fileNameForPath?: (path: string) => string | null;
+  } = {},
+) {
+  const file = await sessionFile();
+  const bytes = jsonl(header(), ...lines);
+  await writeFile(file.path, bytes);
   return {
-    directory,
-    path,
+    ...file,
     bytes,
-    record,
-    projection: await openProjection(record, readHooks, fileNameForPath),
+    projection: await openProjection(
+      file.record,
+      options.readHooks,
+      options.fileNameForPath,
+    ),
   };
 }
 
@@ -122,13 +129,10 @@ describe("SessionProjection framing and last-good state", () => {
   });
 
   it("reads legacy session entries without modifying their JSONL bytes", async () => {
-    const cwd = await mkdtemp(join(tmpdir(), "inspire-projection-legacy-"));
-    directories.push(cwd);
-    const path = join(cwd, "legacy.jsonl");
-    const id = "legacy";
+    const { directory: cwd, path, record } = await sessionFile();
     const timestamp = new Date(0);
     const original = jsonl(
-      { type: "session", id, cwd, timestamp },
+      { type: "session", id: record.id, cwd, timestamp },
       {
         type: "message",
         timestamp,
@@ -136,37 +140,11 @@ describe("SessionProjection framing and last-good state", () => {
       },
     );
     await writeFile(path, original);
-    const projection = await openProjection({
-      id,
-      cwd,
-      path,
-      source: null,
-      created: timestamp,
-      modified: timestamp,
-      messageCount: 1,
-      firstMessage: "legacy",
-    });
+    const projection = await openProjection({ ...record, cwd });
     expect(projection.latestPage().messages).toMatchObject([
       { role: "user", content: "legacy" },
     ]);
     expect(await readFile(path, "utf8")).toBe(original);
-  });
-
-  it("finds the latest saved continuation independently for interleaved sibling branches", async () => {
-    const { projection } = await fixture([
-      message("root", null, "user", "root", 1),
-      message("left", "root", "assistant", "left", 2),
-      message("right", "root", "assistant", "right", 3),
-      message("left-first", "left", "user", "first left continuation", 6),
-      message("right-end", "right", "user", "right continuation", 7),
-      message("left-end", "left", "user", "last saved left continuation", 4),
-    ]);
-    expect(projection.latestContinuation("left")).toBe("left-end");
-    expect(projection.latestContinuation("right")).toBe("right-end");
-    expect(projection.latestContinuation("right-end")).toBe("right-end");
-    expect(projection.latestContinuation("root")).toBe("left-end");
-    expect(projection.latestContinuation(null)).toBe("left-end");
-    expect(projection.latestContinuation("missing")).toBe("missing");
   });
 
   it("does not turn an unknown parent outcome into success when projecting failed child receipts", () => {
@@ -215,9 +193,7 @@ describe("SessionProjection framing and last-good state", () => {
         ),
         message("answer", "mixed-input", "assistant", "Answer", 2),
       ],
-      "session-a",
-      undefined,
-      (file) => (file === reference ? name : null),
+      { fileNameForPath: (file) => (file === reference ? name : null) },
     );
     const page = projection.latestPage();
     const projected = page.messages[0];
@@ -269,183 +245,84 @@ describe("SessionProjection framing and last-good state", () => {
     expect(await readFile(path, "utf8")).toBe(bytes);
   });
 
-  it("invalidates composer history on user append, branch change, and same-ID rewrite", async () => {
-    const first = message("u1", null, "user", "first", 1);
-    const { path, projection } = await fixture([first]);
-    const original = projection.latestPage().composerHistoryVersion;
-    const second = message("u2", "u1", "user", "second", 2);
-    await appendFile(path, `${JSON.stringify(second)}\n`);
-    await projection.reconcile(true);
-    const appended = projection.latestPage().composerHistoryVersion;
-    expect(appended).not.toBe(original);
-    expect(
-      projection.historyPage({ kind: "composer" }).composerHistoryVersion,
-    ).toBe(appended);
-    expect(projection.latestPage([], "u1").composerHistoryVersion).toBe(
-      original,
-    );
-
-    const branch = message("u3", "u1", "user", "alternate", 3);
-    await appendFile(path, `${JSON.stringify(branch)}\n`);
-    await projection.reconcile(true);
-    const branched = projection.latestPage().composerHistoryVersion;
-    expect(branched).not.toBe(appended);
-    expect(
-      projection
-        .historyPage({ kind: "composer" })
-        .entries.map((entry) => entry.text),
-    ).toEqual(["alternate", "first"]);
-
-    await writeFile(
-      path,
-      jsonl(
-        header(),
-        { ...first, message: { ...first.message, content: "rewritten" } },
-        second,
-        branch,
-      ),
-    );
-    await projection.reconcile(true);
-    expect(projection.latestPage().composerHistoryVersion).not.toBe(branched);
-    expect(projection.latestPage([], "u1").composerHistoryVersion).not.toBe(
-      original,
-    );
-    expect(
-      projection
-        .historyPage({ kind: "composer" })
-        .entries.map((entry) => entry.text),
-    ).toEqual(["alternate", "rewritten"]);
-  });
-
-  it("accepts only working-directory aliases for the catalogued project", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "inspire-projection-cwd-"));
-    directories.push(directory);
+  it("attests a pending native file through its first complete append and checks its project identity", async () => {
+    const { directory, path, record } = await sessionFile();
     const alias = join(directory, "alias");
     const other = join(directory, "other");
     await mkdir(other);
     await symlink(directory, alias, "junction");
-    const path = join(directory, "session.jsonl");
-    await writeFile(
-      path,
-      `${JSON.stringify({ ...header(), cwd: directory })}\n`,
-    );
-    const record: SessionRecord = {
-      id: "session-a",
-      path,
-      source: null,
-      cwd: alias,
-      created: new Date(),
-      modified: new Date(),
-      messageCount: 0,
-      firstMessage: "",
-    };
-
-    const projection = await SessionProjection.openPending(record);
-    expect(projection.attestInitialMaterialization([])).toBe("complete");
-    await projection.close();
-    await expect(
-      SessionProjection.openPending({ ...record, cwd: other }),
-    ).rejects.toMatchObject({ status: 409 });
-  });
-
-  it("permits an absent session file only while a new session materializes", async () => {
-    const directory = await mkdtemp(
-      join(tmpdir(), "inspire-pending-projection-"),
-    );
-    directories.push(directory);
-    const path = join(directory, "pending-session.jsonl");
-    const record: SessionRecord = {
-      id: "pending-session",
-      path,
-      source: null,
-      cwd: "/project",
-      created: new Date(),
-      modified: new Date(),
-      messageCount: 0,
-      firstMessage: "",
-    };
+    record.cwd = alias;
     await expect(SessionProjection.open(record)).rejects.toThrow(
       /ENOENT|no such file/i,
     );
     const projection = await SessionProjection.openPending(record);
+    projections.push(projection);
     await projection.suspendReconciliation();
-    try {
-      expect(projection).toMatchObject({
-        sourceIdentity: null,
-        health: { status: "ok" },
-      });
-      await expect(projection.reconcileSuspended(true)).resolves.toMatchObject({
-        changed: false,
-        sourceChanged: false,
-      });
+    await expect(projection.reconcileSuspended(true)).resolves.toMatchObject({
+      changed: false,
+      sourceChanged: false,
+      health: { status: "ok" },
+    });
+    expect(projection.sourceIdentity).toBeNull();
 
-      const firstHeader = JSON.stringify(header(record.id));
-      await writeFile(path, firstHeader.slice(0, -1));
-      await expect(projection.reconcileSuspended(true)).resolves.toMatchObject({
-        changed: false,
-        sourceChanged: true,
-        committedBytes: 0,
-        uncommittedBytes: Buffer.byteLength(firstHeader) - 1,
-        health: { status: "pending" },
-      });
-      expect(projection.attestInitialMaterialization([])).toBe("partial");
+    const firstHeader = JSON.stringify({ ...header(), cwd: directory });
+    await writeFile(path, firstHeader.slice(0, -1));
+    await expect(projection.reconcileSuspended(true)).resolves.toMatchObject({
+      changed: false,
+      sourceChanged: true,
+      committedBytes: 0,
+      uncommittedBytes: Buffer.byteLength(firstHeader) - 1,
+      health: { status: "pending" },
+    });
+    expect(projection.attestInitialMaterialization([])).toBe("partial");
 
-      const entries = [
+    const entries = (
+      [
         {
           type: "model_change",
-          id: "model-1",
+          id: "model",
           parentId: null,
-          timestamp: "2026-08-01T00:00:01.000Z",
           provider: "test",
           modelId: "model",
         },
         {
           type: "thinking_level_change",
-          id: "thinking-1",
-          parentId: "model-1",
-          timestamp: "2026-08-01T00:00:02.000Z",
+          id: "thinking",
+          parentId: "model",
           thinkingLevel: "medium",
         },
-      ] as const;
-      await appendFile(
-        path,
-        `${firstHeader.slice(-1)}\n${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
-      );
-      await expect(projection.reconcileSuspended(true)).resolves.toMatchObject({
-        changed: true,
-        kind: "append",
-        previousTailVerified: true,
-        uncommittedBytes: 0,
-        health: { status: "ok" },
-      });
-      expect(projection.attestInitialMaterialization(entries)).toBe("complete");
-    } finally {
-      projection.resumeReconciliation();
-      await projection.close();
-    }
+      ] as const
+    ).map((entry) => ({ ...entry, timestamp: new Date(1).toISOString() }));
+    await appendFile(path, firstHeader.slice(-1) + "\n" + jsonl(...entries));
+    await expect(projection.reconcileSuspended(true)).resolves.toMatchObject({
+      changed: true,
+      kind: "append",
+      previousTailVerified: true,
+      uncommittedBytes: 0,
+      health: { status: "ok" },
+    });
+    expect(projection.attestInitialMaterialization(entries)).toBe("complete");
+    await expect(
+      SessionProjection.openPending({ ...record, cwd: other }),
+    ).rejects.toMatchObject({ status: 409 });
   });
 
-  it("uses transcript-specific projection budgets with the shared sensitive-key policy", () => {
-    const projected = boundedTranscriptValue({
-      authorization: "secret",
-      nested: { token: "secret", text: "x".repeat(70_000) },
-    }) as Record<string, unknown>;
-    expect(projected.authorization).toBe("[redacted]");
-    expect((projected.nested as Record<string, unknown>).token).toBe(
-      "[redacted]",
-    );
-    expect(String((projected.nested as Record<string, unknown>).text)).toMatch(
-      /truncated/,
-    );
-  });
-
-  it("retains message identity and outcome under object and content budgets", () => {
+  it("redacts nested credentials and retains identity and outcome under transcript budgets", () => {
     const dense = Object.fromEntries(
       Array.from({ length: 300 }, (_, index) => [
         `field-${index}`,
         "x".repeat(4_000),
       ]),
     );
+    expect(
+      boundedTranscriptValue({
+        authorization: "secret",
+        nested: { token: "secret", text: "x".repeat(70_000) },
+      }),
+    ).toMatchObject({
+      authorization: "[redacted]",
+      nested: { token: "[redacted]", text: expect.stringMatching(/truncated/) },
+    });
     const identity = {
       __inspireMessageId: "entry-id:0",
       __inspireEntryId: "entry-id",
@@ -495,152 +372,87 @@ describe("SessionProjection framing and last-good state", () => {
     }
   });
 
-  it("withholds a split UTF-8 line and verifies its completed tail when LF arrives", async () => {
+  it("admits a split UTF-8 frame only on completion, and detects later unresolved tail loss", async () => {
     const { path, projection } = await fixture([
       message("u1", null, "user", "good", 1),
     ]);
-    const revision = projection.revision;
-    const sourceVersion = projection.sourceVersion;
+    await projection.suspendReconciliation();
+    const reconcile = () => projection.reconcileSuspended(true);
+    const { revision, sourceVersion } = projection;
     const text = "完整";
-    const next = Buffer.from(
-      JSON.stringify(message("a1", "u1", "assistant", text, 2)),
-    );
-    const splitAt = next.indexOf(Buffer.from(text)) + 1;
-    await appendFile(path, next.subarray(0, splitAt));
-    const partial = await projection.reconcile(true);
-    expect(partial).toMatchObject({
+    const bytes = Buffer.from(jsonl(message("a1", "u1", "assistant", text, 2)));
+    const split = bytes.indexOf(Buffer.from(text)) + 1;
+    await appendFile(path, bytes.subarray(0, split));
+    await expect(reconcile()).resolves.toMatchObject({
       changed: false,
       sourceChanged: true,
       previousUncommittedBytes: 0,
-      uncommittedBytes: splitAt,
+      uncommittedBytes: split,
     });
     expect(projection.revision).toBe(revision);
     expect(projection.sourceVersion).not.toBe(sourceVersion);
     expect(projection.messages).toHaveLength(1);
-
-    await appendFile(
-      path,
-      Buffer.concat([next.subarray(splitAt), Buffer.from("\n")]),
-    );
-    await expect(projection.reconcile(true)).resolves.toMatchObject({
+    await appendFile(path, bytes.subarray(split));
+    await expect(reconcile()).resolves.toMatchObject({
       changed: true,
       kind: "append",
       uncommittedBytes: 0,
       previousTailVerified: true,
     });
     expect(projection.messages.at(-1)).toMatchObject({ content: text });
-  });
+    const committed = await readFile(path);
 
-  it("surfaces truncation or replacement of an unresolved tail instead of treating it as completion", async () => {
-    const { path, projection } = await fixture([
-      message("u1", null, "user", "good", 1),
-    ]);
-    await projection.suspendReconciliation();
-    try {
-      const committed = projection.committedBytes;
-      await appendFile(path, '{"type":"message"');
-      await projection.reconcileSuspended(true);
-      expect(projection.uncommittedBytes).toBeGreaterThan(0);
-
-      await truncate(path, committed);
-      const truncated = await projection.reconcileSuspended(true);
-      expect(truncated).toMatchObject({
+    for (const tail of ["", "partial-b"]) {
+      await appendFile(path, "partial-a");
+      await expect(reconcile()).resolves.toMatchObject({ uncommittedBytes: 9 });
+      if (tail)
+        await writeFile(path, Buffer.concat([committed, Buffer.from(tail)]));
+      else await truncate(path, committed.length);
+      await expect(reconcile()).resolves.toMatchObject({
         changed: false,
         sourceChanged: true,
-        uncommittedBytes: 0,
+        uncommittedBytes: tail.length,
         previousTailVerified: false,
       });
-
-      await appendFile(path, "partial-a");
-      await projection.reconcileSuspended(true);
-      await writeFile(
-        path,
-        `${(await readFile(path)).subarray(0, committed).toString()}partial-b`,
-      );
-      const rewritten = await projection.reconcileSuspended(true);
-      expect(rewritten).toMatchObject({
-        sourceChanged: true,
-        previousTailVerified: false,
-      });
-    } finally {
-      projection.resumeReconciliation();
-      await projection.close();
-    }
-  });
-
-  it("drains an active file read on close and rejects its queued successor", async () => {
-    const entered = deferredSignal();
-    const release = deferredSignal();
-    let pause = false;
-    const { path, projection } = await fixture(
-      [message("u1", null, "user", "good", 1)],
-      "session-a",
-      {
-        async afterFullReadChunk() {
-          if (!pause) return;
-          pause = false;
-          entered.resolve();
-          await release.promise;
-        },
-      },
-    );
-    await projection.suspendReconciliation();
-    try {
-      await writeFile(
-        path,
-        jsonl(header(), message("u1", null, "user", "edited", 1)),
-      );
-      pause = true;
-      const reading = projection.reconcileSuspended(true);
-      await entered.promise;
-      const rejected = expect(
-        projection.reconcileSuspended(true),
-      ).rejects.toThrow(/closed/);
-      let closed = false;
-      const closing = projection.close().then(() => {
-        closed = true;
-      });
-      await new Promise<void>((resolve) => setImmediate(resolve));
-      expect(closed).toBe(false);
-      release.resolve();
-      await Promise.all([reading, closing, rejected]);
-    } finally {
-      release.resolve();
-      await projection.close();
+      await truncate(path, committed.length);
+      await reconcile();
     }
   });
 
   // This intentionally streams a 32 MiB + 1 byte adversarial entry. It has
   // no external dependency, but may legitimately exceed Vitest's 5s default
   // when the full server suite is CPU- and I/O-contended in CI.
-  it("keeps the last good projection when bad bytes or entry identities reach disk", async () => {
-    const { path, projection } = await fixture([
-      message("u1", null, "user", "good", 1),
-    ]);
-    const revision = projection.revision;
-    await appendFile(path, "{malformed}\n");
-    await projection.reconcile(true);
-    expect(projection.health).toMatchObject({
-      status: "error",
-      message: expect.stringMatching(/malformed/),
+  it("keeps the last good projection through I/O failure, invalid JSONL, and invalid graph identities", async () => {
+    const good = message("u1", null, "user", "good", 1);
+    const { path, projection } = await fixture([good]);
+    await projection.suspendReconciliation();
+    const { revision, messages } = projection;
+    const unchanged = async (error: RegExp) => {
+      await expect(projection.reconcileSuspended(true)).resolves.toMatchObject({
+        changed: false,
+        health: { status: "error", message: expect.stringMatching(error) },
+      });
+      expect(projection.revision).toBe(revision);
+      expect(projection.messages).toEqual(messages);
+    };
+    vi.mocked(open).mockRejectedValueOnce(new Error("temporary read failure"));
+    await unchanged(/temporary read failure/);
+    await expect(projection.reconcileSuspended()).resolves.toMatchObject({
+      changed: false,
+      healthChanged: true,
+      health: { status: "ok" },
     });
-    expect(projection.revision).toBe(revision);
-    expect(projection.messages).toMatchObject([
-      { role: "user", content: "good" },
-    ]);
 
-    const replacements = [
+    await appendFile(path, "{malformed}\n");
+    await unchanged(/malformed/);
+    for (const [bytes, error] of [
       [
-        `${jsonl(header())}${"x".repeat(MAX_PERSISTED_ENTRY_BYTES + 1)}\n`,
+        jsonl(header()) + "x".repeat(MAX_PERSISTED_ENTRY_BYTES + 1) + "\n",
         /exceeds/,
       ],
       [jsonl(header("another-session")), /another session/],
       [
-        jsonl(
-          header(),
-          message("u1", null, "user", "first", 1),
-          message("u1", "u1", "assistant", "duplicate", 2),
-        ),
+        jsonl(header(), good, message("u1", "u1", "assistant", "duplicate", 2)),
         /duplicate entry/i,
       ],
       [
@@ -650,31 +462,22 @@ describe("SessionProjection framing and last-good state", () => {
       [
         jsonl(
           header(),
-          message("u1", "u2", "user", "cycle one", 1),
-          message("u2", "u1", "assistant", "cycle two", 2),
+          message("u1", "u2", "user", "cycle", 1),
+          message("u2", "u1", "assistant", "cycle", 2),
         ),
         /missing or forward parent/i,
       ],
-    ] as const;
-    for (const [bytes, error] of replacements) {
+    ] as const) {
       await writeFile(path, bytes);
-      await projection.reconcile(true);
-      expect(projection.health).toMatchObject({
-        status: "error",
-        message: expect.stringMatching(error),
-      });
-      expect(projection.revision).toBe(revision);
-      expect(projection.messages).toMatchObject([
-        { role: "user", content: "good" },
-      ]);
+      await unchanged(error);
     }
-
     await writeFile(
       path,
       jsonl(header(), message("u1", null, "user", "repaired", 1)),
     );
-    await projection.reconcile(true);
-    expect(projection.health.status).toBe("ok");
+    await expect(projection.reconcileSuspended()).resolves.toMatchObject({
+      health: { status: "ok" },
+    });
     expect(projection.messages).toMatchObject([
       { role: "user", content: "repaired" },
     ]);
@@ -682,119 +485,72 @@ describe("SessionProjection framing and last-good state", () => {
 });
 
 describe("SessionProjection replacement and Pi context semantics", () => {
-  it("keeps the verified linear suffix projection equivalent to a fresh Pi context build", async () => {
+  it("builds incremental context from a verified suffix exactly as a fresh Pi read would", async () => {
     const { path, record, projection } = await fixture([
       message("s1", null, "system", "host-only startup", 0),
       message("u1", "s1", "user", "one", 1),
     ]);
     const prefix = projection.messages[0];
-    let fresh: SessionProjection | null = null;
-    try {
-      expect(projection.viewMessages("s1")).toEqual([]);
-      const appended = [
-        {
-          type: "session_info",
-          id: "info",
-          parentId: "u1",
-          timestamp: "2026-08-01T00:00:02.000Z",
-          name: "Named",
-        },
-        {
-          type: "model_change",
-          id: "model",
-          parentId: "info",
-          timestamp: "2026-08-01T00:00:03.000Z",
-          provider: "test-provider",
-          modelId: "test-model",
-        },
-        {
-          type: "thinking_level_change",
-          id: "thinking",
-          parentId: "model",
-          timestamp: "2026-08-01T00:00:04.000Z",
-          thinkingLevel: "high",
-        },
-        {
-          type: "custom_message",
-          id: "custom",
-          parentId: "thinking",
-          timestamp: "2026-08-01T00:00:05.000Z",
-          customType: "notice",
-          content: "custom context",
-          display: true,
-        },
-        {
-          type: "branch_summary",
-          id: "summary",
-          parentId: "custom",
-          timestamp: "2026-08-01T00:00:06.000Z",
-          summary: "branch context",
-          fromId: "u1",
-        },
-        {
-          ...message("a1", "summary", "assistant", "two", 7),
-          message: {
-            role: "assistant",
-            content: "two",
-            timestamp: 7,
-            provider: "answer-provider",
-            model: "answer-model",
-          },
-        },
+    expect(projection.viewMessages("s1")).toEqual([]);
+    const entries = [
+      { type: "session_info", id: "info", parentId: "u1", name: "Named" },
+      {
+        type: "model_change",
+        id: "model",
+        parentId: "info",
+        provider: "test-provider",
+        modelId: "test-model",
+      },
+      {
+        type: "thinking_level_change",
+        id: "thinking",
+        parentId: "model",
+        thinkingLevel: "high",
+      },
+      {
+        type: "custom_message",
+        id: "custom",
+        parentId: "thinking",
+        customType: "notice",
+        content: "custom context",
+        display: true,
+      },
+      {
+        type: "branch_summary",
+        id: "summary",
+        parentId: "custom",
+        fromId: "u1",
+        summary: "branch context",
+      },
+    ].map((entry, index) => ({
+      ...entry,
+      timestamp: new Date(index + 2).toISOString(),
+    }));
+    await appendFile(
+      path,
+      jsonl(
+        ...entries,
+        message("a1", "summary", "assistant", "two", 7, {
+          provider: "answer-provider",
+          model: "answer-model",
+        }),
         message("s2", "a1", "system", "host-only update", 8),
-      ];
-      await appendFile(
-        path,
-        `${appended.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
-      );
-      expect(await projection.reconcile(true)).toMatchObject({
-        kind: "append",
-        messageChange: "append",
-      });
-
-      expect(projection.messages[0]).toBe(prefix);
-      expect(projection.leafId).toBe("s2");
-      expect(projection.viewMessages("s2")).toEqual(projection.messages);
-      expect(JSON.stringify(projection.latestPage())).not.toContain(
-        "host-only",
-      );
-      fresh = await SessionProjection.open(record);
-      expect(projection.messages).toEqual(fresh.messages);
-      expect(projection.model).toEqual(fresh.model);
-      expect(projection.thinkingLevel).toBe(fresh.thinkingLevel);
-    } finally {
-      await fresh?.close();
-      await projection.close();
-    }
-  });
-
-  it("recovers a healthy projection on the next ordinary read after a verification failure", async () => {
-    const { projection } = await fixture([
-      message("u1", null, "user", "one", 1),
-    ]);
-    await projection.suspendReconciliation();
-    try {
-      await expect(projection.reconcileSuspended(true)).resolves.toMatchObject({
-        changed: false,
-        sourceChanged: false,
-        health: { status: "ok" },
-      });
-
-      vi.mocked(open).mockRejectedValueOnce(
-        new Error("temporary read failure"),
-      );
-      await expect(projection.reconcileSuspended(true)).resolves.toMatchObject({
-        health: { status: "error" },
-      });
-      await expect(projection.reconcileSuspended()).resolves.toMatchObject({
-        changed: false,
-        healthChanged: true,
-        health: { status: "ok" },
-      });
-    } finally {
-      projection.resumeReconciliation();
-      await projection.close();
-    }
+      ),
+    );
+    await expect(projection.reconcile(true)).resolves.toMatchObject({
+      kind: "append",
+      messageChange: "append",
+    });
+    expect(projection.messages[0]).toBe(prefix);
+    expect(projection.leafId).toBe("s2");
+    expect(projection.viewMessages("s2")).toEqual(projection.messages);
+    expect(JSON.stringify(projection.latestPage())).not.toContain("host-only");
+    const fresh = await openProjection(record);
+    expect(projection).toMatchObject({
+      messages: fresh.messages,
+      model: fresh.model,
+      thinkingLevel: fresh.thinkingLevel,
+    });
   });
 
   it.skipIf(process.platform === "win32")(
@@ -820,50 +576,78 @@ describe("SessionProjection replacement and Pi context semantics", () => {
     },
   );
 
-  it("publishes coherent bytes when a streamed read races a same-size rewrite", async () => {
-    const entered = deferredSignal();
-    const release = deferredSignal();
-    let pause = false;
+  it("publishes a coherent same-size rewrite, then drains an active read and rejects its successor on close", async () => {
+    let pause: (() => Promise<void>) | undefined;
     const size = 256 * 1024;
-    const entry = (text: string) => message("u1", null, "user", text, 1);
-    const { path, projection } = await fixture(
-      [entry("A".repeat(size))],
-      "session-a",
-      {
+    const entry = (character: string) =>
+      message("u1", null, "user", character.repeat(size), 1);
+    const { path, projection } = await fixture([entry("A")], {
+      readHooks: {
         async afterFullReadChunk() {
-          if (!pause) return;
-          pause = false;
-          entered.resolve();
-          await release.promise;
+          const wait = pause;
+          pause = undefined;
+          await wait?.();
         },
       },
-    );
+    });
     await projection.suspendReconciliation();
+    const holdRead = () => {
+      const entered = deferredSignal();
+      const release = deferredSignal();
+      pause = () => {
+        entered.resolve();
+        return release.promise;
+      };
+      return { entered: entered.promise, release: release.resolve };
+    };
+    const rewrite = async (character: string) =>
+      writeFile(path, jsonl(header(), entry(character)));
+
+    const before = await stat(path);
+    await rewrite("B");
+    await utimes(path, before.atime, before.mtime);
+    const racing = holdRead();
+    const reconciling = projection.reconcileSuspended();
     try {
-      const before = await stat(path);
-      await writeFile(path, jsonl(header(), entry("B".repeat(size))));
-      await utimes(path, before.atime, before.mtime);
-      pause = true;
-      const reconciling = projection.reconcileSuspended();
-      await entered.promise;
-      const content = "C".repeat(size);
-      await writeFile(path, jsonl(header(), entry(content)));
-      release.resolve();
-      await expect(reconciling).resolves.toMatchObject({
-        kind: "rewrite",
-        health: { status: "ok" },
-      });
-      expect(projection.messages[0]).toMatchObject({ content });
-      await truncate(path, Buffer.byteLength(jsonl(header())));
-      await expect(projection.reconcileSuspended()).resolves.toMatchObject({
-        kind: "rewrite",
-        changed: true,
-      });
-      expect(projection.messages).toEqual([]);
+      await racing.entered;
+      await rewrite("C");
     } finally {
-      release.resolve();
-      projection.resumeReconciliation();
-      await projection.close();
+      racing.release();
+    }
+    await expect(reconciling).resolves.toMatchObject({
+      kind: "rewrite",
+      health: { status: "ok" },
+    });
+    expect(projection.messages[0]).toMatchObject({ content: "C".repeat(size) });
+    await truncate(path, Buffer.byteLength(jsonl(header())));
+    await expect(projection.reconcileSuspended()).resolves.toMatchObject({
+      kind: "rewrite",
+      changed: true,
+    });
+    expect(projection.messages).toEqual([]);
+
+    // Rewriting the committed header forces a full read for the close fence.
+    await writeFile(
+      path,
+      jsonl({ ...header(), timestamp: new Date(1).toISOString() }, entry("D")),
+    );
+    const held = holdRead();
+    const reading = projection.reconcileSuspended(true);
+    try {
+      await held.entered;
+      const queued = expect(
+        projection.reconcileSuspended(true),
+      ).rejects.toThrow(/closed/);
+      let closed = false;
+      const closing = projection.close().then(() => {
+        closed = true;
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(closed).toBe(false);
+      held.release();
+      await Promise.all([reading, closing, queued]);
+    } finally {
+      held.release();
     }
   });
 });
@@ -884,7 +668,7 @@ describe("SessionProjection bounded paging", () => {
         },
       ),
     );
-    const { record, projection: initial } = await fixture([
+    const { projection } = await fixture([
       message("user", null, "user", "Read", 1),
       message(
         "call",
@@ -920,8 +704,6 @@ describe("SessionProjection bounded paging", () => {
       }),
       ...lines,
     ]);
-    await initial.close();
-    const projection = await openProjection(record);
     let page = projection.historyPage({ kind: "page" });
     const firstRevision = page.revision;
     const received: string[] = [];
@@ -966,8 +748,8 @@ describe("SessionProjection bounded paging", () => {
     });
   }, 30_000);
 
-  it("keeps a native cursor pinned through appends and compaction, then rejects replaced sources", async () => {
-    const lines = Array.from({ length: 22 }, (_, index) =>
+  it("keeps native History pinned across two compactions and branch appends, then rejects a replaced file", async () => {
+    const entries = Array.from({ length: 20 }, (_, index) =>
       message(
         `u${index}`,
         index ? `u${index - 1}` : null,
@@ -976,59 +758,30 @@ describe("SessionProjection bounded paging", () => {
         index + 1,
       ),
     );
-    const { directory, path, projection } = await fixture(lines);
-    const latest = projection.historyPage(
-      { kind: "page" },
-      projection.leafId,
-      "view-a",
+    const { directory, path, record, projection } = await fixture(entries);
+    const append = async (...lines: unknown[]) => {
+      await appendFile(path, jsonl(...lines));
+      await projection.reconcile(true);
+    };
+    const ids = (rows: readonly unknown[]) =>
+      rows.map((row) => (row as { __inspireEntryId: string }).__inspireEntryId);
+    const cursorPage = (
+      cursor?: string,
+      leaf = projection.leafId,
+      view = "view-a",
+    ) => projection.historyPage({ kind: "page", cursor }, leaf, view);
+    const latest = cursorPage();
+    expect(latest.earlier).not.toBeNull();
+    const cursor = latest.earlier!;
+    const older = cursorPage(cursor);
+    expect(() => cursorPage(cursor, projection.leafId, "view-b")).toThrow(
+      /another branch view/,
     );
-    const query = { kind: "page", cursor: latest.earlier! } as const;
-    const older = projection.historyPage(query, projection.leafId, "view-a");
-    expect(() =>
-      projection.historyPage(query, projection.leafId, "view-b"),
-    ).toThrow(/another branch view/);
-    await appendFile(
-      path,
-      jsonl({
-        type: "compaction",
-        id: "compact",
-        parentId: "u21",
-        firstKeptEntryId: "u18",
-        summary: "Summary",
-        tokensBefore: 1000,
-        timestamp: "2026-08-01T00:03:00.000Z",
-      }),
-    );
-    await projection.reconcile(true);
-    const after = projection.historyPage(query, projection.leafId, "view-a");
-    expect(after.messages).toEqual(older.messages);
-    expect(after.leafId).toBe(latest.leafId);
-    const replacement = join(directory, "replacement.jsonl");
-    await writeFile(replacement, await readFile(path));
-    await rename(replacement, path);
-    await expect(projection.reconcile(true)).resolves.toMatchObject({
-      kind: "rewrite",
-      changed: false,
-      sourceChanged: true,
-    });
-    expect(() =>
-      projection.historyPage(query, projection.leafId, "view-a"),
-    ).toThrow(/stale/);
-  });
-});
+    expect(() => cursorPage(cursor, "u18")).toThrow(/selected branch/);
+    const tampered = (cursor.startsWith("A") ? "B" : "A") + cursor.slice(1);
+    expect(() => cursorPage(tampered)).toThrow(/cursor/i);
+    const version = projection.latestPage().composerHistoryVersion;
 
-describe("chronological compaction projection", () => {
-  it("keeps live, reopened, repeated and earlier-branch views in persisted order", async () => {
-    const { path, record, projection } = await fixture([
-      message("u1", null, "user", "old", 1),
-      message("a1", "u1", "assistant", "old answer", 2),
-      message("u2", "a1", "user", "retained", 3),
-      message("a2", "u2", "assistant", "retained answer", 4),
-    ]);
-    const ids = (messages: readonly unknown[]) =>
-      messages.map(
-        (value) => (value as { __inspireEntryId: string }).__inspireEntryId,
-      );
     const compact = (
       id: string,
       parentId: string,
@@ -1038,67 +791,103 @@ describe("chronological compaction projection", () => {
       id,
       parentId,
       firstKeptEntryId,
-      // Deliberately earlier than the retained messages: never sort timestamps.
       timestamp: new Date(0).toISOString(),
       summary: id,
       tokensBefore: 1000,
       details: { source: "magic-context", lastCompactedOrdinal: 2 },
       systemMessage: {
         role: "system",
-        content: "host-only compaction checkpoint",
+        content: "host-only checkpoint",
         toolsAdded: [],
         timestamp: 0,
       },
     });
-    await appendFile(path, jsonl(compact("c1", "a2", "u2")));
-    await projection.reconcile(true);
-    expect(ids(projection.messages)).toEqual(["u2", "a2", "c1"]);
-    await appendFile(
-      path,
-      jsonl(
-        message("u3", "c1", "user", "after compaction", 5),
-        message("a3", "u3", "assistant", "new answer", 6),
-      ),
+    await append(compact("c1", "u19", "u18"));
+    expect(ids(projection.messages)).toEqual(["u18", "u19", "c1"]);
+    expect(projection.latestPage().composerHistoryVersion).toBe(version);
+    expect(cursorPage(cursor)).toMatchObject({
+      leafId: latest.leafId,
+      messages: older.messages,
+    });
+
+    await append(message("follow", "c1", "user", "After compaction", 21));
+    const following = projection.latestPage().composerHistoryVersion;
+    expect(following).not.toBe(version);
+    expect(
+      projection.historyPage({ kind: "composer" }).composerHistoryVersion,
+    ).toBe(following);
+    expect(projection.latestPage([], "c1").composerHistoryVersion).toBe(
+      version,
     );
-    await projection.reconcile(true);
-    expect(ids(projection.messages)).toEqual(["u2", "a2", "c1", "u3", "a3"]);
     const reopened = await openProjection(record);
-    expect(ids(reopened.messages)).toEqual(ids(projection.messages));
+    expect(reopened.messages).toEqual(projection.messages);
     expect(reopened.messages[2]).toMatchObject({
       role: "compactionSummary",
       __inspireCompactionSource: "magic-context",
       tokensBefore: 1000,
     });
     expect(reopened.messages[2]).not.toHaveProperty("details");
-    await appendFile(path, jsonl(compact("c2", "a3", "u3")));
-    await projection.reconcile(true);
-    expect(ids(projection.messages)).toEqual(["u3", "a3", "c2"]);
-    expect(ids(projection.viewMessages("a3"))).toEqual([
-      "u2",
-      "a2",
+    expect(() =>
+      reopened.historyPage({ kind: "page", cursor }, reopened.leafId, "view-a"),
+    ).toThrow(/expired projection incarnation/);
+
+    await append(compact("c2", "follow", "follow"));
+    expect(ids(projection.messages)).toEqual(["follow", "c2"]);
+    expect(ids(projection.viewMessages("follow"))).toEqual([
+      "u18",
+      "u19",
       "c1",
-      "u3",
-      "a3",
+      "follow",
     ]);
-    const before = await readFile(path, "utf8");
-    const branch = jsonl(
-      message(
-        "tool",
-        "a1",
-        "assistant",
-        [{ type: "toolCall", id: "call", name: "read", arguments: {} }],
-        7,
-      ),
-      message("result", "tool", "toolResult", "tool output", 8, {
-        toolCallId: "call",
-      }),
+    const beforeBranch = await readFile(path, "utf8");
+    const branches = [
+      message("left", "u18", "assistant", "Side reply", 26),
+      message("right", "u18", "assistant", "Other reply", 27),
+      message("left-first", "left", "user", "First left", 30),
+      message("right-end", "right", "user", "Right end", 31),
+      message("left-end", "left", "user", "Left end", 28),
+    ];
+    await append(...branches);
+    expect(ids(projection.messages)).toEqual([
+      ...entries.slice(0, 19).map(({ id }) => id),
+      "left",
+      "left-end",
+    ]);
+    for (const [from, tip] of [
+      ["left", "left-end"],
+      ["right", "right-end"],
+      ["right-end", "right-end"],
+      ["u18", "left-end"],
+      [null, "left-end"],
+      ["missing", "missing"],
+    ] as const) {
+      expect(projection.latestContinuation(from)).toBe(tip);
+    }
+    expect(() => cursorPage(cursor)).toThrow(/selected branch/);
+    expect(cursorPage(cursor, "c2").messages).toEqual(older.messages);
+    const branched = projection.latestPage().composerHistoryVersion;
+    expect(branched).not.toBe(following);
+    expect(projection.historyPage({ kind: "composer" }).entries[0]?.text).toBe(
+      "Left end",
     );
-    await appendFile(path, branch);
-    await projection.reconcile(true);
-    expect(ids(projection.messages)).toEqual(["u1", "a1", "tool", "result"]);
-    expect(projection.messages.at(-1)).toMatchObject({
-      content: "tool output",
+    const beforeReplace = await readFile(path, "utf8");
+    expect(beforeReplace).toBe(beforeBranch + jsonl(...branches));
+
+    const replacement = join(directory, "replacement.jsonl");
+    await writeFile(replacement, beforeReplace);
+    await rename(replacement, path);
+    await expect(projection.reconcile(true)).resolves.toMatchObject({
+      kind: "rewrite",
+      changed: false,
+      sourceChanged: true,
     });
-    expect(await readFile(path, "utf8")).toBe(before + branch);
+    expect(() => cursorPage(cursor, "c2")).toThrow(/stale/);
+
+    await writeFile(path, beforeReplace.replace("Prompt 0", "Rewritten"));
+    await projection.reconcile(true);
+    expect(projection.latestPage().composerHistoryVersion).not.toBe(branched);
+    expect(
+      projection.historyPage({ kind: "composer" }).entries.at(-1)?.text,
+    ).toBe("Rewritten");
   });
 });

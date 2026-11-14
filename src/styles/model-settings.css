@@ -80,27 +80,6 @@
   padding: var(--space-2);
   border-top: 1px solid var(--hairline);
 }
-.models-auth .models-remove-credential {
-  min-height: var(--set-control-h);
-  padding: 0 var(--space-3);
-  color: var(--error-ink);
-  font: inherit;
-  font-size: var(--text-sm);
-  background: var(--bg-surface);
-  border: 1px solid var(--hairline-strong);
-  border-radius: var(--radius-control);
-  cursor: pointer;
-}
-.models-auth .models-remove-credential:hover:where(:not(:disabled)) {
-  text-decoration: underline;
-  background: transparent;
-}
-.models-auth .models-remove-credential:disabled {
-  background: var(--bg-inset);
-  border-color: var(--hairline);
-  color: var(--faint);
-  cursor: default;
-}
 .models-secret-input { display: flex; align-items: center; width: 100%; min-width: 0; gap: var(--space-1); }
 .models-secret-input input { flex: 1; }
 .models-capabilities { min-width: 0; padding: 0; margin: var(--space-4) 0; border: 0; }
@@ -165,7 +144,7 @@
   border-top: 1px solid var(--hairline);
   overflow-wrap: anywhere;
 }
-.models-detail code { color: var(--muted); }
+.models-detail code { display: block; color: var(--muted); }
 .models-choice { display: inline-flex; gap: var(--space-1); align-items: center; }
 .models-saved-entries { margin-top: var(--space-3); padding-inline: 14px; font-size: var(--text-sm); }
 .models-saved-entries summary { cursor: pointer; min-height: 36px; padding: var(--space-2) 0; }
@@ -183,14 +162,11 @@
 .models-form__optional .models-form__grid { margin-top: var(--space-2); }
 .models-form { flex: 1; min-height: 0; display: flex; flex-direction: column; margin: 0; }
 .models-form__wide { grid-column: 1 / -1; }
-.models-form label,
-.models-search,
-.models-login__input label { display: flex; flex-direction: column; gap: var(--space-1); font-size: var(--text-sm); color: var(--ink); }
+.models-form label { display: flex; flex-direction: column; gap: var(--space-1); font-size: var(--text-sm); color: var(--ink); }
 .models-settings input:where(:not([type=checkbox], [type=radio], .search-field input)),
-.models-auth input { box-sizing: border-box; min-width: 0; max-width: 100%; width: 100%; min-height: 36px; padding: var(--space-2) var(--space-3); border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg-control); color: var(--ink); font: inherit; font-size: var(--text-sm); }
+.models-auth input:not(.search-field input) { box-sizing: border-box; min-width: 0; max-width: 100%; width: 100%; min-height: 36px; padding: var(--space-2) var(--space-3); border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg-control); color: var(--ink); font: inherit; font-size: var(--text-sm); }
 .models-settings input:not(.search-field input):focus-visible,
-.models-auth input:focus-visible,
-.models-form input:focus-visible { outline: 2px solid var(--accent-focus); outline-offset: 1px; }
+.models-auth input:not(.search-field input):focus-visible { outline: 2px solid var(--accent-focus); outline-offset: 1px; }
 .models-form .native-select--field {
   width: 100%;
   min-width: 0;
@@ -204,7 +180,7 @@
 .models-confirm p { margin: 0 0 var(--space-3); }
 .models-status { font-size: var(--text-sm); color: var(--muted); overflow-wrap: anywhere; }
 .models-status[role=alert] { color: var(--error-ink); }
-.models-search { margin: 0 0 var(--space-2); }
+.models-auth > .search-field { margin-bottom: var(--space-2); }
 .models-auth__back { display: inline-flex; align-items: center; gap: var(--space-1); min-height: 36px; }
 .models-auth__providers { max-height: 180px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
 .models-auth__providers .picker__row { width: 100%; min-height: 36px; flex-wrap: wrap; overflow-wrap: anywhere; }
@@ -235,7 +211,7 @@
   .models-auth { padding: var(--space-3); }
   .models-settings .button,
   .models-auth .button,
-  .models-auth input,
+  .models-auth input:not(.search-field input),
   .models-form .native-select--field,
   .models-icon-button,
   .models-settings input:where(:not([type=checkbox], [type=radio], .search-field input)),

@@ -8,7 +8,7 @@ covers:
   - scripts/vite-pdf-assets.ts
   - server/current-web-build.mjs
   - src/controllers/{resource,git,workspace}-controller.ts
-  - src/components/{ContextPane,ContextTabStrip,ContextPaneState,FilesPane,FilePreview,PdfPreview,DocumentPreview,ChangesPane,WorkspaceBrowser,ResourcePathLabel,SearchMatchText,NotebookPreview,PaneResizeHandle,RichText,CodeView,Transcript,TablePreview,DocumentOutline,ReaderQuoteAction}.tsx
+  - src/components/{ContextPane,ContextTabStrip,ContextPaneState,FilesPane,FilePreview,PdfPreview,DocumentPreview,ChangesPane,WorkspaceBrowser,ResourcePathLabel,SearchMatchText,NotebookPreview,PaneResizeHandle,RichText,CodeView,Transcript,TablePreview,DocumentOutline,ReaderContents,ChoicePanel,ReaderQuoteAction}.tsx
   - src/components/context-pane-view.ts
   - src/App.tsx
   - src/styles.css
@@ -232,7 +232,8 @@ drops its possibly partial last record. A notice points to Source or Download fo
 
 Rendered Markdown and notebooks with at least three `h1`–`h3` headings add a **Contents** action to
 the toolbar. It lists the headings currently rendered, marks the one at the reading line, and
-scrolls only the reader's own scroller.
+scrolls only the reader's own scroller. Markdown, notebooks, and PDF share the anchored contents
+list, keyboard navigation, and focus restoration. Each reader resolves its own heading or page.
 
 Selecting text in a body reader (Source, Markdown, notebook, Table or PDF; not Git Changes or the
 HTML frame) shows one **Quote** control just below the selection. It appends a Markdown block quote

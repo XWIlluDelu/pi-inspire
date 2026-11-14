@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   branchEntryContent,
   branchEntryText,
-  branchNode,
+  branchRouteLabel,
   indexSessionEntries,
   sessionRoutes,
 } from "../../server/session-tree.js";
@@ -135,12 +135,6 @@ describe("saved history entries and branch routes", () => {
           timestamp: 1,
         },
       };
-      const node = branchNode(shell, false, true);
-      expect(node).toMatchObject({
-        role: "shell",
-        canEdit: false,
-        canFork: false,
-      });
       expect(branchEntryText(shell)).toContain(
         `${excludeFromContext ? "!!" : "!"}printf shell-marker`,
       );
@@ -164,7 +158,7 @@ describe("saved history entries and branch routes", () => {
         ],
       },
     );
-    expect(branchNode(mixed, true, true).snippet).toBe(
+    expect(branchRouteLabel(mixed)).toBe(
       "First block Thinking Thought process [Image: image/png] Last block",
     );
 
@@ -178,7 +172,7 @@ describe("saved history entries and branch routes", () => {
         ],
       },
     );
-    const preview = branchNode(entry, false, false).snippet;
+    const preview = branchRouteLabel(entry);
     expect(preview.startsWith("x")).toBe(true);
     expect(preview.length).toBeLessThanOrEqual(240);
   });
@@ -203,9 +197,7 @@ describe("saved history entries and branch routes", () => {
     const text = branchEntryText(entry);
     expect(text).toContain(output);
     expect(text).toContain("!echo ```");
-    expect(branchNode(entry, false, false).snippet.length).toBeLessThanOrEqual(
-      240,
-    );
+    expect(branchRouteLabel(entry).length).toBeLessThanOrEqual(240);
   });
 
   it("rejects oversized raw entry and parent identities with a small typed error that never echoes them", () => {

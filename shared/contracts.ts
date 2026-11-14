@@ -1036,31 +1036,6 @@ export interface ComposerHistoryPage {
   nextStart: number | null;
 }
 
-export type BranchNodeRole =
-  | "user"
-  | "assistant"
-  | "tool"
-  | "shell"
-  | "system"
-  | "metadata";
-
-export interface BranchTreeNode {
-  id: string;
-  parentId: string | null;
-  depth: number;
-  type: string;
-  role: BranchNodeRole;
-  label: string;
-  snippet: string;
-  timestamp: string;
-  active: boolean;
-  leaf: boolean;
-  canEdit: boolean;
-  canFork: boolean;
-  /** Complete native child count, independent of this page. */
-  childCount?: number;
-}
-
 export interface BranchImageRequest {
   sessionId: string;
   viewId: string;
@@ -1079,7 +1054,14 @@ export interface SavedShellDetails {
 export interface BranchEntryResponse {
   sessionId: string;
   revision: number;
-  node: BranchTreeNode;
+  node: {
+    id: string;
+    leaf: boolean;
+    childCount: number;
+    canEdit: boolean;
+    canFork: boolean;
+    toolResult: boolean;
+  };
   skipSummaryPrompt?: boolean;
   shell?: SavedShellDetails;
   text: string;

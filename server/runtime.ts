@@ -37,7 +37,6 @@ import {
   type HostNativeCommandResponse,
   isBusyRunState,
   type LiveTranscript,
-  MAX_PROJECT_FILES,
   MAX_PROMPT_CHARS,
   MAX_SESSION_ID_CHARS,
   type ModelOption,
@@ -105,10 +104,10 @@ import {
   newBridgeIdentity,
 } from "./runtime-branch-bridge.js";
 import {
-  assertPromptArtifactBudget,
+  preparePromptArtifacts,
   readComposerHistoryImages,
   resolveComposerHistoryArtifacts,
-  revalidateProjectFiles,
+  samePromptArtifacts,
 } from "./runtime-composer-artifacts.js";
 import { RuntimeEventController } from "./runtime-events.js";
 import { RuntimeExtensionUiController } from "./runtime-extension-ui.js";
@@ -191,6 +190,27 @@ const ATTACH_CONTROL_PATH = fileURLToPath(
 const MAX_DEFERRED_PROMPTS = 16;
 const MAINTENANCE_RESTART_LEASE_MS = 30_000;
 const ATTACHED_RESTART_CHECK_MS = 5_000;
+const STOP_GRACE_MS = 3_000;
+
+async function confirmInterruption(
+  completion: Promise<unknown>,
+  activity: string,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      completion,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`${activity} cancellation was not confirmed`)),
+          STOP_GRACE_MS,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 function finiteMetric(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) && value >= 0
@@ -277,9 +297,19 @@ export interface RuntimeWorkerStatus {
 }
 
 interface ForkReservation {
+  kind: "fork";
+  path: string;
   completion: Promise<void>;
   release(): void;
 }
+
+type DestinationReservation =
+  | ForkReservation
+  | {
+      kind: "open";
+      path: string;
+      completion: Promise<RuntimeSlot>;
+    };
 
 type OpenProjection = (
   session: SessionRecord,
@@ -310,11 +340,8 @@ export class RuntimeController extends EventEmitter {
     PiRpcProcess,
     RuntimeWorkerStatus
   >();
-  private readonly loadingSlots = new Map<string, Promise<RuntimeSlot>>();
-  private readonly loadingPaths = new Map<string, Promise<RuntimeSlot>>();
   private readonly selectionReservations = new Map<string, number>();
-  private readonly forkReservationsById = new Map<string, ForkReservation>();
-  private readonly forkReservationsByPath = new Map<string, ForkReservation>();
+  private readonly destinations = new Map<string, DestinationReservation>();
   private readonly unavailableCapabilityWarnings = new WeakMap<
     RuntimeSlot,
     Set<string>
@@ -560,12 +587,8 @@ export class RuntimeController extends EventEmitter {
           this.lastOpenedSessionId = null;
       },
       changing: (sessionId, path) =>
-        this.selectionReservations.has(sessionId) ||
-        this.loadingSlots.has(sessionId) ||
-        this.loadingPaths.has(path) ||
-        Boolean(this.provisionalReservation(sessionId, path)) ||
-        this.forkReservationsById.has(sessionId) ||
-        this.forkReservationsByPath.has(path),
+        this.isReserved(sessionId, path) ||
+        Boolean(this.provisionalReservation(sessionId, path)),
       slot: (sessionId) => this.slots.get(sessionId),
       removeSlot: (sessionId, expected) => {
         this.externalSessions?.detach(expected);
@@ -733,14 +756,8 @@ export class RuntimeController extends EventEmitter {
       isObserved: (sessionId) => this.sessionViewObservers.has(sessionId),
       isExternal: (slot) => this.externalSessions?.has(slot) === true,
       slots: () => this.slots.values(),
-      isLoading: (sessionId) => this.loadingSlots.has(sessionId),
-      hasSelectionReservation: (sessionId) =>
-        this.selectionReservations.has(sessionId),
-      hasForkReservation: (sessionId, sessionPath) =>
-        this.forkReservationsById.has(sessionId) ||
-        Boolean(
-          sessionPath && this.forkReservationsByPath.has(resolve(sessionPath)),
-        ),
+      isReserved: (slot) =>
+        this.isReserved(slot.id, slot.sessionPath ?? undefined),
       stopWorker: (slot) => this.stopWriter(slot),
       removeSlot: (slot) => {
         this.externalSessions?.detach(slot);
@@ -926,9 +943,8 @@ export class RuntimeController extends EventEmitter {
 
   private hasInFlightRuntimeOperation(): boolean {
     if (
-      this.loadingSlots.size > 0 ||
+      this.destinations.size > 0 ||
       this.selectionReservations.size > 0 ||
-      this.forkReservationsById.size > 0 ||
       this.provisionalSlots.size > 0 ||
       this.deletions.hasInFlight()
     )
@@ -1096,44 +1112,48 @@ export class RuntimeController extends EventEmitter {
     slot.viewId = bridgeToken("view");
   }
 
+  private destination(
+    id: string,
+    path?: string,
+    kind?: DestinationReservation["kind"],
+  ) {
+    const reservation = this.destinations.get(id);
+    if (reservation && (!kind || reservation.kind === kind)) return reservation;
+    if (path !== undefined)
+      for (const candidate of this.destinations.values())
+        if (candidate.path === path && (!kind || candidate.kind === kind))
+          return candidate;
+  }
+
+  private forkReservation(id: string, path?: string) {
+    return this.destination(id, path, "fork");
+  }
+
+  private isReserved(id: string, path?: string): boolean {
+    return (
+      this.selectionReservations.has(id) ||
+      Boolean(this.destination(id, path && resolve(path)))
+    );
+  }
+
   private reserveForkDestination(id: string, path: string): ForkReservation {
-    if (
-      this.forkReservationsById.has(id) ||
-      this.forkReservationsByPath.has(path) ||
-      this.loadingSlots.has(id) ||
-      this.loadingPaths.has(path)
-    ) {
+    if (this.destination(id, path)) {
       throw requestError("Fork destination is already being attached", 409);
     }
     const { promise: completion, resolve: settle } =
       Promise.withResolvers<void>();
-    let released = false;
     const reservation: ForkReservation = {
+      kind: "fork",
+      path,
       completion,
       release: () => {
-        if (released) return;
-        released = true;
-        if (this.forkReservationsById.get(id) === reservation)
-          this.forkReservationsById.delete(id);
-        if (this.forkReservationsByPath.get(path) === reservation)
-          this.forkReservationsByPath.delete(path);
+        if (this.destinations.get(id) === reservation)
+          this.destinations.delete(id);
         settle();
       },
     };
-    this.forkReservationsById.set(id, reservation);
-    this.forkReservationsByPath.set(path, reservation);
+    this.destinations.set(id, reservation);
     return reservation;
-  }
-
-  private async waitForForkReservation(session: SessionRecord): Promise<void> {
-    const path = resolve(session.path);
-    while (true) {
-      const reservation =
-        this.forkReservationsById.get(session.id) ??
-        this.forkReservationsByPath.get(path);
-      if (!reservation) return;
-      await reservation.completion;
-    }
   }
 
   private provisionalReservation(sessionId: string, path?: string) {
@@ -1147,17 +1167,6 @@ export class RuntimeController extends EventEmitter {
         // excluded as the owner of a newly discovered catalog record.
         (slot.stopping !== null && slot.sessionPath === null),
     );
-  }
-
-  private async waitForProvisionalReservation(
-    sessionId: string,
-    path: string,
-  ): Promise<void> {
-    while (true) {
-      const reservation = this.provisionalReservation(sessionId, path);
-      if (!reservation) return;
-      await (reservation.slot.stopping ?? reservation.completion);
-    }
   }
 
   private touch(slot: RuntimeSlot): void {
@@ -2241,27 +2250,22 @@ export class RuntimeController extends EventEmitter {
   }
 
   private async prepareSlot(session: SessionRecord): Promise<RuntimeSlot> {
-    this.assertNotClosing();
-    if (this.deletions.isDeleting(session.id)) {
-      throw requestError("That session is being deleted", 409);
-    }
     const path = resolve(session.path);
-    while (true) {
-      await this.waitForForkReservation(session);
-      await this.waitForProvisionalReservation(session.id, path);
-      const forkReserved =
-        this.forkReservationsById.has(session.id) ||
-        this.forkReservationsByPath.has(path);
-      const provisionalReserved = this.provisionalReservation(session.id, path);
-      if (!forkReserved && !provisionalReserved) break;
+    for (;;) {
+      this.assertNotClosing();
+      if (this.deletions.isDeleting(session.id))
+        throw requestError("That session is being deleted", 409);
+      const fork = this.forkReservation(session.id, path);
+      const provisional = this.provisionalReservation(session.id, path);
+      const pending =
+        fork?.completion ??
+        provisional?.slot.stopping ??
+        provisional?.completion ??
+        this.slots.get(session.id)?.stopping;
+      if (!pending) break;
+      await pending;
     }
-    this.assertNotClosing();
-    if (this.deletions.isDeleting(session.id)) {
-      throw requestError("That session is being deleted", 409);
-    }
-    let existing = this.slots.get(session.id);
-    if (existing?.stopping) await existing.stopping;
-    existing = this.slots.get(session.id);
+    const existing = this.slots.get(session.id);
     if (existing && (existing.projection || existing.process)) {
       if (existing.readOnlyReason === "workspace-unavailable") {
         const slot = existing;
@@ -2286,11 +2290,9 @@ export class RuntimeController extends EventEmitter {
         "Session path is already owned by another session",
         409,
       );
-    const pending = this.loadingSlots.get(session.id);
-    if (pending) return pending;
-    const pendingPath = this.loadingPaths.get(path);
-    if (pendingPath) {
-      const loaded = await pendingPath;
+    const pending = this.destination(session.id, path, "open");
+    if (pending?.kind === "open") {
+      const loaded = await pending.completion;
       if (loaded.id === session.id) return loaded;
       throw requestError(
         "Session path is already owned by another session",
@@ -2356,15 +2358,13 @@ export class RuntimeController extends EventEmitter {
       this.attachProjection(slot, projection);
       return slot;
     })();
-    this.loadingSlots.set(session.id, loading);
-    this.loadingPaths.set(path, loading);
+    const reservation = { kind: "open", path, completion: loading } as const;
+    this.destinations.set(session.id, reservation);
     try {
       return await loading;
     } finally {
-      if (this.loadingSlots.get(session.id) === loading)
-        this.loadingSlots.delete(session.id);
-      if (this.loadingPaths.get(path) === loading)
-        this.loadingPaths.delete(path);
+      if (this.destinations.get(session.id) === reservation)
+        this.destinations.delete(session.id);
     }
   }
 
@@ -2762,19 +2762,18 @@ export class RuntimeController extends EventEmitter {
           : null;
       if (
         this.slots.has(sessionId) ||
-        this.loadingSlots.has(sessionId) ||
+        this.destinations.has(sessionId) ||
         [...this.provisionalSlots.values()].some(
           ({ slot: existing }) =>
             existing !== slot && existing.id === sessionId,
         ) ||
         this.deletions.isDeleting(sessionId) ||
-        this.forkReservationsById.has(sessionId) ||
-        (reportedPath !== null && this.forkReservationsByPath.has(reportedPath))
+        this.forkReservation(sessionId, reportedPath ?? undefined)
       )
         throw new Error("Pi created a duplicate or reserved session identity");
       const pathCollision =
         reportedPath !== null &&
-        (this.loadingPaths.has(reportedPath) ||
+        (this.destination(sessionId, reportedPath, "open") ||
           [...this.slots.values()].some(
             (existing) => existing.sessionPath === reportedPath,
           ) ||
@@ -3135,23 +3134,7 @@ export class RuntimeController extends EventEmitter {
               request,
               this.attachments,
             );
-            const changed =
-              refreshed.images.length !== history.images.length ||
-              refreshed.images.some(
-                (image, index) =>
-                  image.mimeType !== history.images[index]?.mimeType ||
-                  image.data !== history.images[index]?.data,
-              ) ||
-              refreshed.fileBytes !== history.fileBytes ||
-              refreshed.files.length !== history.files.length ||
-              refreshed.files.some(
-                (file, index) => file.path !== history.files[index]?.path,
-              ) ||
-              refreshed.projectFiles.length !== history.projectFiles.length ||
-              refreshed.projectFiles.some(
-                (path, index) => path !== history.projectFiles[index],
-              );
-            if (changed) {
+            if (!samePromptArtifacts(refreshed, history)) {
               throw requestError(
                 "A recalled attachment changed before prompt delivery",
                 409,
@@ -3159,43 +3142,21 @@ export class RuntimeController extends EventEmitter {
             }
             history = refreshed;
           }
-          const images = [...resolved.images, ...history.images];
-          const contextFiles = [...resolved.files, ...history.files];
+          const {
+            files: contextFiles,
+            fileBytes,
+            images,
+            projectFiles,
+          } = await preparePromptArtifacts(
+            slot,
+            request,
+            resolved,
+            resolvedProjectFiles,
+            history,
+          );
           const ordinaryFiles = contextFiles.filter(
             (file): file is AttachmentContextFile & { kind: "file" } =>
               file.kind === "file",
-          );
-          const ordinaryFileBytes =
-            resolved.files
-              .filter((file) => file.kind === "file")
-              .reduce((sum, file) => sum + file.size, 0) + history.fileBytes;
-          const selectedProjectFiles = [
-            ...resolvedProjectFiles,
-            ...history.projectFiles,
-          ];
-          const expectedProjectFiles = [...new Set(selectedProjectFiles)];
-          if (expectedProjectFiles.length > MAX_PROJECT_FILES) {
-            throw requestError(
-              `At most ${MAX_PROJECT_FILES} project files per message`,
-              413,
-            );
-          }
-          // Revalidate direct and recalled project files together after every
-          // artifact read. Neither an earlier selection nor one half of a
-          // sequential check may authorize the paths delivered to Pi.
-          const projectFiles = await revalidateProjectFiles(
-            slot.cwd,
-            [...(request.projectFiles ?? []), ...history.projectFiles],
-            expectedProjectFiles,
-          );
-          // `resolved.files` contains every newly staged attachment, including
-          // the image files represented again as RPC image parts.
-          assertPromptArtifactBudget(
-            resolved.files.length +
-              history.files.length +
-              history.images.length,
-            ordinaryFileBytes,
-            images,
           );
           const fullMessage = addAttachmentContext(
             message,
@@ -3408,21 +3369,12 @@ export class RuntimeController extends EventEmitter {
                     this.attachments,
                   );
                   if (
-                    projected.images.length === images.length &&
-                    projected.images.every(
-                      (image, index) =>
-                        image.mimeType === images[index]?.mimeType &&
-                        image.data === images[index]?.data,
-                    ) &&
-                    projected.fileBytes === ordinaryFileBytes &&
-                    projected.projectFiles.length === projectFiles.length &&
-                    projected.projectFiles.every(
-                      (path, index) => path === projectFiles[index],
-                    ) &&
-                    projected.files.length === ordinaryFiles.length &&
-                    projected.files.every(
-                      (file, index) => file.path === ordinaryFiles[index]?.path,
-                    )
+                    samePromptArtifacts(projected, {
+                      images,
+                      files: ordinaryFiles,
+                      fileBytes,
+                      projectFiles,
+                    })
                   ) {
                     acceptedHistoryEntry = newest;
                   }
@@ -3966,14 +3918,14 @@ export class RuntimeController extends EventEmitter {
         const identityCollision =
           destinationId === source.id ||
           this.slots.has(destinationId) ||
-          this.loadingSlots.has(destinationId) ||
+          this.destinations.has(destinationId) ||
           this.deletions.isDeleting(destinationId) ||
           [...this.provisionalSlots.values()].some(
             ({ slot }) => slot.id === destinationId,
           );
         const pathCollision =
           destinationPath === resolve(sourcePath) ||
-          this.loadingPaths.has(destinationPath) ||
+          this.destination(destinationId, destinationPath, "open") ||
           [...this.slots.values()].some(
             (slot) =>
               slot.sessionPath !== null &&
@@ -4023,11 +3975,9 @@ export class RuntimeController extends EventEmitter {
           );
         }
         if (
-          this.forkReservationsById.get(destinationId) !== reservation ||
-          this.forkReservationsByPath.get(destinationPath) !== reservation ||
+          this.destinations.get(destinationId) !== reservation ||
           this.slots.has(destinationId) ||
-          this.loadingSlots.has(destinationId) ||
-          this.loadingPaths.has(destinationPath)
+          this.destination(destinationId, destinationPath, "open")
         ) {
           throw requestError(
             "Fork destination ownership changed before publication",
@@ -4050,8 +4000,7 @@ export class RuntimeController extends EventEmitter {
           throw new Error("Published fork destination failed revalidation");
         }
         if (
-          this.forkReservationsById.get(destinationId) !== reservation ||
-          this.forkReservationsByPath.get(destinationPath) !== reservation ||
+          this.destinations.get(destinationId) !== reservation ||
           this.slots.has(destinationId)
         ) {
           throw new Error("Fork destination ownership changed before attach");
@@ -4435,7 +4384,6 @@ export class RuntimeController extends EventEmitter {
     if (bash && !isBusyRunState(slot.runState)) {
       slot.stoppingInput = true;
       slot.inputStopEpoch += 1;
-      let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         if (slot.pendingExtensionDialogs.size > 0) {
           // A suspended hook has not installed Pi's Bash abort controller yet.
@@ -4443,23 +4391,13 @@ export class RuntimeController extends EventEmitter {
           this.extensionUi.clear(slot, "aborted");
           return { steering: [], followUp: [] };
         }
-        await bash.worker.request({ type: "abort_bash" }, 3_000);
-        await Promise.race([
-          bash.finished,
-          new Promise<never>((_, reject) => {
-            timer = setTimeout(
-              () =>
-                reject(new Error("Pi shell cancellation was not confirmed")),
-              3_000,
-            );
-          }),
-        ]);
+        await bash.worker.request({ type: "abort_bash" }, STOP_GRACE_MS);
+        await confirmInterruption(bash.finished, "Pi shell");
       } catch {
         // Native abort_bash cannot interrupt a suspended user_bash hook.
         if (!slot.process || slot.process === bash.worker)
           await this.stopWriter(slot, "bash");
       } finally {
-        clearTimeout(timer);
         slot.stoppingInput = false;
       }
       return { steering: [], followUp: [] };
@@ -4500,30 +4438,16 @@ export class RuntimeController extends EventEmitter {
         }
         const compaction = slot.manualCompaction;
         if (compaction?.worker === rpc) {
-          let timer: ReturnType<typeof setTimeout> | undefined;
           try {
             // Generic abort cancels Pi's manual compaction controller. Its
             // acknowledgement alone does not prove a suspended hook finished.
-            await rpc.request({ type: "abort" }, 3_000);
-            await Promise.race([
-              compaction.finished,
-              new Promise<never>((_, reject) => {
-                timer = setTimeout(
-                  () =>
-                    reject(
-                      new Error("Pi compaction cancellation was not confirmed"),
-                    ),
-                  3_000,
-                );
-              }),
-            ]);
+            await rpc.request({ type: "abort" }, STOP_GRACE_MS);
+            await confirmInterruption(compaction.finished, "Pi compaction");
           } catch {
             // Only explicit cancellation has a grace budget. An unresponsive
             // hook retires through the existing actual-stop/writer fence.
             if (!slot.process || slot.process === rpc)
               await this.stopWriter(slot, "compact");
-          } finally {
-            clearTimeout(timer);
           }
           if (slot.process === rpc) await this.extensionUi.cancel(slot, rpc);
           else if (!slot.process) this.extensionUi.clear(slot, "aborted");
@@ -4537,34 +4461,21 @@ export class RuntimeController extends EventEmitter {
           // Wait for this handler, not acknowledgement; an uncooperative hook
           // retains the explicit Stop fallback rather than blocking forever.
           const branch = slot.pendingBranchBridge;
-          let timer: ReturnType<typeof setTimeout> | undefined;
           try {
-            await Promise.race([
+            await confirmInterruption(
               Promise.all([
-                rpc.request({ type: "abort" }, 3_000),
+                rpc.request({ type: "abort" }, STOP_GRACE_MS),
                 branch.result,
                 branch.finished,
               ]),
-              new Promise<never>((_, reject) => {
-                timer = setTimeout(
-                  () =>
-                    reject(
-                      new Error(
-                        "Branch summary cancellation was not confirmed",
-                      ),
-                    ),
-                  3_000,
-                );
-              }),
-            ]);
+              "Branch summary",
+            );
           } catch {
             if (!slot.process || slot.process === rpc) {
               await this.stopWriter(slot, "prompt");
               if (!slot.process)
                 slot.runState = slot.conflict ? "conflict" : "aborted";
             }
-          } finally {
-            clearTimeout(timer);
           }
         } else if (slot.pendingPromptCount > 0 || slot.pendingBranchBridge) {
           // Pi abort need not interrupt a pre-prompt hook. Explicit Stop retires
@@ -5378,8 +5289,9 @@ export class RuntimeController extends EventEmitter {
     ]);
     const stopping = Promise.allSettled(this.stopSlotsForClose(ownedSlots));
     await Promise.allSettled([
-      ...this.loadingSlots.values(),
-      ...this.loadingPaths.values(),
+      ...[...this.destinations.values()].flatMap((reservation) =>
+        reservation.kind === "open" ? [reservation.completion] : [],
+      ),
       ...this.deletions.settled(),
       ...provisional.map((entry) => entry.completion),
       ...[...ownedSlots].flatMap((slot) => [

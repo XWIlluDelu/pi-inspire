@@ -545,14 +545,6 @@
   color: var(--muted);
 }
 
-.choice-panel { display: inline-flex; }
-.choice-panel__body {
-  position: fixed;
-  z-index: 40;
-  overflow: auto;
-}
-.choice-panel__body[hidden] { display: none; }
-
 .composer__spacer {
   flex: 1;
   min-width: 0;

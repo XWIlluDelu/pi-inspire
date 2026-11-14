@@ -25,9 +25,8 @@ import {
 } from "./external-session.js";
 import { requestError } from "./request-error.js";
 import {
-  assertPromptArtifactBudget,
+  preparePromptArtifacts,
   resolveComposerHistoryArtifacts,
-  revalidateProjectFiles,
 } from "./runtime-composer-artifacts.js";
 import type { RuntimeSlot } from "./runtime-slot.js";
 
@@ -215,7 +214,7 @@ export class RuntimeExternalSessions {
     if (this.closed || slot.process || !slot.sessionPath) return false;
     const previous = this.connections.get(slot);
     if (previous) {
-      if (await this.refreshConnection(slot, previous, { release: false }))
+      if (await this.refreshConnection(slot, previous, "reconnect"))
         return true;
       if (this.closed || !this.host.current(slot) || slot.process) return false;
     }
@@ -282,19 +281,24 @@ export class RuntimeExternalSessions {
   private async refreshConnection(
     slot: RuntimeSlot,
     connection: Connection,
-    {
-      release = true,
-      requireObservation = false,
-    }: { release?: boolean; requireObservation?: boolean } = {},
+    mode: "read" | "background" | "reconnect" | "restart" = "read",
+    read = ++this.readSequence,
   ): Promise<boolean> {
-    const read = ++this.readSequence;
     const selectionRevision = connection.selectionRevision;
     let state: ExternalSessionRead | undefined;
     try {
       state = await connection.native.read();
     } catch (error) {
-      if (requireObservation) throw error;
+      if (mode === "background" || mode === "restart") throw error;
       // A transient failure keeps the attachment; its poll continues.
+    }
+    if (mode === "background") {
+      if (this.closed || this.connections.get(slot) !== connection)
+        return false;
+      if (!this.host.current(slot)) {
+        this.detach(slot);
+        return false;
+      }
     }
     if (state) await this.reconcileReportedLeaf(slot, state);
     if (
@@ -305,15 +309,22 @@ export class RuntimeExternalSessions {
     )
       return false;
     if (!state || read < connection.latestRead) return true;
-    if (requireObservation && "ended" in state && state.ended === "unreachable")
+    if (mode === "restart" && "ended" in state && state.ended === "unreachable")
       throw requestError("The attached Pi could not confirm its state.", 409);
     connection.latestRead = read;
     if ("ended" in state || !this.host.corresponds(slot, state.leafId)) {
-      this.end(slot, "ended" in state ? state.ended : "left-branch", release);
+      this.end(
+        slot,
+        "ended" in state ? state.ended : "left-branch",
+        mode !== "reconnect",
+      );
       return false;
     }
-    connection.failing = false;
     this.applyState(slot, connection, state, false, selectionRevision);
+    // Background history may be reclaimed without interrupting the native poll.
+    if (mode === "background" && slot.projection)
+      await this.host.reconcile(slot, false);
+    connection.failing = false;
     return true;
   }
 
@@ -426,37 +437,8 @@ export class RuntimeExternalSessions {
 
   private async poll(slot: RuntimeSlot, connection: Connection): Promise<void> {
     const read = ++this.readSequence;
-    const selectionRevision = connection.selectionRevision;
     try {
-      const state = await connection.native.read();
-      if (this.closed || this.connections.get(slot) !== connection) return;
-      if (!this.host.current(slot)) {
-        this.detach(slot);
-        return;
-      }
-      await this.reconcileReportedLeaf(slot, state);
-      if (
-        this.closed ||
-        this.connections.get(slot) !== connection ||
-        read < connection.latestRead
-      )
-        return;
-      connection.latestRead = read;
-      // The attached Pi moving to another branch or session ends the binding;
-      // the view keeps its own position.
-      if ("ended" in state) {
-        this.end(slot, state.ended);
-        return;
-      }
-      if (!this.host.corresponds(slot, state.leafId)) {
-        this.end(slot, "left-branch");
-        return;
-      }
-      this.applyState(slot, connection, state, false, selectionRevision);
-      // Background history may be intentionally reclaimed. Keep observing Pi
-      // without rebuilding it; retained projections use their version fast path.
-      if (slot.projection) await this.host.reconcile(slot, false);
-      connection.failing = false;
+      await this.refreshConnection(slot, connection, "background", read);
     } catch (error) {
       if (
         this.connections.get(slot) !== connection ||
@@ -552,34 +534,29 @@ export class RuntimeExternalSessions {
         slot.cwd,
         request.projectFiles,
       );
-      const expected = [...new Set([...selected, ...history.projectFiles])];
-      const projectFiles = await revalidateProjectFiles(
-        slot.cwd,
-        [...(request.projectFiles ?? []), ...history.projectFiles],
-        expected,
+      const artifacts = await preparePromptArtifacts(
+        slot,
+        request,
+        prepared,
+        selected,
+        history,
       );
-      assertPromptArtifactBudget(
-        prepared.files.length + history.files.length + history.images.length,
-        prepared.files
-          .filter((file) => file.kind === "file")
-          .reduce((size, file) => size + file.size, 0) + history.fileBytes,
-        [...prepared.images, ...history.images],
+      // The receiver may outlive a lost receipt. Its copies have a separate
+      // lifetime from the editor's original upload handles.
+      const transportImages = await this.attachments.prepareTransportImages(
+        artifacts.images,
       );
-      // The receiver may outlive a lost receipt. Its image copies have a
-      // separate lifetime from the editor's original upload handles.
-      const transportImages = await this.attachments.prepareTransportImages([
-        ...prepared.images,
-        ...history.images,
-      ]);
       copied.push(...transportImages.map((image) => image.id));
-      const files = [...prepared.files, ...history.files].filter(
-        (file) => file.kind === "file",
-      );
+      const files = artifacts.files.filter((file) => file.kind === "file");
       const images = transportImages.map(({ path, mimeType }) => ({
         path,
         mimeType,
       }));
-      const fullMessage = addAttachmentContext(message, files, projectFiles);
+      const fullMessage = addAttachmentContext(
+        message,
+        files,
+        artifacts.projectFiles,
+      );
       if (!fullMessage && images.length === 0)
         throw requestError("Message or attachment is required", 400);
       const beforeSend = () => {
@@ -663,9 +640,11 @@ export class RuntimeExternalSessions {
       throw requestError("The external Pi connection has ended.", 409);
     let leafId = connection.state.leafId;
     if (forRestart) {
-      const attached = await this.refreshConnection(slot, connection, {
-        requireObservation: true,
-      });
+      const attached = await this.refreshConnection(
+        slot,
+        connection,
+        "restart",
+      );
       if (!attached || connection.state.activity === "idle") return;
       leafId ??= connection.state.leafId;
     }

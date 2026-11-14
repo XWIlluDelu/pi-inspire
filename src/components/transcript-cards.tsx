@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import {
   createContext,
+  Fragment,
   useContext,
   useId,
   useLayoutEffect,
@@ -52,7 +53,6 @@ import { ChildCalls, childCallsSummary } from "./ChildCalls";
 import { CodeModeResult, codeModeDuration } from "./CodeModeResult";
 import { CodeRows, CodeView } from "./CodeView";
 import { CopyAction } from "./CopyAction";
-import { DetailSummary } from "./DetailSummary";
 import { ImageGallery } from "./ImageGallery";
 import {
   ImagePreview,
@@ -64,6 +64,7 @@ import { PiStatus } from "./PiStatus";
 import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
 import { ResourcePathLabel } from "./ResourcePathLabel";
 import {
+  ActivityDetails,
   ActivityReadingBlock,
   useActivityReaderExpanded,
   useActivityReaderScroll,
@@ -306,7 +307,10 @@ const pendingToolText: Record<ToolStatus, string> = {
 
 type ContentBlock =
   | Exclude<ToolPresentationBlock, { type: "diff" }>
-  | (Extract<ToolPresentationBlock, { type: "diff" }> & { lines: DiffLine[] });
+  | (Extract<ToolPresentationBlock, { type: "diff" }> & { lines: DiffLine[] })
+  | { type: "result"; text: string; error?: boolean }
+  | { type: "inspection"; data: object }
+  | { type: "empty" };
 
 // Partial paths are readable text, not usable resource identities yet.
 const ToolArgumentPreviewContext =
@@ -502,31 +506,6 @@ function hasResultData(value: unknown): boolean {
   return true;
 }
 
-/** Mount reader bodies only after disclosure. */
-function ToolDisclosure({
-  reader,
-  label,
-  children,
-  inline = false,
-}: {
-  reader: string;
-  label: string;
-  children: React.ReactNode;
-  inline?: boolean;
-}) {
-  const [open, setOpen] = useActivityReaderExpanded(reader);
-  if (inline) return children;
-  return (
-    <details
-      open={open}
-      onToggle={(event) => setOpen(event.currentTarget.open)}
-    >
-      <DetailSummary>{label}</DetailSummary>
-      {open ? children : null}
-    </details>
-  );
-}
-
 function rawResultData(result: ChatMessage) {
   const { content } = result;
   const unrendered = Array.isArray(content)
@@ -553,47 +532,28 @@ function JsonReader({ label, value }: { label: string; value: unknown }) {
   return <ToolTextReader label={label} text={text} />;
 }
 
-function RawToolResult({ result }: { result: ChatMessage }) {
+function rawResultBlocks(result: ChatMessage): ContentBlock[] {
   const output = toolResultText(result);
   const diff = !result.isError ? parseUnifiedDiff(output) : null;
-  const images: ContentBlock[] = [];
-  if (Array.isArray(result.content))
-    for (const [index, part] of result.content.entries()) {
-      if (part?.type === "image") {
-        images.push(
-          toolResultImage(
-            result,
-            index,
-            `Tool result image ${images.length + 1}`,
-          ) ?? unavailableToolImage,
-        );
-      }
-    }
+  const blocks: ContentBlock[] = [];
+  if (diff) blocks.push({ type: "diff", text: output, lines: diff });
+  else if (output)
+    blocks.push({
+      type: "result",
+      text: output,
+      error: result.isError,
+    });
+  let imageNumber = 0;
+  const content = Array.isArray(result.content) ? result.content : [];
+  for (const [index, part] of content.entries())
+    if (part?.type === "image")
+      blocks.push(
+        toolResultImage(result, index, `Tool result image ${++imageNumber}`) ??
+          unavailableToolImage,
+      );
   const data = rawResultData(result);
-  const hasData = Object.keys(data).length > 0;
-  return (
-    <>
-      {diff ? (
-        <DiffView lines={diff} />
-      ) : output ? (
-        <ToolTextReader
-          text={output}
-          label="Result text"
-          error={result.isError}
-          resultPreview
-        />
-      ) : null}
-      <PresentationBlocks blocks={images} />
-      {hasData && (
-        <ToolDisclosure reader="result-data" label="Result details">
-          <JsonReader label="Result data" value={data} />
-        </ToolDisclosure>
-      )}
-      {!output && !images.length && !hasData && (
-        <div className="tool-empty">No output</div>
-      )}
-    </>
-  );
+  if (Object.keys(data).length) blocks.push({ type: "inspection", data });
+  return blocks.length ? blocks : [{ type: "empty" }];
 }
 
 function ToolBlockHeading({ label, path }: { label?: string; path?: string }) {
@@ -748,43 +708,11 @@ function ToolImage({
   );
 }
 
-function ToolPresentationBlockView({
-  block,
-  readingKey = block.type,
-}: {
-  block: ContentBlock;
-  readingKey?: string;
-}) {
-  const body = renderToolBlock(block);
-  return (
-    <ActivityReadingBlock name={readingKey}>
-      {block.type === "image" ||
-      block.type === "notice" ||
-      block.type === "properties" ? (
-        body
-      ) : (
-        <div className="tool-block">
-          <ToolBlockHeading
-            label={block.type === "codemode-result" ? "Output" : block.label}
-            path={"path" in block ? block.path : undefined}
-          />
-          {body}
-        </div>
-      )}
-    </ActivityReadingBlock>
-  );
-}
-
 function renderToolBlock(block: ContentBlock) {
   switch (block.type) {
     case "codemode-result":
       return (
-        <CodeModeResult
-          result={block.result}
-          renderImage={(image) =>
-            renderToolBlock(image ?? unavailableToolImage)
-          }
-        />
+        <CodeModeResult result={block.result} renderImage={renderToolImage} />
       );
     case "properties":
       return (
@@ -833,14 +761,6 @@ function renderToolBlock(block: ContentBlock) {
     }
     case "diff":
       return <DiffView lines={block.lines} />;
-    case "terminal":
-      return (
-        <ToolTextReader
-          text={stripTerminalSequences(block.text)}
-          label={block.label}
-          error={block.error}
-        />
-      );
     case "list":
       return block.items.length > 0 ? (
         <ul className="tool-list">
@@ -937,15 +857,41 @@ function renderToolBlock(block: ContentBlock) {
           <RichText text={block.text} variant="extension" />
         </div>
       );
+    case "empty":
+      return <div className="tool-empty">No output</div>;
+    case "inspection":
+      return (
+        <ActivityDetails reader="result-data" label="Result details">
+          {() => <JsonReader label="Result data" value={block.data} />}
+        </ActivityDetails>
+      );
+    case "result":
     case "text":
+    case "terminal":
       return (
         <ToolTextReader
-          text={block.text}
-          label={block.label ?? "Output text"}
+          text={
+            block.type === "terminal"
+              ? stripTerminalSequences(block.text)
+              : block.text
+          }
+          label={
+            block.type === "result"
+              ? "Result text"
+              : (block.label ??
+                (block.type === "text" ? "Output text" : undefined))
+          }
           error={block.error}
+          resultPreview={block.type === "result"}
         />
       );
   }
+}
+
+function renderToolImage(
+  block: Extract<ToolPresentationBlock, { type: "image" }> | null,
+) {
+  return renderToolBlock(block ?? unavailableToolImage);
 }
 
 function presentationBlocks(
@@ -969,11 +915,41 @@ function presentationBlocks(
   }
 }
 
-function PresentationBlocks({ blocks }: { blocks: ContentBlock[] }) {
+function PresentationBlocks({
+  blocks,
+  raw = false,
+}: {
+  blocks: ContentBlock[];
+  raw?: boolean;
+}) {
+  let rawImageIndex = 0;
   return blocks.map((block, index) => {
-    const key = `${block.type}:${index}`;
+    if (raw && block.type !== "image" && block !== unavailableToolImage)
+      return <Fragment key={block.type}>{renderToolBlock(block)}</Fragment>;
+    const key = `${block.type}:${raw ? rawImageIndex++ : index}`;
+    const body = renderToolBlock(block);
     return (
-      <ToolPresentationBlockView key={key} readingKey={key} block={block} />
+      <ActivityReadingBlock key={key} name={key}>
+        {block.type === "image" ||
+        block.type === "notice" ||
+        block.type === "properties" ? (
+          body
+        ) : (
+          <div className="tool-block">
+            <ToolBlockHeading
+              label={
+                block.type === "codemode-result"
+                  ? "Output"
+                  : "label" in block
+                    ? block.label
+                    : undefined
+              }
+              path={"path" in block ? block.path : undefined}
+            />
+            {body}
+          </div>
+        )}
+      </ActivityReadingBlock>
     );
   });
 }
@@ -1136,12 +1112,12 @@ function ArgumentReader({ call }: { call: ToolCallContent }) {
 function ToolScript({ call }: { call: ToolCallContent }) {
   const args = call.arguments as { code: string };
   return (
-    <ToolDisclosure
+    <ActivityDetails
       reader="script"
       label={call.__inspireToolCall ? "Script (partial)" : "Script"}
     >
-      <StructuredCode text={args.code} language="javascript" />
-    </ToolDisclosure>
+      {() => <StructuredCode text={args.code} language="javascript" />}
+    </ActivityDetails>
   );
 }
 
@@ -1184,7 +1160,7 @@ function ToolDetails({
           {pending}
         </div>
       ) : result ? (
-        <RawToolResult result={result} />
+        <PresentationBlocks blocks={rawResultBlocks(result)} raw />
       ) : (
         pending
       )}
@@ -1194,13 +1170,13 @@ function ToolDetails({
         (!inlineArgs ||
           !call.__inspireToolCall ||
           Object.keys(call.arguments ?? {}).length > 0) && (
-          <ToolDisclosure
+          <ActivityDetails
             reader="arguments"
             label={call.__inspireToolCall ? "Arguments (partial)" : "Arguments"}
             inline={inlineArgs}
           >
-            <ArgumentReader call={call} />
-          </ToolDisclosure>
+            {() => <ArgumentReader call={call} />}
+          </ActivityDetails>
         )}
     </>
   );

@@ -16,11 +16,47 @@ import { ImageGalleryContext } from "./ImageGallery";
 import { ImageLightbox } from "./ImageLightbox";
 import { PiLoader } from "./PiLoader";
 
-export const TranscriptImageOwnerContext = createContext<{
+interface TranscriptImageOwner {
   sessionId: string;
   viewId: string;
   projectionKey: string;
-} | null>(null);
+}
+
+export const TranscriptImageOwnerContext =
+  createContext<TranscriptImageOwner | null>(null);
+
+/** Both native message bodies keep the original, unfiltered part position. */
+export function messageImage(
+  part: unknown,
+  messageIndex: number | undefined,
+  partIndex: number,
+  owner: TranscriptImageOwner,
+) {
+  if (!part || typeof part !== "object") return null;
+  const image = part as Record<string, unknown>;
+  if (image.type !== "image") return null;
+  if (Number.isSafeInteger(messageIndex) && owner.sessionId && owner.viewId)
+    return (
+      <TranscriptImage
+        key={`persisted:${partIndex}`}
+        {...owner}
+        reference={`pi-embedded://${messageIndex}/${partIndex}`}
+      />
+    );
+  if (
+    typeof image.data !== "string" ||
+    typeof image.mimeType !== "string" ||
+    !/^image\//i.test(image.mimeType)
+  )
+    return null;
+  return (
+    <ImagePreview
+      key={`inline:${partIndex}`}
+      src={`data:${image.mimeType};base64,${image.data}`}
+      className="image-preview--message"
+    />
+  );
+}
 
 /** Authored image links keep navigation semantics without nested buttons. */
 export const ImageLinkContext = createContext(false);

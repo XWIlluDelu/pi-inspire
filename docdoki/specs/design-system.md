@@ -693,9 +693,8 @@ and entry motion.
 Action rows use the same small UI text, accent-tint interaction feedback and inset focus role.
 Anchored panels follow their trigger while scrolling and close once it is fully clipped.
 Searchable model lists and descriptive project groups keep their information hierarchy.
-Session actions size to their content within viewport bounds, with drag handles in a separate
-trailing column. [[workspace-layout]] owns compact disclosure and [[interface-preferences]] owns
-saved ordering.
+Session actions size to their content within viewport bounds. [[workspace-layout]] owns compact
+disclosure and [[interface-preferences]] owns saved ordering.
 
 ## Content copying
 

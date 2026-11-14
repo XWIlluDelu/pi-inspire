@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { DetailSummary } from "./DetailSummary";
 
 interface ReaderScrollPosition {
   top: number;
@@ -83,6 +84,36 @@ export function useActivityReaderExpanded(
     [write],
   );
   return [expanded, choose] as const;
+}
+
+/** Mount and prepare the body only while the native disclosure is open. */
+export function ActivityDetails({
+  reader,
+  label,
+  className,
+  summaryClassName,
+  inline = false,
+  children,
+}: {
+  reader: string;
+  label: ReactNode;
+  className?: string;
+  summaryClassName?: string;
+  inline?: boolean;
+  children: () => ReactNode;
+}) {
+  const [open, setOpen] = useActivityReaderExpanded(reader);
+  if (inline) return children();
+  return (
+    <details
+      className={className}
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <DetailSummary className={summaryClassName}>{label}</DetailSummary>
+      {open && children()}
+    </details>
+  );
 }
 
 export function useActivityReaderScroll<T extends HTMLElement>(

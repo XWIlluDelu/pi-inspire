@@ -35,6 +35,7 @@ import {
 } from "../pdf-find";
 import { ContextPaneState } from "./ContextPaneState";
 import { PiLoader } from "./PiLoader";
+import { currentContentsIndex, ReaderContents } from "./ReaderContents";
 import { SearchField } from "./SearchField";
 import "../styles/pdf-preview.css";
 
@@ -537,11 +538,6 @@ export function PdfPreview({ blob, name }: { blob: Blob; name: string }) {
   };
   const hit =
     findOpen && matches?.[current] ? { ...matches[current]!, needle } : null;
-  // The last contents entry starting at or before the visible page.
-  let currentContentsIndex = -1;
-  outline.forEach((entry, index) => {
-    if (entry.page <= number) currentContentsIndex = index;
-  });
   const changeZoom = (next: number) => {
     navigationRef.current?.capturePosition();
     setZoom(next);
@@ -674,17 +670,22 @@ export function PdfPreview({ blob, name }: { blob: Blob; name: string }) {
               <ChevronLeft size={16} aria-hidden />
             </button>
             {outline.length > 0 ? (
-              <button
-                type="button"
-                className="button button--quiet pdf-preview__fit pdf-preview__page-number"
-                aria-haspopup="true"
-                aria-expanded={contentsOpen}
-                aria-label={`Page ${number} of ${loaded.document.numPages}. Show contents`}
-                title="Contents"
-                onClick={() => setContentsOpen(!contentsOpen)}
-              >
-                {number} / {loaded.document.numPages}
-              </button>
+              <ReaderContents
+                label="PDF contents"
+                triggerLabel={`Page ${number} of ${loaded.document.numPages}. Show contents`}
+                triggerClassName="button button--quiet pdf-preview__fit pdf-preview__page-number"
+                trigger={`${number} / ${loaded.document.numPages}`}
+                open={contentsOpen}
+                setOpen={setContentsOpen}
+                entries={outline}
+                current={currentContentsIndex(
+                  outline,
+                  (entry) => entry.page <= number,
+                )}
+                onPick={(entry) =>
+                  navigationRef.current?.scrollToPage(entry.page)
+                }
+              />
             ) : (
               <span className="pdf-preview__page-number" aria-live="polite">
                 {number} / {loaded.document.numPages}
@@ -738,37 +739,6 @@ export function PdfPreview({ blob, name }: { blob: Blob; name: string }) {
               <Search size={16} aria-hidden />
             </button>
           </div>
-          {contentsOpen ? (
-            <nav
-              className="reader-contents reader-contents--pdf"
-              aria-label="PDF contents"
-              onKeyDown={(event) => {
-                if (event.key === "Escape") {
-                  event.stopPropagation();
-                  setContentsOpen(false);
-                }
-              }}
-            >
-              {outline.map((entry, index) => (
-                <button
-                  key={index}
-                  type="button"
-                  className="reader-contents__entry"
-                  style={{ paddingInlineStart: `${12 + entry.depth * 14}px` }}
-                  aria-current={
-                    index === currentContentsIndex ? "location" : undefined
-                  }
-                  onClick={() => {
-                    setContentsOpen(false);
-                    navigationRef.current?.scrollToPage(entry.page);
-                  }}
-                >
-                  <span>{entry.title}</span>
-                  <span className="reader-contents__meta">{entry.page}</span>
-                </button>
-              ))}
-            </nav>
-          ) : null}
           <PdfPages
             loaded={loaded}
             zoom={zoom}

@@ -5,6 +5,8 @@ covers:
   - src/ansi.ts
   - src/events.ts
   - src/components/Transcript.tsx
+  - src/components/{BashExecution,ChildCalls,CodeModeResult,CustomMessage,ImagePreview}.tsx
+  - src/shell-record.ts
   - tests/browser/activity-presentation.spec.ts
   - src/styles/{transcript,activity-cards}.css
   - server/session-projection.ts

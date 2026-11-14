@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { isJsonRecord } from "../shared/json-record.js";
+import { isJsonRecord, jsonRecord } from "../shared/json-record.js";
 import {
   MCP_SERVER_NAME,
   type McpConfigEdit,
@@ -23,8 +23,7 @@ import {
   applyConfigurationPatch,
   configurationFileTarget,
   editConfigurationDocument,
-  parseConfigurationObject,
-  readConfigurationFile,
+  readConfigurationDocument,
 } from "./configuration-file.js";
 import { filesystemRelativePath } from "./filesystem-containment.js";
 import { resolveProjectDirectory } from "./paths.js";
@@ -38,15 +37,16 @@ const normalExposure = (value: unknown) =>
     : mcpExposureSchema.safeParse(value).data;
 const strings = (value: unknown) =>
   isJsonRecord(value) ? Object.keys(value) : [];
-const fieldNames = new Set([
-  "type",
-  ...Object.keys(mcpConfigValuesSchema.shape),
-]);
-const policyFields = new Set(Object.keys(mcpPolicyFields));
+const configFields = mcpConfigValuesSchema.shape;
+const hasOnlyPolicy = (value: JsonObject) =>
+  Object.keys(value).every((key) => Object.hasOwn(mcpPolicyFields, key));
 const isPolicyOnly = (value: unknown, scope: McpConfigScope) =>
-  scope === "project" &&
-  isJsonRecord(value) &&
-  Object.keys(value).every((key) => policyFields.has(key));
+  scope === "project" && isJsonRecord(value) && hasOnlyPolicy(value);
+const nameInPi = (name: string) => name.replaceAll("-", "_");
+const userOnlyAuth =
+  "Pi provider authentication is only allowed in user MCP configuration";
+const secureAuth =
+  "Pi provider authentication requires HTTPS except on loopback";
 
 function transportOf(value: JsonObject) {
   return typeof value.url === "string" &&
@@ -95,28 +95,26 @@ function projectEntry(
           })
         : [],
     ),
-    extraFieldCount: Object.keys(value).filter((key) => !fieldNames.has(key))
-      .length,
+    extraFieldCount: Object.keys(value).filter(
+      (key) => key !== "type" && !Object.hasOwn(configFields, key),
+    ).length,
   };
 }
 const mcpDocument = {
   invalid: "Repair the invalid mcp.json object before editing it",
   preserveIndent: true,
 };
-function serversOf(document: JsonObject): JsonObject {
-  if (document.mcpServers === undefined) return {};
-  if (isJsonRecord(document.mcpServers)) return document.mcpServers;
+function serversOf({ mcpServers = {} }: JsonObject): JsonObject {
+  if (isJsonRecord(mcpServers)) return mcpServers;
   throw requestError(mcpDocument.invalid, 409);
 }
-const readServers = (source: string | undefined) =>
-  serversOf(parseConfigurationObject(source, mcpDocument));
 
 function mergeValues(current: JsonObject, values: McpConfigValues): JsonObject {
   const patch: JsonObject = { ...values };
   for (const key of ["env", "headers", "oauth"] as const) {
     if (values[key])
       patch[key] = applyConfigurationPatch(
-        isJsonRecord(current[key]) ? current[key] : {},
+        jsonRecord(current[key]) ?? {},
         values[key],
       );
   }
@@ -125,46 +123,38 @@ function mergeValues(current: JsonObject, values: McpConfigValues): JsonObject {
   return applyConfigurationPatch(current, patch);
 }
 function validate(value: JsonObject, scope: McpConfigScope): void {
+  const { command, url, auth, oauth, ...fields } = value;
   const transport = transportOf(value);
-  if (value.command !== undefined && value.url !== undefined)
+  if (command !== undefined && url !== undefined)
     throw requestError(
       "Choose either a stdio program or an HTTP URL, not both",
       400,
     );
   if (!transport)
     throw requestError("Choose a stdio program or a streamable HTTP URL", 400);
-  if (transport === "stdio" && !(value.command as string).trim())
+  if (transport === "stdio" && !(command as string).trim())
     throw requestError("A stdio program is required", 400);
   if (transport === "http") {
-    let url: URL;
+    let target: URL;
     try {
-      url = new URL(value.url as string);
+      target = new URL(url as string);
     } catch {
       throw requestError("Enter a valid HTTP or HTTPS URL", 400);
     }
-    if (!["http:", "https:"].includes(url.protocol))
+    if (target.protocol !== "http:" && target.protocol !== "https:")
       throw requestError("Enter a valid HTTP or HTTPS URL", 400);
-    if (value.auth !== undefined) {
-      if (scope === "project")
-        throw requestError(
-          "Pi provider authentication is only allowed in user MCP configuration",
-          400,
-        );
-      if (
-        url.protocol !== "https:" &&
-        !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)
-      )
-        throw requestError(
-          "Pi provider authentication requires HTTPS except on loopback",
-          400,
-        );
-    }
+    if (auth !== undefined && scope === "project")
+      throw requestError(userOnlyAuth, 400);
+    if (
+      auth !== undefined &&
+      target.protocol !== "https:" &&
+      !["localhost", "127.0.0.1", "[::1]"].includes(target.hostname)
+    )
+      throw requestError(secureAuth, 400);
   }
   // Validate supported fields without returning the submitted or stored secret in errors.
   const known = Object.fromEntries(
-    Object.entries(value).filter(
-      ([key]) => fieldNames.has(key) && key !== "type" && key !== "oauth",
-    ),
+    Object.entries(fields).filter(([key]) => Object.hasOwn(configFields, key)),
   );
   if (known.exposure === "codemode-deferred") known.exposure = "codemode";
   if (isJsonRecord(known.toolExposure))
@@ -174,9 +164,9 @@ function validate(value: JsonObject, scope: McpConfigScope): void {
         mode === "codemode-deferred" ? "codemode" : mode,
       ]),
     );
-  const oauthError = mcpOAuthError(value.oauth);
+  const oauthError = mcpOAuthError(oauth);
   if (oauthError) throw requestError(oauthError, 400);
-  if (!mcpConfigValuesSchema.safeParse(known).success)
+  if (!mcpConfigValuesSchema.safeParse({ command, url, ...known }).success)
     throw requestError(
       "MCP configuration has invalid field values; check the server configuration",
       400,
@@ -207,52 +197,59 @@ export class McpConfigService {
       },
     };
   }
+  private async readFile(cwd: string | null, scope: McpConfigScope) {
+    const file = this.authority(cwd, scope);
+    const identified = { scope, path: file.path };
+    try {
+      const { value, revision, error } = await readConfigurationDocument(
+        file,
+        mcpDocument,
+      );
+      if (error) throw requestError(error, 409);
+      return {
+        ...identified,
+        revision,
+        entries: Object.entries(serversOf(value)).map(([name, record]) =>
+          projectEntry(name, record, scope),
+        ),
+      };
+    } catch (error) {
+      return {
+        ...identified,
+        revision: "",
+        entries: [],
+        error:
+          error instanceof Error
+            ? error.message
+            : "MCP configuration is unavailable",
+      };
+    }
+  }
+
   async read(cwd: string | null): Promise<McpConfigSnapshot> {
     const scopes: McpConfigScope[] =
       cwd === null ? ["user"] : ["user", "project"];
-    const files = await Promise.all(
-      scopes.map(async (scope) => {
-        const authority = this.authority(cwd, scope);
-        const { path } = authority;
-        try {
-          const { source, revision } = await readConfigurationFile(authority);
-          return {
-            scope,
-            path,
-            revision,
-            entries: Object.entries(readServers(source)).map(([name, raw]) =>
-              projectEntry(name, raw, scope),
-            ),
-          };
-        } catch (error) {
-          return {
-            scope,
-            path,
-            revision: "",
-            entries: [],
-            error:
-              error instanceof Error
-                ? error.message
-                : "MCP configuration is unavailable",
-          };
-        }
-      }),
-    );
-    return { cwd, files };
+    return {
+      cwd,
+      files: await Promise.all(
+        scopes.map((scope) => this.readFile(cwd, scope)),
+      ),
+    };
   }
   async readConnection(
     cwd: string | null,
     request: McpConnectionRead,
   ): Promise<McpConnectionValues> {
-    const { source, revision } = await readConfigurationFile(
+    const { value } = await readConfigurationDocument(
       this.authority(cwd, request.scope),
+      mcpDocument,
+      {
+        revision: request.revision,
+        stale:
+          "MCP configuration changed elsewhere. Refresh files before viewing saved values.",
+      },
     );
-    if (revision !== request.revision)
-      throw requestError(
-        "MCP configuration changed elsewhere. Refresh files before viewing saved values.",
-        409,
-      );
-    const servers = readServers(source);
+    const servers = serversOf(value);
     const entry = Object.hasOwn(servers, request.name)
       ? servers[request.name]
       : undefined;
@@ -289,10 +286,11 @@ export class McpConfigService {
               : "That server no longer exists in this file",
             409,
           );
-        if (operation === "remove") {
-          delete servers[name];
-          return { ...document, mcpServers: servers };
-        }
+        if (operation === "remove")
+          return {
+            ...document,
+            mcpServers: applyConfigurationPatch(servers, { [name]: null }),
+          };
         const current = adding ? {} : servers[name];
         if (!isJsonRecord(current))
           throw requestError(
@@ -301,16 +299,18 @@ export class McpConfigService {
           );
         const value = mergeValues(current, values);
         if (isPolicyOnly(adding ? value : current, scope)) {
-          if (Object.keys(values).some((key) => !policyFields.has(key)))
+          if (!hasOnlyPolicy(values))
             throw requestError(
               "Project policy overrides can only edit enabled, exposure and toolExposure",
               400,
             );
-          const { source } = await readConfigurationFile(user);
-          const inherited = readServers(source);
-          const base = Object.hasOwn(inherited, name)
-            ? inherited[name]
-            : undefined;
+          const { value: inherited, error } = await readConfigurationDocument(
+            user,
+            mcpDocument,
+          );
+          if (error) throw requestError(error, 409);
+          const records = serversOf(inherited);
+          const base = Object.hasOwn(records, name) ? records[name] : undefined;
           if (!isJsonRecord(base))
             throw requestError(
               "Project policy override needs a same-name user server",
@@ -329,15 +329,14 @@ export class McpConfigService {
         if (adding && cwd !== null) {
           const other = scope === "user" ? "project" : "user";
           names.push(
-            ...(await readConfigurationFile(this.authority(cwd, other))
-              .then(({ source }) => Object.keys(readServers(source)))
-              .catch(() => [])),
+            ...(await this.readFile(cwd, other)).entries.map(
+              ({ name }) => name,
+            ),
           );
         }
-        const normalize = (value: string) => value.replaceAll("-", "_");
         if (
           names.some(
-            (other) => other !== name && normalize(other) === normalize(name),
+            (other) => other !== name && nameInPi(other) === nameInPi(name),
           )
         )
           throw requestError(

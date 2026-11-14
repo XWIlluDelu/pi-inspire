@@ -22,10 +22,17 @@ it("discovers native global/trusted-project registrations and resolves defaults 
   const project = join(f.trusted, ".pi");
   const settingsFile = join(project, "settings.json");
   const settings = JSON.parse(await readFile(settingsFile, "utf8"));
+  const enabledModels = [
+    "project-router/auto",
+    "global-native/a",
+    "global-native/*:high",
+    "missing/model",
+  ];
   await writeFile(
     settingsFile,
     JSON.stringify({
       ...settings,
+      enabledModels,
       modelThinkingLevels: {
         "project-native/a": "medium",
         "project-native/b": "invalid-value",
@@ -145,7 +152,10 @@ it("discovers native global/trusted-project registrations and resolves defaults 
     });
 
     const current = await settingsAt(f.trusted);
-    await endpoint
+    expect(current.body.models).toEqual(trusted.models);
+    expect(current.body.nativeApiProviders).toContain("openai");
+    expect(current.body.nativeApiProviders).not.toContain("global-native");
+    const declaration = await endpoint
       .patch("/api/model-settings/config")
       .query({ cwd: f.trusted })
       .send({
@@ -157,6 +167,17 @@ it("discovers native global/trusted-project registrations and resolves defaults 
         },
       })
       .expect(200);
+    expect(declaration.body.snapshot).toMatchObject({
+      effective: { enabledModels },
+      models: expect.arrayContaining([
+        expect.objectContaining({
+          provider: "global-native",
+          id: "a",
+          name: "Still editable",
+        }),
+      ]),
+      providers: [{ id: "global-native" }],
+    });
     expect(await readdir(f.sessions)).toEqual([]);
     expect(await readFile(f.events, "utf8")).not.toMatch(
       /session_start|agent_start|request|route/,

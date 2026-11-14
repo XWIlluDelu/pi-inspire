@@ -55,6 +55,18 @@ export function restartReceiptIdentity(intent: HostRestartRequest) {
   };
 }
 
+export function matchesRestartIntent(
+  operation: Record<string, unknown> | HostRestartOperation | null,
+  intent: HostRestartRequest,
+): boolean {
+  return (
+    operation?.id === intent.operationId &&
+    operation.scope === intent.scope &&
+    operation.interruptWork === intent.interruptWork &&
+    operation.skipAttachedStop === intent.skipAttachedStop
+  );
+}
+
 export function restartObservation(
   intent: HostRestartRequest,
   result: HostRestartOperation,

@@ -30,11 +30,7 @@ import { CodeView } from "./CodeView";
 import { ContextPaneState } from "./ContextPaneState";
 import { CopyFeedback } from "./CopyFeedback";
 import type { ContextPaneView } from "./context-pane-view";
-import {
-  DOCUMENT_OUTLINE_MIN_HEADINGS,
-  DocumentOutlineButton,
-  useDocumentHeadingCount,
-} from "./DocumentOutline";
+import { DocumentOutline } from "./DocumentOutline";
 import { DocumentPreview } from "./DocumentPreview";
 import { ImagePreview } from "./ImagePreview";
 import { NotebookPreview } from "./NotebookPreview";
@@ -220,10 +216,15 @@ function ReadyResource({
   interactiveUrl?: string;
 }) {
   const { descriptor } = preview;
-  if (viewMode === "source" && hasSourceAndPreview(descriptor, preview.text))
+  const delimiter = tableDelimiter(descriptor);
+  if (
+    preview.text !== undefined &&
+    ((descriptor.kind === "text" && !delimiter) ||
+      (viewMode === "source" && hasSourceAndPreview(descriptor, preview.text)))
+  )
     return (
       <SourceCodePreview
-        text={preview.text!}
+        text={preview.text}
         language={sourceLanguage(descriptor)}
         jump={jump}
         readingPosition={readingPosition}
@@ -238,7 +239,6 @@ function ReadyResource({
         hint={formatBytes(descriptor.size)}
       />
     );
-  const delimiter = tableDelimiter(descriptor);
   if (delimiter && preview.text !== undefined)
     return (
       <TablePreview
@@ -246,16 +246,6 @@ function ReadyResource({
         delimiter={delimiter}
         truncated={preview.truncated}
         name={descriptor.name}
-      />
-    );
-  if (descriptor.kind === "text" && preview.text !== undefined)
-    return (
-      <SourceCodePreview
-        text={preview.text}
-        language={languageForFile(descriptor.name)}
-        jump={jump}
-        readingPosition={readingPosition}
-        truncated={preview.truncated}
       />
     );
   if (descriptor.kind === "notebook" && preview.text !== undefined)
@@ -297,18 +287,25 @@ function ReadyResource({
         />
       </>
     );
-  if (descriptor.kind === "image" && preview.objectUrl)
+  if (
+    (descriptor.kind === "image" || descriptor.kind === "video") &&
+    preview.objectUrl
+  )
     return (
       <div
         className="res__preview-fill res__preview-media"
         data-pane-scroll-active="true"
       >
-        <ImagePreview
-          src={preview.objectUrl}
-          alt={descriptor.name}
-          name={descriptor.name}
-          className="image-preview--file"
-        />
+        {descriptor.kind === "image" ? (
+          <ImagePreview
+            src={preview.objectUrl}
+            alt={descriptor.name}
+            name={descriptor.name}
+            className="image-preview--file"
+          />
+        ) : (
+          <video controls src={preview.objectUrl} />
+        )}
       </div>
     );
   if (descriptor.kind === "pdf" && preview.pdfBlob)
@@ -321,15 +318,6 @@ function ReadyResource({
     );
   if (descriptor.kind === "audio" && preview.objectUrl)
     return <audio className="res__media" controls src={preview.objectUrl} />;
-  if (descriptor.kind === "video" && preview.objectUrl)
-    return (
-      <div
-        className="res__preview-fill res__preview-media"
-        data-pane-scroll-active="true"
-      >
-        <video controls src={preview.objectUrl} />
-      </div>
-    );
   return (
     <ContextPaneState
       icon={<FileText size={17} aria-hidden />}
@@ -623,15 +611,6 @@ export function FilePreview({
   };
   const contentRef = useRef<HTMLDivElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
-  const headingCount = useDocumentHeadingCount(
-    contentRef,
-    !showingChanges &&
-      viewMode === "preview" &&
-      preview?.status === "ready" &&
-      (descriptor?.kind === "markdown" || descriptor?.kind === "notebook"),
-    descriptor?.id,
-  );
-  const outlineAvailable = headingCount >= DOCUMENT_OUTLINE_MIN_HEADINGS;
   useLayoutEffect(() => {
     const root = contentRef.current;
     const saved = readingState?.rendered.current;
@@ -681,8 +660,10 @@ export function FilePreview({
             onChange={showBody}
           />
         ) : null}
-        {outlineAvailable ? (
-          <DocumentOutlineButton contentRef={contentRef} portalRef={rootRef} />
+        {!showingChanges &&
+        viewMode === "preview" &&
+        (descriptor?.kind === "markdown" || descriptor?.kind === "notebook") ? (
+          <DocumentOutline contentRef={contentRef} identity={descriptor.id} />
         ) : null}
         <button
           type="button"

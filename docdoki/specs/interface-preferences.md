@@ -4,7 +4,7 @@ covers:
   - shared/contracts.ts
   - server/{preferences,update-checker,pi-update-checker,update-coordinator}.ts
   - src/controllers/{preference,update,runtime-event}-controller.ts
-  - src/{visual-preferences,session-actions,update-availability,use-modal-focus}.ts
+  - src/{preference-labels,visual-preferences,session-actions,update-availability,use-modal-focus}.ts
   - src/components/{Settings,SettingsControls,SettingsDialog,SettingsSection,SessionActionsSettings,SystemVersionsCard}.tsx
   - src/styles/{settings-overlays,responsive}.css
   - tests/server/{preferences,update-checker,update-coordinator}.test.ts

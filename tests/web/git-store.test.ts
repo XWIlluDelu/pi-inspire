@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, expect, it, vi } from "vitest";
 import type {
   GitDiffResponse,
   GitFileChange,
@@ -11,340 +11,281 @@ import {
   deferred,
   FakeWebSocket,
   installFakeWebSocket,
-  installFetch,
   jsonBody,
   type RouteResponse,
+  selectSession,
 } from "./helpers";
-import { baseRoutes, initStore } from "./store-fixture";
+import { initStore, installStoreRoutes } from "./store-fixture";
 
-const path = {
-  id: "ZmlsZS50eHQ",
-  display: "file.txt",
-  utf8Path: "file.txt",
-  workspacePath: "file.txt",
-};
-
-function repository(
-  files: GitFileChange[],
-): Extract<GitStatusResponse, { kind: "repository" }> {
-  return {
-    kind: "repository",
-    head: { kind: "branch", name: "main", oid: "0123456789abcdef" },
-    files,
-    total: files.length,
-    truncated: false,
-  };
-}
-
-const initialStatus = repository([
-  {
-    path,
-    staged: { kind: "modified" },
-    unstaged: { kind: "modified" },
-    worktree: { kind: "modified" },
-    untracked: false,
-  },
-]);
-
-function textDiff(text: string): GitDiffResponse {
-  return {
-    kind: "text",
-    path,
-    truncated: false,
-    encodingLossy: false,
-    additions: 1,
-    deletions: 0,
-    lines: [{ kind: "add", text, oldLine: null, newLine: 1 }],
-  };
-}
-
-describe("Git inspection ownership and freshness", () => {
-  beforeEach(() => installFakeWebSocket());
-
-  it("revalidates an open comparison after reconnect and retires it when the session changes", async () => {
-    const started = deferred<void>();
-    const lateStatus = deferred<RouteResponse>();
-    const diffStarted = deferred<AbortSignal | null | undefined>();
-    const lateDiff = deferred<RouteResponse>();
-    let transport = "old";
-    let blockStatus = false;
-    let blockDiff = false;
-    installFetch((url, init) => {
-      if (url.startsWith("/api/git/status")) {
-        if (transport === "old" && blockStatus) {
-          started.resolve();
-          return lateStatus.promise;
-        }
-        return {
-          body: {
-            ...initialStatus,
-            head: { ...initialStatus.head, name: transport },
-          },
-        };
-      }
-      if (url.startsWith("/api/git/diff")) {
-        if (blockDiff) {
-          diffStarted.resolve(init.signal);
-          return lateDiff.promise;
-        }
-        return { body: textDiff(transport) };
-      }
-      if (url === "/api/sessions/open")
-        return { body: activeSnapshot({ sessionId: "s2", cwd: "/other" }) };
-      return baseRoutes(url, init);
-    });
-    const { store } = await initStore();
-    await store.openGitDiff(path.id);
-    expect(store.getState().gitDiff).toMatchObject({
-      status: "ready",
-      result: textDiff("old"),
-    });
-    blockStatus = true;
-    const refreshing = store.refreshGitStatus();
-    await started.promise;
-
-    transport = "replacement";
-    await store.init();
-    FakeWebSocket.instances.at(-1)!.join(activeSnapshot());
-    await vi.waitFor(() =>
-      expect(store.getState()).toMatchObject({
-        gitStatus: { head: { name: "replacement" } },
-        gitDiff: { status: "ready", result: textDiff("replacement") },
-      }),
-    );
-
-    lateStatus.resolve({ body: initialStatus });
-    await refreshing;
-    expect(store.getState()).toMatchObject({
-      gitStatus: { head: { name: "replacement" } },
-      gitDiff: { status: "ready", result: textDiff("replacement") },
-    });
-
-    blockDiff = true;
-    const opening = store.openGitDiff(path.id);
-    const signal = await diffStarted.promise;
-    await store.openSession("s2");
-    expect(signal?.aborted).toBe(true);
-    lateDiff.resolve({ body: textDiff("previous session") });
-    await opening;
-    expect(store.getState()).toMatchObject({
-      sessionId: "s2",
-      gitStatus: null,
-      gitDiff: null,
-      fileInspection: { kind: "browse" },
-    });
-  });
-});
-
-const change: GitFileChange = {
+const readme: GitFileChange = {
   path: {
     id: "src-readme",
     display: "src/readme.md",
-    utf8Path: "src/readme.md",
     workspacePath: "src/readme.md",
+    utf8Path: "src/readme.md",
   },
-  staged: { kind: "modified" },
-  unstaged: { kind: "modified" },
-  worktree: { kind: "modified" as const },
+  worktree: { kind: "modified" },
+  untracked: false,
+};
+const deleted: GitFileChange = {
+  path: { id: "deleted", display: "deleted.txt", workspacePath: "deleted.txt" },
+  worktree: { kind: "deleted" },
+  untracked: false,
+};
+const opaque: GitFileChange = {
+  path: { id: "opaque", display: "escaped-�" },
+  worktree: { kind: "modified" },
   untracked: false,
 };
 
-describe("shared Files and Changes tabs", () => {
-  let status: GitStatusResponse;
-  let statusFailure: boolean;
-  let statusWait: Promise<void> | null;
-  let aliasWait: Promise<void> | null;
-  let aliasSignal: AbortSignal | null | undefined;
-  let resolved: string[];
-  let diffs: Array<{ pathId: string }>;
+const repository = (files = [readme], name = "main"): GitStatusResponse => ({
+  kind: "repository",
+  head: { kind: "branch", name, oid: "0123456789abcdef" },
+  files,
+  total: files.length,
+  truncated: false,
+});
+const binary = ({ path }: GitFileChange): GitDiffResponse => ({
+  kind: "binary",
+  path,
+});
+const textDiff = (text: string): GitDiffResponse => ({
+  kind: "text",
+  path: readme.path,
+  additions: 1,
+  deletions: 0,
+  truncated: false,
+  encodingLossy: false,
+  lines: [{ kind: "add", text, oldLine: null, newLine: 1 }],
+});
 
-  beforeEach(() => {
-    installFakeWebSocket();
-    status = repository([change]);
-    statusFailure = false;
-    statusWait = null;
-    aliasWait = null;
-    aliasSignal = undefined;
-    resolved = [];
-    diffs = [];
-    installFetch(async (url, init) => {
-      if (url.startsWith("/api/git/status")) {
-        if (statusWait) await statusWait;
-        return statusFailure
-          ? { status: 503, body: { error: "Git unavailable" } }
-          : { body: status };
-      }
-      if (url.startsWith("/api/git/diff")) {
-        const { pathId } = jsonBody(init);
-        diffs.push({ pathId: String(pathId) });
-        const file =
-          status.kind === "repository"
-            ? status.files.find((file) => file.path.id === pathId)
-            : undefined;
-        return { body: { kind: "binary", path: file?.path } };
-      }
-      if (url.startsWith("/api/resources/resolve")) {
-        const { reference, workspacePath, sessionId } = jsonBody(init);
-        resolved.push(String(reference));
-        if (reference === "readme.md" && aliasWait) {
-          aliasSignal = init.signal;
-          await aliasWait;
-        }
-        if (reference === "deleted.txt")
-          return { status: 404, body: { error: "File was deleted" } };
-        return {
-          body: fakeResourceDescriptor(String(reference), {
-            id: `fresh-${resolved.length}`,
-            sessionId: String(sessionId),
-            viewId: `view-${sessionId}`,
-            workspacePath: String(
-              workspacePath ??
-                (reference === "readme.md" ? "src/readme.md" : reference),
-            ),
-            mimeType: "application/octet-stream",
-            kind: "binary",
-          }),
-        };
-      }
-      if (url.startsWith("/api/files/list"))
-        return { body: { entries: [], truncated: false } };
-      return baseRoutes(url, init);
-    });
-  });
-
-  it("keeps Changes selected when a pending alias resolves to an existing tab", async () => {
-    const { store } = await initStore();
-    await store.openWorkspaceFile("src/readme.md");
-    await store.openWorkspaceFile("other.txt");
-    const pending = deferred<void>();
-    aliasWait = pending.promise;
-    const body = store.openResource("readme.md");
-    await store.setFileChangesView(true);
-    expect(diffs).toEqual([]);
-
-    pending.resolve();
-    await body;
-
-    expect(store.getState().resourceTabs).toMatchObject([
-      { reference: "src/readme.md", view: "changes" },
-      { reference: "other.txt" },
-    ]);
-    expect(store.getState().fileInspection).toMatchObject({
-      kind: "file",
-      reference: "src/readme.md",
-      workspacePath: "src/readme.md",
-    });
-    await vi.waitFor(() =>
-      expect(store.getState().gitDiff).toMatchObject({
-        status: "ready",
-        result: { path: change.path },
-      }),
-    );
-  });
-
-  it("opens deleted and opaque Git paths while retiring a late Files read", async () => {
-    const deleted: GitFileChange = {
-      path: {
-        id: "deleted",
-        display: "deleted.txt",
-        utf8Path: "deleted.txt",
-        workspacePath: "deleted.txt",
-      },
-      staged: { kind: "deleted" },
-      worktree: { kind: "deleted" },
-      untracked: false,
-    };
-    const opaque: GitFileChange = {
-      path: { id: "opaque", display: "escaped-name" },
-      unstaged: { kind: "modified" },
-      worktree: { kind: "modified" as const },
-      untracked: false,
-    };
-    status = repository([deleted, opaque]);
-    const { store } = await initStore();
-    const pending = deferred<void>();
-    aliasWait = pending.promise;
-    const staleRead = store.openResource("readme.md");
-    await vi.waitFor(() => expect(resolved).toEqual(["readme.md"]));
-    await store.openGitDiff(deleted.path.id);
-    expect(aliasSignal?.aborted).toBe(true);
-    pending.resolve();
-    await staleRead;
-    await vi.waitFor(() =>
-      expect(inspectedPreview(store.getState().fileInspection)).toMatchObject({
-        status: "error",
-        message: "File was deleted",
-      }),
-    );
-    expect(store.getState().gitDiff).toMatchObject({
-      status: "ready",
-      result: { path: deleted.path },
-    });
-    await store.openGitDiff(opaque.path.id);
-    expect(store.getState().fileInspection.reference).toBe("pi-git://opaque");
-    expect(store.getState().gitDiff).toMatchObject({
-      status: "ready",
-      result: { path: opaque.path },
-    });
-    await store.setFileChangesView(false);
-    expect(inspectedPreview(store.getState().fileInspection)).toMatchObject({
-      status: "error",
-      reference: "pi-git://opaque",
-    });
-    expect(resolved).toEqual(["readme.md", "deleted.txt"]);
-  });
-
-  it("distinguishes failed status from a confirmed clean file without retaining another comparison", async () => {
-    const { store } = await initStore();
-    await store.openGitDiff(change.path.id);
-    await store.setFileChangesView(false);
-    statusFailure = true;
-    await store.setFileChangesView(true);
-    expect(store.getState()).toMatchObject({
-      gitStatusError: "Git unavailable",
-      gitDiff: null,
-    });
-    expect(store.getState().resourceTabs[0].view).toBe("changes");
-    statusFailure = false;
-    status = repository([]);
-    await store.refreshFileTab();
-    expect(store.getState()).toMatchObject({
-      gitStatusError: null,
-      gitStatus: { files: [] },
-      gitDiff: null,
-    });
-    expect(diffs).toHaveLength(1);
-    status = repository([change]);
-    await store.refreshGitStatus();
-    expect(store.getState().gitDiff).toMatchObject({
-      status: "ready",
-      result: { path: change.path },
-    });
-  });
-
-  it.each(["closes the pane", "selects another file"] as const)(
-    "retires a delayed Git mode request when the reader %s",
-    async (transition) => {
-      const { store } = await initStore();
-      await store.openResource("readme.md");
-      const pending = deferred<void>();
-      statusWait = pending.promise;
-      statusFailure = transition === "closes the pane";
-      const opening = store.setFileChangesView(true);
-      if (statusFailure) store.setResourcesOpen(false);
-      else await store.openResource("other.txt");
-      pending.resolve();
-      await opening;
-      expect(store.getState()).toMatchObject({
-        gitDiff: null,
-        ...(statusFailure
-          ? {
-              resourcesOpen: false,
-              fileInspection: { kind: "file", preview: null },
-            }
-          : { fileInspection: { kind: "file", reference: "other.txt" } }),
-      });
-      expect(diffs).toEqual([]);
+async function fixture(files = [readme]) {
+  const status = vi
+    .fn<
+      (signal: RequestInit["signal"]) => RouteResponse | Promise<RouteResponse>
+    >()
+    .mockReturnValue({ body: repository(files) });
+  const diff = vi
+    .fn<
+      (
+        pathId: unknown,
+        signal: RequestInit["signal"],
+      ) => RouteResponse | Promise<RouteResponse>
+    >()
+    .mockImplementation((id) => ({
+      body: binary(files.find((file) => file.path.id === id)!),
+    }));
+  const alias = deferred<void>();
+  let holdAlias = false;
+  const resolve = vi.fn(
+    async (body: Record<string, unknown>, _signal: RequestInit["signal"]) => {
+      const { reference, workspacePath, sessionId } = body;
+      if (reference === "readme.md" && holdAlias) await alias.promise;
+      if (reference === "deleted.txt")
+        return { status: 404, body: { error: "File was deleted" } };
+      return {
+        body: fakeResourceDescriptor(String(reference), {
+          sessionId: String(sessionId),
+          viewId: `view-${sessionId}`,
+          workspacePath: String(
+            workspacePath ??
+              (reference === "readme.md" ? "src/readme.md" : reference),
+          ),
+          kind: "binary",
+          mimeType: "application/octet-stream",
+        }),
+      };
     },
   );
+  installStoreRoutes((url, init) => {
+    if (url.startsWith("/api/git/status?")) return status(init.signal);
+    if (url === "/api/git/diff")
+      return diff(jsonBody(init).pathId, init.signal);
+    if (url === "/api/resources/resolve")
+      return resolve(jsonBody(init), init.signal);
+    if (url.startsWith("/api/files/list"))
+      return { body: { entries: [], truncated: false } };
+  });
+  const { store } = await initStore();
+  const state = () => store.getState();
+  return {
+    store,
+    state,
+    status,
+    diff,
+    resolve,
+    alias,
+    holdAlias: () => {
+      holdAlias = true;
+    },
+  };
+}
+
+beforeEach(() => installFakeWebSocket());
+
+it("reauthorizes visible Changes on reconnect and retires reads across session selection", async () => {
+  const f = await fixture();
+  f.diff.mockReturnValue({ body: textDiff("old") });
+  await f.store.openGitDiff(readme.path.id);
+  expect(f.state().gitDiff).toMatchObject({
+    status: "ready",
+    result: textDiff("old"),
+  });
+  const started = deferred<void>();
+  const oldStatus = deferred<RouteResponse>();
+  f.status.mockImplementationOnce(() => {
+    started.resolve();
+    return oldStatus.promise;
+  });
+  const inspecting = f.store.refreshGitStatus();
+  await started.promise;
+  f.status.mockReturnValue({ body: repository([readme], "replacement") });
+  f.diff.mockReturnValue({ body: textDiff("replacement") });
+  await f.store.init();
+  FakeWebSocket.instances.at(-1)!.join(activeSnapshot());
+  const fresh = {
+    gitStatus: { head: { name: "replacement" } },
+    gitDiff: { status: "ready", result: textDiff("replacement") },
+  };
+  await vi.waitFor(() => expect(f.state()).toMatchObject(fresh));
+  oldStatus.resolve({ body: repository() });
+  await inspecting;
+  expect(f.state()).toMatchObject(fresh);
+
+  const opened = deferred<RequestInit["signal"]>();
+  const lateDiff = deferred<RouteResponse>();
+  f.diff.mockImplementationOnce((_id, signal) => {
+    opened.resolve(signal);
+    return lateDiff.promise;
+  });
+  const pending = f.store.openGitDiff(readme.path.id);
+  const signal = await opened.promise;
+  await selectSession(
+    f.store,
+    activeSnapshot({ sessionId: "s2", cwd: "/other" }),
+  );
+  expect(signal?.aborted).toBe(true);
+  lateDiff.resolve({ body: textDiff("retired session") });
+  await pending;
+  expect(f.state()).toMatchObject({
+    sessionId: "s2",
+    gitStatus: null,
+    gitDiff: null,
+    fileInspection: { kind: "browse" },
+  });
 });
+
+it("deduplicates the canonical tab after a late alias without changing the selected Changes mode", async () => {
+  const f = await fixture();
+  await f.store.openWorkspaceFile("src/readme.md");
+  await f.store.openWorkspaceFile("other.txt");
+  f.holdAlias();
+  const reading = f.store.openResource("readme.md");
+  await f.store.setFileChangesView(true);
+  expect(f.diff).not.toHaveBeenCalled();
+  f.alias.resolve();
+  await reading;
+  await vi.waitFor(() =>
+    expect(f.state()).toMatchObject({
+      resourceTabs: [
+        { reference: "src/readme.md", view: "changes" },
+        { reference: "other.txt" },
+      ],
+      fileInspection: {
+        kind: "file",
+        reference: "src/readme.md",
+        workspacePath: "src/readme.md",
+      },
+      gitDiff: { status: "ready", result: binary(readme) },
+    }),
+  );
+});
+
+it("opens deleted and opaque paths as Git comparisons without guessing a filesystem name", async () => {
+  const f = await fixture([deleted, opaque]);
+  f.holdAlias();
+  const stale = f.store.openResource("readme.md");
+  await vi.waitFor(() => expect(f.resolve).toHaveBeenCalledOnce());
+  await f.store.openGitDiff(deleted.path.id);
+  expect(f.resolve.mock.calls[0]![1]?.aborted).toBe(true);
+  f.alias.resolve();
+  await stale;
+  await vi.waitFor(() =>
+    expect(inspectedPreview(f.state().fileInspection)).toMatchObject({
+      status: "error",
+      message: "File was deleted",
+    }),
+  );
+  expect(f.state().gitDiff).toMatchObject({
+    status: "ready",
+    result: binary(deleted),
+  });
+  await f.store.openGitDiff(opaque.path.id);
+  expect(f.state().gitDiff).toMatchObject({
+    status: "ready",
+    result: binary(opaque),
+  });
+  await f.store.setFileChangesView(false);
+  expect(inspectedPreview(f.state().fileInspection)).toMatchObject({
+    status: "error",
+    reference: "pi-git://opaque",
+  });
+  expect(f.resolve.mock.calls.map(([body]) => body.reference)).toEqual([
+    "readme.md",
+    "deleted.txt",
+  ]);
+});
+
+it("distinguishes failed status from a confirmed clean result while retaining Changes mode", async () => {
+  const f = await fixture();
+  await f.store.openGitDiff(readme.path.id);
+  await f.store.setFileChangesView(false);
+  f.status.mockReturnValueOnce({
+    status: 503,
+    body: { error: "Git unavailable" },
+  });
+  await f.store.setFileChangesView(true);
+  expect(f.state()).toMatchObject({
+    gitStatusError: "Git unavailable",
+    gitDiff: null,
+    resourceTabs: [{ view: "changes" }],
+  });
+  f.status.mockReturnValueOnce({ body: repository([]) });
+  await f.store.refreshFileTab();
+  expect(f.state()).toMatchObject({
+    gitStatusError: null,
+    gitStatus: { files: [] },
+    gitDiff: null,
+  });
+  expect(f.diff).toHaveBeenCalledOnce();
+  await f.store.refreshGitStatus();
+  expect(f.state().gitDiff).toMatchObject({
+    status: "ready",
+    result: binary(readme),
+  });
+});
+
+it.each(["close", "switch"] as const)(
+  "drops deferred Changes mode on %s before a diff can start",
+  async (gesture) => {
+    const f = await fixture();
+    await f.store.openResource("readme.md");
+    const pending = deferred<RouteResponse>();
+    f.status.mockReturnValueOnce(pending.promise);
+    const opening = f.store.setFileChangesView(true);
+    if (gesture === "close") f.store.setResourcesOpen(false);
+    else await f.store.openResource("other.txt");
+    pending.resolve({ body: repository() });
+    await opening;
+    expect(f.diff).not.toHaveBeenCalled();
+    expect(f.state()).toMatchObject({
+      gitDiff: null,
+      ...(gesture === "close"
+        ? {
+            resourcesOpen: false,
+            fileInspection: { kind: "file", preview: null },
+          }
+        : { fileInspection: { kind: "file", reference: "other.txt" } }),
+    });
+  },
+);
