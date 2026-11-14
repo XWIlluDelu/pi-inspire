@@ -14,6 +14,7 @@ import type {
   TerminalDescriptor,
   TerminalServerControlMessage,
 } from "../../shared/terminal-contracts";
+import type { TerminalIntent } from "../../shared/terminal-operations";
 import { WorkspaceDock } from "../../src/components/WorkspaceDock";
 import { terminalOperations } from "../../src/controllers/terminal-operation-controller";
 import {
@@ -32,20 +33,40 @@ import { deferred, installLocalStorage } from "./helpers";
 
 const api = vi.hoisted(() => ({
   terminals: vi.fn(),
-  createTerminal: vi.fn(),
-  renameTerminal: vi.fn(),
-  removeTerminal: vi.fn(),
-  restartTerminal: vi.fn(),
-  reorderTerminals: vi.fn(),
   retryTerminalOperation: vi.fn(),
   terminalSettings: vi.fn(),
+}));
+const controls = vi.hoisted(() => ({
+  create: vi.fn(),
+  rename: vi.fn(),
+  remove: vi.fn(),
+  restart: vi.fn(),
+  reorder: vi.fn(),
 }));
 const viewCallbacks = vi.hoisted(
   () => new Map<string, { bell(): void; complete(): void }>(),
 );
 vi.mock("../../src/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/api")>()),
-  createApi: () => api,
+  createApi: () => ({
+    ...api,
+    terminalOperation: (intent: TerminalIntent) => {
+      switch (intent.command) {
+        case "create":
+          return controls.create(intent.params.request);
+        case "rename":
+          return controls.rename(intent.params);
+        case "remove":
+          return controls.remove(intent.params);
+        case "restart":
+          return controls.restart(intent.params);
+        case "reorder":
+          return controls.reorder(intent.params);
+        default:
+          throw new Error("Unexpected terminal intent");
+      }
+    },
+  }),
 }));
 vi.mock("../../src/components/TerminalView", () => ({
   TerminalView: ({
@@ -144,7 +165,7 @@ beforeEach(() => {
   clearTerminalActions();
   clearTerminalInsertions();
   viewCallbacks.clear();
-  for (const mock of Object.values(api)) mock.mockReset();
+  for (const mock of Object.values({ ...api, ...controls })) mock.mockReset();
   api.terminalSettings.mockResolvedValue({
     persistOutput: false,
     historyRetentionDays: 30,
@@ -237,11 +258,11 @@ afterEach(() => {
 
 it("retains the original terminal for queued Close and Restart", async () => {
   api.terminals.mockResolvedValueOnce(catalog([]));
-  api.removeTerminal.mockResolvedValue({
+  controls.remove.mockResolvedValue({
     catalogEpoch: "daemon-1",
     revision: 3,
   });
-  api.restartTerminal.mockResolvedValue(terminal("A shell", "/A", 2));
+  controls.restart.mockResolvedValue(terminal("A shell", "/A", 2));
   const view = render(<WorkspaceDock cwd="/A" />);
   await screen.findByText("Project terminal", { exact: true });
   act(() => {
@@ -252,14 +273,17 @@ it("retains the original terminal for queued Close and Restart", async () => {
   await screen.findByRole("tab", { name: "B shell", selected: true });
   view.rerender(<WorkspaceDock cwd="/A" />);
   await screen.findByRole("tab", { name: "A shell", selected: true });
-  expect(api.removeTerminal).not.toHaveBeenCalled();
-  expect(api.restartTerminal).not.toHaveBeenCalled();
+  expect(controls.remove).not.toHaveBeenCalled();
+  expect(controls.restart).not.toHaveBeenCalled();
   await act(async () => queueTerminalAction("restart", "/A"));
   act(() => queueTerminalAction("close", "/A"));
   view.rerender(<WorkspaceDock cwd="/B" />);
   await screen.findByRole("tab", { name: "B shell", selected: true });
-  expect(api.restartTerminal).toHaveBeenCalledExactlyOnceWith("A shell");
-  expect(api.removeTerminal).toHaveBeenCalledExactlyOnceWith("A shell", false);
+  expect(controls.restart).toHaveBeenCalledExactlyOnceWith({ id: "A shell" });
+  expect(controls.remove).toHaveBeenCalledExactlyOnceWith({
+    id: "A shell",
+    force: false,
+  });
 });
 
 describe("terminal creation controls", () => {
@@ -271,7 +295,7 @@ describe("terminal creation controls", () => {
     "routes Shift+Backquote with %s in %s mode",
     async (modifier, shortcutMode) => {
       saveTerminalUiSettings({ ...DEFAULT_TERMINAL_UI_SETTINGS, shortcutMode });
-      api.createTerminal.mockResolvedValue(terminal("new shell"));
+      controls.create.mockResolvedValue(terminal("new shell"));
       render(<WorkspaceDock cwd="/A" />);
       const target = await screen.findByRole("tab", {
         name: "A shell",
@@ -284,10 +308,10 @@ describe("terminal creation controls", () => {
         [modifier]: true,
       });
       if (shortcutMode === "shell") {
-        expect(api.createTerminal).not.toHaveBeenCalled();
+        expect(controls.create).not.toHaveBeenCalled();
       } else {
         await screen.findByRole("tab", { name: "new shell", selected: true });
-        expect(api.createTerminal).toHaveBeenCalledExactlyOnceWith({
+        expect(controls.create).toHaveBeenCalledExactlyOnceWith({
           cwd: "/A",
         });
       }
@@ -304,7 +328,7 @@ describe("terminal creation controls", () => {
       matches: true,
     } as MediaQueryList);
     api.terminals.mockResolvedValue({ ...catalog([]), profiles });
-    api.createTerminal.mockResolvedValue(terminal("new zsh"));
+    controls.create.mockResolvedValue(terminal("new zsh"));
     render(<WorkspaceDock cwd="/A" />);
     const empty = await screen.findByText("Project terminal", { exact: true });
     fireEvent.click(
@@ -314,10 +338,10 @@ describe("terminal creation controls", () => {
     );
     const picker = screen.getByLabelText("Choose terminal profile");
     expect(picker).toHaveFocus();
-    expect(api.createTerminal).not.toHaveBeenCalled();
+    expect(controls.create).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Zsh" }));
     await screen.findByRole("tab", { name: "new zsh", selected: true });
-    expect(api.createTerminal).toHaveBeenCalledWith({
+    expect(controls.create).toHaveBeenCalledWith({
       cwd: "/A",
       profileId: "zsh",
     });
@@ -337,13 +361,13 @@ describe("terminal creation controls", () => {
         matches: compact,
       } as MediaQueryList);
       api.terminals.mockResolvedValue({ ...catalog([]), profiles });
-      api.createTerminal.mockResolvedValue(terminal("new bash"));
+      controls.create.mockResolvedValue(terminal("new bash"));
       render(<WorkspaceDock cwd="/A" />);
       fireEvent.click(
         await screen.findByRole("button", { name: "New terminal" }),
       );
       await screen.findByRole("tab", { name: "new bash", selected: true });
-      expect(api.createTerminal).toHaveBeenCalledExactlyOnceWith({ cwd: "/A" });
+      expect(controls.create).toHaveBeenCalledExactlyOnceWith({ cwd: "/A" });
     },
   );
 });
@@ -360,7 +384,7 @@ describe("terminal project ownership", () => {
     expect(confirm).toHaveBeenCalledWith(
       "Close “busy A” and terminate its running process?",
     );
-    expect(api.removeTerminal).not.toHaveBeenCalled();
+    expect(controls.remove).not.toHaveBeenCalled();
     expect(
       screen.getByRole("tab", { name: "busy A", selected: true }),
     ).toBeVisible();
@@ -384,8 +408,8 @@ describe("terminal project ownership", () => {
     act(() => queueTerminalAction("close", "/A"));
     act(() => queueTerminalAction("restart", "/A"));
     fireEvent.keyDown(input, { key: "PageUp", ctrlKey: true });
-    expect(api.removeTerminal).not.toHaveBeenCalled();
-    expect(api.restartTerminal).not.toHaveBeenCalled();
+    expect(controls.remove).not.toHaveBeenCalled();
+    expect(controls.restart).not.toHaveBeenCalled();
 
     view.rerender(<WorkspaceDock cwd="/A" active />);
     await screen.findByRole("tab", { name: "A second", selected: true });
@@ -394,7 +418,7 @@ describe("terminal project ownership", () => {
     ).getByLabelText("Fixture terminal input");
     expect(reactivated).toBeEnabled();
     expect(reactivated).toHaveValue("unfinished command");
-    expect(api.createTerminal).not.toHaveBeenCalled();
+    expect(controls.create).not.toHaveBeenCalled();
     act(() => queueTerminalAction("focus", "/A"));
     const reserved = new KeyboardEvent("keydown", {
       key: "Escape",
@@ -412,17 +436,17 @@ describe("terminal project ownership", () => {
 
   it("waits until the pane is shown before creating a terminal for queued insertion", async () => {
     api.terminals.mockResolvedValue(catalog([]));
-    api.createTerminal.mockResolvedValue(terminal("new shell", "/A", 2));
+    controls.create.mockResolvedValue(terminal("new shell", "/A", 2));
     const view = render(<WorkspaceDock cwd="/A" />);
     await screen.findByRole("button", { name: "New terminal" });
     view.rerender(<WorkspaceDock cwd="/A" active={false} />);
     act(() => queueTerminalInsertion("pending command", "/A"));
     await act(async () => {});
-    expect(api.createTerminal).not.toHaveBeenCalled();
+    expect(controls.create).not.toHaveBeenCalled();
 
     view.rerender(<WorkspaceDock cwd="/A" active />);
     await waitFor(() =>
-      expect(api.createTerminal).toHaveBeenCalledExactlyOnceWith({ cwd: "/A" }),
+      expect(controls.create).toHaveBeenCalledExactlyOnceWith({ cwd: "/A" }),
     );
     await screen.findByRole("tab", { name: "new shell", selected: true });
   });
@@ -464,7 +488,7 @@ describe("terminal project ownership", () => {
       expect.stringContaining("The operation may still be running."),
     );
     expect(stopTracking).toHaveBeenCalledExactlyOnceWith("lost");
-    expect(api.createTerminal).not.toHaveBeenCalled();
+    expect(controls.create).not.toHaveBeenCalled();
     expect(api.retryTerminalOperation).not.toHaveBeenCalled();
     await screen.findByText("Completed · Could not clear tracking");
     fireEvent.click(
@@ -486,17 +510,20 @@ describe("terminal project ownership", () => {
     const closed = deferred<{ catalogEpoch: string; revision: number }>();
     const ordered = deferred<never>();
     const listed = deferred<TerminalCatalogResponse>();
-    api.removeTerminal.mockReturnValueOnce(closed.promise);
-    api.reorderTerminals.mockReturnValueOnce(ordered.promise);
+    controls.remove.mockReturnValueOnce(closed.promise);
+    controls.reorder.mockReturnValueOnce(ordered.promise);
     render(<WorkspaceDock cwd="/A" />);
     await screen.findByRole("tab", { name: "A shell", selected: true });
     action("Move tab right");
-    expect(api.reorderTerminals).toHaveBeenCalledWith({
-      cwd: "/A",
-      terminalIds: ["A second", "A shell"],
+    expect(controls.reorder).toHaveBeenCalledWith({
+      projectCwd: "/A",
+      ids: ["A second", "A shell"],
     });
     action("Close");
-    expect(api.removeTerminal).toHaveBeenCalledWith("A shell", false);
+    expect(controls.remove).toHaveBeenCalledWith({
+      id: "A shell",
+      force: false,
+    });
     api.terminals.mockReturnValueOnce(listed.promise);
     await act(async () => {
       poll();
@@ -517,19 +544,19 @@ describe("terminal project ownership", () => {
     async (transition) => {
       const old = deferred<TerminalDescriptor>();
       const current = deferred<TerminalDescriptor>();
-      api.createTerminal
+      controls.create
         .mockReturnValueOnce(old.promise)
         .mockReturnValueOnce(current.promise);
       const view = render(<WorkspaceDock cwd="/A" />);
       await screen.findByRole("tab", { name: "A shell", selected: true });
       if (transition === "return to A") {
-        api.removeTerminal.mockResolvedValueOnce({
+        controls.remove.mockResolvedValueOnce({
           catalogEpoch: "daemon-1",
           revision: 2,
         });
         action("Close");
         fireEvent.click(await screen.findByRole("button", { name: "Reopen" }));
-        expect(api.createTerminal).toHaveBeenCalledWith(
+        expect(controls.create).toHaveBeenCalledWith(
           expect.objectContaining({ cwd: "/A", profileId: "bash" }),
         );
         view.rerender(<WorkspaceDock cwd="/B" />);

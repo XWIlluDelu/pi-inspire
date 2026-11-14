@@ -7,10 +7,12 @@ import {
 } from "../web/fixtures/custom-message-presentation";
 import { renderedColors } from "./support/colors";
 import { openEventSession } from "./support/host-events";
+import { hostRequest } from "./support/host-request";
+import { openConversationSearch, openSettings } from "./support/navigation";
 
 test.use({ serviceWorkers: "block" });
 
-async function openReview(page: Page) {
+async function openReview(page: Page, adapter?: boolean) {
   const send = await openEventSession(
     page,
     "Custom message review",
@@ -22,6 +24,9 @@ async function openReview(page: Page) {
       thinkingVisibility: "hidden",
       activityFoldVisibility: "collapsed",
     },
+    adapter
+      ? [{ id: "review", name: "Review renderer", enabled: true }]
+      : undefined,
   );
   return (message: ReturnType<typeof incomingRelay>) =>
     send({ type: "message_end", message });
@@ -45,7 +50,7 @@ test("sender-led custom messages preserve content, keyboard inspection and respo
 }) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  const send = await openReview(page);
+  const send = await openReview(page, true);
   const message = incomingRelay();
   send(message);
   const card = page.getByRole("article", { name: "Inspire: composer editing" });
@@ -80,6 +85,38 @@ test("sender-led custom messages preserve content, keyboard inspection and respo
     content: message.content,
     details: message.details,
   });
+  await page.route("**/api/presentation-adapters/review", async (route) => {
+    const { enabled } = route.request().postDataJSON();
+    const publication = await (
+      await hostRequest(page).get("/api/preferences")
+    ).json();
+    await route.fulfill({
+      json: {
+        configuration: enabled
+          ? customMessageConfiguration
+          : { version: 1, rules: {}, mappings: {} },
+        adapters: [{ id: "review", name: "Review renderer", enabled }],
+        preferences: publication.preferences,
+        preferenceRevision: publication.revision,
+      },
+    });
+  });
+  await openSettings(page);
+  await page.getByRole("button", { name: "Adapters", exact: true }).click();
+  const adapter = page.getByRole("switch", { name: "Review renderer" });
+  await adapter.press("Space");
+  await expect(adapter).not.toBeChecked();
+  await page.keyboard.press("Escape");
+  const unconfigured = page.getByRole("article", { name: "Relay message" });
+  await expect(unconfigured.locator("details")).toHaveAttribute("open", "");
+  await expect(unconfigured).toContainText("To reply, use the relay tool");
+  await openSettings(page);
+  await page.getByRole("button", { name: "Adapters", exact: true }).click();
+  await adapter.press("Space");
+  await expect(adapter).toBeChecked();
+  await page.keyboard.press("Escape");
+  await expect(card.locator("details")).toHaveAttribute("open", "");
+  await expect(card.locator("details pre")).toHaveText(raw!);
   await summary.press("Space");
   await expect(card.locator("details pre")).toHaveCount(0);
   expect(
@@ -135,6 +172,76 @@ test("sender-led custom messages preserve content, keyboard inspection and respo
   expect(wrappedHeader.headerHeight).toBeGreaterThan(wrappedHeader.copyHeight);
   for (const offset of await longCard.evaluate(headerOffsets))
     expect(Math.abs(offset)).toBeLessThan(0.5);
+
+  const external = incomingRelay("Unverified review paragraph");
+  external.__inspireMessageId = "external-custom";
+  external.content =
+    "**From remote@other-host · unverified cross-machine**\n\n" +
+    "Unverified review paragraph\n\n<script>globalThis.customMarkupRan = true</script>";
+  external.details = {
+    ...(external.details as object),
+    message: { crossMachine: { trust: "unverified" } },
+  };
+  send(external);
+  send({
+    ...external,
+    __inspireMessageId: "hidden-context-custom",
+    display: false,
+    content: "Private model context",
+  });
+  const mixed = {
+    ...external,
+    __inspireMessageId: "mixed-custom",
+    content: [
+      { type: "text", text: "**Original block**" },
+      {
+        type: "image",
+        mimeType: "image/png",
+        data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR42mNgAAIAAAUAAen63NgAAAAASUVORK5CYII=",
+      },
+      { type: "future", data: "Unrecognized payload" },
+      "Primitive payload",
+      { type: "text", text: "After" },
+    ],
+  };
+  send(mixed);
+  const fallback = page
+    .getByRole("article", { name: "Relay message" })
+    .filter({ hasText: "Unverified review paragraph" });
+  const blocks = page
+    .getByRole("article", { name: "Relay message" })
+    .filter({ hasText: "Original block" });
+  await expect(blocks.locator("strong")).toHaveText("Original block");
+  for (const preserved of [
+    "Unrecognized payload",
+    "Primitive payload",
+    "After",
+  ])
+    await expect(
+      blocks.getByText(preserved, { exact: preserved === "After" }),
+    ).toBeVisible();
+  await expect(blocks.locator("img")).toHaveAttribute(
+    "src",
+    /^data:image\/png;base64,/,
+  );
+  await expect(
+    fallback.getByText("From remote@other-host · unverified cross-machine", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(fallback.locator("script")).toHaveCount(0);
+  await expect(page.getByText("Private model context")).toHaveCount(0);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const search = await openConversationSearch(page);
+  await search.fill("Unverified review paragraph");
+  const matches = page.getByLabel("Transcript search matches");
+  await expect(matches).toHaveText("1 match");
+  for (const scope of ["user", "model"]) {
+    await page
+      .getByRole("combobox", { name: "Search scope" })
+      .selectOption(scope);
+    await expect(matches).toHaveText("0 matches");
+  }
 
   expect(errors).toEqual([]);
 });

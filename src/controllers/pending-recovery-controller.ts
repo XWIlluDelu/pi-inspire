@@ -84,10 +84,7 @@ export class PendingRecoveryController {
         const result =
           handoff.confirmed ??
           (await (dispatch
-            ? (action === "recover"
-                ? api.recoverPending(sessionId, request)
-                : api.abort(sessionId, request)
-              ).catch((error: unknown) => {
+            ? api.pendingOperation(request, "start").catch((error: unknown) => {
                 if (
                   current() &&
                   (error instanceof ApiTransportError ||

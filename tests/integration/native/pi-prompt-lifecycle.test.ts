@@ -222,32 +222,35 @@ describe("native prompt admission and extension dialogs", () => {
     expect(eventsOf(f.runtimeEvents, "runtime_error")).toEqual([]);
   }, 20_000);
 
-  it("keeps an independent command's dialog answerable when the model settles", async () => {
+  it("keeps independent dialogs answerable through model settlement, timeout, and scoped Stop", async () => {
     let releaseModel!: () => void;
     const modelReplyGate = new Promise<void>((resolveReply) => {
       releaseModel = resolveReply;
     });
     try {
       const f = await fixture(false, 0, modelReplyGate);
+      const worker = f.workers[0]!;
+      const pid = worker.pid;
+      const snapshot = () => f.runtime.snapshot(f.sessionId);
+      const question = (title: string) =>
+        vi.waitFor(async () => {
+          const next = (await snapshot()).pendingExtensionUiRequests?.find(
+            (request) => request.title === title,
+          );
+          expect(next).toBeDefined();
+          return next!;
+        });
       await f.api.prompt(
         f.delivery("Reply after the command opens its dialog."),
       );
       await vi.waitFor(() => expect(f.modelRequests).toHaveLength(1));
       const command = f.api.prompt(f.delivery("/await"));
       void command.catch(() => {});
-      await vi.waitFor(async () =>
-        expect(
-          (await f.runtime.snapshot(f.sessionId)).pendingExtensionUiRequests,
-        ).toHaveLength(1),
-      );
-      const dialog = (await f.runtime.snapshot(f.sessionId))
-        .pendingExtensionUiRequests![0]!;
+      const dialog = await question("Synthetic preflight confirmation");
       releaseModel();
       await settled(f, 1);
-      expect(f.workers[0]!.hasPendingRequest("prompt")).toBe(true);
-      expect(
-        (await f.runtime.snapshot(f.sessionId)).pendingExtensionUiRequests,
-      ).toEqual([dialog]);
+      expect(worker.hasPendingRequest("prompt")).toBe(true);
+      expect((await snapshot()).pendingExtensionUiRequests).toEqual([dialog]);
       expect(eventsOf(f.runtimeEvents, "extension_ui_clear")).toEqual([]);
       await f.runtime.extensionUiResponse({
         sessionId: f.sessionId,
@@ -255,11 +258,61 @@ describe("native prompt admission and extension dialogs", () => {
         confirmed: true,
       });
       await expect(command).resolves.toMatchObject({ accepted: true });
-      expect(
-        (await f.runtime.snapshot(f.sessionId)).pendingExtensionUiRequests,
-      ).toEqual([]);
-      expect(f.workers).toHaveLength(1);
-      expect(f.workers[0]!.stop).not.toHaveBeenCalled();
+
+      const timing = f.api.prompt(f.delivery("/ui-demo timeout 1200"));
+      const timed = await question("Timed note");
+      expect(timed.expiresAt).toBeGreaterThan(Date.now());
+      await timing;
+      await vi.waitFor(async () =>
+        expect((await snapshot()).pendingExtensionUiRequests).toEqual([]),
+      );
+      expect(eventsOf(f.runtimeEvents, "extension_ui_remove")).toContainEqual(
+        expect.objectContaining({ id: timed.id, reason: "expired" }),
+      );
+      await expect(
+        f.runtime.extensionUiResponse({
+          sessionId: f.sessionId,
+          id: timed.id,
+          value: "late",
+        }),
+      ).rejects.toThrow(/no longer pending/);
+
+      await f.api.prompt(f.delivery("/background-question"));
+      const stopped = await question("Stop question");
+      expect(eventsOf(f.runtimeEvents, "extension_ui_request")).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            sessionId: f.sessionId,
+            method: "setTitle",
+            title: "Native extension title",
+          }),
+          expect.objectContaining({
+            sessionId: f.sessionId,
+            method: "set_editor_text",
+            text: "Native extension draft",
+          }),
+        ]),
+      );
+      await f.runtime.abort(f.sessionId);
+      const next = await question("Independent next question");
+      expect(next.id).not.toBe(stopped.id);
+      expect((await snapshot()).extensionStatuses?.["fixture.stop"]).toBe(
+        "false",
+      );
+      await f.runtime.extensionUiResponse({
+        sessionId: f.sessionId,
+        id: next.id,
+        cancelled: true,
+      });
+      await vi.waitFor(async () =>
+        expect((await snapshot()).extensionStatuses?.["fixture.stop"]).toBe(
+          "finished",
+        ),
+      );
+      expect(f.workers).toEqual([worker]);
+      expect(worker.pid).toBe(pid);
+      expect(worker.available).toBe(true);
+      expect(worker.stop).not.toHaveBeenCalled();
       expect(eventsOf(f.runtimeEvents, "runtime_error")).toEqual([]);
     } finally {
       releaseModel();
@@ -302,7 +355,7 @@ describe("native prompt admission and extension dialogs", () => {
         (await f.runtime.snapshot(f.sessionId)).pendingQueues?.totalCount,
       ).toBe(1);
     });
-    await f.api.clearPending(f.sessionId);
+    await f.api.json("clearPending", { body: { sessionId: f.sessionId } });
     await cleared;
     expect(await f.api.recoverPending(f.sessionId)).toEqual({
       steering: [],

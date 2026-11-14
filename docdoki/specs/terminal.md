@@ -155,7 +155,7 @@ Confirmation explains that this neither cancels the old work nor establishes its
 mutation, persists retirement before releasing the local identity, and is unavailable during a check.
 A subsequent deliberate action gets a new identity; retries never silently become new work.
 Unavailable or malformed storage blocks untracked writes. The browser persists the typed intent
-and sends it to the terminal operation endpoint. Results use the same receipt shape as Host
+and submits each terminal control through one typed terminal operation entry point. Results use the same receipt shape as Host
 operations, with terminal epoch as executor identity. Validation failures with a valid identity
 return a matching rejection before dispatch. Records from a previous format remain explicitly
 unknown. The user can retire their tracking after inspecting the catalog; there is no replay.

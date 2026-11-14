@@ -46,68 +46,6 @@
   }
 }
 
-/* Deferred Settings uses the same layout; placeholders are static and inert. */
-.settings__loading-status {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-height: 36px;
-  color: var(--muted);
-  font-size: var(--text-sm);
-}
-
-.settings__loading .settings__nav-item {
-  min-width: 0;
-  flex: 1;
-}
-
-.settings__loading .settings__card {
-  flex-shrink: 0;
-}
-
-.settings__loading .settings__nav-item,
-.settings__loading .settings__field {
-  pointer-events: none;
-}
-
-.settings__skeleton {
-  display: block;
-  flex-shrink: 0;
-  height: 8px;
-  max-width: 100%;
-  border-radius: var(--radius-xs);
-  background: var(--hairline);
-}
-
-.settings__skeleton--icon {
-  width: 14px;
-  height: 14px;
-}
-
-.settings__skeleton--label {
-  width: 80px;
-  flex-shrink: 1;
-}
-
-.settings__skeleton--description {
-  width: 200px;
-  opacity: 0.6;
-}
-
-.settings__skeleton--control {
-  width: 38%;
-  height: 24px;
-  opacity: 0.6;
-}
-
-.settings__skeleton-copy {
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
 .settings__layout {
   display: flex;
   flex: 1 1 auto;
@@ -458,12 +396,12 @@
   justify-content: flex-end;
 }
 
-.settings__field-control > .native-select--field {
+.settings__field-control > .native-select {
   width: var(--set-choice-w);
   max-width: 100%;
 }
 
-.settings__field .native-select--field {
+.settings__field .native-select {
   min-width: 0;
   min-height: var(--set-control-h);
   height: var(--set-control-h);
@@ -633,7 +571,7 @@
 }
 
 @media (pointer: coarse) {
-  .settings__field .native-select--field,
+  .settings__field .native-select,
   .settings-switch,
   .settings__nav-item {
     min-height: 40px;

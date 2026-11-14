@@ -31,7 +31,6 @@ covers:
   - src/components/AssistantError.tsx
   - src/components/CustomMessage.tsx
   - src/components/BashExecution.tsx
-  - tests/web/native-shell.test.tsx
   - tests/browser/native-shell.spec.ts
   - src/components/transcript-search.ts
   - src/components/transcript-search-highlights.ts

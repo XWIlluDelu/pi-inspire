@@ -10,7 +10,7 @@ covers:
   - server/runtime-worker-pool.ts
   - shared/{contracts,host-endpoints,host-operations,json-endpoints,assistant-stream,tool-argument-updates}.ts
   - server/{tool-argument-stream,tool-argument-batches,runtime-stream-budget}.ts
-  - src/{api,events,store,snapshot-transition,transport-performance,recovery-backoff,operation-observer}.ts
+  - src/{api,events,store,snapshot-transition,transport-performance,recovery-backoff,operation-observer,receipt-storage}.ts
   - src/controllers/{connection,session-selection,runtime-event,branch,resource,session-catalog}-controller.ts
   - tests/server/{app-events,app-input-operations,runtime-worker-pool}.test.ts
   - tests/integration/session-detail-join.test.ts
@@ -195,6 +195,11 @@ the draft or delivery selection has changed. Same-version tab reload restores th
 identity and request fingerprint for receipt observation. Unsupported records can be explicitly
 retired. The stored record contains the proof used for observation and has no replayable input. After a Host
 restart, the old result remains unknown and the user can inspect history before starting new input.
+
+Prompt, terminal and restart tracking share bounded storage reads and writes. Each validates its
+own current records before dispatch. A read failure blocks writes until the original record can be
+checked. Invalid records require explicit retirement. The existing tab records retain their keys
+and formats, and each executor keeps its own identity and receipt semantics.
 
 ## Pending handoff observations
 

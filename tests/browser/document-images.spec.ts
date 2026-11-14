@@ -20,18 +20,30 @@ test("Markdown and Notebook figures share scoped galleries while authored links 
   await expect(
     resources.getByAltText("Linked validation curve", { exact: true }),
   ).toBeVisible();
-  await resources
-    .getByRole("button", { name: "Preview training curve.png", exact: true })
-    .click();
+  await resources.getByAltText("Validation curve", { exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Image preview" });
   await expect(dialog.locator("img")).toBeVisible();
-  await expect(
-    dialog.getByRole("group", { name: "Image navigation" }),
-  ).toContainText("1 / 3");
+  const navigation = dialog.getByRole("group", { name: "Image navigation" });
+  await expect(navigation).toContainText("1 / 4");
   await expect(
     dialog.getByRole("link", { name: "Download image" }),
   ).toHaveAttribute("download", "training curve.png");
-  await dialog.getByRole("button", { name: "Next image" }).click();
+  const scale = dialog.getByRole("button", { name: "Actual size" });
+  const fitted = await scale.innerText();
+  const original = await dialog.locator("img").getAttribute("src");
+  const background = dialog.getByRole("combobox", { name: "Image background" });
+  await dialog.getByRole("button", { name: "Zoom in" }).click();
+  await expect(scale).not.toHaveText(fitted);
+  await background.selectOption("Black");
+  const next = dialog.getByRole("button", { name: "Next image" });
+  await next.click();
+  await expect(navigation).toContainText("2 / 4");
+  await expect(
+    dialog.getByAltText("Repeated validation curve"),
+  ).toHaveAttribute("src", original!);
+  await expect(scale).toHaveText(fitted);
+  await expect(background).toHaveValue("Black");
+  await next.click();
   await expect(dialog.getByAltText("Observation pipeline")).toBeVisible();
   await page.goBack();
   await expect(dialog).toBeHidden();

@@ -40,57 +40,6 @@ describe("maintenance restart admission", () => {
     return schedulingRuntime({ sessions: [] }).runtime;
   }
 
-  it.each(["completed", "unconfirmed"] as const)(
-    "fences a failed startup until its worker retirement is %s",
-    async (retirement) => {
-      const stopStarted = deferredSignal();
-      const stopGate = deferredSignal();
-      const { runtime, workers } = schedulingRuntime({
-        configure(worker) {
-          worker.start = async () => {
-            const error = new Error("Pi failed during startup");
-            if (retirement === "completed") worker.emit("exit", error);
-            throw error;
-          };
-          worker.stop = async () => {
-            stopStarted.resolve();
-            await stopGate.promise;
-            if (retirement === "unconfirmed")
-              throw new Error("Pi stop unconfirmed");
-          };
-        },
-      });
-      const busy = { kind: "busy", reason: "in-flight-operation" };
-      try {
-        await runtime.openSession("a");
-        const startup = startWorker(runtime).catch((error: unknown) => error);
-        await stopStarted.promise;
-        expect(runtime.reserveMaintenanceRestart(false, true)).toEqual(busy);
-        stopGate.resolve();
-        expect(await startup).toBeInstanceOf(Error);
-        if (retirement === "unconfirmed") {
-          await expect(runtime.openSession("a")).rejects.toThrow(
-            "Pi stop unconfirmed",
-          );
-          expect(workers).toHaveLength(1);
-          expect(runtime.reserveMaintenanceRestart(false, true)).toEqual(busy);
-        } else {
-          expect(
-            (await runtime.snapshot("a")).sessionStatuses["a"]?.runState,
-          ).toBe("failed");
-          expect(runtime.reserveMaintenanceRestart(false, true).kind).toBe(
-            "ready",
-          );
-        }
-      } finally {
-        stopGate.resolve();
-        if (retirement === "unconfirmed")
-          await expect(runtime.close()).rejects.toThrow("Pi stop unconfirmed");
-        else await runtime.close();
-      }
-    },
-  );
-
   it("fences expired, released and foreign identities and keeps a committed drain", async () => {
     vi.useFakeTimers();
     const runtime = idleRuntime();

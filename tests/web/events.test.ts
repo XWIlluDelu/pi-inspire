@@ -428,3 +428,47 @@ it("replaces extension status and widgets from bounded Host projections", () => 
     emit("extension_ui_request", { ...widget, extensionDisplays: [] }).slice,
   ).toMatchObject({ statuses: {}, extensionDisplays: [] });
 });
+
+it("stream updates retain model state and replace the same live shell row", () => {
+  const message = {
+    role: "bashExecution",
+    timestamp: 1,
+    command: "pwd",
+    output: "",
+    __inspireLiveId: "shell-live",
+    __inspireBashRunning: true,
+  };
+  let reduced = reduce(
+    { ...emptyEventSlice(), streaming: true },
+    {
+      type: "message_start",
+      message,
+      shellExecution: true,
+      bashRunning: true,
+    },
+  );
+  expect(reduced.slice).toMatchObject({
+    bashRunning: true,
+    streaming: true,
+  });
+  reduced = reduce(reduced.slice, {
+    type: "message_end",
+    shellExecution: true,
+    bashRunning: false,
+    message: {
+      ...message,
+      output: "/project",
+      exitCode: 0,
+      __inspireBashRunning: false,
+    },
+  });
+  expect(reduced.slice.messages).toHaveLength(1);
+  expect(reduced.slice).toMatchObject({
+    bashRunning: false,
+    streaming: true,
+  });
+  expect(reduced.slice.messages[0]).toMatchObject({
+    __inspireLiveId: "shell-live",
+    output: "/project",
+  });
+});

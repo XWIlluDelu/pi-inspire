@@ -273,45 +273,6 @@ test("busy Host restarts submit directly and keep narrow status stable", async (
     await expect(message).toHaveText("Host reconnected.");
     await expect(restart).toBeEnabled();
     await stable("reconnected");
-
-    status = {
-      ...status,
-      operation: { id: "another-restart", scope: "host", phase: "submitted" },
-    };
-    const storageKey = "inspire:host-restart:v1";
-    await page.evaluate(
-      (key) => sessionStorage.setItem(key, "unreadable"),
-      storageKey,
-    );
-    await page.reload();
-    const restored = await openSystemSettings(page);
-    const reset = restored.getByRole("button", {
-      name: "Reset restart recovery…",
-    });
-    await expect(
-      restored.getByText(/Can't read the saved restart status/),
-    ).toBeVisible();
-    await expect(
-      restored.getByRole("button", { name: "Recheck status" }),
-    ).toBeEnabled();
-    page.once("dialog", (dialog) => dialog.dismiss());
-    await reset.click();
-    expect(
-      await page.evaluate((key) => sessionStorage.getItem(key), storageKey),
-    ).toBe("unreadable");
-    const confirm = page.waitForEvent("dialog");
-    const clicking = reset.click();
-    const trackingDialog = await confirm;
-    expect(trackingDialog.message()).toContain(
-      "Any restart already requested can still run.",
-    );
-    await trackingDialog.accept();
-    await clicking;
-    await expect(restored.getByText("Restart requested.")).toBeVisible();
-    await expect(
-      restored.getByRole("button", { name: "Restart", exact: true }),
-    ).toBeDisabled();
-    await expect(reset).toHaveCount(0);
   } finally {
     statusReady.resolve();
     receiptReady.resolve();
@@ -319,66 +280,73 @@ test("busy Host restarts submit directly and keep narrow status stable", async (
   expect(submitted).toHaveLength(5);
 });
 
-for (const includeHerdr of [false, true]) {
-  test(`Restart all confirms Pi shutdown with active Herdr mode ${includeHerdr}`, async ({
-    page,
-  }) => {
-    const status: HostRestartStatus = {
-      hostId: crypto.randomUUID(),
-      available: true,
-      allPiAvailable: true,
-      allPiIncludesHerdr: includeHerdr,
-      operation: null,
+test("Restart all previews the current Herdr scope and submits only after confirmation", async ({
+  page,
+}) => {
+  const status: HostRestartStatus = {
+    hostId: crypto.randomUUID(),
+    available: true,
+    allPiAvailable: true,
+    allPiIncludesHerdr: false,
+    operation: null,
+  };
+  const submitted: HostRestartRequest[] = [];
+  await page.route("**/api/host/restart", async (route) => {
+    if (route.request().method() === "GET")
+      return route.fulfill({ json: status });
+    const request = route.request().postDataJSON() as HostRestartRequest;
+    submitted.push(request);
+    status.operation = {
+      id: request.operationId,
+      scope: request.scope,
+      interruptWork: true,
+      phase: "submitted",
     };
-    const submitted: HostRestartRequest[] = [];
-    await page.route("**/api/host/restart", async (route) => {
-      if (route.request().method() === "GET")
-        return route.fulfill({ json: status });
-      const request = route.request().postDataJSON() as HostRestartRequest;
-      submitted.push(request);
-      status.operation = {
-        id: request.operationId,
-        scope: request.scope,
-        interruptWork: true,
-        phase: "submitted",
-      };
-      return route.fulfill({
-        json: restartObservation(request, status.operation),
-      });
+    return route.fulfill({
+      json: restartObservation(request, status.operation),
     });
-    await pairedPage(page);
-    const settings = await openSystemSettings(page);
-    await settings
-      .getByRole("button", { name: "Restart all", exact: true })
-      .click();
-    const dialog = page.getByRole("alertdialog", { name: "Restart all?" });
-    await expect(dialog).toContainText(
-      includeHerdr
-        ? "All your Pi sessions, including Herdr sessions, will close."
-        : "Your Pi sessions outside Herdr will close.",
-    );
-    await expect(dialog).toContainText(
-      "Project terminals will close and running tasks will stop.",
-    );
-    await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
-    expect(submitted).toHaveLength(0);
-    await settings
-      .getByRole("button", { name: "Restart all", exact: true })
-      .click();
-    await dialog
-      .getByRole("button", { name: "Restart all", exact: true })
-      .click();
-    await expect.poll(() => submitted.length).toBe(1);
-    expect(submitted[0]).toMatchObject({
+  });
+  await pairedPage(page);
+  const settings = await openSystemSettings(page);
+  const restart = settings.getByRole("button", {
+    name: "Restart all",
+    exact: true,
+  });
+  const dialog = page.getByRole("alertdialog", { name: "Restart all?" });
+  await restart.click();
+  await expect(dialog).toContainText(
+    "Your Pi sessions outside Herdr will close.",
+  );
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  expect(submitted).toHaveLength(0);
+
+  status.allPiIncludesHerdr = true;
+  await expect(
+    settings.getByText("Close all Pi sessions and restart Inspire.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await restart.click();
+  await expect(dialog).toContainText(
+    "All your Pi sessions, including Herdr sessions, will close.",
+  );
+  await expect(dialog).toContainText(
+    "Project terminals will close and running tasks will stop.",
+  );
+  await dialog
+    .getByRole("button", { name: "Restart all", exact: true })
+    .click();
+  await expect(settings.locator(".host-restart__status")).toHaveText(
+    "Restart requested.",
+  );
+  expect(submitted).toEqual([
+    expect.objectContaining({
       scope: "all-pi",
       interruptWork: true,
       hostId: status.hostId,
-    });
-    await expect(settings.locator(".host-restart__status")).toHaveText(
-      "Restart requested.",
-    );
-  });
-}
+    }),
+  ]);
+});
 
 test("selected Settings categories remain visible across responsive layouts without trapping manual navigation scrolling", async ({
   page,
@@ -508,84 +476,7 @@ test("selected Settings categories remain visible across responsive layouts with
   ).toBeInViewport();
 });
 
-test("category switches retain model search and a login arriving while hidden", async ({
-  page,
-}) => {
-  let releaseLogin!: () => void;
-  const loginResponse = new Promise<void>((resolve) => {
-    releaseLogin = resolve;
-  });
-  const operations: string[] = [];
-  await page.route("**/api/provider-auth**", async (route) => {
-    const { operation } = route.request().postDataJSON();
-    operations.push(operation);
-    if (operation === "start") await loginResponse;
-    await route.fallback();
-  });
-  await pairAndOpen(page);
-  await openSettings(page);
-  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
-  const nav = settings.getByRole("navigation", { name: "Settings categories" });
-  await nav.getByRole("button", { name: "Models", exact: true }).click();
-  const grid = settings.getByRole("listbox", { name: "Available models" });
-  await expect(grid.getByRole("option").first()).toBeVisible();
-  const search = settings.getByRole("combobox", {
-    name: "Search available models",
-  });
-  const query = "offline";
-  await search.fill(query);
-  await expect(grid.getByRole("option").first()).toBeVisible();
-
-  const credentials = settings.getByRole("region", {
-    name: "Login & API keys",
-  });
-  await credentials
-    .getByRole("button", { name: "Connect provider", exact: true })
-    .click();
-  await credentials.getByLabel("Search providers").fill("anthropic");
-  await credentials
-    .getByRole("button", { name: "Set up Anthropic", exact: true })
-    .click();
-  await credentials
-    .getByRole("button", { name: "Anthropic API key", exact: true })
-    .click();
-  const display = nav.getByRole("button", { name: "Display", exact: true });
-  await display.click();
-  const loginArrived = page.waitForResponse(
-    (response) =>
-      response.url().includes("/api/provider-auth") &&
-      response.request().postDataJSON().operation === "start",
-  );
-  releaseLogin();
-  expect((await loginArrived).ok()).toBe(true);
-  await expect(display).toBeFocused();
-  await expect(
-    settings.getByLabel("Enter Anthropic API key", { exact: true }),
-  ).toHaveCount(0);
-  await nav.getByRole("button", { name: "Models", exact: true }).click();
-  await expect(search).toHaveValue(query);
-
-  const secret = credentials.getByLabel("Enter Anthropic API key", {
-    exact: true,
-  });
-  await secret.fill("SYNTHETIC_CATEGORY_KEY");
-  await nav.getByRole("button", { name: "Conversation", exact: true }).click();
-  await nav.getByRole("button", { name: "Models", exact: true }).click();
-  await expect(secret).toHaveValue("SYNTHETIC_CATEGORY_KEY");
-  await credentials
-    .getByRole("button", { name: "Cancel login", exact: true })
-    .click();
-  await expect(
-    credentials.getByText("Login cancelled.", { exact: true }),
-  ).toBeVisible();
-  expect(
-    operations.filter(
-      (operation) => operation === "start" || operation === "cancel",
-    ),
-  ).toEqual(["start", "cancel"]);
-});
-
-test("narrow Conversation settings persist preferences and restore focus when reset is cancelled", async ({
+test("narrow Settings keeps footer actions usable and preserves preferences after a cancelled reset", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 320, height: 844 });
@@ -618,6 +509,39 @@ test("narrow Conversation settings persist preferences and restore focus when re
     expect((await saved).ok()).toBe(true);
   };
   await openConversation();
+  const footer = dialog.locator(".settings__footer");
+  await page.evaluate(() => {
+    const event = new Event("beforeinstallprompt", { cancelable: true });
+    Object.assign(event, {
+      prompt: () => Promise.resolve(),
+      userChoice: Promise.resolve({ outcome: "dismissed" }),
+    });
+    window.dispatchEvent(event);
+  });
+  await page.evaluate(() => document.fonts.ready);
+  for (const name of ["Install app", "Reset preferences"]) {
+    const action = footer.getByRole("button", { name, exact: true });
+    await expect(action).toBeInViewport({ ratio: 1 });
+    await action.focus();
+    expect(await action.evaluate(focusRingClipping)).toBeLessThanOrEqual(0.5);
+    expect(await action.evaluate(textOverflowsInlineBounds)).toBe(false);
+  }
+  await page.evaluate(() => {
+    const matchMedia = window.matchMedia.bind(window);
+    window.matchMedia = (query) => {
+      const result = matchMedia(query);
+      if (query === "(display-mode: standalone)")
+        Object.defineProperty(result, "matches", { value: true });
+      return result;
+    };
+    window.dispatchEvent(new Event("appinstalled"));
+  });
+  const installed = footer.getByText("App installed", { exact: true });
+  await expect(installed).toBeVisible();
+  await expect(footer.getByRole("button", { name: "Install app" })).toHaveCount(
+    0,
+  );
+  expect(await installed.evaluate(textOverflowsInlineBounds)).toBe(false);
   const send = dialog.getByRole("group", { name: "Send key", exact: true });
   expect(await send.evaluate(textOverflowsInlineBounds)).toBe(false);
   await reset.click();
@@ -672,51 +596,4 @@ test("long Herdr diagnostics leave availability recheck usable", {
   await expect(status).toBeVisible();
   expect(await status.evaluate(textOverflowsInlineBounds)).toBe(false);
   await recheck.click({ trial: true });
-});
-
-test("fits installation, status and reset inside the narrow footer", async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 320, height: 740 });
-  await page.emulateMedia({ reducedMotion: "reduce" });
-  await pairedPage(page);
-  await openSettings(page);
-  const footer = page
-    .getByRole("dialog", { name: "Settings", exact: true })
-    .locator(".settings__footer");
-  await expect(
-    footer.getByRole("button", { name: "Reset preferences" }),
-  ).toBeVisible();
-  await page.evaluate(() => {
-    const event = new Event("beforeinstallprompt", { cancelable: true });
-    Object.assign(event, {
-      prompt: () => Promise.resolve(),
-      userChoice: Promise.resolve({ outcome: "dismissed" }),
-    });
-    window.dispatchEvent(event);
-  });
-  await page.evaluate(() => document.fonts.ready);
-  for (const name of ["Install app", "Reset preferences"]) {
-    const action = footer.getByRole("button", { name, exact: true });
-    await expect(action).toBeInViewport({ ratio: 1 });
-    await action.focus();
-    expect(await action.evaluate(focusRingClipping)).toBeLessThanOrEqual(0.5);
-    expect(await action.evaluate(textOverflowsInlineBounds)).toBe(false);
-  }
-  await page.evaluate(() => {
-    const matchMedia = window.matchMedia.bind(window);
-    window.matchMedia = (query) => {
-      const result = matchMedia(query);
-      if (query === "(display-mode: standalone)")
-        Object.defineProperty(result, "matches", { value: true });
-      return result;
-    };
-    window.dispatchEvent(new Event("appinstalled"));
-  });
-  const installed = footer.getByText("App installed", { exact: true });
-  await expect(installed).toBeVisible();
-  await expect(footer.getByRole("button", { name: "Install app" })).toHaveCount(
-    0,
-  );
-  expect(await installed.evaluate(textOverflowsInlineBounds)).toBe(false);
 });

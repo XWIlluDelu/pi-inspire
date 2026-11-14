@@ -344,8 +344,8 @@ describe("catalog retained-content search", () => {
   }, 30_000);
 
   it("searches a growing session's complete prefix, retires cancellation, and refuses replaced identity", async () => {
-    await withSearchFixture(async (root, index) => {
-      const records = await index.list(root);
+    await withSearchFixture(async (root, index, catalog) => {
+      const records = await catalog.refresh();
       const controller = new AbortController();
       const searching = searchSessionRecords(
         records,
@@ -426,24 +426,12 @@ describe("catalog retained-content search", () => {
       await expect(
         searchSessionRecords([owner], "replacement"),
       ).rejects.toThrow(/source changed/i);
+      const result = await catalog.list({ query: "cobalt" });
+      expect(result.sessions.map((row) => row.id)).toEqual(["search-newer"]);
+      expect(result.issues).toEqual([
+        expect.objectContaining({ path: owner.path }),
+      ]);
     });
-  });
-});
-
-it("searches available sessions while identifying an unreadable or replaced source", async () => {
-  await withSearchFixture(async (_root, _index, catalog) => {
-    await catalog.list();
-    const owner = await catalog.get("search-owner");
-    await rm(owner!.path);
-    await writeFile(
-      owner!.path,
-      `${JSON.stringify({ type: "session", version: 3, id: "replacement", cwd: owner!.cwd })}\n`,
-    );
-    const result = await catalog.list({ query: "cobalt" });
-    expect(result.sessions.map((row) => row.id)).toEqual(["search-newer"]);
-    expect(result.issues).toEqual([
-      expect.objectContaining({ path: owner!.path }),
-    ]);
   });
 });
 

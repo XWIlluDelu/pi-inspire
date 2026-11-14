@@ -40,7 +40,7 @@ import {
 } from "./fixtures/native-pi.js";
 import { writeOfflineModels } from "./fixtures/offline-model.js";
 import { upload } from "./fixtures/runtime.js";
-import { jsonl, messageEntry } from "./fixtures/session-jsonl.js";
+import { messageEntry, writeSession } from "./fixtures/session-jsonl.js";
 
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => {
@@ -127,29 +127,22 @@ async function attachWorkspace(
   const id = resume?.id ?? randomUUID();
   const sessionFile = resume?.sessionFile ?? join(sessions, `${id}.jsonl`);
   if (!resume) {
-    const timestamp = "2026-01-01T00:00:00.000Z";
-    await writeFile(
-      sessionFile,
-      jsonl(
-        { type: "session", version: 3, id, timestamp, cwd: root },
-        messageEntry(
-          "u1",
-          null,
-          { role: "user", content: "first", timestamp: 1 },
-          timestamp,
-        ),
-        messageEntry(
-          "a1",
-          "u1",
-          savedAssistant("answer", {
-            provider: "fixture",
-            model: "offline",
-            timestamp: 2,
-          }),
-          timestamp,
-        ),
+    await writeSession(sessionFile, root, id, [
+      messageEntry("u1", null, {
+        role: "user",
+        content: "first",
+        timestamp: 1,
+      }),
+      messageEntry(
+        "a1",
+        "u1",
+        savedAssistant("answer", {
+          provider: "fixture",
+          model: "offline",
+          timestamp: 2,
+        }),
       ),
-    );
+    ]);
   }
   const environment = {
     ...isolated,

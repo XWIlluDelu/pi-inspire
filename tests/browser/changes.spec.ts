@@ -2,7 +2,11 @@ import { expect, type Locator, test } from "@playwright/test";
 import type { GitDiffResponse } from "../../shared/contracts";
 import { focusRingClipping } from "./support/focus-bounds";
 import { routeSnapshots } from "./support/host-events";
-import { openPreviewFixture, openResourceFixture } from "./support/navigation";
+import {
+  openFixtureSession,
+  openPreviewFixture,
+  openResourceFixture,
+} from "./support/navigation";
 
 const changeRow = /page\.html, modified/;
 const fileTab = { name: "page.html", exact: true };
@@ -48,6 +52,8 @@ test("@cross-browser keeps compact Changes rows readable through refresh and nav
   });
   const destination = path(`packages/calibration/observations/${name}`);
   const originalPath = path(`packages/calibration/previous/${name}`);
+  const deleted = path("deleted.txt");
+  const opaque = { id: "_w", display: "raw-�.txt" };
   const files = [
     {
       path: destination,
@@ -56,6 +62,8 @@ test("@cross-browser keeps compact Changes rows readable through refresh and nav
     },
     { path: path("new.txt"), worktree: { kind: "added" }, untracked: true },
     { path: path("merge.txt"), conflict: { code: "UU" }, untracked: false },
+    { path: deleted, worktree: { kind: "deleted" }, untracked: false },
+    { path: opaque, worktree: { kind: "modified" }, untracked: false },
     ...Array.from({ length: 30 }, (_, index) => ({
       path: path(`updated-${index}.txt`),
       worktree: { kind: "modified" },
@@ -63,6 +71,7 @@ test("@cross-browser keeps compact Changes rows readable through refresh and nav
     })),
   ];
   let unavailable = false;
+  let clean = false;
   await page.route("**/api/git/status**", (route) =>
     unavailable
       ? route.fulfill({ status: 503, json: { error: "Git timed out" } })
@@ -74,8 +83,8 @@ test("@cross-browser keeps compact Changes rows readable through refresh and nav
               name: "review/calibration",
               oid: "b".repeat(40),
             },
-            files,
-            total: files.length,
+            files: clean ? [] : files,
+            total: clean ? 0 : files.length,
             truncated: false,
           },
         }),
@@ -128,6 +137,49 @@ test("@cross-browser keeps compact Changes rows readable through refresh and nav
   await expect
     .poll(() => list.evaluate((element) => element.scrollTop))
     .toBe(offset);
+
+  const requestedPaths: string[] = [];
+  const resolvedPaths: string[] = [];
+  await page.route("**/api/resources/resolve", (route) => {
+    resolvedPaths.push(route.request().postDataJSON().reference);
+    return route.continue();
+  });
+  await page.route("**/api/git/diff", (route) => {
+    const { pathId } = route.request().postDataJSON();
+    requestedPaths.push(pathId);
+    return route.fulfill({
+      json:
+        pathId === opaque.id
+          ? { kind: "unsupported", reason: "path-encoding", path: opaque }
+          : { kind: "binary", path: deleted },
+    });
+  });
+  for (const path of [deleted, opaque]) {
+    await tab.click();
+    await pane.getByRole("button", { name: new RegExp(path.display) }).click();
+    await expect(
+      pane.getByRole("tab", { name: path.display, exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+    await expect(
+      pane.getByText(
+        path === opaque
+          ? "This Git path cannot be represented as UTF-8."
+          : "Binary change",
+        { exact: true },
+      ),
+    ).toBeVisible();
+  }
+  expect(requestedPaths).toEqual([deleted.id, opaque.id]);
+  expect(resolvedPaths).toEqual([deleted.display]);
+  await pane.getByRole("button", gitToggle).click();
+  await expect(
+    pane.getByText("This Git path has no readable workspace file."),
+  ).toBeVisible();
+  await tab.click();
+  clean = true;
+  await refresh.click();
+  await expect(pane.getByText("Clean", { exact: true })).toBeVisible();
+  await expect(stale).toHaveCount(0);
 });
 
 test.describe("narrow Changes controls", () => {
@@ -213,6 +265,31 @@ test.describe("narrow Changes controls", () => {
     await expect(changesView).toHaveAttribute("aria-pressed", "false");
     await pane.getByRole("button", { name: "Preview", exact: true }).click();
     await expect(heading).toHaveText("Quiet systems, legible signals.");
+    const retiring = Promise.withResolvers<void>();
+    const releaseDiff = Promise.withResolvers<void>();
+    await page.route(
+      "**/api/git/diff",
+      async (route) => {
+        const response = await route.fetch();
+        retiring.resolve();
+        await releaseDiff.promise;
+        await route.fulfill({ response }).catch(() => {});
+      },
+      { times: 1 },
+    );
+    try {
+      await changesView.click();
+      await retiring.promise;
+      await openFixtureSession(
+        page,
+        /Review extension event lifecycle/,
+        "fixture-history",
+      );
+    } finally {
+      releaseDiff.resolve();
+    }
+    await expect(source).toHaveCount(0);
+    await expect(file).toHaveCount(0);
   });
 });
 

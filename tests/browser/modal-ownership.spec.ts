@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, type Locator, test } from "@playwright/test";
 import { routeSnapshots } from "./support/host-events";
 import { completeOperation } from "./support/host-operations";
 import {
@@ -15,7 +15,9 @@ test("Escape closes the focused workbench surface before aborting an active run"
     snapshot(snapshot) {
       if (snapshot.active?.sessionId !== sessionId) return;
       snapshot.active.isStreaming = true;
-
+      snapshot.active.stats = {
+        contextUsage: { tokens: 180, contextWindow: 1_000, percent: 18 },
+      };
       snapshot.sessionStatuses[sessionId] = { runState: "running" };
     },
     event(event) {
@@ -44,6 +46,9 @@ test("Escape closes the focused workbench surface before aborting an active run"
   await page.keyboard.press("Escape");
   await expect(settings).toHaveCount(0);
   await openCommandPalette(page);
+  const filter = palette.getByRole("combobox");
+  expect(await composingEscape(filter)).toBe(true);
+  await expect(palette).toBeVisible();
   await palette
     .getByRole("option", { name: "New session", exact: true })
     .press("Escape");
@@ -52,6 +57,55 @@ test("Escape closes the focused workbench surface before aborting an active run"
   await sessions.focus();
   await sessions.press("Escape");
   await expect(sessions).not.toBeFocused();
+
+  const draft = page.getByRole("textbox", { name: "Message", exact: true });
+  const hint = page.getByRole("tooltip");
+  await draft.fill("/com");
+  await expect(page.getByRole("option", { name: /\/compact/ })).toBeVisible();
+  await page.getByRole("button", { name: /^Session & usage, context/ }).hover();
+  await expect(hint).toContainText("18%");
+  await draft.press("Escape");
+  await expect(page.getByRole("option", { name: /\/compact/ })).toHaveCount(0);
+  expect(await composingEscape(draft)).toBe(true);
+  await expect(hint).toBeVisible();
+  await draft.press("Escape");
+  await expect(hint).toHaveCount(0);
+  await draft.fill("");
+
+  const title = page.getByRole("button", { name: /^Session actions:/ });
+  const name = page.getByRole("textbox", { name: "Session name" });
+  await openCommandPalette(page);
+  await filter.fill("rename");
+  const release = Promise.withResolvers<void>();
+  await page.route("**/api/sessions/rename", async (route) => {
+    await release.promise;
+    await route.fulfill({ json: { ok: true } });
+  });
+  try {
+    await palette.getByRole("option", { name: /Rename session/ }).click();
+    await expect(name).toHaveValue(await title.innerText());
+    await name.fill("Older request");
+    const sent = page.waitForRequest("**/api/sessions/rename");
+    await name.press("Enter");
+    expect((await sent).postDataJSON().name).toBe("Older request");
+    await name.press("Escape");
+    await palette.getByRole("option", { name: /Rename session/ }).click();
+    await name.fill("Newer edit");
+    const receipt = page.waitForResponse("**/api/sessions/rename");
+    const catalog = page.waitForResponse(
+      (reply) => new URL(reply.url()).pathname === "/api/sessions",
+    );
+    release.resolve();
+    await receipt;
+    await catalog;
+    await expect(name).toHaveValue("Newer edit");
+    await name.press("Escape");
+    await expect(filter).toHaveValue("rename");
+  } finally {
+    release.resolve();
+  }
+  await filter.press("Escape");
+  await expect(palette).toHaveCount(0);
 
   await page.setViewportSize({ width: 390, height: 844 });
   const searchLauncher = page.getByRole("button", {
@@ -70,73 +124,77 @@ test("Escape closes the focused workbench surface before aborting an active run"
   await expect.poll(() => aborts).toBe(1);
 });
 
+function composingEscape(field: Locator) {
+  return field.evaluate((element) =>
+    element.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Escape",
+        isComposing: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    ),
+  );
+}
+
 test.describe("phone action dialogs", () => {
   test.use({ viewport: { width: 390, height: 600 }, hasTouch: true });
-  for (const name of ["Command palette", "Export session"]) {
-    test(
-      name +
-        " consumes Back and explicit close without leaving an empty history entry",
-      async ({ page }) => {
-        await page.goto("about:blank#outside-inspire");
-        await pairAndOpen(page);
-        const inspireUrl = page.url();
-        const draft = page.getByRole("textbox", {
-          name: "Message",
-          exact: true,
-        });
-        await draft.fill("Keep this unfinished input");
-        const open = async () => {
-          if (name === "Command palette")
-            await page
-              .getByRole("button", { name: "Open command palette" })
-              .click();
-          else {
-            await page
-              .getByRole("button", { name: /^Session actions:/ })
-              .click();
-            await page
-              .getByRole("menuitem", { name: "Export session…", exact: true })
-              .click();
-          }
-          await expect(
-            page.getByRole("dialog", { name, exact: true }),
-          ).toBeVisible();
-        };
-        await open();
-        if (name === "Command palette") {
-          const palette = page.getByRole("dialog", { name });
-          const filter = palette.getByRole("combobox", {
-            name: "Filter commands",
-          });
-          await expect(palette).toBeFocused();
-          await palette.press("ArrowDown");
-          await expect(filter).toHaveAttribute("aria-activedescendant", /.+/);
-          await filter.fill("rename");
-          await palette.getByRole("option", { name: /Rename session/ }).tap();
-          const rename = page
-            .getByRole("dialog", { name: "Rename session" })
-            .getByRole("textbox", { name: "Session name" });
-          await expect(rename).toBeFocused();
-          await rename.press("Escape");
-          await expect(filter).toHaveValue("rename");
-          await expect(filter).toBeFocused();
-        }
-        await page.goBack();
-        await expect(
-          page.getByRole("dialog", { name, exact: true }),
-        ).toHaveCount(0);
-        await expect(page).toHaveURL(inspireUrl);
-        await expect(draft).toHaveValue("Keep this unfinished input");
-        await open();
-        await page.keyboard.press("Escape");
-        await expect(
-          page.getByRole("dialog", { name, exact: true }),
-        ).toHaveCount(0);
-        await page.goBack();
-        await expect(page).toHaveURL("about:blank#outside-inspire");
-      },
-    );
-  }
+  test("consumes Back and explicit close for rename, palette and export", async ({
+    page,
+  }) => {
+    await page.goto("about:blank#outside-inspire");
+    await pairAndOpen(page);
+    const inspireUrl = page.url();
+    const draft = page.getByRole("textbox", { name: "Message", exact: true });
+    await draft.fill("Keep this unfinished input");
+    const title = page.getByRole("button", { name: /^Session actions:/ });
+    const openExport = async () => {
+      await title.click();
+      await page
+        .getByRole("menuitem", { name: "Export session…", exact: true })
+        .click();
+    };
+    const palette = await openCommandPalette(page);
+    const filter = palette.getByRole("combobox", { name: "Filter commands" });
+    await expect(palette).toBeFocused();
+    await palette.press("ArrowDown");
+    await expect(filter).toHaveAttribute("aria-activedescendant", /.+/);
+    await filter.fill("rename");
+    const name = page.getByRole("textbox", { name: "Session name" });
+    for (const method of ["escape", "back"]) {
+      await palette.getByRole("option", { name: /Rename session/ }).tap();
+      await expect(name).toBeFocused();
+      if (method === "escape") await name.press("Escape");
+      else await page.goBack();
+      await expect(name).toHaveCount(0);
+      await expect(filter).toHaveValue("rename");
+      await expect(filter).toBeFocused();
+    }
+    const exportDialog = page.getByRole("dialog", {
+      name: "Export session",
+      exact: true,
+    });
+    const depth = () =>
+      page.evaluate(() => history.state?.__inspireWorkbench?.depth ?? 0);
+    for (const [dialog, open] of [
+      [palette, () => openCommandPalette(page)],
+      [exportDialog, openExport],
+    ] as const) {
+      if (dialog === exportDialog) await open();
+      await expect(dialog).toBeVisible();
+      await expect.poll(depth).toBe(1);
+      await page.goBack();
+      await expect(dialog).toHaveCount(0);
+      await expect(page).toHaveURL(inspireUrl);
+      await open();
+      await page.keyboard.press("Escape");
+      await expect(dialog).toHaveCount(0);
+      await expect.poll(depth).toBe(0);
+      await expect(draft).toHaveValue("Keep this unfinished input");
+    }
+    await page.goBack();
+    await expect(page).toHaveURL("about:blank#outside-inspire");
+  });
 });
 
 test("Settings keeps modal ownership when the workspace becomes a drawer @cross-browser", async ({

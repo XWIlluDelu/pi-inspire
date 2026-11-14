@@ -164,10 +164,11 @@ describe("BranchController", () => {
         else if (replacement === "view")
           replaced.patch({ view: { viewId: "replaced-view" } });
         else replaced.replaceTransport();
-        if (replacement === "session" && kind === "entry")
-          stale.reject(new Error("Previous selection read failed"));
+        if (kind === "entry")
+          stale.reject(new ApiError(401, "Previous selection credentials"));
         else stale.resolve(result);
         await expect(staleRead).resolves.toBeNull();
+        expect(replaced.handleAuthFailure).not.toHaveBeenCalled();
       }
     },
   );
@@ -216,16 +217,86 @@ describe("BranchController", () => {
     }
   });
 
-  it("retains position fencing for navigation during same-view append", async () => {
-    const harness = createHarness();
-    const pending = deferred<BranchNavigateResponse>();
-    harness.navigateBranch.mockReturnValue(pending.promise);
-    const navigation = harness.controller.navigate("a1", "switch");
-    harness.patch({ view: { effectiveLeafId: "appended" } });
-    pending.resolve({} as BranchNavigateResponse);
-    await expect(navigation).resolves.toBe(false);
-    expect(harness.applyNavigation).not.toHaveBeenCalled();
-    expect(harness.state().branchActionId).toBeNull();
+  it.each(["append", "view replacement"] as const)(
+    "retires navigation after %s",
+    async (change) => {
+      const harness = createHarness();
+      const pending = deferred<BranchNavigateResponse>();
+      harness.navigateBranch.mockReturnValue(pending.promise);
+      const navigation = harness.controller.navigate("a1", "switch");
+      harness.patch({
+        view:
+          change === "append"
+            ? { effectiveLeafId: "appended" }
+            : { viewId: "replacement" },
+      });
+      pending.reject(new ApiError(409, "Source changed"));
+      await expect(navigation).resolves.toBe(false);
+      expect(harness.applyNavigation).not.toHaveBeenCalled();
+      expect(harness.state()).toMatchObject({
+        branchActionId: null,
+        branchTreeError: null,
+      });
+    },
+  );
+
+  it.each(["fork", "clone"] as const)(
+    "uses the captured %s prefix despite a later append",
+    async (action) => {
+      const h = createHarness();
+      const response = deferred<BranchForkResponse>();
+      const command = action === "fork" ? h.forkBranch : h.cloneBranch;
+      command.mockReturnValue(response.promise);
+      const copying =
+        action === "fork" ? h.controller.fork("u1") : h.controller.clone();
+      h.patch({ view: { effectiveLeafId: "a2" } });
+      const snapshot = {
+        sessionId: "forked",
+        snapshot: activeSnapshot({ sessionId: "forked" }),
+        editorText: "",
+      };
+      response.resolve(snapshot);
+      await expect(copying).resolves.toBe(true);
+      expect(command).toHaveBeenCalledExactlyOnceWith({
+        sessionId: "s1",
+        viewId: "view-1",
+        targetId: action === "fork" ? "u1" : "a1",
+      });
+      expect(h.applyFork).toHaveBeenCalledExactlyOnceWith(snapshot);
+      if (action !== "fork") return;
+      command.mockRejectedValueOnce(new ApiError(409, "Source changed"));
+      await expect(h.controller.fork("u1")).resolves.toBe(false);
+      expect(h.state()).toMatchObject({
+        branchActionId: null,
+        branchTreeError: "Source changed",
+      });
+      const retired = deferred<BranchForkResponse>();
+      command.mockReturnValue(retired.promise);
+      const pending = h.controller.fork("u1");
+      h.replaceTransport();
+      retired.reject(new ApiError(401, "Previous transport credentials"));
+      await expect(pending).resolves.toBe(false);
+      expect(h.handleAuthFailure).not.toHaveBeenCalled();
+    },
+  );
+
+  it("discards complete-content Copy if its view changes while reading the image", async () => {
+    const h = createHarness();
+    const image = deferred<Blob>();
+    h.sessionHistory.mockResolvedValue({
+      text: "saved input",
+      nextOffset: null,
+      images: [{ index: 0, mimeType: "image/png" }],
+    });
+    h.branchImage.mockReturnValue(image.promise);
+    const copying = h.controller.copyContent(
+      "u1",
+      new AbortController().signal,
+    );
+    await vi.waitFor(() => expect(h.branchImage).toHaveBeenCalledOnce());
+    h.patch({ view: { viewId: "next" } });
+    image.resolve(new Blob(["saved pixels"]));
+    await expect(copying).resolves.toBeNull();
   });
 
   it("applies the returned editor text when the socket publishes this same navigation first", async () => {

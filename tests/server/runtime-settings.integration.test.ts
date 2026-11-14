@@ -4,15 +4,17 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AttachmentStore } from "../../server/attachments.js";
 import { PiRpcProcess } from "../../server/pi-rpc.js";
 import { RuntimeController } from "../../server/runtime.js";
-import type {
-  SessionCatalogLike,
-  SessionRecord,
-} from "../../server/session-catalog.js";
-
+import { SessionCatalog } from "../../server/session-catalog.js";
+import { savedAssistant } from "../fixtures/history-session.js";
 import {
   nativePiWorkspace,
   stubNativePiEnvironment,
 } from "./fixtures/native-pi.js";
+import {
+  messageEntry,
+  thinkingOff,
+  writeSession,
+} from "./fixtures/session-jsonl.js";
 
 const directories: string[] = [];
 const IDS = [
@@ -47,95 +49,34 @@ async function fixture(trust: "always" | "never", enabled?: boolean) {
       followUpMode: "one-at-a-time",
     }),
   );
-  const records: SessionRecord[] = [];
-  for (const [index, id] of IDS.entries()) {
-    const cwd = join(root, `project-${index}`);
-    await mkdir(join(cwd, ".pi"), { recursive: true });
-    if (index === 0)
-      await writeFile(
-        join(cwd, ".pi/settings.json"),
-        JSON.stringify({
-          retry: { enabled: false },
-          compaction: { enabled: false },
+  const records = await Promise.all(
+    IDS.map(async (id, index) => {
+      const cwd = join(root, `project-${index}`);
+      await mkdir(join(cwd, ".pi"), { recursive: true });
+      if (index === 0)
+        await writeFile(
+          join(cwd, ".pi/settings.json"),
+          JSON.stringify({
+            retry: { enabled: false },
+            compaction: { enabled: false },
+          }),
+        );
+      return writeSession(join(sessions, `${id}.jsonl`), cwd, id, [
+        thinkingOff,
+        messageEntry("u1", thinkingOff.id, {
+          role: "user",
+          content: "offline fixture",
+          timestamp: 1,
         }),
-      );
-    const path = join(sessions, `${id}.jsonl`);
-    const timestamp = "2026-01-01T00:00:00.000Z";
-    await writeFile(
-      path,
-      [
-        { type: "session", version: 3, id, cwd, timestamp },
-        {
-          type: "thinking_level_change",
-          id: "t1",
-          parentId: null,
-          timestamp,
-          thinkingLevel: "off",
-        },
-        {
-          type: "message",
-          id: "u1",
-          parentId: "t1",
-          timestamp,
-          message: { role: "user", content: "offline fixture", timestamp: 1 },
-        },
-        {
-          type: "message",
-          id: "a1",
-          parentId: "u1",
-          timestamp,
-          message: {
-            role: "assistant",
-            content: [{ type: "text", text: "offline answer" }],
-            timestamp: 2,
-            api: "openai-completions",
-            provider: "fixture",
-            model: "fixture",
-            stopReason: "stop",
-            usage: {
-              input: 0,
-              output: 0,
-              cacheRead: 0,
-              cacheWrite: 0,
-              totalTokens: 0,
-              cost: {
-                input: 0,
-                output: 0,
-                cacheRead: 0,
-                cacheWrite: 0,
-                total: 0,
-              },
-            },
-          },
-        },
-      ]
-        .map((entry) => JSON.stringify(entry))
-        .join("\n") + "\n",
-    );
-    records.push({
-      id,
-      cwd,
-      path,
-      source: null,
-      created: new Date(timestamp),
-      modified: new Date(timestamp),
-      messageCount: 2,
-      firstMessage: "offline fixture",
-    });
-  }
-  const catalog: SessionCatalogLike = {
-    refresh: async () => records,
-    get: async (id) => records.find((record) => record.id === id),
-    list: async () => ({
-      sessions: [],
-      total: 0,
-      offset: 0,
-      limit: 40,
+        messageEntry(
+          "a1",
+          "u1",
+          savedAssistant("offline answer", { timestamp: 2 }),
+        ),
+      ]);
     }),
-    listByIds: async () => [],
-    listByCwds: async () => [],
-    invalidate() {},
-  };
+  );
+  const catalog = new SessionCatalog(workspace.cwd);
   const attachments = new AttachmentStore(join(root, "uploads"));
   const workers: PiRpcProcess[] = [];
   const runtime = new RuntimeController(catalog, attachments, {

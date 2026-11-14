@@ -1,4 +1,4 @@
-import { AlertTriangle, X } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { isMacKeyboardPlatform } from "../keyboard-input";
 import { store, useAppState } from "../store";
@@ -8,7 +8,7 @@ import {
   workbenchShortcuts,
 } from "../workbench-keyboard";
 import { ContextPaneState } from "./ContextPaneState";
-import { Modal } from "./Modal";
+import { DialogHeader, Modal } from "./Modal";
 import { PiLoader } from "./PiLoader";
 import { ProgressiveRichText } from "./ProgressiveRichText";
 
@@ -176,23 +176,17 @@ export function CommandHelp({
       onDismiss={onClose}
     >
       <div className="dialog dialog--flush command-help">
-        <header className="dialog__header dialog__header--bar">
-          <h2 className="dialog__title">
-            {mode === "hotkeys"
+        <DialogHeader
+          title={
+            mode === "hotkeys"
               ? "Keyboard shortcuts"
               : release
                 ? `Pi ${release.version} release notes`
-                : "Pi release notes"}
-          </h2>
-          <button
-            type="button"
-            className="icon-button"
-            aria-label="Close command help"
-            onClick={onClose}
-          >
-            <X size={16} aria-hidden />
-          </button>
-        </header>
+                : "Pi release notes"
+          }
+          closeLabel="Close command help"
+          onClose={onClose}
+        />
         <div className="command-help__body" tabIndex={0}>
           {mode === "hotkeys" ? (
             <div className="command-help__grid">

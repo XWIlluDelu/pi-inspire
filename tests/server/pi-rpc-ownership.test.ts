@@ -84,7 +84,7 @@ const flush = async () => {
 };
 
 describe("Pi RPC operation-owned waits", () => {
-  it("keeps default prompts pending through preflight compaction and human input", async () => {
+  it("keeps preflight compaction and human input pending unless explicitly stopped", async () => {
     const outcome = vi.fn();
     const pending = rpc
       .request({ type: "prompt", message: "synthetic-secret-prompt" })
@@ -119,9 +119,7 @@ describe("Pi RPC operation-owned waits", () => {
     await pending;
     expect(rpc.hasPendingRequest("prompt")).toBe(false);
     expect(JSON.stringify(diagnostics)).not.toContain("synthetic-secret");
-  });
 
-  it("lets explicit cancellation stop a pending preflight prompt", async () => {
     const result = rpc
       .request({ type: "prompt" }, null)
       .catch((error) => error);
@@ -141,26 +139,18 @@ describe("Pi RPC operation-owned waits", () => {
     await failure.stopped;
   });
 
-  it("keeps manual compaction unbounded by default", async () => {
-    const result = rpc.request({ type: "compact" });
-    await vi.advanceTimersByTimeAsync(1_000_000);
-    expect(rpc.hasPendingRequest("compact")).toBe(true);
-    expect(boundary.signal).not.toHaveBeenCalled();
-    child.reply(child.commands[1]);
-    await result;
-  });
-
-  it("keeps default reads bounded and explicit-null reads operation owned", async () => {
+  it("bounds default reads while explicit-null reads and native compaction stay operation owned", async () => {
     const bounded = rpc.request({ type: "get_state" }).catch((error) => error);
     const unbounded = rpc.request({ type: "get_tree" }, null);
-    await vi.advanceTimersByTimeAsync(30_001);
+    const compaction = rpc.request({ type: "compact" });
+    await vi.advanceTimersByTimeAsync(1_000_000);
     expect(await bounded).toMatchObject({
       message: "Pi command get_state response timed out",
     });
+    expect(rpc.hasPendingRequest("compact")).toBe(true);
     expect(boundary.signal).not.toHaveBeenCalled();
-    child.reply(child.commands[1]);
-    child.reply(child.commands[2]);
-    await unbounded;
+    for (const command of child.commands.slice(1)) child.reply(command);
+    await Promise.all([unbounded, compaction]);
     expect(rpc.available).toBe(true);
   });
 

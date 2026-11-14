@@ -107,11 +107,11 @@ export function historyFixtureEntries(
       role: "bashExecution",
       command: "printf 'native-shell-history'",
       output: excludeFromContext
-        ? "native-shell-excluded-result"
+        ? "native-shell-excluded-result\n\u001b[31m# literal heading\u001b[0m\n<script>literal script</script>\nFull output: /tmp/stdout-is-not-metadata.log\n\n```js\nraw code\n```"
         : "native shell line 2500\nCOMPLETE_NATIVE_SHELL_LOG_END\n",
-      exitCode: 0,
+      exitCode: excludeFromContext ? 3 : 0,
       cancelled: false,
-      truncated: !excludeFromContext,
+      truncated: true,
       excludeFromContext,
       ...(!excludeFromContext
         ? {

@@ -1,14 +1,14 @@
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
-import { appendFile, writeFile } from "node:fs/promises";
+import { appendFile, readFile, writeFile } from "node:fs/promises";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { RuntimeSlot } from "../../server/runtime-slot.js";
 import { deferredSignal } from "./fixtures/runtime.js";
+import { jsonl, messageEntry } from "./fixtures/session-jsonl.js";
 
 import {
   disposeProjectionFixture,
-  ProjectionRpc,
   setup,
 } from "./fixtures/runtime-projection.js";
 
@@ -143,138 +143,82 @@ describe("writer startup attestation", () => {
     },
   );
 
-  it("invalidates replaced history even when admission stops before Pi starts", async () => {
+  it.each([
+    ["factory rewrite", false],
+    ["factory append", false],
+    ["partial append", true],
+    ["wrong level", true],
+    ["foreign suffix", true],
+    ["bad parent", true],
+    ["startup rewrite", true],
+  ] as const)("fences writer admission after a %s", async (fault, starts) => {
+    const entry = startupThinking(
+      fault === "bad parent" ? "not-u1" : "u1",
+      fault === "wrong level" ? "high" : "off",
+    );
     const { runtime, workers, sequence, opened } = await setup([], (worker) => {
-      writeFileSync(
-        worker.sessionPath,
-        readFileSync(worker.sessionPath, "utf8").replace(
-          '"content":"original"',
-          '"content":"replaced before startup"',
-        ),
-      );
-    });
-    await vi.waitFor(() => expect(workers[0]!.stops).toBe(1));
-    expect(sequence).not.toContain("start");
-    const changed = (await runtime.snapshot("session-a")).active!;
-    expect(changed.transcriptPage.viewId).not.toBe(
-      opened.active!.transcriptPage.viewId,
-    );
-    expect(JSON.stringify(changed.transcriptPage.messages)).toContain(
-      "replaced before startup",
-    );
-  });
+      if (fault === "factory rewrite") {
+        const original = readFileSync(worker.sessionPath, "utf8");
+        writeFileSync(
+          worker.sessionPath,
+          original.replace(
+            '"content":"original"',
+            '"content":"replaced before startup"',
+          ),
+        );
+        return;
+      }
+      if (fault === "partial append") {
+        worker.onStart = () =>
+          appendFile(worker.sessionPath, '{"type":"message"');
+        return;
+      }
 
-  it("rejects an otherwise exact state-equivalent entry injected by the process factory before rpc.start", async () => {
-    const entry = startupThinking("u1");
-    const { runtime, workers, sequence } = await setup([], (worker) => {
       worker.startupEntries = [entry];
       worker.startupLeafId = entry.id;
-      appendFileSync(worker.sessionPath, `${JSON.stringify(entry)}\n`);
-    });
-    await vi.waitFor(() => expect(workers[0]!.stops).toBe(1));
-    expect(sequence).not.toContain("start");
-    expect(workers[0]!.commands).toEqual([]);
-    expect(
-      (await runtime.snapshot("session-a")).sessionStatuses["session-a"]
-        ?.runState,
-    ).toBe("failed");
-  });
+      if (fault === "factory append") {
+        appendFileSync(worker.sessionPath, jsonl(entry));
+        return;
+      }
 
-  it.each([
-    {
-      name: "partial append",
-      prepare: (worker: ProjectionRpc) => {
-        worker.onStart = async () => {
-          await appendFile(worker.sessionPath, '{"type":"message"');
-        };
-      },
-    },
-    {
-      name: "wrong level",
-      prepare: (worker: ProjectionRpc) => {
-        const entry = startupThinking("u1", "high");
-        worker.startupEntries = [entry];
-        worker.startupLeafId = entry.id;
-        worker.stateThinkingLevel = "off";
-        worker.onStart = async () => {
-          await appendFile(worker.sessionPath, `${JSON.stringify(entry)}\n`);
-        };
-      },
-    },
-    {
-      name: "mixed external append",
-      prepare: (worker: ProjectionRpc) => {
-        const own = startupThinking("u1");
-        const external = {
-          type: "message",
-          id: "external",
-          parentId: own.id,
-          timestamp: "2026-08-01T00:00:03.000Z",
-          message: { role: "assistant", content: "external", timestamp: 3 },
-        };
-        // The external append exists only on disk, not in this Pi worker.
-        worker.startupEntries = [own];
-        worker.startupLeafId = own.id;
-        worker.onStart = async () => {
-          await appendFile(
-            worker.sessionPath,
-            `${JSON.stringify(own)}\n${JSON.stringify(external)}\n`,
-          );
-        };
-      },
-    },
-    {
-      name: "bad parent",
-      prepare: (worker: ProjectionRpc) => {
-        const entry = startupThinking("not-u1");
-        worker.startupEntries = [entry];
-        worker.startupLeafId = entry.id;
-        worker.onStart = async () => {
-          await appendFile(worker.sessionPath, `${JSON.stringify(entry)}\n`);
-        };
-      },
-    },
-    {
-      name: "rewrite",
-      prepare: (worker: ProjectionRpc) => {
-        const entry = startupThinking("u1");
-        worker.startupEntries = [entry];
-        worker.startupLeafId = entry.id;
-        worker.onStart = async () => {
-          const header = {
-            type: "session",
-            version: 3,
-            id: "session-a",
-            timestamp: "2026-08-01T00:00:00.000Z",
-            cwd: worker.options.cwd,
-          };
-          const changed = {
-            type: "message",
-            id: "u1",
-            parentId: null,
-            timestamp: "2026-08-01T00:00:01.000Z",
-            message: { role: "user", content: "rewritten", timestamp: 1 },
-          };
+      worker.onStart = async () => {
+        const path = worker.sessionPath;
+        if (fault === "startup rewrite") {
+          const original = await readFile(path, "utf8");
           await writeFile(
-            worker.sessionPath,
-            `${[header, changed, entry].map((value) => JSON.stringify(value)).join("\n")}\n`,
+            path,
+            original.replace('"content":"original"', '"content":"rewritten"') +
+              jsonl(entry),
           );
-        };
-      },
-    },
-  ])(
-    "fails closed for a $name during startup attestation",
-    async ({ prepare }) => {
-      const { runtime, workers } = await setup([], prepare);
-      await vi.waitFor(() => expect(workers[0]!.stops).toBe(1));
-      expect(
-        (await runtime.snapshot("session-a")).sessionStatuses["session-a"]
-          ?.runState,
-      ).toBe("failed");
-      expect(workers).toHaveLength(1);
-      expect(workers[0]!.commands).not.toContainEqual({
-        type: "get_commands",
-      });
-    },
-  );
+        } else if (fault === "foreign suffix") {
+          await appendFile(
+            path,
+            jsonl(
+              entry,
+              messageEntry("external", entry.id, {
+                role: "assistant",
+                content: "external",
+                timestamp: 3,
+              }),
+            ),
+          );
+        } else await appendFile(path, jsonl(entry));
+      };
+    });
+
+    await vi.waitFor(() => expect(workers[0]!.stops).toBe(1));
+    expect(workers).toHaveLength(1);
+    expect(sequence.includes("start")).toBe(starts);
+    expect(workers[0]!.commands).not.toContainEqual({ type: "get_commands" });
+    if (!starts) expect(workers[0]!.commands).toEqual([]);
+    const snapshot = await runtime.snapshot("session-a");
+    expect(snapshot.sessionStatuses["session-a"]?.runState).toBe("failed");
+    if (fault === "factory rewrite") {
+      const changed = snapshot.active!.transcriptPage;
+      expect(changed.viewId).not.toBe(opened.active!.transcriptPage.viewId);
+      expect(JSON.stringify(changed.messages)).toContain(
+        "replaced before startup",
+      );
+    }
+  });
 });

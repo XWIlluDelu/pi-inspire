@@ -7,6 +7,7 @@ import {
 } from "../../shared/host-restart";
 import { createApi } from "../api";
 import { ReceiptRead } from "../operation-observer";
+import { receiptStorage } from "../receipt-storage";
 
 const KEY = "inspire:host-restart:v1";
 
@@ -35,14 +36,24 @@ export class HostRestartClient {
   private loaded = false;
   private readonly listeners = new Set<() => void>();
   private readonly observation = new ReceiptRead<"status", void>();
+  private readonly tracking: ReturnType<
+    typeof receiptStorage<HostRestartRequest | null>
+  >;
   private receiptRevision = 0;
   constructor(
     private readonly api: Pick<
       ReturnType<typeof createApi>,
       "hostRestartStatus" | "restartHost"
     > = createApi(),
-    private readonly storage: () => Storage = () => sessionStorage,
-  ) {}
+    storage?: () => Storage,
+  ) {
+    this.tracking = receiptStorage(
+      512,
+      hostRestartRequestSchema.parse,
+      null,
+      storage,
+    );
+  }
   snapshot = (): State => this.state;
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -52,48 +63,44 @@ export class HostRestartClient {
     this.state = { ...this.state, ...patch };
     for (const listener of this.listeners) listener();
   }
-  private restore(): void {
-    if (this.loaded) return;
-    let recordRead = false;
-    try {
-      const raw = this.storage().getItem(KEY);
-      recordRead = true;
-      if (raw !== null && raw.length > 512) throw new Error();
-      const pending =
-        raw === null ? null : hostRestartRequestSchema.parse(JSON.parse(raw));
-      this.loaded = true;
-      this.patch({
-        pending,
-        blocked: false,
-        recoveryInvalid: false,
-        error: null,
-      });
-    } catch {
+  private restore(): boolean {
+    if (!this.loaded) {
+      const loaded = this.tracking.read(KEY);
+      if (!loaded.issue) {
+        this.track(loaded.value);
+        return true;
+      }
       this.patch({
         blocked: true,
-        recoveryInvalid: recordRead,
-        error: recordRead
-          ? "Can't read the saved restart status. You can still recheck the Host."
-          : "Can't access browser storage. Recheck Host status before restarting.",
+        recoveryInvalid: loaded.issue === "format",
+        error:
+          loaded.issue === "format"
+            ? "Can't read the saved restart status. You can still recheck the Host."
+            : "Can't access browser storage. Recheck Host status before restarting.",
       });
-      throw new Error("Restart storage unavailable");
     }
+    return this.loaded;
+  }
+  private track(
+    pending: HostRestartRequest | null,
+    patch?: Partial<State>,
+  ): void {
+    this.loaded = true;
+    this.patch({
+      pending,
+      blocked: false,
+      recoveryInvalid: false,
+      error: null,
+      ...patch,
+    });
   }
   private persist(
     pending: HostRestartRequest | null,
     patch?: Partial<State>,
   ): void {
     try {
-      if (pending) this.storage().setItem(KEY, JSON.stringify(pending));
-      else this.storage().removeItem(KEY);
-      this.loaded = true;
-      this.patch({
-        pending,
-        blocked: false,
-        recoveryInvalid: false,
-        error: null,
-        ...patch,
-      });
+      this.tracking.write(KEY, pending);
+      this.track(pending, patch);
     } catch {
       this.loaded = false;
       this.patch({
@@ -108,12 +115,7 @@ export class HostRestartClient {
     this.observation.observe("status", () => this.observe());
   private async observe(): Promise<void> {
     const receiptRevision = this.receiptRevision;
-    try {
-      this.restore();
-    } catch {
-      // Recovery bookkeeping cannot prevent a read of the actual Host state.
-    }
-    const restored = this.loaded;
+    const restored = this.restore();
     try {
       const status = await this.api.hostRestartStatus();
       // A pre-POST read of the same Host can still describe the last attempt.
@@ -160,8 +162,8 @@ export class HostRestartClient {
   ): Promise<void> => {
     if (this.state.sending || this.state.blocked || this.state.pending) return;
     try {
-      this.restore();
       if (
+        !this.restore() ||
         this.state.pending ||
         !this.state.status ||
         (scope === "all-pi" && !interruptWork) ||

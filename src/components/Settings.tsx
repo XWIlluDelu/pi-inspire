@@ -39,16 +39,17 @@ import { HerdrSettings } from "./HerdrSettings";
 import { HostRestartSettings } from "./HostRestartSettings";
 import { McpSettings } from "./McpSettings";
 import { ModelsSettings } from "./ModelsSettings";
-import { NativeSelect } from "./NativeSelect";
 import { PresentationAdapterSettings } from "./PresentationAdapterSettings";
 import { SessionActionsSettings } from "./SessionActionsSettings";
 import {
   type SettingsChoice as Choice,
-  SegmentedControl,
+  SegmentedField,
+  SelectField,
   SettingField,
   SettingsFeedback,
   SettingsLayout,
-  SettingsSwitch,
+  SettingsPage,
+  SwitchField,
 } from "./SettingsControls";
 import { SettingsConfirmation } from "./SettingsDialog";
 import { SettingsSection as Section } from "./SettingsSection";
@@ -114,17 +115,13 @@ function PreferenceSegments({
 }) {
   const field = segmentedPreferences[name];
   return (
-    <SettingField
+    <SegmentedField
       label={field.label}
       description={"description" in field ? field.description : undefined}
-    >
-      <SegmentedControl
-        label={field.label}
-        value={prefs[name]}
-        options={field.options}
-        onChange={(value) => store.setPreference(name, value)}
-      />
-    </SettingField>
+      value={prefs[name]}
+      options={field.options}
+      onChange={(value) => store.setPreference(name, value)}
+    />
   );
 }
 
@@ -287,11 +284,7 @@ export const SettingsContent = memo(function SettingsContent({
           </footer>
         }
       >
-        <div
-          className="settings__page"
-          data-category="display"
-          hidden={activeCategory !== "display"}
-        >
+        <SettingsPage hidden={activeCategory !== "display"}>
           <Section id="display" icon={<Palette size={14} />} title="Display">
             <PreferenceSegments name="theme" prefs={prefs} />
 
@@ -325,27 +318,18 @@ export const SettingsContent = memo(function SettingsContent({
               <PreferenceSegments key={name} name={name} prefs={prefs} />
             ))}
 
-            <SettingField
+            <SwitchField
               label="Titlebar needles"
-              layout="inline"
               description="Animated needles in the installed app's title bar."
-            >
-              <SettingsSwitch
-                label="Titlebar needles"
-                checked={prefs.titlebarNeedles}
-                onChange={(value) =>
-                  store.setPreference("titlebarNeedles", value)
-                }
-              />
-            </SettingField>
+              checked={prefs.titlebarNeedles}
+              onChange={(value) =>
+                store.setPreference("titlebarNeedles", value)
+              }
+            />
           </Section>
-        </div>
+        </SettingsPage>
 
-        <div
-          className="settings__page"
-          data-category="conversation"
-          hidden={activeCategory !== "conversation"}
-        >
+        <SettingsPage hidden={activeCategory !== "conversation"}>
           <Section
             id="conversation"
             icon={<ScrollText size={14} />}
@@ -354,45 +338,33 @@ export const SettingsContent = memo(function SettingsContent({
             {CONVERSATION_CHOICES.map((key) => {
               const field = preferenceChoices[key];
               return (
-                <SettingField
+                <SelectField
                   key={key}
                   label={field.label}
                   description={
                     "description" in field ? field.description : undefined
                   }
-                >
-                  <NativeSelect
-                    label={field.label}
-                    className="native-select--field"
-                    value={prefs[key]}
-                    options={field.options}
-                    onChange={(value) => store.setPreference(key, value)}
-                  />
-                </SettingField>
+                  value={prefs[key]}
+                  options={field.options}
+                  onChange={(value) => store.setPreference(key, value)}
+                />
               );
             })}
 
             <PreferenceSegments name="desktopSendKey" prefs={prefs} />
           </Section>
-        </div>
+        </SettingsPage>
 
-        <div
-          className="settings__page"
-          data-category="behavior"
-          hidden={activeCategory !== "behavior"}
-        >
+        <SettingsPage hidden={activeCategory !== "behavior"}>
           <Section id="behavior" icon={<Compass size={14} />} title="Behavior">
-            <SettingField label={preferenceChoices.launch.label}>
-              <NativeSelect
-                label={preferenceChoices.launch.label}
-                className="native-select--field"
-                value={prefs.launch}
-                options={preferenceChoices.launch.options}
-                onChange={(value) => store.setPreference("launch", value)}
-              />
-            </SettingField>
+            <SelectField
+              label={preferenceChoices.launch.label}
+              value={prefs.launch}
+              options={preferenceChoices.launch.options}
+              onChange={(value) => store.setPreference("launch", value)}
+            />
 
-            <SettingField
+            <SelectField
               label="Task alerts"
               description="This device · Notify when a background task finishes or stops with an error."
               feedback={
@@ -456,17 +428,12 @@ export const SettingsContent = memo(function SettingsContent({
                   )
                 )
               }
-            >
-              <NativeSelect
-                label="Task alerts"
-                className="native-select--field"
-                aria-busy={alerts.busy}
-                value={alerts.mode}
-                options={COMPLETION_ALERTS}
-                onChange={(value) => void store.setCompletionAttention(value)}
-              />
-            </SettingField>
-            <SettingField
+              aria-busy={alerts.busy}
+              value={alerts.mode}
+              options={COMPLETION_ALERTS}
+              onChange={(value) => void store.setCompletionAttention(value)}
+            />
+            <SelectField
               label="Notification grouping"
               description="This device · One notification per session or project. Changing this clears existing task notifications."
               feedback={
@@ -488,22 +455,17 @@ export const SettingsContent = memo(function SettingsContent({
                   </div>
                 )
               }
-            >
-              <NativeSelect
-                label="Notification grouping"
-                className="native-select--field"
-                value={alerts.grouping}
-                options={[
-                  { value: "session", label: "Session" },
-                  { value: "project", label: "Project" },
-                ]}
-                disabled={alerts.groupingBusy}
-                aria-busy={alerts.groupingBusy}
-                onChange={(value) =>
-                  void store.setTaskNotificationGrouping(value)
-                }
-              />
-            </SettingField>
+              value={alerts.grouping}
+              options={[
+                { value: "session", label: "Session" },
+                { value: "project", label: "Project" },
+              ]}
+              disabled={alerts.groupingBusy}
+              aria-busy={alerts.groupingBusy}
+              onChange={(value) =>
+                void store.setTaskNotificationGrouping(value)
+              }
+            />
           </Section>
 
           <SessionActionsSettings
@@ -529,35 +491,30 @@ export const SettingsContent = memo(function SettingsContent({
                   "steeringMode",
                   "Steering delivery",
                   "Delivery while Pi is responding.",
-                  store.setSteeringMode,
                 ],
                 [
                   "followUpMode",
                   "Follow-up delivery",
                   "Delivery after Pi responds.",
-                  store.setFollowUpMode,
                 ],
               ] as const
-            ).map(([key, label, description, setMode]) => {
+            ).map(([key, label, description]) => {
               const value = state.runtimeSettings?.[key];
               const pending = state.pendingRuntimeSettings[key];
               return (
-                <SettingField
+                <SelectField
                   key={key}
                   label={label}
                   description={description}
                   status={pending ? "Saving…" : undefined}
-                >
-                  <NativeSelect
-                    label={label}
-                    className="native-select--field"
-                    value={value ?? ""}
-                    display={value == null ? "Unavailable" : undefined}
-                    options={MESSAGE_DELIVERY_MODES}
-                    disabled={pending || !state.sessionId || value == null}
-                    onChange={(mode) => void setMode(mode)}
-                  />
-                </SettingField>
+                  value={value ?? ""}
+                  display={value == null ? "Unavailable" : undefined}
+                  options={MESSAGE_DELIVERY_MODES}
+                  disabled={pending || !state.sessionId || value == null}
+                  onChange={(mode) =>
+                    void store.setPiRuntimeSetting({ key, value: mode })
+                  }
+                />
               );
             })}
 
@@ -567,24 +524,21 @@ export const SettingsContent = memo(function SettingsContent({
                   "autoCompactionEnabled",
                   "Automatic context compaction",
                   "Summarize older messages when approaching the context limit.",
-                  store.setAutoCompaction,
                 ],
                 [
                   "autoRetryEnabled",
                   "Automatic retry",
                   "Retry temporary provider errors.",
-                  store.setAutoRetry,
                 ],
               ] as const
-            ).map(([key, label, description, setValue]) => {
+            ).map(([key, label, description]) => {
               const value = state.runtimeSettings?.[key];
               const pending = state.pendingRuntimeSettings[key];
               const unavailable = !state.sessionId || value == null;
               return (
-                <SettingField
+                <SwitchField
                   key={key}
                   label={label}
-                  layout="inline"
                   description={description}
                   status={
                     pending
@@ -593,24 +547,18 @@ export const SettingsContent = memo(function SettingsContent({
                         ? "Unavailable"
                         : undefined
                   }
-                >
-                  <SettingsSwitch
-                    label={label}
-                    checked={value === true}
-                    disabled={pending || unavailable}
-                    onChange={(checked) => void setValue(checked)}
-                  />
-                </SettingField>
+                  checked={value === true}
+                  disabled={pending || unavailable}
+                  onChange={(checked) =>
+                    void store.setPiRuntimeSetting({ key, value: checked })
+                  }
+                />
               );
             })}
           </Section>
-        </div>
+        </SettingsPage>
 
-        <div
-          className="settings__page"
-          data-category="models"
-          hidden={activeCategory !== "models"}
-        >
+        <SettingsPage hidden={activeCategory !== "models"}>
           <ModelsSettings
             active={activeCategory === "models"}
             destination={{
@@ -618,32 +566,20 @@ export const SettingsContent = memo(function SettingsContent({
               owner: modelDestination?.owner ?? workspaceOwner,
             }}
           />
-        </div>
+        </SettingsPage>
 
-        <div
-          className="settings__page"
-          data-category="mcp"
-          hidden={activeCategory !== "mcp"}
-        >
+        <SettingsPage hidden={activeCategory !== "mcp"}>
           <McpSettings
             active={activeCategory === "mcp"}
             owner={workspaceOwner}
           />
-        </div>
+        </SettingsPage>
 
-        <div
-          className="settings__page"
-          data-category="adapters"
-          hidden={activeCategory !== "adapters"}
-        >
+        <SettingsPage hidden={activeCategory !== "adapters"}>
           <PresentationAdapterSettings />
-        </div>
+        </SettingsPage>
 
-        <div
-          className="settings__page"
-          data-category="updates"
-          hidden={activeCategory !== "updates"}
-        >
+        <SettingsPage hidden={activeCategory !== "updates"}>
           <SystemVersionsCard />
 
           <Section id="herdr" icon={<Server size={14} />} title="Host">
@@ -654,7 +590,7 @@ export const SettingsContent = memo(function SettingsContent({
             />
             <HostRestartSettings suspended={suspended} />
           </Section>
-        </div>
+        </SettingsPage>
       </SettingsLayout>
       {confirmingReset && !suspended ? (
         <SettingsConfirmation

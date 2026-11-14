@@ -4,20 +4,11 @@ import type {
   BranchImageRequest,
   BranchNavigateRequest,
   CompletionAttentionPreference,
-  HostNativeCommandRequest,
-  InspirePreferences,
-  NewSessionOptions,
-  PendingOperationIdentity,
   PendingOperationRequest,
-  PendingReadRequest,
   PendingRecovery,
-  PiMessageDeliveryMode,
   PromptAcceptedResponse,
   PromptDeliveryRequest,
-  SessionDeletionRequest,
-  SessionExportRequest,
   SessionHistoryPages,
-  ThinkingLevel,
   UploadedAttachment,
 } from "../shared/contracts";
 import type { SessionHistoryQuery } from "../shared/history-query";
@@ -42,20 +33,9 @@ import type {
   RequestSchemas,
 } from "../shared/json-endpoints";
 import { isJsonRecord } from "../shared/json-record";
-import type { McpConfigEdit, McpConnectionRead } from "../shared/mcp";
-import type {
-  ModelConfigEdit,
-  ModelPreferencesPatch,
-  ModelSettingsOwner,
-} from "../shared/model-settings";
+import type { ModelSettingsOwner } from "../shared/model-settings";
 import type { TaskNotificationGrouping } from "../shared/notifications";
 import type { ProviderAuthOperation } from "../shared/provider-auth-bridge";
-import type {
-  TerminalCreateRequest,
-  TerminalRenameRequest,
-  TerminalReorderRequest,
-  TerminalServiceSettingsPatch,
-} from "../shared/terminal-contracts";
 import { terminalOperations } from "./controllers/terminal-operation-controller";
 import { withTransportMeasure } from "./transport-performance";
 
@@ -423,25 +403,23 @@ function confirmedHostReceipt<Command extends HostOperationCommand>(
 
 async function pendingHandoff(
   { action, operationId, ...query }: PendingOperationRequest,
-  submit = false,
+  phase: "start" | "observe" = "observe",
 ): Promise<PendingRecovery> {
   const options = { mutation: true, readErrorBody: true };
-  const value = submit
-    ? await call(
-        inputRoutes[action],
-        { body: { operationId, ...query } },
-        undefined,
-        {
-          ...options,
-          timeoutMs: null,
-        },
-      )
-    : await call(
-        inputRoutes.observePending,
-        { params: { operationId }, query: { action, ...query } },
-        undefined,
-        options,
-      );
+  const value =
+    phase === "start"
+      ? await call(
+          inputRoutes[action],
+          { body: { operationId, ...query } },
+          undefined,
+          options,
+        )
+      : await call(
+          inputRoutes.observePending,
+          { params: { operationId }, query: { action, ...query } },
+          undefined,
+          options,
+        );
   const receipt = confirmedHostReceipt(
     action,
     { operationId, authorityId: query.authorityId },
@@ -553,8 +531,25 @@ function flag(value: boolean | undefined) {
   return value ? "1" : undefined;
 }
 
+type HostEndpoint = typeof routes;
+type EndpointResult<E> =
+  E extends JsonEndpoint<infer _Schemas, infer Result> ? Result : never;
+
+function hostJson<K extends keyof HostEndpoint>(
+  name: K,
+  input: RequestInput<HostEndpoint[K]["schemas"]>,
+  signal?: AbortSignal,
+): Promise<EndpointResult<HostEndpoint[K]>> {
+  const route = routes[name] as JsonEndpoint<
+    HostEndpoint[K]["schemas"],
+    EndpointResult<HostEndpoint[K]>
+  >;
+  return call(route, input, signal);
+}
+
 export function createApi() {
   return {
+    json: hostJson,
     taskAlertSettings: () => call(routes.taskAlertSettings, {}),
     configureTaskAlerts: (
       mode: CompletionAttentionPreference | undefined,
@@ -576,7 +571,6 @@ export function createApi() {
     acknowledgeTaskAlert: (id: string) =>
       call(routes.acknowledgeTaskAlert, { body: { id } }),
     testTaskAlert: () => call(routes.testTaskAlert, {}),
-    herdrStatus: () => call(routes.herdrStatus, {}),
     hostRestartStatus: () => call(routes.hostRestartStatus, {}),
     restartHost: async (intent: HostRestartRequest) => {
       const value = await call(routes.restartHost, { body: intent });
@@ -653,24 +647,10 @@ export function createApi() {
     forkBranch: (body: BranchForkRequest) => call(routes.forkBranch, { body }),
     sessions: (q: string, offset = 0, limit = 40, signal?: AbortSignal) =>
       call(routes.sessions, { query: { q, offset, limit } }, signal),
-    refreshSessions: () => call(routes.refreshSessions, {}),
     sessionsByIds: (ids: string[], signal?: AbortSignal) =>
       call(routes.sessionsByIds, { body: { ids } }, signal),
     sessionsByCwds: (cwds: string[], signal?: AbortSignal) =>
       call(routes.sessionsByCwds, { body: { cwds } }, signal),
-    openSession: (id: string, signal?: AbortSignal) =>
-      call(routes.openSession, { body: { id } }, signal),
-    takeOverSession: (sessionId: string) =>
-      call(routes.takeOverSession, { body: { sessionId } }),
-    resumeCommand: (sessionId: string) =>
-      call(routes.resumeCommand, { query: { sessionId } }),
-    deselectSession: (signal?: AbortSignal) =>
-      call(routes.deselectSession, {}, signal),
-    newSession: (
-      cwd: string,
-      options: NewSessionOptions = {},
-      signal?: AbortSignal,
-    ) => call(routes.newSession, { body: { cwd, ...options } }, signal),
     refreshModels: (
       sessionId?: string,
       cwd?: string,
@@ -688,26 +668,6 @@ export function createApi() {
         },
         signal,
       ),
-    mcpConfig: (query: ModelSettingsOwner) => call(routes.mcpConfig, { query }),
-    mcpConnection: (query: ModelSettingsOwner, body: McpConnectionRead) =>
-      call(routes.mcpConnection, { query, body }),
-    editMcpConfig: (query: ModelSettingsOwner, body: McpConfigEdit) =>
-      call(routes.editMcpConfig, { query, body }),
-    modelSettings: (owner: ModelSettingsOwner, refresh = false) =>
-      call(routes.modelSettings, {
-        query: { ...owner, refresh: refresh ? "1" : undefined },
-      }),
-    saveModelPreferences: (
-      query: ModelSettingsOwner,
-      revision: string,
-      patch: ModelPreferencesPatch,
-    ) =>
-      call(routes.saveModelPreferences, { query, body: { revision, patch } }),
-    editModelConfig: (
-      query: ModelSettingsOwner,
-      revision: string,
-      edit: ModelConfigEdit,
-    ) => call(routes.editModelConfig, { query, body: { revision, edit } }),
     providerAuth: (query: ModelSettingsOwner, body: ProviderAuthOperation) =>
       call(routes.providerAuth, { query, body }, undefined, {
         mutation: body.operation !== "providers" && body.operation !== "status",
@@ -721,34 +681,13 @@ export function createApi() {
       call(routes.searchNewSessionFiles, {
         query: { cwd, q, limit, showHidden: flag(showHidden) },
       }),
-    renameSession: (sessionId: string, name: string) =>
-      call(routes.renameSession, { body: { sessionId, name } }),
-    deleteSessions: (body: SessionDeletionRequest) =>
-      call(routes.deleteSessions, { body }),
     terminals: (cwd?: string) =>
       call(routes.terminals, { query: { cwd: cwd || undefined } }),
     retryTerminalOperation: (key: string) => terminalOperations.retry(key),
-    createTerminal: (request: TerminalCreateRequest) =>
-      terminalOperations.run({ command: "create", params: { request } }),
-    renameTerminal: (id: string, { title }: TerminalRenameRequest) =>
-      terminalOperations.run({ command: "rename", params: { id, title } }),
-    reorderTerminals: ({ cwd, terminalIds }: TerminalReorderRequest) =>
-      terminalOperations.run({
-        command: "reorder",
-        params: { projectCwd: cwd, ids: terminalIds },
-      }),
-    restartTerminal: (id: string) =>
-      terminalOperations.run({ command: "restart", params: { id } }),
-    removeTerminal: (id: string, force = false) =>
-      terminalOperations.run({ command: "remove", params: { id, force } }),
+    terminalOperation: terminalOperations.run.bind(terminalOperations),
     terminalAttachTicket: (id: string, signal?: AbortSignal) =>
       call(routes.terminalAttachTicket, { params: { id } }, signal),
     terminalSettings: () => call(routes.terminalSettings, {}),
-    updateTerminalSettings: (patch: TerminalServiceSettingsPatch) =>
-      terminalOperations.run({ command: "updateSettings", params: { patch } }),
-    clearTerminalHistory: async () => {
-      await terminalOperations.run({ command: "clearHistory", params: {} });
-    },
     prompt: (
       body: PromptDeliveryRequest,
       signal?: AbortSignal,
@@ -761,11 +700,6 @@ export function createApi() {
       identity: HostOperationIdentity & { fingerprint?: string },
       signal?: AbortSignal,
     ) => deliverPrompt(identity, signal),
-    nativeCommand: (body: HostNativeCommandRequest, signal?: AbortSignal) =>
-      call(routes.nativeCommand, { body }, signal),
-    piChangelog: () => call(routes.piChangelog, {}),
-    exportSession: (body: SessionExportRequest) =>
-      call(routes.exportSession, { body }),
     exportDownload: async (sessionId: string, id: string) =>
       (
         await readBlob(
@@ -773,30 +707,7 @@ export function createApi() {
           { timeoutMs: LONG_HTTP_OBSERVATION_TIMEOUT_MS },
         )
       ).blob,
-    abort: (sessionId: string, identity: PendingOperationIdentity) =>
-      pendingHandoff({ ...identity, sessionId, action: "abort" }, true),
-    recoverPending: (sessionId: string, identity: PendingOperationIdentity) =>
-      pendingHandoff({ ...identity, sessionId, action: "recover" }, true),
-    pendingOperation: (intent: PendingOperationRequest) =>
-      pendingHandoff(intent),
-    pendingText: (body: PendingReadRequest, signal?: AbortSignal) =>
-      call(routes.pendingText, { body }, signal),
-    clearPending: (sessionId: string) =>
-      call(routes.clearPending, { body: { sessionId } }),
-    cycleModel: (sessionId: string, direction: 1 | -1) =>
-      call(routes.cycleModel, { body: { sessionId, direction } }),
-    setModel: (sessionId: string, provider: string, modelId: string) =>
-      call(routes.setModel, { body: { sessionId, provider, modelId } }),
-    setThinkingLevel: (sessionId: string, level: ThinkingLevel) =>
-      call(routes.setThinkingLevel, { body: { sessionId, level } }),
-    setAutoCompaction: (sessionId: string, enabled: boolean) =>
-      call(routes.setAutoCompaction, { body: { sessionId, enabled } }),
-    setAutoRetry: (sessionId: string, enabled: boolean) =>
-      call(routes.setAutoRetry, { body: { sessionId, enabled } }),
-    setSteeringMode: (sessionId: string, mode: PiMessageDeliveryMode) =>
-      call(routes.setSteeringMode, { body: { sessionId, mode } }),
-    setFollowUpMode: (sessionId: string, mode: PiMessageDeliveryMode) =>
-      call(routes.setFollowUpMode, { body: { sessionId, mode } }),
+    pendingOperation: pendingHandoff,
     uploadAttachments: (files: File[], signal?: AbortSignal) =>
       uploadFiles(files, signal),
     attachmentPreview: async (id: string, signal?: AbortSignal) =>
@@ -899,17 +810,6 @@ export function createApi() {
       sessionId: string,
       options?: ResourceContentOptions,
     ) => fetchResourceContent(id, sessionId, options),
-    respondExtensionUi: (
-      body: RequestInput<typeof routes.respondExtensionUi.schemas>["body"],
-    ) => call(routes.respondExtensionUi, { body }),
-    setPresentationAdapterEnabled: (id: string, enabled: boolean) =>
-      call(routes.setPresentationAdapterEnabled, {
-        params: { id },
-        body: { enabled },
-      }),
-    preferences: () => call(routes.preferences, {}),
-    savePreferences: (body: Partial<InspirePreferences>) =>
-      call(routes.savePreferences, { body }),
   };
 }
 

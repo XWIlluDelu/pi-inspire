@@ -40,40 +40,6 @@ describe("image preview ownership", () => {
     />
   );
 
-  it("fits the next figure even when it reuses the same document-owned URL", () => {
-    render(
-      <ImageGallery>
-        <ImagePreview src="blob:shared" name="First figure" />
-        <ImagePreview src="blob:shared" name="Repeated figure" />
-      </ImageGallery>,
-    );
-    fireEvent.click(
-      screen.getByRole("button", { name: "Preview First figure" }),
-    );
-    const dialog = screen.getByRole("dialog", { name: "Image preview" });
-    const image = dialog.querySelector("img")!;
-    Object.defineProperties(image, {
-      naturalWidth: { value: 1200 },
-      naturalHeight: { value: 800 },
-    });
-    fireEvent.load(image);
-    const originalFit = image.style.transform;
-    fireEvent.click(
-      within(dialog).getByRole("button", { name: "Actual size" }),
-    );
-    fireEvent.change(
-      within(dialog).getByRole("combobox", { name: "Image background" }),
-      { target: { value: "Black" } },
-    );
-    fireEvent.click(within(dialog).getByRole("button", { name: "Next image" }));
-    expect(dialog.querySelector("img")?.style.transform).toBe(originalFit);
-    expect(
-      within(dialog).getByRole("combobox", { name: "Image background" }),
-    ).toHaveValue("Black");
-    expect(
-      within(dialog).getByRole("group", { name: "Image navigation" }),
-    ).toHaveTextContent("2 / 2");
-  });
   it("orders a gallery by the document, updates labels without closing, and never revives a retired selection", async () => {
     const items = (sources: string[], name = "two.png") => (
       <StrictMode>

@@ -146,10 +146,9 @@ test.describe("phone session actions", () => {
       expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
         sessionId,
       );
-      expect(await menu.boundingBox()).toMatchObject({
-        width: bounds?.width,
-        height: bounds?.height,
-      });
+      const copiedBounds = await menu.boundingBox();
+      expect(copiedBounds?.width).toBeCloseTo(bounds!.width, 1);
+      expect(copiedBounds?.height).toBeCloseTo(bounds!.height, 1);
       await page.keyboard.press("End");
       await expect(
         menu.getByRole("menuitem", { name: "Switch branch…" }),

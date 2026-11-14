@@ -195,8 +195,12 @@ export const inputOperationEndpoints = {
     params: receiptParams,
     query: promptObservationSchema.omit({ operationId: true }).strip(),
   }),
-  abort: pendingReply("post", "/api/control/abort", pendingAdmission),
-  recover: pendingReply("post", "/api/pending/recover", pendingAdmission),
+  abort: pendingReply("post", "/api/control/abort", pendingAdmission, {
+    timeoutMs: null,
+  }),
+  recover: pendingReply("post", "/api/pending/recover", pendingAdmission, {
+    timeoutMs: null,
+  }),
   observePending: pendingReply("get", "/api/pending/operations/:operationId", {
     params: receiptParams,
     query: pendingOperationRequestSchema.omit({ operationId: true }),

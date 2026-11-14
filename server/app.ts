@@ -1127,24 +1127,27 @@ export function createInspireServer(deps: AppDependencies): {
   jsonRoute(app, routes.setThinkingLevel, ({ body }) =>
     deps.runtime.setThinkingLevel(body.sessionId, body.level),
   );
-  for (const [route, apply] of [
-    [routes.setAutoCompaction, "setAutoCompaction"],
-    [routes.setAutoRetry, "setAutoRetry"],
-  ] as const) {
-    jsonRoute(app, route, async ({ body }) => {
-      await deps.runtime[apply](body.sessionId, body.enabled);
+  jsonRoute(
+    app,
+    routes.setRuntimeSetting,
+    async ({ body: { sessionId, setting } }) => {
+      switch (setting.key) {
+        case "autoCompactionEnabled":
+          await deps.runtime.setAutoCompaction(sessionId, setting.value);
+          break;
+        case "autoRetryEnabled":
+          await deps.runtime.setAutoRetry(sessionId, setting.value);
+          break;
+        case "steeringMode":
+          await deps.runtime.setSteeringMode(sessionId, setting.value);
+          break;
+        case "followUpMode":
+          await deps.runtime.setFollowUpMode(sessionId, setting.value);
+          break;
+      }
       return { ok: true };
-    });
-  }
-  for (const [route, apply] of [
-    [routes.setSteeringMode, "setSteeringMode"],
-    [routes.setFollowUpMode, "setFollowUpMode"],
-  ] as const) {
-    jsonRoute(app, route, async ({ body }) => {
-      await deps.runtime[apply](body.sessionId, body.mode);
-      return { ok: true };
-    });
-  }
+    },
+  );
   jsonRoute(app, routes.respondExtensionUi, async ({ body }) => {
     await deps.runtime.extensionUiResponse(body);
     return { ok: true };

@@ -10,6 +10,7 @@ import {
   terminalReceiptIdentity,
 } from "../../shared/terminal-operations";
 import { authenticatedFetch } from "../browser-auth";
+import { receiptStorage } from "../receipt-storage";
 
 const STORAGE_KEY = "inspire:terminal-operations:v2";
 const RETIRED_STORAGE_KEY = "inspire:terminal-operations:v1";
@@ -26,6 +27,20 @@ interface TrackedOperation {
 function intentKey(intent: TerminalIntent): string {
   return JSON.stringify(intent);
 }
+
+const savedOperations = terminalOperationSchema
+  .array()
+  .max(MAX_PENDING)
+  .refine(
+    (entries) =>
+      new Set(entries.map(({ intent }) => intentKey(intent))).size ===
+        entries.length &&
+      new Set(
+        entries.map(
+          ({ executor, operationId }) => `${executor.epoch}:${operationId}`,
+        ),
+      ).size === entries.length,
+  );
 
 interface TerminalRecoveryRow {
   key: string;
@@ -63,13 +78,22 @@ export class TerminalOperationController {
   private operations = new Map<string, TrackedOperation>();
   private readonly listeners = new Set<() => void>();
   private state: TerminalRecoveryRow[] = [];
-  private loaded = false;
-  private retiredRecords = false;
+  private recoveryState: "unread" | "current" | "retired" = "unread";
+  private readonly tracking: ReturnType<
+    typeof receiptStorage<TerminalOperation[]>
+  >;
 
   constructor(
     private readonly transport: typeof fetch = (...args) => fetch(...args),
     private readonly storage: () => Storage = () => sessionStorage,
-  ) {}
+  ) {
+    this.tracking = receiptStorage(
+      MAX_STORAGE_CHARS,
+      savedOperations.parse,
+      [],
+      storage,
+    );
+  }
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -78,38 +102,24 @@ export class TerminalOperationController {
   snapshot = (): TerminalRecoveryRow[] => this.state;
 
   restore(): void {
-    if (this.loaded) return;
+    if (this.recoveryState !== "unread") return;
     // Storage failure must not silently discard uncertain identities.
     const storage = this.storage();
-    const raw = storage.getItem(STORAGE_KEY);
     const retired = storage.getItem(RETIRED_STORAGE_KEY);
-    const restored = new Map<string, TrackedOperation>();
-    const identities = new Set<string>();
-    try {
-      if (raw !== null && raw.length > MAX_STORAGE_CHARS)
-        throw new Error("Stored terminal operations exceed their limit");
-      const entries: unknown = raw === null ? [] : JSON.parse(raw);
-      if (!Array.isArray(entries) || entries.length > MAX_PENDING)
-        throw new Error("Invalid stored terminal operations");
-      for (const value of entries) {
-        const operation = terminalOperationSchema.parse(value);
-        const key = intentKey(operation.intent);
-        const identity = `${operation.executor.epoch}:${operation.operationId}`;
-        if (restored.has(key) || identities.has(identity))
-          throw new Error("Duplicate stored terminal operation");
-        restored.set(key, { operation, outcome: "unknown" });
-        identities.add(identity);
-      }
-    } catch {
+    const saved = this.tracking.read(STORAGE_KEY);
+    if (saved.issue === "storage") throw saved.error;
+    if (saved.issue)
       throw new Error(
         "Terminal operation storage is invalid; controls are blocked.",
       );
-    }
-    // Validate the whole set before publishing any recoverable identity. A bad
-    // later entry must not allow an earlier entry (or a new intent) to dispatch.
-    this.operations = restored;
-    this.retiredRecords = retired !== null && retired !== "[]";
-    this.loaded = true;
+    this.operations = new Map(
+      saved.value.map((operation) => [
+        intentKey(operation.intent),
+        { operation, outcome: "unknown" },
+      ]),
+    );
+    this.recoveryState =
+      retired !== null && retired !== "[]" ? "retired" : "current";
     this.publish();
   }
 
@@ -118,12 +128,13 @@ export class TerminalOperationController {
   ): Promise<TerminalOperationResults[I["command"]]> {
     try {
       this.restore();
-      if (this.retiredRecords)
+      if (this.recoveryState === "retired")
         throw new Error(
           "Check your terminals and stop tracking the previous version’s operations before sending new controls.",
         );
-      const valid = terminalIntentSchema.parse(intent);
-      return this.dispatch<TerminalOperationResults[I["command"]]>(valid);
+      return this.dispatch<TerminalOperationResults[I["command"]]>(
+        terminalIntentSchema.parse(intent),
+      );
     } catch (error) {
       return Promise.reject(error);
     }
@@ -141,14 +152,8 @@ export class TerminalOperationController {
       );
     // A confirmed result makes another click a new intent, not a replay.
     // Retire its stored recovery record before admitting that new intent.
-    if (tracked.outcome && tracked.outcome !== "unknown") {
-      try {
-        this.removeOperation(tracked);
-        delete tracked.outcome;
-      } catch (error) {
-        return Promise.reject(error);
-      }
-    }
+    if (tracked.outcome && tracked.outcome !== "unknown")
+      this.removeOperation(tracked);
     const task = Promise.resolve()
       .then(() => this.deliver<T>(tracked, intent))
       .finally(() => {
@@ -174,9 +179,9 @@ export class TerminalOperationController {
   /** Retire a recovery record; never dispatch or claim cancellation. */
   stopTracking(key: string): void {
     this.restore();
-    if (key === RETIRED_STORAGE_KEY && this.retiredRecords) {
+    if (key === RETIRED_STORAGE_KEY && this.recoveryState === "retired") {
       this.storage().removeItem(RETIRED_STORAGE_KEY);
-      this.retiredRecords = false;
+      this.recoveryState = "current";
       this.publish();
       return;
     }
@@ -192,14 +197,9 @@ export class TerminalOperationController {
   }
 
   private removeOperation(tracked: TrackedOperation): void {
-    const operation = tracked.operation;
+    this.persist(tracked);
     delete tracked.operation;
-    try {
-      this.persist();
-    } catch (error) {
-      tracked.operation = operation;
-      throw error;
-    }
+    delete tracked.outcome;
   }
 
   private async deliver<T>(
@@ -293,28 +293,27 @@ export class TerminalOperationController {
     }
   }
 
-  private persist(): void {
-    this.storage().setItem(
+  private persist(retiring?: TrackedOperation): void {
+    this.tracking.write(
       STORAGE_KEY,
-      JSON.stringify(
-        [...this.operations.values()].flatMap(({ operation }) =>
-          operation ? [operation] : [],
-        ),
+      [...this.operations.values()].flatMap((record) =>
+        record !== retiring && record.operation ? [record.operation] : [],
       ),
     );
   }
   private publish(): void {
-    const rows: TerminalRecoveryRow[] = this.retiredRecords
-      ? [
-          {
-            key: RETIRED_STORAGE_KEY,
-            label: "Terminal operations from a previous version",
-            busy: false,
-            outcome: "unknown",
-            canRetry: false,
-          },
-        ]
-      : [];
+    const rows: TerminalRecoveryRow[] =
+      this.recoveryState === "retired"
+        ? [
+            {
+              key: RETIRED_STORAGE_KEY,
+              label: "Terminal operations from a previous version",
+              busy: false,
+              outcome: "unknown",
+              canRetry: false,
+            },
+          ]
+        : [];
     for (const [key, { operation, outcome, task }] of this.operations) {
       if (!operation || !outcome) continue;
       rows.push({

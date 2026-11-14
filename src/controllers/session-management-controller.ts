@@ -60,7 +60,9 @@ export class SessionManagementController {
       this.host.api() === api && this.latestRename.get(sessionId) === request;
     const trimmedName = name.trim();
     try {
-      await api.renameSession(sessionId, trimmedName);
+      await api.json("renameSession", {
+        body: { sessionId, name: trimmedName },
+      });
       if (!ownsRequest()) return { status: "stale" };
       // The response may return after a session switch; only the owning
       // session's visible title updates.
@@ -112,8 +114,8 @@ export class SessionManagementController {
     this.host.patch({ sessionDeleteReviewRequired: true });
     try {
       const [preferences] = await Promise.all([
-        api.preferences(),
-        api.refreshSessions(),
+        api.json("preferences", {}),
+        api.json("refreshSessions", {}),
       ]);
       if (!ownsTransport()) return;
       this.host.publishPreferences(preferences);
@@ -209,7 +211,7 @@ export class SessionManagementController {
         }
       }
       resumeReads = this.host.pauseSessionReads(ids);
-      const result = await api.deleteSessions(request);
+      const result = await api.json("deleteSessions", { body: request });
       if (!ownsTransport()) return null;
       const { deleted, failure, navigation } = result;
       if (deleted.length) {

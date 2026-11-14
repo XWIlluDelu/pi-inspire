@@ -54,6 +54,27 @@ function card(
 }
 
 describe("generic tool fallback", () => {
+  it("uses generic child calls when the mapped CodeMode rule is absent", () => {
+    configurePresentationAdapters({
+      version: 1,
+      rules: {},
+      mappings: { codemode: "user.missing" },
+    });
+    render(
+      card(call("codemode", { code: 'text("checked");' }), {
+        ...result("Script completed\nactual result"),
+        __inspireCalls: {
+          source: "codemode",
+          complete: true,
+          calls: [{ key: "codemode:0", name: "read", status: "ok" }],
+        },
+      }),
+    );
+    expect(screen.getByRole("group", { name: "Child calls" })).toBeVisible();
+    expect(
+      screen.getByRole("group", { name: "Result text" }),
+    ).toHaveTextContent("Script completed actual result");
+  });
   it("keeps an unknown tool's live partial arguments directly visible", () => {
     const partial: ToolCallContent = {
       ...call("custom_tool", { prompt: "incoming argument text" }),

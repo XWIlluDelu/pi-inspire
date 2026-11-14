@@ -10,13 +10,49 @@ test("model labels and selection retain text contrast in light and dark", async 
   page,
 }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
+  const models = [
+    { provider: "openai", id: "alpha", name: "alpha", reasoning: false },
+    { provider: "custom", id: "folder/chat", name: "Nested chat" },
+    { provider: "local", id: "folder/chat", name: "Nested chat" },
+  ];
+  let commonModels: ModelOption[] = [models[2]!, models[0]!];
+  let model = models[2]!;
+  const selected: unknown[] = [];
+  await routeSnapshots(page, {
+    bootstrap(body) {
+      body.preferences.recentModelIds = [models[1]!];
+    },
+    snapshot({ active }) {
+      if (active)
+        Object.assign(active, { model, availableModels: models, commonModels });
+    },
+  });
+  await page.route("**/api/models**", (route) =>
+    route.fulfill({ json: { models, commonModels } }),
+  );
+  await page.route("**/api/control/model", (route) => {
+    const request = route.request().postDataJSON();
+    selected.push(request);
+    model = models.find(
+      ({ provider, id }) =>
+        provider === request.provider && id === request.modelId,
+    )!;
+    return route.fulfill({ json: { model, thinkingLevel: "off" } });
+  });
   await pairAndOpen(page);
-  await page.getByRole("button", { name: "Model", exact: true }).click();
-  await expect(
-    page
-      .getByRole("listbox", { name: "Available models" })
-      .getByRole("option", { selected: true }),
-  ).toBeVisible();
+  const picker = page.getByRole("button", { name: "Model", exact: true });
+  await picker.click();
+  const options = page
+    .getByRole("listbox", { name: "Available models" })
+    .getByRole("option");
+  await expect(options).toHaveCount(3);
+  await expect(options.nth(0)).toHaveAttribute(
+    "title",
+    "Nested chat — local/folder/chat",
+  );
+  await expect(options.nth(0)).toHaveAttribute("aria-selected", "true");
+  await expect(options.nth(1)).toContainText("No thinking");
+  await expect(options.nth(2)).toContainText("Recent");
   for (const [palette, theme] of [
     ["chimonanthus", "light"],
     ["hydrangea", "dark"],
@@ -32,6 +68,37 @@ test("model labels and selection retain text contrast in light and dark", async 
       .analyze();
     expect(result.violations, `${palette}/${theme}`).toEqual([]);
   }
+  const search = page.getByRole("combobox", { name: "Search models" });
+  await options.nth(1).hover();
+  await search.hover();
+  await expect(search).not.toHaveAttribute("aria-activedescendant", /.+/);
+  await expect(options.nth(0)).toHaveAttribute("aria-selected", "true");
+  await search.fill("OPENAI/ALPHA");
+  await expect(options).toHaveCount(1);
+  await expect(options.first()).toHaveAccessibleName(/openai\/alpha/i);
+  await search.fill("nedct");
+  const match = page.getByTitle("Nested chat — custom/folder/chat");
+  expect(
+    (await match.locator(".search-match").allTextContents()).join(""),
+  ).toBe("Nedct");
+  await search.fill("custom/folder/chat");
+  await expect(options).toHaveCount(1);
+  await expect(options.first().locator(".search-match")).toHaveText(
+    "folder/chat",
+  );
+  await expect(page.locator(".model-picker__heading .search-match")).toHaveText(
+    "custom",
+  );
+  await search.press("Enter");
+  await expect(picker).toBeFocused();
+  expect(selected).toMatchObject([
+    { provider: "custom", modelId: "folder/chat" },
+  ]);
+
+  commonModels = [];
+  await picker.click();
+  await expect(page.getByText("Common models", { exact: true })).toHaveCount(0);
+  await expect(options).toHaveCount(3);
 });
 
 // The PTY integration owns native API semantics; this verifies the routed browser controls.

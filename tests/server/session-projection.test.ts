@@ -15,6 +15,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { piInstallation } from "../../server/pi-installation.js";
 import type { SessionRecord } from "../../server/session-catalog.js";
 import { JsonlObjectDecoder } from "../../server/session-jsonl.js";
 import {
@@ -26,6 +27,7 @@ import {
 } from "../../server/session-projection.js";
 import { ATTACHMENT_CONTEXT_HEADING } from "../../shared/attachment-context.js";
 import { collectSessionResourceReferences } from "../../shared/resource-references.js";
+import { savedAssistant } from "../fixtures/history-session.js";
 import { deferredSignal } from "./fixtures/runtime.js";
 import { jsonl, messageEntry } from "./fixtures/session-jsonl.js";
 
@@ -551,6 +553,60 @@ describe("SessionProjection replacement and Pi context semantics", () => {
       model: fresh.model,
       thinkingLevel: fresh.thinkingLevel,
     });
+  });
+
+  it("keeps raw History independent from native assistant context edits and then applies retain-none compaction", async () => {
+    const { directory, path, record, projection } = await fixture([
+      message("u1", null, "user", "original user text", 1),
+      messageEntry(
+        "a1",
+        "u1",
+        savedAssistant("original assistant text", { timestamp: 2 }),
+      ),
+    ]);
+    const { SessionManager, buildSessionContext } = piInstallation.sdk;
+    const manager = SessionManager.open(path, directory, directory);
+    const original = projection.latestPage().messages;
+    for (const content of ["replacement context", null]) {
+      const id = manager.appendContextEdit(
+        "a1",
+        content === null ? null : { content },
+      );
+      await expect(projection.reconcile(true)).resolves.toMatchObject({
+        changed: true,
+        kind: "append",
+      });
+      expect(projection.entry(id)?.type).toBe("context_edit");
+      expect(projection.latestPage().messages).toEqual(original);
+      const assistants = buildSessionContext(
+        manager.getEntries(),
+      ).messages.filter((message) => message.role === "assistant");
+      expect(assistants.map(({ content }) => content)).toEqual(
+        content === null ? [] : [[{ type: "text", text: content }]],
+      );
+    }
+    const bytes = await readFile(path);
+    expect((await openProjection(record)).latestPage().messages).toEqual(
+      original,
+    );
+    expect(await readFile(path)).toEqual(bytes);
+
+    const compacted = manager.appendCompaction("retained summary", null, 15);
+    expect(manager.getEntry(compacted)).toMatchObject({
+      type: "compaction",
+      firstKeptEntryId: compacted,
+    });
+    manager.appendMessage({
+      role: "user",
+      content: "after compaction",
+      timestamp: 3,
+    });
+    await projection.reconcile(true);
+    expect(projection.health.status).toBe("ok");
+    expect(projection.latestPage().messages).toMatchObject([
+      { role: "compactionSummary", summary: "retained summary" },
+      { role: "user", content: "after compaction" },
+    ]);
   });
 
   it.skipIf(process.platform === "win32")(

@@ -155,13 +155,19 @@ test.describe("narrow CodeMode details", () => {
 
     const childCalls: ChildCallList = {
       source: "codemode",
-      complete: true,
+      complete: false,
       calls: calls.map((entry, index) =>
         index === 40
           ? { ...entry, status: "error", error: "Report is unavailable" }
           : { ...entry, status: "ok" },
       ),
     };
+    childCalls.calls.push({
+      key: "codemode:80",
+      name: "read",
+      status: "unfinished",
+      argumentsOmitted: true,
+    });
     const stdout = Array.from(
       { length: 70 },
       (_, index) => `Checked fixture module ${index + 1}`,
@@ -171,7 +177,12 @@ test.describe("narrow CodeMode details", () => {
       ...receipt,
       isError: false,
       __inspireMessageId: "full-codemode-result",
-      details: { fullOutputPath: "/tmp/review-output.txt" },
+      details: {
+        fullOutputPath: "/tmp/review-output.txt",
+        calls: [
+          { name: "read", status: "error", error: "Report is unavailable" },
+        ],
+      },
       __inspireCalls: childCalls,
       content: [
         {
@@ -213,6 +224,13 @@ test.describe("narrow CodeMode details", () => {
       .click();
     await expect(error).toHaveText("Report is unavailable");
     await expect(code).toContainText("tools.read");
+    const incomplete = list
+      .locator(".child-call")
+      .filter({ hasText: "Unfinished" });
+    await incomplete.locator("summary").tap();
+    await expect(incomplete).toContainText("Arguments not retained");
+    await expect(incomplete.getByText("Available arguments")).toHaveCount(0);
+    await expect(card.getByText("Call record incomplete")).toBeVisible();
 
     await expect(output).toBeVisible();
     const action = card.getByRole("button", { name: "View full output" });
@@ -240,11 +258,48 @@ test.describe("narrow CodeMode details", () => {
         exact: true,
       }),
     ).toBeVisible();
+    const copiedText = () =>
+      page.evaluate(() => window.gestureClipboardWrites.at(-1)?.text);
+    await expect.poll(copiedText).toContain("Checked fixture module 70");
+    expect(await copiedText()).toContain(
+      JSON.stringify(call.arguments, null, 2),
+    );
+    expect(await copiedText()).toContain(
+      JSON.stringify(result.details, null, 2),
+    );
+    expect(await copiedText()).toContain("Wall time 4.2 seconds");
+
+    const imported = {
+      ...result,
+      toolCallId: "result-without-arguments",
+      __inspireMessageId: "imported-codemode-result",
+    };
+    send({ type: "message_end", message: imported });
+    const resultOnly = page
+      .locator(".card--tool")
+      .filter({ hasText: "CodeMode result" });
+    await resultOnly
+      .getByRole("button", { name: "Expand CodeMode result details" })
+      .click();
+    await expect(resultOnly.getByText("Script", { exact: true })).toHaveCount(
+      0,
+    );
+    await expect(
+      resultOnly.getByText("Result details", { exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      resultOnly.getByRole("button", { name: "View full output" }),
+    ).toBeVisible();
+    await resultOnly
+      .getByRole("button", { name: "Copy codemode result" })
+      .click();
     await expect
-      .poll(() =>
-        page.evaluate(() => window.gestureClipboardWrites.at(-1)?.text),
-      )
-      .toContain("Checked fixture module 70");
+      .poll(copiedText)
+      .toContain('"toolCallId": "result-without-arguments"');
+    expect(JSON.parse((await copiedText())!)).toMatchObject({
+      content: imported.content,
+      details: imported.details,
+    });
   });
 });
 

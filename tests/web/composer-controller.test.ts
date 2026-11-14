@@ -248,6 +248,22 @@ it("reloads a current receipt for observation and blocks writes when tab storage
   }
 
   const reopened = fixture(true);
+  // A read denial must not overwrite an identity when storage is writable.
+  const reads = vi.spyOn(window, "sessionStorage", "get").mockReturnValue({
+    getItem() {
+      throw new DOMException("unavailable", "SecurityError");
+    },
+    setItem: storage.setItem.bind(storage),
+  } as unknown as Storage);
+  try {
+    expect(await reopened.send("new draft")).toBe(false);
+    expect(reopened.controller.deliveryState(owner).storageIssue).toBe(
+      "storage",
+    );
+  } finally {
+    reads.mockRestore();
+  }
+  expect(sessionStorage.getItem(ledger)).toBe(saved);
   reopened.controller.loadDeliveries(owner);
   expect(reopened.draft().text).toBe("new draft");
   expect(await reopened.controller.send("another request")).toBe(false);

@@ -6,15 +6,8 @@ import {
   Plus,
   RotateCcw,
   Trash2,
-  X,
 } from "lucide-react";
-import {
-  type ComponentProps,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { TerminalServiceSettings } from "../../shared/terminal-contracts";
 import type { createApi } from "../api";
 import {
@@ -29,14 +22,14 @@ import {
   type TerminalUiSettings,
 } from "../terminal-settings";
 import { ButtonLabel } from "./ButtonLabel";
-import { Modal } from "./Modal";
-import { NativeSelect } from "./NativeSelect";
+import { DialogHeader, Modal } from "./Modal";
 import {
-  SegmentedControl,
+  SegmentedField,
+  SelectField,
   SettingField,
   SettingsFeedback,
   SettingsLayout,
-  SettingsSwitch,
+  SwitchField,
 } from "./SettingsControls";
 import { SettingsCardMessage, SettingsSection } from "./SettingsSection";
 
@@ -51,31 +44,11 @@ const CATEGORIES = [
 ] as const;
 type CategoryId = (typeof CATEGORIES)[number]["id"];
 
-type SwitchFieldProps = ComponentProps<typeof SettingsSwitch> &
-  Pick<ComponentProps<typeof SettingField>, "description" | "status"> & {
-    fieldLabel?: string;
-  };
-
-function SwitchField({
-  fieldLabel,
-  description,
-  status,
-  ...control
-}: SwitchFieldProps) {
-  return (
-    <SettingField
-      label={fieldLabel ?? control.label}
-      description={description}
-      status={status}
-      layout="inline"
-    >
-      <SettingsSwitch {...control} />
-    </SettingField>
-  );
-}
-
 interface TerminalSettingsDialogProps {
-  api: ReturnType<typeof createApi>;
+  api: Pick<
+    ReturnType<typeof createApi>,
+    "terminalSettings" | "terminalOperation"
+  >;
   settings: TerminalUiSettings;
   onSettingsChange: (settings: TerminalUiSettings) => void;
   onClose: () => void;
@@ -149,7 +122,12 @@ export function TerminalSettingsDialog({
       setSavingService(true);
       setServiceError("");
       try {
-        setServiceSettings(await api.updateTerminalSettings(patch));
+        setServiceSettings(
+          await api.terminalOperation({
+            command: "updateSettings",
+            params: { patch },
+          }),
+        );
       } catch (error) {
         setServiceError(
           error instanceof Error
@@ -212,7 +190,7 @@ export function TerminalSettingsDialog({
     setClearing(true);
     setServiceError("");
     try {
-      await api.clearTerminalHistory();
+      await api.terminalOperation({ command: "clearHistory", params: {} });
     } catch (error) {
       setServiceError(
         error instanceof Error
@@ -229,24 +207,15 @@ export function TerminalSettingsDialog({
   return (
     <Modal
       overlayClassName="terminal-settings-overlay"
-      aria-labelledby="terminal-settings-title"
+      aria-label="Terminal settings"
       onDismiss={onClose}
     >
       <div className="dialog dialog--flush terminal-settings">
-        <header className="dialog__header dialog__header--bar">
-          <h2 id="terminal-settings-title" className="dialog__title">
-            Terminal settings
-          </h2>
-          <button
-            type="button"
-            className="icon-button"
-            onClick={onClose}
-            aria-label="Close terminal settings"
-            title="Close"
-          >
-            <X size={15} aria-hidden />
-          </button>
-        </header>
+        <DialogHeader
+          title="Terminal settings"
+          closeLabel="Close terminal settings"
+          onClose={onClose}
+        />
         <SettingsLayout
           label="Terminal settings categories"
           categories={CATEGORIES}
@@ -315,80 +284,71 @@ export function TerminalSettingsDialog({
                     </button>
                   </div>
                 </SettingField>
-                <SettingField label="Line height">
-                  <SegmentedControl
-                    label="Terminal line height"
-                    value={String(settings.lineHeight)}
-                    options={[
-                      { value: "1", label: "Compact" },
-                      { value: "1.2", label: "Comfortable" },
-                      { value: "1.4", label: "Spacious" },
-                    ]}
-                    onChange={(value) =>
-                      updateUi({ lineHeight: Number(value) })
-                    }
-                  />
-                </SettingField>
-                <SettingField label="Cursor">
-                  <SegmentedControl
-                    label="Terminal cursor shape"
-                    value={settings.cursorStyle}
-                    options={[
-                      { value: "block", label: "Block" },
-                      { value: "bar", label: "Bar" },
-                      { value: "underline", label: "Underline" },
-                    ]}
-                    onChange={(cursorStyle) => updateUi({ cursorStyle })}
-                  />
-                </SettingField>
+                <SegmentedField
+                  label="Line height"
+                  controlLabel="Terminal line height"
+                  value={String(settings.lineHeight)}
+                  options={[
+                    { value: "1", label: "Compact" },
+                    { value: "1.2", label: "Comfortable" },
+                    { value: "1.4", label: "Spacious" },
+                  ]}
+                  onChange={(value) => updateUi({ lineHeight: Number(value) })}
+                />
+                <SegmentedField
+                  label="Cursor"
+                  controlLabel="Terminal cursor shape"
+                  value={settings.cursorStyle}
+                  options={[
+                    { value: "block", label: "Block" },
+                    { value: "bar", label: "Bar" },
+                    { value: "underline", label: "Underline" },
+                  ]}
+                  onChange={(cursorStyle) => updateUi({ cursorStyle })}
+                />
                 <SwitchField
-                  fieldLabel="Blinking cursor"
-                  label="Blinking terminal cursor"
+                  label="Blinking cursor"
+                  controlLabel="Blinking terminal cursor"
                   checked={settings.cursorBlink}
                   onChange={(cursorBlink) => updateUi({ cursorBlink })}
                 />
-                <SettingField label="Scrollback">
-                  <NativeSelect
-                    label="Terminal scrollback lines"
-                    className="native-select--field"
-                    value={String(settings.scrollbackRows)}
-                    options={[5000, 20000, 50000, 100000].map((rows) => ({
-                      value: String(rows),
-                      label: `${rows.toLocaleString("en-US")} lines`,
-                    }))}
-                    onChange={(value) =>
-                      updateUi({ scrollbackRows: Number(value) })
-                    }
-                  />
-                </SettingField>
+                <SelectField
+                  label="Scrollback"
+                  controlLabel="Terminal scrollback lines"
+                  value={String(settings.scrollbackRows)}
+                  options={[5000, 20000, 50000, 100000].map((rows) => ({
+                    value: String(rows),
+                    label: `${rows.toLocaleString("en-US")} lines`,
+                  }))}
+                  onChange={(value) =>
+                    updateUi({ scrollbackRows: Number(value) })
+                  }
+                />
               </>
             ) : category.id === "interaction" ? (
               <>
                 <SwitchField
-                  fieldLabel="Protect rich paste"
-                  label="Protect terminal paste"
+                  label="Protect rich paste"
+                  controlLabel="Protect terminal paste"
                   description="Confirm multiline text or control characters."
                   checked={settings.pasteProtection}
                   onChange={(pasteProtection) => updateUi({ pasteProtection })}
                 />
-                <SettingField
+                <SegmentedField
                   label="Shortcut priority"
                   description="Where search, copy and paste shortcuts go."
-                >
-                  <SegmentedControl
-                    label="Terminal shortcut priority"
-                    value={settings.shortcutMode}
-                    options={[
-                      { value: "workbench", label: "Workbench" },
-                      { value: "shell", label: "Shell" },
-                    ]}
-                    onChange={(shortcutMode) => updateUi({ shortcutMode })}
-                  />
-                </SettingField>
+                  controlLabel="Terminal shortcut priority"
+                  value={settings.shortcutMode}
+                  options={[
+                    { value: "workbench", label: "Workbench" },
+                    { value: "shell", label: "Shell" },
+                  ]}
+                  onChange={(shortcutMode) => updateUi({ shortcutMode })}
+                />
                 {isMacTerminalBrowser() ? (
                   <SwitchField
-                    fieldLabel="Option as Meta"
-                    label="Use Option as Meta"
+                    label="Option as Meta"
+                    controlLabel="Use Option as Meta"
                     description="Option sends shell shortcuts instead of special characters."
                     checked={settings.macOptionIsMeta}
                     onChange={(macOptionIsMeta) =>
@@ -396,21 +356,20 @@ export function TerminalSettingsDialog({
                     }
                   />
                 ) : null}
-                <SettingField label="Bell" status={permissionStatus("bell")}>
-                  <NativeSelect
-                    label="Terminal bell behavior"
-                    className="native-select--field"
-                    value={settings.bell}
-                    options={[
-                      { value: "off", label: "Off" },
-                      { value: "visual", label: "Mark terminal tab" },
-                      { value: "desktop", label: "Desktop notification" },
-                    ]}
-                    onChange={(value) =>
-                      void selectBell(value as TerminalBellMode)
-                    }
-                  />
-                </SettingField>
+                <SelectField
+                  label="Bell"
+                  status={permissionStatus("bell")}
+                  controlLabel="Terminal bell behavior"
+                  value={settings.bell}
+                  options={[
+                    { value: "off", label: "Off" },
+                    { value: "visual", label: "Mark terminal tab" },
+                    { value: "desktop", label: "Desktop notification" },
+                  ]}
+                  onChange={(value) =>
+                    void selectBell(value as TerminalBellMode)
+                  }
+                />
                 <SwitchField
                   label="Long task notifications"
                   description="Notify when a background command finishes. Command text isn't shown."
@@ -418,30 +377,26 @@ export function TerminalSettingsDialog({
                   checked={settings.longTaskNotifications}
                   onChange={setLongTaskNotifications}
                 />
-                <SettingField
+                <SelectField
                   label="Long task threshold"
                   className="terminal-settings__field--subordinate"
-                >
-                  <NativeSelect
-                    label="Long task notification threshold"
-                    className="native-select--field"
-                    value={String(settings.longTaskThresholdSeconds)}
-                    disabled={!settings.longTaskNotifications}
-                    options={[
-                      { value: "5", label: "5 seconds" },
-                      { value: "10", label: "10 seconds" },
-                      { value: "30", label: "30 seconds" },
-                      { value: "60", label: "1 minute" },
-                      { value: "300", label: "5 minutes" },
-                    ]}
-                    onChange={(value) =>
-                      updateUi({ longTaskThresholdSeconds: Number(value) })
-                    }
-                  />
-                </SettingField>
+                  controlLabel="Long task notification threshold"
+                  value={String(settings.longTaskThresholdSeconds)}
+                  disabled={!settings.longTaskNotifications}
+                  options={[
+                    { value: "5", label: "5 seconds" },
+                    { value: "10", label: "10 seconds" },
+                    { value: "30", label: "30 seconds" },
+                    { value: "60", label: "1 minute" },
+                    { value: "300", label: "5 minutes" },
+                  ]}
+                  onChange={(value) =>
+                    updateUi({ longTaskThresholdSeconds: Number(value) })
+                  }
+                />
                 <SwitchField
-                  fieldLabel="Screen reader mode"
-                  label="Terminal screen reader mode"
+                  label="Screen reader mode"
+                  controlLabel="Terminal screen reader mode"
                   description="Make terminal output readable by screen readers. May slow rendering."
                   checked={settings.screenReaderMode}
                   onChange={(screenReaderMode) =>
@@ -452,8 +407,8 @@ export function TerminalSettingsDialog({
             ) : serviceSettings ? (
               <>
                 <SwitchField
-                  fieldLabel="Persist output"
-                  label="Persist terminal output"
+                  label="Persist output"
+                  controlLabel="Persist terminal output"
                   description="Keep output after a system restart. It may contain secrets. Turning this off deletes saved output."
                   checked={serviceSettings.persistOutput}
                   disabled={savingService}
@@ -467,26 +422,24 @@ export function TerminalSettingsDialog({
                       void updateService({ persistOutput });
                   }}
                 />
-                <SettingField label="Retention">
-                  <NativeSelect
-                    label="Terminal output retention"
-                    className="native-select--field"
-                    value={String(serviceSettings.historyRetentionDays)}
-                    disabled={savingService || !serviceSettings.persistOutput}
-                    options={[
-                      { value: "1", label: "1 day" },
-                      { value: "7", label: "7 days" },
-                      { value: "30", label: "30 days" },
-                      { value: "90", label: "90 days" },
-                      { value: "365", label: "1 year" },
-                    ]}
-                    onChange={(value) =>
-                      void updateService({
-                        historyRetentionDays: Number(value),
-                      })
-                    }
-                  />
-                </SettingField>
+                <SelectField
+                  label="Retention"
+                  controlLabel="Terminal output retention"
+                  value={String(serviceSettings.historyRetentionDays)}
+                  disabled={savingService || !serviceSettings.persistOutput}
+                  options={[
+                    { value: "1", label: "1 day" },
+                    { value: "7", label: "7 days" },
+                    { value: "30", label: "30 days" },
+                    { value: "90", label: "90 days" },
+                    { value: "365", label: "1 year" },
+                  ]}
+                  onChange={(value) =>
+                    void updateService({
+                      historyRetentionDays: Number(value),
+                    })
+                  }
+                />
                 <SettingField
                   label="Clear saved output"
                   description="Active terminals stay open."

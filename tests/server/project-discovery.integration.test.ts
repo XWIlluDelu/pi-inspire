@@ -1,4 +1,5 @@
 import {
+  appendFile,
   mkdir,
   mkdtemp,
   readFile,
@@ -27,6 +28,7 @@ import {
   startOfflineModel,
   writeOfflineModels,
 } from "./fixtures/offline-model.js";
+import { jsonl, messageEntry, writeSession } from "./fixtures/session-jsonl.js";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -131,7 +133,21 @@ describe("Host project discovery continuity", () => {
       const created = await api(current.application)
         .newSession(project)
         .expect(200);
-      const id = created.body.active.sessionId as string;
+      const { sessionId: id, sessionFile } = created.body.active as {
+        sessionId: string;
+        sessionFile: string;
+      };
+      const settled = (evidence: string) =>
+        vi.waitFor(
+          async () => {
+            expect(await readFile(sessionFile, "utf8")).toContain(evidence);
+            expect(
+              (await current.runtime.snapshot(id)).sessionStatuses[id]
+                ?.runState,
+            ).toBe("idle");
+          },
+          { timeout: 10_000 },
+        );
       expect((await current.preferences.read()).pinnedProjectCwds).toEqual([]);
       expect(await current.preferences.projectDirectories.read()).toContain(
         project,
@@ -140,18 +156,7 @@ describe("Host project discovery continuity", () => {
         sessionId: id,
         message: "first message",
       });
-      await vi.waitFor(
-        async () => {
-          expect(
-            await readFile(created.body.active.sessionFile, "utf8"),
-          ).toContain("offline answer");
-          expect(
-            (await current.runtime.snapshot(created.body.active.sessionId))
-              .sessionStatuses[created.body.active.sessionId]?.runState,
-          ).toBe("idle");
-        },
-        { timeout: 10_000 },
-      );
+      await settled("offline answer");
       await current.application.close();
       current = reconstruct();
       expect(
@@ -163,18 +168,7 @@ describe("Host project discovery continuity", () => {
         sessionId: id,
         message: "continue after reconstruction",
       });
-      await vi.waitFor(
-        async () => {
-          expect(
-            await readFile(created.body.active.sessionFile, "utf8"),
-          ).toContain("continue after reconstruction");
-          expect(
-            (await current.runtime.snapshot(created.body.active.sessionId))
-              .sessionStatuses[created.body.active.sessionId]?.runState,
-          ).toBe("idle");
-        },
-        { timeout: 10_000 },
-      );
+      await settled("continue after reconstruction");
       // Exercise the actual preference route, including clearing both kinds
       // of folder curation. Neither transition removes storage knowledge.
       await api(current.application)
@@ -213,7 +207,7 @@ describe("Host project discovery continuity", () => {
     }
   }, 30_000);
 
-  it("finds a session written by external Pi under an inherited relative storage path", async () => {
+  it("finds an externally forked session and keeps its native cursor separate from later disk appends", async () => {
     const { root, project, agent } = await fixture();
     await mkdir(join(project, ".pi"));
     await writeFile(
@@ -227,30 +221,47 @@ describe("Host project discovery continuity", () => {
     vi.stubEnv("PI_CODING_AGENT_SESSION_DIR", "external-sessions");
     const source = join(root, "source.jsonl");
     const timestamp = "2026-01-01T00:00:00Z";
-    await writeFile(
+    const usage = (
+      id: string,
+      parentId: string,
+      kind: string,
+      tokens: number,
+    ) => ({
+      type: "usage",
+      id,
+      parentId,
+      timestamp,
+      kind,
+      provider: "fixture",
+      model: "offline",
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: tokens,
+        cacheWrite: 0,
+        totalTokens: tokens,
+        cost: {
+          input: 0,
+          output: 0,
+          cacheRead: tokens / 8_000,
+          cacheWrite: 0,
+          total: tokens / 8_000,
+        },
+      },
+    });
+    await writeSession(
       source,
+      project,
+      "55555555-5555-4555-8555-555555555555",
       [
-        {
-          type: "session",
-          version: 3,
-          id: "55555555-5555-4555-8555-555555555555",
-          cwd: project,
-          timestamp,
-        },
-        {
-          type: "message",
-          id: "u1",
-          parentId: null,
-          timestamp,
-          message: {
-            role: "user",
-            content: "External Pi session",
-            timestamp: 1,
-          },
-        },
-      ]
-        .map((entry) => JSON.stringify(entry))
-        .join("\n") + "\n",
+        messageEntry("u1", null, {
+          role: "user",
+          content: "External Pi session",
+          timestamp: 1,
+        }),
+        usage("cache", "u1", "cache_warm", 1_000),
+        usage("worker-tail", "cache", "future-usage-kind", 2_000),
+      ],
     );
     const rpc = new PiRpcProcess({
       cwd: project,
@@ -264,35 +275,67 @@ describe("Host project discovery continuity", () => {
       ],
       env: { PI_OFFLINE: "1" },
     });
-    let state: { sessionId: string; sessionFile: string };
     await rpc.start();
     try {
-      state = await rpc.request({ type: "get_state" });
+      const { sessionId, sessionFile } = await rpc.request<{
+        sessionId: string;
+        sessionFile: string;
+      }>({ type: "get_state" });
+      const file = resolve(project, sessionFile);
+      const expected = join(project, "external-sessions");
+      expect(dirname(file)).toBe(expected);
+      expect(await createPiSessionDirectoryResolver()(project)).toBe(expected);
+      expect(await readFile(file, "utf8")).toContain("External Pi session");
+      const catalog = new SessionCatalog(project);
+      expect((await catalog.list()).sessions.map(({ id }) => id)).toEqual([
+        sessionId,
+      ]);
+      expect(await catalog.get(sessionId)).toMatchObject({
+        path: file,
+        cwd: project,
+      });
+      await expect(
+        rpc.request({ type: "get_session_stats" }),
+      ).resolves.toMatchObject({
+        sessionId,
+        tokens: { cacheRead: 3_000, total: 3_000 },
+        cost: 0.375,
+      });
+      const { leafId } = await rpc.request<{ leafId: string }>({
+        type: "get_entries",
+      });
+      expect(leafId).toEqual(expect.any(String));
+      await appendFile(
+        file,
+        jsonl({
+          type: "custom",
+          id: "disk-tail",
+          parentId: leafId,
+          timestamp,
+          customType: "external",
+          data: {},
+        }),
+      );
+      await expect(
+        rpc.request({ type: "get_entries", since: leafId }),
+      ).resolves.toEqual({ entries: [], leafId });
+      await expect(
+        rpc.request({ type: "get_entries", since: "disk-tail" }),
+      ).rejects.toThrow(/not found/i);
     } finally {
       await rpc.stop();
     }
-    const file = resolve(project, state.sessionFile);
-    const expected = join(project, "external-sessions");
-    expect(dirname(file)).toBe(expected);
-    expect(await createPiSessionDirectoryResolver()(project)).toBe(expected);
-    expect(await readFile(file, "utf8")).toContain("External Pi session");
-    const catalog = new SessionCatalog(project);
-    expect((await catalog.list()).sessions.map(({ id }) => id)).toEqual([
-      state.sessionId,
-    ]);
-    expect(await catalog.get(state.sessionId)).toMatchObject({
-      path: file,
-      cwd: project,
-    });
   }, 30_000);
 
   it("remembers the cwd of an opened existing session without pinning it", async () => {
     const { root, startup, project, agent, preferencesPath } = await fixture();
     const storage = join(agent, "sessions", "--existing--");
     await mkdir(storage, { recursive: true });
-    await writeFile(
+    await writeSession(
       join(storage, "existing.jsonl"),
-      `${JSON.stringify({ type: "session", version: 3, id: "existing", cwd: project, timestamp: new Date().toISOString() })}\n`,
+      project,
+      "existing",
+      [],
     );
     const current = host(
       startup,
@@ -326,9 +369,11 @@ describe("Host project discovery continuity", () => {
       const rpc = new PiRpcProcess(options);
       vi.spyOn(rpc, "start").mockImplementation(async () => {
         await mkdir(join(project, "sessions"), { recursive: true });
-        await writeFile(
+        await writeSession(
           join(project, "sessions", "uncertain.jsonl"),
-          `${JSON.stringify({ type: "session", version: 3, id: "uncertain", cwd: project, timestamp: new Date().toISOString() })}\n`,
+          project,
+          "uncertain",
+          [],
         );
         throw new Error("startup response lost");
       });

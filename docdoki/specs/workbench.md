@@ -380,6 +380,8 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   the current presentation title, Escape returns to the original filter, and an unedited Enter
   never promotes a fallback title into Pi metadata. Renames are latest-request-wins per session,
   and an older completion cannot close a subsequently reopened rename editor.
+  On a phone, Back leaves the rename editor for its invoking palette with the filter intact, or
+  returns to the conversation when the title menu opened it.
 
 - Keyboard shortcuts open one focus-contained, scrollable browser help dialog. It reflects the
   chosen desktop send chord, touch-first Return and IME boundaries, completion/history, palette and

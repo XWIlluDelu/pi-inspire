@@ -1,4 +1,10 @@
-import { type ReactNode, useLayoutEffect, useRef } from "react";
+import {
+  type ComponentProps,
+  type ReactNode,
+  useLayoutEffect,
+  useRef,
+} from "react";
+import { NativeSelect } from "./NativeSelect";
 
 export interface SettingsChoice<T extends string> {
   value: T;
@@ -96,6 +102,29 @@ function revealSettingsCategory(category: HTMLElement) {
   });
 }
 
+export function SettingsPage({
+  hidden,
+  children,
+}: {
+  hidden: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div className="settings__page" hidden={hidden}>
+      {children}
+    </div>
+  );
+}
+
+type FieldDetails = {
+  label: string;
+  description?: ReactNode;
+  status?: ReactNode;
+  feedback?: ReactNode;
+  className?: string;
+  layout?: "adaptive" | "inline";
+};
+
 export function SettingField({
   label,
   description,
@@ -104,15 +133,7 @@ export function SettingField({
   feedback,
   className,
   layout = "adaptive",
-}: {
-  label: string;
-  description?: ReactNode;
-  children: ReactNode;
-  status?: ReactNode;
-  feedback?: ReactNode;
-  className?: string;
-  layout?: "adaptive" | "inline";
-}) {
+}: FieldDetails & { children: ReactNode }) {
   return (
     <div
       className={`settings__field${className ? ` ${className}` : ""}`}
@@ -147,32 +168,74 @@ export function SettingsFeedback({
   );
 }
 
-export function SegmentedControl<T extends string>({
+type ChoiceField = FieldDetails & { controlLabel?: string };
+
+export function SelectField<Value extends string>({
+  controlLabel,
   label,
+  description,
+  status,
+  feedback,
+  className,
+  layout,
+  ...select
+}: ChoiceField &
+  Omit<ComponentProps<typeof NativeSelect<Value>>, "label" | "className">) {
+  return (
+    <SettingField
+      {...{ label, description, status, feedback, className, layout }}
+    >
+      <NativeSelect label={controlLabel ?? label} {...select} />
+    </SettingField>
+  );
+}
+
+export function SegmentedField<T extends string>({
+  label,
+  controlLabel = label,
+  description,
   value,
   options,
   onChange,
-}: {
-  label: string;
+}: Pick<FieldDetails, "label" | "description"> & {
+  controlLabel?: string;
   value: T;
-  options: SettingsChoice<T>[];
+  options: readonly SettingsChoice<T>[];
   onChange: (value: T) => void;
 }) {
   return (
-    <div className="segmented" role="group" aria-label={label}>
-      {options.map((option) => (
-        <button
-          type="button"
-          key={option.value}
-          className={`segmented__item${value === option.value ? " segmented__item--active" : ""}`}
-          onClick={() => onChange(option.value)}
-          aria-pressed={value === option.value}
-        >
-          {option.icon}
-          <span>{option.label}</span>
-        </button>
-      ))}
-    </div>
+    <SettingField label={label} description={description}>
+      <div className="segmented" role="group" aria-label={controlLabel}>
+        {options.map((option) => (
+          <button
+            type="button"
+            key={option.value}
+            className={`segmented__item${value === option.value ? " segmented__item--active" : ""}`}
+            onClick={() => onChange(option.value)}
+            aria-pressed={value === option.value}
+          >
+            {option.icon}
+            <span>{option.label}</span>
+          </button>
+        ))}
+      </div>
+    </SettingField>
+  );
+}
+
+export function SwitchField({
+  controlLabel,
+  label,
+  description,
+  status,
+  ...control
+}: Pick<FieldDetails, "label" | "description" | "status"> & {
+  controlLabel?: string;
+} & Omit<ComponentProps<typeof SettingsSwitch>, "label">) {
+  return (
+    <SettingField layout="inline" {...{ label, description, status }}>
+      <SettingsSwitch label={controlLabel ?? label} {...control} />
+    </SettingField>
   );
 }
 

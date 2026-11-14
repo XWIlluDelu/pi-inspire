@@ -514,9 +514,11 @@ export const WorkspaceDock = memo(function WorkspaceDock({
       setCreating(true);
       setError(null);
       try {
-        const terminal = await api.createTerminal({
-          cwd,
-          ...(profile ? { profileId: profile.id } : {}),
+        const terminal = await api.terminalOperation({
+          command: "create",
+          params: {
+            request: { cwd, ...(profile ? { profileId: profile.id } : {}) },
+          },
         });
         await commitDescriptor(terminal, true);
       } catch (createError) {
@@ -682,7 +684,10 @@ export const WorkspaceDock = memo(function WorkspaceDock({
       return;
     setError(null);
     try {
-      const removed = await api.removeTerminal(terminal.id, force);
+      const removed = await api.terminalOperation({
+        command: "remove",
+        params: { id: terminal.id, force },
+      });
       if (!catalogController.active) return;
       setRecentlyClosed({ terminal, closedAt: Date.now() });
       const before = catalogController.snapshot()?.terminals ?? [];
@@ -718,7 +723,12 @@ export const WorkspaceDock = memo(function WorkspaceDock({
     )
       return;
     try {
-      await commitDescriptor(await api.restartTerminal(terminal.id));
+      await commitDescriptor(
+        await api.terminalOperation({
+          command: "restart",
+          params: { id: terminal.id },
+        }),
+      );
     } catch (restartError) {
       if (!catalogController.active) return;
       setError(
@@ -741,8 +751,9 @@ export const WorkspaceDock = memo(function WorkspaceDock({
     const id = renameId;
     setRenameId(null);
     try {
-      const renamed = await api.renameTerminal(id, {
-        title: renameValue.trim() || null,
+      const renamed = await api.terminalOperation({
+        command: "rename",
+        params: { id, title: renameValue.trim() || null },
       });
       await commitDescriptor(renamed);
     } catch (renameError) {
@@ -761,17 +772,23 @@ export const WorkspaceDock = memo(function WorkspaceDock({
     const targetCwd = closed.terminal.projectCwd;
     setRecentlyClosed(null);
     try {
-      const terminal = await api.createTerminal({
-        cwd: targetCwd,
-        profileId: closed.terminal.profileId,
-        cols: closed.terminal.cols,
-        rows: closed.terminal.rows,
+      const terminal = await api.terminalOperation({
+        command: "create",
+        params: {
+          request: {
+            cwd: targetCwd,
+            profileId: closed.terminal.profileId,
+            cols: closed.terminal.cols,
+            rows: closed.terminal.rows,
+          },
+        },
       });
       await commitDescriptor(terminal, true);
       const restored =
         closed.terminal.titleSource === "user"
-          ? await api.renameTerminal(terminal.id, {
-              title: closed.terminal.title,
+          ? await api.terminalOperation({
+              command: "rename",
+              params: { id: terminal.id, title: closed.terminal.title },
             })
           : terminal;
       if (!catalogController.active) return;
@@ -806,9 +823,9 @@ export const WorkspaceDock = memo(function WorkspaceDock({
     next.splice(position === "after" ? targetIndex + 1 : targetIndex, 0, moved);
     try {
       catalogController.replace(
-        await api.reorderTerminals({
-          cwd,
-          terminalIds: next.map((terminal) => terminal.id),
+        await api.terminalOperation({
+          command: "reorder",
+          params: { projectCwd: cwd, ids: next.map(({ id }) => id) },
         }),
       );
     } catch (reorderError) {

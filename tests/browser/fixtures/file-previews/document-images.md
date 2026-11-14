@@ -8,6 +8,8 @@ The following figures are synthetic fixtures, not training measurements.
 
 ![Validation curve](training%20curve.png "Synthetic validation curve")
 
+![Repeated validation curve](training%20curve.png)
+
 ![Observation pipeline](vector.svg)
 
 [![Linked validation curve](training%20curve.png)](document.md#interpretation)

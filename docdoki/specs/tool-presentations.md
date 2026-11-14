@@ -19,7 +19,7 @@ covers:
   - tests/browser/{tool-presentations,custom-message}.spec.ts
   - tests/server/{app,app-events}.test.ts
   - tests/server/tool-presentation-config.test.ts
-  - tests/web/{tool-cards,tool-output-preview,child-calls,codemode-result}.test.tsx
+  - tests/web/{tool-cards,child-calls,codemode-result}.test.tsx
   - tests/server/pi-child-calls.integration.test.ts
   - tests/fixtures/pi-child-calls-extension.ts
   - tests/web/thinking-presentations.test.tsx

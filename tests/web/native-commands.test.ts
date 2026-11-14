@@ -228,35 +228,6 @@ describe("Pi native command dispatch", () => {
       });
     }
 
-    it("dispatches each setting to its addressed Pi endpoint", async () => {
-      const settings: PiRuntimeSettings = {
-        autoCompactionEnabled: true,
-        autoRetryEnabled: true,
-        steeringMode: "all",
-        followUpMode: "one-at-a-time",
-      };
-      const mutate = vi.fn(() => ({ body: { ok: true } }));
-      installSettingRoutes(settings, mutate);
-      const { store } = await initStore(
-        activeSnapshot({ runtimeSettings: settings }),
-      );
-
-      await store.setAutoCompaction(false);
-      await store.setAutoRetry(false);
-      await store.setSteeringMode("one-at-a-time");
-      await store.setFollowUpMode("all");
-
-      expect(mutate.mock.calls).toEqual([
-        ["/api/control/auto-compaction", { sessionId: "s1", enabled: false }],
-        ["/api/control/auto-retry", { sessionId: "s1", enabled: false }],
-        [
-          "/api/control/steering-mode",
-          { sessionId: "s1", mode: "one-at-a-time" },
-        ],
-        ["/api/control/follow-up-mode", { sessionId: "s1", mode: "all" }],
-      ]);
-    });
-
     it.each([false, true])(
       "reconciles overlapping changes when the latest write is accepted: %s",
       async (accepted) => {
@@ -268,22 +239,32 @@ describe("Pi native command dispatch", () => {
         };
         const old = deferred<RouteResponse>();
         const latest = deferred<RouteResponse>();
-        installSettingRoutes(
-          settings,
-          vi
-            .fn()
-            .mockReturnValueOnce(old.promise)
-            .mockReturnValueOnce(latest.promise),
-        );
+        const send = vi
+          .fn()
+          .mockReturnValueOnce(old.promise)
+          .mockReturnValueOnce(latest.promise);
+        installSettingRoutes(settings, send);
         const { store } = await initStore(
           activeSnapshot({ runtimeSettings: settings }),
         );
-        const olderWrite = store.setAutoRetry(true);
+        const olderWrite = store.setPiRuntimeSetting({
+          key: "autoRetryEnabled",
+          value: true,
+        });
         expect(store.getState().runtimeSettings?.autoRetryEnabled).toBe(false);
         expect(store.getState().pendingRuntimeSettings.autoRetryEnabled).toBe(
           true,
         );
-        const latestWrite = store.setAutoRetry(accepted);
+        const latestWrite = store.setPiRuntimeSetting({
+          key: "autoRetryEnabled",
+          value: accepted,
+        });
+        expect(send.mock.calls).toEqual(
+          [true, accepted].map((value) => [
+            "/api/control/runtime-setting",
+            { sessionId: "s1", setting: { key: "autoRetryEnabled", value } },
+          ]),
+        );
         if (accepted) {
           settings.autoRetryEnabled = true;
           latest.resolve({ body: { ok: true } });

@@ -52,6 +52,11 @@ test("conversation feedback shares an axis and keeps narrow touch actions usable
     0,
   );
   const error = page.getByRole("group", { name: "Pi error" });
+  await expect(error.locator(".assistant-error__message")).toHaveText(
+    "fetch failed\nThe provider closed the connection before a response arrived.",
+    { useInnerText: true },
+  );
+  await expect(error).not.toContainText("Diagnostic line 1:");
   await error.getByRole("button", { name: "Show details" }).tap();
   await expect(error).toContainText("Diagnostic line 8");
   for (const [surface, copy] of [
@@ -67,6 +72,39 @@ test("conversation feedback shares an axis and keeps narrow touch actions usable
     ).toBeLessThanOrEqual(1);
   }
   await error.getByRole("button", { name: "Hide details" }).tap();
+
+  await page
+    .getByRole("button", { name: "Collapse assistant activity" })
+    .first()
+    .tap();
+  const log = page.getByRole("log");
+  const order = await log.innerText();
+  expect(order).toMatch(/继续[\s\S]*fetch failed[\s\S]*保留已有设计/);
+  await expect(error).toBeVisible();
+  send(
+    ...[
+      { errorMessage: "a\nb\nc\nd\ne\nf", __inspireMessageId: "short-lines" },
+      { errorMessage: "Rejected by Pi", __inspireMessageId: "simple-error" },
+    ].map((message) => ({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [],
+        stopReason: "error",
+        ...message,
+      },
+    })),
+  );
+  await expect(log.getByRole("group", { name: "Pi error" })).toHaveCount(3);
+  await expect(log.getByRole("button", { name: "Show details" })).toHaveCount(
+    2,
+  );
+  await expect(
+    log
+      .getByRole("group", { name: "Pi error" })
+      .filter({ hasText: "Rejected by Pi" })
+      .getByRole("button", { name: "Show details" }),
+  ).toHaveCount(0);
 
   await page.route("**/api/control/native-command", (route) =>
     route.fulfill({
@@ -91,5 +129,5 @@ test("conversation feedback shares an axis and keeps narrow touch actions usable
   ).toBeLessThanOrEqual(1);
   await receipt.getByRole("button", { name: /dismiss/i }).tap();
   await expect(receipt).toHaveCount(0);
-  await expect(error).toBeVisible();
+  await expect(error.first()).toBeVisible();
 });

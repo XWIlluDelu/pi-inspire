@@ -38,6 +38,7 @@ import { Nav } from "./components/Nav";
 import { Notices } from "./components/Notices";
 import { PaneResizeHandle } from "./components/PaneResizeHandle";
 import { PiLoader } from "./components/PiLoader";
+import { RenameSessionDialog } from "./components/RenameSessionDialog";
 import { RenderErrorBoundary } from "./components/RenderErrorBoundary";
 import type { SettingsCategoryId } from "./components/Settings";
 import { SettingsDialog, SettingsLoading } from "./components/SettingsDialog";
@@ -46,6 +47,7 @@ import { Welcome, type WelcomeInheritance } from "./components/Welcome";
 import { BrandLogo, Wordmark } from "./components/Wordmark";
 import { isComposingKeyboardEvent } from "./keyboard-input";
 import { thinkingLevelLabel } from "./model-options";
+import { runStop, type WorkbenchDestinations } from "./session-actions";
 import { shallowEqual, store, useAppState } from "./store";
 import { useInspectionHistory } from "./use-inspection-history";
 import { hasActiveModal, useModalDepth } from "./use-modal-focus";
@@ -53,7 +55,11 @@ import {
   applyBrowserTheme,
   cacheVisualPreferences,
 } from "./visual-preferences";
-import { modelCycleAction, workbenchShortcut } from "./workbench-keyboard";
+import {
+  modelCycleAction,
+  runModelCycle,
+  workbenchShortcut,
+} from "./workbench-keyboard";
 import { readNavCollapsed, saveNavCollapsed } from "./workbench-session";
 
 const loadContextPane = () => import("./components/ContextPane");
@@ -483,6 +489,7 @@ type Inspection =
       destination?: ModelSettingsDestination;
     }
   | { kind: "palette" }
+  | { kind: "rename"; sessionId: string; name: string; fromPalette: boolean }
   | { kind: "export"; sessionId: string }
   | { kind: "help"; mode: "hotkeys" | "changelog" };
 
@@ -550,10 +557,23 @@ export function App() {
     },
     [],
   );
-  const openPaletteSettings = useCallback(
-    () => openSettings("behavior"),
-    [openSettings],
-  );
+  const openRename = useCallback((sessionId: string, name: string) => {
+    setInspection((current) => ({
+      kind: "rename",
+      sessionId,
+      name,
+      fromPalette: current?.kind === "palette",
+    }));
+  }, []);
+  const closeRename = useCallback(() => {
+    setInspection((current) =>
+      current?.kind === "rename"
+        ? current.fromPalette
+          ? { kind: "palette" }
+          : null
+        : current,
+    );
+  }, []);
   const extensionOverlayOpen = state.extensionOverlayOpen;
   const extensionDialogRef = useRef<ExtensionUiDialogHandle>(null);
   const [welcomeInheritance, setWelcomeInheritance] =
@@ -599,8 +619,11 @@ export function App() {
   useEffect(() => {
     if (state.sessionId) setWelcomeInheritance(null);
     setInspection((current) =>
-      current?.kind === "export" && current.sessionId !== state.sessionId
-        ? null
+      (current?.kind === "export" || current?.kind === "rename") &&
+      current.sessionId !== state.sessionId
+        ? current.kind === "rename" && current.fromPalette
+          ? { kind: "palette" }
+          : null
         : current,
     );
   }, [state.sessionId]);
@@ -622,6 +645,9 @@ export function App() {
     ...(state.resourcesOpen ? ["context"] : []),
     ...(mobileNavOpen ? ["navigation"] : []),
     ...(inspection ? ["inspection"] : []),
+    ...(inspection?.kind === "rename" && inspection.fromPalette
+      ? ["rename"]
+      : []),
     ...(extensionOverlayOpen ? ["extension"] : []),
   ];
   useInspectionHistory(
@@ -631,6 +657,12 @@ export function App() {
       if (!remaining.includes("extension"))
         extensionDialogRef.current?.cancel();
       if (!remaining.includes("inspection")) setInspection(null);
+      else if (
+        !remaining.includes("rename") &&
+        inspection?.kind === "rename" &&
+        inspection.fromPalette
+      )
+        closeRename();
       if (!remaining.includes("navigation")) setMobileNavOpen(false);
       if (!remaining.includes("context")) store.setResourcesOpen(false);
     },
@@ -722,6 +754,24 @@ export function App() {
     openSettings("updates");
   }, [extensionOverlayOpen, settingsOpen, openSettings]);
 
+  const destinations = useMemo<WorkbenchDestinations>(
+    () => ({
+      history: () => transcriptRef.current?.openHistory(),
+      models: (request) =>
+        openSettings("models", {
+          query: request?.query,
+          focus: request?.modelSettingsFocus,
+          owner: request?.modelSettingsOwner,
+        }),
+      settings: () => openSettings("behavior"),
+      updates: () => openSettings("updates"),
+      hotkeys: () => openCommandHelp("hotkeys"),
+      changelog: () => openCommandHelp("changelog"),
+      sessions: openSessionSearch,
+      new: newSession,
+    }),
+    [newSession, openCommandHelp, openSessionSearch, openSettings],
+  );
   useEffect(() => {
     const request = state.nativeCommandUiRequest;
     if (!request) return;
@@ -729,36 +779,15 @@ export function App() {
       store.consumeNativeCommandUiRequest(request.id);
       return;
     }
-    if (request.action === "model" || request.action === "thinking") return;
-    if (extensionOverlayOpen) return;
-    if (request.action === "history") {
-      transcriptRef.current?.openHistory();
-    } else if (request.action === "models") {
-      openSettings("models", {
-        query: request.query,
-        focus: request.modelSettingsFocus,
-        owner: request.modelSettingsOwner,
-      });
-    } else if (request.action === "settings") {
-      openSettings("behavior");
-    } else if (request.action === "updates") {
-      openSettings("updates");
-    } else if (request.action === "hotkeys" || request.action === "changelog") {
-      openCommandHelp(request.action);
-    } else if (request.action === "sessions") {
-      openSessionSearch();
-    } else if (request.action === "new") {
-      newSession();
-    }
+    if (
+      request.action === "model" ||
+      request.action === "thinking" ||
+      extensionOverlayOpen
+    )
+      return;
+    destinations[request.action](request);
     store.consumeNativeCommandUiRequest(request.id);
-  }, [
-    extensionOverlayOpen,
-    newSession,
-    openCommandHelp,
-    openSessionSearch,
-    openSettings,
-    state.nativeCommandUiRequest,
-  ]);
+  }, [destinations, extensionOverlayOpen, state.nativeCommandUiRequest]);
 
   useLayoutEffect(() => {
     if (!state.bootstrapped || !focusedTerminalLaunchRequested()) return;
@@ -864,8 +893,7 @@ export function App() {
         )
           return;
         event.preventDefault();
-        if (cycleAction === "thinking") void store.cycleThinking();
-        else void store.cycleModel(cycleAction === "next-model" ? 1 : -1);
+        runModelCycle(cycleAction);
         return;
       }
       const action = workbenchShortcut(event);
@@ -903,7 +931,7 @@ export function App() {
         !event.defaultPrevented &&
         (isAbortableRunState(state.runState) || state.bashRunning)
       ) {
-        void store.abort();
+        runStop(state.sessionId);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -911,6 +939,7 @@ export function App() {
   }, [
     state.runState,
     state.bashRunning,
+    state.sessionId,
     state.resourcesOpen,
     narrowViewport,
     mobileNavOpen,
@@ -983,6 +1012,7 @@ export function App() {
           onToggleNavigation={toggleNavigation}
           onOpenCommandPalette={openCommandPalette}
           onExportSession={openExport}
+          onRenameSession={openRename}
           onToggleSettings={toggleSettings}
           onToggleResources={toggleResources}
         />
@@ -1101,18 +1131,27 @@ export function App() {
           onClose={closeInspection}
         />
       ) : null}
-      {inspection?.kind === "palette" ? (
+      {inspection?.kind === "palette" ||
+      (inspection?.kind === "rename" && inspection.fromPalette) ? (
         <CommandPalette
-          onExportSession={openExport}
           active={!extensionOverlayOpen}
+          renameOpen={inspection.kind === "rename"}
           onClose={closeCommandPalette}
+          onExportSession={openExport}
+          onRenameSession={openRename}
           onToggleNav={toggleNavigation}
           onToggleCtx={toggleResources}
-          onNewSession={newSession}
           onOpenSession={openSession}
-          onFindSession={openSessionSearch}
-          onOpenSettings={openPaletteSettings}
-          onOpenHelp={openCommandHelp}
+          destinations={destinations}
+        />
+      ) : null}
+      {inspection?.kind === "rename" &&
+      inspection.sessionId === state.sessionId ? (
+        <RenameSessionDialog
+          sessionId={inspection.sessionId}
+          initialName={inspection.name}
+          active={!extensionOverlayOpen && !state.readOnlyReason}
+          onClose={closeRename}
         />
       ) : null}
       {inspection?.kind === "help" && !extensionOverlayOpen ? (

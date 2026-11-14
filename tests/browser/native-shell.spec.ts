@@ -13,19 +13,29 @@ test("native shell cards stream, stop, recall and fit the narrow composer withou
   const submitted: Array<Record<string, unknown>> = [];
   let stopped = 0;
   let modelBusy = false;
+  let retired = false;
   const projectShell = (snapshot: ActiveSnapshot) => {
     if (snapshot.active?.sessionId !== sessionId) return;
     snapshot.sessionStatuses[sessionId] = {
       runState: modelBusy ? "running" : "idle",
     };
     snapshot.active.isStreaming = modelBusy;
-    if (submitted.length && snapshot.active?.sessionId === sessionId) {
-      snapshot.bashRunning = stopped === 0;
+    if (submitted.length) {
+      snapshot.bashRunning = stopped === 0 && !retired;
       snapshot.active.transcriptPage.messages.push({
         ...shell,
         output: "STREAMED_BROWSER_OUTPUT\n",
-        __inspireBashRunning: stopped === 0,
-        ...(stopped ? { cancelled: true, __inspireSettled: true } : {}),
+        __inspireBashRunning: snapshot.bashRunning,
+        ...(retired
+          ? {
+              excludeFromContext: false,
+              __inspireBashInterrupted: true,
+              __inspireBashError:
+                "Pi worker retired before its shell result was confirmed",
+            }
+          : stopped
+            ? { cancelled: true, __inspireSettled: true }
+            : {}),
       });
     }
   };
@@ -38,7 +48,12 @@ test("native shell cards stream, stop, recall and fit the narrow composer withou
     __inspireLiveId: "browser-native-shell",
     __inspireBashRunning: true,
   };
-  const transport = await routeSnapshots(page, { snapshot: projectShell });
+  const transport = await routeSnapshots(page, {
+    snapshot: projectShell,
+    bootstrap: ({ preferences }) => {
+      preferences.toolVisibility = "hidden";
+    },
+  });
   await page.route("**/api/prompt", async (route) => {
     const body = route.request().postDataJSON() as Record<string, unknown>;
     submitted.push(body);
@@ -180,4 +195,12 @@ test("native shell cards stream, stop, recall and fit the narrow composer withou
   await transport.reload(sessionId);
   await expect(card).toHaveCount(1);
   await expect(card.getByText("Cancelled", { exact: true })).toBeVisible();
+
+  retired = true;
+  await transport.reload(sessionId);
+  await expect(card).toHaveCount(1);
+  await expect(card.getByText("Interrupted", { exact: true })).toBeVisible();
+  await expect(card).toContainText("STREAMED_BROWSER_OUTPUT");
+  await expect(card).toContainText("Context unconfirmed");
+  await expect(card.getByText("Running", { exact: true })).toHaveCount(0);
 });

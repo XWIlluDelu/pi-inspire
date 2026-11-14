@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AttachmentStore } from "../../server/attachments.js";
 import { PiRpcProcess } from "../../server/pi-rpc.js";
 import { RuntimeController } from "../../server/runtime.js";
-import type { SessionRecord } from "../../server/session-catalog.js";
+import { SessionCatalog } from "../../server/session-catalog.js";
 import { savedAssistant } from "../fixtures/history-session.js";
 import {
   nativePiWorkspace,
@@ -14,8 +14,8 @@ import {
   startOfflineModel,
   writeOfflineModels,
 } from "./fixtures/offline-model.js";
-import { catalog, deferredSignal } from "./fixtures/runtime.js";
-import { jsonl, messageEntry } from "./fixtures/session-jsonl.js";
+import { deferredSignal } from "./fixtures/runtime.js";
+import { messageEntry, writeSession } from "./fixtures/session-jsonl.js";
 
 const cleanups: Array<() => Promise<unknown>> = [];
 const SESSION_ID = "33333333-3333-4333-8333-333333333333";
@@ -94,27 +94,8 @@ async function fixture(
   stubNativePiEnvironment(f.env);
   const model = stream ? await heldModel(f.agent) : undefined;
   const path = join(f.sessions, "source.jsonl");
-  const source = jsonl(
-    {
-      type: "session",
-      version: 3,
-      id: SESSION_ID,
-      timestamp: "2026-08-01T00:00:00.000Z",
-      cwd: f.cwd,
-    },
-    ...entries,
-  );
-  await writeFile(path, source);
-  const record: SessionRecord = {
-    id: SESSION_ID,
-    cwd: f.cwd,
-    path,
-    source: null,
-    created: new Date(),
-    modified: new Date(),
-    messageCount: entries.length,
-    firstMessage: "question one",
-  };
+  await writeSession(path, f.cwd, SESSION_ID, entries);
+  const source = await readFile(path, "utf8");
   if (extension) {
     const extensions = join(f.agent, "extensions");
     await mkdir(extensions);
@@ -123,22 +104,26 @@ async function fixture(
   const attachments = new AttachmentStore(join(f.root, "uploads"));
   const workers: PiRpcProcess[] = [];
   cleanups.push(() => attachments.close());
-  const runtime = new RuntimeController(catalog([record]), attachments, {
-    createProcess: (options) => {
-      const worker = new PiRpcProcess({
-        ...options,
-        env: { ...f.env, ...options.env, PI_ATTACH_CONTROL: "0" },
-        args: [
-          "--session-dir",
-          f.sessions,
-          ...(options.args ?? []),
-          ...(stream ? ["--model", MODEL] : []),
-        ],
-      });
-      workers.push(worker);
-      return worker;
+  const runtime = new RuntimeController(
+    new SessionCatalog(f.cwd),
+    attachments,
+    {
+      createProcess: (options) => {
+        const worker = new PiRpcProcess({
+          ...options,
+          env: { ...f.env, ...options.env, PI_ATTACH_CONTROL: "0" },
+          args: [
+            "--session-dir",
+            f.sessions,
+            ...(options.args ?? []),
+            ...(stream ? ["--model", MODEL] : []),
+          ],
+        });
+        workers.push(worker);
+        return worker;
+      },
     },
-  });
+  );
   cleanups.push(() => runtime.close());
   let ready = false;
   runtime.on("event", (event) => {

@@ -227,14 +227,11 @@ function runtimeFor(
 }
 
 /** A native session with an empty leaf, attached only after explicit takeover. */
-async function attachedRuntime(
-  connect: ConnectExternalSession,
-  { createProcess }: Pick<RuntimeControllerOptions, "createProcess"> = {},
-) {
+async function attachedRuntime(connect: ConnectExternalSession) {
   const session = record("a", fixtureWorkspace);
   await (await preview(session, [])).close();
   vi.stubEnv("PI_CODING_AGENT_SESSION_DIR", join(fixtureWorkspace, "previews"));
-  return runtimeFor(session, { ...(createProcess ? { createProcess } : {}) })
+  return runtimeFor(session)
     .setExternalSessionPresence(async () => [null])
     .setExternalSessionConnector(async (id, file, match, idleOnly) =>
       idleOnly ? null : connect(id, file, match, idleOnly),
@@ -248,13 +245,9 @@ async function openAttached(runtime: RuntimeController, id: string) {
 }
 
 describe("continue an externally owned Pi", () => {
-  it("detects and stops live attached work before the next poll on restart", async () => {
-    const session = await persistedRecord("a");
+  it("detects live attached work before the next poll and requires a confirmed Stop for restart", async () => {
     const f = nativeFixture();
-    f.setState({ activity: "idle", leafId: "u1" });
-    const runtime = runtimeFor(session)
-      .setExternalSessionPresence(async () => ["u1"])
-      .setExternalSessionConnector(async () => f.native);
+    const runtime = await attachedRuntime(async () => f.native);
     const events: string[] = [];
     runtime.on("event", (event) => events.push(event.type));
     const dispatch = vi.fn();
@@ -268,7 +261,7 @@ describe("continue an externally owned Pi", () => {
         if (startsAfterReservation) {
           // The TUI starts work after reservation while its last poll is idle.
           startsAfterReservation = false;
-          f.setState({ activity: "working", leafId: "u1" });
+          f.setState({ activity: "working" });
         }
         if (await commit()) {
           dispatch();
@@ -297,6 +290,19 @@ describe("continue an externally owned Pi", () => {
       expect(dispatch).not.toHaveBeenCalled();
       expect(f.native.abort).not.toHaveBeenCalled();
       expect(events).not.toContain("agent_start");
+
+      const unconfirmed = () =>
+        expect(runtime.stopAttachedPiWork()).rejects.toThrow(
+          "Could not confirm Stop for a. Work may still be running.",
+        );
+      vi.mocked(f.native.read).mockRejectedValueOnce(new Error("Unavailable"));
+      await unconfirmed();
+      expect(f.native.abort).not.toHaveBeenCalled();
+      vi.mocked(f.native.abort).mockRejectedValueOnce(
+        new Error("No Stop receipt"),
+      );
+      await unconfirmed();
+
       controller.start({
         hostId: (await controller.status()).hostId,
         operationId: "forced-before-poll",
@@ -310,62 +316,27 @@ describe("continue an externally owned Pi", () => {
         }),
       );
       expect(dispatch).toHaveBeenCalledOnce();
-      expect(f.native.abort).toHaveBeenCalledExactlyOnceWith("u1");
+      expect(vi.mocked(f.native.abort).mock.calls).toEqual([[null], [null]]);
     } finally {
       vi.useRealTimers();
     }
-  });
-
-  it("reports unconfirmed Stop and refreshes the receiver before retrying on an empty branch", async () => {
-    const f = nativeFixture();
-    f.setState({ activity: "working" });
-    const runtime = await attachedRuntime(async () => f.native);
-    await openAttached(runtime, "a");
-    const stop = () =>
-      expect(runtime.stopAttachedPiWork()).rejects.toThrow(
-        "Could not confirm Stop for a. Work may still be running.",
-      );
-    vi.mocked(f.native.read).mockRejectedValueOnce(new Error("Unavailable"));
-    await stop();
-    expect(f.native.abort).not.toHaveBeenCalled();
-    vi.mocked(f.native.abort).mockRejectedValueOnce(
-      new Error("No Stop receipt"),
-    );
-    await stop();
-    await runtime.stopAttachedPiWork();
-    expect(vi.mocked(f.native.abort).mock.calls).toEqual([[null], [null]]);
-  });
-
-  it("opens the current branch when the live Pi confirms it is still on an older node", async () => {
-    const session = await persistedRecord("a");
-    await appendFile(session.path, branchMessage("saved-current", "u1"));
-    const { createProcess: create } = workerFactory();
-    const runtime = runtimeFor(session, {
-      createProcess: create,
-    }).setExternalSessionPresence(async (_id, _file, _fresh, isAncestor) => {
-      expect(isAncestor("u1")).toBe(true);
-      return ["u1"];
-    });
-    const preview = await runtime.openSession("a");
-    expect(preview.active?.effectiveLeafId).toBe("saved-current");
-    expect(create).not.toHaveBeenCalled();
-    await startWorker(runtime);
-    expect(create).toHaveBeenCalledOnce();
-    const snapshot = await runtime.snapshot("a");
-    expect(snapshot.active?.readOnlyReason).toBeUndefined();
-    expect(snapshot.active?.effectiveLeafId).toBe("saved-current");
   });
 
   it("blocks cold writer admission for busy, unreachable or unknown native ownership", async () => {
     const empty = record("empty", fixtureWorkspace);
     await (await preview(empty, [])).close();
     await rename(empty.path, join(fixtureWorkspace, "empty.jsonl"));
+    const session = await persistedRecord("a");
     const native = nativeFixture({ activity: "working", leafId: "u1" }).native;
     const { createProcess, workers } = workerFactory();
     const presence = vi.fn(
-      async (): Promise<(string | null | undefined)[]> => ["u1"],
+      async (
+        ..._args: Parameters<
+          Parameters<RuntimeController["setExternalSessionPresence"]>[0]
+        >
+      ): Promise<(string | null | undefined)[]> => ["u1"],
     );
-    const runtime = runtimeFor(await persistedRecord("a"), { createProcess })
+    const runtime = runtimeFor(session, { createProcess })
       .setExternalSessionPresence(presence)
       .setExternalSessionConnector(async (_id, _file, _match, idleOnly) =>
         idleOnly ? native : null,
@@ -414,6 +385,21 @@ describe("continue an externally owned Pi", () => {
         .mockResolvedValue(["not-yet-projected"]);
       await expect(send()).rejects.toMatchObject(active);
       expect(workers.map(({ starts }) => starts)).toEqual([0]);
+      await appendFile(session.path, branchMessage("saved-current", "u1"));
+      presence.mockResolvedValue(["u1"]);
+      await runtime.navigateBranch({
+        sessionId: "a",
+        targetId: "saved-current",
+        revision: (await snapshot()).active!.branchRevision!,
+        mode: "watch",
+      });
+      expect((await snapshot()).active?.readOnlyReason).toBeUndefined();
+      await startWorker(runtime);
+      expect(workers.map(({ starts }) => starts)).toEqual([0, 1]);
+      expect((await snapshot()).active).toMatchObject({
+        effectiveLeafId: "saved-current",
+        readOnlyReason: undefined,
+      });
     } finally {
       release();
     }
@@ -507,32 +493,6 @@ describe("continue an externally owned Pi", () => {
       stopped.resolve();
     }
   });
-
-  it.each(["rename", "setModel", "setThinkingLevel"] as const)(
-    "does not retarget %s from a retired attachment",
-    async (action) => {
-      const first = nativeFixture();
-      const replacement = nativeFixture();
-      const connect = vi
-        .fn()
-        .mockResolvedValueOnce(first.native)
-        .mockResolvedValue(replacement.native);
-      const { createProcess: create } = workerFactory();
-      const runtime = await attachedRuntime(connect, { createProcess: create });
-      await openAttached(runtime, "a");
-      first.setState({ ended: "exited" });
-      const mutate = {
-        rename: () => runtime.rename("a", "Original Pi"),
-        setModel: () => runtime.setModel("a", "native", "model"),
-        setThinkingLevel: () => runtime.setThinkingLevel("a", "high"),
-      };
-      await expect(mutate[action]()).rejects.toMatchObject({ status: 409 });
-      expect(connect).toHaveBeenCalledOnce();
-      expect(create).not.toHaveBeenCalled();
-      expect(first.native[action]).not.toHaveBeenCalled();
-      expect(replacement.native[action]).not.toHaveBeenCalled();
-    },
-  );
 
   it("fences sends across Watch, recalled input, and a failed return to Inspire", async () => {
     const session = await persistedRecord("a");
@@ -758,9 +718,24 @@ describe("continue an externally owned Pi", () => {
       await entered.promise;
       receiver = null;
       current.setState({ ended: "exited" });
-      await expect(send("For retired Pi")).rejects.toThrow(
-        /connection has ended/,
-      );
+      await Promise.all([
+        expect(send("For retired Pi")).rejects.toThrow(/connection has ended/),
+        ...[
+          runtime.rename("a", "For retired Pi"),
+          runtime.setModel("a", "native", "model"),
+          runtime.setThinkingLevel("a", "high"),
+        ].map((mutation) =>
+          expect(mutation).rejects.toMatchObject({ status: 409 }),
+        ),
+      ]);
+      for (const action of [
+        "rename",
+        "setModel",
+        "setThinkingLevel",
+      ] as const) {
+        expect(current.native[action]).not.toHaveBeenCalled();
+        expect(replacement.native[action]).not.toHaveBeenCalled();
+      }
       late.resolve();
       await vi.advanceTimersByTimeAsync(750);
       const retired = await snapshot();
@@ -1032,7 +1007,7 @@ describe("continue an externally owned Pi", () => {
     },
   );
 
-  it("discards a takeover that resolves after Host shutdown", async () => {
+  it("refuses a takeover completing after shutdown", async () => {
     const f = nativeFixture();
     const gate = deferredSignal();
     const connect = vi.fn(async () => {
@@ -1041,7 +1016,7 @@ describe("continue an externally owned Pi", () => {
     });
     const runtime = await attachedRuntime(connect);
     const taking = openAttached(runtime, "a").catch(() => undefined);
-    await vi.waitFor(() => expect(connect).toHaveBeenCalled());
+    await vi.waitFor(() => expect(connect).toHaveBeenCalledOnce());
     const closing = runtime.close();
     gate.resolve();
     await closing;

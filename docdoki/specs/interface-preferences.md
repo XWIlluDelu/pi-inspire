@@ -199,3 +199,6 @@ Settings and modal tests cover navigation, loading, menu dismissal, and focus re
 checks menu reachability and persistence. Update tests cover their observation lifecycle; task-alert
 conformance follows [[notifications]], with device evidence and remaining acceptance in
 [[follow-notifications-2026-10-22]].
+
+Settings keeps its dialog and close button mounted while the category content loads. The body
+shows the shared loading status or an alert with Reload if the import fails.

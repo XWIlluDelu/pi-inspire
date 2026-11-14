@@ -1,7 +1,7 @@
 import { ArrowDown, ArrowUp, ListOrdered } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
 import type { SessionActionId } from "../../shared/contracts";
-import { moveSessionAction, sessionActions } from "../session-actions";
+import { sessionActions } from "../session-actions";
 import { SettingsSection } from "./SettingsSection";
 
 export function SessionActionsSettings({
@@ -49,7 +49,12 @@ export function SessionActionsSettings({
                     disabled={destination < 0 || destination >= order.length}
                     onClick={(event) => {
                       pendingFocus.current = event.currentTarget;
-                      onChange(moveSessionAction(order, id, destination));
+                      const next = [...order];
+                      [next[index], next[destination]] = [
+                        next[destination]!,
+                        id,
+                      ];
+                      onChange(next);
                       setAnnouncement(
                         `${label} moved to position ${destination + 1} of ${order.length}.`,
                       );

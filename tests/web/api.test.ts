@@ -236,7 +236,7 @@ describe("ordinary HTTP observation", () => {
     vi.spyOn(response, "json").mockReturnValue(new Promise<never>(() => {}));
     const fetch = transport(response);
     const rejected = expect(
-      createApi().openSession("s1"),
+      createApi().json("openSession", { body: { id: "s1" } }),
     ).rejects.toMatchObject({
       name: "ApiTransportError",
       timedOut: true,
@@ -264,7 +264,9 @@ describe("ordinary HTTP observation", () => {
           return response;
         }),
       );
-      await expect(createApi().newSession("/workspace")).rejects.toMatchObject({
+      await expect(
+        createApi().json("newSession", { body: { cwd: "/workspace" } }),
+      ).rejects.toMatchObject({
         name: "ApiTransportError",
         outcomeUnknown: true,
         timedOut: false,
@@ -282,7 +284,7 @@ describe("ordinary HTTP observation", () => {
       const owner = new AbortController();
       const invoke = () =>
         reason === "deadline"
-          ? api.openSession("s1", owner.signal)
+          ? api.json("openSession", { body: { id: "s1" } }, owner.signal)
           : api.navigateBranch(
               { sessionId: "s1", revision: 1, targetId: "t1", mode: "switch" },
               owner.signal,
@@ -316,7 +318,7 @@ describe("ordinary HTTP observation", () => {
       const api = createApi();
       const result = (
         operation === "create"
-          ? api.newSession("/workspace")
+          ? api.json("newSession", { body: { cwd: "/workspace" } })
           : api.forkBranch({
               sessionId: "s1",
               viewId: "view-1",
@@ -414,9 +416,12 @@ it("preserves explicit settings owners and omits missing ones", async () => {
   );
   const api = createApi();
   const cwd = "C:\\Users\\中文 & demo\\project";
-  await api.mcpConfig({ cwd });
-  await api.modelSettings({ sessionId: "session & one" });
-  await api.saveModelPreferences({}, "revision", { defaultModel: null });
+  await api.json("mcpConfig", { query: { cwd } });
+  await api.json("modelSettings", { query: { sessionId: "session & one" } });
+  await api.json("saveModelPreferences", {
+    query: {},
+    body: { revision: "revision", patch: { defaultModel: null } },
+  });
   expect(
     fetch.mock.calls.map(([url]) =>
       Object.fromEntries(new URL(String(url), "http://localhost").searchParams),

@@ -5,12 +5,16 @@ import { expect, it, vi } from "vitest";
 import { AttachmentStore } from "../../server/attachments.js";
 import { PiRpcProcess } from "../../server/pi-rpc.js";
 import { RuntimeController } from "../../server/runtime.js";
-import type { SessionRecord } from "../../server/session-catalog.js";
+import { SessionCatalog } from "../../server/session-catalog.js";
 import {
   nativePiWorkspace,
   stubNativePiEnvironment,
 } from "./fixtures/native-pi.js";
-import { catalog } from "./fixtures/runtime.js";
+import {
+  messageEntry,
+  thinkingOff,
+  writeSession,
+} from "./fixtures/session-jsonl.js";
 
 const nativeCommandNames = ["audit.inspect", "审阅/检查"];
 
@@ -56,51 +60,22 @@ it("refreshes commands and extension UI on native reload without replacing eithe
   }`,
   );
   await writeFile(join(prompts, "removed.md"), "REMOVED_TEMPLATE");
-  const records: SessionRecord[] = [];
-  for (let index = 0; index < 2; index += 1) {
-    const id = randomUUID();
-    const path = join(sessions, `${id}.jsonl`);
-    const timestamp = Date.now();
-    await writeFile(
-      path,
-      [
-        {
-          type: "session",
-          version: 3,
-          id,
-          timestamp: new Date(timestamp).toISOString(),
-          cwd,
-        },
-        {
-          type: "message",
-          id: "00000001",
-          parentId: null,
-          timestamp: new Date(timestamp).toISOString(),
-          message: {
-            role: "user",
-            content: "Retained conversation",
-            timestamp,
-          },
-        },
-      ]
-        .map((entry) => JSON.stringify(entry))
-        .join("\n") + "\n",
-    );
-    records.push({
-      id,
-      path,
-      cwd,
-      source: null,
-      created: new Date(timestamp),
-      modified: new Date(timestamp),
-      messageCount: 1,
-      firstMessage: "Retained conversation",
-    });
-  }
+  const records = await Promise.all(
+    [randomUUID(), randomUUID()].map((id) =>
+      writeSession(join(sessions, `${id}.jsonl`), cwd, id, [
+        thinkingOff,
+        messageEntry("00000001", thinkingOff.id, {
+          role: "user",
+          content: "Retained conversation",
+          timestamp: Date.now(),
+        }),
+      ]),
+    ),
+  );
   const workers: PiRpcProcess[] = [];
   const events: Record<string, unknown>[] = [];
   const runtime = new RuntimeController(
-    catalog(records),
+    new SessionCatalog(cwd),
     new AttachmentStore(join(root, "uploads")),
     {
       createProcess: (options) => {
@@ -134,22 +109,15 @@ it("refreshes commands and extension UI on native reload without replacing eithe
       (await runtime.snapshot(id)).active?.commands as Array<{ name: string }>
     ).map((command) => command.name);
   try {
-    for (const record of records) {
-      await runtime.openSession(record.id);
-      await runtime.setSteeringMode(record.id, "one-at-a-time");
-      await vi.waitFor(
-        async () => expect(await names(record.id)).toContain("reload-fixture"),
-        { timeout: 15_000 },
-      );
-    }
-    const pids = workers.map((worker) => worker.pid);
     const before = await readFile(a.path, "utf8");
+    await runtime.openSession(a.id);
+    expect(workers).toHaveLength(0);
     for (const name of nativeCommandNames) {
-      expect(await names(a.id)).toContain(name);
       await runtime.prompt({
         sessionId: a.id,
         message: `/${name}\tkeep paths\nnext`,
       });
+      expect(await names(a.id)).toContain(name);
       expect(events).toContainEqual(
         expect.objectContaining({
           method: "notify",
@@ -157,6 +125,10 @@ it("refreshes commands and extension UI on native reload without replacing eithe
         }),
       );
     }
+    await runtime.openSession(b.id);
+    await runtime.setSteeringMode(b.id, "one-at-a-time");
+    expect(await names(b.id)).toContain("reload-fixture");
+    const pids = workers.map((worker) => worker.pid);
     await runtime.prompt({ sessionId: a.id, message: "/tmp/project/file" });
     expect(events).toContainEqual(
       expect.objectContaining({

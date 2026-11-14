@@ -29,6 +29,7 @@ import {
   rememberComposerHistory,
 } from "../composer-history";
 import { ReceiptRead } from "../operation-observer";
+import { type ReceiptStorageIssue, receiptStorage } from "../receipt-storage";
 import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
 import {
   hasDraftInput,
@@ -95,6 +96,12 @@ const savedDeliveries = promptObservationSchema
   .array()
   .max(MAX_SAVED_DELIVERIES);
 
+const deliveryStorage = receiptStorage(
+  MAX_SAVED_DELIVERIES * 256,
+  savedDeliveries.parse,
+  [],
+);
+
 interface ComposerControllerHost {
   state(): Pick<AppState, "sessionId" | "view">;
   drafts: SessionDrafts;
@@ -111,7 +118,7 @@ export class ComposerController {
   /** Absence means this session's receipt storage has not been read yet. */
   private readonly storageState = new Map<
     string,
-    "format" | "storage" | null
+    ReceiptStorageIssue | "unread" | null
   >();
   private readonly listeners = new Set<() => void>();
   private deliveryVersion = 0;
@@ -130,12 +137,15 @@ export class ComposerController {
 
   deliveryState = (sessionId: string | null) => ({
     failedCount: this.deliveriesFor(sessionId, "draft").length,
-    storageIssue: sessionId
-      ? (this.storageState.get(sessionId) ?? undefined)
-      : undefined,
+    storageIssue: sessionId ? this.storageIssue(sessionId) : undefined,
     reloaded: this.reloadedDelivery(sessionId)?.receipt.operationId,
     previous: this.deliveriesFor(sessionId, "previous")[0]?.receipt.operationId,
   });
+
+  private storageIssue(sessionId: string): ReceiptStorageIssue | undefined {
+    const issue = this.storageState.get(sessionId);
+    return issue === "unread" ? "storage" : (issue ?? undefined);
+  }
 
   private reloadedDelivery(
     sessionId: string | null,
@@ -160,20 +170,19 @@ export class ComposerController {
   }
 
   loadDeliveries(sessionId: string): void {
-    if (this.storageState.has(sessionId)) return;
-    this.storageState.set(sessionId, null);
-    try {
-      const saved = window.sessionStorage.getItem(DELIVERY_STORAGE + sessionId);
-      if (!saved) return;
-      if (saved.length > MAX_SAVED_DELIVERIES * 256)
-        throw new Error("Unknown prompt operation format");
-      const operations = savedDeliveries.parse(JSON.parse(saved));
-      if (
-        new Set(operations.map(({ operationId }) => operationId)).size !==
-          operations.length ||
-        operations.some(({ operationId }) => this.deliveries.has(operationId))
-      )
-        throw new Error("Invalid prompt operation identity");
+    const previous = this.storageState.get(sessionId);
+    if (previous !== undefined && previous !== "unread") return;
+    const saved = deliveryStorage.read(DELIVERY_STORAGE + sessionId);
+    const operations = saved.value ?? [];
+    const ids = new Set(operations.map(({ operationId }) => operationId));
+    const issue =
+      saved.issue ??
+      (ids.size !== operations.length ||
+      [...ids].some((id) => this.deliveries.has(id))
+        ? "format"
+        : null);
+    this.storageState.set(sessionId, issue === "storage" ? "unread" : issue);
+    if (!issue)
       for (const receipt of operations)
         this.deliveries.set(receipt.operationId, {
           sessionId,
@@ -184,15 +193,13 @@ export class ComposerController {
           recovery: "reloaded",
           confirmation: new ReceiptRead(),
         });
-    } catch {
-      this.storageState.set(sessionId, "format");
-    }
-    this.publish();
+    if (issue || operations.length || previous === "unread") this.publish();
   }
 
   private persist(sessionId: string): boolean {
     try {
-      if (this.storageState.get(sessionId) === "format") return false;
+      const issue = this.storageState.get(sessionId);
+      if (issue === "format" || issue === "unread") return false;
       const operations = this.deliveriesFor(sessionId)
         .filter(({ refused }) => !refused)
         .map(({ receipt }) => receipt);
@@ -203,10 +210,10 @@ export class ComposerController {
         );
         return false;
       }
-      const key = DELIVERY_STORAGE + sessionId;
-      if (operations.length)
-        window.sessionStorage.setItem(key, JSON.stringify(operations));
-      else window.sessionStorage.removeItem(key);
+      deliveryStorage.write(
+        DELIVERY_STORAGE + sessionId,
+        operations.length ? operations : null,
+      );
       this.storageState.set(sessionId, null);
       return true;
     } catch {
@@ -889,7 +896,7 @@ export class ComposerController {
   }
 
   forgetUnsupportedDeliveries(sessionId: string): void {
-    if (!this.storageState.get(sessionId)) return;
+    if (this.storageState.get(sessionId) !== "format") return;
     this.storageState.set(sessionId, null);
     this.persist(sessionId);
     this.publish();

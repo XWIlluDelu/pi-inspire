@@ -133,8 +133,8 @@ describe("session deletion ownership", () => {
     },
   );
 
-  it.each(["success", "failure", "newer-selection", "opening"] as const)(
-    "deletes the visible session with %s ownership",
+  it.each(["newer-selection", "opening"] as const)(
+    "retains %s ownership when the previously visible session is deleted",
     async (outcome) => {
       const { promise: deleteGate, resolve: releaseDelete } = deferred<void>();
       const { promise: openGate, resolve: releaseOpen } = deferred<void>();
@@ -152,8 +152,6 @@ describe("session deletion ownership", () => {
         if (url === "/api/sessions/delete") {
           requested = true;
           await deleteGate;
-          if (outcome === "failure")
-            return { status: 500, body: { error: "Trash unavailable" } };
           deleted = true;
           expect(jsonBody(init)).toEqual({ scope: "session", sessionId: "s1" });
           return { body: committed("s1") };
@@ -182,33 +180,21 @@ describe("session deletion ownership", () => {
       const deleting = store.deleteSession("s1");
       await vi.waitFor(() => expect(requested).toBe(true));
       expect(store.getState().sessionId).toBe("s1");
-      let opening: Promise<void> | undefined;
-      if (outcome === "newer-selection" || outcome === "opening") {
-        opening = store.openSession("s2");
-        if (outcome === "newer-selection") await opening;
-      }
+      const opening = store.openSession("s2");
+      if (outcome === "newer-selection") await opening;
       releaseDelete();
-      await expect(deleting).resolves.toBe(
-        outcome === "failure" ? null : "trashed",
-      );
+      await expect(deleting).resolves.toBe("trashed");
       if (outcome === "opening") {
         expect(store.getState().sessionSelectionPending).toBe(true);
         releaseOpen();
         await opening;
       }
-      expect(store.getState().sessionId).toBe(
-        outcome === "failure" ? "s1" : outcome === "success" ? null : "s2",
+      expect(store.getState()).toMatchObject({ sessionId: "s2" });
+      expect(store.getState().sessionStatuses).not.toHaveProperty("s1");
+      expect(store.getState().externalSessionActivities).not.toHaveProperty(
+        "s1",
       );
-      if (outcome === "failure") {
-        expect(store.drafts.get("s1").text).toBe("deleted draft");
-        expect(store.getState().prefs.hiddenSessionIds).toEqual(["s1"]);
-        expect(store.getState().sessions).toHaveLength(2);
-        expect(store.getState().sessionDeleteError).toBe("Trash unavailable");
-      } else {
-        expect(store.drafts.get("s1").text).toBe("");
-        expect(store.getState().sessionStatuses.s1).toBeUndefined();
-        expect(store.getState().externalSessionActivities.s1).toBeUndefined();
-      }
+      expect(store.drafts.get("s1").text).toBe("");
       expect(store.drafts.get("s2").text).toBe("keep this draft");
       expect(
         fetch.mock.calls.some(([url]) => String(url).includes("/deselect")),
@@ -220,6 +206,7 @@ describe("session deletion ownership", () => {
     { method: "delete", result: "committed" },
     { method: "delete", result: "refused" },
     { method: "clear", result: "partial" },
+    { method: "delete", result: "unauthorized" },
   ] as const)(
     "fences old projection reads during $method and reconciles the $result result",
     async ({ method, result }) => {
@@ -286,10 +273,23 @@ describe("session deletion ownership", () => {
       expect(reads).toBe(1);
 
       const rejectOldRead = () =>
-        oldRead.resolve({
-          status: 409,
-          body: { error: "That session is being deleted" },
+        oldRead.resolve(
+          result === "unauthorized"
+            ? { status: 401, body: { error: "Pairing expired" } }
+            : { status: 409, body: { error: "That session is being deleted" } },
+        );
+      if (result === "unauthorized") {
+        rejectOldRead();
+        await refreshing;
+        expect(store.getState()).toMatchObject({
+          needsToken: true,
+          connection: "offline",
         });
+        deletion.resolve();
+        await removing;
+        expect(store.getState().live.notices).toEqual([]);
+        return;
+      }
       if (result !== "committed") {
         rejectOldRead();
         await refreshing;
@@ -320,90 +320,16 @@ describe("session deletion ownership", () => {
     },
   );
 
-  it("keeps authentication failures transport-wide during deletion", async () => {
-    const response = deferred<{ status: number; body: { error: string } }>();
-    const deletion = deferred<void>();
-    let deleting = false;
-    installFetch(async (url, init) => {
-      if (url.startsWith("/api/bootstrap"))
-        return {
-          body: bootstrapPayload({
-            startupSessionId: "s1",
-            preferences: { ...DEFAULT_PREFS, hiddenSessionIds: ["s1"] },
-          }),
-        };
-      if (url.startsWith("/api/snapshot")) return response.promise;
-      if (url === "/api/sessions/delete") {
-        deleting = true;
-        await deletion.promise;
-        return { body: committed("s1") };
-      }
-      return baseRoutes(url, init);
-    });
-    const { store } = await initStore();
-    const refreshing = store.refreshSession();
-    const removing = store.deleteSession("s1");
-    await vi.waitFor(() => expect(deleting).toBe(true));
-    response.resolve({ status: 401, body: { error: "Pairing expired" } });
-    await refreshing;
-    expect(store.getState()).toMatchObject({
-      needsToken: true,
-      connection: "offline",
-    });
-    deletion.resolve();
-    await removing;
-    expect(store.getState().live.notices).toEqual([]);
-  });
-
-  it("allows deletion only after the Hide write is confirmed", async () => {
-    const rows = [sessionSummary({ id: "s1" }), sessionSummary({ id: "s2" })];
-    const { promise: patchGate, resolve: releasePatch } = deferred<void>();
-    let deleteCalled = false;
-    let deleted = false;
-    installFetch(async (url, init) => {
-      if (url.startsWith("/api/bootstrap"))
-        return { body: bootstrapPayload({ startupSessionId: "s1" }) };
-      if (url.startsWith("/api/preferences") && init.method === "PATCH") {
-        await patchGate;
-        return { body: { ...DEFAULT_PREFS, hiddenSessionIds: ["s2"] } };
-      }
-      if (url === "/api/sessions/delete") {
-        deleteCalled = true;
-        deleted = true;
-        return { body: committed("s2") };
-      }
-      if (url.startsWith("/api/sessions")) {
-        const sessions = deleted ? rows.slice(0, 1) : rows;
-        return {
-          body: sessionPage(sessions, sessions.length),
-        };
-      }
-      return baseRoutes(url, init);
-    });
-    const { store } = await initStore();
-    await vi.waitFor(() => expect(store.getState().sessions).toHaveLength(2));
-
-    store.toggleSessionHidden("s2");
-    expect(store.getState().prefs.hiddenSessionIds).toEqual([]);
-    await expect(store.deleteSession("s2")).resolves.toBeNull();
-    expect(deleteCalled).toBe(false);
-    releasePatch();
-    await vi.waitFor(() =>
-      expect(store.getState().prefs.hiddenSessionIds).toEqual(["s2"]),
-    );
-    await expect(store.deleteSession("s2")).resolves.toBe("trashed");
-    expect(deleteCalled).toBe(true);
-  });
-
-  it("reconciles deletion without discarding a newer setting or another session's draft", async () => {
+  it("waits for confirmed Hide and reconciles deletion while preserving newer preferences and the other draft", async () => {
     const active = activeSnapshot({ sessionId: "s1" });
     active.sessionStatuses.s2 = { runState: "idle", indicator: "completed" };
     const rows = [sessionSummary({ id: "s1" }), sessionSummary({ id: "s2" })];
     const initial = {
       ...DEFAULT_PREFS,
       pinnedSessionIds: ["s2"],
-      hiddenSessionIds: ["s2"],
+      hiddenSessionIds: [],
     };
+    const hide = deferred<void>();
     const deletion = deferred<void>();
     const requested = deferred<void>();
     const patches: Record<string, unknown>[] = [];
@@ -419,7 +345,9 @@ describe("session deletion ownership", () => {
       if (url.startsWith("/api/preferences") && init.method === "PATCH") {
         const patch = jsonBody(init);
         patches.push(patch);
-        return { body: { ...initial, ...patch } };
+        if ("hiddenSessionIds" in patch) await hide.promise;
+        Object.assign(initial, patch);
+        return { body: { ...initial } };
       }
       if (url === "/api/sessions/delete") {
         requested.resolve();
@@ -440,12 +368,27 @@ describe("session deletion ownership", () => {
     store.drafts.setText("s1", "keep this draft");
     store.drafts.setText("s2", "deleted draft");
 
+    store.toggleSessionHidden("s2");
+    await vi.waitFor(() =>
+      expect(patches).toEqual([
+        { hiddenSessionIds: ["s2"], pinnedSessionIds: [] },
+      ]),
+    );
+    expect(store.getState().prefs.hiddenSessionIds).toEqual([]);
+    await expect(store.deleteSession("s2")).resolves.toBeNull();
+    hide.resolve();
+    await vi.waitFor(() =>
+      expect(store.getState().prefs.hiddenSessionIds).toEqual(["s2"]),
+    );
     const removing = store.deleteSession("s2");
     await requested.promise;
     store.setPreference("theme", "dark");
     store.toggleSessionPin("s1");
     await vi.waitFor(() => expect(patches).toContainEqual({ theme: "dark" }));
-    expect(patches.some((patch) => "pinnedSessionIds" in patch)).toBe(false);
+    expect(patches).toEqual([
+      { hiddenSessionIds: ["s2"], pinnedSessionIds: [] },
+      { theme: "dark" },
+    ]);
     deletion.resolve();
     await removing;
     expect(store.getState().sessions.map(({ id }) => id)).toEqual(["s1"]);

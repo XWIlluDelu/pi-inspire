@@ -16,7 +16,6 @@ import {
   type ModelOption,
   type NewSessionOptions,
   type PendingRecovery,
-  type PiMessageDeliveryMode,
   type PiRuntimeSettings,
   type PromptAcceptedResponse,
   parseExtensionStatuses,
@@ -28,6 +27,7 @@ import {
   type ThinkingLevel,
 } from "../shared/contracts";
 import type { SessionHistoryQuery } from "../shared/history-query";
+import type { RuntimeSetting } from "../shared/host-endpoints";
 import { jsonRecord } from "../shared/json-record";
 import type {
   ModelCatalogResponse,
@@ -1331,7 +1331,7 @@ export class AppStore {
   };
 
   installedPiChangelog = () =>
-    this.api?.piChangelog() ??
+    this.api?.json("piChangelog", {}) ??
     Promise.reject(new Error("The Host is unavailable"));
 
   exportSession = (
@@ -1344,7 +1344,9 @@ export class AppStore {
     if (existing) return existing.promise;
     const promise: Promise<void> = Promise.resolve().then(async () => {
       try {
-        const exported = await api.exportSession({ sessionId, format });
+        const exported = await api.json("exportSession", {
+          body: { sessionId, format },
+        });
         const blob = await api.exportDownload(sessionId, exported.downloadId);
         if (this.api !== api)
           throw new Error("The Host connection changed during export");
@@ -1423,10 +1425,8 @@ export class AppStore {
     const selectionGeneration = this.selectionGeneration;
     void (async () => {
       try {
-        const result = await api.nativeCommand({
-          sessionId,
-          command,
-          ...(argument ? { argument } : {}),
+        const result = await api.json("nativeCommand", {
+          body: { sessionId, command, argument: argument || undefined },
         });
         if (this.api !== api) return;
         if (result.outcome !== "cancelled" && command !== "export") {
@@ -2086,7 +2086,7 @@ export class AppStore {
     try {
       if (action === "recover")
         return await this.pendingRecovery.run(sessionId, action, viewId);
-      await api.clearPending(sessionId);
+      await api.json("clearPending", { body: { sessionId } });
       // Queue events carry the truth after Clear, including newly queued input.
       return current();
     } catch (error) {
@@ -2149,13 +2149,9 @@ export class AppStore {
       this.state.live.queue.revision === queueRevision &&
       this.selectionGeneration === generation;
     try {
-      const result = await api.pendingText(
-        {
-          sessionId,
-          viewId,
-          revision,
-          ...(itemId === undefined ? {} : { itemId }),
-        },
+      const result = await api.json(
+        "pendingText",
+        { body: { sessionId, viewId, revision, itemId } },
         signal,
       );
       if (!owns()) return null;
@@ -2194,7 +2190,7 @@ export class AppStore {
     const api = this.api;
     const generation = this.selectionGeneration;
     if (!api) throw new Error("The Host is not connected");
-    const snapshot = await api.takeOverSession(sessionId);
+    const snapshot = await api.json("takeOverSession", { body: { sessionId } });
     if (
       this.api === api &&
       this.state.sessionId === sessionId &&
@@ -2208,8 +2204,10 @@ export class AppStore {
     try {
       const api = this.api;
       if (!api) throw new Error("The Host is not connected");
-      const { command, projectDirectoryMissing } =
-        await api.resumeCommand(sessionId);
+      const { command, projectDirectoryMissing } = await api.json(
+        "resumeCommand",
+        { query: { sessionId } },
+      );
       await navigator.clipboard.writeText(command);
       this.notify(
         "info",
@@ -2247,7 +2245,9 @@ export class AppStore {
     const ownsTransport = (): boolean => this.api === api;
     if (!api || !sessionId) return { status: "stale" };
     try {
-      const selection = await api.setModel(sessionId, provider, modelId);
+      const selection = await api.json("setModel", {
+        body: { sessionId, provider, modelId },
+      });
       if (!ownsTransport()) return { status: "stale" };
       // Recency records only successful runtime changes. Keep unavailable
       // identities in the source preference; the picker filters its display.
@@ -2295,7 +2295,9 @@ export class AppStore {
     const request = ++this.thinkingLevelRequest;
     this.set({ thinkingLevelPending: true });
     try {
-      const selection = await api.setThinkingLevel(sessionId, level);
+      const selection = await api.json("setThinkingLevel", {
+        body: { sessionId, level },
+      });
       if (!ownsTransport() || request !== this.thinkingLevelRequest)
         return { status: "stale" };
       if (
@@ -2354,30 +2356,8 @@ export class AppStore {
     }
   };
 
-  setAutoCompaction = (enabled: boolean): Promise<boolean> =>
-    this.setPiRuntimeSetting("autoCompactionEnabled", (api, sessionId) =>
-      api.setAutoCompaction(sessionId, enabled),
-    );
-
-  setAutoRetry = (enabled: boolean): Promise<boolean> =>
-    this.setPiRuntimeSetting("autoRetryEnabled", (api, sessionId) =>
-      api.setAutoRetry(sessionId, enabled),
-    );
-
-  setSteeringMode = (mode: PiMessageDeliveryMode): Promise<boolean> =>
-    this.setPiRuntimeSetting("steeringMode", (api, sessionId) =>
-      api.setSteeringMode(sessionId, mode),
-    );
-
-  setFollowUpMode = (mode: PiMessageDeliveryMode): Promise<boolean> =>
-    this.setPiRuntimeSetting("followUpMode", (api, sessionId) =>
-      api.setFollowUpMode(sessionId, mode),
-    );
-
-  private async setPiRuntimeSetting(
-    key: keyof PiRuntimeSettings,
-    apply: (api: Api, sessionId: string) => Promise<unknown>,
-  ): Promise<boolean> {
+  setPiRuntimeSetting = async (setting: RuntimeSetting): Promise<boolean> => {
+    const { key } = setting;
     const {
       sessionId,
       view: { viewId: transcriptViewId },
@@ -2400,7 +2380,7 @@ export class AppStore {
       },
     });
     try {
-      await apply(api, sessionId);
+      await api.json("setRuntimeSetting", { body: { sessionId, setting } });
       if (owns()) await this.resync();
       return this.api === api;
     } catch (error) {
@@ -2425,7 +2405,7 @@ export class AppStore {
       if (this.runtimeSettingOwners.get(key) === owner)
         this.runtimeSettingOwners.delete(key);
     }
-  }
+  };
 
   // --- Composer attachments & project files ---
 
@@ -2551,7 +2531,7 @@ export class AppStore {
       }
       try {
         // Pi owns scope order, thinking defaults and model_select effects.
-        await api.cycleModel(sessionId, direction);
+        await api.json("cycleModel", { body: { sessionId, direction } });
         if (!owns()) return;
         await this.resync(sessionId, selection);
         if (owns() && this.state.model)
@@ -2582,17 +2562,17 @@ export class AppStore {
     });
 
   readMcpConfig = async (owner: { sessionId?: string; cwd?: string }) =>
-    this.settingsApi().mcpConfig(owner);
+    this.settingsApi().json("mcpConfig", { query: owner });
 
   readMcpConnection = async (
     owner: { sessionId?: string; cwd?: string },
     input: import("../shared/mcp").McpConnectionRead,
-  ) => this.settingsApi().mcpConnection(owner, input);
+  ) => this.settingsApi().json("mcpConnection", { query: owner, body: input });
 
   editMcpConfig = async (
     owner: { sessionId?: string; cwd?: string },
     edit: import("../shared/mcp").McpConfigEdit,
-  ) => this.settingsApi().editMcpConfig(owner, edit);
+  ) => this.settingsApi().json("editMcpConfig", { query: owner, body: edit });
 
   // Publishing a settings-write snapshot retires earlier catalog reads.
   private modelSettingsRevision = 0;
@@ -2639,7 +2619,9 @@ export class AppStore {
     refresh = false,
   ): Promise<ModelSettingsSnapshot> => {
     const { api, current } = this.modelSettingsRead(owner);
-    const snapshot = await api.modelSettings(owner, refresh);
+    const snapshot = await api.json("modelSettings", {
+      query: { ...owner, refresh: refresh ? "1" : undefined },
+    });
     if (current() && !snapshot.modelDiscoveryFailed)
       this.set({
         ...(refresh ? { availableModels: snapshot.models } : {}),
@@ -2654,7 +2636,10 @@ export class AppStore {
     patch: ModelPreferencesPatch,
   ) => {
     const { api, current } = this.modelSettingsOperation(owner);
-    const result = await api.saveModelPreferences(owner, revision, patch);
+    const result = await api.json("saveModelPreferences", {
+      query: owner,
+      body: { revision, patch },
+    });
     if (result.snapshot && current()) {
       this.modelSettingsRevision++;
       this.set({ commonModels: result.snapshot.commonModels });
@@ -2668,7 +2653,10 @@ export class AppStore {
     edit: ModelConfigEdit,
   ) => {
     const { api, current } = this.modelSettingsOperation(owner);
-    const result = await api.editModelConfig(owner, revision, edit);
+    const result = await api.json("editModelConfig", {
+      query: owner,
+      body: { revision, edit },
+    });
     if (result.snapshot && current()) {
       this.modelSettingsRevision++;
       this.set({
@@ -2837,10 +2825,8 @@ export class AppStore {
     if (!request || payload.id !== request.id) return null;
     this.patchLive({ extensionUiRespondingId: request.id });
     try {
-      await api.respondExtensionUi({
-        ...payload,
-        id: request.id,
-        sessionId: request.sessionId,
+      await api.json("respondExtensionUi", {
+        body: { ...payload, id: request.id, sessionId: request.sessionId },
       });
       if (ownsTransport() && this.state.sessionId === request.sessionId) {
         this.patchLive({
@@ -2899,7 +2885,10 @@ export class AppStore {
   ): Promise<void> => {
     const api = this.api;
     if (!api) throw new Error("Connect to the Host before changing adapters.");
-    const result = await api.setPresentationAdapterEnabled(id, enabled);
+    const result = await api.json("setPresentationAdapterEnabled", {
+      params: { id },
+      body: { enabled },
+    });
     if (api !== this.api) return;
     this.preferences.publish({
       preferences: result.preferences,

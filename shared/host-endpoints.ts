@@ -143,18 +143,17 @@ const nativeCommandSchema = z
       .optional(),
   })
   .strict();
-const runtimeBooleanSchema = z
-  .object({
-    sessionId: sessionIdField,
-    enabled: z.boolean(),
-  })
-  .strict();
-const runtimeDeliveryModeSchema = z
-  .object({
-    sessionId: sessionIdField,
-    mode: z.enum(["all", "one-at-a-time"]),
-  })
-  .strict();
+const runtimeSetting = z.discriminatedUnion("key", [
+  z.strictObject({
+    key: z.enum(["autoCompactionEnabled", "autoRetryEnabled"]),
+    value: z.boolean(),
+  }),
+  z.strictObject({
+    key: z.enum(["steeringMode", "followUpMode"]),
+    value: z.enum(["all", "one-at-a-time"]),
+  }),
+]);
+export type RuntimeSetting = z.input<typeof runtimeSetting>;
 const clearPendingSchema = z.object({ sessionId: sessionIdField }).strict();
 const pendingReadSchema = z
   .object({
@@ -552,17 +551,11 @@ export const hostEndpoints = {
   setThinkingLevel: modelSelection("post", "/api/control/thinking", {
     body: thinkingSchema,
   }),
-  setAutoCompaction: ok("post", "/api/control/auto-compaction", {
-    body: runtimeBooleanSchema,
-  }),
-  setAutoRetry: ok("post", "/api/control/auto-retry", {
-    body: runtimeBooleanSchema,
-  }),
-  setSteeringMode: ok("post", "/api/control/steering-mode", {
-    body: runtimeDeliveryModeSchema,
-  }),
-  setFollowUpMode: ok("post", "/api/control/follow-up-mode", {
-    body: runtimeDeliveryModeSchema,
+  setRuntimeSetting: ok("post", "/api/control/runtime-setting", {
+    body: z.strictObject({
+      sessionId: sessionIdField,
+      setting: runtimeSetting,
+    }),
   }),
   searchFiles: endpoint<ProjectFileSearchResult>()("get", "/api/files", {
     query: fileQuerySchema,

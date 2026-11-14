@@ -86,18 +86,6 @@ describe("Pi RPC over real child-process pipes", () => {
     },
   );
 
-  it("cancels a stopped compaction with a pending response", async () => {
-    const { rpc } = await rpcFixture('if (command.type === "compact") return;');
-    await rpc.start();
-    const pending = rpc.request({ type: "compact" }, null);
-    const cancelled =
-      expect(pending).rejects.toBeInstanceOf(PiRpcCancelledError);
-    // Fence the write without relying on an arbitrary sleep.
-    await rpc.request({ type: "get_state" });
-    await rpc.stop("compact");
-    await cancelled;
-  });
-
   it("correlates replies, preserves Unicode line separators, and rejects oversized input without stopping Pi", async () => {
     const { rpc } = await rpcFixture(
       [
@@ -223,6 +211,7 @@ describe("Pi RPC over real child-process pipes", () => {
         "  delayed.push(response(command));",
         "  return;",
         "}",
+        'if (command.type === "compact") return;',
         "for (const frame of delayed.splice(0)) send(frame);",
       ].join("\n"),
       'import { writeFileSync } from "node:fs"; const delayed = [];',
@@ -255,6 +244,12 @@ describe("Pi RPC over real child-process pipes", () => {
     expect(await readFile(join(directory, "persisted.txt"), "utf8")).toBe(
       "committed",
     );
+    const cancelled = expect(
+      rpc.request({ type: "compact" }, null),
+    ).rejects.toBeInstanceOf(PiRpcCancelledError);
+    await rpc.request({ type: "get_state" }); // Fences the compaction write.
+    await rpc.stop("compact");
+    await cancelled;
   });
 
   it("accepts a complete final response when stdout closes without LF", async () => {

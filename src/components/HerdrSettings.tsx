@@ -4,9 +4,9 @@ import type { HerdrEnhancementStatus } from "../../shared/herdr";
 import { createApi } from "../api";
 import { store, useAppState } from "../store";
 import { PiLoader } from "./PiLoader";
-import { SettingField, SettingsSwitch } from "./SettingsControls";
+import { SwitchField } from "./SettingsControls";
 
-const readStatus = () => createApi().herdrStatus();
+const readStatus = () => createApi().json("herdrStatus", {});
 
 /** The saved choice is independent of the backend's effective-at-startup state.
  * Status is read-only; restarting always goes through the existing Host control. */
@@ -111,19 +111,14 @@ export function HerdrSettings({
   }
 
   return (
-    <SettingField
+    <SwitchField
       label="Herdr enhancement"
-      layout="inline"
       description="Run Inspire's Pi sessions in Herdr. Requires a Host restart."
       status={statusNode}
-    >
-      <SettingsSwitch
-        label="Herdr enhancement"
-        checked={desired ?? saved}
-        disabled={!saved && !canEnable}
-        busy={loading}
-        onChange={(checked) => store.setPreference("herdrEnabled", checked)}
-      />
-    </SettingField>
+      checked={desired ?? saved}
+      disabled={!saved && !canEnable}
+      busy={loading}
+      onChange={(checked) => store.setPreference("herdrEnabled", checked)}
+    />
   );
 }

@@ -118,11 +118,6 @@ export interface TerminalRemoveResponse {
   revision: number;
 }
 
-export interface TerminalReorderRequest {
-  cwd: string;
-  terminalIds: string[];
-}
-
 export interface TerminalAttachTicketResponse {
   ticket: string;
   expiresAt: string;

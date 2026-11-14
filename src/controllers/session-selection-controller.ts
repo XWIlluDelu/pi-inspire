@@ -68,7 +68,7 @@ export class SessionSelectionController {
     return this.runSelection<SessionOpenResult>(
       id,
       api,
-      (signal) => api.openSession(id, signal),
+      (signal) => api.json("openSession", { body: { id } }, signal),
       "Failed to open session",
       "superseded",
       () => {
@@ -88,7 +88,7 @@ export class SessionSelectionController {
     return this.runSelection(
       null,
       api,
-      (signal) => api.deselectSession(signal),
+      (signal) => api.json("deselectSession", {}, signal),
       "Failed to open New session",
       false,
       (snapshot) => snapshot.active === null,
@@ -122,7 +122,11 @@ export class SessionSelectionController {
         api,
         async (signal) => {
           try {
-            return await api.newSession(target, options, signal);
+            return await api.json(
+              "newSession",
+              { body: { cwd: target, ...options } },
+              signal,
+            );
           } catch (error) {
             // A gateway/server timeout is not proof that no session exists.
             if (

@@ -165,13 +165,15 @@ describe("native Pending recovery", () => {
       revision: pendingQueues!.revision,
     };
     expect(
-      await f.api.pendingText({
-        ...read,
-        itemId: pendingQueues!.steering[2]!.id,
+      await f.api.json("pendingText", {
+        body: {
+          ...read,
+          itemId: pendingQueues!.steering[2]!.id,
+        },
       }),
     ).toEqual({ text: longText, images: [] });
     const images = [first, duplicate, second, imageOnly, ...extra];
-    expect(await f.api.pendingText(read)).toEqual({
+    expect(await f.api.json("pendingText", { body: read })).toEqual({
       text: [
         `1. same caption\n2. same caption\n3. ${longText}\n4. same caption\n5. `,
         ...extra.map((_, index) => `${6 + index}. additional image`),
@@ -210,7 +212,7 @@ describe("native Pending recovery", () => {
       imageCount: 4,
       textLength: merged.trim().length,
     });
-    await f.api.clearPending(f.sessionId);
+    await f.api.json("clearPending", { body: { sessionId: f.sessionId } });
     for (const image of images.slice(0, 4))
       await expect(f.api.attachmentPreview(image.id)).rejects.toMatchObject({
         status: 404,
@@ -284,7 +286,9 @@ describe("native Pending recovery", () => {
       expect(eventsOf(f.runtimeEvents, "queue_update").at(-1)).toMatchObject({
         pendingQueues: { totalCount: 0 },
       });
-      await expect(f.api.pendingText(staleRead)).rejects.toMatchObject({
+      await expect(
+        f.api.json("pendingText", { body: staleRead }),
+      ).rejects.toMatchObject({
         status: 409,
       });
       const pending = await addImage(f, "pending.gif");
@@ -313,13 +317,17 @@ describe("native Pending recovery", () => {
         viewId: snapshot.active!.transcriptPage.viewId,
         revision: snapshot.pendingQueues!.revision,
       };
-      expect(await f.api.pendingText({ ...read, itemId: rows[0]!.id })).toEqual(
-        { text: caption, images: [{ attachmentId: pending.id }] },
-      );
-      expect(await f.api.pendingText({ ...read, itemId: rows[1]!.id })).toEqual(
-        { text: "later exact text", images: [] },
-      );
-      expect(await f.api.pendingText(read)).toEqual({
+      expect(
+        await f.api.json("pendingText", {
+          body: { ...read, itemId: rows[0]!.id },
+        }),
+      ).toEqual({ text: caption, images: [{ attachmentId: pending.id }] });
+      expect(
+        await f.api.json("pendingText", {
+          body: { ...read, itemId: rows[1]!.id },
+        }),
+      ).toEqual({ text: "later exact text", images: [] });
+      expect(await f.api.json("pendingText", { body: read })).toEqual({
         text: `1. ${caption}\n2. later exact text`,
         images: [{ attachmentId: pending.id }],
       });

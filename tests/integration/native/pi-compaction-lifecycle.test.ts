@@ -14,7 +14,9 @@ afterEach(disposeOperationFixture);
 async function compactThenReturnToEarlierPoint(
   f: Awaited<ReturnType<typeof fixture>>,
 ) {
-  await f.api.nativeCommand({ sessionId: f.sessionId, command: "compact" });
+  await f.api.json("nativeCommand", {
+    body: { sessionId: f.sessionId, command: "compact" },
+  });
   const tree = (await f.api.snapshot(f.sessionId)).active!;
   await f.api.navigateBranch({
     sessionId: f.sessionId,
@@ -35,9 +37,11 @@ describe("native manual compaction cancellation", () => {
       const worker = f.workers[0]!;
       const pid = worker.pid;
       const requests = vi.spyOn(worker, "request");
-      const compacting = f.api.nativeCommand({
-        sessionId: f.sessionId,
-        command: "compact",
+      const compacting = f.api.json("nativeCommand", {
+        body: {
+          sessionId: f.sessionId,
+          command: "compact",
+        },
       });
       void compacting.catch(() => {});
       await vi.waitFor(() =>
@@ -102,9 +106,11 @@ describe("native manual compaction cancellation", () => {
       expect(worker.pid).toBe(pid);
       expect(worker.available).toBe(true);
       await expect(
-        f.api.nativeCommand({
-          sessionId: f.sessionId,
-          command: "compact",
+        f.api.json("nativeCommand", {
+          body: {
+            sessionId: f.sessionId,
+            command: "compact",
+          },
         }),
       ).resolves.toMatchObject({ outcome: "completed" });
       expect(
@@ -128,10 +134,12 @@ describe("native manual compaction cancellation", () => {
     const f = await fixture(false, 0);
     const worker = f.workers[0]!;
     const requests = vi.spyOn(worker, "request");
-    const compacting = f.api.nativeCommand({
-      sessionId: f.sessionId,
-      command: "compact",
-      argument: "fixture-ignore-cancellation",
+    const compacting = f.api.json("nativeCommand", {
+      body: {
+        sessionId: f.sessionId,
+        command: "compact",
+        argument: "fixture-ignore-cancellation",
+      },
     });
     await vi.waitFor(async () =>
       expect(
@@ -169,10 +177,12 @@ describe("native manual compaction cancellation", () => {
     const f = await fixture(false, 0);
     await compactThenReturnToEarlierPoint(f);
     const worker = f.workers[0]!;
-    const compacting = f.api.nativeCommand({
-      sessionId: f.sessionId,
-      command: "compact",
-      argument: "fixture-post-compact",
+    const compacting = f.api.json("nativeCommand", {
+      body: {
+        sessionId: f.sessionId,
+        command: "compact",
+        argument: "fixture-post-compact",
+      },
     });
     void compacting.catch(() => {});
     // Host projection reconciliation may await the still-running compact receipt.

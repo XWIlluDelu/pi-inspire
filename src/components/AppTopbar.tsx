@@ -15,44 +15,16 @@ import {
   projectNameFromCwd,
   type RunState,
 } from "../../shared/contracts";
-import { userMessageTitle } from "../../shared/user-message";
 import { selectedRunState } from "../app-state";
-import { branchCopiesBlocked } from "../controllers/branch-controller";
-import { type ChatMessage } from "../events";
 import { gitChangeCount, gitHeadLabel } from "../git-presentation";
 import { isComposingKeyboardEvent } from "../keyboard-input";
+import { sessionPresentationName } from "../session-actions";
 import { shallowEqual, store, useAppState } from "../store";
 import { useCopied } from "../use-copied";
 import { ExtensionStatus } from "./ExtensionDisplays";
 import { NavigationToggle } from "./NavigationToggle";
 import { PiLoader } from "./PiLoader";
-import { RenameSessionDialog } from "./RenameSessionDialog";
 import { SessionActionsMenu } from "./SessionActionsMenu";
-
-const GENERIC_SESSION_HEADINGS = new Set(["Untitled session", "New session"]);
-
-/** Keep Pi's explicit session name distinct from its visual fallback. The
- * catalog normally owns the first-prompt projection; a complete short
- * transcript covers the brief interval before that catalog row refreshes. */
-export function sessionHeading(
-  sessionName: string,
-  catalogTitle: string | undefined,
-  messages: readonly ChatMessage[],
-  transcriptStartsAtRoot: boolean,
-): string {
-  const explicit = sessionName.trim();
-  if (explicit) return explicit;
-  const catalog = catalogTitle?.trim() ?? "";
-  if (catalog && !GENERIC_SESSION_HEADINGS.has(catalog)) return catalog;
-  if (transcriptStartsAtRoot) {
-    for (const message of messages) {
-      if (message.role !== "user") continue;
-      const title = userMessageTitle(message.content);
-      if (title) return title;
-    }
-  }
-  return "New session";
-}
 
 function StatusChip({
   children,
@@ -148,50 +120,26 @@ function GitSummary() {
 
 const SessionIdent = memo(function SessionIdent({
   onExport,
-  onOpenHistory,
+  onRename,
 }: {
   onExport: () => void;
-  onOpenHistory: () => void;
+  onRename: (sessionId: string, name: string) => void;
 }) {
-  const {
-    sessionId,
-    sessionName,
-    heading,
-    cwd,
-    project,
-    projectDisplay,
-    sessionActionOrder,
-    cloneDisabled,
-    readOnlyReason,
-  } = useAppState((state) => {
-    const catalogTitle = state.sessions.find(
-      (session) => session.id === state.sessionId,
-    )?.title;
-    return {
+  const { sessionId, heading, cwd, projectDisplay } = useAppState(
+    (state) => ({
       sessionId: state.sessionId,
-      sessionName: state.sessionName,
-      heading: sessionHeading(
-        state.sessionName,
-        catalogTitle,
-        state.live.messages,
-        !state.view.hasOlder,
-      ),
+      heading: sessionPresentationName(state),
       cwd: state.cwd,
-      project: state.cwd ? projectNameFromCwd(state.cwd) : null,
       projectDisplay: state.prefs.projectDisplay,
-      sessionActionOrder: state.prefs.sessionActionOrder,
-      cloneDisabled: branchCopiesBlocked(state),
-      readOnlyReason: state.readOnlyReason,
-    };
-  }, shallowEqual);
-  const [editing, setEditing] = useState(false);
+    }),
+    shallowEqual,
+  );
   const [menuOpen, setMenuOpen] = useState(false);
   const titleRef = useRef<HTMLButtonElement>(null);
   const closeMenu = (restoreFocus = false) => {
     setMenuOpen(false);
     if (restoreFocus) titleRef.current?.focus({ preventScroll: true });
   };
-  const ownsMenu = () => store.getState().sessionId === sessionId;
   const { copied, copy } = useCopied({
     scope: cwd,
     onError: store.reportCopyError,
@@ -229,46 +177,11 @@ const SessionIdent = memo(function SessionIdent({
         <SessionActionsMenu
           anchorRef={titleRef}
           sessionId={sessionId}
-          actionOrder={sessionActionOrder}
-          onCopyError={store.reportCopyError}
-          cloneDisabled={cloneDisabled}
-          renameDisabled={Boolean(readOnlyReason)}
           onClose={closeMenu}
-          onRename={() => {
-            if (!ownsMenu() || store.getState().readOnlyReason) return;
-            closeMenu(true);
-            setEditing(true);
-          }}
-          onSwitchBranch={() => {
-            if (!ownsMenu()) return;
-            closeMenu();
-            onOpenHistory();
-          }}
-          onClone={() => {
-            if (!ownsMenu()) return;
-            const trigger = document.activeElement;
-            void store.cloneCurrentBranch().then((cloned) => {
-              if (!cloned) return;
-              closeMenu(
-                document.activeElement === trigger ||
-                  document.activeElement === document.body,
-              );
-            });
-          }}
-          onExport={() => {
-            if (!ownsMenu()) return;
-            closeMenu(true);
-            onExport();
-          }}
+          onRename={onRename}
+          onExport={onExport}
         />
       ) : null}
-      {editing && !readOnlyReason && (
-        <RenameSessionDialog
-          sessionId={sessionId}
-          initialName={sessionName}
-          onClose={() => setEditing(false)}
-        />
-      )}
       <div className="topbar__workspace-meta">
         {cwd ? (
           <button
@@ -291,7 +204,7 @@ const SessionIdent = memo(function SessionIdent({
             {/* The normal label remains the sole width authority. Copy feedback
                 overlays it, so a wider hidden message cannot extend hover chrome. */}
             <span className="topbar__project-label">
-              {projectDisplay === "path" ? cwd : project}
+              {projectDisplay === "path" ? cwd : projectNameFromCwd(cwd)}
             </span>
             <Check size={11} className="topbar__project-feedback" aria-hidden />
           </button>
@@ -310,7 +223,7 @@ export const AppTopbar = memo(function AppTopbar({
   onToggleNavigation,
   onOpenCommandPalette,
   onExportSession,
-  onOpenHistory = store.openHistory,
+  onRenameSession,
   onToggleSettings,
   onToggleResources,
 }: {
@@ -321,7 +234,7 @@ export const AppTopbar = memo(function AppTopbar({
   onToggleNavigation: () => void;
   onOpenCommandPalette: () => void;
   onExportSession: () => void;
-  onOpenHistory?: () => void;
+  onRenameSession: (sessionId: string, name: string) => void;
   onToggleSettings: () => void;
   onToggleResources: () => void;
 }) {
@@ -366,7 +279,7 @@ export const AppTopbar = memo(function AppTopbar({
       <SessionIdent
         key={state.sessionId}
         onExport={onExportSession}
-        onOpenHistory={onOpenHistory}
+        onRename={onRenameSession}
       />
       <div className="topbar__status" aria-live="polite">
         <StateChip

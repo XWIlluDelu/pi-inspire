@@ -1,3 +1,4 @@
+import { X } from "lucide-react";
 import type { ComponentProps, RefObject } from "react";
 import { useDialog } from "../use-modal-focus";
 
@@ -49,5 +50,30 @@ export function Modal({
     >
       {children}
     </dialog>
+  );
+}
+
+export function DialogHeader({
+  title,
+  closeLabel,
+  onClose,
+}: {
+  title: string;
+  closeLabel: string;
+  onClose: () => void;
+}) {
+  return (
+    <header className="dialog__header dialog__header--bar">
+      <h2 className="dialog__title">{title}</h2>
+      <button
+        type="button"
+        className="icon-button"
+        aria-label={closeLabel}
+        title={closeLabel}
+        onClick={onClose}
+      >
+        <X size={16} aria-hidden />
+      </button>
+    </header>
   );
 }

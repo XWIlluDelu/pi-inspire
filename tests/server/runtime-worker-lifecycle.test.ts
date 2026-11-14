@@ -58,41 +58,96 @@ describe("worker startup and retirement", () => {
     expect(workers[1]?.starts).toBe(1);
     expect(remember).toHaveBeenCalledWith(await realpath(TEST_CWD));
   });
-  it.each(["existing", "new"] as const)(
-    "does not start a %s writer after shutdown while its factory is preparing",
-    async (kind) => {
+  it.each([
+    ["existing", "factory"],
+    ["existing", "writer inspection"],
+    ["new", "factory"],
+    ["new", "startup"],
+    ["new", "identity read"],
+  ] as const)(
+    "drains a %s writer when Host closes during its %s",
+    async (kind, stage) => {
+      const entered = deferredSignal();
       const gate = deferredSignal();
-      let worker: FakeRpc | undefined;
+      const createTransport = vi.fn(() => {
+        throw new Error("A retired worker must not launch a Pi transport");
+      });
+      let worker!: FakeRpc;
+      let inspectedWorker: PiRpcProcess | undefined;
       const runtime = new RuntimeController(
-        catalog([record("a", TEST_CWD)]),
+        catalog(kind === "existing" ? [record("a", TEST_CWD)] : []),
         trackedAttachmentStore(),
         {
           createProcess: async (options) => {
+            if (stage === "writer inspection") {
+              inspectedWorker = new PiRpcProcess({
+                ...options,
+                createTransport,
+              });
+              vi.spyOn(inspectedWorker, "stop");
+              return inspectedWorker;
+            }
             worker = new FakeRpc(options);
-            await gate.promise;
+            if (stage === "factory") {
+              entered.resolve();
+              await gate.promise;
+            } else if (stage === "startup") {
+              worker.startGate = gate.promise;
+            } else {
+              const request = worker.request.bind(worker);
+              worker.request = async <T>(command: Record<string, unknown>) => {
+                const result = await request<T>(command);
+                if (command.type === "get_state") {
+                  entered.resolve();
+                  await gate.promise;
+                }
+                return result;
+              };
+            }
             return worker as unknown as PiRpcProcess;
           },
           openSessionProjection: preview,
         },
-      );
+      ).setExternalSessionPresence(async () => {
+        if (inspectedWorker) {
+          entered.resolve();
+          await gate.promise;
+        }
+        return [];
+      });
       if (kind === "existing") await runtime.openSession("a");
       const opening =
         kind === "existing"
           ? startWorker(runtime)
           : runtime.newSession(TEST_CWD);
-      const outcome = opening.catch((error: unknown) => error);
+      const rejection = expect(opening).rejects.toThrow(/closing/);
       try {
-        await vi.waitFor(() => expect(worker).toBeDefined());
+        if (stage === "startup")
+          await vi.waitFor(() => expect(worker?.starts).toBe(1));
+        else await entered.promise;
+        if (stage === "startup" || stage === "identity read") {
+          expect(runtime.ownWorkerTags()).toContain(
+            worker.options.env?.PI_ATTACH_CONTROL_TAG,
+          );
+        }
         const closing = runtime.close();
+        if (inspectedWorker)
+          expect(inspectedWorker.stop).toHaveBeenCalledOnce();
+        else if (stage !== "factory")
+          await vi.waitFor(() => expect(worker.stops).toBe(1));
+        await expect(runtime.newSession(TEST_CWD)).rejects.toThrow(/closing/);
         gate.resolve();
-        await closing;
-        const result = await outcome;
-        expect(result).toBeInstanceOf(Error);
-        expect(worker!.starts).toBe(0);
-        expect(worker!.stops).toBe(1);
+        await Promise.all([closing, rejection]);
+        if (inspectedWorker) expect(createTransport).not.toHaveBeenCalled();
+        else {
+          expect(worker.starts).toBe(stage === "factory" ? 0 : 1);
+          expect(worker.stops).toBe(1);
+        }
+        expect(runtime.ownWorkerTags()).toEqual(new Set());
+        expect(runtime.startupSessionHint).toBeNull();
       } finally {
         gate.resolve();
-        await outcome;
+        await opening.catch(() => {});
         await runtime.close();
       }
     },
@@ -164,6 +219,8 @@ describe("worker startup and retirement", () => {
   it.each([
     ["unexpected exit", "confirmed"],
     ["unexpected exit", "unconfirmed"],
+    ["failed startup", "confirmed"],
+    ["failed startup", "unconfirmed"],
     ["idle eviction", "confirmed"],
     ["explicit reload", "unconfirmed"],
   ] as const)(
@@ -181,14 +238,28 @@ describe("worker startup and retirement", () => {
       const ids = Array.from({ length: MAX_IDLE_WORKERS + 2 }, (_, index) =>
         String(index),
       );
+      const firstFailure = new Error("Pi failed during startup");
       const { runtime, workers } = schedulingRuntime({
         sessions: ids.map((id) => record(id, "/tmp")),
+        configure(worker) {
+          if (workers.length !== 0) return;
+          if (retirement === "failed startup") {
+            vi.spyOn(worker, "start").mockRejectedValueOnce(firstFailure);
+          }
+          vi.spyOn(worker, "stop").mockReturnValueOnce(stop);
+        },
       });
       try {
         await runtime.openSession("0");
-        await startWorker(runtime, "0");
+        let failedStartup: Promise<unknown> | undefined;
+        if (retirement === "failed startup") {
+          failedStartup = startWorker(runtime, "0").catch(
+            (error: unknown) => error,
+          );
+          await vi.waitFor(() => expect(workers).toHaveLength(1));
+        } else await startWorker(runtime, "0");
         const old = workers[0]!;
-        const stopping = vi.spyOn(old, "stop").mockImplementation(() => stop);
+        const stopping = vi.mocked(old.stop);
         let reloading: Promise<unknown> | undefined;
         if (retirement === "unexpected exit") {
           old.emit("event", {
@@ -251,12 +322,17 @@ describe("worker startup and retirement", () => {
             await runtime.openSession(id);
             await startWorker(runtime, id);
           }
-        } else {
+        } else if (retirement === "explicit reload") {
           reloading = runtime
             .nativeCommand({ sessionId: "0", command: "reload" })
             .catch((error: unknown) => error);
         }
         await vi.waitFor(() => expect(stopping).toHaveBeenCalledOnce());
+        if (failedStartup)
+          expect(runtime.reserveMaintenanceRestart(false, true)).toEqual({
+            kind: "busy",
+            reason: "in-flight-operation",
+          });
         const delivery = runtime
           .openSession("0")
           .then(() =>
@@ -273,6 +349,7 @@ describe("worker startup and retirement", () => {
 
         if (outcome === "confirmed") {
           confirmStop();
+          if (failedStartup) expect(await failedStartup).toBe(firstFailure);
           expect(await delivery).toBeNull();
           expect(
             workers.filter((worker) => worker.sessionId === "0"),
@@ -294,6 +371,13 @@ describe("worker startup and retirement", () => {
           const failure = new Error("Old writer exit unconfirmed");
           rejectStop(failure);
           if (reloading) expect(await reloading).toBe(failure);
+          if (failedStartup) {
+            expect(await failedStartup).toBeInstanceOf(Error);
+            expect(runtime.reserveMaintenanceRestart(false, true)).toEqual({
+              kind: "busy",
+              reason: "in-flight-operation",
+            });
+          }
           expect(await delivery).toBe(failure);
           await expect(runtime.openSession("0")).rejects.toThrow(
             "Old writer exit unconfirmed",
@@ -341,108 +425,6 @@ describe("worker startup and retirement", () => {
       (runtime as unknown as { slots: Map<string, unknown> }).slots.size,
     ).toBe(0);
   });
-
-  it("does not start a prepared worker after close retires it during writer inspection", async () => {
-    const inspected = deferredSignal();
-    const releaseInspection = deferredSignal();
-    const createTransport = vi.fn(() => {
-      throw new Error("A retired worker must not launch a Pi transport");
-    });
-    let worker!: PiRpcProcess;
-    const guard = vi.fn(async () => {
-      // Pause once the explicit operation has prepared a worker, before it starts.
-      if (worker) {
-        inspected.resolve();
-        await releaseInspection.promise;
-      }
-    });
-    const runtime = new RuntimeController(
-      catalog([record("a", TEST_CWD)]),
-      trackedAttachmentStore(),
-      {
-        createProcess: (options) => {
-          worker = new PiRpcProcess({ ...options, createTransport });
-          return worker;
-        },
-        openSessionProjection: preview,
-      },
-    ).setExternalSessionPresence(async () => {
-      await guard();
-      return [];
-    });
-    try {
-      await runtime.openSession("a");
-      const starting = startWorker(runtime).catch((error: unknown) => error);
-      await inspected.promise;
-      const stop = vi.spyOn(worker, "stop");
-      expect(createTransport.mock.calls.length).toBe(0);
-      const closing = runtime.close();
-      expect(stop).toHaveBeenCalledOnce();
-      releaseInspection.resolve();
-      await closing;
-      expect(await starting).toBeInstanceOf(Error);
-      expect(createTransport.mock.calls.length).toBe(0);
-      expect(runtime.startupSessionHint).toBeNull();
-    } finally {
-      releaseInspection.resolve();
-      await runtime.close();
-    }
-  });
-
-  it.each(["startup", "identity confirmation"] as const)(
-    "drains a provisional new-session writer during %s on close",
-    async (stage) => {
-      let worker!: FakeRpc;
-      const entered = deferredSignal();
-      const gate = deferredSignal();
-      const runtime = new RuntimeController(
-        catalog([]),
-        trackedAttachmentStore(),
-        {
-          createProcess: (options) => {
-            worker = new FakeRpc(options);
-            if (stage === "startup") worker.startGate = gate.promise;
-            const request = worker.request.bind(worker);
-            worker.request = async <T>(command: Record<string, unknown>) => {
-              const result = await request<T>(command);
-              if (
-                stage === "identity confirmation" &&
-                command.type === "get_state"
-              ) {
-                entered.resolve();
-                await gate.promise;
-              }
-              return result;
-            };
-            return worker as unknown as PiRpcProcess;
-          },
-          openSessionProjection: preview,
-        },
-      );
-      const creating = runtime.newSession(TEST_CWD);
-      const rejection = expect(creating).rejects.toThrow(/closing/);
-      try {
-        if (stage === "startup")
-          await vi.waitFor(() => expect(worker?.starts).toBe(1));
-        else await entered.promise;
-        expect(runtime.ownWorkerTags()).toContain(
-          worker.options.env?.PI_ATTACH_CONTROL_TAG,
-        );
-        const closing = runtime.close();
-        await vi.waitFor(() => expect(worker.stops).toBe(1));
-        await expect(runtime.newSession(TEST_CWD)).rejects.toThrow(/closing/);
-        gate.resolve();
-        await rejection;
-        await closing;
-        expect(runtime.ownWorkerTags()).toEqual(new Set());
-        expect(runtime.startupSessionHint).toBeNull();
-        expect(worker.stops).toBe(1);
-      } finally {
-        gate.resolve();
-        await runtime.close();
-      }
-    },
-  );
 
   it.each([
     { reported: true, confirmed: true },

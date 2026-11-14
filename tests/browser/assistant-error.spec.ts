@@ -1,7 +1,11 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 import { assistantOutcomeScenario } from "./support/assistant-outcomes";
-import { openFixtureSession, pairedPage } from "./support/navigation";
+import {
+  openConversationSearch,
+  openFixtureSession,
+  pairedPage,
+} from "./support/navigation";
 
 test.afterEach(async ({ page }) => {
   // Settled events can start a snapshot read after their visible outcome.
@@ -51,6 +55,13 @@ test.describe("narrow conversation", () => {
     await expect(
       page.getByText("Partial response kept before Stop.", { exact: true }),
     ).toBeVisible();
+    const search = await openConversationSearch(page);
+    const matches = page.getByLabel("Transcript search matches");
+    await search.fill("This operation was aborted");
+    await expect(matches).toHaveText("0 matches");
+    await search.fill("Stopped");
+    await search.press("Enter");
+    await expect(matches).toHaveText("1 of 1");
 
     await fixture.reload();
     await expect(stopped).toHaveCount(1);

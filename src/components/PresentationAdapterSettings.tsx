@@ -2,7 +2,7 @@ import { Puzzle } from "lucide-react";
 import { useState } from "react";
 import { usePresentationAdapters } from "../presentation-adapters";
 import { store } from "../store";
-import { SettingField, SettingsSwitch } from "./SettingsControls";
+import { SwitchField } from "./SettingsControls";
 import { SettingsCardMessage, SettingsSection } from "./SettingsSection";
 
 export function PresentationAdapterSettings() {
@@ -31,25 +31,20 @@ export function PresentationAdapterSettings() {
     >
       {adapters.length ? (
         adapters.map((adapter) => (
-          <SettingField
+          <SwitchField
             key={adapter.id}
             label={adapter.name}
-            layout="inline"
             status={
               adapter.warning ? (
                 <span role="alert">{adapter.warning}</span>
               ) : undefined
             }
-          >
-            <SettingsSwitch
-              label={adapter.name}
-              checked={adapter.enabled}
-              disabled={pending !== null}
-              busy={pending === adapter.id}
-              onChange={(enabled) => void toggle(adapter.id, enabled)}
-              state={adapter.enabled ? "On" : "Off"}
-            />
-          </SettingField>
+            checked={adapter.enabled}
+            disabled={pending !== null}
+            busy={pending === adapter.id}
+            onChange={(enabled) => void toggle(adapter.id, enabled)}
+            state={adapter.enabled ? "On" : "Off"}
+          />
         ))
       ) : (
         <SettingsCardMessage>

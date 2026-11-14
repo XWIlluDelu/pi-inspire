@@ -4,7 +4,10 @@ import { resolve } from "node:path";
 import { expect, vi } from "vitest";
 import { PiRpcProcess } from "../../../server/pi-rpc";
 import { piInstallation, SessionManager } from "../../../server/pi-runtime";
-import type { PromptDeliveryRequest } from "../../../shared/contracts";
+import type {
+  PendingOperationIdentity,
+  PromptDeliveryRequest,
+} from "../../../shared/contracts";
 import { type Api, createApi } from "../../../src/api";
 import { savedAssistant } from "../../fixtures/history-session";
 import { hostServices } from "../../fixtures/host-services";
@@ -29,23 +32,19 @@ type ObservedEvent = Record<string, unknown> & { type: string };
 type NativeOperationApi = Pick<
   Api,
   | "attachmentPreview"
-  | "clearPending"
-  | "nativeCommand"
+  | "json"
   | "navigateBranch"
   | "pendingOperation"
-  | "pendingText"
   | "prompt"
   | "snapshot"
-> & {
-  recoverPending: (
-    id: string,
-    identity?: Parameters<Api["recoverPending"]>[1],
-  ) => ReturnType<Api["recoverPending"]>;
-  abort: (
-    id: string,
-    identity?: Parameters<Api["abort"]>[1],
-  ) => ReturnType<Api["abort"]>;
-};
+> &
+  Record<
+    "recoverPending" | "abort",
+    (
+      id: string,
+      identity?: PendingOperationIdentity,
+    ) => ReturnType<Api["pendingOperation"]>
+  >;
 
 export async function fixture(
   autoCompaction: boolean,
@@ -149,6 +148,8 @@ export async function fixture(
           ...(options.args ?? []),
           "--extension",
           resolve("tests/fixtures/pi-operation-lifecycle-extension.ts"),
+          "--extension",
+          resolve("docs/examples/native-ui.ts"),
         ],
         env: { ...environment, ...options.env },
       });
@@ -181,9 +182,15 @@ export async function fixture(
   const api: NativeOperationApi = {
     ...client,
     recoverPending: (id, identity = host.promptDelivery({})) =>
-      client.recoverPending(id, identity),
+      client.pendingOperation(
+        { ...identity, sessionId: id, action: "recover" },
+        "start",
+      ),
     abort: (id, identity = host.promptDelivery({})) =>
-      client.abort(id, identity),
+      client.pendingOperation(
+        { ...identity, sessionId: id, action: "abort" },
+        "start",
+      ),
   };
   await runtime.openSession(sessionId);
   await runtime.setSteeringMode(sessionId, "one-at-a-time");

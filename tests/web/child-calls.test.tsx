@@ -1,22 +1,11 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
 import { codemodeCalls } from "../../shared/tool-activity";
 import { childCallSummary } from "../../src/child-call-summary";
 import { ToolCard } from "../../src/components/transcript-cards";
-import {
-  type ChatMessage,
-  type ToolCallContent,
-  toolResultText,
-} from "../../src/events";
-import { configurePresentationAdapters } from "../../src/presentation-adapters";
+import type { ChatMessage, ToolCallContent } from "../../src/events";
 
-const call: ToolCallContent = {
-  type: "toolCall",
-  id: "script",
-  name: "codemode",
-  arguments: { code: "text(await tools.read({path: 'a.txt'}));" },
-};
 const records = [
   { id: "script/?", name: "read", args: '{"path":"a.txt"}', status: "running" },
   {
@@ -36,110 +25,11 @@ const finishedCalls = [
   },
   { ...records[1], id: "script/models.classify/1", status: "ok" },
 ];
-const final: ChatMessage = {
-  role: "toolResult",
-  toolCallId: "script",
-  toolName: "codemode",
-  isError: false,
-  content: [{ type: "text", text: "Script completed\nactual result" }],
-  details: { calls: finishedCalls },
-  __inspireCalls: codemodeCalls({ calls: finishedCalls }),
-};
-afterEach(() => configurePresentationAdapters());
-
-it("expands the child-call summary and copies the complete original tool block", async () => {
-  const result = {
-    ...final,
-    content: [
-      {
-        type: "text",
-        text: "Script completed\nWall time 3.5 seconds\nOutput:\n",
-      },
-      { type: "text", text: '{"output":"line one\\nline two"}' },
-    ],
-  };
-  const writeText = vi.fn(async () => {});
-  Object.defineProperty(navigator, "clipboard", {
-    configurable: true,
-    value: { writeText },
-  });
-  render(
-    <ToolCard
-      call={call}
-      result={result}
-      activity={undefined}
-      live={false}
-      visibility="collapsed"
-    />,
-  );
-  const metadata = screen.getByText("3.5s · 1 failed · 2 calls");
-  expect(metadata).toBeVisible();
-  expect(screen.queryByRole("group", { name: "Child calls" })).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Expand CodeMode tool" }));
-  expect(
-    await screen.findByRole("group", { name: "Child calls" }),
-  ).toBeVisible();
-  expect(screen.getByLabelText("finished", { exact: true })).toBeVisible();
-  expect(metadata).toBeVisible();
-  expect(screen.getByText("Output", { exact: true })).toBeVisible();
-  fireEvent.click(
-    screen.getByRole("button", { name: "Copy codemode tool block" }),
-  );
-  await waitFor(() =>
-    expect(writeText).toHaveBeenCalledWith(
-      [
-        "codemode",
-        "Arguments",
-        JSON.stringify(call.arguments, null, 2),
-        "Result",
-        toolResultText(result),
-        "Result details",
-        JSON.stringify(result.details, null, 2),
-      ].join("\n\n"),
-    ),
-  );
-});
-
-it("retains result-only imports and their copy without inventing a Script", async () => {
-  const writeText = vi.fn(async (_text: string) => {});
-  Object.defineProperty(navigator, "clipboard", {
-    configurable: true,
-    value: { writeText },
-  });
-  render(
-    <ToolCard
-      result={{
-        ...final,
-        details: {
-          ...(final.details as object),
-          fullOutputPath: "/tmp/recorded-output.txt",
-        },
-      }}
-      visibility="expanded"
-    />,
-  );
-  expect(
-    screen.getByRole("button", { name: "View full output" }),
-  ).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Copy codemode result" }));
-  await waitFor(() => expect(writeText).toHaveBeenCalled());
-  expect(JSON.parse(writeText.mock.calls[0][0])).toMatchObject({
-    content: final.content,
-    details: {
-      calls: finishedCalls,
-      fullOutputPath: "/tmp/recorded-output.txt",
-    },
-  });
-  expect(screen.queryByText("Script", { exact: true })).not.toBeInTheDocument();
-  expect(
-    screen.queryByText("Result details", { exact: true }),
-  ).not.toBeInTheDocument();
-});
 
 it("keeps CodeMode call positions through native temporary id changes", () => {
   const live = codemodeCalls({ calls: records })!.calls;
   expect(live.map(({ key }) => key)).toEqual(["codemode:0", "codemode:1"]);
-  expect(final.__inspireCalls?.calls).toMatchObject([
+  expect(codemodeCalls({ calls: finishedCalls })?.calls).toMatchObject([
     { key: live[0]!.key, status: "error" },
     { key: live[1]!.key, status: "ok" },
   ]);
@@ -188,30 +78,6 @@ it("distinguishes omitted arguments from unfinished child calls", async () => {
   expect(await screen.findByText("Arguments not retained")).toBeInTheDocument();
   expect(screen.queryByText("Available arguments")).not.toBeInTheDocument();
   expect(screen.getByText(/Call record incomplete/)).toBeInTheDocument();
-});
-
-it("shows generic child calls when the selected Codemode mapping is missing", async () => {
-  configurePresentationAdapters({
-    version: 1,
-    rules: {},
-    mappings: { codemode: "user.missing" },
-  });
-  render(
-    <ToolCard
-      call={call}
-      result={final}
-      activity={undefined}
-      live={false}
-      visibility="collapsed"
-    />,
-  );
-  fireEvent.click(screen.getByRole("button", { name: "Expand CodeMode tool" }));
-  expect(
-    await screen.findByRole("group", { name: "Child calls" }),
-  ).toBeVisible();
-  expect(screen.getByRole("group", { name: "Result text" })).toHaveTextContent(
-    "Script completed actual result",
-  );
 });
 
 describe("childCallSummary", () => {

@@ -4,7 +4,10 @@ import type {
   BootstrapResponse,
   SessionRuntimeStatus,
 } from "../../../shared/contracts";
-import type { ToolPresentationConfiguration } from "../../../shared/tool-presentation-config";
+import type {
+  PresentationAdapterInfo,
+  ToolPresentationConfiguration,
+} from "../../../shared/tool-presentation-config";
 import { browserWorkspace } from "../fixtures/workspace.mjs";
 import { hostRequest } from "./host-request";
 import { pairedPage, reloadSession } from "./navigation";
@@ -89,11 +92,14 @@ export async function openEventSession(
   name: string,
   toolPresentations: ToolPresentationConfiguration,
   preferences: Record<string, unknown>,
+  presentationAdapters?: PresentationAdapterInfo[],
 ) {
   const transport = await routeSnapshots(page, {
     bootstrap: (body) => {
       Object.assign(body.preferences, preferences);
       body.toolPresentations = toolPresentations;
+      if (presentationAdapters)
+        body.presentationAdapters = presentationAdapters;
     },
   });
   await pairedPage(page);

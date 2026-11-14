@@ -139,6 +139,64 @@ test("Fork restores saved images for preview, editing and explicit resend", asyn
   await expect(viewer.locator("img")).toHaveJSProperty("naturalWidth", 720);
 });
 
+test("retires an addressed Fork result when the browser switches sessions", async ({
+  page,
+}) => {
+  await connectCalibration(page);
+  const result = Promise.withResolvers<{
+    response: import("@playwright/test").APIResponse;
+    attachment: string;
+  }>();
+  const allowReply = Promise.withResolvers<void>();
+  await page.route("**/api/branches/fork", async (route) => {
+    try {
+      const response = await route.fetch();
+      expect(response.ok()).toBe(true);
+      const { editorAttachments } = await response.json();
+      expect(editorAttachments).toHaveLength(1);
+      result.resolve({ response, attachment: editorAttachments[0].id });
+      await allowReply.promise;
+      await route.fulfill({ response });
+    } catch (error) {
+      result.reject(error);
+      throw error;
+    }
+  });
+  const history = await openHistoryPane(page);
+  await inspect(history, "Compare the calibration strategies", "history-u-0");
+  const cleanup = page.waitForResponse(
+    (event) =>
+      event.request().method() === "DELETE" &&
+      event.url().includes("/api/attachments/"),
+  );
+  try {
+    await history
+      .getByRole("button", { name: "Fork to new session", exact: true })
+      .click();
+    const { attachment } = await result.promise;
+    await openFixtureSession(
+      page,
+      /Review extension event lifecycle/,
+      "fixture-history",
+    );
+    const input = page.getByRole("textbox", { name: "Message", exact: true });
+    await input.fill("Draft in the selected session");
+    allowReply.resolve();
+    const discarded = await cleanup;
+    expect(discarded.ok()).toBe(true);
+    expect(discarded.url()).toContain(`/api/attachments/${attachment}`);
+    await expect(input).toHaveValue("Draft in the selected session");
+    await expect(
+      page.getByRole("button", {
+        name: /^Session actions: Review extension event lifecycle/,
+      }),
+    ).toBeVisible();
+    await expect(page.locator(".attachment")).toHaveCount(0);
+  } finally {
+    allowReply.resolve();
+  }
+});
+
 test("recovers a History image and opens local references in the authorized session reader", async ({
   page,
 }) => {
@@ -217,6 +275,18 @@ test("recovers a History image and opens local references in the authorized sess
     name: "Shell record preview",
   });
   await expect(shellPreview).toContainText("Excluded from context");
+  await expect(shellPreview.getByRole("status")).toHaveText("Exit 3");
+  const output = await shellPreview
+    .locator(".shell-execution__output")
+    .textContent();
+  expect(output).toContain(
+    "# literal heading\n<script>literal script</script>",
+  );
+  expect(output).not.toContain("\u001b");
+  await expect(shellPreview.locator("script")).toHaveCount(0);
+  await expect(
+    shellPreview.getByRole("button", { name: "View full shell output" }),
+  ).toHaveCount(0);
 
   await inspect(
     history,
@@ -224,6 +294,8 @@ test("recovers a History image and opens local references in the authorized sess
     "history-shell-included",
   );
   await expect(shellPreview).toContainText("Included in context");
+  await expect(shellPreview.getByRole("status")).toHaveText("Exit 0");
+  await expect(shellPreview).toContainText("Pi truncated the recorded output.");
   await expect(
     history.getByRole("button", { name: "Continue here", exact: true }),
   ).toBeEnabled();

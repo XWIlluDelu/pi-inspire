@@ -116,8 +116,8 @@ it("keeps valid external appends on disk, fences incomplete writes, and retires 
   expect(worker.stops).toBe(1);
 });
 
-it("retains a live response when its final native checkpoint has no saved entry", async () => {
-  const { runtime, workers } = await setup();
+it("retains unsaved live output and reads only the saved prefix while Pi's leaf leads the file", async () => {
+  const { runtime, workers, path } = await setup();
   const worker = workers[0]!;
   worker.emit("event", { type: "agent_start" });
   worker.emit("event", {
@@ -132,20 +132,19 @@ it("retains a live response when its final native checkpoint has no saved entry"
     __inspireUnconfirmed: true,
   });
   expect(page.messages.at(-1)).not.toHaveProperty("__inspireEntryId");
-});
 
-it("reads only the saved prefix when the native leaf leads the file", async () => {
-  const { runtime, workers, path } = await setup();
-  const native = entry("native", "u1", "assistant", "Only in Pi so far");
-  workers[0]!.publishCheckpoint([native], { sealed: "settled" });
-  const snapshot = await runtime.snapshot("session-a");
-  expect(snapshot.active?.effectiveLeafId).toBe("native");
-  expect(snapshot.active?.transcriptPage.messages.at(-1)).toMatchObject({
-    __inspireEntryId: "native",
+  const native = entry("native", "u1", "assistant", "unsaved output");
+  worker.publishCheckpoint([native], { sealed: "settled" });
+  expect((await runtime.snapshot("session-a")).active).toMatchObject({
+    effectiveLeafId: "native",
+    transcriptPage: {
+      messages: expect.arrayContaining([
+        expect.objectContaining({ __inspireEntryId: "native" }),
+      ]),
+    },
   });
-  const view = snapshot.active!.transcriptPage.viewId;
   const saved = () =>
-    runtime.sessionHistory("session-a", view, { kind: "page" });
+    runtime.sessionHistory("session-a", page.viewId, { kind: "page" });
   expect((await saved()).leafId).toBe("u1");
   await appendFile(path, jsonl(native));
   expect((await saved()).leafId).toBe("native");

@@ -290,7 +290,7 @@ export class SessionCatalogController {
     try {
       if (action.kind === "refresh") {
         scope.check();
-        await api.refreshSessions();
+        await api.json("refreshSessions", {});
         retry = { kind: "reset" };
       }
       const perform = (signal: AbortSignal) =>

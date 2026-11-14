@@ -146,7 +146,7 @@ export class PreferenceController {
     this.writes = this.writes.then(async () => {
       if (this.host.api() !== api) return;
       try {
-        const publication = await api.savePreferences(intent);
+        const publication = await api.json("savePreferences", { body: intent });
         if (this.host.api() !== api) return;
         this.clear(intent);
         this.publish(publication);
@@ -158,7 +158,7 @@ export class PreferenceController {
         }
         if (isTransientFailure(error)) {
           try {
-            const observation = await api.preferences();
+            const observation = await api.json("preferences", {});
             if (this.host.api() !== api) return;
             if (this.matches(intent, observation.preferences))
               this.clear(intent);
@@ -201,7 +201,7 @@ export class PreferenceController {
   private async observeAfterReplacement(api: Api): Promise<void> {
     this.pendingObservation = false;
     try {
-      const publication = await api.preferences();
+      const publication = await api.json("preferences", {});
       if (this.host.api() === api) this.publish(publication);
     } catch {
       // The next bootstrap still supplies the latest confirmed preferences.

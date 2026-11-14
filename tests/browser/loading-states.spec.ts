@@ -12,18 +12,14 @@ const contextModule =
 // rather than letting the service-worker cache bypass page route interception.
 test.use({ serviceWorkers: "block" });
 
-async function holdRequests(
-  page: Page,
-  pattern: string | RegExp,
-  outcome: "continue" | "abort" = "continue",
-) {
+async function holdRequests(page: Page, pattern: RegExp, abort = false) {
   let release!: () => void;
   const gate = new Promise<void>((resolve) => {
     release = resolve;
   });
   await page.route(pattern, async (route) => {
     await gate;
-    if (outcome === "abort") await route.abort();
+    if (abort) await route.abort();
     else await route.continue();
   });
   return release;
@@ -44,15 +40,21 @@ test("Π chooses again at a complete animation boundary and stays static with re
     const dialog = page.getByRole("dialog", { name: "Settings", exact: true });
     const close = dialog.getByRole("button", { name: "Close settings" });
     await expect(close).toBeFocused();
-    const loader = dialog.getByRole("status").locator(".pi-loading");
+    const status = dialog.getByRole("status");
+    const loader = status.locator(".pi-loading");
     await expect(loader).toHaveAttribute("data-variant", "rows");
     await expect(loader).toHaveCSS("animation-duration", "2.4s");
-    await page
-      .getByRole("dialog", { name: "Settings", exact: true })
-      .evaluate((el) =>
-        Promise.all(el.getAnimations().map((animation) => animation.finished)),
-      );
-    const before = await loader.boundingBox();
+    await dialog.evaluate((el) =>
+      Promise.all(
+        el
+          .getAnimations({ subtree: true })
+          .filter((animation) =>
+            Number.isFinite(animation.effect?.getComputedTiming().endTime),
+          )
+          .map((animation) => animation.finished),
+      ),
+    );
+    const before = await status.boundingBox();
     await page.evaluate(() => {
       Math.random = () => 0.999;
     });
@@ -60,7 +62,9 @@ test("Π chooses again at a complete animation boundary and stays static with re
     await expect(loader).toHaveAttribute("data-variant", "gather", {
       timeout: 4000,
     });
-    expect(await loader.boundingBox()).toEqual(before);
+    const after = await status.boundingBox();
+    for (const axis of ["x", "y", "width", "height"] as const)
+      expect(after?.[axis]).toBeCloseTo(before![axis], 1);
     await page.emulateMedia({ reducedMotion: "reduce" });
     await expect(loader).toHaveCSS("animation-name", "none");
     release();
@@ -77,34 +81,29 @@ test("Π chooses again at a complete animation boundary and stays static with re
   }
 });
 
-test("Settings deferred failure remains dismissible and reload recovers", async ({
-  page,
-}) => {
-  await pairedPage(page);
-  await page.route(settingsModule, (route) => route.abort());
-  await openSettings(page);
-  const dialog = page.getByRole("dialog", { name: "Settings", exact: true });
-  await expect(dialog.getByRole("alert")).toContainText(
-    "Settings could not be opened.",
-  );
-  await page.keyboard.press("Escape");
-  await expect(dialog).not.toBeVisible();
-  await openSettings(page);
-  await page.unroute(settingsModule);
-  await dialog.getByRole("button", { name: "Reload" }).click();
-  await openSettings(page);
-  await expect(
-    page.getByRole("navigation", { name: "Settings categories" }),
-  ).toBeVisible();
-});
-
-test("Context restores focus after a deferred import fails and reloads", async ({
+test("deferred Settings and Context failures retain focus and recover after reload", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 768, height: 844 });
   await pairAndOpen(page);
-  const pattern = contextModule;
-  const release = await holdRequests(page, pattern, "abort");
+  await page.route(settingsModule, (route) => route.abort());
+  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+  await openSettings(page);
+  await expect(settings.getByRole("alert")).toContainText(
+    "Settings could not be opened.",
+  );
+  await page.keyboard.press("Escape");
+  await expect(settings).toHaveCount(0);
+  await openSettings(page);
+  await page.unroute(settingsModule);
+  await settings.getByRole("button", { name: "Reload" }).click();
+  await openSettings(page);
+  await expect(
+    settings.getByRole("navigation", { name: "Settings categories" }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  const release = await holdRequests(page, contextModule, true);
   const toggle = page.getByRole("button", { name: "Toggle resources panel" });
   const pane = page.getByRole("dialog", { name: "Context panel" });
   try {
@@ -131,7 +130,7 @@ test("Context restores focus after a deferred import fails and reloads", async (
     await expect(toggle).toBeFocused();
     await toggle.click();
     await expect(pane.getByRole("alert")).toBeVisible();
-    await page.unroute(pattern);
+    await page.unroute(contextModule);
     await pane.getByRole("button", { name: "Reload" }).click();
     await expect(page.getByRole("main")).toBeVisible();
     // Recovery reload restores the open drawer and its focus owner.

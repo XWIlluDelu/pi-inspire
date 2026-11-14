@@ -1,4 +1,8 @@
 import { expect, type Page, test } from "@playwright/test";
+import {
+  type TerminalOperation,
+  terminalReceiptIdentity,
+} from "../../shared/terminal-operations";
 import { DEFAULT_TERMINAL_UI_SETTINGS } from "../../src/terminal-settings";
 import { openCommandPalette, pairAndOpen } from "./support/navigation";
 
@@ -20,6 +24,7 @@ test.describe("narrow terminal settings", () => {
     let clears = 0;
     const loading = Promise.withResolvers<void>();
     const savingRetention = Promise.withResolvers<void>();
+    const failedClear = Promise.withResolvers<void>();
     await page.route("**/api/terminal-operations", async (route) => {
       if (route.request().method() === "GET") {
         await route.fulfill({
@@ -27,25 +32,32 @@ test.describe("narrow terminal settings", () => {
         });
         return;
       }
-      const {
-        executor,
-        operationId,
-        intent: { command, params },
-      } = route.request().postDataJSON();
-      if (command === "updateSettings") {
-        const { patch } = params;
+      const operation = route.request().postDataJSON() as TerminalOperation;
+      const { intent } = operation;
+      const receipt = terminalReceiptIdentity(operation);
+      if (intent.command === "clearHistory" && ++clears === 1) {
+        await failedClear.promise;
+        return route.fulfill({
+          status: 409,
+          json: {
+            ...receipt,
+            state: "rejected",
+            error: { status: 409, message: "Saved output is busy." },
+          },
+        });
+      }
+      if (intent.command === "updateSettings") {
+        const { patch } = intent.params;
         patches.push(patch);
         if (patch.historyRetentionDays !== undefined)
           await savingRetention.promise;
         service = { ...service, ...patch };
-      } else if (command === "clearHistory") clears++;
+      }
       await route.fulfill({
         json: {
-          executor,
-          operationId,
-          command,
+          ...receipt,
           state: "completed",
-          result: command === "clearHistory" ? null : service,
+          result: intent.command === "clearHistory" ? null : service,
         },
       });
     });
@@ -131,7 +143,7 @@ test.describe("narrow terminal settings", () => {
       savingRetention.resolve();
     }
     await category("Saved output").click();
-    await expect(retention).toContainText("90 days");
+    await expect(retention).toHaveValue("90");
     await expect(retention).toBeEnabled();
     page.once("dialog", (dialog) => dialog.dismiss());
     await settings
@@ -177,13 +189,37 @@ test.describe("narrow terminal settings", () => {
       page.getByRole("dialog", { name: "Context panel" }),
     ).toBeVisible();
     await page.getByRole("button", { name: "Close context pane" }).click();
-    const reopened = await openTerminalSettings(page);
+    await openTerminalSettings(page);
     await category("Saved output").click();
     await expect(
-      reopened.getByRole("switch", { name: "Persist terminal output" }),
+      settings.getByRole("switch", { name: "Persist terminal output" }),
     ).not.toBeChecked();
-    page.once("dialog", (dialog) => dialog.accept());
-    await reopened.getByRole("button", { name: "Clear history" }).click();
-    await expect.poll(() => clears).toBe(1);
+    const clear = settings.getByRole("button", {
+      name: "Clear history",
+      exact: true,
+    });
+    const requestClear = () => {
+      page.once("dialog", (dialog) => dialog.accept());
+      return clear.click();
+    };
+    try {
+      await requestClear();
+      await category("Appearance").click();
+      await category("Saved output").click();
+      await expect(
+        settings.getByRole("button", { name: "Clearing…" }),
+      ).toBeDisabled();
+      await category("Appearance").click();
+      failedClear.resolve();
+      await expect(settings.getByRole("alert")).toHaveText(
+        "Saved output is busy.",
+      );
+    } finally {
+      failedClear.resolve();
+    }
+    await category("Saved output").click();
+    await requestClear();
+    await expect(clear).toBeEnabled();
+    expect(clears).toBe(2);
   });
 });

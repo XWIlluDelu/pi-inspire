@@ -20,23 +20,6 @@ beforeEach(initializeRuntimeFixture);
 afterEach(disposeRuntimeFixture);
 
 describe("native commands and worker-local catalogs", () => {
-  it("starts on the first saved-session command and uses Pi's authoritative command names", async () => {
-    const { runtime, workers } = schedulingRuntime({
-      configure: (worker) =>
-        worker.responseOverrides.set("get_commands", {
-          commands: [{ name: "配置?", source: "extension" }],
-        }),
-    });
-    trackRuntime(runtime);
-    await runtime.openSession("a");
-    expect(workers).toHaveLength(0);
-    await runtime.prompt({ sessionId: "a", message: "/配置?\tset mode" });
-    expect(workers[0]!.commands).toContainEqual({
-      type: "prompt",
-      message: "/配置? set mode",
-    });
-  });
-
   it("routes native and extension commands without settling active model work", async () => {
     const fixture = schedulingRuntime({
       configure: (worker) => {

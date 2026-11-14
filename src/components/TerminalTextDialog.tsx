@@ -1,9 +1,9 @@
-import { MessageSquareQuote, TextSelect, X } from "lucide-react";
+import { MessageSquareQuote, TextSelect } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
 import { useCopied } from "../use-copied";
 import { ButtonLabel } from "./ButtonLabel";
 import { CopyFeedback } from "./CopyFeedback";
-import { Modal } from "./Modal";
+import { DialogHeader, Modal } from "./Modal";
 
 export function TerminalTextDialog({
   text,
@@ -46,18 +46,11 @@ export function TerminalTextDialog({
       onDismiss={onClose}
     >
       <div className="dialog dialog--flush terminal-text-dialog">
-        <header className="dialog__header dialog__header--bar">
-          <h2 className="dialog__title">Select text</h2>
-          <button
-            type="button"
-            className="icon-button"
-            aria-label="Close text selection"
-            title="Close text selection"
-            onClick={onClose}
-          >
-            <X size={16} aria-hidden="true" />
-          </button>
-        </header>
+        <DialogHeader
+          title="Select text"
+          closeLabel="Close text selection"
+          onClose={onClose}
+        />
         <textarea
           ref={textRef}
           className="terminal-text-dialog__text"

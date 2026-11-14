@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ATTACHMENT_CONTEXT_HEADING } from "../../shared/attachment-context";
 import {
@@ -9,48 +9,11 @@ import {
   type SessionActionId,
 } from "../../shared/contracts";
 import { createInitialAppState } from "../../src/app-state";
-import { AppTopbar, sessionHeading } from "../../src/components/AppTopbar";
-import { SessionActionsMenu } from "../../src/components/SessionActionsMenu";
+import { AppTopbar } from "../../src/components/AppTopbar";
 import { SessionActionsSettings } from "../../src/components/SessionActionsSettings";
+import { sessionHeading } from "../../src/session-actions";
 import { store } from "../../src/store";
 import { deferred } from "./helpers";
-
-function Harness({
-  onCopyError = vi.fn(),
-  readOnly = false,
-}: {
-  onCopyError?: (message: string) => void;
-  readOnly?: boolean;
-}) {
-  const anchorRef = useRef<HTMLButtonElement>(null);
-  const [open, setOpen] = useState(false);
-  const [order, setOrder] = useState<SessionActionId[]>([
-    ...SESSION_ACTION_IDS,
-  ]);
-  return (
-    <>
-      <SessionActionsSettings order={order} onChange={setOrder} />
-      <button ref={anchorRef} type="button" onClick={() => setOpen(true)}>
-        Session title
-      </button>
-      {open ? (
-        <SessionActionsMenu
-          anchorRef={anchorRef}
-          sessionId="01a163f4-8e43-71df-9bd6-71efa60bd123"
-          actionOrder={order}
-          onCopyError={onCopyError}
-          renameDisabled={readOnly}
-          cloneDisabled={readOnly}
-          onRename={vi.fn()}
-          onClone={vi.fn()}
-          onSwitchBranch={vi.fn()}
-          onExport={vi.fn()}
-          onClose={() => setOpen(false)}
-        />
-      ) : null}
-    </>
-  );
-}
 
 describe("Session headings", () => {
   it.each(["Review this report", ""])(
@@ -77,19 +40,15 @@ describe("Session headings", () => {
   );
 });
 
-function renderTopbar() {
-  let state = {
+const sessionId = "01a163f4-8e43-71df-9bd6-71efa60bd123";
+function renderTopbar(readOnly = false) {
+  vi.spyOn(store, "getState").mockReturnValue({
     ...createInitialAppState(),
-    sessionId: "s1",
+    sessionId,
     sessionName: "Original title",
     cwd: "/workspace/report",
-    gitStatus: { kind: "not-repository" as const },
-  };
-  vi.spyOn(store, "getState").mockImplementation(() => state);
-  const listeners = new Set<() => void>();
-  vi.spyOn(store, "subscribe").mockImplementation((listener) => {
-    listeners.add(listener);
-    return () => listeners.delete(listener);
+    gitStatus: { kind: "not-repository" },
+    readOnlyReason: readOnly ? "workspace-unavailable" : null,
   });
   const noop = () => {};
   render(
@@ -100,37 +59,12 @@ function renderTopbar() {
       onToggleNavigation={noop}
       onOpenCommandPalette={noop}
       onExportSession={noop}
+      onRenameSession={noop}
       onToggleSettings={noop}
       onToggleResources={noop}
     />,
   );
-  return (sessionId: string, sessionName: string) =>
-    act(() => {
-      state = { ...state, sessionId, sessionName };
-      for (const publish of listeners) publish();
-    });
 }
-
-it("keeps rename writes owned by the active editor and session", async () => {
-  const select = renderTopbar();
-  const receipt = deferred<boolean>();
-  const rename = vi
-    .spyOn(store, "renameSession")
-    .mockReturnValue(receipt.promise);
-  const edit = () => {
-    fireEvent.click(screen.getByRole("button", { name: /^Session actions:/ }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Rename session" }));
-    return screen.getByRole("textbox", { name: "Session name" });
-  };
-  const original = edit();
-  fireEvent.change(original, { target: { value: "  Committed title  " } });
-  fireEvent.click(screen.getByRole("button", { name: "Save session name" }));
-  expect(rename).toHaveBeenCalledExactlyOnceWith("s1", "Committed title");
-  select("s2", "Other session");
-  await act(async () => receipt.resolve(true));
-  expect(original).not.toBeInTheDocument();
-  expect(screen.getByRole("heading", { name: "Other session" })).toBeVisible();
-});
 
 it.each(["resolve", "reject"] as const)(
   "retires project path copy %s when the session owner changes",
@@ -174,9 +108,10 @@ describe("Session actions", () => {
             completeCopy = resolve;
           }),
       );
-    const onCopyError = vi.fn();
-    render(<Harness readOnly onCopyError={onCopyError} />);
-    await user.click(screen.getByRole("button", { name: "Session title" }));
+    const onCopyError = vi.spyOn(store, "reportCopyError");
+    vi.spyOn(store, "copyOwnership").mockReturnValue(() => true);
+    renderTopbar(true);
+    await user.click(screen.getByRole("button", { name: /^Session actions:/ }));
     const copy = screen.getByRole("menuitem", { name: "Copy session ID" });
     expect(copy).toHaveFocus();
     expect(
@@ -204,7 +139,13 @@ describe("Session actions", () => {
 
   it("keeps focus on the moved action at the order boundary", async () => {
     const user = userEvent.setup();
-    render(<Harness />);
+    function Order() {
+      const [order, setOrder] = useState<SessionActionId[]>([
+        ...SESSION_ACTION_IDS,
+      ]);
+      return <SessionActionsSettings order={order} onChange={setOrder} />;
+    }
+    render(<Order />);
     const up = screen.getByRole("button", { name: "Move Copy session ID up" });
     const down = screen.getByRole("button", {
       name: "Move Copy session ID down",

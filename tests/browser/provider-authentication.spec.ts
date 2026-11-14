@@ -33,8 +33,14 @@ test("updates and removes real provider credentials through /login while preserv
   let discardCancelReply = false;
   let holdStartReply = false;
   const directoryReply = Promise.withResolvers<void>();
-  const created = Promise.withResolvers<{ owner: string | null; id: string }>();
-  const releaseStart = Promise.withResolvers<void>();
+  const start = () =>
+    Promise.withResolvers<{ owner: string | null; id: string }>();
+  let created = start();
+  let activeStart: PromiseWithResolvers<void> | undefined;
+  const startReplies = [
+    Promise.withResolvers<void>(),
+    Promise.withResolvers<void>(),
+  ];
   await page.route("**/api/provider-auth**", async (route) => {
     const request = loginRequest(route.request());
     if (request?.operation === "providers" && directoryFault) {
@@ -50,11 +56,13 @@ test("updates and removes real provider credentials through /login while preserv
       holdStartReply = false;
       const response = await route.fetch();
       const { result } = await response.json();
+      const reply = startReplies.shift()!;
+      activeStart = reply;
       created.resolve({
         owner: new URL(route.request().url()).searchParams.get("sessionId"),
         id: result.id,
       });
-      await releaseStart.promise;
+      await reply.promise;
       return route.fulfill({ response });
     }
     await route.fallback();
@@ -144,8 +152,38 @@ test("updates and removes real provider credentials through /login while preserv
     await dismiss.click();
     expect(await stored()).toEqual({ type: "api_key", key: "synthetic" });
 
+    const categories = settings.getByRole("navigation", {
+      name: "Settings categories",
+    });
+    const models = categories.getByRole("button", {
+      name: "Models",
+      exact: true,
+    });
+    const display = categories.getByRole("button", {
+      name: "Display",
+      exact: true,
+    });
+    const modelSearch = settings.getByRole("combobox", {
+      name: "Search available models",
+    });
+    await modelSearch.fill("offline");
+    holdStartReply = true;
     await method.click();
+    await created.promise;
+    await display.click();
+    const arrived = page.waitForResponse(
+      (response) => loginRequest(response.request())?.operation === "start",
+    );
+    activeStart?.resolve();
+    await arrived;
+    await expect(display).toBeFocused();
+    await expect(secret).toHaveCount(0);
+    await models.click();
+    await expect(modelSearch).toHaveValue("offline");
     await secret.fill("SYNTHETIC_API_KEY");
+    await display.click();
+    await models.click();
+    await expect(secret).toHaveValue("SYNTHETIC_API_KEY");
     directoryFault = true;
     await settings
       .getByRole("button", { name: "Continue", exact: true })
@@ -196,6 +234,7 @@ test("updates and removes real provider credentials through /login while preserv
     ).toEqual([]);
     await search.fill("anthropic");
     await settings.getByRole("button", { name: "Set up Anthropic" }).click();
+    created = start();
     holdStartReply = true;
     await method.click();
     const old = await created.promise;
@@ -204,7 +243,7 @@ test("updates and removes real provider credentials through /login while preserv
       const request = loginRequest(response.request());
       return request?.operation === "cancel" && request.id === old.id;
     });
-    releaseStart.resolve();
+    activeStart?.resolve();
     const receipt = await cancelled;
     expect(new URL(receipt.url()).searchParams.get("sessionId")).toBe(
       old.owner,
@@ -214,7 +253,8 @@ test("updates and removes real provider credentials through /login while preserv
     await expect(model).toHaveAttribute("title", current);
   } finally {
     directoryReply.resolve();
-    releaseStart.resolve();
+    activeStart?.resolve();
+    for (const reply of startReplies) reply.resolve();
     await writeFile(auth, original);
   }
 });

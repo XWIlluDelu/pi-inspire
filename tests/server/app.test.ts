@@ -225,17 +225,19 @@ describe("Host HTTP workflows", () => {
       expect(await settings(sessionId)).toBeDefined();
       return state;
     });
-    const post = (name: string, body: object) =>
-      local.post(`/api/control/${name}`).send(body);
-    await post("auto-compaction", { sessionId, enabled: "true" }).expect(400);
-    await post("steering-mode", { mode: "all" }).expect(400);
-    for (const [path, value] of [
-      ["auto-compaction", { enabled: true }],
-      ["auto-retry", { enabled: true }],
-      ["steering-mode", { mode: "all" }],
-      ["follow-up-mode", { mode: "all" }],
+    const post = (setting: object, target: string | null = sessionId) =>
+      local
+        .post("/api/control/runtime-setting")
+        .send({ sessionId: target, setting });
+    await post({ key: "autoCompactionEnabled", value: "true" }).expect(400);
+    await post({ key: "steeringMode", value: "all" }, null).expect(400);
+    for (const [key, value] of [
+      ["autoCompactionEnabled", true],
+      ["autoRetryEnabled", true],
+      ["steeringMode", "all"],
+      ["followUpMode", "all"],
     ] as const)
-      await post(path, { sessionId, ...value }).expect(200, { ok: true });
+      await post({ key, value }).expect(200, { ok: true });
     await vi.waitFor(async () =>
       expect(await settings(sessionId)).toMatchObject({
         autoCompactionEnabled: true,
