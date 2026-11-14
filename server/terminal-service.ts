@@ -5,13 +5,10 @@ import type {
 } from "../shared/terminal-contracts.js";
 import type {
   TerminalAttachOptions,
-  TerminalControl,
   TerminalIntent,
   TerminalOperation,
   TerminalOperationResults,
 } from "../shared/terminal-operations.js";
-
-export type { TerminalAttachOptions } from "../shared/terminal-operations.js";
 
 export interface TerminalAttachmentSink {
   sendControl(message: TerminalServerControlMessage): void;
@@ -19,9 +16,10 @@ export interface TerminalAttachmentSink {
   close(code: number, reason: string): void;
 }
 
+export type TerminalClientFrame = { data: Uint8Array } | { control: unknown };
+
 export interface TerminalAttachment {
-  writeInput(sequence: number, data: Uint8Array): void;
-  control(message: TerminalControl): void;
+  send(frame: TerminalClientFrame): void;
   detach(): void;
 }
 

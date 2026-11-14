@@ -15,6 +15,7 @@ import type { TerminalAttachment } from "../../server/terminal-service.js";
 import { TerminalSessionManager } from "../../server/terminal-session-manager.js";
 import { ensureTerminalShellIntegration } from "../../server/terminal-shell-integration.js";
 import {
+  encodeTerminalInputFrame,
   decodeTerminalServerDataFrame,
   type TerminalServerControlMessage,
 } from "../../shared/terminal-contracts.js";
@@ -87,7 +88,7 @@ it.each(profiles)(
     let attachment: TerminalAttachment | undefined;
     let sequence = 0;
     const write = (text: string) =>
-      attachment!.writeInput(++sequence, Buffer.from(text));
+      attachment!.send({ data: encodeTerminalInputFrame(++sequence, Buffer.from(text)) });
 
     terminal.parser.registerOscHandler(6973, (value) => {
       const phase = value.split(";")[0];

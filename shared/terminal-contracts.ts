@@ -135,12 +135,6 @@ export interface TerminalAttachRequest {
   ownerToken?: string;
 }
 
-export type TerminalClientControlMessage =
-  | TerminalAttachRequest
-  | { type: "resize"; cols: number; rows: number }
-  | { type: "take_control"; cols: number; rows: number }
-  | { type: "ping" };
-
 export type TerminalServerControlMessage =
   | {
       type: "attached";

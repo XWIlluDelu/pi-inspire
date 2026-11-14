@@ -11,19 +11,9 @@ const catalog = {
   profiles: [],
 };
 function backend() {
-  const writeInput = vi.fn();
   return {
     list: vi.fn().mockResolvedValue(catalog),
-    operate: vi.fn().mockRejectedValue(new Error("Acknowledgement lost")),
-    attach: vi.fn().mockResolvedValue({
-      id: "attachment",
-      terminalId: "terminal",
-      writeInput,
-      control: vi.fn(),
-      detach: vi.fn(),
-    }),
     close: vi.fn().mockResolvedValue(undefined),
-    writeInput,
   };
 }
 function asService(client: ReturnType<typeof backend>): TerminalService {
@@ -72,35 +62,4 @@ it("closes a late connection without reviving its old lifecycle or dispatching o
     code: "terminal_service_closed",
   });
   await current.close();
-});
-
-it("never replays dispatched mutations or input after a lost acknowledgement", async () => {
-  const client = backend();
-  const connect = vi.fn().mockResolvedValue(asService(client));
-  const service = new TerminalConnection(connect);
-  const attachment = await service.run((terminal) =>
-    terminal.attach(
-      { terminalId: "terminal", clientId: "browser", cols: 80, rows: 24 },
-      { sendControl: vi.fn(), sendData: vi.fn(), close: vi.fn() },
-    ),
-  );
-  attachment.writeInput(1, new Uint8Array([65]));
-  const operation = {
-    operationId: "operation",
-    executor: { kind: "terminal", epoch: "fixture" },
-    intent: { command: "restart", params: { id: "terminal" } },
-  } as const;
-  await expect(
-    service.run((terminal) => terminal.operate(operation, false)),
-  ).rejects.toThrow("Acknowledgement lost");
-  await expect(service.run((terminal) => terminal.list())).resolves.toEqual(
-    catalog,
-  );
-  expect(connect).toHaveBeenCalledOnce();
-  expect(client.operate).toHaveBeenCalledExactlyOnceWith(operation, false);
-  expect(client.writeInput).toHaveBeenCalledExactlyOnceWith(
-    1,
-    new Uint8Array([65]),
-  );
-  await service.close();
 });

@@ -5,26 +5,24 @@ import type { Express } from "express";
 import { WebSocket, WebSocketServer } from "ws";
 import { BROWSER_UPGRADE_CLOSE } from "../shared/browser-build.mjs";
 import { hostEndpoints as routes } from "../shared/host-endpoints.js";
-import type { OperationReceipt } from "../shared/host-operations.js";
-import {
-  decodeTerminalInputFrame,
-  MAX_TERMINAL_INPUT_BYTES,
-} from "../shared/terminal-contracts.js";
+import { MAX_TERMINAL_INPUT_BYTES } from "../shared/terminal-contracts.js";
 import {
   TERMINAL_OPERATIONS_PATH,
   terminalAttachTicketSchema,
-  terminalControlSchema,
   terminalOperationIdentitySchema,
   terminalOperationSchema,
   terminalReceiptIdentity,
 } from "../shared/terminal-operations.js";
 import { canonicalOrigin } from "./browser-auth.js";
+import { maintainBrowserSockets, terminateUpgradedSockets } from "./browser-socket-lifecycle.js";
 import { jsonRoute } from "./json-route.js";
+import { settleOperation } from "./operation-receipts.js";
 import { requestError } from "./request-error.js";
-import type {
-  TerminalAttachment,
-  TerminalConnection,
-  TerminalService,
+import { terminalDaemonMethods } from "./terminal-daemon-protocol.js";
+import {
+  type TerminalAttachment,
+  type TerminalConnection,
+  type TerminalService,
 } from "./terminal-service.js";
 
 const TERMINAL_ATTACH_TICKET_TTL_MS = 15_000;
@@ -35,7 +33,7 @@ const MAX_TERMINAL_SOCKETS = 128;
 interface TerminalSocketState {
   responsive: boolean;
   attachment: TerminalAttachment | "attaching" | null;
-  build?: string;
+  browserBuild: string | undefined;
   detach(): void;
 }
 
@@ -86,7 +84,7 @@ export function createTerminalGateway(
   app.get(TERMINAL_OPERATIONS_PATH, async (_request, response) => {
     response.set("Cache-Control", "no-store");
     response.json({
-      epoch: await terminal((service) => service.operationEpoch()),
+      epoch: (await terminal(terminalDaemonMethods.ping)).operationEpoch,
     });
   });
   app.post(TERMINAL_OPERATIONS_PATH, async (request, response) => {
@@ -105,57 +103,42 @@ export function createTerminalGateway(
       return;
     }
     const { data: operation } = parsed;
-    const receipt = terminalReceiptIdentity(operation);
-    try {
-      const result = await terminal((service) =>
-        service.operate(operation, observeOnly),
-      );
-      response.json({
-        ...receipt,
-        state: "completed",
-        result: result ?? null,
-      } satisfies OperationReceipt<
-        typeof receipt.executor,
-        typeof receipt.command,
-        unknown
-      >);
-    } catch (error) {
-      const { status = 500, code } = error as {
-        status?: number;
-        code?: string;
-      };
-      const retired = [
-        "terminal_operation_epoch_changed",
-        "terminal_operation_expired",
-        "terminal_operation_missing",
-        "terminal_operation_mismatch",
-      ].includes(code ?? "");
-      response.status(status).json({
-        ...receipt,
-        state:
-          !retired && status >= 400 && status < 500 ? "rejected" : "unknown",
-        error: {
-          status,
-          message:
-            error instanceof Error
-              ? error.message
-              : "Terminal operation failed.",
-          ...(code ? { code } : {}),
-        },
-      });
-    }
+    const receipt = await settleOperation(
+      terminalReceiptIdentity(operation),
+      async () =>
+        (await terminal((service) =>
+          terminalDaemonMethods[observeOnly ? "observeOperation" : "operate"](
+            service, operation,
+          ),
+        )) ?? null,
+      ({ code, status }) =>
+        status < 400 ||
+        status >= 500 ||
+        [
+          "terminal_operation_epoch_changed",
+          "terminal_operation_expired",
+          "terminal_operation_missing",
+          "terminal_operation_mismatch",
+        ].includes(code ?? ""),
+      "Terminal operation failed.",
+    );
+    if (receipt.state === "rejected" || receipt.state === "unknown")
+      response.status(receipt.error.status);
+    response.json(receipt);
   });
   jsonRoute(app, routes.terminals, ({ query }) =>
-    terminal((service) => service.list(query.cwd)),
+    terminal((service) =>
+      terminalDaemonMethods.getCatalog(service, { projectCwd: query.cwd }),
+    ),
   );
   jsonRoute(app, routes.terminalSettings, () =>
-    terminal((service) => service.getSettings()),
+    terminal(terminalDaemonMethods.getSettings),
   );
   jsonRoute(
     app,
     routes.terminalAttachTicket,
     async ({ params: { id: terminalId } }, request) => {
-      const catalog = await terminal((service) => service.list());
+      const catalog = await terminal((service) => terminalDaemonMethods.getCatalog(service, {}));
       if (!catalog.terminals.some((candidate) => candidate.id === terminalId))
         throw requestError("Terminal was not found", 404, {
           code: "terminal_not_found",
@@ -199,43 +182,11 @@ export function createTerminalGateway(
       return false;
     }
   };
-  const heartbeatMessage = JSON.stringify({ type: "heartbeat" });
-  let checkingBuild = false;
-  const heartbeatInterval = setInterval(() => {
-    if (!checkingBuild && terminalSockets.size > 0) {
-      checkingBuild = true;
-      void currentBrowserBuild()
-        .then((build) => {
-          if (!build) return;
-          for (const [socket, peer] of terminalSockets) {
-            if (peer.build === build) continue;
-            peer.detach();
-            socket.close(BROWSER_UPGRADE_CLOSE, "Reload Inspire");
-          }
-        })
-        .catch(() => {})
-        .finally(() => {
-          checkingBuild = false;
-        });
-    }
-    for (const [socket, peer] of terminalSockets) {
-      if (socket.readyState !== WebSocket.OPEN) continue;
-      if (!peer.responsive) {
-        socket.terminate();
-        continue;
-      }
-      peer.responsive = false;
-      try {
-        socket.ping();
-      } catch {
-        socket.terminate();
-        continue;
-      }
-      if (peer.attachment && peer.attachment !== "attaching")
-        sendTerminalBounded(socket, heartbeatMessage);
-    }
-  }, heartbeatIntervalMs);
-  heartbeatInterval.unref();
+  const stopHeartbeat = maintainBrowserSockets(
+    terminalSockets, heartbeatIntervalMs, currentBrowserBuild,
+    (peer) => !!peer.attachment && peer.attachment !== "attaching",
+    sendTerminalBounded, (socket) => terminalSockets.get(socket)?.detach(),
+  );
 
   function openTerminalSocket(
     socket: WebSocket,
@@ -245,7 +196,7 @@ export function createTerminalGateway(
     const peer: TerminalSocketState = {
       responsive: true,
       attachment: null,
-      build,
+      browserBuild: build,
       detach,
     };
     terminalSockets.set(socket, peer);
@@ -349,16 +300,14 @@ export function createTerminalGateway(
         return;
       }
       try {
+        const data = Buffer.from(raw as ArrayBuffer);
         if (isBinary) {
-          const frame = decodeTerminalInputFrame(
-            Buffer.from(raw as ArrayBuffer),
-          );
-          attachment.writeInput(frame.sequence, frame.data);
+          attachment.send({ data });
         } else {
-          const message = terminalControlSchema.parse(
-            JSON.parse(Buffer.from(raw as ArrayBuffer).toString("utf8")),
-          );
-          attachment.control(message);
+          const control = JSON.parse(data.toString("utf8"));
+          if (control?.type === "terminal_daemon_detach")
+            throw new Error("Terminal message is invalid");
+          attachment.send({ control });
         }
       } catch (error) {
         sendError(
@@ -401,21 +350,11 @@ export function createTerminalGateway(
       });
     },
     close(): void {
-      clearInterval(heartbeatInterval);
+      stopHeartbeat();
       terminalTickets.clear();
       for (const socket of terminalSockets.keys())
         socket.close(1001, "Server shutting down");
     },
-    async terminateRemaining(): Promise<void> {
-      await Promise.all(
-        [...terminalWebsocket.clients].map(
-          (socket) =>
-            new Promise<void>((resolveClosed) => {
-              socket.once("close", () => resolveClosed());
-              socket.terminate();
-            }),
-        ),
-      );
-    },
+    terminateRemaining: () => terminateUpgradedSockets(terminalWebsocket),
   };
 }

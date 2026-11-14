@@ -16,7 +16,7 @@ import {
 
 export const TERMINAL_OPERATIONS_PATH = "/api/terminal-operations";
 export const terminalIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,80}$/u);
-export const terminalDimensionsSchema = {
+const terminalDimensionsSchema = {
   cols: z.number().int().min(MIN_TERMINAL_COLS).max(MAX_TERMINAL_COLS),
   rows: z.number().int().min(MIN_TERMINAL_ROWS).max(MAX_TERMINAL_ROWS),
 };

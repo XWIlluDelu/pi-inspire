@@ -9,6 +9,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
+import { encodeTerminalInputFrame } from "../../shared/terminal-contracts.js";
 import { expect, it, vi } from "vitest";
 import { processStartIdentity } from "../../server/instance-state.mjs";
 import { signalProcessTree } from "../../server/process-tree.mjs";
@@ -235,10 +236,12 @@ it("restarts only the authenticated scoped owner, stops actual PTYs, and restore
       process.platform === "win32"
         ? JSON.stringify(process.execPath)
         : "'" + process.execPath.replaceAll("'", "'\\''") + "'";
-    attachment.writeInput(
-      1,
-      Buffer.from(executable + ' -e "' + command + '"\r'),
-    );
+    attachment.send({
+      data: encodeTerminalInputFrame(
+        1,
+        Buffer.from(executable + ' -e "' + command + '"\r'),
+      ),
+    });
     let ownedPid = 0;
     await vi.waitFor(
       async () => {

@@ -1,13 +1,11 @@
 import { randomUUID } from "node:crypto";
-import type { Socket } from "node:net";
 import {
-  encodeTerminalInputFrame,
   type TerminalCatalogResponse,
   type TerminalServerControlMessage,
   type TerminalServiceSettings,
 } from "../shared/terminal-contracts.js";
 import type {
-  TerminalControl,
+  TerminalAttachOptions,
   TerminalIntent,
   TerminalOperation,
   TerminalOperationResults,
@@ -17,6 +15,8 @@ import {
   TERMINAL_DAEMON_PROTOCOL_VERSION,
   TERMINAL_DAEMON_READY_TYPE,
   type TerminalDaemonRpcMethod,
+  type TerminalDaemonRpcParams,
+  type TerminalDaemonRpcResult,
   type TerminalDaemonRpcResponse,
 } from "./terminal-daemon-protocol.js";
 import { connectTerminalDaemon } from "./terminal-daemon-tls.js";
@@ -32,7 +32,7 @@ import {
 import type {
   TerminalAttachment,
   TerminalAttachmentSink,
-  TerminalAttachOptions,
+  TerminalClientFrame,
   TerminalService,
 } from "./terminal-service.js";
 import { TerminalServiceError } from "./terminal-service.js";
@@ -43,10 +43,6 @@ const RPC_TIMEOUT_MS = 5_000;
 const LIFECYCLE_RPC_TIMEOUT_MS = 15_000;
 const ATTACH_TIMEOUT_MS = 30_000;
 const IPC_BUFFER_LIMIT_BYTES = 8 * 1024 * 1024;
-
-function socketChunkBytes(chunk: string | Buffer): Buffer {
-  return typeof chunk === "string" ? Buffer.from(chunk) : chunk;
-}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object"
@@ -68,53 +64,20 @@ function daemonError(value: unknown): TerminalServiceError {
   return new TerminalServiceError(code, status, message);
 }
 
-class DaemonAttachment implements TerminalAttachment {
-  private detached = false;
+function serviceStopping(): TerminalServiceError {
+  return new TerminalServiceError(
+    "terminal_service_closed", 503, "The terminal service is stopping.",
+  );
+}
 
-  constructor(
-    private readonly socket: Socket,
-    private readonly onDetach: () => void,
-  ) {}
-
-  writeInput(sequence: number, data: Uint8Array): void {
-    this.write(
-      TERMINAL_IPC_INPUT_FRAME,
-      encodeTerminalInputFrame(sequence, data),
-    );
-  }
-
-  control(message: TerminalControl): void {
-    this.write(TERMINAL_IPC_JSON_FRAME, JSON.stringify(message));
-  }
-
-  detach(): void {
-    if (this.detached) return;
-    this.detached = true;
-    this.onDetach();
-    if (!this.socket.destroyed) {
-      this.socket.end(
-        encodeTerminalIpcJson({ type: "terminal_daemon_detach" }),
-      );
-    }
-  }
-
-  private write(kind: number, payload: string | Uint8Array): void {
-    if (this.detached || this.socket.destroyed)
-      throw new Error("Terminal attachment is disconnected");
-    const frame = encodeTerminalIpcFrame(kind, payload);
-    if (
-      this.socket.writableLength + frame.byteLength >
-      IPC_BUFFER_LIMIT_BYTES
-    ) {
-      this.socket.destroy();
-      throw new Error("Terminal attachment is too slow");
-    }
-    this.socket.write(frame);
-  }
+function connectionLost(): TerminalServiceError {
+  return new TerminalServiceError(
+    "terminal_daemon_unavailable", 503, "The terminal service is unavailable.",
+  );
 }
 
 export class TerminalDaemonClient implements TerminalService {
-  private readonly attachments = new Set<DaemonAttachment>();
+  private readonly attachments = new Set<TerminalAttachment>();
   private closed = false;
 
   constructor(
@@ -123,19 +86,19 @@ export class TerminalDaemonClient implements TerminalService {
   ) {}
 
   async probe(): Promise<void> {
-    await this.rpc("ping", {});
+    await this.operationEpoch();
   }
 
   daemonInfo(): Promise<TerminalDaemonInfo> {
     return this.rpc("getDaemonInfo", {});
   }
 
-  shutdownDaemon(instanceId: string, force: boolean): Promise<void> {
-    return this.rpc("shutdownDaemon", { instanceId, force });
+  async shutdownDaemon(instanceId: string, force: boolean): Promise<void> {
+    await this.rpc("shutdownDaemon", { instanceId, force });
   }
 
   async operationEpoch(): Promise<string> {
-    const result = await this.rpc<{ operationEpoch: string }>("ping", {});
+    const result = await this.rpc("ping", {});
     return result.operationEpoch;
   }
 
@@ -150,7 +113,7 @@ export class TerminalDaemonClient implements TerminalService {
       command === "remove" || command === "restart"
         ? LIFECYCLE_RPC_TIMEOUT_MS
         : RPC_TIMEOUT_MS,
-    );
+    ) as Promise<TerminalOperationResults[I["command"]]>;
   }
 
   list(projectCwd?: string): Promise<TerminalCatalogResponse> {
@@ -161,77 +124,106 @@ export class TerminalDaemonClient implements TerminalService {
     return this.rpc("getSettings", {});
   }
 
+  private connect(
+    request:
+      | { mode: "attach"; options: TerminalAttachOptions }
+      | {
+          mode: "rpc";
+          requestId: string;
+          method: TerminalDaemonRpcMethod;
+          params: unknown;
+        },
+  ) {
+    if (this.closed) throw serviceStopping();
+    const socket = connectTerminalDaemon(this.address, this.token);
+    socket.once("secureConnect", () => {
+      socket.write(
+        encodeTerminalIpcJson({
+          protocolVersion: TERMINAL_DAEMON_PROTOCOL_VERSION,
+          ...request,
+        }),
+      );
+    });
+    return socket;
+  }
+
   attach(
     options: TerminalAttachOptions,
     sink: TerminalAttachmentSink,
   ): Promise<TerminalAttachment> {
-    if (this.closed)
-      return Promise.reject(
-        new TerminalServiceError(
-          "terminal_service_closed",
-          503,
-          "The terminal service is stopping.",
-        ),
-      );
-
     return new Promise<TerminalAttachment>((resolvePromise, rejectPromise) => {
-      const socket = connectTerminalDaemon(this.address, this.token);
+      const socket = this.connect({ mode: "attach", options });
       socket.setNoDelay(true);
       const decoder = new TerminalIpcDecoder();
-      let settled = false;
-      let failed = false;
-      let intentionalClose = false;
-      let deliveryReady = false;
-      let attachment: DaemonAttachment | null = null;
+      let state: "connecting" | "publishing" | "ready" | "closed" = "connecting";
+      let attachment: TerminalAttachment | null = null;
       let attachTimeout: ReturnType<typeof setTimeout> | null = null;
       const pendingDeliveries: Array<() => void> = [];
 
-      const fail = (error: unknown): void => {
-        if (failed) return;
-        failed = true;
-        pendingDeliveries.length = 0;
+      const clearDeadline = () => {
         if (attachTimeout) clearTimeout(attachTimeout);
         attachTimeout = null;
-        if (!settled) {
-          settled = true;
-          rejectPromise(error);
-          return;
-        }
-        if (!intentionalClose) {
+      };
+      const fail = (error: unknown): void => {
+        if (state === "closed") return;
+        const connecting = state === "connecting";
+        state = "closed";
+        pendingDeliveries.length = 0;
+        clearDeadline();
+        if (connecting) rejectPromise(error);
+        else {
           try {
             sink.close(1012, "Terminal service connection lost");
           } catch {
-            // The browser-side transport may already be gone.
+            // The browser may already be gone.
           }
         }
       };
       const deliver = (operation: () => void): void => {
-        if (!deliveryReady) {
-          pendingDeliveries.push(operation);
-          return;
-        }
-        operation();
+        if (state === "publishing") pendingDeliveries.push(operation);
+        else if (state === "ready") operation();
       };
       const establishAttachment = (): void => {
-        if (settled) return;
-        attachment = new DaemonAttachment(socket, () => {
-          intentionalClose = true;
-          if (attachment) this.attachments.delete(attachment);
-        });
-        this.attachments.add(attachment);
-        settled = true;
-        resolvePromise(attachment);
+        if (state !== "connecting") return;
+        if (this.closed) throw serviceStopping();
+        const handle: TerminalAttachment = {
+          send(frame: TerminalClientFrame) {
+            if (state === "closed" || socket.destroyed)
+              throw new Error("Terminal attachment is disconnected");
+            const packet =
+              "data" in frame
+                ? encodeTerminalIpcFrame(TERMINAL_IPC_INPUT_FRAME, frame.data)
+                : encodeTerminalIpcJson(frame.control);
+            if (socket.writableLength + packet.byteLength > IPC_BUFFER_LIMIT_BYTES) {
+              socket.destroy();
+              throw new Error("Terminal attachment is too slow");
+            }
+            socket.write(packet);
+          },
+          detach: () => {
+            if (state === "closed") return;
+            state = "closed";
+            clearDeadline();
+            this.attachments.delete(handle);
+            if (!socket.destroyed)
+              socket.end(encodeTerminalIpcJson({ type: "terminal_daemon_detach" }));
+          },
+        };
+        attachment = handle;
+        this.attachments.add(handle);
+        state = "publishing";
+        resolvePromise(handle);
         // Promise reactions run before this microtask. That lets the Host
         // publish the attachment handle before replay_complete can cause a
         // fast browser to send its first input frame.
         queueMicrotask(() => {
-          if (failed || intentionalClose) {
+          if (state !== "publishing") {
             pendingDeliveries.length = 0;
             return;
           }
-          deliveryReady = true;
+          state = "ready";
           try {
-            for (const operation of pendingDeliveries.splice(0)) operation();
+            for (const operation of pendingDeliveries.splice(0)) deliver(operation);
           } catch (error) {
             fail(error);
             socket.destroy();
@@ -244,20 +236,11 @@ export class TerminalDaemonClient implements TerminalService {
       }, ATTACH_TIMEOUT_MS);
       attachTimeout.unref();
 
-      socket.once("secureConnect", () => {
-        socket.write(
-          encodeTerminalIpcJson({
-            protocolVersion: TERMINAL_DAEMON_PROTOCOL_VERSION,
-            mode: "attach",
-            options,
-          }),
-        );
-      });
       socket.on("data", (chunk) => {
         try {
-          for (const frame of decoder.push(socketChunkBytes(chunk))) {
+          for (const frame of decoder.push(chunk)) {
             if (frame.kind === TERMINAL_IPC_DATA_FRAME) {
-              if (!settled)
+              if (state === "connecting")
                 throw new Error("Terminal daemon sent output before attaching");
               deliver(() => sink.sendData(frame.payload));
               continue;
@@ -266,12 +249,9 @@ export class TerminalDaemonClient implements TerminalService {
               throw new Error("Terminal daemon sent an unknown IPC frame");
             const message = asRecord(decodeTerminalIpcJson(frame.payload));
             if (message?.type === TERMINAL_DAEMON_READY_TYPE) {
-              if (!settled)
-                throw new Error(
-                  "Terminal daemon became ready before identifying the attachment",
-                );
-              if (attachTimeout) clearTimeout(attachTimeout);
-              attachTimeout = null;
+              if (state === "connecting")
+                throw new Error("Terminal daemon did not identify the attachment");
+              clearDeadline();
               continue;
             }
             if (message?.type === "terminal_daemon_error") {
@@ -287,18 +267,22 @@ export class TerminalDaemonClient implements TerminalService {
                 typeof message.reason === "string"
                   ? message.reason
                   : "Terminal closed";
+              if (state === "connecting")
+                throw new TerminalServiceError("terminal_attach_failed", 503, reason);
               deliver(() => {
-                intentionalClose = true;
-                sink.close(code, reason);
-                socket.end();
+                state = "closed";
+                clearDeadline();
+                try {
+                  sink.close(code, reason);
+                } finally {
+                  socket.end();
+                }
               });
               continue;
             }
             if (message?.type === "attached") establishAttachment();
-            if (!settled)
-              throw new Error(
-                "Terminal daemon did not identify the attachment",
-              );
+            if (attachment === null && state !== "closed")
+              throw new Error("Terminal daemon did not identify the attachment");
             deliver(() =>
               sink.sendControl(
                 message as unknown as TerminalServerControlMessage,
@@ -313,13 +297,7 @@ export class TerminalDaemonClient implements TerminalService {
       socket.once("error", (error) => fail(error));
       socket.once("close", () => {
         if (attachment) this.attachments.delete(attachment);
-        fail(
-          new TerminalServiceError(
-            "terminal_daemon_unavailable",
-            503,
-            "The terminal service is unavailable.",
-          ),
-        );
+        fail(connectionLost());
       });
     });
   }
@@ -330,23 +308,16 @@ export class TerminalDaemonClient implements TerminalService {
     this.attachments.clear();
   }
 
-  private rpc<Result>(
-    method: TerminalDaemonRpcMethod,
-    params: unknown,
+  private rpc<Method extends TerminalDaemonRpcMethod>(
+    method: Method,
+    params: TerminalDaemonRpcParams<Method>,
     timeoutMs = RPC_TIMEOUT_MS,
-  ): Promise<Result> {
-    if (this.closed)
-      return Promise.reject(
-        new TerminalServiceError(
-          "terminal_service_closed",
-          503,
-          "The terminal service is stopping.",
-        ),
-      );
+  ): Promise<TerminalDaemonRpcResult<Method>> {
+    type Result = TerminalDaemonRpcResult<Method>;
     return new Promise<Result>((resolvePromise, rejectPromise) => {
-      const socket = connectTerminalDaemon(this.address, this.token);
-      const decoder = new TerminalIpcDecoder();
       const requestId = randomUUID();
+      const socket = this.connect({ mode: "rpc", requestId, method, params });
+      const decoder = new TerminalIpcDecoder();
       let settled = false;
       const timeout = setTimeout(() => {
         finish(
@@ -368,20 +339,9 @@ export class TerminalDaemonClient implements TerminalService {
         else resolvePromise(result as Result);
       };
 
-      socket.once("secureConnect", () => {
-        socket.write(
-          encodeTerminalIpcJson({
-            protocolVersion: TERMINAL_DAEMON_PROTOCOL_VERSION,
-            mode: "rpc",
-            requestId,
-            method,
-            params,
-          }),
-        );
-      });
       socket.on("data", (chunk) => {
         try {
-          for (const frame of decoder.push(socketChunkBytes(chunk))) {
+          for (const frame of decoder.push(chunk)) {
             if (frame.kind !== TERMINAL_IPC_JSON_FRAME)
               throw new Error("Terminal daemon sent an unknown RPC frame");
             const response = decodeTerminalIpcJson(
@@ -399,13 +359,7 @@ export class TerminalDaemonClient implements TerminalService {
       });
       socket.once("error", (error) => finish(error));
       socket.once("close", () => {
-        finish(
-          new TerminalServiceError(
-            "terminal_daemon_unavailable",
-            503,
-            "The terminal service is unavailable.",
-          ),
-        );
+        finish(connectionLost());
       });
     });
   }
