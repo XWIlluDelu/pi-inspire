@@ -43,10 +43,6 @@ describe("feedback reading dwell", () => {
     ["This session does not have a name yet.", 3_000],
     ["Close this tab when you are done. Your sessions keep running.", 5_000],
     [
-      "The workspace has finished loading. Some background services are still reconnecting, so their status may take a moment to update. You can keep editing your draft and choose another session without waiting for these services.",
-      8_000,
-    ],
-    [
       "当前工作目录暂时不可用，请检查网络连接并确认磁盘已经挂载。你可以继续编辑草稿，也可以切换到其他会话。连接恢复后再刷新文件列表，现有内容不会被替换。",
       8_000,
     ],

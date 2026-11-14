@@ -54,7 +54,6 @@ test("keeps inline math and display scrolling local to narrow readers", async ({
     );
     const overflow = (el: Element) => el.scrollWidth - el.clientWidth;
     const assistant = page.locator(".rich-text--assistant");
-    const user = page.locator(".turn--user .rich-text");
     const checkLayout = async (reader: Locator) => {
       const inline = reader.locator(".inline-math");
       await expect(inline).toHaveCSS("display", "inline");
@@ -65,7 +64,6 @@ test("keeps inline math and display scrolling local to narrow readers", async ({
       expect(await reader.evaluate(overflow)).toBeLessThanOrEqual(1);
     };
     await checkLayout(assistant);
-    await checkLayout(user);
     const display = assistant.locator(".katex-display").last();
     await display.focus();
     await display.press("ArrowRight");

@@ -1,6 +1,6 @@
 import {
-  createContext,
   type ComponentProps,
+  createContext,
   type ReactNode,
   useCallback,
   useContext,
@@ -218,6 +218,28 @@ export function ActivityCode({
       tabIndex={scrollable ? 0 : undefined}
       role={scrollable ? "group" : undefined}
       aria-label={scrollable ? label : undefined}
+    />
+  );
+}
+
+export function ActivityReader({
+  reader,
+  label,
+  className = "",
+  ...props
+}: ComponentProps<"div"> & { reader: string; label: string }) {
+  const scroll = useActivityReaderScroll<HTMLDivElement>(
+    reader,
+    props.children,
+  );
+  return (
+    <div
+      {...props}
+      {...scroll.props}
+      className={`activity-reader ${className}`}
+      tabIndex={0}
+      role="group"
+      aria-label={label}
     />
   );
 }

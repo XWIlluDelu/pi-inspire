@@ -6,7 +6,7 @@ import {
   toolResultImage,
 } from "../tool-presentations/model";
 import { CodeView } from "./CodeView";
-import { useActivityReaderScroll } from "./transcript-activity-visibility";
+import { ActivityReader } from "./transcript-activity-visibility";
 
 function partText(part: unknown) {
   if (!part || typeof part !== "object") return undefined;
@@ -109,19 +109,13 @@ export function CodeModeResult({
     });
     return blocks.length ? blocks : null;
   }, [result, renderImage]);
-  const scroll = useActivityReaderScroll<HTMLDivElement>(
-    "codemode-result-scroll",
-    result,
-  );
   return (
-    <div
-      className="activity-reader codemode-result"
-      {...scroll.props}
-      tabIndex={0}
-      role="group"
-      aria-label="Result output"
+    <ActivityReader
+      className="codemode-result"
+      reader="codemode-result-scroll"
+      label="Result output"
     >
       {parts ?? <div className="tool-empty">No output</div>}
-    </div>
+    </ActivityReader>
   );
 }

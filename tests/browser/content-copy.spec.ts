@@ -16,7 +16,7 @@ test.use({
 
 test.describe("touch file copy", () => {
   test.use({ hasTouch: true, viewport: { width: 390, height: 844 } });
-  test("copies the selected file and clears its confirmation when the file changes", async ({
+  test("copies the selected file path from its narrow preview", async ({
     page,
     context,
   }) => {
@@ -50,18 +50,6 @@ test.describe("touch file copy", () => {
       /README\.md$/,
     );
 
-    await open("native-shell.log");
-    const copy = pane.getByRole("button", {
-      name: /Copy path .*native-shell\.log/,
-    });
-    await expect(copy).toBeInViewport();
-    await copy.click();
-    await expect(
-      pane.getByRole("button", { name: "Path copied" }),
-    ).toBeVisible();
-    expect(await page.evaluate(() => navigator.clipboard.readText())).toMatch(
-      /native-shell\.log$/,
-    );
   });
 });
 

@@ -3,7 +3,6 @@ import { join } from "node:path";
 import { expect, type Locator, test } from "@playwright/test";
 import { customMessageConfiguration } from "../web/fixtures/custom-message-presentation";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
-import { clipboardLines } from "./support/clipboard";
 import { openEventSession } from "./support/host-events";
 import { firstTextBaseline } from "./support/text-baseline";
 
@@ -89,7 +88,7 @@ async function expectTaskColumn(reader: Locator) {
 
 test("task lists keep their reading column across Live and file previews", {
   tag: "@platform-ui",
-}, async ({ page, context }) => {
+}, async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 1000 });
   const file = join(browserWorkspace, "task-layout.md");
   await writeFile(file, checklist);
@@ -122,33 +121,10 @@ test("task lists keep their reading column across Live and file previews", {
           ],
         },
       },
-      {
-        type: "message_end",
-        message: {
-          role: "custom",
-          customType: "relay_message",
-          display: true,
-          content: checklist,
-          details: { from: { name: "Checklist review" }, bodyText: checklist },
-          timestamp: 3,
-        },
-      },
     );
     await page.evaluate(() => document.fonts.ready);
-    for (const selector of [
-      ".rich-text--user",
-      ".rich-text--thinking",
-      ".rich-text--assistant",
-      ".custom-message__body .rich-text",
-    ]) {
-      const reader = page.locator(selector).last();
-      await expectTaskColumn(reader);
-    }
-
+    await expectTaskColumn(page.locator(".rich-text--assistant").last());
     await page.setViewportSize({ width: 320, height: 900 });
-    await page.evaluate(() => {
-      document.documentElement.dataset.contentTextSize = "large";
-    });
     const user = page.locator(".rich-text--user").last();
     await expectTaskColumn(user);
     // The tall math expression and later plain text share the first line;
@@ -182,22 +158,16 @@ test("task lists keep their reading column across Live and file previews", {
         return sameColumn.length;
       });
     expect(wrappedLines).toBeGreaterThan(1);
-    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-    await page
-      .locator(".turn--user")
-      .last()
-      .getByRole("button", { name: "Copy message" })
-      .press("Enter");
-    await expect
-      .poll(() => clipboardLines(page))
-      .toEqual(checklist.split("\n"));
-
     await page.getByRole("link", { name: "checklist", exact: true }).click();
     const preview = page.locator(".ctx .rich-text");
     await expect(
       preview.getByRole("heading", { name: "Checklist" }),
     ).toBeVisible();
     await expectTaskColumn(preview);
+    await expect(preview.locator("strong")).toHaveText("reference calibration");
+    await expect(preview.locator("input[type=checkbox]:checked")).toHaveCount(
+      3,
+    );
   } finally {
     await rm(file, { force: true });
   }

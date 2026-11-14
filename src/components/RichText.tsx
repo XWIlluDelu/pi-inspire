@@ -30,7 +30,6 @@ import {
 import { store } from "../store";
 import { queueTerminalInsertion } from "../terminal-actions";
 import { CodeView } from "./CodeView";
-import { CopyAction } from "./CopyAction";
 import { DocumentImage, DocumentResourceContext } from "./DocumentPreview";
 import {
   ImageLinkContext,
@@ -38,6 +37,7 @@ import {
   TranscriptImageOwnerContext,
 } from "./ImagePreview";
 import { RichTextMath } from "./RichTextMath";
+import { ActivityHeader } from "./transcript-activity-visibility";
 
 export type RichTextVariant = "assistant" | "user" | "thinking" | "extension";
 const ASYNC_MARKDOWN_MIN_CHARS = 8_000;
@@ -51,7 +51,10 @@ const CodeBlock = memo(function CodeBlock({
 }) {
   return (
     <div className="code-block">
-      <div className="activity-surface__head code-block__bar">
+      <ActivityHeader
+        className="code-block__bar"
+        copy={{ text: code, label: "Code", copiedLabel: "Copied" }}
+      >
         <span className="code-block__lang">{language}</span>
         <button
           type="button"
@@ -65,13 +68,7 @@ const CodeBlock = memo(function CodeBlock({
         >
           <SquareTerminal size={13} aria-hidden />
         </button>
-        <CopyAction
-          text={code}
-          label="Code"
-          copiedLabel="Copied"
-          className="activity-copy"
-        />
-      </div>
+      </ActivityHeader>
       <CodeView
         className="code-block__pre"
         tabIndex={0}

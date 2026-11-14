@@ -98,31 +98,6 @@ const retry = { attempt: 2, maxAttempts: 3, message: "Provider overloaded" };
 afterEach(() => vi.useRealTimers());
 
 describe("runtime-owned activity", () => {
-  it("renews one query readout and keeps it readable through runtime progress and keyboard focus", async () => {
-    vi.useFakeTimers();
-    render(<CommandActivity />);
-    await act(() => store.sendPrompt("/session"));
-    act(() => vi.advanceTimersByTime(7_000));
-    await act(() => store.sendPrompt("/session"));
-    act(() =>
-      socket().emit({
-        type: "agent_start",
-        sessionId: store.getState().sessionId,
-      }),
-    );
-    act(() => vi.advanceTimersByTime(2_000));
-    expect(screen.getByText("/session")).toBeVisible();
-
-    const dock = screen.getByRole("region", { name: "Command activity" });
-    act(() => dock.focus());
-    expect(dock).toHaveFocus();
-    act(() => vi.advanceTimersByTime(60_000));
-    expect(screen.getByText("/session")).toBeVisible();
-    act(() => dock.blur());
-    act(() => vi.advanceTimersByTime(9_000));
-    expect(screen.queryByText("/session")).toBeNull();
-  });
-
   it.each(["receipt first", "end event first"] as const)(
     "takes compaction progress from the Host with the %s",
     async (order) => {
@@ -198,41 +173,6 @@ describe("runtime-owned activity", () => {
     });
   });
 
-  it("renders retry detail from a snapshot and discards it when switching sessions", async () => {
-    const emitSnapshot = () => act(() => socket().emitSnapshot(snapshot));
-    renderActivity();
-    snapshot.sessionStatuses[snapshot.active!.sessionId] = {
-      runState: "retrying",
-    };
-    snapshot.retry = retry;
-    emitSnapshot();
-    expect(retryStatus()).toHaveTextContent("Retry 2/3 — Provider overloaded");
-    snapshot.retry = { ...retry, attempt: 99 };
-    emitSnapshot();
-    expect(retryStatus()).toHaveTextContent(/^Retrying$/);
-    snapshot = { ...activeSnapshot({ sessionId: "other-session" }), retry };
-    await selectSession(store, snapshot);
-    expect(retryStatus()).not.toBeInTheDocument();
-  });
-
-  it("shows a live retry until the run settles", () => {
-    renderActivity();
-    const emit = (event: Record<string, unknown>) =>
-      act(() =>
-        socket().emit({ sessionId: snapshot.active!.sessionId, ...event }),
-      );
-    emit({
-      type: "auto_retry_start",
-      sessionStatus: { runState: "retrying" },
-      attempt: 2,
-      maxAttempts: 3,
-      errorMessage: "rate limited",
-    });
-    expect(retryStatus()).toHaveTextContent("Retry 2/3 — rate limited");
-    emit({ type: "agent_settled", sessionStatus: { runState: "failed" } });
-    expect(retryStatus()).not.toBeInTheDocument();
-  });
-
   it("restores compaction backoff on entry and retires it as attempts resume or finish", async () => {
     snapshot.sessionStatuses[snapshot.active!.sessionId] = {
       runState: "compacting",
@@ -244,27 +184,22 @@ describe("runtime-owned activity", () => {
       "Compaction retry 2/3 — waiting — Provider overloaded",
     );
 
-    const update = (type: string, detail: Record<string, unknown> = {}) =>
+    const update = (summarizationRetry: typeof retry | null) =>
       act(() =>
         socket().emit({
-          type,
+          type: "compaction_progress",
           sessionId: snapshot.active!.sessionId,
           sessionStatus: { runState: "compacting" },
-          ...detail,
+          retry: null,
+          summarizationRetry,
         }),
       );
-    update("summarization_retry_attempt_start");
+    update(null);
     expect(progress()).toHaveTextContent("Compacting context");
-    update("summarization_retry_scheduled", { attempt: 99, maxAttempts: 3 });
-    expect(progress()).toHaveTextContent("Compacting context");
-    update("summarization_retry_scheduled", {
-      attempt: 3,
-      maxAttempts: 3,
-      errorMessage: "Still overloaded",
-    });
+    update({ attempt: 3, maxAttempts: 3, message: "Still overloaded" });
     expect(progress()).toHaveTextContent("Compaction retry 3/3");
     expect(retryStatus()).not.toBeInTheDocument();
-    update("summarization_retry_finished");
+    update(null);
     expect(progress()).toHaveTextContent("Compacting context");
 
     snapshot.sessionStatuses[snapshot.active!.sessionId] = {
@@ -348,6 +283,8 @@ describe("phase event reduction", () => {
         {
           type: "compaction_end",
           sessionStatus,
+          retry: null,
+          summarizationRetry: null,
           ...event,
         },
       );

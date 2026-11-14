@@ -92,38 +92,18 @@ summary.disclosure-row::-webkit-details-marker { display: none; }
   text-align: left;
   color: var(--muted);
   cursor: pointer;
-  transition:
-    color var(--dur-micro) var(--ease-standard),
-    background var(--dur-micro) var(--ease-standard);
-}
-
-@media (hover: hover) {
-  .card__header:has(.card__disclosure:hover) .card__chevron {
-    color: var(--ink);
-  }
-  .card__header:has(.card__disclosure:hover) .card__summary {
-    color: var(--body);
-  }
-}
-
-.card__disclosure:active .card__chevron {
-  color: var(--ink);
 }
 
 .card__disclosure {
-  flex: none;
+  flex: 0 1 auto;
   min-width: 0;
-  max-width: min(100%, 32ch);
+  max-width: 32ch;
   gap: 6px;
   border: 0;
   background: transparent;
   padding: 1px 0 1px 4px;
   color: inherit;
   text-align: left;
-}
-
-.card__header:has(> .card__copy) .card__disclosure {
-  max-width: min(calc(100% - var(--activity-copy-size) - 12px), 32ch);
 }
 
 .card__disclosure::after {
@@ -133,17 +113,15 @@ summary.disclosure-row::-webkit-details-marker { display: none; }
   border-radius: var(--radius-control);
 }
 
-.card__disclosure:focus-visible {
-  outline: none;
-  color: var(--ink);
-}
+.card__disclosure:is(:hover, :active, :focus-visible) { color: var(--ink); }
+.card__disclosure:focus-visible { outline: none; }
 
 .card__disclosure:focus-visible::after {
   outline: 2px solid var(--accent-focus);
   outline-offset: -2px;
 }
 
-.card__header :is(a, button, input, select, textarea, [role="button"], [role="link"]):not(.card__disclosure) {
+.card__header :is(a, button):not(.card__disclosure) {
   position: relative;
   z-index: 1;
 }
@@ -309,8 +287,7 @@ details[open] > .detail-summary > .chev {
 }
 
 /* Structured and phase layouts already separate status from adjacent details. */
-.tool-presentation > .card__pending,
-.tool-call-result > .card__pending:only-child {
+.tool-presentation > .card__pending {
   padding-block: 0;
 }
 
@@ -562,10 +539,6 @@ span.tool-resource { color: var(--muted); }
   min-width: 0;
 }
 
-.tool-call-result:empty {
-  display: none;
-}
-
 .child-calls {
   max-height: min(20rem, 45vh);
   overflow: auto;
@@ -661,7 +634,7 @@ details > .activity-reader { margin-top: var(--space-1); }
   object-fit: contain;
 }
 
-.tool-call-layout--codemode .child-calls {
+.child-calls[data-unbounded] {
   max-height: none;
   overflow: visible;
   overscroll-behavior: auto;

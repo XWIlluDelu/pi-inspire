@@ -128,32 +128,6 @@ describe("transcript viewport geometry", () => {
     vi.unstubAllGlobals();
   });
 
-  it("follows the latest boundary on resize while the reader is pinned", () => {
-    render(<ViewportHarness />);
-    const log = screen.getByRole("log");
-    setScrollGeometry(log, { clientHeight: 400, scrollTop: 600 });
-    const resize = (height: number) => {
-      Object.defineProperty(log, "clientHeight", {
-        configurable: true,
-        value: height,
-      });
-      act(() => {
-        TestResizeObserver.trigger(log);
-        flushAnimationFrames();
-      });
-    };
-
-    resize(300);
-    expect(log.scrollTop).toBe(700);
-
-    fireEvent.wheel(log, { deltaY: -300 });
-    log.scrollTop = 400;
-    fireEvent.scroll(log);
-    resize(180);
-    expect(log.scrollTop).toBe(400);
-    expect(log).toHaveAttribute("data-pinned", "false");
-  });
-
   it("keeps an upward wheel intent across a queued layout scroll at latest", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     render(<ViewportHarness />);

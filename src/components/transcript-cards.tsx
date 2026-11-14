@@ -65,13 +65,14 @@ import {
   ActivityCode,
   ActivityDetails,
   ActivityHeader,
+  ActivityReader,
   ActivityReadingBlock,
   ActivityText,
   useActivityReaderExpanded,
 } from "./transcript-activity-visibility";
 import { TranscriptSearchReveal } from "./transcript-search";
 
-export type StaticVisibility = Exclude<VisibilityPreference, "dynamic">;
+type StaticVisibility = Exclude<VisibilityPreference, "dynamic">;
 
 const CardInspectionContext = createContext<(() => void) | undefined>(
   undefined,
@@ -772,15 +773,14 @@ function renderToolBlock(block: ContentBlock) {
       );
     case "markdown":
       return (
-        <div
-          className="activity-reader tool-markdown"
+        <ActivityReader
+          className="tool-markdown"
+          reader="markdown"
           data-error={block.error || undefined}
-          role="group"
-          aria-label={block.label ?? "Formatted output"}
-          tabIndex={0}
+          label={block.label ?? "Formatted output"}
         >
           <RichText text={block.text} variant="extension" />
-        </div>
+        </ActivityReader>
       );
     case "empty":
       return <div className="tool-empty">No output</div>;
@@ -906,62 +906,6 @@ function ToolActivityText(props: React.ComponentProps<typeof ActivityText>) {
   return <ActivityText {...props} following={preview?.phase === "streaming"} />;
 }
 
-function PhaseToolDetails({
-  calls,
-  running,
-  settled,
-  children,
-  script,
-  codemode,
-}: {
-  calls?: ChildCallList;
-  running: boolean;
-  settled: boolean;
-  children: React.ReactNode;
-  script?: React.ReactNode;
-  codemode: boolean;
-}) {
-  const [readingCalls, setReadingCalls] =
-    useActivityReaderExpanded("reading-calls");
-  const inspect = useContext(CardInspectionContext);
-  const resultBody = (
-    <div key="result" className="tool-call-result">
-      {children}
-    </div>
-  );
-  const callsBody =
-    calls && (calls.calls.length > 0 || !calls.complete) ? (
-      <div key="calls">
-        {!codemode && (
-          <div className="card__section-label">
-            {childCallsSummary(calls) || "Calls"}
-          </div>
-        )}
-        <ChildCalls
-          list={calls}
-          running={running}
-          onRead={() => {
-            inspect?.();
-            if (!settled) setReadingCalls(true);
-          }}
-        />
-      </div>
-    ) : null;
-  return (
-    <div
-      className={`tool-call-layout ${codemode ? "tool-call-layout--codemode" : ""}`}
-      onFocusCapture={inspect}
-      onClickCapture={inspect}
-      onPointerDownCapture={inspect}
-    >
-      {codemode || !settled || readingCalls
-        ? [callsBody, resultBody]
-        : [resultBody, callsBody]}
-      {script}
-    </div>
-  );
-}
-
 function ArgumentReader({ call }: { call: ToolCallContent }) {
   const items = toolFileArguments(call).map(({ key, value }) => ({
     label: key,
@@ -1014,8 +958,9 @@ function ToolDetails({
   const blocks = formatted ?? (result ? rawResultBlocks(result) : []);
   if (preview)
     blocks.push({ type: "live", label: "Output (live preview)", ...preview });
-  const phaseDetails = codemode || calls;
-  const inlineArgs = !result && !phaseDetails;
+  const hasCalls = calls && (calls.calls.length > 0 || !calls.complete);
+  const inspect = useContext(CardInspectionContext);
+  const inlineArgs = !result && !codemode && !calls;
   const pending = !result && !calls?.calls.length && (
     <div className="card__pending">{pendingToolText[status]}</div>
   );
@@ -1050,19 +995,29 @@ function ToolDetails({
       {call?.__inspireToolCall?.truncated ? (
         <div className="card__pending">Argument preview truncated</div>
       ) : null}
-      {phaseDetails ? (
-        <PhaseToolDetails
-          calls={calls}
-          running={status === "running"}
-          settled={Boolean(result)}
-          script={codemode && call ? <ToolScript call={call} /> : undefined}
-          codemode={codemode}
-        >
-          {body}
-        </PhaseToolDetails>
-      ) : (
-        body
-      )}
+      <div
+        className="tool-call-layout"
+        onFocusCapture={inspect}
+        onClickCapture={inspect}
+        onPointerDownCapture={inspect}
+      >
+        {hasCalls && (
+          <div>
+            {!codemode && (
+              <div className="card__section-label">
+                {childCallsSummary(calls) || "Calls"}
+              </div>
+            )}
+            <ChildCalls
+              list={calls}
+              running={status === "running"}
+              unbounded={codemode}
+            />
+          </div>
+        )}
+        {body}
+        {codemode && call && <ToolScript call={call} />}
+      </div>
     </ImageGallery>
   );
 }

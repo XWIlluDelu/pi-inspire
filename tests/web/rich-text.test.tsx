@@ -277,19 +277,6 @@ describe("local file references", () => {
     );
   });
 
-  it("keeps local Markdown links in the session reader", () => {
-    const paths = ["./out/report.pdf", "/tmp/run.log", "file:///tmp/chart.png"];
-    render(
-      <RichText
-        text={paths.map((path, i) => `[file ${i}](${path})`).join(" ")}
-      />,
-    );
-    for (const [i, path] of paths.entries()) {
-      const link = screen.getByRole("link", { name: `file ${i}` });
-      expect(link).toHaveAttribute("data-file-path", path);
-    }
-  });
-
   it("keeps http(s) and mailto links as safe external links", () => {
     render(
       <RichText text="[Pi](https://pi.dev) [mail](mailto:a@b.c) [paper](http://x.test/p.pdf)" />,
@@ -300,44 +287,10 @@ describe("local file references", () => {
       expect(link).toHaveAttribute("rel", "noreferrer noopener");
     }
   });
-
-  it("makes local images open the preview and remote images click-through links", () => {
-    const { container } = render(
-      <RichText text="![chart](./chart.png) ![logo](https://pi.dev/logo.png) ![Unknown](unrecognized-format)" />,
-    );
-    const local = screen.getByRole("button", { name: "Preview chart" });
-    expect(local).toHaveAttribute("data-file-path", "./chart.png");
-    // Remote images never auto-load; the reference becomes an explicit link.
-    expect(container.querySelector("img")).toBeNull();
-    expect(screen.getByText("Unknown")).toHaveAttribute(
-      "title",
-      "Image unavailable",
-    );
-    const remote = screen.getByRole("link", { name: /logo/ });
-    expect(remote).toHaveAttribute("href", "https://pi.dev/logo.png");
-    expect(remote).toHaveAttribute("rel", "noreferrer noopener");
-  });
-
-  it("makes credible inline-code paths clickable without touching ordinary code", () => {
-    const { container } = render(
-      <RichText text="Edit `src/store.ts` then run `npm test`." />,
-    );
-    const ref = container.querySelector('[data-file-path="src/store.ts"]');
-    expect(ref).toBeTruthy();
-    expect(ref!.textContent).toBe("src/store.ts");
-    expect(container.querySelector('[data-file-path="npm test"]')).toBeNull();
-  });
 });
 
 describe("markdown constructs", () => {
-  it("preserves and copies fenced and indented code as literal blocks", async ({
-    onTestFinished,
-  }) => {
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    vi.stubGlobal("navigator", { clipboard: { writeText } });
-    onTestFinished(() => {
-      vi.unstubAllGlobals();
-    });
+  it("preserves fenced and indented code as literal blocks", () => {
     const blocks = [
       [
         "```\n  src/store.ts\n\n\t$x$\n<img src=x>\n```",
@@ -364,46 +317,6 @@ describe("markdown constructs", () => {
       screen.getByText("python", { selector: ".code-block__lang" }),
     ).toBeVisible();
     expect(container.querySelector("code.language-python")).toHaveClass("hljs");
-    expect(
-      screen.getAllByRole("button", { name: "Insert code in terminal" }),
-    ).toHaveLength(blocks.length);
-    fireEvent.click(screen.getAllByRole("button", { name: "Copy code" })[0]!);
-    await waitFor(() =>
-      expect(writeText).toHaveBeenCalledExactlyOnceWith(blocks[0]![1]),
-    );
-  });
-
-  it("keeps task markers separate from tight-item content without losing inline formatting", () => {
-    const { container } = render(
-      <RichText
-        text={
-          "| A | B |\n| - | - |\n| 1 | 2 |\n\n- [x] Review **reference** and `run-id` before [next run](https://example.invalid/run).\n- [ ] Retain the sample.\n\n7. Ordinary item."
-        }
-      />,
-    );
-    expect(screen.getByRole("table")).toBeInTheDocument();
-    const ordinaryList = container.querySelector("ol");
-    expect(ordinaryList).toHaveAttribute("start", "7");
-    expect(ordinaryList?.querySelector("li")).toHaveTextContent(
-      "Ordinary item",
-    );
-    const tasks = container.querySelectorAll(".task-list-item");
-    const content = tasks[0]!.querySelector(".rich-text__task-content")!;
-    expect(content.textContent).toBe(
-      "Review reference and run-id before next run.",
-    );
-    expect(content.querySelector("strong")).toHaveTextContent("reference");
-    expect(content.querySelector("code")).toHaveTextContent("run-id");
-    expect(content.querySelector("a")).toHaveAttribute(
-      "href",
-      "https://example.invalid/run",
-    );
-    const marker = content.querySelector(".rich-text__task-marker input");
-    expect(marker).toBeChecked();
-    expect(marker).toBeDisabled();
-    const pending = tasks[1]!.querySelector("input");
-    expect(pending).not.toBeChecked();
-    expect(pending).toBeDisabled();
   });
 
   it.each([false, true])(

@@ -284,7 +284,7 @@ test.describe("touch reading controls", () => {
     context,
   }) => {
     const emit = await searchFixture(page, "Touch code actions");
-    const code = "console.log('Ready');";
+    const code = "  console.log('Ready');\n\n\t// Preserve indentation";
     emit({
       type: "message_end",
       message: {

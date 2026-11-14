@@ -28,11 +28,10 @@ import {
   usePresentationAdapters,
 } from "../presentation-adapters";
 import { store } from "../store";
-import { useImageUrl } from "../use-image-url";
 import { hasActiveModal } from "../use-modal-focus";
 import { CopyAction } from "./CopyAction";
 import { ImageGallery } from "./ImageGallery";
-import { ImagePreview, messageImage } from "./ImagePreview";
+import { LoadedImagePreview, messageImage } from "./ImagePreview";
 import { PiLoader } from "./PiLoader";
 import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
 import {
@@ -334,17 +333,7 @@ function PendingImage({ id, alt }: { id: string; alt: string }) {
     (signal: AbortSignal) => store.loadAttachmentImage(id, signal),
     [id],
   );
-  const { src, error } = useImageUrl(loadImage);
-
-  return (
-    <ImagePreview
-      src={src}
-      alt={alt}
-      className="pending-group__image"
-      loading={!src && !error}
-      error={error}
-    />
-  );
+  return <LoadedImagePreview load={loadImage} alt={alt} className="pending-group__image" />;
 }
 
 export function PendingQueueGroups({

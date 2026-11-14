@@ -52,7 +52,7 @@ covers:
   - tests/web/{transcript-search-highlights,content-copy,activity-visibility}.test.tsx
   - tests/browser/{transcript-search,extension-ui}.spec.ts
   - tests/web/assistant-error.test.tsx
-  - tests/web/custom-message.test.tsx
+  - tests/browser/custom-message.spec.ts
   - tests/browser/assistant-error.spec.ts
   - tests/web/transcript-fold.test.tsx
   - tests/web/prompt-map.test.tsx

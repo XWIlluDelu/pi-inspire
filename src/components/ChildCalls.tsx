@@ -127,11 +127,11 @@ function CallRow({ call }: { call: ChildCall }) {
 export function ChildCalls({
   list,
   running,
-  onRead,
+  unbounded = false,
 }: {
   list: ChildCallList;
   running: boolean;
-  onRead: () => void;
+  unbounded?: boolean;
 }) {
   const scroll = useActivityReaderScroll<HTMLDivElement>(
     "child-calls-scroll",
@@ -142,27 +142,13 @@ export function ChildCalls({
     <>
       <div
         className="child-calls"
-        ref={scroll.props.ref}
+        data-unbounded={unbounded || undefined}
+        {...scroll.props}
         tabIndex={0}
         role="group"
         aria-label="Child calls"
-        onFocusCapture={() => {
-          scroll.stopFollowing();
-          onRead();
-        }}
-        onPointerDown={() => {
-          scroll.stopFollowing();
-          onRead();
-        }}
-        onScroll={(event) => {
-          scroll.props.onScroll(event);
-          const element = event.currentTarget;
-          if (
-            element.scrollHeight - element.scrollTop - element.clientHeight >=
-            24
-          )
-            onRead();
-        }}
+        onFocusCapture={scroll.stopFollowing}
+        onPointerDown={scroll.stopFollowing}
       >
         {list.calls.map((call) => (
           <CallRow key={call.key} call={call} />
