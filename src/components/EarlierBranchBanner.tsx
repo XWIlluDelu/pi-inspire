@@ -1,5 +1,5 @@
 import { GitBranch, X } from "lucide-react";
-import { memo, useLayoutEffect, useRef, useState } from "react";
+import { memo, useRef, useState } from "react";
 import { hasEarlierContinuation } from "../controllers/branch-controller";
 import { shallowEqual, store, useAppState } from "../store";
 import { PiLoader } from "./PiLoader";
@@ -9,38 +9,15 @@ export const EarlierBranchBanner = memo(function EarlierBranchBanner() {
     useAppState(
       (state) => ({
         earlierContinuation: hasEarlierContinuation(state),
-        durableLeafId: state.transcriptDurableLeafId,
+        durableLeafId: state.view.durableLeafId,
         actionId: state.branchActionId,
         treeError: state.branchTreeError,
       }),
       shallowEqual,
     );
   const [dismissed, setDismissed] = useState(false);
-  const visible = earlierContinuation && !dismissed;
   const bannerRef = useRef<HTMLElement>(null);
-  useLayoutEffect(() => {
-    if (!visible) return;
-    const banner = bannerRef.current;
-    const wrap = banner?.parentElement;
-    if (!banner || !wrap) return;
-    const measure = () => {
-      const bottom =
-        banner.getBoundingClientRect().bottom -
-        wrap.getBoundingClientRect().top;
-      wrap.style.setProperty(
-        "--earlier-branch-inset",
-        `calc(${bottom}px + var(--space-4))`,
-      );
-    };
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(banner);
-    return () => {
-      observer.disconnect();
-      wrap.style.removeProperty("--earlier-branch-inset");
-    };
-  }, [visible]);
-  if (!visible) return null;
+  if (!earlierContinuation || dismissed) return null;
 
   const busy = actionId !== null;
   const returning = actionId === `switch:${durableLeafId}`;
@@ -71,7 +48,9 @@ export const EarlierBranchBanner = memo(function EarlierBranchBanner() {
         aria-label="Dismiss earlier continuation notice"
         title="Dismiss notice"
         onClick={() => {
-          bannerRef.current?.parentElement?.focus({ preventScroll: true });
+          bannerRef.current
+            ?.closest<HTMLElement>(".transcript-wrap")
+            ?.focus({ preventScroll: true });
           setDismissed(true);
         }}
       >

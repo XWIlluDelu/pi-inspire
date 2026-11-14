@@ -1,8 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { hostReceipt } from "../../shared/host-operations";
+import { matchOperationReceipt } from "../../shared/host-operations";
 import {
-  ApiError,
   ApiRequestCancelledError,
   ApiTransportError,
   createApi,
@@ -16,9 +15,19 @@ const prompt = {
   message: "hello",
 };
 
-const receipt = hostReceipt("prompt", prompt);
+const receipt = {
+  executor: { kind: "host", authorityId: "authority-1" },
+  operationId: "operation-1",
+  command: "prompt",
+};
+const receiptPath = "/api/prompt/operation-1?authorityId=authority-1";
 const accepted = { ...receipt, state: "completed", result: null };
 const pending = { ...receipt, state: "pending" };
+const rejection = {
+  ...receipt,
+  state: "rejected",
+  error: { status: 409, message: "Pi refused prompt" },
+};
 
 afterEach(() => {
   vi.useRealTimers();
@@ -50,125 +59,76 @@ describe("prompt delivery transport", () => {
     ).toHaveLength(1);
   });
 
-  it("confirms a lost submission response using only the original receipt", async () => {
-    vi.useFakeTimers();
-    const fetch = vi
-      .fn<typeof globalThis.fetch>()
-      .mockRejectedValueOnce(
-        new TypeError("Connection closed during POST response"),
-      )
-      .mockResolvedValueOnce(
-        Response.json({ error: "Proxy unavailable" }, { status: 503 }),
-      )
-      .mockResolvedValueOnce(Response.json(accepted));
-    vi.stubGlobal("fetch", fetch);
-
-    const delivery = createApi().prompt(prompt);
-    await vi.advanceTimersByTimeAsync(1_500);
-    await expect(delivery).resolves.toEqual({
-      accepted: true,
-      historyEntry: null,
-    });
-    expect(fetch.mock.calls.map(([url, init]) => [url, init?.method])).toEqual([
-      ["/api/prompt", "POST"],
-      ["/api/prompt/operation-1?authorityId=authority-1", undefined],
-      ["/api/prompt/operation-1?authorityId=authority-1", undefined],
-    ]);
-  });
-
-  it("preserves unknown delivery when a lost submission has no matching receipt", async () => {
-    vi.useFakeTimers();
-    const fetch = vi
-      .fn<typeof globalThis.fetch>()
-      .mockRejectedValueOnce(new TypeError("Connection closed"))
-      .mockResolvedValueOnce(
-        Response.json(
-          { code: "PROMPT_OPERATION_NOT_FOUND", outcomeUnknown: true },
-          { status: 409 },
-        ),
-      );
-    vi.stubGlobal("fetch", fetch);
-
-    const delivery = createApi().prompt(prompt);
-    const rejected = expect(delivery).rejects.toMatchObject({
-      code: "PROMPT_OPERATION_NOT_FOUND",
-      outcomeUnknown: true,
-    });
-    await vi.advanceTimersByTimeAsync(1_000);
-    await rejected;
-    expect(fetch.mock.calls.map(([url]) => url)).toEqual([
-      "/api/prompt",
-      "/api/prompt/operation-1?authorityId=authority-1",
-    ]);
-  });
-
-  it("keeps a submitted prompt unconfirmed when its receipt read returns 401", async () => {
-    vi.useFakeTimers();
-    const fetch = vi
-      .fn<typeof globalThis.fetch>()
-      .mockResolvedValueOnce(Response.json(pending))
-      .mockResolvedValueOnce(
-        Response.json({ error: "Pairing expired" }, { status: 401 }),
-      );
-    vi.stubGlobal("fetch", fetch);
-    const result = expect(createApi().prompt(prompt)).rejects.toMatchObject({
-      status: 401,
-      outcomeUnknown: true,
-    });
-    await vi.advanceTimersByTimeAsync(1_000);
-    await result;
-    expect(fetch.mock.calls[1]?.[0]).toBe(
-      "/api/prompt/operation-1?authorityId=authority-1",
-    );
-  });
-
-  it("checks the original receipt without dispatch when retrying uncertain delivery", async () => {
-    const fetch = vi.fn(async () =>
-      Response.json({ error: "No receipt" }, { status: 409 }),
-    );
-    vi.stubGlobal("fetch", fetch);
-    await expect(createApi().observePrompt(prompt)).rejects.toMatchObject({
-      outcomeUnknown: true,
-    });
-    expect(fetch).toHaveBeenCalledExactlyOnceWith(
-      "/api/prompt/operation-1?authorityId=authority-1",
-      expect.not.objectContaining({ method: "POST" }),
-    );
-  });
-
-  it("accepts only matching Host proof of rejection", async () => {
-    const response = (state = "rejected") =>
-      Response.json(
-        {
-          ...receipt,
-          state,
-          error: { status: 409, message: "Pi refused prompt" },
-        },
-        { status: 409 },
-      );
-    const fetch = vi.fn(() => Promise.resolve(response()));
-    vi.stubGlobal("fetch", fetch);
-    const api = createApi();
-    await expect(api.prompt(prompt)).rejects.toMatchObject({
-      name: "ApiError",
+  it.each([
+    { status: 200, result: accepted },
+    {
       status: 409,
-      outcomeUnknown: false,
-    } satisfies Partial<ApiError>);
-    for (const body of [
-      { ...prompt, operationId: "another-operation" },
-      { ...prompt, authorityId: "another-host" },
-    ]) {
-      await expect(api.prompt(body)).rejects.toMatchObject({
-        outcomeUnknown: true,
+      result: { code: "PROMPT_OPERATION_NOT_FOUND", outcomeUnknown: true },
+    },
+    { status: 401, result: { error: "Pairing expired" } },
+  ])(
+    "observes the original receipt after a lost or pending POST ($status)",
+    async ({ status, result }) => {
+      vi.useFakeTimers();
+      const fetch = vi.fn<typeof globalThis.fetch>();
+      if (status === 401) fetch.mockResolvedValueOnce(Response.json(pending));
+      else
+        fetch.mockRejectedValueOnce(new TypeError("Lost submission response"));
+      if (status === 200)
+        fetch.mockResolvedValueOnce(
+          Response.json({ error: "Proxy unavailable" }, { status: 503 }),
+        );
+      fetch.mockResolvedValueOnce(Response.json(result, { status }));
+      vi.stubGlobal("fetch", fetch);
+
+      const delivery = createApi().prompt(prompt);
+      const outcome =
+        status === 200
+          ? expect(delivery).resolves.toEqual({
+              accepted: true,
+              historyEntry: null,
+            })
+          : expect(delivery).rejects.toMatchObject({
+              status,
+              outcomeUnknown: true,
+              ...(status === 409 ? { code: "PROMPT_OPERATION_NOT_FOUND" } : {}),
+            });
+      await vi.advanceTimersByTimeAsync(1_500);
+      await outcome;
+      expect(
+        fetch.mock.calls.map(([url, init]) => [url, init?.method]),
+      ).toEqual([
+        ["/api/prompt", "POST"],
+        [receiptPath, undefined],
+        ...(status === 200 ? [[receiptPath, undefined]] : []),
+      ]);
+    },
+  );
+
+  it.each([
+    [rejection, false],
+    [{ ...rejection, state: "unknown" }, true],
+    [
+      { ...rejection, executor: { kind: "host", authorityId: "another-host" } },
+      true,
+    ],
+  ] as const)(
+    "checks only the original receipt and requires matching rejection proof (%#)",
+    async (result, outcomeUnknown) => {
+      const fetch = vi.fn(async () => Response.json(result, { status: 409 }));
+      vi.stubGlobal("fetch", fetch);
+      await expect(createApi().observePrompt(prompt)).rejects.toMatchObject({
+        outcomeUnknown,
+        ...(outcomeUnknown
+          ? {}
+          : { status: 409, message: rejection.error.message }),
       });
-    }
-    fetch.mockResolvedValueOnce(response("unknown"));
-    await expect(api.prompt(prompt)).rejects.toMatchObject({
-      name: "ApiError",
-      status: 409,
-      outcomeUnknown: true,
-    });
-  });
+      expect(fetch).toHaveBeenCalledExactlyOnceWith(
+        receiptPath,
+        expect.not.objectContaining({ method: "POST" }),
+      );
+    },
+  );
 
   it("waits beyond 30s using owned pending receipts without posting the prompt again", async () => {
     vi.useFakeTimers();
@@ -192,7 +152,7 @@ describe("prompt delivery transport", () => {
     ]);
     for (const call of fetch.mock.calls.slice(1)) {
       expect(call).toEqual([
-        "/api/prompt/operation-1?authorityId=authority-1",
+        receiptPath,
         expect.not.objectContaining({ method: "POST" }),
       ]);
     }
@@ -214,21 +174,37 @@ describe("prompt delivery transport", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
-  it.each([pending, accepted])(
-    "ignores a receipt from another operation ($state)",
-    async (result) => {
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(async () =>
-          Response.json({ ...result, operationId: "another-operation" }),
-        ),
-      );
-      await expect(createApi().prompt(prompt)).rejects.toMatchObject({
-        name: ApiTransportError.name,
-        outcomeUnknown: true,
-      });
+  it("rejects a malformed prompt result after matching the operation", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ ...accepted, result: {} })),
+    );
+    await expect(createApi().prompt(prompt)).rejects.toMatchObject({
+      name: ApiTransportError.name,
+      outcomeUnknown: true,
+    });
+  });
+});
+
+it("matches only a complete receipt from the original executor and operation", () => {
+  const unknown = { ...rejection, state: "unknown" };
+  for (const value of [pending, accepted, rejection, unknown])
+    expect(matchOperationReceipt(value, receipt)).toBe(value);
+  for (const value of [
+    { ...pending, operationId: "another-operation" },
+    { ...accepted, command: "abort" },
+    { ...rejection, executor: { ...receipt.executor, extra: "invalid" } },
+    {
+      ...rejection,
+      executor: { ...receipt.executor, authorityId: "another-host" },
     },
-  );
+    { ...pending, executor: null },
+    { ...receipt, state: "completed" },
+    { ...unknown, error: { status: "409", message: "unknown" } },
+    { ...receipt, state: "expired" },
+  ]) {
+    expect(matchOperationReceipt(value, receipt)).toBeNull();
+  }
 });
 
 describe("ordinary HTTP observation", () => {

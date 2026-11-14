@@ -84,14 +84,41 @@ export class RecoveryBackoff {
   }
 }
 
-/** One cancellable owner. Each read starts a fresh retry budget. */
-export function recoverableRead(owns: () => boolean) {
+/** The owner is checked both before reading and before the result can publish. */
+export function readScope(owns: () => boolean, parent?: AbortSignal) {
   const controller = new AbortController();
-  const { signal } = controller;
+  const signal = parent
+    ? AbortSignal.any([parent, controller.signal])
+    : controller.signal;
+  const current = () => !signal.aborted && owns();
+  const check = () => {
+    if (!current())
+      throw new DOMException("The read is no longer current", "AbortError");
+  };
   return {
-    current: () => !signal.aborted && owns(),
+    signal,
+    current,
+    check,
     abort: () => controller.abort(),
+    async read<T>(
+      perform: (signal: AbortSignal) => Promise<T>,
+      recovery?: RecoveryBackoff,
+    ): Promise<T> {
+      check();
+      const result = recovery
+        ? await recovery.read(() => perform(signal), signal, owns)
+        : await perform(signal);
+      check();
+      return result;
+    },
+  };
+}
+
+export function recoverableRead(owns: () => boolean) {
+  const scope = readScope(owns);
+  return {
+    ...scope,
     read: <T>(perform: (signal: AbortSignal) => Promise<T>) =>
-      new RecoveryBackoff().read(() => perform(signal), signal, owns),
+      scope.read(perform, new RecoveryBackoff()),
   };
 }

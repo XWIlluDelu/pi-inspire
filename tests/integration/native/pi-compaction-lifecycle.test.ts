@@ -7,7 +7,7 @@ import {
   disposeOperationFixture,
   eventsOf,
   fixture,
-} from "./fixtures/native-operation.js";
+} from "./operation-fixture";
 
 afterEach(disposeOperationFixture);
 
@@ -19,7 +19,7 @@ async function compactThenReturnToEarlierPoint(
   await f.api.navigateBranch({
     sessionId: f.sessionId,
     revision: tree.branchRevision!,
-    targetId: "00000008",
+    targetId: f.earlierEntryId,
     mode: "switch",
     summarize: false,
   });
@@ -78,7 +78,7 @@ describe("native manual compaction cancellation", () => {
         outcome: "cancelled",
       });
       const cancelled = await f.runtime.snapshot(f.sessionId);
-      expect(cancelled.runState).toBe("aborted");
+      expect(cancelled.sessionStatuses[f.sessionId]?.runState).toBe("aborted");
       expect(cancelled.active?.projectionConflict).toBeNull();
       expect(cancelled.pendingQueues?.totalCount).toBe(0);
       expect(
@@ -152,7 +152,10 @@ describe("native manual compaction cancellation", () => {
     expect(worker.stop).toHaveBeenCalledWith("compact");
     expect(worker.available).toBe(false);
     expect(worker.pid).toBeNull();
-    expect((await f.runtime.snapshot(f.sessionId)).runState).toBe("aborted");
+    expect(
+      (await f.runtime.snapshot(f.sessionId)).sessionStatuses[f.sessionId]
+        ?.runState,
+    ).toBe("aborted");
     expect(
       (await f.runtime.snapshot(f.sessionId)).active?.projectionConflict,
     ).toBeNull();
@@ -186,7 +189,10 @@ describe("native manual compaction cancellation", () => {
     );
     await f.api.abort(f.sessionId);
     await expect(compacting).resolves.toMatchObject({ outcome: "completed" });
-    expect((await f.runtime.snapshot(f.sessionId)).runState).toBe("idle");
+    expect(
+      (await f.runtime.snapshot(f.sessionId)).sessionStatuses[f.sessionId]
+        ?.runState,
+    ).toBe("idle");
     expect(eventsOf(f.runtimeEvents, "compaction_end").at(-1)).toMatchObject({
       result: {},
     });
@@ -200,7 +206,7 @@ describe("native manual compaction cancellation", () => {
       .map((line) => JSON.parse(line)) as SessionEntry[];
     const compactions = entries.filter((entry) => entry.type === "compaction");
     expect(compactions).toHaveLength(2);
-    expect(compactions.at(-1)?.parentId).toBe("00000008");
+    expect(compactions.at(-1)?.parentId).toBe(f.earlierEntryId);
     expect(entries.at(-1)).toMatchObject({
       type: "custom",
       customType: "fixture-after-compaction",

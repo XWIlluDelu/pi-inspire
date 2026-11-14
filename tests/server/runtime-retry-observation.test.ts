@@ -11,8 +11,8 @@ import {
   disposeRuntimeFixture,
   initializeRuntimeFixture,
   schedulingRuntime,
-  trackRuntime,
   startWorker,
+  trackRuntime,
 } from "./fixtures/runtime.js";
 
 describe("worker-confirmed retry observation", () => {
@@ -64,25 +64,28 @@ describe("worker-confirmed retry observation", () => {
       detail.message,
     );
     expect(await snapshot()).toMatchObject({
-      runState: "retrying",
+      sessionStatuses: { a: { runState: "retrying" } },
       retry: detail,
     });
     await emit("auto_retry_end", { success: true });
     expect((await snapshot()).retry).toBeNull();
     await emit("auto_retry_start", { ...retry, attempt: 99 });
     expect(await snapshot()).toMatchObject({
-      runState: "retrying",
+      sessionStatuses: { a: { runState: "retrying" } },
       retry: null,
     });
     await emit("agent_settled");
-    expect(await snapshot()).toMatchObject({ runState: "idle", retry: null });
+    expect(await snapshot()).toMatchObject({
+      sessionStatuses: { a: { runState: "idle" } },
+      retry: null,
+    });
 
     await emit("compaction_start", { reason: "manual" });
     expect(
       (await emit("summarization_retry_scheduled", retry)).errorMessage,
     ).toBe(detail.message);
     expect(await snapshot()).toMatchObject({
-      runState: "compacting",
+      sessionStatuses: { a: { runState: "compacting" } },
       retry: null,
       summarizationRetry: detail,
     });
@@ -93,14 +96,14 @@ describe("worker-confirmed retry observation", () => {
     ]) {
       await emit(type);
       expect(await snapshot()).toMatchObject({
-        runState: "compacting",
+        sessionStatuses: { a: { runState: "compacting" } },
         summarizationRetry: null,
       });
       await emit("summarization_retry_scheduled", retry);
     }
     await emit("compaction_end", { reason: "manual", aborted: true });
     expect(await snapshot()).toMatchObject({
-      runState: "aborted",
+      sessionStatuses: { a: { runState: "aborted" } },
       summarizationRetry: null,
     });
   });

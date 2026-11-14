@@ -26,8 +26,6 @@ interface SessionSelectionControllerHost {
   releaseOpening(ticket: number): void;
   applySnapshot(snapshot: ActiveSnapshot): void;
   ensureSessionVisible(sessionId: string): void;
-  consumeReadyWhileOpening(sessionId: string, ticket: number): boolean;
-  resyncSelected(sessionId: string): void;
   setActionError(message: string | null): void;
   rememberModel(model: ModelIdentity): void;
   refreshSessionCatalog(): void;
@@ -73,11 +71,8 @@ export class SessionSelectionController {
       (signal) => api.openSession(id, signal),
       "Failed to open session",
       "superseded",
-      (_snapshot, ticket) => {
+      () => {
         this.host.ensureSessionVisible(id);
-        if (this.host.consumeReadyWhileOpening(id, ticket)) {
-          this.host.resyncSelected(id);
-        }
         return "opened";
       },
       (error) =>
@@ -164,7 +159,7 @@ export class SessionSelectionController {
     request: (signal: AbortSignal) => Promise<ActiveSnapshot>,
     fallbackMessage: string,
     staleResult: T,
-    afterApply: (snapshot: ActiveSnapshot, ticket: number) => T,
+    afterApply: (snapshot: ActiveSnapshot) => T,
     onFailure?: (error: unknown) => T,
   ): Promise<T> {
     const ticket = this.host.beginOpening(openingSessionId);
@@ -176,7 +171,7 @@ export class SessionSelectionController {
       if (!this.host.ownsOpening(ticket, api)) return staleResult;
       this.host.applySnapshot(snapshot);
       this.host.setActionError(null);
-      return afterApply(snapshot, ticket);
+      return afterApply(snapshot);
     } catch (error) {
       if (this.host.ownsOpening(ticket, api)) {
         if (error instanceof ApiError && error.status === 401)

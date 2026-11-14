@@ -2,33 +2,27 @@ import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
 import type { RefObject } from "react";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import { NativeSelect } from "./NativeSelect";
+import { SearchField } from "./SearchField";
 import {
   TRANSCRIPT_SEARCH_SCOPES,
-  type TranscriptSearchScope,
   type useTranscriptSearch,
 } from "./transcript-search";
 
-type MobileTranscriptTool = "search" | null;
-
-/**
- * Persistent desktop search and local narrow launchers.
- * Transcript retains state and focus ownership.
- */
 export function TranscriptUtilities({
   search,
   inputRef,
   searchLauncherRef,
   onOpenHistory,
-  mobileTool,
-  onOpenMobile,
+  searchOpen,
+  onOpenSearch,
   onClose,
 }: {
   search: ReturnType<typeof useTranscriptSearch>;
   inputRef: RefObject<HTMLInputElement | null>;
   searchLauncherRef: RefObject<HTMLButtonElement | null>;
   onOpenHistory?: () => void;
-  mobileTool: MobileTranscriptTool;
-  onOpenMobile: (tool: MobileTranscriptTool) => void;
+  searchOpen: boolean;
+  onOpenSearch: () => void;
   onClose: (restoreFocus?: boolean) => void;
 }) {
   const matchCount = search.matches.length;
@@ -38,72 +32,42 @@ export function TranscriptUtilities({
     : `${matchCount} ${matchCount === 1 ? "match" : "matches"}`;
 
   return (
-    <>
-      <div className="transcript-mobile-toolbar">
-        {mobileTool !== "search" ? (
-          <div
-            className="transcript-mobile-toolbar__launchers"
-            role="toolbar"
-            aria-label="Transcript tools"
-          >
-            {onOpenHistory && (
-              <button
-                type="button"
-                className="transcript-mobile-toolbar__button transcript-mobile-toolbar__button--history"
-                onClick={onOpenHistory}
-              >
-                Turn history
-              </button>
-            )}
-            <button
-              ref={searchLauncherRef}
-              type="button"
-              className="transcript-mobile-toolbar__button"
-              aria-label="Open conversation search"
-              title="Search conversation"
-              onClick={() => onOpenMobile("search")}
-            >
-              <Search size={18} aria-hidden />
-            </button>
-          </div>
-        ) : null}
-      </div>
+    <div
+      className="transcript-tools"
+      data-search-open={searchOpen || undefined}
+      role="toolbar"
+      aria-label="Transcript tools"
+    >
       {onOpenHistory && (
         <button
           type="button"
-          className="native-history-launcher"
+          className="button transcript-tools__history"
           onClick={onOpenHistory}
         >
           Turn history
         </button>
       )}
-      <div
-        className={`transcript-search ${search.query ? "transcript-search--active" : ""} ${mobileTool === "search" ? "transcript-search--open" : ""}`}
+      <button
+        ref={searchLauncherRef}
+        type="button"
+        className="button transcript-tools__open"
+        aria-label="Open conversation search"
+        title="Search conversation"
+        onClick={onOpenSearch}
+      >
+        <Search size={18} aria-hidden />
+      </button>
+      <section
+        className="transcript-search"
         role="search"
         aria-label="Search conversation"
-        onClick={(event) => {
-          if (
-            event.target === event.currentTarget ||
-            (event.target instanceof Element &&
-              event.target.closest(".transcript-search__icon"))
-          ) {
-            inputRef.current?.focus();
-          }
-        }}
       >
-        <Search size={14} className="transcript-search__icon" aria-hidden />
-        <NativeSelect
-          label="Search scope"
-          value={search.scope}
-          options={TRANSCRIPT_SEARCH_SCOPES}
-          onChange={(value) => search.setScope(value as TranscriptSearchScope)}
-          className="transcript-search__scope"
-        />
-        <input
-          ref={inputRef}
-          type="search"
+        <SearchField
+          className="transcript-search__field"
+          data-query-active={Boolean(search.query) || undefined}
+          inputRef={inputRef}
           value={search.query}
-          onChange={(event) => search.setQuery(event.target.value)}
+          onValueChange={search.setQuery}
           onKeyDown={(event) => {
             if (isComposingKeyboardEvent(event.nativeEvent)) return;
             if (event.key === "Enter") {
@@ -112,56 +76,69 @@ export function TranscriptUtilities({
             } else if (event.key === "Escape") {
               event.preventDefault();
               event.stopPropagation();
-              if (mobileTool === "search") onClose(true);
+              if (searchOpen) onClose(true);
               else inputRef.current?.blur();
             }
           }}
           placeholder="Search conversation"
           aria-label="Search conversation"
           title="Search loaded conversation messages"
+          action={
+            <>
+              <NativeSelect
+                label="Search scope"
+                value={search.scope}
+                options={TRANSCRIPT_SEARCH_SCOPES}
+                onChange={search.setScope}
+                className="transcript-search__scope"
+              />
+              <output
+                className="sr-only"
+                aria-live="polite"
+                aria-label="Transcript search matches"
+              >
+                {search.query ? matchStatus : ""}
+              </output>
+              {search.query ? (
+                <span
+                  className="transcript-search__count"
+                  aria-hidden="true"
+                  title={matchStatus}
+                >
+                  {currentMatch ? `${currentMatch}/${matchCount}` : matchCount}
+                </span>
+              ) : null}
+              <button
+                className="icon-button"
+                type="button"
+                aria-label="Previous transcript match"
+                disabled={matchCount === 0}
+                onClick={() => search.navigate(-1)}
+              >
+                <ChevronUp size={13} aria-hidden />
+              </button>
+              <button
+                className="icon-button"
+                type="button"
+                aria-label="Next transcript match"
+                disabled={matchCount === 0}
+                onClick={() => search.navigate(1)}
+              >
+                <ChevronDown size={13} aria-hidden />
+              </button>
+              <button
+                type="button"
+                className="icon-button transcript-tools__close"
+                aria-label="Close conversation search"
+                title="Close search"
+                onClick={() => onClose(true)}
+              >
+                <X size={14} aria-hidden />
+              </button>
+            </>
+          }
         />
-        <output
-          className="sr-only"
-          aria-live="polite"
-          aria-label="Transcript search matches"
-        >
-          {search.query ? matchStatus : ""}
-        </output>
-        {search.query ? (
-          <span
-            className="transcript-search__count"
-            aria-hidden="true"
-            title={matchStatus}
-          >
-            {currentMatch ? `${currentMatch}/${matchCount}` : matchCount}
-          </span>
-        ) : null}
-        <button
-          type="button"
-          aria-label="Previous transcript match"
-          disabled={matchCount === 0}
-          onClick={() => search.navigate(-1)}
-        >
-          <ChevronUp size={13} aria-hidden />
-        </button>
-        <button
-          type="button"
-          aria-label="Next transcript match"
-          disabled={matchCount === 0}
-          onClick={() => search.navigate(1)}
-        >
-          <ChevronDown size={13} aria-hidden />
-        </button>
-        <button
-          type="button"
-          className="transcript-search__close"
-          aria-label="Close conversation search"
-          title="Close search"
-          onClick={() => onClose(true)}
-        >
-          <X size={14} aria-hidden />
-        </button>
-      </div>
-    </>
+      </section>
+    </div>
   );
 }

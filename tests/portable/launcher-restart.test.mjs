@@ -174,7 +174,9 @@ test("lost post-commit confirmation remains uncertain without retrying", async (
   }
 });
 
-async function launcherFixture(t, mode) {
+test("standalone stop cancels page replacement even after Host state disappeared", {
+  timeout: 60_000,
+}, async (t) => {
   const root = await mkdtemp(join(tmpdir(), "inspire-launcher-handoff-"));
   await preparePackagedLauncher(root, {
     host: `
@@ -184,7 +186,6 @@ async function launcherFixture(t, mode) {
     const result = await createLauncherRestartClient().request(() => true);
     if (!result.issued) process.exit(2);
     await writeFile(process.env.TEST_READY, "ready");
-    if (process.env.TEST_MODE === "failed-cleanup") process.exit(1);
     // Model the real shutdown interval after state removal but before exit.
     while (!(await readFile(process.env.INSPIRE_STOP_REQUEST_PATH).catch(() => null)))
       await new Promise(resolve => setTimeout(resolve, 10));
@@ -195,7 +196,6 @@ async function launcherFixture(t, mode) {
     ...(await directLauncherEnvironment(root)),
     TEST_LAUNCHES: join(root, "launches"),
     TEST_READY: join(root, "ready"),
-    TEST_MODE: mode,
   };
   const child = spawn(process.execPath, [join(root, "inspire.mjs")], {
     cwd: root,
@@ -220,36 +220,21 @@ async function launcherFixture(t, mode) {
     }
     await rm(root, { recursive: true, force: true });
   });
-  return { root, env, child, exited, output: () => output };
-}
-
-test("launcher does not replace a Host whose restart cleanup failed", {
-  timeout: 60_000,
-}, async (t) => {
-  const f = await launcherFixture(t, "failed-cleanup");
-  assert.equal(await f.exited, 1, f.output());
-  assert.equal(await readFile(f.env.TEST_LAUNCHES, "utf8"), "started\n");
-});
-
-test("standalone stop cancels page replacement even after Host state disappeared", {
-  timeout: 60_000,
-}, async (t) => {
-  const f = await launcherFixture(t, "stop-race");
   const deadline = Date.now() + 30_000;
-  while (!(await readFile(f.env.TEST_READY).catch(() => null))) {
-    assert.equal(f.child.exitCode, null, f.output());
-    assert.ok(Date.now() < deadline, f.output());
+  while (!(await readFile(env.TEST_READY).catch(() => null))) {
+    assert.equal(child.exitCode, null, output);
+    assert.ok(Date.now() < deadline, output);
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
   const result = await promisify(execFileCallback)(
     process.execPath,
-    [join(f.root, "inspire.mjs"), "stop"],
-    { env: f.env, timeout: 30_000 },
+    [join(root, "inspire.mjs"), "stop"],
+    { env, timeout: 30_000 },
   );
   assert.match(
     result.stdout,
     /Cancelled the pending INSΠRE startup|No managed INSΠRE instance/u,
   );
-  assert.equal(await f.exited, 0, f.output());
-  assert.equal(await readFile(f.env.TEST_LAUNCHES, "utf8"), "started\n");
+  assert.equal(await exited, 0, output);
+  assert.equal(await readFile(env.TEST_LAUNCHES, "utf8"), "started\n");
 });

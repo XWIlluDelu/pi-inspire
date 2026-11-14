@@ -307,7 +307,10 @@ export class McpConfigService {
               400,
             );
           const { source } = await readConfigurationFile(user);
-          const base = readServers(source)[name];
+          const inherited = readServers(source);
+          const base = Object.hasOwn(inherited, name)
+            ? inherited[name]
+            : undefined;
           if (!isJsonRecord(base))
             throw requestError(
               "Project policy override needs a same-name user server",

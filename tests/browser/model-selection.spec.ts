@@ -71,7 +71,7 @@ test("native model controls adopt Pi's effective results and preserve the draft"
         thinkingLevel,
         availableModels: models,
       };
-      snapshot.runState = "running";
+
       snapshot.sessionStatuses[id] = {
         runState: "running",
         external: true,

@@ -39,8 +39,8 @@ export const ExtensionUiDialog = memo(function ExtensionUiDialog({
 }) {
   const { requests, respondingId, runState } = useAppState(
     (state) => ({
-      requests: state.extensionUiRequests,
-      respondingId: state.extensionUiRespondingId,
+      requests: state.live.extensionUiRequests,
+      respondingId: state.live.extensionUiRespondingId,
       runState: selectedRunState(state),
     }),
     shallowEqual,

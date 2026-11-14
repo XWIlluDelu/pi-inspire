@@ -42,8 +42,7 @@ describe("native shell transcript", () => {
     ).toBeVisible();
   });
 
-  it("stream updates retain model state and hand off live-to-persisted identity without duplicate cards", () => {
-    const settled = new Set<string>();
+  it("stream updates retain model state and replace the same live shell row", () => {
     const message = {
       role: "bashExecution",
       timestamp: 1,
@@ -54,7 +53,6 @@ describe("native shell transcript", () => {
     };
     let reduced = reduceEvent(
       { ...emptyEventSlice(), streaming: true },
-      settled,
       {
         type: "message_start",
         message,
@@ -66,7 +64,7 @@ describe("native shell transcript", () => {
       bashRunning: true,
       streaming: true,
     });
-    reduced = reduceEvent(reduced.slice, settled, {
+    reduced = reduceEvent(reduced.slice, {
       type: "message_end",
       shellExecution: true,
       bashRunning: false,
@@ -74,7 +72,6 @@ describe("native shell transcript", () => {
         ...message,
         output: "/project",
         exitCode: 0,
-        __inspireMessageId: "durable:0",
         __inspireBashRunning: false,
       },
     });
@@ -84,7 +81,7 @@ describe("native shell transcript", () => {
       streaming: true,
     });
     expect(reduced.slice.messages[0]).toMatchObject({
-      __inspireMessageId: "durable:0",
+      __inspireLiveId: "shell-live",
       output: "/project",
     });
   });

@@ -16,8 +16,7 @@ import {
 import {
   applyConfigurationPatch,
   editConfigurationDocument,
-  parseConfigurationObject,
-  readConfigurationFile,
+  readConfigurationDocument,
 } from "./configuration-file.js";
 import {
   readNativeModelSettings,
@@ -130,38 +129,33 @@ export class ModelSettingsService {
     models: ModelOption[],
   ): Promise<ModelSettingsSnapshot> {
     const [settings, modelsFile, native] = await Promise.all([
-      readConfigurationFile({ path: join(this.agentDir, "settings.json") }),
-      readConfigurationFile({ path: join(this.agentDir, "models.json") }),
+      readConfigurationDocument(
+        { path: join(this.agentDir, "settings.json") },
+        settingsDocument,
+      ),
+      readConfigurationDocument(
+        { path: join(this.agentDir, "models.json") },
+        modelsDocument,
+      ),
       readNativeModelSettings(cwd, this.agentDir),
     ]);
-    let global: JsonObject = {},
-      config: JsonObject = {};
-    let settingsError: string | undefined, configError: string | undefined;
-    try {
-      global = parseConfigurationObject(settings.source, settingsDocument);
-    } catch {
-      settingsError = settingsDocument.invalid;
-    }
-    try {
-      config = parseConfigurationObject(modelsFile.source, modelsDocument);
-    } catch {
-      configError = modelsDocument.invalid;
-    }
     const effective = preferences(native.effective);
-    if (native.globalError)
-      settingsError ??=
-        "Global Pi settings could not be loaded. Repair settings.json before saving.";
+    const settingsError =
+      settings.error ??
+      (native.globalError
+        ? "Global Pi settings could not be loaded. Repair settings.json before saving."
+        : undefined);
     const projectSettingsError = native.projectError
       ? "Project settings could not be loaded. Showing global defaults; global settings remain editable. Repair this project's .pi/settings.json to restore its overrides."
       : undefined;
-    const saved = preferences(global);
+    const saved = preferences(settings.value);
     return {
       settingsRevision: settings.revision,
       configRevision: modelsFile.revision,
       saved,
       effective,
       projectOverrides: native.projectOverrides,
-      providers: declarationProjection(config),
+      providers: declarationProjection(modelsFile.value),
       nativeApiProviders: await this.readNativeApiProviders(),
       models,
       commonModels: await commonModelOptions(effective.enabledModels, models),
@@ -173,7 +167,7 @@ export class ModelSettingsService {
       ),
       ...(settingsError ? { settingsError } : {}),
       ...(projectSettingsError ? { projectSettingsError } : {}),
-      ...(configError ? { configError } : {}),
+      ...(modelsFile.error ? { configError: modelsFile.error } : {}),
     };
   }
   async savePreferences(

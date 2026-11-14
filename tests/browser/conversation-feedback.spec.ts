@@ -82,7 +82,9 @@ test("conversation feedback shares an axis and keeps narrow touch actions usable
     .getByRole("textbox", { name: "Message", exact: true })
     .fill("/compact");
   await page.locator(".composer__send").tap();
-  const receipt = page.locator(".command-activity__item--error");
+  const receipt = page
+    .getByRole("region", { name: "Command activity" })
+    .getByRole("alert");
   await expect(receipt).toContainText("Failed");
   expect(
     await receipt.evaluate((el) => el.scrollWidth - el.clientWidth),

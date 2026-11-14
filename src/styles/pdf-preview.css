@@ -26,22 +26,12 @@
   background: var(--hairline);
 }
 
-.pdf-preview__fit {
+.pdf-preview__fit.button {
   min-width: 36px;
-  height: var(--pane-tool-size);
+  min-height: var(--pane-tool-size);
   padding: 0 var(--space-2);
-  color: var(--muted);
-  border: 0;
-  border-radius: var(--radius-control);
-  background: transparent;
-  cursor: pointer;
   font: inherit;
   font-variant-numeric: tabular-nums;
-}
-
-.pdf-preview__fit:hover {
-  background: var(--bg-inset);
-  color: var(--ink);
 }
 
 .pdf-preview__viewport {
@@ -138,32 +128,10 @@
   color: transparent;
 }
 
-/* Find replaces the page controls in place; it never adds a row. */
-.pdf-preview__toolbar--find {
-  gap: 4px;
-}
-
-.pdf-preview__find-icon {
-  flex: none;
-  color: var(--faint);
-}
-
-.pdf-preview__find-input {
-  flex: 1 1 auto;
-  min-width: 0;
+.pdf-preview__find-field {
+  --search-height: var(--pane-tool-size);
+  flex: 1;
   max-width: 260px;
-  height: var(--pane-tool-size);
-  padding: 0 var(--space-2);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-control);
-  background: var(--bg-surface);
-  color: var(--ink);
-  font: var(--text-sm) / var(--leading-ui) var(--font-sans);
-}
-
-.pdf-preview__find-input:focus-visible {
-  outline: 2px solid var(--accent-focus);
-  outline-offset: -1px;
 }
 
 .pdf-preview__toolbar--find .pdf-preview__page-number {

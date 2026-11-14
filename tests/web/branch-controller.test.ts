@@ -4,6 +4,7 @@ import type {
   BranchNavigateResponse,
 } from "../../shared/contracts";
 import { type Api, ApiError } from "../../src/api";
+import { emptyTranscriptView } from "../../src/app-state";
 import {
   BranchController,
   type BranchControllerPatch,
@@ -14,17 +15,17 @@ import { activeSnapshot, deferred } from "./helpers";
 function createHarness(initial: Partial<BranchControllerState> = {}) {
   let state: BranchControllerState = {
     sessionId: "s1",
-    transcriptViewId: "view-1",
-    transcriptIncarnation: "incarnation-1",
-    composerHistoryVersion: "history-1",
-    transcriptDurableLeafId: "a1",
-    transcriptEffectiveLeafId: "a1",
-    transcriptNavigationLeased: false,
-    branchRevision: 1,
+    view: {
+      ...emptyTranscriptView,
+      viewId: "view-1",
+      incarnation: "incarnation-1",
+      composerHistoryVersion: "history-1",
+      durableLeafId: "a1",
+      effectiveLeafId: "a1",
+      branchRevision: 1,
+    },
     branchTreeError: null,
     branchActionId: null,
-    projectionHealth: { status: "ok" },
-    projectionConflict: null,
     ...initial,
   };
   let selectionGeneration = 1;
@@ -65,8 +66,17 @@ function createHarness(initial: Partial<BranchControllerState> = {}) {
   return {
     controller,
     state: () => state,
-    patch: (patch: Partial<BranchControllerState>) => {
-      state = { ...state, ...patch };
+    patch: ({
+      view,
+      ...patch
+    }: Partial<Omit<BranchControllerState, "view">> & {
+      view?: Partial<BranchControllerState["view"]>;
+    }) => {
+      state = {
+        ...state,
+        ...patch,
+        ...(view ? { view: { ...state.view, ...view } } : {}),
+      };
     },
     invalidateSelection: () => {
       selectionGeneration += 1;
@@ -96,9 +106,9 @@ describe("BranchController", () => {
   it.each([
     { branchActionId: "another-action" },
     {
-      projectionHealth: {
-        status: "error" as const,
-        message: "Unreadable source",
+      view: {
+        ...emptyTranscriptView,
+        health: { status: "error" as const, message: "Unreadable source" },
       },
     },
     { readOnlyReason: "workspace-unavailable" as const },
@@ -140,8 +150,7 @@ describe("BranchController", () => {
           targetId: "retained-point",
         });
       harness.patch({
-        transcriptEffectiveLeafId: "appended",
-        transcriptDurableLeafId: "appended",
+        view: { effectiveLeafId: "appended", durableLeafId: "appended" },
       });
       pending.resolve(result);
       await expect(reading).resolves.toBe(result);
@@ -153,7 +162,7 @@ describe("BranchController", () => {
         const staleRead = read(replaced);
         if (replacement === "session") replaced.invalidateSelection();
         else if (replacement === "view")
-          replaced.patch({ transcriptViewId: "replaced-view" });
+          replaced.patch({ view: { viewId: "replaced-view" } });
         else replaced.replaceTransport();
         if (replacement === "session" && kind === "entry")
           stale.reject(new Error("Previous selection read failed"));
@@ -212,7 +221,7 @@ describe("BranchController", () => {
     const pending = deferred<BranchNavigateResponse>();
     harness.navigateBranch.mockReturnValue(pending.promise);
     const navigation = harness.controller.navigate("a1", "switch");
-    harness.patch({ transcriptEffectiveLeafId: "appended" });
+    harness.patch({ view: { effectiveLeafId: "appended" } });
     pending.resolve({} as BranchNavigateResponse);
     await expect(navigation).resolves.toBe(false);
     expect(harness.applyNavigation).not.toHaveBeenCalled();
@@ -224,10 +233,9 @@ describe("BranchController", () => {
     const pending = deferred<BranchNavigateResponse>();
     harness.navigateBranch.mockReturnValue(pending.promise);
     const navigation = harness.controller.navigate("a1", "edit");
-    harness.controller.invalidate({ preserveAction: true });
+    harness.controller.retireReads();
     harness.patch({
-      transcriptViewId: "navigated",
-      transcriptEffectiveLeafId: "u1",
+      view: { viewId: "navigated", effectiveLeafId: "u1" },
     });
     const response = {
       snapshot: activeSnapshot({

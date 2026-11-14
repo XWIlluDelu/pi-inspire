@@ -55,31 +55,6 @@
     animation: resources-drawer-in var(--dur-panel) var(--ease-standard);
   }
 
-  .app--narrow .ctx__header {
-    gap: var(--space-1);
-    height: auto;
-    /* Keep the compact tool strip around its existing 32px touch actions. */
-    min-height: 37px;
-    padding: 0 var(--space-2);
-  }
-
-  .app--narrow .ctx__header:has(.ctx__tabs) { padding-left: 0; }
-
-  .app--narrow .ctx__modes button {
-    min-height: 32px;
-    padding: 4px 0;
-  }
-
-  .app--narrow .ctx__close {
-    display: inline-flex;
-  }
-
-  .app--narrow .ctx__header-actions .icon-button {
-    width: 32px;
-    height: 32px;
-    min-height: 32px;
-  }
-
   .app--narrow .file-preview__content:not(:has(> .source-reader, > .pdf-preview)) {
     padding: var(--space-2);
   }
@@ -129,77 +104,9 @@
     display: none;
   }
 
-  .transcript-mobile-toolbar {
-    position: absolute;
-    z-index: 4;
-    top: var(--space-2);
-    right: max(var(--space-3), var(--safe-right));
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    pointer-events: none;
-  }
-
-  .transcript-mobile-toolbar__launchers {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-2);
-    pointer-events: auto;
-  }
-
-  .transcript-mobile-toolbar__button {
-    display: inline-flex;
-    width: 44px;
-    height: 44px;
-    align-items: center;
-    justify-content: center;
-    border: 1px solid var(--line);
-    border-radius: var(--radius-control);
-    background: var(--bg-surface);
-    box-shadow: var(--shadow-1);
-    color: var(--muted);
-    cursor: pointer;
-    transition:
-      border-color var(--dur-micro) var(--ease-standard),
-      color var(--dur-micro) var(--ease-standard),
-      background var(--dur-micro) var(--ease-standard);
-  }
-
-  .transcript-mobile-toolbar__button--history {
-    width: auto;
-    padding-inline: var(--space-2);
-  }
-
-  .transcript-mobile-toolbar__button:hover,
-  .transcript-mobile-toolbar__button:focus-visible {
-    border-color: var(--line-strong);
-    background: var(--bg-raised);
-    color: var(--ink);
-  }
-
   .transcript {
-    --transcript-padding-top: calc(var(--space-2) + 44px + var(--space-3));
     --transcript-padding-bottom: var(--space-6);
     padding-inline: max(var(--space-4), var(--safe-left)) max(var(--space-4), var(--safe-right));
-  }
-
-  .transcript-search {
-    display: none;
-  }
-
-  .transcript-search--open {
-    z-index: 5;
-    top: var(--space-2);
-    right: max(var(--space-3), var(--safe-right));
-    left: max(var(--space-3), var(--safe-left));
-    display: flex;
-    width: auto;
-    min-height: 44px;
-    padding: 5px var(--space-2);
-  }
-
-  .transcript-search > .transcript-search__close {
-    display: inline-flex;
   }
 
   .user-bubble {
@@ -226,17 +133,6 @@
 }
 
 @media (max-width: 600px) {
-  .topbar {
-    padding-inline: max(var(--space-2), var(--safe-left))
-      max(var(--space-2), var(--safe-right));
-  }
-
-  .topbar .icon-button {
-    flex: 0 0 44px;
-    width: 44px;
-    height: 44px;
-  }
-
   .token-gate {
     min-height: var(--app-height);
     padding: max(var(--space-4), var(--safe-top))
@@ -259,18 +155,6 @@
     flex-wrap: wrap;
   }
 
-  .topbar__title-button {
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  /* The topbar's own 600px container tier hides the branch text; a phone
-     viewport adds a slightly roomier, squarer chip. */
-  .topbar__git {
-    padding: 2px 6px;
-    border-radius: var(--radius-xs);
-  }
-
   .topbar__status .chip {
     padding-inline: var(--space-1);
   }
@@ -283,10 +167,6 @@
     overflow: hidden;
     clip-path: inset(50%);
     white-space: nowrap;
-  }
-
-  .topbar__actions {
-    gap: 0;
   }
 
   .transcript {
@@ -376,8 +256,8 @@
     border-radius: var(--radius-md);
   }
 
-  .settings__header {
-    padding: var(--space-2) var(--space-3);
+  :is(.settings, .terminal-settings) .dialog__header--bar {
+    --dialog-header-padding: var(--space-2) var(--space-3);
   }
 
   .settings__layout {
@@ -439,8 +319,7 @@
     height: 2px;
   }
 
-  .settings__content,
-  .terminal-settings__body {
+  .settings__content {
     padding: var(--space-3) var(--space-3) var(--space-5);
   }
 
@@ -461,7 +340,7 @@
     min-height: 20px;
   }
 
-  .palette {
+  .palette.dialog {
     width: 100%;
     max-height: calc(
       var(--app-height) - max(var(--space-2), var(--safe-top)) -

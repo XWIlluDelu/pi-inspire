@@ -42,10 +42,11 @@ export class RuntimeReadController {
     this.host.assertAvailable();
     const slot = this.host.requireSlot(sessionId);
     return this.host.useSlot(slot, async () => {
-      requireProjection(slot);
       // The projection validates source identity/version on every read; only
       // changed files need byte revalidation. Writer admission remains forced.
       await this.host.reconcileSlot(slot, false);
+      if (this.host.requireSlot(sessionId) !== slot)
+        throw requestError("The session view changed while reading", 409);
       return read(requireProjection(slot), slot, effectiveRuntimeLeaf(slot));
     });
   }
@@ -121,18 +122,9 @@ export class RuntimeReadController {
   }
 
   resourceContext(sessionId: string): Promise<ResourceContext> {
-    this.host.assertAvailable();
-    const slot = this.host.requireSlot(sessionId);
-    return this.host.useSlot(slot, async () => {
-      await this.host.reconcileSlot(slot, false);
-      if (this.host.requireSlot(sessionId) !== slot || !slot.projection) {
-        throw requestError(
-          "The resource does not belong to the visible branch view",
-          409,
-        );
-      }
+    return this.projectionRead(sessionId, (projection, slot) => {
       const viewId = slot.viewId;
-      const revision = requireProjection(slot).revision;
+      const revision = projection.revision;
       return {
         sessionId: slot.id,
         viewId,

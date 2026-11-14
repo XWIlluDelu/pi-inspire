@@ -1,6 +1,7 @@
 import {
   lazy,
   memo,
+  type ReactNode,
   type RefObject,
   Suspense,
   useCallback,
@@ -52,7 +53,7 @@ import {
   applyBrowserTheme,
   cacheVisualPreferences,
 } from "./visual-preferences";
-import { modelCycleAction } from "./workbench-keyboard";
+import { modelCycleAction, workbenchShortcut } from "./workbench-keyboard";
 import { readNavCollapsed, saveNavCollapsed } from "./workbench-session";
 
 const loadContextPane = () => import("./components/ContextPane");
@@ -64,9 +65,30 @@ const DeferredSettingsSurface = lazy(() =>
   loadSettings().then((module) => ({ default: module.SettingsContent })),
 );
 
-function reportDeferredSurfaceError(error: unknown): void {
-  console.error("Deferred surface failed to load", error);
+function DeferredPanel({
+  loading,
+  error,
+  children,
+}: {
+  loading: ReactNode;
+  error: ReactNode;
+  children: ReactNode;
+}) {
+  // Commit the loading panel immediately so focus can enter while code loads.
+  const showContent = useDeferredValue(true, false);
+  return (
+    <RenderErrorBoundary
+      onError={(error) =>
+        console.error("Deferred surface failed to load", error)
+      }
+      fallback={error}
+    >
+      <Suspense fallback={loading}>{showContent ? children : loading}</Suspense>
+    </RenderErrorBoundary>
+  );
 }
+
+const reloadPage = () => window.location.reload();
 
 function DeferredContextPane({
   isModal,
@@ -75,27 +97,14 @@ function DeferredContextPane({
   isModal: boolean;
   onClose: () => void;
 }) {
-  // Commit loading as ordinary content; suspended background work adds no fallback retry delay.
-  const showContent = useDeferredValue(true, false);
   return (
     <ContextPaneShell isModal={isModal} onClose={onClose}>
-      <RenderErrorBoundary
-        onError={reportDeferredSurfaceError}
-        fallback={
-          <ContextPaneLoading
-            onClose={onClose}
-            onRetry={() => window.location.reload()}
-          />
-        }
+      <DeferredPanel
+        loading={<ContextPaneLoading onClose={onClose} />}
+        error={<ContextPaneLoading onClose={onClose} onRetry={reloadPage} />}
       >
-        <Suspense fallback={<ContextPaneLoading onClose={onClose} />}>
-          {showContent ? (
-            <DeferredContextSurface isModal={isModal} onClose={onClose} />
-          ) : (
-            <ContextPaneLoading onClose={onClose} />
-          )}
-        </Suspense>
-      </RenderErrorBoundary>
+        <DeferredContextSurface isModal={isModal} onClose={onClose} />
+      </DeferredPanel>
     </ContextPaneShell>
   );
 }
@@ -113,26 +122,19 @@ function DeferredSettings({
   workspaceOwner: { sessionId?: string; cwd?: string };
   onClose: () => void;
 }) {
-  const showContent = useDeferredValue(true, false);
   return (
     <SettingsDialog suspended={suspended} onClose={onClose}>
-      <RenderErrorBoundary
-        onError={reportDeferredSurfaceError}
-        fallback={<SettingsLoading onRetry={() => window.location.reload()} />}
+      <DeferredPanel
+        loading={<SettingsLoading />}
+        error={<SettingsLoading onRetry={reloadPage} />}
       >
-        <Suspense fallback={<SettingsLoading />}>
-          {showContent ? (
-            <DeferredSettingsSurface
-              suspended={suspended}
-              initialCategory={initialCategory}
-              modelDestination={modelDestination}
-              workspaceOwner={workspaceOwner}
-            />
-          ) : (
-            <SettingsLoading />
-          )}
-        </Suspense>
-      </RenderErrorBoundary>
+        <DeferredSettingsSurface
+          suspended={suspended}
+          initialCategory={initialCategory}
+          modelDestination={modelDestination}
+          workspaceOwner={workspaceOwner}
+        />
+      </DeferredPanel>
     </SettingsDialog>
   );
 }
@@ -337,16 +339,16 @@ const ConversationStage = memo(function ConversationStage({
       readOnlyReason: source.readOnlyReason,
       model: source.model,
       thinkingLevel: source.thinkingLevel,
-      messages: source.messages,
-      streaming: source.streaming,
+      messages: source.live.messages,
+      streaming: source.live.streaming,
       runState: selectedRunState(source),
-      activeAssistantMessageKey: source.activeAssistantMessageKey,
-      tools: source.tools,
-      transcriptViewId: source.transcriptViewId,
-      transcriptIncarnation: source.transcriptIncarnation,
-      queue: source.queue,
+      activeAssistantMessageKey: source.live.activeAssistantMessageKey,
+      tools: source.live.tools,
+      transcriptViewId: source.view.viewId,
+      transcriptIncarnation: source.view.incarnation,
+      queue: source.live.queue,
       pendingAction: source.pendingAction,
-      extensionDisplays: source.extensionDisplays,
+      extensionDisplays: source.live.extensionDisplays,
       thinkingVisibility: source.prefs.thinkingVisibility,
       toolVisibility: source.prefs.toolVisibility,
       activityFoldVisibility: source.prefs.activityFoldVisibility,
@@ -493,19 +495,19 @@ export function App() {
       startupPending: source.startupPending,
       connection: source.connection,
       connectionProblem: source.connectionProblem,
-      extensionOverlayOpen: source.extensionUiRequests.length > 0,
+      extensionOverlayOpen: source.live.extensionUiRequests.length > 0,
       resourcesOpen: source.resourcesOpen,
       contextMode: source.contextMode,
       prefs: source.prefs,
-      windowTitle: source.windowTitle,
+      windowTitle: source.live.windowTitle,
       sessionName: source.sessionName,
       attentionCount: source.attentionSessionIds.length,
       sessionId: source.sessionId,
       runState: selectedRunState(source),
-      bashRunning: source.bashRunning,
+      bashRunning: source.live.bashRunning,
       error: source.error,
       errorSeverity: source.errorSeverity,
-      projectionConflict: source.projectionConflict,
+      projectionConflict: source.view.conflict,
       nativeCommandUiRequest: source.nativeCommandUiRequest,
       readOnlyReason: source.readOnlyReason,
     }),
@@ -760,8 +762,8 @@ export function App() {
 
   useLayoutEffect(() => {
     if (!state.bootstrapped || !focusedTerminalLaunchRequested()) return;
-    if (state.contextMode !== "terminal") store.setContextMode("terminal");
-    if (!state.resourcesOpen) store.setResourcesOpen(true);
+    if (state.contextMode !== "terminal" || !state.resourcesOpen)
+      store.openContextMode("terminal");
   }, [state.bootstrapped, state.contextMode, state.resourcesOpen]);
 
   useEffect(() => {
@@ -866,14 +868,12 @@ export function App() {
         else void store.cycleModel(cycleAction === "next-model" ? 1 : -1);
         return;
       }
-      const mod =
-        event.ctrlKey !== event.metaKey && !event.altKey && !event.shiftKey;
-      if (mod && event.key.toLowerCase() === "k") {
+      const action = workbenchShortcut(event);
+      if (action === "palette") {
         event.preventDefault();
         openCommandPalette();
       } else if (
-        mod &&
-        event.key.toLowerCase() === "f" &&
+        action === "find" &&
         transcriptRef.current &&
         target?.closest(".center") &&
         !target.closest(
@@ -882,10 +882,10 @@ export function App() {
       ) {
         event.preventDefault();
         transcriptRef.current.openSearch();
-      } else if (mod && event.key.toLowerCase() === "b") {
+      } else if (action === "nav") {
         event.preventDefault();
         toggleNavigation();
-      } else if (mod && event.key === ".") {
+      } else if (action === "ctx") {
         event.preventDefault();
         toggleResources();
       } else if (event.key === "Escape" && narrowViewport && mobileNavOpen) {

@@ -2,27 +2,36 @@ import {
   ArrowLeft,
   ArrowRight,
   ChevronDown,
-  ChevronRight,
+  Circle,
+  ClipboardPaste,
+  Copy,
+  Eraser,
   ExternalLink,
+  Eye,
   FolderKanban,
+  Keyboard,
   Maximize2,
   Minimize2,
+  Monitor,
   MoreHorizontal,
   Pencil,
   Plus,
   RotateCcw,
   Search,
   Settings2,
+  Square,
   SquareTerminal,
+  TextSelect,
   Trash2,
   Undo2,
   X,
 } from "lucide-react";
 import {
-  type DragEvent,
   type KeyboardEvent,
+  lazy,
   memo,
   type ReactNode,
+  Suspense,
   useCallback,
   useEffect,
   useId,
@@ -63,19 +72,59 @@ import {
   loadTerminalUiSettings,
   type TerminalUiSettings,
 } from "../terminal-settings";
+import { recoverModalFocus } from "../use-modal-focus";
 import { ButtonLabel } from "./ButtonLabel";
-import { ContextTabStrip, type TerminalDockTab } from "./ContextTabStrip";
+import { ContextPaneState } from "./ContextPaneState";
+import {
+  ContextTabStrip,
+  type FileDockTab,
+  type TerminalDockTab,
+} from "./ContextTabStrip";
+import { DetailSummary } from "./DetailSummary";
+import { handleDockTabKey } from "./dock-tab-keyboard";
 import { NoticeCard } from "./NoticeCard";
 import { PiLoader } from "./PiLoader";
+import { SearchField } from "./SearchField";
 import { SearchMatchText, searchMatchRanges } from "./SearchMatchText";
-import { TerminalSettingsDialog } from "./TerminalSettingsDialog";
-import { TerminalView } from "./TerminalView";
+import type { TerminalViewActions } from "./TerminalView";
 
-interface TerminalPaneProps {
+const TerminalView = lazy(() =>
+  import("./TerminalView").then(({ TerminalView }) => ({
+    default: TerminalView,
+  })),
+);
+const TerminalSettingsDialog = lazy(() =>
+  import("./TerminalSettingsDialog").then(({ TerminalSettingsDialog }) => ({
+    default: TerminalSettingsDialog,
+  })),
+);
+function TerminalStatusIcon({
+  transport,
+  exited,
+}: Pick<TerminalViewActions, "transport" | "exited">) {
+  if (exited) return <Square size={12} aria-hidden />;
+  if (transport === "connected") return <Eye size={16} aria-hidden />;
+  if (transport === "offline") return <Circle size={16} aria-hidden />;
+  return <PiLoader size={16} aria-hidden />;
+}
+
+const TERMINAL_LOADING = (
+  <ContextPaneState
+    className="terminal-empty"
+    icon={<PiLoader size={17} aria-hidden />}
+    title="Loading terminal…"
+  />
+);
+
+interface WorkspaceDockProps {
   cwd: string | null;
   active?: boolean;
   reloadKey?: number;
-  onDockTabs?(tabs: readonly TerminalDockTab[]): void;
+  context?: {
+    files: readonly FileDockTab[];
+    tools: ReactNode;
+    body: ReactNode;
+  };
   onActivate?(): void;
   onOpenFile?(reference: string): void;
   onSendToComposer?(text: string): void;
@@ -94,7 +143,6 @@ interface RecentlyClosed {
 
 const ACTIVE_KEY_PREFIX = "inspire:terminal-active:";
 const EMPTY_TERMINALS: TerminalDescriptor[] = [];
-const EMPTY_DOCK_TABS: readonly TerminalDockTab[] = [];
 
 function readTerminalLaunchTarget(): TerminalLaunchTarget | null {
   const params = new URLSearchParams(window.location.search);
@@ -131,16 +179,16 @@ function notificationTerminalLabel(terminal: TerminalDescriptor): string {
     : terminal.shellLabel || "Terminal";
 }
 
-export const TerminalPane = memo(function TerminalPane({
+export const WorkspaceDock = memo(function WorkspaceDock({
   cwd: sessionCwd,
   active = true,
   reloadKey = 0,
-  onDockTabs,
+  context,
   onActivate,
   onOpenFile,
   onSendToComposer,
   onCommandComplete,
-}: TerminalPaneProps) {
+}: WorkspaceDockProps) {
   const api = useMemo(() => createApi(), []);
   const recoveryOperations = useSyncExternalStore(
     terminalOperations.subscribe,
@@ -149,10 +197,19 @@ export const TerminalPane = memo(function TerminalPane({
   const launchTarget = useMemo(readTerminalLaunchTarget, []);
   const lastSessionCwdRef = useRef(sessionCwd);
   const [cwd, setCwd] = useState(sessionCwd);
-  const catalogController = useMemo(
-    () => new TerminalCatalogController(cwd),
-    [cwd, reloadKey],
-  );
+  const [catalogOwner, setCatalogOwner] = useState(() => ({
+    controller: new TerminalCatalogController(cwd),
+    reloadKey,
+  }));
+  if (
+    catalogOwner.controller.cwd !== cwd ||
+    catalogOwner.reloadKey !== reloadKey
+  )
+    setCatalogOwner({
+      controller: new TerminalCatalogController(cwd, catalogOwner.controller),
+      reloadKey,
+    });
+  const catalogController = catalogOwner.controller;
   const catalog = useSyncExternalStore(
     catalogController.subscribe,
     catalogController.snapshot,
@@ -169,7 +226,11 @@ export const TerminalPane = memo(function TerminalPane({
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [focused, setFocused] = useState(launchTarget?.focus ?? false);
-  const sharedTabs = Boolean(onDockTabs && !focused);
+  const showingContext = context && !focused;
+  const visibleCatalog = Boolean(context || active);
+  const [viewActions, setViewActions] = useState<TerminalViewActions | null>(
+    null,
+  );
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [uiSettings, setUiSettings] = useState<TerminalUiSettings>(() =>
     loadTerminalUiSettings(),
@@ -183,10 +244,10 @@ export const TerminalPane = memo(function TerminalPane({
   const [globalLoading, setGlobalLoading] = useState(false);
   const [insertionRevision, setInsertionRevision] = useState(0);
   const requestGeneration = useRef(0);
+  const foregroundCatalog = useRef(false);
   const knownOutputOffsetsRef = useRef(new Map<string, number>());
   const autoCreateInsertionRef = useRef<string | null>(null);
-  const draggedId = useRef<string | null>(null);
-  const paneRef = useRef<HTMLDivElement>(null);
+  const paneRef = useRef<HTMLElement>(null);
   const profileMenuRef = useRef<HTMLDetailsElement>(null);
   const menuGroupName = useId();
   const renamePendingRef = useRef(false);
@@ -208,6 +269,8 @@ export const TerminalPane = memo(function TerminalPane({
 
   useLayoutEffect(() => {
     catalogController.active = true;
+    foregroundCatalog.current = false;
+    setLoading(false);
     setCreating(false);
     setError(null);
     setRenameId(null);
@@ -219,7 +282,6 @@ export const TerminalPane = memo(function TerminalPane({
 
   const terminals = catalog?.terminals ?? EMPTY_TERMINALS;
   const activeTerminal = terminals.find((terminal) => terminal.id === activeId);
-  useLayoutEffect(() => () => onDockTabs?.(EMPTY_DOCK_TABS), [onDockTabs]);
 
   useEffect(() => {
     if (launchTarget || lastSessionCwdRef.current === sessionCwd) return;
@@ -255,40 +317,46 @@ export const TerminalPane = memo(function TerminalPane({
     };
   }, [api, launchTarget]);
 
-  const load = useCallback(async () => {
-    if (!cwd) {
-      setActiveId(null);
-      return;
-    }
-    const generation = ++requestGeneration.current;
-    setLoading(true);
-    setError(null);
-    try {
-      const next = await api.terminals(cwd);
+  const load = useCallback(
+    async (poll = false) => {
       if (
-        generation !== requestGeneration.current ||
-        !catalogController.replace(next)
+        !cwd ||
+        !catalogController.active ||
+        (poll && foregroundCatalog.current)
       )
         return;
-      setActiveId((current) => {
-        const preferred = current ?? storedActiveTerminal(cwd);
-        return next.terminals.some((terminal) => terminal.id === preferred)
-          ? preferred
-          : (next.terminals[0]?.id ?? null);
-      });
-    } catch (loadError) {
-      if (generation !== requestGeneration.current || !catalogController.active)
-        return;
-      setError(
-        loadError instanceof Error
-          ? loadError.message
-          : "Terminals failed to load",
-      );
-    } finally {
-      if (generation === requestGeneration.current && catalogController.active)
-        setLoading(false);
-    }
-  }, [api, cwd, catalogController]);
+      const generation = ++requestGeneration.current;
+      const current = () =>
+        generation === requestGeneration.current && catalogController.active;
+      if (!poll) {
+        foregroundCatalog.current = true;
+        setLoading(true);
+        setError(null);
+      }
+      try {
+        const next = await api.terminals(cwd);
+        if (!current() || !catalogController.replace(next)) return;
+        if (!poll)
+          setActiveId((id) => {
+            const preferred = id ?? storedActiveTerminal(cwd);
+            return next.terminals.some((terminal) => terminal.id === preferred)
+              ? preferred
+              : (next.terminals[0]?.id ?? null);
+          });
+      } catch (error) {
+        if (!poll && current())
+          setError(
+            error instanceof Error ? error.message : "Terminals failed to load",
+          );
+      } finally {
+        if (!poll && current()) {
+          foregroundCatalog.current = false;
+          setLoading(false);
+        }
+      }
+    },
+    [api, cwd, catalogController],
+  );
 
   const loadGlobal = useCallback(async () => {
     if (globalLoading) return;
@@ -307,36 +375,27 @@ export const TerminalPane = memo(function TerminalPane({
   }, [api, globalLoading]);
 
   useEffect(() => {
-    if (!active && !onDockTabs) return;
+    if (!visibleCatalog) return;
     void load();
-    return () => {
-      requestGeneration.current += 1;
-    };
-  }, [active, load, reloadKey, onDockTabs]);
-
-  useEffect(() => {
-    if (!active || !cwd) return;
-    let cancelled = false;
     let polling = false;
-    const poll = async () => {
-      if (polling) return;
-      polling = true;
-      try {
-        const next = await api.terminals(cwd);
-        if (!cancelled) catalogController.replace(next);
-      } catch {
-        // The attached terminal sockets expose transport failures directly;
-        // catalog polling remains a quiet status refresh.
-      } finally {
-        polling = false;
-      }
-    };
-    const timer = window.setInterval(() => void poll(), 5_000);
+    const timer =
+      active && cwd
+        ? window.setInterval(async () => {
+            if (polling || !catalogController.snapshot()) return;
+            polling = true;
+            try {
+              await load(true);
+            } finally {
+              polling = false;
+            }
+          }, 5_000)
+        : undefined;
     return () => {
-      cancelled = true;
       window.clearInterval(timer);
+      requestGeneration.current += 1;
+      foregroundCatalog.current = false;
     };
-  }, [active, api, cwd, catalogController]);
+  }, [active, cwd, load, visibleCatalog, catalogController]);
 
   useEffect(
     () =>
@@ -745,7 +804,6 @@ export const TerminalPane = memo(function TerminalPane({
     if (!moved) return;
     const targetIndex = next.findIndex((terminal) => terminal.id === targetId);
     next.splice(position === "after" ? targetIndex + 1 : targetIndex, 0, moved);
-    const rollback = catalogController.order(next);
     try {
       catalogController.replace(
         await api.reorderTerminals({
@@ -755,7 +813,6 @@ export const TerminalPane = memo(function TerminalPane({
       );
     } catch (reorderError) {
       if (!catalogController.active) return;
-      rollback();
       setError(
         reorderError instanceof Error
           ? reorderError.message
@@ -764,39 +821,10 @@ export const TerminalPane = memo(function TerminalPane({
     }
   };
 
-  const handleTabKey = (
-    event: KeyboardEvent<HTMLButtonElement>,
-    index: number,
-  ) => {
-    const reorderShortcut = event.shiftKey && (event.ctrlKey || event.metaKey);
-    if (sharedTabs && !reorderShortcut) return;
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-    event.preventDefault();
-    const direction = event.key === "ArrowRight" ? 1 : -1;
-    const current = terminals[index];
-    if (reorderShortcut) {
-      event.stopPropagation();
-      const target = terminals[index + direction];
-      if (current && target)
-        void reorder(current.id, target.id, direction > 0 ? "after" : "before");
-      return;
-    }
-    const next =
-      terminals[(index + direction + terminals.length) % terminals.length];
-    if (!next) return;
-    setActiveId(next.id);
-    document.getElementById(`terminal-tab-${next.id}`)?.focus();
-  };
-
-  const handleDrop = (event: DragEvent<HTMLDivElement>, targetId: string) => {
-    event.preventDefault();
-    const fromId = draggedId.current;
-    draggedId.current = null;
-    if (!fromId) return;
-    const bounds = event.currentTarget.getBoundingClientRect();
-    const position =
-      event.clientX > bounds.left + bounds.width / 2 ? "after" : "before";
-    void reorder(fromId, targetId, position);
+  const moveTerminal = (terminal: TerminalDescriptor, direction: -1 | 1) => {
+    const target = terminals[terminals.indexOf(terminal) + direction];
+    if (target)
+      void reorder(terminal.id, target.id, direction < 0 ? "before" : "after");
   };
 
   terminalActionHandlerRef.current = ({ action, projectCwd }) => {
@@ -851,7 +879,9 @@ export const TerminalPane = memo(function TerminalPane({
         event.defaultPrevented ||
         isComposingKeyboardEvent(event) ||
         event.getModifierState("AltGraph") ||
-        !paneRef.current?.contains(event.target as Node) ||
+        !(event.target instanceof Element) ||
+        !paneRef.current?.contains(event.target) ||
+        !event.target.closest('.terminal-pane, [data-dock-tab^="terminal:"]') ||
         !isTerminalShortcutTarget(event.target)
       )
         return;
@@ -884,14 +914,14 @@ export const TerminalPane = memo(function TerminalPane({
     uiSettings.shortcutMode,
   ]);
 
-  const tabs: TerminalDockTab[] = terminals.map((terminal, index) => ({
+  const tabs: TerminalDockTab[] = terminals.map((terminal) => ({
     kind: "terminal",
     id: terminal.id,
+    terminal,
+    panel: "context-terminal-content",
     label: terminalLabel(terminal),
     title: terminal.currentCwd,
-    status: terminal.status,
-    selected: terminal.id === activeId && (!sharedTabs || active),
-    open: openedIds.has(terminal.id),
+    selected: terminal.id === activeId && (!showingContext || active),
     unread: unreadIds.has(terminal.id),
     bell: bellIds.has(terminal.id),
     rename:
@@ -912,26 +942,9 @@ export const TerminalPane = memo(function TerminalPane({
     },
     beginRename: () => beginRename(terminal),
     close: () => void closeTerminal(terminal),
-    keyDown: (event) => handleTabKey(event, index),
-    drag: () => {
-      draggedId.current = terminal.id;
-    },
-    drop: (event) => handleDrop(event, terminal.id),
+    move: (direction) => moveTerminal(terminal, direction),
+    drop: (from, position) => void reorder(from, terminal.id, position),
   }));
-  // Publish descriptors, not rendered children. The dock owns its tab strip.
-  useLayoutEffect(() => {
-    onDockTabs?.(sharedTabs ? tabs : EMPTY_DOCK_TABS);
-  });
-
-  if (!cwd) {
-    return (
-      <div className="terminal-empty">
-        <SquareTerminal size={24} aria-hidden />
-        <strong>No project selected</strong>
-        <span>Open a session to use project terminals.</span>
-      </div>
-    );
-  }
 
   const terminalMatches = (text: string) =>
     searchMatchRanges(text, [terminalFilter], (value) => value.toLowerCase());
@@ -955,20 +968,24 @@ export const TerminalPane = memo(function TerminalPane({
     globalGroups.set(terminal.projectCwd, group);
   }
 
-  const hasActiveView = Boolean(active && activeTerminal);
-  const toolbar = (controls?: ReactNode, viewActions?: ReactNode) => (
+  const currentView =
+    active &&
+    activeTerminal &&
+    viewActions?.owner === `${activeTerminal.id}:${activeTerminal.outputEpoch}`
+      ? viewActions
+      : null;
+  const activeViewKey =
+    activeTerminal && `${activeTerminal.id}:${activeTerminal.outputEpoch}`;
+  const toolbar = (
     <div
       className="pane-toolbar terminal-toolbar"
       role="toolbar"
       aria-label="Terminal controls"
     >
-      <div
-        className={`terminal-tabs__new${hasProfileChoice ? " terminal-tabs__new--profiles" : ""}`}
-      >
+      {!showingContext && terminals.length > 0 && (
         <button
           type="button"
           className="icon-button"
-          hidden={sharedTabs}
           data-terminal-focus-trigger
           onClick={() => void createTerminal()}
           disabled={creating}
@@ -977,54 +994,83 @@ export const TerminalPane = memo(function TerminalPane({
         >
           <Plus size={15} aria-hidden />
         </button>
-        {hasProfileChoice ? (
-          <details
-            ref={profileMenuRef}
-            name={menuGroupName}
-            className="terminal-menu terminal-menu--profiles"
-            data-terminal-menu
+      )}
+      {hasProfileChoice ? (
+        <details
+          ref={profileMenuRef}
+          name={menuGroupName}
+          className="terminal-menu terminal-menu--profiles"
+          data-terminal-menu
+        >
+          <summary
+            className="icon-button"
+            aria-label="Choose terminal profile"
+            title="Choose terminal profile"
+            aria-disabled={creating}
+            onClick={(event) => {
+              if (creating) event.preventDefault();
+            }}
           >
-            <summary
-              className="terminal-tabs__profile"
-              aria-label="Choose terminal profile"
-              title="Choose terminal profile"
-              aria-disabled={creating}
-              onClick={(event) => {
-                if (creating) event.preventDefault();
-              }}
-            >
-              <Plus
-                className="terminal-tabs__profile-new"
-                size={15}
-                aria-hidden
+            <ChevronDown size={14} aria-hidden />
+          </summary>
+          <div className="terminal-menu__popover terminal-menu__popover--profiles">
+            {availableProfiles.map((profile) => (
+              <button
+                type="button"
+                key={profile.id}
+                data-terminal-focus-trigger
+                disabled={creating}
+                onClick={() => void createTerminal(profile)}
+              >
+                <span>{profile.label}</span>
+                {profile.isDefault ? <small>Default</small> : null}
+              </button>
+            ))}
+          </div>
+        </details>
+      ) : null}
+      {currentView && (
+        <div className="terminal-view-controls">
+          <span
+            className={`terminal-view__status terminal-view__status--${currentView.transport}`}
+            role="status"
+            aria-label={currentView.statusLabel}
+            title={currentView.statusLabel}
+          >
+            {currentView.transport === "connected" &&
+            currentView.writable &&
+            !currentView.exited ? (
+              <button
+                type="button"
+                className="icon-button terminal-view__keyboard"
+                aria-label="Focus terminal input"
+                disabled={!currentView.ready}
+                onPointerDown={(event) => event.preventDefault()}
+                onClick={() => currentView.invoke("focus")}
+              >
+                <Keyboard size={16} aria-hidden />
+              </button>
+            ) : (
+              <TerminalStatusIcon
+                transport={currentView.transport}
+                exited={currentView.exited}
               />
-              <ChevronDown
-                className="terminal-tabs__profile-chevron"
-                size={12}
-                aria-hidden
-              />
-            </summary>
-            <div className="terminal-menu__popover terminal-menu__popover--profiles">
-              {availableProfiles.map((profile) => (
-                <button
-                  type="button"
-                  key={profile.id}
-                  data-terminal-focus-trigger
-                  disabled={creating}
-                  onClick={() => void createTerminal(profile)}
-                >
-                  <span>{profile.label}</span>
-                  {profile.isDefault ? <small>Default</small> : null}
-                </button>
-              ))}
-            </div>
-          </details>
-        ) : null}
-      </div>
-      {controls}
+            )}
+          </span>
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Search terminal output"
+            aria-expanded={currentView.searchOpen}
+            onClick={() => currentView.invoke("search")}
+          >
+            <Search size={16} aria-hidden />
+          </button>
+        </div>
+      )}
       <button
         type="button"
-        className="icon-button terminal-tabs__focus"
+        className="icon-button"
         onClick={() => setFocused((value) => !value)}
         aria-label={focused ? "Exit focused terminal" : "Focus terminal"}
         title={focused ? "Exit focus" : "Focus terminal"}
@@ -1056,19 +1102,70 @@ export const TerminalPane = memo(function TerminalPane({
           <MoreHorizontal size={16} aria-hidden />
         </summary>
         <div className="terminal-menu__popover">
-          {viewActions}
-          <button
-            type="button"
-            className="terminal-menu__focus"
-            onClick={() => setFocused((value) => !value)}
-          >
-            {focused ? (
-              <Minimize2 size={14} aria-hidden />
-            ) : (
-              <Maximize2 size={14} aria-hidden />
-            )}
-            {focused ? "Exit focused terminal" : "Focus terminal"}
-          </button>
+          {currentView && (
+            <div className="terminal-menu__view" key={activeViewKey}>
+              {(
+                [
+                  [
+                    "paste",
+                    "Paste",
+                    ClipboardPaste,
+                    !currentView.writable ||
+                      !currentView.ready ||
+                      currentView.exited,
+                  ],
+                  ["copy", "Copy all", Copy, false],
+                  ["select", "Select text", TextSelect, false],
+                  [
+                    "copy-last",
+                    "Copy last output",
+                    Copy,
+                    !currentView.hasLastOutput,
+                  ],
+                ] as const
+              ).map(([action, label, Icon, disabled]) => (
+                <button
+                  key={action}
+                  type="button"
+                  disabled={disabled}
+                  aria-label={
+                    action === "paste" ? "Paste into terminal" : undefined
+                  }
+                  onClick={(event) =>
+                    currentView.invoke(action, event.currentTarget)
+                  }
+                >
+                  <Icon size={14} aria-hidden /> {label}
+                </button>
+              ))}
+              <details
+                className="terminal-menu__group"
+                data-terminal-menu-group
+              >
+                <DetailSummary>
+                  <Monitor size={14} aria-hidden /> Display
+                </DetailSummary>
+                <div>
+                  {(
+                    [
+                      ["clear", "Clear local scrollback", Eraser],
+                      ["reset", "Reset terminal display", RotateCcw],
+                    ] as const
+                  ).map(([action, label, Icon]) => (
+                    <button
+                      key={action}
+                      type="button"
+                      onClick={(event) =>
+                        currentView.invoke(action, event.currentTarget)
+                      }
+                    >
+                      <Icon size={14} aria-hidden /> {label}
+                    </button>
+                  ))}
+                </div>
+              </details>
+            </div>
+          )}
           {activeTerminal ? (
             <>
               <button type="button" onClick={() => beginRename(activeTerminal)}>
@@ -1084,41 +1181,26 @@ export const TerminalPane = memo(function TerminalPane({
                 className="terminal-menu__group"
                 data-terminal-menu-group
               >
-                <summary>
+                <DetailSummary>
                   <SquareTerminal size={14} aria-hidden /> Manage terminal
-                  <ChevronRight
-                    className="terminal-menu__chevron"
-                    size={13}
-                    aria-hidden
-                  />
-                </summary>
+                </DetailSummary>
                 <div>
-                  {terminals.indexOf(activeTerminal) > 0 ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const target =
-                          terminals[terminals.indexOf(activeTerminal) - 1];
-                        if (target)
-                          void reorder(activeTerminal.id, target.id, "before");
-                      }}
-                    >
-                      <ArrowLeft size={14} aria-hidden /> Move tab left
-                    </button>
-                  ) : null}
-                  {terminals.indexOf(activeTerminal) < terminals.length - 1 ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const target =
-                          terminals[terminals.indexOf(activeTerminal) + 1];
-                        if (target)
-                          void reorder(activeTerminal.id, target.id, "after");
-                      }}
-                    >
-                      <ArrowRight size={14} aria-hidden /> Move tab right
-                    </button>
-                  ) : null}
+                  {([-1, 1] as const).map((step) => {
+                    const target =
+                      terminals[terminals.indexOf(activeTerminal) + step];
+                    if (!target) return null;
+                    const Icon = step < 0 ? ArrowLeft : ArrowRight;
+                    return (
+                      <button
+                        key={step}
+                        type="button"
+                        onClick={() => moveTerminal(activeTerminal, step)}
+                      >
+                        <Icon size={14} aria-hidden />{" "}
+                        {step < 0 ? "Move tab left" : "Move tab right"}
+                      </button>
+                    );
+                  })}
                   <button
                     type="button"
                     data-terminal-focus-trigger
@@ -1158,24 +1240,18 @@ export const TerminalPane = memo(function TerminalPane({
                 void loadGlobal();
             }}
           >
-            <summary aria-label="Terminals in all projects">
+            <DetailSummary aria-label="Terminals in all projects">
               <FolderKanban size={14} aria-hidden /> All terminals
-              <ChevronRight
-                className="terminal-menu__chevron"
-                size={13}
-                aria-hidden
-              />
-            </summary>
+            </DetailSummary>
             <div>
-              <label className="terminal-menu__search">
-                <Search size={13} aria-hidden />
-                <input
-                  value={terminalFilter}
-                  onChange={(event) => setTerminalFilter(event.target.value)}
-                  placeholder="Find terminal or project"
-                  aria-label="Find terminal or project"
-                />
-              </label>
+              <SearchField
+                className="terminal-menu__search"
+                value={terminalFilter}
+                onValueChange={setTerminalFilter}
+                placeholder="Find terminal or project"
+                aria-label="Find terminal or project"
+                iconSize={13}
+              />
               {globalLoading && !globalCatalog ? (
                 <div className="terminal-menu__message">Loading…</div>
               ) : globalGroups.size === 0 ? (
@@ -1264,222 +1340,252 @@ export const TerminalPane = memo(function TerminalPane({
   );
 
   return (
-    <div
+    <section
       ref={paneRef}
-      className={`terminal-pane${focused ? " terminal-pane--focused" : ""}${sharedTabs ? " terminal-pane--shared" : ""}`}
+      className={`workspace-dock${focused ? " terminal-pane--focused" : ""}`}
       onKeyDown={onMenuKeyDown}
       onClickCapture={(event) => {
         const button = (event.target as Element).closest("button");
         button?.closest(TERMINAL_MENU_SELECTOR)?.removeAttribute("open");
       }}
     >
-      {sessionCwd && cwd !== sessionCwd ? (
-        <div className="terminal-project-context">
-          <span>
-            Viewing <strong>{projectLabel(cwd)}</strong>
-          </span>
-          <button
-            type="button"
-            onClick={() => {
-              setActiveId(null);
-              setCwd(sessionCwd);
-            }}
-          >
-            Back to current project
-          </button>
-        </div>
-      ) : null}
-      {!sharedTabs && <ContextTabStrip tabs={tabs} focused active={active} />}
-      {!hasActiveView && toolbar()}
+      <div
+        className="pane-toolbar ctx__header"
+        ref={recoverModalFocus}
+        role="tablist"
+        aria-label={showingContext ? "Context tabs" : "Project terminals"}
+        onKeyDown={handleDockTabKey}
+      >
+        <ContextTabStrip
+          tabs={showingContext ? [...context.files, ...tabs] : tabs}
+        />
+        {showingContext ? context.tools : null}
+      </div>
+      {showingContext ? context.body : null}
+      <section
+        className="terminal-pane"
+        id="context-terminal-content"
+        role="tabpanel"
+        aria-label="Terminal"
+        hidden={Boolean(context && !active)}
+      >
+        {cwd && sessionCwd && cwd !== sessionCwd ? (
+          <div className="terminal-project-context">
+            <span>
+              Viewing <strong>{projectLabel(cwd)}</strong>
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setActiveId(null);
+                setCwd(sessionCwd);
+              }}
+            >
+              Back to current project
+            </button>
+          </div>
+        ) : null}
+        {cwd && toolbar}
 
-      {loading && !catalog ? (
-        <div className="terminal-empty terminal-empty--loading" role="status">
-          <PiLoader size={17} aria-hidden />
-          Loading terminals…
-        </div>
-      ) : terminals.length === 0 ? (
-        <div className="terminal-empty">
-          <SquareTerminal size={28} aria-hidden />
-          <strong>Project terminal</strong>
-          <span>Terminals keep running after you disconnect.</span>
-          <button
-            type="button"
-            className="button button--primary"
-            data-terminal-focus-trigger
-            onClick={createFromControl}
-            disabled={creating}
+        {!cwd ? (
+          <ContextPaneState
+            className="terminal-empty"
+            icon={<SquareTerminal size={24} aria-hidden />}
+            title="No project selected"
+            hint="Open a session to use project terminals."
+          />
+        ) : loading && !catalog ? (
+          TERMINAL_LOADING
+        ) : terminals.length === 0 ? (
+          <ContextPaneState
+            className="terminal-empty"
+            icon={<SquareTerminal size={28} aria-hidden />}
+            title="Project terminal"
+            hint="Terminals keep running after you disconnect."
           >
-            <Plus size={14} aria-hidden />
-            <ButtonLabel reserve="New terminal">
-              {creating ? "Starting…" : "New terminal"}
-            </ButtonLabel>
-          </button>
-        </div>
-      ) : (
-        <div className="terminal-views">
-          {terminals
-            .filter(
-              (terminal) =>
-                openedIds.has(terminal.id) ||
-                (active && terminal.id === activeId),
-            )
-            .map((terminal) => (
-              <div
-                id={`terminal-view-${terminal.id}`}
-                key={`${terminal.id}:${terminal.outputEpoch}`}
-                className="terminal-views__item"
-                role="region"
-                aria-label={`${terminalLabel(terminal)} terminal`}
-                hidden={terminal.id !== activeId}
-              >
-                <TerminalView
+            <button
+              type="button"
+              className="button button--primary"
+              data-terminal-focus-trigger
+              onClick={createFromControl}
+              disabled={creating}
+            >
+              <Plus size={14} aria-hidden />
+              <ButtonLabel reserve="New terminal">
+                {creating ? "Starting…" : "New terminal"}
+              </ButtonLabel>
+            </button>
+          </ContextPaneState>
+        ) : (
+          <div className="terminal-views">
+            {terminals
+              .filter(
+                (terminal) =>
+                  openedIds.has(terminal.id) ||
+                  (active && terminal.id === activeId),
+              )
+              .map((terminal) => (
+                <div
+                  id={`terminal-view-${terminal.id}`}
+                  key={`${terminal.id}:${terminal.outputEpoch}`}
+                  className="terminal-views__item"
+                  role="region"
+                  aria-label={`${terminalLabel(terminal)} terminal`}
+                  hidden={terminal.id !== activeId}
+                >
+                  <Suspense fallback={TERMINAL_LOADING}>
+                    <TerminalView
+                      api={api}
+                      terminal={terminal}
+                      active={active && terminal.id === activeId}
+                      settings={uiSettings}
+                      publishActions={setViewActions}
+                      onDescriptor={applyDescriptor}
+                      onBackgroundOutput={markBackgroundOutput}
+                      onBell={markBell}
+                      onOpenFile={cwd === sessionCwd ? onOpenFile : undefined}
+                      onSendToComposer={
+                        cwd === sessionCwd ? onSendToComposer : undefined
+                      }
+                      onCommandComplete={handleCommandComplete}
+                    />
+                  </Suspense>
+                </div>
+              ))}
+          </div>
+        )}
+
+        {active && settingsOpen
+          ? createPortal(
+              <Suspense fallback={null}>
+                <TerminalSettingsDialog
                   api={api}
-                  terminal={terminal}
-                  active={active && terminal.id === activeId}
                   settings={uiSettings}
-                  toolbar={terminal.id === activeId ? toolbar : undefined}
-                  onDescriptor={applyDescriptor}
-                  onBackgroundOutput={markBackgroundOutput}
-                  onBell={markBell}
-                  onOpenFile={cwd === sessionCwd ? onOpenFile : undefined}
-                  onSendToComposer={
-                    cwd === sessionCwd ? onSendToComposer : undefined
-                  }
-                  onCommandComplete={handleCommandComplete}
+                  onSettingsChange={setUiSettings}
+                  onClose={() => setSettingsOpen(false)}
                 />
+              </Suspense>,
+              document.body,
+            )
+          : null}
+
+        {recentlyClosed && Date.now() - recentlyClosed.closedAt < 30_000 ? (
+          <div className="terminal-undo" role="status">
+            <span>Terminal closed</span>
+            <button type="button" onClick={() => void reopenClosed()}>
+              <Undo2 size={13} aria-hidden /> Reopen
+            </button>
+            <button
+              type="button"
+              className="icon-button"
+              onClick={() => setRecentlyClosed(null)}
+              aria-label="Dismiss"
+            >
+              <X size={13} aria-hidden />
+            </button>
+          </div>
+        ) : null}
+        {recoveryOperations.length > 0 ? (
+          <section
+            className="terminal-pending"
+            aria-label="Terminal control recovery"
+          >
+            {recoveryOperations.map((operation) => (
+              <div
+                className="terminal-pending__row"
+                role="status"
+                key={operation.key}
+              >
+                <span className="terminal-pending__description">
+                  <span
+                    className="terminal-pending__label"
+                    title={operation.label}
+                  >
+                    {operation.label}
+                  </span>
+                  <span>
+                    {operation.outcome !== "unknown"
+                      ? `${operation.outcome === "completed" ? "Completed" : "Rejected"} · Could not clear tracking`
+                      : "Outcome unknown"}
+                  </span>
+                </span>
+                {operation.canRetry ? (
+                  <button
+                    type="button"
+                    className="button button--quiet"
+                    disabled={operation.busy}
+                    aria-busy={operation.busy}
+                    onClick={() => {
+                      void api
+                        .retryTerminalOperation(operation.key)
+                        .then(() => {
+                          if (catalogController.active) return load();
+                        })
+                        .catch((retryError: unknown) => {
+                          if (catalogController.active)
+                            setError(
+                              retryError instanceof Error
+                                ? retryError.message
+                                : "Terminal outcome remains unknown",
+                            );
+                        });
+                    }}
+                  >
+                    <ButtonLabel
+                      reserve={
+                        operation.outcome !== "unknown"
+                          ? "Clear recovery record"
+                          : "Retry same operation"
+                      }
+                    >
+                      {operation.busy
+                        ? "Checking…"
+                        : operation.outcome !== "unknown"
+                          ? "Clear recovery record"
+                          : "Retry same operation"}
+                    </ButtonLabel>
+                  </button>
+                ) : null}
+                {operation.outcome === "unknown" ? (
+                  <button
+                    type="button"
+                    className="button button--quiet"
+                    disabled={operation.busy}
+                    onClick={() => {
+                      if (
+                        !window.confirm(
+                          `Stop tracking ${operation.label}? The operation may still be running. Check your terminals before trying again.`,
+                        )
+                      )
+                        return;
+                      try {
+                        terminalOperations.stopTracking(operation.key);
+                      } catch (trackingError) {
+                        setError(
+                          trackingError instanceof Error
+                            ? trackingError.message
+                            : "Could not stop tracking this operation",
+                        );
+                      }
+                    }}
+                  >
+                    Stop tracking…
+                  </button>
+                ) : null}
               </div>
             ))}
-        </div>
-      )}
-
-      {active && settingsOpen
-        ? createPortal(
-            <TerminalSettingsDialog
-              api={api}
-              settings={uiSettings}
-              onSettingsChange={setUiSettings}
-              onClose={() => setSettingsOpen(false)}
-            />,
-            document.body,
-          )
-        : null}
-
-      {recentlyClosed && Date.now() - recentlyClosed.closedAt < 30_000 ? (
-        <div className="terminal-undo" role="status">
-          <span>Terminal closed</span>
-          <button type="button" onClick={() => void reopenClosed()}>
-            <Undo2 size={13} aria-hidden /> Reopen
-          </button>
-          <button
-            type="button"
-            className="icon-button"
-            onClick={() => setRecentlyClosed(null)}
-            aria-label="Dismiss"
-          >
-            <X size={13} aria-hidden />
-          </button>
-        </div>
-      ) : null}
-      {recoveryOperations.length > 0 ? (
-        <section
-          className="terminal-pending"
-          aria-label="Terminal control recovery"
-        >
-          {recoveryOperations.map((operation) => (
-            <div
-              className="terminal-pending__row"
-              role="status"
-              key={operation.key}
-            >
-              <span className="terminal-pending__description">
-                <span
-                  className="terminal-pending__label"
-                  title={operation.label}
-                >
-                  {operation.label}
-                </span>
-                <span>
-                  {operation.outcome !== "unknown"
-                    ? `${operation.outcome === "completed" ? "Completed" : "Rejected"} · Could not clear tracking`
-                    : "Outcome unknown"}
-                </span>
-              </span>
-              {operation.canRetry ? (
-                <button
-                  type="button"
-                  className="button button--quiet"
-                  disabled={operation.busy}
-                  aria-busy={operation.busy}
-                  onClick={() => {
-                    void api
-                      .retryTerminalOperation(operation.key)
-                      .then(() => {
-                        if (catalogController.active) return load();
-                      })
-                      .catch((retryError: unknown) => {
-                        if (catalogController.active)
-                          setError(
-                            retryError instanceof Error
-                              ? retryError.message
-                              : "Terminal outcome remains unknown",
-                          );
-                      });
-                  }}
-                >
-                  <ButtonLabel
-                    reserve={
-                      operation.outcome !== "unknown"
-                        ? "Clear recovery record"
-                        : "Retry same operation"
-                    }
-                  >
-                    {operation.busy
-                      ? "Checking…"
-                      : operation.outcome !== "unknown"
-                        ? "Clear recovery record"
-                        : "Retry same operation"}
-                  </ButtonLabel>
-                </button>
-              ) : null}
-              {operation.outcome === "unknown" ? (
-                <button
-                  type="button"
-                  className="button button--quiet"
-                  disabled={operation.busy}
-                  onClick={() => {
-                    if (
-                      !window.confirm(
-                        `Stop tracking ${operation.label}? The operation may still be running. Check your terminals before trying again.`,
-                      )
-                    )
-                      return;
-                    try {
-                      terminalOperations.stopTracking(operation.key);
-                    } catch (trackingError) {
-                      setError(
-                        trackingError instanceof Error
-                          ? trackingError.message
-                          : "Could not stop tracking this operation",
-                      );
-                    }
-                  }}
-                >
-                  Stop tracking…
-                </button>
-              ) : null}
-            </div>
-          ))}
-        </section>
-      ) : null}
-      {error ? (
-        <NoticeCard
-          kind="error"
-          text={error}
-          className="terminal-pane__error"
-          onDismiss={() => setError(null)}
-          dismissLabel="Dismiss terminal error"
-        />
-      ) : null}
-    </div>
+          </section>
+        ) : null}
+        {error ? (
+          <NoticeCard
+            kind="error"
+            text={error}
+            className="terminal-pane__error"
+            onDismiss={() => setError(null)}
+            dismissLabel="Dismiss terminal error"
+          />
+        ) : null}
+      </section>
+    </section>
   );
 });

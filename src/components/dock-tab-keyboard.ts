@@ -10,7 +10,7 @@ export function handleDockTabKey(event: KeyboardEvent<HTMLElement>) {
     return;
   const tabs = [
     ...(target
-      .closest(".ctx__tabs")
+      .closest('[role="tablist"]')
       ?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? []),
   ];
   const index = tabs.indexOf(target as HTMLButtonElement);

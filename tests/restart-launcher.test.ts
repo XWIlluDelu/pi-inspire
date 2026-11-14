@@ -25,17 +25,16 @@ import {
 } from "./server/fixtures/host-api.js";
 import { isolatedTestEnvironment } from "./server/fixtures/isolated-environment.js";
 
-const directories: string[] = [];
-const closeServers: Array<() => Promise<void>> = [];
+let root: string;
+let host: Awaited<ReturnType<typeof hostApiFixture>> | undefined;
 afterEach(async () => {
-  for (const close of closeServers.splice(0)) await close();
-  for (const directory of directories.splice(0))
-    await rm(directory, { recursive: true, force: true });
+  if (host) await closeHostApiFixture(host);
+  host = undefined;
+  await rm(root, { recursive: true, force: true });
 });
 
-async function fixture(fail: boolean) {
-  const root = await mkdtemp(join(tmpdir(), "inspire-restart-launcher-"));
-  directories.push(root);
+async function fixture() {
+  root = await mkdtemp(join(tmpdir(), "inspire-restart-launcher-"));
   await preparePackagedLauncher(root);
   // The launcher fixture must never enumerate or stop real user Pi processes.
   await writeFile(
@@ -55,7 +54,7 @@ async function fixture(fail: boolean) {
   const logPath = await installSystemdManager(root);
   await writeFile(
     join(root, "build/server/restart-preflight.js"),
-    `import { appendFileSync } from 'node:fs'; appendFileSync(process.env.FIXTURE_LOG, 'preflight\\n'); process.exit(${fail ? 1 : 0});`,
+    `import { appendFileSync } from 'node:fs'; appendFileSync(process.env.FIXTURE_LOG, 'preflight\\n'); process.exit(process.env.FIXTURE_PREFLIGHT_FAIL ? 1 : 0);`,
   );
   const env = isolatedTestEnvironment(root, {
     PATH: [
@@ -71,6 +70,7 @@ async function fixture(fail: boolean) {
   });
   const command = (args: string[]) => [join(root, "inspire.mjs"), ...args];
   const options = { env, encoding: "utf8" as const, timeout: 15_000 };
+  const log = () => readFile(logPath, "utf8");
   return {
     root,
     env,
@@ -84,11 +84,10 @@ async function fixture(fail: boolean) {
       ready = true,
     } = {}) {
       let state: InstanceState;
-      const host = await hostApiFixture({
+      host = await hostApiFixture({
         activeHerdrMode: includeHerdr,
         instanceState: () => (ready ? state : null),
       });
-      closeServers.push(() => closeHostApiFixture(host));
       state = {
         schemaVersion: INSTANCE_STATE_VERSION,
         root,
@@ -126,7 +125,9 @@ async function fixture(fail: boolean) {
       `,
       );
     },
-    log: () => readFile(logPath, "utf8"),
+    log,
+    mutations: async () =>
+      (await log()).match(/^--user (?:start|stop|restart) .*$/gmu) ?? [],
   };
 }
 
@@ -134,7 +135,7 @@ describe.runIf(process.platform === "linux")(
   "prepared launcher restarts (isolated service fixture)",
   () => {
     it("installs readiness-gated units and delegates only default Host lifecycles", async () => {
-      const f = await fixture(false);
+      const f = await fixture();
       f.run(["service", "install-host"]);
       const unit = (name: string) =>
         readFile(join(f.env.XDG_CONFIG_HOME!, "systemd/user", name), "utf8");
@@ -183,87 +184,80 @@ describe.runIf(process.platform === "linux")(
       expect(() => f.run(["status"])).toThrow(/INSΠRE is not running/u);
     }, 30_000);
 
-    it("leaves both services running when full restart preparation fails", async () => {
-      const f = await fixture(true);
+    it("prepares before changing the services and keeps a failed preparation non-issuing", async () => {
+      const f = await fixture();
+      f.env.FIXTURE_PREFLIGHT_FAIL = "1";
       expect(() => f.run(["restart", "--all"])).toThrow(
         /running Host was not stopped/,
       );
-      const log = await f.log();
-      expect(log).toContain("preflight\n");
-      expect(log).not.toMatch(/^--user (start|stop|restart)/mu);
-    });
-    it("prepares before restarting both services exactly once", async () => {
-      const f = await fixture(false);
+      expect(await f.mutations()).toEqual([]);
+      expect(await f.log()).toContain("preflight\n");
+      delete f.env.FIXTURE_PREFLIGHT_FAIL;
       f.run(["restart", "--terminals"]);
-      const lines = (await f.log()).split("\n");
-      const mutations = lines.filter((line) =>
-        /^--user (start|stop|restart)/u.test(line),
-      );
-      expect(mutations).toEqual([
+      expect(await f.mutations()).toEqual([
         "--user restart inspire-terminal.service inspire-host.service",
       ]);
-      expect(lines).toContain("preflight");
-      expect(lines.indexOf("preflight")).toBeLessThan(
-        lines.indexOf(mutations[0]!),
+      expect(await f.log()).toMatch(
+        /preflight\n[\s\S]*restart inspire-terminal.service inspire-host.service/,
       );
     });
-    it.each([false, true])(
-      "uses running Herdr mode (%s) and stops the owner before Pi cleanup",
-      async (includeHerdr) => {
-        const f = await fixture(false);
-        await f.runningHost({ includeHerdr });
-        await f.runAsync(["restart", "--all"]);
-        const lines = (await f.log()).split("\n");
-        const stopped = lines.indexOf("--user stop inspire-host.service");
-        const cleaned = lines.indexOf(`stop-all-pi:${includeHerdr}`);
-        const started = lines.indexOf("--user start inspire-host.service");
-        expect(stopped).toBeGreaterThan(lines.indexOf("preflight"));
-        expect(cleaned).toBeGreaterThan(stopped);
-        expect(started).toBeGreaterThan(cleaned);
+
+    it.each([
+      { mode: "direct", includeHerdr: false },
+      { mode: "enhanced", includeHerdr: true },
+      {
+        mode: "readiness lost",
+        ready: false,
+        error: /Cannot verify the running Host/,
+      },
+      {
+        mode: "exit unconfirmed",
+        confirmExit: false,
+        error: /Host exit was not confirmed/u,
+      },
+      {
+        mode: "Pi cleanup unconfirmed",
+        cleanupFails: true,
+        error: /Synthetic Pi stop failure/,
+      },
+    ])(
+      "fences full restart in $mode mode",
+      async ({ includeHerdr, ready, confirmExit, cleanupFails, error }) => {
+        const f = await fixture();
+        if (cleanupFails) f.env.FIXTURE_STOP_PI_FAIL = "1";
+        await f.runningHost({ includeHerdr, ready, confirmExit });
+        const restart = f.runAsync(["restart", "--all"]);
+        if (error) await expect(restart).rejects.toThrow(error);
+        else await restart;
+        const log = await f.log();
+        expect(log).toContain("preflight\ninspect owner\n");
+        const effects =
+          log.match(
+            /^(?:--user (?:stop|start) inspire-host\.service|stop-all-pi:.*)$/gmu,
+          ) ?? [];
+        expect(effects).toEqual(
+          ready === false
+            ? []
+            : [
+                "--user stop inspire-host.service",
+                ...(confirmExit === false
+                  ? []
+                  : [`stop-all-pi:${includeHerdr ?? false}`]),
+                ...(!error ? ["--user start inspire-host.service"] : []),
+              ],
+        );
       },
     );
+
     it("refuses a Pi-descended caller before preparation or service shutdown", async () => {
-      const f = await fixture(false);
+      const f = await fixture();
       f.env.FIXTURE_PI_ANCESTOR = "1";
       expect(() => f.run(["restart", "--all"])).toThrow(/outside Pi/);
-      const log = await f.log();
-      expect(log).not.toContain("preflight");
-      expect(log).not.toContain("stop-all-pi");
-      expect(log).not.toMatch(/^--user (start|stop|restart)/mu);
-    });
-    it("never starts a replacement after failed global Pi cleanup", async () => {
-      const f = await fixture(false);
-      f.env.FIXTURE_STOP_PI_FAIL = "1";
-      await f.runningHost();
-      await expect(f.runAsync(["restart", "--all"])).rejects.toThrow(
-        /Synthetic Pi stop failure/,
-      );
-      expect(await f.log()).toContain("stop-all-pi");
-      expect(await f.log()).not.toContain("--user start inspire-host.service");
-    });
-    it("does not clean Pi or start another Host without process exit proof", async () => {
-      const f = await fixture(false);
-      await f.runningHost({ confirmExit: false });
-      await expect(f.runAsync(["restart", "--all"])).rejects.toThrow(
-        /Host exit was not confirmed/u,
-      );
-      const log = await f.log();
-      expect(log).toContain("--user stop inspire-host.service");
-      expect(log).not.toContain("stop-all-pi");
-      expect(log).not.toContain("--user start inspire-host.service");
-    });
-    it("verifies the running Host after preflight", async () => {
-      const f = await fixture(false);
-      await f.runningHost({ ready: false });
-      await expect(f.runAsync(["restart"])).rejects.toThrow(
-        /Cannot verify the running Host/,
-      );
-      const log = await f.log();
-      expect(log).toContain("preflight\ninspect owner\n");
-      expect(log).not.toMatch(/--user (start|stop|restart)/u);
+      expect(await f.log()).not.toMatch(/preflight|stop-all-pi/);
+      expect(await f.mutations()).toEqual([]);
     });
     it("blocks terminal-ending restart inside a project terminal and keeps default Host restart on systemd", async () => {
-      const f = await fixture(false);
+      const f = await fixture();
       f.env.INSPIRE_TERMINAL_ID = "project-terminal";
       expect(() => f.run(["restart", "--all"])).toThrow(/external OS terminal/);
       // The child uses this fixture's runtime directory, not the real user instance.
@@ -278,18 +272,16 @@ describe.runIf(process.platform === "linux")(
       expect(output).toContain(
         "Restarted INSΠRE Host. Terminals remain running.",
       );
-      const mutations = (await f.log())
-        .split("\n")
-        .filter((line) => /^--user (start|stop|restart)/u.test(line));
-      expect(mutations).toEqual(["--user restart inspire-host.service"]);
+      expect(await f.mutations()).toEqual([
+        "--user restart inspire-host.service",
+      ]);
     });
-    it.each(["--unknown", "--host-only"])(
-      "rejects restart flag %s",
-      async (flag) => {
-        const f = await fixture(false);
-        expect(() => f.run(["restart", flag])).toThrow(/Use: inspire restart/);
-        expect(await f.log()).not.toMatch(/^--user (start|stop|restart)/mu);
-      },
-    );
+    it("rejects the retired host-only flag", async () => {
+      const f = await fixture();
+      expect(() => f.run(["restart", "--host-only"])).toThrow(
+        /Use: inspire restart/,
+      );
+      expect(await f.mutations()).toEqual([]);
+    });
   },
 );

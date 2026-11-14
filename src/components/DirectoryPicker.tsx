@@ -161,7 +161,7 @@ export function DirectoryPicker({
   return (
     <Modal aria-label="Choose project directory" onDismiss={onCancel}>
       <div className="dialog dirpicker">
-        <div className="dirpicker__header">
+        <header className="dialog__header">
           <h2 className="dialog__title">Choose project directory</h2>
           <button
             type="button"
@@ -182,7 +182,7 @@ export function DirectoryPicker({
               <EyeOff size={16} aria-hidden />
             )}
           </button>
-        </div>
+        </header>
         <div className="dirpicker__path-field" data-path={path}>
           <textarea
             rows={1}
@@ -224,7 +224,7 @@ export function DirectoryPicker({
               <button
                 key={root.path}
                 type="button"
-                className="dirpicker__root button--quiet"
+                className="button button--quiet dirpicker__root"
                 title={`Browse ${root.path}`}
                 onClick={() => void navigate(root.path)}
               >

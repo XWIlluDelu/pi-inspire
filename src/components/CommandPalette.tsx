@@ -1,13 +1,5 @@
 import { SearchX } from "lucide-react";
-import {
-  memo,
-  useCallback,
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { nativeCommand, parseCommandInvocation } from "../../shared/commands";
 import { isAbortableRunState, isBusyRunState } from "../../shared/contracts";
 import { selectedRunState } from "../app-state";
@@ -25,18 +17,25 @@ import { isTouchFirstDevice } from "../input-device";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import { paletteTextMatchRanges, rankPaletteItems } from "../palette-search";
 import { preferenceChoices } from "../preference-labels";
+import { sessionActions } from "../session-actions";
 import { shallowEqual, store, useAppState } from "../store";
 import {
   queueTerminalAction,
   type TerminalUiAction,
 } from "../terminal-actions";
 import { useSearchFocus } from "../use-search-focus";
-import { modelCycleShortcut } from "../workbench-keyboard";
+import {
+  modelCycleShortcut,
+  workbenchShortcutLabel,
+  workbenchShortcuts,
+} from "../workbench-keyboard";
 import { sessionHeading } from "./AppTopbar";
 import { ButtonLabel } from "./ButtonLabel";
 import { ComposerInput } from "./ComposerInput";
 import { Modal } from "./Modal";
 import { visibleSessions } from "./nav-model";
+import { OptionList, useOptionList } from "./OptionList";
+import { RenameSessionDialog } from "./RenameSessionDialog";
 import { SearchMatchText } from "./SearchMatchText";
 
 interface PaletteItem {
@@ -59,12 +58,36 @@ const preferenceActionKeys = {
   activityFoldVisibility: "activity-folds",
 } satisfies Record<keyof typeof preferenceChoices, string>;
 
+const workspaceActions = [
+  { mode: "files", title: "Open Files", aliases: [] },
+  { mode: "changes", title: "Open Changes", aliases: [] },
+  {
+    mode: "terminal",
+    title: "Open Terminal",
+    aliases: ["shell", "project shell"],
+  },
+] as const;
+
+const terminalActions: {
+  action: TerminalUiAction;
+  title: string;
+  hint?: string;
+}[] = [
+  { action: "new", title: "New terminal", hint: "Ctrl+Shift+`" },
+  { action: "next", title: "Next terminal", hint: "Ctrl+PageDown" },
+  { action: "previous", title: "Previous terminal", hint: "Ctrl+PageUp" },
+  { action: "take-control", title: "Take control of terminal" },
+  { action: "restart", title: "Restart terminal" },
+  { action: "close", title: "Close terminal" },
+  { action: "focus", title: "Toggle terminal focus" },
+  { action: "settings", title: "Terminal settings" },
+];
+
 function runTerminalAction(action: TerminalUiAction): void {
   const projectCwd = store.getState().cwd;
   if (!projectCwd) return;
   queueTerminalAction(action, projectCwd);
-  store.setResourcesOpen(true);
-  store.setContextMode("terminal");
+  store.openContextMode("terminal");
 }
 
 export const CommandPalette = memo(function CommandPalette({
@@ -105,11 +128,11 @@ export const CommandPalette = memo(function CommandPalette({
       heading: sessionHeading(
         appState.sessionName,
         catalogTitle,
-        appState.messages,
-        !appState.hasOlderMessages,
+        appState.live.messages,
+        !appState.view.hasOlder,
       ),
       runState: selectedRunState(appState),
-      bashRunning: appState.bashRunning,
+      bashRunning: appState.live.bashRunning,
       earlierContinuation: hasEarlierContinuation(appState),
       prefs: appState.prefs,
       sessions: appState.sessions,
@@ -118,7 +141,7 @@ export const CommandPalette = memo(function CommandPalette({
       model: appState.model,
     };
   }, shallowEqual);
-  const listId = useId();
+  const list = useOptionList<PaletteItem>();
   const [searchQuery, setSearchQuery] = useState("");
   const [preparation, setPreparation] = useState<{
     owner: string;
@@ -142,15 +165,10 @@ export const CommandPalette = memo(function CommandPalette({
   const [sendingLabel, setSendingLabel] = useState<string | null>(null);
   const preparationSending = sendingLabel !== null;
   const [delivery, setDelivery] = useState<"steer" | "followUp">("steer");
-  const [index, setIndex] = useState(0);
-  const [keyboardActive, setKeyboardActive] = useState(true);
-  const [renameSessionId, setRenameSessionId] = useState<string | null>(null);
-  const renaming = renameSessionId !== null;
-  const [renameValue, setRenameValue] = useState("");
-  const [renameInitialValue, setRenameInitialValue] = useState("");
+  const [rename, setRename] = useState<{ owner: string; name: string } | null>(
+    null,
+  );
   const inputRef = useRef<HTMLInputElement>(null);
-  const listRef = useRef<HTMLDivElement>(null);
-  const renameIncarnationRef = useRef(0);
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
@@ -158,19 +176,10 @@ export const CommandPalette = memo(function CommandPalette({
       mountedRef.current = false;
     };
   }, []);
-  const exitRename = useCallback(() => {
-    renameIncarnationRef.current += 1;
-    setRenameSessionId(null);
-    setRenameValue("");
-    setRenameInitialValue("");
-  }, []);
   const dialogRef = useRef<HTMLDialogElement>(null);
   const abortable = isAbortableRunState(state.runState) || state.bashRunning;
 
-  useSearchFocus(active && !preparation && !renaming, inputRef, dialogRef);
-  useEffect(() => {
-    if (active && renaming) inputRef.current?.focus({ preventScroll: true });
-  }, [active, renaming]);
+  useSearchFocus(active && !preparation && !rename, inputRef, dialogRef);
 
   useEffect(() => {
     if (preparation && preparation.owner !== state.sessionId)
@@ -178,8 +187,8 @@ export const CommandPalette = memo(function CommandPalette({
   }, [preparation, state.sessionId]);
 
   useEffect(() => {
-    if (renaming && renameSessionId !== state.sessionId) exitRename();
-  }, [exitRename, renameSessionId, renaming, state.sessionId]);
+    if (rename && rename.owner !== state.sessionId) setRename(null);
+  }, [rename, state.sessionId]);
 
   const items = useMemo<PaletteItem[]>(() => {
     const actions: PaletteItem[] = [
@@ -228,120 +237,58 @@ export const CommandPalette = memo(function CommandPalette({
         title: "Refresh session list",
         run: () => void store.refreshSessions(),
       },
-      {
-        id: "nav",
+      ...(["nav", "ctx"] as const).map((id) => ({
+        id,
         group: "Actions",
-        title: "Toggle navigation panel",
-        hint: "Ctrl+B",
-        run: onToggleNav,
-      },
-      {
-        id: "ctx",
-        group: "Actions",
-        title: "Toggle resources panel",
-        hint: "Ctrl+.",
-        run: onToggleCtx,
-      },
+        title: workbenchShortcuts[id].title,
+        hint: workbenchShortcutLabel(id),
+        run: id === "nav" ? onToggleNav : onToggleCtx,
+      })),
     ];
     if (state.sessionId) {
       const { sessionId } = state;
+      const runInSession = (run: () => void) => () => {
+        if (store.getState().sessionId === sessionId) run();
+      };
       actions.push(
         {
           id: "copy-resume-command",
           group: "Actions",
           title: "Copy resume command",
-          run: () => void store.copyResumeCommand(sessionId),
+          run: runInSession(() => void store.copyResumeCommand(sessionId)),
         },
-        {
-          id: "files",
-          group: "Workspace",
-          title: "Open Files",
-          default: true,
-          run: () => {
-            store.setResourcesOpen(true);
-            store.setContextMode("files");
-          },
-        },
-        {
-          id: "changes",
-          group: "Workspace",
-          title: "Open Changes",
-          default: true,
-          run: () => {
-            store.setResourcesOpen(true);
-            store.setContextMode("changes");
-          },
-        },
+        ...workspaceActions.map(
+          ({ mode, title, aliases }): PaletteItem => ({
+            id: mode,
+            group: "Workspace",
+            title,
+            aliases: [...aliases],
+            default: true,
+            run: runInSession(() => store.openContextMode(mode)),
+          }),
+        ),
         {
           id: "history",
           group: "Workspace",
           title: "Open History",
-          aliases: ["/tree", "history", "branches", "branch navigation"],
+          aliases: [
+            `/${sessionActions["switch-branch"].command}`,
+            "history",
+            "branches",
+            "branch navigation",
+          ],
           default: true,
-          run: store.openHistory,
+          run: runInSession(store.openHistory),
         },
-        {
-          id: "terminal",
-          group: "Workspace",
-          title: "Open Terminal",
-          aliases: ["shell", "project shell"],
-          default: true,
-          run: () => {
-            store.setResourcesOpen(true);
-            store.setContextMode("terminal");
-          },
-        },
-        {
-          id: "terminal-new",
-          group: "Terminal",
-          title: "New terminal",
-          hint: "Ctrl+Shift+`",
-          run: () => runTerminalAction("new"),
-        },
-        {
-          id: "terminal-next",
-          group: "Terminal",
-          title: "Next terminal",
-          hint: "Ctrl+PageDown",
-          run: () => runTerminalAction("next"),
-        },
-        {
-          id: "terminal-previous",
-          group: "Terminal",
-          title: "Previous terminal",
-          hint: "Ctrl+PageUp",
-          run: () => runTerminalAction("previous"),
-        },
-        {
-          id: "terminal-control",
-          group: "Terminal",
-          title: "Take control of terminal",
-          run: () => runTerminalAction("take-control"),
-        },
-        {
-          id: "terminal-restart",
-          group: "Terminal",
-          title: "Restart terminal",
-          run: () => runTerminalAction("restart"),
-        },
-        {
-          id: "terminal-close",
-          group: "Terminal",
-          title: "Close terminal",
-          run: () => runTerminalAction("close"),
-        },
-        {
-          id: "terminal-focus",
-          group: "Terminal",
-          title: "Toggle terminal focus",
-          run: () => runTerminalAction("focus"),
-        },
-        {
-          id: "terminal-settings",
-          group: "Terminal",
-          title: "Terminal settings",
-          run: () => runTerminalAction("settings"),
-        },
+        ...terminalActions.map(
+          ({ action, title, hint }): PaletteItem => ({
+            id: `terminal-${action}`,
+            group: "Terminal",
+            title,
+            hint,
+            run: runInSession(() => runTerminalAction(action)),
+          }),
+        ),
       );
       if (!state.readOnlyReason) {
         if (!state.external)
@@ -391,23 +338,33 @@ export const CommandPalette = memo(function CommandPalette({
       actions.push({
         id: "clone",
         group: "Workspace",
-        title: "Clone current branch",
-        aliases: ["/clone"],
-        run: () => void store.cloneCurrentBranch(),
+        title: sessionActions.clone.title,
+        aliases: [`/${sessionActions.clone.command}`],
+        run: () => {
+          const current = store.getState();
+          if (
+            current.sessionId === state.sessionId &&
+            !branchCopiesBlocked(current)
+          )
+            void store.cloneCurrentBranch();
+        },
       });
     }
     if (state.sessionId && !state.readOnlyReason) {
       actions.push({
         id: "rename",
         group: "Actions",
-        title: "Rename session…",
-        aliases: ["/name", "rename"],
+        title: `${sessionActions.rename.title}…`,
+        aliases: [`/${sessionActions.rename.command}`, "rename"],
         keepOpen: true,
         run: () => {
-          renameIncarnationRef.current += 1;
-          setRenameSessionId(state.sessionId);
-          setRenameValue(state.heading);
-          setRenameInitialValue(state.heading);
+          const current = store.getState();
+          if (
+            state.sessionId &&
+            state.sessionId === current.sessionId &&
+            !current.readOnlyReason
+          )
+            setRename({ owner: state.sessionId, name: state.heading });
         },
       });
     }
@@ -463,7 +420,7 @@ export const CommandPalette = memo(function CommandPalette({
             (command) =>
               (!state.readOnlyReason ||
                 (command.source === "builtin" &&
-                  (command.name === "export" ||
+                  (command.name === sessionActions.export.command ||
                     nativeCommand(command.name)?.availableWithoutWorkspace))) &&
               !actions.some((action) =>
                 action.aliases?.includes(`/${command.name}`),
@@ -476,7 +433,7 @@ export const CommandPalette = memo(function CommandPalette({
             const titles: Record<string, string> = {
               model: "Choose model",
               thinking: "Choose thinking level",
-              export: "Export session…",
+              export: sessionActions.export.title,
               compact: state.external
                 ? "Compact in native Pi…"
                 : "Compact context…",
@@ -515,7 +472,10 @@ export const CommandPalette = memo(function CommandPalette({
                       : command.description,
               keepOpen: prepare,
               run: () => {
-                if (command.source === "builtin" && command.name === "export") {
+                if (
+                  command.source === "builtin" &&
+                  command.name === sessionActions.export.command
+                ) {
                   onExportSession();
                 } else if (prepare) {
                   setDelivery("steer");
@@ -562,31 +522,15 @@ export const CommandPalette = memo(function CommandPalette({
     return [...byGroup.values()].flat();
   }, [items]);
 
-  const filtered = searchQuery.trim()
-    ? rankPaletteItems(items, searchQuery)
-    : defaultItems;
-  const clamped = Math.min(index, Math.max(0, filtered.length - 1));
-
-  // Rows render under one header per group — the same grammar the model
-  // selector and the composer completion use — rather than repeating the
-  // group label on every row. Keyboard navigation still indexes the flat
-  // filtered list, so headers are never selectable.
-  const sections = new Map<
-    string,
-    Array<{ item: PaletteItem; index: number }>
-  >();
-  filtered.forEach((item, itemIndex) => {
-    const group = searchQuery.trim() ? "Results" : item.group;
-    const rows = sections.get(group);
-    if (rows) rows.push({ item, index: itemIndex });
-    else sections.set(group, [{ item, index: itemIndex }]);
-  });
-
-  useEffect(() => {
-    if (!keyboardActive) return;
-    const active = listRef.current?.querySelector('[aria-selected="true"]');
-    active?.scrollIntoView({ block: "nearest" });
-  }, [clamped, searchQuery, filtered.length, keyboardActive]);
+  const searching = Boolean(searchQuery.trim());
+  const options = (
+    searching ? rankPaletteItems(items, searchQuery) : defaultItems
+  ).map((item) => ({
+    key: item.id,
+    value: item,
+    group: searching ? "Results" : item.group,
+    title: item.title,
+  }));
 
   const runItem = (item: PaletteItem | undefined) => {
     if (!item) return;
@@ -621,65 +565,33 @@ export const CommandPalette = memo(function CommandPalette({
     if (sent && store.getState().sessionId === preparation.owner) onClose();
   };
 
-  const submitRename = async () => {
-    const name = renameValue.trim();
-    const owner = renameSessionId;
-    if (!name || !owner || store.getState().sessionId !== owner) return;
-    // A prefilled presentation title may be a fallback rather than Pi-owned
-    // metadata. Enter without an edit must not promote it into a new name.
-    if (name === renameInitialValue.trim()) {
-      onClose();
-      return;
-    }
-    const incarnation = renameIncarnationRef.current;
-    if (
-      (await store.renameSession(owner, name)) &&
-      renameIncarnationRef.current === incarnation &&
-      store.getState().sessionId === owner
-    )
-      onClose();
-  };
-
   return (
     <Modal
       ref={dialogRef}
       active={active}
       aria-label="Command palette"
       onDismiss={onClose}
-      focusSurface={isTouchFirstDevice() && !preparation && !renaming}
+      focusSurface={isTouchFirstDevice() && !preparation}
       onEscape={() => {
         if (preparation && !preparationSending) setPreparation(null);
-        else if (renaming) exitRename();
         else onClose();
       }}
       onKeyDown={(event) => {
         if (
           preparation ||
-          renaming ||
           event.defaultPrevented ||
           isComposingKeyboardEvent(event.nativeEvent) ||
           (event.target !== event.currentTarget &&
             event.target !== inputRef.current)
         )
           return;
-        if (event.key === "ArrowDown") {
-          event.preventDefault();
-          setKeyboardActive(true);
-          setIndex(Math.min(clamped + 1, filtered.length - 1));
-        } else if (event.key === "ArrowUp") {
-          event.preventDefault();
-          setKeyboardActive(true);
-          setIndex(Math.max(clamped - 1, 0));
-        } else if (event.key === "Enter") {
-          event.preventDefault();
-          runItem(filtered[clamped]);
-        }
+        list.navigate(event, options, runItem, { consumeEmptyEnter: true });
       }}
     >
-      <div className="palette">
+      <div className="dialog dialog--flush palette">
         {preparation ? (
           <div className="palette__prepare">
-            <h2 className="palette__prepare-title">
+            <h2 className="dialog__title">
               {preparedCommand
                 ? `Prepare /${preparedCommand.name}`
                 : "Prepare command"}
@@ -740,7 +652,7 @@ export const CommandPalette = memo(function CommandPalette({
                 </button>
               </div>
             ) : null}
-            <div className="palette__prepare-actions">
+            <footer className="dialog__actions palette__prepare-actions">
               <button
                 type="button"
                 className="button button--quiet"
@@ -761,153 +673,83 @@ export const CommandPalette = memo(function CommandPalette({
                   {preparationSending ? "Sending…" : preparationLabel}
                 </ButtonLabel>
               </button>
-            </div>
+            </footer>
           </div>
         ) : (
           <>
-            {renaming ? (
-              <input
-                ref={inputRef}
-                className="palette__input"
-                value={renameValue}
-                placeholder="New session name…"
-                aria-label="New session name"
-                onChange={(event) => setRenameValue(event.target.value)}
-                onKeyDown={(event) => {
-                  if (isComposingKeyboardEvent(event.nativeEvent)) return;
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    void submitRename();
-                  }
-                }}
-              />
-            ) : (
-              <input
-                ref={inputRef}
-                className="palette__input"
-                value={searchQuery}
-                placeholder="Search actions and sessions…"
-                aria-label="Filter commands"
-                role="combobox"
-                aria-autocomplete="list"
-                aria-expanded={true}
-                aria-controls={listId}
-                aria-activedescendant={
-                  keyboardActive && filtered[clamped]
-                    ? `${listId}-${clamped}`
-                    : undefined
-                }
-                onChange={(event) => {
-                  setSearchQuery(event.target.value);
-                  setIndex(0);
-                  setKeyboardActive(true);
-                }}
-              />
-            )}
-            {renaming ? (
-              <div className="palette__prepare-actions">
-                <button
-                  type="button"
-                  className="button button--quiet"
-                  onClick={exitRename}
-                >
-                  Back
-                </button>
-                <button
-                  type="button"
-                  className="button button--primary"
-                  disabled={!renameValue.trim()}
-                  onClick={() => void submitRename()}
-                >
-                  Rename
-                </button>
-              </div>
-            ) : (
-              <div
-                className="palette__list"
-                data-keyboard-active={keyboardActive}
-                ref={listRef}
-                id={listId}
-                role="listbox"
-                aria-label="Commands"
-              >
-                {[...sections].map(([group, rows]) => (
-                  <div
-                    className="palette__section"
-                    key={group}
-                    role="group"
-                    aria-label={group}
-                  >
-                    <div className="palette__group" aria-hidden="true">
-                      {group.startsWith("Pi") ? (
-                        <>
-                          <span data-authored-case>Pi</span>
-                          {group.slice(2)}
-                        </>
-                      ) : (
-                        group
-                      )}
-                    </div>
-                    {rows.map(({ item, index: itemIndex }) => (
-                      <button
-                        type="button"
-                        role="option"
-                        id={`${listId}-${itemIndex}`}
-                        aria-selected={keyboardActive && itemIndex === clamped}
-                        key={item.id}
-                        title={item.title}
-                        className={`palette__row ${keyboardActive && itemIndex === clamped ? "palette__row--active" : ""}`}
-                        onPointerMove={(event) => {
-                          if (event.pointerType === "touch") return;
-                          setKeyboardActive(false);
-                          setIndex(itemIndex);
-                        }}
-                        onFocus={() => {
-                          setKeyboardActive(true);
-                          setIndex(itemIndex);
-                        }}
-                        onClick={() => runItem(item)}
-                      >
-                        <span className="palette__title">
-                          <SearchMatchText
-                            text={item.title}
-                            ranges={paletteTextMatchRanges(
-                              item.title,
-                              searchQuery,
-                            )}
-                          />
-                        </span>
-                        {item.hint ? (
-                          <span className="palette__hint-inline">
-                            <SearchMatchText
-                              text={item.hint}
-                              ranges={paletteTextMatchRanges(
-                                item.hint,
-                                searchQuery,
-                              )}
-                            />
-                          </span>
-                        ) : null}
-                      </button>
-                    ))}
-                  </div>
-                ))}
-                {filtered.length === 0 ? (
-                  <div className="empty-state">
-                    <SearchX size={26} strokeWidth={1.5} aria-hidden />
-                    <span className="empty-state__title">
-                      No matching commands
+            <input
+              ref={inputRef}
+              className="palette__input"
+              value={searchQuery}
+              placeholder="Search actions and sessions…"
+              aria-label="Filter commands"
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded={true}
+              aria-controls={list.id}
+              aria-activedescendant={list.descendant(options)}
+              onChange={(event) => {
+                setSearchQuery(event.target.value);
+                list.reset(true);
+              }}
+            />
+            <OptionList
+              list={list}
+              options={options}
+              label="Commands"
+              className="palette__list"
+              optionClass="palette__row"
+              optionButtons
+              highlightAsSelection
+              plain
+              onPick={runItem}
+              heading={({ group }) => (
+                <div className="palette__group" aria-hidden="true">
+                  {group}
+                </div>
+              )}
+              renderOption={({ value: item }) => (
+                <>
+                  <span className="palette__title">
+                    <SearchMatchText
+                      text={item.title}
+                      ranges={paletteTextMatchRanges(item.title, searchQuery)}
+                    />
+                  </span>
+                  {item.hint ? (
+                    <span className="palette__hint-inline">
+                      <SearchMatchText
+                        text={item.hint}
+                        ranges={paletteTextMatchRanges(item.hint, searchQuery)}
+                      />
                     </span>
-                    <span className="empty-state__hint">
-                      Shorter words match more
-                    </span>
-                  </div>
-                ) : null}
-              </div>
-            )}
+                  ) : null}
+                </>
+              )}
+            >
+              {!options.length ? (
+                <div className="empty-state">
+                  <SearchX size={26} strokeWidth={1.5} aria-hidden />
+                  <span className="empty-state__title">
+                    No matching commands
+                  </span>
+                  <span className="empty-state__hint">
+                    Shorter words match more
+                  </span>
+                </div>
+              ) : null}
+            </OptionList>
           </>
         )}
       </div>
+      {rename && rename.owner === state.sessionId ? (
+        <RenameSessionDialog
+          sessionId={rename.owner}
+          initialName={rename.name}
+          active={active}
+          onClose={() => setRename(null)}
+        />
+      ) : null}
     </Modal>
   );
 });

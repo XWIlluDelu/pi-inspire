@@ -31,15 +31,18 @@ test("finds an open tab by name and keeps it reachable in the narrow workbench @
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "Open tabs", exact: true }).click();
   const tabs = page.getByRole("dialog", { name: "Open tabs", exact: true });
-  const filter = tabs.getByRole("textbox", { name: "Find open tab" });
+  const filter = tabs.getByRole("combobox", { name: "Find open tab" });
   await filter.fill("TerminalSettings");
-  await expect(tabs.getByRole("button", { name: /document\.md/ })).toHaveCount(
+  await expect(tabs.getByRole("option", { name: /document\.md/ })).toHaveCount(
     0,
   );
   await filter.press("ArrowDown");
-  const match = tabs.getByRole("button", { name: /TerminalSettingsDialog/ });
-  await expect(match).toBeFocused();
-  await match.press("Enter");
+  const match = tabs.getByRole("option", { name: /TerminalSettingsDialog/ });
+  await expect(filter).toHaveAttribute(
+    "aria-activedescendant",
+    (await match.getAttribute("id"))!,
+  );
+  await filter.press("Enter");
   const selected = dialog.getByRole("tab", {
     name: "TerminalSettingsDialog.tsx",
     exact: true,
@@ -94,10 +97,10 @@ test("shared terminal tabs reactivate the same shell and keep rename editing in 
     });
     const terminalLabel = (await tab.getAttribute("aria-label"))!;
     await openTabs
-      .getByRole("textbox", { name: "Find open tab" })
+      .getByRole("combobox", { name: "Find open tab" })
       .fill(terminalLabel);
     await openTabs
-      .getByRole("button", { name: terminalLabel, exact: false })
+      .getByRole("option", { name: terminalLabel, exact: false })
       .click();
     await expect(tab).toHaveAttribute("aria-selected", "true");
     expect(await catalogIds()).toEqual(originalIds);

@@ -46,7 +46,7 @@ describe("preference persistence", () => {
     });
     const store = new AppStore();
     await store.init();
-    expect(store.getState().notices).toEqual(
+    expect(store.getState().live.notices).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           kind: "warning",

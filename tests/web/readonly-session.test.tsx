@@ -99,7 +99,10 @@ it.each([
     expect(screen.queryByRole("option", { name: /^Compact/ })).toBeNull();
     fireEvent.keyDown(filter, { key: "Escape" });
 
-    const { sessionId, transcriptViewId } = store.getState();
+    const {
+      sessionId,
+      view: { viewId: transcriptViewId },
+    } = store.getState();
     store.drafts.setText(sessionId!, "Keep this unsent draft");
     await act(async () =>
       store.addFiles([
@@ -116,7 +119,7 @@ it.each([
     expect(await screen.findByRole("textbox", { name: "Message" })).toHaveValue(
       "Keep this unsent draft",
     );
-    expect(store.getState().transcriptViewId).toBe(transcriptViewId);
+    expect(store.getState().view.viewId).toBe(transcriptViewId);
     expect(screen.getByText("Retained answer")).toBeVisible();
     expect(screen.getByText("notes.txt")).toBeVisible();
   },

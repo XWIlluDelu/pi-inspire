@@ -28,6 +28,7 @@ export function createWorkerView(
     contextGeneration: 1,
     finishedMessages: new Map(),
     sealedCursor: entries.at(-1)?.id ?? null,
+    nativeLeafId: leaf,
     entryTurns: new Map(),
   };
 }

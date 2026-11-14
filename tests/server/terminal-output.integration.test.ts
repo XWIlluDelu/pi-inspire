@@ -1,4 +1,11 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,7 +14,10 @@ import { discoverTerminalProfiles } from "../../server/terminal-profiles.js";
 import type { TerminalAttachment } from "../../server/terminal-service.js";
 import { TerminalSessionManager } from "../../server/terminal-session-manager.js";
 import { ensureTerminalShellIntegration } from "../../server/terminal-shell-integration.js";
-import { decodeTerminalServerDataFrame } from "../../shared/terminal-contracts.js";
+import {
+  decodeTerminalServerDataFrame,
+  type TerminalServerControlMessage,
+} from "../../shared/terminal-contracts.js";
 import {
   type TerminalCommandOutput,
   terminalBufferText,
@@ -25,7 +35,11 @@ const profiles = discoverTerminalProfiles().filter((profile) =>
 it.each(profiles)(
   "$id: extracts native output through the production launcher and preserves shell input",
   async (profile) => {
-    const root = await mkdtemp(join(tmpdir(), "inspire-native-output-"));
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), "inspire-native-output-")),
+    );
+    const cwd = join(root, "project with spaces");
+    await mkdir(cwd);
     const integration = join(root, "integration");
     await ensureTerminalShellIntegration(integration);
     if (windows) {
@@ -65,6 +79,7 @@ it.each(profiles)(
     const ranges: TerminalCommandOutput[] = [];
     const commands: string[] = [];
     const statuses: number[] = [];
+    const completions: TerminalServerControlMessage[] = [];
     let start: Pick<TerminalCommandOutput, "start" | "startColumn"> | null =
       null;
     let prompts = 0;
@@ -99,7 +114,7 @@ it.each(profiles)(
 
     try {
       const descriptor = await manager.create({
-        cwd: root,
+        cwd,
         profileId: profile.id,
         cols: 80,
         rows: 24,
@@ -112,7 +127,9 @@ it.each(profiles)(
           rows: 24,
         },
         {
-          sendControl() {},
+          sendControl(message) {
+            if (message.type === "command_complete") completions.push(message);
+          },
           sendData(frame) {
             const { data } = decodeTerminalServerDataFrame(frame);
             tail = tail.then(
@@ -137,7 +154,7 @@ it.each(profiles)(
         ? [
             {
               command:
-                "[Console]::WriteLine(('SHORT'+'_A')); [Console]::WriteLine(('SHORT'+'_B'))",
+                "[Console]::WriteLine(('SHORT'+'_A'));  [Console]::WriteLine(('SHORT'+'_B'))",
               output: "SHORT_A\nSHORT_B",
             },
             {
@@ -170,7 +187,7 @@ it.each(profiles)(
           ]
         : [
             {
-              command: "printf '%s\\n' SHORT''_A SHORT''_B",
+              command: "printf '%s\\n' SHORT''_A  SHORT''_B",
               output: "SHORT_A\nSHORT_B",
             },
             {
@@ -223,8 +240,18 @@ it.each(profiles)(
         }
         expect(ranges).toHaveLength(previousRanges + 1);
         expect(statuses.at(-1)).toBe(status);
-        if (previousRanges === 0 || command.includes("$(printf"))
+        if (previousRanges === 0 || command.includes("$(printf")) {
           expect(commands.at(-1)).toBe(command);
+          expect(completions.at(-1)).toMatchObject({
+            command,
+            currentCwd: cwd,
+            exitCode: status,
+          });
+          expect(manager.list(cwd).terminals[0]).toMatchObject({
+            commandRunning: false,
+            title: profile.label,
+          });
+        }
         expect(
           terminalCommandOutput(terminal.buffer.normal, ranges.at(-1)!),
         ).toBe(output);

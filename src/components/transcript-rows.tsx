@@ -7,16 +7,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import {
-  memo,
-  type Ref,
-  useCallback,
-  useContext,
-  useEffect,
-  useId,
-  useLayoutEffect,
-  useState,
-} from "react";
+import { memo, type Ref, useCallback, useEffect, useId, useState } from "react";
 import type {
   GenericExtensionDisplay,
   PendingQueues,
@@ -41,20 +32,19 @@ import {
 import { store } from "../store";
 import { useImageUrl } from "../use-image-url";
 import { hasActiveModal } from "../use-modal-focus";
+import { CodeView } from "./CodeView";
 import { CopyAction } from "./CopyAction";
+import { DetailSummary } from "./DetailSummary";
 import { ImageGallery } from "./ImageGallery";
 import { ImagePreview, TranscriptImage } from "./ImagePreview";
 import { PiLoader } from "./PiLoader";
 import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
 import {
-  CardHeader,
+  CollapsibleCard,
   GenericCard,
-  type StaticVisibility,
   ThinkingCard,
   ToolCard,
-  ToolResultCard,
 } from "./transcript-cards";
-import { TranscriptSearchReveal } from "./transcript-search";
 
 // --- Turns and activity ---
 
@@ -63,30 +53,28 @@ function MessageActions({
   getContent,
   forkEntryId,
   copyLabel = "Message",
-  className = "",
 }: {
   text: string;
   getContent?: CopyLoader;
   forkEntryId?: string;
   copyLabel?: string;
-  className?: string;
 }) {
   const [forking, setForking] = useState(false);
   if (!text && !getContent && !forkEntryId) return null;
   return (
-    <div className={`turn__actions ${className}`}>
+    <div className="turn__actions">
       {text || getContent ? (
         <CopyAction
           text={text}
           getContent={getContent}
           label={copyLabel}
-          className="turn__action"
+          className="activity-copy turn__action"
         />
       ) : null}
       {forkEntryId ? (
         <button
           type="button"
-          className="icon-button turn__action"
+          className="icon-button activity-copy turn__action"
           aria-label="Fork session from this input"
           title="Fork a new session from this input"
           disabled={forking}
@@ -265,7 +253,6 @@ export function AssistantResponse({
           text={copyText}
           getContent={copyContent}
           copyLabel="Response"
-          className="turn__actions--response"
         />
       }
     >
@@ -332,16 +319,6 @@ export function AssistantActivityCard({
   }
 }
 
-export const UnpairedToolResultRow = memo(function UnpairedToolResultRow({
-  message,
-  visibility,
-}: {
-  message: ChatMessage;
-  visibility: StaticVisibility;
-}) {
-  return <ToolResultCard result={message} visibility={visibility} />;
-});
-
 export const ContextCheckpointRow = memo(function ContextCheckpointRow({
   message,
 }: {
@@ -362,49 +339,41 @@ export const ContextCheckpointRow = memo(function ContextCheckpointRow({
     Number.isFinite(message.tokensBefore)
       ? `${tokensLabel} ≈ ${Math.round(message.tokensBefore).toLocaleString()} tokens`
       : null;
-  const [open, setOpen] = useState(false);
-  const searchReveal = useContext(TranscriptSearchReveal);
-  useLayoutEffect(() => {
-    if (searchReveal !== null) setOpen(true);
-  }, [searchReveal]);
   const bodyId = useId();
   const metricId = `${bodyId}-metric`;
   return (
     <div className="turn turn--checkpoint">
-      <div className="context-checkpoint">
-        <CardHeader
-          expanded={open}
-          icon={<Archive size={14} aria-hidden />}
-          label={title}
-          toggleLabel={title}
-          accessibleLabel={title}
-          controlsId={bodyId}
-          describedBy={tokens ? metricId : undefined}
-          onToggle={() => setOpen(!open)}
-          summary={
-            tokens && (
-              <span
-                id={metricId}
-                className="context-checkpoint__metric"
-                title={tokensDescription}
-              >
-                {tokens}
-              </span>
-            )
-          }
-          copyText={summary}
-          copyLabel={compacted ? "Compaction summary" : "Branch summary"}
-        />
-        <div id={bodyId} className="card__body" hidden={!open}>
-          {open ? (
-            summary ? (
-              <RichText text={displaySummary} />
-            ) : (
-              <p>No summary was recorded.</p>
-            )
-          ) : null}
-        </div>
-      </div>
+      <CollapsibleCard
+        className="context-checkpoint"
+        defaultVisibility="collapsed"
+        icon={<Archive size={14} aria-hidden />}
+        label={title}
+        toggleLabel={title}
+        accessibleLabel={title}
+        id={bodyId}
+        revealOnSearch
+        describedBy={tokens ? metricId : undefined}
+        summaryVisibleWhenOpen
+        summary={
+          tokens && (
+            <span
+              id={metricId}
+              className="context-checkpoint__metric"
+              title={tokensDescription}
+            >
+              {tokens}
+            </span>
+          )
+        }
+        copyText={summary}
+        copyLabel={compacted ? "Compaction summary" : "Branch summary"}
+      >
+        {summary ? (
+          <RichText text={displaySummary} />
+        ) : (
+          <p>No summary was recorded.</p>
+        )}
+      </CollapsibleCard>
     </div>
   );
 });
@@ -485,7 +454,7 @@ export function PendingQueueGroups({
         !focusChanged &&
         !hasActiveModal() &&
         current.sessionId === owner.sessionId &&
-        current.transcriptViewId === owner.transcriptViewId &&
+        current.view.viewId === owner.view.viewId &&
         current.transportGeneration === owner.transportGeneration &&
         !current.sessionSelectionPending
       )
@@ -534,12 +503,12 @@ export function PendingQueueGroups({
                   : { text: true, image: queue.totalImageCount > 0 },
               )}
               label="all pending input"
-              className="pending-group__copy"
+              className="activity-copy"
             />
           ) : null}
           <button
             type="button"
-            className="icon-button pending-group__control"
+            className="icon-button activity-copy"
             aria-label="Return all Pending input to composer"
             title="Return text and images to your draft. Pi keeps working."
             disabled={busy}
@@ -553,10 +522,10 @@ export function PendingQueueGroups({
           </button>
           {confirmClear ? (
             <span className="pending-groups__confirm">
-              <span className="pending-groups__confirm-label">Clear all?</span>
+              <span>Clear all?</span>
               <button
                 type="button"
-                className="pending-groups__confirm-btn"
+                className="button button--danger"
                 disabled={busy}
                 onClick={() =>
                   void onClear().then((cleared) => {
@@ -568,7 +537,7 @@ export function PendingQueueGroups({
               </button>
               <button
                 type="button"
-                className="pending-groups__confirm-cancel"
+                className="icon-button activity-copy"
                 aria-label="Cancel clearing Pending input"
                 disabled={busy}
                 onClick={() => setConfirmClear(false)}
@@ -579,7 +548,7 @@ export function PendingQueueGroups({
           ) : (
             <button
               type="button"
-              className="icon-button pending-group__control pending-group__control--clear"
+              className="icon-button activity-copy pending-group__clear"
               aria-label="Clear all Pending input"
               title="Clear all Pending input"
               disabled={busy}
@@ -648,24 +617,22 @@ export function PendingQueueGroups({
                       </span>
                     ) : null}
                   </div>
-                  <div className="pending-group__item-actions">
-                    {canCopy ? (
-                      <CopyAction
-                        key={queue.revision}
-                        getContent={copyLoader(
-                          (signal) => getText(queue.revision, entry.id, signal),
-                          queue.totalImageCount === undefined
-                            ? null
-                            : {
-                                text: entry.textLength > 0 || !entry.imageCount,
-                                image: Boolean(entry.imageCount),
-                              },
-                        )}
-                        label={`${group.label} item ${index + 1}`}
-                        className="pending-group__copy"
-                      />
-                    ) : null}
-                  </div>
+                  {canCopy ? (
+                    <CopyAction
+                      key={queue.revision}
+                      getContent={copyLoader(
+                        (signal) => getText(queue.revision, entry.id, signal),
+                        queue.totalImageCount === undefined
+                          ? null
+                          : {
+                              text: entry.textLength > 0 || !entry.imageCount,
+                              image: Boolean(entry.imageCount),
+                            },
+                      )}
+                      label={`${group.label} item ${index + 1}`}
+                      className="activity-copy"
+                    />
+                  ) : null}
                 </li>
               );
             })}
@@ -692,15 +659,17 @@ export function ExtensionDisplaySurface({
       </div>
       {displays.map((display) => (
         <details key={display.id} className="extension-surface__item">
-          <summary>
+          <DetailSummary>
             <code>{display.method}</code>
             <span>
               {display.source} · {display.label}
             </span>
-          </summary>
-          <pre className="card__mono">
-            {JSON.stringify(display.payload, null, 2)}
-          </pre>
+          </DetailSummary>
+          <CodeView
+            className="activity-reader"
+            tabIndex={0}
+            text={JSON.stringify(display.payload, null, 2)}
+          />
         </details>
       ))}
     </section>

@@ -129,7 +129,7 @@ export function ComposerThinkingControl(props: ThinkingControlProps) {
   const scope = useAppState(
     (source) => ({
       kind: "session" as const,
-      statuses: source.statuses,
+      statuses: source.live.statuses,
       commands: source.commands,
       sessionId: source.sessionId,
       generation: source.transportGeneration,

@@ -33,33 +33,22 @@ export function ContextPaneShell({
       if (
         event.target instanceof Element &&
         ref.current?.contains(event.target) &&
-        event.target.closest(".terminal-search")
+        event.target.closest(".terminal-search, .dock-tabs .choice-panel")
       )
         return false;
       if (!dismissTerminalMenu(ref.current, event.target)) onClose();
     },
   );
-  // The same host element also preserves readers and terminals across layouts.
-  return isModal ? (
-    <div
-      className="ctx res"
-      id="context-pane"
-      ref={ref}
-      role="dialog"
-      aria-modal="true"
-      aria-label="Context panel"
-      tabIndex={-1}
-    >
-      {children}
-    </div>
-  ) : (
-    <div
-      className="ctx res"
-      id="context-pane"
-      ref={ref}
-      role="complementary"
-      aria-label="Context panel"
-    >
+  const semantics = isModal
+    ? {
+        role: "dialog",
+        "aria-label": "Context panel",
+        "aria-modal": true,
+        tabIndex: -1,
+      }
+    : { role: "complementary", "aria-label": "Context panel" };
+  return (
+    <div className="ctx res" id="context-pane" ref={ref} {...semantics}>
       {children}
     </div>
   );
@@ -74,9 +63,8 @@ export function ContextPaneLoading({
 }) {
   return (
     <>
-      <div className="ctx__header" ref={recoverModalFocus}>
-        <span aria-hidden />
-        <div className="ctx__header-actions">
+      <div className="pane-toolbar ctx__header" ref={recoverModalFocus}>
+        <div className="ctx__tools">
           <button
             type="button"
             className="icon-button ctx__close"

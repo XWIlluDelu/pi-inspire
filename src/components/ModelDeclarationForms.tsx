@@ -21,19 +21,11 @@ import {
 import { DetailSummary } from "./DetailSummary";
 
 type FormProps = {
-  onSave: (edit: ModelConfigEdit) => Promise<boolean>;
+  onSave: (edit: ModelConfigEdit) => void;
   onCancel: () => void;
   busy: boolean;
   error?: string | null;
 };
-
-function FormError({ error }: Pick<FormProps, "error">) {
-  return error ? (
-    <p className="settings__error" role="alert" tabIndex={-1}>
-      {error}
-    </p>
-  ) : null;
-}
 
 function useDeclarationFields<
   Fields extends Record<
@@ -52,9 +44,9 @@ function useDeclarationFields<
     bind: (field: Field) => ({
       ...fields[field].control,
       disabled,
-      value: draft[field] ?? String(declaration?.[field] ?? ""),
-      onChange: (event: React.ChangeEvent<HTMLInputElement>) =>
-        setDraft((current) => ({ ...current, [field]: event.target.value })),
+      value: draft[field] ?? declaration?.[field] ?? "",
+      onChange: ({ currentTarget }: React.ChangeEvent<HTMLInputElement>) =>
+        setDraft((current) => ({ ...current, [field]: currentTarget.value })),
     }),
     patch: () =>
       Object.fromEntries(
@@ -93,6 +85,7 @@ export function ProviderForm({
   return (
     <ConfigurationForm
       busy={busy}
+      error={error}
       saveDisabled={!id.trim()}
       onSave={() =>
         void onSave({
@@ -135,7 +128,6 @@ export function ProviderForm({
           onChange={(edit) => setKey(edit as SecretEdit)}
         />
       </div>
-      <FormError error={error} />
     </ConfigurationForm>
   );
 }
@@ -161,6 +153,7 @@ export function ModelForm({
   return (
     <ConfigurationForm
       busy={busy}
+      error={error}
       saveDisabled={!id.trim()}
       onSave={() =>
         void onSave({
@@ -260,7 +253,6 @@ export function ModelForm({
           />
         </div>
       </details>
-      <FormError error={error} />
     </ConfigurationForm>
   );
 }

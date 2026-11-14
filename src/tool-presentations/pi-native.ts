@@ -755,8 +755,12 @@ function lsRule(): ToolPresentationRule {
 /** Result-only imports use the same native output and recorded-file reader. */
 export function codeModeResultBlocks(
   result: ChatMessage,
-): ToolPresentationBlock[] {
-  const blocks: ToolPresentationBlock[] = [{ type: "codemode-result", result }];
+): Array<
+  Extract<ToolPresentationBlock, { type: "codemode-result" | "notice" }>
+> {
+  const blocks: Array<
+    Extract<ToolPresentationBlock, { type: "codemode-result" | "notice" }>
+  > = [{ type: "codemode-result", result }];
   const fullOutputPath = jsonRecord(result.details)?.fullOutputPath;
   if (typeof fullOutputPath === "string" && fullOutputPath)
     blocks.push({

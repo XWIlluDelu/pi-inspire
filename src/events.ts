@@ -21,15 +21,10 @@ import {
   parsePendingQueues,
   parseRetryInfo,
   type RetryInfo,
-  type RunState,
   type SessionRuntimeStatus,
 } from "../shared/contracts";
 import { structuralMessageIdentity } from "../shared/message-identity";
-import {
-  type ActivityTool,
-  type ChildCallList,
-  updateChildActivity,
-} from "../shared/tool-activity";
+import type { ActivityTool, ChildCallList } from "../shared/tool-activity";
 import type { ToolCallPreview } from "../shared/tool-argument-updates";
 import { userMessageContent } from "../shared/user-message";
 
@@ -178,6 +173,7 @@ export interface WireEvent {
   message?: unknown;
   data?: unknown;
   sessionStatus?: SessionRuntimeStatus;
+  toolActivity?: Record<string, ActivityTool>;
   [key: string]: unknown;
 }
 
@@ -243,8 +239,6 @@ export function emptyEventSlice(): EventSlice {
 
 interface ReduceResult {
   slice: EventSlice;
-  /** Message keys that became settled with this event and must survive resync dedupe. */
-  settle: string[];
   /** Set when this event should trigger an authoritative snapshot resync. */
   resync: boolean;
   /** False for unknown or no-op events: slice is the same reference, callers must not publish it. */
@@ -266,35 +260,11 @@ function streamRevision(value: unknown): number | null {
     : null;
 }
 
-/** Replace the message identified by key. Only keyless defensive events may
- * fall back to the trailing unsettled assistant; a new keyed turn must never
- * overwrite an older turn merely because its end event was absent. */
-function upsert(
-  messages: ChatMessage[],
-  incoming: ChatMessage,
-  settledKeys: ReadonlySet<string>,
-): ChatMessage[] {
-  const next = [...messages];
+function upsert(messages: ChatMessage[], incoming: ChatMessage): ChatMessage[] {
   const key = messageKey(incoming);
-  let index = key ? indexOfKey(next, key) : -1;
-  if (index === -1 && incoming.__inspireLiveId)
-    index = next.findIndex(
-      (message) => message.__inspireLiveId === incoming.__inspireLiveId,
-    );
-  if (index === -1 && !key && incoming.role === "assistant") {
-    for (let i = next.length - 1; i >= 0; i -= 1) {
-      const candidate = next[i]!;
-      const candidateKey = messageKey(candidate);
-      if (
-        candidate.role === "assistant" &&
-        (!candidateKey || !settledKeys.has(candidateKey))
-      ) {
-        index = i;
-        break;
-      }
-    }
-  }
-  if (index === -1) next.push(incoming);
+  const index = key === null ? -1 : indexOfKey(messages, key);
+  const next = [...messages];
+  if (index < 0) next.push(incoming);
   else next[index] = incoming;
   return next;
 }
@@ -387,19 +357,12 @@ function extensionDisplaysFromEvent(
   return parseExtensionDisplays(event.extensionDisplays);
 }
 
-/**
- * Pure reconciliation of one Pi wire event into the transient presentation
- * slice. Settled-message dedupe keys are reported (not mutated) so the store
- * stays the single owner of the settled set.
- */
+/** Apply one ordered Host update to the current Live presentation. */
 export function reduceEvent(
   current: EventSlice,
-  settledKeys: ReadonlySet<string>,
   event: WireEvent,
-  previousRunState: RunState = "idle",
 ): ReduceResult {
   const slice: EventSlice = { ...current };
-  const settle: string[] = [];
   let resync = false;
   let changed = false;
   if (
@@ -419,12 +382,20 @@ export function reduceEvent(
     slice.statuses = statuses;
     changed = true;
   }
+  if (event.toolActivity) {
+    slice.tools = { ...current.tools, ...event.toolActivity };
+    changed = true;
+  }
   switch (event.type) {
     case "message_start": {
       const message = asMessage(event.message);
       const key = messageKey(message);
-      if (key && settledKeys.has(key)) break; // duplicate of a settled message
-      slice.messages = upsert(current.messages, message, settledKeys);
+      if (
+        key &&
+        current.messages[indexOfKey(current.messages, key)]?.__inspireSettled
+      )
+        break;
+      slice.messages = upsert(current.messages, message);
       changed = true;
       if (message.role === "assistant") {
         slice.streaming = true;
@@ -465,7 +436,7 @@ export function reduceEvent(
         revision <= currentRevision
       )
         break;
-      slice.messages = upsert(current.messages, supplied, settledKeys);
+      slice.messages = upsert(current.messages, supplied);
       changed = true;
       break;
     }
@@ -511,41 +482,13 @@ export function reduceEvent(
       break;
     }
     case "message_end": {
-      const message = asMessage(interruptAssistantToolCalls(event.message));
-      slice.messages = upsert(current.messages, message, settledKeys);
+      const message = {
+        ...asMessage(interruptAssistantToolCalls(event.message)),
+        __inspireSettled: true,
+      };
+      slice.messages = upsert(current.messages, message);
       changed = true;
-      const key = messageKey(message);
-      if (key) settle.push(key);
-      if (message.role === "assistant") {
-        slice.streaming = false;
-        // A completed call observed in this turn is queued until execution
-        // starts. History and reconnect snapshots do not establish that state.
-        if (
-          key &&
-          key === current.activeAssistantMessageKey &&
-          isBusyRunState(previousRunState) &&
-          message.stopReason !== "error" &&
-          message.stopReason !== "aborted"
-        ) {
-          const pending = contentItems(message).filter(
-            (item): item is ToolCallContent =>
-              item.type === "toolCall" &&
-              typeof item.id === "string" &&
-              typeof item.name === "string" &&
-              !item.__inspireToolCall &&
-              !current.tools[item.id],
-          );
-          if (pending.length > 0) {
-            slice.tools = { ...current.tools };
-            for (const call of pending)
-              slice.tools[call.id] = {
-                id: call.id,
-                name: call.name,
-                phase: "queued",
-              };
-          }
-        }
-      }
+      if (message.role === "assistant") slice.streaming = false;
       break;
     }
     case "agent_start": {
@@ -613,46 +556,6 @@ export function reduceEvent(
     case "summarization_retry_attempt_start":
     case "summarization_retry_finished": {
       slice.summarizationRetry = null;
-      changed = true;
-      break;
-    }
-    case "tool_execution_start":
-    case "tool_execution_update":
-    case "tool_execution_end": {
-      if (typeof event.parentToolCallId === "string") {
-        slice.tools = updateChildActivity(current.tools, event);
-        changed = slice.tools !== current.tools;
-        break;
-      }
-      const id = typeof event.toolCallId === "string" ? event.toolCallId : "";
-      if (!id) break;
-      const existing = current.tools[id];
-      const ended = event.type === "tool_execution_end";
-      // A delayed update must not resurrect a completed execution.
-      if (!ended && (existing?.phase === "done" || existing?.phase === "error"))
-        break;
-      slice.tools = {
-        ...current.tools,
-        [id]: {
-          id,
-          name:
-            typeof event.toolName === "string" && event.toolName
-              ? event.toolName
-              : (existing?.name ?? "tool"),
-          phase: ended ? (event.isError ? "error" : "done") : "running",
-          ...(event.type === "tool_execution_update"
-            ? {
-                outputPreview:
-                  event.outputPreview as ActivityTool["outputPreview"],
-              }
-            : {}),
-          calls:
-            event.toolName === "codemode"
-              ? ((event.childCalls as ChildCallList | undefined) ??
-                existing?.calls)
-              : existing?.calls,
-        },
-      };
       changed = true;
       break;
     }
@@ -812,9 +715,9 @@ export function reduceEvent(
       break;
   }
 
-  const runState = event.sessionStatus?.runState ?? previousRunState;
+  const runState = event.sessionStatus?.runState;
   if (
-    event.sessionStatus &&
+    runState &&
     !isBusyRunState(runState) &&
     Object.values(slice.tools).some(
       (tool) => tool.phase === "running" || tool.phase === "queued",
@@ -829,15 +732,19 @@ export function reduceEvent(
     );
     changed = true;
   }
-  if (!isBusyRunState(runState) && slice.summarizationRetry !== null) {
+  if (
+    runState &&
+    !isBusyRunState(runState) &&
+    slice.summarizationRetry !== null
+  ) {
     slice.summarizationRetry = null;
     changed = true;
   }
-  if (runState !== "retrying" && slice.retry !== null) {
+  if (runState && runState !== "retrying" && slice.retry !== null) {
     slice.retry = null;
     changed = true;
   }
   return changed || resync
-    ? { slice, settle, resync, changed: true }
-    : { slice: current, settle, resync, changed: false };
+    ? { slice, resync, changed: true }
+    : { slice: current, resync, changed: false };
 }

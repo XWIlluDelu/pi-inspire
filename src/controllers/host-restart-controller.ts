@@ -5,6 +5,7 @@ import {
   hostRestartRequestSchema,
 } from "../../shared/host-restart";
 import { createApi } from "../api";
+import { ReceiptRead } from "../operation-observer";
 
 const KEY = "inspire:host-restart:v1";
 interface State {
@@ -31,7 +32,7 @@ export class HostRestartClient {
   };
   private loaded = false;
   private readonly listeners = new Set<() => void>();
-  private observation: Promise<void> | null = null;
+  private readonly observation = new ReceiptRead<"status", void>();
   private receiptRevision = 0;
   constructor(
     private readonly api: Pick<
@@ -91,13 +92,8 @@ export class HostRestartClient {
       throw new Error("Restart storage unavailable");
     }
   }
-  refresh = (): Promise<void> => {
-    if (this.observation) return this.observation;
-    this.observation = this.observe().finally(() => {
-      this.observation = null;
-    });
-    return this.observation;
-  };
+  refresh = (): Promise<void> =>
+    this.observation.observe("status", () => this.observe());
   private async observe(): Promise<void> {
     const receiptRevision = this.receiptRevision;
     let restored = false;
@@ -239,7 +235,7 @@ export class HostRestartClient {
       this.patch({ sending: false });
       // Any read already in flight may predate this receipt. Observe again
       // after it settles so the browser can see the next authoritative phase.
-      await this.observation;
+      await this.observation.task;
       await this.refresh();
     }
   }

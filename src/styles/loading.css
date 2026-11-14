@@ -13,6 +13,9 @@
   color: var(--muted);
 }
 
+.pi-status[data-status="success"] { color: var(--success); }
+.pi-status[data-status="error"] { color: var(--error); }
+
 /* A nonvisual clock switches patterns only after a complete dot sequence. */
 .pi-loading {
   --pi-loading-period: 2.4s;

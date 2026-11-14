@@ -5,17 +5,17 @@ covers:
   - shared/{contracts,pending-preview,composer-artifact-references,resource-references,image-dimension-notes,image-types,attachment-context}.ts
   - src/{App,api,store,app-state,clipboard-files,keyboard-input,composer-*,session-drafts,model-options}.ts*
   - src/controllers/{composer,pending-recovery}-controller.ts
-  - server/pending-operation-receipts.ts
+  - server/operation-receipts.ts
   - tests/server/app-input-operations.test.ts
   - tests/integration/recovered-image-user-intent.test.ts
-  - src/components/{ActivityBar,AttachmentList,Composer,ComposerInput,ImagePreview,ImageLightbox,ImageGallery,ModelSelector,ProjectFiles,Transcript,transcript-rows,Welcome,DirectoryPicker,ExportDialog}.tsx
+  - src/components/{ActivityBar,AttachmentList,Composer,ComposerInput,MessageEditor,ImagePreview,ImageLightbox,ImageGallery,ModelSelector,ProjectFiles,Transcript,transcript-rows,Welcome,DirectoryPicker,ExportDialog}.tsx
   - src/{image-viewport,use-image-viewport,use-image-history}.ts
   - src/styles/*.css
-  - tests/server/{attachments,attachment-retention,composer-history*,runtime-composer-artifacts,runtime-pending*,runtime-compaction,app}.test.ts
-  - tests/server/runtime-pending.test.ts
+  - tests/server/{attachments,attachment-retention,composer-history*,runtime-composer-artifacts,runtime-pending*,runtime-delivery,app}.test.ts
+  - tests/integration/native/pi-{prompt,pending-recovery,shell,compaction}*.test.ts
   - tests/web/{composer*,session-drafts,native-commands,readonly-session,content-copy,welcome*,directory-picker,project-file-picker,model-selector,model-store}.test.ts*
   - tests/web/{image-preview,attachments}.test.tsx
-  - tests/browser/{composer,file-attachments,usage-facts,model-selection,project-file-picker,pending-input,image-interactions}.spec.ts
+  - tests/browser/{composer,file-attachments,usage-facts,model-selection,model-workflow,project-directory,project-file-picker,pending-input,image-interactions}.spec.ts
 ---
 
 # Conversation composer
@@ -100,7 +100,7 @@ creating a session. Picker selections bind to its canonical root; changing the d
 and creation uses that root. New's inline selections use absolute canonical-workspace paths so a
 later directory change cannot retarget them.
 
-The explicit picker recovers transient search failures with bounded backoff in its current workspace,
+The picker and inline completion recover transient search failures with bounded backoff in the current workspace,
 query and visibility scope; dismissal or transport replacement retires old work. Recovery only reads
 candidates and never adds a reference. Persistent failures keep local feedback.
 
@@ -349,6 +349,7 @@ full content is unavailable.
   revision/coordinate, including image-only items, uploads held during compaction and recalled
   images. Copy all includes omitted rows, numbered with Steer before Queue and order preserved within
   each group. Image formats, clipboard ordering and plain-text alternatives follow [[design-system]].
+  The copy result carries one ordered image source list for both uploaded and recalled images.
   Neither action stops/removes input, recovers attachment ownership, or changes the draft. The queue
   reports an all-row image total, including omitted rows, so gesture-bound Copy can declare formats
   before the full-content read. An unavailable deferred upload leaves that total unknown and Copy
@@ -517,6 +518,7 @@ attachments stay with that session.
 ## Checks
 
 Editor/controller tests cover session partitions, text/history restoration, completion and keyboard
-ownership, artifact handoff and delayed results. Host/native tests cover upload retention, prompt
-history, bounded admission and Pending recovery; browser tests cover focus, narrow layouts, image
-inspection and command preparation. Protocol and worker checks belong to the linked owners above.
+ownership. The browser drives native first delivery with a mixed draft and keeps a delayed upload
+with its created session after navigation. Host/native tests cover upload retention, prompt history,
+bounded admission and Pending recovery. Browser tests also cover focus, narrow layouts, image
+inspection and command preparation.

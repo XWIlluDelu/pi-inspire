@@ -165,9 +165,8 @@ boundaries in this contract.
   On a narrow workbench, adjacent 44px Search and Turn history launchers live in the conversation
   tool row. Search replaces that row in place with an input across the reading width, focusing
   and selecting its text. Close or Escape clears the query and match ownership, closes the row,
-  and restores focus to its local launcher. An outside press dismisses either narrow tool; the
-  portaled search-scope menu remains part of search. No duplicate search launcher sits in the
-  global header.
+  and restores focus to its local launcher. An outside press dismisses narrow Search. The scope
+  choice stays inside the shared search field.
 
   A bottom-centered floating text button, `Jump to latest`, appears only when the scrollport is
   actually away from its latest boundary, independently of automatic-follow or search ownership.

@@ -13,7 +13,6 @@ import {
   closeHostApiFixture,
   hostApiFixture,
   observeEventSocket,
-  token,
 } from "../server/fixtures/host-api";
 import {
   nativePiWorkspace,
@@ -97,7 +96,6 @@ it.each([false, true])(
     let host: Awaited<ReturnType<typeof hostApiFixture>> | undefined,
       store: AppStore | undefined;
     let peer: WebSocket | undefined;
-    const realFetch = fetch;
     try {
       await runtime.openSession(manager.getSessionId());
       await runtime.setSteeringMode(manager.getSessionId(), "one-at-a-time");
@@ -105,14 +103,7 @@ it.each([false, true])(
         services: { runtime, catalog, attachments, cwd: f.cwd },
       });
       installFakeWebSocket();
-      vi.stubGlobal("fetch", (async (input, init) => {
-        const headers = new Headers(init?.headers);
-        headers.set("Authorization", "Bearer " + token);
-        return realFetch(new URL(String(input), host!.baseUrl), {
-          ...init,
-          headers,
-        });
-      }) satisfies typeof fetch);
+      vi.stubGlobal("fetch", host.fetchHost);
       store = new AppStore();
       await store.init();
       const socket = FakeWebSocket.instances.at(-1)!;
@@ -149,7 +140,7 @@ it.each([false, true])(
         model: { id: "b" },
         thinkingLevel: "low",
       });
-      expect(store.getState().notices.at(-1)?.text).toContain(
+      expect(store.getState().live.notices.at(-1)?.text).toContain(
         "forward model cycling",
       );
       await store.setThinkingLevel("high");
@@ -165,6 +156,7 @@ it.each([false, true])(
           | { connectionController: { stop(): void } }
           | undefined
       )?.connectionController.stop();
+      vi.unstubAllGlobals();
       if (host) await closeHostApiFixture(host);
       else await runtime.close();
       await attachments.close();

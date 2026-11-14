@@ -72,22 +72,24 @@ it("joins one terminal intent while the daemon still owns the result", async () 
   expect(request).toHaveBeenCalledTimes(2);
 });
 
-it("restores the original daemon identity until an expired intent is retired", async () => {
-  const delivered: TerminalOperation[] = [];
-  const handle = (operation: TerminalOperation) => {
-    delivered.push(operation);
-    if (delivered.length === 1) throw new TypeError("lost");
-    if (operation.executor.epoch === oldEpoch)
-      return reply(
+it("preserves the original intent across a mismatched receipt, reload, and daemon replacement", async () => {
+  const responses = [
+    (operation: TerminalOperation) =>
+      reply(operation, { executor: { kind: "terminal", epoch: newEpoch } }),
+    (operation: TerminalOperation) =>
+      reply(
         operation,
         {
           state: "unknown",
           error: { message: "Receipt expired", status: 409 },
         },
         409,
-      );
-    return reply(operation, { result: null });
-  };
+      ),
+    (operation: TerminalOperation) => reply(operation, { result: null }),
+  ];
+  const handle = vi.fn((operation: TerminalOperation) =>
+    responses.shift()!(operation),
+  );
   await expect(
     new TerminalOperationController(transport(handle)).run(remove),
   ).rejects.toThrow("outcome is unknown");
@@ -95,29 +97,19 @@ it("restores the original daemon identity until an expired intent is retired", a
   const restarted = new TerminalOperationController(request);
   restarted.restore();
   const [entry] = restarted.snapshot();
+  expect(entry?.outcome).toBe("unknown");
   await expect(restarted.retry(entry!.key)).rejects.toThrow("Receipt expired");
   expect(request.mock.calls[0]?.[0]).toBe("/api/terminal-operations?observe=1");
-  expect(delivered).toEqual([delivered[0], delivered[0]]);
+  const intent = handle.mock.calls[0]![0];
+  expect(handle.mock.calls[1]![0]).toEqual(intent);
   restarted.stopTracking(entry!.key);
   await expect(restarted.run(remove)).resolves.toBeNull();
-  expect(delivered[2]).toMatchObject({
+  expect(handle.mock.calls[2]![0]).toMatchObject({
     executor: { epoch: newEpoch },
     intent: remove,
   });
-  expect(delivered[2]!.operationId).not.toBe(delivered[0]!.operationId);
+  expect(handle.mock.calls[2]![0].operationId).not.toBe(intent.operationId);
 });
-
-it.each(["executor", "command", "operationId", "result"])(
-  "retains the intent when a response has no matching %s",
-  async (field) => {
-    const handle = vi.fn((operation: TerminalOperation) =>
-      reply(operation, { [field]: undefined }),
-    );
-    const controller = new TerminalOperationController(transport(handle));
-    await expect(controller.run(create)).rejects.toThrow("outcome is unknown");
-    expect(controller.snapshot()).toMatchObject([{ outcome: "unknown" }]);
-  },
-);
 
 it("releases a matched refusal and quarantines a malformed stored set without issuing work", async () => {
   const handler = vi.fn((operation: TerminalOperation) =>

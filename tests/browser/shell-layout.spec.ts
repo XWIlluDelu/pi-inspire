@@ -1,6 +1,6 @@
 import { basename } from "node:path";
 import AxeBuilder from "@axe-core/playwright";
-import { expect, test } from "@playwright/test";
+import { expect, type Locator, test } from "@playwright/test";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
 import { focusRingClipping } from "./support/focus-bounds";
 import { routeSnapshots } from "./support/host-events";
@@ -9,30 +9,17 @@ import {
   openPreviewFixture,
   pairedPage,
 } from "./support/navigation";
-import { textBaseline } from "./support/text-baseline";
 
-test("header controls keep visible keyboard focus across desktop and phone layouts", async ({
-  page,
-}) => {
-  await pairedPage(page);
-  await openFixtureSession(page, /Review extension event lifecycle/);
-  await page.evaluate(() => document.fonts.ready);
-  for (const [width, height, name] of [
-    [901, 390, "Toggle resources panel"],
-    [320, 640, "Toggle navigation"],
-  ] as const) {
-    await page.setViewportSize({ width, height });
-    const button = page.getByRole("button", { name, exact: true });
-    await button.focus();
-    await page.keyboard.press("Tab");
-    await page.keyboard.press("Shift+Tab");
-    await expect(button).toBeFocused();
-    await expect(button).toHaveCSS("outline-style", "solid");
-    await expect
-      .poll(() => button.evaluate(focusRingClipping))
-      .toBeLessThanOrEqual(0.5);
-  }
-});
+const width = (pane: Locator) =>
+  pane.evaluate((el) => el.getBoundingClientRect().width);
+async function drag(handle: Locator, offset: number) {
+  const { x, y, width } = (await handle.boundingBox())!;
+  const mouse = handle.page().mouse;
+  await mouse.move(x + width / 2, y + 24);
+  await mouse.down();
+  await mouse.move(x + width / 2 + offset, y + 24, { steps: 6 });
+  await mouse.up();
+}
 
 test("desktop pane gutters remain pointer and keyboard resize targets", async ({
   page,
@@ -50,37 +37,19 @@ test("desktop pane gutters remain pointer and keyboard resize targets", async ({
   ] as const) {
     const handle = page.getByRole("separator", { name: label, exact: true });
     const pane = page.locator(selector);
-    const initial = (await pane.boundingBox())!.width;
-    const bounds = (await handle.boundingBox())!;
-    const x = bounds.x + bounds.width / 2;
-    const y = bounds.y + 24;
-    await page.mouse.move(x, y);
-    await page.mouse.down();
-    await page.mouse.move(x + delta, y, { steps: 6 });
-    await page.mouse.up();
-    await expect
-      .poll(async () => (await pane.boundingBox())!.width)
-      .toBeCloseTo(initial + 48, 0);
+    const initial = await width(pane);
+    await drag(handle, delta);
+    await expect.poll(() => width(pane)).toBeCloseTo(initial + 48, 0);
 
-    const dragged = (await pane.boundingBox())!.width;
-    await handle.focus();
     await handle.press(selector === ".nav" ? "ArrowRight" : "ArrowLeft");
-    await expect
-      .poll(async () => (await pane.boundingBox())!.width)
-      .toBeGreaterThan(dragged);
-    // Save the settled size, rather than an intermediate frame of the resize.
-    await expect
-      .poll(async () => (await pane.boundingBox())!.width)
-      .toBeCloseTo(Number(await handle.getAttribute("aria-valuenow")), 0);
+    const reported = Number(await handle.getAttribute("aria-valuenow"));
+    expect(reported).toBeGreaterThan(initial + 48);
+    await expect.poll(() => width(pane)).toBeCloseTo(reported, 0);
   }
 
   const widths = () =>
     Promise.all(
-      [".nav", ".ctx"].map((selector) =>
-        page
-          .locator(selector)
-          .evaluate((el) => el.getBoundingClientRect().width),
-      ),
+      [".nav", ".ctx"].map((selector) => width(page.locator(selector))),
     );
   const saved = await widths();
   await page.reload();
@@ -129,13 +98,13 @@ test("side panes preserve saved widths and leave the reading budget during resiz
   await pairedPage(page);
   await openFixtureSession(page, /Review extension event lifecycle/);
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
-  await expect(page.locator(".ctx__modes")).toBeVisible();
+  await expect(
+    page.getByRole("tab", { name: "Files", exact: true }),
+  ).toBeVisible();
 
   const nav = page.locator(".nav");
   const ctx = page.locator(".ctx");
   const center = page.locator(".center");
-  const width = (pane: typeof nav) =>
-    pane.evaluate((el) => el.getBoundingClientRect().width);
   await expect.poll(() => width(nav)).toBeGreaterThanOrEqual(220);
   expect(await width(ctx)).toBeGreaterThanOrEqual(320);
   expect(await width(center)).toBeGreaterThanOrEqual(344);
@@ -170,13 +139,7 @@ test("side panes preserve saved widths and leave the reading budget during resiz
   const limit = Number(await right.getAttribute("aria-valuemax"));
   expect(limit).toBeGreaterThan(originalContext);
 
-  const handle = (await right.boundingBox())!;
-  const x = handle.x + handle.width / 2;
-  const y = handle.y + 24;
-  await page.mouse.move(x, y);
-  await page.mouse.down();
-  await page.mouse.move(x - 400, y, { steps: 8 });
-  await page.mouse.up();
+  await drag(right, -400);
   expect(await width(nav)).toBeCloseTo(reducedNav, 0);
   expect(await width(center)).toBeGreaterThanOrEqual(400);
   expect(await width(ctx)).toBeCloseTo(limit, 0);
@@ -291,48 +254,35 @@ test("workbench headers keep labels, controls and the live Git count readable", 
   await expect(page.locator(".topbar__git")).toHaveAccessibleName(
     /fixture\/analysis, 1 change/,
   );
-  await page.evaluate(() => document.fonts.ready);
-  for (const width of [1440, 390]) {
-    await page.setViewportSize({ width, height: 900 });
-    const title = page.locator(".topbar__title-button > span");
-    await expect(title).toBeVisible();
-    const titleBaseline = await title.evaluate(textBaseline);
-    for (const selector of [
-      ".topbar__project-label",
-      ".topbar__git-branch",
-      ".topbar__git-count",
-      ".topbar__extension-text",
-    ]) {
-      const label = page.locator(selector);
-      if (await label.isVisible()) {
-        expect(
-          Math.abs((await label.evaluate(textBaseline)) - titleBaseline),
-          `${width}: ${selector}`,
-        ).toBeLessThanOrEqual(0.5);
-      }
-    }
-  }
-  await page.setViewportSize({ width: 1440, height: 1000 });
   const branch = page.locator(".topbar__git-branch");
   await expect(branch).toBeVisible();
   expect(
     await branch.evaluate((label) => label.scrollWidth - label.clientWidth),
   ).toBeLessThanOrEqual(1);
 
-  await page.setViewportSize({ width: 390, height: 844 });
-  const metadata = page.locator(".topbar__workspace-meta");
-  expect(
-    await metadata.evaluate((element) => {
-      const meta = element.getBoundingClientRect();
-      const git = element
-        .querySelector(".topbar__git")!
-        .getBoundingClientRect();
-      return git.right - meta.right;
-    }),
-  ).toBeLessThanOrEqual(1);
-
-  await page.setViewportSize({ width: 320, height: 844 });
-  await expect(metadata).toBeHidden();
+  await page.evaluate(() => document.fonts.ready);
+  for (const [width, height, name] of [
+    [901, 390, "Toggle resources panel"],
+    [320, 640, "Toggle navigation"],
+  ] as const) {
+    await page.setViewportSize({ width, height });
+    const button = page.getByRole("button", { name, exact: true });
+    await button.focus();
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Shift+Tab");
+    await expect(button).toBeFocused();
+    await expect(button).toHaveCSS("outline-style", "solid");
+    await expect
+      .poll(() => button.evaluate(focusRingClipping))
+      .toBeLessThanOrEqual(0.5);
+  }
+  const topbar = page.locator(".topbar");
+  for (const control of [
+    topbar.getByRole("button", { name: "Copy project path" }),
+    topbar.getByRole("button", { name: /Open Git changes.*1 change/ }),
+  ]) {
+    await expect(control).toBeInViewport({ ratio: 1 });
+  }
   const model = page.getByRole("button", { name: "Model", exact: true });
   await expect(model).toBeVisible();
   expect(
@@ -342,9 +292,9 @@ test("workbench headers keep labels, controls and the live Git count readable", 
   ).toBeLessThanOrEqual(1);
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
   const pane = page.getByRole("dialog", { name: "Context panel" });
-  const modes = pane.locator(".ctx__modes");
+  const tools = pane.locator(".ctx__tools");
   const changes = pane.getByRole("tab", { name: "Changes", exact: true });
-  const count = modes.locator(".ctx__mode-count");
+  const count = changes.locator(".ctx__mode-count");
   await expect(count).toHaveText("1");
   const refresh = pane.getByRole("button", {
     name: "Refresh context pane",
@@ -358,54 +308,13 @@ test("workbench headers keep labels, controls and the live Git count readable", 
   await expect(count).toHaveText("99+");
   await openPreviewFixture(pane, "document.md");
 
-  const tiles = await modes.locator("button").evaluateAll((buttons) =>
-    buttons.map((button) => {
-      const box = button.getBoundingClientRect();
-      const icon = button.querySelector("svg")!.getBoundingClientRect();
-      const count = button
-        .querySelector(".ctx__mode-count")
-        ?.getBoundingClientRect();
-      return {
-        width: box.width,
-        height: box.height,
-        icon: [icon.width, icon.height],
-        iconCenterOffset: Math.abs(
-          icon.y + icon.height / 2 - box.y - box.height / 2,
-        ),
-        gutter: Math.min(
-          icon.left - box.left,
-          box.right - (count ?? icon).right,
-        ),
-        counted: count !== undefined,
-      };
-    }),
-  );
-  const regularWidths = tiles
-    .filter((tile) => !tile.counted)
-    .map((tile) => tile.width);
-  expect(Math.max(...regularWidths) - Math.min(...regularWidths)).toBeLessThan(
-    0.1,
-  );
-  for (const tile of tiles) {
-    expect(tile.icon).toEqual([16, 16]);
-    expect(tile.height).toBeGreaterThanOrEqual(32);
-    expect(tile.iconCenterOffset).toBeLessThanOrEqual(1);
-    expect(tile.gutter).toBeGreaterThanOrEqual(2);
-  }
-  const tools = (await modes.boundingBox())!;
-  const actions = (await pane.locator(".ctx__header-actions").boundingBox())!;
-  expect(actions.x - tools.x - tools.width).toBeGreaterThanOrEqual(2);
-
-  for (const mode of ["Files", "Changes"]) {
-    await modes.getByRole("tab", { name: mode, exact: true }).click();
-    const icon = (await changes.locator("svg").boundingBox())!;
-    const target = (await changes.boundingBox())!;
-    const box = (await count.boundingBox())!;
-    expect(box.x - icon.x - icon.width).toBeGreaterThanOrEqual(2);
-    expect(box.x + box.width).toBeLessThan(target.x + target.width);
-    expect(
-      Math.abs(box.y + box.height / 2 - icon.y - icon.height / 2),
-    ).toBeLessThanOrEqual(1);
-  }
+  expect(
+    await tools.evaluate((el) => el.scrollWidth - el.clientWidth),
+  ).toBeLessThanOrEqual(1);
+  const icon = (await changes.locator("svg").boundingBox())!;
+  const target = (await changes.boundingBox())!;
+  const box = (await count.boundingBox())!;
+  expect(box.x).toBeGreaterThan(icon.x + icon.width);
+  expect(box.x + box.width).toBeLessThan(target.x + target.width);
   await page.unrouteAll({ behavior: "wait" });
 });

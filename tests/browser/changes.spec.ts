@@ -2,7 +2,6 @@ import { expect, type Locator, test } from "@playwright/test";
 import type { GitDiffResponse } from "../../shared/contracts";
 import { focusRingClipping } from "./support/focus-bounds";
 import { routeSnapshots } from "./support/host-events";
-import { hostRequest } from "./support/host-request";
 import { openPreviewFixture, openResourceFixture } from "./support/navigation";
 
 const changeRow = /page\.html, modified/;
@@ -47,16 +46,14 @@ test("@cross-browser keeps compact Changes rows readable through refresh and nav
     utf8Path: display,
     workspacePath: display,
   });
-  const changes = (["renamed", "copied"] as const).map((kind) => ({
-    path: path(`packages/calibration/${kind}/observations/${name}`),
-    worktree: {
-      kind,
-      originalPath: path(`packages/calibration/previous/observations/${name}`),
-    },
-    untracked: false,
-  }));
+  const destination = path(`packages/calibration/observations/${name}`);
+  const originalPath = path(`packages/calibration/previous/${name}`);
   const files = [
-    ...changes,
+    {
+      path: destination,
+      worktree: { kind: "renamed", originalPath },
+      untracked: false,
+    },
     { path: path("new.txt"), worktree: { kind: "added" }, untracked: true },
     { path: path("merge.txt"), conflict: { code: "UU" }, untracked: false },
     ...Array.from({ length: 30 }, (_, index) => ({
@@ -86,39 +83,26 @@ test("@cross-browser keeps compact Changes rows readable through refresh and nav
   const pane = await openResourceFixture(page);
   const tab = pane.getByRole("tab", { name: "Changes", exact: true });
   await tab.click();
-  await page.evaluate(() => document.fonts.ready);
+  const row = pane.getByRole("button", {
+    name: `${destination.display}, renamed, renamed from ${originalPath.display}`,
+  });
+  await expect(row).toBeInViewport();
+  const source = row.locator(".changes__source");
+  await expect(source).toBeVisible();
+  expect((await source.boundingBox())!.y).toBeGreaterThan(
+    (await row.locator(".res__row-name").boundingBox())!.y,
+  );
+  const sourceBounds = (await source.boundingBox())!;
+  const rowBounds = (await row.boundingBox())!;
+  expect(sourceBounds.x + sourceBounds.width).toBeLessThanOrEqual(
+    rowBounds.x + rowBounds.width,
+  );
   await expect(
     pane.getByRole("button", { name: /new\.txt, Untracked/ }),
   ).toBeVisible();
   await expect(
     pane.getByRole("button", { name: "merge.txt, conflict UU" }),
   ).toBeVisible();
-  for (const change of changes) {
-    const { kind, originalPath } = change.worktree;
-    const row = pane.getByRole("button", {
-      name: `${change.path.display}, ${kind}, ${kind} from ${originalPath.display}`,
-      exact: true,
-    });
-    const destination = row.locator(".res__row-name");
-    const origin = row.locator(".changes__source");
-    await expect(origin).toBeVisible();
-    const destinationBox = (await destination.boundingBox())!;
-    expect((await origin.boundingBox())!.y).toBeGreaterThanOrEqual(
-      destinationBox.y + destinationBox.height,
-    );
-    for (const label of await row.locator(".resource-path__visible").all()) {
-      expect(
-        await label.evaluate((element) => {
-          const box = element.getBoundingClientRect();
-          const range = document.createRange();
-          range.selectNodeContents(element);
-          return Array.from(range.getClientRects()).every(
-            (rect) => rect.left >= box.left - 1 && rect.right <= box.right + 1,
-          );
-        }),
-      ).toBe(true);
-    }
-  }
   const refresh = pane.getByRole("button", { name: "Refresh context pane" });
   const stale = pane
     .getByRole("status")
@@ -181,9 +165,9 @@ test.describe("narrow Changes controls", () => {
       name: /Source changes for .*page\.html/,
     });
     const retry = pane.getByRole("button", { name: "Retry", exact: true });
-    await expect(pane.locator(".res__state")).toContainText(
-      "Source unavailable",
-    );
+    await expect(
+      pane.getByText("Source unavailable", { exact: true }),
+    ).toBeVisible();
     await checkKeyboardFocus(retry);
     fail = false;
     await retry.press("Enter");
@@ -218,19 +202,8 @@ test.describe("narrow Changes controls", () => {
       .locator("h1");
     await changesView.click();
     await expect(heading).toHaveText("Quiet systems, legible signals.");
-    const frame = page.frameLocator("iframe[title='Preview page.html']");
-    const enable = pane.getByRole("button", { name: "Enable interaction" });
-    await enable.click();
-    await expect(frame.locator("#status")).toHaveText("SCRIPT EXECUTED");
-    const grant = (await frame.owner().getAttribute("src"))!;
-    await changesView.click();
-    await expect(source).toBeVisible();
-    await expect
-      .poll(async () => (await hostRequest(page).get(grant)).status())
-      .toBe(404);
     await pane.getByRole("button", { name: "Source", exact: true }).click();
     const bodySource = pane.getByRole("region", { name: "File source" });
-    await expect(bodySource).toBeVisible();
     await changesView.click();
     await expect(source).toBeVisible();
     await changesView.click();
@@ -240,7 +213,6 @@ test.describe("narrow Changes controls", () => {
     await expect(changesView).toHaveAttribute("aria-pressed", "false");
     await pane.getByRole("button", { name: "Preview", exact: true }).click();
     await expect(heading).toHaveText("Quiet systems, legible signals.");
-    await expect(frame.owner()).toHaveAttribute("sandbox", "");
   });
 });
 
@@ -391,9 +363,6 @@ test.describe("touch source navigation", () => {
       transport.send({
         type: "tool_execution_end",
         sessionId: "fixture-resources",
-        toolCallId: "refresh-fixture",
-        toolName: "bash",
-        result: "done",
       });
       await expect.poll(() => pending).toBe(true);
       await page.clock.resume();

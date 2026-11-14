@@ -60,7 +60,7 @@ const STATUS_POPOVER: FloatingMenuConstraints = {
 
 export const ExtensionStatus = memo(function ExtensionStatus() {
   const { statuses, sessionId } = useAppState(
-    (state) => ({ statuses: state.statuses, sessionId: state.sessionId }),
+    (state) => ({ statuses: state.live.statuses, sessionId: state.sessionId }),
     shallowEqual,
   );
   const { configuration } = usePresentationAdapters();

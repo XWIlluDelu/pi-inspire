@@ -5,16 +5,7 @@ import {
   SquareTerminal,
   X,
 } from "lucide-react";
-import {
-  lazy,
-  memo,
-  Suspense,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fencedMarkdown } from "../../shared/markdown-fence";
 import {
   resourceReferenceLabel,
@@ -22,7 +13,6 @@ import {
 } from "../../shared/resource-references";
 import { gitChangeCount } from "../git-presentation";
 import { appendDraftBlock } from "../reader-quote";
-import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
 import { inspectedFileTab } from "../resource-preview";
 import {
   resourceRows as toResourceRows,
@@ -30,22 +20,14 @@ import {
 } from "../resources";
 import { shallowEqual, store, useAppState } from "../store";
 import { queueTerminalAction } from "../terminal-actions";
-import { hasActiveModal, recoverModalFocus } from "../use-modal-focus";
+import { hasActiveModal } from "../use-modal-focus";
 import { ChangesPane } from "./ChangesPane";
-import {
-  ContextTabStrip,
-  type FileDockTab,
-  type TerminalDockTab,
-} from "./ContextTabStrip";
+import type { FileDockTab } from "./ContextTabStrip";
 import { selectContextPaneView } from "./context-pane-view";
-import { handleDockTabKey } from "./dock-tab-keyboard";
 import type { FileReadingState } from "./FilePreview";
 import { FilesPane } from "./FilesPane";
 import { PiLoader } from "./PiLoader";
-
-const TerminalPane = lazy(() =>
-  import("./TerminalPane").then((module) => ({ default: module.TerminalPane })),
-);
+import { WorkspaceDock } from "./WorkspaceDock";
 
 export const ContextPane = memo(function ContextPane({
   isModal = false,
@@ -59,13 +41,12 @@ export const ContextPane = memo(function ContextPane({
   const [resourcePage, setResourcePage] = useState<
     (SessionResourceListResponse & { clientTransportGeneration: number }) | null
   >(null);
-  const [resourceStatus, setResourceStatus] = useState<
-    "idle" | "loading" | "error"
-  >("idle");
-  const [resourceError, setResourceError] = useState<string | null>(null);
+  const [resourceRead, setResourceRead] = useState<{
+    owner: string;
+    error?: string;
+  } | null>(null);
   const [terminalReloadKey, setTerminalReloadKey] = useState(0);
   const resourceRequest = useRef<AbortController | null>(null);
-  const resourceRecovery = useMemo(() => new RecoveryBackoff(), []);
   const changesScrollTop = useMemo(
     () => ({ current: 0 }),
     [state.sessionId, state.cwd],
@@ -77,18 +58,6 @@ export const ContextPane = memo(function ContextPane({
   const browseScrollTop = useMemo(
     () => ({ current: 0 }),
     [state.sessionId, state.cwd, transportGeneration],
-  );
-  const [terminalVisited, setTerminalVisited] = useState(false);
-  const [terminalTabs, setTerminalTabs] = useState<readonly TerminalDockTab[]>(
-    [],
-  );
-  useEffect(() => {
-    if (state.contextMode === "terminal" || (state.resourcesOpen && state.cwd))
-      setTerminalVisited(true);
-  }, [state.contextMode, state.resourcesOpen, state.cwd]);
-  const activateTerminal = useCallback(
-    () => store.setContextMode("terminal"),
-    [],
   );
   useEffect(() => {
     for (const reference of fileReadings.keys())
@@ -125,104 +94,54 @@ export const ContextPane = memo(function ContextPane({
     resourcePage.revision === state.transcriptRevision &&
     resourcePage.clientTransportGeneration === transportGeneration;
 
-  const loadResources = useCallback(
-    async function loadResources() {
-      if (!state.sessionId || !state.transcriptViewId) return;
-      resourceRecovery.cancel();
-      resourceRequest.current?.abort();
-      const request = new AbortController();
-      resourceRequest.current = request;
-      setResourceStatus("loading");
-      setResourceError(null);
-      try {
-        const response = await store.loadSessionResources(request.signal);
-        if (
-          request.signal.aborted ||
-          store.getState().transportGeneration !== transportGeneration
-        )
-          return;
-        if (response) {
-          resourceRecovery.reset();
-          setResourcePage({
-            ...response,
-            clientTransportGeneration: transportGeneration,
-          });
-        }
-        setResourceStatus("idle");
-      } catch (error) {
-        if (
-          request.signal.aborted ||
-          store.getState().transportGeneration !== transportGeneration
-        )
-          return;
-        const current = store.getState();
-        if (
-          isTransientFailure(error) &&
-          resourceRecovery.schedule(() => {
-            const latest = store.getState();
-            if (
-              latest.sessionId === state.sessionId &&
-              latest.transcriptViewId === state.transcriptViewId &&
-              latest.transportGeneration === transportGeneration &&
-              latest.resourcesOpen &&
-              latest.contextMode === "files" &&
-              latest.fileInspection.kind === "browse"
-            )
-              void loadResources();
-          })
-        ) {
-          setResourceStatus("loading");
-          return;
-        }
-        if (
-          current.sessionId !== state.sessionId ||
-          current.transcriptViewId !== state.transcriptViewId
-        )
-          return;
-        setResourceStatus("error");
-        setResourceError(
-          error instanceof Error
-            ? error.message
-            : "Recent files failed to load",
-        );
-      } finally {
-        if (resourceRequest.current === request) resourceRequest.current = null;
-      }
-    },
-    [
-      state.sessionId,
-      state.transcriptViewId,
-      transportGeneration,
-      resourceRecovery,
-    ],
-  );
-
-  useEffect(() => {
-    resourceRequest.current?.abort();
-    resourceRecovery.reset();
-    setResourceStatus("idle");
-    setResourceError(null);
-    return () => {
-      resourceRequest.current?.abort();
-      resourceRecovery.reset();
-    };
-  }, [
+  const resourceOwner = JSON.stringify([
     state.sessionId,
     state.transcriptViewId,
+    state.transcriptRevision,
     transportGeneration,
-    browsingFiles,
-    resourceRecovery,
   ]);
+  const loadResources = useCallback(async () => {
+    resourceRequest.current?.abort();
+    const request = new AbortController();
+    resourceRequest.current = request;
+    setResourceRead({ owner: resourceOwner });
+    try {
+      const response = await store.loadSessionResources(request.signal);
+      if (request.signal.aborted) return;
+      if (response)
+        setResourcePage({
+          ...response,
+          clientTransportGeneration: transportGeneration,
+        });
+      setResourceRead(null);
+    } catch (error) {
+      if (!request.signal.aborted)
+        setResourceRead({
+          owner: resourceOwner,
+          error:
+            error instanceof Error
+              ? error.message
+              : "Recent files failed to load",
+        });
+    } finally {
+      if (resourceRequest.current === request) resourceRequest.current = null;
+    }
+  }, [resourceOwner, transportGeneration]);
 
   useEffect(() => {
-    if (!browsingFiles || !state.sessionId || !state.transcriptViewId) return;
-    if (!currentResourcePage) void loadResources();
+    if (
+      browsingFiles &&
+      state.sessionId &&
+      state.transcriptViewId &&
+      !currentResourcePage
+    )
+      void loadResources();
+    return () => resourceRequest.current?.abort();
   }, [
     browsingFiles,
     currentResourcePage,
     loadResources,
     state.sessionId,
-    state.transcriptRevision,
     state.transcriptViewId,
   ]);
 
@@ -235,13 +154,7 @@ export const ContextPane = memo(function ContextPane({
     );
   }, [browsingFiles, currentResourcePage, recentRows]);
 
-  useEffect(
-    () => () => {
-      resourceRequest.current?.abort();
-      store.cancelResourceProbes();
-    },
-    [],
-  );
+  useEffect(() => () => store.cancelResourceProbes(), []);
 
   const gitDetailView = !state.resourcesOpen
     ? null
@@ -357,6 +270,7 @@ export const ContextPane = memo(function ContextPane({
     return {
       kind: "file",
       id: tab.reference,
+      panel: "context-file-content",
       title,
       label: title.split(/[\\/]/u).at(-1) || title,
       selected: activeFile && selectedReference === tab.reference,
@@ -366,163 +280,131 @@ export const ContextPane = memo(function ContextPane({
       close: () => store.closeResourceTab(tab.reference),
     };
   });
-  const contents = (
-    <>
-      <div
-        className="ctx__header"
-        data-has-tabs={fileTabs.length + terminalTabs.length > 0 || undefined}
-        ref={recoverModalFocus}
-      >
-        <div
-          className="ctx__tabs"
-          role="tablist"
-          aria-label="Context tabs"
-          onKeyDown={handleDockTabKey}
-        >
-          <ContextTabStrip tabs={[...fileTabs, ...terminalTabs]} />
-          <div className="ctx__modes">
-            {(["files", "changes"] as const).map((mode) => {
-              const label = mode === "files" ? "Files" : "Changes";
-              const Icon = mode === "files" ? Folder : GitCompareArrows;
-              const selected =
-                state.contextMode === mode && (mode !== "files" || !activeFile);
-              const changesCount =
-                mode === "changes" ? (gitChangeCount(state.gitStatus) ?? 0) : 0;
-              return (
-                <button
-                  type="button"
-                  key={mode}
-                  role="tab"
-                  aria-label={label}
-                  title={
-                    changesCount
-                      ? `${label} (${changesCount} ${changesCount === 1 ? "change" : "changes"})`
-                      : label
-                  }
-                  aria-selected={selected}
-                  aria-controls={`context-${mode}-content`}
-                  tabIndex={selected ? 0 : -1}
-                  onClick={() => {
-                    if (mode === "files") store.showFileBrowser();
-                    else store.setContextMode(mode);
-                  }}
-                >
-                  <Icon size={16} aria-hidden />
-                  {changesCount > 0 ? (
-                    <span className="ctx__mode-count" aria-hidden="true">
-                      {changesCount > 99 ? "99+" : changesCount}
-                    </span>
-                  ) : null}
-                </button>
-              );
-            })}
-            <button
-              type="button"
-              aria-label="New terminal"
-              title="New terminal"
-              disabled={!state.cwd}
-              data-terminal-focus-trigger
-              onClick={() => {
-                store.setContextMode("terminal");
-                queueTerminalAction("new", state.cwd);
-              }}
-            >
-              <SquareTerminal size={16} aria-hidden />
-            </button>
-          </div>
-        </div>
-        <div className="ctx__header-actions">
+  const tools = (
+    <div className="ctx__tools">
+      {(["files", "changes"] as const).map((mode) => {
+        const label = mode === "files" ? "Files" : "Changes";
+        const Icon = mode === "files" ? Folder : GitCompareArrows;
+        const selected =
+          state.contextMode === mode && (mode !== "files" || !activeFile);
+        const changesCount =
+          mode === "changes" ? (gitChangeCount(state.gitStatus) ?? 0) : 0;
+        return (
           <button
             type="button"
-            className="icon-button"
-            title="Refresh"
-            aria-label="Refresh context pane"
-            onClick={handleRefresh}
-            aria-busy={refreshing}
-            disabled={
-              refreshing ||
-              (state.contextMode !== "terminal" && !state.sessionId)
+            className="icon-button ctx__mode"
+            data-counted={changesCount > 0 || undefined}
+            key={mode}
+            role="tab"
+            aria-label={label}
+            title={
+              changesCount
+                ? `${label} (${changesCount} ${changesCount === 1 ? "change" : "changes"})`
+                : label
             }
+            aria-selected={selected}
+            aria-controls={`context-${mode}-content`}
+            tabIndex={selected ? 0 : -1}
+            onClick={() => {
+              if (mode === "files") store.showFileBrowser();
+              else store.openContextMode(mode);
+            }}
           >
-            {refreshing ? (
-              <PiLoader size={14} aria-hidden />
-            ) : (
-              <RefreshCw size={14} aria-hidden />
-            )}
+            <Icon size={16} aria-hidden />
+            {changesCount > 0 ? (
+              <span className="ctx__mode-count" aria-hidden="true">
+                {changesCount > 99 ? "99+" : changesCount}
+              </span>
+            ) : null}
           </button>
-          {onClose ? (
-            <button
-              type="button"
-              className="icon-button ctx__close"
-              title="Close"
-              aria-label="Close context pane"
-              onClick={onClose}
-            >
-              <X size={15} aria-hidden />
-            </button>
-          ) : null}
-        </div>
-      </div>
-      {state.contextMode === "files" ? (
-        <div
-          className="ctx__content"
-          id={activeFile ? "context-file-content" : "context-files-content"}
-          role="tabpanel"
-          aria-label={activeFile ? "File" : "Files"}
+        );
+      })}
+      <button
+        type="button"
+        className="icon-button"
+        aria-label="New terminal"
+        title="New terminal"
+        disabled={!state.cwd}
+        data-terminal-focus-trigger
+        onClick={() => {
+          store.openContextMode("terminal");
+          queueTerminalAction("new", state.cwd);
+        }}
+      >
+        <SquareTerminal size={16} aria-hidden />
+      </button>
+      <button
+        type="button"
+        className="icon-button"
+        title="Refresh"
+        aria-label="Refresh context pane"
+        onClick={handleRefresh}
+        aria-busy={refreshing}
+        disabled={
+          refreshing || (state.contextMode !== "terminal" && !state.sessionId)
+        }
+      >
+        {refreshing ? (
+          <PiLoader size={14} aria-hidden />
+        ) : (
+          <RefreshCw size={14} aria-hidden />
+        )}
+      </button>
+      {onClose ? (
+        <button
+          type="button"
+          className="icon-button ctx__close"
+          title="Close"
+          aria-label="Close context pane"
+          onClick={onClose}
         >
-          <FilesPane
-            state={state}
-            rows={recentRows}
-            loading={resourceStatus === "loading"}
-            error={resourceError}
-            browseScrollTop={browseScrollTop}
-            readingState={fileReading}
-            onQuote={handleReaderQuote}
-          />
-        </div>
-      ) : state.contextMode === "changes" ? (
-        <div
-          className="ctx__content"
-          id="context-changes-content"
-          role="tabpanel"
-          aria-label="Changes"
-        >
-          <ChangesPane state={state} browseScrollTop={changesScrollTop} />
-        </div>
+          <X size={15} aria-hidden />
+        </button>
       ) : null}
-      {terminalVisited || state.contextMode === "terminal" ? (
-        <div
-          className="ctx__content"
-          id="context-terminal-content"
-          role="tabpanel"
-          aria-label="Terminal"
-          hidden={state.contextMode !== "terminal"}
-        >
-          <Suspense
-            fallback={
-              <div
-                className="terminal-empty terminal-empty--loading"
-                role="status"
-              >
-                <PiLoader size={17} aria-hidden />
-                Loading terminal…
-              </div>
-            }
-          >
-            <TerminalPane
-              cwd={state.cwd}
-              onDockTabs={setTerminalTabs}
-              onActivate={activateTerminal}
-              active={state.resourcesOpen && state.contextMode === "terminal"}
-              reloadKey={terminalReloadKey}
-              onOpenFile={handleTerminalOpenFile}
-              onSendToComposer={handleTerminalSelection}
-              onCommandComplete={handleTerminalCommandComplete}
-            />
-          </Suspense>
-        </div>
-      ) : null}
-    </>
+    </div>
   );
-  return contents;
+  const body =
+    state.contextMode === "files" ? (
+      <div
+        className="ctx__content"
+        id={activeFile ? "context-file-content" : "context-files-content"}
+        role="tabpanel"
+        aria-label={activeFile ? "File" : "Files"}
+      >
+        <FilesPane
+          state={state}
+          rows={recentRows}
+          loading={resourceRead?.owner === resourceOwner && !resourceRead.error}
+          error={
+            resourceRead?.owner === resourceOwner
+              ? (resourceRead.error ?? null)
+              : null
+          }
+          browseScrollTop={browseScrollTop}
+          readingState={fileReading}
+          onQuote={handleReaderQuote}
+        />
+      </div>
+    ) : state.contextMode === "changes" ? (
+      <div
+        className="ctx__content"
+        id="context-changes-content"
+        role="tabpanel"
+        aria-label="Changes"
+      >
+        <ChangesPane state={state} browseScrollTop={changesScrollTop} />
+      </div>
+    ) : null;
+  return (
+    <WorkspaceDock
+      cwd={state.cwd}
+      context={{ files: fileTabs, tools, body }}
+      onActivate={() => store.openContextMode("terminal")}
+      active={state.resourcesOpen && state.contextMode === "terminal"}
+      reloadKey={terminalReloadKey}
+      onOpenFile={handleTerminalOpenFile}
+      onSendToComposer={handleTerminalSelection}
+      onCommandComplete={handleTerminalCommandComplete}
+    />
+  );
 });

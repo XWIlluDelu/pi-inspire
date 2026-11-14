@@ -62,7 +62,7 @@ export function historyFixtureEntries(
           ? [
               {
                 type: "text",
-                text: "Compare the calibration strategies and retain the full measurement record.",
+                text: "Compare the calibration strategies and retain the full measurement record. Read `README.md` or [the project document](README.md); see [external docs](https://example.com/docs).",
               },
               historyImage,
             ]

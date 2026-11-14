@@ -276,21 +276,32 @@ describe("login attempt ownership", () => {
     ).toBeEnabled();
   });
 
-  it("does not show a retired owner's Cancel result or refresh the new owner", async () => {
-    const cancel = deferred<ProviderLoginAttempt>();
-    host.providerAuth.mockImplementation(async (_owner, request) =>
-      request.operation === "cancel" ? cancel.promise : pendingLogin(),
-    );
-    const view = render(panel());
-    await start();
-    click("Cancel login");
-    view.rerender(panel({ owner: { sessionId: "two" } }));
-    await act(async () => cancel.resolve(terminal("cancelled")));
-    expect(screen.queryByText("Login cancelled.")).toBeNull();
-    expect(refresh).not.toHaveBeenCalled();
-    click("Manage Anthropic");
-    expect(
-      screen.getByRole("button", { name: "Claude authorization" }),
-    ).toBeEnabled();
-  });
+  it.each(["cancel", "logout"] as const)(
+    "does not publish a retired owner's %s result",
+    async (operation) => {
+      const retired = deferred<ProviderLoginAttempt | null>();
+      host.providerAuth.mockImplementation(async (_owner, request) =>
+        request.operation === operation ? retired.promise : pendingLogin(),
+      );
+      const view = render(panel());
+      if (operation === "cancel") {
+        await start();
+        click("Cancel login");
+      } else {
+        click("Manage Anthropic");
+        click("Remove saved credentials for Anthropic");
+        click("Remove saved credentials");
+      }
+      view.rerender(panel({ owner: { sessionId: "two" } }));
+      await act(async () =>
+        retired.resolve(operation === "cancel" ? terminal("cancelled") : null),
+      );
+      expect(screen.queryByText("Login cancelled.")).toBeNull();
+      expect(refresh).not.toHaveBeenCalled();
+      click("Manage Anthropic");
+      expect(
+        screen.getByRole("button", { name: "Claude authorization" }),
+      ).toBeEnabled();
+    },
+  );
 });

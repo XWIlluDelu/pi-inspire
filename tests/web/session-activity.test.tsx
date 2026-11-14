@@ -38,8 +38,6 @@ beforeEach(() => {
     ensureSessionVisible,
     applySnapshot: vi.fn(),
     applyTranscript: () => {},
-    recordRuntimeReady: vi.fn(),
-    clearRuntimeReady: vi.fn(),
     refreshLoadedSessions: vi.fn(async () => {}),
     hasVisibleGitSurface: () => false,
     refreshGitStatus: vi.fn(async () => {}),
@@ -212,5 +210,19 @@ describe("session activity presentation", () => {
     view.rerender(row());
     expect(screen.queryByTitle(/Idle in Pi/)).toBeNull();
     expect(state.completedRunSequence).toBe(0);
+  });
+
+  it("uses an addressed completion from the Host for the title cue", () => {
+    state.sessionId = "s1";
+    const settled = {
+      type: "agent_settled",
+      completed: true,
+      sessionStatus: { runState: "idle" as const },
+    };
+    events.apply({ ...settled, sessionId: external.id });
+    events.apply({ ...settled, sessionId: "s1", completed: false });
+    expect(state.completedRunSequence).toBe(0);
+    events.apply({ ...settled, sessionId: "s1" });
+    expect(state.completedRunSequence).toBe(1);
   });
 });

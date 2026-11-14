@@ -87,14 +87,13 @@ export function ResponseActivityFold({
     <section
       className="activity-fold"
       aria-label="Assistant activity"
-      data-activity-fold={open ? "open" : "closed"}
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) setFocus(null);
       }}
     >
       <button
         type="button"
-        className="activity-fold__disclosure"
+        className="disclosure-row activity-fold__disclosure"
         aria-controls={id}
         aria-expanded={open}
         aria-label={
@@ -138,6 +137,7 @@ export function ResponseActivityFold({
               >
                 <button
                   type="button"
+                  className="button button--quiet disclosure-row"
                   disabled={page === 0}
                   onClick={() => showPage(page - 1)}
                 >
@@ -148,6 +148,7 @@ export function ResponseActivityFold({
                 </span>
                 <button
                   type="button"
+                  className="button button--quiet disclosure-row"
                   disabled={page === last}
                   onClick={() => showPage(page + 1)}
                 >

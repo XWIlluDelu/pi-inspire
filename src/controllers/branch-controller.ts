@@ -8,46 +8,29 @@ import type {
   BranchNavigateRequest,
   BranchNavigateResponse,
   ComposerHistoryEntry,
-  ProjectionConflict,
-  ProjectionHealth,
   SessionReadOnlyReason,
 } from "../../shared/contracts";
 import { MAX_COMPOSER_HISTORY_ENTRIES } from "../../shared/contracts";
 import type { SessionHistoryQuery } from "../../shared/history-query";
 import { type Api, ApiError } from "../api";
+import type { AppState } from "../app-state";
 import type { ComposerHistoryScope } from "../composer-history";
 import type { CopyContent } from "../content-copy";
-import { RecoveryBackoff } from "../recovery-backoff";
+import { RecoveryBackoff, readScope } from "../recovery-backoff";
 import { shellCopyText } from "../shell-record";
 
-export interface BranchControllerState {
-  sessionId: string | null;
-  transcriptViewId: string | null;
-  transcriptIncarnation: string | null;
-  composerHistoryVersion: string | null;
-  transcriptDurableLeafId: string | null;
-  transcriptEffectiveLeafId: string | null;
-  transcriptNavigationLeased: boolean;
-  branchRevision: number | null;
-  branchTreeError: string | null;
-  branchActionId: string | null;
-  projectionHealth: ProjectionHealth;
-  projectionConflict: ProjectionConflict | null;
-  readOnlyReason?: SessionReadOnlyReason | null;
-}
+export type BranchControllerState = Pick<
+  AppState,
+  "sessionId" | "view" | "branchTreeError" | "branchActionId"
+> & { readOnlyReason?: SessionReadOnlyReason | null };
 
-export function hasEarlierContinuation(
-  state: Pick<
-    BranchControllerState,
-    | "transcriptDurableLeafId"
-    | "transcriptEffectiveLeafId"
-    | "transcriptNavigationLeased"
-  >,
-): boolean {
+export function hasEarlierContinuation({
+  view,
+}: Pick<BranchControllerState, "view">): boolean {
   return (
-    state.transcriptNavigationLeased &&
-    state.transcriptDurableLeafId !== null &&
-    state.transcriptDurableLeafId !== state.transcriptEffectiveLeafId
+    view.navigationLeased &&
+    view.durableLeafId !== null &&
+    view.durableLeafId !== view.effectiveLeafId
   );
 }
 
@@ -56,7 +39,7 @@ function branchCopyBlockReason(state: BranchControllerState): string | null {
   if (state.readOnlyReason === "workspace-unavailable")
     return "The project folder is unavailable";
   if (state.branchActionId) return "A history action is in progress";
-  if (state.projectionHealth.status === "error" || state.projectionConflict)
+  if (state.view.health.status === "error" || state.view.conflict)
     return "Recover this session before continuing";
   return null;
 }
@@ -103,14 +86,19 @@ export class BranchController {
 
   constructor(private readonly host: BranchControllerHost) {}
 
-  invalidate({ preserveError = false, preserveAction = false } = {}): void {
+  retireReads(): void {
     this.inspection.abort();
     this.inspection = new AbortController();
-    if (!preserveAction) this.actionRequest += 1;
-    this.host.patch({
-      ...(!preserveAction ? { branchActionId: null } : {}),
-      ...(!preserveError ? { branchTreeError: null } : {}),
-    });
+  }
+
+  retireAction(): void {
+    this.actionRequest += 1;
+  }
+
+  invalidate(): void {
+    this.retireReads();
+    this.retireAction();
+    this.host.patch({ branchActionId: null, branchTreeError: null });
   }
 
   history<Q extends SessionHistoryQuery>(
@@ -121,7 +109,7 @@ export class BranchController {
     retry = false,
   ) {
     const current = this.host.state();
-    if (current.sessionId !== sessionId || current.transcriptViewId !== viewId)
+    if (current.sessionId !== sessionId || current.view.viewId !== viewId)
       return Promise.resolve(null);
     return this.read(
       (api, signal) => api.sessionHistory(sessionId, viewId, query, signal),
@@ -143,9 +131,9 @@ export class BranchController {
       const state = this.host.state();
       return (
         state.sessionId === sessionId &&
-        state.transcriptViewId === viewId &&
-        state.transcriptIncarnation === incarnation &&
-        state.composerHistoryVersion === historyVersion
+        state.view.viewId === viewId &&
+        state.view.incarnation === incarnation &&
+        state.view.composerHistoryVersion === historyVersion
       );
     };
     if (!matches()) return null;
@@ -214,7 +202,10 @@ export class BranchController {
   }
 
   readEntry(targetId: string, offset = 0, signal?: AbortSignal) {
-    const { sessionId, transcriptViewId } = this.host.state();
+    const {
+      sessionId,
+      view: { viewId: transcriptViewId },
+    } = this.host.state();
     return sessionId && transcriptViewId
       ? this.history(
           sessionId,
@@ -227,7 +218,10 @@ export class BranchController {
   }
 
   readImage(targetId: string, index: number, signal?: AbortSignal) {
-    const { sessionId, transcriptViewId } = this.host.state();
+    const {
+      sessionId,
+      view: { viewId: transcriptViewId },
+    } = this.host.state();
     return sessionId && transcriptViewId
       ? this.read(
           (api, signal) =>
@@ -247,7 +241,10 @@ export class BranchController {
     signal: AbortSignal,
     format?: "message",
   ): Promise<CopyContent | null> {
-    const { sessionId, transcriptViewId: viewId } = this.host.state();
+    const {
+      sessionId,
+      view: { viewId },
+    } = this.host.state();
     if (!sessionId || !viewId) return null;
     return this.read(async (api, signal) => {
       let offset = 0;
@@ -296,28 +293,19 @@ export class BranchController {
     const signal = external
       ? AbortSignal.any([this.inspection.signal, external])
       : this.inspection.signal;
-    const owns = () =>
-      !signal.aborted &&
-      this.host.api() === api &&
-      this.ownsView(ticket, "view");
-    if (!owns()) return null;
+    const scope = readScope(
+      () => this.host.api() === api && this.ownsView(ticket, "view"),
+      signal,
+    );
     try {
-      const result = retry
-        ? await new RecoveryBackoff().read(
-            () => perform(api, signal),
-            signal,
-            owns,
-          )
-        : await perform(api, signal);
-      return owns() ? result : null;
+      return await scope.read(
+        (signal) => perform(api, signal),
+        retry ? new RecoveryBackoff() : undefined,
+      );
     } catch (error) {
-      if (
-        this.host.api() === api &&
-        error instanceof ApiError &&
-        error.status === 401
-      )
-        this.host.handleAuthFailure();
-      else if (owns()) throw error;
+      if (!scope.current()) return null;
+      if (!(error instanceof ApiError) || error.status !== 401) throw error;
+      this.host.handleAuthFailure();
       return null;
     }
   }
@@ -329,7 +317,7 @@ export class BranchController {
       Exclude<BranchNavigateRequest, { mode: "watch" }>,
       "summarize" | "customInstructions"
     > = {},
-    revision = this.host.state().branchRevision,
+    revision = this.host.state().view.branchRevision,
   ): Promise<boolean> {
     const api = this.host.api();
     const state = this.host.state();
@@ -389,7 +377,7 @@ export class BranchController {
     const api = this.host.api();
     const state = this.host.state();
     const sessionId = state.sessionId;
-    const viewId = state.transcriptViewId;
+    const viewId = state.view.viewId;
     if (!api || !sessionId || !viewId || branchCopiesBlocked(state))
       return false;
     const selectionRequest = this.host.beginForkSelection();
@@ -426,14 +414,14 @@ export class BranchController {
     const api = this.host.api();
     const state = this.host.state();
     const sessionId = state.sessionId;
-    const viewId = state.transcriptViewId;
+    const viewId = state.view.viewId;
     if (!api || !sessionId || !viewId) return false;
     const blocked = branchCopyBlockReason(state);
     if (blocked) {
       onFailure?.(blocked);
       return false;
     }
-    const endpoint = targetId ?? state.transcriptEffectiveLeafId;
+    const endpoint = targetId ?? state.view.effectiveLeafId;
     const selectionRequest = this.host.beginForkSelection();
     return this.runAction(
       `clone:${targetId ?? "current"}`,
@@ -482,8 +470,8 @@ export class BranchController {
       )
         return false;
       if (
-        state.transcriptViewId === ticket.viewId &&
-        state.transcriptEffectiveLeafId === ticket.effectiveLeafId
+        state.view.viewId === ticket.viewId &&
+        state.view.effectiveLeafId === ticket.effectiveLeafId
       )
         return true;
       // The socket can publish this navigation before its HTTP response.
@@ -491,8 +479,8 @@ export class BranchController {
         ?.active;
       return Boolean(
         active &&
-          active.transcriptPage.viewId === state.transcriptViewId &&
-          active.effectiveLeafId === state.transcriptEffectiveLeafId,
+          active.transcriptPage.viewId === state.view.viewId &&
+          active.effectiveLeafId === state.view.effectiveLeafId,
       );
     };
     this.host.patch({ branchActionId: actionId, branchTreeError: null });
@@ -522,9 +510,9 @@ export class BranchController {
 
   returnToLatest(): Promise<boolean> {
     const state = this.host.state();
-    if (!state.transcriptDurableLeafId || !hasEarlierContinuation(state))
+    if (!state.view.durableLeafId || !hasEarlierContinuation(state))
       return Promise.resolve(false);
-    return this.navigate(state.transcriptDurableLeafId, "switch");
+    return this.navigate(state.view.durableLeafId, "switch");
   }
 
   private viewTicket(state: BranchControllerState): BranchViewTicket {
@@ -533,8 +521,8 @@ export class BranchController {
     return {
       sessionId,
       selectionGeneration: this.host.selectionGeneration(),
-      viewId: state.transcriptViewId,
-      effectiveLeafId: state.transcriptEffectiveLeafId,
+      viewId: state.view.viewId,
+      effectiveLeafId: state.view.effectiveLeafId,
       selectionRequest: this.host.selectionRequest(),
     };
   }
@@ -547,9 +535,9 @@ export class BranchController {
     return (
       state.sessionId === ticket.sessionId &&
       this.host.selectionGeneration() === ticket.selectionGeneration &&
-      state.transcriptViewId === ticket.viewId &&
+      state.view.viewId === ticket.viewId &&
       (ownership === "view" ||
-        state.transcriptEffectiveLeafId === ticket.effectiveLeafId) &&
+        state.view.effectiveLeafId === ticket.effectiveLeafId) &&
       this.host.selectionRequest() === ticket.selectionRequest
     );
   }

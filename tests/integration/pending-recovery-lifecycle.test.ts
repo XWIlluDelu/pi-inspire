@@ -1,31 +1,31 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { hostReceipt } from "../../shared/host-operations";
 import {
   closeHostApiFixture,
   hostApiFixture,
 } from "../server/fixtures/host-api";
 import {
-  activeSnapshot,
   deferred,
   FakeWebSocket,
   installFakeWebSocket,
   jsonBody,
-  TEST_HOST_AUTHORITY,
 } from "../web/helpers";
-import { initStore, installStoreRoutes } from "../web/store-fixture";
-import { forwardHostRequests } from "./host-requests";
+import { initStore } from "../web/store-fixture";
 
 describe("Pending intent and receipt lifecycle", () => {
   let f: Awaited<ReturnType<typeof hostApiFixture>>;
-  let forward: ReturnType<typeof forwardHostRequests>;
+  const sessionId = "fixture-active";
+  const snapshot = () => f.runtime.snapshot(sessionId);
+  const connect = async () =>
+    initStore(await snapshot(), f.application.authorityId);
   beforeEach(async () => {
     installFakeWebSocket();
     f = await hostApiFixture();
-    forward = forwardHostRequests(f.application);
+    await f.runtime.openSession(sessionId);
   });
   afterEach(async () => {
     vi.useRealTimers();
+    vi.unstubAllGlobals();
     await closeHostApiFixture(f);
   });
 
@@ -44,9 +44,10 @@ describe("Pending intent and receipt lifecycle", () => {
         });
 
       const receiptReads = vi.fn();
-      const fetch = installStoreRoutes(async (url, init) => {
+      const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
+        const url = String(input);
         if (url === "/api/pending/recover") {
-          const response = await forward(url, init);
+          const response = await f.fetchHost(input, init);
           admitted.resolve();
           await delivery.promise;
           return response;
@@ -54,14 +55,16 @@ describe("Pending intent and receipt lifecycle", () => {
         if (url.startsWith("/api/pending/operations/")) {
           receiptReads();
           return receipt === "unavailable"
-            ? {
-                status: 503,
-                body: { error: "receipt observation unavailable" },
-              }
-            : forward(url, init);
+            ? Response.json(
+                { error: "receipt observation unavailable" },
+                { status: 503 },
+              )
+            : f.fetchHost(input, init);
         }
+        return f.fetchHost(input, init);
       });
-      const { store } = await initStore();
+      vi.stubGlobal("fetch", fetch);
+      const { store } = await connect();
       const generation = store.getState().transportGeneration;
       const operation = store.recoverPending();
       const expectedDraft = receipt === "failed" ? "" : "reclaimed input";
@@ -69,12 +72,14 @@ describe("Pending intent and receipt lifecycle", () => {
         await admitted.promise;
         store.recoverConnection("online");
         await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2));
-        FakeWebSocket.instances[1]!.join(activeSnapshot());
+        FakeWebSocket.instances[1]!.join(await snapshot(), {
+          authorityId: f.application.authorityId,
+        });
 
         if (receipt === "unavailable") {
           await vi.waitFor(() => expect(receiptReads).toHaveBeenCalledOnce());
           expect(store.getState().pendingAction).toBe("recover");
-          expect(store.getState().notices).toEqual([]);
+          expect(store.getState().live.notices).toEqual([]);
           delivery.resolve();
         }
         await expect(operation).resolves.toBe(receipt !== "failed");
@@ -83,8 +88,8 @@ describe("Pending intent and receipt lifecycle", () => {
           transportGeneration: generation,
         });
         expect(recover).toHaveBeenCalledOnce();
-        expect(store.drafts.get("s1").text).toBe(expectedDraft);
-        const notices = store.getState().notices;
+        expect(store.drafts.get(sessionId).text).toBe(expectedDraft);
+        const notices = store.getState().live.notices;
         expect(notices).toHaveLength(receipt === "failed" ? 1 : 0);
         expect(
           fetch.mock.calls.filter(([url]) =>
@@ -94,149 +99,176 @@ describe("Pending intent and receipt lifecycle", () => {
 
         delivery.resolve();
         await new Promise<void>((resolve) => setTimeout(resolve, 0));
-        expect(store.getState().notices).toEqual(notices);
+        expect(store.getState().live.notices).toEqual(notices);
       } finally {
         delivery.resolve();
         await operation;
       }
-      expect(store.drafts.get("s1").text).toBe(expectedDraft);
+      expect(store.drafts.get(sessionId).text).toBe(expectedDraft);
       if (receipt === "failed") {
         recover.mockResolvedValue({ steering: ["new input"], followUp: [] });
         expect(await store.recoverPending()).toBe(true);
         expect(recover).toHaveBeenCalledTimes(2);
-        expect(store.drafts.get("s1").text).toBe("new input");
+        expect(store.drafts.get(sessionId).text).toBe("new input");
       }
     },
   );
 
-  it("requires matched Host proof to retire a failed Return intent", async () => {
-    const recover = vi
-      .spyOn(f.runtime, "recoverPending")
-      .mockResolvedValue({ steering: ["retained"], followUp: [] });
-    const ids: string[] = [];
-    let observing = false;
-    let reads = 0;
-    installStoreRoutes(async (url, init) => {
-      if (url === "/api/pending/recover") {
-        ids.push(String(jsonBody(init).operationId));
-        await forward(url, init);
-        return { status: 500, body: { error: "observation failed" } };
-      }
-      if (url.startsWith("/api/pending/operations/")) {
-        expect(url).toContain(ids[0]);
-        if (observing) return forward(url, init);
-        if (++reads === 1) throw new TypeError("receipt unavailable");
-        return {
-          status: 500,
-          body: {
-            ...hostReceipt("recover", {
-              authorityId: TEST_HOST_AUTHORITY,
-              operationId: "unmatched-operation",
-            }),
-            state: "rejected",
-            error: { status: 500, message: "another operation failed" },
-          },
-        };
-      }
-    });
-    const { store } = await initStore();
-    expect(await store.recoverPending()).toBe(false);
-    expect(await store.recoverPending()).toBe(false);
-    observing = true;
-    expect(await store.recoverPending()).toBe(true);
-    expect(ids).toHaveLength(1);
-    expect(recover).toHaveBeenCalledOnce();
-    expect(store.drafts.get("s1").text).toBe("retained");
-  });
+  it.each(["same queue", "new queue", "retired receipt"] as const)(
+    "keeps an unresolved Return addressed through $0",
+    async (outcome) => {
+      let observeOld = false;
+      let reads = 0;
+      const requests: Record<string, unknown>[] = [];
+      const recover = vi
+        .spyOn(f.runtime, "recoverPending")
+        .mockResolvedValueOnce({ steering: ["old queue"], followUp: [] })
+        .mockResolvedValue({ steering: ["new queue"], followUp: [] });
+      vi.stubGlobal("fetch", (async (input, init) => {
+        const url = String(input);
+        if (url === "/api/pending/recover") {
+          requests.push(jsonBody(init ?? {}));
+          const response = await f.fetchHost(input, init);
+          if (requests.length === 1) throw new TypeError("lost response");
+          return response;
+        }
+        if (!observeOld && url.startsWith("/api/pending/operations/")) {
+          expect(url).toContain(requests[0]!.operationId);
+          if (++reads === 1) throw new TypeError("lost receipt");
+          return Response.json(
+            {
+              executor: {
+                kind: "host",
+                authorityId: f.application.authorityId,
+              },
+              command: "recover",
+              operationId: "another-operation",
+              state: "rejected",
+              error: { status: 409, message: "Another operation failed" },
+            },
+            { status: 409 },
+          );
+        }
+        return f.fetchHost(input, init);
+      }) satisfies typeof fetch);
+      const { store, socket } = await connect();
+      expect(await store.recoverPending()).toBe(false);
+      expect(await store.recoverPending()).toBe(false);
+      expect(recover).toHaveBeenCalledOnce();
+      expect(requests).toHaveLength(1);
+      observeOld = true;
 
-  it("keeps a retired receipt unknown until a new queue is admitted", async () => {
-    let lost = true;
-    const requests: Record<string, unknown>[] = [];
-    const recover = vi
-      .spyOn(f.runtime, "recoverPending")
-      .mockResolvedValue({ steering: ["original"], followUp: [] });
-    installStoreRoutes(async (url, init) => {
-      if (url === "/api/pending/recover") {
-        requests.push(jsonBody(init));
-        const response = await forward(url, init);
-        if (lost) throw new TypeError("lost response");
-        return response;
+      if (outcome === "same queue") {
+        expect(await store.recoverPending()).toBe(true);
+        expect(store.drafts.get(sessionId).text).toBe("old queue");
+        expect(recover).toHaveBeenCalledOnce();
+        return;
       }
-      if (url.startsWith("/api/pending/operations/")) {
-        if (lost) throw new TypeError("lost receipt");
-        return forward(url, init);
+      if (outcome === "retired receipt") {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        vi.setSystemTime(Date.now() + 16 * 60_000);
+        expect(await store.recoverPending()).toBe(false);
+        const retired = await f.fetchHost("/api/pending/recover", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(requests[0]),
+        });
+        expect(retired.status).toBe(409);
+        expect(await retired.json()).toMatchObject({
+          code: "PENDING_OPERATION_RESULT_RETIRED",
+        });
+        expect(recover).toHaveBeenCalledOnce();
       }
-    });
-    const { store, socket } = await initStore();
-    expect(await store.recoverPending()).toBe(false);
-    vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(Date.now() + 16 * 60_000);
-    lost = false;
-    expect(await store.recoverPending()).toBe(false);
-    expect(recover).toHaveBeenCalledOnce();
-    expect(await store.recoverPending()).toBe(false);
-    expect(requests).toHaveLength(1);
-    recover.mockResolvedValue({ steering: ["current queue"], followUp: [] });
-    socket.emit({
-      type: "queue_update",
-      sessionId: "s1",
-      pendingQueues: { revision: 2, totalCount: 1, steering: [], followUp: [] },
-    });
-    expect(await store.recoverPending()).toBe(true);
-    expect(requests[1]?.operationId).not.toBe(requests[0]?.operationId);
-    expect(store.drafts.get("s1").text).toBe("current queue");
-    const retired = await forward("/api/pending/recover", {
-      method: "POST",
-      body: JSON.stringify(requests[0]),
-    });
-    expect(retired).toMatchObject({
-      status: 409,
-      body: { code: "PENDING_OPERATION_RESULT_RETIRED" },
-    });
-    expect(recover).toHaveBeenCalledTimes(2);
-  });
+      socket.emit({
+        type: "queue_update",
+        sessionId,
+        pendingQueues: {
+          revision: 7,
+          totalCount: 1,
+          steering: [],
+          followUp: [],
+        },
+      });
+      expect(await store.recoverPending()).toBe(true);
+      await vi.waitFor(() => {
+        const draft = store.drafts.get(sessionId).text.split("\n\n").sort();
+        expect(draft).toEqual(
+          outcome === "new queue" ? ["new queue", "old queue"] : ["new queue"],
+        );
+      });
+      expect(requests[1]?.operationId).not.toBe(requests[0]?.operationId);
+      expect(recover).toHaveBeenCalledTimes(2);
+    },
+  );
 
-  it("returns newly admitted input without replacing the unknown older queue's receipt", async () => {
-    let readOld = false,
-      posts = 0;
-    const ids: string[] = [];
-    const recover = vi
-      .spyOn(f.runtime, "recoverPending")
-      .mockImplementation(async () => ({
-        steering: [++posts === 1 ? "old queue" : "new queue"],
+  it.each(["Return", "Stop"] as const)(
+    "keeps the original draft when $0 settles after selecting another session",
+    async (delayed) => {
+      const released = deferred<void>();
+      const admitted = deferred<void>();
+      const recover = vi.spyOn(f.runtime, "recoverPending").mockResolvedValue({
+        steering: ["first handoff"],
         followUp: [],
-      }));
-    installStoreRoutes(async (url, init) => {
-      if (url === "/api/pending/recover") {
-        ids.push(String(jsonBody(init).operationId));
-        const response = await forward(url, init);
-        if (ids.length === 1) throw new TypeError("lost response");
-        return response;
-      }
-      if (url.startsWith("/api/pending/operations/")) {
-        if (!readOld) throw new TypeError("lost receipt");
-        return forward(url, init);
-      }
-    });
-    const { store, socket } = await initStore();
-    expect(await store.recoverPending()).toBe(false);
-    readOld = true;
-    socket.emit({
-      type: "queue_update",
-      sessionId: "s1",
-      pendingQueues: {
-        revision: 7,
-        totalCount: 1,
+      });
+      const abort = vi.spyOn(f.runtime, "abort").mockResolvedValue({
         steering: [],
-        followUp: [],
-      },
-    });
-    expect(await store.recoverPending()).toBe(true);
-    await vi.waitFor(() =>
-      expect(store.drafts.get("s1").text).toContain("old queue"),
-    );
-    expect(store.drafts.get("s1").text).toContain("new queue");
-    expect(ids[0]).not.toBe(ids[1]);
-    expect(recover).toHaveBeenCalledTimes(2);
-  });
+        followUp: ["late input"],
+      });
+      const returnPath = "/api/pending/recover";
+      const stopPath = "/api/control/abort";
+      const heldPath = delayed === "Return" ? returnPath : stopPath;
+      vi.stubGlobal("fetch", (async (input, init) => {
+        const url = String(input);
+        if (url === stopPath)
+          expect(store.drafts.get(sessionId).text).toBe(
+            "first handoff\n\noriginal draft",
+          );
+        const response = await f.fetchHost(input, init);
+        if (url === heldPath) {
+          admitted.resolve();
+          await released.promise;
+        }
+        return response;
+      }) satisfies typeof fetch);
+
+      const { store } = await connect();
+      const nextSession = "fixture-history";
+      store.drafts.setText(sessionId, "original draft");
+      const stopping = store.abort();
+      try {
+        await admitted.promise;
+        await store.openSession(nextSession);
+        store.drafts.setText(nextSession, "another draft");
+        if (delayed === "Return") {
+          await store.init();
+          FakeWebSocket.instances
+            .at(-1)!
+            .join(await f.runtime.snapshot(nextSession), {
+              authorityId: f.application.authorityId,
+            });
+          await vi.waitFor(() =>
+            expect(store.drafts.get(sessionId).text).toBe(
+              "first handoff\n\noriginal draft",
+            ),
+          );
+        } else {
+          store.drafts.setText(sessionId, "edited during Stop");
+        }
+      } finally {
+        released.resolve();
+        await stopping;
+      }
+      expect(recover).toHaveBeenCalledOnce();
+      expect(recover.mock.calls[0]?.[0]).toBe(sessionId);
+      expect(abort).toHaveBeenCalledTimes(delayed === "Return" ? 0 : 1);
+      if (delayed === "Stop") expect(abort.mock.calls[0]?.[0]).toBe(sessionId);
+      expect(store.getState().sessionId).toBe(nextSession);
+      expect(store.drafts.get(nextSession).text).toBe("another draft");
+      expect(store.drafts.get(sessionId).text).toBe(
+        delayed === "Return"
+          ? "first handoff\n\noriginal draft"
+          : "late input\n\nedited during Stop",
+      );
+    },
+  );
 });

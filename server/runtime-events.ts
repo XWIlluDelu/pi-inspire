@@ -26,10 +26,12 @@ import {
   parsePendingExtensionUiRequest,
   parseRetryInfo,
 } from "../shared/contracts.js";
+import { jsonRecord } from "../shared/json-record.js";
 import { structuralMessageIdentity } from "../shared/message-identity.js";
 import type { TaskOutcome } from "../shared/notifications.js";
 import { PROVIDER_AUTH_SUFFIX } from "../shared/provider-auth-bridge.js";
 import {
+  type ActivityTool,
   childCallFromEvent,
   codemodeCalls,
   toolOutputPreview,
@@ -256,6 +258,42 @@ export class RuntimeEventController {
     return true;
   }
 
+  private readToolActivity(
+    slot: RuntimeSlot,
+    record: Record<string, unknown>,
+  ): ActivityTool | undefined {
+    const id = record.toolCallId;
+    if (typeof id !== "string" || !id) return;
+    const ended = record.type === "tool_execution_end";
+    if (typeof record.parentToolCallId === "string")
+      return updateChildActivity(
+        slot.toolActivity,
+        record.parentToolCallId,
+        childCallFromEvent(
+          this.host.safeProjection(record) as Record<string, unknown>,
+        ),
+      );
+    const existing = slot.toolActivity[id];
+    if (!ended && (existing?.phase === "done" || existing?.phase === "error"))
+      return;
+    const name = record.toolName;
+    if (typeof name !== "string" || !name) return;
+    return {
+      id,
+      name,
+      phase: ended ? (record.isError ? "error" : "done") : "running",
+      ...(record.type === "tool_execution_update"
+        ? { outputPreview: toolOutputPreview(record.partialResult) }
+        : {}),
+      calls:
+        (name === "codemode"
+          ? codemodeCalls(
+              jsonRecord(ended ? record.result : record.partialResult)?.details,
+            )
+          : undefined) ?? existing?.calls,
+    };
+  }
+
   private handleEvent(
     slot: RuntimeSlot,
     event: unknown,
@@ -385,6 +423,35 @@ export class RuntimeEventController {
             : undefined,
         );
         const streamMessageKey = structuralMessageIdentity(projectedMessage);
+        const content = jsonRecord(projectedMessage)?.content;
+        const queued: Record<string, ActivityTool> = {};
+        if (
+          phase === "end" &&
+          messageRecord.role === "assistant" &&
+          isBusyRunState(slot.runState) &&
+          structuralMessageIdentity(previousMessage) === streamMessageKey &&
+          messageRecord.stopReason === "toolUse" &&
+          Array.isArray(content)
+        ) {
+          for (const part of content) {
+            const call = jsonRecord(part);
+            if (
+              call?.type === "toolCall" &&
+              typeof call.id === "string" &&
+              typeof call.name === "string" &&
+              !call.__inspireToolCall &&
+              !slot.toolActivity[call.id]
+            )
+              queued[call.id] = {
+                id: call.id,
+                name: call.name,
+                phase: "queued",
+              };
+          }
+        }
+        const toolActivity = Object.keys(queued).length ? queued : undefined;
+        if (toolActivity)
+          slot.toolActivity = { ...slot.toolActivity, ...toolActivity };
         const delta = record.assistantMessageEvent as
           | Record<string, unknown>
           | undefined;
@@ -407,6 +474,7 @@ export class RuntimeEventController {
             ? { assistantMessageEvent: record.assistantMessageEvent }
             : {}),
           message: projectedMessage,
+          ...(toolActivity ? { toolActivity } : {}),
           ...(streamRevision === null ? {} : { streamRevision }),
           ...(incremental && streamMessageKey
             ? {
@@ -422,81 +490,12 @@ export class RuntimeEventController {
       case "tool_execution_start":
       case "tool_execution_update":
       case "tool_execution_end": {
-        const rootUpdate =
-          record.type === "tool_execution_update" &&
-          typeof record.parentToolCallId !== "string";
-        const outputPreview = rootUpdate
-          ? toolOutputPreview(record.partialResult)
-          : undefined;
-        let projectedEvent = record;
-        if (rootUpdate) {
-          const { content: _content, ...partialResult } =
-            (record.partialResult ?? {}) as Record<string, unknown>;
-          projectedEvent = { ...record, partialResult, outputPreview };
-          forwardedEvent = projectedEvent;
-        }
-        const safe = this.host.safeProjection(projectedEvent) as Record<
-          string,
-          unknown
-        >;
-        if (typeof record.parentToolCallId === "string") {
-          // Child results belong only to the calling tool. Retain/send summaries,
-          // not its result content, images, structuredContent or private details.
-          forwardedEvent = {
-            type: record.type,
-            toolCallId: record.toolCallId,
-            toolName: record.toolName,
-            parentToolCallId: record.parentToolCallId,
-            childCall: childCallFromEvent(safe),
-          };
-          slot.toolActivity = updateChildActivity(
-            slot.toolActivity,
-            forwardedEvent as Record<string, unknown>,
-          );
-        } else if (
-          typeof record.toolCallId === "string" &&
-          typeof record.toolName === "string"
-        ) {
-          const existing = slot.toolActivity[record.toolCallId];
-          const ended = record.type === "tool_execution_end";
-          if (
-            !ended &&
-            (existing?.phase === "done" || existing?.phase === "error")
-          )
-            break;
-          const result = (ended ? safe.result : safe.partialResult) as
-            | { details?: unknown }
-            | undefined;
-          const calls =
-            record.toolName === "codemode"
-              ? codemodeCalls(result?.details)
-              : undefined;
-          if (
-            calls &&
-            result &&
-            typeof result.details === "object" &&
-            result.details !== null
-          ) {
-            const { calls: _nativeCalls, ...details } =
-              result.details as Record<string, unknown>;
-            // One bounded presentation DTO crosses live transport, just as in history.
-            forwardedEvent = {
-              ...safe,
-              childCalls: calls,
-              [ended ? "result" : "partialResult"]: { ...result, details },
-            };
-          }
-          slot.toolActivity = {
-            ...slot.toolActivity,
-            [record.toolCallId]: {
-              id: record.toolCallId,
-              name: record.toolName,
-              phase: ended ? (record.isError ? "error" : "done") : "running",
-              calls: calls ?? existing?.calls,
-              ...(!ended ? { outputPreview } : {}),
-            },
-          };
-        }
+        const activity = this.readToolActivity(slot, record);
+        if (!activity && record.type !== "tool_execution_end") return;
+        const toolActivity = activity ? { [activity.id]: activity } : undefined;
+        if (toolActivity)
+          slot.toolActivity = { ...slot.toolActivity, ...toolActivity };
+        forwardedEvent = { type: record.type, toolActivity };
         break;
       }
       case "bash_execution_update":
@@ -688,7 +687,12 @@ export class RuntimeEventController {
         slot.activeAssistantKey = null;
         slot.activeTurnId = null;
         slot.attention = outcome;
-        if (slot.activeTask === "agent") this.host.finishTask(slot, outcome);
+        const completed =
+          slot.activeTask === "agent" && outcome === "completed";
+        forwardedEvent = { ...record, completed };
+        if (slot.activeTask === "agent") {
+          this.host.finishTask(slot, outcome);
+        }
         // Native display captions can outlive consumption and settlement.
         // Keep worker-bound row evidence until Pi removes them or the worker retires.
         slot.pendingImages?.settled();

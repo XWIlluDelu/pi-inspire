@@ -9,6 +9,7 @@ import {
   terminalReceiptIdentity,
 } from "../../shared/terminal-operations";
 import { authenticatedFetch } from "../browser-auth";
+import { ReceiptRead } from "../operation-observer";
 
 const STORAGE_KEY = "inspire:terminal-operations:v2";
 const RETIRED_STORAGE_KEY = "inspire:terminal-operations:v1";
@@ -60,7 +61,7 @@ function operationLabel(intent: TerminalIntent): string {
  * explicitly stopping tracking retires only the browser intent, not the work. */
 export class TerminalOperationController {
   private pending = new Map<string, TrackedOperation>();
-  private readonly running = new Map<string, Promise<unknown>>();
+  private readonly running = new Map<string, ReceiptRead<string, unknown>>();
   private readonly listeners = new Set<() => void>();
   private state: TerminalRecoveryRow[] = [];
   private loaded = false;
@@ -131,7 +132,7 @@ export class TerminalOperationController {
 
   private dispatch<T>(intent: TerminalIntent): Promise<T> {
     const key = intentKey(intent);
-    const running = this.running.get(key);
+    const running = this.running.get(key)?.task;
     if (running) return running as Promise<T>;
     // A confirmed result makes another click a new intent, not a replay.
     // Retire its stored recovery record before admitting that new intent.
@@ -143,11 +144,14 @@ export class TerminalOperationController {
         return Promise.reject(error);
       }
     }
-    const task = this.deliver<T>(key, intent).finally(() => {
-      this.running.delete(key);
-      this.publish();
-    });
-    this.running.set(key, task);
+    const receipt = new ReceiptRead<string, unknown>();
+    this.running.set(key, receipt);
+    const task = receipt.observe(key, (signal) =>
+      this.deliver<T>(key, intent, signal).finally(() => {
+        this.running.delete(key);
+        this.publish();
+      }),
+    ) as Promise<T>;
     this.publish();
     return task;
   }
@@ -193,7 +197,11 @@ export class TerminalOperationController {
     this.publish();
   }
 
-  private async deliver<T>(key: string, intent: TerminalIntent): Promise<T> {
+  private async deliver<T>(
+    key: string,
+    intent: TerminalIntent,
+    signal: AbortSignal,
+  ): Promise<T> {
     let pending = this.pending.get(key);
     const observeOnly = pending?.outcome === "unknown";
     if (!pending) {
@@ -204,7 +212,7 @@ export class TerminalOperationController {
       const response = await authenticatedFetch(
         TERMINAL_OPERATIONS_PATH,
         {
-          signal: AbortSignal.timeout(10_000),
+          signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
         },
         this.transport,
       );
@@ -247,7 +255,7 @@ export class TerminalOperationController {
           method: "POST",
           body: JSON.stringify(operation),
           headers: { "Content-Type": "application/json" },
-          signal: AbortSignal.timeout(20_000),
+          signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]),
         },
         this.transport,
       );

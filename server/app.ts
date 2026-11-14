@@ -67,7 +67,6 @@ import { commonModelOptions } from "./model-settings.js";
 import { registerModelSettingsRoutes } from "./model-settings-routes.js";
 import { OperationReceipts } from "./operation-receipts.js";
 import { resolveProjectDirectory } from "./paths.js";
-import { PendingOperationReceipts } from "./pending-operation-receipts.js";
 import { installedPiChangelog } from "./pi-changelog.js";
 import type { PreferencesStore } from "./preferences.js";
 import {
@@ -300,13 +299,12 @@ export function createInspireServer(deps: AppDependencies): {
   const updateCoordinator =
     deps.updateCoordinator ??
     new UpdateCoordinator({ currentPiVersion: deps.piVersion });
-  const pendingOperations = new PendingOperationReceipts();
+  const pendingOperations = new OperationReceipts<
+    HostOperationResults["recover"]
+  >("pending");
   const promptOperations = new OperationReceipts<
     HostOperationResults["prompt"]
-  >({
-    message: "This Host has reached its process-lifetime prompt receipt limit",
-    code: "PROMPT_OPERATION_CAPACITY",
-  });
+  >("prompt");
 
   async function observeOperation<Command extends HostOperationCommand>(
     command: Command,
@@ -380,23 +378,16 @@ export function createInspireServer(deps: AppDependencies): {
 
   const observePrompt = (
     operationId: string,
-    completion: Promise<HostOperationResults["prompt"]> | null,
+    completion: Promise<HostOperationResults["prompt"]>,
     response: Response,
-  ) => {
-    if (!completion)
-      throw requestError(
-        "This Host resolved that prompt operation, but its receipt retired; inspect the conversation before resending",
-        409,
-        { code: "PROMPT_OPERATION_RESULT_RETIRED", outcomeUnknown: true },
-      );
-    return observeOperation(
+  ) =>
+    observeOperation(
       "prompt",
       { operationId, authorityId },
       completion,
       response,
       deps.promptObservationWindowMs ?? PROMPT_OBSERVATION_WINDOW_MS,
     );
-  };
 
   // The host itself remains loopback-only. A local reverse proxy may report
   // the original HTTPS protocol, but arbitrary network hops never gain trust.
@@ -946,25 +937,20 @@ export function createInspireServer(deps: AppDependencies): {
     const fingerprint = createHash("sha256")
       .update(promptFingerprintInput(prompt))
       .digest("hex");
-    const operation = promptOperations.get(prompt.operationId);
-    if (operation && operation.fingerprint !== fingerprint)
-      throw requestError(
-        "That prompt operation ID was reused with different content",
-        409,
-        { code: "PROMPT_OPERATION_MISMATCH" },
-      );
-    const completion = operation
-      ? operation.result
-      : promptOperations.start(prompt.operationId, fingerprint, async () => {
-          const {
-            operationId: _operationId,
-            authorityId: _authorityId,
-            ...input
-          } = prompt;
-          const historyEntry = await deps.runtime.prompt(input);
-          void updateCoordinator.promptAccepted();
-          return historyEntry;
-        });
+    const completion = promptOperations.run(
+      prompt.operationId,
+      fingerprint,
+      async () => {
+        const {
+          operationId: _operationId,
+          authorityId: _authorityId,
+          ...input
+        } = prompt;
+        const historyEntry = await deps.runtime.prompt(input);
+        void updateCoordinator.promptAccepted();
+        return historyEntry;
+      },
+    );
     await observePrompt(prompt.operationId, completion, response);
   });
   app.get(
@@ -984,26 +970,11 @@ export function createInspireServer(deps: AppDependencies): {
           code: "HOST_AUTHORITY_CHANGED",
           outcomeUnknown: true,
         });
-      const operation = promptOperations.get(operationId);
-      if (!operation)
-        throw requestError(
-          "This Host cannot identify that prompt receipt",
-          409,
-          {
-            code: "PROMPT_OPERATION_NOT_FOUND",
-            outcomeUnknown: true,
-          },
-        );
-      if (fingerprint !== undefined && fingerprint !== operation.fingerprint)
-        throw requestError(
-          "The prompt receipt belongs to different content",
-          409,
-          {
-            code: "PROMPT_OPERATION_MISMATCH",
-            outcomeUnknown: true,
-          },
-        );
-      await observePrompt(operationId, operation.result, response);
+      await observePrompt(
+        operationId,
+        promptOperations.observe(operationId, fingerprint),
+        response,
+      );
     },
   );
   jsonRoute(app, routes.piChangelog, installedPiChangelog);
@@ -1099,12 +1070,6 @@ export function createInspireServer(deps: AppDependencies): {
         outcomeUnknown: true,
       });
   };
-  const pendingResponse = (
-    recovered: Awaited<ReturnType<RuntimeController["recoverPending"]>>,
-  ) => ({
-    ...recovered,
-    ...(recovered.attachments?.length ? { authorityId } : {}),
-  });
   app.get(
     `${INPUT_OPERATION_PATHS.pending}/:operationId`,
     async (request, response) => {
@@ -1116,7 +1081,14 @@ export function createInspireServer(deps: AppDependencies): {
       await observeOperation(
         operation.action,
         operation,
-        pendingOperations.observe(operation).then(pendingResponse),
+        pendingOperations.observe(
+          operation.operationId,
+          JSON.stringify([
+            operation.sessionId,
+            operation.action,
+            operation.expectedViewId,
+          ]),
+        ),
         response,
       );
     },
@@ -1128,20 +1100,21 @@ export function createInspireServer(deps: AppDependencies): {
     app.post(path, async (request, response) => {
       const operation = pendingOperationSchema.parse(request.body);
       assertPendingAuthority(operation.authorityId);
-      const completion = pendingOperations.run({ ...operation, action }, () =>
-        action === "abort"
-          ? deps.runtime.abort(operation.sessionId, operation.expectedViewId)
-          : deps.runtime.recoverPending(
-              operation.sessionId,
-              operation.expectedViewId,
-            ),
+      const { operationId, sessionId, expectedViewId } = operation;
+      const completion = pendingOperations.run(
+        operationId,
+        JSON.stringify([sessionId, action, expectedViewId]),
+        async () => {
+          const recovered =
+            action === "abort"
+              ? await deps.runtime.abort(sessionId, expectedViewId)
+              : await deps.runtime.recoverPending(sessionId, expectedViewId);
+          return recovered.attachments?.length
+            ? { ...recovered, authorityId }
+            : recovered;
+        },
       );
-      await observeOperation(
-        action,
-        operation,
-        completion.then(pendingResponse),
-        response,
-      );
+      await observeOperation(action, operation, completion, response);
     });
   }
   jsonRoute(app, routes.pendingText, ({ body }) =>

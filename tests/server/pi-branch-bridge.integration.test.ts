@@ -387,7 +387,10 @@ export default function (pi) {
         { status: "rejected", reason: { status: 409 } },
       ]);
       await expect(navigating).resolves.toMatchObject({
-        snapshot: { active: { effectiveLeafId: "a1" }, runState: "idle" },
+        snapshot: {
+          active: { effectiveLeafId: "a1" },
+          sessionStatuses: { [SESSION_ID]: { runState: "idle" } },
+        },
       });
       shellRequests.mockRestore();
     }
@@ -499,7 +502,10 @@ export default function (pi) {
     const sourcePid = workers[0]?.pid;
     await model!.started;
     await vi.waitFor(async () =>
-      expect((await runtime.snapshot(SESSION_ID)).runState).toBe("running"),
+      expect(
+        (await runtime.snapshot(SESSION_ID)).sessionStatuses[SESSION_ID]
+          ?.runState,
+      ).toBe("running"),
     );
     const sourceView = (await runtime.snapshot(SESSION_ID)).active!;
     const viewId = sourceView.transcriptPage.viewId;
@@ -523,7 +529,9 @@ export default function (pi) {
       "utf8",
     );
 
-    expect(forked.snapshot.runState).toBe("idle");
+    expect(forked.snapshot.sessionStatuses[forked.sessionId]?.runState).toBe(
+      "idle",
+    );
     expect(forked.snapshot.sessionStatuses[SESSION_ID]?.runState).toBe(
       "running",
     );

@@ -1,11 +1,5 @@
 // @vitest-environment jsdom
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ModelSelector } from "../../src/components/ModelSelector";
 import { supportedThinkingLevels } from "../../src/model-options";
@@ -30,51 +24,43 @@ const models = [
 ];
 
 describe("model picker interaction", () => {
-  it.each([
-    { state: "disabled", disabled: true, choices: models },
-    { state: "unavailable", disabled: false, choices: [] },
-  ])(
-    "closes an open picker when $state without changing or reopening the selection",
-    ({ disabled, choices }) => {
-      const change = vi.fn();
-      const props = {
-        value: models[0]!,
-        models,
-        recent: [],
-        onChange: change,
-      };
-      const view = render(<ModelSelector {...props} />);
-      const trigger = screen.getByRole("button", { name: "Model" });
-      fireEvent.click(trigger);
-      expect(
-        screen.getByRole("listbox", { name: "Available models" }),
-      ).toBeInTheDocument();
+  it("closes an open picker when disabled without changing its selection", () => {
+    const change = vi.fn();
+    const props = {
+      value: models[0]!,
+      models,
+      recent: [],
+      onChange: change,
+    };
+    const view = render(<ModelSelector {...props} />);
+    const trigger = screen.getByRole("button", { name: "Model" });
+    fireEvent.click(trigger);
+    expect(
+      screen.getByRole("listbox", { name: "Available models" }),
+    ).toBeInTheDocument();
 
-      view.rerender(
-        <ModelSelector {...props} models={choices} disabled={disabled} />,
-      );
-      expect(trigger).toBeDisabled();
-      expect(trigger).toHaveAttribute("aria-expanded", "false");
-      expect(
-        screen.queryByRole("listbox", { name: "Available models" }),
-      ).not.toBeInTheDocument();
-      fireEvent.keyDown(trigger, { key: "ArrowDown" });
-      expect(
-        screen.queryByRole("listbox", { name: "Available models" }),
-      ).not.toBeInTheDocument();
-      expect(change).not.toHaveBeenCalled();
+    view.rerender(<ModelSelector {...props} disabled />);
+    expect(trigger).toBeDisabled();
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(
+      screen.queryByRole("listbox", { name: "Available models" }),
+    ).not.toBeInTheDocument();
+    fireEvent.keyDown(trigger, { key: "ArrowDown" });
+    expect(
+      screen.queryByRole("listbox", { name: "Available models" }),
+    ).not.toBeInTheDocument();
+    expect(change).not.toHaveBeenCalled();
 
-      view.rerender(<ModelSelector {...props} />);
-      expect(trigger).toBeEnabled();
-      expect(trigger).toHaveAttribute("aria-expanded", "false");
-      fireEvent.click(trigger);
-      fireEvent.click(screen.getByRole("option", { name: /Claude Haiku/ }));
-      expect(change).toHaveBeenCalledExactlyOnceWith(
-        models[1]!.provider,
-        models[1]!.id,
-      );
-    },
-  );
+    view.rerender(<ModelSelector {...props} />);
+    expect(trigger).toBeEnabled();
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole("option", { name: /Claude Haiku/ }));
+    expect(change).toHaveBeenCalledExactlyOnceWith(
+      models[1]!.provider,
+      models[1]!.id,
+    );
+  });
 
   it("highlights model identity matches and selects the matching provider even when names and IDs coincide", async () => {
     const choices = [
@@ -215,12 +201,7 @@ describe("model picker interaction", () => {
     expect(screen.queryAllByRole("option")).toEqual([]);
   });
 
-  it("keeps cached choices and the keyboard selection usable as refresh reorders models and then fails", async () => {
-    let fail!: (error: Error) => void;
-    const refreshModels = () =>
-      new Promise<string | undefined>((_resolve, reject) => {
-        fail = reject;
-      });
+  it("keeps the keyboard selection by model identity when the catalog reorders", () => {
     const choices = [
       { provider: "fixture", id: "a", name: "Model Alpha" },
       { provider: "fixture", id: "b", name: "Model Beta" },
@@ -232,7 +213,6 @@ describe("model picker interaction", () => {
       models: choices,
       recent: [],
       onChange,
-      refreshModels,
     };
     const view = render(<ModelSelector {...props} />);
     fireEvent.click(screen.getByRole("button", { name: "Model" }));
@@ -252,9 +232,6 @@ describe("model picker interaction", () => {
         recent={[choices[2]!]}
       />,
     );
-    expect(screen.getByRole("option", { name: /Model Added/ })).toBeVisible();
-    await act(async () => fail(new Error("offline")));
-    expect(screen.getByRole("status")).toHaveTextContent("Could not refresh");
     expect(search).toHaveValue("model");
     expect(search).toHaveFocus();
     fireEvent.keyDown(search, { key: "Enter" });

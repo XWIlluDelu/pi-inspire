@@ -51,10 +51,9 @@ test("anchors the occupancy ring as unknown and numeric readings change", async 
   const meter = page.getByRole("button", { name: /^Session & usage, context/ });
   const setUsage = (percent: number | null, running: boolean) =>
     update((next) => {
-      next.runState = running ? "running" : "idle";
       next.active!.isStreaming = running;
       next.sessionStatuses[next.active!.sessionId] = {
-        runState: next.runState,
+        runState: running ? "running" : "idle",
       };
       next.active!.stats = {
         contextUsage: {

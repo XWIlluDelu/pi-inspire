@@ -37,6 +37,7 @@
 }
 
 .welcome__composer {
+  --editor-compact-height: 45dvh;
   width: min(var(--composer-max), 100%);
 }
 

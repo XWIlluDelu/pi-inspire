@@ -141,7 +141,7 @@ const RUN_STATES = [
 ] as const;
 export type RunState = (typeof RUN_STATES)[number];
 
-export function isRunState(value: unknown): value is RunState {
+function isRunState(value: unknown): value is RunState {
   return (RUN_STATES as readonly unknown[]).includes(value);
 }
 
@@ -716,10 +716,7 @@ export interface PendingRecovery extends PendingInput {
 
 export interface PendingCopyContent {
   text: string;
-  /** Original upload handles, retained for upload-only copies. */
-  imageAttachmentIds?: string[];
-  /** Ordered sources when the input also contains recalled images. */
-  images?: Array<{ attachmentId: string } | { data: string; mimeType: string }>;
+  images: Array<{ attachmentId: string } | { data: string; mimeType: string }>;
 }
 
 export type PendingReadRequest = Body<"pendingText">;
@@ -1198,7 +1195,6 @@ export interface ActiveSnapshot {
     commonModels?: import("./model-settings.js").CommonModelOption[];
     commands: unknown[];
   };
-  runState: RunState;
   /** Direct Bash runs independently of the model/compaction lifecycle. */
   bashRunning?: boolean;
   sessionStatuses: Record<string, SessionRuntimeStatus>;

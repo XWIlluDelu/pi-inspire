@@ -1,607 +1,282 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ModelOption } from "../../shared/contracts";
-import type { CommonModelOption } from "../../shared/model-settings";
-import { AppStore } from "../../src/store";
+import { beforeEach, expect, it, vi } from "vitest";
 import { modelSettingsSnapshot } from "./fixtures/model-settings";
-import { sessionPage } from "./fixtures/session-catalog";
-import type { RouteResponse } from "./helpers";
 import {
   activeSnapshot,
   bootstrapPayload,
   deferred,
-  FakeWebSocket,
   installFakeWebSocket,
-  installFetch,
   jsonBody,
+  type RouteResponse,
 } from "./helpers";
-import { baseRoutes, initStore, installStoreRoutes } from "./store-fixture";
+import { initStore, installStoreRoutes } from "./store-fixture";
 
-describe("model catalog ownership", () => {
-  beforeEach(() => installFakeWebSocket());
-  it("replaces cached choices only with an authoritative catalog and keeps native selection", async () => {
-    const fresh = [{ provider: "fixture", id: "fresh" }];
-    const offline = { status: 503, body: { error: "catalog offline" } };
-    const catalog = vi
-      .fn()
-      .mockReturnValueOnce(offline)
-      .mockReturnValueOnce({ body: { models: fresh } })
-      .mockReturnValueOnce(offline);
-    installFetch((url, init) => {
-      if (url.startsWith("/api/bootstrap"))
-        return {
-          body: bootstrapPayload({
-            availableModels: [{ provider: "fixture", id: "previous-pi" }],
-            startupSessionId: "s1",
-          }),
-        };
-      return url.startsWith("/api/models") ? catalog() : baseRoutes(url, init);
-    });
-    const { store } = await initStore(activeSnapshot({ availableModels: [] }));
-    const { model, thinkingLevel } = store.getState();
-    await expect(store.refreshModels()).rejects.toThrow("catalog offline");
-    expect(store.getState().availableModels).toEqual([]);
-    await store.refreshModels();
-    await expect(store.refreshModels()).rejects.toThrow("catalog offline");
-    expect(store.getState()).toMatchObject({
-      availableModels: fresh,
-      model,
-      thinkingLevel,
-    });
-  });
-  it("retires earlier Settings and picker reads when model writes commit", async () => {
-    const settings = deferred<RouteResponse>();
-    const catalog = deferred<RouteResponse>();
-    const stale = [{ provider: "outdated", id: "old" }];
-    const choices = [{ provider: "configured", id: "new" }];
-    const committed = modelSettingsSnapshot({
-      models: choices,
-      commonModels: choices,
-    });
-    const readCatalog = vi
-      .fn()
-      .mockReturnValueOnce(catalog.promise)
-      .mockReturnValue({ body: committed });
-    installStoreRoutes((url, init) => {
-      if (url.startsWith("/api/model-settings"))
-        return init.method === "PATCH"
-          ? { body: { saved: true, snapshot: committed } }
-          : settings.promise;
-      if (url.startsWith("/api/models")) return readCatalog();
-    });
-    const { store } = await initStore();
-    const { sessionId, availableModels, model, thinkingLevel } =
-      store.getState();
-    const owner = { sessionId: sessionId! };
-    const olderSettings = store.readModelSettings(owner, true);
-    await store.saveModelPreferences(owner, committed.settingsRevision, {
-      enabledModels: ["configured/new"],
-    });
-    settings.resolve({
-      body: modelSettingsSnapshot({ models: stale, commonModels: stale }),
-    });
-    await olderSettings;
-    expect(store.getState()).toMatchObject({
-      availableModels,
-      commonModels: choices,
-    });
+beforeEach(() => installFakeWebSocket());
 
-    const olderCatalog = store.refreshModels(owner);
-    await store.editModelConfig(owner, committed.configRevision, {
-      kind: "provider",
-      id: "configured",
-      values: {},
-    });
-    catalog.resolve({ body: { models: stale, commonModels: stale } });
-    await olderCatalog;
-    expect(store.getState()).toMatchObject({
-      availableModels: choices,
-      commonModels: choices,
-      model,
-      thinkingLevel,
-    });
-    await store.refreshModels(owner);
-    expect(store.getState().availableModels).toEqual(choices);
-  });
+const first = { provider: "fixture", id: "first", reasoning: true };
+const second = { provider: "fixture", id: "second", reasoning: true };
+const offline = { status: 503, body: { error: "catalog offline" } };
 
-  it("keeps prospective model configuration independent of the selected session", async () => {
-    const models = [{ provider: "prospective", id: "model" }];
-    const snapshot = modelSettingsSnapshot({ models, commonModels: models });
-    const paths: string[] = [];
-    installStoreRoutes((url, init) => {
-      if (!/^\/api\/(models|model-settings)/.test(url)) return;
-      paths.push(url);
+it("keeps the current selection and authoritative choices after failed catalog reads", async () => {
+  const catalog = vi
+    .fn()
+    .mockReturnValueOnce(offline)
+    .mockReturnValueOnce({ body: { models: [second] } })
+    .mockReturnValue(offline);
+  installStoreRoutes((url) => {
+    if (url === "/api/bootstrap")
       return {
-        body: init.method === "PATCH" ? { saved: true, snapshot } : snapshot,
+        body: bootstrapPayload({
+          availableModels: [first],
+          startupSessionId: "s1",
+        }),
       };
-    });
-    const { store } = await initStore();
-    const { availableModels, commonModels, model } = store.getState();
-    const owner = { cwd: "/prospective" };
-    await expect(store.readModelSettings(owner)).resolves.toEqual(snapshot);
-    await store.saveModelPreferences(owner, snapshot.settingsRevision, {
-      enabledModels: ["prospective/model"],
-    });
-    await store.editModelConfig(owner, snapshot.configRevision, {
-      kind: "provider",
-      id: "prospective",
-      values: {},
-    });
-    await store.refreshModels(owner);
-    expect(
-      paths.map((path) =>
-        new URL(path, "http://fixture").searchParams.get("cwd"),
-      ),
-    ).toEqual(Array(4).fill("/prospective"));
-    expect(store.getState()).toMatchObject({
-      availableModels,
-      commonModels,
-      model,
-    });
+    if (url.startsWith("/api/models")) return catalog();
   });
-  it("does not apply a delayed catalog to another selection", async () => {
-    const pending = deferred<{
-      models: Array<{ provider: string; id: string }>;
-    }>();
-    installStoreRoutes(async (url) => {
-      if (url.startsWith("/api/models")) return { body: await pending.promise };
-      if (url === "/api/sessions/deselect")
-        return {
-          body: { active: null, runState: "idle", sessionStatuses: {} },
-        };
-    });
-    const { store } = await initStore();
-    const request = store.refreshModels();
-    await store.deselectSession();
-    const cached = store.getState().availableModels;
-    pending.resolve({ models: [{ provider: "fixture", id: "stale" }] });
-    await request;
-    expect(store.getState().availableModels).toEqual(cached);
+  const { store } = await initStore(
+    activeSnapshot({ model: first, availableModels: [] }),
+  );
+  await expect(store.refreshModels()).rejects.toThrow("catalog offline");
+  expect(store.getState().availableModels).toEqual([]);
+  await store.refreshModels();
+  await expect(store.refreshModels()).rejects.toThrow("catalog offline");
+  expect(store.getState()).toMatchObject({
+    model: first,
+    availableModels: [second],
   });
 });
 
-describe("native model controls", () => {
-  beforeEach(() => installFakeWebSocket());
-
-  function controlHost() {
-    let model: ModelOption = {
-      provider: "openai",
-      id: "gpt-5",
-      reasoning: true,
-      thinkingLevelMap: { xhigh: "xhigh" },
-    };
-    let thinkingLevel = "medium",
-      sessionId = "s1";
-    const models: ModelOption[] = [
-      model,
-      { provider: "custom", id: "local", reasoning: true },
-      { provider: "anthropic", id: "haiku", reasoning: false },
-    ];
-    const nativeCycles = [
-      { model: models[2]!, thinkingLevel: "off" },
-      { model: models[1]!, thinkingLevel: "high" },
-      { model: models[2]!, thinkingLevel: "off" },
-    ];
-    let cycle = 0;
-    let commonModels: CommonModelOption[] = [
-      { provider: "custom", id: "local", thinkingLevel: "high" },
-      { provider: "openai", id: "gpt-5" },
-      { provider: "anthropic", id: "haiku" },
-    ];
-    const controls: Array<Record<string, unknown>> = [];
-    const snapshot = () =>
-      activeSnapshot({
-        sessionId,
-        model,
-        thinkingLevel,
-        availableModels: models,
-        commonModels,
-      });
-    let modelGate: Promise<unknown> | undefined;
-    installFetch(async (url, init) => {
-      if (url.startsWith("/api/bootstrap"))
-        return { body: bootstrapPayload({ startupSessionId: sessionId }) };
-      if (url.startsWith("/api/snapshot")) return { body: snapshot() };
-      if (url === "/api/sessions/open") {
-        sessionId = String(jsonBody(init).id);
-        return { body: snapshot() };
-      }
-      if (url.startsWith("/api/sessions")) return { body: sessionPage([], 0) };
-      if (url === "/api/control/model-cycle") {
-        const body = jsonBody(init);
-        controls.push(body);
-        if (modelGate) await modelGate;
-        if (body.sessionId === sessionId)
-          ({ model, thinkingLevel } = nativeCycles[cycle++]!);
-        return { body: { model, thinkingLevel } };
-      }
-      if (url.startsWith("/api/control/thinking")) {
-        const body = jsonBody(init);
-        controls.push(body);
-        thinkingLevel = String(body.level);
-        return { body: { model, thinkingLevel } };
-      }
-      if (url.startsWith("/api/model-settings")) {
-        commonModels = [
-          { provider: "anthropic", id: "haiku" },
-          { provider: "openai", id: "gpt-5" },
-          { provider: "custom", id: "local", thinkingLevel: "high" },
-        ];
-        return {
-          body: {
-            saved: true,
-            snapshot: modelSettingsSnapshot({ commonModels }),
-          },
-        };
-      }
-      if (url.startsWith("/api/preferences"))
-        return {
-          body: { ...bootstrapPayload().preferences, ...jsonBody(init) },
-        };
-      return undefined;
-    });
-    return {
-      controls,
-      snapshot,
-      gateModels: (gate: Promise<unknown>) => {
-        modelGate = gate;
-      },
-    };
-  }
-
-  it("uses refreshed thinking capabilities and adopts Pi's actual command result", async () => {
-    const initial: ModelOption = {
-      provider: "fixture",
-      id: "reasoner",
-      reasoning: false,
-    };
-    const redirected = {
-      provider: "native",
-      id: "extension-choice",
-      reasoning: true,
-    };
-    let model = initial;
-    const catalog: ModelOption[] = [
-      {
-        ...initial,
-        reasoning: true,
-        thinkingLevelMap: { xhigh: "xhigh", max: "max" },
-      },
-    ];
-    let thinkingLevel = "high";
-    const levels: string[] = [];
-    const snapshot = () =>
-      activeSnapshot({ model, thinkingLevel, availableModels: [] });
-    installFetch((url, init) => {
-      if (url.startsWith("/api/bootstrap"))
-        return { body: bootstrapPayload({ startupSessionId: "s1" }) };
-      if (url.startsWith("/api/snapshot")) return { body: snapshot() };
-      if (url.startsWith("/api/models")) return { body: { models: catalog } };
-      if (url.startsWith("/api/control/thinking")) {
-        thinkingLevel = String(jsonBody(init).level);
-        levels.push(thinkingLevel);
-        if (thinkingLevel === "max") {
-          model = redirected;
-          thinkingLevel = "low";
-        }
-        return { body: { model, thinkingLevel } };
-      }
-      return baseRoutes(url, init);
-    });
-    const store = new AppStore();
-    await store.init();
-    FakeWebSocket.instances.at(-1)!.join(snapshot());
-    await store.refreshModels();
-    await store.cycleThinking();
-    expect(levels).toEqual(["xhigh"]);
-    expect(store.getState().model).toMatchObject({
-      provider: initial.provider,
-      id: initial.id,
-    });
-    await store.sendPrompt("/thinking max");
-    await vi.waitFor(() => expect(store.getState().thinkingLevel).toBe("low"));
-    expect(levels).toEqual(["xhigh", "max"]);
-    expect(store.getState().model).toEqual(redirected);
+it("replaces old Settings and picker results with the committed catalog and keeps prospective reads scoped", async () => {
+  const oldSettings = deferred<RouteResponse>();
+  const oldPicker = deferred<RouteResponse>();
+  const writable = modelSettingsSnapshot({
+    models: [second],
+    commonModels: [second],
   });
-
-  it("serializes rapid native model and thinking actions and preserves selection when scope is saved", async () => {
-    const host = controlHost(),
-      store = new AppStore();
-    await store.init();
-    FakeWebSocket.instances.at(-1)!.join(host.snapshot());
-    await Promise.all([
-      store.cycleModel(1),
-      store.cycleModel(1),
-      store.cycleThinking(),
-      store.cycleThinking(),
-    ]);
-    expect(host.controls).toEqual([
-      { sessionId: "s1", direction: 1 },
-      { sessionId: "s1", direction: 1 },
-      { sessionId: "s1", level: "off" },
-      { sessionId: "s1", level: "minimal" },
-    ]);
-    const current = store.getState().model;
-    await store.saveModelPreferences({ sessionId: "s1" }, "a".repeat(64), {
-      enabledModels: ["anthropic/haiku", "openai/gpt-5", "custom/local:high"],
-    });
-    expect(store.getState().model).toEqual(current);
-    await store.cycleModel(1);
-    expect(host.controls.at(-1)).toEqual({ sessionId: "s1", direction: 1 });
-    expect(store.getState().model?.id).toBe("haiku");
-    expect(
-      store.getState().commonModels.map((value) => value.provider),
-    ).toEqual(["anthropic", "openai", "custom"]);
+  const stale = modelSettingsSnapshot({
+    models: [first],
+    commonModels: [first],
   });
+  const success = { body: { saved: true, snapshot: writable } };
+  installStoreRoutes((url, init) => {
+    if (url.includes("cwd=%2Fprospective")) return { body: stale };
+    if (url.startsWith("/api/model-settings"))
+      return init.method === "PATCH" ? success : oldSettings.promise;
+    if (url.startsWith("/api/models")) return oldPicker.promise;
+  });
+  const { store } = await initStore(
+    activeSnapshot({ model: first, availableModels: [first] }),
+  );
+  const owner = { sessionId: "s1" };
+  const settings = store.readModelSettings(owner, true);
+  await store.saveModelPreferences(owner, writable.settingsRevision, {
+    enabledModels: ["fixture/second"],
+  });
+  oldSettings.resolve({ body: stale });
+  await settings;
+  expect(store.getState().commonModels).toEqual([second]);
 
-  it("does not let an old queued cycle mutate or delay a newly selected session", async () => {
-    const host = controlHost(),
-      store = new AppStore(),
-      gate = deferred<void>();
-    await store.init();
-    FakeWebSocket.instances.at(-1)!.join(host.snapshot());
-    host.gateModels(gate.promise);
-    const old = store.cycleModel(1),
-      queued = store.cycleThinking();
-    await vi.waitFor(() => expect(host.controls).toHaveLength(1));
-    await store.openSession("s2");
-    await store.cycleThinking();
-    expect(host.controls[1]).toEqual({ sessionId: "s2", level: "high" });
-    gate.resolve();
-    await Promise.all([old, queued]);
-    expect(host.controls).toHaveLength(2);
-    expect(store.getState().sessionId).toBe("s2");
-    expect(store.getState().thinkingLevel).toBe("high");
+  const picker = store.refreshModels(owner);
+  await store.editModelConfig(owner, writable.configRevision, {
+    kind: "provider",
+    id: "fixture",
+    values: {},
+  });
+  oldPicker.resolve({ body: stale });
+  await picker;
+  await store.readModelSettings({ cwd: "/prospective" }, true);
+  await store.refreshModels({ cwd: "/prospective" });
+  expect(store.getState()).toMatchObject({
+    model: first,
+    availableModels: [second],
+    commonModels: [second],
   });
 });
 
-describe("recent model preference", () => {
-  beforeEach(() => installFakeWebSocket());
+it("ignores a catalog for a retired selection", async () => {
+  const catalog = deferred<RouteResponse>();
+  installStoreRoutes((url) => {
+    if (url.startsWith("/api/models")) return catalog.promise;
+    if (url === "/api/sessions/deselect")
+      return { body: { active: null, runState: "idle", sessionStatuses: {} } };
+  });
+  const { store } = await initStore();
+  const read = store.refreshModels();
+  await store.deselectSession();
+  const current = store.getState().availableModels;
+  catalog.resolve({ body: { models: [second] } });
+  await read;
+  expect(store.getState().availableModels).toEqual(current);
+});
 
-  it("updates bounded model recency only after a distinct, accepted selection", async () => {
-    const recent = Array.from({ length: 8 }, (_, index) => ({
-      provider: "fixture",
-      id: `recent-${index}`,
-    }));
-    const patches: Record<string, unknown>[] = [];
-    const otherProvider = { provider: "local", id: recent[3]!.id };
-    let selected = otherProvider;
-    installFetch((url, init) => {
-      if (url.startsWith("/api/bootstrap"))
-        return {
-          body: bootstrapPayload({
-            startupSessionId: "s1",
-            preferences: {
-              ...bootstrapPayload().preferences,
-              recentModelIds: recent,
-            },
-          }),
-        };
-      if (url.startsWith("/api/sessions")) return { body: sessionPage([], 0) };
-      if (url.startsWith("/api/control/model")) {
-        const body = jsonBody(init);
-        if (body.modelId === "missing")
-          return { status: 500, body: { error: "model unavailable" } };
-        selected = {
-          provider: String(body.provider),
-          id: String(body.modelId),
-        };
-        return {
-          body: { model: selected, thinkingLevel: "medium" },
-        };
-      }
-      if (url.startsWith("/api/snapshot"))
-        return { body: activeSnapshot({ model: selected }) };
-      if (url.startsWith("/api/preferences")) {
-        patches.push(jsonBody(init));
-        return {
-          body: { ...bootstrapPayload().preferences, ...jsonBody(init) },
-        };
-      }
-      return undefined;
-    });
-    const store = new AppStore();
-    await store.init();
-    FakeWebSocket.instances.at(-1)!.join(activeSnapshot());
+it("serializes active cycle actions and does not wait for retired actions to finish", async () => {
+  const held = deferred<RouteResponse>();
+  const calls: unknown[] = [];
+  const snapshot = (sessionId = "s1") =>
+    activeSnapshot({ sessionId, model: first, thinkingLevel: "off" });
+  installStoreRoutes((url, init) => {
+    if (url === "/api/sessions/open") return { body: snapshot("s2") };
+    if (url === "/api/control/model-cycle") {
+      calls.push(jsonBody(init));
+      return held.promise;
+    }
+    if (url === "/api/control/thinking") {
+      const body = jsonBody(init);
+      calls.push(body);
+      return { body: { model: first, thinkingLevel: body.level } };
+    }
+  });
+  const { store } = await initStore(snapshot());
+  await Promise.all([store.cycleThinking(), store.cycleThinking()]);
+  expect(calls).toEqual([
+    { sessionId: "s1", level: "minimal" },
+    { sessionId: "s1", level: "low" },
+  ]);
 
-    await expect(
-      store.setModel(otherProvider.provider, otherProvider.id),
-    ).resolves.toBe(true);
-    const afterNewSelection = [otherProvider, ...recent.slice(0, 7)];
-    await vi.waitFor(() =>
-      expect(patches).toEqual([{ recentModelIds: afterNewSelection }]),
-    );
-    expect(store.getState().prefs.recentModelIds).toEqual(afterNewSelection);
-
-    await expect(store.setModel("fixture", "recent-3")).resolves.toBe(true);
-    const afterPromotion = [
-      recent[3]!,
-      afterNewSelection[0]!,
-      ...recent.slice(0, 3),
-      ...recent.slice(4, 7),
-    ];
-    await vi.waitFor(() =>
-      expect(patches).toEqual([
-        { recentModelIds: afterNewSelection },
-        { recentModelIds: afterPromotion },
-      ]),
-    );
-    expect(store.getState().prefs.recentModelIds).toEqual(afterPromotion);
-
-    await expect(store.setModel("fixture", "recent-3")).resolves.toBe(true);
-    await expect(store.setModel("fixture", "missing")).resolves.toBe(false);
-    expect(store.getState().model).toEqual(recent[3]);
-    expect(store.getState().notices.at(-1)?.text).toBe("model unavailable");
-    expect(store.getState().prefs.recentModelIds).toEqual(afterPromotion);
-    expect(patches).toHaveLength(2);
+  const old = store.cycleModel(1);
+  const queued = store.cycleThinking();
+  await vi.waitFor(() => expect(calls).toHaveLength(3));
+  await store.openSession("s2");
+  await store.cycleThinking();
+  held.resolve({ body: { model: second, thinkingLevel: "high" } });
+  await Promise.all([old, queued]);
+  expect(calls.slice(2)).toEqual([
+    { sessionId: "s1", direction: 1 },
+    { sessionId: "s2", level: "minimal" },
+  ]);
+  expect(store.getState()).toMatchObject({
+    sessionId: "s2",
+    model: first,
+    thinkingLevel: "minimal",
   });
 });
 
-describe("thinking level control", () => {
-  beforeEach(() => installFakeWebSocket());
-
-  it.each(["snapshot", "failure"] as const)(
-    "retires an older thinking change's resync %s after a confirmed change",
-    async (completion) => {
-      const firstReceipt = deferred<RouteResponse>();
-      const resync = deferred<RouteResponse>();
-      const model = { provider: "kimi-coding", id: "kimi-k3" };
-      let thinkingLevel = "medium";
-      let reads = 0;
-      installFetch((url, init) => {
-        if (url.startsWith("/api/snapshot")) {
-          reads += 1;
-          if (reads === 2) return resync.promise;
-          return {
-            body: activeSnapshot({
-              thinkingLevel,
-              pageMessages: [{ role: "user", content: "Fresh history" }],
-            }),
-          };
-        }
-        if (url === "/api/control/thinking") {
-          thinkingLevel = String(jsonBody(init).level);
-          return thinkingLevel === "high"
-            ? firstReceipt.promise
-            : { body: { model, thinkingLevel } };
-        }
-        return baseRoutes(url, init);
-      });
-      const { store } = await initStore();
-      const older = store.setThinkingLevel("high");
-      await store.refreshSession();
-      firstReceipt.resolve({ body: { model, thinkingLevel: "high" } });
-      await vi.waitFor(() => expect(reads).toBe(2));
-
-      await expect(store.setThinkingLevel("low")).resolves.toBe(true);
-      resync.resolve(
-        completion === "snapshot"
-          ? { body: activeSnapshot({ thinkingLevel: "high" }) }
-          : { status: 503, body: { error: "Older read failed" } },
-      );
-      await expect(older).resolves.toBe(false);
-      expect(store.getState().thinkingLevel).toBe("low");
-      expect(store.getState().error).toBeNull();
-
-      await store.refreshSession();
-      expect(store.getState().thinkingLevel).toBe("low");
-      expect(store.getState().messages).toMatchObject([
-        { role: "user", content: "Fresh history" },
-      ]);
-      expect(store.getState().error).toBeNull();
-      expect(reads).toBe(3);
-    },
+it("uses refreshed thinking capabilities and accepts Pi's actual model and effort", async () => {
+  const original = { ...first, reasoning: false };
+  const enriched = { ...first, thinkingLevelMap: { xhigh: "xhigh" } };
+  const changes: unknown[] = [];
+  installStoreRoutes((url, init) => {
+    if (url.startsWith("/api/models")) return { body: { models: [enriched] } };
+    if (url === "/api/control/thinking") {
+      changes.push(jsonBody(init));
+      return { body: { model: second, thinkingLevel: "low" } };
+    }
+  });
+  const { store } = await initStore(
+    activeSnapshot({
+      model: original,
+      thinkingLevel: "high",
+      availableModels: [],
+    }),
   );
+  await store.refreshModels();
+  await store.cycleThinking();
+  expect(changes).toEqual([{ sessionId: "s1", level: "xhigh" }]);
+  expect(store.getState()).toMatchObject({
+    model: second,
+    thinkingLevel: "low",
+  });
+});
 
-  it.each(["picker", "cycle"] as const)(
-    "keeps the newer %s selection when an earlier thinking response arrives late",
-    async (control) => {
-      const delivery = deferred<void>();
-      const oldModel = { provider: "fixture", id: "old", reasoning: true };
-      const newModel = { provider: "fixture", id: "new", reasoning: true };
-      let model = oldModel;
-      let thinkingLevel = "medium";
-      const snapshot = () => activeSnapshot({ model, thinkingLevel });
-      installFetch(async (url, init) => {
-        if (url.startsWith("/api/bootstrap"))
-          return { body: bootstrapPayload({ startupSessionId: "s1" }) };
-        if (url.startsWith("/api/snapshot")) return { body: snapshot() };
-        if (url === "/api/control/thinking") {
-          // Pi completes this mutation first. Only HTTP delivery is delayed;
-          // the next mutation and its snapshot observe the newer native state.
-          thinkingLevel = String(jsonBody(init).level);
-          const result = { model, thinkingLevel };
-          await delivery.promise;
-          return { body: result };
-        }
-        if (
-          url === "/api/control/model" ||
-          url === "/api/control/model-cycle"
-        ) {
-          model = newModel;
-          thinkingLevel = "low";
-          return { body: { model, thinkingLevel } };
-        }
-        return baseRoutes(url, init);
-      });
-      const { store } = await initStore(snapshot());
-      const thinking = store.setThinkingLevel("high");
-      await vi.waitFor(() => expect(thinkingLevel).toBe("high"));
-      if (control === "picker") await store.setModel("fixture", "new");
-      else await store.cycleModel(1);
-      expect(store.getState().model).toEqual(newModel);
-      expect(store.getState().thinkingLevel).toBe("low");
-
-      delivery.resolve();
-      await thinking;
-
-      expect(store.getState().model).toEqual(newModel);
-      expect(store.getState().thinkingLevel).toBe("low");
-    },
+it("remembers a distinct confirmed model identity and leaves recency alone after refusal", async () => {
+  const recent = Array.from({ length: 8 }, (_, index) => ({
+    provider: "fixture",
+    id: `recent-${index}`,
+  }));
+  const routed = { provider: "another", id: "recent-3" };
+  const patches: unknown[] = [];
+  const defaults = bootstrapPayload().preferences;
+  installStoreRoutes((url, init) => {
+    if (url === "/api/bootstrap")
+      return {
+        body: bootstrapPayload({
+          startupSessionId: "s1",
+          preferences: { ...defaults, recentModelIds: recent },
+        }),
+      };
+    if (url === "/api/control/model")
+      return jsonBody(init).modelId === "missing"
+        ? { status: 400, body: { error: "model unavailable" } }
+        : { body: { model: routed, thinkingLevel: "medium" } };
+    if (url.startsWith("/api/snapshot"))
+      return { body: activeSnapshot({ model: routed }) };
+    if (url === "/api/preferences") {
+      const patch = jsonBody(init);
+      patches.push(patch);
+      return { body: { ...defaults, ...patch } };
+    }
+  });
+  const { store } = await initStore();
+  const expected = [routed, ...recent.slice(0, 7)];
+  await expect(store.setModel("fixture", "redirected")).resolves.toBe(true);
+  await vi.waitFor(() =>
+    expect(store.getState().prefs.recentModelIds).toEqual(expected),
   );
+  await store.setModel(routed.provider, routed.id);
+  await expect(store.setModel("fixture", "missing")).resolves.toBe(false);
+  expect(patches).toEqual([{ recentModelIds: expected }]);
+  expect(store.getState().model).toEqual(routed);
+});
 
-  it.each([false, true])(
-    "reconciles a refused thinking change with native state (newer snapshot: %s)",
-    async (nativeUpdate) => {
-      const thinking = deferred<RouteResponse>();
-      const resync = deferred<RouteResponse>();
-      installFetch((url, init) => {
-        if (url === "/api/control/thinking") return thinking.promise;
-        if (url.startsWith("/api/snapshot")) return resync.promise;
-        return baseRoutes(url, init);
-      });
-      const { store, socket } = await initStore();
-      const confirmed = nativeUpdate ? "low" : "medium";
-      const changing = store.setThinkingLevel("xhigh");
-      if (nativeUpdate) {
-        socket.emitSnapshot(activeSnapshot({ thinkingLevel: confirmed }));
-      }
-
-      thinking.resolve({ status: 400, body: { error: "unsupported level" } });
-      await expect(changing).resolves.toBe(false);
-      expect(store.getState().thinkingLevel).toBe(confirmed);
-      expect(store.getState().notices.at(-1)?.text).toBe("unsupported level");
-      expect(store.getState().error).toBeNull();
-
-      resync.resolve({ body: activeSnapshot({ thinkingLevel: "off" }) });
-      await vi.waitFor(() =>
-        expect(store.getState().thinkingLevel).toBe("off"),
-      );
-    },
-  );
-
-  it("does not let an older refusal undo a newer accepted level", async () => {
-    const xhigh = deferred<RouteResponse>();
-    const low = deferred<RouteResponse>();
-    const fetch = installFetch((url, init) => {
-      if (url.startsWith("/api/control/thinking")) {
-        const body = jsonBody(init) as { level: string };
-        return body.level === "xhigh" ? xhigh.promise : low.promise;
-      }
-      return baseRoutes(url, init);
+it.each(["receipt", "resync", "refusal"] as const)(
+  "keeps confirmed effort across an older %s",
+  async (stage) => {
+    const receipt = deferred<RouteResponse>();
+    const resync = deferred<RouteResponse>();
+    const receiptOf = (thinkingLevel: string) => ({
+      body: { model: first, thinkingLevel },
     });
-    const { store } = await initStore();
-
-    const older = store.setThinkingLevel("xhigh");
+    let level = "medium",
+      reads = 0;
+    installStoreRoutes((url, init) => {
+      if (url === "/api/control/thinking") {
+        level = String(jsonBody(init).level);
+        return level === "high" ? receipt.promise : receiptOf(level);
+      }
+      if (url.startsWith("/api/snapshot")) {
+        if (++reads === 2 && stage === "resync") return resync.promise;
+        return { body: activeSnapshot({ model: first, thinkingLevel: level }) };
+      }
+    });
+    const { store } = await initStore(activeSnapshot({ model: first }));
+    const old = store.setThinkingLevel("high");
     expect(store.getState().thinkingLevel).toBe("medium");
     expect(store.getState().thinkingLevelPending).toBe(true);
-    const newer = store.setThinkingLevel("low");
-    expect(store.getState().thinkingLevel).toBe("medium");
-    low.resolve({
-      body: { model: store.getState().model, thinkingLevel: "low" },
+    if (stage === "resync") {
+      await store.refreshSession();
+      receipt.resolve(receiptOf("high"));
+      await vi.waitFor(() => expect(reads).toBe(2));
+    }
+    await expect(store.setThinkingLevel("low")).resolves.toBe(true);
+    if (stage === "resync")
+      resync.resolve({ body: activeSnapshot({ thinkingLevel: "high" }) });
+    else
+      receipt.resolve(
+        stage === "refusal"
+          ? { status: 400, body: { error: "old write refused" } }
+          : receiptOf("high"),
+      );
+    await expect(old).resolves.toBe(false);
+    expect(store.getState()).toMatchObject({
+      model: first,
+      thinkingLevel: "low",
+      thinkingLevelPending: false,
     });
-    await expect(newer).resolves.toBe(true);
-    expect(store.getState().thinkingLevel).toBe("low");
-    xhigh.resolve({ status: 500, body: { error: "unsupported level" } });
-    await expect(older).resolves.toBe(false);
+    expect(store.getState().live.notices).toEqual([]);
+  },
+);
 
-    expect(store.getState().thinkingLevel).toBe("low");
-    expect(store.getState().notices).toEqual([]);
-    expect(store.getState().error).toBeNull();
-    expect(
-      fetch.mock.calls.filter(([url]) =>
-        String(url).startsWith("/api/snapshot"),
-      ),
-    ).toEqual([]);
+it("observes Pi after a current refusal without replacing the last confirmation early", async () => {
+  const result = deferred<RouteResponse>();
+  installStoreRoutes((url) => {
+    if (url === "/api/control/thinking")
+      return { status: 400, body: { error: "unsupported level" } };
+    if (url.startsWith("/api/snapshot")) return result.promise;
   });
+  const { store } = await initStore(activeSnapshot({ thinkingLevel: "low" }));
+  await expect(store.setThinkingLevel("xhigh")).resolves.toBe(false);
+  expect(store.getState().thinkingLevel).toBe("low");
+  expect(store.getState().live.notices.at(-1)?.text).toBe("unsupported level");
+  result.resolve({ body: activeSnapshot({ thinkingLevel: "off" }) });
+  await vi.waitFor(() => expect(store.getState().thinkingLevel).toBe("off"));
 });

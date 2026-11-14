@@ -11,7 +11,6 @@ export function SettingsLayout<Category extends string>({
   categories,
   navigation,
   onNavigate,
-  contentClass = "settings__content",
   busy,
   children,
   footer,
@@ -20,7 +19,6 @@ export function SettingsLayout<Category extends string>({
   categories: readonly { id: Category; label: string; icon: ReactNode }[];
   navigation: { category: Category; section?: string };
   onNavigate: (category: Category) => void;
-  contentClass?: string;
   busy?: boolean;
   children: ReactNode;
   footer: ReactNode;
@@ -81,7 +79,7 @@ export function SettingsLayout<Category extends string>({
         </div>
       </nav>
       <div className="settings__main">
-        <main className={contentClass} ref={content}>
+        <main className="settings__content" ref={content}>
           {children}
         </main>
         {footer}

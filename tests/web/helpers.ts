@@ -101,7 +101,11 @@ export interface RouteResponse {
 export type RouteHandler = (
   url: string,
   init: RequestInit,
-) => RouteResponse | undefined | Promise<RouteResponse | undefined>;
+) =>
+  | RouteResponse
+  | Response
+  | undefined
+  | Promise<RouteResponse | Response | undefined>;
 
 let fixturePreferenceRevision = 0;
 
@@ -126,6 +130,7 @@ export function installFetch(handler: RouteHandler) {
       status: 404,
       body: { error: `No mock route for ${url}` },
     };
+    if (route instanceof Response) return route;
     let body = inputReceiptFixture(url, init ?? {}, route);
     if ((route.status ?? 200) < 400 && body && typeof body === "object") {
       if (url === "/api/preferences" && !("revision" in body)) {
@@ -262,7 +267,6 @@ export function installFakeWebSocket(): void {
 export const DEFAULT_PREFS = defaultPreferences;
 export const emptySnapshot: ActiveSnapshot = {
   active: null,
-  runState: "idle",
   sessionStatuses: {},
 };
 
@@ -324,8 +328,7 @@ export function activeSnapshot(
   };
   return {
     active,
-    runState: "idle",
-    sessionStatuses: { [String(active.sessionId)]: { runState: "idle" } },
+    sessionStatuses: { [sessionId]: { runState: "idle" } },
   };
 }
 

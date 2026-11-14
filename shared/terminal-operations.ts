@@ -20,6 +20,38 @@ export const terminalDimensionsSchema = {
   cols: z.number().int().min(MIN_TERMINAL_COLS).max(MAX_TERMINAL_COLS),
   rows: z.number().int().min(MIN_TERMINAL_ROWS).max(MAX_TERMINAL_ROWS),
 };
+const terminalAttachmentFields = {
+  clientId: z.string().min(1).max(128),
+  ...terminalDimensionsSchema,
+  outputEpoch: z.string().min(1).max(80).optional(),
+  nextOutputOffset: z
+    .number()
+    .int()
+    .nonnegative()
+    .max(Number.MAX_SAFE_INTEGER)
+    .optional(),
+  resizeRevision: z.number().int().nonnegative().max(0xffffffff).optional(),
+  ownerToken: z.string().min(1).max(128).optional(),
+};
+export const terminalAttachmentSchema = z.strictObject({
+  terminalId: terminalIdSchema,
+  ...terminalAttachmentFields,
+});
+export const terminalAttachTicketSchema = z.strictObject({
+  type: z.literal("attach"),
+  ticket: z.string().uuid(),
+  ...terminalAttachmentFields,
+});
+export const terminalControlSchema = z.discriminatedUnion("type", [
+  z.strictObject({ type: z.literal("resize"), ...terminalDimensionsSchema }),
+  z.strictObject({
+    type: z.literal("take_control"),
+    ...terminalDimensionsSchema,
+  }),
+  z.strictObject({ type: z.literal("ping") }),
+]);
+export type TerminalAttachOptions = z.output<typeof terminalAttachmentSchema>;
+export type TerminalControl = z.output<typeof terminalControlSchema>;
 const cwd = z.string().min(1).max(4_096);
 const identity = {
   operationId: z.string().uuid(),

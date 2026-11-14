@@ -56,7 +56,7 @@ test("sender-led custom messages preserve content, keyboard inspection and respo
   await expect(card.locator(".custom-message__body strong").last()).toHaveText(
     "final paragraph",
   );
-  await expect(card.locator(".custom-message__raw")).toHaveCount(0);
+  await expect(card.locator("details pre")).toHaveCount(0);
   await expect(card).not.toContainText("To reply, use the relay tool");
 
   await page.setViewportSize({ width: 320, height: 1000 });
@@ -74,14 +74,14 @@ test("sender-led custom messages preserve content, keyboard inspection and respo
   await expect(summary).toBeFocused();
   await summary.press("Enter");
   await expect(card.locator("details")).toHaveAttribute("open", "");
-  const raw = await card.locator(".custom-message__raw").textContent();
+  const raw = await card.locator("details pre").textContent();
   expect(JSON.parse(raw!)).toEqual({
     customType: message.customType,
     content: message.content,
     details: message.details,
   });
   await summary.press("Space");
-  await expect(card.locator(".custom-message__raw")).toHaveCount(0);
+  await expect(card.locator("details pre")).toHaveCount(0);
   expect(
     (await new AxeBuilder({ page }).include(".custom-message").analyze())
       .violations,
@@ -253,11 +253,9 @@ test.describe("touch custom messages", () => {
     expect(copyBox.y + copyBox.height).toBeLessThanOrEqual(bodyBox.y);
     await summary.tap();
     await expect(card.locator("details")).toHaveAttribute("open", "");
-    await expect(card.locator(".custom-message__raw")).toContainText(
-      "replyCommand",
-    );
+    await expect(card.locator("details pre")).toContainText("replyCommand");
     await summary.tap();
-    await expect(card.locator(".custom-message__raw")).toHaveCount(0);
+    await expect(card.locator("details pre")).toHaveCount(0);
     expect(
       await card.evaluate(
         (element) => element.scrollWidth <= element.clientWidth + 1,

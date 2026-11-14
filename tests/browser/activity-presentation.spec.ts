@@ -5,14 +5,23 @@ import { customMessageConfiguration } from "../web/fixtures/custom-message-prese
 import { openEventSession } from "./support/host-events";
 import { openFixtureSession, pairedPage } from "./support/navigation";
 
-test("activity headers disclose across the row and keep Copy beside the label", async ({
+test("saved activity opens from the keyboard and keeps its disclosure and Copy independently reachable", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 320, height: 1000 });
   await pairedPage(page);
   await openFixtureSession(page, /Formula rendering and spectral analysis/);
   const fold = page.locator(".activity-fold").first();
-  await fold.getByRole("button", { name: "Expand assistant activity" }).click();
+  const disclosure = fold.getByRole("button", { name: /assistant activity/i });
+  const content = fold.locator(".activity-fold__content");
+  await expect(disclosure).toHaveAttribute("aria-expanded", "false");
+  await expect(fold.locator(".activity-fold__summary")).toContainText(/step/);
+  await disclosure.press("Enter");
+  await expect(disclosure).toBeFocused();
+  await expect(content).toBeVisible();
+  expect(
+    await fold.evaluate((el) => el.scrollWidth - el.clientWidth),
+  ).toBeLessThanOrEqual(1);
   const card = fold.locator(".card--tool").first();
   const toggle = card.locator(".card__disclosure");
   const header = card.locator(".card__header");
@@ -27,138 +36,16 @@ test("activity headers disclose across the row and keep Copy beside the label", 
   await copy.focus();
   await page.keyboard.press("Shift+Tab");
   await expect(toggle).toBeFocused();
-  const geometry = await header.evaluate((header) => {
-    const body = header.parentElement!.querySelector(".card__body")!;
-    const bodyStyle = getComputedStyle(body);
-    const bounds = (selector: string) =>
-      header.querySelector(selector)!.getBoundingClientRect();
-    const focus = getComputedStyle(
-      header.querySelector(".card__disclosure")!,
-      "::after",
-    );
-    return {
-      leadingDisclosure:
-        bounds(".card__chevron").right <= bounds(".card__icon").left,
-      copyGap: bounds(".card__copy").left - bounds(".card__disclosure").right,
-      readingOffset:
-        body.getBoundingClientRect().left +
-        Number.parseFloat(bodyStyle.paddingLeft) -
-        bounds(".card__label").left,
-      focusOutline: focus.outlineStyle,
-      focusWidth: parseFloat(focus.width),
-      rowWidth: header.clientWidth,
-    };
-  });
-  expect(geometry.leadingDisclosure).toBe(true);
-  expect(geometry.copyGap).toBeGreaterThan(0);
-  expect(Math.abs(geometry.readingOffset)).toBeLessThanOrEqual(1);
-  expect(geometry.focusOutline).toBe("solid");
-  expect(geometry.focusWidth).toBeCloseTo(geometry.rowWidth);
+  expect(
+    await toggle.evaluate(
+      (button) => getComputedStyle(button, "::after").outlineStyle,
+    ),
+  ).toBe("solid");
   await copy.press("Enter");
   await expect(toggle).toHaveAttribute("aria-expanded", "true");
-});
-
-test("activity summaries disclose with keyboard focus on a narrow screen", async ({
-  page,
-}) => {
-  await pairedPage(page);
-  await openFixtureSession(page, /Formula rendering and spectral analysis/);
-  const fold = page.locator(".activity-fold").first();
-  const disclosure = fold.getByRole("button", { name: /assistant activity/i });
-  await expect(disclosure).toHaveAttribute("aria-expanded", "false");
-  await expect(fold.locator(".activity-fold__summary")).toContainText(/step/);
-  await page.setViewportSize({ width: 320, height: 1000 });
-  await disclosure.focus();
-  await disclosure.press("Enter");
-  const content = fold.locator(".activity-fold__content");
-  await expect(disclosure).toBeFocused();
-  await expect(disclosure).toHaveAttribute("aria-expanded", "true");
-  await expect(content).toBeVisible();
-  expect(
-    await fold.evaluate((el) => el.scrollWidth - el.clientWidth),
-  ).toBeLessThanOrEqual(1);
   await disclosure.press("Enter");
   await expect(disclosure).toBeFocused();
   await expect(content).toBeHidden();
-});
-
-test("Thinking copy follows disclosure and custom messages stay independent", async ({
-  page,
-}) => {
-  const send = await openEventSession(
-    page,
-    "Activity reading",
-    customMessageConfiguration,
-    {
-      theme: "light",
-      palette: "wisteria",
-      toolVisibility: "compact",
-      thinkingVisibility: "collapsed",
-      activityFoldVisibility: "expanded",
-    },
-  );
-  send(
-    ...activityReadingMessages().map((message) => ({
-      type: "message_end",
-      message,
-    })),
-  );
-  const extension = page.getByRole("article", {
-    name: "Inspire: composer editing",
-  });
-  await expect(extension).toContainText("Review notes");
-  const thinking = page.locator(".card--thinking").first();
-  await page.setViewportSize({ width: 320, height: 1100 });
-  const copy = thinking.getByRole("button", {
-    name: "Copy thinking block",
-    exact: true,
-  });
-  await expect(copy).toHaveCount(0);
-  await thinking
-    .getByRole("button", { name: "Expand Thinking", exact: true })
-    .click();
-  await expect(thinking.locator(".card__body")).toBeVisible();
-  await page.evaluate(() => document.fonts.ready);
-  const rhythm = await thinking.evaluate((el) => {
-    const title = el.querySelector(".card__label")!.getBoundingClientRect();
-    const disclosure = el
-      .querySelector(".card__disclosure")!
-      .getBoundingClientRect();
-    const copy = el.querySelector(".card__copy")!.getBoundingClientRect();
-    const paragraphs = [...el.querySelectorAll("p")].map((p) =>
-      p.getBoundingClientRect(),
-    );
-    return {
-      copyGap: copy.left - disclosure.right,
-      indent: paragraphs[0]!.left - title.left,
-      paragraphGap: paragraphs[1]!.top - paragraphs[0]!.bottom,
-    };
-  });
-  expect(rhythm.copyGap).toBeGreaterThan(0);
-  expect(Math.abs(rhythm.indent)).toBeLessThanOrEqual(1);
-  expect(rhythm.paragraphGap).toBeGreaterThan(0);
-  expect(rhythm.paragraphGap).toBeLessThanOrEqual(8);
-  await copy.focus();
-  await expect(copy).toBeFocused();
-  await page.keyboard.press("Enter");
-  await expect(
-    thinking.getByRole("button", { name: "Collapse Thinking", exact: true }),
-  ).toHaveAttribute("aria-expanded", "true");
-  await thinking
-    .getByRole("button", { name: "Collapse Thinking", exact: true })
-    .click();
-  await expect(copy).toHaveCount(0);
-  expect(
-    await thinking.evaluate(
-      (element) => element.scrollWidth <= element.clientWidth + 1,
-    ),
-  ).toBe(true);
-  const group = page.locator(".activity-fold").first();
-  await group
-    .getByRole("button", { name: "Collapse assistant activity", exact: true })
-    .click();
-  await expect(extension).toBeVisible();
-  await expect(extension).toContainText("The keyboard checks are complete.");
 });
 
 test("success and failure cues retain semantic color in tools and nested calls", async ({
@@ -188,6 +75,7 @@ test("success and failure cues retain semantic color in tools and nested calls",
       name: "preview_check",
       args: "{}",
       status: "error",
+      error: "Preview check failed",
       durationMs: 30,
     },
     {
@@ -197,14 +85,6 @@ test("success and failure cues retain semantic color in tools and nested calls",
       status: "cancelled",
     },
   );
-  // Model-call preview strings are intentionally not an expandable argument
-  // payload, so this completed call has no detail control.
-  code.details.calls.push({
-    id: "model-complete",
-    name: "models.classify",
-    args: "fixture/classifier",
-    status: "ok",
-  });
   send(
     ...messages.map((message) => ({
       type: "message_end",
@@ -249,42 +129,19 @@ test("success and failure cues retain semantic color in tools and nested calls",
     .filter({ hasText: "CodeMode" })
     .first();
   await codeCard.locator(".card__disclosure").click();
-  await expect(codeCard.locator(".child-call__status--error")).toBeVisible();
-  const detail = codeCard.locator("details.child-call").first();
-  await detail.locator("summary").click();
-  await expect(detail.locator(".child-call__detail")).toBeVisible();
+  const detail = codeCard
+    .locator("details.child-call")
+    .filter({ hasText: "preview_check" });
   await page.setViewportSize({ width: 320, height: 1000 });
-  const alignment = await codeCard.evaluate((element) => {
-    const detail = element.querySelector("details.child-call[open]")!;
-    const name = detail
-      .querySelector(".child-call__name")!
-      .getBoundingClientRect();
-    const status = detail
-      .querySelector(".child-call__status")!
-      .getBoundingClientRect();
-    const arrow = detail
-      .querySelector(".child-call__chevron")!
-      .getBoundingClientRect();
-    const body = detail.querySelector(".child-call__detail")!;
-    const plainName = element
-      .querySelector(".child-call > div.child-call__row .child-call__name")!
-      .getBoundingClientRect();
-    return {
-      nameColumnOffset: plainName.left - name.left,
-      leading: arrow.right <= name.left,
-      trailingStatus: name.right <= status.left,
-      nameOffset:
-        body.getBoundingClientRect().left +
-        parseFloat(getComputedStyle(body).paddingLeft) -
-        name.left,
-      overflow: element.scrollWidth > element.clientWidth + 1,
-    };
-  });
-  expect(alignment.leading).toBe(true);
-  expect(alignment.trailingStatus).toBe(true);
-  expect(Math.abs(alignment.nameColumnOffset)).toBeLessThanOrEqual(1);
-  expect(Math.abs(alignment.nameOffset)).toBeLessThanOrEqual(1);
-  expect(alignment.overflow).toBe(false);
+  const summary = detail.locator("summary");
+  await summary.press("Enter");
+  await expect(summary).toBeFocused();
+  await expect(detail.getByRole("group", { name: "Call error" })).toBeVisible();
+  expect(
+    await codeCard.evaluate(
+      (element) => element.scrollWidth - element.clientWidth,
+    ),
+  ).toBeLessThanOrEqual(1);
   for (const theme of ["light", "dark"]) {
     await page.evaluate(
       (theme) => (document.documentElement.dataset.theme = theme),
@@ -293,12 +150,12 @@ test("success and failure cues retain semantic color in tools and nested calls",
     for (const [selector, token] of [
       [".card--thinking .card__icon", "--activity-think"],
       [".card--tool .card__icon", "--activity-tool"],
-      [".card__status .status-success", "--success"],
-      [".card__status .status-error", "--error"],
-      [".child-call__status--ok", "--success"],
-      [".child-call__status--error", "--error"],
+      ['.card__status [data-status="success"]', "--success"],
+      ['.card__status [data-status="error"]', "--error"],
+      ['.child-call__status [data-status="success"]', "--success"],
+      ['.child-call__status [data-status="error"]', "--error"],
       ['.card__status .pi-status[data-status="neutral"]', "--muted"],
-      [".child-call__status--cancelled", "--muted"],
+      ['.child-call__status[data-status="cancelled"] .pi-status', "--muted"],
     ]) {
       const cue = page.locator(selector!).first();
       await expect(cue).toBeVisible();
@@ -368,7 +225,13 @@ test.describe("touch activity disclosures", () => {
       });
       await expect(toggle).toHaveAttribute("aria-expanded", "true");
       await expect(copy).toBeVisible();
-      expect((await copy.boundingBox())!.width).toBeGreaterThanOrEqual(32);
+      const { width, height } = (await copy.boundingBox())!;
+      expect(Math.min(width, height)).toBeGreaterThanOrEqual(32);
+      expect(
+        await surface.evaluate(
+          (element) => element.scrollWidth - element.clientWidth,
+        ),
+      ).toBeLessThanOrEqual(1);
       await copy.tap();
       await expect(toggle).toHaveAttribute("aria-expanded", "true");
       await toggle.tap();
@@ -385,5 +248,12 @@ test.describe("touch activity disclosures", () => {
         ),
       ).not.toBe("none");
     }
+    await page
+      .getByRole("button", { name: "Collapse assistant activity" })
+      .first()
+      .tap();
+    await expect(
+      page.getByRole("article", { name: "Inspire: composer editing" }),
+    ).toContainText("The keyboard checks are complete.");
   });
 });

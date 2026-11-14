@@ -64,8 +64,7 @@ const CodeBlock = memo(function CodeBlock({
             className="icon-button"
             onClick={() => {
               queueTerminalInsertion(code, store.getState().cwd);
-              store.setContextMode("terminal");
-              store.setResourcesOpen(true);
+              store.openContextMode("terminal");
             }}
             aria-label="Insert code in terminal"
             title="Insert in terminal for review"

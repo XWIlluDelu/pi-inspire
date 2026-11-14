@@ -12,11 +12,12 @@ covers:
   - shared/terminal-*.ts
   - src/{api,App,app-state,store,terminal-*,use-copied}.ts*
   - src/controllers/terminal-operation-controller.ts
-  - src/components/{CommandPalette,ContextPane,NoticeCard,Notices,RichText,TerminalPane,TerminalSettingsDialog,TerminalTextDialog,TerminalView}.tsx
+  - src/components/{CommandPalette,ContextPane,NoticeCard,Notices,RichText,WorkspaceDock,TerminalSettingsDialog,TerminalTextDialog,TerminalView}.tsx
   - src/styles.css
   - src/styles/{terminal,responsive,settings-overlays,workbench}.css
   - tests/{server,shared,web}/**/*terminal*
   - tests/browser/{context-tabs,project-terminals,terminal-settings,terminal-theme}.spec.ts
+  - tests/browser/support/terminal-*.ts
   - tests/deploy/systemd-control.test.mjs
   - tests/launcher.test.ts
   - vite.config.ts
@@ -42,7 +43,9 @@ Windows machine-wide pipe names include the OS account and state-directory ident
 installation. Unix socket addresses stay within the native byte limit, including long and Unicode
 temporary roots; shortening does not relax current-user ownership or private-directory checks.
 An unverified listener at the configured address blocks automatic replacement.
-The current daemon wire protocol gates data access and maintenance. On-demand recovery only reconnects and shares one
+The current daemon wire protocol gates data access and maintenance. The Host gateway and daemon
+validate the same attachment and control fields. The attach ticket stays with the browser gateway.
+On-demand recovery only reconnects and shares one
 initialization across requests. It leaves dispatched controls and input untouched. Closing fences
 late initialization and releases the client. Only the owner that bound a socket removes it.
 An existing non-private POSIX parent is rejected rather than chmodded, so a custom socket, token or
@@ -169,11 +172,11 @@ claimed by an unverified listener. [Maintenance guidance](../../docs/host.md#con
 covers this boundary and the installed-service scope of `inspire restart --terminals`.
 
 Catalog loads, polling, and mutations belong to one pane project/reload generation. Switching projects,
-reloading, or unmounting retires old response/error/loading/selection/rollback writebacks, while completed
+reloading, or unmounting retires old response/error/loading/selection writebacks, while completed
 server work remains effective. Full catalogs validate project and daemon epoch/revision; partial receipts
 merge by ID within that epoch and do not suppress equal-revision full reconciliation. A new epoch needs
-a complete catalog, and retired epochs cannot replace it. Optimistic-order rollback applies only to its
-still-current state. Recovery rows retain uncertainty during checks; tab relationships target mounted
+a complete catalog, and retired epochs cannot replace it. Terminal reordering publishes its confirmed
+catalog. Recovery rows retain uncertainty during checks; tab relationships target mounted
 lazy panels.
 
 Palette UI intent binds the originating project before opening a lazy pane. Close, Restart and
@@ -229,13 +232,14 @@ Profile choice, connection and control state, search, focus and More stay in a t
 terminal output. In the shared dock, the toolbar uses the same 28px desktop and 32px touch/narrow
 button tier as file actions, with 16px glyphs. A foreign-project context row stays above the tools
 and keeps Back to current project available. The selected view supplies search and display
-controls directly to the toolbar. The toolbar also provides profile, focus and catalog actions
+controls to the persistent toolbar through the active terminal ID and output epoch. The toolbar
+also provides profile, focus and catalog actions
 while no view is open. Writable terminals expose control state in an accessible name and tooltip.
 Non-writable terminals keep connection feedback, the ownership message and Take control where
 ready. Search, selection actions, copy confirmation and connection errors have their own output
 overlays. The Terminal shortcut creates a default terminal and the toolbar profile chooser offers
 named alternatives.
-At pane widths up to 480px, Focus remains in More. Focus mode and same-origin focused windows
+Focus stays in the toolbar across widths. Focus mode and same-origin focused windows
 attach the existing terminal and display the tab strip above the toolbar. Changing the active
 terminal keeps the tab strip mounted and preserves its keyboard focus and rename target.
 

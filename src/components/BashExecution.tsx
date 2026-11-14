@@ -5,6 +5,7 @@ import {
   isResourceReferenceText,
 } from "../../shared/resource-references";
 import { stripTerminalSequences } from "../ansi";
+import { copyLoader } from "../content-copy";
 import type { ChatMessage } from "../events";
 import { shellCommand, shellCopyText } from "../shell-record";
 import { CodeView } from "./CodeView";
@@ -49,63 +50,78 @@ export const BashExecution = memo(function BashExecution({
   const output = stripTerminalSequences(message.output ?? "");
   const previewTruncated =
     (running || interrupted) && message.__inspireBashPreviewTruncated;
-  const copy = [
-    shellCopyText(shell, message.output ?? "", status, contextLabel),
-    error ?? "",
-  ]
-    .filter(Boolean)
-    .join("\n");
+  const fullOutput = message.fullOutputPath;
   return (
     <section
-      className={`turn shell-execution card${history ? " shell-execution--history" : ""}${failed ? " card--failed" : " card--tool"}`}
+      className={`activity-surface shell-execution${history ? " shell-execution--history" : ""}`}
       aria-label={history ? "Shell record preview" : "Shell command"}
     >
-      <div className="shell-execution__header">
+      <div className="activity-surface__head shell-execution__header">
         {running ? (
           <PiLoader size={14} aria-hidden />
         ) : (
           <SquareTerminal size={14} aria-hidden />
         )}
         <span>Shell</span>
-        <span className="shell-execution__status" role="status">
+        <span
+          className="shell-execution__status"
+          data-error={failed || undefined}
+          role="status"
+        >
           {status}
         </span>
         <span className="shell-execution__context">{contextLabel}</span>
         {!history && (
           <CopyAction
-            text={copy}
+            getContent={copyLoader(async () =>
+              [
+                shellCopyText(
+                  shell,
+                  message.output ?? "",
+                  status,
+                  contextLabel,
+                ),
+                error,
+              ]
+                .filter(Boolean)
+                .join("\n"),
+            )}
             label="shell result"
             className="activity-copy"
           />
         )}
       </div>
-      <CodeView className="shell-execution__command" text={command} />
+      <CodeView className="activity-reader" text={command} />
       {output ? (
-        <CodeView className="shell-execution__output" text={output} />
+        <CodeView
+          className="activity-reader shell-execution__output"
+          text={output}
+          tabIndex={history ? undefined : 0}
+          role={history ? undefined : "group"}
+          aria-label={history ? undefined : "Shell output"}
+        />
       ) : null}
       {previewTruncated || message.truncated ? (
-        <p className="shell-execution__note">
+        <div className="tool-notice">
           {previewTruncated
             ? "Showing the latest streamed output."
             : "Pi truncated the recorded output."}
-          {message.fullOutputPath &&
-          isResourceReferenceText(message.fullOutputPath) ? (
-            <>
-              {" "}
-              <button
-                type="button"
-                className="tool-notice__action"
-                data-file-path={fileResourceReference(message.fullOutputPath)}
-                title={`Preview ${message.fullOutputPath}`}
-                aria-label={history ? "View full shell output" : undefined}
-              >
-                View full output
-              </button>
-            </>
+          {fullOutput && isResourceReferenceText(fullOutput) ? (
+            <button
+              type="button"
+              className="tool-notice__action"
+              data-file-path={fileResourceReference(fullOutput)}
+              title={`Preview ${fullOutput}`}
+              aria-label={history ? "View full shell output" : undefined}
+            >
+              View full output
+            </button>
           ) : null}
-        </p>
+        </div>
       ) : null}
-      {error ? <p className="shell-execution__error">{error}</p> : null}
+      {error ? (
+        <div className="tool-notice tool-notice--error">{error}</div>
+      ) : null}
     </section>
   );
 });

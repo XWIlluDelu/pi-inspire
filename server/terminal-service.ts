@@ -1,14 +1,17 @@
 import type {
   TerminalCatalogResponse,
-  TerminalClientControlMessage,
   TerminalServerControlMessage,
   TerminalServiceSettings,
 } from "../shared/terminal-contracts.js";
 import type {
+  TerminalAttachOptions,
+  TerminalControl,
   TerminalIntent,
   TerminalOperation,
   TerminalOperationResults,
 } from "../shared/terminal-operations.js";
+
+export type { TerminalAttachOptions } from "../shared/terminal-operations.js";
 
 export interface TerminalAttachmentSink {
   sendControl(message: TerminalServerControlMessage): void;
@@ -16,24 +19,9 @@ export interface TerminalAttachmentSink {
   close(code: number, reason: string): void;
 }
 
-export interface TerminalAttachOptions {
-  terminalId: string;
-  clientId: string;
-  cols: number;
-  rows: number;
-  outputEpoch?: string;
-  nextOutputOffset?: number;
-  resizeRevision?: number;
-  ownerToken?: string;
-}
-
 export interface TerminalAttachment {
-  readonly id: string;
-  readonly terminalId: string;
   writeInput(sequence: number, data: Uint8Array): void;
-  control(
-    message: Exclude<TerminalClientControlMessage, { type: "attach" }>,
-  ): void;
+  control(message: TerminalControl): void;
   detach(): void;
 }
 

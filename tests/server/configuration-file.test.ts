@@ -6,6 +6,7 @@ import {
   editConfigurationDocument,
   editConfigurationFile,
   readConfigurationFile,
+  savedConfiguration,
 } from "../../server/configuration-file.js";
 
 vi.mock("node:fs/promises", async (importOriginal) => ({
@@ -134,6 +135,17 @@ describe("Pi configuration editing", () => {
     expect(
       results.find((result) => result.status === "rejected"),
     ).toMatchObject({ reason: { status: 409 } });
+    expect(await fs.readFile(file, "utf8")).toBe(replacement);
+  });
+
+  it("reports a committed save when its response cannot read the file again", async () => {
+    const file = join(root, "config.json");
+    await edit(file);
+    expect(
+      await savedConfiguration(async () => {
+        throw new Error("Readback unavailable");
+      }, "Refresh files before editing"),
+    ).toEqual({ saved: true, warning: "Refresh files before editing" });
     expect(await fs.readFile(file, "utf8")).toBe(replacement);
   });
 

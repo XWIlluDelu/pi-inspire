@@ -5,6 +5,7 @@ import {
   type ToolPresentationBlock,
   toolResultImage,
 } from "../tool-presentations/model";
+import { CodeView } from "./CodeView";
 import { useActivityReaderScroll } from "./transcript-activity-visibility";
 
 /** Only a standalone first-part runner banner is metadata, not user output. */
@@ -114,7 +115,7 @@ export function CodeModeResult({
   renderImage,
 }: {
   result: ChatMessage;
-  renderImage: (block: ImageBlock) => React.ReactNode;
+  renderImage: (block: ImageBlock | null) => React.ReactNode;
 }) {
   const parts = useMemo(() => resultParts(result), [result]);
   const scroll = useActivityReaderScroll<HTMLDivElement>(
@@ -123,7 +124,7 @@ export function CodeModeResult({
   );
   return (
     <div
-      className="codemode-result"
+      className="activity-reader codemode-result"
       {...scroll.props}
       tabIndex={0}
       role="group"
@@ -132,13 +133,9 @@ export function CodeModeResult({
       {parts.map((part) => (
         <Fragment key={part.index}>
           {part.kind === "text" ? (
-            <pre className="codemode-result__text">{part.text}</pre>
-          ) : part.image ? (
-            renderImage(part.image)
+            <CodeView text={part.text} />
           ) : (
-            <div className="tool-notice tool-notice--warning">
-              Image unavailable (unsupported or invalid image data)
-            </div>
+            renderImage(part.image)
           )}
         </Fragment>
       ))}

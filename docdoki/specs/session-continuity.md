@@ -79,7 +79,7 @@ covers:
   - tests/web/store*.test.ts
   - tests/web/connection-controller.test.ts
   - tests/web/events.test.ts
-  - tests/web/welcome-new-session.test.tsx
+  - tests/browser/model-workflow.spec.ts
 ---
 
 # Session continuity

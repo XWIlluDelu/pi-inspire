@@ -1,12 +1,15 @@
 import type { SessionActionId } from "../shared/contracts";
 
-export const SESSION_ACTION_LABELS: Record<SessionActionId, string> = {
-  rename: "Rename session",
-  "copy-id": "Copy session ID",
-  clone: "Clone current branch",
-  "switch-branch": "Switch branch…",
-  export: "Export session…",
-};
+export const sessionActions = {
+  rename: { title: "Rename session", command: "name" },
+  "copy-id": { title: "Copy session ID" },
+  clone: { title: "Clone current branch", command: "clone" },
+  "switch-branch": { title: "Switch branch…", command: "tree" },
+  export: { title: "Export session…", command: "export" },
+} as const satisfies Record<
+  SessionActionId,
+  { title: string; command?: string }
+>;
 
 export function moveSessionAction(
   order: readonly SessionActionId[],

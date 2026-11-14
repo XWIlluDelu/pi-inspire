@@ -1,20 +1,12 @@
 import {
   type ActiveSnapshot,
-  isBusyRunState,
   type LiveTranscript,
   type ProjectionConflict,
-  projectionConflictSeverity,
   type SessionRuntimeStatus,
 } from "../../shared/contracts";
 import { isExternalSessionActivities } from "../../shared/session-activity";
-import { type AppState, selectedRunState } from "../app-state";
-import {
-  type ChatMessage,
-  type EventSlice,
-  messageKey,
-  reduceEvent,
-  type WireEvent,
-} from "../events";
+import { type AppState, transcriptDiagnostic } from "../app-state";
+import { reduceEvent, type WireEvent } from "../events";
 
 interface RuntimeEventHost {
   state(): AppState;
@@ -28,8 +20,6 @@ interface RuntimeEventHost {
     statuses?: Record<string, SessionRuntimeStatus>,
   ): void;
   ensureSessionVisible(sessionId: string): void;
-  recordRuntimeReady(sessionId: string): void;
-  clearRuntimeReady(sessionId: string): void;
   refreshLoadedSessions(): Promise<void>;
   hasVisibleGitSurface(): boolean;
   refreshGitStatus(): Promise<void>;
@@ -42,8 +32,6 @@ interface RuntimeEventHost {
  * Snapshots remain AppStore transactions; this controller routes live deltas
  * without giving event producers a second browser-state authority. */
 export class RuntimeEventController {
-  private settledKeys = new Set<string>();
-  private readonly observedRuns = new Set<string>();
   private readonly titleAttention = new Set<string>();
   private readonly acknowledgedStatus = new Map<string, number>();
   private pendingResync: {
@@ -121,19 +109,6 @@ export class RuntimeEventController {
       : status;
   }
 
-  /** Track live runs only for the selected conversation's completion UI.
-   * Task notification identity and standalone compaction belong to the Host.
-   * Snapshots retire observations but never manufacture a completed run. */
-  reconcileObservedRuns(
-    sessionStatuses: Readonly<Record<string, SessionRuntimeStatus>>,
-  ): void {
-    for (const sessionId of this.observedRuns) {
-      const runState = sessionStatuses[sessionId]?.runState;
-      if (!runState || !isBusyRunState(runState))
-        this.observedRuns.delete(sessionId);
-    }
-  }
-
   markTaskAttention(sessionId: string): void {
     if (
       this.host.state().taskAlerts.mode === "off" ||
@@ -145,7 +120,6 @@ export class RuntimeEventController {
   }
 
   invalidateTransport(): void {
-    this.observedRuns.clear();
     if (this.pendingResync) clearTimeout(this.pendingResync.timer);
     this.pendingResync = null;
   }
@@ -176,39 +150,10 @@ export class RuntimeEventController {
 
   forgetAttention(sessionIds: ReadonlySet<string>): void {
     for (const sessionId of sessionIds) {
-      this.observedRuns.delete(sessionId);
       this.titleAttention.delete(sessionId);
       this.acknowledgedStatus.delete(sessionId);
     }
     this.publishTitleAttention();
-  }
-
-  replaceSettledMessages(messages: readonly ChatMessage[]): void {
-    this.settledKeys = new Set(
-      messages.map(messageKey).filter((key): key is string => key !== null),
-    );
-  }
-
-  private eventSlice(): EventSlice {
-    const s = this.host.state();
-    return {
-      messages: s.messages,
-      streaming: s.streaming,
-      bashRunning: s.bashRunning,
-      activeAssistantMessageKey: s.activeAssistantMessageKey,
-      tools: s.tools,
-      retry: s.retry,
-      pendingRetryError: s.pendingRetryError,
-      summarizationRetry: s.summarizationRetry,
-      queue: s.queue,
-      extensionUiRequests: s.extensionUiRequests,
-      extensionUiRespondingId: s.extensionUiRespondingId,
-      extensionDisplays: s.extensionDisplays,
-      notices: s.notices,
-      statuses: s.statuses,
-      windowTitle: s.windowTitle,
-      nextNoticeId: s.nextNoticeId,
-    };
   }
 
   apply(event: WireEvent): void {
@@ -235,7 +180,7 @@ export class RuntimeEventController {
           runtimeSequence:
             typeof event.runtimeSequence === "number"
               ? event.runtimeSequence
-              : undefined,
+              : snapshot.runtimeSequence,
         });
         if (snapshot.active?.sessionId)
           this.host.ensureSessionVisible(snapshot.active.sessionId);
@@ -247,34 +192,10 @@ export class RuntimeEventController {
     // into the map before any transcript routing.
     const eventSessionId =
       typeof event.sessionId === "string" ? event.sessionId : null;
-    if (eventSessionId) this.host.ensureSessionVisible(eventSessionId);
     const sessionStatuses = this.mergeSessionStatus(
       eventSessionId,
       event.sessionStatus,
     );
-    if (eventSessionId) {
-      if (event.type === "agent_start" || event.type === "auto_retry_start") {
-        this.observedRuns.add(eventSessionId);
-      } else if (event.type === "agent_settled") {
-        if (
-          this.observedRuns.delete(eventSessionId) &&
-          event.sessionStatus?.runState === "idle" &&
-          eventSessionId === this.host.state().sessionId
-        ) {
-          this.host.patch({
-            completedRunSequence: this.host.state().completedRunSequence + 1,
-          });
-        }
-      } else if (
-        event.type === "runtime_error" ||
-        event.type === "external_attachment_ended"
-      ) {
-        // Runtime death or a released attachment ends this browser's view of
-        // every operation it was following.
-        this.observedRuns.delete(eventSessionId);
-      }
-    }
-
     if (
       eventSessionId !== null &&
       eventSessionId !== this.host.state().sessionId
@@ -284,18 +205,13 @@ export class RuntimeEventController {
       // changes; a settle refreshes the list so folder/time ordering catches
       // up. Unchanged statuses (token-level chatter) publish nothing.
       if (sessionStatuses) this.host.patch({ sessionStatuses });
-      if (
-        event.type === "runtime_ready" &&
-        eventSessionId === this.host.state().openingSessionId
-      ) {
-        this.host.recordRuntimeReady(eventSessionId);
-      }
-      if (event.type === "runtime_error")
-        this.host.clearRuntimeReady(eventSessionId);
+      this.host.ensureSessionVisible(eventSessionId);
       if (event.type === "agent_settled")
         void this.host.refreshLoadedSessions();
       return;
     }
+
+    if (eventSessionId) this.host.ensureSessionVisible(eventSessionId);
 
     if (
       event.type === "tool_execution_end" &&
@@ -330,19 +246,16 @@ export class RuntimeEventController {
     }
 
     if (event.type === "session_projection_conflict") {
-      if (sessionStatuses) this.host.patch({ sessionStatuses });
       const conflict = event.conflict as ProjectionConflict | undefined;
-      if (typeof conflict?.message === "string") {
+      const statusPatch = sessionStatuses ? { sessionStatuses } : {};
+      if (conflict && typeof conflict.message === "string") {
+        const view = { ...this.host.state().view, conflict };
         this.host.patch({
-          projectionConflict: conflict,
-          projectionError: conflict.message,
-          error: conflict.message,
-          errorSeverity:
-            projectionConflictSeverity(conflict) === "attention"
-              ? "warning"
-              : "error",
+          ...statusPatch,
+          view,
+          ...transcriptDiagnostic(view),
         });
-      }
+      } else this.host.patch(statusPatch);
       return;
     }
 
@@ -368,18 +281,23 @@ export class RuntimeEventController {
       return;
     }
 
-    const { slice, settle, resync, changed } = reduceEvent(
-      this.eventSlice(),
-      this.settledKeys,
+    const { slice, resync, changed } = reduceEvent(
+      this.host.state().live,
       event,
-      selectedRunState(this.host.state()),
     );
-    for (const key of settle) this.settledKeys.add(key);
-    if (changed) {
-      this.host.patch(sessionStatuses ? { ...slice, sessionStatuses } : slice);
-    } else if (sessionStatuses) {
-      this.host.patch({ sessionStatuses });
-    }
+    const completed =
+      eventSessionId !== null &&
+      event.type === "agent_settled" &&
+      event.completed === true &&
+      event.sessionStatus?.runState === "idle";
+    if (changed || sessionStatuses || completed)
+      this.host.patch({
+        ...(changed ? { live: slice } : {}),
+        ...(sessionStatuses ? { sessionStatuses } : {}),
+        ...(completed
+          ? { completedRunSequence: this.host.state().completedRunSequence + 1 }
+          : {}),
+      });
     if (resync) {
       const sessionId = eventSessionId ?? this.host.state().sessionId;
       if (event.type === "agent_settled") this.scheduleResync(sessionId);

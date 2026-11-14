@@ -33,7 +33,7 @@ export function SettingsConfirmation({
         <p className="dialog__message" id={`${id}-description`}>
           {description}
         </p>
-        <div className="settings-confirmation__actions">
+        <footer className="dialog__actions">
           <button
             type="button"
             className="button button--quiet"
@@ -48,7 +48,7 @@ export function SettingsConfirmation({
           >
             {confirmLabel}
           </button>
-        </div>
+        </footer>
       </div>
     </Modal>
   );
@@ -134,12 +134,12 @@ export function SettingsDialog({
       aria-label="Settings"
       onDismiss={onClose}
     >
-      <div className="dialog settings">
-        <header className="settings__header">
-          <h2 className="settings__title">Settings</h2>
+      <div className="dialog dialog--flush settings">
+        <header className="dialog__header dialog__header--bar">
+          <h2 className="dialog__title">Settings</h2>
           <button
             type="button"
-            className="icon-button settings__close-btn"
+            className="icon-button"
             onClick={onClose}
             aria-label="Close settings"
             title="Close"

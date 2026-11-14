@@ -507,14 +507,6 @@
 }
 .nav__row-state--running { color: var(--warning); }
 
-.nav__row-state--completed {
-  color: var(--success);
-}
-
-.nav__row-state--failed {
-  color: var(--error);
-}
-
 .nav__row-dot--attention {
   background: var(--warning);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--warning) 30%, transparent);

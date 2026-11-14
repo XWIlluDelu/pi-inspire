@@ -7,10 +7,12 @@ covers:
   - shared/*mcp*.ts
   - src/components/*Mcp*.tsx
   - src/components/ConfigurationForm.tsx
+  - src/use-configuration-document.ts
   - src/styles/mcp-settings.css
   - tests/server/*mcp*.ts
   - tests/server/configuration-file.test.ts
   - tests/web/*mcp*.tsx
+  - tests/web/configuration-document.test.tsx
   - tests/browser/*mcp*.ts
 ---
 
@@ -39,10 +41,10 @@ remains decided but deferred until public runtime interfaces can support it.
 
 ### Editing and inheritance
 
-Settings → MCP groups file entries under **User** and **Project**, with quiet source-path captions.
-Rows show name, transport, file-disabled state and an understated same-name project override, not
-connection health. Add sits beside the section title. Rows use the Models edit and remove buttons
-with accessible names and tooltips. Advanced fields use the shared disclosure. The model/MCP form
+Settings → MCP shows **User** and **Project** source paths and file errors. Choose a server from the
+scope-labelled selector to see its name, transport, file-disabled state, any same-name project
+override and its edit actions. Add sits beside the section title. Advanced fields use the shared
+disclosure. The model/MCP form
 keeps Save/Cancel reachable while the body scrolls and reveals the focused field's label. New-server
 forms focus Server name. Ordinary edits focus URL or Program. Policy edits focus Tool exposure
 with its menu closed. The project editor explains trust.
@@ -100,7 +102,9 @@ environment/header values or OAuth values other than the registration method. In
 editor, **Show saved URL** or **Show saved arguments** explicitly reads only that entry's literal
 connection values at the displayed file revision. The authenticated response is non-cacheable,
 does not resolve hooks and includes no unrelated credentials. Changed files require Refresh before
-revealing values; late reads cannot populate a different Settings owner or revision.
+revealing values; late reads cannot populate a different Settings owner or revision. Refreshing
+replaces a previous reveal with the new file revision and keeps values explicitly edited in the
+draft.
 The supported field definitions supply the patch schemas and form controls. Public fields use a
 safe projection, and the same descriptors distinguish the explicitly revealable connection fields
 from write-only secrets. Keep, replace and remove have separate edit intents.

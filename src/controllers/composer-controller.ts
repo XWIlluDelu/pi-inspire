@@ -20,6 +20,7 @@ import {
   isSupportedPromptImageMimeType,
 } from "../../shared/image-types";
 import { type Api, ApiError, ApiTransportError } from "../api";
+import type { AppState } from "../app-state";
 import { selectAttachmentFiles } from "../attachment-selection";
 import {
   type ComposerHistoryScope,
@@ -27,6 +28,7 @@ import {
   discardComposerHistory,
   rememberComposerHistory,
 } from "../composer-history";
+import { ReceiptRead } from "../operation-observer";
 import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
 import {
   hasDraftInput,
@@ -80,7 +82,7 @@ interface DeliveryRecord {
   /** Controls the available recovery action after observation. */
   recovery: "draft" | "previous" | "reloaded" | "palette";
   outcome: "unconfirmed" | "refused";
-  confirmation?: AbortController;
+  confirmation: ReceiptRead<Api, PromptAcceptedResponse | false>;
   handoffRevision?: number;
   historyScope?: ComposerHistoryScope;
 }
@@ -93,13 +95,7 @@ const savedDeliveries = promptObservationSchema
   .max(MAX_SAVED_DELIVERIES);
 
 interface ComposerControllerHost {
-  state(): {
-    sessionId: string | null;
-    transcriptViewId: string | null;
-    transcriptIncarnation?: string | null;
-    transcriptEffectiveLeafId?: string | null;
-    composerHistoryVersion?: string | null;
-  };
+  state(): Pick<AppState, "sessionId" | "view">;
   drafts: SessionDrafts;
   api(): Api | null;
   authorityId(): string | null;
@@ -158,7 +154,7 @@ export class ComposerController {
         record.identity.sessionId === sessionId &&
         (recovery === undefined ||
           (record.recovery === recovery &&
-            !record.confirmation &&
+            !record.confirmation.pending &&
             (recovery !== "draft" || !this.isLinked(record)))),
     );
   }
@@ -186,6 +182,7 @@ export class ComposerController {
           projectFiles: [],
           recovery: "reloaded",
           outcome: "unconfirmed",
+          confirmation: new ReceiptRead(),
         });
     } catch {
       this.unsupportedDeliveries.set(sessionId, "format");
@@ -235,9 +232,8 @@ export class ComposerController {
     }
     let deliveryOutcomeUnknown = false;
     for (const record of this.deliveries.values()) {
-      if (!record.confirmation) continue;
+      if (!record.confirmation.pending) continue;
       deliveryOutcomeUnknown = true;
-      record.confirmation?.abort();
       this.settleDelivery(record, "unknown");
     }
     if (deliveryOutcomeUnknown)
@@ -407,7 +403,7 @@ export class ComposerController {
     this.host.drafts.clear(sessionId);
     for (const [id, record] of this.deliveries) {
       if (record.identity.sessionId !== sessionId) continue;
-      record.confirmation?.abort();
+      record.confirmation.cancel();
       for (const item of record.attachments)
         attachments.set(item.localId, item);
       this.deliveries.delete(id);
@@ -427,10 +423,12 @@ export class ComposerController {
   ): Promise<PromptAcceptedResponse | false> {
     const {
       sessionId,
-      transcriptViewId,
-      transcriptIncarnation,
-      transcriptEffectiveLeafId,
-      composerHistoryVersion,
+      view: {
+        viewId: transcriptViewId,
+        incarnation: transcriptIncarnation,
+        effectiveLeafId: transcriptEffectiveLeafId,
+        composerHistoryVersion,
+      },
     } = this.host.state();
     const api = this.host.api();
     const authorityId = this.host.authorityId();
@@ -560,6 +558,7 @@ export class ComposerController {
       projectFiles,
       recovery: independent ? "palette" : "draft",
       outcome: "unconfirmed",
+      confirmation: new ReceiptRead(),
       historyScope:
         !independent && transcriptViewId && composerHistoryVersion
           ? {
@@ -621,7 +620,7 @@ export class ComposerController {
     const { authorityId, operationId, sessionId, fingerprint } =
       record.identity;
     const api = this.host.api();
-    if (!api || record.confirmation || record.outcome === "refused")
+    if (!api || record.confirmation.pending || record.outcome === "refused")
       return false;
     if (this.host.authorityId() !== authorityId) {
       this.host.notifyVisible(
@@ -630,79 +629,83 @@ export class ComposerController {
       );
       return false;
     }
-    const confirmation = new AbortController();
-    record.confirmation = confirmation;
-    const ownsTransport = () =>
-      this.host.api() === api &&
-      this.deliveries.get(operationId) === record &&
-      record.confirmation === confirmation;
-    try {
-      const response = request
-        ? await api.prompt(request, confirmation.signal, fingerprint)
-        : await api.observePrompt(
-            { authorityId, operationId, fingerprint },
-            confirmation.signal,
+    return record.confirmation.observe(api, async (signal) => {
+      const ownsTransport = () =>
+        !signal.aborted &&
+        this.host.api() === api &&
+        this.deliveries.get(operationId) === record;
+      try {
+        const response = request
+          ? await api.prompt(request, signal, fingerprint)
+          : await api.observePrompt(
+              { authorityId, operationId, fingerprint },
+              signal,
+            );
+        if (!ownsTransport()) return false;
+        if (record.historyScope)
+          rememberComposerHistory(
+            record.historyScope,
+            response.historyEntry ?? {
+              text: record.message.trim(),
+              images: [],
+              files: [],
+            },
           );
-      if (!ownsTransport()) return false;
-      if (record.historyScope)
-        rememberComposerHistory(
-          record.historyScope,
-          response.historyEntry ?? {
-            text: record.message.trim(),
-            images: [],
-            files: [],
-          },
-        );
-      this.finishDelivery(record, "accepted");
-      return { accepted: true, historyEntry: response.historyEntry };
-    } catch (error) {
-      if (!ownsTransport()) return false;
-      const rejection =
-        error instanceof ApiError && !error.outcomeUnknown ? error : null;
-      if (rejection) {
-        for (const item of record.attachments) {
-          const staged = this.stagedFiles.get(item.localId);
-          if (staged) staged.submitted = false;
+        this.finishDelivery(record, "accepted");
+        return { accepted: true, historyEntry: response.historyEntry };
+      } catch (error) {
+        if (!ownsTransport()) return false;
+        const rejection =
+          error instanceof ApiError && !error.outcomeUnknown ? error : null;
+        if (rejection) {
+          for (const item of record.attachments) {
+            const staged = this.stagedFiles.get(item.localId);
+            if (staged) staged.submitted = false;
+          }
         }
-      }
-      if (rejection?.code === "PROMPT_RECOVERED")
-        return this.returnDelivery(record, rejection);
-      if (rejection?.code === "PROMPT_CLEARED")
-        return this.finishDelivery(record, "cleared");
-      if (rejection?.code === "ATTACHMENTS_EXPIRED") {
-        for (const item of record.attachments) {
-          if (!item.uploadedId || !rejection.matches?.includes(item.uploadedId))
-            continue;
-          this.patchAttachment(
-            sessionId,
-            item.localId,
-            this.stagedFiles.has(item.localId)
-              ? { status: "uploading" }
-              : {
-                  status: "error",
-                  error:
-                    "This attachment is no longer available. Add it again.",
-                },
-          );
+        if (rejection?.code === "PROMPT_RECOVERED")
+          return this.returnDelivery(record, rejection);
+        if (rejection?.code === "PROMPT_CLEARED")
+          return this.finishDelivery(record, "cleared");
+        if (rejection?.code === "ATTACHMENTS_EXPIRED") {
+          for (const item of record.attachments) {
+            if (
+              !item.uploadedId ||
+              !rejection.matches?.includes(item.uploadedId)
+            )
+              continue;
+            this.patchAttachment(
+              sessionId,
+              item.localId,
+              this.stagedFiles.has(item.localId)
+                ? { status: "uploading" }
+                : {
+                    status: "error",
+                    error:
+                      "This attachment is no longer available. Add it again.",
+                  },
+            );
+          }
         }
+        this.settleDelivery(record, rejection ? "refused" : "unknown");
+        if (rejection?.code === "ATTACHMENTS_EXPIRED") this.resumeUploads();
+        if (rejection?.code === "PROMPT_ABORTED") return false;
+        if (error instanceof ApiError && error.status === 401) {
+          this.host.handleAuthFailure();
+        } else {
+          const message =
+            rejection?.message ??
+            (error instanceof ApiError &&
+            error.code === "ATTACH_CONTROL_OUTCOME_UNKNOWN"
+              ? "The attached Pi did not confirm delivery. Check its conversation before sending again."
+              : "Message delivery is unconfirmed. Retry checks its original receipt.");
+          if (record.recovery === "palette")
+            this.host.notify("warning", message);
+          else this.host.notifyVisible(sessionId, message);
+        }
+        return false;
       }
-      this.settleDelivery(record, rejection ? "refused" : "unknown");
-      if (rejection?.code === "ATTACHMENTS_EXPIRED") this.resumeUploads();
-      if (rejection?.code === "PROMPT_ABORTED") return false;
-      if (error instanceof ApiError && error.status === 401) {
-        this.host.handleAuthFailure();
-      } else {
-        const message =
-          rejection?.message ??
-          (error instanceof ApiError &&
-          error.code === "ATTACH_CONTROL_OUTCOME_UNKNOWN"
-            ? "The attached Pi did not confirm delivery. Check its conversation before sending again."
-            : "Message delivery is unconfirmed. Retry checks its original receipt.");
-        if (record.recovery === "palette") this.host.notify("warning", message);
-        else this.host.notifyVisible(sessionId, message);
-      }
-      return false;
-    }
+    });
   }
 
   private returnDelivery(record: DeliveryRecord, receipt: ApiError): false {
@@ -777,7 +780,7 @@ export class ComposerController {
     state: "unknown" | "refused",
   ): void {
     record.outcome = state === "refused" ? "refused" : "unconfirmed";
-    record.confirmation = undefined;
+    record.confirmation.cancel();
     if (this.isLinked(record)) {
       if (state === "refused") {
         const { sessionId, operationId } = record.identity;
@@ -828,7 +831,7 @@ export class ComposerController {
   detach(sessionId: string): void {
     const draft = this.host.drafts.get(sessionId);
     const record = this.currentDelivery(sessionId);
-    if (!record || record.confirmation) return;
+    if (!record || record.confirmation.pending) return;
     if (record.recovery === "reloaded") return this.forget(record);
     record.attachments = this.deliveryAttachments(record);
     const submittedIds = new Set(
@@ -907,14 +910,17 @@ export class ComposerController {
     scope: ComposerHistoryScope,
     entry: ComposerHistoryEntry,
   ): boolean {
-    const { sessionId, transcriptViewId } = this.host.state();
+    const {
+      sessionId,
+      view: { viewId: transcriptViewId },
+    } = this.host.state();
     if (sessionId !== scope.sessionId || transcriptViewId !== scope.viewId)
       return false;
     const draft = this.host.drafts.get(sessionId);
     const linked = draft.intentId
       ? this.deliveries.get(draft.intentId)
       : undefined;
-    if (linked?.confirmation) return false;
+    if (linked?.confirmation.pending) return false;
     this.releaseAttachments(
       draft.attachments.filter(
         (item) =>

@@ -96,7 +96,7 @@ it("attests native startup writes, keeps the worker usable, and admits an idle r
     type: "get_state",
   });
   expect(await f.runtime.snapshot(f.id)).toMatchObject({
-    runState: "idle",
+    sessionStatuses: { [f.id]: { runState: "idle" } },
     active: { thinkingLevel: nativeState.thinkingLevel },
   });
   await expect(f.runtime.setThinkingLevel(f.id, "off")).resolves.toMatchObject({
@@ -157,7 +157,7 @@ it.each([
     );
     const snapshot = await f.runtime.snapshot(f.id);
     expect(snapshot).toMatchObject({
-      runState: "failed",
+      sessionStatuses: { [f.id]: { runState: "failed" } },
       pendingExtensionUiRequests: [],
     });
     expect(JSON.stringify([snapshot, f.event.mock.calls])).not.toContain(

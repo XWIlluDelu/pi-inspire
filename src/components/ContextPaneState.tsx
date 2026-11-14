@@ -19,18 +19,15 @@ export function ContextPaneState({
   onRetry?: () => void;
 }) {
   return (
-    <div
-      className={className ? `res__state ${className}` : "res__state"}
-      role={role}
-    >
-      <div className="res__state-icon">{icon}</div>
-      <p className="res__state-title">{title}</p>
-      {hint ? <p className="res__state-hint">{hint}</p> : null}
+    <div className={`empty-state res__state ${className ?? ""}`} role={role}>
+      {icon}
+      <p className="empty-state__title">{title}</p>
+      {hint ? <p className="empty-state__hint">{hint}</p> : null}
       {children}
       {onRetry && (
         <button
           type="button"
-          className="res__more button--quiet res__state-action"
+          className="button button--quiet"
           onClick={onRetry}
         >
           <RotateCw size={12} aria-hidden /> Retry

@@ -1,469 +1,387 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import type { PromptAcceptedResponse } from "../../shared/contracts";
+import { afterEach, expect, it, vi } from "vitest";
+import type {
+  PromptAcceptedResponse,
+  UploadedAttachment,
+} from "../../shared/contracts";
 import { type Api, ApiError, ApiTransportError } from "../../src/api";
+import { emptyTranscriptView } from "../../src/app-state";
 import { ComposerController } from "../../src/controllers/composer-controller";
 import { SessionDrafts } from "../../src/session-drafts";
-import { deferred } from "./helpers";
+import { deferred, TEST_HOST_AUTHORITY } from "./helpers";
 
-function createHarness(
-  sessionId = "session-a",
-  transcriptViewId: string | null = null,
-  drafts = new SessionDrafts(),
-) {
-  let activeSessionId: string | null = sessionId;
-  const prompt = vi.fn();
-  const observePrompt = vi.fn();
-  const uploadAttachments = vi.fn();
-  const deleteAttachment = vi.fn().mockResolvedValue(undefined);
-  let authorityId = "11111111-1111-4111-8111-111111111111";
-  let api = {
-    prompt,
-    observePrompt,
-    uploadAttachments,
-    deleteAttachment,
-    attachmentPreview: vi
-      .fn()
-      .mockRejectedValue(new Error("Preview unavailable")),
-  } as unknown as Api;
-  const notify = vi.fn();
-  const notifyVisible = vi.fn();
-  const handleAuthFailure = vi.fn();
-  const controller = new ComposerController({
-    state: () => ({ sessionId: activeSessionId, transcriptViewId }),
-    api: () => api,
-    authorityId: () => authorityId,
-    drafts,
-    notify,
-    handleAuthFailure,
-    notifyVisible: (owner, message) => {
-      if (activeSessionId === owner) notifyVisible(message);
-    },
-  });
+const owner = "session-a";
+const other = "session-b";
+const nextAuthority = "22222222-2222-4222-8222-222222222222";
+const ledger = `inspire:composer-operations:v1:${owner}`;
+const accepted = {
+  accepted: true,
+  historyEntry: null,
+} satisfies PromptAcceptedResponse;
+const file = (name: string) => new File([name], name);
+
+function uploaded(
+  id: string,
+  fileName = `${id}.txt`,
+  kind: UploadedAttachment["kind"] = "file",
+): UploadedAttachment {
   return {
-    controller,
-    drafts,
-    prompt,
-    observePrompt,
-    uploadAttachments,
-    notify,
-    notifyVisible,
-    handleAuthFailure,
-    deleteAttachment,
-    replaceTransport: (replacement?: Api) => {
-      api = replacement ?? { ...api };
-      controller.invalidateForTransportReplacement();
-    },
-    replaceAuthority: (replacement: string) => {
-      authorityId = replacement;
-      api = { ...api };
-      controller.invalidateForTransportReplacement();
-    },
-    activate: (id: string | null) => {
-      activeSessionId = id;
-    },
-    send: (message: string, behavior?: "steer" | "followUp") => {
-      drafts.setText(activeSessionId, message);
-      return (
-        (activeSessionId && controller.retryIfTracking(activeSessionId)) ||
-        controller.send(message, behavior, drafts.get(activeSessionId))
-      );
-    },
-    slice: (id = sessionId) => {
-      const { attachments, projectFiles } = drafts.get(id);
-      return {
-        attachments,
-        projectFiles,
-        failedDeliveryCount: controller.deliveryState(id).failedCount,
-      };
-    },
+    id,
+    fileName,
+    kind,
+    mimeType: kind === "image" ? "image/png" : "text/plain",
+    size: 4,
   };
 }
 
-const acceptedPrompt: PromptAcceptedResponse = {
-  accepted: true,
-  historyEntry: null,
-};
-const receiptKey = "inspire:composer-operations:v1:session-a";
+function fixture() {
+  let sessionId = owner;
+  let authorityId = TEST_HOST_AUTHORITY;
+  const view = { ...emptyTranscriptView, viewId: "view-a" };
+  const drafts = new SessionDrafts();
+  const transport = {
+    prompt: vi.fn<Api["prompt"]>(),
+    observePrompt: vi.fn<Api["observePrompt"]>(),
+    uploadAttachments: vi.fn<Api["uploadAttachments"]>(),
+    deleteAttachment: vi
+      .fn<Api["deleteAttachment"]>()
+      .mockResolvedValue({ ok: true }),
+    attachmentPreview: vi
+      .fn<Api["attachmentPreview"]>()
+      .mockRejectedValue(new Error("Preview unavailable")),
+  };
+  let api = transport as unknown as Api;
+  const notice = vi.fn();
+  const authFailure = vi.fn();
+  const controller = new ComposerController({
+    state: () => ({ sessionId, view }),
+    authorityId: () => authorityId,
+    api: () => api,
+    drafts,
+    notify: (_kind, message) => notice(message),
+    notifyVisible: (id, message) => {
+      if (id === sessionId) notice(message);
+    },
+    handleAuthFailure: authFailure,
+  });
+  return {
+    ...transport,
+    controller,
+    notice,
+    authFailure,
+    draft: (id = owner) => drafts.get(id),
+    edit: (text: string) => drafts.setText(owner, text),
+    select: (id: string) => {
+      sessionId = id;
+    },
+    replaceTransport: (authority = authorityId) => {
+      authorityId = authority;
+      api = { ...api };
+      controller.invalidateForTransportReplacement();
+    },
+    send: (text: string, behavior?: "steer" | "followUp") => {
+      drafts.setText(sessionId, text);
+      return (
+        controller.retryIfTracking(sessionId) ??
+        controller.send(text, behavior, drafts.get(sessionId))
+      );
+    },
+    receipt: () => {
+      const [request, , fingerprint] = transport.prompt.mock.calls[0]!;
+      return {
+        operationId: request.operationId,
+        authorityId: request.authorityId,
+        fingerprint,
+      };
+    },
+    upload: (...attachments: UploadedAttachment[]) =>
+      transport.uploadAttachments.mockResolvedValueOnce({ attachments }),
+  };
+}
 
-describe("ComposerController", () => {
-  afterEach(() => vi.useRealTimers());
-  it("deduplicates each image in a handoff after a draft is removed, not the handle forever", () => {
-    const f = createHarness();
-    const authority = "11111111-1111-4111-8111-111111111111";
-    f.controller.reconcileAuthority(authority);
-    const image = (id: string) => ({
+afterEach(() => vi.useRealTimers());
+
+it("deduplicates images per recovery handoff, including removed handles", () => {
+  const f = fixture();
+  const first = uploaded("first", "first.png", "image");
+  const second = uploaded("second", "second.png", "image");
+  const returnImages = (id: string, ...items: UploadedAttachment[]) =>
+    f.controller.restoreStagedAttachments(
+      owner,
+      items,
+      TEST_HOST_AUTHORITY,
       id,
-      fileName: id + ".png",
-      mimeType: "image/png",
-      size: 4,
-      kind: "image" as const,
-    });
-    f.controller.restoreStagedAttachments(
-      "session-a",
-      [image("a")],
-      authority,
-      "first",
     );
-    f.controller.removeAttachment(f.slice().attachments[0]!.localId);
-    expect(f.slice().attachments).toEqual([]);
-    f.controller.restoreStagedAttachments(
-      "session-a",
-      [image("a"), image("b")],
-      authority,
-      "first",
-    );
-    expect(f.slice().attachments.map((item) => item.uploadedId)).toEqual(["b"]);
-    f.controller.restoreStagedAttachments(
-      "session-a",
-      [image("a")],
-      authority,
-      "next",
-    );
-    expect(f.slice().attachments.map((item) => item.uploadedId)).toEqual([
-      "a",
-      "b",
-    ]);
-  });
+  const handles = () => f.draft().attachments.map((item) => item.uploadedId);
+  returnImages("handoff", first);
+  f.controller.removeAttachment(f.draft().attachments[0]!.localId);
+  returnImages("handoff", first, second);
+  expect(handles()).toEqual(["second"]);
+  returnImages("next handoff", first);
+  expect(handles()).toEqual(["first", "second"]);
+});
 
-  it.each(["refused", "unknown"] as const)(
-    "restores the %s input without replacing the later draft",
-    async (outcome) => {
-      const f = createHarness();
-      const receipt = deferred<PromptAcceptedResponse>();
-      f.prompt
-        .mockReturnValueOnce(receipt.promise)
-        .mockResolvedValue(acceptedPrompt);
-      f.observePrompt.mockResolvedValue(acceptedPrompt);
-      f.controller.addProjectFile("/workspace/original.ts");
-      const sending = f.send("original", "steer");
-      const [original] = f.prompt.mock.calls[0]!;
-      expect(f.drafts.get("session-a")).toMatchObject({
-        text: "",
-        projectFiles: [],
-      });
-      f.drafts.setText("session-a", "later");
-      f.drafts.setText("session-a", "");
-      receipt.reject(
-        outcome === "unknown"
-          ? new ApiTransportError("request", true)
-          : new ApiError(409, "not delivered"),
+it.each(["refused", "unknown"] as const)(
+  "restores %s input only on explicit request after a draft edit back to empty",
+  async (outcome) => {
+    const f = fixture();
+    const reply = deferred<PromptAcceptedResponse>();
+    f.prompt.mockReturnValueOnce(reply.promise).mockResolvedValue(accepted);
+    f.observePrompt.mockResolvedValue(accepted);
+    f.controller.addProjectFile("original.ts");
+    const sending = f.send("original", "steer");
+    f.edit("later");
+    f.edit("");
+    reply.reject(
+      outcome === "refused"
+        ? new ApiError(409, "not delivered")
+        : new ApiTransportError("request", true),
+    );
+    expect(await sending).toBe(false);
+    expect(f.draft()).toMatchObject({ text: "", projectFiles: [] });
+    expect(f.controller.deliveryState(owner).failedCount).toBe(1);
+    expect(f.controller.restoreFailedPrompt(owner)).toBe(true);
+    expect(f.draft()).toMatchObject({
+      text: "original",
+      projectFiles: ["original.ts"],
+    });
+    expect(await f.send("original")).toEqual(accepted);
+    if (outcome === "unknown") {
+      expect(f.observePrompt).toHaveBeenCalledExactlyOnceWith(
+        f.receipt(),
+        expect.any(AbortSignal),
       );
-      await expect(sending).resolves.toBe(false);
-      expect(f.drafts.get("session-a").text).toBe("");
-      expect(f.slice().failedDeliveryCount).toBe(1);
-      expect(f.controller.restoreFailedPrompt("session-a")).toBe(true);
-      expect(f.drafts.get("session-a")).toMatchObject({
-        text: "original",
-        projectFiles: ["/workspace/original.ts"],
-      });
-      await f.send("original");
-      if (outcome === "unknown") {
-        expect(f.observePrompt).toHaveBeenCalledExactlyOnceWith(
-          {
-            operationId: original.operationId,
-            authorityId: original.authorityId,
-            fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/u),
-          },
-          expect.any(AbortSignal),
-        );
-        expect(f.prompt).toHaveBeenCalledOnce();
-      } else {
-        const [next] = f.prompt.mock.calls[1]!;
-        expect(next.operationId).not.toBe(original.operationId);
-      }
-    },
-  );
-
-  it.each(["PROMPT_RECOVERED", "PROMPT_CLEARED"] as const)(
-    "applies the Host's %s outcome to the original draft without restoring the text again",
-    async (code) => {
-      const response = deferred<PromptAcceptedResponse>();
-      const f = createHarness();
-      f.prompt.mockReturnValue(response.promise);
-      f.uploadAttachments.mockResolvedValue({
-        attachments: [
-          {
-            id: "image",
-            fileName: "image.png",
-            kind: "image",
-            mimeType: "image/png",
-            size: 4,
-          },
-        ],
-      });
-      await f.controller.addFiles([
-        new File(["data"], "image.png", { type: "image/png" }),
-      ]);
-      f.controller.addProjectFile("/workspace/pending.ts");
-      const sending = f.send("pending input", "steer");
-      f.controller.addProjectFile("/workspace/new-draft.ts");
-      f.activate("session-b");
-      response.reject(
-        new ApiError(409, "Pending input changed", undefined, code),
-      );
-
-      await expect(sending).resolves.toBe(false);
-      const recovered = code === "PROMPT_RECOVERED";
-      expect(f.slice("session-a")).toEqual({
-        projectFiles: recovered
-          ? ["/workspace/pending.ts", "/workspace/new-draft.ts"]
-          : ["/workspace/new-draft.ts"],
-        attachments: recovered
-          ? [expect.objectContaining({ uploadedId: "image", status: "ready" })]
-          : [],
-        failedDeliveryCount: 0,
-      });
-      expect(f.slice("session-b").attachments).toEqual([]);
-      expect(f.drafts.get("session-a").text).toBe("");
-      if (recovered) expect(f.deleteAttachment).not.toHaveBeenCalled();
-    },
-  );
-
-  it("preserves attachments and project files added during a send", async () => {
-    const pending = deferred<PromptAcceptedResponse>();
-    const harness = createHarness();
-    harness.prompt.mockReturnValue(pending.promise);
-    harness.uploadAttachments.mockResolvedValue({
-      attachments: [{ id: "next-file", fileName: "next.txt", kind: "file" }],
-    });
-    harness.controller.addProjectFile("/workspace/sent.ts");
-
-    const sending = harness.send("inspect this");
-    expect(harness.slice().projectFiles).toEqual([]);
-    harness.controller.addProjectFile("/workspace/next.ts");
-    await harness.controller.addFiles([
-      new File(["next"], "next.txt", { type: "text/plain" }),
-    ]);
-    pending.resolve(acceptedPrompt);
-
-    await expect(sending).resolves.toEqual({
-      accepted: true,
-      historyEntry: null,
-    });
-    expect(harness.prompt).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionId: "session-a",
-        message: "inspect this",
-        projectFiles: ["/workspace/sent.ts"],
-      }),
-      expect.any(AbortSignal),
-      expect.stringMatching(/^[a-f0-9]{64}$/u),
-    );
-    expect(harness.slice()).toEqual({
-      attachments: [
-        expect.objectContaining({
-          uploadedId: "next-file",
-          status: "ready",
-        }),
-      ],
-      projectFiles: ["/workspace/next.ts"],
-      failedDeliveryCount: 0,
-    });
-  });
-
-  it.each([
-    "background transport failure",
-    "current authorization failure",
-  ] as const)(
-    "keeps the draft in its own session after a %s",
-    async (reason) => {
-      const f = createHarness();
-      const expired = reason === "current authorization failure";
-      f.prompt.mockRejectedValue(
-        expired
-          ? new ApiError(401, "expired token")
-          : new ApiTransportError("request"),
-      );
-      f.controller.addProjectFile("/workspace/message.ts");
-
-      const sending = f.send("send");
-      if (!expired) f.activate("session-b");
-
-      await expect(sending).resolves.toBe(false);
-      expect(f.handleAuthFailure).toHaveBeenCalledTimes(expired ? 1 : 0);
-      expect(f.notifyVisible).not.toHaveBeenCalled();
-      expect(f.slice("session-a")).toEqual({
-        attachments: [],
-        projectFiles: ["/workspace/message.ts"],
-        failedDeliveryCount: 0,
-      });
-    },
-  );
-
-  it("retires confirmation polling without cancelling or losing the delivery", async () => {
-    const harness = createHarness();
-    const pending = deferred<PromptAcceptedResponse>();
-    const retry = deferred<PromptAcceptedResponse>();
-    harness.prompt.mockReturnValueOnce(pending.promise);
-    harness.observePrompt
-      .mockReturnValueOnce(retry.promise)
-      .mockResolvedValueOnce(acceptedPrompt);
-    harness.controller.addProjectFile("/workspace/kept.ts");
-    const sending = harness.send("synthetic prompt");
-    const [first, signal] = harness.prompt.mock.calls[0]!;
-    harness.replaceTransport();
-    expect(signal.aborted).toBe(true);
-    expect(harness.slice().projectFiles).toEqual(["/workspace/kept.ts"]);
-    const retrying = harness.send("synthetic prompt");
-    const [identity, retrySignal] = harness.observePrompt.mock.calls[0]!;
-    expect(identity).toEqual({
-      operationId: first.operationId,
-      authorityId: first.authorityId,
-      fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/u),
-    });
-    pending.resolve(acceptedPrompt);
-    await expect(sending).resolves.toBe(false);
-    expect(retrySignal.aborted).toBe(false);
-    harness.replaceTransport();
-    expect(retrySignal.aborted).toBe(true);
-    retry.resolve(acceptedPrompt);
-    await expect(retrying).resolves.toBe(false);
-    await expect(harness.send("synthetic prompt")).resolves.toEqual(
-      acceptedPrompt,
-    );
-    expect(harness.observePrompt.mock.calls[1]![0]).toEqual(identity);
-    expect(harness.prompt).toHaveBeenCalledOnce();
-  });
-
-  it("checks only the original receipt after editing and leaves the new input intact", async () => {
-    const f = createHarness();
-    f.prompt.mockRejectedValueOnce(new ApiTransportError("request"));
-    f.observePrompt.mockResolvedValue(acceptedPrompt);
-    f.controller.addProjectFile("plan.md");
-    await f.send("original");
-    f.drafts.setText("session-a", "");
-    f.controller.removeProjectFile("plan.md");
-    f.controller.addProjectFile("plan.md");
-    await f.controller.retryIfTracking("session-a");
-    const [original] = f.prompt.mock.calls[0]!;
-    expect(f.observePrompt).toHaveBeenCalledExactlyOnceWith(
-      {
-        operationId: original.operationId,
-        authorityId: original.authorityId,
-        fingerprint: f.prompt.mock.calls[0]![2],
-      },
-      expect.any(AbortSignal),
-    );
-    expect(f.drafts.get("session-a")).toMatchObject({
-      text: "",
-      projectFiles: ["plan.md"],
-      intentId: undefined,
-    });
-  });
-
-  it("requires explicit new input before sending the same text after a Host restart", async () => {
-    const f = createHarness();
-    f.prompt
-      .mockRejectedValueOnce(new ApiTransportError("request"))
-      .mockResolvedValue(acceptedPrompt);
-    await f.send("inspect first");
-    const [original] = f.prompt.mock.calls[0]!;
-    f.replaceAuthority("22222222-2222-4222-8222-222222222222");
-
-    await expect(f.send("inspect first")).resolves.toBe(false);
-    expect(f.prompt).toHaveBeenCalledTimes(1);
-    expect(f.notifyVisible).toHaveBeenLastCalledWith(
-      expect.stringContaining("Check the conversation"),
-    );
-    f.controller.detach("session-a");
-    expect(f.controller.deliveryState("session-a").previous).toBe(
-      original.operationId,
-    );
-    await expect(f.send("inspect first")).resolves.toEqual(acceptedPrompt);
-    const [next] = f.prompt.mock.calls[1]!;
-    expect(next.operationId).not.toBe(original.operationId);
-    expect(next.authorityId).toBe("22222222-2222-4222-8222-222222222222");
-  });
-
-  it("restores an unknown prompt after reload and reads only its original receipt", async () => {
-    const first = createHarness();
-    first.prompt.mockRejectedValue(new ApiTransportError("request"));
-    await first.send("Recover this exact input", "followUp");
-    const [original] = first.prompt.mock.calls[0]!;
-    const saved = JSON.parse(window.sessionStorage.getItem(receiptKey)!);
-    const fingerprint = first.prompt.mock.calls[0]![2];
-    expect(saved).toEqual([
-      {
-        authorityId: original.authorityId,
-        operationId: original.operationId,
-        fingerprint,
-      },
-    ]);
-    const next = createHarness();
-    const receipt = deferred<PromptAcceptedResponse>();
-    next.observePrompt.mockReturnValue(receipt.promise);
-    next.controller.loadDeliveries("session-a");
-    expect(next.drafts.get("session-a").text).toBe("Recover this exact input");
-    const checking = next.send("Recover this exact input");
-    await expect(next.controller.send("another request")).resolves.toBe(false);
-    receipt.resolve(acceptedPrompt);
-    await expect(checking).resolves.toEqual(acceptedPrompt);
-    expect(next.observePrompt).toHaveBeenCalledExactlyOnceWith(
-      {
-        operationId: original.operationId,
-        authorityId: original.authorityId,
-        fingerprint,
-      },
-      expect.any(AbortSignal),
-    );
-    expect(next.prompt).not.toHaveBeenCalled();
-    expect(next.drafts.get("session-a").text).toBe("Recover this exact input");
-  });
-
-  it("keeps existing receipt records when publishing another prompt fails", async () => {
-    const f = createHarness();
-    f.prompt.mockRejectedValueOnce(new ApiTransportError("request"));
-    await f.send("original");
-    f.controller.detach("session-a");
-    const saved = window.sessionStorage.getItem(receiptKey);
-    expect(saved).toContain(f.prompt.mock.calls[0]![0].operationId);
-    const storage = window.sessionStorage;
-    const writes = vi.spyOn(window, "sessionStorage", "get").mockReturnValue({
-      getItem: storage.getItem.bind(storage),
-      removeItem: storage.removeItem.bind(storage),
-      setItem(item: string, value: string) {
-        if (item === receiptKey)
-          throw new DOMException("quota", "QuotaExceededError");
-        storage.setItem(item, value);
-      },
-    } as Storage);
-    try {
-      await expect(f.send("new draft")).resolves.toBe(false);
       expect(f.prompt).toHaveBeenCalledOnce();
-      expect(window.sessionStorage.getItem(receiptKey)).toBe(saved);
-      expect(f.drafts.get("session-a").text).toBe("new draft");
-      expect(f.controller.deliveryState("session-a").storageIssue).toBe(
-        "storage",
+    } else {
+      expect(f.observePrompt).not.toHaveBeenCalled();
+      expect(f.prompt.mock.calls[1]?.[0].operationId).not.toBe(
+        f.receipt().operationId,
       );
-    } finally {
-      writes.mockRestore();
     }
-  });
+  },
+);
 
-  it("retains an unreadable receipt until the user explicitly stops tracking it", async () => {
-    const f = createHarness();
-    window.sessionStorage.setItem(receiptKey, JSON.stringify([{ old: true }]));
-    await expect(f.send("new draft")).resolves.toBe(false);
-    expect(f.prompt).not.toHaveBeenCalled();
-    expect(f.observePrompt).not.toHaveBeenCalled();
-    expect(f.controller.deliveryState("session-a").storageIssue).toBe("format");
-    expect(window.sessionStorage.getItem(receiptKey)).toContain("old");
-    f.controller.forgetUnsupportedDeliveries("session-a");
-    expect(window.sessionStorage.getItem(receiptKey)).toBeNull();
-    f.prompt.mockResolvedValue(acceptedPrompt);
-    await expect(f.send("new draft")).resolves.toEqual(acceptedPrompt);
-  });
-
-  it("retains recalled artifacts after a refused send and releases the displaced draft", async () => {
-    const f = createHarness("session-a", "view-a");
-    f.uploadAttachments.mockResolvedValue({
-      attachments: [{ id: "draft-file", fileName: "draft.txt", kind: "file" }],
+it.each(["accepted", "PROMPT_RECOVERED", "PROMPT_CLEARED"] as const)(
+  "keeps newer staging in the original session after %s",
+  async (outcome) => {
+    const f = fixture();
+    const reply = deferred<PromptAcceptedResponse>();
+    f.prompt.mockReturnValue(reply.promise);
+    f.upload(uploaded("sent", "sent.png", "image"));
+    f.upload(uploaded("next"));
+    await f.controller.addFiles([
+      new File(["data"], "sent.png", { type: "image/png" }),
+    ]);
+    f.controller.addProjectFile("sent.ts");
+    const sending = f.send("pending input", "steer");
+    f.controller.addProjectFile("next.ts");
+    await f.controller.addFiles([file("next.txt")]);
+    f.select(other);
+    if (outcome === "accepted") reply.resolve(accepted);
+    else
+      reply.reject(
+        new ApiError(409, "Pending input changed", undefined, outcome),
+      );
+    const returned = outcome === "PROMPT_RECOVERED";
+    expect(await sending).toEqual(outcome === "accepted" ? accepted : false);
+    expect(f.draft()).toMatchObject({
+      text: "",
+      projectFiles: returned ? ["sent.ts", "next.ts"] : ["next.ts"],
     });
-    await f.controller.addFiles([new File(["draft"], "draft.txt")]);
-    const reference = "pi-history-image://entry-4/1";
+    expect(f.draft().attachments.map((item) => item.uploadedId)).toEqual(
+      returned ? ["sent", "next"] : ["next"],
+    );
+    expect(f.draft(other)).toMatchObject({
+      text: "",
+      projectFiles: [],
+      attachments: [],
+    });
+    expect(f.controller.deliveryState(owner).failedCount).toBe(0);
+    expect(f.deleteAttachment.mock.calls).toEqual(
+      outcome === "PROMPT_CLEARED" ? [["sent"]] : [],
+    );
+  },
+);
+
+it.each(["background transport", "current authorization"] as const)(
+  "keeps draft ownership without a stray notice after %s fails",
+  async (failure) => {
+    const f = fixture();
+    const unauthorized = failure === "current authorization";
+    f.prompt.mockRejectedValue(
+      unauthorized
+        ? new ApiError(401, "expired token")
+        : new ApiTransportError("request"),
+    );
+    f.controller.addProjectFile("message.ts");
+    const sending = f.send("send");
+    if (!unauthorized) f.select(other);
+    expect(await sending).toBe(false);
+    expect(f.draft()).toMatchObject({
+      text: "send",
+      projectFiles: ["message.ts"],
+    });
+    expect(f.authFailure).toHaveBeenCalledTimes(unauthorized ? 1 : 0);
+    expect(f.notice).not.toHaveBeenCalled();
+  },
+);
+
+it("resumes the same observation after a replaced transport and never clears intervening edits", async () => {
+  const f = fixture();
+  const submission = deferred<PromptAcceptedResponse>();
+  const read = deferred<PromptAcceptedResponse>();
+  f.prompt.mockReturnValue(submission.promise);
+  f.observePrompt.mockReturnValueOnce(read.promise).mockResolvedValue(accepted);
+  f.controller.addProjectFile("plan.md");
+  const sending = f.send("original");
+  f.replaceTransport();
+  expect(f.prompt.mock.calls[0]![1]?.aborted).toBe(true);
+  expect(f.draft()).toMatchObject({
+    text: "original",
+    intentId: f.receipt().operationId,
+    projectFiles: ["plan.md"],
+  });
+  f.edit("");
+  f.controller.removeProjectFile("plan.md");
+  f.controller.addProjectFile("plan.md");
+  const observing = f.controller.retryIfTracking(owner);
+  submission.resolve(accepted);
+  expect(await sending).toBe(false);
+  const [identity, signal] = f.observePrompt.mock.calls[0]!;
+  expect(signal?.aborted).toBe(false);
+  f.replaceTransport();
+  expect(signal?.aborted).toBe(true);
+  read.resolve(accepted);
+  expect(await observing).toBe(false);
+  expect(await f.controller.retryIfTracking(owner)).toEqual(accepted);
+  expect(f.observePrompt.mock.calls.map(([receipt]) => receipt)).toEqual([
+    f.receipt(),
+    identity,
+  ]);
+  expect(f.prompt).toHaveBeenCalledOnce();
+  expect(f.draft()).toMatchObject({
+    text: "",
+    intentId: undefined,
+    projectFiles: ["plan.md"],
+  });
+});
+
+it("reloads an unresolved receipt without replaying its prompt or clearing its saved text", async () => {
+  const original = fixture();
+  original.prompt.mockRejectedValue(new ApiTransportError("request"));
+  await original.send("unconfirmed", "followUp");
+  expect(JSON.parse(sessionStorage.getItem(ledger)!)).toEqual([
+    original.receipt(),
+  ]);
+
+  const reopened = fixture();
+  reopened.controller.loadDeliveries(owner);
+  expect(reopened.draft().text).toBe("unconfirmed");
+  expect(await reopened.controller.send("another request")).toBe(false);
+  reopened.observePrompt.mockResolvedValue(accepted);
+  expect(await reopened.send("unconfirmed")).toEqual(accepted);
+  expect(reopened.observePrompt).toHaveBeenCalledExactlyOnceWith(
+    original.receipt(),
+    expect.any(AbortSignal),
+  );
+  expect(reopened.prompt).not.toHaveBeenCalled();
+  expect(reopened.draft().text).toBe("unconfirmed");
+  expect(sessionStorage.getItem(ledger)).toBeNull();
+});
+
+it.each([false, true])(
+  "stages fresh bytes only after explicitly leaving an unconfirmed identical send (Host restarted: %s)",
+  async (restarted) => {
+    const f = fixture();
+    const originalFile = file("kept.txt");
+    f.upload(uploaded("original", originalFile.name));
+    f.upload(uploaded("restaged", originalFile.name));
+    await f.controller.addFiles([originalFile]);
+    f.replaceTransport();
+    f.controller.reconcileAuthority(TEST_HOST_AUTHORITY);
+    f.controller.resumeUploads();
+    expect(f.uploadAttachments).toHaveBeenCalledOnce();
+    f.prompt
+      .mockRejectedValueOnce(new ApiTransportError("request", true))
+      .mockResolvedValue(accepted);
+    await f.send("same caption");
+    if (restarted) {
+      f.replaceTransport(nextAuthority);
+      expect(await f.send("same caption")).toBe(false);
+      expect(f.notice).toHaveBeenLastCalledWith(
+        expect.stringContaining("Check the conversation"),
+      );
+      expect(f.observePrompt).not.toHaveBeenCalled();
+    }
+    expect(f.prompt).toHaveBeenCalledOnce();
+    f.controller.detach(owner);
+    await vi.waitFor(() =>
+      expect(f.draft().attachments[0]?.status).toBe("ready"),
+    );
+    expect(f.deleteAttachment).not.toHaveBeenCalled();
+    expect(f.uploadAttachments.mock.calls[1]![0]).toEqual([originalFile]);
+    expect(await f.send("same caption")).toEqual(accepted);
+    const next = f.prompt.mock.calls[1]![0];
+    expect(next).toMatchObject({
+      authorityId: restarted ? nextAuthority : TEST_HOST_AUTHORITY,
+      attachmentIds: ["restaged"],
+    });
+    expect(next.operationId).not.toBe(f.receipt().operationId);
+    expect(f.controller.deliveryState(owner).previous).toBe(
+      f.receipt().operationId,
+    );
+  },
+);
+
+it("preserves existing receipt records when tab storage refuses a new operation", async () => {
+  const f = fixture();
+  f.prompt.mockRejectedValueOnce(new ApiTransportError("request"));
+  await f.send("original");
+  f.controller.detach(owner);
+  const saved = sessionStorage.getItem(ledger);
+  expect(saved).toContain(f.receipt().operationId);
+  const storage = window.sessionStorage;
+  const writes = vi.spyOn(window, "sessionStorage", "get").mockReturnValue({
+    getItem: storage.getItem.bind(storage),
+    removeItem: storage.removeItem.bind(storage),
+    setItem(key: string, value: string) {
+      if (key === ledger) throw new DOMException("quota", "QuotaExceededError");
+      storage.setItem(key, value);
+    },
+  } as Storage);
+  try {
+    expect(await f.send("new draft")).toBe(false);
+    expect(f.prompt).toHaveBeenCalledOnce();
+    expect(sessionStorage.getItem(ledger)).toBe(saved);
+    expect(f.draft().text).toBe("new draft");
+    expect(f.controller.deliveryState(owner).storageIssue).toBe("storage");
+  } finally {
+    writes.mockRestore();
+  }
+});
+
+it("keeps unreadable receipt records until the editor explicitly stops tracking them", async () => {
+  const f = fixture();
+  const old = '[{"old":true}]';
+  sessionStorage.setItem(ledger, old);
+  expect(await f.send("new draft")).toBe(false);
+  expect(f.prompt).not.toHaveBeenCalled();
+  expect(f.controller.deliveryState(owner).storageIssue).toBe("format");
+  expect(sessionStorage.getItem(ledger)).toBe(old);
+  f.controller.forgetUnsupportedDeliveries(owner);
+  expect(sessionStorage.getItem(ledger)).toBeNull();
+  f.prompt.mockResolvedValue(accepted);
+  expect(await f.send("new draft")).toEqual(accepted);
+});
+
+it("retains a recalled image after a refused send while releasing the displaced upload", async () => {
+  const f = fixture();
+  f.upload(uploaded("displaced"));
+  await f.controller.addFiles([file("displaced.txt")]);
+  const reference = "pi-history-image://entry-4/1";
+  expect(
     f.controller.useHistoryEntry(
       {
-        sessionId: "session-a",
+        sessionId: owner,
         viewId: "view-a",
         incarnation: "projection-a",
         effectiveLeafId: "leaf-a",
@@ -474,270 +392,169 @@ describe("ComposerController", () => {
         images: [{ reference, mimeType: "image/png", size: 12 }],
         files: [],
       },
-    );
-    f.prompt.mockRejectedValue(new ApiError(409, "not delivered"));
-    await expect(f.send("recalled")).resolves.toBe(false);
-    expect(f.deleteAttachment).toHaveBeenCalledWith("draft-file");
-    expect(f.slice().attachments).toMatchObject([
-      { recalledArtifact: { type: "image", reference } },
-    ]);
-  });
+    ),
+  ).toBe(true);
+  f.prompt.mockRejectedValue(new ApiError(409, "not delivered"));
+  expect(await f.send("recalled")).toBe(false);
+  expect(f.deleteAttachment).toHaveBeenCalledExactlyOnceWith("displaced");
+  expect(f.draft().attachments).toMatchObject([
+    { recalledArtifact: { type: "image", reference } },
+  ]);
+});
 
-  it.each(["staged", "failed delivery"])(
-    "restores a browser-held %s upload in its inactive partition after Host replacement",
-    async (location) => {
-      const harness = createHarness();
-      harness.uploadAttachments.mockResolvedValue({
-        attachments: [
-          { id: "old-upload", fileName: "draft.txt", kind: "file" },
-        ],
-      });
-      await harness.controller.addFiles([new File(["draft"], "draft.txt")]);
-      if (location === "staged") {
-        harness.replaceTransport();
-        harness.controller.reconcileAuthority(
-          "11111111-1111-4111-8111-111111111111",
-        );
-        harness.controller.resumeUploads();
-        expect(harness.slice().attachments[0]).toMatchObject({
-          status: "ready",
-          uploadedId: "old-upload",
-        });
-        expect(harness.uploadAttachments).toHaveBeenCalledOnce();
-      }
-      if (location === "failed delivery") {
-        harness.prompt.mockRejectedValue(new ApiError(409, "not sent"));
-        const sending = harness.send("send");
-        harness.drafts.setText("session-a", "newer");
-        harness.drafts.setText("session-a", "");
-        await sending;
-      }
-      harness.activate("session-b");
-      const nextAuthority = "22222222-2222-4222-8222-222222222222";
-      harness.uploadAttachments.mockResolvedValue({
-        attachments: [
-          { id: "new-upload", fileName: "draft.txt", kind: "file" },
-        ],
-      });
-      harness.replaceAuthority(nextAuthority);
-      harness.controller.reconcileAuthority(nextAuthority);
-      harness.controller.resumeUploads();
-      harness.controller.restoreFailedPrompt("session-a");
-      await vi.waitFor(() =>
-        expect(harness.slice().attachments[0]).toMatchObject({
-          status: "ready",
-          uploadedId: "new-upload",
-          uploadedAuthorityId: nextAuthority,
-        }),
-      );
-      expect(harness.uploadAttachments.mock.calls[1]![0][0]).toBe(
-        harness.uploadAttachments.mock.calls[0]![0][0],
-      );
-      expect(harness.slice("session-b").attachments).toEqual([]);
-      harness.activate("session-a");
-      harness.prompt.mockClear();
-      harness.prompt.mockResolvedValue(acceptedPrompt);
-      await expect(harness.send("send")).resolves.toEqual(acceptedPrompt);
-      expect(harness.prompt.mock.calls[0]![0]).toMatchObject({
-        authorityId: nextAuthority,
-        attachmentIds: ["new-upload"],
-      });
-    },
+it("restages browser-held bytes from a failed delivery in its inactive partition after Host replacement", async () => {
+  const f = fixture();
+  const draftFile = file("draft.txt");
+  f.upload(uploaded("old-upload", draftFile.name));
+  f.upload(uploaded("new-upload", draftFile.name));
+  await f.controller.addFiles([draftFile]);
+  f.prompt
+    .mockRejectedValueOnce(new ApiError(409, "not sent"))
+    .mockResolvedValue(accepted);
+  const sending = f.send("send");
+  f.edit("newer");
+  f.edit("");
+  expect(await sending).toBe(false);
+  f.select(other);
+  f.replaceTransport(nextAuthority);
+  f.controller.reconcileAuthority(nextAuthority);
+  expect(f.controller.restoreFailedPrompt(owner)).toBe(true);
+  await vi.waitFor(() =>
+    expect(f.draft().attachments[0]).toMatchObject({
+      status: "ready",
+      uploadedId: "new-upload",
+      uploadedAuthorityId: nextAuthority,
+    }),
   );
+  expect(f.uploadAttachments.mock.calls[1]![0]).toEqual([draftFile]);
+  expect(f.draft(other).attachments).toEqual([]);
+  f.select(owner);
+  expect(await f.send("send")).toEqual(accepted);
+  expect(f.prompt.mock.calls[1]![0]).toMatchObject({
+    authorityId: nextAuthority,
+    attachmentIds: ["new-upload"],
+  });
+});
 
-  it("restages only definitively expired files without replaying the refused prompt", async () => {
-    const harness = createHarness();
-    harness.uploadAttachments.mockResolvedValue({
-      attachments: ["expired", "valid"].map((id) => ({
-        id,
-        fileName: `${id}.txt`,
-        kind: "file",
-      })),
-    });
-    await harness.controller.addFiles([
-      new File(["old"], "expired.txt"),
-      new File(["new"], "valid.txt"),
-    ]);
-    const replacement = deferred<{
-      attachments: Array<{ id: string; fileName: string; kind: "file" }>;
-    }>();
-    harness.uploadAttachments.mockReturnValue(replacement.promise);
-    harness.prompt.mockRejectedValue(
+it("restages only definitively expired handles and waits for another deliberate send", async () => {
+  const f = fixture();
+  const expired = file("expired.txt");
+  f.upload(uploaded("expired"), uploaded("valid"));
+  await f.controller.addFiles([expired, file("valid.txt")]);
+  const replacement = deferred<{ attachments: UploadedAttachment[] }>();
+  f.uploadAttachments.mockReturnValueOnce(replacement.promise);
+  f.prompt
+    .mockRejectedValueOnce(
       new ApiError(
         409,
         "Attachments expired",
         ["expired"],
         "ATTACHMENTS_EXPIRED",
       ),
-    );
-    await expect(harness.send("send")).resolves.toBe(false);
-    expect(harness.slice().attachments.map((item) => item.status)).toEqual([
-      "uploading",
-      "ready",
-    ]);
-    expect(harness.uploadAttachments).toHaveBeenCalledTimes(2);
-    expect(harness.uploadAttachments.mock.calls[1]![0]).toEqual([
-      harness.uploadAttachments.mock.calls[0]![0][0],
-    ]);
-    await expect(harness.send("send")).resolves.toBe(false);
-    expect(harness.prompt).toHaveBeenCalledOnce();
-    replacement.resolve({
-      attachments: [{ id: "renewed", fileName: "expired.txt", kind: "file" }],
-    });
-    await vi.waitFor(() =>
-      expect(harness.slice().attachments[0]?.status).toBe("ready"),
-    );
-    expect(harness.prompt).toHaveBeenCalledOnce();
-    harness.prompt.mockResolvedValue(acceptedPrompt);
-    await harness.send("send");
-    expect(harness.prompt.mock.calls[1]![0].attachmentIds).toEqual([
-      "renewed",
-      "valid",
-    ]);
-  });
-
-  it.each(["refused", "incomplete"] as const)(
-    "blocks delivery after a %s batch and reclaims any partial handles",
-    async (outcome) => {
-      const harness = createHarness();
-      if (outcome === "incomplete") {
-        harness.uploadAttachments.mockResolvedValue({
-          attachments: [{ id: "partial", fileName: "one.txt", kind: "file" }],
-        });
-      } else {
-        harness.uploadAttachments.mockRejectedValue(
-          new ApiError(400, "Unsupported file"),
-        );
-      }
-      await harness.controller.addFiles([
-        new File(["one"], "one.txt", { type: "text/plain" }),
-        new File(["two"], "two.txt", { type: "text/plain" }),
-      ]);
-      expect(harness.deleteAttachment.mock.calls).toEqual(
-        outcome === "incomplete" ? [["partial"]] : [],
-      );
-      expect(harness.slice().attachments.map(({ status }) => status)).toEqual([
-        "error",
-        "error",
-      ]);
-      await expect(harness.send("send")).resolves.toBe(false);
-      expect(harness.notify).toHaveBeenCalledWith(
-        "warning",
-        "Retry or remove failed attachments before sending",
-      );
-      expect(harness.prompt).not.toHaveBeenCalled();
-    },
+    )
+    .mockResolvedValue(accepted);
+  expect(await f.send("send")).toBe(false);
+  expect(f.draft().attachments.map(({ status }) => status)).toEqual([
+    "uploading",
+    "ready",
+  ]);
+  expect(f.uploadAttachments.mock.calls[1]![0]).toEqual([expired]);
+  expect(await f.send("send")).toBe(false);
+  replacement.resolve({ attachments: [uploaded("renewed", expired.name)] });
+  await vi.waitFor(() =>
+    expect(f.draft().attachments[0]?.status).toBe("ready"),
   );
+  expect(f.prompt).toHaveBeenCalledOnce();
+  expect(await f.send("send")).toEqual(accepted);
+  expect(f.prompt.mock.calls[1]![0].attachmentIds).toEqual([
+    "renewed",
+    "valid",
+  ]);
+});
 
-  it.each(["withdrawal", "retry"] as const)(
-    "keeps a timed-out upload pending and handles %s without replaying the prompt",
-    async (action) => {
-      vi.useFakeTimers();
-      const harness = createHarness();
-      const file = new File(["retained"], "retained.txt");
-      harness.uploadAttachments.mockRejectedValue(
-        new ApiTransportError("request", true, true),
+it.each(["refused", "incomplete"] as const)(
+  "blocks sending a %s upload batch and reclaims any partial handles",
+  async (outcome) => {
+    const f = fixture();
+    if (outcome === "incomplete") f.upload(uploaded("partial", "one.txt"));
+    else
+      f.uploadAttachments.mockRejectedValue(
+        new ApiError(400, "Unsupported file"),
       );
-      await harness.controller.addFiles([file]);
-      const item = harness.slice().attachments[0]!;
-      expect(item).toMatchObject({ status: "uploading", error: undefined });
-      await expect(harness.send("message")).resolves.toBe(false);
+    await f.controller.addFiles([file("one.txt"), file("two.txt")]);
+    expect(f.deleteAttachment.mock.calls).toEqual(
+      outcome === "incomplete" ? [["partial"]] : [],
+    );
+    expect(f.draft().attachments.map(({ status }) => status)).toEqual([
+      "error",
+      "error",
+    ]);
+    expect(await f.send("send")).toBe(false);
+    expect(f.notice).toHaveBeenLastCalledWith(
+      "Retry or remove failed attachments before sending",
+    );
+    expect(f.prompt).not.toHaveBeenCalled();
+  },
+);
 
-      if (action === "withdrawal") {
-        harness.controller.removeAttachment(item.localId);
-        await vi.advanceTimersByTimeAsync(14_000);
-        expect(harness.uploadAttachments).toHaveBeenCalledOnce();
-        expect(harness.prompt).not.toHaveBeenCalled();
-        harness.prompt.mockResolvedValue(acceptedPrompt);
-        await expect(harness.send("message")).resolves.toEqual(acceptedPrompt);
-        return;
-      }
-      await vi.advanceTimersByTimeAsync(14_000);
-      expect(harness.uploadAttachments).toHaveBeenCalledTimes(4);
-      expect(harness.slice().attachments[0]).toMatchObject({
+it.each(["withdrawal", "retry"] as const)(
+  "holds the draft during a transient upload failure until %s",
+  async (action) => {
+    vi.useFakeTimers();
+    const f = fixture();
+    const originalFile = file("retained.txt");
+    f.uploadAttachments.mockRejectedValue(
+      new ApiTransportError("request", true, true),
+    );
+    await f.controller.addFiles([originalFile]);
+    const item = f.draft().attachments[0]!;
+    expect(item.status).toBe("uploading");
+    expect(await f.send("message")).toBe(false);
+    if (action === "withdrawal") f.controller.removeAttachment(item.localId);
+    await vi.advanceTimersByTimeAsync(14_000);
+    expect(f.uploadAttachments).toHaveBeenCalledTimes(
+      action === "withdrawal" ? 1 : 4,
+    );
+    expect(f.prompt).not.toHaveBeenCalled();
+    if (action === "retry") {
+      expect(f.draft().attachments[0]).toMatchObject({
         status: "error",
         retryable: true,
       });
-      harness.uploadAttachments.mockResolvedValue({
-        attachments: [{ id: "recovered", fileName: file.name, kind: "file" }],
-      });
-      await harness.controller.retryAttachment(item.localId);
-      expect(harness.uploadAttachments.mock.calls.at(-1)![0][0]).toBe(file);
-      expect(harness.slice().attachments[0]).toMatchObject({
+      f.upload(uploaded("recovered", originalFile.name));
+      await f.controller.retryAttachment(item.localId);
+      expect(f.uploadAttachments.mock.calls.at(-1)![0]).toEqual([originalFile]);
+      expect(f.draft().attachments[0]).toMatchObject({
         localId: item.localId,
         status: "ready",
         uploadedId: "recovered",
       });
-      expect(harness.prompt).not.toHaveBeenCalled();
-    },
-  );
+    }
+    f.prompt.mockResolvedValue(accepted);
+    expect(await f.send("message")).toEqual(accepted);
+  },
+);
 
-  it("stages a new handle for an identical file after explicitly leaving uncertain delivery", async () => {
-    const f = createHarness();
-    const file = new File(["kept"], "kept.txt");
-    f.uploadAttachments
-      .mockResolvedValueOnce({
-        attachments: [{ id: "original", fileName: file.name, kind: "file" }],
-      })
-      .mockResolvedValueOnce({
-        attachments: [{ id: "restaged", fileName: file.name, kind: "file" }],
-      });
-    await f.controller.addFiles([file]);
-    f.prompt
-      .mockRejectedValueOnce(new ApiTransportError("request", true))
-      .mockResolvedValue(acceptedPrompt);
-    await f.send("same caption");
-    f.controller.detach("session-a");
-    await vi.waitFor(() =>
-      expect(f.drafts.get("session-a").attachments[0]?.status).toBe("ready"),
+it.each(["withdrawal", "transport replacement"] as const)(
+  "retires the whole upload only when no current owner remains after %s",
+  async (action) => {
+    const f = fixture();
+    const reply = deferred<{ attachments: UploadedAttachment[] }>();
+    f.uploadAttachments.mockReturnValue(reply.promise);
+    const staging = f.controller.addFiles([file("one.txt"), file("two.txt")]);
+    const signal = f.uploadAttachments.mock.calls[0]![1]!;
+    if (action === "withdrawal") {
+      const [first, second] = f.draft().attachments;
+      f.controller.removeAttachment(first!.localId);
+      expect(signal.aborted).toBe(false);
+      f.controller.removeAttachment(second!.localId);
+    } else f.replaceTransport();
+    expect(signal.aborted).toBe(true);
+    reply.resolve({ attachments: [uploaded("one"), uploaded("two")] });
+    await staging;
+    expect(f.deleteAttachment.mock.calls).toEqual([["one"], ["two"]]);
+    expect(f.draft().attachments.map(({ status }) => status)).toEqual(
+      action === "withdrawal" ? [] : ["uploading", "uploading"],
     );
-    expect(f.deleteAttachment).not.toHaveBeenCalled();
-    expect(f.uploadAttachments.mock.calls[1]![0]).toEqual([file]);
-    await f.send("same caption");
-    const [first, second] = f.prompt.mock.calls.map(([request]) => request);
-    expect(second.operationId).not.toBe(first.operationId);
-    expect(second.attachmentIds).toEqual(["restaged"]);
-    expect(f.controller.deliveryState("session-a").previous).toBe(
-      first.operationId,
-    );
-  });
-
-  it.each(["withdrawal", "transport replacement"] as const)(
-    "reclaims late upload handles after %s",
-    async (action) => {
-      const harness = createHarness();
-      const pending = deferred<{
-        attachments: Array<{ id: string; fileName: string; kind: "file" }>;
-      }>();
-      harness.uploadAttachments.mockReturnValue(pending.promise);
-      const names = ["one.txt", "two.txt"];
-      const uploading = harness.controller.addFiles(
-        names.map((name) => new File([name], name)),
-      );
-      const signal = harness.uploadAttachments.mock.calls[0]![1] as AbortSignal;
-      if (action === "withdrawal") {
-        const [first, second] = harness.slice().attachments;
-        harness.controller.removeAttachment(first!.localId);
-        expect(signal.aborted).toBe(false);
-        harness.controller.removeAttachment(second!.localId);
-      } else {
-        harness.replaceTransport();
-      }
-      expect(signal.aborted).toBe(true);
-      pending.resolve({
-        attachments: names.map((name) => ({
-          id: name,
-          fileName: name,
-          kind: "file",
-        })),
-      });
-      await uploading;
-      expect(harness.deleteAttachment.mock.calls).toEqual(
-        names.map((name) => [name]),
-      );
-      expect(harness.slice().attachments.map(({ status }) => status)).toEqual(
-        action === "withdrawal" ? [] : ["uploading", "uploading"],
-      );
-    },
-  );
-});
+  },
+);

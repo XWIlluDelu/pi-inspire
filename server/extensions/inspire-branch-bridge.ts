@@ -15,13 +15,10 @@ import {
   MODEL_REFRESH_TIMEOUT_MS,
   PENDING_IMAGE_SUFFIX,
   RETRY_STATE_SUFFIX,
-  UI_RELOAD_SUFFIX,
   type RetryStateRequest,
   type RetryStateResult,
+  UI_RELOAD_SUFFIX,
 } from "../../shared/branch-bridge-protocol.js";
-
-import { nativeEntryDigest } from "../native-entry-digest.js";
-import { userMessageEvidence } from "../pending-image-evidence.js";
 import { MAX_SESSION_ID_CHARS } from "../../shared/contracts.js";
 import {
   CHECKPOINT_CHUNK_CHARS,
@@ -31,6 +28,8 @@ import {
   NATIVE_START_SUFFIX,
   type WorkerCheckpoint,
 } from "../../shared/worker-checkpoint.js";
+import { nativeEntryDigest } from "../native-entry-digest.js";
+import { userMessageEvidence } from "../pending-image-evidence.js";
 import { registerProviderAuthBridge } from "./provider-auth-bridge.js";
 
 const CHECKPOINT_STATE = Symbol.for("inspire.worker-checkpoint");
@@ -218,6 +217,11 @@ export default function inspireBranchBridge(pi: ExtensionAPI): void {
     checkpoint.run += 1;
   });
   pi.on("turn_start", (_event, ctx) => {
+    publish(ctx, "turn");
+  });
+  pi.on("context", (_event, ctx) => {
+    // Pi has persisted the input by the time it assembles model context.
+    // Adopt that input before the response so its saved actions are available.
     publish(ctx, "turn");
   });
   pi.on("agent_settled", (_event, ctx) => {

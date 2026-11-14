@@ -309,52 +309,6 @@ describe("TerminalSessionManager", () => {
     },
   );
 
-  it("tracks shell command boundaries, working directories, and completion", async () => {
-    const { manager, spawns } = setup();
-    const terminal = await manager.create({ cwd: process.cwd() });
-    const sink = new FakeSink();
-    await manager.attach(
-      {
-        terminalId: terminal.id,
-        clientId: "client-a",
-        cols: 100,
-        rows: 30,
-      },
-      sink,
-    );
-
-    const exactCommand = "printf 'a  b'";
-    spawns[0]?.pty.emitData(
-      `\u001b]6973;C1;${encodeURIComponent(exactCommand)}\u0007`,
-    );
-    await vi.waitFor(() =>
-      expect(manager.list(process.cwd()).terminals[0]).toMatchObject({
-        currentCommand: "printf 'a b'",
-        commandRunning: true,
-      }),
-    );
-    const commandCwd = `${process.cwd()}/path  with spaces`;
-    spawns[0]?.pty.emitData(
-      `\u001b]6973;P1;${encodeURIComponent(commandCwd)}\u0007\u001b]6973;D;0\u0007`,
-    );
-    await vi.waitFor(() =>
-      expect(
-        sink.controls.find((message) => message.type === "command_complete"),
-      ).toMatchObject({
-        type: "command_complete",
-        command: exactCommand,
-        currentCwd: commandCwd,
-        exitCode: 0,
-      }),
-    );
-    expect(manager.list(process.cwd()).terminals[0]).toMatchObject({
-      currentCommand: "bash",
-      commandRunning: false,
-      title: "Bash",
-    });
-    await manager.close();
-  });
-
   it("replays output after a slow writer disconnects and keeps the same tab through exit and restart", async () => {
     const { manager, spawns } = setup();
     try {

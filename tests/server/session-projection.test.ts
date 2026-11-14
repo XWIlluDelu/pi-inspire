@@ -23,7 +23,6 @@ import {
   SessionProjection,
   type SessionProjectionReadHooks,
   TRANSCRIPT_PAGE_MAX_BYTES,
-  TRANSCRIPT_PAGE_MAX_MESSAGES,
 } from "../../server/session-projection.js";
 import { ATTACHMENT_CONTEXT_HEADING } from "../../shared/attachment-context.js";
 import { collectSessionResourceReferences } from "../../shared/resource-references.js";
@@ -299,7 +298,12 @@ describe("SessionProjection framing and last-good state", () => {
 
     await writeFile(
       path,
-      `${[header(), { ...first, message: { ...first.message, content: "rewritten" } }, second, branch].map((entry) => JSON.stringify(entry)).join("\n")}\n`,
+      jsonl(
+        header(),
+        { ...first, message: { ...first.message, content: "rewritten" } },
+        second,
+        branch,
+      ),
     );
     await projection.reconcile(true);
     expect(projection.latestPage().composerHistoryVersion).not.toBe(branched);
@@ -411,8 +415,6 @@ describe("SessionProjection framing and last-good state", () => {
         changed: true,
         kind: "append",
         previousTailVerified: true,
-        appendedEntries: entries,
-        previousLeafId: null,
         uncommittedBytes: 0,
         health: { status: "ok" },
       });
@@ -774,7 +776,8 @@ describe("SessionProjection replacement and Pi context semantics", () => {
     try {
       await expect(projection.reconcileSuspended(true)).resolves.toMatchObject({
         changed: false,
-        verifiedUnchangedContent: true,
+        sourceChanged: false,
+        health: { status: "ok" },
       });
 
       vi.mocked(open).mockRejectedValueOnce(
@@ -788,60 +791,6 @@ describe("SessionProjection replacement and Pi context semantics", () => {
         healthChanged: true,
         health: { status: "ok" },
       });
-    } finally {
-      projection.resumeReconciliation();
-      await projection.close();
-    }
-  });
-
-  it("detects append, same-size edits and source replacement without a watch notification", async () => {
-    const first = message("u1", null, "user", "one", 1);
-    const second = message("a1", "u1", "assistant", "two", 2);
-    const { directory, path, projection } = await fixture([first]);
-    await projection.suspendReconciliation();
-    try {
-      await appendFile(path, `${JSON.stringify(second)}\n`);
-      await expect(projection.reconcileSuspended(true)).resolves.toMatchObject({
-        changed: true,
-        kind: "append",
-      });
-      expect(projection.messages).toHaveLength(2);
-
-      const before = await stat(path);
-      const edited = message("u1", null, "user", "ONE", 1);
-      await writeFile(path, jsonl(header(), edited, second));
-      await utimes(path, before.atime, before.mtime);
-      await expect(projection.reconcileSuspended()).resolves.toMatchObject({
-        changed: true,
-        kind: "rewrite",
-      });
-      expect(projection.messages[0]).toMatchObject({ content: "ONE" });
-
-      const third = message("u2", "a1", "user", "three", 3);
-      await writeFile(path, jsonl(header(), first, second, third));
-      await expect(projection.reconcileSuspended()).resolves.toMatchObject({
-        changed: true,
-        kind: "rewrite",
-      });
-      expect(
-        projection.messages.map(
-          (entry) => (entry as { content: unknown }).content,
-        ),
-      ).toEqual(["one", "two", "three"]);
-
-      const replacement = join(directory, "replacement.jsonl");
-      await writeFile(replacement, await readFile(path));
-      await rename(replacement, path);
-      const atomic = await projection.reconcileSuspended();
-      expect(atomic).toMatchObject({ changed: false, sourceChanged: true });
-      expect(atomic.verifiedUnchangedContent).toBeUndefined();
-
-      await truncate(path, Buffer.byteLength(jsonl(header())));
-      await expect(projection.reconcileSuspended(true)).resolves.toMatchObject({
-        changed: true,
-        kind: "rewrite",
-      });
-      expect(projection.messages).toEqual([]);
     } finally {
       projection.resumeReconciliation();
       await projection.close();
@@ -891,9 +840,11 @@ describe("SessionProjection replacement and Pi context semantics", () => {
     );
     await projection.suspendReconciliation();
     try {
+      const before = await stat(path);
       await writeFile(path, jsonl(header(), entry("B".repeat(size))));
+      await utimes(path, before.atime, before.mtime);
       pause = true;
-      const reconciling = projection.reconcileSuspended(true);
+      const reconciling = projection.reconcileSuspended();
       await entered.promise;
       const content = "C".repeat(size);
       await writeFile(path, jsonl(header(), entry(content)));
@@ -903,6 +854,12 @@ describe("SessionProjection replacement and Pi context semantics", () => {
         health: { status: "ok" },
       });
       expect(projection.messages[0]).toMatchObject({ content });
+      await truncate(path, Buffer.byteLength(jsonl(header())));
+      await expect(projection.reconcileSuspended()).resolves.toMatchObject({
+        kind: "rewrite",
+        changed: true,
+      });
+      expect(projection.messages).toEqual([]);
     } finally {
       release.resolve();
       projection.resumeReconciliation();
@@ -912,60 +869,31 @@ describe("SessionProjection replacement and Pi context semantics", () => {
 });
 
 describe("SessionProjection bounded paging", () => {
-  it("pages more than 10 MiB of history within the transcript byte budget", async () => {
+  it("pages a native turn over 10 MiB across equal-timestamp results and saved outcomes", async () => {
     const body = "z".repeat(480_000);
-    const lines = Array.from({ length: 24 }, (_, index) =>
+    const lines = Array.from({ length: 120 }, (_, index) =>
       message(
-        `m${index}`,
-        index ? `m${index - 1}` : null,
-        index % 2 ? "assistant" : "user",
-        body,
-        index + 1,
+        `result-${index}`,
+        index ? `result-${index - 1}` : "private",
+        "toolResult",
+        index < 24 ? body : `Result ${index}`,
+        2,
+        {
+          toolCallId: `call-${index}`,
+          toolName: "read",
+        },
       ),
     );
-    const { projection } = await fixture(lines);
-    let page = projection.historyPage({ kind: "page" });
-    const firstRevision = page.revision;
-    const received: unknown[] = [];
-    expect(page.earlier).not.toBeNull();
-    for (;;) {
-      expect(page.revision).toBe(firstRevision);
-      expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThanOrEqual(
-        TRANSCRIPT_PAGE_MAX_BYTES,
-      );
-      received.unshift(...page.messages);
-      if (!page.earlier) break;
-      page = projection.historyPage({ kind: "page", cursor: page.earlier });
-    }
-    expect(received).toMatchObject(
-      Array.from({ length: 24 }, (_, index) => ({
-        __inspireEntryId: `m${index}`,
-      })),
-    );
-  }, 30_000);
-
-  it("keeps saved outcomes, extension review, and paired calls reachable", async () => {
-    const call = {
-      type: "toolCall",
-      id: "read-call",
-      name: "read",
-      arguments: {},
-    };
-    const lines = [
-      message("u1", null, "user", "inspect activity", 1),
-      message("a1", "u1", "assistant", "old response", 2),
-      message("tool", "a1", "assistant", [call], 3),
-      message("result", "tool", "toolResult", "done", 4, {
-        toolCallId: call.id,
-      }),
+    const { record, projection: initial } = await fixture([
+      message("user", null, "user", "Read", 1),
       message(
-        "thought",
-        "result",
+        "call",
+        "user",
         "assistant",
-        [{ type: "thinking", thinking: "planning" }],
-        5,
+        [{ type: "toolCall", id: "call-0", name: "read", arguments: {} }],
+        2,
       ),
-      message("error", "thought", "assistant", [], 6, {
+      message("error", "call", "assistant", [], 2, {
         stopReason: "error",
         errorMessage: "fetch failed",
       }),
@@ -974,80 +902,69 @@ describe("SessionProjection bounded paging", () => {
         "error",
         "assistant",
         [{ type: "thinking", thinking: "partial" }],
-        7,
-        {
-          stopReason: "aborted",
-          errorMessage: "interrupted",
-        },
+        2,
+        { stopReason: "aborted", errorMessage: "interrupted" },
       ),
       {
         type: "custom_message",
         id: "review",
         parentId: "aborted",
-        timestamp: new Date(8).toISOString(),
+        timestamp: new Date(2).toISOString(),
         customType: "review",
         content: "Visible extension review",
         details: { source: "extension" },
         display: true,
       },
-      message("private", "review", "custom", "private context", 9, {
+      message("private", "review", "custom", "private context", 2, {
         display: false,
       }),
-      ...Array.from({ length: TRANSCRIPT_PAGE_MAX_MESSAGES }, (_, index) =>
-        message(
-          `tail-${index}`,
-          index ? `tail-${index - 1}` : "private",
-          "assistant",
-          "answer",
-          index + 100,
+      ...lines,
+    ]);
+    await initial.close();
+    const projection = await openProjection(record);
+    let page = projection.historyPage({ kind: "page" });
+    const firstRevision = page.revision;
+    const received: string[] = [];
+    expect(page.earlier).not.toBeNull();
+    for (;;) {
+      expect(page.revision).toBe(firstRevision);
+      expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThanOrEqual(
+        TRANSCRIPT_PAGE_MAX_BYTES,
+      );
+      received.unshift(
+        ...page.messages.map(
+          (row) => (row as { __inspireEntryId: string }).__inspireEntryId,
         ),
-      ),
-    ];
-    const { projection, record } = await fixture(lines);
-    await projection.close();
-    const reopened = await openProjection(record);
-    const page = reopened.historyPage({ kind: "page", entryId: "u1" });
-    expect(page.messages).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ role: "toolResult", toolCallId: call.id }),
-        expect.objectContaining({
-          stopReason: "error",
-          errorMessage: "fetch failed",
-        }),
-        expect.objectContaining({
-          stopReason: "aborted",
-          errorMessage: "interrupted",
-        }),
-        expect.objectContaining({
-          role: "custom",
-          content: "Visible extension review",
-        }),
-      ]),
-    );
-  });
-
-  it("keeps equal-timestamp tool results distinct across native pages", async () => {
-    const lines = Array.from({ length: 120 }, (_, index) =>
-      message(
-        `tr${index}`,
-        index ? `tr${index - 1}` : null,
-        "toolResult",
-        `result-${index}`,
-        1,
-        { toolCallId: `call-${index}`, toolName: "read" },
-      ),
-    );
-    const { projection } = await fixture(lines);
-    const first = projection.historyPage({ kind: "page" });
-    const second = projection.historyPage({
+      );
+      if (!page.earlier) break;
+      page = projection.historyPage({ kind: "page", cursor: page.earlier });
+    }
+    expect(received).toEqual([
+      "user",
+      "call",
+      "error",
+      "aborted",
+      "review",
+      "private",
+      ...lines.map(({ id }) => id),
+    ]);
+    const earliest = projection.historyPage({
       kind: "page",
-      cursor: first.earlier!,
+      entryId: "user",
+    }).messages;
+    expect(earliest.slice(0, 6)).toMatchObject([
+      { role: "user" },
+      { content: [{ id: "call-0" }] },
+      { stopReason: "error", errorMessage: "fetch failed" },
+      { stopReason: "aborted", errorMessage: "interrupted" },
+      { role: "custom", content: "Visible extension review" },
+      { role: "custom", display: false },
+    ]);
+    expect(earliest[6]).toMatchObject({
+      role: "toolResult",
+      toolCallId: "call-0",
     });
-    const ids = [...second.messages, ...first.messages].map(
-      (row) => (row as { __inspireEntryId: string }).__inspireEntryId,
-    );
-    expect(ids).toEqual(lines.map(({ id }) => id));
-  });
+  }, 30_000);
 
   it("keeps a native cursor pinned through appends and compaction, then rejects replaced sources", async () => {
     const lines = Array.from({ length: 22 }, (_, index) =>
@@ -1089,7 +1006,11 @@ describe("SessionProjection bounded paging", () => {
     const replacement = join(directory, "replacement.jsonl");
     await writeFile(replacement, await readFile(path));
     await rename(replacement, path);
-    await projection.reconcile(true);
+    await expect(projection.reconcile(true)).resolves.toMatchObject({
+      kind: "rewrite",
+      changed: false,
+      sourceChanged: true,
+    });
     expect(() =>
       projection.historyPage(query, projection.leafId, "view-a"),
     ).toThrow(/stale/);

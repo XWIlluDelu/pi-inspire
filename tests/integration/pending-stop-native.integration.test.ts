@@ -3,14 +3,10 @@
 import { expect, it, vi } from "vitest";
 import { selectedRunState } from "../../src/app-state";
 import { AppStore } from "../../src/store";
-import {
-  disposeOperationFixture,
-  fixture,
-} from "../server/fixtures/native-operation";
 import { deferred, FakeWebSocket, installFakeWebSocket } from "../web/helpers";
+import { disposeOperationFixture, fixture } from "./native/operation-fixture";
 
 it("shares concurrent Stop requests and reclaims both lost handoffs while stopping a later native run", async () => {
-  const browserWindow = window;
   const gate = deferred<void>();
   let f: Awaited<ReturnType<typeof fixture>> | undefined;
   let store: AppStore | undefined;
@@ -18,7 +14,6 @@ it("shares concurrent Stop requests and reclaims both lost handoffs while stoppi
   let releaseView: (() => void) | undefined;
   try {
     f = await fixture(false, 35_000, gate.promise);
-    vi.stubGlobal("window", browserWindow);
     installFakeWebSocket();
     const bridge = fetch;
     let receiptsUnavailable = true;
@@ -80,7 +75,7 @@ it("shares concurrent Stop requests and reclaims both lost handoffs while stoppi
       expect(selectedRunState(store!.getState())).toBe("aborted"),
     );
     expect(store.drafts.get(f.sessionId).text).toBe("newer draft");
-    expect(store.getState().notices).toContainEqual(
+    expect(store.getState().live.notices).toContainEqual(
       expect.objectContaining({
         text: expect.stringContaining("Pending recovery failed"),
       }),
@@ -92,9 +87,10 @@ it("shares concurrent Stop requests and reclaims both lost handoffs while stoppi
     expect(selectedRunState(store.getState())).toBe("running");
     await store.abort();
     await vi.waitFor(async () =>
-      expect((await f!.runtime.snapshot(f!.sessionId)).runState).toBe(
-        "aborted",
-      ),
+      expect(
+        (await f!.runtime.snapshot(f!.sessionId)).sessionStatuses[f!.sessionId]
+          ?.runState,
+      ).toBe("aborted"),
     );
     await vi.waitFor(() => {
       const draft = store!.drafts.get(f!.sessionId).text.split("\n\n");

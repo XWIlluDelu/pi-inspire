@@ -3,18 +3,17 @@ import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 import type { Express } from "express";
 import { WebSocket, WebSocketServer } from "ws";
-import { z } from "zod";
 import { BROWSER_UPGRADE_CLOSE } from "../shared/browser-build.mjs";
 import { hostEndpoints as routes } from "../shared/host-endpoints.js";
 import type { OperationReceipt } from "../shared/host-operations.js";
 import {
   decodeTerminalInputFrame,
   MAX_TERMINAL_INPUT_BYTES,
-  type TerminalClientControlMessage,
 } from "../shared/terminal-contracts.js";
 import {
   TERMINAL_OPERATIONS_PATH,
-  terminalDimensionsSchema,
+  terminalAttachTicketSchema,
+  terminalControlSchema,
   terminalOperationIdentitySchema,
   terminalOperationSchema,
   terminalReceiptIdentity,
@@ -27,31 +26,6 @@ import type {
   TerminalConnection,
   TerminalService,
 } from "./terminal-service.js";
-
-const terminalAttachSchema = z
-  .object({
-    type: z.literal("attach"),
-    ticket: z.string().uuid(),
-    clientId: z.string().min(1).max(128),
-    ...terminalDimensionsSchema,
-    outputEpoch: z.string().min(1).max(80).optional(),
-    nextOutputOffset: z
-      .number()
-      .int()
-      .nonnegative()
-      .max(Number.MAX_SAFE_INTEGER)
-      .optional(),
-    resizeRevision: z.number().int().nonnegative().max(0xffffffff).optional(),
-    ownerToken: z.string().min(1).max(128).optional(),
-  })
-  .strict();
-const terminalControlSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("resize"), ...terminalDimensionsSchema }).strict(),
-  z
-    .object({ type: z.literal("take_control"), ...terminalDimensionsSchema })
-    .strict(),
-  z.object({ type: z.literal("ping") }).strict(),
-]);
 
 const TERMINAL_ATTACH_TICKET_TTL_MS = 15_000;
 const MAX_TERMINAL_ATTACH_TICKETS = 2_048;
@@ -326,9 +300,9 @@ export function createTerminalGateway(
           socket.close(1008, "Terminal attach required");
           return;
         }
-        let request: z.infer<typeof terminalAttachSchema>;
+        let request: ReturnType<typeof terminalAttachTicketSchema.parse>;
         try {
-          request = terminalAttachSchema.parse(
+          request = terminalAttachTicketSchema.parse(
             JSON.parse(Buffer.from(raw as ArrayBuffer).toString("utf8")),
           );
         } catch {
@@ -383,7 +357,7 @@ export function createTerminalGateway(
         } else {
           const message = terminalControlSchema.parse(
             JSON.parse(Buffer.from(raw as ArrayBuffer).toString("utf8")),
-          ) as Exclude<TerminalClientControlMessage, { type: "attach" }>;
+          );
           attachment.control(message);
         }
       } catch (error) {

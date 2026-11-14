@@ -1,7 +1,6 @@
 import { Bell, FileText, MoreHorizontal, X } from "lucide-react";
 import {
   type DragEvent,
-  type KeyboardEvent,
   type MouseEvent,
   useLayoutEffect,
   useRef,
@@ -10,9 +9,12 @@ import {
 import type { TerminalDescriptor } from "../../shared/terminal-contracts";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import { ChoicePanel } from "./ChoicePanel";
+import { OptionList, useOptionList } from "./OptionList";
+import { SearchField } from "./SearchField";
 
 interface DocumentTab {
   id: string;
+  panel: string;
   label: string;
   title: string;
   selected: boolean;
@@ -27,8 +29,7 @@ export type FileDockTab = DocumentTab & {
 
 export type TerminalDockTab = DocumentTab & {
   kind: "terminal";
-  status: TerminalDescriptor["status"];
-  open: boolean;
+  terminal: TerminalDescriptor;
   unread: boolean;
   bell: boolean;
   rename?: {
@@ -38,9 +39,8 @@ export type TerminalDockTab = DocumentTab & {
     cancel(): void;
   };
   beginRename(): void;
-  keyDown(event: KeyboardEvent<HTMLButtonElement>): void;
-  drag(): void;
-  drop(event: DragEvent<HTMLDivElement>): void;
+  move(direction: -1 | 1): void;
+  drop(from: string, position: "before" | "after"): void;
 };
 
 type DockTab = FileDockTab | TerminalDockTab;
@@ -55,11 +55,13 @@ function selector(tab: DockTab) {
 
 function DockTabButton({
   tab,
-  focused,
+  drag,
+  drop,
   onClose,
 }: {
   tab: DockTab;
-  focused: boolean;
+  drag(id: string): void;
+  drop(tab: TerminalDockTab, event: DragEvent<HTMLDivElement>): void;
   onClose(event: MouseEvent<HTMLButtonElement>): void;
 }) {
   const terminal = tab.kind === "terminal" ? tab : null;
@@ -68,15 +70,15 @@ function DockTabButton({
     <div
       className="dock-tab"
       data-selected={tab.selected || undefined}
-      role={terminal ? "presentation" : undefined}
+      role="presentation"
       draggable={Boolean(terminal)}
-      onDragStart={terminal?.drag}
+      onDragStart={terminal ? () => drag(terminal.id) : undefined}
       onDragOver={terminal ? (event) => event.preventDefault() : undefined}
-      onDrop={terminal?.drop}
+      onDrop={terminal ? (event) => drop(terminal, event) : undefined}
     >
       {rename ? (
         <input
-          className="inline-rename-input dock-tab__rename"
+          className="text-field dock-tab__rename"
           value={rename.value}
           autoFocus
           size={1}
@@ -96,21 +98,12 @@ function DockTabButton({
           type="button"
           id={terminal ? `terminal-tab-${terminal.id}` : undefined}
           className="dock-tab__select"
-          {...(focused
-            ? { "aria-pressed": tab.selected }
-            : { role: "tab" as const, "aria-selected": tab.selected })}
+          role="tab"
+          aria-selected={tab.selected}
           data-terminal-focus-trigger={terminal ? true : undefined}
           data-dock-tab={tabKey(tab)}
           aria-label={`${tab.label}${terminal?.unread ? ", new output" : ""}${terminal?.bell ? ", bell" : ""}`}
-          aria-controls={
-            !terminal
-              ? "context-file-content"
-              : !focused
-                ? "context-terminal-content"
-                : terminal.open
-                  ? `terminal-view-${terminal.id}`
-                  : undefined
-          }
+          aria-controls={tab.panel}
           aria-keyshortcuts={
             terminal
               ? "Control+Shift+ArrowLeft Control+Shift+ArrowRight Meta+Shift+ArrowLeft Meta+Shift+ArrowRight"
@@ -124,7 +117,18 @@ function DockTabButton({
             } else tab.select();
           }}
           onDoubleClick={terminal?.beginRename}
-          onKeyDown={terminal?.keyDown}
+          onKeyDown={(event) => {
+            if (
+              !terminal ||
+              isComposingKeyboardEvent(event.nativeEvent) ||
+              !event.shiftKey ||
+              !(event.ctrlKey || event.metaKey) ||
+              (event.key !== "ArrowLeft" && event.key !== "ArrowRight")
+            )
+              return;
+            event.preventDefault();
+            terminal.move(event.key === "ArrowRight" ? 1 : -1);
+          }}
           title={terminal ? `${tab.label} — ${tab.title}` : tab.title}
         >
           {!terminal ? (
@@ -132,7 +136,7 @@ function DockTabButton({
           ) : (
             <span className="dock-tab__icon" aria-hidden>
               <span
-                className={`terminal-tab__status terminal-tab__status--${terminal.status}`}
+                className={`terminal-tab__status terminal-tab__status--${terminal.terminal.status}`}
               />
             </span>
           )}
@@ -158,30 +162,38 @@ function DockTabButton({
   );
 }
 
-export function ContextTabStrip({
-  tabs,
-  focused = false,
-  active = true,
-}: {
-  tabs: readonly DockTab[];
-  focused?: boolean;
-  active?: boolean;
-}) {
+export function ContextTabStrip({ tabs }: { tabs: readonly DockTab[] }) {
   const stripRef = useRef<HTMLDivElement>(null);
+  const dragged = useRef<string | null>(null);
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
+  const list = useOptionList<DockTab>();
   const selected = tabs.find((tab) => tab.selected);
   const activeSelector = selected ? selector(selected) : null;
+  const drag = (id: string) => {
+    dragged.current = id;
+  };
+  const drop = (target: TerminalDockTab, event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const from = dragged.current;
+    dragged.current = null;
+    if (!from) return;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    target.drop(
+      from,
+      event.clientX > bounds.left + bounds.width / 2 ? "after" : "before",
+    );
+  };
   const focusTab = (target: string) =>
     requestAnimationFrame(() =>
       stripRef.current
-        ?.closest(".ctx__tabs")
+        ?.closest('[role="tablist"]')
         ?.querySelector<HTMLElement>(target)
         ?.focus(),
     );
   useLayoutEffect(() => {
     const strip = stripRef.current;
-    if (!strip || !active || !activeSelector) return;
+    if (!strip || !activeSelector) return;
     const reveal = () =>
       strip
         .querySelector(activeSelector)
@@ -190,20 +202,15 @@ export function ContextTabStrip({
     const observer = new ResizeObserver(reveal);
     observer.observe(strip);
     return () => observer.disconnect();
-  }, [active, activeSelector]);
+  }, [activeSelector]);
   const strip = (
-    <div
-      className="dock-tabs__scroll"
-      {...(focused
-        ? { role: "toolbar" as const, "aria-label": "Project terminals" }
-        : {})}
-      ref={stripRef}
-    >
+    <div className="dock-tabs__scroll" ref={stripRef}>
       {tabs.map((tab) => (
         <DockTabButton
           key={tabKey(tab)}
           tab={tab}
-          focused={focused}
+          drag={drag}
+          drop={drop}
           onClose={(event) => {
             const restoreFocus =
               tab.kind === "file" &&
@@ -215,62 +222,76 @@ export function ContextTabStrip({
       ))}
     </div>
   );
-  if (focused) return strip;
+  if (!tabs.length) return null;
   const filter = query.trim().toLocaleLowerCase();
-  const matching = tabs.filter((tab) =>
-    `${tab.label} ${tab.title}`.toLocaleLowerCase().includes(filter),
-  );
+  const options = tabs
+    .filter((tab) =>
+      `${tab.label} ${tab.title}`.toLocaleLowerCase().includes(filter),
+    )
+    .map((tab) => ({
+      key: tabKey(tab),
+      value: tab,
+      selected: tab.selected,
+      title: tab.title,
+      label: tab.label,
+    }));
   const setMenuOpen = (next: boolean) => {
     setOpen(next);
-    if (!next) setQuery("");
+    if (!next) {
+      setQuery("");
+      list.reset();
+    }
+  };
+  const pick = (tab: DockTab) => {
+    tab.select();
+    setMenuOpen(false);
+    focusTab(selector(tab));
   };
   return (
     <div className="dock-tabs">
       {strip}
       {tabs.length > 1 && (
-        <div className="ctx__tab-overflow">
-          <ChoicePanel
+        <ChoicePanel
+          label="Open tabs"
+          open={open}
+          setOpen={setMenuOpen}
+          trigger={<MoreHorizontal size={16} aria-hidden />}
+        >
+          <SearchField
+            aria-label="Find open tab"
+            placeholder="Find open tab"
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded={open}
+            aria-controls={list.id}
+            aria-activedescendant={list.descendant(options)}
+            value={query}
+            onValueChange={(value) => {
+              setQuery(value);
+              list.reset(true);
+            }}
+            onKeyDown={(event) =>
+              list.navigate(event, options, pick, { edges: true })
+            }
+          />
+          <OptionList
+            list={list}
+            options={options}
             label="Open tabs"
-            open={open}
-            setOpen={setMenuOpen}
-            trigger={<MoreHorizontal size={16} aria-hidden />}
-            className="ctx__open-tabs-menu"
+            onPick={pick}
+            optionButtons
+            plain
+            optionClass="dock-tab-option"
+            renderOption={({ value: tab }) => (
+              <>
+                {tab.label}
+                {tab.title !== tab.label && <small>{tab.title}</small>}
+              </>
+            )}
           >
-            <input
-              aria-label="Find open tab"
-              placeholder="Find open tab"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "ArrowDown") {
-                  event.preventDefault();
-                  event.currentTarget.nextElementSibling
-                    ?.querySelector("button")
-                    ?.focus();
-                }
-              }}
-            />
-            <div className="ctx__open-tab-results">
-              {matching.length === 0 && <p>No matching tabs</p>}
-              {matching.map((tab) => (
-                <button
-                  key={tabKey(tab)}
-                  type="button"
-                  aria-current={tab.selected || undefined}
-                  title={tab.title}
-                  onClick={() => {
-                    tab.select();
-                    setMenuOpen(false);
-                    focusTab(selector(tab));
-                  }}
-                >
-                  {tab.label}
-                  {tab.title !== tab.label && <small>{tab.title}</small>}
-                </button>
-              ))}
-            </div>
-          </ChoicePanel>
-        </div>
+            {!options.length && <p role="status">No matching tabs</p>}
+          </OptionList>
+        </ChoicePanel>
       )}
     </div>
   );

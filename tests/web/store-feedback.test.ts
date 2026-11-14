@@ -25,7 +25,7 @@ describe("feedback scope", () => {
     });
     const { store } = await initStore();
     await store.abort();
-    expect(store.getState().notices).toEqual([
+    expect(store.getState().live.notices).toEqual([
       expect.objectContaining({
         kind: "info",
         text: expect.stringContaining(
@@ -62,12 +62,12 @@ describe("feedback scope", () => {
     await store.clearPending();
     expect(requested).toEqual(failedActions);
     expect(store.getState().error).toBe(warning);
-    const notices = store.getState().notices;
+    const notices = store.getState().live.notices;
     expect(notices).toHaveLength(2);
     unavailable = false;
     await store.refreshSession();
     expect(store.getState().error).toBeNull();
-    expect(store.getState().notices).toEqual(notices);
+    expect(store.getState().live.notices).toEqual(notices);
   });
 
   it.each([false, true])(
@@ -153,11 +153,13 @@ describe("feedback scope", () => {
       );
       expect(store.getState()).toMatchObject({
         error: null,
-        notices: [],
-        extensionUiRespondingId: null,
+        live: {
+          notices: [],
+          extensionUiRespondingId: null,
+        },
       });
       if (outcome === "changed session")
-        expect(store.getState().extensionUiRequests).toMatchObject([
+        expect(store.getState().live.extensionUiRequests).toMatchObject([
           { sessionId: "s2", id: "choice" },
         ]);
     },

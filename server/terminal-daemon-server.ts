@@ -2,11 +2,12 @@ import { chmod, lstat, rm } from "node:fs/promises";
 import type { Socket } from "node:net";
 import { dirname } from "node:path";
 import { createServer, type Server } from "node:tls";
+import { decodeTerminalInputFrame } from "../shared/terminal-contracts.js";
 import {
-  decodeTerminalInputFrame,
-  type TerminalClientControlMessage,
-} from "../shared/terminal-contracts.js";
-import { terminalOperationSchema } from "../shared/terminal-operations.js";
+  terminalAttachmentSchema,
+  terminalControlSchema,
+  terminalOperationSchema,
+} from "../shared/terminal-operations.js";
 import { ensurePrivateDirectory } from "./private-directory.js";
 import type { TerminalDaemonInfo } from "./terminal-daemon-configuration.js";
 import {
@@ -31,10 +32,7 @@ import {
   TerminalIpcDecoder,
   type TerminalIpcFrame,
 } from "./terminal-ipc.js";
-import type {
-  TerminalAttachment,
-  TerminalAttachOptions,
-} from "./terminal-service.js";
+import type { TerminalAttachment } from "./terminal-service.js";
 import {
   type TerminalService,
   TerminalServiceError,
@@ -204,13 +202,7 @@ export class TerminalDaemonServer {
         if (asRecord(message).type === "terminal_daemon_detach") {
           attachment.detach();
           socket.end();
-        } else
-          attachment.control(
-            message as Exclude<
-              TerminalClientControlMessage,
-              { type: "attach" }
-            >,
-          );
+        } else attachment.control(terminalControlSchema.parse(message));
       } else throw new Error("Terminal daemon received an unknown IPC frame");
     };
 
@@ -318,12 +310,10 @@ export class TerminalDaemonServer {
         };
       case "getCatalog": {
         const { projectCwd } = asRecord(request.params);
-        if (typeof projectCwd !== "string")
+        if (projectCwd !== undefined && typeof projectCwd !== "string")
           throw new Error("projectCwd must be a string");
         return this.terminals.list(projectCwd);
       }
-      case "getGlobalCatalog":
-        return this.terminals.list();
       case "getSettings":
         return this.terminals.getSettings();
       case "getDaemonInfo":
@@ -372,9 +362,7 @@ export class TerminalDaemonServer {
     request: TerminalDaemonAttachRequest,
     sendJson: (value: unknown) => void,
   ): Promise<TerminalAttachment> {
-    const options = asRecord(
-      request.options,
-    ) as unknown as TerminalAttachOptions;
+    const options = terminalAttachmentSchema.parse(request.options);
     return this.terminals.attach(options, {
       sendControl: sendJson,
       sendData: (frame) => {

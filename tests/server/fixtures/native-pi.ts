@@ -10,8 +10,9 @@ import { isolatedTestEnvironment } from "./isolated-environment.js";
 export async function nativePiWorkspace(
   prefix: string,
   settings: Record<string, unknown>,
+  parent = tmpdir(),
 ) {
-  const root = await realpath(await mkdtemp(join(tmpdir(), prefix)));
+  const root = await realpath(await mkdtemp(join(parent, prefix)));
   const agent = join(root, "agent");
   const cwd = join(root, "workspace");
   const sessions = join(root, "sessions");

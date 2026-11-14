@@ -91,11 +91,11 @@ The selected tab is brought into view. Arrow keys, Home and End navigate the str
 panes the tab strip gets its own row, keeping the selected tab and tools reachable. Opening,
 closing, renaming and resizing preserve the underlying readers and terminal processes.
 The strip renders file and terminal descriptors directly and uses the same descriptors for search.
-Focused terminal windows use the same terminal tab controls within their own toolbar.
+Focused terminal windows use the same tab strip and keyboard navigation. Focused layout changes
+which documents the strip lists and preserves the mounted terminal view.
 
-Files and Changes share the selected-tab surface, top corners and fine boundary with file and
-terminal tabs. The Terminal shortcut creates a terminal. Fine-pointer desktop headers use a 32px
-row. A pane at most 400px wide gives open tabs a second row when present.
+Files and Changes use the same selection tint as open file and terminal tabs. The Terminal shortcut
+creates a terminal. A pane at most 400px wide gives open tabs a second row when present.
 File, PDF and terminal actions use the same compact toolbar above their content. Terminal search
 and selection overlays stay within the output area.
 Desktop HTML previews use the context perimeter instead of a second complete inner frame.
@@ -129,8 +129,8 @@ completion behavior are unchanged.
   conversation shows its normalized first prompt (or `New session` before any prompt); that
   fallback is never promoted into session metadata or OS-visible titles. The heading truncates at
   its available width. Beside it, the project location appears as folder name or full path per a
-  global preference, with no folder glyph; clicking copies the absolute path without shifting
-  layout, and Ctrl/⌘+click shows the project folder in the Host's file manager.
+  global preference. When the header is compact, a folder glyph carries the same action. Clicking
+  copies the absolute path, and Ctrl/⌘+click shows the project folder in the Host's file manager.
 
   A quiet clickable Git summary follows. It shows the current branch or detached/unborn identity,
   adds a total only when the worktree has changes, and opens the detailed Changes pane on
@@ -153,16 +153,11 @@ completion behavior are unchanged.
   its session-row indicators without a duplicate header badge. Both layouts preserve background
   outcome visibility when navigation hides the list, using text rather than color alone.
 
-  Session title, project, Git and extension status form one left-aligned cluster with consistent
-  spacing and a shared text baseline across the sans title and mono metadata/status; icons and
-  global action buttons are centered independently. The project and Git identifiers form a tighter
-  workspace subgroup beside the title. They have no resting background or frame; hover strengthens
-  their text and keyboard focus keeps its outline. When the status slot is empty, identity can use
-  the remaining header width instead of truncating beside unused reserved space; empty status takes
-  no space. The Git label's width cap follows the header's available width. Nonempty status keeps
-  its existing budget. Extension text uses the available space at
-  every width, with full statuses available by click, tap or keyboard when truncated. Secondary
-  project and Git details yield before the title and primary navigation. Trailing actions keep their own space.
+  Session title, project, Git and extension status form one leading cluster. Secondary labels
+  truncate as space shrinks. The project and Git controls retain glyphs when their labels are hidden
+  in a compact header. Git shows up to `99+` changes, with the exact total and branch in the
+  accessible name. Truncated extension statuses remain available by click, tap or keyboard.
+  Trailing actions keep their own space.
 
   Global controls stay on the right. Header actions are the command palette, Settings (desktop
   only) and the contextual pane toggle. Conversation search stays with its reading surface under
@@ -198,10 +193,8 @@ completion behavior are unchanged.
 ## Contextual modes
 
 - Workspace file browsing lives in the contextual Files pane; the session navigation column does
-  not duplicate its tree. The right tool header shares the navigation/titlebar rail background,
-  with one weak 1px hairline separating it from the content below. The file tree and file-preview canvas share the main reading-stage background. Selected file/terminal tabs use that
-  content surface with weak top/left/right edges, small top-only corners and an open bottom seam;
-  desktop top corners join the frame squarely. Search fields, toolbars, authored documents
+  not duplicate its tree. The right tool header uses the rail background with a fine boundary to the
+  reader. Tabs and selected tool modes use one accent tint. Search fields, toolbars, authored documents
   and the terminal keep their own content-surface roles.
 
 - Open files and project terminals have tabs on the leading side of the contextual header. Files,
@@ -213,12 +206,10 @@ completion behavior are unchanged.
   scroll. File tabs keep independent reader modes and Source/rendered scroll offsets;
   [[resource-preview]] defines the boundary for embedded readers and execution.
 
-  The searchable Open tabs list keeps all open files and terminals reachable while the tool actions
-  remain available. Filename tabs fill the header height, starting at its leading edge, with
-  internal label spacing instead of floating rounded backgrounds. Title and close action share one
-  continuous tab background; close hover changes only its icon ink, and keyboard focus uses a thin
-  outline. Selection indicators remain. File-specific and terminal controls have toolbars above
-  their content. Deferred loading preserves the tab header geometry and keeps loading and actionable
+  The searchable Open tabs list keeps all open files and terminals reachable while the tool
+  actions remain available. The tab strip scrolls to its selection, keeps the label and Close
+  action together, and restores focus to the chosen tab after a search. File-specific and terminal
+  toolbars stay above their content. Deferred loading preserves the toolbar and keeps actionable
   failure feedback in the content area.
 
   F5 restores the browser tab's navigation, pane widths and visibility, contextual tool, file-tab

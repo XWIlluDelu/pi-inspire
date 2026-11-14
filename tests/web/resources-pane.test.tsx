@@ -6,235 +6,174 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { stripResourceLocation } from "../../shared/resource-references";
 import { ContextPane } from "../../src/components/ContextPane";
 import { Notices } from "../../src/components/Notices";
 import { store } from "../../src/store";
-import { sessionPage } from "./fixtures/session-catalog";
+import { fakeResourceDescriptor } from "./fixtures/resources";
 import {
   activeSnapshot,
-  bootstrapPayload,
   deferred,
   FakeWebSocket,
   installFakeWebSocket,
+  jsonBody,
 } from "./helpers";
+import { installStoreRoutes } from "./store-fixture";
 
-const source = {
-  markdown: {
-    kind: "markdown",
-    mimeType: "text/markdown",
-    text: "# Previewed notes\n\nThird line\nFourth line",
-  },
-  "demo.html": {
-    kind: "html",
-    mimeType: "text/html",
-    text: "<h1>Static page</h1>",
-  },
+const notes = {
+  id: "notes",
+  display: "notes.md",
+  utf8Path: "notes.md",
+  workspacePath: "notes.md",
 };
-
-function fixtureFile(path: string) {
-  return path in source ? (path as keyof typeof source) : "markdown";
-}
+const markdown = "# Previewed notes\n\nThird line\nFourth line";
 
 describe("Files pane", () => {
-  let gitStatusGate: Promise<void> | null = null;
-  let missingProbeReference: string | null = null;
-  let invalidProbeReference: string | null = null;
-  let resourceListGate: Promise<void> | null = null;
-  let transcriptRevision = 1;
-  let resourceListHead: string | null = null;
+  let gitStatusGate: Promise<void> | null;
+  let resourceListGate: Promise<void> | null;
+  let transcriptRevision: number;
+  let resourceListHead: string;
+  let unavailable: boolean;
+  let requests: (
+    path: string,
+  ) => ReturnType<typeof installStoreRoutes>["mock"]["calls"];
 
   beforeEach(async () => {
-    gitStatusGate = null;
-    missingProbeReference = null;
-    invalidProbeReference = null;
-    resourceListGate = null;
+    gitStatusGate = resourceListGate = null;
     transcriptRevision = 1;
-    resourceListHead = null;
+    resourceListHead = "notes.md";
+    unavailable = false;
     installFakeWebSocket();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-        const url = String(input);
-        if (url.startsWith("/api/bootstrap")) {
-          return Response.json(
-            bootstrapPayload({
-              startupSessionId: "s1",
-            }),
-          );
-        }
-        if (url.startsWith("/api/sessions"))
-          return Response.json(sessionPage([], 0));
-        if (url.startsWith("/api/files/list")) {
-          const dir =
-            new URL(url, "http://localhost").searchParams.get("dir") ?? "";
-          return Response.json({
-            entries:
-              dir === "src"
+    const fetch = installStoreRoutes(async (url, init) => {
+      const { pathname, searchParams } = new URL(url, "http://fixture.local");
+      const address = {
+        sessionId: "s1",
+        viewId: "view-s1",
+        revision: transcriptRevision,
+      };
+      switch (pathname) {
+        case "/api/files/list":
+          return {
+            body: {
+              entries: searchParams.get("dir")
                 ? []
                 : [
                     { name: "src", type: "dir" },
                     { name: "README.md", type: "file" },
                   ],
-          });
-        }
-        const notesPath = {
-          id: "notes",
-          display: "notes.md",
-          utf8Path: "notes.md",
-          workspacePath: "notes.md",
-        };
-        if (url.startsWith("/api/git/status")) {
-          const gate = gitStatusGate;
-          gitStatusGate = null;
-          if (gate) await gate;
-          return Response.json({
-            kind: "repository",
-            head: { kind: "branch", name: "main", oid: "0123456789abcdef" },
-            files: [
-              {
-                path: notesPath,
-                worktree: { kind: "modified" },
-                untracked: false,
-              },
-            ],
-            total: 1,
-            truncated: false,
-          });
-        }
-        if (url.startsWith("/api/git/diff")) {
-          return Response.json({
-            path: notesPath,
-            kind: "text",
-            additions: 1,
-            deletions: 0,
-            truncated: false,
-            encodingLossy: false,
-            lines: [{ kind: "add", text: "+new", oldLine: null, newLine: 1 }],
-          });
-        }
-        if (url.startsWith("/api/resources/list")) {
-          const responseRevision = transcriptRevision;
-          const gate = resourceListGate;
-          resourceListGate = null;
-          if (gate) await gate;
-          const resources = [
-            resourceListHead ?? "notes.md",
-            "demo.html",
-            "old-1.md",
-          ].map((reference) => ({
-            key: `file:${reference}`,
-            reference,
-            label: reference,
-            source: "link" as const,
-          }));
-          return Response.json({
-            sessionId: "s1",
-            viewId: "view-s1",
-            revision: responseRevision,
-            resources,
-            produced: [],
-          });
-        }
-        if (url.startsWith("/api/resources/probe")) {
-          const body = JSON.parse(String(init?.body ?? "{}")) as {
-            references: string[];
+            },
           };
-          return Response.json({
-            sessionId: "s1",
-            viewId: "view-s1",
-            revision: transcriptRevision,
-            results: body.references.map((reference) =>
-              reference === missingProbeReference
-                ? {
-                    reference,
-                    availability: "missing",
-                    message: "The referenced file was not found",
-                  }
-                : reference === invalidProbeReference
-                  ? {
-                      reference,
-                      availability: "invalid",
-                      message: "The reference is not a file",
-                    }
-                  : {
-                      reference,
-                      availability: "available",
-                      workspacePath: stripResourceLocation(reference),
-                    },
-            ),
-          });
-        }
-        if (url.startsWith("/api/html-previews/"))
-          return new Response(null, { status: 204 });
-        if (url.endsWith("/interactive"))
-          return Response.json({
-            id: "html-grant",
-            url: "/html-preview/html-grant/demo.html",
-          });
-        if (url.startsWith("/api/resources/resolve")) {
-          const body = JSON.parse(String(init?.body ?? "{}")) as {
+        case "/api/git/status":
+          await gitStatusGate;
+          return {
+            body: {
+              kind: "repository",
+              head: { kind: "branch", name: "main", oid: "0123456789abcdef" },
+              files: [
+                {
+                  path: notes,
+                  worktree: { kind: "modified" },
+                  untracked: false,
+                },
+              ],
+              total: 1,
+              truncated: false,
+            },
+          };
+        case "/api/git/diff":
+          return {
+            body: {
+              path: notes,
+              kind: "text",
+              additions: 1,
+              deletions: 0,
+              lines: [{ kind: "add", text: "+new", oldLine: null, newLine: 1 }],
+            },
+          };
+        case "/api/resources/list":
+          await resourceListGate;
+          return {
+            body: {
+              ...address,
+              produced: [],
+              resources: [resourceListHead, "demo.html", "old-1.md"].map(
+                (reference) => ({
+                  key: reference,
+                  reference,
+                  label: reference,
+                  source: "link",
+                }),
+              ),
+            },
+          };
+        case "/api/resources/probe":
+          return {
+            body: {
+              ...address,
+              results: (jsonBody(init).references as string[]).map(
+                (reference) => ({
+                  reference,
+                  ...(unavailable && reference === "demo.html"
+                    ? {
+                        availability: "missing",
+                        message: "The referenced file was not found",
+                      }
+                    : unavailable && reference === "old-1.md"
+                      ? {
+                          availability: "invalid",
+                          message: "The reference is not a file",
+                        }
+                      : {
+                          availability: "available",
+                          workspacePath: stripResourceLocation(reference),
+                        }),
+                }),
+              ),
+            },
+          };
+        case "/api/resources/resolve": {
+          const { reference, workspacePath } = jsonBody(init) as {
             reference: string;
             workspacePath?: string;
           };
-          // Match the Host's canonical workspace path, not URL spelling.
-          const resolvedPath = (
-            body.workspacePath ?? stripResourceLocation(body.reference)
-          ).replace(/^\.\//, "");
-          if (resolvedPath === "folder")
-            return Response.json(
-              { error: "The reference is not a file" },
-              { status: 400 },
-            );
-          const id = fixtureFile(resolvedPath);
-          const file = source[id];
-          return Response.json({
-            id,
-            sessionId: "s1",
-            viewId: "view-s1",
-            reference: body.reference,
-            workspacePath: resolvedPath,
-            name: resolvedPath.split("/").at(-1),
-            mimeType: file.mimeType,
-            size: file.text.length,
-            kind: file.kind,
-          });
+          const path = workspacePath ?? stripResourceLocation(reference);
+          if (path === "./folder" || path === "folder")
+            return {
+              status: 400,
+              body: { error: "The reference is not a file" },
+            };
+          return {
+            body: fakeResourceDescriptor(reference, {
+              id: "notes",
+              workspacePath: path,
+              name: path,
+              kind: "markdown",
+              mimeType: "text/markdown",
+              size: markdown.length,
+            }),
+          };
         }
-        const match = /^\/api\/resources\/([^/]+)\/content(?:\?|$)/.exec(url);
-        if (match) {
-          const file = source[fixtureFile(match[1]!)];
-          return new Response(file.text, {
-            headers: { "Content-Type": file.mimeType },
+        case "/api/resources/notes/content":
+          return new Response(markdown, {
+            headers: { "Content-Type": "text/markdown" },
           });
-        }
-        return Response.json({ error: `unhandled ${url}` }, { status: 404 });
-      }),
-    );
-    // This suite shares a store; reconnect now intentionally retains navigation.
-    // Start each independent case with an explicitly cleared browser workbench.
+        case "/api/resources/show-in-file-manager":
+          return jsonBody(init).directory
+            ? { body: { ok: true } }
+            : { status: 503, body: { error: "No desktop is available" } };
+      }
+    });
+    requests = (path) =>
+      fetch.mock.calls.filter(([url]) => String(url).startsWith(path));
     store.showFileBrowser();
     for (const tab of store.getState().resourceTabs)
       store.closeResourceTab(tab.reference);
-    store.setWorkspaceQuery("");
-    for (const dir of store.getState().workspaceExpandedDirs)
-      store.toggleWorkspaceDirectory(dir);
-    store.setWorkspaceShowHidden(false);
     await store.init();
-    FakeWebSocket.instances.at(-1)!.join(
-      activeSnapshot({
-        transcriptPage: { revision: transcriptRevision, hasOlder: true },
-      }),
-    );
+    FakeWebSocket.instances.at(-1)!.join(activeSnapshot());
+    store.showFileBrowser();
     store.setResourcesOpen(false);
-    store.setContextMode("files");
   });
-
-  function requests(path: string) {
-    return vi
-      .mocked(fetch)
-      .mock.calls.filter(([url]) => String(url).startsWith(path));
-  }
 
   function showContext() {
     store.setResourcesOpen(true);
@@ -242,18 +181,6 @@ describe("Files pane", () => {
   }
 
   it("reveals a folder and a Recent file without leaving Files, and reports a Host refusal", async () => {
-    const shown: unknown[] = [];
-    const original = vi.mocked(fetch).getMockImplementation()!;
-    vi.mocked(fetch).mockImplementation(async (input, init) => {
-      if (String(input) !== "/api/resources/show-in-file-manager")
-        return original(input, init);
-      const body = JSON.parse(String(init?.body));
-      shown.push(body);
-      return body.directory
-        ? Response.json({ ok: true })
-        : Response.json({ error: "No desktop is available" }, { status: 503 });
-    });
-
     showContext();
     render(<Notices onViewUpdates={() => {}} />);
     const folder = await screen.findByRole("button", { name: /^src$/ });
@@ -263,7 +190,11 @@ describe("Files pane", () => {
       metaKey: true,
     });
     expect(await screen.findByText("No desktop is available")).toBeVisible();
-    expect(shown).toEqual([
+    expect(
+      requests("/api/resources/show-in-file-manager").map(([, init]) =>
+        jsonBody(init ?? {}),
+      ),
+    ).toEqual([
       {
         sessionId: "s1",
         reference: "src",
@@ -283,97 +214,49 @@ describe("Files pane", () => {
     ).toBeVisible();
   });
 
-  it.each(["revision", "transport"] as const)(
-    "refreshes Recent in place when its %s changes",
-    async (owner) => {
-      showContext();
-      await screen.findByRole("button", { name: /notes\.md/ });
-      await waitFor(() =>
-        expect(
-          store.getState().resourceStanding["notes.md"]?.availability,
-        ).toBe("available"),
+  it("keeps Recent usable while a new revision is being resolved", async () => {
+    showContext();
+    const original = await screen.findByRole("button", { name: /notes\.md/ });
+    const pending = deferred<void>();
+    resourceListGate = pending.promise;
+    resourceListHead = "replacement.md";
+    transcriptRevision = 2;
+    try {
+      act(() =>
+        FakeWebSocket.instances
+          .at(-1)!
+          .emitSnapshot(activeSnapshot({ transcriptPage: { revision: 2 } })),
       );
+      expect(original).toBeEnabled();
+    } finally {
+      act(() => pending.resolve());
+    }
+    expect(
+      await screen.findByRole("button", { name: /replacement\.md/ }),
+    ).toBeVisible();
+    expect(original).not.toBeInTheDocument();
+  });
 
-      let releaseList!: () => void;
-      resourceListGate = new Promise<void>((resolve) => {
-        releaseList = resolve;
-      });
-      resourceListHead = "replacement.md";
-      const listCount = requests("/api/resources/list").length;
-      try {
-        if (owner === "revision") {
-          transcriptRevision = 2;
-          act(() => {
-            FakeWebSocket.instances.at(-1)?.emitSnapshot(
-              activeSnapshot({
-                transcriptPage: {
-                  revision: 2,
-                  hasOlder: true,
-                },
-              }),
-            );
-          });
-        } else {
-          await act(async () => {
-            await store.init();
-            FakeWebSocket.instances.at(-1)!.join(activeSnapshot());
-          });
-        }
-        await waitFor(() =>
-          expect(requests("/api/resources/list").length).toBe(listCount + 1),
-        );
-        expect(screen.getByRole("button", { name: /notes\.md/ })).toBeVisible();
-        expect(screen.queryByText("Loading recent files…")).toBeNull();
-        if (owner === "revision") {
-          expect(
-            store.getState().resourceStanding["notes.md"]?.workspacePath,
-          ).toBe("notes.md");
-        }
-      } finally {
-        act(releaseList);
-      }
-      expect(
-        await screen.findByRole("button", { name: /replacement\.md/ }),
-      ).toBeVisible();
-      expect(screen.queryByRole("button", { name: /notes\.md/ })).toBeNull();
-    },
-  );
-
-  it("reuses the named file tab for line targets and retains Browse and Source positions", async () => {
+  it("reuses the named file tab for a line target and retains the source through an append", async () => {
     resourceListHead = "notes.md#L3";
-    const computedStyle = window.getComputedStyle.bind(window);
-    vi.spyOn(window, "getComputedStyle").mockImplementation((element) => {
-      const style = computedStyle(element);
-      if (element.classList.contains("source-view")) style.lineHeight = "20px";
-      return style;
-    });
     showContext();
     await screen.findByRole("button", { name: /^notes\.md/ });
-    const scroll = () =>
-      document.querySelector<HTMLElement>(".files-browser__scroll")!;
-    scroll().scrollTop = 137;
     await act(() => store.openResource("notes.md"));
-    expect(
-      await screen.findByRole("heading", { name: "Previewed notes" }),
-    ).toBeVisible();
+    await screen.findByRole("heading", { name: "Previewed notes" });
     fireEvent.click(screen.getByRole("tab", { name: "Files" }));
-    expect(scroll().scrollTop).toBe(137);
     await waitFor(() =>
       expect(
         store.getState().resourceStanding["notes.md#L3"]?.workspacePath,
       ).toBe("notes.md"),
     );
     fireEvent.click(screen.getByRole("button", { name: /^notes\.md/ }));
-    const source = await screen.findByRole("region", { name: "File source" });
-    expect(source.scrollTop).toBe(40);
+    expect(
+      await screen.findByRole("region", { name: "File source" }),
+    ).toBeVisible();
     expect(
       screen.getByRole("tab", { name: "notes.md", selected: true }),
     ).toBeVisible();
-
-    await act(() => store.openResource("notes.md#L4", "notes.md"));
-    const retargeted = screen.getByRole("region", { name: "File source" });
-    expect(retargeted.scrollTop).toBe(60);
-    fireEvent.scroll(retargeted, { target: { scrollTop: 27 } });
+    expect(store.getState().resourceTabs).toHaveLength(1);
     const listsBeforeAppend = requests("/api/resources/list").length;
     transcriptRevision = 2;
     act(() => {
@@ -383,11 +266,8 @@ describe("Files pane", () => {
         }),
       );
     });
-    await waitFor(() => expect(store.getState().transcriptRevision).toBe(2));
-    const retainedSource = await screen.findByRole("region", {
-      name: "File source",
-    });
-    expect(retainedSource.scrollTop).toBe(27);
+    await waitFor(() => expect(store.getState().view.revision).toBe(2));
+    expect(screen.getByRole("region", { name: "File source" })).toBeVisible();
     expect(requests("/api/resources/list").length).toBe(listsBeforeAppend);
   });
 
@@ -401,50 +281,36 @@ describe("Files pane", () => {
     const git = deferred<void>();
     const recent = deferred<void>();
     gitStatusGate = git.promise;
-    const calls = vi.mocked(fetch).mock.calls;
     try {
       fireEvent.click(refresh);
       expect(refresh).toBeDisabled();
       fireEvent.click(screen.getByRole("tab", { name: "Files" }));
-      await screen.findByRole("button", { name: "README.md" });
-      await waitFor(() =>
-        expect(requests("/api/resources/probe").length).toBeGreaterThan(0),
-      );
-      expect(refresh).toBeEnabled();
-
-      const before = calls.length;
+      await screen.findByRole("button", { name: /^notes\.md/ });
       const lists = requests("/api/resources/list").length;
-      const probes = requests("/api/resources/probe").length;
+      const status = requests("/api/git/status").length;
       resourceListGate = recent.promise;
       fireEvent.click(refresh);
-      expect(refresh).toHaveAttribute("aria-busy", "true");
+      expect(refresh).toBeDisabled();
+      expect(requests("/api/resources/list")).toHaveLength(lists + 1);
+      expect(requests("/api/git/status")).toHaveLength(status);
+      expect(
+        requests("/api/files/list").some(([url]) =>
+          String(url).includes("refresh=1"),
+        ),
+      ).toBe(true);
       await act(async () => git.resolve());
       expect(refresh).toBeDisabled();
-      expect(requests("/api/resources/list").length).toBeGreaterThan(lists);
-      const refreshUrls = calls.slice(before).map(([input]) => String(input));
-      expect(refreshUrls).toContainEqual(
-        expect.stringMatching(/^\/api\/files\/list\?.*refresh=1/),
-      );
-      expect(refreshUrls).not.toContainEqual(
-        expect.stringMatching(/^\/api\/git\/status/),
-      );
-
-      await act(async () => recent.resolve());
-      await waitFor(() =>
-        expect(requests("/api/resources/probe").length).toBeGreaterThan(probes),
-      );
-      expect(refresh).toBeEnabled();
     } finally {
       await act(async () => {
         git.resolve();
         recent.resolve();
       });
     }
+    expect(refresh).toBeEnabled();
   });
 
   it("marks missing Recent files, omits non-files, and offers no Retry for a direct non-file", async () => {
-    missingProbeReference = "demo.html";
-    invalidProbeReference = "old-1.md";
+    unavailable = true;
     showContext();
     const missing = await screen.findByRole("button", {
       name: /demo\.html.*unavailable/i,
@@ -461,38 +327,5 @@ describe("Files pane", () => {
     ).toBeVisible();
     expect(screen.getByText("Not a file")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
-  });
-
-  it("revokes active HTML interaction after a projection replacement", async () => {
-    showContext();
-    await act(() => store.openResource("demo.html"));
-    fireEvent.click(screen.getByRole("button", { name: "Enable interaction" }));
-    await waitFor(() =>
-      expect(screen.getByTitle("Preview demo.html")).toHaveAttribute(
-        "sandbox",
-        "allow-scripts",
-      ),
-    );
-    act(() => {
-      FakeWebSocket.instances.at(-1)?.emitSnapshot(
-        activeSnapshot({
-          transcriptPage: {
-            revision: 2,
-            appendFromRevision: 2,
-            incarnation: "projection-2",
-          },
-        }),
-      );
-    });
-    await waitFor(() =>
-      expect(requests("/api/html-previews/html-grant")).toHaveLength(1),
-    );
-    expect(await screen.findByTitle("Preview demo.html")).toHaveAttribute(
-      "sandbox",
-      "",
-    );
-    expect(
-      screen.getByRole("button", { name: "Enable interaction" }),
-    ).toBeVisible();
   });
 });

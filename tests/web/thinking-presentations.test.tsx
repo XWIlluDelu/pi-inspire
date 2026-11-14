@@ -103,9 +103,7 @@ describe("custom Thinking presentations", () => {
       name: "Expand Thinking",
     });
     expect(within(card).getByText("Trace")).toBeInTheDocument();
-    expect(card.querySelector(".tool-summary__subdued")).toHaveTextContent(
-      "# Plan",
-    );
+    expect(within(card).getByText("# Plan", { exact: true })).toBeVisible();
 
     fireEvent.click(disclosure);
     expect(

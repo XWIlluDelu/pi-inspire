@@ -25,6 +25,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { isComposingKeyboardEvent } from "../keyboard-input";
 import {
   markOccurrence,
   normalizeFindQuery,
@@ -34,6 +35,7 @@ import {
 } from "../pdf-find";
 import { ContextPaneState } from "./ContextPaneState";
 import { PiLoader } from "./PiLoader";
+import { SearchField } from "./SearchField";
 import "../styles/pdf-preview.css";
 
 interface LoadedPdf {
@@ -598,16 +600,15 @@ export function PdfPreview({ blob, name }: { blob: Blob; name: string }) {
           role="search"
           aria-label="Find in PDF"
         >
-          <Search size={14} className="pdf-preview__find-icon" aria-hidden />
-          <input
-            ref={findInputRef}
-            className="pdf-preview__find-input"
-            type="search"
+          <SearchField
+            inputRef={findInputRef}
+            className="pdf-preview__find-field"
             value={query}
             placeholder="Find in PDF"
             aria-label="Find in PDF"
-            onChange={(event) => setQuery(event.target.value)}
+            onValueChange={setQuery}
             onKeyDown={(event) => {
+              if (isComposingKeyboardEvent(event.nativeEvent)) return;
               if (event.key === "Enter") {
                 event.preventDefault();
                 step(event.shiftKey ? -1 : 1);
@@ -675,7 +676,7 @@ export function PdfPreview({ blob, name }: { blob: Blob; name: string }) {
             {outline.length > 0 ? (
               <button
                 type="button"
-                className="pdf-preview__fit pdf-preview__page-number"
+                className="button button--quiet pdf-preview__fit pdf-preview__page-number"
                 aria-haspopup="true"
                 aria-expanded={contentsOpen}
                 aria-label={`Page ${number} of ${loaded.document.numPages}. Show contents`}
@@ -710,7 +711,7 @@ export function PdfPreview({ blob, name }: { blob: Blob; name: string }) {
             </button>
             <button
               type="button"
-              className="pdf-preview__fit"
+              className="button button--quiet pdf-preview__fit"
               aria-label="Fit PDF to width"
               title="Fit to width"
               onClick={() => changeZoom(1)}

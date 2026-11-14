@@ -2,7 +2,11 @@ import { AlertTriangle, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { isMacKeyboardPlatform } from "../keyboard-input";
 import { store, useAppState } from "../store";
-import { modelCycleShortcut } from "../workbench-keyboard";
+import {
+  modelCycleShortcut,
+  workbenchShortcutLabel,
+  workbenchShortcuts,
+} from "../workbench-keyboard";
 import { ContextPaneState } from "./ContextPaneState";
 import { Modal } from "./Modal";
 import { PiLoader } from "./PiLoader";
@@ -70,9 +74,12 @@ export function CommandHelp({
     {
       title: "Workbench",
       rows: [
-        ["Ctrl/⌘+K", "Open the command palette"],
-        ["Ctrl/⌘+B", "Toggle session navigation"],
-        ["Ctrl/⌘+.", "Toggle Files / Changes / History / Terminal"],
+        ...(["palette", "nav", "ctx"] as const).map(
+          (action): [Shortcut, string] => [
+            workbenchShortcutLabel(action),
+            workbenchShortcuts[action].title,
+          ],
+        ),
         ["Esc", "Dismiss a menu or dialog; otherwise Stop active work"],
       ],
     },
@@ -116,7 +123,7 @@ export function CommandHelp({
     {
       title: "Conversation",
       rows: [
-        ["Ctrl/⌘+F", "Find in the focused transcript"],
+        [workbenchShortcutLabel("find"), workbenchShortcuts.find.title],
         [
           ["Enter", "Shift+Enter"],
           "Next / previous match in conversation search",
@@ -168,9 +175,9 @@ export function CommandHelp({
       aria-label={mode === "hotkeys" ? "Keyboard shortcuts" : "Pi changelog"}
       onDismiss={onClose}
     >
-      <div className="dialog dialog--wide command-help">
-        <div className="command-help__header">
-          <h2>
+      <div className="dialog dialog--flush command-help">
+        <header className="dialog__header dialog__header--bar">
+          <h2 className="dialog__title">
             {mode === "hotkeys"
               ? "Keyboard shortcuts"
               : release
@@ -185,7 +192,7 @@ export function CommandHelp({
           >
             <X size={16} aria-hidden />
           </button>
-        </div>
+        </header>
         <div className="command-help__body" tabIndex={0}>
           {mode === "hotkeys" ? (
             <div className="command-help__grid">

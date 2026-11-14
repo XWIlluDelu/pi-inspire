@@ -37,11 +37,11 @@ export async function createComposerFixture() {
       const response = {
         body: {
           sessionId,
-          revision: state.transcriptRevision,
-          viewId: state.transcriptViewId,
-          incarnation: state.transcriptIncarnation,
-          effectiveLeafId: state.transcriptEffectiveLeafId,
-          composerHistoryVersion: state.composerHistoryVersion,
+          revision: state.view.revision,
+          viewId: state.view.viewId,
+          incarnation: state.view.incarnation,
+          effectiveLeafId: state.view.effectiveLeafId,
+          composerHistoryVersion: state.view.composerHistoryVersion,
           historyId: `history-${JSON.stringify(host.historyEntries)}`,
           total: host.historyEntries.length,
           start,

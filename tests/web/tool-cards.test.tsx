@@ -1,10 +1,15 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { toolPresentationConfigurationSchema } from "../../shared/tool-presentation-config";
 import { Transcript } from "../../src/components/Transcript";
 import { ToolCard } from "../../src/components/transcript-cards";
-import { UnpairedToolResultRow } from "../../src/components/transcript-rows";
 import type { ChatMessage, ToolCallContent } from "../../src/events";
 import {
   configurePresentationAdapters,
@@ -90,26 +95,56 @@ describe("generic tool fallback", () => {
     expect(screen.getByRole("dialog", { name: "Image preview" })).toBeVisible();
   });
 
-  it.each([
-    { details: { line: 4 }, content: [] },
-    { content: { line: 4 } },
-    { content: [{ type: "extensionData", line: 4 }] },
-  ])("preserves structured output for inspection: %j", async (payload) => {
-    render(
-      card(call("extension_tool", {}), { role: "toolResult", ...payload }),
-    );
-    expect(screen.queryByText(/"line": 4/)).toBeNull();
-    expect(screen.queryByText("No output")).toBeNull();
-    fireEvent.click(screen.getByText("Result details"));
-    expect(await screen.findByText(/"line": 4/)).toBeVisible();
-  });
-
-  it("distinguishes an empty result from text with optional metadata", () => {
+  it("bounds the result reader while keeping complete text and structured data in Copy", async () => {
     const extension = call("extension_tool", {});
     const { rerender } = render(card(extension, result("", {})));
     expect(screen.getByText("No output")).toBeVisible();
-    rerender(card(extension, result("Useful output", { tokens: 1024 })));
-    expect(screen.getByText("Useful output")).toBeVisible();
+    const output = `${"Useful output\n".repeat(70)}Final result line`;
+    rerender(
+      card(extension, {
+        ...result(output, { tokens: 1024 }),
+        content: [
+          { type: "text", text: output },
+          { type: "extensionData", line: 4 },
+        ],
+      }),
+    );
+    const reader = screen.getByRole("group", { name: "Result text" });
+    expect(reader).not.toHaveTextContent("Final result line");
+    expect(screen.queryByRole("group", { name: "Result data" })).toBeNull();
+    const writeText = vi.fn(async (_text: string) => {});
+    const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    try {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Copy extension_tool tool block" }),
+      );
+      await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
+      const copied = writeText.mock.calls[0]![0];
+      expect(copied).toContain(output);
+      expect(copied).toContain('"tokens": 1024');
+      expect(copied).toContain('"type": "extensionData"');
+      fireEvent.click(screen.getByRole("button", { name: "Show all" }));
+      expect(reader).toHaveTextContent("Final result line");
+      fireEvent.click(screen.getByText("Result details"));
+      expect(
+        await screen.findByRole("group", { name: "Result data" }),
+      ).toHaveTextContent('"line": 4');
+      rerender(
+        card(extension, { role: "toolResult", content: { whole: "record" } }),
+      );
+      await waitFor(() =>
+        expect(
+          screen.getByRole("group", { name: "Result data" }),
+        ).toHaveTextContent('"whole": "record"'),
+      );
+    } finally {
+      if (clipboard) Object.defineProperty(navigator, "clipboard", clipboard);
+      else Reflect.deleteProperty(navigator, "clipboard");
+    }
   });
 
   it("opens or reveals the full file argument without treating a command as a path", () => {
@@ -213,9 +248,9 @@ describe("saved tool images", () => {
 describe("native Pi tool cards", () => {
   it("retains an unpaired result's text, image and structured data without inventing input", async () => {
     render(
-      <UnpairedToolResultRow
+      <ToolCard
         visibility="expanded"
-        message={{
+        result={{
           role: "toolResult",
           toolCallId: "missing-call",
           toolName: "plot",
@@ -231,56 +266,21 @@ describe("native Pi tool cards", () => {
     expect(screen.getByAltText("Tool result image 1")).toBeInTheDocument();
     fireEvent.click(screen.getByText("Result details"));
     expect(await screen.findByText(/"peak": 12.4/)).toBeInTheDocument();
+    expect(screen.queryByText("Arguments", { exact: true })).toBeNull();
   });
 
-  it.each(["native", "configured"])(
-    "merges overlapping %s search context without losing match emphasis or changed text",
-    (format) => {
-      if (format === "configured")
-        configurePresentationAdapters(
-          toolPresentationConfigurationSchema.parse({
-            version: 1,
-            rules: {
-              "test.grouped": {
-                summary: [{ value: { path: "args.pattern" } }],
-                blocks: [
-                  {
-                    type: "search",
-                    source: { path: "result.text" },
-                    format: "grouped-lines",
-                  },
-                ],
-              },
-            },
-            mappings: { grep: "test.grouped" },
-          }),
-        );
-      const rows = [
-        "1- before",
-        "2- target()",
-        "2- changed()",
-        "2: target()",
-        "3- after",
-      ];
-      const output =
-        format === "configured"
-          ? `src/a.ts\n${rows.map((line) => ` ${line}`).join("\n")}`
-          : rows
-              .map((line) => `src/a.ts${line.includes(":") ? ":" : "-"}${line}`)
-              .join("\n");
-      const { container } = render(
-        card(call("grep", { pattern: "target", path: "src" }), result(output)),
-      );
-      expect(container.querySelectorAll(".tool-search-line")).toHaveLength(4);
-      expect(
-        container.querySelectorAll(".tool-search-line--match"),
-      ).toHaveLength(1);
-      expect(
-        container.querySelector(".tool-search-line--match code"),
-      ).toHaveTextContent("target()");
-      expect(screen.getByText("changed()")).toBeInTheDocument();
-    },
-  );
+  it("renders unique search results with match emphasis", () => {
+    const output =
+      "src/a.ts-1- before\nsrc/a.ts-2- target()\nsrc/a.ts-2- changed()\nsrc/a.ts:2: target()";
+    const { container } = render(
+      card(call("grep", { pattern: "target", path: "src" }), result(output)),
+    );
+    expect(container.querySelectorAll(".code-row")).toHaveLength(3);
+    expect(
+      container.querySelector('[data-kind="match"] code'),
+    ).toHaveTextContent("target()");
+    expect(screen.getByText("changed()")).toBeVisible();
+  });
 
   it("renders bounded arguments on demand and keeps interrupted previews unexecuted", () => {
     const partial: ToolCallContent = {

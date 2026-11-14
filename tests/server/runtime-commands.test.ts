@@ -88,7 +88,9 @@ describe("native commands and worker-local catalogs", () => {
     await prompt("Discuss /compaction strategies?");
     fixture.worker.emit("event", { type: "agent_start" });
     await vi.waitFor(async () =>
-      expect((await runtime.snapshot("a")).runState).toBe("running"),
+      expect((await runtime.snapshot("a")).sessionStatuses["a"]?.runState).toBe(
+        "running",
+      ),
     );
     await prompt("/plugin:model custom");
     expect(finished).toHaveBeenLastCalledWith(
@@ -112,7 +114,9 @@ describe("native commands and worker-local catalogs", () => {
       outcome: "completed",
       details: [{ label: "File", value: resolve("/tmp/session.html") }],
     });
-    expect((await runtime.snapshot("a")).runState).toBe("running");
+    expect((await runtime.snapshot("a")).sessionStatuses["a"]?.runState).toBe(
+      "running",
+    );
     expect(fixture.worker.stops).toBe(0);
   });
 

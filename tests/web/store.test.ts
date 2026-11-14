@@ -9,6 +9,7 @@ import {
   bootstrapPayload,
   DEFAULT_PREFS,
   deferred,
+  emptySnapshot,
   FakeWebSocket,
   installFakeWebSocket,
   type RouteResponse,
@@ -26,16 +27,22 @@ afterEach(() => {
 });
 
 describe("websocket lifecycle", () => {
-  it("accepts low event sequences from a restarted Host on the same session", async () => {
+  it("compares HTTP and socket cuts within the current Host and accepts low sequences after a restart", async () => {
     const nextHost = "22222222-2222-4222-8222-222222222222";
     let authorityId = TEST_HOST_AUTHORITY;
     const snapshot = activeSnapshot();
-    installStoreRoutes((url) =>
-      url.startsWith("/api/bootstrap")
-        ? { body: bootstrapPayload({ authorityId, startupSessionId: "s1" }) }
-        : undefined,
-    );
-    const { store, socket } = await initStore();
+    const confirmed = activeSnapshot({
+      pageMessages: [{ role: "assistant", content: "Already confirmed" }],
+    });
+    installStoreRoutes((url) => {
+      if (url.startsWith("/api/bootstrap"))
+        return {
+          body: bootstrapPayload({ authorityId, startupSessionId: "s1" }),
+        };
+      if (url.startsWith("/api/snapshot"))
+        return { body: { ...confirmed, runtimeSequence: 200 } };
+    });
+    const { store } = await initStore();
     const publish = (
       peer: FakeWebSocket,
       runtimeSequence: number,
@@ -49,39 +56,25 @@ describe("websocket lifecycle", () => {
           transcriptPage: { messages: [{ role: "assistant", content }] },
         }).active,
       });
-    publish(socket, 200, "before restart");
-    expect(store.getState().messages.at(-1)?.content).toBe("before restart");
+    await store.init();
+    const waiting = FakeWebSocket.instances.at(-1)!;
+    waiting.open();
+    await store.refreshSession();
+    waiting.emitSnapshot(snapshot, { runtimeSequence: 199 });
+    expect(store.getState()).toMatchObject({
+      connection: "open",
+      live: {
+        messages: [{ content: "Already confirmed" }],
+      },
+    });
     authorityId = nextHost;
     await store.init();
     const replacement = FakeWebSocket.instances.at(-1)!;
     replacement.join(snapshot, { authorityId: nextHost });
     publish(replacement, 2, "after restart");
-    expect(store.getState().messages.at(-1)?.content).toBe("after restart");
-  });
-
-  it("keeps a newer HTTP observation when a joined snapshot was captured earlier", async () => {
-    const current = activeSnapshot({
-      pageMessages: [{ role: "assistant", content: "Already confirmed" }],
-    });
-    installStoreRoutes((url) =>
-      url.startsWith("/api/snapshot")
-        ? { body: { ...current, runtimeSequence: 12 } }
-        : undefined,
+    expect(store.getState().live.messages.at(-1)?.content).toBe(
+      "after restart",
     );
-    const { store } = await initStore();
-    await store.init();
-    const peer = FakeWebSocket.instances.at(-1)!;
-    peer.open();
-    await store.refreshSession();
-    peer.emitSnapshot(activeSnapshot(), {
-      detailSessionId: "s1",
-      detailRevision: 0,
-      runtimeSequence: 11,
-    });
-    expect(store.getState()).toMatchObject({
-      connection: "open",
-      messages: [{ role: "assistant", content: "Already confirmed" }],
-    });
   });
 
   it.each(["replacement", "deadline"] as const)(
@@ -187,10 +180,11 @@ describe("websocket lifecycle", () => {
         finish();
         await selecting;
       }
-      socket.emitSnapshot(
-        { active: null, runState: "idle", sessionStatuses: {} },
-        { detailSessionId: "s1", detailRevision: 0, missingDetail: true },
-      );
+      socket.emitSnapshot(emptySnapshot, {
+        detailSessionId: "s1",
+        detailRevision: 0,
+        missingDetail: true,
+      });
       if (phase === "pending") {
         expect(store.getState()).toMatchObject({
           sessionId: null,
@@ -201,7 +195,7 @@ describe("websocket lifecycle", () => {
         await selecting;
       }
       expect(store.getState().sessionId).toBe("s2");
-      expect(store.getState().notices).not.toContainEqual(
+      expect(store.getState().live.notices).not.toContainEqual(
         expect.objectContaining({
           text: expect.stringContaining("previous session no longer exists"),
         }),
@@ -236,6 +230,7 @@ describe("multi-session event routing", () => {
       isStreaming: true,
     });
     running.sessionStatuses.s2 = { runState: "idle", indicator: "completed" };
+    running.sessionStatuses.s1 = { runState: "running" };
     running.pendingExtensionUiRequests = [
       {
         sessionId: "s1",
@@ -256,21 +251,25 @@ describe("multi-session event routing", () => {
 
     publish(running);
     expect(store.getState()).toMatchObject({
-      sessionStatuses: { s2: { indicator: "completed" } },
-      extensionUiRequests: running.pendingExtensionUiRequests,
-      queue: running.pendingQueues,
-      tools: running.active!.toolActivity,
-      statuses: { usage: "37%" },
+      sessionStatuses: running.sessionStatuses,
+      live: {
+        extensionUiRequests: running.pendingExtensionUiRequests,
+        queue: running.pendingQueues,
+        tools: running.active!.toolActivity,
+        statuses: { usage: "37%" },
+      },
     });
 
     const settled = activeSnapshot();
     publish(settled);
     expect(store.getState()).toMatchObject({
       sessionStatuses: settled.sessionStatuses,
-      extensionUiRequests: [],
-      queue: pendingQueues(),
-      statuses: {},
-      tools: {},
+      live: {
+        extensionUiRequests: [],
+        queue: pendingQueues(),
+        statuses: {},
+        tools: {},
+      },
     });
   });
 
@@ -302,8 +301,10 @@ describe("multi-session event routing", () => {
     publishDraft("editor-1");
     publishDraft("editor-2");
     expect(store.getState()).toMatchObject({
-      statuses: { worker: "indexing" },
-      windowTitle: "Session A title",
+      live: {
+        statuses: { worker: "indexing" },
+        windowTitle: "Session A title",
+      },
     });
     expect(store.drafts.get("s1").text).toBe("draft from A");
 
@@ -312,8 +313,10 @@ describe("multi-session event routing", () => {
       activeSnapshot({ sessionId: "s2", sessionName: "Session B" }),
     );
     expect(store.getState()).toMatchObject({
-      statuses: {},
-      windowTitle: null,
+      live: {
+        statuses: {},
+        windowTitle: null,
+      },
     });
     expect(store.drafts.get("s1").text).toBe("draft from A");
     expect(store.drafts.get("s2").text).toBe("");
@@ -363,10 +366,12 @@ describe("multi-session event routing", () => {
         expect.arrayContaining([expect.stringMatching(/^\/api\/snapshot/)]),
       );
       expect(store.getState()).toMatchObject({
-        messages: [],
-        streaming: false,
-        extensionUiRequests: [],
         sessionStatuses: { bg: completed },
+        live: {
+          messages: [],
+          streaming: false,
+          extensionUiRequests: [],
+        },
       });
     } finally {
       unsubscribe();
@@ -382,7 +387,10 @@ describe("multi-session event routing", () => {
     store.drafts.setText("s1", "keep this draft");
     const seen: Array<[string | null, unknown]> = [];
     const unsubscribe = store.subscribe(() => {
-      const { transcriptViewId, messages } = store.getState();
+      const {
+        view: { viewId: transcriptViewId },
+        live: { messages },
+      } = store.getState();
       seen.push([transcriptViewId, messages.at(-1)?.content]);
     });
     try {
@@ -415,8 +423,10 @@ describe("multi-session event routing", () => {
       for (const [view, text] of seen)
         expect(view === "new-view").toBe(text === "saved native text");
       expect(store.getState()).toMatchObject({
-        branchRevision: 2,
-        transcriptEffectiveLeafId: "native-leaf",
+        view: {
+          branchRevision: 2,
+          effectiveLeafId: "native-leaf",
+        },
       });
       expect(store.drafts.get("s1").text).toBe("keep this draft");
       expect(
@@ -440,7 +450,9 @@ describe("multi-session event routing", () => {
     });
     expect(store.getState()).toMatchObject({
       connection: "reconnecting",
-      projectionHealth: { status: "ok" },
+      view: {
+        health: { status: "ok" },
+      },
     });
     await vi.advanceTimersByTimeAsync(1_000);
     FakeWebSocket.instances.at(-1)!.join(
@@ -452,7 +464,9 @@ describe("multi-session event routing", () => {
     );
     expect(store.getState()).toMatchObject({
       connection: "open",
-      messages: [{ content: "Confirmed on reconnect" }],
+      live: {
+        messages: [{ content: "Confirmed on reconnect" }],
+      },
     });
   });
 
@@ -491,10 +505,12 @@ describe("multi-session event routing", () => {
       }).active,
     });
     expect(store.getState()).toMatchObject({
-      transcriptRevision: 2,
-      projectionConflict: conflict,
       error: conflict.message,
       errorSeverity: "error",
+      view: {
+        revision: 2,
+        conflict: conflict,
+      },
     });
     expect(refresh).not.toHaveBeenCalled();
     socket.emit({ type: "runtime_ready", sessionId: "s1", runtimeSequence: 3 });
@@ -511,10 +527,11 @@ describe("multi-session event routing", () => {
     });
     await vi.advanceTimersByTimeAsync(1_000);
     expect(store.getState()).toMatchObject({
-      transcriptRevision: 3,
-      projectionHealth: { status: "ok" },
-      projectionError: null,
       error: null,
+      view: {
+        revision: 3,
+        health: { status: "ok" },
+      },
     });
   });
 
@@ -537,7 +554,7 @@ describe("multi-session event routing", () => {
       ),
     );
     await expect(store.clearPending()).resolves.toBe(false);
-    expect(store.getState().queue).toEqual(active.pendingQueues);
+    expect(store.getState().live.queue).toEqual(active.pendingQueues);
     const newer = pendingQueues(["arrived after clear"], [], { revision: 2 });
     socket.emit({
       type: "queue_update",
@@ -546,26 +563,17 @@ describe("multi-session event routing", () => {
     });
     clear.resolve({ body: { ok: true } });
     await expect(clearing).resolves.toBe(true);
-    expect(store.getState().queue).toEqual(newer);
+    expect(store.getState().live.queue).toEqual(newer);
     expect(store.getState().pendingAction).toBeNull();
   });
 
-  it("loads live state when runtime_ready arrives before an open response", async () => {
+  it("joins the opened session's Live view after an early runtime_ready", async () => {
     const release = deferred<void>();
     const fetch = installStoreRoutes(async (url) => {
       if (url === "/api/sessions/open") {
         await release.promise;
         return { body: activeSnapshot({ sessionId: "s2" }) };
       }
-      if (url === "/api/snapshot?detail=s2")
-        return {
-          body: activeSnapshot({
-            sessionId: "s2",
-            pageMessages: [
-              { role: "assistant", content: "live runtime", timestamp: 2 },
-            ],
-          }),
-        };
     });
     const { store, socket } = await initStore();
     const opening = store.openSession("s2");
@@ -582,16 +590,23 @@ describe("multi-session event routing", () => {
     });
     release.resolve();
     await opening;
-    await vi.waitFor(() =>
-      expect(
-        store.getState().messages.map((message) => message.content),
-      ).toEqual(["live runtime"]),
+    expect(JSON.parse(socket.sent.at(-1)!)).toEqual({
+      type: "detail_interest",
+      sessionId: "s2",
+      revision: 1,
+    });
+    socket.emitSnapshot(
+      activeSnapshot({
+        sessionId: "s2",
+        pageMessages: [{ role: "assistant", content: "live runtime" }],
+      }),
     );
+    expect(store.getState().live.messages.at(-1)?.content).toBe("live runtime");
     expect(
       fetch.mock.calls.filter(([url]) =>
         String(url).startsWith("/api/snapshot"),
       ),
-    ).toHaveLength(1);
+    ).toHaveLength(0);
   });
 
   it("rerenders a shallow object selection only when a selected value changes", () => {

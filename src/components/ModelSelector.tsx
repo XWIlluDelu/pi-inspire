@@ -8,6 +8,7 @@ import {
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import {
   type FloatingMenuConstraints,
+  useFloatingMenuDismissal,
   useFloatingMenuPlacement,
 } from "../use-floating-menu";
 import { ModelList } from "./ModelList";
@@ -58,9 +59,8 @@ export function ModelSelector({
   const handledOpenRequest = useRef<number | null>(null);
   const [open, setOpen] = useState(false);
   const [initialQuery, setInitialQuery] = useState("");
-  const [refreshStatus, setRefreshStatus] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
-  const refreshGeneration = useRef(0);
+  const [refreshStatus, setRefreshStatus] = useState<string | null>();
+  const refreshing = refreshStatus === undefined && Boolean(refreshModels);
   const isDisabled =
     disabled || (!models.length && !refreshModels && !onManageModels);
   const resolveMenuTarget = useCallback(() => {
@@ -97,48 +97,22 @@ export function ModelSelector({
     onOpenRequestHandled?.(openRequest.id);
   }, [disabled, openRequest, onOpenRequestHandled, show]);
   useEffect(() => {
-    const generation = ++refreshGeneration.current;
-    if (!open || isDisabled || !refreshModels) {
-      setRefreshing(false);
-      return;
-    }
-    setRefreshing(true);
-    setRefreshStatus(null);
+    if (!open || isDisabled || !refreshModels) return;
+    let current = true;
+    setRefreshStatus(undefined);
     void refreshModels().then(
       (warning) => {
-        if (refreshGeneration.current === generation) {
-          setRefreshing(false);
-          setRefreshStatus(warning ?? null);
-        }
+        if (current) setRefreshStatus(warning ?? null);
       },
       () => {
-        if (refreshGeneration.current === generation) {
-          setRefreshing(false);
-          setRefreshStatus("Could not refresh models");
-        }
+        if (current) setRefreshStatus("Could not refresh models");
       },
     );
     return () => {
-      ++refreshGeneration.current;
+      current = false;
     };
   }, [open, isDisabled, refreshModels]);
-  useEffect(() => {
-    if (!open) return;
-    const close = (event: MouseEvent | FocusEvent) => {
-      const target = event.target as Node;
-      if (
-        !rootRef.current?.contains(target) &&
-        !menuRef.current?.contains(target)
-      )
-        setOpen(false);
-    };
-    window.addEventListener("mousedown", close);
-    window.addEventListener("focusin", close);
-    return () => {
-      window.removeEventListener("mousedown", close);
-      window.removeEventListener("focusin", close);
-    };
-  }, [open]);
+  useFloatingMenuDismissal(open, rootRef, menuRef, () => setOpen(false));
   const restoreTriggerFocus = () =>
     requestAnimationFrame(() =>
       triggerRef.current?.focus({ preventScroll: true }),

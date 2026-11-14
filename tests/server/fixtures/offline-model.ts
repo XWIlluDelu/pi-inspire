@@ -100,6 +100,7 @@ export function writeOfflineModels(
     contextWindow?: number;
     maxTokens?: number;
   }>,
+  apiKey = "synthetic",
 ) {
   return writeFile(
     join(agent, "models.json"),
@@ -107,7 +108,7 @@ export function writeOfflineModels(
       providers: {
         [provider]: {
           api: "openai-completions",
-          apiKey: "synthetic",
+          apiKey,
           baseUrl,
           models: models.map((model) => ({
             name: model.id,

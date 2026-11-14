@@ -93,10 +93,8 @@ describe("Pi context edits and transcript projection", () => {
         await expect(projection.reconcile(true)).resolves.toMatchObject({
           changed: true,
           kind: "append",
-          appendedEntries: [
-            expect.objectContaining({ type: "context_edit", id: editId }),
-          ],
         });
+        expect(projection.entry(editId)?.type).toBe("context_edit");
         expect(projection.health.status).toBe("ok");
         expect(projection.latestPage().messages).toEqual(original);
         const assistantContext = buildSessionContext(

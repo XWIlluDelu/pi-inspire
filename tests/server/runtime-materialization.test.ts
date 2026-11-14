@@ -238,9 +238,11 @@ describe("new-session materialization", () => {
           fixture.attachments.resolveForPrompt([image.id]),
         ).rejects.toThrow(/expired/);
         expect(fixture.worker.stops).toBe(1);
-        expect((await fixture.runtime.snapshot("new-session")).runState).toBe(
-          "conflict",
-        );
+        expect(
+          (await fixture.runtime.snapshot("new-session")).sessionStatuses[
+            "new-session"
+          ]?.runState,
+        ).toBe("conflict");
         await expect(
           fixture.runtime.prompt({
             sessionId: "new-session",

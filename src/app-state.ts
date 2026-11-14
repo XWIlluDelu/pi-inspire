@@ -7,6 +7,7 @@ import {
   type PiUpdateCheckResponse,
   type ProjectionConflict,
   type ProjectionHealth,
+  projectionConflictSeverity,
   type ResourceProbeResult,
   type RunState,
   type SessionCatalogIssue,
@@ -92,17 +93,6 @@ export interface NativeCommandUiRequest {
   modelSettingsOwner?: ModelSettingsOwner;
 }
 
-export function transcriptRevisionContains(
-  revision: number,
-  appendFromRevision: number,
-  ancestorRevision: number,
-): boolean {
-  return (
-    revision === ancestorRevision ||
-    (revision > ancestorRevision && appendFromRevision <= ancestorRevision)
-  );
-}
-
 export function contextUsage(stats: unknown): ContextUsage | null {
   if (!stats || typeof stats !== "object") return null;
   const raw = (stats as { contextUsage?: unknown }).contextUsage;
@@ -128,10 +118,52 @@ export function contextUsage(stats: unknown): ContextUsage | null {
   return { tokens, contextWindow, percent };
 }
 
-export interface AppState
-  extends EventSlice,
-    WorkspaceBrowserState,
-    FileInspectionState {
+export interface TranscriptView {
+  viewId: string | null;
+  incarnation: string | null;
+  revision: number;
+  durableLeafId: string | null;
+  effectiveLeafId: string | null;
+  navigationLeased: boolean;
+  composerHistoryVersion: string | null;
+  hasOlder: boolean;
+  branchRevision: number | null;
+  health: ProjectionHealth;
+  conflict: ProjectionConflict | null;
+}
+
+export const emptyTranscriptView: TranscriptView = {
+  viewId: null,
+  incarnation: null,
+  revision: 0,
+  durableLeafId: null,
+  effectiveLeafId: null,
+  navigationLeased: false,
+  composerHistoryVersion: null,
+  hasOlder: false,
+  branchRevision: null,
+  health: { status: "ok" },
+  conflict: null,
+};
+
+export function transcriptDiagnostic({ health, conflict }: TranscriptView) {
+  const error =
+    conflict?.message ??
+    (health.status === "ok"
+      ? null
+      : (health.message ?? "Session persistence is not yet confirmed"));
+  const warning =
+    projectionConflictSeverity(conflict) === "attention" ||
+    (!conflict && health.status === "pending");
+  return {
+    error,
+    errorSeverity: warning ? ("warning" as const) : ("error" as const),
+  };
+}
+
+export interface AppState extends WorkspaceBrowserState, FileInspectionState {
+  view: TranscriptView;
+  live: EventSlice;
   needsToken: boolean;
   connection: ManagedConnectionState;
   connectionProblem: ManagedConnectionProblem;
@@ -176,20 +208,6 @@ export interface AppState
   commandActivities: Record<string, NativeCommandActivity[]>;
   nativeCommandUiRequest: NativeCommandUiRequest | null;
   nextNativeCommandId: number;
-  transcriptRevision: number;
-  /** Earliest revision still sharing this projection's unchanged prefix. */
-  transcriptAppendFromRevision: number;
-  transcriptIncarnation: string | null;
-  transcriptViewId: string | null;
-  /** Saved Pi projection leaf and the continuation shown in the transcript. */
-  transcriptDurableLeafId: string | null;
-  transcriptEffectiveLeafId: string | null;
-  transcriptNavigationLeased: boolean;
-  composerHistoryVersion: string | null;
-  hasOlderMessages: boolean;
-  projectionHealth: ProjectionHealth;
-  projectionConflict: ProjectionConflict | null;
-  projectionError: string | null;
   /** Current session synchronization/projection error. Operation feedback
    * stays local or uses Notices. Attention conflicts are warnings. */
   errorSeverity: "error" | "warning";
@@ -237,9 +255,6 @@ export interface AppState
   /** Files/resources pane visibility (Ctrl+.). */
   resourcesOpen: boolean;
   contextMode: "files" | "changes" | "terminal";
-  /** The compact nav disclosure is store-owned so drawer remounts and
-   * responsive transitions retain it. */
-  branchRevision: number | null;
   branchTreeError: string | null;
   branchActionId: string | null;
   gitStatus: GitStatusResponse | null;
@@ -256,12 +271,9 @@ export interface AppState
 export function selectedRunState({
   sessionId,
   sessionStatuses,
-  projectionConflict,
-}: Pick<
-  AppState,
-  "sessionId" | "sessionStatuses" | "projectionConflict"
->): RunState {
-  if (projectionConflict) return "conflict";
+  view,
+}: Pick<AppState, "sessionId" | "sessionStatuses" | "view">): RunState {
+  if (view.conflict) return "conflict";
   return (sessionId && sessionStatuses[sessionId]?.runState) || "idle";
 }
 
@@ -278,7 +290,8 @@ export function emptyResourceInspectionState(): Pick<
 
 export function createInitialAppState(): AppState {
   return {
-    ...emptyEventSlice(),
+    view: emptyTranscriptView,
+    live: emptyEventSlice(),
     ...emptyWorkspaceBrowserState(),
     needsToken: false,
     connection: "connecting",
@@ -319,18 +332,6 @@ export function createInitialAppState(): AppState {
     commandActivities: {},
     nativeCommandUiRequest: null,
     nextNativeCommandId: 1,
-    transcriptRevision: 0,
-    transcriptAppendFromRevision: 0,
-    transcriptIncarnation: null,
-    transcriptViewId: null,
-    transcriptDurableLeafId: null,
-    transcriptEffectiveLeafId: null,
-    transcriptNavigationLeased: false,
-    composerHistoryVersion: null,
-    hasOlderMessages: false,
-    projectionHealth: { status: "ok" },
-    projectionConflict: null,
-    projectionError: null,
     errorSeverity: "error",
     sessions: [],
     sessionQuery: "",
@@ -359,7 +360,6 @@ export function createInitialAppState(): AppState {
     resourcesOpen: false,
     contextMode: "files",
     ...emptyResourceInspectionState(),
-    branchRevision: null,
     branchTreeError: null,
     branchActionId: null,
     gitStatus: null,

@@ -37,11 +37,7 @@ interface StartupProjectionBaseline {
   fingerprint: string;
   sourceIdentity: string | null;
   sourceVersion: string | null;
-  committedBytes: number;
-  uncommittedBytes: number;
-  uncommittedFingerprint: string | null;
   tailEntryId: string | null;
-  leafId: string | null;
 }
 
 function captureStartupProjection(
@@ -52,11 +48,7 @@ function captureStartupProjection(
     fingerprint: projection.fingerprint,
     sourceIdentity: projection.sourceIdentity,
     sourceVersion: projection.sourceVersion,
-    committedBytes: projection.committedBytes,
-    uncommittedBytes: projection.uncommittedBytes,
-    uncommittedFingerprint: projection.uncommittedFingerprint,
     tailEntryId: projection.tailEntryId,
-    leafId: projection.leafId,
   };
 }
 
@@ -431,25 +423,12 @@ export class RuntimeWorkerLifecycle {
     const projection = slot.projection;
     if (
       !projection ||
-      projection.health.status === "error" ||
-      reconciled.changed ||
-      reconciled.healthChanged ||
-      reconciled.sourceChanged ||
+      projection.health.status !== "ok" ||
       reconciled.kind !== "none" ||
-      reconciled.previousRevision !== baseline.revision ||
-      reconciled.revision !== baseline.revision ||
-      reconciled.previousFingerprint !== baseline.fingerprint ||
-      reconciled.fingerprint !== baseline.fingerprint ||
       projection.revision !== baseline.revision ||
       projection.fingerprint !== baseline.fingerprint ||
-      projection.sourceIdentity !== baseline.sourceIdentity ||
       projection.sourceVersion !== baseline.sourceVersion ||
-      projection.committedBytes !== baseline.committedBytes ||
-      projection.uncommittedBytes !== baseline.uncommittedBytes ||
-      projection.uncommittedFingerprint !== baseline.uncommittedFingerprint ||
-      projection.uncommittedBytes > 0 ||
-      projection.tailEntryId !== baseline.tailEntryId ||
-      projection.leafId !== baseline.leafId
+      projection.tailEntryId !== baseline.tailEntryId
     ) {
       throw requestError(
         "Session changed after worker creation but before Pi startup",
@@ -469,11 +448,6 @@ export class RuntimeWorkerLifecycle {
         409,
       );
     };
-    if (
-      baseline.tailEntryId !== baseline.leafId ||
-      baseline.uncommittedBytes > 0
-    )
-      fail();
     // The early native startup hook precedes later extensions' writes. Tail
     // identity alone would miss a same-ID prefix rewrite racing Pi's open.
     if (rpc instanceof PiRpcProcess || slot.nativeStart !== null) {
@@ -546,12 +520,12 @@ export class RuntimeWorkerLifecycle {
         projection.revision !== baseline.revision ||
         projection.fingerprint !== baseline.fingerprint ||
         delta.length !== 0 ||
-        parsedRpcEntries.leafId !== baseline.leafId ||
-        projection.leafId !== baseline.leafId
+        parsedRpcEntries.leafId !== baseline.tailEntryId ||
+        projection.leafId !== baseline.tailEntryId
       )
         fail();
     } else {
-      const appendedEntries = reconciled.appendedEntries;
+      const appendedEntries = projection.entriesAfter(baseline.tailEntryId);
       // Pi and its extensions own session_start persistence. Verify the worker's
       // complete append against disk, without imposing an entry-type policy.
       if (
@@ -559,23 +533,18 @@ export class RuntimeWorkerLifecycle {
         reconciled.healthChanged ||
         reconciled.previousRevision !== baseline.revision ||
         reconciled.previousFingerprint !== baseline.fingerprint ||
-        reconciled.previousLeafId !== baseline.leafId ||
         projection.revision !== baseline.revision + 1 ||
-        projection.committedBytes <= baseline.committedBytes ||
-        !Array.isArray(appendedEntries) ||
         appendedEntries.length !== delta.length ||
         delta.length === 0
       )
         fail();
 
-      for (let index = 0; index < delta.length; index += 1) {
-        const rpcEntry = delta[index]!;
-        const projectedEntry = (appendedEntries as readonly SessionEntry[])[
-          index
-        ];
-        if (!projectedEntry || !samePersistedJson(projectedEntry, rpcEntry))
-          fail();
-      }
+      if (
+        !delta.every((entry, index) =>
+          samePersistedJson(appendedEntries[index], entry),
+        )
+      )
+        fail();
 
       if (
         projection.leafId !== parsedRpcEntries.leafId ||

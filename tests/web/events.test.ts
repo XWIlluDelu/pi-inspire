@@ -9,11 +9,9 @@ import {
 import { pendingQueues } from "./pending-fixtures";
 
 function observe(slice = emptyEventSlice()) {
-  const settled = new Set<string>();
   return (event: WireEvent) => {
-    const result = reduce(slice, settled, event);
+    const result = reduce(slice, event);
     slice = result.slice;
-    for (const key of result.settle) settled.add(key);
     return result;
   };
 }
@@ -24,8 +22,7 @@ function assistantText(text: string, timestamp = 2): ChatMessage {
 
 describe("message reconciliation", () => {
   it("replays compacted tool argument batches across snapshots and rejects revision/identity gaps", () => {
-    const settled = new Set<string>();
-    const start = reduce(emptyEventSlice(), settled, {
+    const start = reduce(emptyEventSlice(), {
       type: "message_start",
       message: {
         role: "assistant",
@@ -35,7 +32,7 @@ describe("message reconciliation", () => {
         __inspireStreamRevision: 0,
       },
     });
-    const shell = reduce(start.slice, settled, {
+    const shell = reduce(start.slice, {
       type: "message_update_batch",
       streamMessageKey: "live:stream-write",
       streamRevision: 1,
@@ -80,27 +77,27 @@ describe("message reconciliation", () => {
         },
       ],
     };
-    const preview = reduce(shell.slice, settled, batch);
+    const preview = reduce(shell.slice, batch);
     expect(preview.resync).toBe(false);
     expect(preview.slice.messages[0]).toMatchObject({
       __inspireStreamRevision: 8,
       content: [{ arguments: { content: "first" } }],
     });
-    expect(reduce(preview.slice, settled, batch).resync).toBe(true);
+    expect(reduce(preview.slice, batch).resync).toBe(true);
+    expect(reduce(shell.slice, { ...batch, sourceEventCount: 6 }).resync).toBe(
+      true,
+    );
     expect(
-      reduce(shell.slice, settled, { ...batch, sourceEventCount: 6 }).resync,
-    ).toBe(true);
-    expect(
-      reduce(shell.slice, settled, {
+      reduce(shell.slice, {
         ...batch,
         streamMessageKey: "live:other-call",
       }).resync,
     ).toBe(true);
-    const restored = reduce(emptyEventSlice(), settled, {
+    const restored = reduce(emptyEventSlice(), {
       type: "message_start",
       message: preview.slice.messages[0],
     });
-    const continued = reduce(restored.slice, settled, {
+    const continued = reduce(restored.slice, {
       type: "message_update_batch",
       streamMessageKey: "live:stream-write",
       streamRevision: 9,
@@ -123,7 +120,7 @@ describe("message reconciliation", () => {
     expect(preview.slice.messages[0]).toMatchObject({
       content: [{ arguments: { content: "first" } }],
     });
-    const interrupted = reduce(continued.slice, settled, {
+    const interrupted = reduce(continued.slice, {
       type: "message_end",
       message: {
         ...continued.slice.messages[0],
@@ -147,8 +144,9 @@ describe("message reconciliation", () => {
     ]);
   });
 
-  it("reduces an ordered delta batch once and rejects a broken length witness", () => {
-    const started = reduce(emptyEventSlice(), new Set(), {
+  it("applies ordered deltas to one live response and requires matching revision and text length", () => {
+    const emit = observe();
+    const started = emit({
       type: "message_start",
       message: {
         role: "assistant",
@@ -159,7 +157,7 @@ describe("message reconciliation", () => {
       },
     });
     const streamMessageKey = started.slice.activeAssistantMessageKey!;
-    const batch = reduce(started.slice, new Set(), {
+    const batch = emit({
       type: "message_update_batch",
       streamMessageKey,
       streamTextLength: 5,
@@ -177,56 +175,42 @@ describe("message reconciliation", () => {
       { type: "text", text: "hello" },
     ]);
 
-    const broken = reduce(batch.slice, new Set(), {
+    const delta = (streamTextLength: number): WireEvent => ({
       type: "message_update_batch",
       streamMessageKey,
-      streamTextLength: 99,
+      streamTextLength,
       streamRevision: 4,
       sourceEventCount: 1,
       assistantMessageEvents: [
         { type: "text_delta", contentIndex: 0, delta: "!" },
       ],
     });
+    const broken = emit(delta(99));
     expect(broken.resync).toBe(true);
     expect(broken.slice.messages).toBe(batch.slice.messages);
-  });
-
-  it("does not let a joining backlog regress a newer snapshot projection", () => {
-    const emit = observe();
-    const liveId = "call-overlap";
-    emit({
-      type: "message_start",
-      message: {
-        ...assistantText(""),
-        content: [],
-        __inspireLiveId: liveId,
-        __inspireStreamRevision: 0,
-      },
-    });
-    const update = (text: string, revision: number) =>
+    expect(
       emit({
         type: "message_update",
         streamDelta: true,
-        streamMessageKey: `live:${liveId}`,
-        streamTextLength: text.length,
-        streamRevision: revision,
+        streamMessageKey,
+        streamTextLength: 3,
+        streamRevision: 2,
         message: {
-          ...assistantText(text),
-          __inspireLiveId: liveId,
-          __inspireStreamRevision: revision,
+          ...assistantText("hel"),
+          __inspireLiveId: "call-batch",
+          __inspireStreamRevision: 2,
         },
-      });
-    const atThree = update("abc", 3);
-    expect(update("ab", 2)).toMatchObject({
+      }),
+    ).toMatchObject({
       changed: false,
       resync: false,
-      slice: { messages: atThree.slice.messages },
+      slice: { messages: batch.slice.messages },
     });
-    const advanced = update("abcd", 4);
+    const advanced = emit(delta(6));
     expect(advanced.resync).toBe(false);
     expect(advanced.slice.messages[0]).toMatchObject({
       __inspireStreamRevision: 4,
-      content: [{ type: "text", text: "abcd" }],
+      content: [{ type: "text", text: "hello!" }],
     });
   });
 
@@ -239,7 +223,7 @@ describe("message reconciliation", () => {
         timestamp: 1,
       },
     ];
-    const result = reduce(slice, new Set(["assistant:1"]), {
+    const result = reduce(slice, {
       type: "message_update_batch",
       streamMessageKey: "live:orphan",
       streamRevision: 1,
@@ -256,99 +240,17 @@ describe("message reconciliation", () => {
     ]);
   });
 
-  it("keeps an observed completed call queued until execution is observed", () => {
-    const message = {
-      role: "assistant",
-      timestamp: 7,
-      content: [
-        {
-          type: "toolCall",
-          id: "queued",
-          name: "write",
-          arguments: { path: "a.ts", content: "ready" },
-        },
-      ],
-    };
-    const started = reduce(emptyEventSlice(), new Set(), {
-      type: "message_start",
-      message,
-    });
-    const ended = reduce(
-      started.slice,
-      new Set(),
-      {
-        type: "message_end",
-        message,
-      },
-      "running",
-    );
-    expect(ended.slice.streaming).toBe(false);
-    expect(ended.slice.tools.queued).toEqual({
-      id: "queued",
-      name: "write",
-      phase: "queued",
-    });
-    const executing = reduce(ended.slice, new Set(), {
-      type: "tool_execution_update",
-      toolCallId: "queued",
-      toolName: "write",
-      outputPreview: { text: "Writing…", truncated: false },
-    });
-    expect(executing.slice.tools.queued?.phase).toBe("running");
-    const replayed = reduce(executing.slice, new Set(), {
+  it("applies the Host's queued tool atomically with the assistant message", () => {
+    const emit = observe();
+    const message = assistantText("I’ll check the file");
+    const tool = { id: "queued", name: "read", phase: "queued" } as const;
+    const ended = emit({
       type: "message_end",
       message,
+      toolActivity: { [tool.id]: tool },
     });
-    expect(replayed.slice.tools.queued?.phase).toBe("running");
-    const settled = reduce(ended.slice, new Set(), { type: "agent_settled" });
-    expect(settled.slice.tools).toEqual({});
-  });
-
-  it("does not infer a queued execution from unobserved or interrupted calls", () => {
-    const call = {
-      type: "toolCall",
-      id: "unobserved",
-      name: "write",
-      arguments: { path: "a.ts" },
-    };
-    const message = { role: "assistant", timestamp: 7, content: [call] };
-    expect(
-      reduce(emptyEventSlice(), new Set(), { type: "message_end", message })
-        .slice.tools,
-    ).toEqual({});
-    const started = reduce(emptyEventSlice(), new Set(), {
-      type: "message_start",
-      message,
-    });
-    for (const stopReason of ["aborted", "error"]) {
-      const ended = reduce(
-        started.slice,
-        new Set(),
-        {
-          type: "message_end",
-          message: { ...message, stopReason },
-        },
-        "running",
-      );
-      expect(ended.slice.tools).toEqual({});
-    }
-    const partial = reduce(started.slice, new Set(), {
-      type: "message_end",
-      message: {
-        ...message,
-        content: [
-          {
-            ...call,
-            __inspireToolCall: {
-              phase: "streaming",
-              characters: 12,
-              truncated: false,
-            },
-          },
-        ],
-      },
-    });
-    expect(partial.slice.tools).toEqual({});
+    expect(ended.slice.messages).toMatchObject([message]);
+    expect(ended.slice.tools[tool.id]).toEqual(tool);
   });
 
   it("keeps same-timestamp lifecycles distinct and ignores a replay of a settled live identity", () => {
@@ -366,7 +268,6 @@ describe("message reconciliation", () => {
       const key = `live:${message.__inspireLiveId}`;
       expect(ended.slice.activeAssistantMessageKey).toBe(key);
       expect(ended.slice.streaming).toBe(false);
-      expect(ended.settle).toEqual([key]);
     }
     const replay = emit({ type: "message_start", message: first });
     expect(replay.changed).toBe(false);
@@ -384,7 +285,7 @@ describe("message reconciliation", () => {
       { role: "user", content: "second question", timestamp: 3 },
     ];
     const second = assistantText("second answer", 4);
-    const next = reduce(slice, new Set(), {
+    const next = reduce(slice, {
       type: "message_start",
       message: second,
     });
@@ -396,10 +297,9 @@ describe("message reconciliation", () => {
     slice.streaming = true;
     slice.activeAssistantMessageKey = "live:retained";
     slice.queue = pendingQueues(["steer"], ["later"]);
-    const result = reduce(slice, new Set(), { type: "prompt_finished" });
+    const result = reduce(slice, { type: "prompt_finished" });
     expect(result.resync).toBe(true);
     expect(result.slice).toEqual(slice);
-    expect(result.settle).toEqual([]);
   });
 
   it("resyncs on settle without discarding the Host's pending-input projection", () => {
@@ -410,7 +310,7 @@ describe("message reconciliation", () => {
     slice.queue = pendingQueues(["steer"], ["later one", "later two"], {
       revision: 4,
     });
-    const { slice: next, resync } = reduce(slice, new Set(), {
+    const { slice: next, resync } = reduce(slice, {
       type: "agent_settled",
     });
     expect(resync).toBe(true);
@@ -424,7 +324,7 @@ describe("message reconciliation", () => {
 
 describe("transient tool/retry/queue activity", () => {
   it("shows Host retry details and reports the final error only after a non-aborted settlement", () => {
-    const started = reduce(emptyEventSlice(), new Set(), {
+    const started = reduce(emptyEventSlice(), {
       type: "auto_retry_start",
       sessionStatus: { runState: "retrying" },
       attempt: 2,
@@ -436,7 +336,7 @@ describe("transient tool/retry/queue activity", () => {
       maxAttempts: 5,
       message: "rate limited",
     });
-    const failed = reduce(started.slice, new Set(), {
+    const failed = reduce(started.slice, {
       type: "auto_retry_end",
       sessionStatus: { runState: "failed" },
       success: false,
@@ -445,7 +345,7 @@ describe("transient tool/retry/queue activity", () => {
     expect(failed.slice.retry).toBeNull();
     expect(failed.slice.notices).toEqual([]);
     for (const aborted of [false, true]) {
-      const settled = reduce(failed.slice, new Set(), {
+      const settled = reduce(failed.slice, {
         type: "agent_settled",
         sessionStatus: { runState: aborted ? "aborted" : "failed" },
         aborted,
@@ -502,7 +402,7 @@ describe("extension_ui_request mapping", () => {
   });
 
   it("clears browser-only liveness when a runtime dies without settling", () => {
-    const pending = reduce(emptyEventSlice(), new Set(), {
+    const pending = reduce(emptyEventSlice(), {
       type: "extension_ui_request",
       sessionId: "s1",
       id: "r1",
@@ -529,7 +429,6 @@ describe("extension_ui_request mapping", () => {
           },
         ],
       },
-      new Set(),
       {
         type: "runtime_error",
         error: "crashed",
@@ -571,7 +470,6 @@ describe("extension_ui_request mapping", () => {
     (reason, notice) => {
       const result = reduce(
         { ...emptyEventSlice(), streaming: true },
-        new Set(),
         { type: "external_attachment_ended", reason, duringWork: true },
       );
       expect(result.resync).toBe(true);
@@ -587,7 +485,7 @@ describe("extension_ui_request mapping", () => {
 
   it("resyncs when a controlled worker stop retires the branch view", () => {
     expect(
-      reduce(emptyEventSlice(), new Set(), {
+      reduce(emptyEventSlice(), {
         type: "extension_runtime_stopped",
         extensionDisplays: [],
         extensionStatuses: {},
@@ -596,7 +494,7 @@ describe("extension_ui_request mapping", () => {
   });
 
   it("replaces setStatus state from the authoritative Host projection", () => {
-    const withStatus = reduce(emptyEventSlice(), new Set(), {
+    const withStatus = reduce(emptyEventSlice(), {
       type: "extension_ui_request",
       id: "r3",
       method: "setStatus",
@@ -608,7 +506,7 @@ describe("extension_ui_request mapping", () => {
     });
     expect(withStatus.slice.statuses).toEqual({ linter: "linting…" });
 
-    const cleared = reduce(withStatus.slice, new Set(), {
+    const cleared = reduce(withStatus.slice, {
       type: "extension_ui_request",
       id: "r4",
       method: "setStatus",
@@ -626,10 +524,10 @@ describe("extension_ui_request mapping", () => {
       widgetKey: "plan",
       widgetLines: ["unprojected secret"],
     };
-    const raw = reduce(initial, new Set(), widget);
+    const raw = reduce(initial, widget);
     expect(raw.slice.extensionDisplays).toEqual([]);
 
-    const shown = reduce(raw.slice, new Set(), {
+    const shown = reduce(raw.slice, {
       ...widget,
       extensionDisplays: [
         {
@@ -650,7 +548,7 @@ describe("extension_ui_request mapping", () => {
       lines: ["one", "two"],
     });
 
-    const cleared = reduce(shown.slice, new Set(), {
+    const cleared = reduce(shown.slice, {
       ...widget,
       extensionDisplays: [],
     });

@@ -4,16 +4,16 @@ covers:
   - server/app.ts
   - server/runtime-event-sockets.ts
   - server/runtime.ts
-  - server/{operation-receipts,pending-operation-receipts}.ts
+  - server/operation-receipts.ts
   - src/controllers/pending-recovery-controller.ts
   - tests/integration/pending-{recovery-lifecycle,stop-native.integration}.test.ts
   - server/runtime-worker-pool.ts
   - shared/{contracts,host-endpoints,json-endpoints,assistant-stream,tool-argument-updates}.ts
   - server/{tool-argument-stream,tool-argument-batches,runtime-stream-budget}.ts
-  - src/{api,events,store,snapshot-transition,transport-performance,recovery-backoff}.ts
-  - src/controllers/{connection,session-selection,runtime-event,branch}-controller.ts
+  - src/{api,events,store,snapshot-transition,transport-performance,recovery-backoff,operation-observer}.ts
+  - src/controllers/{connection,session-selection,runtime-event,branch,resource,session-catalog}-controller.ts
   - tests/server/{app-events,app-input-operations,runtime-worker-pool}.test.ts
-  - tests/integration/session-detail-confirmation.test.ts
+  - tests/integration/session-detail-join.test.ts
   - tests/web/{events,store,store-transcript,store-navigation,store-async-ownership}.test.ts
 ---
 
@@ -46,8 +46,8 @@ follows [[session-persistence]]. It does not prevent explicit deletion. Host-res
 restore history and input without a page refresh, and without repeatedly reclaiming/rebuilding the
 visible conversation when dependent reads fail.
 
-Foreground and navigation derive run state from one Host status per session. Live events carry the
-explicit status through wire validation. Message and lifecycle events still update transient content
+Foreground and navigation derive run state from one Host status per session. The addressed snapshot
+and live events use the same status contract. Message and lifecycle events still update transient content
 and request presentation. The browser acknowledges the outcome ID it viewed without clearing
 another browser's indication. Bounded Host-owned retry details accompany addressed snapshots and
 live events and retire outside retry phases. A valid `retrying` state remains visible if its detail
@@ -66,6 +66,7 @@ the snapshot. The socket replays only queued runtime events newer than that cut.
 After a socket loss, attempt bounded WebSocket resume with the current address. A failed resume
 falls back to metadata bootstrap; a newer selection replaces the socket's interest and invalidates
 any previous projection still in flight. HTTP open remains an explicit selection operation.
+Readiness sent before an open response arrives on the new addressed subscription's snapshot.
 
 HTTP snapshot reads also carry an explicit session ID or an empty detail address. The last-opened
 hint is used only to choose a new tab's starting address.
@@ -96,7 +97,9 @@ continued change refuses the read. This recovery neither replaces a live owned p
 retries a write. A missing open target refreshes the list while keeping the visible conversation.
 
 Background snapshot failures keep confirmed content and retry with bounded backoff under the same
-API, transport, selection and branch-view owner. A fresh snapshot
+API, transport, selection and branch-view owner. Catalog, History and resource reads check their
+owner before starting and before publishing. Their independent contributions keep their own addresses
+and cancellation. A fresh snapshot
 retires recovery. Superseded reads cannot publish warnings or restart retries. Commands and prompts
 are never replayed; persistent synchronization loss follows [[workbench]].
 
@@ -210,6 +213,7 @@ mismatched proof and transport loss stay uncertain; retrying the same intent onl
 
 Prompt and Pending each retain at most 2,048 settled results and 32 MiB for 15 minutes.
 Process-lifetime tombstones prevent redispatch. Each 65,536-identity limit refuses further admission.
+They use one receipt implementation with separate capacities and delivery fingerprints.
 
 ## Transcript views
 
@@ -220,6 +224,9 @@ compaction. Entry detail exposes bounded body sections and image metadata; image
 view-bound image endpoint. Live uses a separately bounded transcript tail. Each replacement
 installs the rows, branch coordinates and persistence state from one Host event. Joining sockets
 retain individual deltas so they can cut the backlog inside a stream batch.
+The browser uses the same view replacement rules for full snapshots and Live checkpoints.
+A live agent settlement carries its confirmed completion for the titlebar cue. A snapshot
+supplies status without replaying that cue.
 
 Each transcript snapshot/page carries an opaque branch-view generation and effective leaf.
 Browser transcript readers validate the returned `viewId` against the request before applying

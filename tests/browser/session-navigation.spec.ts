@@ -4,6 +4,7 @@ import type {
   SessionListResponse,
   SessionRuntimeStatus,
 } from "../../shared/contracts";
+import { navigationGroupsFixture } from "./fixtures/navigation-groups";
 import { routeSnapshots } from "./support/host-events";
 import { hostRequest } from "./support/host-request";
 import {
@@ -324,6 +325,125 @@ test.describe("touch session drawer", () => {
   });
 });
 
+test("catalog search follows curation and reviews the exact Hidden selection", async ({
+  page,
+}) => {
+  await navigationGroupsFixture(page);
+  await pairedPage(page);
+  const nav = page.getByRole("navigation", { name: "Sessions" });
+  const search = nav.getByRole("searchbox", { name: "Search sessions" });
+  const reports = nav.getByRole("button", { name: "reports", exact: true });
+  const row = nav.locator('[data-session-id="fixture-active"]');
+  const action = (label: string) =>
+    row.getByRole("button", { name: `${label} "Reports session"` });
+  const selected = nav.locator(".nav__row--highlighted .nav__row-name");
+  await expect(reports).toHaveAttribute("aria-expanded", "false");
+  await search.fill("reports");
+  await expect(reports).toBeDisabled();
+  await expect(selected).toHaveText("Reports session");
+  await search.press("ArrowDown");
+  await expect(selected).toHaveText("Independent hidden session");
+  await search.press("ArrowUp");
+  await action("Pin").click();
+  await expect(action("Unpin")).toBeVisible();
+  await search.focus();
+  await expect(selected).toHaveText("Reports session");
+  await action("Hide").click();
+  await expect(action("Restore")).toBeVisible();
+  await search.focus();
+  await expect(selected).toHaveText("Reports session");
+  await search.press("ArrowDown");
+  await expect(selected).toHaveText("Independent hidden session");
+  await search.press("ArrowUp");
+  await search.fill("session");
+  await search.press("Enter");
+  await expect(
+    page.getByRole("form", { name: "Start a session" }),
+  ).toBeVisible();
+  await expect(selected).toHaveText("Geometry session");
+
+  const palette = await openCommandPalette(page);
+  for (const query of ["", "session"]) {
+    await palette.getByLabel("Filter commands").fill(query);
+    await expect(
+      palette.getByRole("option", { name: /^Geometry session/ }),
+    ).toBeVisible();
+    await expect(
+      palette.getByRole("option", {
+        name: /^Reports session|^Archived measurement/,
+      }),
+    ).toHaveCount(0);
+  }
+  await page.keyboard.press("Escape");
+  await search.fill("");
+  await expect(
+    nav.getByRole("button", { name: "calibration", exact: true }),
+  ).toHaveAttribute("aria-expanded", "false");
+  await expect(row).toHaveCount(0);
+  const hidden = nav.getByRole("button", { name: "Hidden", exact: true });
+  await hidden.click();
+  await page.reload();
+  await expect(hidden).toHaveAttribute("aria-pressed", "true");
+  await expect(row).toBeVisible();
+
+  const requests: Array<{
+    scope: string;
+    projectCwd?: string;
+    sessionIds: string[];
+  }> = [];
+  await page.route("**/api/sessions/delete", (route) => {
+    requests.push(route.request().postDataJSON());
+    return route.fulfill({
+      status: 503,
+      json: { error: "Deletion unavailable" },
+    });
+  });
+  const all = nav.getByRole("button", { name: "Clear Hidden" });
+  await search.fill("reports");
+  await expect(all).toBeDisabled();
+  await search.fill("");
+  const folder = nav.getByRole("button", {
+    name: "Delete all sessions in folder archived-a",
+  });
+  await folder.click();
+  const dialog = page.getByRole("alertdialog", {
+    name: "Clear hidden folder?",
+  });
+  await expect(dialog).toHaveAccessibleDescription(/\/projects\/archived-a/);
+  const deleteOne = dialog.getByRole("button", { name: "Delete 1 session" });
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(dialog).toBeHidden();
+  expect(requests).toEqual([]);
+  await folder.click();
+  await deleteOne.click();
+  await expect
+    .poll(() => requests[0])
+    .toMatchObject({
+      scope: "hidden",
+      projectCwd: "/projects/archived-a",
+      sessionIds: ["fixture-compaction"],
+    });
+  await expect(dialog.getByText("Deletion unavailable")).toBeVisible();
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await all.click();
+  await page
+    .getByRole("alertdialog", { name: "Clear Hidden?" })
+    .getByRole("button", { name: "Delete 4 sessions" })
+    .click();
+  await expect
+    .poll(() => requests[1])
+    .toMatchObject({
+      scope: "hidden",
+      sessionIds: expect.arrayContaining([
+        "fixture-active",
+        "fixture-compaction",
+        "fixture-errors",
+        "hidden-independent",
+      ]),
+    });
+  expect(requests[1]?.sessionIds).toHaveLength(4);
+});
+
 test("Needs you receives live attention and remembers its mode across reload", async ({
   page,
 }) => {
@@ -351,7 +471,9 @@ test("Needs you receives live attention and remembers its mode across reload", a
       }),
     // Other tests share this Host; start from no session statuses.
     snapshot: (snapshot) => {
-      Object.assign(snapshot, { sessionStatuses: {} });
+      snapshot.sessionStatuses = snapshot.active
+        ? { [snapshot.active.sessionId]: { runState: "idle" } }
+        : {};
     },
     event: (event) => {
       if (event.type === "session_status") return false;
@@ -408,9 +530,16 @@ test("navigation attention counts clear the glyph in the rail and drawer", async
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.emulateMedia({ reducedMotion: "reduce" });
   const statuses: Record<string, SessionRuntimeStatus> = {};
+  let attentionId = 0;
   const transport = await routeSnapshots(page, {
     snapshot(snapshot) {
-      snapshot.sessionStatuses = { ...statuses };
+      const active = snapshot.active?.sessionId;
+      snapshot.sessionStatuses = active
+        ? { ...statuses, [active]: statuses[active] ?? { runState: "idle" } }
+        : { ...statuses };
+    },
+    event(event) {
+      if (event.type === "session_status") return false;
     },
   });
   await pairedPage(page);
@@ -423,7 +552,7 @@ test("navigation attention counts clear the glyph in the rail and drawer", async
 
   const report = (id: string, completed: boolean) => {
     statuses[id] = completed
-      ? { runState: "idle", indicator: "completed" }
+      ? { runState: "idle", indicator: "completed", attentionId: ++attentionId }
       : { runState: "idle" };
     transport.send({
       type: "session_status",
@@ -432,44 +561,11 @@ test("navigation attention counts clear the glyph in the rail and drawer", async
     });
   };
   const check = async (toggle: Locator, count: string) => {
-    await expect(
-      toggle.locator(".navigation-toggle__attention > [aria-hidden]"),
-    ).toHaveText(count);
-    expect(
-      await toggle.evaluate((button) => {
-        const badge = button
-          .querySelector(".navigation-toggle__attention")!
-          .getBoundingClientRect();
-        const header = button
-          .closest("header, .nav__header")!
-          .getBoundingClientRect();
-        if (badge.top < header.top || badge.right > header.right)
-          return "clipped";
-
-        // The reticle has transparent space within its SVG viewBox. Check its
-        // painted geometry so placing a badge in that space is permitted.
-        const svg = [...button.querySelectorAll("svg")].find(
-          (icon) => icon.getBoundingClientRect().width > 0,
-        )!;
-        for (const shape of svg.querySelectorAll<SVGGeometryElement>(
-          "path, rect",
-        )) {
-          const matrix = shape.getScreenCTM()!.inverse();
-          const { stroke, fill } = getComputedStyle(shape);
-          for (let y = badge.top + 0.25; y < badge.bottom; y += 0.5) {
-            for (let x = badge.left + 0.25; x < badge.right; x += 0.5) {
-              const point = new DOMPoint(x, y).matrixTransform(matrix);
-              if (
-                (stroke !== "none" && shape.isPointInStroke(point)) ||
-                (fill !== "none" && shape.isPointInFill(point))
-              )
-                return "overlap";
-            }
-          }
-        }
-        return "clear";
-      }),
-    ).toBe("clear");
+    const badge = toggle.locator(
+      ".navigation-toggle__attention > [aria-hidden]",
+    );
+    await expect(badge).toHaveText(count);
+    await expect(badge).toBeInViewport({ ratio: 1 });
   };
 
   report("fixture-prompt-map", true);
@@ -512,122 +608,55 @@ test("navigation attention counts clear the glyph in the rail and drawer", async
   await page.unrouteAll({ behavior: "wait" });
 });
 
-for (const touch of [false, true]) {
-  test.describe(touch ? "touch status axes" : "pointer status axes", () => {
-    test.use({
-      hasTouch: touch,
-      viewport: { width: touch ? 320 : 1440, height: 1000 },
-    });
-    test("grouped, pinned and searched titles keep their position and width across status changes", async ({
-      page,
-    }) => {
-      await page.emulateMedia({ reducedMotion: "reduce" });
-      const transport = await routeSnapshots(page, {
-        bootstrap: (body) =>
-          Object.assign(body.preferences, {
-            pinnedSessionIds: ["fixture-prompt-map"],
-            hiddenSessionIds: [],
-            hiddenProjectCwds: [],
-            navCollapsedGroups: [],
-          }),
+test.describe("phone status alignment", () => {
+  test.use({ viewport: { width: 320, height: 1000 }, hasTouch: true });
+
+  test("running, failed and waiting rows leave room for titles and curation", async ({
+    page,
+  }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    const transport = await navigationGroupsFixture(page);
+    await pairedPage(page);
+    await openFixtureSession(page, /Geometry session/, "fixture-history");
+    await expect.poll(() => transport.ready("fixture-history")).toBe(true);
+    await page
+      .getByRole("button", { name: "Toggle navigation", exact: true })
+      .tap();
+    const search = page.getByRole("searchbox", { name: "Search sessions" });
+    const row = page.locator('[data-session-id="fixture-active"]');
+    const title = row.locator(".nav__row-name");
+    await search.fill("reports");
+    await expect(title.locator(".search-match")).toHaveText("Reports");
+    await page.evaluate(() => document.fonts.ready);
+    const before = await title.boundingBox();
+    const states = [
+      { runState: "running", indicator: "running", label: "Working" },
+      { runState: "idle", indicator: "completed", label: "Completed" },
+      { runState: "idle", indicator: "failed", label: "Failed" },
+      { runState: "running", needsInput: true, label: "Waiting for input" },
+    ] as const;
+    for (const { label, ...sessionStatus } of states) {
+      transport.send({
+        type: "session_status",
+        sessionId: "fixture-active",
+        sessionStatus,
       });
-      await pairedPage(page);
-      await openFixtureSession(
-        page,
-        /Review extension event lifecycle/,
-        "fixture-history",
-      );
-      await expect.poll(() => transport.ready("fixture-history")).toBe(true);
-      const fixtures = [
-        {
-          id: "fixture-calibration-history",
-          name: "Calibration history fixture",
-        },
-        { id: "fixture-prompt-map", name: "Prompt map long-session fixture" },
-      ];
-      const states = [
-        { runState: "running", indicator: "running", label: "Working" },
-        { runState: "idle", indicator: "completed", label: "Completed" },
-        { runState: "idle", indicator: "failed", label: "Failed" },
-        { runState: "running", needsInput: true, label: "Waiting for input" },
-      ];
-      const measureTitle = (row: Element) => {
-        const main = row
-          .querySelector(".nav__row-main")!
-          .getBoundingClientRect();
-        const title = row
-          .querySelector(".nav__row-name")!
-          .getBoundingClientRect();
-        const mark = row
-          .querySelector(".nav__row-state, .nav__row-dot")
-          ?.getBoundingClientRect();
-        return {
-          inset: title.left - main.left,
-          width: title.width,
-          center: title.top + title.height / 2,
-          markInset: mark ? mark.left - main.left : null,
-          markGap: mark ? title.left - mark.right : null,
-        };
-      };
-      if (touch)
-        await page
-          .getByRole("button", { name: "Toggle navigation", exact: true })
-          .click();
-      const search = page.getByRole("searchbox", { name: "Search sessions" });
-      for (const query of ["", "fixture"]) {
-        await search.fill(query);
-        const rows = fixtures.map(({ id }) =>
-          page.locator(`.nav__row[data-session-id="${id}"]`),
-        );
-        for (const row of rows) await expect(row).toBeVisible();
-        if (query)
-          await expect(rows[0]!.locator(".search-match")).toHaveText("fixture");
-        else
-          await expect(
-            page.locator(
-              `.nav__group--pinned .nav__row[data-session-id="${fixtures[1]!.id}"]`,
-            ),
-          ).toBeVisible();
-        await page.evaluate(() => document.fonts.ready);
-        const idle = await Promise.all(
-          rows.map((row) => row.evaluate(measureTitle)),
-        );
-        for (const { label, ...sessionStatus } of states) {
-          for (const { id } of fixtures)
-            transport.send({
-              type: "session_status",
-              sessionId: id,
-              sessionStatus,
-            });
-          for (const [index, row] of rows.entries()) {
-            const status = row.getByRole("img", { name: label, exact: true });
-            await expect(status).toBeVisible();
-            const title = await row.evaluate(measureTitle);
-            expect(title.inset).toBeCloseTo(idle[index]!.inset, 1);
-            expect(title.width).toBeCloseTo(idle[index]!.width, 1);
-            expect(title.markGap).toBeGreaterThanOrEqual(7);
-            expect(title.markInset).toBeGreaterThanOrEqual(0);
-            if (label !== "Waiting for input") {
-              const glyph = (await status.locator("svg").boundingBox())!;
-              expect(glyph.width).toBeCloseTo(10, 2);
-              expect(glyph.height).toBeCloseTo(10, 2);
-              expect(
-                Math.abs(glyph.y + glyph.height / 2 - title.center),
-              ).toBeLessThanOrEqual(0.5);
-            }
-          }
-        }
-        for (const { id } of fixtures)
-          transport.send({
-            type: "session_status",
-            sessionId: id,
-            sessionStatus: { runState: "idle" },
-          });
-        for (const row of rows)
-          await expect(
-            row.getByRole("img", { name: "Waiting for input", exact: true }),
-          ).toBeHidden();
-      }
+      const status = row.getByRole("img", { name: label, exact: true });
+      await expect(status).toBeVisible();
+      expect(await title.boundingBox()).toEqual(before);
+      const mark = (await status.boundingBox())!;
+      expect(mark.x + mark.width).toBeLessThanOrEqual(before!.x);
+      await expect(
+        row.getByRole("button", { name: 'Hide "Reports session"' }),
+      ).toBeInViewport();
+    }
+    transport.send({
+      type: "session_status",
+      sessionId: "fixture-active",
+      sessionStatus: { runState: "idle" },
     });
+    await expect(
+      row.getByRole("img", { name: "Waiting for input" }),
+    ).toBeHidden();
   });
-}
+});

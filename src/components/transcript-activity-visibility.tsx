@@ -15,14 +15,9 @@ interface ReaderScrollPosition {
 }
 type ReaderValue = boolean | ReaderScrollPosition;
 
-type ActivityReadingChoice = {
-  disclosure?: "open" | "closed";
-  readers?: Map<string, ReaderValue>;
-};
-
 /** Only deliberate choices outlive an omitted card. The projection owns this
  * map; defaults and transient renderer state never become saved preferences. */
-export type ActivityReadingChoices = Map<string, ActivityReadingChoice>;
+export type ActivityReadingChoices = Map<string, Map<string, ReaderValue>>;
 export const ReadingChoices = createContext<ActivityReadingChoices | null>(
   null,
 );
@@ -51,16 +46,14 @@ function useActivityReaderMemory<T extends ReaderValue>(name: string) {
   const block = useContext(ReadingBlock);
   const key = `${block}/${name}`;
   const read = useCallback(
-    () =>
-      id ? (choices?.get(id)?.readers?.get(key) as T | undefined) : undefined,
+    () => (id ? (choices?.get(id)?.get(key) as T | undefined) : undefined),
     [choices, id, key],
   );
   const write = useCallback(
     (value: T) => {
       if (!choices || !id) return;
-      const choice = choices.get(id) ?? {};
-      choice.readers ??= new Map();
-      choice.readers.set(key, value);
+      const choice = choices.get(id) ?? new Map();
+      choice.set(key, value);
       choices.set(id, choice);
     },
     [choices, id, key],
@@ -69,20 +62,27 @@ function useActivityReaderMemory<T extends ReaderValue>(name: string) {
 }
 
 /** Only an explicit reader action records a choice; mounting does not freeze a default. */
-export function useActivityReaderExpanded(name: string) {
+export function useActivityReaderExpanded(
+  name: string,
+): readonly [boolean, (expanded: boolean) => void];
+export function useActivityReaderExpanded(
+  name: string,
+  empty: null,
+): readonly [boolean | null, (expanded: boolean) => void];
+export function useActivityReaderExpanded(
+  name: string,
+  empty: false | null = false,
+) {
   const [read, write] = useActivityReaderMemory<boolean>(name);
-  const [expanded, setExpanded] = useState(() => read() ?? false);
-  const current = useRef(expanded);
-  current.current = expanded;
-  return [
-    expanded,
-    (next: boolean | ((previous: boolean) => boolean)) => {
-      const value = typeof next === "function" ? next(current.current) : next;
-      current.current = value;
-      write(value);
-      setExpanded(value);
+  const [expanded, setExpanded] = useState(() => read() ?? empty);
+  const choose = useCallback(
+    (next: boolean) => {
+      write(next);
+      setExpanded(next);
     },
-  ] as const;
+    [write],
+  );
+  return [expanded, choose] as const;
 }
 
 export function useActivityReaderScroll<T extends HTMLElement>(
@@ -129,22 +129,6 @@ export function useActivityReaderScroll<T extends HTMLElement>(
       },
     },
   };
-}
-
-export function useActivityDisclosure() {
-  const choices = useContext(ReadingChoices);
-  const id = useContext(ActivityItemId);
-  const [override, setOverride] = useState<"open" | "closed" | null>(
-    () => (id ? choices?.get(id)?.disclosure : null) ?? null,
-  );
-  return [
-    override,
-    (next: "open" | "closed") => {
-      if (id && choices)
-        choices.set(id, { ...choices.get(id), disclosure: next });
-      setOverride(next);
-    },
-  ] as const;
 }
 
 /** Only a real Pi tool call carries its explicit choices across pages and checkpoints. */

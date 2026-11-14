@@ -305,43 +305,42 @@ function transferObservationTimeout(bytes: number): number {
   return LONG_HTTP_OBSERVATION_TIMEOUT_MS + Math.ceil(bytes / 131_072) * 1_000;
 }
 
+function readBlob(
+  path: string,
+  options: { signal?: AbortSignal; headers?: HeadersInit; timeoutMs?: number },
+): Promise<{ blob: Blob; response: Response }> {
+  const { signal, headers, timeoutMs } = options;
+  return observeRequest(signal, { timeoutMs }, async (signal) => {
+    const response = await applicationFetch(path, { signal, headers });
+    await ensureOk(response);
+    try {
+      return { blob: await response.blob(), response };
+    } catch (error) {
+      if (aborted(error)) throw error;
+      throw new ApiTransportError("response");
+    }
+  });
+}
+
 async function fetchResourceContent(
   id: string,
   sessionId: string,
   options: ResourceContentOptions = {},
 ): Promise<ResourceContentResponse> {
-  return observeRequest(
-    options.signal,
-    { timeoutMs: transferObservationTimeout(options.byteLimit ?? 0) },
-    async (signal) => {
-      const response = await applicationFetch(
-        `/api/resources/${encodeURIComponent(id)}/content?sessionId=${encodeURIComponent(sessionId)}`,
-        {
-          signal,
-          headers: {
-            ...(options.byteLimit
-              ? { Range: `bytes=0-${Math.max(0, options.byteLimit - 1)}` }
-              : {}),
-          },
-        },
-      );
-      await ensureOk(response);
-      let blob: Blob;
-      try {
-        blob = await response.blob();
-      } catch (error) {
-        if (aborted(error)) throw error;
-        throw new ApiTransportError("response");
-      }
-      if (options.byteLimit !== undefined && blob.size > options.byteLimit) {
-        throw new ApiError(
-          502,
-          "The resource response exceeded its byte limit",
-        );
-      }
-      return { blob, totalSize: contentTotalSize(response, blob) };
+  const { byteLimit, signal } = options;
+  const { blob, response } = await readBlob(
+    `/api/resources/${encodeURIComponent(id)}/content?sessionId=${encodeURIComponent(sessionId)}`,
+    {
+      signal,
+      timeoutMs: transferObservationTimeout(byteLimit ?? 0),
+      headers: byteLimit
+        ? { Range: `bytes=0-${Math.max(0, byteLimit - 1)}` }
+        : undefined,
     },
   );
+  if (byteLimit !== undefined && blob.size > byteLimit)
+    throw new ApiError(502, "The resource response exceeded its byte limit");
+  return { blob, totalSize: contentTotalSize(response, blob) };
 }
 
 async function uploadFiles(
@@ -643,26 +642,22 @@ export function createApi() {
       signal?: AbortSignal,
     ) =>
       call(routes.lastAssistantText, { query: { sessionId, viewId } }, signal),
-    branchImage: (
+    branchImage: async (
       body: BranchImageRequest,
       index: number,
       signal?: AbortSignal,
     ) =>
-      observeRequest(signal, { mutation: false }, async (signal) => {
-        const response = await applicationFetch(
+      (
+        await readBlob(
           `/api/branches/image?${new URLSearchParams({
             sessionId: body.sessionId,
             viewId: body.viewId,
             targetId: body.targetId,
             index: String(index),
-          }).toString()}`,
-          {
-            signal,
-          },
-        );
-        await ensureOk(response);
-        return response.blob();
-      }),
+          })}`,
+          { signal },
+        )
+      ).blob,
     cloneBranch: (body: BranchCloneRequest) =>
       call(routes.cloneBranch, { body }),
     navigateBranch: (body: BranchNavigateRequest, signal?: AbortSignal) =>
@@ -673,8 +668,8 @@ export function createApi() {
     refreshSessions: () => call(routes.refreshSessions, {}),
     sessionsByIds: (ids: string[], signal?: AbortSignal) =>
       call(routes.sessionsByIds, { body: { ids } }, signal),
-    sessionsByCwds: (cwds: string[]) =>
-      call(routes.sessionsByCwds, { body: { cwds } }),
+    sessionsByCwds: (cwds: string[], signal?: AbortSignal) =>
+      call(routes.sessionsByCwds, { body: { cwds } }, signal),
     openSession: (id: string, signal?: AbortSignal) =>
       call(routes.openSession, { body: { id } }, signal),
     takeOverSession: (sessionId: string) =>
@@ -783,21 +778,13 @@ export function createApi() {
     piChangelog: () => call(routes.piChangelog, {}),
     exportSession: (body: SessionExportRequest) =>
       call(routes.exportSession, { body }),
-    exportDownload: (sessionId: string, id: string) =>
-      observeRequest(
-        undefined,
-        { mutation: false, timeoutMs: LONG_HTTP_OBSERVATION_TIMEOUT_MS },
-        async (signal) => {
-          const response = await applicationFetch(
-            `/api/sessions/${encodeURIComponent(sessionId)}/exports/${encodeURIComponent(id)}`,
-            {
-              signal,
-            },
-          );
-          await ensureOk(response);
-          return response.blob();
-        },
-      ),
+    exportDownload: async (sessionId: string, id: string) =>
+      (
+        await readBlob(
+          `/api/sessions/${encodeURIComponent(sessionId)}/exports/${encodeURIComponent(id)}`,
+          { timeoutMs: LONG_HTTP_OBSERVATION_TIMEOUT_MS },
+        )
+      ).blob,
     abort: (sessionId: string, identity: PendingOperationIdentity) =>
       pendingHandoff("abort", identity, INPUT_OPERATION_PATHS.abort, {
         sessionId,
@@ -838,17 +825,12 @@ export function createApi() {
       call(routes.setFollowUpMode, { body: { sessionId, mode } }),
     uploadAttachments: (files: File[], signal?: AbortSignal) =>
       uploadFiles(files, signal),
-    attachmentPreview: (id: string, signal?: AbortSignal) =>
-      observeRequest(signal, { mutation: false }, async (signal) => {
-        const response = await applicationFetch(
-          `/api/attachments/${encodeURIComponent(id)}/image`,
-          {
-            signal,
-          },
-        );
-        await ensureOk(response);
-        return response.blob();
-      }),
+    attachmentPreview: async (id: string, signal?: AbortSignal) =>
+      (
+        await readBlob(`/api/attachments/${encodeURIComponent(id)}/image`, {
+          signal,
+        })
+      ).blob,
     deleteAttachment: (id: string) =>
       call(routes.deleteAttachment, { params: { id } }),
     searchFiles: (

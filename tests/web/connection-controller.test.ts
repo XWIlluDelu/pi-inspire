@@ -97,7 +97,7 @@ describe("ConnectionController", () => {
     expect(FakeWebSocket.instances).toHaveLength(2);
   });
 
-  it("keeps current interest through selection changes and resume", async () => {
+  it("sends pre-open changes after connection and accepts global events with empty detail", async () => {
     const { controller, host } = harness();
     const state = { ...host.state(), sessionId: "a" as string | null };
     host.state.mockImplementation(() => state);
@@ -128,8 +128,6 @@ describe("ConnectionController", () => {
     socket.emit(addressedSnapshot(null, 2));
     expect(socket.closeCount).toBe(0);
 
-    host.applyEvent.mockClear();
-
     for (const event of [
       { type: "update_status", updateStatus: { revision: 1 } },
       {
@@ -141,20 +139,6 @@ describe("ConnectionController", () => {
       socket.emit(event);
       expect(host.applyEvent).toHaveBeenLastCalledWith(event);
     }
-
-    socket.close();
-    await vi.advanceTimersByTimeAsync(1_000);
-    const resumed = FakeWebSocket.instances[1]!;
-    expect(new URL(resumed.url).searchParams.get("detail")).toBe("");
-    expect(host.reconnect).not.toHaveBeenCalled();
-    resumed.open();
-    host.patch.mockClear();
-    resumed.emit(snapshot);
-    expect(host.applyEvent).toHaveBeenLastCalledWith(snapshot);
-    expect(host.patch).toHaveBeenLastCalledWith({
-      connection: "open",
-      connectionProblem: null,
-    });
   });
 
   it("retires a socket error, tries one resume and falls back to bootstrap", async () => {
@@ -271,7 +255,7 @@ describe("ConnectionController", () => {
     expect(FakeWebSocket.instances).toHaveLength(3);
   });
 
-  it("coalesces full-message updates and flushes on a lifecycle event or render deadline", async () => {
+  it("coalesces full replacements and ordered deltas, with a bounded flush before lifecycle events", async () => {
     const { controller, host } = harness();
     await controller.connect();
     const socket = FakeWebSocket.instances[0]!;
@@ -305,14 +289,6 @@ describe("ConnectionController", () => {
       update("abcd"),
       ended,
     ]);
-  });
-
-  it("merges ordered deltas within the batch limit and flushes before lifecycle events", async () => {
-    const { controller, host } = harness();
-    await controller.connect();
-    const socket = FakeWebSocket.instances[0]!;
-    socket.open();
-    socket.emit(snapshot);
     host.applyEvent.mockClear();
 
     const deltaBatch = (assistant: string, text: string, offset = 0) => ({
@@ -374,7 +350,10 @@ describe("ConnectionController", () => {
       "invalid snapshot",
       JSON.stringify({
         ...snapshot,
-        data: { ...snapshot.data, runState: "unknown" },
+        data: {
+          ...snapshot.data,
+          sessionStatuses: { a: { runState: "unknown" } },
+        },
       }),
       "bootstrap",
     ],

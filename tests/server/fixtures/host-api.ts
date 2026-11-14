@@ -1,6 +1,5 @@
 import { generateKeyPairSync, randomUUID, sign } from "node:crypto";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
-import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
@@ -19,14 +18,17 @@ import type {
   ActiveSnapshot,
   SessionRuntimeStatus,
 } from "../../../shared/contracts.js";
+import type { ActivityTool } from "../../../shared/tool-activity.js";
 import { hostServices } from "../../fixtures/host-services.js";
 import { workbenchFixture } from "../../fixtures/workbench.js";
 import { seedWorkbenchSessions } from "../../fixtures/workbench-sessions.js";
+import { listenOnLoopback } from "./offline-model.js";
 
 type DetailFrame = Record<string, unknown> & {
   type: string;
   data?: ActiveSnapshot;
   sessionStatus?: SessionRuntimeStatus;
+  toolActivity?: Record<string, ActivityTool>;
 };
 
 export function observeEventSocket(url: string, options: ClientOptions = {}) {
@@ -129,12 +131,14 @@ type HostFixtureOptions = ConfigurationOptions &
       | "distDir"
       | "terminal"
       | "developmentBrowserBuild"
+      | "piVersion"
     >
   > & { services?: HostFixtureServices; restartBackend?: HostRestartBackend };
 
 export async function hostApiFixture({
   services,
   restartBackend,
+  piVersion = "0.80.10",
   ...options
 }: HostFixtureOptions = {}) {
   const temporary = await realpath(
@@ -182,9 +186,9 @@ export async function hostApiFixture({
     resources,
     git,
     version: "0.1.0-test",
-    piVersion: "0.80.10",
+    piVersion,
     updateCoordinator: new UpdateCoordinator({
-      currentPiVersion: "0.80.10",
+      currentPiVersion: piVersion,
       probeInspire: async () => ({
         kind: "available",
         update: {
@@ -194,8 +198,8 @@ export async function hostApiFixture({
         },
       }),
       probePi: async () => ({
-        currentVersion: "0.80.10",
-        installedVersion: "0.80.10",
+        currentVersion: piVersion,
+        installedVersion: piVersion,
         pi: {
           kind: "available",
           latestVersion: "0.84.3",
@@ -216,14 +220,20 @@ export async function hostApiFixture({
     distDir: join(temporary, "missing-dist"),
     ...options,
   });
-  await new Promise<void>((resolve) =>
-    application.server.listen(0, "127.0.0.1", resolve),
-  );
-  const address = application.server.address() as AddressInfo;
-  const baseUrl = `http://127.0.0.1:${address.port}`;
+  const baseUrl = await listenOnLoopback(application.server);
+  const authorization = `Bearer ${options.token ?? token}`;
   const localRequest = request
     .agent(application.server)
-    .set("Authorization", `Bearer ${options.token ?? token}`);
+    .set("Authorization", authorization);
+  const nativeFetch = globalThis.fetch;
+  const fetchHost: typeof fetch = (input, init) => {
+    const url = new URL(String(input), baseUrl);
+    if (url.origin !== baseUrl)
+      throw new Error("Request left the fixture Host");
+    const headers = new Headers(init?.headers);
+    headers.set("Authorization", authorization);
+    return nativeFetch(url, { ...init, headers });
+  };
   const api = () => localRequest.get("/api/bootstrap");
   function promptDelivery<T extends Record<string, unknown>>(body: T) {
     return {
@@ -243,6 +253,7 @@ export async function hostApiFixture({
     git,
     application,
     baseUrl,
+    fetchHost,
     localRequest,
     api,
     promptDelivery,

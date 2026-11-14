@@ -15,7 +15,9 @@ test("native shell cards stream, stop, recall and fit the narrow composer withou
   let modelBusy = false;
   const projectShell = (snapshot: ActiveSnapshot) => {
     if (snapshot.active?.sessionId !== sessionId) return;
-    snapshot.runState = modelBusy ? "running" : "idle";
+    snapshot.sessionStatuses[sessionId] = {
+      runState: modelBusy ? "running" : "idle",
+    };
     snapshot.active.isStreaming = modelBusy;
     if (submitted.length && snapshot.active?.sessionId === sessionId) {
       snapshot.bashRunning = stopped === 0;

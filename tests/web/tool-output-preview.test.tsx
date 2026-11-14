@@ -19,19 +19,19 @@ const call: ToolCallContent = {
   name: "bash",
   arguments: { command: "npm run build" },
 };
-const update = (text: string, truncated = false): WireEvent => ({
-  type: "tool_execution_update",
-  toolCallId: call.id,
-  ...(text ? { outputPreview: { text, truncated } } : {}),
-});
 const reduce = (state: EventSlice, event: WireEvent) =>
-  reduceEvent(state, new Set(), event).slice;
-function running(toolCall = call) {
+  reduceEvent(state, event).slice;
+function progress(text: string, truncated = false): EventSlice {
   return reduce(emptyEventSlice(), {
-    type: "tool_execution_start",
-    toolCallId: toolCall.id,
-    toolName: toolCall.name,
-    args: toolCall.arguments,
+    type: "tool_execution_update",
+    toolActivity: {
+      [call.id]: {
+        id: call.id,
+        name: call.name,
+        phase: "running",
+        ...(text ? { outputPreview: { text, truncated } } : {}),
+      },
+    },
   });
 }
 function card(state: EventSlice, toolCall = call, result?: ChatMessage) {
@@ -68,25 +68,23 @@ describe("execution output previews", () => {
       }),
     );
     const toolCall = { ...call, name: "declared_extension" };
-    let state = reduce(
-      running(toolCall),
-      update("\u001b[32mLive progress\u001b[0m"),
+    const { rerender } = render(
+      card(progress("\u001b[32mLive progress\u001b[0m"), toolCall),
     );
-    const { rerender } = render(card(state, toolCall));
     expect(screen.getByText("Live progress")).toBeVisible();
     expect(screen.getByText("Output (live preview)")).toBeVisible();
     expect(screen.getByLabelText("running")).toBeVisible();
     expect(screen.queryByText("Final result")).not.toBeInTheDocument();
 
-    state = reduce(state, {
-      ...update(""),
-      partialResult: { details: { progress: 90 } },
-    });
-    rerender(card(state, toolCall));
+    const withoutOutput = progress("");
+    rerender(card(withoutOutput, toolCall));
     expect(screen.queryByText("Live progress")).not.toBeInTheDocument();
 
     rerender(
-      card(state, toolCall, { role: "toolResult", content: "Complete" }),
+      card(withoutOutput, toolCall, {
+        role: "toolResult",
+        content: "Complete",
+      }),
     );
     expect(screen.getByText("Final result")).toBeVisible();
     expect(screen.getByText("Complete")).toBeVisible();
@@ -100,11 +98,7 @@ describe("execution output previews", () => {
       arguments: { path: "src/a.ts", oldText: "before", newText: "after" },
     };
     const patch = "--- src/a.ts\n+++ src/a.ts\n@@ -1 +1 @@\n-before\n+after\n";
-    const state = reduce(running(), {
-      ...update(patch),
-      partialResult: { details: { patch } },
-    });
-    const { container } = render(card(state, edit));
+    const { container } = render(card(progress(patch), edit));
     expect(screen.getByText("Requested replacement")).toBeInTheDocument();
     expect(screen.queryByText("Applied changes")).not.toBeInTheDocument();
     expect(container.querySelector(".tool-terminal--live")?.textContent).toBe(
@@ -113,22 +107,21 @@ describe("execution output previews", () => {
     expect(screen.getByLabelText("running")).toBeInTheDocument();
   });
 
-  it("rejects late output while an execution failure is awaiting its final result", () => {
-    const state = reduce(running(), update("working"));
-    const ended = reduce(state, {
+  it("shows a failed execution before its final result arrives", () => {
+    const ended = reduce(progress("working"), {
       type: "tool_execution_end",
-      toolCallId: call.id,
-      isError: true,
+      toolActivity: {
+        [call.id]: { id: call.id, name: call.name, phase: "error" },
+      },
     });
-    render(card(reduce(ended, update("late"))));
+    render(card(ended));
     expect(screen.queryByText("working")).not.toBeInTheDocument();
-    expect(screen.queryByText("late")).not.toBeInTheDocument();
     expect(screen.getByText("Finalizing result…")).toBeVisible();
     expect(screen.getByLabelText("failed")).toBeVisible();
   });
 
   it("drops transient output on interrupted settlement without inventing success", () => {
-    const state = reduce(reduce(running(), update("working")), {
+    const state = reduce(progress("working"), {
       type: "status",
       sessionStatus: { runState: "aborted" },
     });
@@ -152,7 +145,7 @@ describe("execution output previews", () => {
       configurable: true,
       value: { writeText },
     });
-    let state = reduce(running(), update(`${"old".repeat(5_331)}latest`, true));
+    const state = progress(`${"old".repeat(5_331)}latest`, true);
     const tool = (result?: ChatMessage) => (
       <ToolCard
         call={call}
@@ -175,11 +168,6 @@ describe("execution output previews", () => {
     const copied = writeText.mock.calls[0][0] as string;
     expect(copied).toContain("Output (live preview, truncated)");
     expect(copied.endsWith("latest")).toBe(true);
-    state = reduce(state, {
-      type: "tool_execution_end",
-      toolCallId: call.id,
-      isError: true,
-    });
     rerender(tool({ role: "toolResult", content: "aborted", isError: true }));
     expect(container.querySelector(".tool-terminal--live")).toBeNull();
     expect(screen.getByLabelText("failed")).toBeInTheDocument();

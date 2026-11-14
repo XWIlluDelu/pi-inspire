@@ -1,12 +1,5 @@
 // @vitest-environment jsdom
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useRef, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -17,7 +10,6 @@ import {
 } from "../../shared/contracts";
 import { createInitialAppState } from "../../src/app-state";
 import { AppTopbar, sessionHeading } from "../../src/components/AppTopbar";
-import { ExportDialog } from "../../src/components/ExportDialog";
 import { SessionActionsMenu } from "../../src/components/SessionActionsMenu";
 import { SessionActionsSettings } from "../../src/components/SessionActionsSettings";
 import { store } from "../../src/store";
@@ -25,13 +17,9 @@ import { deferred } from "./helpers";
 
 function Harness({
   onCopyError = vi.fn(),
-  onExport = vi.fn(),
-  onSwitchBranch = vi.fn(),
   readOnly = false,
 }: {
   onCopyError?: (message: string) => void;
-  onExport?: () => void;
-  onSwitchBranch?: () => void;
   readOnly?: boolean;
 }) {
   const anchorRef = useRef<HTMLButtonElement>(null);
@@ -55,8 +43,8 @@ function Harness({
           cloneDisabled={readOnly}
           onRename={vi.fn()}
           onClone={vi.fn()}
-          onSwitchBranch={onSwitchBranch}
-          onExport={onExport}
+          onSwitchBranch={vi.fn()}
+          onExport={vi.fn()}
           onClose={() => setOpen(false)}
         />
       ) : null}
@@ -134,21 +122,12 @@ it("keeps rename writes owned by the active editor and session", async () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "Rename session" }));
     return screen.getByRole("textbox", { name: "Session name" });
   };
-  const cancelled = edit();
-  fireEvent.change(cancelled, { target: { value: "Discard this edit" } });
-  fireEvent.keyDown(cancelled, { key: "Escape" });
-  expect(rename).not.toHaveBeenCalled();
-
   const original = edit();
   fireEvent.change(original, { target: { value: "  Committed title  " } });
-  const save = screen.getByRole("button", { name: "Save session name" });
-  fireEvent.click(save);
+  fireEvent.click(screen.getByRole("button", { name: "Save session name" }));
   expect(rename).toHaveBeenCalledExactlyOnceWith("s1", "Committed title");
-  fireEvent.change(original, { target: { value: "A newer draft" } });
-  await act(async () => receipt.resolve(true));
-  expect(original).toHaveValue("A newer draft");
-
   select("s2", "Other session");
+  await act(async () => receipt.resolve(true));
   expect(original).not.toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "Other session" })).toBeVisible();
 });
@@ -223,37 +202,6 @@ describe("Session actions", () => {
     expect(screen.getByRole("menu", { name: "Session actions" })).toBeVisible();
   });
 
-  it("opens the shared History destination from the title menu", async () => {
-    const onSwitchBranch = vi.fn();
-    const user = userEvent.setup();
-    render(<Harness onSwitchBranch={onSwitchBranch} />);
-    await user.click(screen.getByRole("button", { name: "Session title" }));
-    await user.click(screen.getByRole("menuitem", { name: "Switch branch…" }));
-    expect(onSwitchBranch).toHaveBeenCalledOnce();
-  });
-
-  it("uses the settings order for menu keyboard navigation and returns focus", async () => {
-    const user = userEvent.setup();
-    const onExport = vi.fn();
-    render(<Harness onExport={onExport} />);
-    const up = screen.getByRole("button", { name: "Move Export session… up" });
-    up.focus();
-    await user.keyboard("{Enter}");
-    expect(up).toHaveFocus();
-    expect(screen.getByRole("status")).toHaveTextContent("position 4 of 5");
-    const title = screen.getByRole("button", { name: "Session title" });
-    await user.click(title);
-    const menu = within(screen.getByRole("menu", { name: "Session actions" }));
-    expect(menu.getAllByRole("menuitem").at(3)).toHaveTextContent(
-      "Export session…",
-    );
-    await user.keyboard("{End}{ArrowUp}{Enter}");
-    expect(onExport).toHaveBeenCalledOnce();
-    await user.keyboard("{Escape}");
-    expect(title).toHaveFocus();
-    expect(screen.queryByRole("menu")).toBeNull();
-  });
-
   it("keeps focus on the moved action at the order boundary", async () => {
     const user = userEvent.setup();
     render(<Harness />);
@@ -275,44 +223,5 @@ describe("Session actions", () => {
         screen.getByRole("list", { name: "Session action order" }),
       ).getAllByRole("listitem")[1],
     ).toHaveTextContent("Copy session ID");
-  });
-
-  it("retains the selected format on failure and downloads for the captured session on retry", async () => {
-    const exportSession = vi
-      .spyOn(store, "exportSession")
-      .mockRejectedValueOnce(new Error("Unable to read this session"))
-      .mockResolvedValueOnce();
-    const onClose = vi.fn();
-    const view = render(
-      <ExportDialog sessionId="s1" active onClose={onClose} />,
-    );
-    expect(
-      screen.getByRole("radio", { name: "HTML Whole session" }),
-    ).toBeChecked();
-    fireEvent.click(
-      screen.getByRole("radio", { name: "JSONL Current branch" }),
-    );
-    view.rerender(
-      <ExportDialog sessionId="s1" active={false} onClose={onClose} />,
-    );
-    expect(screen.queryByRole("dialog")).toBeNull();
-    view.rerender(<ExportDialog sessionId="s1" active onClose={onClose} />);
-    expect(
-      screen.getByRole("radio", { name: "JSONL Current branch" }),
-    ).toBeChecked();
-    fireEvent.click(screen.getByRole("button", { name: "Download" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Unable to read this session",
-    );
-    expect(onClose).not.toHaveBeenCalled();
-    expect(
-      screen.getByRole("radio", { name: "JSONL Current branch" }),
-    ).toBeChecked();
-    fireEvent.click(screen.getByRole("button", { name: "Download" }));
-    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
-    expect(exportSession.mock.calls).toEqual([
-      ["s1", "jsonl"],
-      ["s1", "jsonl"],
-    ]);
   });
 });

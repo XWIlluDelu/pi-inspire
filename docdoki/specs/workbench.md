@@ -51,7 +51,7 @@ covers:
   - src/components/ContextPane.tsx
   - src/components/ContextPaneState.tsx
   - src/components/context-pane-view.ts
-  - src/components/TerminalPane.tsx
+  - src/components/WorkspaceDock.tsx
   - src/components/TerminalSettingsDialog.tsx
   - src/components/TerminalView.tsx
   - src/terminal-actions.ts
@@ -376,7 +376,7 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   Existing graphical actions open their own controls. Commands needing prompt review or arguments
   use the transient preparation boundary in [[composer]], not a second persistent editor or queue.
   The palette does not create a second queue-inspection surface for immutable Pi-owned queued
-  input. Its command filter and session rename value are independent: entering rename pre-fills
+  input. The palette and title menu open the same rename editor. From the palette it pre-fills
   the current presentation title, Escape returns to the original filter, and an unedited Enter
   never promotes a fallback title into Pi metadata. Renames are latest-request-wins per session,
   and an older completion cannot close a subsequently reopened rename editor.

@@ -27,14 +27,13 @@ import { BashExecution } from "./BashExecution";
 import { CustomMessage } from "./CustomMessage";
 import { PiLoader } from "./PiLoader";
 import type { ActivityReadingChoices } from "./transcript-activity-visibility";
-import { genericContentTitle } from "./transcript-cards";
+import { genericContentTitle, ToolCard } from "./transcript-cards";
 import { type ActivityItem, ResponseActivityFold } from "./transcript-fold";
 import {
   AssistantActivityCard,
   type AssistantActivityContent,
   AssistantResponse,
   ContextCheckpointRow,
-  UnpairedToolResultRow,
   UserBubble,
 } from "./transcript-rows";
 import type { TranscriptSearchScope } from "./transcript-search";
@@ -355,12 +354,7 @@ export function useTranscriptRows(options: TranscriptRowProjectionOptions) {
               toolCallId: message.toolCallId,
               name: message.toolName,
               failed: message.isError === true,
-              node: (
-                <UnpairedToolResultRow
-                  message={message}
-                  visibility={cardVisibility}
-                />
-              ),
+              node: <ToolCard result={message} visibility={cardVisibility} />,
             });
           break;
         default:

@@ -43,17 +43,26 @@ describe("catalog reads", () => {
     ];
     const pinned = sessionSummary({ id: "pinned" });
     const hidden = sessionSummary({ id: "hidden", cwd: "/work/hidden" });
+    const refresh = deferred<void>();
+    let refreshing = false;
     const { store } = await installCatalog(
       ({ offset }) => {
         offsets.push(offset);
-        return pageResult(pages[offset / 2]!, 6, offset);
+        return refreshing
+          ? pageResult(["refreshed"])
+          : pageResult(pages[offset / 2]!, 6, offset);
       },
       {
         preferences: {
           pinnedSessionIds: [pinned.id],
           hiddenProjectCwds: [hidden.cwd],
         },
-        routes: (url) => {
+        routes: async (url) => {
+          if (url === "/api/sessions/refresh") {
+            refreshing = true;
+            await refresh.promise;
+            return { body: { ok: true } };
+          }
           if (url.startsWith("/api/sessions/by-id"))
             return { body: { sessions: [pinned] } };
           if (url.startsWith("/api/sessions/by-cwd"))
@@ -80,6 +89,15 @@ describe("catalog reads", () => {
       sessionListNextOffset: 6,
       sessionListTotal: 6,
     });
+    const confirmed = catalogIds(store);
+    const updating = store.refreshSessions();
+    await vi.waitFor(() => expect(refreshing).toBe(true));
+    expect(catalogIds(store)).toEqual(confirmed);
+    refresh.resolve();
+    await updating;
+    expect(offsets).toEqual([0, 2, 4, 0]);
+    expect(catalogIds(store)).toEqual(["refreshed", pinned.id, hidden.id]);
+    expect(store.getState().sessionListNextOffset).toBe(1);
   });
 
   it("coalesces duplicate appends without blocking a replacement query", async () => {
@@ -159,35 +177,6 @@ describe("catalog reads", () => {
       expect(store.getState().sessionListNextOffset).toBe(2);
     },
   );
-
-  it("replaces prior pages only after an explicit refresh completes", async () => {
-    const refresh = deferred<void>();
-    let refreshing = false;
-    const list = vi.fn(({ offset }: PageRequest) =>
-      refreshing
-        ? pageResult(["refreshed"])
-        : pageResult([offset ? "older" : "recent"], 2, offset),
-    );
-    const { store } = await installCatalog(list, {
-      routes: async (url) => {
-        if (url !== "/api/sessions/refresh") return;
-        refreshing = true;
-        await refresh.promise;
-        return { body: { ok: true } };
-      },
-    });
-    await vi.waitFor(() => expect(catalogIds(store)).toEqual(["recent"]));
-    await store.loadOlderSessions();
-    const refreshingPromise = store.refreshSessions();
-    await vi.waitFor(() => expect(refreshing).toBe(true));
-    expect(catalogIds(store)).toEqual(["recent", "older"]);
-    refresh.resolve();
-    await refreshingPromise;
-
-    expect(list.mock.calls.map(([{ offset }]) => offset)).toEqual([0, 1, 0]);
-    expect(catalogIds(store)).toEqual(["refreshed"]);
-    expect(store.getState().sessionListNextOffset).toBe(1);
-  });
 
   it("hydrates new and forked selections missing from the current page", async () => {
     const created = activeSnapshot({

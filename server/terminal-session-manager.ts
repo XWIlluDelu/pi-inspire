@@ -289,26 +289,6 @@ function normalizeCwd(value: string): string {
   return resolve(value);
 }
 
-class SessionAttachment implements TerminalAttachment {
-  constructor(
-    private readonly manager: TerminalSessionManager,
-    readonly terminalId: string,
-    readonly id: string,
-  ) {}
-
-  writeInput(sequence: number, data: Uint8Array): void {
-    this.manager.writeInput(this.terminalId, this.id, sequence, data);
-  }
-
-  control(message: Parameters<TerminalAttachment["control"]>[0]): void {
-    this.manager.controlAttachment(this.terminalId, this.id, message);
-  }
-
-  detach(): void {
-    this.manager.detachAttachment(this.terminalId, this.id);
-  }
-}
-
 export class TerminalSessionManager implements TerminalService {
   private readonly operations = new TerminalOperationReceipts();
   private readonly sessions = new Map<string, ManagedTerminal>();
@@ -819,14 +799,20 @@ export class TerminalSessionManager implements TerminalService {
           reason: ownershipReason,
         });
       this.broadcastDescriptor(session, attachment.id);
-      return new SessionAttachment(this, session.id, attachment.id);
+      return {
+        writeInput: (sequence, data) =>
+          this.writeInput(session.id, attachment.id, sequence, data),
+        control: (message) =>
+          this.controlAttachment(session.id, attachment.id, message),
+        detach: () => this.detachAttachment(session.id, attachment.id),
+      };
     } catch (error) {
       this.detachAttachment(session.id, attachment.id);
       throw error;
     }
   }
 
-  writeInput(
+  private writeInput(
     terminalId: string,
     attachmentId: string,
     sequence: number,
@@ -879,7 +865,7 @@ export class TerminalSessionManager implements TerminalService {
     this.sendControl(attachment, { type: "input_ack", sequence });
   }
 
-  controlAttachment(
+  private controlAttachment(
     terminalId: string,
     attachmentId: string,
     message: Parameters<TerminalAttachment["control"]>[0],
@@ -904,7 +890,7 @@ export class TerminalSessionManager implements TerminalService {
     }
   }
 
-  detachAttachment(terminalId: string, attachmentId: string): void {
+  private detachAttachment(terminalId: string, attachmentId: string): void {
     const session = this.sessions.get(terminalId);
     const attachment = session?.attachments.get(attachmentId);
     if (!session || !attachment) return;

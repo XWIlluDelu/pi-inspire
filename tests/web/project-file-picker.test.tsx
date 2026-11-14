@@ -21,13 +21,7 @@ const page = { files: [file], truncated: false };
 
 function Picker(props: PickerProps) {
   return (
-    <ProjectFileControl
-      {...props}
-      selected={[]}
-      open
-      onShowHiddenChange={vi.fn()}
-      onOpenChange={vi.fn()}
-    />
+    <ProjectFileControl {...props} selected={[]} onShowHiddenChange={vi.fn()} />
   );
 }
 
@@ -44,6 +38,7 @@ it("recovers transient searches, reports exhausted retries, and does not retry a
     .mockResolvedValue(page);
   const props = { search, scope: "one", showHidden: false, onAdd: vi.fn() };
   const view = render(<Picker {...props} />);
+  fireEvent.click(screen.getByRole("button", { name: "Add project files" }));
   await act(() => vi.advanceTimersByTimeAsync(200));
   expect(screen.getByRole("status")).toHaveTextContent("Searching");
   await act(() => vi.runAllTimersAsync());
@@ -69,6 +64,7 @@ it("retires retries from superseded queries, projects, visibility, and a closed 
   const search = vi.fn().mockRejectedValue(new ApiError(503, "Unavailable"));
   const props = { search, scope: "one", showHidden: false, onAdd: vi.fn() };
   const view = render(<Picker {...props} />);
+  fireEvent.click(screen.getByRole("button", { name: "Add project files" }));
   await act(() => vi.advanceTimersByTimeAsync(200));
 
   fireEvent.change(

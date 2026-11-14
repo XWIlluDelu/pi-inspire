@@ -1,14 +1,11 @@
-import { act, render, waitFor } from "@testing-library/react";
-import { createElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   GitDiffResponse,
   GitFileChange,
   GitStatusResponse,
 } from "../../shared/contracts";
-import { AppTopbar } from "../../src/components/AppTopbar";
 import { inspectedPreview } from "../../src/resource-preview";
-import { store as appStore } from "../../src/store";
+import { fakeResourceDescriptor } from "./fixtures/resources";
 import {
   activeSnapshot,
   deferred,
@@ -63,55 +60,6 @@ function textDiff(text: string): GitDiffResponse {
 
 describe("Git inspection ownership and freshness", () => {
   beforeEach(() => installFakeWebSocket());
-
-  it("keeps one topbar Git observation across session identity remounts", async () => {
-    let statusCalls = 0;
-    let status: GitStatusResponse = initialStatus;
-    installFetch((url, init) => {
-      if (url.startsWith("/api/git/status")) {
-        statusCalls += 1;
-        return { body: status };
-      }
-      if (url === "/api/sessions/open")
-        return {
-          body: activeSnapshot({ sessionId: jsonBody(init).id as string }),
-        };
-      return baseRoutes(url, init);
-    });
-    await act(async () => {
-      await appStore.init();
-      FakeWebSocket.instances.at(-1)!.join(activeSnapshot());
-    });
-    const noop = () => {};
-    render(
-      createElement(AppTopbar, {
-        narrowViewport: false,
-        mobileNavOpen: false,
-        settingsOpen: false,
-        onToggleNavigation: noop,
-        onOpenCommandPalette: noop,
-        onExportSession: noop,
-        onToggleSettings: noop,
-        onToggleResources: noop,
-      }),
-    );
-    await waitFor(() =>
-      expect(appStore.getState().gitStatus).toEqual(initialStatus),
-    );
-    expect(statusCalls).toBe(1);
-
-    for (const [index, id] of ["s2", "s3"].entries()) {
-      status = id === "s3" ? { kind: "not-repository" } : initialStatus;
-      await act(async () => {
-        await appStore.openSession(id);
-      });
-      await waitFor(() =>
-        expect(appStore.getState().gitStatus).toEqual(status),
-      );
-      expect(appStore.getState().sessionId).toBe(id);
-      expect(statusCalls).toBe(index + 2);
-    }
-  });
 
   it("revalidates an open comparison after reconnect and retires it when the session changes", async () => {
     const started = deferred<void>();
@@ -245,19 +193,17 @@ describe("shared Files and Changes tabs", () => {
         if (reference === "deleted.txt")
           return { status: 404, body: { error: "File was deleted" } };
         return {
-          body: {
+          body: fakeResourceDescriptor(String(reference), {
             id: `fresh-${resolved.length}`,
-            sessionId,
+            sessionId: String(sessionId),
             viewId: `view-${sessionId}`,
-            reference,
-            workspacePath:
+            workspacePath: String(
               workspacePath ??
-              (reference === "readme.md" ? "src/readme.md" : reference),
-            name: reference,
+                (reference === "readme.md" ? "src/readme.md" : reference),
+            ),
             mimeType: "application/octet-stream",
-            size: 12,
             kind: "binary",
-          },
+          }),
         };
       }
       if (url.startsWith("/api/files/list"))

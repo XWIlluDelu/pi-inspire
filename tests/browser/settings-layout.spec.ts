@@ -5,7 +5,6 @@ import {
   type HostRestartStatus,
   restartObservation,
 } from "../../shared/host-restart";
-import { modelSettingsScenario } from "./fixtures/model-settings";
 import { clipboardLines } from "./support/clipboard";
 import { focusRingClipping } from "./support/focus-bounds";
 import { routeSnapshots } from "./support/host-events";
@@ -386,14 +385,15 @@ test("selected Settings categories remain visible across responsive layouts with
 test("category switches retain model search and a login arriving while hidden", async ({
   page,
 }) => {
-  const scenario = await modelSettingsScenario(page);
   let releaseLogin!: () => void;
   const loginResponse = new Promise<void>((resolve) => {
     releaseLogin = resolve;
   });
+  const operations: string[] = [];
   await page.route("**/api/provider-auth**", async (route) => {
-    if (route.request().postDataJSON().operation === "start")
-      await loginResponse;
+    const { operation } = route.request().postDataJSON();
+    operations.push(operation);
+    if (operation === "start") await loginResponse;
     await route.fallback();
   });
   await pairAndOpen(page);
@@ -406,7 +406,7 @@ test("category switches retain model search and a login arriving while hidden", 
   const search = settings.getByRole("combobox", {
     name: "Search available models",
   });
-  const query = scenario.snapshot().models[0]!.id;
+  const query = "offline";
   await search.fill(query);
   await expect(grid.getByRole("option").first()).toBeVisible();
 
@@ -414,46 +414,49 @@ test("category switches retain model search and a login arriving while hidden", 
     name: "Login & API keys",
   });
   await credentials
-    .getByRole("button", { name: "Manage Anthropic", exact: true })
+    .getByRole("button", { name: "Connect provider", exact: true })
+    .click();
+  await credentials.getByLabel("Search providers").fill("anthropic");
+  await credentials
+    .getByRole("button", { name: "Set up Anthropic", exact: true })
     .click();
   await credentials
     .getByRole("button", { name: "Anthropic API key", exact: true })
     .click();
   const display = nav.getByRole("button", { name: "Display", exact: true });
   await display.click();
-  const loginArrived = page.waitForResponse("**/api/provider-auth**");
+  const loginArrived = page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/provider-auth") &&
+      response.request().postDataJSON().operation === "start",
+  );
   releaseLogin();
   expect((await loginArrived).ok()).toBe(true);
   await expect(display).toBeFocused();
   await expect(
-    settings.getByRole("textbox", { name: "API key", exact: true }),
+    settings.getByLabel("Enter Anthropic API key", { exact: true }),
   ).toHaveCount(0);
   await nav.getByRole("button", { name: "Models", exact: true }).click();
   await expect(search).toHaveValue(query);
 
-  const secret = credentials.getByLabel("API key", { exact: true });
+  const secret = credentials.getByLabel("Enter Anthropic API key", {
+    exact: true,
+  });
   await secret.fill("SYNTHETIC_CATEGORY_KEY");
   await nav.getByRole("button", { name: "Conversation", exact: true }).click();
   await nav.getByRole("button", { name: "Models", exact: true }).click();
   await expect(secret).toHaveValue("SYNTHETIC_CATEGORY_KEY");
   await credentials
-    .getByRole("button", { name: "Continue", exact: true })
+    .getByRole("button", { name: "Cancel login", exact: true })
     .click();
   await expect(
-    credentials.getByText("Login complete.", { exact: true }),
+    credentials.getByText("Login cancelled.", { exact: true }),
   ).toBeVisible();
   expect(
-    scenario.authOperations.filter(
-      (operation) => operation.operation === "start",
+    operations.filter(
+      (operation) => operation === "start" || operation === "cancel",
     ),
-  ).toHaveLength(1);
-  expect(
-    scenario.authOperations.some(
-      (operation) => operation.operation === "cancel",
-    ),
-  ).toBe(false);
-
-  expect(scenario.errors).toEqual([]);
+  ).toEqual(["start", "cancel"]);
 });
 
 test("narrow Conversation settings persist preferences and restore focus when reset is cancelled", async ({

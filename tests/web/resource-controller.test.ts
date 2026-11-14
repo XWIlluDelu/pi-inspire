@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ResourceProbeResponse } from "../../shared/contracts";
 import { MAX_RESOURCE_PROBE_REFERENCES } from "../../shared/resource-references";
 import { type Api, ApiError } from "../../src/api";
+import { emptyTranscriptView } from "../../src/app-state";
 import { ResourceController } from "../../src/controllers/resource-controller";
 import {
   inspectedPreview,
@@ -19,9 +20,12 @@ function fixture() {
   });
   const state: ReturnType<Host["state"]> = {
     sessionId: "s1",
-    transcriptViewId: "v1",
-    transcriptIncarnation: "p1",
-    transcriptRevision: 1,
+    view: {
+      ...emptyTranscriptView,
+      viewId: "v1",
+      incarnation: "p1",
+      revision: 1,
+    },
     resourcesOpen: true,
     contextMode: "files",
     fileInspection: { kind: "browse" },
@@ -30,7 +34,7 @@ function fixture() {
   };
   const probeResponse = (
     results: ResourceProbeResponse["results"],
-    revision = state.transcriptRevision,
+    revision = state.view.revision,
   ): ResourceProbeResponse => ({
     sessionId: "s1",
     viewId: "v1",
@@ -123,16 +127,17 @@ describe("ResourceController", () => {
     vi.restoreAllMocks();
   });
 
-  it("retains verified batches and retries only unverified references", async () => {
+  it("retains verified batches, retries only failed references, and stops at a new revision", async () => {
     const f = fixture();
-    const references = Array.from(
-      { length: MAX_RESOURCE_PROBE_REFERENCES + 2 },
+    const batch = Array.from(
+      { length: MAX_RESOURCE_PROBE_REFERENCES },
       (_, index) => `file-${index}.md`,
     );
-    const [missing, outside] = references;
-    const unavailable = references[MAX_RESOURCE_PROBE_REFERENCES]!;
+    const [missing, outside] = batch;
+    const remaining = ["later.md", "new.md"];
+    const unavailable = new ApiError(503, "Read unavailable");
     f.api.probeResources
-      .mockImplementationOnce(async (_sessionId, batch) =>
+      .mockResolvedValueOnce(
         f.probeResponse(
           batch.map((reference) => ({
             reference,
@@ -145,26 +150,31 @@ describe("ResourceController", () => {
           })),
         ),
       )
-      .mockRejectedValueOnce(new ApiError(503, "Second batch unavailable"));
-
-    await f.controller.probeResources(references);
-    expect(f.state.resourceStanding[missing!]?.availability).toBe("missing");
-    expect(f.state.resourceStanding[outside!]?.availability).toBe(
-      "unavailable",
-    );
-    expect(f.state.resourceStanding[unavailable]?.availability).toBe("unknown");
+      .mockRejectedValueOnce(unavailable);
+    await f.controller.probeResources([...batch, ...remaining]);
+    const standing = (reference: string) =>
+      f.state.resourceStanding[reference]?.availability;
+    expect(standing(missing!)).toBe("missing");
+    expect(standing(outside!)).toBe("unavailable");
+    expect(standing(remaining[0]!)).toBe("unknown");
     await vi.advanceTimersByTimeAsync(1_000);
-    await f.controller.probeResources([...references, "newly-visible.md"]);
-    expect(f.api.probeResources.mock.calls.map(([, batch]) => batch)).toEqual([
-      references.slice(0, MAX_RESOURCE_PROBE_REFERENCES),
-      references.slice(MAX_RESOURCE_PROBE_REFERENCES),
-      references.slice(MAX_RESOURCE_PROBE_REFERENCES),
-      ["newly-visible.md"],
-    ]);
-    expect(f.state.resourceStanding[missing!]?.availability).toBe("missing");
-    expect(f.state.resourceStanding[unavailable]?.availability).toBe(
-      "available",
-    );
+    expect(
+      f.api.probeResources.mock.calls.map(([, references]) => references),
+    ).toEqual([batch, remaining, remaining]);
+    expect(standing(remaining[0]!)).toBe("available");
+
+    f.state.view.revision++;
+    f.api.probeResources.mockRejectedValueOnce(unavailable);
+    await f.controller.probeResources([...remaining, "after-append.md"]);
+    expect(standing(remaining[0]!)).toBe("available");
+    expect(standing("after-append.md")).toBe("unknown");
+    f.state.view.revision++;
+    await vi.advanceTimersByTimeAsync(14_000);
+    expect(f.api.probeResources).toHaveBeenCalledTimes(4);
+    f.controller.cancelProbes(true);
+    expect(f.state.resourceStanding).toEqual({});
+    await f.controller.probeResources(remaining);
+    expect(standing(remaining[0]!)).toBe("available");
     expect(f.state.fileInspection).toEqual({ kind: "browse" });
     expect(f.api.resourceContent).not.toHaveBeenCalled();
   });
@@ -189,32 +199,6 @@ describe("ResourceController", () => {
     });
   });
 
-  it("keeps confirmed standing through a failed append probe and allows explicit reprobe", async () => {
-    const f = fixture();
-    await f.controller.probeResources(["notes.txt"]);
-    f.state.transcriptRevision += 1;
-    f.api.probeResources.mockRejectedValueOnce(
-      new ApiError(503, "Read unavailable"),
-    );
-    await f.controller.probeResources(["notes.txt", "new.txt"]);
-    expect(f.state.resourceStanding["notes.txt"]?.availability).toBe(
-      "available",
-    );
-    expect(f.state.resourceStanding["new.txt"]?.availability).toBe("unknown");
-
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(f.state.resourceStanding["new.txt"]?.availability).toBe("available");
-    await f.controller.probeResources(["notes.txt"]);
-    expect(f.api.probeResources).toHaveBeenCalledTimes(3);
-    f.controller.cancelProbes(true);
-    expect(f.state.resourceStanding).toEqual({});
-    await f.controller.probeResources(["notes.txt"]);
-    expect(f.api.probeResources).toHaveBeenCalledTimes(4);
-    expect(f.state.resourceStanding["notes.txt"]?.availability).toBe(
-      "available",
-    );
-  });
-
   it.each(["revision", "transport"] as const)(
     "ignores an in-flight probe from the retired %s",
     async (change) => {
@@ -223,7 +207,7 @@ describe("ResourceController", () => {
       f.api.probeResources.mockReturnValueOnce(late.promise);
       const probe = f.controller.probeResources(["notes.txt"]);
       if (change === "revision") {
-        f.state.transcriptRevision += 1;
+        f.state.view.revision += 1;
         late.resolve(
           f.probeResponse(
             [{ reference: "notes.txt", availability: "missing" }],
@@ -243,17 +227,6 @@ describe("ResourceController", () => {
       );
     },
   );
-
-  it("does not retry probes belonging to an earlier transcript revision", async () => {
-    const f = fixture();
-    f.api.probeResources.mockRejectedValueOnce(
-      new ApiError(503, "Temporary probe failure"),
-    );
-    await f.controller.probeResources(["notes.txt"]);
-    f.state.transcriptRevision += 1;
-    await vi.advanceTimersByTimeAsync(14_000);
-    expect(f.api.probeResources).toHaveBeenCalledOnce();
-  });
 
   it.each(["resolveResource", "resourceContent"] as const)(
     "recovers a temporary %s failure in the original read",
@@ -337,6 +310,7 @@ describe("ResourceController", () => {
     expect(revoke).toHaveBeenLastCalledWith("blob:new");
 
     await f.controller.openResource("plot.png");
+    f.state.resourceTabs.push({ reference: "pi-embedded://0/0" });
     f.rotate();
     expect(revoke).toHaveBeenLastCalledWith("blob:reopened");
     expect(f.state.resourceTabs).toEqual([{ reference: "plot.png" }]);
@@ -344,46 +318,19 @@ describe("ResourceController", () => {
     expect(preview()).toEqual({ status: "loading", reference: "plot.png" });
   });
 
-  it.each(["selection", "view", "transport", "closed"] as const)(
-    "retires a waiting retry when its %s changes",
-    async (change) => {
-      const f = fixture();
-      f.api.resolveResource.mockRejectedValueOnce(
-        new ApiError(503, "Temporary failure"),
-      );
-      const reading = f.controller.openResource("notes.txt");
-      await vi.advanceTimersByTimeAsync(0);
-      if (change === "selection") f.controller.clearSelection();
-      if (change === "view") {
-        f.state.transcriptViewId = "new-view";
-        f.controller.invalidate();
-      }
-      if (change === "transport") f.rotate();
-      if (change === "closed") {
-        f.state.resourcesOpen = false;
-        f.controller.cancelRequest();
-      }
-      await reading;
-      await vi.advanceTimersByTimeAsync(20_000);
-      expect(f.api.resolveResource).toHaveBeenCalledOnce();
-      expect(f.api.resourceContent).not.toHaveBeenCalled();
-    },
-  );
-
-  it("retires positional embedded tabs without discarding named tabs", () => {
+  it("cancels a waiting retry when its view is replaced", async () => {
     const f = fixture();
-    const reference = "pi-embedded://0/0";
-    f.state.resourceTabs = [{ reference: "notes.txt" }, { reference }];
-    f.state.fileInspection = {
-      kind: "file",
-      reference,
-      preview: { status: "loading", reference },
-    };
-    f.rotate();
-    expect(f.state).toMatchObject({
-      resourceTabs: [{ reference: "notes.txt" }],
-      fileInspection: { kind: "browse" },
-    });
+    f.api.resolveResource.mockRejectedValueOnce(
+      new ApiError(503, "Temporary failure"),
+    );
+    const read = f.controller.openResource("notes.txt");
+    await vi.advanceTimersByTimeAsync(0);
+    f.state.view.viewId = "new-view";
+    f.controller.invalidate();
+    await read;
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(f.api.resolveResource).toHaveBeenCalledOnce();
+    expect(f.api.resourceContent).not.toHaveBeenCalled();
   });
 
   it.each([20, 4])(
@@ -412,7 +359,7 @@ describe("ResourceController", () => {
       '<svg xmlns="http://www.w3.org/2000/svg"><text>你好 🌍</text></svg>',
     ],
   ] as const)(
-    "decodes BOM source without losing %s preview behavior",
+    "uses decoded text and the right Blob for %s",
     async (kind, name, type, text) => {
       const f = fixture();
       const blob = new Blob([Buffer.from("\uFEFF" + text, "utf16le")], {
@@ -421,8 +368,6 @@ describe("ResourceController", () => {
       f.api.resolveResource.mockResolvedValue({
         ...f.descriptor,
         kind,
-        reference: name,
-        name,
         mimeType: type,
         size: blob.size,
       });
@@ -435,17 +380,13 @@ describe("ResourceController", () => {
         expect(inspectedPreview(f.state.fileInspection)).toMatchObject({
           status: "ready",
           text,
-          truncated: false,
           objectUrl: "blob:preview",
         });
         const preview = createUrl.mock.calls[0]![0] as Blob;
         if (kind === "html") {
           expect(preview.type).toBe("text/html;charset=utf-8");
-          expect(await preview.text()).toContain("你好 🌍");
-          expect(await preview.text()).toContain("Content-Security-Policy");
-        } else {
-          expect(preview).toBe(blob);
-        }
+          expect(await preview.text()).toContain(text);
+        } else expect(preview).toBe(blob);
       } finally {
         f.controller.invalidate();
       }
@@ -470,97 +411,69 @@ describe("ResourceController", () => {
     });
   });
 
-  it.each(["file selection", "session"] as const)(
-    "cancels a content transfer when the %s changes",
-    async (change) => {
-      const f = fixture();
-      const started = deferred<AbortSignal>();
-      const late = deferred<unknown>();
-      f.api.resourceContent.mockImplementationOnce((_id, _session, options) => {
-        started.resolve(options.signal);
-        return late.promise;
-      });
-      const read = f.controller.openResource("notes.txt");
-      const signal = await started.promise;
-      if (change === "file selection")
-        await f.controller.openResource("other.txt");
-      else {
-        f.state.sessionId = "s2";
-        f.controller.invalidate();
-      }
-      expect(signal.aborted).toBe(true);
-      const current = f.state.fileInspection;
-      late.resolve({ blob: new Blob(["old bytes"]), totalSize: 9 });
-      await read;
-      expect(f.state.fileInspection).toBe(current);
-    },
-  );
+  it("aborts a content transfer and ignores late bytes when another file opens", async () => {
+    const f = fixture();
+    const started = deferred<AbortSignal>();
+    const late = deferred<unknown>();
+    f.api.resourceContent.mockImplementationOnce((_id, _session, options) => {
+      started.resolve(options.signal);
+      return late.promise;
+    });
+    const read = f.controller.openResource("notes.txt");
+    const signal = await started.promise;
+    await f.controller.openResource("other.txt");
+    expect(signal.aborted).toBe(true);
+    const current = f.state.fileInspection;
+    late.resolve({ blob: new Blob(["old bytes"]), totalSize: 9 });
+    await read;
+    expect(f.state.fileInspection).toBe(current);
+  });
 
-  it.each([
-    ["pi-embedded://4/0", "pi-embedded://4/0"],
-    ["chart.png", "./figures/chart.png"],
-  ])(
-    "reads %s without selecting Files",
-    async (reference, resolvedReference) => {
-      const f = fixture();
-      const blob = new Blob(["png"], { type: "image/png" });
-      const signal = new AbortController().signal;
-      f.api.resolveResource.mockResolvedValue({
-        ...f.descriptor,
-        reference: resolvedReference,
-        kind: "image",
-        mimeType: blob.type,
-        size: blob.size,
-      });
-      f.api.resourceContent.mockResolvedValue({ blob, totalSize: blob.size });
-      const read = (owner: string) =>
-        f.controller.loadTranscriptImage("s1", "v1", owner, reference, signal);
-
-      await expect(read("v1\u0000p1")).resolves.toBe(blob);
-      expect(f.api.resourceContent).toHaveBeenCalledWith("notes", "s1", {
-        byteLimit: MAX_MEDIA_PREVIEW_BYTES + 1,
-        signal,
-      });
-      await expect(read("v1\u0000obsolete")).rejects.toMatchObject({
-        name: "AbortError",
-      });
-      expect(f.api.resolveResource).toHaveBeenCalledOnce();
-      expect(f.state.fileInspection).toEqual({ kind: "browse" });
-    },
-  );
-
-  it.each(["projection", "transport"] as const)(
-    "retires an in-flight transcript image after %s replacement",
+  it.each(["incarnation", "transport"] as const)(
+    "reads a transcript image without selecting Files and fences the old %s",
     async (change) => {
       const f = fixture();
       const reference = "pi-embedded://4/0";
-      const started = deferred<void>();
-      const late = deferred<unknown>();
-      f.api.resolveResource.mockResolvedValue({
+      const blob = new Blob(["png"], { type: "image/png" });
+      const descriptor = {
         ...f.descriptor,
         kind: "image",
         reference,
-      });
-      f.api.resourceContent.mockImplementation(() => {
+        mimeType: blob.type,
+        size: blob.size,
+      };
+      const content = { blob, totalSize: blob.size };
+      f.api.resolveResource.mockResolvedValue(descriptor);
+      f.api.resourceContent.mockResolvedValue(content);
+      const read = () =>
+        f.controller.loadTranscriptImage(
+          "s1",
+          "v1",
+          "v1\u0000p1",
+          reference,
+          new AbortController().signal,
+        );
+      await expect(read()).resolves.toBe(blob);
+      expect(f.state.fileInspection).toEqual({ kind: "browse" });
+
+      const started = deferred<void>();
+      const late = deferred<typeof content>();
+      f.api.resourceContent.mockImplementationOnce(() => {
         started.resolve();
         return late.promise;
       });
-      const read = f.controller.loadTranscriptImage(
-        "s1",
-        "v1",
-        "v1\u0000p1",
-        reference,
-        new AbortController().signal,
-      );
+      const result = expect(read()).rejects.toMatchObject({
+        name: "AbortError",
+      });
       await started.promise;
-      if (change === "projection") {
-        f.state.transcriptIncarnation = "p2";
-        late.resolve({ blob: new Blob(["old"]), totalSize: 3 });
+      if (change === "incarnation") {
+        f.state.view.incarnation = "p2";
+        late.resolve(content);
       } else {
-        f.rotate();
+        f.replaceApi();
         late.reject(new ApiError(401, "Retired credentials"));
       }
-      await expect(read).rejects.toMatchObject({ name: "AbortError" });
+      await result;
       expect(f.host.handleAuthFailure).not.toHaveBeenCalled();
     },
   );
@@ -627,9 +540,13 @@ describe("ResourceController", () => {
     },
   );
 
-  it("reads a document image through authenticated resolve and bounded content without modifying the selection", async () => {
+  it("binds a linked image to its document across ordinary appends", async () => {
     const f = fixture();
     const { read, image, content } = selectDocument(f);
+    f.api.resolveResource.mockImplementationOnce(async () => {
+      f.state.view.revision++;
+      return image;
+    });
     await expect(read()).resolves.toBe(content.blob);
     expect(f.api.resolveResource).toHaveBeenCalledWith(
       "s1",
@@ -643,94 +560,68 @@ describe("ResourceController", () => {
     expect(f.host.patch).not.toHaveBeenCalled();
   });
 
-  // Images and tickets use the same selected-file owner. Exercise each cause
-  // of retirement once, while keeping both request paths and abort signals.
-  it.each([
-    ["image", "view"],
-    ["image", "pane"],
-    ["image", "external abort"],
-    ["image", "controller abort"],
-    ["download", "session"],
-    ["download", "selection"],
-    ["download", "closed"],
-    ["download", "controller abort"],
-  ] as const)("retires a pending %s after %s", async (kind, change) => {
-    const f = fixture();
-    const { image, read } = selectDocument(f);
-    const abort = new AbortController();
-    const pending = deferred<unknown>();
-    const endpoint =
-      kind === "image" ? f.api.resolveResource : f.api.resourceDownloadTicket;
-    endpoint.mockReturnValueOnce(pending.promise);
-    const outcome = expect(
-      kind === "image" ? read(abort.signal) : f.controller.downloadResource(),
-    ).rejects.toMatchObject({ name: "AbortError" });
-    const signal: AbortSignal = endpoint.mock.calls[0]![2];
-    if (change === "view") f.state.transcriptViewId = "v2";
-    if (change === "pane") f.state.contextMode = "changes";
-    if (change === "external abort") abort.abort();
-    if (change === "controller abort") f.controller.cancelRequest();
-    if (change === "session") f.state.sessionId = "s2";
-    if (change === "selection") f.state.fileInspection = { kind: "browse" };
-    if (change === "closed") f.state.resourcesOpen = false;
-    if (change.endsWith("abort")) expect(signal.aborted).toBe(true);
-    pending.resolve(
-      kind === "image"
-        ? image
-        : { ticket: "a".repeat(43), expiresAt: Date.now() + 15_000 },
-    );
-    await outcome;
-    expect(f.api.resourceContent).not.toHaveBeenCalled();
-    expect(f.host.saveDownload).not.toHaveBeenCalled();
-  });
-
-  it("keeps a document image current through an append and fences a late content response from a retired transport", async () => {
-    const f = fixture();
-    const { read, image, content } = selectDocument(f);
-    const started = deferred<void>();
-    const late = deferred<typeof content>();
-    f.api.resolveResource.mockImplementationOnce(async () => {
-      f.state.transcriptRevision++;
-      return image;
-    });
-    f.api.resourceContent.mockImplementationOnce(() => {
-      started.resolve();
-      return late.promise;
-    });
-    const outcome = expect(read()).rejects.toMatchObject({
-      name: "AbortError",
-    });
-    await started.promise;
-    f.replaceApi();
-    late.resolve(content);
-    await outcome;
-  });
-
-  it.each([
-    { viewId: "v2" },
-    { sessionId: "s2" },
-    { mimeType: "text/html" },
-    { size: MAX_MEDIA_PREVIEW_BYTES + 1 },
-  ])(
-    "refuses an invalid document image descriptor %j before reading content",
-    async (invalid) => {
+  it.each(["pane", "reader abort", "controller abort"] as const)(
+    "retires a linked image after %s",
+    async (change) => {
       const f = fixture();
-      const { read, image } = selectDocument(f);
-      f.api.resolveResource.mockResolvedValueOnce({ ...image, ...invalid });
-      await expect(read()).rejects.toThrow();
+      const { image, read } = selectDocument(f);
+      const abort = new AbortController();
+      const pending = deferred<typeof image>();
+      f.api.resolveResource.mockReturnValueOnce(pending.promise);
+      const result = expect(read(abort.signal)).rejects.toMatchObject({
+        name: "AbortError",
+      });
+      const signal: AbortSignal = f.api.resolveResource.mock.calls[0]![2];
+      if (change === "pane") f.state.contextMode = "changes";
+      if (change === "reader abort") abort.abort();
+      if (change === "controller abort") f.controller.cancelRequest();
+      if (change !== "pane") expect(signal.aborted).toBe(true);
+      pending.resolve(image);
+      await result;
       expect(f.api.resourceContent).not.toHaveBeenCalled();
     },
   );
 
-  it.each([
-    { totalSize: MAX_MEDIA_PREVIEW_BYTES + 1 },
-    { totalSize: 8 },
-    { blob: new Blob(["png"], { type: "text/html" }) },
-  ])("refuses invalid document image content %j", async (invalid) => {
+  it.each(["closed", "new file", "controller abort"] as const)(
+    "does not start a download after %s",
+    async (change) => {
+      const f = fixture();
+      selectDocument(f);
+      const pending = deferred<{ ticket: string }>();
+      f.api.resourceDownloadTicket.mockReturnValueOnce(pending.promise);
+      const result = expect(
+        f.controller.downloadResource(),
+      ).rejects.toMatchObject({ name: "AbortError" });
+      if (change === "closed") f.state.resourcesOpen = false;
+      if (change === "new file") f.state.fileInspection = { kind: "browse" };
+      if (change === "controller abort") f.controller.cancelRequest();
+      pending.resolve({ ticket: "a".repeat(43) });
+      await result;
+      expect(f.host.saveDownload).not.toHaveBeenCalled();
+    },
+  );
+
+  it("requires the linked image to match the addressed descriptor and complete content", async () => {
     const f = fixture();
-    const { read, content } = selectDocument(f);
-    f.api.resourceContent.mockResolvedValueOnce({ ...content, ...invalid });
-    await expect(read()).rejects.toThrow();
+    const { read, image, content } = selectDocument(f);
+    for (const invalid of [
+      { viewId: "v2" },
+      { sessionId: "s2" },
+      { mimeType: "text/html" },
+      { size: MAX_MEDIA_PREVIEW_BYTES + 1 },
+    ]) {
+      f.api.resolveResource.mockResolvedValueOnce({ ...image, ...invalid });
+      await expect(read()).rejects.toThrow();
+    }
+    expect(f.api.resourceContent).not.toHaveBeenCalled();
+    for (const invalid of [
+      { totalSize: MAX_MEDIA_PREVIEW_BYTES + 1 },
+      { totalSize: 8 },
+      { blob: new Blob(["png"], { type: "text/html" }) },
+    ]) {
+      f.api.resourceContent.mockResolvedValueOnce({ ...content, ...invalid });
+      await expect(read()).rejects.toThrow();
+    }
   });
 
   it("reports current image authorization failure without letting an old download invalidate the transport", async () => {

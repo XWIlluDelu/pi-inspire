@@ -56,7 +56,10 @@ it("keeps native virtual selection/effort across replies, real navigation, copie
   const selected = { provider: "project-router", id: "auto", virtual: true };
   const settle = async (id: string) => {
     await vi.waitFor(
-      async () => expect((await runtime.snapshot(id)).runState).toBe("idle"),
+      async () =>
+        expect((await runtime.snapshot(id)).sessionStatuses[id]?.runState).toBe(
+          "idle",
+        ),
       { timeout: 10_000 },
     );
     return (await runtime.snapshot(id)).active!;

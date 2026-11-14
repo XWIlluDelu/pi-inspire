@@ -406,7 +406,10 @@ export class RuntimeExternalSessions {
         slot.attention = slot.runState === "failed" ? "failed" : null;
         if (!sameReceiver) this.host.taskOutcome(slot, "ended");
       }
-      this.host.emit(slot, { type: "agent_settled" });
+      this.host.emit(slot, {
+        type: "agent_settled",
+        completed: newResults.at(-1)?.outcome === "completed",
+      });
     } else {
       this.host.emit(slot, { type: "agent_start" });
     }

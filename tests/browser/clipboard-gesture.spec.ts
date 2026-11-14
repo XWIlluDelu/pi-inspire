@@ -38,7 +38,7 @@ async function openHistoryDetail(page: Page) {
   await openSavedCopy(page);
   const history = await openHistoryPane(page);
   await history
-    .getByRole("textbox", { name: "Search this branch" })
+    .getByRole("searchbox", { name: "Search this branch" })
     .fill("User source");
   await history.getByRole("button", { name: "Search", exact: true }).click();
   await history

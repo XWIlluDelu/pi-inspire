@@ -5,13 +5,13 @@ covers:
   - server/extensions/{inspire-branch-bridge,provider-auth-bridge}.ts
   - server/configuration-file.ts
   - shared/{contracts,commands,model-settings,provider-auth-bridge}.ts
-  - src/{App,api,app-state,store,model-options,use-modal-focus}.ts*
+  - src/{App,api,app-state,store,model-options,use-modal-focus,use-configuration-document}.ts*
   - src/components/{Settings,SettingsControls,SettingsSection,ModelsSettings,ModelDeclarationForms,ConfigurationForm,ProviderAuthentication,ModelSelector,ModelList,Composer,Welcome,CommandPalette,CommandHelp}.tsx
   - src/styles/model-settings.css
   - tests/server/{model-settings,model-catalog,model-metadata.integration,model-workflow.integration,provider-auth,provider-auth-bridge.integration}.test.ts
   - tests/server/configuration-file.test.ts
   - tests/integration/model-cycle-native.test.ts
-  - tests/web/{model-settings,model-store,model-selector,modal-focus,provider-authentication,welcome-model-transition,welcome-new-session}.test.ts*
+  - tests/web/{configuration-document,model-settings,model-store,model-selector,modal-focus,provider-authentication,welcome-model-transition}.test.ts*
   - tests/browser/{model-selection,model-settings*,model-workflow,provider-authentication}.spec.ts
 progress: in-progress
 ---
@@ -45,7 +45,7 @@ Models settings separates three tasks:
 | --- | --- |
 | Models | Searchable available models; selected-model details for Common, default and declaration actions; saved-default Clear; default thinking; ordered common rules |
 | Login & API keys | Saved credential status and Manage; Connect provider; provider → method → login navigation |
-| Custom providers | Collapsed provider/model list with counts, Add and Edit/Remove; connection fields and advanced model declarations |
+| Custom providers | Collapsed declaration selector with counts; Add provider and selected declaration actions |
 
 Select a model to inspect its identity and actions below the list. Common uses a checkbox for
 direct membership and a rule action for pattern-based membership. Set as default saves one model,
@@ -179,11 +179,12 @@ Provider and model forms open inside Models with the browsing view still mounted
 identifies the edit target. The shared model/MCP form keeps Save and Cancel reachable while the body
 scrolls. [[design-system]] defines scrolling in short windows. Errors stay in the form.
 
-Drafts belong to the provider/model and creation mode. Switching categories retains drafts,
-search and loaded data. Hidden forms wait to take focus or scroll. Back and Cancel discard the form
-draft and restore the browsing context and originating control. Creating a provider focuses Add
-model. Creating or renaming an available model selects the saved identity for inspection. Common
-and Default writes leave focus under the user's control.
+Select a custom provider or model by identity to see its declaration actions. Models and MCP
+share the editor's document, selection, draft and async ownership rules. Switching categories
+retains drafts, search and loaded data. Hidden forms wait to take focus or scroll. Back and Cancel
+discard the draft and restore the browsing context and originating control. Creating a provider
+focuses Add model. Creating or renaming an available model selects the saved identity for
+inspection. Common and Default writes leave focus under the user's control.
 
 Candidate declarations are validated in the existing isolated metadata worker against the same
 agent directory, selected working directory and project-trust policy as Pi. Extension provider
@@ -249,9 +250,14 @@ Pi's saved credential; environment and `models.json` credentials are managed sep
 - `tests/server/model-settings.test.ts` covers native file syntax, preserved unedited declarations
   and protected credentials.
 - `tests/server/configuration-file.test.ts` covers shared publication, concurrent edits, changed
-  targets, invalid documents and lock release after cleanup failure. MCP uses the same transaction.
-- `tests/web/welcome-model-transition.test.tsx` covers New's effort ownership across model/directory
-  changes, supported-level clamping, late discovery and the submitted startup selection.
+  targets, invalid documents, committed saves with failed readback and lock release after cleanup
+  failure. MCP uses the same transaction.
+- `tests/browser/model-settings.spec.ts` uses native declarations to prove provider setup, rejected
+  candidates, global default saves and Common updates while browsing a cold session.
+- `tests/browser/model-workflow.spec.ts` covers trusted extension defaults, native explicit and
+  inherited startup choices, and confirmed project controls before first input.
+- `tests/web/welcome-model-transition.test.tsx` covers blocked or failed inheritance, stale
+  directory discovery and unavailable models.
 
 ## Related contracts
 

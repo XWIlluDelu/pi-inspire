@@ -53,6 +53,7 @@ import {
   isCommandQuery,
   type NativeCommandActivity,
   selectedRunState,
+  transcriptDiagnostic,
 } from "./app-state";
 import { BrowserUpgradeRequired } from "./browser-auth";
 import { type PiCommand, resolveCommandInventory } from "./composer-completion";
@@ -85,7 +86,12 @@ import {
 import { SessionSelectionController } from "./controllers/session-selection-controller";
 import { UpdateController } from "./controllers/update-controller";
 import { WorkspaceController } from "./controllers/workspace-controller";
-import { appendNotice, type Notice, parseExtensionDisplays } from "./events";
+import {
+  appendNotice,
+  type EventSlice,
+  type Notice,
+  parseExtensionDisplays,
+} from "./events";
 import { resolveModelMetadata, supportedThinkingLevels } from "./model-options";
 import { TaskNotificationController } from "./notifications";
 import {
@@ -102,7 +108,6 @@ import { type SessionDraft, SessionDrafts } from "./session-drafts";
 import {
   deriveSnapshotTransition,
   snapshotLifecyclePatch,
-  transcriptPatch,
 } from "./snapshot-transition";
 import {
   forgetFileReading,
@@ -238,7 +243,7 @@ export class AppStore {
       const ownsDraft = this.drafts.get(sessionId).revision === draftRevision;
       if (
         response.snapshot.active?.transcriptPage.viewId !==
-        this.state.transcriptViewId
+        this.state.view.viewId
       )
         this.applySnapshot(response.snapshot);
       if (response.editorText === undefined) return;
@@ -314,13 +319,6 @@ export class AppStore {
     releaseOpening: (ticket) => this.releaseOpening(ticket),
     applySnapshot: (snapshot) => this.applySnapshot(snapshot),
     ensureSessionVisible: (sessionId) => this.ensureSessionVisible(sessionId),
-    consumeReadyWhileOpening: (sessionId, ticket) => {
-      if (this.readyWhileOpening.get(sessionId) !== ticket) return false;
-      this.readyWhileOpening.delete(sessionId);
-      return true;
-    },
-    resyncSelected: (sessionId) =>
-      void this.resync(sessionId, this.selectionGeneration),
     setActionError: (sessionActionError) => this.set({ sessionActionError }),
     rememberModel: (model) => this.preferences.rememberModel(model),
     refreshSessionCatalog: () => void this.catalog.refreshLoaded(),
@@ -339,11 +337,6 @@ export class AppStore {
     applyTranscript: (sessionId, data, sequence, statuses) =>
       this.applyLiveTranscript(sessionId, data, sequence, statuses),
     ensureSessionVisible: (sessionId) => this.ensureSessionVisible(sessionId),
-    recordRuntimeReady: (sessionId) => {
-      if (this.openingOwner !== null)
-        this.readyWhileOpening.set(sessionId, this.openingOwner);
-    },
-    clearRuntimeReady: (sessionId) => this.readyWhileOpening.delete(sessionId),
     refreshLoadedSessions: () => this.catalog.refreshLoaded(),
     hasVisibleGitSurface: () => this.git.hasVisibleSurface(),
     refreshGitStatus: () => this.git.refreshStatus(),
@@ -519,7 +512,6 @@ export class AppStore {
     keyof PiRuntimeSettings,
     symbol
   >();
-  private readyWhileOpening = new Map<string, number>();
   private bootstrapRequest: AbortController | null = null;
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -542,10 +534,14 @@ export class AppStore {
     for (const listener of this.listeners) listener();
   }
 
+  private patchLive(partial: Partial<EventSlice>): void {
+    this.set({ live: { ...this.state.live, ...partial } });
+  }
+
   private notify(kind: Notice["kind"], text: string): void {
-    const id = this.state.nextNoticeId;
-    this.set({
-      notices: appendNotice(this.state.notices, { id, kind, text }),
+    const id = this.state.live.nextNoticeId;
+    this.patchLive({
+      notices: appendNotice(this.state.live.notices, { id, kind, text }),
       nextNoticeId: id + 1,
     });
   }
@@ -571,7 +567,7 @@ export class AppStore {
     // Commit only the deleted identity's view. A newer open/new request keeps
     // its selection owner and can still publish its own snapshot afterwards.
     if (this.state.sessionId && sessionIds.has(this.state.sessionId)) {
-      this.applySnapshot({ active: null, runState: "idle", sessionStatuses });
+      this.applySnapshot({ active: null, sessionStatuses });
     }
     return sessionStatuses;
   }
@@ -618,7 +614,7 @@ export class AppStore {
       deletingSessionId: null,
       clearingHidden: false,
       pendingAction: null,
-      extensionUiRespondingId: null,
+      live: { ...this.state.live, extensionUiRespondingId: null },
     });
   }
 
@@ -679,14 +675,12 @@ export class AppStore {
   // --- Bootstrap ---
 
   private claimOpening(owner: number, sessionId: string | null): void {
-    this.readyWhileOpening.clear();
     this.openingOwner = owner;
     this.set({ openingSessionId: sessionId, sessionSelectionPending: true });
   }
 
   private releaseOpening(owner?: number): void {
     if (owner !== undefined && this.openingOwner !== owner) return;
-    this.readyWhileOpening.clear();
     this.openingOwner = null;
     if (
       this.state.openingSessionId !== null ||
@@ -852,10 +846,8 @@ export class AppStore {
     this.snapshotGeneration += 1;
     const active = snapshot.active;
     const transition = deriveSnapshotTransition(this.state, active);
-    const { nextSessionId, cwd, nextViewId, revisionChanged, messages } =
-      transition;
+    const { sessionId: nextSessionId, cwd, sessionChanged } = transition;
     if (nextSessionId) this.composer.loadDeliveries(nextSessionId);
-    const sessionChanged = transition.kind === "session-changed";
     if (sessionChanged) {
       this.transcriptSequence = -1;
       this.visibleEventSequence = -1;
@@ -865,52 +857,16 @@ export class AppStore {
         this.transcriptSequence,
         snapshot.runtimeSequence,
       );
-    const projectionOwnerChanged =
-      sessionChanged ||
-      transition.kind === "view-changed" ||
-      transition.kind === "projection-replaced";
-    const sessionOwnerPatch = sessionChanged
-      ? this.workspace.changeOwner(cwd)
-      : {};
-    if (projectionOwnerChanged) {
-      this.selectionGeneration += 1;
-      if (sessionChanged) this.pendingActionRequest += 1;
-      this.branches.invalidate({
-        preserveError: true,
-        preserveAction: !sessionChanged,
-      });
-      // Retire old content authority even when the same session survives.
-      // The lifecycle patch separately retains named-file selection intent
-      // so compaction/rewrite can reauthorize it instead of returning to Browse.
-      this.resources.invalidate();
-      if (sessionChanged) this.git.invalidateForTransportReplacement();
-      else this.git.clearComparison();
-    } else if (revisionChanged) {
-      // Cancel observations owned by the old transcript generation. Keep the
-      // last known standing visible until Browse produces current observations.
-      this.resources.cancelProbes();
-    }
-    this.runtimeEvents.replaceSettledMessages(messages);
+    const lifecyclePatch = this.replaceView(transition);
     const sessionStatuses = this.runtimeEvents.projectSessionStatuses(
-      nextSessionId
-        ? {
-            ...snapshot.sessionStatuses,
-            [nextSessionId]: {
-              ...snapshot.sessionStatuses[nextSessionId],
-              runState: snapshot.runState,
-            },
-          }
-        : snapshot.sessionStatuses,
+      snapshot.sessionStatuses,
       nextSessionId,
     );
+    const runState = nextSessionId
+      ? (sessionStatuses[nextSessionId]?.runState ?? "idle")
+      : "idle";
     const extensionStatuses =
       parseExtensionStatuses(snapshot.extensionStatuses) ?? {};
-    this.runtimeEvents.reconcileObservedRuns(sessionStatuses);
-    const lifecyclePatch = snapshotLifecyclePatch(
-      this.state,
-      transition,
-      sessionOwnerPatch,
-    );
     const restoreWorkbench =
       !this.workbenchReady || sessionChanged || cwd !== this.state.cwd;
     if (restoreWorkbench) {
@@ -922,14 +878,12 @@ export class AppStore {
       }
     }
     this.set({
-      sessionId: active?.sessionId ?? null,
+      ...lifecyclePatch,
+      sessionId: nextSessionId,
       sessionName: active?.sessionName ?? "",
       sessionFile: active?.sessionFile ?? null,
       sessionStats: active?.stats ?? null,
       runtimeSettings: active?.runtimeSettings ?? null,
-      ...(sessionChanged || nextViewId !== this.state.transcriptViewId
-        ? { pendingRuntimeSettings: {}, thinkingLevelPending: false }
-        : {}),
       readOnlyReason: active?.readOnlyReason ?? null,
       cwd,
       model: (active?.model as AppState["model"]) ?? null,
@@ -946,47 +900,33 @@ export class AppStore {
       commands: Array.isArray(active?.commands)
         ? (active.commands as PiCommand[])
         : [],
-      ...transcriptPatch(transition, active),
-      streaming: Boolean(active?.isStreaming),
-      bashRunning: snapshot.bashRunning === true,
+      ...transcriptDiagnostic(transition.view),
       sessionStatuses,
       sessionActionError: null,
-      // Settled activity is rebuilt from the selected worker. Background
-      // extension dialogs are restored in Pi request order when their owning
-      // session is viewed.
-      tools: active?.toolActivity ?? {},
-      retry:
-        snapshot.runState === "retrying"
-          ? parseRetryInfo(snapshot.retry)
+      live: {
+        ...lifecyclePatch.live,
+        ...(sessionChanged ? { windowTitle: null } : {}),
+        streaming: Boolean(active?.isStreaming),
+        bashRunning: snapshot.bashRunning === true,
+        tools: active?.toolActivity ?? {},
+        retry: runState === "retrying" ? parseRetryInfo(snapshot.retry) : null,
+        summarizationRetry: isBusyRunState(runState)
+          ? parseRetryInfo(snapshot.summarizationRetry)
           : null,
-      summarizationRetry: isBusyRunState(snapshot.runState)
-        ? parseRetryInfo(snapshot.summarizationRetry)
-        : null,
-      queue: pendingQueues,
-      extensionUiRequests: Array.isArray(snapshot.pendingExtensionUiRequests)
-        ? snapshot.pendingExtensionUiRequests
-        : [],
-      extensionUiRespondingId:
-        transition.kind === "session-changed" ||
-        transition.kind === "view-changed"
-          ? null
-          : this.state.extensionUiRespondingId,
-      extensionDisplays: parseExtensionDisplays(snapshot.extensionDisplays),
-      statuses: extensionStatuses,
-      ...lifecyclePatch,
+        queue: pendingQueues,
+        extensionUiRequests: Array.isArray(snapshot.pendingExtensionUiRequests)
+          ? snapshot.pendingExtensionUiRequests
+          : [],
+        extensionDisplays: parseExtensionDisplays(snapshot.extensionDisplays),
+        statuses: extensionStatuses,
+      },
     });
     this.workbenchReady = true;
     if (restoreWorkbench) {
       if (this.hostAuthorityId) rememberWorkbenchSession(this.state.sessionId);
       this.workspace.resumeSearch();
     }
-    if (
-      lifecyclePatch.fileInspection?.kind === "file" &&
-      this.state.fileInspection === lifecyclePatch.fileInspection &&
-      this.state.resourcesOpen &&
-      this.state.contextMode === "files"
-    )
-      void this.restoreFileTab();
+    this.restoreViewFile(lifecyclePatch);
     // Snapshots restore projection only. Attention is armed exclusively by
     // live lifecycle events, never by bootstrap/reconnect status.
     if (nextSessionId) this.runtimeEvents.acknowledgeVisibleSession();
@@ -1018,40 +958,62 @@ export class AppStore {
       sessionId,
       cwd: this.state.cwd,
     });
-    const replaced =
-      transition.kind === "view-changed" ||
-      transition.kind === "projection-replaced";
-    const lifecycle = snapshotLifecyclePatch(this.state, transition);
-    if (replaced) {
-      this.selectionGeneration += 1;
-      this.resyncRequest += 1;
-      this.branches.invalidate({ preserveError: true, preserveAction: true });
-      this.resources.invalidate();
-      this.git.clearComparison();
-    } else if (transition.revisionChanged) {
-      this.resources.cancelProbes();
-    }
-    this.runtimeEvents.replaceSettledMessages(transition.messages);
-    const { error, errorSeverity, ...transcript } = transcriptPatch(
-      transition,
-      live,
-    );
+    const lifecycle = this.replaceView(transition);
+    const diagnostic = transcriptDiagnostic(transition.view);
     this.set({
       ...lifecycle,
       ...(sessionStatuses ? { sessionStatuses } : {}),
-      ...transcript,
-      ...(error || this.state.error === this.state.projectionError
-        ? { error, errorSeverity }
-        : {}),
-      ...(replaced
-        ? {
-            extensionUiRespondingId: null,
-            pendingRuntimeSettings: {},
-            thinkingLevelPending: false,
-          }
+      ...(diagnostic.error ||
+      this.state.error === transcriptDiagnostic(this.state.view).error
+        ? diagnostic
         : {}),
     });
-    if (replaced && lifecycle.fileInspection?.kind === "file")
+    this.restoreViewFile(lifecycle);
+  }
+
+  private replaceView(transition: ReturnType<typeof deriveSnapshotTransition>) {
+    const { sessionChanged, cwd, replaced, revisionChanged } = transition;
+    if (replaced) {
+      this.selectionGeneration += 1;
+      this.resyncRequest += 1;
+      if (sessionChanged) {
+        this.pendingActionRequest += 1;
+        this.branches.retireAction();
+      }
+      this.branches.retireReads();
+      this.resources.invalidate();
+      if (sessionChanged) this.git.invalidateForTransportReplacement();
+      else this.git.clearComparison();
+    } else if (revisionChanged) {
+      this.resources.cancelProbes();
+    }
+    return {
+      ...snapshotLifecyclePatch(
+        this.state,
+        transition,
+        sessionChanged ? this.workspace.changeOwner(cwd) : undefined,
+      ),
+      view: transition.view,
+      live: {
+        ...this.state.live,
+        messages: transition.messages,
+        activeAssistantMessageKey: transition.activeAssistantMessageKey,
+        ...(transition.viewChanged ? { pendingRetryError: null } : {}),
+        ...(replaced ? { extensionUiRespondingId: null } : {}),
+      },
+      ...(replaced
+        ? { pendingRuntimeSettings: {}, thinkingLevelPending: false }
+        : {}),
+    };
+  }
+
+  private restoreViewFile({ fileInspection }: Partial<AppState>) {
+    if (
+      fileInspection?.kind === "file" &&
+      this.state.fileInspection === fileInspection &&
+      this.state.resourcesOpen &&
+      this.state.contextMode === "files"
+    )
       void this.restoreFileTab();
   }
 
@@ -1102,8 +1064,8 @@ export class AppStore {
           snapshot.runtimeSequence <
             Math.max(this.transcriptSequence, this.visibleEventSequence)) ||
         (page?.incarnation &&
-          page.incarnation === this.state.transcriptIncarnation &&
-          page.revision < this.state.transcriptRevision)
+          page.incarnation === this.state.view.incarnation &&
+          page.revision < this.state.view.revision)
       )
         return;
       this.applySnapshot(snapshot);
@@ -1125,7 +1087,9 @@ export class AppStore {
             return;
           if (this.state.connection !== "open") return;
         }
-        const currentProjectionError = this.state.projectionError;
+        const currentProjectionError = transcriptDiagnostic(
+          this.state.view,
+        ).error;
         this.set({
           error:
             currentProjectionError ??
@@ -1134,8 +1098,7 @@ export class AppStore {
               : "Could not refresh this conversation. Showing the last loaded version."),
           errorSeverity:
             currentProjectionError &&
-            projectionConflictSeverity(this.state.projectionConflict) ===
-              "error"
+            projectionConflictSeverity(this.state.view.conflict) === "error"
               ? "error"
               : "warning",
         });
@@ -1631,8 +1594,8 @@ export class AppStore {
     )
       throw new Error("This control is not available in this session.");
     const confirmed = () =>
-      controlState(control, this.state.statuses[control.state.key])?.value ===
-      value;
+      controlState(control, this.state.live.statuses[control.state.key])
+        ?.value === value;
     if (confirmed()) return true;
     return new Promise<boolean>((resolve, reject) => {
       let settled = false;
@@ -1860,7 +1823,7 @@ export class AppStore {
     }
     if (name === "copy") {
       const api = this.api;
-      const viewId = this.state.transcriptViewId;
+      const viewId = this.state.view.viewId;
       const selectionGeneration = this.selectionGeneration;
       if (!api || !viewId) {
         report(
@@ -1874,7 +1837,7 @@ export class AppStore {
         this.api === api &&
         this.selectionGeneration === selectionGeneration &&
         this.state.sessionId === sessionId &&
-        this.state.transcriptViewId === viewId;
+        this.state.view.viewId === viewId;
       let noResponse = false;
       void writeCopyContent(
         copyLoader(async (signal) => {
@@ -2038,7 +2001,7 @@ export class AppStore {
 
   abort = async (): Promise<void> => {
     const sessionId = this.state.sessionId;
-    const viewId = this.state.transcriptViewId ?? undefined;
+    const viewId = this.state.view.viewId ?? undefined;
     const selectionGeneration = this.selectionGeneration;
     const api = this.api;
     if (!api || !sessionId) return;
@@ -2052,9 +2015,9 @@ export class AppStore {
       });
     try {
       if (
-        !this.state.projectionConflict &&
+        !this.state.view.conflict &&
         !(
-          this.state.bashRunning &&
+          this.state.live.bashRunning &&
           !isBusyRunState(selectedRunState(this.state))
         )
       ) {
@@ -2146,7 +2109,7 @@ export class AppStore {
       return await this.pendingRecovery.run(
         sessionId,
         "recover",
-        this.state.transcriptViewId ?? undefined,
+        this.state.view.viewId ?? undefined,
       );
     } catch (error) {
       if (this.api !== api) return false;
@@ -2173,14 +2136,14 @@ export class AppStore {
     const api = this.api;
     const selection = this.selectionGeneration;
     const session = this.state.sessionId;
-    const view = this.state.transcriptViewId;
-    const incarnation = this.state.transcriptIncarnation;
+    const view = this.state.view.viewId;
+    const incarnation = this.state.view.incarnation;
     return () =>
       this.api === api &&
       this.selectionGeneration === selection &&
       this.state.sessionId === session &&
-      this.state.transcriptViewId === view &&
-      this.state.transcriptIncarnation === incarnation;
+      this.state.view.viewId === view &&
+      this.state.view.incarnation === incarnation;
   };
 
   pendingText = async (
@@ -2189,9 +2152,9 @@ export class AppStore {
     signal = new AbortController().signal,
   ): Promise<CopySource | null> => {
     const sessionId = this.state.sessionId;
-    const viewId = this.state.transcriptViewId;
+    const viewId = this.state.view.viewId;
     const generation = this.selectionGeneration;
-    const queueRevision = this.state.queue.revision;
+    const queueRevision = this.state.live.queue.revision;
     const api = this.api;
     if (!api || !sessionId || !viewId) {
       this.notify("warning", "Complete pending text is unavailable");
@@ -2201,8 +2164,8 @@ export class AppStore {
       !signal.aborted &&
       this.api === api &&
       this.state.sessionId === sessionId &&
-      this.state.transcriptViewId === viewId &&
-      this.state.queue.revision === queueRevision &&
+      this.state.view.viewId === viewId &&
+      this.state.live.queue.revision === queueRevision &&
       this.selectionGeneration === generation;
     try {
       const result = await api.pendingText(
@@ -2215,14 +2178,10 @@ export class AppStore {
         signal,
       );
       if (!owns()) return null;
-      if (typeof result.text !== "string")
+      if (typeof result.text !== "string" || !Array.isArray(result.images))
         throw new Error("Complete pending text is unavailable");
       const images: Blob[] = [];
-      const sources =
-        result.images ??
-        result.imageAttachmentIds?.map((attachmentId) => ({ attachmentId })) ??
-        [];
-      for (const source of sources) {
+      for (const source of result.images) {
         images.push(
           "attachmentId" in source
             ? await api.attachmentPreview(source.attachmentId, signal)
@@ -2473,7 +2432,10 @@ export class AppStore {
     key: keyof PiRuntimeSettings,
     apply: (api: Api, sessionId: string) => Promise<unknown>,
   ): Promise<boolean> {
-    const { sessionId, transcriptViewId } = this.state;
+    const {
+      sessionId,
+      view: { viewId: transcriptViewId },
+    } = this.state;
     const api = this.api;
     if (!api || !sessionId) return false;
     const selection = this.selectionRequest;
@@ -2483,7 +2445,7 @@ export class AppStore {
       this.api === api &&
       this.selectionRequest === selection &&
       this.state.sessionId === sessionId &&
-      this.state.transcriptViewId === transcriptViewId &&
+      this.state.view.viewId === transcriptViewId &&
       this.runtimeSettingOwners.get(key) === owner;
     this.set({
       pendingRuntimeSettings: {
@@ -2528,9 +2490,9 @@ export class AppStore {
   ): boolean => {
     if (
       this.state.sessionSelectionPending ||
-      this.state.transcriptIncarnation !== scope.incarnation ||
-      this.state.transcriptEffectiveLeafId !== scope.effectiveLeafId ||
-      this.state.composerHistoryVersion !== scope.historyVersion ||
+      this.state.view.incarnation !== scope.incarnation ||
+      this.state.view.effectiveLeafId !== scope.effectiveLeafId ||
+      this.state.view.composerHistoryVersion !== scope.historyVersion ||
       this.drafts.get(scope.sessionId).revision !== expectedDraftRevision
     )
       return false;
@@ -2951,10 +2913,10 @@ export class AppStore {
   ): Promise<string | null> => {
     const api = this.api;
     const ownsTransport = (): boolean => this.api === api;
-    if (!api || this.state.extensionUiRespondingId) return null;
-    const request = this.state.extensionUiRequests[0];
+    if (!api || this.state.live.extensionUiRespondingId) return null;
+    const request = this.state.live.extensionUiRequests[0];
     if (!request || payload.id !== request.id) return null;
-    this.set({ extensionUiRespondingId: request.id });
+    this.patchLive({ extensionUiRespondingId: request.id });
     try {
       await api.respondExtensionUi({
         ...payload,
@@ -2962,8 +2924,8 @@ export class AppStore {
         sessionId: request.sessionId,
       });
       if (ownsTransport() && this.state.sessionId === request.sessionId) {
-        this.set({
-          extensionUiRequests: this.state.extensionUiRequests.filter(
+        this.patchLive({
+          extensionUiRequests: this.state.live.extensionUiRequests.filter(
             (candidate) => candidate.id !== request.id,
           ),
         });
@@ -2979,7 +2941,7 @@ export class AppStore {
       // completion must not turn a later dialog into a global error.
       if (
         this.state.sessionId === request.sessionId &&
-        this.state.extensionUiRequests.some(
+        this.state.live.extensionUiRequests.some(
           (candidate) => candidate.id === request.id,
         )
       ) {
@@ -2988,8 +2950,11 @@ export class AppStore {
           : "Failed to answer the extension";
       }
     } finally {
-      if (ownsTransport() && this.state.extensionUiRespondingId === request.id)
-        this.set({ extensionUiRespondingId: null });
+      if (
+        ownsTransport() &&
+        this.state.live.extensionUiRespondingId === request.id
+      )
+        this.patchLive({ extensionUiRespondingId: null });
     }
     return null;
   };
@@ -3001,9 +2966,9 @@ export class AppStore {
   snoozeUpdate = (): void => this.updates.snooze();
 
   dismissNotice = (id: number): void => {
-    if (!this.state.notices.some((notice) => notice.id === id)) return;
-    this.set({
-      notices: this.state.notices.filter((notice) => notice.id !== id),
+    if (!this.state.live.notices.some((notice) => notice.id === id)) return;
+    this.patchLive({
+      notices: this.state.live.notices.filter((notice) => notice.id !== id),
     });
   };
 
@@ -3165,8 +3130,14 @@ export class AppStore {
       ? this.git.refreshStatus()
       : this.restoreFileTab();
 
-  setResourcesOpen = (resourcesOpen: boolean): void => {
-    const { fileInspection, contextMode } = this.state;
+  setResourcesOpen = (resourcesOpen: boolean): void =>
+    this.changeContext(resourcesOpen);
+
+  private changeContext(
+    resourcesOpen: boolean,
+    requestedMode?: AppState["contextMode"],
+  ): void {
+    const { fileInspection } = this.state;
     if (!resourcesOpen) {
       this.resources.invalidate();
       this.git.clearComparison();
@@ -3179,14 +3150,16 @@ export class AppStore {
       });
       return;
     }
-    this.set({ resourcesOpen });
+    const contextMode = requestedMode ?? this.state.contextMode;
+    this.set({ resourcesOpen, contextMode });
     if (
       contextMode === "files" &&
       fileInspection.kind === "file" &&
       (!fileInspection.preview || showsFileComparison(this.state))
     )
       void this.restoreFileTab();
-  };
+    if (requestedMode === "changes") void this.git.refreshStatus();
+  }
 
   selectResourceTab = (reference: string): Promise<void> => {
     const tab = this.state.resourceTabs.find(
@@ -3243,10 +3216,8 @@ export class AppStore {
     this.set({ resourcesOpen: true, contextMode: "files" });
   };
 
-  setContextMode = (contextMode: "files" | "changes" | "terminal"): void => {
-    this.set({ contextMode });
-    if (contextMode === "changes") void this.git.refreshStatus();
-  };
+  openContextMode = (contextMode: AppState["contextMode"]): void =>
+    this.changeContext(true, contextMode);
 
   readBranchEntry = (targetId: string, offset = 0, signal?: AbortSignal) =>
     this.branches.readEntry(targetId, offset, signal);

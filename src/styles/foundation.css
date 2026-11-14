@@ -32,7 +32,8 @@
   --topbar-h: 44px;
   --window-titlebar-height: 0px;
   --app-height: calc(100dvh - var(--window-titlebar-height));
-  --activity-row-h: 30px;
+  --activity-copy-size: 24px;
+  --disclosure-height: 28px;
   --reading-width-max: 820px;
   --content-max: min(var(--reading-width-max), clamp(680px, 70vw, 980px));
   --composer-max: var(--content-max);
@@ -524,9 +525,6 @@
   --bg-inset: #EAE8E3;
   --bg-control: #EEECE8;
   --bg-prompt: #EEECE8;
-  --bg-file-canvas: #FAFAFA;
-  --bg-file-surface: #FFFFFF;
-  --bg-file-inset: #F1F1F1;
   --bg-overlay: rgba(19, 21, 23, 0.4);
   --line: color-mix(in srgb, var(--ink) 10%, transparent);
   --line-strong: color-mix(in srgb, var(--ink) 24%, transparent);
@@ -579,9 +577,6 @@
   --bg-inset: #14171B;
   --bg-control: #23272C;
   --bg-prompt: #23272C;
-  --bg-file-canvas: #151515;
-  --bg-file-surface: #1D1D1D;
-  --bg-file-inset: #0F0F0F;
   --bg-overlay: rgba(0, 0, 0, 0.65);
   --line: color-mix(in srgb, var(--ink) 12%, transparent);
   --line-strong: color-mix(in srgb, var(--ink) 22%, transparent);
@@ -634,9 +629,6 @@
   --bg-inset: #E5EBE8;
   --bg-control: #E9EEEB;
   --bg-prompt: #E9EEEB;
-  --bg-file-canvas: #FAFAFA;
-  --bg-file-surface: #FFFFFF;
-  --bg-file-inset: #F1F1F1;
   --bg-overlay: rgba(18, 23, 21, 0.4);
   --line: color-mix(in srgb, var(--ink) 10%, transparent);
   --line-strong: color-mix(in srgb, var(--ink) 24%, transparent);
@@ -689,9 +681,6 @@
   --bg-inset: #141A16;
   --bg-control: #232B26;
   --bg-prompt: #232B26;
-  --bg-file-canvas: #151515;
-  --bg-file-surface: #1D1D1D;
-  --bg-file-inset: #0F0F0F;
   --bg-overlay: rgba(0, 0, 0, 0.6);
   --line: color-mix(in srgb, var(--ink) 12%, transparent);
   --line-strong: color-mix(in srgb, var(--ink) 22%, transparent);
@@ -757,9 +746,6 @@
   --on-accent: #FFFFFF;
   --chrome-bg: #F4F5F6;
   --chrome-ink: #63676C;
-  --bg-file-canvas: #FAFAFA;
-  --bg-file-surface: #FFFFFF;
-  --bg-file-inset: #F1F1F1;
   --bg-overlay: rgba(0, 0, 0, 0.4);
   --line: #E5E5E5;
   --line-subtle: var(--line);
@@ -812,9 +798,6 @@
   --on-accent: #181818;
   --chrome-bg: #14171A;
   --chrome-ink: #B9C0C7;
-  --bg-file-canvas: #151515;
-  --bg-file-surface: #1D1D1D;
-  --bg-file-inset: #0F0F0F;
   --bg-overlay: rgba(0, 0, 0, 0.62);
   --line: #2B2B2B;
   --line-subtle: var(--line);
@@ -928,24 +911,6 @@ input[type="search"]::-webkit-search-cancel-button:hover {
     width: 28px;
     height: 28px;
   }
-}
-
-/* Inline identity editors share their surface; owners keep label-sized geometry. */
-.inline-rename-input {
-  min-width: 0;
-  border: 1px solid var(--hairline-strong);
-  border-radius: var(--radius-sm);
-  background: var(--bg-canvas);
-  padding: 2px var(--space-2);
-  transition:
-    border-color var(--dur-micro) var(--ease-standard),
-    box-shadow var(--dur-micro) var(--ease-standard);
-}
-
-.inline-rename-input:focus-visible {
-  outline: none;
-  border-color: var(--accent-focus);
-  box-shadow: 0 0 0 3px var(--accent-tint);
 }
 
 .files-browser__scroll {
@@ -1262,10 +1227,6 @@ input[type="search"]::-webkit-search-cancel-button:hover {
   from {
     opacity: 0;
   }
-}
-
-.status-success {
-  color: var(--success);
 }
 
 .status-error {

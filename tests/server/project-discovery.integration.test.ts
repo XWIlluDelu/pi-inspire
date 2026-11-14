@@ -147,7 +147,7 @@ describe("Host project discovery continuity", () => {
           ).toContain("offline answer");
           expect(
             (await current.runtime.snapshot(created.body.active.sessionId))
-              .runState,
+              .sessionStatuses[created.body.active.sessionId]?.runState,
           ).toBe("idle");
         },
         { timeout: 10_000 },
@@ -170,7 +170,7 @@ describe("Host project discovery continuity", () => {
           ).toContain("continue after reconstruction");
           expect(
             (await current.runtime.snapshot(created.body.active.sessionId))
-              .runState,
+              .sessionStatuses[created.body.active.sessionId]?.runState,
           ).toBe("idle");
         },
         { timeout: 10_000 },

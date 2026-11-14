@@ -89,9 +89,7 @@ export const Transcript = memo(function Transcript({
   const searchOwnsViewportRef = useRef(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchLauncherRef = useRef<HTMLButtonElement>(null);
-  const [mobileTranscriptTool, setMobileTranscriptTool] = useState<
-    "search" | null
-  >(null);
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const projectionViewKey = transcriptProjectionKey(
     viewId,
     projectionIncarnation,
@@ -156,22 +154,17 @@ export const Transcript = memo(function Transcript({
     revealVersion: search.revealVersion,
   });
 
-  const closeMobileTranscriptTool = useCallback(
+  const closeMobileSearch = useCallback(
     (restoreFocus = false) => {
-      const closedTool = mobileTranscriptTool;
-      if (
-        closedTool === "search" &&
-        window.matchMedia("(max-width: 900px)").matches
-      )
+      if (mobileSearchOpen && window.matchMedia("(max-width: 900px)").matches)
         search.clear();
-      setMobileTranscriptTool(null);
-      if (restoreFocus && closedTool) {
-        requestAnimationFrame(() => {
-          searchLauncherRef.current?.focus({ preventScroll: true });
-        });
-      }
+      setMobileSearchOpen(false);
+      if (restoreFocus)
+        requestAnimationFrame(() =>
+          searchLauncherRef.current?.focus({ preventScroll: true }),
+        );
     },
-    [mobileTranscriptTool, search],
+    [mobileSearchOpen, search],
   );
   const searchQueryRef = useRef(search.query);
   searchQueryRef.current = search.query;
@@ -184,7 +177,7 @@ export const Transcript = memo(function Transcript({
       return;
     }
     if (window.matchMedia("(max-width: 900px)").matches)
-      setMobileTranscriptTool("search");
+      setMobileSearchOpen(true);
     // The layout effect focuses a newly opened narrow search after it renders.
     searchInputRef.current?.focus();
     searchInputRef.current?.select();
@@ -192,21 +185,19 @@ export const Transcript = memo(function Transcript({
 
   // A session or view change retires narrow tool state with its query.
   useLayoutEffect(() => {
-    setMobileTranscriptTool(null);
+    setMobileSearchOpen(false);
   }, [sessionId, projectionViewKey]);
 
   useLayoutEffect(() => {
-    if (mobileTranscriptTool !== "search") return;
+    if (!mobileSearchOpen) return;
     searchInputRef.current?.focus();
     searchInputRef.current?.select();
-  }, [mobileTranscriptTool]);
+  }, [mobileSearchOpen]);
 
   useEffect(() => {
     const narrow = window.matchMedia("(max-width: 900px)");
     const syncLayout = () => {
-      setMobileTranscriptTool(
-        narrow.matches && searchQueryRef.current ? "search" : null,
-      );
+      setMobileSearchOpen(narrow.matches && Boolean(searchQueryRef.current));
     };
     syncLayout();
     narrow.addEventListener("change", syncLayout);
@@ -214,29 +205,18 @@ export const Transcript = memo(function Transcript({
   }, []);
 
   useEffect(() => {
-    if (
-      mobileTranscriptTool !== "search" ||
-      !window.matchMedia("(max-width: 900px)").matches
-    )
+    if (!mobileSearchOpen || !window.matchMedia("(max-width: 900px)").matches)
       return;
     const closeFromOutside = (event: PointerEvent) => {
       const target = event.target;
       if (!(target instanceof Element)) return;
-      if (target.closest(".transcript-mobile-toolbar, .transcript-search"))
-        return;
-      const scopeMenuId = searchInputRef.current
-        ?.closest(".transcript-search")
-        ?.querySelector("[aria-controls]")
-        ?.getAttribute("aria-controls");
-      if (scopeMenuId && document.getElementById(scopeMenuId)?.contains(target))
-        return;
-      closeMobileTranscriptTool();
+      if (!target.closest(".transcript-tools")) closeMobileSearch();
     };
     document.addEventListener("pointerdown", closeFromOutside, true);
     return () => {
       document.removeEventListener("pointerdown", closeFromOutside, true);
     };
-  }, [closeMobileTranscriptTool, mobileTranscriptTool]);
+  }, [closeMobileSearch, mobileSearchOpen]);
 
   const jumpToPending = () => {
     const pending = pendingRef.current;
@@ -293,7 +273,7 @@ export const Transcript = memo(function Transcript({
 
   return (
     <div
-      className={`transcript-wrap transcript-wrap--mobile-${mobileTranscriptTool ?? "idle"}`}
+      className="transcript-wrap"
       tabIndex={-1}
       onKeyDownCapture={(event) => {
         if (
@@ -346,18 +326,18 @@ export const Transcript = memo(function Transcript({
         />
       ) : null}
       <div className="transcript-live" hidden={readingHistory}>
-        <EarlierBranchBanner key={`${sessionId}:${viewId}`} />
         <TranscriptUtilities
           search={search}
           inputRef={searchInputRef}
           searchLauncherRef={searchLauncherRef}
-          mobileTool={mobileTranscriptTool}
-          onOpenMobile={setMobileTranscriptTool}
+          searchOpen={mobileSearchOpen}
+          onOpenSearch={() => setMobileSearchOpen(true)}
           onOpenHistory={
             sessionId && viewId ? () => setHistoryOwner(historyKey) : undefined
           }
-          onClose={closeMobileTranscriptTool}
+          onClose={closeMobileSearch}
         />
+        <EarlierBranchBanner key={`${sessionId}:${viewId}`} />
         <div
           className="transcript"
           role="log"

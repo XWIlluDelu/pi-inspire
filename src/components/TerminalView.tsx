@@ -6,26 +6,16 @@ import "@xterm/xterm/css/xterm.css";
 import {
   Check,
   ChevronDown,
-  ChevronRight,
   ChevronUp,
-  Circle,
-  ClipboardPaste,
   Copy,
-  Eraser,
-  Eye,
   Keyboard,
   MessageSquareQuote,
-  Monitor,
-  RotateCcw,
   Search,
-  Square,
-  TextSelect,
   X,
 } from "lucide-react";
 import {
   memo,
   type KeyboardEvent as ReactKeyboardEvent,
-  type ReactNode,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -82,12 +72,33 @@ import {
 } from "../terminal-theme";
 import { useCopied } from "../use-copied";
 import { NoticeCard } from "./NoticeCard";
-import { PiLoader } from "./PiLoader";
 import { TerminalTextDialog } from "./TerminalTextDialog";
 import { TerminalTouchKeys } from "./TerminalTouchKeys";
 
+type TerminalViewAction =
+  | "focus"
+  | "search"
+  | "paste"
+  | "copy"
+  | "select"
+  | "copy-last"
+  | "clear"
+  | "reset";
+
+export interface TerminalViewActions {
+  owner: string;
+  statusLabel: string;
+  transport: TerminalTransportStatus;
+  exited: boolean;
+  writable: boolean;
+  ready: boolean;
+  searchOpen: boolean;
+  hasLastOutput: boolean;
+  invoke(action: TerminalViewAction, opener?: HTMLButtonElement): void;
+}
+
 interface TerminalViewProps {
-  toolbar?: (controls: ReactNode, actions: ReactNode) => ReactNode;
+  publishActions(actions: TerminalViewActions): void;
   api: Api;
   terminal: TerminalDescriptor;
   active: boolean;
@@ -201,7 +212,7 @@ export const TerminalView = memo(function TerminalView({
   terminal: descriptor,
   active,
   settings,
-  toolbar,
+  publishActions,
   onDescriptor,
   onBackgroundOutput,
   onBell,
@@ -836,12 +847,12 @@ export const TerminalView = memo(function TerminalView({
     const xterm = xtermRef.current;
     if (xterm) void copy(terminalBufferText(xterm.buffer.active));
   };
-  const selectText = (opener: HTMLButtonElement) => {
+  const selectText = (opener?: HTMLButtonElement) => {
     const buffer = xtermRef.current?.buffer.active;
     if (!buffer) return;
     clearModifiers();
     opener
-      .closest("details[data-terminal-menu]")
+      ?.closest("details[data-terminal-menu]")
       ?.querySelector("summary")
       ?.focus();
     setTextSnapshot({
@@ -925,117 +936,85 @@ export const TerminalView = memo(function TerminalView({
             ? "View only"
             : "Control available";
 
+  const invokeRef = useRef<TerminalViewActions["invoke"]>(() => {});
+  invokeRef.current = (action, opener) => {
+    switch (action) {
+      case "focus": {
+        const pending = modifiersRef.current;
+        xtermRef.current?.blur();
+        xtermRef.current?.focus();
+        updateModifiers(pending);
+        break;
+      }
+      case "search":
+        if (searchStateRef.current.open) closeSearch(false);
+        else setSearch((current) => ({ ...current, open: true }));
+        break;
+      case "paste":
+        void pasteClipboard();
+        break;
+      case "copy":
+        copyAll();
+        break;
+      case "select":
+        selectText(opener);
+        break;
+      case "copy-last":
+        copyLastCommandOutput();
+        break;
+      case "clear":
+        xtermRef.current?.clear();
+        break;
+      case "reset":
+        clearCommandOutput();
+        xtermRef.current?.reset();
+        connectionRef.current?.forceSnapshot();
+    }
+  };
+
+  const owner = `${descriptor.id}:${descriptor.outputEpoch}`;
+  const exited = descriptor.status === "exited";
+  const hasLastOutput = lastOutput !== null;
+  useLayoutEffect(() => {
+    if (!active) return;
+    publishActions({
+      owner,
+      statusLabel,
+      transport,
+      exited,
+      writable,
+      ready,
+      searchOpen: search.open,
+      hasLastOutput,
+      invoke(action, opener) {
+        if (
+          activeRef.current &&
+          xtermRef.current &&
+          `${descriptorRef.current.id}:${descriptorRef.current.outputEpoch}` ===
+            owner
+        )
+          invokeRef.current(action, opener);
+      },
+    });
+  }, [
+    active,
+    owner,
+    statusLabel,
+    transport,
+    exited,
+    writable,
+    ready,
+    search.open,
+    hasLastOutput,
+    publishActions,
+  ]);
+
   return (
     <section
       className={`terminal-view${active ? " terminal-view--active" : ""}${bellFlash ? " terminal-view--bell" : ""}`}
       aria-label={`Terminal ${descriptor.title}`}
       aria-hidden={!active}
     >
-      {active &&
-        toolbar?.(
-          <div className="terminal-view-controls">
-            <span
-              className={`terminal-view__status terminal-view__status--${transport}`}
-              role="status"
-              aria-label={statusLabel}
-              title={`${statusLabel} · ${transport}`}
-            >
-              {descriptor.status === "exited" ? (
-                <Square size={12} aria-hidden />
-              ) : transport !== "connected" ? (
-                transport === "offline" ? (
-                  <Circle size={16} aria-hidden />
-                ) : (
-                  <PiLoader size={16} aria-hidden />
-                )
-              ) : writable ? (
-                <button
-                  type="button"
-                  className="icon-button terminal-view__keyboard"
-                  aria-label="Focus terminal input"
-                  title="Focus terminal input"
-                  disabled={!ready}
-                  onPointerDown={(event) => event.preventDefault()}
-                  onClick={() => {
-                    const pending = modifiersRef.current;
-                    xtermRef.current?.blur();
-                    xtermRef.current?.focus();
-                    updateModifiers(pending);
-                  }}
-                >
-                  <Keyboard size={16} aria-hidden />
-                </button>
-              ) : (
-                <Eye size={16} aria-hidden />
-              )}
-            </span>
-            <button
-              type="button"
-              className="icon-button"
-              onClick={() => {
-                if (search.open) closeSearch(false);
-                else setSearch((current) => ({ ...current, open: true }));
-              }}
-              aria-label="Search terminal output"
-              aria-expanded={search.open}
-              title="Search terminal output"
-            >
-              <Search size={16} aria-hidden />
-            </button>
-          </div>,
-          <div className="terminal-menu__view">
-            <button
-              type="button"
-              onClick={() => void pasteClipboard()}
-              disabled={!writable || !ready || descriptor.status !== "running"}
-              aria-label="Paste into terminal"
-            >
-              <ClipboardPaste size={14} aria-hidden /> Paste
-            </button>
-            <button type="button" onClick={copyAll}>
-              <Copy size={14} aria-hidden /> Copy all
-            </button>
-            <button
-              type="button"
-              onClick={(event) => selectText(event.currentTarget)}
-            >
-              <TextSelect size={14} aria-hidden /> Select text
-            </button>
-            <button
-              type="button"
-              disabled={!lastOutput}
-              title="Copy the last completed command output"
-              onClick={copyLastCommandOutput}
-            >
-              <Copy size={14} aria-hidden /> Copy last output
-            </button>
-            <details className="terminal-menu__group" data-terminal-menu-group>
-              <summary>
-                <Monitor size={14} aria-hidden /> Display
-                <ChevronRight
-                  className="terminal-menu__chevron"
-                  size={13}
-                  aria-hidden
-                />
-              </summary>
-              <div>
-                <button type="button" onClick={() => xtermRef.current?.clear()}>
-                  <Eraser size={14} aria-hidden /> Clear local scrollback
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    clearCommandOutput();
-                    xtermRef.current?.reset();
-                    connectionRef.current?.forceSnapshot();
-                  }}
-                >
-                  <RotateCcw size={14} aria-hidden /> Reset terminal display
-                </button>
-              </div>
-            </details>
-          </div>,
-        )}
       <div className="terminal-view__stage">
         <div ref={hostRef} className="terminal-view__xterm" />
         <div className="terminal-view__overlays">

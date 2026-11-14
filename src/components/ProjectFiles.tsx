@@ -112,20 +112,76 @@ interface ProjectFilePickerProps {
   onAdd: (file: ProjectFileResult) => void;
 }
 
+export function useProjectFileSearch(
+  search: ProjectFilePickerProps["search"] | undefined,
+  query: string | undefined,
+  scope: string | null | undefined,
+  showHidden: boolean,
+  delay: number,
+) {
+  const transport = useAppState((state) => state.transportGeneration);
+  const owner = useMemo(
+    () => ({ query, search, scope, showHidden, transport }),
+    [query, search, scope, showHidden, transport],
+  );
+  const [response, setResponse] = useState<{
+    owner: typeof owner;
+    result: ProjectFileSearchResult | null;
+  }>();
+  useEffect(() => {
+    const { query, search, transport } = owner;
+    if (query === undefined || !search) return;
+    const request = recoverableRead(
+      () => store.getState().transportGeneration === transport,
+    );
+    const publish = (result: ProjectFileSearchResult | null) => {
+      if (request.current()) setResponse({ owner, result });
+    };
+    const timer = setTimeout(() => {
+      void request
+        .read(() => search(query))
+        .then(
+          (result) =>
+            publish({
+              ...result,
+              files: rankProjectFiles(result.files, query),
+            }),
+          () => publish(null),
+        );
+    }, delay);
+    return () => {
+      request.abort();
+      clearTimeout(timer);
+    };
+  }, [owner, delay]);
+
+  const current = response?.owner === owner ? response.result : undefined;
+  const status: "loading" | "ready" | "error" =
+    current === null
+      ? "error"
+      : current || query === undefined
+        ? "ready"
+        : "loading";
+  return {
+    files: current?.files ?? EMPTY_FILES,
+    truncated: Boolean(current?.truncated),
+    status,
+  };
+}
+
+const EMPTY_FILES: readonly ProjectFileResult[] = [];
+
 export function ProjectFileControl({
   scope,
-  open,
-  onOpenChange,
   disabled = false,
   buttonDisabled = disabled,
   ...picker
 }: Omit<ProjectFilePickerProps, "scope"> & {
   scope: string | null;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
   buttonDisabled?: boolean;
 }) {
   const anchorRef = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
   return (
     <>
       <button
@@ -133,7 +189,7 @@ export function ProjectFileControl({
         type="button"
         className={`icon-button ${open ? "icon-button--active" : ""}`}
         disabled={buttonDisabled}
-        onClick={() => onOpenChange(!open)}
+        onClick={() => setOpen(!open)}
         aria-label="Add project files"
         aria-haspopup="dialog"
         aria-expanded={open}
@@ -147,7 +203,7 @@ export function ProjectFileControl({
           anchorRef={anchorRef}
           scope={scope}
           disabled={disabled}
-          onClose={() => onOpenChange(false)}
+          onClose={() => setOpen(false)}
         />
       ) : null}
     </>
@@ -168,13 +224,12 @@ function ProjectFilePicker({
   anchorRef: RefObject<HTMLButtonElement | null>;
   onClose: () => void;
 }) {
-  const transportGeneration = useAppState((state) => state.transportGeneration);
   const [query, setQuery] = useState("");
-  const [truncated, setTruncated] = useState(false);
-  const [results, setResults] = useState<ProjectFileResult[]>([]);
-  const [status, setStatus] = useState<"loading" | "ready" | "error">(
-    "loading",
-  );
+  const {
+    files: results,
+    truncated,
+    status,
+  } = useProjectFileSearch(search, query, scope, showHidden, 200);
   const list = useOptionList<ProjectFileResult>();
   const { reset } = list;
   const menuRef = useRef<HTMLDivElement>(null);
@@ -220,32 +275,7 @@ function ProjectFilePicker({
       consumeEmptyEnter: true,
     });
 
-  useEffect(() => {
-    const request = recoverableRead(
-      () => store.getState().transportGeneration === transportGeneration,
-    );
-    setResults([]);
-    setTruncated(false);
-    reset();
-    setStatus("loading");
-    const read = async () => {
-      try {
-        const result = await request.read(() => search(query));
-        if (!request.current()) return;
-        setResults(rankProjectFiles(result.files, query));
-        setTruncated(Boolean(result.truncated));
-        reset();
-        setStatus("ready");
-      } catch {
-        if (request.current()) setStatus("error");
-      }
-    };
-    const timer = setTimeout(() => void read(), 200);
-    return () => {
-      request.abort();
-      clearTimeout(timer);
-    };
-  }, [query, scope, search, showHidden, transportGeneration, reset]);
+  useEffect(() => reset(), [results, reset]);
 
   if (!placement) return null;
   return (

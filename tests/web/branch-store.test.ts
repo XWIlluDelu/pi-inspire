@@ -129,7 +129,7 @@ describe("branch request view ownership", () => {
         expect(store.getState().branchTreeError).toBeNull();
       } else expect(store.getState().branchTreeError).toBe("Source changed");
       expect(store.getState().sessionId).toBe("s1");
-      expect(store.getState().transcriptEffectiveLeafId).toBe(
+      expect(store.getState().view.effectiveLeafId).toBe(
         change === "view" ? "u1" : "a2",
       );
     },

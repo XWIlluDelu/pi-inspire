@@ -379,7 +379,7 @@ function ResourcePreviewContent({
           {preview.matches.map((match) => (
             <button
               type="button"
-              className="res__more res__choice"
+              className="button res__choice"
               key={match}
               title={match}
               onClick={() => void store.openResource(match, match)}
@@ -724,21 +724,19 @@ export function FilePreview({
             )}
           </button>
         ) : null}
-        <span className="file-preview__exports">
-          <PathCopyButton path={displayPath} />
-          <button
-            type="button"
-            className="icon-button"
-            aria-label={
-              downloadName ? `Download ${downloadName}` : "Download unavailable"
-            }
-            title={downloadName ? "Download" : "Download unavailable"}
-            disabled={!downloadName || currentDownload?.pending}
-            onClick={() => void downloadResource()}
-          >
-            <Download size={16} aria-hidden />
-          </button>
-        </span>
+        <PathCopyButton path={displayPath} />
+        <button
+          type="button"
+          className="icon-button"
+          aria-label={
+            downloadName ? `Download ${downloadName}` : "Download unavailable"
+          }
+          title={downloadName ? "Download" : "Download unavailable"}
+          disabled={!downloadName || currentDownload?.pending}
+          onClick={() => void downloadResource()}
+        >
+          <Download size={16} aria-hidden />
+        </button>
       </div>
       <div
         className="file-preview__content"

@@ -125,7 +125,7 @@ function runBusy() {
   act(() =>
     FakeWebSocket.instances.at(-1)?.emitSnapshot({
       ...activeSnapshot({ commands, availableModels: models }),
-      runState: "running",
+      sessionStatuses: { s1: { runState: "running" } },
     }),
   );
 }
@@ -224,20 +224,20 @@ describe("command discovery and preparation", () => {
     render(<App />);
     const edit = () => {
       fireEvent.click(screen.getByRole("option", { name: /Rename session/ }));
-      return screen.getByLabelText("New session name");
+      return screen.getByLabelText("Session name");
     };
     await palette("rename");
     const oldEditor = edit();
     expect(oldEditor).toHaveValue("Test session");
     fireEvent.change(oldEditor, { target: { value: "Old request" } });
-    fireEvent.keyDown(oldEditor, { key: "Enter" });
+    fireEvent.submit(oldEditor.closest("form")!);
     expect(rename).toHaveBeenCalledWith("s1", "Old request");
     fireEvent.keyDown(oldEditor, { key: "Escape" });
     expect(screen.getByLabelText("Filter commands")).toHaveValue("rename");
     const currentEditor = edit();
     fireEvent.change(currentEditor, { target: { value: "New draft" } });
     await act(async () => acknowledgement.resolve(true));
-    expect(screen.getByLabelText("New session name")).toHaveValue("New draft");
+    expect(screen.getByLabelText("Session name")).toHaveValue("New draft");
   });
 
   it("lets modal and editor controls consume Escape before the hovered hint and Stop", async () => {

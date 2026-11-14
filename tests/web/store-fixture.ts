@@ -33,13 +33,16 @@ export function installStoreRoutes(route: RouteHandler) {
   );
 }
 
-export async function initStore(snapshot = activeSnapshot()): Promise<{
+export async function initStore(
+  snapshot = activeSnapshot(),
+  authorityId?: string,
+): Promise<{
   store: AppStore;
   socket: FakeWebSocket;
 }> {
   const store = new AppStore();
   await store.init();
   const socket = FakeWebSocket.instances.at(-1)!;
-  socket.join(snapshot);
+  socket.join(snapshot, authorityId ? { authorityId } : undefined);
   return { store, socket };
 }

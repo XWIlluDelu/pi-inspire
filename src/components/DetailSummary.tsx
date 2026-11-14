@@ -8,9 +8,12 @@ export function DetailSummary({
   ...props
 }: ComponentProps<"summary">) {
   return (
-    <summary className={`detail-summary ${className}`} {...props}>
-      <ChevronRight size={12} aria-hidden className="detail-summary__chevron" />
-      <span>{children}</span>
+    <summary
+      className={`disclosure-row detail-summary ${className}`}
+      {...props}
+    >
+      <ChevronRight size={12} aria-hidden className="chev" />
+      <span className="detail-summary__label">{children}</span>
     </summary>
   );
 }

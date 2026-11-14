@@ -33,7 +33,7 @@ export async function assistantOutcomeScenario(page: Page) {
   };
   const project = (snapshot: ActiveSnapshot) => {
     if (snapshot.active?.sessionId !== sessionId) return;
-    snapshot.runState = runState;
+
     snapshot.sessionStatuses[sessionId] = { runState };
     const messages = [
       {

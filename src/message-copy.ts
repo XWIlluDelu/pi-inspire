@@ -36,10 +36,10 @@ export function messageCopyLoader(
           return (
             owner &&
             state.sessionId === owner.sessionId &&
-            state.transcriptViewId === owner.viewId &&
+            state.view.viewId === owner.viewId &&
             transcriptProjectionKey(
-              state.transcriptViewId,
-              state.transcriptIncarnation,
+              state.view.viewId,
+              state.view.incarnation,
             ) === owner.projectionKey
           );
         };

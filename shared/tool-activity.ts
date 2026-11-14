@@ -168,12 +168,9 @@ export function childCallFromEvent(event: Record<string, unknown>): ChildCall {
 /** Flatten native generic descendants into their model-issued parent's one list. */
 export function updateChildActivity(
   tools: Record<string, ActivityTool>,
-  event: Record<string, unknown>,
-): Record<string, ActivityTool> {
-  const parent =
-    typeof event.parentToolCallId === "string" ? event.parentToolCallId : "";
-  const incoming = event.childCall as ChildCall | undefined;
-  if (!parent || !incoming) return tools;
+  parent: string,
+  incoming: ChildCall,
+): ActivityTool | undefined {
   const root = tools[parent]
     ? parent
     : Object.keys(tools).find(
@@ -181,7 +178,7 @@ export function updateChildActivity(
           tools[id]!.calls?.source === "nested" &&
           tools[id]!.calls!.calls.some((call) => call.key === parent),
       );
-  if (!root) return tools;
+  if (!root) return;
   const tool = tools[root]!;
   if (
     tool.phase === "done" ||
@@ -189,7 +186,7 @@ export function updateChildActivity(
     tool.calls?.source === "codemode" ||
     tool.name === "codemode"
   )
-    return tools;
+    return;
   const previous = tool.calls ?? {
     source: "nested" as const,
     calls: [],
@@ -199,16 +196,13 @@ export function updateChildActivity(
   if (
     index >= 0 &&
     previous.calls[index]!.status !== "running" &&
-    event.type !== "tool_execution_end"
+    incoming.status === "running"
   )
-    return tools;
+    return;
   if (index < 0 && previous.calls.length >= MAX_CHILD_CALLS)
     return previous.complete
-      ? {
-          ...tools,
-          [root]: { ...tool, calls: { ...previous, complete: false } },
-        }
-      : tools;
+      ? { ...tool, calls: { ...previous, complete: false } }
+      : undefined;
   const calls = [...previous.calls];
   if (index < 0) calls.push(incoming);
   else calls[index] = { ...calls[index], ...incoming };
@@ -226,10 +220,7 @@ export function updateChildActivity(
       calls[index] = { ...metadata, ...args };
     }
   }
-  return {
-    ...tools,
-    [root]: { ...tool, calls: { source: "nested", calls, complete } },
-  };
+  return { ...tool, calls: { source: "nested", calls, complete } };
 }
 
 const TOOL_OUTPUT_PREVIEW_CHARS = 16_000;

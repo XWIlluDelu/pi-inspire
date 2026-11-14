@@ -43,8 +43,7 @@ describe("extension context messages", () => {
     ).toBeVisible();
     expect(container.querySelector("details")).toHaveAttribute("open");
     expect(
-      JSON.parse(container.querySelector(".custom-message__raw")!.textContent!)
-        .content,
+      JSON.parse(container.querySelector("details pre")!.textContent!).content,
     ).toBe(message.content);
     act(() => configurePresentationAdapters());
     expect(screen.getByText("Relay message")).toBeVisible();

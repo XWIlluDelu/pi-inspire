@@ -3,11 +3,11 @@ import type { Socket } from "node:net";
 import {
   encodeTerminalInputFrame,
   type TerminalCatalogResponse,
-  type TerminalClientControlMessage,
   type TerminalServerControlMessage,
   type TerminalServiceSettings,
 } from "../shared/terminal-contracts.js";
 import type {
+  TerminalControl,
   TerminalIntent,
   TerminalOperation,
   TerminalOperationResults,
@@ -72,8 +72,6 @@ class DaemonAttachment implements TerminalAttachment {
   private detached = false;
 
   constructor(
-    readonly id: string,
-    readonly terminalId: string,
     private readonly socket: Socket,
     private readonly onDetach: () => void,
   ) {}
@@ -85,9 +83,7 @@ class DaemonAttachment implements TerminalAttachment {
     );
   }
 
-  control(
-    message: Exclude<TerminalClientControlMessage, { type: "attach" }>,
-  ): void {
+  control(message: TerminalControl): void {
     this.write(TERMINAL_IPC_JSON_FRAME, JSON.stringify(message));
   }
 
@@ -158,9 +154,7 @@ export class TerminalDaemonClient implements TerminalService {
   }
 
   list(projectCwd?: string): Promise<TerminalCatalogResponse> {
-    return projectCwd === undefined
-      ? this.rpc("getGlobalCatalog", {})
-      : this.rpc("getCatalog", { projectCwd });
+    return this.rpc("getCatalog", { projectCwd });
   }
 
   getSettings(): Promise<TerminalServiceSettings> {
@@ -220,15 +214,10 @@ export class TerminalDaemonClient implements TerminalService {
       };
       const establishAttachment = (): void => {
         if (settled) return;
-        attachment = new DaemonAttachment(
-          randomUUID(),
-          options.terminalId,
-          socket,
-          () => {
-            intentionalClose = true;
-            if (attachment) this.attachments.delete(attachment);
-          },
-        );
+        attachment = new DaemonAttachment(socket, () => {
+          intentionalClose = true;
+          if (attachment) this.attachments.delete(attachment);
+        });
         this.attachments.add(attachment);
         settled = true;
         resolvePromise(attachment);
@@ -260,7 +249,6 @@ export class TerminalDaemonClient implements TerminalService {
           encodeTerminalIpcJson({
             protocolVersion: TERMINAL_DAEMON_PROTOCOL_VERSION,
             mode: "attach",
-            terminalId: options.terminalId,
             options,
           }),
         );

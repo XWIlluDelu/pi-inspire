@@ -16,6 +16,7 @@ import {
   userMessageDisplayContent,
   userMessageFileName,
 } from "../events";
+import { isComposingKeyboardEvent } from "../keyboard-input";
 import { resourceReferenceFromEventTarget } from "../resources";
 import { shallowEqual, store, useAppState } from "../store";
 import { BashExecution } from "./BashExecution";
@@ -23,6 +24,7 @@ import { CopyAction } from "./CopyAction";
 import { HistoryImage } from "./HistoryImage";
 import { PiLoader } from "./PiLoader";
 import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
+import { SearchField } from "./SearchField";
 
 type Location = {
   entryId: string;
@@ -80,11 +82,11 @@ export function NativeTurnReader({
       attached: state.readOnlyReason === "external-active",
       busy: Boolean(
         state.readOnlyReason ||
-          state.projectionHealth.status !== "ok" ||
+          state.view.health.status !== "ok" ||
           isBusyRunState(selectedRunState(state)) ||
-          state.bashRunning ||
-          state.queue.totalCount ||
-          state.extensionUiRequests.length,
+          state.live.bashRunning ||
+          state.live.queue.totalCount ||
+          state.live.extensionUiRequests.length,
       ),
     }),
     shallowEqual,
@@ -324,11 +326,16 @@ export function NativeTurnReader({
 
   return (
     <section className="native-history" aria-label="Turn history">
-      <div className="native-history__controls">
-        <button type="button" onClick={onLive}>
+      <div
+        className="pane-toolbar native-history__controls"
+        role="toolbar"
+        aria-label="History controls"
+      >
+        <button className="button button--quiet" type="button" onClick={onLive}>
           Live
         </button>
         <button
+          className="button button--quiet"
           type="button"
           disabled={!page?.earlier || loading}
           onClick={() => void read(page?.earlier ?? undefined)}
@@ -336,6 +343,7 @@ export function NativeTurnReader({
           Earlier
         </button>
         <button
+          className="button button--quiet"
           type="button"
           disabled={!page?.later || loading}
           onClick={() => void read(page?.later ?? undefined)}
@@ -350,11 +358,17 @@ export function NativeTurnReader({
             of {page.totalTurns}
           </span>
         )}
-        <button type="button" disabled={loading} onClick={() => void read()}>
+        <button
+          className="button button--quiet"
+          type="button"
+          disabled={loading}
+          onClick={() => void read()}
+        >
           Current conversation
         </button>
         {Boolean(page?.rootCount && (page.rootCount > 1 || !page.leafId)) && (
           <button
+            className="button button--quiet"
             type="button"
             disabled={loading}
             onClick={() => void readRoutes("")}
@@ -369,13 +383,24 @@ export function NativeTurnReader({
             if (query.trim()) void search(query.trim());
           }}
         >
-          <input
+          <SearchField
             aria-label="Search this branch"
             value={query}
             maxLength={200}
-            onChange={(event) => setQuery(event.target.value)}
+            onValueChange={setQuery}
+            onKeyDown={(event) => {
+              if (
+                event.key === "Enter" &&
+                isComposingKeyboardEvent(event.nativeEvent)
+              )
+                event.preventDefault();
+            }}
           />
-          <button type="submit" disabled={!query.trim() || loading}>
+          <button
+            className="button button--quiet"
+            type="submit"
+            disabled={!query.trim() || loading}
+          >
             Search
           </button>
         </form>
@@ -435,8 +460,14 @@ export function NativeTurnReader({
           page?.messages.map(asMessage).map((message, index, messages) => {
             const id = message.__inspireEntryId;
             if (!id) return null;
-            const firstRow = messages[index - 1]?.__inspireEntryId !== id;
-            const expanded = firstRow && body?.entryId === id ? body : null;
+            if (messages[index - 1]?.__inspireEntryId === id) return null;
+            let end = index + 1;
+            while (messages[end]?.__inspireEntryId === id) end += 1;
+            const expanded = body?.entryId === id ? body : null;
+            const canSummarize =
+              !expanded?.result.skipSummaryPrompt &&
+              !state.busy &&
+              !expanded?.result.node.leaf;
             return (
               <article data-history-entry={id} key={messageKey(message) ?? id}>
                 <div className="native-history__entry">
@@ -466,7 +497,7 @@ export function NativeTurnReader({
                   <CopyAction
                     key={expanded ? "expanded" : "preview"}
                     label="history entry"
-                    className="native-history__copy"
+                    className="activity-copy"
                     disabled={loading}
                     getContent={copyLoader(
                       (signal) => store.branchCopyContent(id, signal),
@@ -481,27 +512,31 @@ export function NativeTurnReader({
                     )}
                   />
                 </div>
-                {firstRow &&
-                  page.branchPoints
-                    ?.filter((point) => point.entryId === id)
-                    .map((point) => (
-                      <div key={point.id}>
-                        <button
-                          type="button"
-                          disabled={loading}
-                          aria-expanded={routes?.parentId === point.id}
-                          onClick={() =>
-                            routes?.parentId === point.id
-                              ? setRoutes(null)
-                              : void readRoutes(point.id)
-                          }
-                        >
-                          Other routes ({point.count})
-                        </button>
-                        {routeButtons(point.id)}
-                      </div>
-                    ))}
-                <NativeHistoryMessage message={message} />
+                {page.branchPoints
+                  ?.filter((point) => point.entryId === id)
+                  .map((point) => (
+                    <div key={point.id}>
+                      <button
+                        type="button"
+                        disabled={loading}
+                        aria-expanded={routes?.parentId === point.id}
+                        onClick={() =>
+                          routes?.parentId === point.id
+                            ? setRoutes(null)
+                            : void readRoutes(point.id)
+                        }
+                      >
+                        Other routes ({point.count})
+                      </button>
+                      {routeButtons(point.id)}
+                    </div>
+                  ))}
+                {messages.slice(index, end).map((row) => (
+                  <NativeHistoryMessage
+                    key={messageKey(row) ?? id}
+                    message={row}
+                  />
+                ))}
                 {expanded && (
                   <div>
                     {expanded.result.shell ? (
@@ -536,59 +571,53 @@ export function NativeTurnReader({
                           index={image.index}
                         />
                       ))}
-                    <button
-                      type="button"
-                      disabled={loading || expanded.offset === 0}
-                      onClick={() =>
-                        void readBody(id, Math.max(0, expanded.offset - 32_000))
-                      }
-                    >
-                      Previous section
-                    </button>
-                    <button
-                      type="button"
-                      disabled={loading || expanded.result.nextOffset === null}
-                      onClick={() =>
-                        void readBody(
-                          id,
-                          expanded.result.nextOffset ?? undefined,
-                        )
-                      }
-                    >
-                      Next section
-                    </button>
+                    {(
+                      [
+                        [
+                          "Previous section",
+                          expanded.offset
+                            ? Math.max(0, expanded.offset - 32_000)
+                            : null,
+                        ],
+                        ["Next section", expanded.result.nextOffset],
+                      ] as const
+                    ).map(([label, offset]) => (
+                      <button
+                        key={label}
+                        type="button"
+                        disabled={loading || offset === null}
+                        onClick={() => void readBody(id, offset ?? 0)}
+                      >
+                        {label}
+                      </button>
+                    ))}
                     <div
                       className="native-history__entry"
                       role="group"
                       aria-label="Branch actions"
                     >
-                      {!expanded.result.skipSummaryPrompt &&
-                        !state.busy &&
-                        !expanded.result.node.leaf && (
-                          <label>
-                            <input
-                              type="checkbox"
-                              checked={summary}
-                              onChange={(event) =>
-                                setSummary(event.target.checked)
-                              }
-                            />{" "}
-                            Carry branch summary
-                          </label>
-                        )}
-                      {summary &&
-                        !expanded.result.skipSummaryPrompt &&
-                        !state.busy &&
-                        !expanded.result.node.leaf && (
+                      {canSummarize && (
+                        <label>
                           <input
-                            aria-label="Summary instructions"
-                            value={instructions}
-                            maxLength={2000}
+                            type="checkbox"
+                            checked={summary}
                             onChange={(event) =>
-                              setInstructions(event.target.value)
+                              setSummary(event.target.checked)
                             }
-                          />
-                        )}
+                          />{" "}
+                          Carry branch summary
+                        </label>
+                      )}
+                      {summary && canSummarize && (
+                        <input
+                          aria-label="Summary instructions"
+                          value={instructions}
+                          maxLength={2000}
+                          onChange={(event) =>
+                            setInstructions(event.target.value)
+                          }
+                        />
+                      )}
                       <button
                         type="button"
                         disabled={

@@ -223,18 +223,14 @@ describe("HTTP prompt operation ownership", () => {
 
 describe("HTTP Pending recovery and abort ownership", () => {
   it.each(["recover", "abort"] as const)(
-    "shares concurrent %s observations and never clears a later queue on retry",
+    "shares the %s receipt with concurrent callers and later observers",
     async (action) => {
       const f = await start();
-      let finish!: (value: { steering: string[]; followUp: string[] }) => void;
-      const gate = new Promise<{ steering: string[]; followUp: string[] }>(
-        (resolve) => {
-          finish = resolve;
-        },
-      );
+      const result = { steering: ["original text"], followUp: [] };
+      const held = Promise.withResolvers<typeof result>();
       const operation = vi
         .spyOn(f.runtime, action === "recover" ? "recoverPending" : "abort")
-        .mockReturnValueOnce(gate);
+        .mockReturnValueOnce(held.promise);
       const body = {
         sessionId: "fixture-active",
         authorityId: f.application.authorityId,
@@ -244,38 +240,28 @@ describe("HTTP Pending recovery and abort ownership", () => {
       const path =
         action === "recover" ? "/api/pending/recover" : "/api/control/abort";
       const post = () => f.localRequest.post(path).send(body);
-      const first = post().then((response) => response);
-      await vi.waitFor(() => expect(operation).toHaveBeenCalledOnce());
-      expect(operation).toHaveBeenCalledWith(
-        body.sessionId,
-        body.expectedViewId,
-      );
-      const second = post().then((response) => response);
-      finish({ steering: ["original text"], followUp: [] });
-      const [a, b] = await Promise.all([first, second]);
-      expect(a.status).toBe(200);
-      expect(a.body).toMatchObject({
+      const expected = {
         ...hostReceipt(action, body),
         state: "completed",
-        result: { steering: ["original text"], followUp: [] },
-      });
-      expect(b.body).toEqual(a.body);
-      operation.mockResolvedValue({
-        steering: ["new queue must remain"],
-        followUp: [],
-      });
-      const reclaimed = await f.localRequest
-        .get(`/api/pending/operations/${body.operationId}`)
-        .query({
-          authorityId: body.authorityId,
-          sessionId: body.sessionId,
-          expectedViewId: body.expectedViewId,
-          action,
-        })
-        .expect(200);
-      expect(reclaimed.body).toEqual(a.body);
-      expect((await post()).body).toEqual(a.body);
-      expect(operation).toHaveBeenCalledOnce();
+        result,
+      };
+      const first = post()
+        .expect(200, expected)
+        .then((response) => response);
+      const second = post()
+        .expect(200, expected)
+        .then((response) => response);
+      try {
+        await vi.waitFor(() => expect(operation).toHaveBeenCalledOnce());
+      } finally {
+        held.resolve(result);
+      }
+      await Promise.all([first, second]);
+      const { operationId, ...query } = body;
+      await f.localRequest
+        .get(`/api/pending/operations/${operationId}`)
+        .query({ ...query, action })
+        .expect(200, expected);
       for (const changed of [
         { sessionId: "fixture-older" },
         { authorityId: randomUUID() },
@@ -292,7 +278,10 @@ describe("HTTP Pending recovery and abort ownership", () => {
         )
         .send(body)
         .expect(409);
-      expect(operation).toHaveBeenCalledOnce();
+      expect(operation).toHaveBeenCalledExactlyOnceWith(
+        body.sessionId,
+        body.expectedViewId,
+      );
     },
   );
 

@@ -1,4 +1,4 @@
-import { Download, X } from "lucide-react";
+import { Download } from "lucide-react";
 import { memo, useCallback, useLayoutEffect, useRef } from "react";
 import type { Notice } from "../events";
 import { shallowEqual, store, useAppState } from "../store";
@@ -8,7 +8,6 @@ import {
   updateDetailsText,
 } from "../update-availability";
 import { readingDwellMs, useReadingDwell } from "../use-reading-dwell";
-import { CopyAction } from "./CopyAction";
 import { NoticeCard } from "./NoticeCard";
 
 function NoticeItem({ notice }: { notice: Notice }) {
@@ -53,43 +52,28 @@ function UpdateNotice({
 }) {
   const message = updateNoticeText(updates);
   return (
-    <div className="notice notice--info" role="status">
-      <div className="notice__head">
-        <span className="notice__title">
-          <Download size={14} aria-hidden />
-          <span>Updates available</span>
-        </span>
-        <div className="notice__actions">
-          <CopyAction
-            text={updateDetailsText(updates)}
-            label="Update details"
-            className="notice__copy"
-          />
-          <button
-            type="button"
-            className="notice__dismiss"
-            onClick={store.snoozeUpdate}
-            aria-label="Close updates for 24 hours"
-            title="Close for 24 hours"
-          >
-            <X size={13} aria-hidden />
-          </button>
-        </div>
-      </div>
-      <div className="notice__text">
-        <span>{message}</span>{" "}
-        <a
-          className="notice__link"
-          href="#settings-updates"
-          onClick={(event) => {
-            event.preventDefault();
-            onViewUpdates();
-          }}
-        >
-          View updates
-        </a>
-      </div>
-    </div>
+    <NoticeCard
+      kind="info"
+      title="Updates available"
+      icon={<Download size={14} />}
+      copyText={updateDetailsText(updates)}
+      copyLabel="Update details"
+      dismissLabel="Close updates for 24 hours"
+      dismissTitle="Close for 24 hours"
+      onDismiss={store.snoozeUpdate}
+    >
+      {message}{" "}
+      <a
+        className="notice__link"
+        href="#settings-updates"
+        onClick={(event) => {
+          event.preventDefault();
+          onViewUpdates();
+        }}
+      >
+        View updates
+      </a>
+    </NoticeCard>
   );
 }
 
@@ -101,7 +85,7 @@ export const Notices = memo(function Notices({
   const state = useAppState(
     (source) => ({
       sessionId: source.sessionId,
-      notices: source.notices,
+      notices: source.live.notices,
       error: source.error,
       connection: source.connection,
       readOnlyReason: source.readOnlyReason,
@@ -125,9 +109,7 @@ export const Notices = memo(function Notices({
       ),
     ];
     const tools = [
-      ...document.querySelectorAll<HTMLElement>(
-        "main .transcript-search, main .transcript-mobile-toolbar",
-      ),
+      ...document.querySelectorAll<HTMLElement>("main .transcript-tools"),
     ];
     const composer = document.querySelector<HTMLElement>(
       "main .composer, main .composer-readonly",

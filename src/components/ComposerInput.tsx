@@ -1,7 +1,6 @@
 import { Maximize2, Minimize2 } from "lucide-react";
 import {
   type ClipboardEventHandler,
-  type CSSProperties,
   type KeyboardEventHandler,
   type RefObject,
   useCallback,
@@ -21,7 +20,6 @@ import {
   type PiCommand,
   parseCaretCompletion,
   rankCommands,
-  rankProjectFiles,
   replaceCompletionToken,
   replaceFileCompletion,
   resolveCommandInventory,
@@ -30,17 +28,12 @@ import { isComposingKeyboardEvent } from "../keyboard-input";
 import { useFloatingMenuDismissal } from "../use-floating-menu";
 import { HiddenFilesToggle } from "./HiddenFilesToggle";
 import { type ListOption, OptionList, useOptionList } from "./OptionList";
-import { ProjectFileLabel } from "./ProjectFiles";
+import { ProjectFileLabel, useProjectFileSearch } from "./ProjectFiles";
 
-interface CompletionItem {
-  key: string;
-  title: string;
-  hint?: string;
-  group: string;
-  file?: ProjectFileResult;
-  command?: PiCommand;
-  argument?: string;
-}
+type CompletionItem =
+  | { kind: "file"; file: ProjectFileResult }
+  | { kind: "command"; command: PiCommand }
+  | { kind: "argument"; text: string; hint?: string };
 
 function CompletionMenu({
   list,
@@ -67,28 +60,38 @@ function CompletionMenu({
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
   useFloatingMenuDismissal(true, anchorRef, menuRef, onDismiss);
-  const renderItem = ({ value: item }: ListOption<CompletionItem>) =>
-    item.file ? (
-      <ProjectFileLabel
-        path={item.file.path}
-        name={item.title}
-        query={token.query}
-        captionClass="completion__hint"
-      />
-    ) : (
+  const renderItem = ({ value: item }: ListOption<CompletionItem>) => {
+    if (item.kind === "file")
+      return (
+        <ProjectFileLabel
+          path={item.file.path}
+          name={item.file.name}
+          query={token.query}
+          captionClass="completion__hint"
+        />
+      );
+    const command = item.kind === "command" ? item.command : null;
+    const hint =
+      item.kind === "argument"
+        ? item.hint
+        : item.command.execution === "terminal"
+          ? `Terminal only — ${item.command.description ?? "Run in Pi's terminal"}`
+          : item.command.description;
+    return (
       <>
         <span className="completion__title">
-          {item.command ? `/${item.command.name}` : item.title}
-          {item.command?.argumentHint && (
+          {item.kind === "argument" ? item.text : `/${item.command.name}`}
+          {command?.argumentHint && (
             <span className="completion__arguments">
               {" "}
-              {item.command.argumentHint}
+              {command.argumentHint}
             </span>
           )}
         </span>
-        {item.hint && <span className="completion__hint">{item.hint}</span>}
+        {hint && <span className="completion__hint">{hint}</span>}
       </>
     );
+  };
   return (
     <div
       ref={menuRef}
@@ -111,7 +114,6 @@ function CompletionMenu({
         list={list}
         options={options}
         optionClass="completion__option"
-        className="completion__list"
         onPick={onPick}
         highlightAsSelection
         heading={({ group }) => (
@@ -170,7 +172,6 @@ export function ComposerInput({
   showHiddenFiles = false,
   onShowHiddenFilesChange,
   rows = 1,
-  maxHeightRatio = 0.4,
   placeholder,
   label,
   completionLabel = "Message completion",
@@ -192,7 +193,6 @@ export function ComposerInput({
   showHiddenFiles?: boolean;
   onShowHiddenFilesChange?: (value: boolean) => void;
   rows?: number;
-  maxHeightRatio?: number;
   placeholder: string;
   label: string;
   completionLabel?: string;
@@ -204,14 +204,20 @@ export function ComposerInput({
   const completionList = useOptionList<CompletionItem>();
   const editorId = useId();
   const [expanded, setExpanded] = useState(false);
-  const [completionTruncated, setCompletionTruncated] = useState(false);
   const [completion, setCompletion] = useState<CaretCompletion | null>(null);
-  const [completionFiles, setCompletionFiles] = useState<ProjectFileResult[]>(
-    [],
+  const {
+    files: completionFiles,
+    status: completionStatus,
+    truncated: completionTruncated,
+  } = useProjectFileSearch(
+    searchProjectFiles,
+    completion?.kind === "file" && !completionDisabled
+      ? completion.query
+      : undefined,
+    completionScope,
+    showHiddenFiles,
+    140,
   );
-  const [completionStatus, setCompletionStatus] = useState<
-    "loading" | "ready" | "error"
-  >("ready");
   const inputWrapRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   // Let an enclosing modal capture its opener before moving focus.
@@ -291,60 +297,26 @@ export function ComposerInput({
     [commands, includeNativeCommands],
   );
 
-  useEffect(() => {
-    if (completion?.kind !== "file" || !searchProjectFiles) {
-      setCompletionFiles([]);
-      setCompletionStatus("ready");
-      return;
-    }
-    let cancelled = false;
-    setCompletionFiles([]);
-    setCompletionTruncated(false);
-    setCompletionStatus("loading");
-    const timer = setTimeout(() => {
-      searchProjectFiles(completion.query).then(
-        (result) => {
-          if (!cancelled) {
-            setCompletionFiles(
-              rankProjectFiles(result.files, completion.query),
-            );
-            setCompletionTruncated(Boolean(result.truncated));
-            setCompletionStatus("ready");
-          }
-        },
-        () => {
-          if (!cancelled) setCompletionStatus("error");
-        },
-      );
-    }, 140);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [completion, completionScope, searchProjectFiles, showHiddenFiles]);
-
-  const completionItems = useMemo<CompletionItem[]>(() => {
+  const options = useMemo<ListOption<CompletionItem>[]>(() => {
     if (!completion) return [];
     if (completion.kind === "file") {
       return completionFiles.map((file) => ({
         key: file.path,
-        title: file.name,
-        hint: file.path,
-        group: "Project files",
-        file,
+        title: file.path,
+        label: `${file.name}, ${file.path}`,
+        group: onShowHiddenFilesChange ? undefined : "Project files",
+        value: { kind: "file", file },
       }));
     }
     if (completion.kind === "argument") {
       return commandArgumentCandidates(completion, models, activeModel).map(
-        (candidate) => ({
-          key: candidate.value,
-          title: candidate.value,
-          hint: candidate.hint,
+        ({ value, hint }) => ({
+          key: value,
           group:
             completion.name === "model"
               ? "Available models"
               : "Supported thinking levels",
-          argument: candidate.value,
+          value: { kind: "argument", text: value, hint },
         }),
       );
     }
@@ -364,58 +336,49 @@ export function ComposerInput({
     }
     return ranked.map((command) => ({
       key: `${command.source ?? "command"}:${command.name}`,
-      title: `/${command.name}${command.argumentHint ? ` ${command.argumentHint}` : ""}`,
-      hint:
-        command.execution === "terminal"
-          ? `Terminal only — ${command.description ?? "Run in Pi's terminal"}`
-          : command.description,
       group:
         command.source === "builtin"
           ? "Pi"
           : command.source
             ? `${command.source[0]!.toUpperCase()}${command.source.slice(1)}`
             : "Command",
-      command,
+      value: { kind: "command", command },
     }));
-  }, [commandInventory, completion, completionFiles, models, activeModel]);
-
-  const options = useMemo(
-    () =>
-      completionItems.map(
-        (item): ListOption<CompletionItem> => ({
-          key: item.key,
-          value: item,
-          group: item.file && onShowHiddenFilesChange ? undefined : item.group,
-          title: item.file?.path,
-          label: item.file ? `${item.title}, ${item.file.path}` : undefined,
-        }),
-      ),
-    [completionItems, onShowHiddenFilesChange],
-  );
+  }, [
+    commandInventory,
+    completion,
+    completionFiles,
+    models,
+    activeModel,
+    onShowHiddenFilesChange,
+  ]);
 
   const pickCompletion = (item: CompletionItem | undefined) => {
     if (!item || !completion || completionDisabled) return;
+    const command = item.kind === "command" ? item.command : undefined;
     const existingDelimiter = value[completion.end];
     const reusesInlineDelimiter = Boolean(
-      item.command && existingDelimiter && /[ \t]/.test(existingDelimiter),
+      command && existingDelimiter && /[ \t]/.test(existingDelimiter),
     );
     const addsArgumentDelimiter = Boolean(
-      item.command &&
-        (item.command.source !== "builtin" || item.command.argumentHint),
+      command && (command.source !== "builtin" || command.argumentHint),
     );
-    const replacement = item.command
-      ? `/${item.command.name}${reusesInlineDelimiter || !addsArgumentDelimiter ? "" : " "}`
-      : (item.argument ?? "");
-    const inserted = item.file
-      ? replaceFileCompletion(value, completion, item.file)
-      : replaceCompletionToken(value, completion, replacement);
+    const replacement = command
+      ? `/${command.name}${reusesInlineDelimiter || !addsArgumentDelimiter ? "" : " "}`
+      : item.kind === "argument"
+        ? item.text
+        : "";
+    const inserted =
+      item.kind === "file"
+        ? replaceFileCompletion(value, completion, item.file)
+        : replaceCompletionToken(value, completion, replacement);
     const next = reusesInlineDelimiter
       ? { ...inserted, caret: inserted.caret + 1 }
       : inserted;
     inputValueRef.current = next.value;
     const nextArgument =
-      item.command?.source === "builtin" &&
-      ["model", "thinking"].includes(item.command.name)
+      command?.source === "builtin" &&
+      ["model", "thinking"].includes(command.name)
         ? parseCaretCompletion(next.value, next.caret)
         : null;
     dismissedCompletionRef.current = nextArgument
@@ -448,6 +411,7 @@ export function ComposerInput({
     onKeyDown?.(event);
   };
 
+  const usage = commandUsageHint(value, includeNativeCommands);
   return (
     <>
       <div
@@ -464,11 +428,6 @@ export function ComposerInput({
           id={editorId}
           className="composer__input"
           data-expanded={expanded || undefined}
-          style={
-            {
-              "--editor-compact-height": `${maxHeightRatio * 100}dvh`,
-            } as CSSProperties
-          }
           aria-autocomplete="list"
           aria-controls={completion ? completionList.id : undefined}
           aria-activedescendant={
@@ -540,11 +499,11 @@ export function ComposerInput({
           />
         )}
       </div>
-      {commandUsageHint(value, includeNativeCommands) ? (
+      {usage && (
         <div className="composer__usage" role="note">
-          {commandUsageHint(value, includeNativeCommands)}
+          {usage}
         </div>
-      ) : null}
+      )}
       {value || expanded ? (
         <button
           type="button"

@@ -101,7 +101,7 @@ describe("Pi native command dispatch", () => {
       },
     });
     await vi.waitFor(() =>
-      expect(store.getState().notices.at(-1)).toMatchObject({
+      expect(store.getState().live.notices.at(-1)).toMatchObject({
         kind: "info",
         text: "Context compacted.",
       }),
@@ -160,7 +160,7 @@ describe("Pi native command dispatch", () => {
 
   it("gates Compact during active work and reports an unknown Export without retrying", async () => {
     const settings = activeSnapshot();
-    settings.runState = "running";
+
     settings.sessionStatuses.s1 = { runState: "running" };
     const calls = installFetch((url, init) => {
       const selection = {
@@ -333,7 +333,7 @@ describe("Pi native command dispatch", () => {
           },
         ],
       }),
-      runState: "running",
+      sessionStatuses: { s1: { runState: "running" } },
     });
 
     await expect(store.sendPrompt("/copy")).resolves.toMatchObject({
@@ -350,7 +350,7 @@ describe("Pi native command dispatch", () => {
     );
     const query = new URL(String(request![0]), "http://localhost").searchParams;
     expect(query.get("sessionId")).toBe("s1");
-    expect(query.get("viewId")).toBe(store.getState().transcriptViewId);
+    expect(query.get("viewId")).toBe(store.getState().view.viewId);
     const snapshot = activeSnapshot();
     snapshot.active!.transcriptPage.viewId = "another-branch";
     socket.emitSnapshot(snapshot);
@@ -378,7 +378,7 @@ describe("Pi native command dispatch", () => {
     const latest = () => store.getState().commandActivities.s1?.at(-1);
     await store.sendPrompt("/name New session");
     await vi.waitFor(() =>
-      expect(store.getState().notices.at(-1)?.kind).toBe("info"),
+      expect(store.getState().live.notices.at(-1)?.kind).toBe("info"),
     );
     expect(latest()).toBeUndefined();
 
@@ -402,7 +402,7 @@ describe("Pi native command dispatch", () => {
     const { store } = await initStore();
     await store.sendPrompt("/model kimi-coding/kimi-k3");
     await selectSession(store, activeSnapshot({ sessionId: "s2" }));
-    const notices = store.getState().notices.length;
+    const notices = store.getState().live.notices.length;
     response.resolve({ status: 400, body: { error: "Provider denied model" } });
     await vi.waitFor(() =>
       expect(store.getState().commandActivities.s1?.at(-1)).toMatchObject({
@@ -411,7 +411,7 @@ describe("Pi native command dispatch", () => {
         message: "Provider denied model",
       }),
     );
-    expect(store.getState().notices).toHaveLength(notices);
+    expect(store.getState().live.notices).toHaveLength(notices);
   });
 
   it("replaces a session's query readouts in place and clears only queries on departure", async () => {

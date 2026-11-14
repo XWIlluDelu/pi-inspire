@@ -35,7 +35,7 @@ export function CodeView({
 interface CodeRow {
   text: string;
   html?: string;
-  kind?: GitDiffLine["kind"];
+  kind?: GitDiffLine["kind"] | "match";
   oldLine?: number | null;
   newLine?: number | null;
   changeIndex?: number | null;

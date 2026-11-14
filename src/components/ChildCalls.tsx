@@ -1,7 +1,8 @@
-import { ChevronRight } from "lucide-react";
 import type { ChildCall, ChildCallList } from "../../shared/tool-activity";
 import { stripTerminalSequences } from "../ansi";
 import { childCallSummary, isModelCall } from "../child-call-summary";
+import { CodeView } from "./CodeView";
+import { DetailSummary } from "./DetailSummary";
 import { PiLoader } from "./PiLoader";
 import { PiStatus } from "./PiStatus";
 import { ResourcePathLabel } from "./ResourcePathLabel";
@@ -29,6 +30,10 @@ export function childCallsSummary(list?: ChildCallList): string {
 
 function CallRow({ call }: { call: ChildCall }) {
   const [open, setOpen] = useActivityReaderExpanded(`child-call:${call.key}`);
+  const argumentsLabel =
+    call.argumentsPreview !== undefined
+      ? "Arguments preview"
+      : "Available arguments";
   const model = isModelCall(call.name);
   const duration =
     call.durationMs !== undefined && call.durationMs >= 1_000
@@ -55,7 +60,8 @@ function CallRow({ call }: { call: ChildCall }) {
     <>
       <code className="child-call__name">{call.name}</code>
       <span
-        className={`child-call__status child-call__status--${call.status}`}
+        className="child-call__status"
+        data-status={call.status}
         title={statusLabels[call.status]}
       >
         {icon}
@@ -78,10 +84,7 @@ function CallRow({ call }: { call: ChildCall }) {
       open={open}
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
-      <summary className="child-call__row">
-        <ChevronRight size={12} className="child-call__chevron" aria-hidden />
-        {row}
-      </summary>
+      <DetailSummary className="child-call__row">{row}</DetailSummary>
       {open ? (
         <div className="child-call__detail">
           {duration ? (
@@ -92,44 +95,38 @@ function CallRow({ call }: { call: ChildCall }) {
           ) : null}
           {call.arguments !== undefined || (!model && call.argumentsPreview) ? (
             <>
-              <div className="card__section-label">
-                {call.argumentsPreview !== undefined
-                  ? "Arguments preview"
-                  : "Available arguments"}
-              </div>
-              <pre
-                className="card__mono"
+              <div className="card__section-label">{argumentsLabel}</div>
+              <CodeView
+                className="activity-reader"
                 tabIndex={0}
                 role="group"
-                aria-label={
-                  call.argumentsPreview !== undefined
-                    ? "Arguments preview"
-                    : "Available arguments"
-                }
+                aria-label={argumentsLabel}
               >
                 {stripTerminalSequences(
                   call.argumentsPreview ??
                     JSON.stringify(call.arguments, null, 2),
                 )}
-              </pre>
+              </CodeView>
             </>
           ) : null}
           {call.error ? (
-            <pre
-              className="card__mono card__mono--error"
+            <CodeView
+              className="activity-reader"
+              data-error
               tabIndex={0}
               role="group"
               aria-label="Call error"
-            >
-              {stripTerminalSequences(call.error)}
-            </pre>
+              text={stripTerminalSequences(call.error)}
+            />
           ) : null}
         </div>
       ) : null}
     </details>
   ) : (
     <div className="child-call">
-      <div className="child-call__row">{row}</div>
+      <div className="disclosure-row child-call__row">
+        <span className="detail-summary__label">{row}</span>
+      </div>
     </div>
   );
 }

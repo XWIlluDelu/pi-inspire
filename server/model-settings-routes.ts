@@ -59,21 +59,19 @@ export function registerModelSettingsRoutes(
           modelsWarning: metadata?.warning,
         };
       }
-      if (refresh) {
-        const { models, warning } = await deps.runtime.refreshModels(
-          owner.sessionId,
-        );
-        return {
-          models,
-          modelsWarning: warning,
-        };
+      if (!refresh) {
+        const { active } = await deps.runtime.snapshot(owner.sessionId);
+        if (!active?.modelDiscovery)
+          return {
+            models: (active?.availableModels ?? []).map((model) =>
+              modelOption(model as ModelOption),
+            ),
+          };
       }
-      const snapshot = await deps.runtime.snapshot(owner.sessionId);
-      return {
-        models: (snapshot.active?.availableModels ?? []).map((model) =>
-          modelOption(model as ModelOption),
-        ),
-      };
+      const { models, warning } = await deps.runtime.refreshModels(
+        owner.sessionId,
+      );
+      return { models, modelsWarning: warning };
     } catch {
       return {
         models: [],

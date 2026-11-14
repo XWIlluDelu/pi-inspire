@@ -142,9 +142,7 @@ test.describe("narrow terminal settings", () => {
       settings.getByRole("switch", { name: "Persist terminal output" }),
     ).toBeChecked();
     expect(patches).toHaveLength(1);
-    await settings
-      .locator(".terminal-settings__body")
-      .evaluate((el) => (el.scrollTop = el.scrollHeight));
+    await body.evaluate((el) => (el.scrollTop = el.scrollHeight));
 
     page.once("dialog", (dialog) => dialog.accept());
     await settings

@@ -69,7 +69,7 @@ export function TrashConfirmDialog({
       onDismiss={deleting ? undefined : onClose}
     >
       <div className="dialog session-delete">
-        <header className="session-delete__header">
+        <header className="dialog__header">
           <span className="session-delete__icon" aria-hidden>
             <Trash2 size={17} />
           </span>
@@ -111,7 +111,7 @@ export function TrashConfirmDialog({
           </p>
         ) : null}
 
-        <footer className="session-delete__actions">
+        <footer className="dialog__actions">
           <button
             type="button"
             className="button button--quiet"

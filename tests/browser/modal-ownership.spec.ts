@@ -15,7 +15,7 @@ test("Escape closes the focused workbench surface before aborting an active run"
     snapshot(snapshot) {
       if (snapshot.active?.sessionId !== sessionId) return;
       snapshot.active.isStreaming = true;
-      snapshot.runState = "running";
+
       snapshot.sessionStatuses[sessionId] = { runState: "running" };
     },
     event(event) {
@@ -113,13 +113,13 @@ test.describe("phone action dialogs", () => {
           await expect(filter).toHaveAttribute("aria-activedescendant", /.+/);
           await filter.fill("rename");
           await palette.getByRole("option", { name: /Rename session/ }).tap();
-          const rename = palette.getByRole("textbox", {
-            name: "New session name",
-          });
+          const rename = page
+            .getByRole("dialog", { name: "Rename session" })
+            .getByRole("textbox", { name: "Session name" });
           await expect(rename).toBeFocused();
           await rename.press("Escape");
           await expect(filter).toHaveValue("rename");
-          await expect(palette).toBeFocused();
+          await expect(filter).toBeFocused();
         }
         await page.goBack();
         await expect(

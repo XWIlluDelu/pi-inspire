@@ -1,151 +1,57 @@
-import {
-  type LiveTranscript,
-  type ProjectionConflict,
-  type ProjectionHealth,
-  projectionConflictSeverity,
-  type TranscriptPage,
-} from "../shared/contracts";
+import type { LiveTranscript } from "../shared/contracts";
 import {
   type AppState,
   emptyResourceInspectionState,
+  emptyTranscriptView,
   isCommandQuery,
-  transcriptRevisionContains,
 } from "./app-state";
-import { asMessage, type ChatMessage } from "./events";
+import { asMessage } from "./events";
 
-type SnapshotTransitionKind =
-  | "same-projection"
-  | "append"
-  | "projection-replaced"
-  | "view-changed"
-  | "session-changed";
-
-interface SnapshotTransition {
-  kind: SnapshotTransitionKind;
-  page: TranscriptPage | undefined;
-  nextSessionId: string | null;
-  cwd: string | null;
-  nextTranscriptRevision: number;
-  nextViewId: string | null;
-  nextDurableLeafId: string | null;
-  nextEffectiveLeafId: string | null;
-  revisionChanged: boolean;
-  messages: ChatMessage[];
-}
-
-/** Classify one authoritative snapshot and derive its transcript projection
- * without mutating store or controller ownership. */
 export function deriveSnapshotTransition(
   previous: AppState,
   active: (LiveTranscript & { sessionId: string; cwd: string | null }) | null,
-): SnapshotTransition {
+) {
   const page = active?.transcriptPage;
-  const nextSessionId = active?.sessionId ?? null;
+  const sessionId = active?.sessionId ?? null;
   const cwd = active?.cwd ?? null;
-  const sessionChanged = nextSessionId !== previous.sessionId;
-  const nextTranscriptRevision = page?.revision ?? 0;
-  const revisionChanged =
-    nextTranscriptRevision !== previous.transcriptRevision;
-  const nextViewId = page?.viewId ?? null;
-  const nextIncarnation = page?.incarnation ?? null;
-  const viewChanged = Boolean(
-    !sessionChanged &&
-      nextSessionId &&
-      (nextViewId !== previous.transcriptViewId ||
-        nextIncarnation !== previous.transcriptIncarnation),
-  );
-  const sameProjectionOwner = Boolean(
-    !sessionChanged &&
-      !viewChanged &&
-      page &&
-      nextViewId === previous.transcriptViewId &&
-      nextIncarnation === previous.transcriptIncarnation,
-  );
-  const projectionLineageCompatible = Boolean(
-    sameProjectionOwner &&
-      page &&
-      transcriptRevisionContains(
-        page.revision,
-        page.appendFromRevision ?? page.revision,
-        previous.transcriptRevision,
-      ),
-  );
-  const projectionReplaced = Boolean(
-    sameProjectionOwner && revisionChanged && !projectionLineageCompatible,
-  );
-  const newestMessages = (page?.messages ?? []).map(asMessage);
-  const kind: SnapshotTransitionKind = sessionChanged
-    ? "session-changed"
-    : viewChanged
-      ? "view-changed"
-      : projectionReplaced
-        ? "projection-replaced"
-        : revisionChanged && projectionLineageCompatible
-          ? "append"
-          : "same-projection";
-
+  const view =
+    page && active
+      ? {
+          viewId: page.viewId,
+          incarnation: page.incarnation ?? null,
+          revision: page.revision,
+          durableLeafId: active.durableLeafId ?? null,
+          effectiveLeafId:
+            page.effectiveLeafId ?? active.effectiveLeafId ?? null,
+          navigationLeased: active.navigationLeased === true,
+          branchRevision: active.branchRevision ?? null,
+          composerHistoryVersion: page.composerHistoryVersion,
+          hasOlder: page.hasOlder,
+          health: active.projectionHealth ?? emptyTranscriptView.health,
+          conflict: active.projectionConflict ?? null,
+        }
+      : emptyTranscriptView;
+  const sessionChanged = sessionId !== previous.sessionId;
+  const viewChanged =
+    sessionChanged ||
+    view.viewId !== previous.view.viewId ||
+    view.incarnation !== previous.view.incarnation;
+  const revisionChanged = view.revision !== previous.view.revision;
+  const replaced =
+    viewChanged ||
+    (revisionChanged &&
+      (view.revision < previous.view.revision ||
+        (page?.appendFromRevision ?? view.revision) > previous.view.revision));
   return {
-    kind,
-    page,
-    nextSessionId,
+    sessionId,
     cwd,
-    nextTranscriptRevision,
-    nextViewId,
-    nextDurableLeafId: active?.durableLeafId ?? null,
-    nextEffectiveLeafId:
-      page?.effectiveLeafId ?? active?.effectiveLeafId ?? null,
+    view,
+    sessionChanged,
+    viewChanged,
     revisionChanged,
-    messages: newestMessages,
-  };
-}
-
-function projectionDiagnostic(
-  health: ProjectionHealth,
-  conflict: ProjectionConflict | null,
-) {
-  const error =
-    conflict?.message ??
-    (health.status !== "ok"
-      ? (health.message ?? "Session persistence is not yet confirmed")
-      : null);
-  const errorSeverity =
-    projectionConflictSeverity(conflict) === "attention" ||
-    (!conflict && health.status === "pending")
-      ? ("warning" as const)
-      : ("error" as const);
-  return {
-    projectionHealth: health,
-    projectionConflict: conflict,
-    projectionError: error,
-    error,
-    errorSeverity,
-  };
-}
-
-/** A live replacement and a full snapshot install the same reading state. */
-export function transcriptPatch(
-  transition: SnapshotTransition,
-  active: LiveTranscript | null,
-) {
-  const { page, nextTranscriptRevision } = transition;
-  return {
-    messages: transition.messages,
-    transcriptRevision: nextTranscriptRevision,
-    transcriptAppendFromRevision:
-      page?.appendFromRevision ?? nextTranscriptRevision,
-    transcriptIncarnation: page?.incarnation ?? null,
-    transcriptViewId: transition.nextViewId,
-    transcriptDurableLeafId: transition.nextDurableLeafId,
-    transcriptEffectiveLeafId: transition.nextEffectiveLeafId,
-    transcriptNavigationLeased: active?.navigationLeased === true,
-    branchRevision: active?.branchRevision ?? null,
-    composerHistoryVersion: page?.composerHistoryVersion ?? null,
-    hasOlderMessages: Boolean(page?.hasOlder),
+    replaced,
+    messages: (page?.messages ?? []).map(asMessage),
     activeAssistantMessageKey: active?.activeAssistantMessageKey ?? null,
-    ...projectionDiagnostic(
-      active?.projectionHealth ?? { status: "ok" },
-      active?.projectionConflict ?? null,
-    ),
   };
 }
 
@@ -154,7 +60,7 @@ export function transcriptPatch(
  * the same coordinates may name a different image. */
 function renewedResourceInspection(
   previous: AppState,
-  transition: SnapshotTransition,
+  transition: ReturnType<typeof deriveSnapshotTransition>,
 ): Partial<AppState> {
   const empty = emptyResourceInspectionState();
   const inspection = previous.fileInspection;
@@ -187,46 +93,38 @@ function renewedResourceInspection(
  * decoding. Session-owned controller slices are supplied by AppStore. */
 export function snapshotLifecyclePatch(
   previous: AppState,
-  transition: SnapshotTransition,
+  transition: ReturnType<typeof deriveSnapshotTransition>,
   sessionOwnerPatch: Partial<AppState> = {},
 ): Partial<AppState> {
-  switch (transition.kind) {
-    case "session-changed":
-      return {
-        // Readouts belong to this inspection; operational results keep their partition.
-        commandActivities: Object.fromEntries(
-          Object.entries(previous.commandActivities).map(
-            ([sessionId, activities]) => [
-              sessionId,
-              sessionId === previous.sessionId
-                ? activities.filter((activity) => !isCommandQuery(activity))
-                : activities,
-            ],
-          ),
+  if (transition.sessionChanged) {
+    return {
+      // Readouts belong to this inspection; operational results keep their partition.
+      commandActivities: Object.fromEntries(
+        Object.entries(previous.commandActivities).map(
+          ([sessionId, activities]) => [
+            sessionId,
+            sessionId === previous.sessionId
+              ? activities.filter((activity) => !isCommandQuery(activity))
+              : activities,
+          ],
         ),
-        pendingRetryError: null,
-        pendingAction: null,
-        windowTitle: null,
-        contextMode: "files",
-        ...sessionOwnerPatch,
-        branchTreeError: null,
-        branchActionId: null,
-        ...emptyResourceInspectionState(),
-        gitStatus: null,
-        gitStatusError: null,
-        gitStatusPending: false,
-        gitDiff: null,
-      };
-    case "view-changed":
-      return {
-        pendingRetryError: null,
-        branchTreeError: null,
-        ...renewedResourceInspection(previous, transition),
-      };
-    case "projection-replaced":
-      return renewedResourceInspection(previous, transition);
-    case "append":
-    case "same-projection":
-      return {};
+      ),
+      pendingAction: null,
+      contextMode: "files",
+      ...sessionOwnerPatch,
+      branchTreeError: null,
+      branchActionId: null,
+      ...emptyResourceInspectionState(),
+      gitStatus: null,
+      gitStatusError: null,
+      gitStatusPending: false,
+      gitDiff: null,
+    };
   }
+  return transition.replaced
+    ? {
+        ...(transition.viewChanged ? { branchTreeError: null } : {}),
+        ...renewedResourceInspection(previous, transition),
+      }
+    : {};
 }

@@ -3,6 +3,7 @@ import { memo, useId, useState } from "react";
 import { type ChatMessage, messageText } from "../events";
 import { messageCopyLoader } from "../message-copy";
 import { usePresentationAdapters } from "../presentation-adapters";
+import { CodeView } from "./CodeView";
 import { CopyAction } from "./CopyAction";
 import { DetailSummary } from "./DetailSummary";
 import { ImageGallery } from "./ImageGallery";
@@ -60,8 +61,8 @@ export const CustomMessage = memo(function CustomMessage({
   if (message.display === false) return null;
   return (
     <article className="turn turn--custom" aria-labelledby={titleId}>
-      <div className="custom-message">
-        <div className="custom-message__head">
+      <div className="activity-surface custom-message">
+        <div className="activity-surface__head custom-message__head">
           <Package size={14} aria-hidden />
           <div className="custom-message__identity">
             <span id={titleId} className="custom-message__title">
@@ -89,19 +90,16 @@ export const CustomMessage = memo(function CustomMessage({
               <RichText text={presentation?.body ?? text} variant="user" />
             ) : Array.isArray(message.content) ? (
               message.content.map((part: unknown, index: number) => {
-                if (!part || typeof part !== "object")
-                  return (
-                    <pre key={index} className="custom-message__raw">
-                      {inspect(part)}
-                    </pre>
-                  );
-                const item = part as Record<string, unknown>;
-                if (item.type === "text" && typeof item.text === "string") {
+                const item =
+                  part && typeof part === "object"
+                    ? (part as Record<string, unknown>)
+                    : null;
+                if (item?.type === "text" && typeof item.text === "string") {
                   return (
                     <RichText key={index} text={item.text} variant="user" />
                   );
                 }
-                if (item.type === "image") {
+                if (item?.type === "image") {
                   if (
                     Number.isSafeInteger(message.__inspireMessageIndex) &&
                     sessionId &&
@@ -132,15 +130,19 @@ export const CustomMessage = memo(function CustomMessage({
                   }
                 }
                 return (
-                  <pre key={index} className="custom-message__raw">
+                  <CodeView
+                    key={index}
+                    className="activity-reader"
+                    tabIndex={0}
+                  >
                     {inspect(part)}
-                  </pre>
+                  </CodeView>
                 );
               })
             ) : message.content != null ? (
-              <pre className="custom-message__raw">
+              <CodeView className="activity-reader" tabIndex={0}>
                 {inspect(message.content)}
-              </pre>
+              </CodeView>
             ) : null}
           </div>
         </ImageGallery>
@@ -155,7 +157,7 @@ export const CustomMessage = memo(function CustomMessage({
               Details
             </DetailSummary>
             {detailsOpen ? (
-              <pre className="custom-message__raw">
+              <CodeView className="activity-reader" tabIndex={0}>
                 {inspect(
                   presentation
                     ? {
@@ -168,7 +170,7 @@ export const CustomMessage = memo(function CustomMessage({
                         details: message.details,
                       },
                 )}
-              </pre>
+              </CodeView>
             ) : null}
           </details>
         ) : null}

@@ -4,12 +4,17 @@ import {
   MAX_SESSION_ID_HYDRATION_IDS,
   MAX_SESSION_LIST_PAGE_SIZE,
   type SessionCatalogIssue,
+  type SessionListResponse,
   type SessionRuntimeStatus,
   type SessionSummary,
 } from "../../shared/contracts";
 import type { ExternalSessionActivities } from "../../shared/session-activity";
 import { type Api, ApiError } from "../api";
-import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
+import {
+  isTransientFailure,
+  RecoveryBackoff,
+  readScope,
+} from "../recovery-backoff";
 import { sessionCurationOwners } from "../session-curation";
 
 const SESSION_PAGE_SIZE = 40;
@@ -45,13 +50,16 @@ interface SessionCatalogPatch {
   sessionListIssues?: SessionCatalogIssue[];
 }
 
-function baseLoadingPatch(operation: "reset" | "refresh"): SessionCatalogPatch {
+function listFeedback(
+  operation: SessionListOperation = null,
+  error: string | null = null,
+): SessionCatalogPatch {
   return {
-    sessionListLoading: true,
-    sessionListLoadingOlder: false,
-    sessionListHydrating: false,
+    sessionListLoading:
+      error === null && (operation === "reset" || operation === "refresh"),
+    sessionListLoadingOlder: error === null && operation === "older",
     sessionListOperation: operation,
-    sessionListError: null,
+    sessionListError: error,
   };
 }
 
@@ -70,14 +78,16 @@ function uniqueSessions(
   return sessions;
 }
 
+type ReadScope = ReturnType<typeof readScope>;
 type VisibleRead = {
   recovery: RecoveryBackoff;
-  request: AbortController | null;
+  request: ReadScope | null;
 };
-type SessionListRetry =
-  | { kind: "reset"; query: string }
-  | { kind: "older"; query: string; offset: number }
-  | { kind: "refresh"; query: string };
+type ListAction =
+  | { kind: "reset" | "refresh" }
+  | { kind: "older"; offset: number }
+  | { kind: "preserve"; offset: number; total: number; foreground: boolean };
+type ListRead = { scope: ReadScope; action: ListAction; task?: Promise<void> };
 
 interface SessionCatalogControllerHost {
   state(): SessionCatalogState;
@@ -95,33 +105,27 @@ interface SessionCatalogControllerHost {
 export class SessionCatalogController {
   private basePages: SessionSummary[] = [];
   private readonly hydration = new Map<string, SessionSummary>();
-  private loadTicket = 0;
-  private listAbort = new AbortController();
-  private curationTicket = 0;
-  private curationRequestKey: string | null = null;
-  private olderPromise: Promise<void> | null = null;
-  private retry: SessionListRetry | null = null;
+  private list: ListRead | null = null;
+  private curation: { key: string; scope: ReadScope } | null = null;
+  private retry: ListAction | null = null;
   private readonly visibleReads = new Map<string, VisibleRead>();
   private searchTimer: ReturnType<typeof setTimeout> | null = null;
   private preserveRecovery = new RecoveryBackoff();
   private curationRecovery = new RecoveryBackoff();
-  private curationRecoveryOwner = "";
 
   constructor(private readonly host: SessionCatalogControllerHost) {}
 
-  private retireListRequest(): void {
-    this.listAbort.abort();
-    this.listAbort = new AbortController();
+  private retireQuery(): void {
+    this.cancelList();
+    for (const id of this.visibleReads.keys()) this.retireVisibleRead(id);
+    this.cancelCurationRequest();
   }
 
-  private beginListGeneration(): number {
-    this.preserveRecovery.reset();
-    for (const id of this.visibleReads.keys()) this.retireVisibleRead(id);
-    this.retireListRequest();
-    this.cancelCurationRequest();
-    this.olderPromise = null;
+  private cancelList(): void {
+    this.list?.scope.abort();
+    this.list = null;
     this.retry = null;
-    return ++this.loadTicket;
+    this.preserveRecovery.reset();
   }
 
   /** Invalidates all owned work when bootstrap/auth changes the API client.
@@ -129,7 +133,7 @@ export class SessionCatalogController {
    * current generation or turn a later successful pairing into a 401. */
   invalidate(): void {
     this.clearSearchTimer();
-    this.beginListGeneration();
+    this.retireQuery();
     const state = this.host.state();
     if (
       !state.sessionListLoading &&
@@ -141,51 +145,37 @@ export class SessionCatalogController {
       return;
     }
     this.host.patch({
-      sessionListLoading: false,
-      sessionListLoadingOlder: false,
+      ...listFeedback(),
       sessionListHydrating: false,
-      sessionListOperation: null,
-      sessionListError: null,
     });
   }
 
   load(query: string): Promise<void> {
     this.clearSearchTimer();
-    if (!this.host.api()) return Promise.resolve();
-    const state = this.host.state();
-    const queryChanged = query !== state.sessionQuery;
-    // A prior append may finish on the wire, but it cannot coalesce with this
-    // generation or publish its rows.
-    const ticket = this.beginListGeneration();
-    if (queryChanged) this.basePages = [];
-    this.host.patch({
-      ...(queryChanged
-        ? {
-            sessionQuery: query,
-            sessions: query.trim() ? [] : [...this.hydration.values()],
-            sessionListTotal: 0,
-            sessionListNextOffset: 0,
-          }
-        : {}),
-      ...baseLoadingPatch("reset"),
-    });
-    return this.requestReset(query, ticket);
+    return this.startList(query, { kind: "reset" });
   }
 
   /** Search changes query ownership synchronously, then issues its debounced
    * reset. Old-query pages cannot remain rendered or win while typing. */
   search(query: string): void {
-    this.beginListGeneration();
-    this.basePages = [];
+    this.retireQuery();
     this.host.patch({
+      ...this.resetRows(query),
+      ...listFeedback("reset"),
+      sessionListHydrating: false,
+    });
+    this.clearSearchTimer();
+    this.searchTimer = setTimeout(() => void this.load(query), 180);
+  }
+
+  private resetRows(query: string): SessionCatalogPatch {
+    this.basePages = [];
+    return {
       sessionQuery: query,
       sessions: query.trim() ? [] : [...this.hydration.values()],
       sessionListTotal: 0,
       sessionListNextOffset: 0,
-      ...baseLoadingPatch("reset"),
-    });
-    this.clearSearchTimer();
-    this.searchTimer = setTimeout(() => void this.load(query), 180);
+    };
   }
 
   /** Refetch the exact already-consumed extent after a runtime/catalog hint. */
@@ -198,317 +188,197 @@ export class SessionCatalogController {
     );
   }
 
-  /** Rebuild a caller-supplied consumed extent after an optimistic deletion. */
-  preserve(
-    query: string,
-    preserveOffset: number,
-    preserveTotal: number,
-  ): Promise<void> {
-    if (!this.host.api() || query !== this.host.state().sessionQuery)
-      return Promise.resolve();
-    const foreground = this.host.state().sessionListLoading;
-    const ticket = this.beginListGeneration();
-    this.host.patch({
-      sessionListLoading: foreground,
-      sessionListLoadingOlder: false,
-      sessionListHydrating: false,
-      sessionListOperation: foreground ? "reset" : null,
-      sessionListError: null,
+  /** Rebuild the consumed extent after a catalog change. */
+  preserve(query: string, offset: number, total: number): Promise<void> {
+    const state = this.host.state();
+    if (query !== state.sessionQuery) return Promise.resolve();
+    // A background hint cannot supersede an explicit refresh command.
+    if (this.list?.action.kind === "refresh" && this.list.task)
+      return this.list.task;
+    return this.startList(query, {
+      kind: "preserve",
+      offset,
+      total,
+      foreground: state.sessionListLoading,
     });
-    return this.requestReset(
-      query,
-      ticket,
-      preserveOffset,
-      preserveTotal,
-      foreground ? "reset" : "preserve",
-    );
   }
 
-  loadOlder(
-    retry?: Extract<SessionListRetry, { kind: "older" }>,
-  ): Promise<void> {
-    const api = this.host.api();
-    if (!api) return Promise.resolve();
+  loadOlder(): Promise<void> {
+    if (this.list?.action.kind === "older" && this.list.task)
+      return this.list.task;
     const state = this.host.state();
     if (
-      retry &&
-      (retry.query !== state.sessionQuery ||
-        retry.offset !== state.sessionListNextOffset)
-    ) {
-      if (this.retry === retry) this.retry = null;
+      state.sessionListLoading ||
+      state.sessionListNextOffset >= state.sessionListTotal
+    )
       return Promise.resolve();
-    }
-    if (this.olderPromise) return this.olderPromise;
-    if (state.sessionListLoading || state.sessionListLoadingOlder)
-      return Promise.resolve();
-    const offset = retry?.offset ?? state.sessionListNextOffset;
-    if (offset >= state.sessionListTotal && !retry) return Promise.resolve();
-    const query = retry?.query ?? state.sessionQuery;
-    this.retireListRequest();
-    const ticket = ++this.loadTicket;
-    const signal = this.listAbort.signal;
-    this.retry = null;
-    this.host.patch({
-      sessionListLoadingOlder: true,
-      sessionListOperation: "older",
-      sessionListError: null,
+    return this.startList(state.sessionQuery, {
+      kind: "older",
+      offset: state.sessionListNextOffset,
     });
-    const request = (async () => {
-      try {
-        const page = await api.sessions(
-          query,
-          offset,
-          SESSION_PAGE_SIZE,
-          signal,
-        );
-        if (!this.owns(ticket, query, api)) return;
-        if (
-          page.offset !== offset ||
-          (page.sessions.length === 0 && offset < page.total)
-        ) {
-          throw new Error(
-            "Session paging did not advance from its requested offset",
-          );
-        }
-        this.basePages = uniqueSessions(this.basePages, page.sessions);
-        this.retry = null;
-        this.host.patch({
-          sessionListTotal: page.total,
-          sessionListIssues: page.issues ?? [],
-          // Consumed server rows, including duplicate identities, own the
-          // cursor. Rendered/union length is deliberately irrelevant.
-          sessionListNextOffset: page.offset + page.sessions.length,
-          sessionListLoadingOlder: false,
-          sessionListOperation: null,
-          sessionListError: null,
-        });
-        this.publishUnion();
-      } catch (error) {
-        if (!this.owns(ticket, query, api)) return;
-        if (error instanceof ApiError && error.status === 401) {
-          this.retry = null;
-          this.host.patch({
-            sessionListLoadingOlder: false,
-            sessionListOperation: null,
-          });
-          this.host.handleAuthFailure();
-          return;
-        }
-        this.retry = { kind: "older", query, offset };
-        this.host.patch({
-          sessionListLoadingOlder: false,
-          sessionListOperation: "older",
-          sessionListError:
-            error instanceof Error
-              ? error.message
-              : "Failed to load older sessions",
-        });
-      }
-    })();
-    const tracked = request.finally(() => {
-      if (this.olderPromise === tracked) this.olderPromise = null;
-    });
-    this.olderPromise = tracked;
-    return tracked;
   }
 
-  async refresh(retryQuery = this.host.state().sessionQuery): Promise<void> {
-    const api = this.host.api();
-    if (!api) return;
-    const state = this.host.state();
-    if (retryQuery !== state.sessionQuery) {
-      if (this.retry?.kind === "refresh" && this.retry.query === retryQuery) {
-        this.retry = null;
-      }
-      return;
-    }
-    const query = retryQuery;
-    const ticket = this.beginListGeneration();
-    this.host.patch(baseLoadingPatch("refresh"));
-    try {
-      await api.refreshSessions();
-      if (!this.owns(ticket, query, api)) return;
-      await this.requestReset(query, ticket);
-    } catch (error) {
-      if (!this.owns(ticket, query, api)) return;
-      if (error instanceof ApiError && error.status === 401) {
-        this.host.patch({
-          sessionListLoading: false,
-          sessionListOperation: null,
-        });
-        this.host.handleAuthFailure();
-      } else {
-        this.retry = { kind: "refresh", query };
-        this.host.patch({
-          sessionListLoading: false,
-          sessionListOperation: "refresh",
-          sessionListError:
-            error instanceof Error
-              ? error.message
-              : "Failed to refresh sessions",
-        });
-      }
-    }
+  refresh(query = this.host.state().sessionQuery): Promise<void> {
+    return query === this.host.state().sessionQuery
+      ? this.startList(query, { kind: "refresh" })
+      : Promise.resolve();
   }
 
   retryCurrent(): Promise<void> {
-    const retry = this.retry;
-    if (!retry) return this.load(this.host.state().sessionQuery);
-    switch (retry.kind) {
-      case "older":
-        return this.loadOlder(retry);
-      case "refresh":
-        return this.refresh(retry.query);
-      case "reset":
-        return this.load(retry.query);
-    }
+    this.clearSearchTimer();
+    const state = this.host.state();
+    return this.retry?.kind === "older"
+      ? this.loadOlder()
+      : this.startList(state.sessionQuery, this.retry ?? { kind: "reset" });
   }
 
-  /** Ensures a selected/live row is reachable without advancing chronological
-   * pagination or disturbing a nonempty catalog search. */
+  /** Hydrated rows never advance the chronological cursor. */
   ensureVisible(id: string): void {
     void this.hydrateVisible(id);
   }
 
   remove(id: string): void {
     this.cancelCurationRequest();
-    if (this.host.state().sessionListHydrating)
-      this.host.patch({ sessionListHydrating: false });
     this.basePages = this.basePages.filter((session) => session.id !== id);
     this.hydration.delete(id);
     this.retireVisibleRead(id);
-    this.publishUnion();
+    this.publishUnion({ sessionListHydrating: false });
   }
 
-  private async requestReset(
-    query: string,
-    ticket: number,
-    preserveOffset = 0,
-    preserveTotal = 0,
-    operation: "reset" | "preserve" = "reset",
-  ): Promise<void> {
+  private startList(query: string, action: ListAction): Promise<void> {
     const api = this.host.api();
-    if (!api) return;
-    const signal = this.listAbort.signal;
+    if (!api) return Promise.resolve();
+    const queryChanged = query !== this.host.state().sessionQuery;
+    const append = action.kind === "older";
+    if (append) this.cancelList();
+    else this.retireQuery();
+
+    const scope = readScope(
+      () => this.host.api() === api && this.host.state().sessionQuery === query,
+    );
+    const operation =
+      action.kind === "preserve"
+        ? action.foreground
+          ? "reset"
+          : null
+        : action.kind;
+    const read: ListRead = { scope, action };
+    this.list = read;
+    this.host.patch({
+      ...(queryChanged ? this.resetRows(query) : {}),
+      ...(!append ? { sessionListHydrating: false } : {}),
+      ...listFeedback(operation),
+    });
+    read.task = this.readList(api, scope, query, action, operation).finally(
+      () => {
+        if (this.list === read) this.list = null;
+      },
+    );
+    return read.task;
+  }
+
+  private async readList(
+    api: Api,
+    scope: ReadScope,
+    query: string,
+    action: ListAction,
+    operation: SessionListOperation,
+  ): Promise<void> {
+    const append = action.kind === "older";
+    let retry: ListAction =
+      action.kind === "preserve" ? { kind: "reset" } : action;
     try {
-      const rows: SessionSummary[] = [];
-      let page = await api.sessions(
-        query,
-        0,
-        preserveOffset > 0
-          ? Math.min(MAX_SESSION_LIST_PAGE_SIZE, Math.max(1, preserveOffset))
-          : SESSION_PAGE_SIZE,
-        signal,
-      );
-      if (page.offset !== 0 || (page.sessions.length === 0 && page.total > 0)) {
-        throw new Error(
-          "Session paging did not advance from its requested offset",
-        );
+      if (action.kind === "refresh") {
+        scope.check();
+        await api.refreshSessions();
+        retry = { kind: "reset" };
       }
-      rows.push(...page.sessions);
-      const issues = new Map(
-        (page.issues ?? []).map((issue) => [issue.path, issue]),
+      const perform = (signal: AbortSignal) =>
+        this.readPages(api, signal, query, action);
+      const page = await scope.read(
+        perform,
+        operation === null ? this.preserveRecovery : undefined,
       );
-      let nextOffset = page.sessions.length;
-      let total = page.total;
-      if (!this.owns(ticket, query, api)) return;
-      // New rows inserted ahead of an already-consumed cursor must not displace
-      // confirmed rows. Consume the positive total delta as well as the prior
-      // extent; deletions simply stop at the new total.
-      const targetOffset =
-        preserveOffset > 0
-          ? Math.min(total, preserveOffset + Math.max(0, total - preserveTotal))
-          : 0;
-      while (
-        targetOffset > 0 &&
-        nextOffset < targetOffset &&
-        nextOffset < total
-      ) {
-        if (!this.owns(ticket, query, api)) return;
-        const priorOffset = nextOffset;
-        page = await api.sessions(
-          query,
-          nextOffset,
-          Math.min(MAX_SESSION_LIST_PAGE_SIZE, targetOffset - nextOffset),
-          signal,
-        );
-        if (!this.owns(ticket, query, api)) return;
-        if (page.offset !== priorOffset) {
-          throw new Error("Session paging resumed from an unexpected offset");
-        }
-        rows.push(...page.sessions);
-        for (const issue of page.issues ?? []) issues.set(issue.path, issue);
-        nextOffset = page.offset + page.sessions.length;
-        total = page.total;
-        if (nextOffset <= priorOffset && priorOffset < total) {
-          throw new Error(
-            `Session refresh stopped at ${nextOffset} before the preserved extent ${targetOffset}`,
-          );
-        }
-      }
-      if (!this.owns(ticket, query, api)) return;
-      this.preserveRecovery.reset();
-      this.basePages = uniqueSessions(rows);
-      this.pruneHydration();
-      this.retry = null;
-      this.host.patch({
-        sessionListTotal: total,
-        sessionListIssues: [...issues.values()],
-        sessionListNextOffset: nextOffset,
-        sessionListLoading: false,
-        sessionListLoadingOlder: false,
-        sessionListOperation: null,
-        sessionListError: null,
+      this.basePages = uniqueSessions(
+        append ? this.basePages : [],
+        page.sessions,
+      );
+      if (!append) this.pruneHydration();
+      this.publishUnion({
+        ...listFeedback(),
+        sessionListTotal: page.total,
+        sessionListIssues: page.issues,
+        sessionListNextOffset: page.nextOffset,
       });
-      this.publishUnion();
       // Supplemental discovery must never hold back a confirmed base page.
-      if (!query.trim()) await this.hydrateCuration();
+      if (!append && !query.trim() && scope.current())
+        await this.hydrateCuration();
     } catch (error) {
-      if (!this.owns(ticket, query, api)) return;
+      if (!scope.current()) return;
       if (error instanceof ApiError && error.status === 401) {
-        this.retry = null;
-        this.host.patch({
-          sessionListLoading: false,
-          sessionListLoadingOlder: false,
-          sessionListOperation: null,
-        });
+        this.host.patch(listFeedback());
         this.host.handleAuthFailure();
         return;
       }
-      if (operation === "preserve") {
-        this.host.patch({
-          sessionListLoading: false,
-          sessionListLoadingOlder: false,
-          sessionListOperation: null,
-          sessionListError: null,
-        });
-        if (isTransientFailure(error))
-          this.preserveRecovery.schedule(() => {
-            if (this.owns(ticket, query, api))
-              void this.requestReset(
-                query,
-                ticket,
-                preserveOffset,
-                preserveTotal,
-                operation,
-              );
-          });
-      } else {
-        this.retry = { kind: "reset", query };
-        this.host.patch({
-          sessionListLoading: false,
-          sessionListLoadingOlder: false,
-          sessionListOperation: operation,
-          sessionListError:
+      if (operation !== null) {
+        this.retry = retry;
+        this.host.patch(
+          listFeedback(
+            retry.kind,
             error instanceof Error ? error.message : "Failed to list sessions",
-        });
+          ),
+        );
       }
     }
   }
 
-  private publishUnion(): void {
+  private async readPages(
+    api: Api,
+    signal: AbortSignal,
+    query: string,
+    action: ListAction,
+  ) {
+    const issues = new Map<string, SessionCatalogIssue>();
+    const sessions: SessionSummary[] = [];
+    const preserve = action.kind === "preserve" ? action : null;
+    let nextOffset = action.kind === "older" ? action.offset : 0;
+    let target = preserve?.offset ?? 0;
+    let page: SessionListResponse;
+    do {
+      signal.throwIfAborted();
+      const limit =
+        target > nextOffset
+          ? Math.min(MAX_SESSION_LIST_PAGE_SIZE, target - nextOffset)
+          : SESSION_PAGE_SIZE;
+      page = await api.sessions(query, nextOffset, limit, signal);
+      if (
+        page.offset !== nextOffset ||
+        (!page.sessions.length && nextOffset < page.total)
+      )
+        throw new Error(
+          "Session paging did not advance from its requested offset",
+        );
+      if (!sessions.length && preserve && target > 0)
+        target = Math.min(
+          page.total,
+          target + Math.max(0, page.total - preserve.total),
+        );
+      sessions.push(...page.sessions);
+      for (const issue of page.issues ?? []) issues.set(issue.path, issue);
+      nextOffset += page.sessions.length;
+    } while (nextOffset < target && nextOffset < page.total);
+    return {
+      sessions,
+      nextOffset,
+      total: page.total,
+      issues: [...issues.values()],
+    };
+  }
+
+  private publishUnion(patch: SessionCatalogPatch = {}): void {
     const state = this.host.state();
     this.host.patch({
+      ...patch,
       sessions: uniqueSessions(
         this.basePages,
         state.sessionQuery.trim() ? [] : this.hydration.values(),
@@ -555,9 +425,8 @@ export class SessionCatalogController {
 
   private cancelCurationRequest(): void {
     this.curationRecovery.reset();
-    this.curationRecoveryOwner = "";
-    this.curationTicket += 1;
-    this.curationRequestKey = null;
+    this.curation?.scope.abort();
+    this.curation = null;
   }
 
   private pruneHydration(): boolean {
@@ -575,9 +444,7 @@ export class SessionCatalogController {
   /** Reclassify already-known rows after confirmed curation changes. */
   reconcileCuration(): void {
     const ownerKey = this.curationOwnerKey();
-    const staleRequest =
-      this.curationRequestKey !== null && this.curationRequestKey !== ownerKey;
-    if (staleRequest) {
+    if (this.curation && this.curation.key !== ownerKey) {
       this.cancelCurationRequest();
       this.host.patch({ sessionListHydrating: false });
     }
@@ -592,51 +459,47 @@ export class SessionCatalogController {
    * pages, totals, and cursors stay untouched, and the operation remains a
    * quiet background reconciliation, including its bounded recovery window. */
   async hydrateCuration(): Promise<void> {
-    this.curationRecovery.cancel();
     this.reconcileCuration();
     const api = this.host.api();
-    const state = this.host.state();
-    if (!api || state.sessionQuery.trim()) return;
-    const ticket = ++this.curationTicket;
-    const ownerKey = this.curationOwnerKey();
-    if (ownerKey !== this.curationRecoveryOwner) {
-      this.curationRecovery.reset();
-      this.curationRecoveryOwner = ownerKey;
-    }
-    const query = state.sessionQuery;
-    const base = this.basePages;
-    this.curationRequestKey = ownerKey;
-    this.host.patch({ sessionListHydrating: true });
-    const ownsRequest = () =>
-      ticket === this.curationTicket &&
-      ownerKey === this.curationOwnerKey() &&
-      query === this.host.state().sessionQuery &&
-      api === this.host.api();
+    const query = this.host.state().sessionQuery;
+    if (!api || query.trim()) return;
 
+    this.curationRecovery.cancel();
+    this.curation?.scope.abort();
+    const key = this.curationOwnerKey();
+    const scope = readScope(
+      () =>
+        this.host.api() === api &&
+        this.host.state().sessionQuery === query &&
+        this.curationOwnerKey() === key,
+    );
+    this.curation = { key, scope };
+    this.host.patch({ sessionListHydrating: true });
+    let retryScheduled = false;
     try {
-      const hydration = await this.readSupplementalRows(api, base, ownsRequest);
-      if (!hydration || !ownsRequest()) return;
+      const hydration = await scope.read((signal) =>
+        this.readSupplementalRows(api, signal),
+      );
       this.curationRecovery.reset();
-      // An older page or live lookup may have completed while reading the
-      // supplemental rows. Merge against the current catalog in either order.
+      // Chronological pages can advance independently of curation.
       for (const [id, session] of hydration) this.hydration.set(id, session);
       this.pruneHydration();
       this.publishUnion();
       for (const id of this.liveSessionIds())
         void this.hydrateVisible(id, true);
     } catch (error) {
-      if (!ownsRequest()) return;
+      if (!scope.current()) return;
       if (error instanceof ApiError && error.status === 401) {
         this.host.handleAuthFailure();
         return;
       }
       if (isTransientFailure(error))
-        this.curationRecovery.schedule(() => {
-          if (ownsRequest()) void this.hydrateCuration();
+        retryScheduled = this.curationRecovery.schedule(() => {
+          if (scope.current()) void this.hydrateCuration();
         });
     } finally {
-      if (ownsRequest()) {
-        this.curationRequestKey = null;
+      if (this.curation?.scope === scope) {
+        if (!retryScheduled) this.curation = null;
         this.host.patch({ sessionListHydrating: false });
       }
     }
@@ -645,11 +508,10 @@ export class SessionCatalogController {
   /** Hydration is a separate atomic union, bounded by the route caps. */
   private async readSupplementalRows(
     api: Api,
-    base: readonly SessionSummary[],
-    isCurrent: () => boolean,
-  ): Promise<Map<string, SessionSummary> | null> {
+    signal: AbortSignal,
+  ): Promise<Map<string, SessionSummary>> {
     const { ids, cwds } = this.hydrationOwners(this.host.state().prefs);
-    const baseIds = new Set(base.map((session) => session.id));
+    const baseIds = new Set(this.basePages.map((session) => session.id));
     const hydration = new Map<string, SessionSummary>();
     const reads = [
       {
@@ -658,21 +520,21 @@ export class SessionCatalogController {
           (id) => !baseIds.has(id) && !this.hydration.has(id),
         ),
         limit: MAX_SESSION_ID_HYDRATION_IDS,
-        read: (chunk: string[]) => api.sessionsByIds(chunk),
+        read: (chunk: string[]) => api.sessionsByIds(chunk, signal),
       },
       {
         field: "cwd",
         owners: [...cwds],
         limit: MAX_SESSION_CWD_HYDRATION_CWDS,
-        read: (chunk: string[]) => api.sessionsByCwds(chunk),
+        read: (chunk: string[]) => api.sessionsByCwds(chunk, signal),
       },
     ] as const;
     for (const { field, owners, limit, read } of reads) {
       for (let index = 0; index < owners.length; index += limit) {
-        if (!isCurrent()) return null;
+        signal.throwIfAborted();
         const chunk = owners.slice(index, index + limit);
         const response = await read(chunk);
-        if (!isCurrent()) return null;
+        signal.throwIfAborted();
         const requested = new Set(chunk);
         for (const session of response.sessions) {
           if (requested.has(session[field]) && !baseIds.has(session.id))
@@ -695,28 +557,29 @@ export class SessionCatalogController {
       return;
 
     const read = previous ?? { recovery: new RecoveryBackoff(), request: null };
-    const request = new AbortController();
-    const { signal } = request;
-    read.request = request;
-    this.visibleReads.set(id, read);
-    const owns = () => {
+    const request = readScope(() => {
       const { sessionId, sessionStatuses, externalSessionActivities } =
         this.host.state();
       return (
-        !signal.aborted &&
         this.host.api() === api &&
         (sessionId === id ||
           Object.hasOwn(sessionStatuses, id) ||
           Object.hasOwn(externalSessionActivities ?? {}, id))
       );
-    };
+    });
+    read.request = request;
+    this.visibleReads.set(id, read);
+    const { signal, current } = request;
 
     try {
-      if (delayed && (!(await read.recovery.wait(signal)) || !owns())) return;
+      if (delayed && (!(await read.recovery.wait(signal)) || !current()))
+        return;
       do {
         try {
-          const { sessions } = await api.sessionsByIds([id], signal);
-          if (!owns() || this.hasSession(id)) return;
+          const { sessions } = await request.read((signal) =>
+            api.sessionsByIds([id], signal),
+          );
+          if (this.hasSession(id)) return;
           const session = sessions.find((row) => row.id === id);
           if (session) {
             this.hydration.set(id, session);
@@ -725,7 +588,7 @@ export class SessionCatalogController {
           }
           // A new Pi session may not have written its catalog row yet.
         } catch (error) {
-          if (!owns() || this.hasSession(id)) return;
+          if (!current() || this.hasSession(id)) return;
           if (error instanceof ApiError && error.status === 401) {
             this.host.handleAuthFailure();
             return;
@@ -734,13 +597,13 @@ export class SessionCatalogController {
         }
       } while (
         (await read.recovery.wait(signal)) &&
-        owns() &&
+        current() &&
         !this.hasSession(id)
       );
     } finally {
       if (this.visibleReads.get(id) === read) {
         read.request = null;
-        if (!owns() || this.hasSession(id)) this.retireVisibleRead(id);
+        if (!current() || this.hasSession(id)) this.retireVisibleRead(id);
       }
     }
   }
@@ -748,13 +611,5 @@ export class SessionCatalogController {
   private clearSearchTimer(): void {
     if (this.searchTimer) clearTimeout(this.searchTimer);
     this.searchTimer = null;
-  }
-
-  private owns(ticket: number, query: string, api: Api): boolean {
-    return (
-      ticket === this.loadTicket &&
-      query === this.host.state().sessionQuery &&
-      this.host.api() === api
-    );
   }
 }

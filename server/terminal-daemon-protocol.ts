@@ -7,13 +7,12 @@ import {
   installationKey,
 } from "./platform-paths.mjs";
 
-export const TERMINAL_DAEMON_PROTOCOL_VERSION = 5;
+export const TERMINAL_DAEMON_PROTOCOL_VERSION = 6;
 export const TERMINAL_DAEMON_READY_TYPE = "terminal_daemon_ready";
 
 export type TerminalDaemonRpcMethod =
   | "ping"
   | "getCatalog"
-  | "getGlobalCatalog"
   | "getSettings"
   | "getDaemonInfo"
   | "shutdownDaemon"
@@ -31,7 +30,6 @@ export interface TerminalDaemonRpcRequest {
 export interface TerminalDaemonAttachRequest {
   protocolVersion: number;
   mode: "attach";
-  terminalId: string;
   options: unknown;
 }
 

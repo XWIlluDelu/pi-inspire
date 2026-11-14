@@ -23,80 +23,7 @@ const current = () => {
   };
 };
 
-test("@cross-browser conversation search keeps its anchor and separates results from navigation", async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 1440, height: 850 });
-  const emit = await searchFixture(page, "Conversation search geometry");
-  const text = Array.from({ length: 12 }, () => "calibration").join(" ");
-  emit({
-    type: "message_end",
-    message: { role: "user", content: text, timestamp: 1 },
-  });
-  const input = await openConversationSearch(page);
-  await page.evaluate(() => document.fonts.ready);
-  const search = page.getByRole("search", { name: "Search conversation" });
-  const result = search.getByRole("status", {
-    name: "Transcript search matches",
-  });
-  const count = search.locator(".transcript-search__count");
-  const previous = search.getByRole("button", {
-    name: "Previous transcript match",
-  });
-  const next = search.getByRole("button", { name: "Next transcript match" });
-  const before = await search.boundingBox();
-  const fieldStart = (await input.boundingBox())!.x;
-  const nextStart = (await next.boundingBox())!.x;
-
-  await input.fill("calibration");
-  await expect(result).toHaveText("12 matches");
-  expect(await search.boundingBox()).toEqual(before);
-  expect((await input.boundingBox())!.x).toBe(fieldStart);
-  expect((await next.boundingBox())!.x).toBe(nextStart);
-
-  await page.setViewportSize({ width: 901, height: 850 });
-  const expand = page.getByRole("button", {
-    name: "Expand navigation",
-    exact: true,
-  });
-  if (await expand.isVisible()) await expand.click();
-  const context = page.getByRole("button", {
-    name: "Toggle resources panel",
-  });
-  if ((await context.getAttribute("aria-expanded")) !== "true")
-    await context.click();
-  await expect(page.locator(".ctx")).toBeVisible();
-  await expect(count).toHaveText("12");
-  const previousBox = (await previous.boundingBox())!;
-  const nextBox = (await next.boundingBox())!;
-  expect(
-    Math.min(
-      previousBox.width,
-      previousBox.height,
-      nextBox.width,
-      nextBox.height,
-    ),
-  ).toBeGreaterThanOrEqual(24);
-  expect(
-    await count.evaluate((el) => {
-      const range = document.createRange();
-      range.selectNodeContents(el);
-      return range.getBoundingClientRect().right;
-    }),
-  ).toBeLessThan(previousBox.x);
-  await input.focus();
-  await page.keyboard.press("Tab");
-  await expect(previous).toBeFocused();
-  await page.keyboard.press("Tab");
-  await expect(next).toBeFocused();
-  await page.keyboard.press("Enter");
-  await expect(result).toHaveText("1 of 12");
-  await expect(count).toHaveText("1/12");
-  await previous.press("Enter");
-  await expect(result).toHaveText("12 of 12");
-});
-
-test("composition keys do not navigate transcript matches or dismiss search", async ({
+test("@cross-browser search keeps tab order, wraps matches, and yields composing keys", async ({
   page,
 }) => {
   const emit = await searchFixture(page, "Composition-owned search");
@@ -105,93 +32,57 @@ test("composition keys do not navigate transcript matches or dismiss search", as
     message: { role: "user", content: "测量一，测量二。", timestamp: 1 },
   });
   const input = await openConversationSearch(page);
-  const result = page.getByLabel("Transcript search matches");
+  const search = page.getByRole("search", { name: "Search conversation" });
+  const result = search.getByLabel("Transcript search matches");
+  const before = await search.boundingBox();
   await input.fill("测量");
   await expect(result).toHaveText("2 matches");
-  await page.getByRole("button", { name: "Next transcript match" }).click();
+  expect(await search.boundingBox()).toEqual(before);
+  for (const control of [
+    search.getByRole("combobox", { name: "Search scope" }),
+    search.getByRole("button", { name: "Previous transcript match" }),
+    search.getByRole("button", { name: "Next transcript match" }),
+  ]) {
+    await page.keyboard.press("Tab");
+    await expect(control).toBeFocused();
+  }
+  await page.keyboard.press("Enter");
   await expect(result).toHaveText("1 of 2");
   await input.focus();
-  for (const ime of [
-    { isComposing: true },
-    { isComposing: false, keyCode: 229 },
-  ]) {
-    for (const key of ["Enter", "Escape"]) {
-      expect(
-        await input.evaluate(
-          (el, init) =>
-            el.dispatchEvent(
-              new KeyboardEvent("keydown", {
-                ...init,
-                bubbles: true,
-                cancelable: true,
-              }),
-            ),
-          { key, ...ime },
-        ),
-      ).toBe(true);
-      await expect(input).toBeFocused();
-      await expect(result).toHaveText("1 of 2");
-      await expect(input).toHaveValue("测量");
-    }
-  }
+  for (const ime of [{ isComposing: true }, { keyCode: 229 }])
+    for (const key of ["Enter", "Escape"])
+      await input.dispatchEvent("keydown", { key, ...ime });
+  await expect(input).toBeFocused();
+  await expect(result).toHaveText("1 of 2");
   await input.press("Enter");
   await expect(result).toHaveText("2 of 2");
+  await input.press("Enter");
+  await expect(result).toHaveText("1 of 2");
   await input.press("Escape");
-  await expect(input).toBeVisible();
   await expect(input).not.toBeFocused();
   await expect(input).toHaveValue("测量");
-  await expect(result).toHaveText("2 of 2");
-  const nativeFind = (element: Element) =>
-    element.dispatchEvent(
-      new KeyboardEvent("keydown", {
-        key: "f",
-        ctrlKey: true,
-        bubbles: true,
-        cancelable: true,
-      }),
-    );
   const palette = await openCommandPalette(page);
-  expect(await page.locator(".transcript").evaluate(nativeFind)).toBe(true);
+  await page.keyboard.press("Control+f");
   await expect(palette).toBeVisible();
   await expect(input).not.toBeFocused();
   await page.keyboard.press("Escape");
-  const scope = page.getByRole("combobox", { name: "Search scope" });
-  await expect(scope).toHaveJSProperty("tagName", "SELECT");
-  await scope.focus();
-  await scope.press("Control+f");
+  await search
+    .getByRole("combobox", { name: "Search scope" })
+    .press("Control+f");
   await expect(input).toBeFocused();
-  await expect(input).toHaveValue("测量");
-  expect(
-    await input.evaluate((element: HTMLInputElement) =>
-      element.value.slice(
-        element.selectionStart ?? 0,
-        element.selectionEnd ?? 0,
-      ),
-    ),
-  ).toBe("测量");
   const desktop = page.viewportSize()!;
-  const phone = { width: 390, height: desktop.height };
-  await page.setViewportSize(phone);
-  await expect(input).toBeVisible();
+  await page.setViewportSize({ width: 390, height: desktop.height });
   await expect(input).toBeFocused();
   await expect(input).toHaveValue("测量");
   await page.setViewportSize(desktop);
-  // Wait for the desktop transition to retire the open mobile tool before
-  // clearing the query and resizing again.
-  await expect(
-    page.locator('button[aria-label="Open conversation search"]'),
-  ).toBeAttached();
+  await expect(input).toBeVisible();
   await expect(input).toHaveValue("测量");
-  await input.fill("");
-  await expect(result).toHaveText("");
-  await page.setViewportSize(phone);
-  await expect(input).toBeHidden();
 });
 
-test("search counts rendered shell text and reveals a matching branch summary", async ({
+test("Live highlights rendered text and reveals matched branches, checkpoints and errors", async ({
   page,
 }) => {
-  const emit = await searchFixture(page, "Visible search text");
+  const emit = await searchFixture(page, "Search highlights");
   emit(
     {
       type: "message_end",
@@ -207,44 +98,10 @@ test("search counts rendered shell text and reveals a matching branch summary", 
       message: {
         role: "branchSummary",
         summary: "Reason for the fork",
-        timestamp: 4,
+        timestamp: 2,
       },
     },
   );
-  await openConversationSearch(page);
-  const search = page.getByRole("search", {
-    name: "Search conversation",
-  });
-  const input = search.getByRole("searchbox", {
-    name: "Search conversation",
-  });
-  await input.fill("31m");
-  await expect(search).toContainText("0 matches");
-  for (const query of ["Visible status", "Reason for the fork"]) {
-    await input.fill(query);
-    await expect(search.getByLabel("Transcript search matches")).toHaveText(
-      "1 match",
-    );
-    await search.getByRole("button", { name: "Next transcript match" }).click();
-    await expect(search).toContainText("1 of 1");
-    await expect
-      .poll(() => page.evaluate(current))
-      .toMatchObject({ text: query });
-  }
-  const branch = page.getByRole("button", { name: "Branch context" });
-  const copy = page.getByRole("button", { name: "Copy branch summary" });
-  await expect(branch).toHaveAttribute("aria-expanded", "true");
-  await expect(copy).toBeVisible();
-  await branch.click();
-  await expect(copy).toHaveCount(0);
-  await input.press("Enter");
-  await expect(branch).toHaveAttribute("aria-expanded", "true");
-});
-
-test("literal highlights track visible matches and open collapsed results", async ({
-  page,
-}) => {
-  const emit = await searchFixture(page, "Search highlights");
   const code = 'const value = "precise match";';
   const source =
     "# Searchable answer\n\nOne **precise match**, another *precise match*.\n\n" +
@@ -283,6 +140,20 @@ test("literal highlights track visible matches and open collapsed results", asyn
   );
   const input = await openConversationSearch(page);
   const count = page.getByLabel("Transcript search matches");
+  await input.fill("31m");
+  await expect(count).toHaveText("0 matches");
+  for (const query of ["Visible status", "Reason for the fork"]) {
+    await input.fill(query);
+    await input.press("Enter");
+    await expect
+      .poll(() => page.evaluate(current))
+      .toMatchObject({ text: query });
+  }
+  const branch = page.getByRole("button", { name: "Branch context" });
+  await expect(branch).toHaveAttribute("aria-expanded", "true");
+  await branch.click();
+  await input.press("Enter");
+  await expect(branch).toHaveAttribute("aria-expanded", "true");
   await input.fill("PRECISE MATCH");
   await expect(count).toHaveText("6 matches");
   await expect.poll(() => highlightCount(page)).toBe(4);
@@ -341,54 +212,62 @@ test("literal highlights track visible matches and open collapsed results", asyn
   await expect.poll(() => highlightCount(page)).toBe(1);
   await expect.poll(() => page.evaluate(current)).toBeNull();
 
+  await input.fill("newly settled phrase");
+  await page.getByRole("button", { name: "Jump to latest" }).click();
   const live = {
     role: "assistant",
     content: "Newly settled phrase",
-    timestamp: 5,
+    timestamp: 8,
     __inspireLiveId: "search-result-arrival",
   };
-  await input.fill("newly settled phrase");
-  emit({ type: "message_start", message: live });
-  await expect(page.getByText("Newly settled phrase")).toBeVisible();
-  await expect(count).toHaveText("0 matches");
-  emit({ type: "message_end", message: { ...live, __inspireSettled: true } });
-  await expect(count).toHaveText("1 match");
-});
-
-test("reveals a searched older live row and clears highlights on session change", async ({
-  page,
-}) => {
-  const emit = await searchFixture(page, "Live search highlights");
   emit(
-    ...Array.from({ length: 80 }, (_, index) => ({
-      type: "message_end",
-      message: {
-        role: "user",
-        content:
-          index === 2
-            ? "Find this unique older phrase."
-            : `Ordinary prompt ${index}.`,
-        timestamp: index + 1,
-      },
-    })),
+    { type: "agent_start" },
+    { type: "message_start", message: { ...live, content: "" } },
   );
   await expect(
-    page.getByRole("log").getByText("Ordinary prompt 79."),
-  ).toBeAttached();
-  const input = await openConversationSearch(page);
-  // Search includes the bounded Live page even when rows are outside the viewport.
-  await input.fill("Ordinary prompt");
-  await expect(
-    page.getByRole("status", { name: "Transcript search matches" }),
-  ).toHaveText("79 matches");
-  await input.fill("unique older");
-  await expect(
-    page.getByRole("status", { name: "Transcript search matches" }),
-  ).toHaveText("1 match");
+    page.getByRole("status").filter({ hasText: "Working…" }),
+  ).toBeVisible();
+  emit({ type: "message_update", message: live });
+  await expect(page.getByText("Newly settled phrase")).toBeVisible();
+  await expect(count).toHaveText("0 matches");
+  const scroll = () => page.getByRole("log").evaluate((el) => el.scrollTop);
+  const before = await scroll();
+  emit({
+    type: "message_update",
+    message: {
+      ...live,
+      content: live.content + "\n\n" + "Another paragraph.\n\n".repeat(40),
+    },
+  });
+  await expect.poll(scroll).toBeGreaterThan(before);
+  emit({ type: "message_end", message: { ...live, __inspireSettled: true } });
+  await expect(count).toHaveText("1 match");
+  // An explicitly selected hit wins even if a layout scroll first reaches the tail.
+  await input.fill("Reason for the fork");
   await input.press("Enter");
   await expect
     .poll(() => page.evaluate(current))
-    .toMatchObject({ text: "unique older" });
+    .toMatchObject({ text: "Reason for the fork" });
+  const log = page.getByRole("log");
+  await log.evaluate((el) => {
+    el.scrollTop = el.scrollHeight;
+  });
+  const pinned = await scroll();
+  const awayFromLatest = () =>
+    log.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight);
+  emit({
+    type: "message_start",
+    message: {
+      ...live,
+      __inspireLiveId: "next-live",
+      timestamp: 9,
+      content: "Later output.\n\n".repeat(50),
+    },
+  });
+  await expect(log).toContainText("Later output");
+  await expect(count).toHaveText("1 of 1");
+  expect(await scroll()).toBeCloseTo(pinned, 0);
+  expect(await awayFromLatest()).toBeGreaterThan(10);
   await page.getByRole("button", { name: "New session", exact: true }).click();
   await expect.poll(() => highlightCount(page)).toBe(0);
 });

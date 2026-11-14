@@ -113,12 +113,17 @@ wrote them. While an unresolved tail exists, Host writer admission fails. Comple
 tail preserves the existing file generation; replacing or truncating it retires an owned worker.
 Source replacement invalidates saved cursors even when bytes are unchanged.
 
-The Host bridge reads the public session manager at turn start and agent settlement. Its checkpoint
+The Host bridge reads the public session manager at turn start, before a model call and at
+agent settlement. Its checkpoint
 names the worker, native context generation, session, previous cursor, last entry and actual leaf.
 Ordered bounded frames carry only the new native entries. A completed batch updates the worker
 index, after confirming that it continues the admitted cursor. Idle custom messages, commands,
 Bash, compaction and file changes can request a coalesced native checkpoint. An in-progress
-checkpoint does not finalize live presentation.
+checkpoint can extend the native cursor. The visible leaf advances only when its seal can replace
+the matching live rows in the same publication.
+The disk reader and worker checkpoint use the same native entry indexing and query code.
+Their source versions and leaves advance independently. A replaced or rewritten saved source
+retires the old history cursor generation and invalidates composer recall from that source.
 
 At a sealed boundary, compare ordered occurrences in that native suffix. Saved rows use native
 entry IDs; transient rows keep their own stream identity. Matching the same content twice requires

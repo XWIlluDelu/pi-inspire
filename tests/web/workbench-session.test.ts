@@ -203,7 +203,7 @@ describe("browser workbench restoration", () => {
     async (context) => {
       const first = await reload();
       await first.openResource("one.txt");
-      if (context === "terminal") first.setContextMode("terminal");
+      if (context === "terminal") first.openContextMode("terminal");
       else first.setResourcesOpen(false);
 
       const second = await reload();
@@ -268,7 +268,7 @@ describe("browser workbench restoration", () => {
         workspaceExpandedDirs: ["src"],
         workspaceShowHidden: true,
       });
-      if (gesture === "terminal") store.setContextMode("terminal");
+      if (gesture === "terminal") store.openContextMode("terminal");
       if (gesture === "browse") store.showFileBrowser();
       if (gesture === "close") store.setResourcesOpen(false);
       await reconnect();
@@ -308,7 +308,7 @@ describe("browser workbench restoration", () => {
       status: "loading",
       reference: "one.txt",
     });
-    store.setContextMode("terminal");
+    store.openContextMode("terminal");
     bootstrapFailure = false;
     await store.init();
     join();

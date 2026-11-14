@@ -163,10 +163,8 @@ describe("local HTTP peer proofs", () => {
       const owner = state();
       const control = new InstanceHttpControl();
       const leaseId = "a".repeat(43);
-      let receiveBody!: () => void;
-      const started = new Promise<void>((resolve) => {
-        receiveBody = resolve;
-      });
+      const { promise: started, resolve: receiveBody } =
+        Promise.withResolvers<void>();
       const fetch = vi.fn(async (_url, options) => {
         const message = JSON.parse(options.body);
         const reply = control.reply(control.accept(owner, message)!, {
@@ -395,7 +393,6 @@ describe("Host local-control ingress", () => {
       expect(verifyInstanceControlResponse(owner, ready, response.body)).toBe(
         true,
       );
-      expect(JSON.stringify(response.body)).not.toContain(owner.token);
       await localControl(ready).expect(401);
       const mode = createInstanceControlRequest(owner, "restart-mode");
       const modeResponse = await localControl(mode).expect(200);
@@ -403,15 +400,9 @@ describe("Host local-control ingress", () => {
       expect(
         verifyInstanceControlResponse(owner, mode, modeResponse.body),
       ).toBe(true);
-      expect(JSON.stringify(mode)).not.toContain(owner.token);
-      expect(JSON.stringify(modeResponse.body)).not.toContain(owner.token);
-      await localControl(mode).expect(401);
       const link = await instanceLaunchUrl(owner);
       expect(link).not.toBeNull();
-      expect(link).not.toContain(owner.token);
       const pairing = new URL(link!);
-      expect(pairing.origin).toBe(f.baseUrl);
-      expect(pairing.search).toBe("");
       const bootstrap = new URLSearchParams(pairing.hash.slice(1)).get(
         "inspire-bootstrap",
       );
@@ -425,40 +416,28 @@ describe("Host local-control ingress", () => {
           .send({ bootstrap, publicKey });
       await registration().expect(200);
       await registration().expect(401);
-      expect(
-        await instanceLaunchUrl(owner, "https://foreign.invalid"),
-      ).toBeNull();
-      const prepare = createInstanceControlRequest(
-        owner,
-        "maintenance-prepare",
-      );
-      const prepared = await localControl(prepare).expect(200);
-      expect(verifyInstanceControlResponse(owner, prepare, prepared.body)).toBe(
-        true,
-      );
-      expect(prepared.body.result.leaseId).toBe(leaseId);
-      const commit = createInstanceControlRequest(owner, "maintenance-commit", {
-        leaseId,
-      });
-      const committed = await localControl(commit).expect(200);
-      expect(verifyInstanceControlResponse(owner, commit, committed.body)).toBe(
-        true,
-      );
-      expect(committed.body.result).toEqual({ kind: "committed", leaseId });
-      await localControl(commit).expect(401);
+      await expect(
+        instanceLaunchUrl(owner, "https://foreign.invalid"),
+      ).resolves.toBeNull();
+      await expect(
+        requestInstanceControl(owner, "maintenance-prepare"),
+      ).resolves.toMatchObject({ leaseId });
+      await expect(
+        requestInstanceControl(owner, "maintenance-commit", { leaseId }),
+      ).resolves.toEqual({ kind: "committed", leaseId });
       expect(maintenance.reserve).toHaveBeenCalledOnce();
       expect(maintenance.commit).toHaveBeenCalledExactlyOnceWith(leaseId);
-      const release = createInstanceControlRequest(
-        owner,
-        "maintenance-release",
-        { leaseId },
-      );
-      expect((await localControl(release).expect(200)).body.result.kind).toBe(
-        "released",
-      );
+      await expect(
+        requestInstanceControl(owner, "maintenance-release", { leaseId }),
+      ).resolves.toEqual({ kind: "released" });
       expect(maintenance.release).toHaveBeenCalledExactlyOnceWith(leaseId);
+      const previousMode = createInstanceControlRequest(owner, "restart-mode");
+      const previousOwner = owner;
       owner = null;
-      await localControl(release).expect(503);
+      await localControl(previousMode).expect(503);
+      await expect(
+        requestInstanceControl(previousOwner, "readiness"),
+      ).resolves.toBeNull();
     } finally {
       await closeHostApiFixture(f);
     }

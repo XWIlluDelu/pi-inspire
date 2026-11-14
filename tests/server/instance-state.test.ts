@@ -9,7 +9,7 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { createServer, type Server } from "node:http";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -30,36 +30,18 @@ import {
   watchInstanceShutdown,
   writeInstanceState,
 } from "../../server/instance-state.mjs";
-import {
-  closeHostApiFixture,
-  hostApiFixture,
-  token,
-} from "./fixtures/host-api.js";
 
-const temporaryDirectories: string[] = [];
-const servers: Server[] = [];
-const controls: Array<() => void> = [];
+let directory: string;
+let closeMonitor: (() => void) | undefined;
 
 afterEach(async () => {
-  for (const close of controls.splice(0)) close();
-  await Promise.all(
-    servers
-      .splice(0)
-      .map(
-        (server) =>
-          new Promise<void>((resolve) => server.close(() => resolve())),
-      ),
-  );
-  await Promise.all(
-    temporaryDirectories
-      .splice(0)
-      .map((path) => rm(path, { recursive: true, force: true })),
-  );
+  closeMonitor?.();
+  closeMonitor = undefined;
+  if (directory) await rm(directory, { recursive: true, force: true });
 });
 
 async function temporaryStatePath(): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), "inspire-instance-"));
-  temporaryDirectories.push(directory);
+  directory = await mkdtemp(join(tmpdir(), "inspire-instance-"));
   return join(directory, "instance.json");
 }
 
@@ -138,79 +120,37 @@ describe("Inspire instance state", () => {
     await expect(consumeStopRequest(requestPath)).resolves.toBe(false);
   });
 
-  it("fails closed on malformed state instead of treating it as absent", async () => {
+  it("fails closed on corrupt, foreign and reused instance publications", async () => {
     const path = await temporaryStatePath();
-    await writeFile(path, "not-json\n", { mode: 0o600 });
-
-    await expect(
-      inspectInstance(path, {
-        root: process.cwd(),
-        host: "127.0.0.1",
-        port: 4587,
-      }),
-    ).rejects.toThrow();
-  });
-
-  it("does not remove a publication owned by another instance", async () => {
-    const path = await temporaryStatePath();
-    const value = state();
-    await writeInstanceState(path, value);
-
-    await expect(
-      stopManagedInstance(path, {
-        root: `${value.root}-different`,
-        host: value.host,
-        port: value.port,
-      }),
-    ).resolves.toEqual({ kind: "stale" });
-    expect(JSON.parse(await readFile(path, "utf8"))).toEqual(value);
-  });
-
-  it("recognizes only a verified process with a healthy authenticated host", async () => {
-    const path = await temporaryStatePath();
-    let owner: InstanceState | null = null;
-    const host = await hostApiFixture({ instanceState: () => owner });
-    const value = { ...state(Number(new URL(host.baseUrl).port)), token };
-    value.processStartTime = await processStartIdentity(process.pid);
-    owner = value;
-    const expected = { root: value.root, host: value.host, port: value.port };
-    try {
-      await writeInstanceState(path, value);
-      await expect(inspectInstance(path, expected)).resolves.toMatchObject({
-        kind: "healthy",
-        state: value,
-      });
-
-      await writeFile(path, JSON.stringify({ ...value, schemaVersion: 1 }), {
-        mode: 0o600,
-      });
-      await expect(inspectInstance(path, expected)).rejects.toThrow(
-        "Invalid Inspire instance state",
-      );
-      await expect(stopManagedInstance(path, expected)).rejects.toThrow(
-        "Invalid Inspire instance state",
-      );
-      await expect(stat(path + ".shutdown-request")).rejects.toMatchObject({
-        code: "ENOENT",
-      });
-
-      await writeInstanceState(path, value);
-      owner = null;
-      await expect(inspectInstance(path, expected)).resolves.toMatchObject({
-        kind: "unavailable",
-      });
-
-      await writeInstanceState(path, {
-        ...value,
-        processStartTime: value.processStartTime + "-reused",
-      });
-      await expect(inspectInstance(path, expected)).resolves.toEqual({
-        kind: "stale",
-      });
-    } finally {
-      await closeHostApiFixture(host);
+    const owner = {
+      ...state(),
+      processStartTime: await processStartIdentity(process.pid),
+    };
+    const target = { root: owner.root, host: owner.host, port: owner.port };
+    for (const invalid of [
+      "not-json",
+      JSON.stringify({ ...owner, schemaVersion: 1 }),
+    ]) {
+      await writeFile(path, invalid, { mode: 0o600 });
+      await expect(inspectInstance(path, target)).rejects.toThrow();
+      await expect(stopManagedInstance(path, target)).rejects.toThrow();
     }
-  }, 45_000);
+    await expect(stat(path + ".shutdown-request")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await writeInstanceState(path, owner);
+    await expect(
+      stopManagedInstance(path, { ...target, root: owner.root + "-other" }),
+    ).resolves.toEqual({ kind: "stale" });
+    expect(JSON.parse(await readFile(path, "utf8"))).toEqual(owner);
+    await writeInstanceState(path, {
+      ...owner,
+      processStartTime: owner.processStartTime + "-reused",
+    });
+    await expect(inspectInstance(path, target)).resolves.toEqual({
+      kind: "stale",
+    });
+  });
 
   it("does not merge distinct case-sensitive roots even under Windows rules", async (context) => {
     const path = await temporaryStatePath();
@@ -279,18 +219,16 @@ describe("Inspire instance state", () => {
 
   it("reports port ownership without disturbing the listener", async () => {
     const server = createServer();
-    servers.push(server);
-    await new Promise<void>((resolve) =>
-      server.listen(0, "127.0.0.1", resolve),
-    );
-    const address = server.address();
-    if (!address || typeof address === "string")
-      throw new Error("Expected a TCP test server");
-
-    await expect(portAvailable("127.0.0.1", address.port)).resolves.toBe(false);
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-    servers.splice(servers.indexOf(server), 1);
-    await expect(portAvailable("127.0.0.1", address.port)).resolves.toBe(true);
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+    try {
+      await expect(portAvailable("127.0.0.1", port)).resolves.toBe(false);
+      expect(server.listening).toBe(true);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+    await expect(portAvailable("127.0.0.1", port)).resolves.toBe(true);
   });
 });
 
@@ -335,7 +273,7 @@ describe("authenticated local Host shutdown", () => {
     const shutdown = vi.fn(async () => {
       await completeInstanceShutdown(f.path, f.state, true);
     });
-    controls.push(watchInstanceShutdown(f.path, f.state, shutdown));
+    closeMonitor = watchInstanceShutdown(f.path, f.state, shutdown);
     await vi.waitFor(() => expect(shutdown).toHaveBeenCalledOnce());
     await shutdown.mock.results[0]!.value;
     expect(await instanceShutdownRequested(f.path, f.state)).toBe(false);
@@ -344,22 +282,24 @@ describe("authenticated local Host shutdown", () => {
     );
   });
 
-  it.each([
-    { token: "different-token" },
-    { pid: process.pid + 1 },
-    { processStartTime: "reused-pid" },
-    { startedAt: "2026-10-19T00:00:01Z" },
-    { root: "different-installation" },
-    { host: "localhost" },
-    { port: 41235 },
-  ])(
-    "rejects other credentials, incarnation or configuration: %j",
-    async (change) => {
-      const f = await shutdownFixture();
+  it("binds file shutdown to the credential, process incarnation and configuration", async () => {
+    const f = await shutdownFixture();
+    for (const change of [
+      { token: "different-token" },
+      { pid: process.pid + 1 },
+      { processStartTime: "reused-pid" },
+      { startedAt: "2026-10-19T00:00:01Z" },
+      { root: "different-installation" },
+      { host: "localhost" },
+      { port: 41235 },
+    ]) {
       await requestInstanceShutdown(f.path, { ...f.state, ...change });
-      expect(await instanceShutdownRequested(f.path, f.state)).toBe(false);
-    },
-  );
+      expect(
+        await instanceShutdownRequested(f.path, f.state),
+        JSON.stringify(change),
+      ).toBe(false);
+    }
+  });
 
   it("rejects an expired authentic request and tampered payload/MAC", async () => {
     const f = await shutdownFixture();

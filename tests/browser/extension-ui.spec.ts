@@ -8,7 +8,6 @@ import type {
   ExtensionUiRequest,
   SupportedExtensionUiRequest,
 } from "../../shared/contracts";
-import { modelSettingsScenario } from "./fixtures/model-settings";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
 import { clipboardLines } from "./support/clipboard";
 import { routeSnapshots } from "./support/host-events";
@@ -256,7 +255,6 @@ test.describe("narrow Settings interruption", () => {
     page,
   }) => {
     await page.setViewportSize({ width: 390, height: 844 });
-    await modelSettingsScenario(page, "dark");
     const fixture = await openExample(page, "dark");
     await openSettings(page);
     const settings = page.getByRole("dialog", {

@@ -3,7 +3,7 @@ import { type RefObject, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import type { SessionActionId } from "../../shared/contracts";
 import { isComposingKeyboardEvent } from "../keyboard-input";
-import { SESSION_ACTION_LABELS } from "../session-actions";
+import { sessionActions } from "../session-actions";
 import { useCopied } from "../use-copied";
 import {
   type FloatingMenuConstraints,
@@ -87,7 +87,7 @@ export function SessionActionsMenu({
   const attachMenu = useCallback((node: HTMLDivElement | null) => {
     menuRef.current = node;
     node
-      ?.querySelector<HTMLButtonElement>("[data-session-action]:not(:disabled)")
+      ?.querySelector<HTMLButtonElement>("button:enabled")
       ?.focus({ preventScroll: true });
   }, []);
 
@@ -146,12 +146,12 @@ export function SessionActionsMenu({
       {actionOrder.map((id) => {
         const Icon = id === "copy-id" ? null : ACTION_ICONS[id];
         const action = actions[id];
+        const { title } = sessionActions[id];
         return (
           <button
             key={id}
             type="button"
             role="menuitem"
-            data-session-action
             data-copied={id === "copy-id" && copied ? "true" : undefined}
             disabled={action.disabled}
             aria-disabled={id === "copy-id" ? copying : undefined}
@@ -162,14 +162,8 @@ export function SessionActionsMenu({
             ) : Icon ? (
               <Icon size={14} aria-hidden />
             ) : null}
-            <ButtonLabel
-              reserve={
-                id === "copy-id" && copied ? SESSION_ACTION_LABELS[id] : []
-              }
-            >
-              {id === "copy-id" && copied
-                ? "ID copied"
-                : SESSION_ACTION_LABELS[id]}
+            <ButtonLabel reserve={id === "copy-id" && copied ? title : []}>
+              {id === "copy-id" && copied ? "ID copied" : title}
             </ButtonLabel>
           </button>
         );

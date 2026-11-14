@@ -174,7 +174,10 @@ describe("writer startup attestation", () => {
     await vi.waitFor(() => expect(workers[0]!.stops).toBe(1));
     expect(sequence).not.toContain("start");
     expect(workers[0]!.commands).toEqual([]);
-    expect((await runtime.snapshot("session-a")).runState).toBe("failed");
+    expect(
+      (await runtime.snapshot("session-a")).sessionStatuses["session-a"]
+        ?.runState,
+    ).toBe("failed");
   });
 
   it.each([
@@ -264,7 +267,10 @@ describe("writer startup attestation", () => {
     async ({ prepare }) => {
       const { runtime, workers } = await setup([], prepare);
       await vi.waitFor(() => expect(workers[0]!.stops).toBe(1));
-      expect((await runtime.snapshot("session-a")).runState).toBe("failed");
+      expect(
+        (await runtime.snapshot("session-a")).sessionStatuses["session-a"]
+          ?.runState,
+      ).toBe("failed");
       expect(workers).toHaveLength(1);
       expect(workers[0]!.commands).not.toContainEqual({
         type: "get_commands",

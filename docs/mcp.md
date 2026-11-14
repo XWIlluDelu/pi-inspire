@@ -16,16 +16,17 @@ User configuration stays available without a selected project or when the select
 directory is unavailable. Project-file errors do not block user-file edits; project edits require an
 existing project directory and do not recreate missing directories.
 
-Each group shows the configuration file's path. A full project definition replaces the same-name
+Settings shows each configuration file's path. The **MCP server** selector identifies entries by
+name and scope. A full project definition replaces the same-name
 user definition. Policy-only project entries inherit the user connection
 and override enabled state, exposure or per-tool rules. Their editor offers **Inherit from user**
 for enabled/exposure and keeps connection settings and credentials in the user file.
 
 To customize an existing user server for the current project, choose **Customize for this project**
-on its User row. The name and project are fixed; settings start at **Inherit from user**. Choose only
+after selecting its User entry. The name and project are fixed; settings start at **Inherit from user**. Choose only
 the policy you want to override, such as **Enabled in this project → Disabled**, then save. Inspire
 writes just that policy, not a second copy of the connection or credentials. Edit the resulting
-Project row to change the policy; remove that row to restore user inheritance. The shortcut is shown
+Project entry to change the policy; remove it to restore user inheritance. The shortcut is shown
 only when the project file is editable and has no same-name entry yet.
 
 Saving does not grant project trust; use Pi's native trust workflow. Keep personal servers and
@@ -34,7 +35,7 @@ credentials in the user file.
 ## Add or edit a server
 
 Choose **Add server**, enter its name and select **User · all projects** or **This project** as the
-destination. To change an existing entry, open its editor in the corresponding group.
+destination. To change an existing entry, select it and choose **Edit**.
 
 Choose **HTTP** for a streamable HTTP endpoint, or **Stdio** for an executable and separate argument
 rows. The program is one executable, not a shell command. Each argument row is one argument,

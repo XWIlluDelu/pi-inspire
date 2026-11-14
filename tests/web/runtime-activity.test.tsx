@@ -135,7 +135,7 @@ describe("runtime-owned activity", () => {
             message: "Context compacted.",
           }),
         );
-        expect(store.getState().notices.at(-1)?.text).toBe(
+        expect(store.getState().live.notices.at(-1)?.text).toBe(
           "Context compacted.",
         );
       };
@@ -143,7 +143,9 @@ describe("runtime-owned activity", () => {
         void store.sendPrompt("/compact");
       });
       expect(progress()).not.toBeInTheDocument();
-      snapshot.runState = "compacting";
+      snapshot.sessionStatuses[snapshot.active!.sessionId] = {
+        runState: "compacting",
+      };
       start("manual");
       expect(progress()).toHaveTextContent("Compacting context");
 
@@ -151,7 +153,9 @@ describe("runtime-owned activity", () => {
         await completeCommand();
         expect(progress()).toHaveTextContent("Compacting context");
       }
-      snapshot.runState = "idle";
+      snapshot.sessionStatuses[snapshot.active!.sessionId] = {
+        runState: "idle",
+      };
       finish("manual", { result: { summary: "Pi-owned summary" } });
       expect(progress()).not.toBeInTheDocument();
       if (order === "end event first") await completeCommand();
@@ -171,7 +175,7 @@ describe("runtime-owned activity", () => {
         errorMessage: "background quota failure",
       }),
     );
-    expect(store.getState().notices).not.toContainEqual(
+    expect(store.getState().live.notices).not.toContainEqual(
       expect.objectContaining({
         text: expect.stringContaining("background quota failure"),
       }),
@@ -188,7 +192,7 @@ describe("runtime-owned activity", () => {
       expect(selectedRunState(store.getState())).toBe("idle"),
     );
     expect(progress()).not.toBeInTheDocument();
-    expect(store.getState().notices.at(-1)).toMatchObject({
+    expect(store.getState().live.notices.at(-1)).toMatchObject({
       kind: "error",
       text: "Automatic context compaction failed: Provider quota exceeded",
     });
@@ -197,7 +201,9 @@ describe("runtime-owned activity", () => {
   it("renders retry detail from a snapshot and discards it when switching sessions", async () => {
     const emitSnapshot = () => act(() => socket().emitSnapshot(snapshot));
     renderActivity();
-    snapshot.runState = "retrying";
+    snapshot.sessionStatuses[snapshot.active!.sessionId] = {
+      runState: "retrying",
+    };
     snapshot.retry = retry;
     emitSnapshot();
     expect(retryStatus()).toHaveTextContent("Retry 2/3 — Provider overloaded");
@@ -228,7 +234,9 @@ describe("runtime-owned activity", () => {
   });
 
   it("restores compaction backoff on entry and retires it as attempts resume or finish", async () => {
-    snapshot.runState = "compacting";
+    snapshot.sessionStatuses[snapshot.active!.sessionId] = {
+      runState: "compacting",
+    };
     snapshot.summarizationRetry = retry;
     act(() => socket().emitSnapshot(snapshot));
     renderActivity();
@@ -259,7 +267,9 @@ describe("runtime-owned activity", () => {
     update("summarization_retry_finished");
     expect(progress()).toHaveTextContent("Compacting context");
 
-    snapshot.runState = "failed";
+    snapshot.sessionStatuses[snapshot.active!.sessionId] = {
+      runState: "failed",
+    };
     finish("manual", {
       errorMessage: "Summary provider unavailable",
       result: null,
@@ -269,7 +279,7 @@ describe("runtime-owned activity", () => {
       expect(selectedRunState(store.getState())).toBe("failed"),
     );
     expect(progress()).not.toBeInTheDocument();
-    expect(store.getState().notices.at(-1)?.text).toContain(
+    expect(store.getState().live.notices.at(-1)?.text).toContain(
       "Summary provider unavailable",
     );
   });
@@ -335,7 +345,6 @@ describe("phase event reduction", () => {
           ...emptyEventSlice(),
           summarizationRetry: retry,
         },
-        new Set(),
         {
           type: "compaction_end",
           sessionStatus,

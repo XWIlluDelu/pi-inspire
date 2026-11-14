@@ -99,7 +99,7 @@ test("unavailable-project history keeps its reading surface at desktop and phone
   await palette.getByLabel("Filter commands").fill("history");
   await palette.getByRole("option", { name: /Open History/ }).click();
   await expect(
-    page.getByRole("textbox", { name: "Search this branch" }),
+    page.getByRole("searchbox", { name: "Search this branch" }),
   ).toBeVisible();
   await expect(
     page.getByRole("region", { name: "Turn history" }),

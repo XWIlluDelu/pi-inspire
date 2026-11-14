@@ -236,6 +236,6 @@ the continuation in place. The command palette still offers the restore action. 
 in the session menu copies through the displayed point without changing the source session.
 
 Use the Host's navigation lease and durable/effective leaf pair for this presentation. A difference
-caused by following an attached Pi or viewing a saved session alone does not qualify. Fit the notice
-to its content and the available reading stage. Reserve only the measured clearance needed above the
-transcript and its scroll targets, including when diagnostics wrap.
+caused by following an attached Pi or viewing a saved session alone does not qualify. The notice fits
+the reading stage in normal flow above the transcript. Wrapped diagnostics resize the notice and
+leave the reading viewport and restore control accessible.

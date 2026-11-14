@@ -5,7 +5,6 @@ import {
   randomBytes,
   timingSafeEqual,
 } from "node:crypto";
-import { EventEmitter } from "node:events";
 import { type FSWatcher, watch } from "node:fs";
 import { stat } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
@@ -85,7 +84,6 @@ const CURSOR_KEY = randomBytes(32);
 interface Candidate {
   identity: SessionSourceIdentity;
   fingerprint: string;
-  hashState: Hash;
   committedBytes: number;
   uncommittedBytes: number;
   uncommittedFingerprint: string | null;
@@ -96,10 +94,6 @@ interface Candidate {
   header: SessionHeader | null;
   entries: SessionEntry[];
   entriesById: Map<string, SessionEntry>;
-  messages: unknown[];
-  modelSelection: BranchModelSelection;
-  thinkingLevel: string;
-  leafId: string | null;
 }
 
 export type InitialMaterializationAttestation =
@@ -120,26 +114,16 @@ export interface ProjectionReconcileResult {
   previousRevision: number;
   revision: number;
   previousFingerprint: string;
-  fingerprint: string;
+  previousLeafId: string | null;
   healthChanged: boolean;
   /** Full file identity or unresolved-tail state moved even if no entry committed. */
   sourceChanged: boolean;
-  /** Present only after a stable, complete byte-for-byte revalidation of the same object. */
-  verifiedUnchangedContent?: true;
-  previousSourceVersion: string | null;
-  sourceVersion: string | null;
-  /** Projection state captured by this exact filesystem observation. */
-  sourceIdentity: string | null;
   committedBytes: number;
   uncommittedBytes: number;
-  uncommittedFingerprint: string | null;
   health: ProjectionHealth;
   previousUncommittedBytes: number;
   /** A prior unresolved tail is an exact prefix of this candidate's post-commit bytes. */
   previousTailVerified: boolean;
-  /** Exact migrated entries added after the previously verified prefix. */
-  appendedEntries?: readonly SessionEntry[];
-  previousLeafId?: string | null;
 }
 
 export type ProjectionReconcileHandler = (
@@ -179,7 +163,6 @@ export interface SessionProjectionView {
   readonly sourceVersion: string | null;
   readonly committedBytes: number;
   readonly uncommittedBytes: number;
-  readonly uncommittedFingerprint: string | null;
   attestInitialMaterialization(
     workerEntries: readonly SessionEntry[],
   ): InitialMaterializationAttestation;
@@ -218,10 +201,6 @@ export interface SessionProjectionView {
   /** Host startup attestation only: reconcile while ordinary readers are suspended. */
   reconcileSuspended(force?: boolean): Promise<ProjectionReconcileResult>;
   close(): Promise<void>;
-  on(
-    event: "update",
-    listener: (result: ProjectionReconcileResult) => void,
-  ): this;
 }
 
 function fingerprintOfSpan(
@@ -759,7 +738,7 @@ export interface SessionProjectionReadHooks {
 }
 
 /** Read queries over native entries, independent of any filesystem source. */
-class SessionEntryIndex extends EventEmitter {
+class SessionEntryIndex {
   readonly sessionId: string;
   readonly path: string;
   protected currentRevision = 0;
@@ -775,7 +754,6 @@ class SessionEntryIndex extends EventEmitter {
   protected currentEntries: SessionEntry[] = [];
   protected currentEntriesById = new Map<string, SessionEntry>();
   protected currentHistoryAnchor: string | null = null;
-  protected historyReplacementRevision = 0;
   protected historySourceGeneration = 0;
   private historyCache?: {
     leafId: string | null;
@@ -788,7 +766,6 @@ class SessionEntryIndex extends EventEmitter {
     session: Pick<SessionRecord, "id" | "path">,
     private readonly fileNameForPath?: ComposerHistoryFileNameResolver,
   ) {
-    super();
     this.sessionId = session.id;
     this.path = resolve(session.path);
   }
@@ -815,6 +792,53 @@ class SessionEntryIndex extends EventEmitter {
   get tailEntryId(): string | null {
     return this.currentEntries.at(-1)?.id ?? null;
   }
+
+  protected publishEntries(
+    entries: SessionEntry[],
+    byId: Map<string, SessionEntry>,
+    leafId: string | null,
+    suffix: readonly SessionEntry[],
+    kind: ProjectionReconcileResult["kind"],
+  ): ProjectionMessageChange {
+    const linear =
+      kind === "append" &&
+      isLinearAppend(this.currentLeafId, suffix) &&
+      (suffix.at(-1)?.id ?? this.currentLeafId) === leafId;
+    const previousMessages = this.currentMessages;
+    const messages = linear
+      ? appendContextMessages(previousMessages, suffix)
+      : contextMessages(entries, leafId, byId);
+    const change = projectedMessageChange(kind, previousMessages, messages);
+    if (linear) {
+      this.currentModelSelection = appendModelSelection(
+        this.currentModelSelection,
+        suffix,
+      );
+      this.currentThinkingLevel = appendedThinkingLevel(
+        this.currentThinkingLevel,
+        suffix,
+      );
+      for (const entry of suffix)
+        if (changesComposerHistory(entry)) this.currentHistoryAnchor = entry.id;
+    } else {
+      const thinkingLevel = buildSessionContext(
+        entries,
+        leafId,
+        byId,
+      ).thinkingLevel;
+      this.currentModelSelection = branchModelSelection(byId, leafId);
+      this.currentThinkingLevel = thinkingLevel;
+      this.currentHistoryAnchor = composerHistoryAnchor(byId, leafId);
+    }
+    this.currentEntries = entries;
+    this.currentEntriesById = byId;
+    this.currentLeafId = leafId;
+    this.currentMessages = messages;
+    this.currentRevision += 1;
+    if (change === "replace") this.appendFromRevision = this.currentRevision;
+    return change;
+  }
+
   latestContinuation(leafId: string | null): string | null {
     if (leafId === null) return this.tailEntryId;
     if (leafId === this.tailEntryId || !this.currentEntriesById.has(leafId))
@@ -1323,7 +1347,7 @@ class SessionEntryIndex extends EventEmitter {
         : composerHistoryAnchor(this.currentEntriesById, effectiveLeafId);
     // Entry ancestry is immutable during append. A rewrite may reuse IDs with
     // changed content, so it starts a new history epoch even at the same leaf.
-    return JSON.stringify([this.historyReplacementRevision, anchor]);
+    return JSON.stringify([this.historySourceGeneration, anchor]);
   }
 
   private composerHistoryPage(
@@ -1394,35 +1418,23 @@ export class WorkerEntryIndex extends SessionEntryIndex {
   appendWorkerEntries(
     entries: readonly SessionEntry[],
     leafId: string | null,
+    publishLeaf = true,
   ): boolean {
     if (entries.length === 0 && leafId === this.currentLeafId) return false;
-    const byId = indexSessionEntries(entries, this.currentEntriesById);
+    const byId = entries.length
+      ? indexSessionEntries(entries, this.currentEntriesById)
+      : this.currentEntriesById;
     if (leafId !== null && !byId.has(leafId))
       throw requestError("The Pi checkpoint refers to an unknown leaf", 409);
-    const all = [...this.currentEntries, ...entries];
-    const linear =
-      isLinearAppend(this.currentLeafId, entries) &&
-      (entries.at(-1)?.id ?? this.currentLeafId) === leafId;
-    const previousMessages = this.currentMessages;
-    this.currentMessages = linear
-      ? appendContextMessages(this.currentMessages, entries)
-      : contextMessages(all, leafId, byId);
-    this.currentEntriesById = byId;
-    this.currentEntries = all;
-    this.currentLeafId = leafId;
-    this.currentRevision += 1;
-    if (
-      projectedMessageChange(
-        "append",
-        previousMessages,
-        this.currentMessages,
-      ) === "replace"
-    )
-      this.appendFromRevision = this.currentRevision;
-    if (linear) {
-      for (const entry of entries)
-        if (changesComposerHistory(entry)) this.currentHistoryAnchor = entry.id;
-    } else this.currentHistoryAnchor = composerHistoryAnchor(byId, leafId);
+    const all = entries.length
+      ? [...this.currentEntries, ...entries]
+      : this.currentEntries;
+    if (!publishLeaf) {
+      this.currentEntriesById = byId;
+      this.currentEntries = all;
+      return false;
+    }
+    this.publishEntries(all, byId, leafId, entries, "append");
     return true;
   }
 }
@@ -1437,7 +1449,6 @@ export class SessionProjection
   private currentHeader: SessionHeader | null = null;
   private currentIdentity: SessionSourceIdentity | null = null;
   private currentFingerprint = "";
-  private currentHashState: Hash | null = null;
   private currentCommittedBytes = 0;
   private currentUncommittedBytes = 0;
   private currentUncommittedFingerprint: string | null = null;
@@ -1489,7 +1500,7 @@ export class SessionProjection
       initialMaterializationPending,
       fileNameForPath,
     );
-    const result = await projection.reconcile(true);
+    await projection.reconcile(true);
     const loaded = initialMaterializationPending
       ? projection.health.status !== "error"
       : projection.revision > 0;
@@ -1504,7 +1515,6 @@ export class SessionProjection
       );
     }
     projection.startWatching();
-    if (result.changed) projection.emit("update", result);
     return projection;
   }
 
@@ -1587,10 +1597,6 @@ export class SessionProjection
   get uncommittedBytes(): number {
     return this.currentUncommittedBytes;
   }
-  get uncommittedFingerprint(): string | null {
-    return this.currentUncommittedFingerprint;
-  }
-
   async suspendReconciliation(): Promise<void> {
     if (!this.reconciliationResume) {
       this.reconciliationResume = new Promise<void>((resolveResume) => {
@@ -1615,52 +1621,6 @@ export class SessionProjection
 
   setReconcileHandler(handler: ProjectionReconcileHandler): void {
     this.reconcileHandler = handler;
-  }
-
-  private resultObservation(): Pick<
-    ProjectionReconcileResult,
-    | "sourceIdentity"
-    | "committedBytes"
-    | "uncommittedBytes"
-    | "uncommittedFingerprint"
-    | "health"
-  > {
-    return {
-      sourceIdentity: this.sourceIdentity,
-      committedBytes: this.committedBytes,
-      uncommittedBytes: this.uncommittedBytes,
-      uncommittedFingerprint: this.uncommittedFingerprint,
-      health: this.health,
-    };
-  }
-
-  private recordHealthFailure(
-    error: unknown,
-  ): ProjectionReconcileResult | null {
-    const health = healthError(error);
-    if (
-      health.status === this.currentHealth.status &&
-      health.message === this.currentHealth.message
-    )
-      return null;
-    this.currentHealth = health;
-    return {
-      changed: false,
-      initialMaterialization: this.initialMaterializationPending,
-      kind: "none",
-      messageChange: "none",
-      previousRevision: this.revision,
-      revision: this.revision,
-      previousFingerprint: this.fingerprint,
-      fingerprint: this.fingerprint,
-      healthChanged: true,
-      sourceChanged: false,
-      previousSourceVersion: this.sourceVersion,
-      sourceVersion: this.sourceVersion,
-      ...this.resultObservation(),
-      previousUncommittedBytes: this.uncommittedBytes,
-      previousTailVerified: true,
-    };
   }
 
   private startWatching(): void {
@@ -1705,10 +1665,6 @@ export class SessionProjection
     }
     this.hintReading = true;
     void this.reconcile()
-      .then((result) => {
-        if (result.changed || result.healthChanged || result.sourceChanged)
-          this.emit("update", result);
-      })
       .catch((error) => this.reportHealthFailure(error))
       .finally(() => {
         this.hintReading = false;
@@ -1722,10 +1678,10 @@ export class SessionProjection
   private reportHealthFailure(error: unknown): void {
     void this.enqueueObservation(async () => {
       if (this.closed) return;
-      const result = this.recordHealthFailure(error);
-      if (!result) return;
-      await this.reconcileHandler?.(result);
-      this.emit("update", result);
+      const result = await this.observe(() => {
+        this.currentHealth = healthError(error);
+      });
+      if (result.healthChanged) await this.reconcileHandler?.(result);
     }).catch(() => undefined);
   }
 
@@ -1755,142 +1711,110 @@ export class SessionProjection
     consume: boolean,
   ): Promise<ProjectionReconcileResult> {
     return this.enqueueObservation(async () => {
-      const result = await this.reconcileOnce(force);
+      const result = await this.observe(() => this.reconcileOnce(force));
       if (consume) await this.reconcileHandler?.(result);
       return result;
     });
   }
 
-  private async reconcileOnce(
-    force: boolean,
+  private async observe(
+    reconcile: () => void | Promise<
+      | {
+          kind: ProjectionReconcileResult["kind"];
+          messageChange: ProjectionMessageChange;
+          previousTailVerified: boolean;
+        }
+      | undefined
+    >,
   ): Promise<ProjectionReconcileResult> {
     if (this.closed) throw new Error("Session projection is closed");
     const previousRevision = this.revision;
     const previousFingerprint = this.fingerprint;
-    const previousHealth = JSON.stringify(this.health);
+    const previousLeafId = this.currentLeafId;
+    const previousHealth = this.health;
     const previousSourceVersion = this.sourceVersion;
     const previousUncommittedBytes = this.uncommittedBytes;
-    const previousUncommittedFingerprint = this.uncommittedFingerprint;
-    const initialMaterialization = this.initialMaterializationPending;
+    const previousUncommittedFingerprint = this.currentUncommittedFingerprint;
+    const result = await reconcile();
+    return {
+      changed: previousRevision !== this.revision,
+      initialMaterialization: this.initialMaterializationPending,
+      kind: result?.kind ?? "none",
+      messageChange: result?.messageChange ?? "none",
+      previousRevision,
+      revision: this.revision,
+      previousFingerprint,
+      previousLeafId,
+      healthChanged:
+        previousHealth.status !== this.health.status ||
+        previousHealth.message !== this.health.message,
+      sourceChanged:
+        previousSourceVersion !== this.sourceVersion ||
+        previousUncommittedBytes !== this.uncommittedBytes ||
+        previousUncommittedFingerprint !== this.currentUncommittedFingerprint,
+      committedBytes: this.committedBytes,
+      uncommittedBytes: this.uncommittedBytes,
+      health: this.health,
+      previousUncommittedBytes,
+      previousTailVerified: result?.previousTailVerified ?? true,
+    };
+  }
+
+  private async reconcileOnce(force: boolean) {
     try {
       if (
         !force &&
         this.currentIdentity &&
-        this.currentHealth.status === "ok"
-      ) {
-        // Ordinary reads reuse a verified version, not merely a pathname or
-        // size. Do not follow a replacement symlink back to the former inode;
-        // changed or unhealthy sources still take the full verification path.
-        if (await sessionVersionAtPath(this.path, this.currentIdentity)) {
-          return {
-            changed: false,
-            initialMaterialization,
-            kind: "none",
-            messageChange: "none",
-            previousRevision,
-            revision: this.revision,
-            previousFingerprint,
-            fingerprint: this.fingerprint,
-            healthChanged: false,
-            sourceChanged: false,
-            previousSourceVersion: this.sourceVersion,
-            sourceVersion: this.sourceVersion,
-            ...this.resultObservation(),
-            previousUncommittedBytes: this.uncommittedBytes,
-            previousTailVerified: true,
-          };
-        }
-      }
+        this.currentHealth.status === "ok" &&
+        (await sessionVersionAtPath(this.path, this.currentIdentity))
+      )
+        return;
 
       const candidate = await this.readCandidate();
       const initialFileAppearance =
-        initialMaterialization && this.currentHeader === null;
+        this.initialMaterializationPending && this.currentHeader === null;
       const changed = candidate.fingerprint !== this.currentFingerprint;
       const replaced =
         this.currentHeader !== null &&
         this.currentIdentity !== null &&
         !sameSessionObject(candidate.identity, this.currentIdentity);
-      const verifiedUnchangedContent =
-        !changed &&
-        this.currentIdentity !== null &&
-        sameSessionObject(candidate.identity, this.currentIdentity) &&
-        previousUncommittedBytes === 0 &&
-        candidate.uncommittedBytes === 0 &&
-        candidate.committedBytes === this.currentCommittedBytes &&
-        candidate.identity.size === BigInt(this.currentCommittedBytes) &&
-        candidate.previousPrefixFingerprint === previousFingerprint;
-      const previousEntries = this.currentEntries;
-      const previousLeafId = this.currentLeafId;
       let kind: ProjectionReconcileResult["kind"] = "none";
       let messageChange: ProjectionMessageChange = "none";
-      let appendedEntries: SessionEntry[] | undefined;
-      if (replaced) {
-        this.historySourceGeneration += 1;
-        if (!changed) kind = "rewrite";
-      }
+      const previousTailVerified =
+        this.uncommittedBytes === 0 ||
+        candidate.previousTailFingerprint ===
+          this.currentUncommittedFingerprint;
+      if (replaced) kind = "rewrite";
       if (changed) {
+        if (!candidate.header)
+          throw new Error("Session file has no complete Pi session header");
         const prefixVerified =
           this.currentCommittedBytes === 0 ||
           candidate.previousPrefixFingerprint === this.currentFingerprint;
-        const tailVerified =
-          previousUncommittedBytes === 0 ||
-          candidate.previousTailFingerprint === previousUncommittedFingerprint;
         kind =
           initialFileAppearance ||
           (this.currentIdentity &&
-            sameSessionObject(candidate.identity, this.currentIdentity) &&
+            !replaced &&
             candidate.committedBytes >= this.currentCommittedBytes &&
             this.currentFingerprint &&
             prefixVerified &&
-            tailVerified)
+            previousTailVerified)
             ? "append"
             : "rewrite";
-        if (
-          kind === "append" &&
-          previousEntries.every(
-            (entry, index) => candidate.entries[index]?.id === entry.id,
-          )
-        ) {
-          appendedEntries = structuredClone(
-            candidate.entries.slice(previousEntries.length),
-          );
-        }
-        messageChange = projectedMessageChange(
+        messageChange = this.publishEntries(
+          candidate.entries,
+          candidate.entriesById,
+          candidate.entries.at(-1)?.id ?? null,
+          kind === "append"
+            ? candidate.entries.slice(this.currentEntries.length)
+            : [],
           kind,
-          this.currentMessages,
-          candidate.messages,
         );
-        this.currentRevision += 1;
-        if (messageChange === "replace")
-          this.appendFromRevision = this.currentRevision;
-        if (kind !== "append")
-          this.historyReplacementRevision = this.currentRevision;
-        if (
-          appendedEntries &&
-          isLinearAppend(previousLeafId, appendedEntries)
-        ) {
-          for (const entry of appendedEntries)
-            if (changesComposerHistory(entry))
-              this.currentHistoryAnchor = entry.id;
-        } else {
-          this.currentHistoryAnchor = composerHistoryAnchor(
-            candidate.entriesById,
-            candidate.leafId,
-          );
-        }
-        this.currentModelSelection = candidate.modelSelection;
-        this.currentMessages = candidate.messages;
-        this.currentThinkingLevel = candidate.thinkingLevel;
-        this.currentLeafId = candidate.leafId;
-        this.currentEntries = candidate.entries;
-        this.currentEntriesById = candidate.entriesById;
-        if (!candidate.header)
-          throw new Error("Session file has no complete Pi session header");
         this.currentHeader = candidate.header;
         this.currentFingerprint = candidate.fingerprint;
         this.currentCommittedBytes = candidate.committedBytes;
       }
-      this.currentHashState = candidate.hashState;
+      if (kind === "rewrite") this.historySourceGeneration += 1;
       this.currentIdentity = candidate.identity;
       this.currentUncommittedBytes = candidate.uncommittedBytes;
       this.currentUncommittedFingerprint = candidate.uncommittedFingerprint;
@@ -1904,60 +1828,17 @@ export class SessionProjection
           : { status: "ok" };
       this.currentFailureStatus = null;
       this.currentFailureCode = undefined;
-      const sourceChanged =
-        previousSourceVersion !== this.sourceVersion ||
-        previousUncommittedBytes !== this.uncommittedBytes ||
-        previousUncommittedFingerprint !== this.uncommittedFingerprint;
-      const previousTailVerified =
-        previousUncommittedBytes === 0 ||
-        candidate.previousTailFingerprint === previousUncommittedFingerprint;
-      return {
-        changed,
-        initialMaterialization,
-        kind,
-        messageChange,
-        previousRevision,
-        revision: this.revision,
-        previousFingerprint,
-        fingerprint: this.fingerprint,
-        healthChanged: previousHealth !== JSON.stringify(this.health),
-        sourceChanged,
-        ...(verifiedUnchangedContent
-          ? { verifiedUnchangedContent: true as const }
-          : {}),
-        previousSourceVersion,
-        sourceVersion: this.sourceVersion,
-        ...this.resultObservation(),
-        previousUncommittedBytes,
-        previousTailVerified,
-        ...(appendedEntries ? { appendedEntries, previousLeafId } : {}),
-      };
+      return { kind, messageChange, previousTailVerified };
     } catch (error) {
       if (
-        initialMaterialization &&
+        this.initialMaterializationPending &&
         this.currentIdentity === null &&
         (error as NodeJS.ErrnoException)?.code === "ENOENT"
       ) {
         this.currentHealth = { status: "ok" };
         this.currentFailureStatus = null;
         this.currentFailureCode = undefined;
-        return {
-          changed: false,
-          initialMaterialization,
-          kind: "none",
-          messageChange: "none",
-          previousRevision,
-          revision: this.revision,
-          previousFingerprint,
-          fingerprint: this.fingerprint,
-          healthChanged: previousHealth !== JSON.stringify(this.health),
-          sourceChanged: false,
-          previousSourceVersion,
-          sourceVersion: this.sourceVersion,
-          ...this.resultObservation(),
-          previousUncommittedBytes,
-          previousTailVerified: true,
-        };
+        return;
       }
       this.currentHealth = healthError(error);
       const code = (error as { code?: string } | null)?.code;
@@ -1974,20 +1855,8 @@ export class SessionProjection
           ? (error as { status: number }).status
           : 422;
       return {
-        changed: false,
-        initialMaterialization,
-        kind: "none",
-        messageChange: "none",
-        previousRevision,
-        revision: this.revision,
-        previousFingerprint,
-        fingerprint: this.fingerprint,
-        healthChanged: previousHealth !== JSON.stringify(this.health),
-        sourceChanged: false,
-        previousSourceVersion: this.sourceVersion,
-        sourceVersion: this.sourceVersion,
-        ...this.resultObservation(),
-        previousUncommittedBytes,
+        kind: "none" as const,
+        messageChange: "none" as const,
         previousTailVerified: false,
       };
     }
@@ -1998,7 +1867,6 @@ export class SessionProjection
     if (
       !this.currentIdentity ||
       !this.currentHeader ||
-      !this.currentHashState ||
       !sameSessionObject(document.source, this.currentIdentity) ||
       document.source.size < BigInt(this.currentCommittedBytes)
     )
@@ -2107,15 +1975,11 @@ export class SessionProjection
           suffix,
           prefix ? this.currentEntriesById : undefined,
         );
-        const leafId = entries.at(-1)?.id ?? null;
-        const linearAppend =
-          prefix && isLinearAppend(this.currentLeafId, suffix);
         return {
           identity: document.source,
           fingerprint: header
             ? hash.copy().digest("hex")
             : this.currentFingerprint,
-          hashState: hash,
           committedBytes: scan.completeBytes,
           uncommittedBytes: tail.length,
           uncommittedFingerprint: tail.length
@@ -2132,16 +1996,6 @@ export class SessionProjection
           header,
           entries,
           entriesById,
-          messages: linearAppend
-            ? appendContextMessages(this.currentMessages, suffix)
-            : contextMessages(entries, leafId, entriesById),
-          modelSelection: linearAppend
-            ? appendModelSelection(this.currentModelSelection, suffix)
-            : branchModelSelection(entriesById, leafId),
-          thinkingLevel: linearAppend
-            ? appendedThinkingLevel(this.currentThinkingLevel, suffix)
-            : buildSessionContext(entries, leafId, entriesById).thinkingLevel,
-          leafId,
         };
       } finally {
         await document.close();
@@ -2161,7 +2015,6 @@ export class SessionProjection
     this.watcher?.close();
     await this.reconcileTail;
     this.reconcileHandler = null;
-    this.removeAllListeners();
     this.currentEntries = [];
     this.currentMessages = [];
   }

@@ -201,7 +201,9 @@ describe("session deletion ownership", () => {
           error: null,
         });
         expect(
-          store.getState().notices.every((notice) => notice.kind === "info"),
+          store
+            .getState()
+            .live.notices.every((notice) => notice.kind === "info"),
         ).toBe(true);
       } else {
         await vi.waitFor(() => expect(reads).toBe(2));
@@ -246,7 +248,7 @@ describe("session deletion ownership", () => {
     });
     deletion.resolve();
     await removing;
-    expect(store.getState().notices).toEqual([]);
+    expect(store.getState().live.notices).toEqual([]);
   });
 
   it("allows deletion only after the Hide write is confirmed", async () => {

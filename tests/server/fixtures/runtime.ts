@@ -10,7 +10,6 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
-import { expect, vi } from "vitest";
 import { AttachmentStore } from "../../../server/attachments.js";
 import type {
   PiRpcOptions,
@@ -46,7 +45,6 @@ export class FakeRpc extends EventEmitter {
   retryReads = 0;
   retryState = true;
   confirmRetryState = true;
-  failPrompts = false;
   readonly responseOverrides = new Map<string, unknown>();
   startupEvent: Record<string, unknown> | null = null;
   startGate: Promise<void> | null = null;
@@ -211,8 +209,6 @@ export class FakeRpc extends EventEmitter {
       return { disposition: "handled" } as T;
     }
     this.commands.push(command);
-    if (command.type === "prompt" && this.failPrompts)
-      throw new Error("prompt rejected");
     if (
       typeof command.type === "string" &&
       this.responseOverrides.has(command.type)
@@ -345,18 +341,6 @@ export async function persistedRecord(
     ctimeNs: details.ctimeNs,
   };
   return session;
-}
-
-export async function waitForReady(
-  runtime: RuntimeController,
-  sessionId = "a",
-) {
-  const slots = (
-    runtime as unknown as {
-      slots: Map<string, { ready: boolean }>;
-    }
-  ).slots;
-  await vi.waitFor(() => expect(slots.get(sessionId)?.ready).toBe(true));
 }
 
 /** Request a real worker via a native setting, without adding a conversation turn. */

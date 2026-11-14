@@ -2,6 +2,7 @@ import {
   AlertTriangle,
   Check,
   Command,
+  Folder,
   GitBranch,
   PanelLeft,
   PanelRight,
@@ -12,8 +13,6 @@ import {
   type Ref,
   useCallback,
   useEffect,
-  useId,
-  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -32,9 +31,9 @@ import { isComposingKeyboardEvent } from "../keyboard-input";
 import { shallowEqual, store, useAppState } from "../store";
 import { useCopied } from "../use-copied";
 import { ExtensionStatus } from "./ExtensionDisplays";
-import { Modal } from "./Modal";
 import { NavigationToggle } from "./NavigationToggle";
 import { PiLoader } from "./PiLoader";
+import { RenameSessionDialog } from "./RenameSessionDialog";
 import { SessionActionsMenu } from "./SessionActionsMenu";
 
 const GENERIC_SESSION_HEADINGS = new Set(["Untitled session", "New session"]);
@@ -138,123 +137,19 @@ function GitSummary() {
   return (
     <button
       type="button"
-      className={tone ? `topbar__git ${tone}` : "topbar__git"}
-      onClick={() => {
-        store.setContextMode("changes");
-        store.setResourcesOpen(true);
-      }}
+      className={`button button--quiet topbar__git ${tone}`}
+      onClick={() => store.openContextMode("changes")}
       aria-label={`Open Git changes: ${branch}, ${statusLabel}${gitStatusError ? ", status may be stale" : ""}`}
       title={`${branch} · ${statusLabel} — open Changes.${staleLabel}`}
     >
       <GitBranch size={13} className="topbar__git-icon" aria-hidden />
       <span className="topbar__git-branch">{branch}</span>
       {changes > 0 && !changesVisible ? (
-        <span className="topbar__git-count">
-          {changes}
-          <span className="topbar__git-count-word">
-            {changes === 1 ? " change" : " changes"}
-          </span>
+        <span className="topbar__git-count" aria-hidden>
+          {changes > 99 ? "99+" : changes}
         </span>
       ) : null}
     </button>
-  );
-}
-
-function RenameSessionDialog({
-  sessionId,
-  initialName,
-  onClose,
-}: {
-  sessionId: string;
-  initialName: string;
-  onClose: () => void;
-}) {
-  const title = useId();
-  const input = useRef<HTMLInputElement>(null);
-  const editRevision = useRef(0);
-  const [value, setValue] = useState(initialName);
-  const [saving, setSaving] = useState(false);
-
-  useLayoutEffect(() => {
-    input.current?.select();
-  }, []);
-
-  const submit = async () => {
-    const name = value.trim();
-    if (saving || !name || store.getState().sessionId !== sessionId) return;
-    if (name === store.getState().sessionName.trim()) {
-      onClose();
-      return;
-    }
-    const revision = editRevision.current;
-    setSaving(true);
-    try {
-      const saved = await store.renameSession(sessionId, name);
-      if (
-        saved &&
-        revision === editRevision.current &&
-        input.current &&
-        store.getState().sessionId === sessionId
-      )
-        onClose();
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Modal
-      owner={sessionId}
-      aria-labelledby={title}
-      aria-busy={saving || undefined}
-      onDismiss={onClose}
-    >
-      <form
-        className="dialog"
-        onKeyDown={(event) => {
-          if (
-            event.key === "Enter" &&
-            isComposingKeyboardEvent(event.nativeEvent)
-          )
-            event.preventDefault();
-        }}
-        onSubmit={(event) => {
-          event.preventDefault();
-          void submit();
-        }}
-      >
-        <h2 className="dialog__title" id={title}>
-          Rename session
-        </h2>
-        <input
-          className="inline-rename-input"
-          ref={input}
-          data-modal-autofocus
-          aria-label="Session name"
-          value={value}
-          onChange={(event) => {
-            editRevision.current += 1;
-            setValue(event.target.value);
-          }}
-        />
-        <footer className="dialog__actions">
-          <button
-            type="button"
-            className="button button--quiet"
-            onClick={onClose}
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            className="button button--primary"
-            disabled={saving || !value.trim()}
-          >
-            Save session name
-          </button>
-        </footer>
-      </form>
-    </Modal>
   );
 }
 
@@ -287,8 +182,8 @@ const SessionIdent = memo(function SessionIdent({
       heading: sessionHeading(
         state.sessionName,
         catalogTitle,
-        state.messages,
-        !state.hasOlderMessages,
+        state.live.messages,
+        !state.view.hasOlder,
       ),
       cwd: state.cwd,
       project: state.cwd ? projectNameFromCwd(state.cwd) : null,
@@ -311,81 +206,78 @@ const SessionIdent = memo(function SessionIdent({
 
   return (
     <div className="topbar__ident">
-      <div className="topbar__heading">
-        <h1 className="topbar__title" aria-label={heading}>
-          <button
-            ref={titleRef}
-            type="button"
-            className="topbar__title-button"
-            aria-label={`Session actions: ${heading}`}
-            aria-haspopup="menu"
-            aria-expanded={menuOpen}
-            title={heading}
-            onClick={() => setMenuOpen((open) => !open)}
-            onKeyDown={(event) => {
-              if (
-                event.key === "ArrowDown" &&
-                !isComposingKeyboardEvent(event.nativeEvent)
-              ) {
-                event.preventDefault();
-                setMenuOpen(true);
-              }
-            }}
-          >
-            <span>{heading}</span>
-          </button>
-        </h1>
+      <h1 className="topbar__title" aria-label={heading}>
+        <button
+          ref={titleRef}
+          type="button"
+          className="button button--quiet topbar__title-button"
+          aria-label={`Session actions: ${heading}`}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          title={heading}
+          onClick={() => setMenuOpen((open) => !open)}
+          onKeyDown={(event) => {
+            if (
+              event.key === "ArrowDown" &&
+              !isComposingKeyboardEvent(event.nativeEvent)
+            ) {
+              event.preventDefault();
+              setMenuOpen(true);
+            }
+          }}
+        >
+          <span>{heading}</span>
+        </button>
+      </h1>
 
-        {menuOpen ? (
-          <SessionActionsMenu
-            anchorRef={titleRef}
-            sessionId={sessionId}
-            actionOrder={sessionActionOrder}
-            onCopyError={store.reportCopyError}
-            cloneDisabled={cloneDisabled}
-            renameDisabled={Boolean(readOnlyReason)}
-            onClose={closeMenu}
-            onRename={() => {
-              titleRef.current?.focus({ preventScroll: true });
+      {menuOpen ? (
+        <SessionActionsMenu
+          anchorRef={titleRef}
+          sessionId={sessionId}
+          actionOrder={sessionActionOrder}
+          onCopyError={store.reportCopyError}
+          cloneDisabled={cloneDisabled}
+          renameDisabled={Boolean(readOnlyReason)}
+          onClose={closeMenu}
+          onRename={() => {
+            titleRef.current?.focus({ preventScroll: true });
+            closeMenu();
+            setEditing(true);
+          }}
+          onSwitchBranch={() => {
+            closeMenu();
+            onOpenHistory();
+          }}
+          onClone={() => {
+            const trigger = document.activeElement;
+            void store.cloneCurrentBranch().then((cloned) => {
+              if (!cloned) return;
+              const returnFocus =
+                document.activeElement === trigger ||
+                document.activeElement === document.body;
               closeMenu();
-              setEditing(true);
-            }}
-            onSwitchBranch={() => {
-              closeMenu();
-              onOpenHistory();
-            }}
-            onClone={() => {
-              const trigger = document.activeElement;
-              void store.cloneCurrentBranch().then((cloned) => {
-                if (!cloned) return;
-                const returnFocus =
-                  document.activeElement === trigger ||
-                  document.activeElement === document.body;
-                closeMenu();
-                if (returnFocus)
-                  titleRef.current?.focus({ preventScroll: true });
-              });
-            }}
-            onExport={() => {
-              closeMenu();
-              titleRef.current?.focus({ preventScroll: true });
-              onExport();
-            }}
-          />
-        ) : null}
-        {editing && !readOnlyReason && (
-          <RenameSessionDialog
-            sessionId={sessionId}
-            initialName={sessionName}
-            onClose={() => setEditing(false)}
-          />
-        )}
-      </div>
+              if (returnFocus) titleRef.current?.focus({ preventScroll: true });
+            });
+          }}
+          onExport={() => {
+            closeMenu();
+            titleRef.current?.focus({ preventScroll: true });
+            onExport();
+          }}
+        />
+      ) : null}
+      {editing && !readOnlyReason && (
+        <RenameSessionDialog
+          sessionId={sessionId}
+          initialName={sessionName}
+          onClose={() => setEditing(false)}
+        />
+      )}
       <div className="topbar__workspace-meta">
         {cwd ? (
           <button
             type="button"
-            className="topbar__project"
+            className={`button button--quiet topbar__project ${copied ? "is-copied" : ""}`}
             onClick={(event) => {
               // Ctrl/⌘+click opens the project folder on the Host desktop.
               if (event.ctrlKey || event.metaKey)
@@ -399,18 +291,13 @@ const SessionIdent = memo(function SessionIdent({
             }
             aria-label="Copy project path"
           >
+            <Folder className="topbar__project-icon" size={13} aria-hidden />
             {/* The normal label remains the sole width authority. Copy feedback
                 overlays it, so a wider hidden message cannot extend hover chrome. */}
-            <span
-              className={`topbar__project-label ${copied ? "topbar__project-label--copied" : ""}`}
-            >
+            <span className="topbar__project-label">
               {projectDisplay === "path" ? cwd : project}
             </span>
-            <Check
-              size={11}
-              className={`topbar__project-feedback ${copied ? "topbar__project-feedback--visible" : ""}`}
-              aria-hidden
-            />
+            <Check size={11} className="topbar__project-feedback" aria-hidden />
           </button>
         ) : null}
         <GitSummary />
@@ -446,7 +333,7 @@ export const AppTopbar = memo(function AppTopbar({
     (source) => ({
       sessionId: source.sessionId,
       runState: selectedRunState(source),
-      projectionConflict: source.projectionConflict,
+      projectionConflict: source.view.conflict,
       connection: source.connection,
       connectionProblem: source.connectionProblem,
       workspaceLoading:

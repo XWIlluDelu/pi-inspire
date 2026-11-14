@@ -2,274 +2,198 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type HostRestartBackend,
   HostRestartController,
 } from "../../server/host-restart.js";
 import { systemdRestartBackend } from "../../server/host-restart-systemd.js";
-import type {
-  MaintenanceRestartDecision,
-  MaintenanceRestartTransition,
-} from "../../server/runtime.js";
+import type { HostRestartRequest } from "../../shared/host-restart.js";
+import {
+  disposeRuntimeFixture,
+  initializeRuntimeFixture,
+  schedulingRuntime,
+} from "./fixtures/runtime.js";
 
-function fixture(overrides: Partial<HostRestartBackend> = {}) {
-  const runtime = {
-    reserveMaintenanceRestart: vi.fn<
-      (interruptWork?: boolean) => MaintenanceRestartDecision
-    >(() => ({
-      kind: "ready",
-      leaseId: "lease",
-      expiresAt: Date.now() + 30_000,
-    })),
-    commitMaintenanceRestart: vi.fn<() => MaintenanceRestartTransition>(() => ({
-      kind: "committed" as const,
-      leaseId: "lease",
-    })),
-    releaseMaintenanceRestart: vi.fn(() => ({ kind: "released" as const })),
-    checkAttachedRestartWork: vi.fn(async () => null),
-    stopAttachedPiWork: vi.fn(async () => {}),
-  };
+beforeEach(initializeRuntimeFixture);
+afterEach(disposeRuntimeFixture);
+
+async function fixture(overrides: Partial<HostRestartBackend> = {}) {
+  const { runtime } = schedulingRuntime({ sessions: [] });
+  const reserve = vi.spyOn(runtime, "reserveMaintenanceRestart");
+  const commit = vi.spyOn(runtime, "commitMaintenanceRestart");
+  const release = vi.spyOn(runtime, "releaseMaintenanceRestart");
+  const stopAttached = vi.spyOn(runtime, "stopAttachedPiWork");
+  const attachedWork = vi.spyOn(runtime, "checkAttachedRestartWork");
   const backend: HostRestartBackend = {
     inspect: vi.fn(async () => ({ host: true, allPi: true })),
     prepare: vi.fn(async () => {}),
-    request: vi.fn(async (_all, commit) =>
-      (await commit()) ? { code: 0 } : { code: 1, issued: false },
-    ),
+    request: vi.fn(async (_scope, commit) => ({
+      code: (await commit()) ? 0 : 1,
+    })),
     ...overrides,
   };
   const controller = new HostRestartController(runtime, backend);
-  return { controller, runtime, backend };
-}
-async function intent(controller: HostRestartController) {
-  return {
-    hostId: (await controller.status()).hostId,
+  const { hostId } = await controller.status();
+  const intent = (
+    options: Partial<HostRestartRequest> = {},
+  ): HostRestartRequest => ({
+    hostId,
     operationId: randomUUID(),
-    scope: "host" as const,
+    scope: "host",
+    ...options,
+  });
+  const observe = async (fields: object) =>
+    vi.waitFor(async () =>
+      expect((await controller.status()).operation).toMatchObject(fields),
+    );
+  return {
+    controller,
+    runtime,
+    reserve,
+    commit,
+    release,
+    stopAttached,
+    attachedWork,
+    backend,
+    intent,
+    observe,
   };
 }
 
 describe("manual Host restart ownership", () => {
   it.each(["host", "all-pi"] as const)(
-    "checks the scope's authority before submitting %s",
+    "checks %s scope before preparing and acquiring the restart lease",
     async (scope) => {
-      const { controller, runtime, backend } = fixture();
-      const request = { ...(await intent(controller)), scope };
+      const prepared = Promise.withResolvers<void>();
+      const f = await fixture({ prepare: vi.fn(() => prepared.promise) });
+      const request = f.intent({ scope });
       const global = scope === "all-pi";
-      if (global)
-        expect(() => controller.start(request)).toThrow(
+      if (global) {
+        expect(() => f.controller.start(request)).toThrow(
           "Confirm closing all Pi",
         );
-      controller.start(global ? { ...request, interruptWork: true } : request);
-      await vi.waitFor(async () =>
-        expect((await controller.status()).operation?.phase).toBe("submitted"),
+        request.interruptWork = true;
+      }
+      expect(f.controller.start(request).phase).toBe("preparing");
+      await vi.waitFor(() => expect(f.backend.prepare).toHaveBeenCalledOnce());
+      expect(f.reserve).not.toHaveBeenCalled();
+      expect(() => f.controller.start(f.intent())).toThrow("already pending");
+      prepared.resolve();
+      await f.observe({ phase: "submitted" });
+      expect(f.reserve).toHaveBeenCalledExactlyOnceWith(global, true);
+      expect(f.attachedWork).toHaveBeenCalledTimes(global ? 0 : 1);
+      expect(f.stopAttached).not.toHaveBeenCalled();
+      expect(f.backend.request).toHaveBeenCalledExactlyOnceWith(
+        scope,
+        expect.any(Function),
       );
-      expect(runtime.reserveMaintenanceRestart).toHaveBeenCalledWith(
-        global,
-        true,
-      );
-      expect(runtime.stopAttachedPiWork).not.toHaveBeenCalled();
-      expect(runtime.checkAttachedRestartWork).toHaveBeenCalledTimes(
-        global ? 0 : 1,
-      );
-      expect(backend.request).toHaveBeenCalledWith(scope, expect.any(Function));
+      expect(f.release).not.toHaveBeenCalled();
     },
   );
 
-  it("finishes preparation before acquiring idle authority and excludes other operations", async () => {
-    const ready = Promise.withResolvers<void>();
-    const f = fixture({ prepare: vi.fn(() => ready.promise) });
-    const request = await intent(f.controller);
-    expect(f.controller.start(request).phase).toBe("preparing");
-    await vi.waitFor(() => expect(f.backend.prepare).toHaveBeenCalledOnce());
-    expect(f.runtime.reserveMaintenanceRestart).not.toHaveBeenCalled();
-    expect(() =>
-      f.controller.start({ ...request, operationId: randomUUID() }),
-    ).toThrow("already pending");
-    ready.resolve();
-    await vi.waitFor(async () =>
-      expect((await f.controller.status()).operation?.phase).toBe("submitted"),
-    );
-    expect(f.backend.request).toHaveBeenCalledOnce();
-    expect(f.runtime.commitMaintenanceRestart).toHaveBeenCalledWith("lease");
-    expect(f.runtime.releaseMaintenanceRestart).not.toHaveBeenCalled();
-  });
-
-  it("refuses ordinary busy restart, then explicitly authorizes interruption after fresh preparation", async () => {
-    const f = fixture();
-    f.runtime.reserveMaintenanceRestart.mockImplementation((interruptWork) =>
-      interruptWork
-        ? { kind: "ready", leaseId: "lease", expiresAt: Date.now() + 30_000 }
-        : { kind: "busy", reason: "active-work" },
-    );
-    const safe = await intent(f.controller);
-    f.controller.start(safe);
-    await vi.waitFor(async () =>
-      expect((await f.controller.status()).operation).toMatchObject({
-        phase: "rejected",
-        busyReason: "active-work",
-      }),
-    );
+  it("requires a fresh grant after a busy or unconfirmed Stop result", async () => {
+    const f = await fixture();
+    f.reserve.mockReturnValueOnce({ kind: "busy", reason: "active-work" });
+    const original = f.intent();
+    f.controller.start(original);
+    await f.observe({ phase: "rejected", busyReason: "active-work" });
     expect(f.backend.request).not.toHaveBeenCalled();
-    expect(f.runtime.stopAttachedPiWork).not.toHaveBeenCalled();
-    expect(() => f.controller.start({ ...safe, interruptWork: true })).toThrow(
-      "does not match",
-    );
-    const forced = {
-      ...safe,
-      operationId: randomUUID(),
-      interruptWork: true as const,
-    };
-    f.controller.start(forced);
-    await vi.waitFor(async () =>
-      expect((await f.controller.status()).operation?.phase).toBe("submitted"),
-    );
-    expect(f.runtime.reserveMaintenanceRestart).toHaveBeenCalledWith(
-      true,
-      true,
-    );
-    expect(f.runtime.stopAttachedPiWork).toHaveBeenCalledOnce();
-    expect(f.runtime.commitMaintenanceRestart).toHaveBeenCalledWith("lease");
-    expect(f.backend.prepare).toHaveBeenCalledTimes(2);
-    expect(f.backend.request).toHaveBeenCalledOnce();
     expect(() =>
-      f.controller.start({ ...forced, interruptWork: undefined }),
+      f.controller.start({ ...original, interruptWork: true }),
     ).toThrow("does not match");
-  });
 
-  it("reports an unconfirmed Stop before allowing Restart anyway", async () => {
-    const f = fixture();
-    const request = {
-      ...(await intent(f.controller)),
-      interruptWork: true as const,
-    };
-    const anyway = {
-      ...request,
-      operationId: randomUUID(),
-      skipAttachedStop: true as const,
-    };
+    const forced = f.intent({ interruptWork: true });
+    const anyway = f.intent({ interruptWork: true, skipAttachedStop: true });
     expect(() => f.controller.start(anyway)).toThrow(
       "Review the unconfirmed Stop",
     );
-    f.runtime.stopAttachedPiWork.mockRejectedValueOnce(
+    f.stopAttached.mockRejectedValueOnce(
       new Error("Could not confirm Stop for session A."),
     );
-    f.controller.start(request);
-    await vi.waitFor(async () =>
-      expect((await f.controller.status()).operation).toMatchObject({
-        phase: "rejected",
-        stopUnconfirmed: true,
-        error: "Could not confirm Stop for session A.",
-      }),
-    );
+    f.controller.start(forced);
+    await f.observe({
+      phase: "rejected",
+      stopUnconfirmed: true,
+      error: "Could not confirm Stop for session A.",
+    });
     expect(f.backend.request).not.toHaveBeenCalled();
-    expect(f.runtime.releaseMaintenanceRestart).toHaveBeenCalledWith("lease");
+    expect(f.release).toHaveBeenCalledOnce();
     f.controller.start(anyway);
-    await vi.waitFor(async () =>
-      expect((await f.controller.status()).operation?.phase).toBe("submitted"),
-    );
+    await f.observe({ phase: "submitted" });
+    expect(f.backend.prepare).toHaveBeenCalledTimes(3);
     expect(f.backend.request).toHaveBeenCalledOnce();
-    expect(f.runtime.stopAttachedPiWork).toHaveBeenCalledOnce();
+    expect(f.stopAttached).toHaveBeenCalledOnce();
+    expect(() =>
+      f.controller.start({ ...anyway, skipAttachedStop: undefined }),
+    ).toThrow("does not match");
   });
 
-  it("does not interrupt when another restart owns the lease", async () => {
-    const occupied = fixture();
-    occupied.runtime.reserveMaintenanceRestart.mockReturnValue({
-      kind: "busy",
-      reason: "restart-pending",
-    });
-    occupied.controller.start({
-      ...(await intent(occupied.controller)),
-      interruptWork: true,
-    });
-    await vi.waitFor(async () =>
-      expect((await occupied.controller.status()).operation).toMatchObject({
-        phase: "rejected",
-        busyReason: "restart-pending",
-      }),
-    );
-    expect(occupied.backend.request).not.toHaveBeenCalled();
+  it("cannot interrupt work while another restart holds the actual lease", async () => {
+    const f = await fixture();
+    expect(f.runtime.reserveMaintenanceRestart().kind).toBe("ready");
+    f.controller.start(f.intent({ interruptWork: true }));
+    await f.observe({ phase: "rejected", busyReason: "restart-pending" });
+    expect(f.stopAttached).not.toHaveBeenCalled();
+    expect(f.backend.request).not.toHaveBeenCalled();
   });
 
-  it("reports scopes separately and rejects unsupported full restart before preparation", async () => {
-    const f = fixture({
-      inspect: vi.fn(async () => ({ host: true, allPi: false })),
+  it("rejects unsupported full restart before preparation", async () => {
+    const f = await fixture({
+      inspect: async () => ({ host: true, allPi: false }),
     });
     expect(await f.controller.status()).toMatchObject({
       available: true,
       allPiAvailable: false,
       allPiReason: expect.stringContaining("Linux services"),
     });
-    f.controller.start({
-      ...(await intent(f.controller)),
-      scope: "all-pi",
-      interruptWork: true,
-    });
-    await vi.waitFor(async () =>
-      expect((await f.controller.status()).operation).toMatchObject({
-        phase: "rejected",
-        error: expect.stringContaining("Restart all requires"),
-      }),
-    );
+    f.controller.start(f.intent({ scope: "all-pi", interruptWork: true }));
+    await f.observe({ phase: "rejected" });
     expect(f.backend.prepare).not.toHaveBeenCalled();
-    expect(f.runtime.reserveMaintenanceRestart).not.toHaveBeenCalled();
-    f.controller.start({ ...(await intent(f.controller)), scope: "host" });
-    await vi.waitFor(async () =>
-      expect((await f.controller.status()).operation?.phase).toBe("submitted"),
-    );
+    expect(f.reserve).not.toHaveBeenCalled();
+    f.controller.start(f.intent());
+    await f.observe({ phase: "submitted" });
   });
 
   it.each(["active-work", "in-flight-operation"] as const)(
-    "reports a %s veto at final submission as a workload refusal",
+    "reports a %s veto at commit",
     async (reason) => {
-      const f = fixture();
-      f.runtime.commitMaintenanceRestart.mockReturnValue({
-        kind: "skipped",
-        reason,
+      const f = await fixture();
+      f.commit.mockReturnValueOnce({ kind: "skipped", reason });
+      f.controller.start(f.intent());
+      await f.observe({
+        phase: "rejected",
+        busyReason: reason,
+        error: expect.stringContaining("Stop work and restart"),
       });
-      f.controller.start(await intent(f.controller));
-      await vi.waitFor(async () =>
-        expect((await f.controller.status()).operation).toMatchObject({
-          phase: "rejected",
-          busyReason: reason,
-          error: expect.stringContaining("Stop work and restart"),
-        }),
-      );
-      expect(
-        f.runtime.releaseMaintenanceRestart,
-      ).toHaveBeenCalledExactlyOnceWith("lease");
+      expect(f.release).toHaveBeenCalledOnce();
+      expect(f.runtime.reserveMaintenanceRestart().kind).toBe("ready");
     },
   );
 
   it.each([
-    ["proven non-issuance", "rejected"],
-    ["exit-error", "unknown"],
-    ["lost-result", "unknown"],
-  ] as const)("publishes %s as %s without replay", async (mode, phase) => {
-    const f = fixture({
+    ["proved no issuance", "rejected"],
+    ["failed after commit", "unknown"],
+    ["lost reply", "unknown"],
+  ] as const)("reports %s as %s without replay", async (mode, phase) => {
+    const f = await fixture({
       request: vi.fn(async (_scope, commit) => {
         expect(await commit()).toBe(true);
-        if (mode === "lost-result") throw new Error("IPC lost");
-        return mode === "proven non-issuance"
+        if (mode === "lost reply") throw new Error("IPC lost");
+        return mode === "proved no issuance"
           ? { code: 1, issued: false }
           : { code: 1 };
       }),
     });
-    const request = await intent(f.controller);
+    const request = f.intent();
     f.controller.start(request);
-    await vi.waitFor(async () =>
-      expect((await f.controller.status()).operation?.phase).toBe(phase),
+    await f.observe({ phase });
+    expect(f.release).toHaveBeenCalledTimes(phase === "rejected" ? 1 : 0);
+    expect(f.runtime.reserveMaintenanceRestart().kind).toBe(
+      phase === "rejected" ? "ready" : "busy",
     );
-    if (phase === "rejected")
-      expect(
-        f.runtime.releaseMaintenanceRestart,
-      ).toHaveBeenCalledExactlyOnceWith("lease");
-    else {
-      expect(f.runtime.releaseMaintenanceRestart).not.toHaveBeenCalled();
-      expect(() =>
-        f.controller.start({ ...request, operationId: randomUUID() }),
-      ).toThrow("already pending");
-    }
+    if (phase === "unknown")
+      expect(() => f.controller.start(f.intent())).toThrow("already pending");
     expect(f.controller.start(request).phase).toBe(phase);
     expect(f.backend.request).toHaveBeenCalledOnce();
   });

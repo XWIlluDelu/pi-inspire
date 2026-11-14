@@ -1,4 +1,5 @@
 import { appendFile, readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   ConnectExternalSession,
@@ -15,14 +16,16 @@ import {
 import { RuntimeExternalSessions } from "../../server/runtime-external-sessions.js";
 import type { RuntimeSlot } from "../../server/runtime-slot.js";
 import { createRuntimeSlot } from "../../server/runtime-slot.js";
-import type { SessionRecord } from "../../server/session-catalog.js";
+import {
+  SessionCatalog,
+  type SessionRecord,
+} from "../../server/session-catalog.js";
 import { parseAttachmentContext } from "../../shared/attachment-context.js";
 import {
-  catalog,
   deferredSignal,
   disposeRuntimeFixture,
   FakeRpc,
-  fakeRuntime,
+  fixtureWorkspace,
   initializeRuntimeFixture,
   persistedRecord,
   preview,
@@ -33,17 +36,36 @@ import {
   upload,
 } from "./fixtures/runtime.js";
 import { jsonl, messageEntry } from "./fixtures/session-jsonl.js";
+import {
+  nativePiWorkspace,
+  stubNativePiEnvironment,
+} from "./fixtures/native-pi.js";
 
-const directProjections: Awaited<ReturnType<typeof preview>>[] = [];
+const directlyAttached: Array<{
+  external: RuntimeExternalSessions;
+  projection: Awaited<ReturnType<typeof preview>>;
+}> = [];
 
-beforeEach(initializeRuntimeFixture);
+beforeEach(async () => {
+  await initializeRuntimeFixture();
+  const pi = await nativePiWorkspace(
+    "pi-",
+    { defaultProjectTrust: "never" },
+    fixtureWorkspace,
+  );
+  stubNativePiEnvironment(pi.env);
+  vi.stubEnv("PI_CODING_AGENT_SESSION_DIR", fixtureWorkspace);
+});
 afterEach(async () => {
   try {
-    await Promise.all(
-      directProjections.splice(0).map((projection) => projection.close()),
-    );
-  } finally {
+    for (const { external, projection } of directlyAttached.splice(0)) {
+      external.close();
+      await projection.close();
+    }
     await disposeRuntimeFixture();
+  } finally {
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
   }
 });
 
@@ -59,8 +81,8 @@ function nativeState(
   };
 }
 
-function nativeFixture() {
-  let state: ExternalSessionRead = nativeState();
+function nativeFixture(initial?: Partial<ExternalSessionState>) {
+  let state: ExternalSessionRead = nativeState(initial);
   const selection = { model: null, thinkingLevel: "off" as const };
   const native: ExternalSessionConnection = {
     read: vi.fn(async () => state),
@@ -98,10 +120,11 @@ const branchMessage = (id: string, parentId: string) =>
     }),
   );
 
-function workerFactory() {
+function workerFactory(configure?: (worker: FakeRpc) => void) {
   const workers: FakeRpc[] = [];
   const createProcess = vi.fn((options: PiRpcOptions) => {
     const worker = new FakeRpc(options);
+    configure?.(worker);
     workers.push(worker);
     return worker as unknown as PiRpcProcess;
   });
@@ -112,11 +135,9 @@ function workerFactory() {
 async function directAttachment(
   connect: ConnectExternalSession,
   host: Partial<ConstructorParameters<typeof RuntimeExternalSessions>[1]> = {},
-  pollMs?: number,
 ) {
   const session = record("a", "/tmp");
   const projection = await preview(session, []);
-  directProjections.push(projection);
   const slot = createRuntimeSlot({
     id: "a",
     cwd: session.cwd,
@@ -129,30 +150,34 @@ async function directAttachment(
     incarnationId: "slot-a",
     viewId: "view-a",
   });
+  const emit = vi.fn();
+  const taskOutcome = vi.fn();
+  const released = vi.fn();
+  const log = vi.fn();
   const external = new RuntimeExternalSessions(
     connect,
     {
       current: () => true,
-      emit: vi.fn(),
-      taskOutcome: vi.fn(),
+      emit,
+      taskOutcome,
       assertUsable: vi.fn(),
-      released: vi.fn(),
+      released,
       corresponds: () => true,
       continues: () => true,
       followLeaf: vi.fn(),
       renewView: vi.fn(),
-      log: vi.fn(),
+      log,
       reconcile: async () => {},
       ...host,
     },
     trackedAttachmentStore(),
-    pollMs,
+    10,
   );
-  return { slot, external };
+  directlyAttached.push({ external, projection });
+  return { slot, external, emit, taskOutcome, released, log };
 }
 
 async function nativeModelFixture() {
-  const f = nativeFixture();
   const selection = {
     model: { provider: "native", id: "current" },
     thinkingLevel: "low" as const,
@@ -161,40 +186,52 @@ async function nativeModelFixture() {
     modelSelection: selection,
     taskRuns: { instanceId: "receiver-one", settled: [] },
   });
-  f.setState(state);
+  const f = nativeFixture(state);
+  const replacement = nativeFixture();
+  let current = f.native;
   f.native.models = vi.fn(async () => ({
     ...selection,
     models: [selection.model],
   }));
   f.native.setModel = vi.fn(async () => selection);
   f.native.setThinkingLevel = vi.fn(async () => selection);
-  const emit = vi.fn();
-  const { slot, external } = await directAttachment(
-    async () => f.native,
-    { emit },
-    10,
-  );
-  return { ...f, selection, state, slot, external, emit };
+  const owner = await directAttachment(async () => current);
+  await owner.external.connect(owner.slot);
+  return {
+    ...f,
+    ...owner,
+    selection,
+    state,
+    replacement,
+    replace: async () => {
+      owner.external.detach(owner.slot);
+      current = replacement.native;
+      await owner.external.connect(owner.slot);
+    },
+  };
 }
 
 function runtimeFor(
-  sessions: SessionRecord[],
+  session: SessionRecord,
   options: RuntimeControllerOptions = {},
   store = trackedAttachmentStore(),
 ) {
-  const runtime = new RuntimeController(catalog(sessions), store, {
-    createProcess: () => {
-      throw new Error("must not launch Pi");
+  const runtime = new RuntimeController(
+    new SessionCatalog(session.cwd),
+    store,
+    {
+      createProcess: () => {
+        throw new Error("Unexpected Pi startup");
+      },
+      ...options,
     },
-    ...options,
-  });
+  );
   trackRuntime(runtime);
   return runtime;
 }
 
-/** A runtime over session "a" where a live Pi continues the branch. Owned
- * workers are refused unless a test supplies a factory. */
-function attachedRuntime(
+/** A native session with an empty leaf, attached only after explicit takeover. */
+async function attachedRuntime(
   connect: ConnectExternalSession,
   {
     createProcess,
@@ -204,12 +241,12 @@ function attachedRuntime(
     store?: ReturnType<typeof trackedAttachmentStore>;
   } = {},
 ) {
+  const session = record("a", fixtureWorkspace);
+  await (await preview(session, [])).close();
+  vi.stubEnv("PI_CODING_AGENT_SESSION_DIR", join(fixtureWorkspace, "previews"));
   return runtimeFor(
-    [record("a", "/tmp")],
-    {
-      ...(createProcess ? { createProcess } : {}),
-      openSessionProjection: (session) => preview(session, []),
-    },
+    session,
+    { ...(createProcess ? { createProcess } : {}) },
     store,
   )
     .setExternalSessionPresence(async () => [null])
@@ -229,7 +266,7 @@ describe("continue an externally owned Pi", () => {
     const session = await persistedRecord("a");
     const f = nativeFixture();
     f.setState({ activity: "idle", leafId: "u1" });
-    const runtime = runtimeFor([session])
+    const runtime = runtimeFor(session)
       .setExternalSessionPresence(async () => ["u1"])
       .setExternalSessionConnector(async () => f.native);
     const events: string[] = [];
@@ -289,43 +326,32 @@ describe("continue an externally owned Pi", () => {
       expect(dispatch).toHaveBeenCalledOnce();
       expect(f.native.abort).toHaveBeenCalledExactlyOnceWith("u1");
     } finally {
-      await runtime.close();
       vi.useRealTimers();
     }
   });
 
-  it("identifies the attached session whose Stop could not be confirmed", async () => {
+  it("reports unconfirmed Stop and refreshes the receiver before retrying on an empty branch", async () => {
     const f = nativeFixture();
-    f.setState({ activity: "working", leafId: null });
+    f.setState({ activity: "working" });
+    const runtime = await attachedRuntime(async () => f.native);
+    await openAttached(runtime, "a");
+    const stop = () =>
+      expect(runtime.stopAttachedPiWork()).rejects.toThrow(
+        "Could not confirm Stop for a. Work may still be running.",
+      );
+    vi.mocked(f.native.read).mockRejectedValueOnce(new Error("Unavailable"));
+    await stop();
+    expect(f.native.abort).not.toHaveBeenCalled();
     vi.mocked(f.native.abort).mockRejectedValueOnce(
       new Error("No Stop receipt"),
     );
-    const runtime = attachedRuntime(async () => f.native);
-    await openAttached(runtime, "a");
-    await expect(runtime.stopAttachedPiWork()).rejects.toThrow(
-      "Could not confirm Stop for a. Work may still be running.",
-    );
+    await stop();
+    await runtime.stopAttachedPiWork();
+    expect(vi.mocked(f.native.abort).mock.calls).toEqual([[null], [null]]);
   });
 
-  it("requires a fresh observation for restart interruption and accepts an empty branch", async () => {
-    const f = nativeFixture();
-    f.setState({ activity: "working" });
-    const { slot, external } = await directAttachment(async () => f.native);
-    try {
-      expect(await external.connect(slot)).toBe(true);
-      vi.mocked(f.native.read).mockRejectedValueOnce(new Error("Unavailable"));
-      await expect(external.abort(slot, true)).rejects.toThrow("Unavailable");
-      expect(f.native.abort).not.toHaveBeenCalled();
-      f.setState({ activity: "working", leafId: null });
-      await external.abort(slot, true);
-      expect(f.native.abort).toHaveBeenCalledExactlyOnceWith(null);
-    } finally {
-      external.close();
-    }
-  });
-
-  it("loads a reported continuation and ends the attachment when Pi leaves its branch", async () => {
-    const f = nativeFixture();
+  it("rejects an ancestor, loads a reported continuation, and ends the attachment on another branch", async () => {
+    const f = nativeFixture({ leafId: "ancestor" });
     const known = new Set(["current"]);
     const reconcile = vi.fn(async () => {
       known.add("continued");
@@ -338,33 +364,24 @@ describe("continue an externally owned Pi", () => {
       corresponds: onBranch,
       continues: onBranch,
     });
-    try {
-      f.setState({ activity: "idle", leafId: "ancestor" });
-      expect(await external.connect(slot)).toBe(false);
-      f.setState({ activity: "idle", leafId: "current" });
-      expect(await external.connect(slot)).toBe(true);
-
-      known.delete("continued");
-      reconcile.mockClear();
-      const establishedConnections = connect.mock.calls.length;
-      f.setState({ activity: "working", leafId: "continued" });
-      expect(await external.connect(slot)).toBe(true);
-      expect(reconcile).toHaveBeenCalledOnce();
-      expect(connect).toHaveBeenCalledTimes(establishedConnections);
-
-      f.setState({ activity: "idle", leafId: "sibling" });
-      expect(await external.connect(slot)).toBe(false);
-      expect(external.has(slot)).toBe(false);
-    } finally {
-      external.close();
-    }
+    expect(await external.connect(slot)).toBe(false);
+    f.setState({ leafId: "current" });
+    expect(await external.connect(slot)).toBe(true);
+    reconcile.mockClear();
+    f.setState({ activity: "working", leafId: "continued" });
+    expect(await external.connect(slot)).toBe(true);
+    expect(reconcile).toHaveBeenCalledOnce();
+    expect(connect).toHaveBeenCalledTimes(2);
+    f.setState({ leafId: "sibling" });
+    expect(await external.connect(slot)).toBe(false);
+    expect(external.has(slot)).toBe(false);
   });
 
   it("keeps a cold addressed view read-only when an apparently idle Pi is already working", async () => {
     const f = nativeFixture();
     f.setState({ activity: "working", leafId: "u1" });
     const { createProcess } = workerFactory();
-    const runtime = runtimeFor([await persistedRecord("a")], { createProcess })
+    const runtime = runtimeFor(await persistedRecord("a"), { createProcess })
       .setExternalSessionPresence(async () => ["u1"])
       .setExternalSessionConnector(async (_id, _file, _match, idleOnly) =>
         idleOnly ? f.native : null,
@@ -385,7 +402,6 @@ describe("continue an externally owned Pi", () => {
       expect(f.native.setModel).not.toHaveBeenCalled();
     } finally {
       release();
-      await runtime.close();
     }
   });
 
@@ -393,7 +409,7 @@ describe("continue an externally owned Pi", () => {
     const session = await persistedRecord("a");
     await appendFile(session.path, branchMessage("saved-current", "u1"));
     const { createProcess: create } = workerFactory();
-    const runtime = runtimeFor([session], {
+    const runtime = runtimeFor(session, {
       createProcess: create,
     }).setExternalSessionPresence(async (_id, _file, _fresh, isAncestor) => {
       expect(isAncestor("u1")).toBe(true);
@@ -409,91 +425,76 @@ describe("continue an externally owned Pi", () => {
     expect(snapshot.active?.effectiveLeafId).toBe("saved-current");
   });
 
-  it.each([null, undefined])(
-    "keeps a live Pi with unavailable attachment and leaf %s read-only",
-    async (leaf) => {
-      const presence = vi.fn(async () => [leaf]);
+  it.each([null, undefined, "unavailable", "appeared"] as const)(
+    "does not start a second writer when presence returns %s",
+    async (presence) => {
+      const ancestry = vi.fn(
+        async (): Promise<(string | null | undefined)[]> => [presence],
+      );
+      if (presence === "unavailable")
+        ancestry.mockRejectedValue(new Error("Cannot read registry"));
+      if (presence === "appeared")
+        ancestry
+          .mockResolvedValueOnce([])
+          .mockResolvedValueOnce([])
+          .mockResolvedValue(["not-yet-projected"]);
       const connect = vi.fn(async () => null);
-      const { createProcess: create } = workerFactory();
-      const runtime = attachedRuntime(connect, {
-        createProcess: create,
-      }).setExternalSessionPresence(presence);
-      const release = runtime.retainSessionView("a");
+      const { createProcess, workers } = workerFactory();
+      const runtime = (
+        await attachedRuntime(connect, {
+          createProcess,
+        })
+      ).setExternalSessionPresence(ancestry);
+      const release =
+        presence === "unavailable" ? () => {} : runtime.retainSessionView("a");
       try {
-        await expect(runtime.takeOverSession("a")).rejects.toMatchObject({
-          code: "EXTERNAL_PI_WRITER_ACTIVE",
-        });
-        expect(presence).toHaveBeenCalledWith(
-          "a",
-          expect.any(String),
-          true,
-          expect.any(Function),
-        );
-        expect(connect).toHaveBeenCalledOnce();
-        expect(create).not.toHaveBeenCalled();
-        expect((await runtime.snapshot("a")).active?.readOnlyReason).toBe(
-          "external-active",
+        if (presence == null) {
+          await expect(runtime.takeOverSession("a")).rejects.toMatchObject({
+            code: "EXTERNAL_PI_WRITER_ACTIVE",
+          });
+          expect(connect).toHaveBeenCalledOnce();
+          expect(ancestry).toHaveBeenCalledWith(
+            "a",
+            expect.any(String),
+            true,
+            expect.any(Function),
+          );
+          expect((await runtime.snapshot("a")).active?.readOnlyReason).toBe(
+            "external-active",
+          );
+        } else {
+          await runtime.snapshot("a");
+          await expect(
+            runtime.prompt({ sessionId: "a", message: "First input" }),
+          ).rejects.toMatchObject({
+            code:
+              presence === "appeared"
+                ? "EXTERNAL_PI_WRITER_ACTIVE"
+                : "EXTERNAL_PI_PRESENCE_UNAVAILABLE",
+          });
+        }
+        expect(workers.map(({ starts }) => starts)).toEqual(
+          presence === "appeared" ? [0] : [],
         );
       } finally {
         release();
-        await runtime.close();
       }
     },
   );
 
-  it("does not start a writer when live ownership could not be observed", async () => {
-    const { createProcess: create } = workerFactory();
-    const runtime = attachedRuntime(async () => null, {
-      createProcess: create,
-    }).setExternalSessionPresence(async () => {
-      throw new Error("Cannot read registry");
-    });
-    await runtime.snapshot("a");
-    await expect(
-      runtime.prompt({ sessionId: "a", message: "First input" }),
-    ).rejects.toMatchObject({ code: "EXTERNAL_PI_PRESENCE_UNAVAILABLE" });
-    expect(create).not.toHaveBeenCalled();
-  });
-
-  it("fences a new external leaf reported during writer preparation", async () => {
-    const { createProcess, workers } = workerFactory();
-    const runtime = attachedRuntime(async () => null, {
-      createProcess,
-    }).setExternalSessionPresence(
-      vi
-        .fn()
-        .mockResolvedValueOnce([])
-        .mockResolvedValueOnce([])
-        .mockResolvedValue(["not-yet-projected"]),
-    );
-    const release = runtime.retainSessionView("a");
-    try {
-      await runtime.snapshot("a");
-      await expect(
-        runtime.prompt({ sessionId: "a", message: "First input" }),
-      ).rejects.toMatchObject({ code: "EXTERNAL_PI_WRITER_ACTIVE" });
-      expect(workers).toHaveLength(1);
-      expect(workers[0]!.starts).toBe(0);
-    } finally {
-      release();
-      await runtime.close();
-    }
-  });
-
   it("rechecks a merely viewed session on entry but keeps a worked-on session editable", async () => {
-    let live: (string | null)[] = [];
+    let live: string[] = [];
     const { createProcess, workers } = workerFactory();
-    const runtime = runtimeFor([record("a", "/tmp"), record("b", "/tmp")], {
-      createProcess,
-      openSessionProjection: (session) => preview(session, []),
-    })
+    const session = await persistedRecord("a");
+    await persistedRecord("b");
+    const runtime = runtimeFor(session, { createProcess })
       .setExternalSessionPresence(async () => live)
       .setExternalSessionConnector(async () => null);
     await runtime.openSession("a");
     await runtime.openSession("b");
     expect(workers).toHaveLength(0);
     await runtime.prompt({ sessionId: "b", message: "working here" });
-    live = [null];
+    live = ["u1"];
     expect((await runtime.openSession("a")).active?.readOnlyReason).toBe(
       "external-active",
     );
@@ -514,7 +515,7 @@ describe("continue an externally owned Pi", () => {
     };
     const runs = { instanceId: "receiver", settled: [old] };
     f.setState({ activity: "idle", taskRuns: runs });
-    const runtime = attachedRuntime(async () => f.native);
+    const runtime = await attachedRuntime(async () => f.native);
     const outcomes = vi.fn();
     runtime.on("task_outcome", outcomes);
     await openAttached(runtime, "a");
@@ -542,7 +543,7 @@ describe("continue an externally owned Pi", () => {
 
   it("retries an unavailable takeover and keeps it through a later transient read failure", async () => {
     const f = nativeFixture();
-    const runtime = attachedRuntime(async () => f.native);
+    const runtime = await attachedRuntime(async () => f.native);
     const read = vi.mocked(f.native.read);
     read.mockRejectedValue(new Error("Control endpoint unavailable"));
     await expect(openAttached(runtime, "a")).rejects.toThrow(
@@ -571,17 +572,6 @@ describe("continue an externally owned Pi", () => {
     expect(f.native.prompt).toHaveBeenCalledOnce();
   });
 
-  it("does not call a busy receiver without native queue receipts", async () => {
-    const f = nativeFixture();
-    const runtime = attachedRuntime(async () => f.native);
-    await openAttached(runtime, "a");
-    f.setState({ activity: "working" });
-    await expect(
-      runtime.prompt({ sessionId: "a", message: "queue", behavior: "steer" }),
-    ).rejects.toMatchObject({ code: "ATTACH_CONTROL_QUEUE_ACK_UNAVAILABLE" });
-    expect(f.native.prompt).not.toHaveBeenCalled();
-  });
-
   it("keeps an in-flight send and its Stop addressed to the attached Pi after switching sessions", async () => {
     const f = nativeFixture();
     f.setState({ leafId: "u1" });
@@ -595,10 +585,9 @@ describe("continue an externally owned Pi", () => {
       f.setState({ activity: "working", leafId: "u1" });
     });
     const { createProcess, workers } = workerFactory();
-    const runtime = runtimeFor(
-      [await persistedRecord("a"), await persistedRecord("b")],
-      { createProcess },
-    )
+    const session = await persistedRecord("a");
+    await persistedRecord("b");
+    const runtime = runtimeFor(session, { createProcess })
       .setExternalSessionPresence(async (id) => (id === "a" ? ["u1"] : []))
       .setExternalSessionConnector(async (id) =>
         id === "a" ? f.native : null,
@@ -641,7 +630,6 @@ describe("continue an externally owned Pi", () => {
       expect(runtime.startupSessionHint).toBe("b");
     } finally {
       deliver.resolve();
-      await runtime.close();
     }
   });
 
@@ -655,7 +643,7 @@ describe("continue an externally owned Pi", () => {
         .mockResolvedValueOnce(first.native)
         .mockResolvedValue(replacement.native);
       const { createProcess: create } = workerFactory();
-      const runtime = attachedRuntime(connect, { createProcess: create });
+      const runtime = await attachedRuntime(connect, { createProcess: create });
       await openAttached(runtime, "a");
       first.setState({ ended: "exited" });
       const mutate = {
@@ -680,7 +668,7 @@ describe("continue an externally owned Pi", () => {
     const finish = deferredSignal();
     let pause = false;
     const { createProcess, workers } = workerFactory();
-    const runtime = runtimeFor([session], { createProcess })
+    const runtime = runtimeFor(session, { createProcess })
       .setExternalSessionPresence(async () => {
         if (pause) {
           pause = false;
@@ -728,7 +716,6 @@ describe("continue an externally owned Pi", () => {
     } finally {
       finish.resolve();
       release();
-      await runtime.close();
     }
   });
 
@@ -741,18 +728,16 @@ describe("continue an externally owned Pi", () => {
     const f = nativeFixture();
     f.setState({ activity: "working", leafId: "chosen" });
     let live = true;
-    const { runtime, workers } = fakeRuntime({
-      sessions: [session],
-      configure(worker) {
-        worker.failPrompts = true;
-      },
+    const { createProcess, workers } = workerFactory((worker) => {
+      worker.responseOverrides.set("prompt", () => {
+        throw new Error("Pi did not attest the selected branch");
+      });
     });
-    runtime
+    const runtime = runtimeFor(session, { createProcess })
       .setExternalSessionPresence(async () => (live ? ["chosen"] : []))
       .setExternalSessionConnector(async (_id, _file, _match, idleOnly) =>
         idleOnly ? null : f.native,
       );
-    trackRuntime(runtime);
     await openAttached(runtime, "a");
     await expect(
       runtime.navigateBranch({
@@ -765,8 +750,7 @@ describe("continue an externally owned Pi", () => {
       status: 409,
     });
     expect(await runtime.snapshot("a")).toMatchObject({
-      sessionStatuses: { a: { external: true } },
-      runState: "running",
+      sessionStatuses: { a: { external: true, runState: "running" } },
       active: { effectiveLeafId: "chosen" },
     });
 
@@ -798,7 +782,9 @@ describe("continue an externally owned Pi", () => {
     await expect(send()).rejects.toThrow(
       "The external Pi connection has ended",
     );
-    await expect(send()).rejects.toThrow("prompt rejected");
+    await expect(send()).rejects.toThrow(
+      "Pi did not attest the selected branch",
+    );
     expect(workers).toHaveLength(1);
     expect(workers[0]!.stops).toBeGreaterThan(0);
     expect(workers[0]!.commands).not.toContainEqual({
@@ -811,27 +797,33 @@ describe("continue an externally owned Pi", () => {
     });
   });
 
-  it("discards late native state after retirement and completes writer recovery", async () => {
-    const f = nativeFixture();
+  it("ignores a retired receiver's late state and sends new input only after takeover", async () => {
+    const first = nativeFixture();
+    const replacement = nativeFixture();
     const entered = deferredSignal();
     const proceed = deferredSignal();
     let retired = false;
-    const { createProcess: worker } = workerFactory();
-    const runtime = attachedRuntime(async () => (retired ? null : f.native), {
-      createProcess: worker,
-    }).setExternalSessionPresence(async () => (retired ? [] : [null]));
-    const events: Array<{ type: string }> = [];
-    runtime.on("event", (event) => events.push(event));
+    let rediscovered = false;
+    const { createProcess } = workerFactory();
+    const connect = vi.fn(async () =>
+      rediscovered ? replacement.native : retired ? null : first.native,
+    );
+    const runtime = (
+      await attachedRuntime(connect, {
+        createProcess,
+      })
+    ).setExternalSessionPresence(async () =>
+      retired && !rediscovered ? [] : [null],
+    );
+    const events: string[] = [];
+    runtime.on("event", ({ type }) => events.push(type));
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const release = runtime.retainSessionView("a");
     try {
-      runtime.retainSessionView("a");
       await openAttached(runtime, "a");
-      await vi.waitFor(async () =>
-        expect((await runtime.snapshot("a")).sessionStatuses.a?.external).toBe(
-          true,
-        ),
-      );
-      vi.mocked(f.native.read).mockImplementationOnce(async () => {
+      await runtime.prompt({ sessionId: "a", message: "Before exit" });
+      events.length = 0;
+      vi.mocked(first.native.read).mockImplementationOnce(async () => {
         entered.resolve();
         await proceed.promise;
         return nativeState({ activity: "working" });
@@ -839,26 +831,35 @@ describe("continue an externally owned Pi", () => {
       const observing = vi.advanceTimersByTimeAsync(750);
       await entered.promise;
       retired = true;
-      f.setState({ ended: "exited" });
+      first.setState({ ended: "exited" });
       await expect(
-        runtime.prompt({
-          sessionId: "a",
-          message: "Do not send to retired Pi",
-        }),
+        runtime.prompt({ sessionId: "a", message: "For retired Pi" }),
       ).rejects.toThrow(/connection has ended/);
       proceed.resolve();
       await observing;
       await vi.advanceTimersByTimeAsync(750);
-      expect(worker).not.toHaveBeenCalled();
       const snapshot = await runtime.snapshot("a");
       expect(snapshot.active?.readOnlyReason).toBeUndefined();
       expect(snapshot.sessionStatuses.a?.external).not.toBe(true);
-      expect(snapshot.runState).toBe("idle");
-      expect(events.some((event) => event.type === "agent_start")).toBe(false);
+      expect(snapshot.sessionStatuses.a?.runState ?? "idle").toBe("idle");
+      expect(events).not.toContain("agent_start");
+
+      rediscovered = true;
+      await openAttached(runtime, "a");
+      await runtime.prompt({ sessionId: "a", message: "Fresh" });
+      expect(first.native.prompt).toHaveBeenCalledOnce();
+      expect(replacement.native.prompt).toHaveBeenCalledExactlyOnceWith(
+        "Fresh",
+        undefined,
+        expect.any(Function),
+        undefined,
+        null,
+      );
+      expect(connect).toHaveBeenCalledTimes(2);
+      expect(createProcess).not.toHaveBeenCalled();
     } finally {
+      release();
       proceed.resolve();
-      await runtime.close();
-      vi.useRealTimers();
     }
   });
 
@@ -866,7 +867,7 @@ describe("continue an externally owned Pi", () => {
     const session = await persistedRecord("a");
     const f = nativeFixture();
     f.setState({ activity: "working", leafId: "u1" });
-    const runtime = runtimeFor([session])
+    const runtime = runtimeFor(session)
       .setExternalSessionPresence(async () => ["u1"])
       .setExternalSessionConnector(async (_id, _file, _match, idleOnly) =>
         idleOnly ? null : f.native,
@@ -909,7 +910,7 @@ describe("continue an externally owned Pi", () => {
     const f = nativeFixture();
     const store = trackedAttachmentStore();
     const prompt = vi.mocked(f.native.prompt);
-    const runtime = attachedRuntime(async () => f.native, { store });
+    const runtime = await attachedRuntime(async () => f.native, { store });
     const imageUpload = upload("image.png", "image/png");
     const fileUpload = upload("notes.txt", "text/plain");
     const payload = imageUpload.buffer;
@@ -1003,7 +1004,7 @@ describe("continue an externally owned Pi", () => {
         beforeSend?.();
         delivered.push(text);
       });
-    const runtime = attachedRuntime(async () => f.native);
+    const runtime = await attachedRuntime(async () => f.native);
     try {
       await openAttached(runtime, "a");
       const sending = runtime
@@ -1018,7 +1019,6 @@ describe("continue an externally owned Pi", () => {
       expect(delivered).toEqual(["Fresh input"]);
     } finally {
       gate.resolve();
-      await runtime.close();
     }
   });
 
@@ -1040,7 +1040,7 @@ describe("continue an externally owned Pi", () => {
         vi.mocked(f.native.abort).mockImplementation(hold);
       else vi.mocked(f.native.prompt).mockImplementation(hold);
       const remove = vi.fn(async () => "trashed" as const);
-      const runtime = runtimeFor([await persistedRecord("a")], {
+      const runtime = runtimeFor(await persistedRecord("a"), {
         branchBridgeTimeoutMs: 15_000,
         deleteSessionRecord: remove,
       })
@@ -1048,7 +1048,6 @@ describe("continue an externally owned Pi", () => {
         .setExternalSessionConnector(async () => f.native);
       try {
         await openAttached(runtime, "a");
-        await vi.waitFor(() => expect(f.native.read).toHaveBeenCalled());
         const sending =
           operation === "prompt"
             ? runtime.prompt({ sessionId: "a", message: "Hold" })
@@ -1067,318 +1066,206 @@ describe("continue an externally owned Pi", () => {
         expect(remove).toHaveBeenCalledOnce();
       } finally {
         gate.resolve();
-        await runtime.close();
       }
     },
   );
 
-  it.each(["catalog", "poll", "reselect"] as const)(
-    "preserves completed model and thinking changes over an older %s read",
+  it.each(["catalog", "poll", "reselect", "reaffirm"] as const)(
+    "keeps selection authority during an older %s observation",
     async (source) => {
-      const f = await nativeModelFixture();
+      vi.useFakeTimers();
+      const { external, native, slot, state, selection } =
+        await nativeModelFixture();
       const gate = deferredSignal();
       const selected = {
         model: { provider: "native", id: "selected" },
         thinkingLevel: "high" as const,
       };
-      const models = [f.selection.model, selected.model];
-      vi.mocked(f.native.setModel).mockResolvedValue({
-        ...selected,
-        thinkingLevel: "low",
-      });
-      vi.mocked(f.native.setThinkingLevel).mockResolvedValue(selected);
-      vi.useFakeTimers();
+      const models = [selection.model, selected.model];
       try {
-        await f.external.connect(f.slot);
+        if (source === "reaffirm") {
+          for (const setter of [
+            () => external.setModel(slot, "native", "current"),
+            () => external.setThinkingLevel(slot, "low"),
+          ]) {
+            const late = Promise.withResolvers<
+              typeof selected & { models: typeof models }
+            >();
+            vi.mocked(native.models).mockReturnValueOnce(late.promise);
+            const reading = external.models(slot);
+            await setter();
+            late.resolve({ ...selected, models });
+            expect(await reading).toEqual({ ...selection, models });
+          }
+          expect(external.modelSelection(slot)).toEqual(selection);
+          return;
+        }
+        vi.mocked(native.setModel).mockResolvedValue({
+          ...selected,
+          thinkingLevel: "low",
+        });
+        vi.mocked(native.setThinkingLevel).mockResolvedValue(selected);
         let reading: Promise<unknown> | undefined;
         if (source === "catalog") {
-          vi.mocked(f.native.models).mockImplementationOnce(async () => {
+          vi.mocked(native.models).mockImplementationOnce(async () => {
             await gate.promise;
-            return { ...f.selection, models };
+            return { ...selection, models };
           });
-          reading = f.external.models(f.slot);
+          reading = external.models(slot);
         } else {
-          vi.mocked(f.native.read).mockImplementationOnce(async () => {
+          vi.mocked(native.read).mockImplementationOnce(async () => {
             await gate.promise;
-            return { ...f.state, activity: "working" };
+            return { ...state, activity: "working" };
           });
-          if (source === "reselect") reading = f.external.connect(f.slot);
+          if (source === "reselect") reading = external.connect(slot);
           else await vi.advanceTimersByTimeAsync(10);
-          expect(f.native.read).toHaveBeenCalledTimes(2);
+          expect(native.read).toHaveBeenCalledTimes(2);
         }
-
-        await f.external.setModel(f.slot, "native", "selected");
-        await f.external.setThinkingLevel(f.slot, "high");
+        await external.setModel(slot, "native", "selected");
+        await external.setThinkingLevel(slot, "high");
         gate.resolve();
         const response = await reading;
         await vi.advanceTimersByTimeAsync(0);
-        expect(f.external.modelSelection(f.slot)).toEqual(selected);
+        expect(external.modelSelection(slot)).toEqual(selected);
         if (source === "catalog") {
           expect(response).toEqual({ ...selected, models });
-          expect(f.slot.availableModels).toEqual(models);
+          expect(slot.availableModels).toEqual(models);
         } else {
-          expect(f.slot.runState).toBe("running");
-          // A subsequent terminal-side selection remains authoritative.
+          expect(slot.runState).toBe("running");
           await vi.advanceTimersByTimeAsync(10);
-          expect(f.external.modelSelection(f.slot)).toEqual(f.selection);
+          expect(external.modelSelection(slot)).toEqual(selection);
         }
       } finally {
         gate.resolve();
-        f.external.close();
-        vi.useRealTimers();
       }
     },
   );
 
-  it.each(["model", "thinking"] as const)(
-    "preserves a confirmed same-value %s selection over an older catalog result",
-    async (kind) => {
+  it.each(["native reload", "new connection"] as const)(
+    "ignores catalog and setter replies from before %s",
+    async (change) => {
+      vi.useFakeTimers();
       const f = await nativeModelFixture();
       const gate = deferredSignal();
-      const old = {
-        model: { provider: "native", id: "stale" },
-        thinkingLevel: "off" as const,
+      const successor = {
+        model: { provider: "native", id: "successor" },
+        thinkingLevel: "high" as const,
       };
-      vi.mocked(f.native.models).mockImplementationOnce(async () => {
+      const models = [{ provider: "fresh", id: "available" }];
+      const late = async () => {
         await gate.promise;
-        return { ...old, models: [old.model, f.selection.model] };
-      });
-      vi.useFakeTimers();
+        return f.selection;
+      };
+      vi.mocked(f.native.models).mockImplementationOnce(async () => ({
+        ...(await late()),
+        models: [{ provider: "old", id: "retired" }],
+      }));
+      vi.mocked(f.native.setModel).mockImplementationOnce(late);
+      vi.mocked(f.native.setThinkingLevel).mockImplementationOnce(late);
       try {
-        await f.external.connect(f.slot);
-        const reading = f.external.models(f.slot);
-        if (kind === "model")
-          await f.external.setModel(f.slot, "native", "current");
-        else await f.external.setThinkingLevel(f.slot, "low");
+        const { external, slot, native, replacement } = f;
+        const outcomes = Promise.allSettled([
+          external.models(slot),
+          external.setModel(slot, "native", "current"),
+          external.setThinkingLevel(slot, "low"),
+        ]);
+        if (change === "native reload") {
+          vi.mocked(native.models).mockResolvedValue({ ...successor, models });
+          f.setState({
+            ...f.state,
+            modelSelection: successor,
+            taskRuns: { ...f.state.taskRuns, instanceId: "receiver-two" },
+          });
+          f.emit.mockClear();
+          await vi.advanceTimersByTimeAsync(10);
+          expect(f.emit).toHaveBeenCalledWith(slot, {
+            type: "model_metadata_changed",
+          });
+        } else {
+          vi.mocked(replacement.native.models).mockResolvedValue({
+            ...successor,
+            models,
+          });
+          await f.replace();
+        }
+        expect(slot.availableModels).toBeNull();
+        await expect(external.models(slot)).resolves.toEqual({
+          ...successor,
+          models,
+        });
+        const events = f.emit.mock.calls.length;
         gate.resolve();
-        expect(await reading).toMatchObject(f.selection);
-        expect(f.external.modelSelection(f.slot)).toEqual(f.selection);
+        for (const result of await outcomes)
+          expect(result).toMatchObject({
+            status: "rejected",
+            reason: { status: 409 },
+          });
+        expect(slot.availableModels).toEqual(models);
+        expect(external.modelSelection(slot)).toEqual(successor);
+        expect(f.emit).toHaveBeenCalledTimes(events);
       } finally {
         gate.resolve();
-        f.external.close();
-        vi.useRealTimers();
       }
     },
   );
 
-  it("retires in-flight catalog and selection replies when Pi reloads its receiver", async () => {
-    const f = await nativeModelFixture();
-    const gate = deferredSignal();
-    const successor = {
-      model: { provider: "native", id: "successor" },
-      thinkingLevel: "high" as const,
-    };
-    const oldModel = { provider: "old", id: "retired" };
-    const freshModel = { provider: "fresh", id: "available" };
-    const late = async () => {
-      await gate.promise;
-      return f.selection;
-    };
-    vi.mocked(f.native.models)
-      .mockImplementationOnce(async () => ({
-        ...(await late()),
-        models: [oldModel],
-      }))
-      .mockResolvedValue({ ...successor, models: [freshModel] });
-    vi.mocked(f.native.setModel).mockImplementationOnce(late);
-    vi.mocked(f.native.setThinkingLevel).mockImplementationOnce(late);
-    vi.useFakeTimers();
-    try {
-      await f.external.connect(f.slot);
-      const outcomes = Promise.allSettled([
-        f.external.models(f.slot),
-        f.external.setModel(f.slot, "native", "current"),
-        f.external.setThinkingLevel(f.slot, "low"),
-      ]);
-      f.emit.mockClear();
-      f.setState({
-        ...f.state,
-        modelSelection: successor,
-        taskRuns: { ...f.state.taskRuns, instanceId: "receiver-two" },
-      });
-      await vi.advanceTimersByTimeAsync(10);
-      expect(f.slot.availableModels).toBeNull();
-      expect(f.emit).toHaveBeenCalledWith(f.slot, {
-        type: "model_metadata_changed",
-      });
-      // The replacement's read can finish without waiting for the old reply.
-      await expect(f.external.models(f.slot)).resolves.toMatchObject({
-        ...successor,
-        models: [freshModel],
-      });
-      gate.resolve();
-      for (const result of await outcomes)
-        expect(result).toMatchObject({
-          status: "rejected",
-          reason: { status: 409 },
-        });
-      expect(f.slot.availableModels).toEqual([freshModel]);
-      expect(f.external.modelSelection(f.slot)).toEqual(successor);
-    } finally {
-      gate.resolve();
-      f.external.close();
-      vi.useRealTimers();
-    }
-  });
-
-  it("rejects a retired catalog before changing the replacement owner's models or selection", async () => {
-    const old = nativeFixture(),
-      fresh = nativeFixture();
-    const gate = deferredSignal();
-    const catalogFor = (provider: string) => ({
-      models: [{ provider, id: "model" }],
-      model: { provider, id: "model" },
-      thinkingLevel: "low" as const,
-    });
-    for (const f of [old, fresh]) {
-      f.setState({ activity: "idle" });
-      f.native.setModel = vi.fn();
-      f.native.setThinkingLevel = vi.fn();
-    }
-    old.native.models = vi.fn(async () => {
-      await gate.promise;
-      return catalogFor("old");
-    });
-    fresh.native.models = vi.fn(async () => catalogFor("fresh"));
-    const emit = vi.fn();
-    const { slot, external } = await directAttachment(
-      vi.fn().mockResolvedValueOnce(old.native).mockResolvedValue(fresh.native),
-      { emit },
-    );
-    try {
-      await external.connect(slot);
-      const pending = external.models(slot);
-      const rejected = expect(pending).rejects.toThrow("connection has ended");
-      external.detach(slot);
-      await external.connect(slot);
-      await external.models(slot);
-      const events = emit.mock.calls.length;
-      gate.resolve();
-      await rejected;
-      expect(slot.availableModels).toEqual(catalogFor("fresh").models);
-      expect(external.modelSelection(slot)).toEqual({
-        model: catalogFor("fresh").model,
-        thinkingLevel: "low",
-      });
-      expect(emit).toHaveBeenCalledTimes(events);
-    } finally {
-      gate.resolve();
-      external.close();
-    }
-  });
-
   it("coalesces failed native polls until one complete observation succeeds", async () => {
+    vi.useFakeTimers();
     const f = nativeFixture();
-    const log = vi.fn();
     const reconcile = vi.fn(async (): Promise<unknown> => {
       throw new Error("Projection read failed");
     });
-    const { slot, external } = await directAttachment(
+    const { slot, external, log } = await directAttachment(
       async () => f.native,
-      { log, reconcile },
-      10,
+      { reconcile },
     );
-    vi.useFakeTimers();
-    try {
-      await external.connect(slot);
-      await vi.advanceTimersByTimeAsync(20);
-      expect(log).toHaveBeenCalledTimes(1);
-      expect(reconcile).toHaveBeenCalledWith(slot, false);
-      reconcile.mockResolvedValueOnce(undefined);
-      await vi.advanceTimersByTimeAsync(20);
-      expect(log).toHaveBeenCalledTimes(2);
-      slot.projection = null;
-      const reconciliations = reconcile.mock.calls.length;
-      await vi.advanceTimersByTimeAsync(20);
-      expect(reconcile).toHaveBeenCalledTimes(reconciliations);
-    } finally {
-      external.close();
-      vi.useRealTimers();
-    }
+    await external.connect(slot);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(log).toHaveBeenCalledOnce();
+    expect(reconcile).toHaveBeenCalledWith(slot, false);
+    reconcile.mockResolvedValueOnce(undefined);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(log).toHaveBeenCalledTimes(2);
+    slot.projection = null;
+    const reconciliations = reconcile.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(20);
+    expect(reconcile).toHaveBeenCalledTimes(reconciliations);
   });
 
   it.each([
-    ["exited", { ended: "exited" }, true],
-    ["unreachable", { ended: "unreachable" }, true],
-    ["left-branch", { activity: "working", leafId: "elsewhere" }, false],
+    ["exited", { ended: "exited" }],
+    ["unreachable", { ended: "unreachable" }],
+    ["left-branch", { activity: "working", leafId: "elsewhere" }],
   ] as const)(
-    "ends a busy attachment that %s without claiming its task failed",
-    async (reason, observed, stillOnBranch) => {
-      const f = nativeFixture();
-      const emit = vi.fn();
-      const taskOutcome = vi.fn();
-      let onBranch = true;
-      const released = vi.fn();
-      const { slot, external } = await directAttachment(
-        async () => f.native,
-        {
-          emit,
-          taskOutcome,
-          released,
-          corresponds: () => onBranch,
-        },
-        10,
-      );
+    "retire a busy attachment on %s without reporting failure",
+    async (reason, state) => {
       vi.useFakeTimers();
-      try {
-        f.setState({ activity: "working" });
-        await external.connect(slot);
-        expect(slot.runState).toBe("running");
-        f.setState(observed);
-        onBranch = stillOnBranch;
-        await vi.advanceTimersByTimeAsync(20);
-        expect(external.has(slot)).toBe(false);
-        expect(slot.runState).toBe("idle");
-        expect(emit).toHaveBeenCalledWith(slot, {
-          type: "external_attachment_ended",
-          reason,
-          duringWork: true,
+      const f = nativeFixture({ activity: "working" });
+      const { slot, external, emit, taskOutcome, released } =
+        await directAttachment(async () => f.native, {
+          corresponds: (_slot, leaf) => leaf !== "elsewhere",
         });
-        expect(emit).not.toHaveBeenCalledWith(
-          slot,
-          expect.objectContaining({ type: "runtime_error" }),
-        );
-        expect(released).toHaveBeenCalledWith(slot);
-        if (reason === "exited")
-          expect(taskOutcome).toHaveBeenCalledExactlyOnceWith(slot, "ended");
-        else expect(taskOutcome).not.toHaveBeenCalled();
-      } finally {
-        external.close();
-        vi.useRealTimers();
-      }
+      await external.connect(slot);
+      expect(slot.runState).toBe("running");
+      f.setState(state);
+      await vi.advanceTimersByTimeAsync(20);
+      expect(external.has(slot)).toBe(false);
+      expect(slot.runState).toBe("idle");
+      expect(emit).toHaveBeenCalledWith(slot, {
+        type: "external_attachment_ended",
+        reason,
+        duringWork: true,
+      });
+      expect(emit).not.toHaveBeenCalledWith(
+        slot,
+        expect.objectContaining({ type: "runtime_error" }),
+      );
+      expect(released).toHaveBeenCalledWith(slot);
+      expect(taskOutcome.mock.calls).toEqual(
+        reason === "exited" ? [[slot, "ended"]] : [],
+      );
     },
   );
-
-  it("rediscovers an ended native owner on a subsequent open without repeating input", async () => {
-    const first = nativeFixture();
-    const next = nativeFixture();
-    const connect = vi
-      .fn()
-      .mockResolvedValueOnce(first.native)
-      .mockResolvedValue(next.native);
-    const runtime = attachedRuntime(connect);
-    await openAttached(runtime, "a");
-    await runtime.prompt({ sessionId: "a", message: "First" });
-    first.setState({ ended: "exited" });
-    await vi.waitFor(
-      async () =>
-        expect(
-          (await runtime.snapshot("a")).sessionStatuses.a?.external,
-        ).not.toBe(true),
-      { timeout: 1_500 },
-    );
-    await openAttached(runtime, "a");
-    await runtime.prompt({ sessionId: "a", message: "Fresh" });
-    expect(connect).toHaveBeenCalledTimes(2);
-    expect(first.native.prompt).toHaveBeenCalledTimes(1);
-    expect(next.native.prompt).toHaveBeenCalledExactlyOnceWith(
-      "Fresh",
-      undefined,
-      expect.any(Function),
-      undefined,
-      null,
-    );
-  });
 
   it("discards a takeover that resolves after Host shutdown", async () => {
     const f = nativeFixture();
@@ -1387,7 +1274,7 @@ describe("continue an externally owned Pi", () => {
       await gate.promise;
       return f.native;
     });
-    const runtime = attachedRuntime(connect);
+    const runtime = await attachedRuntime(connect);
     const taking = openAttached(runtime, "a").catch(() => undefined);
     await vi.waitFor(() => expect(connect).toHaveBeenCalled());
     const closing = runtime.close();

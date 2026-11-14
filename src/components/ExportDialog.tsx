@@ -58,7 +58,7 @@ export function ExportDialog({
           void download();
         }}
       >
-        <header className="export-dialog__header">
+        <header className="dialog__header">
           <h2 className="dialog__title" id="export-title">
             Export session
           </h2>
@@ -118,7 +118,7 @@ export function ExportDialog({
           </p>
         ) : null}
         {error !== null ? (
-          <p className="export-dialog__error" role="alert">
+          <p className="dialog__error" role="alert">
             {error}
           </p>
         ) : null}

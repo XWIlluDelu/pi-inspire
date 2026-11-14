@@ -1,5 +1,12 @@
-import { ChevronRight, FolderOpen, Send } from "lucide-react";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChevronRight, FolderOpen } from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   type ModelOption,
   modelIdentityKey,
@@ -11,9 +18,8 @@ import {
   type ModelCatalogResponse,
   modelSwitchThinkingLevel,
 } from "../../shared/model-settings";
-import { ApiError, type ProjectFileResult } from "../api";
+import { ApiError } from "../api";
 import type { PiCommand } from "../composer-completion";
-import { shouldSubmitComposerEnter } from "../composer-keyboard";
 import { relativeTime } from "../format";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import {
@@ -26,21 +32,18 @@ import {
   usePresentationAdapters,
 } from "../presentation-adapters";
 import { recoverableRead } from "../recovery-backoff";
-import { useSessionDraft } from "../session-drafts";
+import { hasDraftInput, useSessionDraft } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
 import {
   readNavigationDisclosure,
   saveNavigationDisclosure,
 } from "../workbench-session";
-import { AttachmentList } from "./AttachmentList";
-import { ComposerInput } from "./ComposerInput";
 import { ThinkingControl } from "./ComposerThinkingControl";
 import { DirectoryPicker } from "./DirectoryPicker";
+import { MessageEditor } from "./MessageEditor";
 import { ModelSelector } from "./ModelSelector";
 import { visibleSessions } from "./nav-model";
 import { PiLoader } from "./PiLoader";
-import { ProjectFileChips, ProjectFileControl } from "./ProjectFiles";
-import { useComposerAttachmentInput } from "./use-composer-attachment-input";
 import { BrandLogo, Wordmark } from "./Wordmark";
 
 const DIRECTORY_PREVIEW_DELAY_MS = 220;
@@ -70,7 +73,7 @@ export interface WelcomeInheritance {
 /** Landing composer. Its staged files remain browser-local until Pi has
  * assigned the new session identity, then enter the normal attachment owner
  * and prompt lifecycle before the first message is delivered. */
-export const Welcome = memo(function Welcome({
+export function Welcome({
   showRecent = true,
   inherited: inheritance = null,
   onDirectoryChange,
@@ -92,7 +95,6 @@ export const Welcome = memo(function Welcome({
   const draft = useSessionDraft(store.drafts, null);
   const [directory, setDirectory] = useState(() => inheritance?.cwd ?? "");
   const [starting, setStarting] = useState(false);
-  const [pickerOpen, setPickerOpen] = useState(false);
   const [showHiddenFiles, setShowHiddenFiles] = useState(false);
   const [recentOpen, setRecentOpen] = useState(() =>
     readNavigationDisclosure("recentSessions"),
@@ -105,11 +107,11 @@ export const Welcome = memo(function Welcome({
   const [browsing, setBrowsing] = useState(false);
   const [explicit, chooseModel] = useState<{
     model: ModelOption;
-    effort?: { key: string; level: ThinkingLevel };
+    effort: ThinkingLevel;
+    pending?: boolean;
   }>();
   const explicitModel = explicit?.model;
   const [manualThinking, chooseThinking] = useState<ThinkingLevel>();
-  const [modelResolveAttempt, setModelResolveAttempt] = useState(0);
   const { configuration } = usePresentationAdapters();
   const [controlValues, setControlValues] = useState<Record<string, string>>(
     {},
@@ -139,260 +141,220 @@ export const Welcome = memo(function Welcome({
   const sourceCwd = inheritance?.cwd;
   const catalogSource =
     sourceCwd === effectiveDirectory ? inheritSession : undefined;
-  const catalogKey = JSON.stringify([
-    transport,
-    effectiveDirectory,
-    catalogSource,
-  ]);
-  const sourceKey = JSON.stringify([transport, inheritSession, sourceCwd]);
-  const [sourceCheck, setSourceCheck] = useState<{
-    key: string;
-    result?: ModelCatalogResponse;
-    error?: string;
-  }>();
+  const key = (cwd?: string, sessionId?: string) =>
+    JSON.stringify([transport, cwd, sessionId]);
+  const catalogKey = key(effectiveDirectory, catalogSource);
+  const sourceKey = key(sourceCwd, inheritSession);
   const readSource = Boolean(
     !explicitModel &&
       inheritSession &&
       !inheritance?.model &&
       inheritance?.modelDiscovery,
   );
-  const source = sourceCheck?.key === sourceKey ? sourceCheck : undefined;
   const inheritWithCatalog = readSource && Boolean(catalogSource);
-  type CatalogCheck = {
+  type Preview = {
     key: string;
     result?: ModelCatalogResponse;
-    issue?: { missing: boolean; message: string };
+    error?: string;
+    missing?: boolean;
+    pending?: boolean;
   };
-  const [catalogCheck, setCatalogCheck] = useState<CatalogCheck>();
-  const currentCheck =
-    catalogCheck?.key === catalogKey ? catalogCheck : undefined;
-  const catalog = currentCheck?.result;
-  const catalogNeeded = !catalog || (inheritWithCatalog && !source?.result);
-  const directoryMissing = currentCheck?.issue?.missing === true;
-  const directoryProblem = directoryMissing
-    ? undefined
-    : currentCheck?.issue?.message;
-  const [checkingDirectory, setCheckingDirectory] = useState<string | null>(
-    null,
-  );
-  const directoryChecking = checkingDirectory === catalogKey;
-  const catalogRequest = useRef<ReturnType<typeof recoverableRead> | null>(
-    null,
-  );
-  const refreshModels = useCallback(
-    async (pick = false) => {
-      catalogRequest.current?.abort();
+  const [catalogPreview, publishCatalog] = useState<Preview>();
+  const [sourcePreview, publishSource] = useState<Preview>();
+  const check = catalogPreview?.key === catalogKey ? catalogPreview : undefined;
+  const catalog = check?.missing || check?.error ? undefined : check?.result;
+  const source = sourcePreview?.key === sourceKey ? sourcePreview : undefined;
+  const directoryMissing = Boolean(check?.missing);
+  const directoryProblem = !directoryMissing ? check?.error : undefined;
+  const directoryChecking = Boolean(check?.pending);
+  const sourceUnresolved = readSource && !source?.result;
+  const sourceError = sourceUnresolved ? source?.error : undefined;
+  const inheritedSelection =
+    source?.result?.selection ?? source?.result?.defaults;
+  const inheritedModel = inheritance?.model ?? inheritedSelection?.model;
+  const initialEffort = inheritance?.model
+    ? inheritance.thinkingLevel
+    : (inheritedSelection?.thinkingLevel ?? inheritance?.thinkingLevel);
+  const inheritedEffort = THINKING_LEVELS.includes(
+    initialEffort as ThinkingLevel,
+  )
+    ? (initialEffort as ThinkingLevel)
+    : "off";
+  const requests = useRef<
+    Partial<Record<"catalog" | "source", ReturnType<typeof recoverableRead>>>
+  >({});
+
+  const refresh = useCallback(
+    async (target: "catalog" | "source", pick = false) => {
+      const ownCatalog = target === "catalog";
+      const previewKey = ownCatalog ? catalogKey : sourceKey;
+      const publish = ownCatalog ? publishCatalog : publishSource;
+      requests.current[target]?.abort();
       const request = recoverableRead(
         () => store.getState().transportGeneration === transport,
       );
-      catalogRequest.current = request;
-      setCheckingDirectory(catalogKey);
+      requests.current[target] = request;
+      publish((old) => ({
+        ...(old?.key === previewKey ? old : {}),
+        key: previewKey,
+        pending: true,
+      }));
       try {
         const result = await request.read((signal) =>
           store.readNewSessionModels(
-            catalogSource,
-            effectiveDirectory || undefined,
-            inheritWithCatalog,
+            ownCatalog ? catalogSource : inheritSession,
+            (ownCatalog ? effectiveDirectory : sourceCwd) || undefined,
+            !ownCatalog || inheritWithCatalog,
             signal,
           ),
         );
-        if (!request.current()) return;
-        setCatalogCheck({ key: catalogKey, result });
-        if (inheritWithCatalog) setSourceCheck({ key: sourceKey, result });
+        publish({ key: previewKey, result });
+        if (ownCatalog)
+          chooseModel((choice) =>
+            choice?.pending
+              ? {
+                  model: choice.model,
+                  effort: candidateEffort(choice.model, result, choice.effort),
+                }
+              : choice,
+          );
+        if (ownCatalog && inheritWithCatalog)
+          publishSource({ key: sourceKey, result });
         return result.warning;
       } catch (error) {
         if (!request.current()) return;
         const missing =
+          ownCatalog &&
           error instanceof ApiError &&
           error.code === "PROJECT_DIRECTORY_MISSING";
         const invalid =
           error instanceof ApiError && [400, 403].includes(error.status);
-        setCatalogCheck((previous) => {
-          if (!missing && !invalid && previous?.key === catalogKey)
-            return previous;
-          return {
-            key: catalogKey,
-            issue: {
-              missing,
-              message:
-                error instanceof Error
-                  ? error.message
-                  : "Project directory could not be checked",
-            },
-          };
+        const message =
+          error instanceof Error
+            ? error.message
+            : ownCatalog
+              ? "Project directory could not be checked"
+              : "The source model is unavailable";
+        publish((old) => {
+          if (old?.key !== previewKey) return old;
+          return !missing && !invalid && (old.result || old.error)
+            ? { ...old, pending: false }
+            : { key: previewKey, error: message, missing };
         });
+        if (ownCatalog && inheritWithCatalog && !missing)
+          publishSource((old) =>
+            old?.key === sourceKey && old.result
+              ? old
+              : { key: sourceKey, error: message },
+          );
         if (!missing) throw error;
-        if (pick)
-          return (
-            await request.read((signal) =>
-              store.readNewSessionModels(undefined, undefined, false, signal),
-            )
-          ).warning;
+        if (pick) {
+          const result = await request.read((signal) =>
+            store.readNewSessionModels(undefined, undefined, false, signal),
+          );
+          publish({ key: previewKey, missing: true, result });
+          return result.warning;
+        }
       } finally {
-        if (request.current()) setCheckingDirectory(null);
-        if (catalogRequest.current === request) catalogRequest.current = null;
+        if (requests.current[target] === request)
+          delete requests.current[target];
       }
     },
     [
       catalogKey,
-      catalogSource,
-      effectiveDirectory,
-      inheritWithCatalog,
       sourceKey,
+      catalogSource,
+      inheritSession,
+      effectiveDirectory,
+      sourceCwd,
+      inheritWithCatalog,
       transport,
     ],
   );
+  const autoPreview = useEffectEvent((target: "catalog" | "source") => {
+    if (target === "catalog" && catalog && !sourceUnresolved) return;
+    if (!requests.current[target]?.current())
+      void refresh(target).catch(() => {});
+  });
   useEffect(() => {
-    const timer =
-      effectiveDirectory && catalogNeeded
-        ? setTimeout(() => {
-            if (!catalogRequest.current?.current())
-              void refreshModels().catch(() => {});
-          }, DIRECTORY_PREVIEW_DELAY_MS)
-        : undefined;
+    const timer = effectiveDirectory
+      ? setTimeout(() => autoPreview("catalog"), DIRECTORY_PREVIEW_DELAY_MS)
+      : undefined;
     return () => {
       clearTimeout(timer);
-      catalogRequest.current?.abort();
+      requests.current.catalog?.abort();
     };
-  }, [catalogNeeded, effectiveDirectory, refreshModels]);
-  const refreshPickerModels = useCallback(
-    () => refreshModels(true),
-    [refreshModels],
-  );
-
-  const inheritedSelection =
-    source?.result?.selection ?? source?.result?.defaults;
-  const inheritedModel = inheritance?.model ?? inheritedSelection?.model;
-  const sourceUnresolved = readSource && !source?.result;
+  }, [catalogKey, effectiveDirectory, inheritWithCatalog]);
   useEffect(() => {
-    if (!sourceUnresolved || inheritWithCatalog || !inheritSession) return;
-    const request = recoverableRead(
-      () => store.getState().transportGeneration === transport,
-    );
-    void request
-      .read((signal) =>
-        store.readNewSessionModels(inheritSession, sourceCwd, true, signal),
-      )
-      .then(
-        (result) => {
-          if (request.current()) setSourceCheck({ key: sourceKey, result });
-        },
-        (error: unknown) => {
-          if (request.current())
-            setSourceCheck({
-              key: sourceKey,
-              error:
-                error instanceof Error
-                  ? error.message
-                  : "The source model is unavailable",
-            });
-        },
-      );
-    return request.abort;
-  }, [
-    sourceUnresolved,
-    inheritWithCatalog,
-    inheritSession,
-    sourceCwd,
-    sourceKey,
-    transport,
-    modelResolveAttempt,
-  ]);
+    if (!sourceUnresolved || (inheritWithCatalog && !directoryMissing)) return;
+    autoPreview("source");
+    return () => requests.current.source?.abort();
+  }, [sourceKey, sourceUnresolved, inheritWithCatalog, directoryMissing]);
+
+  const refreshPickerModels = useCallback(
+    () => refresh("catalog", true),
+    [refresh],
+  );
+  const retryPreview = () => {
+    const target =
+      sourceError && (!inheritWithCatalog || directoryMissing)
+        ? "source"
+        : "catalog";
+    void refresh(target).catch(() => {});
+  };
 
   const chosen = explicitModel ?? inheritedModel;
   const chosenModel = chosen ?? catalog?.defaults?.model ?? null;
-  const catalogModels = catalog?.models ?? state.availableModels;
+  const catalogModels = check?.result?.models ?? state.availableModels;
   const selectedModel = resolveModelMetadata(chosenModel, catalogModels);
   const availableModels =
     selectedModel && !catalogModels.includes(selectedModel)
       ? [...catalogModels, selectedModel]
       : catalogModels;
   const thinkingLevels = supportedThinkingLevels(selectedModel);
-  const currentEffort =
-    (inheritance?.model
-      ? inheritance.thinkingLevel
-      : inheritedSelection?.thinkingLevel) ??
-    catalog?.defaults?.thinkingLevel ??
-    inheritance?.thinkingLevel;
-  const inheritedEffort = THINKING_LEVELS.includes(
-    currentEffort as ThinkingLevel,
-  )
-    ? (currentEffort as ThinkingLevel)
-    : "off";
-  const explicitEffort =
-    explicit &&
-    (explicit.effort?.key === catalogKey
-      ? explicit.effort.level
-      : candidateEffort(
-          explicit.model,
-          catalog,
-          explicit.effort?.level ?? inheritedEffort,
-        ));
-  // A refresh can change capabilities, but the choice retains its effort.
-  useEffect(() => {
-    if (
-      catalog &&
-      explicit &&
-      explicitEffort !== undefined &&
-      explicit.effort?.key !== catalogKey
-    )
-      chooseModel({
-        ...explicit,
-        effort: { key: catalogKey, level: explicitEffort },
-      });
-  }, [catalog, catalogKey, explicit, explicitEffort]);
-
   const modelWarning =
-    (sourceUnresolved ? source?.error : undefined) ??
+    sourceError ??
     (!selectedModel && catalog?.defaults
       ? (catalog.warning ?? "Models are unavailable")
       : undefined);
-  const modelChecking = sourceUnresolved && !source?.error && !directoryProblem;
+  const modelChecking =
+    sourceUnresolved &&
+    !directoryProblem &&
+    (!sourceError || Boolean(source?.pending || check?.pending));
   const thinkingLevel = clampThinkingLevel(
     selectedModel,
-    manualThinking ?? explicitEffort ?? inheritedEffort,
-  );
-
-  const attachmentInput = useComposerAttachmentInput(
-    (files) => store.addFiles(files, null),
-    starting,
+    manualThinking ??
+      explicit?.effort ??
+      (chosen ? inheritedEffort : catalog?.defaults?.thinkingLevel) ??
+      inheritedEffort,
   );
 
   const searchProjectFiles = useCallback(
     (query: string) =>
-      effectiveDirectory
-        ? store.searchNewSessionProjectFiles(
-            effectiveDirectory,
-            query,
-            showHiddenFiles,
-          )
-        : Promise.resolve({ files: [] }),
+      store.searchNewSessionProjectFiles(
+        effectiveDirectory,
+        query,
+        showHiddenFiles,
+      ),
     [effectiveDirectory, showHiddenFiles],
   );
 
   const changeDirectory = (value: string) => {
     setDirectory(value);
     if (value.trim() === effectiveDirectory) return;
-    catalogRequest.current?.abort();
-    setCatalogCheck(undefined);
+    requests.current.catalog?.abort();
+    publishCatalog(undefined);
+    chooseModel((choice) => choice && { ...choice, pending: true });
     if (draft.projectFiles.length)
       store.drafts.update(null, { projectFiles: [], workspaceCwd: undefined });
-    setPickerOpen(false);
   };
 
   // Inherited runtime commands apply only while the visible directory still
   // names the workspace they came from.
-  const commandScopeMatches = Boolean(
-    inheritance && effectiveDirectory === inheritance.cwd,
-  );
-  // Both completion and configurable controls consume this target-owned inventory.
-  const inheritedCommands = commandScopeMatches
-    ? (inheritance?.commands ?? [])
-    : [];
-  const workspaceCommands = catalog?.commands ?? inheritedCommands;
-  const hasInput = Boolean(
-    draft.text.trim() || draft.attachments.length || draft.projectFiles.length,
-  );
+  const workspaceCommands =
+    catalog?.commands ??
+    (effectiveDirectory === inheritance?.cwd ? inheritance.commands : []);
+  const hasInput = hasDraftInput({ ...draft, text: draft.text.trim() });
   const thinkingDefault =
     directoryMissing &&
     manualThinking === undefined &&
@@ -406,6 +368,7 @@ export const Welcome = memo(function Welcome({
   const startBusy = starting || (hasInput && preparing);
   const startReadiness =
     directoryProblem ??
+    (directoryMissing ? sourceError : undefined) ??
     (!hasInput || starting || !effectiveDirectory || directoryMissing
       ? null
       : (modelWarning ??
@@ -437,7 +400,6 @@ export const Welcome = memo(function Welcome({
         ? [{ control, value }]
         : [];
     });
-    if (!model && !createDirectory) return;
     setStarting(true);
     try {
       // A displayed workspace default is a preview, not an explicit override:
@@ -453,7 +415,7 @@ export const Welcome = memo(function Welcome({
           : {}),
       });
       if (!opened) {
-        if (createDirectory) void refreshModels().catch(() => {});
+        if (createDirectory) void refresh("catalog").catch(() => {});
         return;
       }
 
@@ -488,115 +450,92 @@ export const Welcome = memo(function Welcome({
         <p className="welcome__tagline">A workbench for Pi</p>
       </div>
 
-      <form
-        className={`composer welcome__composer ${attachmentInput.dragging ? "composer--drop" : ""}`}
-        aria-label="Start a session"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void start();
+      <MessageEditor
+        sessionId={null}
+        draft={draft}
+        className="welcome__composer"
+        label="Start a session"
+        disabled={starting}
+        onSubmit={() => void start()}
+        files={{
+          scope: effectiveDirectory,
+          search: searchProjectFiles,
+          showHidden: showHiddenFiles,
+          onShowHiddenChange: setShowHiddenFiles,
+          pickerDisabled: !effectiveDirectory || directoryMissing,
         }}
-        {...attachmentInput.dropHandlers}
-      >
-        {attachmentInput.input}
-        {/* The required project choice leads, before what will be sent there. */}
-        <div className="welcome__directory">
-          <button
-            type="button"
-            className="icon-button welcome__directory-browse"
-            aria-label="Browse host directories"
-            title="Browse host directories"
-            disabled={starting}
-            onClick={() => setBrowsing(true)}
-          >
-            <FolderOpen size={14} aria-hidden />
-          </button>
-          <input
-            className="welcome__dir"
-            value={directory}
-            onChange={(event) => changeDirectory(event.target.value)}
-            placeholder="/path/to/project"
-            aria-label="Project directory"
-            spellCheck={false}
-            onKeyDown={(event) => {
-              if (
-                event.key === "Enter" &&
-                !isComposingKeyboardEvent(event.nativeEvent)
-              )
-                event.preventDefault();
-            }}
-            disabled={starting}
-          />
-        </div>
-        {directoryMissing ? (
-          <div
-            className="welcome__dir-action"
-            role="status"
-            aria-busy={starting}
-          >
-            <span>Folder doesn't exist.</span>
-            <button
-              type="button"
-              className="button welcome__dir-action-btn"
-              disabled={!canCreate}
-              aria-busy={starting || sourceUnresolved}
-              onClick={() => void start(true)}
-              title={
-                !hasInput ? "Add a message or attachment to start" : undefined
-              }
-            >
-              {starting || sourceUnresolved ? (
-                <PiLoader size={13} aria-hidden />
-              ) : null}
-              {starting
-                ? "Creating folder and starting…"
-                : "Create folder and start"}
-            </button>
-          </div>
-        ) : null}
-        <AttachmentList
-          sessionId={null}
-          items={draft.attachments}
-          disabled={starting}
-          onRemove={(id) => store.removeAttachment(id, null)}
-        />
-        <ProjectFileChips
-          paths={draft.projectFiles}
-          disabled={starting}
-          onRemove={(path) => store.removeProjectFile(path, null)}
-        />
-        <ComposerInput
-          value={draft.text}
-          onChange={(text) => store.drafts.setText(null, text)}
-          commands={workspaceCommands}
-          includeNativeCommands={false}
-          completionDisabled={starting}
-          completionScope={`new-session:${effectiveDirectory}`}
-          showHiddenFiles={showHiddenFiles}
-          onShowHiddenFilesChange={setShowHiddenFiles}
-          searchProjectFiles={
-            effectiveDirectory ? searchProjectFiles : undefined
-          }
-          rows={3}
-          maxHeightRatio={0.45}
-          placeholder="What do you want to work on?"
-          label="First message"
-          completionLabel="First message completion"
-          autoFocus
-          onPaste={attachmentInput.onPaste}
-          onKeyDown={(event) => {
-            if (
-              !shouldSubmitComposerEnter(
-                event.nativeEvent,
-                state.prefs.desktopSendKey,
-              )
-            )
-              return;
-            event.preventDefault();
-            void start();
-          }}
-        />
-        <div className="composer__meta">
-          <div className="composer__selectors">
+        input={{
+          commands: workspaceCommands,
+          includeNativeCommands: false,
+          completionScope: effectiveDirectory,
+          rows: 3,
+          placeholder: "What do you want to work on?",
+          label: "First message",
+          completionLabel: "First message completion",
+          autoFocus: true,
+        }}
+        header={
+          <>
+            <div className="welcome__directory">
+              <button
+                type="button"
+                className="icon-button welcome__directory-browse"
+                aria-label="Browse host directories"
+                title="Browse host directories"
+                disabled={starting}
+                onClick={() => setBrowsing(true)}
+              >
+                <FolderOpen size={14} aria-hidden />
+              </button>
+              <input
+                className="welcome__dir"
+                value={directory}
+                onChange={(event) => changeDirectory(event.target.value)}
+                placeholder="/path/to/project"
+                aria-label="Project directory"
+                spellCheck={false}
+                onKeyDown={(event) => {
+                  if (
+                    event.key === "Enter" &&
+                    !isComposingKeyboardEvent(event.nativeEvent)
+                  )
+                    event.preventDefault();
+                }}
+                disabled={starting}
+              />
+            </div>
+            {directoryMissing ? (
+              <div
+                className="welcome__dir-action"
+                role="status"
+                aria-busy={starting}
+              >
+                <span>Folder doesn't exist.</span>
+                <button
+                  type="button"
+                  className="button welcome__dir-action-btn"
+                  disabled={!canCreate}
+                  aria-busy={starting || modelChecking}
+                  onClick={() => void start(true)}
+                  title={
+                    !hasInput
+                      ? "Add a message or attachment to start"
+                      : undefined
+                  }
+                >
+                  {starting || modelChecking ? (
+                    <PiLoader size={13} aria-hidden />
+                  ) : null}
+                  {starting
+                    ? "Creating folder and starting…"
+                    : "Create folder and start"}
+                </button>
+              </div>
+            ) : null}
+          </>
+        }
+        selectors={
+          <>
             <ModelSelector
               value={selectedModel}
               title={
@@ -632,12 +571,12 @@ export const Welcome = memo(function Welcome({
                 if (model)
                   chooseModel({
                     model,
-                    effort: catalog
-                      ? {
-                          key: catalogKey,
-                          level: candidateEffort(model, catalog, thinkingLevel),
-                        }
-                      : undefined,
+                    effort: candidateEffort(
+                      model,
+                      check?.result,
+                      thinkingLevel,
+                    ),
+                    pending: !catalog,
                   });
               }}
             />
@@ -673,65 +612,33 @@ export const Welcome = memo(function Welcome({
               levels={thinkingLevels}
               onChange={chooseThinking}
             />
-          </div>
-          <ProjectFileControl
-            scope={effectiveDirectory}
-            open={pickerOpen}
-            onOpenChange={setPickerOpen}
-            buttonDisabled={starting || !effectiveDirectory || directoryMissing}
-            showHidden={showHiddenFiles}
-            onShowHiddenChange={setShowHiddenFiles}
-            selected={draft.projectFiles}
-            disabled={starting}
-            search={searchProjectFiles}
-            onAdd={(file: ProjectFileResult) =>
-              store.addProjectFile(file.path, null, file.workspaceCwd)
-            }
-          />
-          {attachmentInput.button}
-          <span className="composer__spacer" />
-          <button
-            type="submit"
-            className="composer__send"
-            disabled={!canStart}
-            aria-label="Start session"
-            aria-busy={startBusy}
-            title="Start session"
-          >
-            {startBusy ? (
-              <PiLoader size={14} aria-hidden />
-            ) : (
-              <Send size={14} aria-hidden />
-            )}
-          </button>
-        </div>
-        {startReadiness ? (
+          </>
+        }
+        send={{ label: "Start session", disabled: !canStart, busy: startBusy }}
+      >
+        {startReadiness && (
           <div
             className={`welcome__readiness ${directoryProblem || modelWarning ? "welcome__readiness--error" : ""}`}
             role={directoryProblem ? "alert" : "status"}
           >
             <span>{startReadiness}</span>
-            {(directoryProblem || modelWarning) && effectiveDirectory ? (
+            {(directoryProblem || modelWarning) && effectiveDirectory && (
               <button
                 type="button"
                 className="changes__inline-action"
                 disabled={directoryChecking || modelChecking}
                 aria-busy={directoryChecking || modelChecking}
-                onClick={() => {
-                  if (directoryProblem || !selectedModel)
-                    void refreshModels().catch(() => {});
-                  setModelResolveAttempt((attempt) => attempt + 1);
-                }}
+                onClick={retryPreview}
               >
-                {directoryChecking || modelChecking ? (
+                {(directoryChecking || modelChecking) && (
                   <PiLoader size={13} aria-hidden />
-                ) : null}
+                )}
                 {directoryChecking || modelChecking ? "Checking…" : "Retry"}
               </button>
-            ) : null}
+            )}
           </div>
-        ) : null}
-      </form>
+        )}
+      </MessageEditor>
       {state.sessionActionError ? (
         <p className="welcome__error" role="alert">
           {state.sessionActionError}
@@ -794,4 +701,4 @@ export const Welcome = memo(function Welcome({
       ) : null}
     </div>
   );
-});
+}

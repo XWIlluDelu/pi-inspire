@@ -517,17 +517,24 @@ export class RuntimeController extends EventEmitter {
           const previousLeaf = view.index.leafId;
           // The branch command also verifies its own result and publishes its epoch.
           if (slot.pendingBranchBridge) return;
-          const changed = view.index.appendWorkerEntries(fresh, marker.leaf);
-          const sealed =
-            marker.sealed !== null &&
-            this.liveTail.seal(
-              slot,
-              view.index.entriesAfter(view.sealedCursor),
-            );
-          if (marker.sealed !== null) view.sealedCursor = marker.tail;
+          // Unsealed batches can advance the native cursor while the same rows
+          // still belong to Live. Advance the visible leaf with the seal.
+          const sealed = marker.sealed !== null;
+          const changed = view.index.appendWorkerEntries(
+            fresh,
+            marker.leaf,
+            sealed,
+          );
+          view.nativeLeafId = marker.leaf;
+          if (!sealed) return;
+          const adopted = this.liveTail.seal(
+            slot,
+            view.index.entriesAfter(view.sealedCursor),
+          );
+          view.sealedCursor = marker.tail;
           if (changed)
             this.recordViewChange(slot, view.index, previousLeaf, marker.leaf);
-          if (changed || sealed)
+          if (changed || adopted)
             this.emitSlotEvent(slot, {
               type: "session_projection_changed",
               health: slot.projection?.health,
@@ -1789,7 +1796,6 @@ export class RuntimeController extends EventEmitter {
   private emptySnapshot(): ActiveSnapshot {
     return this.captureSnapshot({
       active: null,
-      runState: "idle",
       sessionStatuses: this.sessionStatuses(),
     });
   }
@@ -2174,7 +2180,6 @@ export class RuntimeController extends EventEmitter {
         isStreaming: isBusyRunState(slot.runState),
         toolActivity: slot.toolActivity,
       },
-      runState: slot.runState,
       bashRunning: Boolean(slot.nativeBash),
       retry: slot.runState === "retrying" ? slot.retry : null,
       summarizationRetry: isBusyRunState(slot.runState)
@@ -3662,7 +3667,9 @@ export class RuntimeController extends EventEmitter {
     const editorText = editable
       ? projection.editableText(request.targetId, MAX_PROMPT_CHARS)
       : undefined;
-    const beforeLeaf = effectiveRuntimeLeaf(slot);
+    const beforeLeaf = slot.workerView
+      ? slot.workerView.nativeLeafId
+      : effectiveRuntimeLeaf(slot);
     const navigationTarget = nativeNavigationLeaf(target, beforeLeaf);
     if (request.targetId === beforeLeaf)
       return {
@@ -3827,8 +3834,13 @@ export class RuntimeController extends EventEmitter {
     slot.branchRevision += 1;
     if (!restoringView) slot.deliveryNavigationEpoch += 1;
     this.renewView(slot);
-    slot.workerView?.index.appendWorkerEntries(delta, result.effectiveLeaf);
-    slot.workerView?.finishedMessages.clear();
+    if (slot.workerView) {
+      const { index, finishedMessages } = slot.workerView;
+      index.appendWorkerEntries(delta, result.effectiveLeaf);
+      slot.workerView.nativeLeafId = result.effectiveLeaf;
+      slot.workerView.sealedCursor = index.tailEntryId;
+      finishedMessages.clear();
+    }
     this.checkpoints.refresh(slot);
     this.emitSlotEvent(slot, {
       type: "branch_changed",
@@ -4123,70 +4135,61 @@ export class RuntimeController extends EventEmitter {
       );
     const pi = this.piPendingContent(slot);
     if (!pi) throw requestError("Complete pending text is unavailable", 409);
-    const texts = new Map<string, string>();
-    const images = new Map<string, NonNullable<PendingCopyContent["images"]>>();
+    let total = 0;
+    const texts: string[] = [];
+    const images: PendingCopyContent["images"] = [];
     for (const [mode, values] of [
       ["steer", pi.steering],
       ["followUp", pi.followUp],
     ] as const) {
+      total += values.length;
       values.forEach(({ text, imageCount, imageAttachmentIds }, index) => {
-        const id = `text-${mode}-${index}`;
-        texts.set(id, text);
-        if (request.itemId === undefined || request.itemId === id) {
-          if (imageCount && imageAttachmentIds?.length !== imageCount)
-            throw requestError("Original pending images are unavailable", 409);
-          images.set(
-            id,
-            (imageAttachmentIds ?? []).map((attachmentId) => ({
-              attachmentId,
-            })),
-          );
-        }
+        if (
+          request.itemId !== undefined &&
+          request.itemId !== `text-${mode}-${index}`
+        )
+          return;
+        if (imageCount && imageAttachmentIds?.length !== imageCount)
+          throw requestError("Original pending images are unavailable", 409);
+        texts.push(text);
+        for (const attachmentId of imageAttachmentIds ?? [])
+          images.push({ attachmentId });
       });
-      slot.deferredPrompts
-        .filter(({ request }) => request.behavior === mode)
-        .forEach(({ request: held }, index) => {
-          const id = `host-${mode}-${index}`;
-          texts.set(id, held.message);
-          if (request.itemId === undefined || request.itemId === id) {
-            const uploaded = this.attachments
-              .pendingCopyImageIds(held.attachmentIds ?? [])
-              .map((attachmentId) => ({ attachmentId }));
-            const recalled = held.historyArtifacts?.imageReferences.length
-              ? readComposerHistoryImages(slot, held.historyArtifacts).map(
-                  ({ data, mimeType }) => ({ data, mimeType }),
-                )
-              : [];
-            images.set(id, [...uploaded, ...recalled]);
-          }
-        });
+      let heldIndex = 0;
+      for (const { request: held } of slot.deferredPrompts) {
+        if (held.behavior !== mode) continue;
+        total += 1;
+        const id = `host-${mode}-${heldIndex++}`;
+        if (request.itemId !== undefined && request.itemId !== id) continue;
+        texts.push(held.message);
+        for (const attachmentId of this.attachments.pendingCopyImageIds(
+          held.attachmentIds ?? [],
+        ))
+          images.push({ attachmentId });
+        if (held.historyArtifacts?.imageReferences.length)
+          for (const { data, mimeType } of readComposerHistoryImages(
+            slot,
+            held.historyArtifacts,
+          ))
+            images.push({ data, mimeType });
+      }
     }
-    if (texts.size !== slot.pendingQueues.totalCount)
+    if (total !== slot.pendingQueues.totalCount)
       throw requestError("Complete pending text is unavailable", 409);
-    const copyContent = (
-      text: string,
-      originals: NonNullable<PendingCopyContent["images"]>,
-    ): PendingCopyContent => {
-      const ids = originals.flatMap((image) =>
-        "attachmentId" in image ? [image.attachmentId] : [],
-      );
-      if (ids.length !== originals.length) return { text, images: originals };
-      return { text, ...(ids.length ? { imageAttachmentIds: ids } : {}) };
+    if (request.itemId !== undefined && !texts.length)
+      throw requestError("Pending item is no longer available", 409);
+    return {
+      text:
+        request.itemId !== undefined
+          ? texts[0]!
+          : texts
+              .map(
+                (text, index) =>
+                  `${index + 1}. ${text.replace(/\n/g, "\n   ")}`,
+              )
+              .join("\n"),
+      images,
     };
-    if (request.itemId !== undefined) {
-      const text = texts.get(request.itemId);
-      if (text === undefined)
-        throw requestError("Pending item is no longer available", 409);
-      const originals = images.get(request.itemId) ?? [];
-      return copyContent(text, originals);
-    }
-    const originals = [...images.values()].flat();
-    return copyContent(
-      [...texts.values()]
-        .map((text, index) => `${index + 1}. ${text.replace(/\n/g, "\n   ")}`)
-        .join("\n"),
-      originals,
-    );
   }
 
   /** Remove Host input synchronously before Pi can finish compaction and dispatch it. */
@@ -4260,41 +4263,24 @@ export class RuntimeController extends EventEmitter {
           }
         : host;
     }
-    const imageOwner = slot.pendingImages;
-    const fence = { received: false };
-    const imageClear = imageOwner?.beginClear(fence);
     try {
-      const value = await rpc.request<unknown>(
-        { type: "clear_queue" },
-        30_000,
-        fence,
-      );
-      const pi = exactPendingInput(value);
-      if (!pi) throw new Error("Pi did not return complete pending text");
-      await slot.eventTail;
-      if (imageClear) await imageOwner!.corroborate(imageClear);
-      const pending = imageClear
-        ? imageOwner!.clearedInput(imageClear, pi)
-        : pi;
-      const recoveredImages = imageClear
-        ? await imageOwner!.finishClear(imageClear, pi, true)
-        : {};
+      const { steering, followUp, attachments, warning } =
+        await this.clearNativePending(slot, rpc, true);
       return {
         ...(recoveryId ? { recoveryId } : {}),
-        steering: [...pending.steering, ...host.steering],
-        followUp: [...pending.followUp, ...host.followUp],
-        ...recoveredImages,
-        ...(recoveredImages.attachments?.length || host.attachments?.length
+        steering: [...steering, ...host.steering],
+        followUp: [...followUp, ...host.followUp],
+        ...(warning ? { warning } : {}),
+        ...(attachments?.length || host.attachments?.length
           ? {
               attachments: [
-                ...(recoveredImages.attachments ?? []),
+                ...(attachments ?? []),
                 ...(host.attachments ?? []),
               ],
             }
           : {}),
       };
     } catch (error) {
-      if (imageClear) imageOwner!.cancelClear(imageClear);
       return {
         ...host,
         error:
@@ -4302,6 +4288,38 @@ export class RuntimeController extends EventEmitter {
             ? error.message
             : "Failed to recover Pending input",
       };
+    }
+  }
+
+  private async clearNativePending(
+    slot: RuntimeSlot,
+    rpc: PiRpcProcess,
+    recover: boolean,
+  ): Promise<PendingRecovery> {
+    const images = slot.pendingImages;
+    const fence = { received: false };
+    const clear = images?.beginClear(fence);
+    try {
+      const input = exactPendingInput(
+        await rpc.request({ type: "clear_queue" }, 30_000, fence),
+      );
+      if (!input)
+        throw new Error(
+          recover
+            ? "Pi did not return complete pending text"
+            : "Pi did not confirm complete pending clearing",
+        );
+      if (recover) await slot.eventTail;
+      if (!images || !clear) return input;
+      if (recover) await images.corroborate(clear);
+      const pending = recover ? images.clearedInput(clear, input) : input;
+      return {
+        ...pending,
+        ...(await images.finishClear(clear, input, recover)),
+      };
+    } catch (error) {
+      if (clear) images?.cancelClear(clear);
+      throw error;
     }
   }
 
@@ -4628,23 +4646,7 @@ export class RuntimeController extends EventEmitter {
         }
         // Consumption may race this request. queue_update, not the receipt,
         // owns the display; discard Pi's potentially large returned texts.
-        const imageOwner = slot.pendingImages;
-        const fence = { received: false };
-        const imageClear = imageOwner?.beginClear(fence);
-        try {
-          const value = await ready.process!.request<unknown>(
-            { type: "clear_queue" },
-            30_000,
-            fence,
-          );
-          const pi = exactPendingInput(value);
-          if (!pi)
-            throw new Error("Pi did not confirm complete pending clearing");
-          if (imageClear) await imageOwner!.finishClear(imageClear, pi, false);
-        } catch (error) {
-          if (imageClear) imageOwner!.cancelClear(imageClear);
-          throw error;
-        }
+        await this.clearNativePending(slot, ready.process!, false);
       };
       await (direct
         ? this.deliverySlot(slot, clear)
@@ -4897,48 +4899,25 @@ export class RuntimeController extends EventEmitter {
   }
 
   async rename(sessionId: string, name: string): Promise<void> {
-    return this.withMaintenanceOperation(() =>
-      this.renameInside(sessionId, name),
+    const persistedName = name.trim().slice(0, 160);
+    await this.mutateNativeSelection(
+      sessionId,
+      { type: "set_session_name", name: persistedName },
+      "the session rename",
+      undefined,
+      async (external, slot) => {
+        await external.rename(slot, persistedName);
+        this.catalog.invalidate();
+      },
     );
   }
 
-  private async renameInside(sessionId: string, name: string): Promise<void> {
-    const slot = this.requireSlot(sessionId);
-    const persistedName = name.trim().slice(0, 160);
-    const external = this.externalSessions;
-    if (external?.has(slot)) {
-      this.requireWorkspace(slot);
-      await this.useSlot(slot, () =>
-        external.withAttachment(slot, () =>
-          external.rename(slot, persistedName),
-        ),
-      );
-      this.catalog.invalidate();
-      return;
-    }
-    await this.mutateSlot(slot, async () => {
-      const ready = await this.ensureFreshWriterInsideGate(slot);
-      await this.requestPersistence(slot, ready.process, {
-        type: "set_session_name",
-        name: persistedName,
-      });
-      await this.reconcileAcceptedPersistence(slot, "the session rename");
-      this.catalog.invalidate();
-    });
-  }
-
   async cycleModel(sessionId: string): Promise<unknown> {
-    return this.withMaintenanceOperation(async () => {
-      const slot = this.requireSlot(sessionId);
-      return this.mutateSlot(slot, async () => {
-        const ready = await this.ensureFreshWriterInsideGate(slot);
-        const result = await this.requestPersistence(slot, ready.process, {
-          type: "cycle_model",
-        });
-        await this.reconcileAcceptedPersistence(slot, "the model cycle");
-        return result;
-      });
-    });
+    return this.mutateNativeSelection(
+      sessionId,
+      { type: "cycle_model" },
+      "the model cycle",
+    );
   }
 
   async setModel(
@@ -4946,35 +4925,45 @@ export class RuntimeController extends EventEmitter {
     provider: string,
     modelId: string,
   ): Promise<ModelSelectionResponse> {
-    return this.withMaintenanceOperation(() =>
-      this.setModelInside(sessionId, provider, modelId),
+    return this.mutateNativeSelection(
+      sessionId,
+      { type: "set_model", provider, modelId },
+      "the model change",
+      (rpc) => this.readModelSelection(rpc),
+      (external, slot) => external.setModel(slot, provider, modelId),
     );
   }
 
-  private async setModelInside(
+  private mutateNativeSelection<Result = unknown>(
     sessionId: string,
-    provider: string,
-    modelId: string,
-  ): Promise<ModelSelectionResponse> {
-    const slot = this.requireSlot(sessionId);
-    const external = this.externalSessions;
-    if (external?.has(slot)) {
-      this.requireWorkspace(slot);
-      return this.useSlot(slot, () =>
-        external.withAttachment(slot, () =>
-          external.setModel(slot, provider, modelId),
-        ),
-      );
-    }
-    return this.mutateSlot(slot, async () => {
-      const ready = await this.ensureFreshWriterInsideGate(slot);
-      await this.requestPersistence(slot, ready.process, {
-        type: "set_model",
-        provider,
-        modelId,
+    command: Record<string, unknown>,
+    description: string,
+    read?: (rpc: PiRpcProcess) => Promise<Result>,
+    attached?: (
+      external: RuntimeExternalSessions,
+      slot: RuntimeSlot,
+    ) => Promise<Result>,
+  ): Promise<Result> {
+    return this.withMaintenanceOperation(async () => {
+      const slot = this.requireSlot(sessionId);
+      const external = this.externalSessions;
+      if (attached && external?.has(slot)) {
+        this.requireWorkspace(slot);
+        return this.useSlot(slot, () =>
+          external.withAttachment(slot, () => attached(external, slot)),
+        );
+      }
+      return this.mutateSlot(slot, async () => {
+        const { process } = await this.ensureFreshWriterInsideGate(slot);
+        const result = await this.requestPersistence<Result>(
+          slot,
+          process,
+          command,
+        );
+        await this.reconcileAcceptedPersistence(slot, description);
+        if (command.type === "set_session_name") this.catalog.invalidate();
+        return read ? read(process) : result;
       });
-      await this.reconcileAcceptedPersistence(slot, "the model change");
-      return this.readModelSelection(ready.process);
     });
   }
 
@@ -5135,89 +5124,68 @@ export class RuntimeController extends EventEmitter {
     sessionId: string,
     level: string,
   ): Promise<ModelSelectionResponse> {
-    return this.withMaintenanceOperation(() =>
-      this.setThinkingLevelInside(sessionId, level),
+    if (!(THINKING_LEVELS as readonly string[]).includes(level))
+      throw requestError("Invalid thinking level", 400);
+    return this.mutateNativeSelection(
+      sessionId,
+      { type: "set_thinking_level", level },
+      "the thinking-level change",
+      (rpc) => this.readModelSelection(rpc),
+      (external, slot) =>
+        external.setThinkingLevel(slot, level as ThinkingLevel),
     );
   }
 
-  private async setThinkingLevelInside(
-    sessionId: string,
-    level: string,
-  ): Promise<ModelSelectionResponse> {
-    if (!(THINKING_LEVELS as readonly string[]).includes(level))
-      throw requestError("Invalid thinking level", 400);
-    const slot = this.requireSlot(sessionId);
-    const external = this.externalSessions;
-    if (external?.has(slot)) {
-      this.requireWorkspace(slot);
-      return this.useSlot(slot, () =>
-        external.withAttachment(slot, () =>
-          external.setThinkingLevel(slot, level as ThinkingLevel),
-        ),
-      );
-    }
-    return this.mutateSlot(slot, async () => {
-      const ready = await this.ensureFreshWriterInsideGate(slot);
-      await this.requestPersistence(slot, ready.process, {
-        type: "set_thinking_level",
-        level,
-      });
-      await this.reconcileAcceptedPersistence(
-        slot,
-        "the thinking-level change",
-      );
-      return this.readModelSelection(ready.process);
+  setAutoCompaction(sessionId: string, enabled: boolean): Promise<void> {
+    return this.setRuntimeOption(sessionId, {
+      type: "set_auto_compaction",
+      enabled,
     });
   }
 
-  async setAutoCompaction(sessionId: string, enabled: boolean): Promise<void> {
-    return this.setRuntimeBoolean(sessionId, "set_auto_compaction", enabled);
+  setAutoRetry(sessionId: string, enabled: boolean): Promise<void> {
+    return this.setRuntimeOption(sessionId, {
+      type: "set_auto_retry",
+      enabled,
+    });
   }
 
-  async setAutoRetry(sessionId: string, enabled: boolean): Promise<void> {
-    return this.setRuntimeBoolean(sessionId, "set_auto_retry", enabled);
-  }
-
-  async setSteeringMode(
+  setSteeringMode(
     sessionId: string,
     mode: PiMessageDeliveryMode,
   ): Promise<void> {
-    return this.setRuntimeDeliveryMode(sessionId, "set_steering_mode", mode);
+    return this.setRuntimeOption(sessionId, {
+      type: "set_steering_mode",
+      mode,
+    });
   }
 
-  async setFollowUpMode(
+  setFollowUpMode(
     sessionId: string,
     mode: PiMessageDeliveryMode,
   ): Promise<void> {
-    return this.setRuntimeDeliveryMode(sessionId, "set_follow_up_mode", mode);
+    return this.setRuntimeOption(sessionId, {
+      type: "set_follow_up_mode",
+      mode,
+    });
   }
 
-  private async setRuntimeBoolean(
+  private setRuntimeOption(
     sessionId: string,
-    command: "set_auto_compaction" | "set_auto_retry",
-    enabled: boolean,
+    command:
+      | { type: "set_auto_compaction" | "set_auto_retry"; enabled: boolean }
+      | {
+          type: "set_steering_mode" | "set_follow_up_mode";
+          mode: PiMessageDeliveryMode;
+        },
   ): Promise<void> {
     return this.withMaintenanceOperation(async () => {
       const slot = this.requireSlot(sessionId);
       await this.mutateSlot(slot, async () => {
-        const ready = await this.ensureFreshWriterInsideGate(slot);
-        await ready.process.request({ type: command, enabled });
-        if (command === "set_auto_retry")
-          await this.readRetryState(slot, ready.process);
-      });
-    });
-  }
-
-  private async setRuntimeDeliveryMode(
-    sessionId: string,
-    command: "set_steering_mode" | "set_follow_up_mode",
-    mode: PiMessageDeliveryMode,
-  ): Promise<void> {
-    return this.withMaintenanceOperation(async () => {
-      const slot = this.requireSlot(sessionId);
-      await this.mutateSlot(slot, async () => {
-        const ready = await this.ensureFreshWriterInsideGate(slot);
-        await ready.process.request({ type: command, mode });
+        const { process } = await this.ensureFreshWriterInsideGate(slot);
+        await process.request(command);
+        if (command.type === "set_auto_retry")
+          await this.readRetryState(slot, process);
       });
     });
   }

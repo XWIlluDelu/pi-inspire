@@ -41,9 +41,9 @@ export const ActivityBar = memo(function ActivityBar({
   const state = useAppState(
     (source) => ({
       runState: selectedRunState(source),
-      retry: source.retry,
-      summarizationRetry: source.summarizationRetry,
-      queue: source.queue,
+      retry: source.live.retry,
+      summarizationRetry: source.live.summarizationRetry,
+      queue: source.live.queue,
     }),
     shallowEqual,
   );

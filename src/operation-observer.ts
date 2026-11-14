@@ -1,9 +1,62 @@
+/** One in-flight observation of a receipt or lifecycle record. */
+export class ReceiptRead<Owner, Result> {
+  private active?: {
+    owner: Owner;
+    controller: AbortController;
+    task: Promise<Result>;
+  };
+
+  get pending(): boolean {
+    return this.active !== undefined;
+  }
+
+  get task(): Promise<Result> | undefined {
+    return this.active?.task;
+  }
+
+  cancel(): void {
+    const retired = this.active;
+    this.active = undefined;
+    retired?.controller.abort();
+  }
+
+  observe(
+    owner: Owner,
+    read: (signal: AbortSignal) => Promise<Result>,
+  ): Promise<Result> {
+    const previous = this.active;
+    if (previous && previous.owner === owner) return previous.task;
+    this.cancel();
+    const controller = new AbortController();
+    let resolve!: (result: Result) => void;
+    let reject!: (error: unknown) => void;
+    const result = new Promise<Result>((accept, refuse) => {
+      resolve = accept;
+      reject = refuse;
+    });
+    const active = {
+      owner,
+      controller,
+      task: result.finally(() => {
+        if (this.active === active) this.active = undefined;
+      }),
+    };
+    this.active = active;
+    try {
+      read(controller.signal).then(resolve, reject);
+    } catch (error) {
+      reject(error);
+    }
+    return active.task;
+  }
+}
+
 /** Transport observers can come and go while the original executor runs.
  * Dispatch once and keep the first confirmed result available to every caller. */
 export class OperationObserver<Owner, Result> {
   private dispatched = false;
   private result?: { value: Result };
-  private observation?: { owner: Owner; promise: Promise<Result> };
+  private readonly observation = new ReceiptRead<Owner, Result>();
   private readonly confirmation: Promise<Result>;
   private confirm!: (result: Result) => void;
   private reject!: (error: unknown) => void;
@@ -30,10 +83,11 @@ export class OperationObserver<Owner, Result> {
     readOnly: boolean,
   ): Promise<Result> {
     if (this.terminal) return this.confirmation;
-    if (readOnly || this.observation?.owner !== owner) {
+    if (readOnly) this.observation.cancel();
+    const task = this.observation.observe(owner, async () => {
       const dispatch = !readOnly && !this.dispatched;
       if (dispatch) this.dispatched = true;
-      const promise = Promise.resolve()
+      return Promise.resolve()
         .then(() => (dispatch ? adapter.start() : adapter.read()))
         .catch((error: unknown) => {
           if (dispatch && adapter.recover(error)) return adapter.read();
@@ -57,14 +111,8 @@ export class OperationObserver<Owner, Result> {
             throw error;
           },
         );
-      this.observation = { owner, promise };
-    }
-    const observation = this.observation!;
-    try {
-      return await Promise.race([observation.promise, this.confirmation]);
-    } finally {
-      if (this.observation === observation) this.observation = undefined;
-    }
+    });
+    return Promise.race([task, this.confirmation]);
   }
 
   claim(): { value: Result } | undefined {

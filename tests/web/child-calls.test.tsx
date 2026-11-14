@@ -3,14 +3,9 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { codemodeCalls } from "../../shared/tool-activity";
 import { childCallSummary } from "../../src/child-call-summary";
-import {
-  ToolCard,
-  ToolResultCard,
-} from "../../src/components/transcript-cards";
+import { ToolCard } from "../../src/components/transcript-cards";
 import {
   type ChatMessage,
-  emptyEventSlice,
-  reduceEvent,
   type ToolCallContent,
   toolResultText,
 } from "../../src/events";
@@ -77,14 +72,15 @@ it("expands the child-call summary and copies the complete original tool block",
       visibility="collapsed"
     />,
   );
-  expect(screen.getByText("1 failed · 2 calls")).toBeVisible();
+  const metadata = screen.getByText("3.5s · 1 failed · 2 calls");
+  expect(metadata).toBeVisible();
   expect(screen.queryByRole("group", { name: "Child calls" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Expand CodeMode tool" }));
   expect(
     await screen.findByRole("group", { name: "Child calls" }),
   ).toBeVisible();
   expect(screen.getByLabelText("finished", { exact: true })).toBeVisible();
-  expect(screen.getByText("3.5s")).toBeVisible();
+  expect(metadata).toBeVisible();
   expect(screen.getByText("Output", { exact: true })).toBeVisible();
   fireEvent.click(
     screen.getByRole("button", { name: "Copy codemode tool block" }),
@@ -111,7 +107,7 @@ it("retains result-only imports and their copy without inventing a Script", asyn
     value: { writeText },
   });
   render(
-    <ToolResultCard
+    <ToolCard
       result={{
         ...final,
         details: {
@@ -140,58 +136,13 @@ it("retains result-only imports and their copy without inventing a Script", asyn
   ).not.toBeInTheDocument();
 });
 
-it("uses Codemode's snapshot positions, not temporary ids or generic receipts, and keeps parent outcome independent", () => {
-  let slice = emptyEventSlice();
-  const event = (event: Record<string, unknown>) => {
-    slice = reduceEvent(slice, new Set(), event as { type: string }).slice;
-  };
-  event({
-    type: "tool_execution_start",
-    toolCallId: "script",
-    toolName: "codemode",
-    args: call.arguments,
-  });
-  event({
-    type: "tool_execution_update",
-    toolCallId: "script",
-    toolName: "codemode",
-    childCalls: codemodeCalls({ calls: records }),
-  });
-  event({
-    type: "tool_execution_start",
-    toolCallId: "script/1",
-    parentToolCallId: "script",
-    toolName: "read",
-    childCall: { key: "script/1", name: "read", status: "running" },
-  });
-  expect(Object.keys(slice.tools)).toEqual(["script"]);
-  const liveCalls = slice.tools.script?.calls?.calls.map(({ key }) => key);
-  expect(liveCalls).toHaveLength(2);
-  expect(new Set(liveCalls).size).toBe(2);
-  event({
-    type: "tool_execution_end",
-    toolCallId: "script",
-    toolName: "codemode",
-    isError: false,
-    childCalls: final.__inspireCalls,
-  });
-  expect(slice.tools.script).toMatchObject({
-    phase: "done",
-    calls: {
-      calls: [
-        { key: liveCalls![0], status: "error" },
-        { key: liveCalls![1], status: "ok" },
-      ],
-    },
-  });
-  event({
-    type: "tool_execution_update",
-    toolCallId: "script",
-    toolName: "codemode",
-    childCalls: codemodeCalls({ calls: records }),
-  });
-  expect(slice.tools.script?.phase).toBe("done");
-  expect(slice.tools.script?.calls?.calls[0]?.status).toBe("error");
+it("keeps CodeMode call positions through native temporary id changes", () => {
+  const live = codemodeCalls({ calls: records })!.calls;
+  expect(live.map(({ key }) => key)).toEqual(["codemode:0", "codemode:1"]);
+  expect(final.__inspireCalls?.calls).toMatchObject([
+    { key: live[0]!.key, status: "error" },
+    { key: live[1]!.key, status: "ok" },
+  ]);
 });
 
 it("distinguishes omitted arguments from unfinished child calls", async () => {

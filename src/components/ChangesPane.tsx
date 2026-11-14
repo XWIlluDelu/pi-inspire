@@ -182,15 +182,15 @@ const ChangeRow = memo(function ChangeRow({
       <Icon size={13} aria-hidden />
       <span
         className={`res__row-name ${decoration ? `git-deco--${decoration}` : ""}`}
+        data-has-origin={Boolean(originalPath) || undefined}
       >
         <ResourcePathLabel path={pathName(change)} />
+        {originalPath ? (
+          <span className="changes__source" title={originalPath.display}>
+            from <ResourcePathLabel path={originalPath.display} />
+          </span>
+        ) : null}
       </span>
-      {originalPath ? (
-        <span className="changes__source" title={originalPath.display}>
-          <span>from</span>
-          <ResourcePathLabel path={originalPath.display} />
-        </span>
-      ) : null}
       {facet ? (
         <span
           className={`git-mark ${decoration ? `git-deco--${decoration}` : ""}`}
@@ -297,36 +297,25 @@ function ChangesIndex({ state }: { state: ContextPaneView }) {
 
 function ChangesIndexHeader({ state }: { state: ContextPaneView }) {
   const status = state.gitStatus;
-  if (!status || status.kind !== "repository")
-    return (
-      <div className="res__index-header">
-        <GitBranch size={13} aria-hidden />
-        <span className="res__index-title">Workspace</span>
-      </div>
-    );
-  const isClean = status.total === 0 && !status.truncated;
-  const hasConflict = status.files.some((file) => file.conflict);
-  const summaryTone = hasConflict
-    ? "res__index-summary--conflict"
-    : isClean
-      ? "res__index-summary--clean"
-      : "res__index-summary--dirty";
+  const repo = status?.kind === "repository" ? status : null;
+  const isClean = repo?.total === 0 && !repo.truncated;
+  const hasConflict = repo?.files.some((file) => file.conflict);
   const headLabel = gitHeadLabel(status);
-  const summaryLabel = isClean
-    ? "Clean"
-    : `${status.total} ${status.total === 1 ? "change" : "changes"}`;
   return (
-    <div className="res__index-header">
-      <GitBranch size={13} className="res__index-branch-icon" aria-hidden />
+    <div className="pane-toolbar res__index-header">
+      <GitBranch size={13} aria-hidden />
       <span className="res__index-title" title={headLabel ?? undefined}>
-        {headLabel}
+        {headLabel ?? "Workspace"}
       </span>
-      <span
-        className={`res__index-summary ${summaryTone}`}
-        title={summaryLabel}
-      >
-        {summaryLabel}
-      </span>
+      {repo ? (
+        <span
+          className={`chip chip--${hasConflict ? "error" : isClean ? "success" : "warning"}`}
+        >
+          {isClean
+            ? "Clean"
+            : `${repo.total} ${repo.total === 1 ? "change" : "changes"}`}
+        </span>
+      ) : null}
     </div>
   );
 }

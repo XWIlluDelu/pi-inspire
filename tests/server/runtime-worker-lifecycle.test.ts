@@ -261,7 +261,7 @@ describe("worker startup and retirement", () => {
           expect(current.extensionStatuses).not.toHaveProperty(
             "retired-worker",
           );
-          expect(current.runState).not.toBe("failed");
+          expect(current.sessionStatuses["0"]?.runState).not.toBe("failed");
         } else {
           const failure = new Error("Old writer exit unconfirmed");
           rejectStop(failure);
@@ -367,7 +367,7 @@ describe("worker startup and retirement", () => {
     expect(recovered.active?.transcriptPage.messages).toMatchObject([
       { role: "user", content: "preview:a", timestamp: 1 },
     ]);
-    expect(recovered.runState).toBe("failed");
+    expect(recovered.sessionStatuses.a?.runState).toBe("failed");
     expect(recovered.pendingExtensionUiRequests).toEqual([]);
     expect(recovered.extensionDisplays).toEqual([]);
     expect(recovered.extensionStatuses).toEqual({});

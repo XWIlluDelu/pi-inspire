@@ -4,7 +4,6 @@ import {
 } from "../../shared/assistant-stream";
 import { BROWSER_UPGRADE_CLOSE } from "../../shared/browser-build.mjs";
 import {
-  isRunState,
   isSessionRuntimeStatus,
   type SessionDetailInterest,
 } from "../../shared/contracts";
@@ -143,13 +142,12 @@ function isAuthoritativeSnapshot(
     return false;
   const data = event.data;
   if (!data || typeof data !== "object" || Array.isArray(data)) return false;
-  const { runState, sessionStatuses, active } = data as Record<string, unknown>;
+  const { sessionStatuses, active } = data as Record<string, unknown>;
   const activeId =
     active && typeof active === "object"
       ? (active as { sessionId?: unknown }).sessionId
       : null;
   return (
-    isRunState(runState) &&
     (active === null ||
       (typeof active === "object" &&
         active !== null &&
@@ -160,6 +158,8 @@ function isAuthoritativeSnapshot(
     sessionStatuses !== null &&
     typeof sessionStatuses === "object" &&
     !Array.isArray(sessionStatuses) &&
+    (typeof activeId !== "string" ||
+      Object.hasOwn(sessionStatuses, activeId)) &&
     Object.values(sessionStatuses).every(isSessionRuntimeStatus)
   );
 }

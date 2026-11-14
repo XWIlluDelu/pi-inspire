@@ -295,7 +295,7 @@ export function OptionList<T>({
       aria-label={label}
       aria-busy={loading}
       aria-activedescendant={onKeyDown ? descendant : undefined}
-      className={className}
+      className={className ? `option-list ${className}` : "option-list"}
     >
       {virtual ? (
         <div

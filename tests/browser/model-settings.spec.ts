@@ -1,5 +1,16 @@
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expect, type Page, test } from "@playwright/test";
 import { modelSettingsScenario } from "./fixtures/model-settings";
+import { browserFixtureHome } from "./fixtures/workspace.mjs";
 import { expectConfigurationField } from "./support/configuration-form";
 import { openSettings, pairAndOpen } from "./support/navigation";
 
@@ -15,58 +26,79 @@ async function openModels(page: Page) {
 test("Manage models carries New's prospective project only for its Settings visit", async ({
   page,
 }) => {
-  const target = "/tmp/inspire-browser-prospective-models";
-  const scenario = await modelSettingsScenario(page);
-  scenario.snapshot().projectOverrides = ["defaultThinkingLevel"];
-  let settingsOwner: Record<string, string> | undefined;
-  page.on("request", (request) => {
-    const url = new URL(request.url());
-    if (url.pathname === "/api/model-settings" && request.method() === "GET")
-      settingsOwner = Object.fromEntries(url.searchParams);
-  });
-  await pairAndOpen(page);
-  await page.getByRole("button", { name: "New session", exact: true }).click();
-  await page
-    .getByRole("textbox", { name: "Project directory", exact: true })
-    .fill(target);
-  await page.getByRole("button", { name: "Model", exact: true }).click();
-  await page
-    .getByRole("button", { name: "Manage models", exact: true })
-    .click();
-  await expect.poll(() => settingsOwner).toEqual({ cwd: target, refresh: "1" });
-  await expect(page.getByText(/This project uses/)).toBeVisible();
-  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
-  const write = page.waitForRequest(
-    (request) =>
-      new URL(request.url()).pathname === "/api/model-settings" &&
-      request.method() === "PATCH",
+  const target = await realpath(
+    await mkdtemp(join(tmpdir(), "inspire-model-project-")),
   );
-  await settings.getByRole("option", { name: /Claude Haiku/ }).click();
-  const defaultModel = settings.getByRole("button", { name: "Set as default" });
-  await defaultModel.click();
-  expect(Object.fromEntries(new URL((await write).url()).searchParams)).toEqual(
-    { cwd: target },
-  );
-  await expect(defaultModel).toBeDisabled();
+  const preferences = join(browserFixtureHome, "agent", "settings.json");
+  const previous = await readFile(preferences);
+  try {
+    await mkdir(join(target, ".pi"));
+    await writeFile(
+      join(target, ".pi/settings.json"),
+      '{"defaultThinkingLevel":"low"}',
+    );
+    let settingsOwner: Record<string, string> | undefined;
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (url.pathname === "/api/model-settings" && request.method() === "GET")
+        settingsOwner = Object.fromEntries(url.searchParams);
+    });
+    await pairAndOpen(page);
+    await page
+      .getByRole("button", { name: "New session", exact: true })
+      .click();
+    await page
+      .getByRole("textbox", { name: "Project directory", exact: true })
+      .fill(target);
+    await page.getByRole("button", { name: "Model", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Manage models", exact: true })
+      .click();
+    await expect
+      .poll(() => settingsOwner)
+      .toEqual({ cwd: target, refresh: "1" });
+    await expect(page.getByText(/This project uses/)).toBeVisible();
+    const settings = page.getByRole("dialog", {
+      name: "Settings",
+      exact: true,
+    });
+    const write = page.waitForRequest(
+      (request) =>
+        new URL(request.url()).pathname === "/api/model-settings" &&
+        request.method() === "PATCH",
+    );
+    await settings.getByRole("option", { name: /Secondary model/ }).click();
+    const defaultModel = settings.getByRole("button", {
+      name: "Set as default",
+    });
+    await defaultModel.click();
+    expect(
+      Object.fromEntries(new URL((await write).url()).searchParams),
+    ).toEqual({ cwd: target });
+    await expect(defaultModel).toBeDisabled();
 
-  await settings.press("Escape");
-  await page
-    .getByRole("button", { name: /Review extension event lifecycle/ })
-    .first()
-    .click();
-  await openModels(page);
-  await expect
-    .poll(() => settingsOwner)
-    .toEqual({ sessionId: "fixture-history", refresh: "1" });
+    await settings.press("Escape");
+    await page
+      .getByRole("button", { name: /Review extension event lifecycle/ })
+      .first()
+      .click();
+    await openModels(page);
+    await expect
+      .poll(() => settingsOwner)
+      .toEqual({ sessionId: "fixture-history", refresh: "1" });
+  } finally {
+    await writeFile(preferences, previous);
+    await rm(target, { recursive: true, force: true });
+  }
 });
 
 test.describe("touch model lists", () => {
   test.use({ hasTouch: true });
-  test("search, refresh and keyboard actions preserve the virtual model list and saved choices", async ({
+  test("search, refresh and keyboard actions preserve the bounded model list", async ({
     page,
   }) => {
-    const scenario = await modelSettingsScenario(page, "light", true);
-    const snapshot = scenario.snapshot();
+    const scenario = await modelSettingsScenario(page);
+    const { snapshot } = scenario;
     snapshot.saved.defaultThinkingLevel = "xhigh";
     const providers = [
       "research-calibration-openai-compatible-service",
@@ -158,38 +190,9 @@ test.describe("touch model lists", () => {
     await expect(matching).toBeVisible();
     await search.press("Enter");
     await expect(matching).toHaveAttribute("aria-selected", "true");
-    expect(scenario.snapshot().saved.defaultModel).toBeNull();
-    await settings.getByRole("button", { name: "Set as default" }).click();
-    await expect
-      .poll(() => scenario.snapshot().saved.defaultModel)
-      .toEqual({ provider: target.provider, id: target.id });
-    await search.fill("Claude Haiku");
-    await search.press("Enter");
-    const commonChoice = settings.getByRole("checkbox", {
-      name: "Common: Claude Haiku",
-    });
-    await commonChoice.press("Space");
-    await expect(commonChoice).toBeChecked();
-    await expect(commonChoice).toBeFocused();
-
-    const thinking = settings.getByRole("combobox", {
-      name: "Default thinking",
-    });
-    await settings.getByRole("button", { name: "Clear default model" }).click();
-    await expect(thinking).toBeFocused();
-    await expect(thinking).toHaveValue("xhigh");
-    expect(scenario.snapshot().saved.defaultModel).toBeNull();
-    await thinking.selectOption("unset");
-    await expect
-      .poll(() => scenario.snapshot().saved.defaultThinkingLevel)
-      .toBeNull();
-    await settings.getByText(/Common order/, { exact: false }).click();
-    await settings
-      .getByRole("button", { name: "Move custom/local:high down" })
-      .click();
-    await expect
-      .poll(() => scenario.snapshot().saved.enabledModels)
-      .toEqual(["openai/gpt-5", "custom/local:high", "anthropic/claude-haiku"]);
+    await expect(
+      settings.getByRole("button", { name: "Set as default" }),
+    ).toBeEnabled();
     expect(scenario.errors).toEqual([]);
   });
 });
@@ -260,101 +263,146 @@ test.describe("touch model editor", () => {
 test("first provider and model setup preserves the current model and composer draft", async ({
   page,
 }) => {
-  const scenario = await modelSettingsScenario(page);
-  const empty = scenario.snapshot();
-  empty.models = [];
-  empty.providers = [];
-  empty.commonModels = [];
-  empty.savedCommonEntries = [];
-  empty.saved.enabledModels = [];
-  empty.effective.enabledModels = [];
-  scenario.providers().length = 0;
-  await pairAndOpen(page);
-  const draft = page.getByRole("textbox", {
-    name: "Message",
-    exact: true,
+  const agent = join(browserFixtureHome, "agent");
+  const configuration = join(agent, "models.json");
+  const preferences = join(agent, "settings.json");
+  const original = await readFile(preferences);
+  const originalConfig = await readFile(configuration).catch((error) => {
+    if (error.code === "ENOENT") return undefined;
+    throw error;
   });
-  await draft.fill("Keep this unfinished draft while managing models");
-  const model = page.getByRole("button", { name: "Model", exact: true });
-  const currentModel = /^(?:Offline model|offline) — workbench$/;
-  await expect(model).toHaveAttribute("title", currentModel);
-  await model.click();
-  {
-    const search = page.getByRole("combobox", { name: "Search models" });
-    await expect(search).toBeFocused();
-    await search.press("Tab");
+  const savedPreferences = async () =>
+    JSON.parse(await readFile(preferences, "utf8"));
+  let modelChanges = 0;
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/control/model")
+      modelChanges++;
+  });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  try {
+    await pairAndOpen(page);
+    const draft = page.getByRole("textbox", {
+      name: "Message",
+      exact: true,
+    });
+    await draft.fill("Keep this unfinished draft while managing models");
+    const model = page.getByRole("button", { name: "Model", exact: true });
+    const currentModel = /^(?:Offline model|offline) — workbench$/;
+    await expect(model).toHaveAttribute("title", currentModel);
+    await model.click();
+    {
+      const search = page.getByRole("combobox", { name: "Search models" });
+      await expect(search).toBeFocused();
+      await search.press("Tab");
+      await expect(
+        page.getByRole("button", { name: "Manage models", exact: true }),
+      ).toBeFocused();
+      await page.keyboard.press("Enter");
+    }
+    const settings = page.getByRole("dialog", {
+      name: "Settings",
+      exact: true,
+    });
+    await settings
+      .getByRole("button", { name: "Add provider", exact: true })
+      .click();
+    await settings.getByLabel("Provider ID").fill("new-provider");
+    await settings.getByLabel("Base URL").fill("http://localhost:9999/v1");
+    await settings
+      .getByLabel("API key", { exact: true })
+      .fill("CONFIG_FIXTURE_SECRET");
+    await settings.getByRole("button", { name: "Save", exact: true }).click();
+    const addModel = settings.getByRole("button", {
+      name: "Add model to new-provider",
+      exact: true,
+    });
+    await expect(addModel).toBeFocused();
+    await addModel.click();
+    await settings.getByLabel("Model ID", { exact: true }).fill("new-model");
+    await settings
+      .getByLabel("Display name", { exact: true })
+      .fill("New available model");
+    const form = settings.locator("form").filter({
+      has: page.getByLabel("API type", { exact: true }),
+    });
+    const api = form.getByLabel("API type", { exact: true });
+    const save = form.getByRole("button", { name: "Save", exact: true });
+    await save.click();
+    await expect(api).toBeFocused();
+    await api.fill("openai-completions");
+    const tokens = form.getByLabel("Maximum output tokens");
+    await tokens.fill("-1");
+    await save.click();
+    const error = form.getByRole("alert");
+    await expect(error).toContainText("Pi rejected this declaration");
+    await expect(error).toBeFocused();
+    expect(
+      JSON.parse(await readFile(configuration, "utf8")).providers[
+        "new-provider"
+      ].models ?? [],
+    ).toEqual([]);
+    await tokens.fill("512");
+    await save.click();
+    const common = settings.getByRole("checkbox", {
+      name: "Common: New available model",
+    });
+    await expect(common).toBeVisible();
+    await common.press("Space");
+    await expect(common).toBeFocused();
+    await settings.getByRole("button", { name: "Set as default" }).click();
+    await expect.poll(savedPreferences).toMatchObject({
+      defaultProvider: "new-provider",
+      defaultModel: "new-model",
+      enabledModels: ["new-provider/new-model"],
+    });
+    await settings.getByRole("button", { name: "Clear default model" }).click();
+    const thinking = settings.getByRole("combobox", {
+      name: "Default thinking",
+    });
+    await expect(thinking).toBeFocused();
+    await expect(thinking).toHaveValue("medium");
+    await thinking.selectOption("unset");
+    await expect
+      .poll(async () => (await savedPreferences()).defaultThinkingLevel)
+      .toBeUndefined();
+    await settings
+      .getByRole("button", { name: "Connect provider", exact: true })
+      .click();
+    await settings.getByLabel("Search providers").fill("new-provider");
+    await settings
+      .getByRole("button", { name: "Set up new-provider", exact: true })
+      .click();
+    await settings
+      .getByRole("button", { name: "API key", exact: true })
+      .click();
     await expect(
-      page.getByRole("button", { name: "Manage models", exact: true }),
-    ).toBeFocused();
-    await page.keyboard.press("Enter");
+      settings.getByLabel("Enter API key", { exact: true }),
+    ).toBeVisible();
+    await settings
+      .getByRole("button", { name: "Cancel login", exact: true })
+      .click();
+    await settings
+      .getByRole("button", { name: "Dismiss", exact: true })
+      .click();
+    await settings
+      .getByRole("combobox", { name: "Custom declaration" })
+      .selectOption({ label: "new-provider" });
+    await settings
+      .getByRole("button", { name: "Edit provider new-provider" })
+      .click();
+    await expect(settings.getByLabel("API key", { exact: true })).toHaveValue(
+      "",
+    );
+    await settings.getByRole("button", { name: "Cancel", exact: true }).click();
+    await settings.getByRole("button", { name: "Close settings" }).click();
+    await expect(draft).toHaveValue(
+      "Keep this unfinished draft while managing models",
+    );
+    await expect(model).toHaveAttribute("title", currentModel);
+    expect(modelChanges).toBe(0);
+  } finally {
+    await writeFile(preferences, original);
+    if (originalConfig) await writeFile(configuration, originalConfig);
+    else await rm(configuration, { force: true });
   }
-  const settings = page.getByRole("dialog", {
-    name: "Settings",
-    exact: true,
-  });
-  await settings
-    .getByRole("button", { name: "Add provider", exact: true })
-    .click();
-  await settings.getByLabel("Provider ID").fill("new-provider");
-  await settings.getByLabel("Base URL").fill("http://localhost:9999/v1");
-  await settings
-    .getByLabel("API key", { exact: true })
-    .fill("CONFIG_FIXTURE_SECRET");
-  await settings.getByRole("button", { name: "Save", exact: true }).click();
-  const addModel = settings.getByRole("button", {
-    name: "Add model to new-provider",
-    exact: true,
-  });
-  await expect(addModel).toBeFocused();
-  await addModel.click();
-  await settings.getByLabel("Model ID", { exact: true }).fill("new-model");
-  await settings
-    .getByLabel("Display name", { exact: true })
-    .fill("New available model");
-  const form = settings.locator("form").filter({
-    has: page.getByLabel("API type", { exact: true }),
-  });
-  const api = form.getByLabel("API type", { exact: true });
-  const save = form.getByRole("button", { name: "Save", exact: true });
-  await save.click();
-  await expect(api).toBeFocused();
-  await api.fill("openai-completions");
-  await page.route(
-    "**/api/model-settings/config?**",
-    (route) =>
-      route.fulfill({
-        status: 400,
-        json: { error: "Pi rejected this declaration" },
-      }),
-    { times: 1 },
-  );
-  await save.click();
-  const error = form.getByRole("alert");
-  await expect(error).toHaveText("Pi rejected this declaration");
-  await expect(error).toBeFocused();
-  await save.click();
-  const common = settings.getByRole("checkbox", {
-    name: "Common: New available model",
-  });
-  await expect(common).toBeVisible();
-  await common.click();
-  await settings.getByRole("button", { name: "Set as default" }).click();
-  await expect
-    .poll(() => scenario.snapshot().saved.defaultModel)
-    .toEqual({ provider: "new-provider", id: "new-model" });
-  expect(scenario.snapshot().saved.enabledModels).toEqual([
-    "new-provider/new-model",
-  ]);
-  await settings
-    .getByRole("button", { name: "Edit provider new-provider" })
-    .click();
-  await expect(settings.getByLabel("API key", { exact: true })).toHaveValue("");
-  await settings.getByRole("button", { name: "Cancel", exact: true }).click();
-  await settings.getByRole("button", { name: "Close settings" }).click();
-  await expect(draft).toHaveValue(
-    "Keep this unfinished draft while managing models",
-  );
-  await expect(model).toHaveAttribute("title", currentModel);
-  expect(scenario.modelChanges).toEqual([]);
-  expect(scenario.errors).toEqual([]);
 });

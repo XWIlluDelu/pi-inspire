@@ -7,10 +7,14 @@ import {
 } from "../../shared/resource-references";
 import { decodeTextPreview } from "../../shared/text-preview";
 import { type Api, ApiError } from "../api";
-import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
+import type { AppState } from "../app-state";
+import {
+  isTransientFailure,
+  RecoveryBackoff,
+  readScope,
+} from "../recovery-backoff";
 import {
   classifiedResourceFailure,
-  type FileInspectionState,
   injectHtmlPreviewCsp,
   inspectedPreview,
   MAX_MEDIA_PREVIEW_BYTES,
@@ -21,15 +25,16 @@ import {
 } from "../resource-preview";
 import { transcriptProjectionKey } from "../transcript-projection-key";
 
-interface ResourceControllerState extends FileInspectionState {
-  sessionId: string | null;
-  transcriptViewId: string | null;
-  transcriptIncarnation: string | null;
-  transcriptRevision: number;
-  resourcesOpen: boolean;
-  contextMode: "files" | "changes" | "terminal";
-  resourceStanding: Record<string, ResourceProbeResult>;
-}
+type ResourceControllerState = Pick<
+  AppState,
+  | "sessionId"
+  | "view"
+  | "resourcesOpen"
+  | "contextMode"
+  | "resourceStanding"
+  | "fileInspection"
+  | "resourceTabs"
+>;
 
 type ResourceControllerPatch = Partial<
   Pick<
@@ -51,13 +56,13 @@ interface ResourceControllerHost {
   revealWorkspacePath(workspacePath: string): void;
 }
 
-interface ResourceReadOwner {
+type ReadScope = ReturnType<typeof readScope>;
+type ResourceRead = ReadScope & {
   api: Api;
   sessionId: string;
   viewId: string;
-  signal: AbortSignal;
-  checkCurrent(): void;
-}
+  revision: number;
+};
 
 /**
  * Owns one browser-facing resource lifecycle: revision-bound preflight,
@@ -67,10 +72,10 @@ interface ResourceReadOwner {
  */
 export class ResourceController {
   private previewObjectUrl: string | null = null;
-  private resourceRequest: AbortController | null = null;
+  private resourceRequest: ReadScope | null = null;
   private documentImages = new AbortController();
   private downloads = new AbortController();
-  private resourceProbeRequest: AbortController | null = null;
+  private resourceProbeRequest: ReadScope | null = null;
   private resourceProbeKey: string | null = null;
   private probeRecovery = new RecoveryBackoff();
   private resourceProbedReferences = new Set<string>();
@@ -112,12 +117,11 @@ export class ResourceController {
    * gesture during bootstrap may persist these fields before restoration;
    * temporary empty tabs would overwrite the user's saved workbench. */
   invalidateForTransportReplacement(): void {
-    this.cancelRequest();
-    this.cancelProbes(true);
-    this.revokePreviewObjectUrl();
+    this.invalidate();
     const { fileInspection, resourceTabs, resourcesOpen, contextMode } =
       this.host.state();
     this.host.patch({
+      resourceStanding: {},
       resourceTabs: resourceTabs.filter(
         (tab) => !tab.reference.startsWith("pi-embedded://"),
       ),
@@ -158,39 +162,65 @@ export class ResourceController {
     });
   }
 
-  /** Load the reference page for the currently visible branch revision.
-   * The host returns labels and references only. */
-  async loadSessionResources(
+  private viewRead(
+    owns: (state: ResourceControllerState) => boolean = () => true,
     signal?: AbortSignal,
-  ): Promise<SessionResourceListResponse | null> {
+  ): ResourceRead | null {
     const api = this.host.api();
     const {
       sessionId,
-      transcriptViewId: viewId,
-      transcriptRevision: revision,
+      view: { viewId, incarnation, revision },
     } = this.host.state();
     if (!api || !sessionId || !viewId) return null;
+    const scope = readScope(() => {
+      const state = this.host.state();
+      return (
+        this.host.api() === api &&
+        state.sessionId === sessionId &&
+        state.view.viewId === viewId &&
+        state.view.incarnation === incarnation &&
+        owns(state)
+      );
+    }, signal);
+    return { api, sessionId, viewId, revision, ...scope };
+  }
+
+  private authFailed(error: unknown, scope: ReadScope): boolean {
+    if (
+      !scope.current() ||
+      !(error instanceof ApiError) ||
+      error.status !== 401
+    )
+      return false;
+    this.host.handleAuthFailure();
+    return true;
+  }
+
+  /** Recent rows are a read of one selected transcript revision. */
+  async loadSessionResources(
+    signal?: AbortSignal,
+  ): Promise<SessionResourceListResponse | null> {
+    const revision = this.host.state().view.revision;
+    const scope = this.viewRead(
+      (state) => state.view.revision === revision,
+      signal,
+    );
+    if (!scope) return null;
+    const { api, sessionId, viewId } = scope;
     try {
-      const response = await api.listResources(sessionId, signal);
-      const current = this.host.state();
+      const response = await scope.read(
+        (signal) => api.listResources(sessionId, signal),
+        new RecoveryBackoff(),
+      );
       if (
-        this.host.api() !== api ||
-        signal?.aborted ||
-        current.sessionId !== sessionId ||
-        current.transcriptViewId !== viewId ||
-        current.transcriptRevision !== revision ||
-        response.sessionId !== sessionId ||
-        response.viewId !== viewId ||
-        response.revision !== revision
+        response.sessionId === sessionId &&
+        response.viewId === viewId &&
+        response.revision === revision
       )
-        return null;
-      return response;
+        return response;
+      return null;
     } catch (error) {
-      if (this.host.api() !== api) return null;
-      if (error instanceof ApiError && error.status === 401) {
-        this.host.handleAuthFailure();
-        return null;
-      }
+      if (!scope.current() || this.authFailed(error, scope)) return null;
       throw error;
     }
   }
@@ -199,20 +229,16 @@ export class ResourceController {
    * failed batch is isolated: it never invalidates earlier verified batches,
    * and only its own references remain eligible for retry. */
   async probeResources(references: string[]): Promise<void> {
-    const api = this.host.api();
-    const {
-      sessionId,
-      transcriptViewId: viewId,
-      transcriptRevision: revision,
-    } = this.host.state();
-    if (!api || !sessionId || !viewId) return;
+    const revision = this.host.state().view.revision;
+    const request = this.viewRead((state) => state.view.revision === revision);
+    if (!request) return;
+    const { api, sessionId, viewId } = request;
     const unique = [...new Set(references)];
     const generationKey = JSON.stringify([sessionId, viewId, revision]);
     if (this.resourceProbeKey !== generationKey) {
       this.cancelProbes();
       this.resourceProbeKey = generationKey;
     }
-    if (unique.length === 0) return;
     const pending = unique.filter(
       (reference) => !this.resourceProbedReferences.has(reference),
     );
@@ -220,21 +246,7 @@ export class ResourceController {
 
     this.probeRecovery.cancel();
     this.resourceProbeRequest?.abort();
-    const request = new AbortController();
     this.resourceProbeRequest = request;
-    const ownsProjection = (): boolean => {
-      const current = this.host.state();
-      return (
-        this.host.api() === api &&
-        current.sessionId === sessionId &&
-        current.transcriptViewId === viewId &&
-        current.transcriptRevision === revision
-      );
-    };
-    const stale = () =>
-      this.resourceProbeRequest !== request ||
-      request.signal.aborted ||
-      !ownsProjection();
     let retryNeeded = false;
     try {
       for (
@@ -255,13 +267,10 @@ export class ResourceController {
         const generationIsCurrent = (reference: string): boolean =>
           generations.get(reference) === this.referenceGeneration(reference);
         try {
-          const response = await api.probeResources(
-            sessionId,
-            batch,
-            request.signal,
+          const response = await request.read((signal) =>
+            api.probeResources(sessionId, batch, signal),
           );
           if (
-            stale() ||
             response.sessionId !== sessionId ||
             response.viewId !== viewId ||
             response.revision !== revision
@@ -293,11 +302,7 @@ export class ResourceController {
           }
           this.host.patch({ resourceStanding });
         } catch (error) {
-          if (stale()) return;
-          if (error instanceof ApiError && error.status === 401) {
-            this.host.handleAuthFailure();
-            return;
-          }
+          if (!request.current() || this.authFailed(error, request)) return;
           retryNeeded ||= isTransientFailure(error);
           // A failed observation cannot revoke the last confirmed file standing.
           const resourceStanding = { ...this.host.state().resourceStanding };
@@ -313,7 +318,7 @@ export class ResourceController {
       }
       if (retryNeeded)
         this.probeRecovery.schedule(() => {
-          if (this.resourceProbeKey === generationKey && ownsProjection())
+          if (this.resourceProbeKey === generationKey && request.current())
             void this.probeResources(unique);
         });
       else this.probeRecovery.reset();
@@ -327,7 +332,11 @@ export class ResourceController {
    * after a late response or a browser transport replacement. */
   async createHtmlPreview(): Promise<{ url: string; release: () => void }> {
     const api = this.host.api();
-    const { sessionId, transcriptViewId, fileInspection } = this.host.state();
+    const {
+      sessionId,
+      view: { viewId },
+      fileInspection,
+    } = this.host.state();
     const preview = inspectedPreview(fileInspection);
     if (
       !api ||
@@ -353,7 +362,7 @@ export class ResourceController {
     if (
       this.host.api() !== api ||
       current.sessionId !== sessionId ||
-      current.transcriptViewId !== transcriptViewId ||
+      current.view.viewId !== viewId ||
       inspectedPreview(current.fileInspection) !== preview
     ) {
       release();
@@ -394,15 +403,16 @@ export class ResourceController {
   }
 
   private async readInlineImage(
-    { api, sessionId, viewId, signal, checkCurrent }: ResourceReadOwner,
+    scope: ResourceRead,
     reference: string,
     source: "transcript" | "document",
   ): Promise<Blob> {
     const embedded =
       source === "transcript" && isEmbeddedImageReference(reference);
-    checkCurrent();
-    const descriptor = await api.resolveResource(sessionId, reference, signal);
-    checkCurrent();
+    const { api, sessionId, viewId } = scope;
+    const descriptor = await scope.read((signal) =>
+      api.resolveResource(sessionId, reference, signal),
+    );
     if (
       descriptor.sessionId !== sessionId ||
       descriptor.viewId !== viewId ||
@@ -421,11 +431,12 @@ export class ResourceController {
     }
     if (descriptor.size > MAX_MEDIA_PREVIEW_BYTES)
       throw new Error("The image is too large to preview");
-    const content = await api.resourceContent(descriptor.id, sessionId, {
-      byteLimit: MAX_MEDIA_PREVIEW_BYTES + 1,
-      signal,
-    });
-    checkCurrent();
+    const content = await scope.read((signal) =>
+      api.resourceContent(descriptor.id, sessionId, {
+        byteLimit: MAX_MEDIA_PREVIEW_BYTES + 1,
+        signal,
+      }),
+    );
     if (
       content.totalSize > MAX_MEDIA_PREVIEW_BYTES ||
       content.blob.size > MAX_MEDIA_PREVIEW_BYTES
@@ -448,49 +459,26 @@ export class ResourceController {
     reference: string,
     signal: AbortSignal,
   ): Promise<Blob> {
-    const api = this.host.api();
-    if (
-      !api ||
-      !isLocalResourceReference(reference) ||
-      /^[\\/]{2}/.test(reference)
-    ) {
+    if (!isLocalResourceReference(reference) || /^[\\/]{2}/.test(reference))
       throw new Error("The transcript image reference is unavailable");
-    }
-    const checkCurrent = () => {
-      const current = this.host.state();
-      if (
-        signal.aborted ||
-        this.host.api() !== api ||
-        current.sessionId !== sessionId ||
-        current.transcriptViewId !== viewId ||
-        transcriptProjectionKey(
-          current.transcriptViewId,
-          current.transcriptIncarnation,
-        ) !== projectionKey
-      )
-        throw Object.assign(
-          new Error("The image request is no longer current"),
-          {
-            name: "AbortError",
-          },
-        );
-    };
-    try {
-      return await this.readInlineImage(
-        { api, sessionId, viewId, signal, checkCurrent },
-        reference,
-        "transcript",
+    const scope = this.viewRead(
+      (state) =>
+        state.sessionId === sessionId &&
+        state.view.viewId === viewId &&
+        transcriptProjectionKey(state.view.viewId, state.view.incarnation) ===
+          projectionKey,
+      signal,
+    );
+    if (!scope)
+      throw new DOMException(
+        "The transcript image owner changed",
+        "AbortError",
       );
+    try {
+      return await this.readInlineImage(scope, reference, "transcript");
     } catch (error) {
-      if (
-        error instanceof ApiError &&
-        error.status === 401 &&
-        this.host.api() === api
-      ) {
-        this.host.handleAuthFailure();
-        throw error;
-      }
-      checkCurrent();
+      scope.check();
+      this.authFailed(error, scope);
       throw error;
     }
   }
@@ -500,35 +488,25 @@ export class ResourceController {
     documentId: string,
     signal: AbortSignal,
     ownsPane: (state: ResourceControllerState) => boolean,
-    perform: (owner: ResourceReadOwner) => Promise<T>,
+    perform: (owner: ResourceRead) => Promise<T>,
   ): Promise<T> {
-    const api = this.host.api();
-    const { sessionId, transcriptViewId: viewId } = this.host.state();
-    const retired = () =>
-      new DOMException("The file selection changed", "AbortError");
-    if (!api || !sessionId || !viewId) throw retired();
-    const checkCurrent = () => {
-      const state = this.host.state();
+    const scope = this.viewRead((state) => {
       const preview = inspectedPreview(state.fileInspection);
-      if (
-        signal.aborted ||
-        this.host.api() !== api ||
-        state.sessionId !== sessionId ||
-        state.transcriptViewId !== viewId ||
-        !state.resourcesOpen ||
-        !ownsPane(state) ||
-        preview?.status !== "ready" ||
-        preview.descriptor.id !== documentId
-      )
-        throw retired();
-    };
+      return (
+        state.resourcesOpen &&
+        ownsPane(state) &&
+        preview?.status === "ready" &&
+        preview.descriptor.id === documentId
+      );
+    }, signal);
+    if (!scope)
+      throw new DOMException("The file selection changed", "AbortError");
     try {
-      checkCurrent();
-      return await perform({ api, sessionId, viewId, signal, checkCurrent });
+      scope.check();
+      return await perform(scope);
     } catch (error) {
-      checkCurrent();
-      if (error instanceof ApiError && error.status === 401)
-        this.host.handleAuthFailure();
+      scope.check();
+      this.authFailed(error, scope);
       throw error;
     }
   }
@@ -548,12 +526,16 @@ export class ResourceController {
   }
 
   async downloadResource(): Promise<void> {
-    const { sessionId, transcriptViewId, fileInspection } = this.host.state();
+    const {
+      sessionId,
+      view: { viewId },
+      fileInspection,
+    } = this.host.state();
     const preview = inspectedPreview(fileInspection);
     if (
       !this.host.api() ||
       !sessionId ||
-      !transcriptViewId ||
+      !viewId ||
       preview?.status !== "ready"
     )
       return;
@@ -563,12 +545,13 @@ export class ResourceController {
       this.downloads.signal,
       () => true,
       async (owner) => {
-        const grant = await owner.api.resourceDownloadTicket(
-          descriptor.id,
-          owner.sessionId,
-          owner.signal,
+        const grant = await owner.read((signal) =>
+          owner.api.resourceDownloadTicket(
+            descriptor.id,
+            owner.sessionId,
+            signal,
+          ),
         );
-        owner.checkCurrent();
         if (!/^[A-Za-z0-9_-]{43}$/.test(grant.ticket))
           throw new Error("The Host returned an invalid download ticket");
         this.host.saveDownload(
@@ -598,14 +581,14 @@ export class ResourceController {
     const reference = existing?.reference ?? requestedReference;
     let tabReference = reference;
     const tabView = contextMode === "changes" ? "changes" : undefined;
-    const api = this.host.api();
-    const {
-      sessionId,
-      transcriptViewId: viewId,
-      fileInspection,
-    } = this.host.state();
-    const previous = inspectedPreview(fileInspection);
-    if (!api || !sessionId || !viewId) return;
+    const request = this.viewRead(
+      ({ fileInspection }) =>
+        fileInspection.kind === "file" &&
+        fileInspection.reference === tabReference,
+    );
+    if (!request) return;
+    const { api, sessionId, viewId } = request;
+    const previous = inspectedPreview(this.host.state().fileInspection);
     const retained =
       previous?.status === "ready" &&
       previous.reference === reference &&
@@ -616,7 +599,6 @@ export class ResourceController {
         ? previous
         : null;
     this.cancelRequest(Boolean(retained));
-    const request = new AbortController();
     this.resourceRequest = request;
     if (!retained) this.revokePreviewObjectUrl();
     this.host.patch({
@@ -648,32 +630,13 @@ export class ResourceController {
           ],
     });
     let descriptorResolved = false;
-    const stale = () => {
-      const current = this.host.state();
-      return (
-        this.resourceRequest !== request ||
-        request.signal.aborted ||
-        this.host.api() !== api ||
-        current.fileInspection.kind !== "file" ||
-        current.fileInspection.reference !== tabReference ||
-        current.sessionId !== sessionId ||
-        current.transcriptViewId !== viewId
-      );
-    };
     const backoff = new RecoveryBackoff();
     try {
-      const descriptor = await backoff.read(
-        () =>
-          api.resolveResource(
-            sessionId,
-            reference,
-            request.signal,
-            knownWorkspacePath,
-          ),
-        request.signal,
-        () => !stale(),
+      const descriptor = await request.read(
+        (signal) =>
+          api.resolveResource(sessionId, reference, signal, knownWorkspacePath),
+        backoff,
       );
-      if (stale()) return;
       // Bare filename recovery intentionally returns the canonical workspace
       // reference rather than echoing the shorthand, so session/view identity
       // — not textual equality — binds this response to the request.
@@ -724,7 +687,7 @@ export class ResourceController {
         },
         tabPatch,
       );
-      if (stale()) return;
+      if (!request.current()) return;
       if (workspacePath && workspacePath !== knownWorkspacePath)
         this.host.revealWorkspacePath(workspacePath);
       if (descriptor.kind === "binary") {
@@ -750,8 +713,8 @@ export class ResourceController {
         });
         return;
       }
-      const content = await backoff.read(
-        () =>
+      const content = await request.read(
+        (signal) =>
           api.resourceContent(descriptor.id, sessionId, {
             byteLimit:
               descriptor.kind === "notebook"
@@ -759,12 +722,10 @@ export class ResourceController {
                 : textLike || (svg && descriptor.size > MAX_MEDIA_PREVIEW_BYTES)
                   ? TEXT_PREVIEW_BYTES
                   : MAX_MEDIA_PREVIEW_BYTES + 1,
-            signal: request.signal,
+            signal,
           }),
-        request.signal,
-        () => !stale(),
+        backoff,
       );
-      if (stale()) return;
       const blob = content.blob;
       // Resolve metadata authorizes discovery only. Once bytes arrive, the
       // content response's current total is the sole size authority for both
@@ -786,7 +747,7 @@ export class ResourceController {
           new Uint8Array(await blob.arrayBuffer()),
           blob.size < content.totalSize,
         );
-        if (stale()) return;
+        if (!request.current()) return;
         const objectUrl =
           descriptor.kind === "html"
             ? URL.createObjectURL(
@@ -812,7 +773,7 @@ export class ResourceController {
             Math.min(blob.size, TEXT_PREVIEW_BYTES) < content.totalSize,
           )
         : undefined;
-      if (stale()) return;
+      if (!request.current()) return;
       if (
         content.totalSize > MAX_MEDIA_PREVIEW_BYTES ||
         blob.size > MAX_MEDIA_PREVIEW_BYTES
@@ -838,15 +799,7 @@ export class ResourceController {
         ...(objectUrl ? { objectUrl } : {}),
       });
     } catch (error) {
-      if (
-        error instanceof ApiError &&
-        error.status === 401 &&
-        this.host.api() === api
-      ) {
-        this.host.handleAuthFailure();
-        return;
-      }
-      if (stale()) return;
+      if (!request.current() || this.authFailed(error, request)) return;
       const availability = descriptorResolved
         ? null
         : classifiedResourceFailure(reference, error);

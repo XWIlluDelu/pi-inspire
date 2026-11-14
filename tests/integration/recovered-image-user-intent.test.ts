@@ -1,10 +1,9 @@
 // @vitest-environment jsdom
-import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createInspireServer } from "../../server/app";
-import { PreferencesStore } from "../../server/preferences";
-import { ResourceStore } from "../../server/resources";
-import { token } from "../server/fixtures/host-api";
+import {
+  closeHostApiFixture,
+  hostApiFixture,
+} from "../server/fixtures/host-api";
 import {
   catalog,
   disposeRuntimeFixture,
@@ -16,21 +15,17 @@ import {
   trackedAttachmentStore,
   upload,
 } from "../server/fixtures/runtime";
-import {
-  bootstrapPayload,
-  deferred,
-  installFakeWebSocket,
-  jsonBody,
-  type RouteResponse,
-} from "../web/helpers";
-import { initStore, installStoreRoutes } from "../web/store-fixture";
-import { forwardHostRequests } from "./host-requests";
+import { deferred, installFakeWebSocket, jsonBody } from "../web/helpers";
+import { initStore } from "../web/store-fixture";
 
 beforeEach(async () => {
   await initializeRuntimeFixture();
   installFakeWebSocket();
 });
-afterEach(disposeRuntimeFixture);
+afterEach(async () => {
+  vi.unstubAllGlobals();
+  await disposeRuntimeFixture();
+});
 
 describe("Host-deferred image recovery", () => {
   it.each([
@@ -48,24 +43,15 @@ describe("Host-deferred image recovery", () => {
       const gate = deferred<void>();
       const sent: Record<string, unknown>[] = [];
       let sending: Promise<unknown> | undefined;
-      let promptResponse: RouteResponse | undefined;
-      const application = createInspireServer({
-        token,
-        runtime,
-        attachments,
-        catalog: source,
-        preferences: new PreferencesStore(join(fixtureWorkspace, "prefs.json")),
-        resources: new ResourceStore(),
-        git: {
-          status: async () => ({ kind: "not-repository" }),
-          diff: async () => {
-            throw new Error("unused");
-          },
+      let promptResponse: Response | undefined;
+      const host = await hostApiFixture({
+        services: {
+          runtime,
+          catalog: source,
+          attachments,
+          cwd: fixtureWorkspace,
         },
-        version: "test",
-        piVersion: "1.3.0",
       });
-      const forward = forwardHostRequests(application);
       const waitForQueuedInput = () =>
         vi.waitFor(async () =>
           expect((await runtime.snapshot("a")).pendingQueues?.totalCount).toBe(
@@ -85,42 +71,32 @@ describe("Host-deferred image recovery", () => {
           isStreaming: false,
         }));
         worker.emit("event", { type: "compaction_start", reason: "auto" });
-        installStoreRoutes(async (url, init) => {
-          if (url.startsWith("/api/bootstrap"))
-            return {
-              body: bootstrapPayload({ startupSessionId: "a" }),
-            };
+        vi.stubGlobal("fetch", (async (input, init) => {
+          const url = String(input);
+          // Stage the fixture's real attachment and isolate preview failure from
+          // the return and removal actions this journey exercises.
           if (url === "/api/attachments")
-            return { body: { attachments: [image] } };
+            return Response.json({ attachments: [image] });
           if (url.endsWith("/image"))
-            return {
-              status: 502,
-              body: { error: "Preview temporarily unavailable" },
-            };
-          if (
-            url === "/api/prompt" ||
-            url === "/api/pending/recover" ||
-            url.startsWith("/api/attachments/")
-          ) {
-            if (url === "/api/prompt") sent.push(jsonBody(init));
-            const index = sent.length;
-            const response = await forward(url, init);
-            if (url === "/api/prompt" && index === 1) {
-              promptResponse = response;
-              if (first === "return") await gate.promise;
-            }
-            if (url === "/api/pending/recover" && first === "prompt")
-              await sending;
-            return response;
+            return Response.json(
+              { error: "Preview temporarily unavailable" },
+              { status: 502 },
+            );
+          if (url === "/api/prompt") sent.push(jsonBody(init ?? {}));
+          const index = sent.length;
+          const response = await host.fetchHost(input, init);
+          if (url === "/api/prompt" && index === 1) {
+            promptResponse = response.clone();
+            if (first === "return") await gate.promise;
           }
-        });
-        const snapshot = {
-          ...(await runtime.snapshot("a")),
-          runState: "compacting" as const,
-        };
-        const { store: sender } = await initStore(snapshot);
-        const store =
-          observer === "sender" ? sender : (await initStore(snapshot)).store;
+          if (url === "/api/pending/recover" && first === "prompt")
+            await sending;
+          return response;
+        }) satisfies typeof fetch);
+        const snapshot = await runtime.snapshot("a");
+        const connect = () => initStore(snapshot, host.application.authorityId);
+        const { store: sender } = await connect();
+        const store = observer === "sender" ? sender : (await connect()).store;
         await sender.addFiles([
           new File(["pixels"], "intent.png", { type: "image/png" }),
         ]);
@@ -145,15 +121,13 @@ describe("Host-deferred image recovery", () => {
         const finishOriginalPrompt = async () => {
           gate.resolve();
           expect(await sending).toBe(false);
-          expect(promptResponse).toMatchObject({
-            status: 409,
-            body: {
-              state: "rejected",
-              error: {
-                code: "PROMPT_RECOVERED",
-                recoveredAttachments: [image],
-                recoveryId: expect.any(String),
-              },
+          expect(promptResponse?.status).toBe(409);
+          expect(await promptResponse?.json()).toMatchObject({
+            state: "rejected",
+            error: {
+              code: "PROMPT_RECOVERED",
+              recoveredAttachments: [image],
+              recoveryId: expect.any(String),
             },
           });
         };
@@ -182,7 +156,9 @@ describe("Host-deferred image recovery", () => {
             aborted: true,
           });
           await vi.waitFor(async () =>
-            expect((await runtime.snapshot("a")).runState).toBe("aborted"),
+            expect(
+              (await runtime.snapshot("a")).sessionStatuses["a"]?.runState,
+            ).toBe("aborted"),
           );
         };
         if (action === "send") {
@@ -234,7 +210,7 @@ describe("Host-deferred image recovery", () => {
         gate.resolve();
         await runtime.close();
         await sending;
-        await application.close();
+        await closeHostApiFixture(host);
       }
     },
   );

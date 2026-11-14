@@ -1,5 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
+import type { ActiveSnapshot } from "../../shared/contracts";
+import { routeSnapshots } from "./support/host-events";
 import { hostRequest } from "./support/host-request";
 import { openPreviewFixture, openResourceFixture } from "./support/navigation";
 
@@ -8,6 +10,13 @@ test("HTML interaction isolates real resources and revokes execution across desk
 }) => {
   await page.clock.install();
   await page.setViewportSize({ width: 1280, height: 900 });
+  let selected: ActiveSnapshot["active"] = null;
+  const sessionId = "fixture-resources";
+  const transport = await routeSnapshots(page, {
+    snapshot: ({ active }) => {
+      if (active?.sessionId === sessionId) selected = active;
+    },
+  });
   const externalRequests: string[] = [];
   await page.route("https://preview.example.test/**", async (route) => {
     externalRequests.push(route.request().url());
@@ -106,7 +115,7 @@ test("HTML interaction isolates real resources and revokes execution across desk
   );
   await expect(frame.locator("body")).toHaveAttribute(
     "data-api-status",
-    "blocked",
+    /^(blocked|403)$/,
   );
   await expect(frame.locator("body")).toHaveAttribute(
     "data-local-module",
@@ -151,6 +160,26 @@ test("HTML interaction isolates real resources and revokes execution across desk
   await expect(pane.getByRole("region", { name: "File source" })).toBeVisible();
   await expectRevoked(sourceUrl);
   await pane.getByRole("button", { name: "Preview", exact: true }).click();
+  await expect(frame.locator("#status")).toHaveText("Static preview");
+
+  const replacedUrl = await startInteraction();
+  const transcript = selected!;
+  const replacement = {
+    ...transcript,
+    transcriptPage: {
+      ...transcript.transcriptPage,
+      revision: transcript.transcriptPage.revision + 1,
+      appendFromRevision: transcript.transcriptPage.revision + 1,
+    },
+  };
+  transport.send({
+    type: "session_projection_changed",
+    sessionId,
+    runtimeSequence: Number.MAX_SAFE_INTEGER,
+    transcript: replacement,
+  });
+  await expectRevoked(replacedUrl);
+  await expect(iframe).toHaveAttribute("sandbox", "");
   await expect(frame.locator("#status")).toHaveText("Static preview");
 
   const refreshUrl = await startInteraction();

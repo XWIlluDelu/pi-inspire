@@ -7,8 +7,6 @@ export type ContextPaneView = Pick<
   AppState,
   | "transportGeneration"
   | "sessionId"
-  | "transcriptViewId"
-  | "transcriptRevision"
   | "resourcesOpen"
   | "contextMode"
   | "fileInspection"
@@ -22,14 +20,14 @@ export type ContextPaneView = Pick<
   | "gitStatusError"
   | "gitStatusPending"
   | "gitDiff"
->;
+> & { transcriptViewId: string | null; transcriptRevision: number };
 
 export function selectContextPaneView(state: AppState): ContextPaneView {
   return {
     transportGeneration: state.transportGeneration,
     sessionId: state.sessionId,
-    transcriptViewId: state.transcriptViewId,
-    transcriptRevision: state.transcriptRevision,
+    transcriptViewId: state.view.viewId,
+    transcriptRevision: state.view.revision,
     resourcesOpen: state.resourcesOpen,
     contextMode: state.contextMode,
     fileInspection: state.fileInspection,

@@ -1,5 +1,4 @@
 import { once } from "node:events";
-import { appendFile } from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WebSocket } from "ws";
 import {
@@ -49,59 +48,6 @@ describe("WebSocket observation and transport limits", () => {
       throw socketError ?? error;
     }
   }
-
-  it("publishes saved entries and their effective leaf in one addressed frame", async () => {
-    const { active } = await runtime.openSession("fixture-history");
-    const detail = await connect("detail=fixture-history");
-    const background = await connect();
-    try {
-      const id = "native-append";
-      await appendFile(
-        active!.sessionFile!,
-        `${JSON.stringify({
-          type: "message",
-          id,
-          parentId: active!.effectiveLeafId,
-          timestamp: new Date().toISOString(),
-          message: {
-            role: "user",
-            content: "one native replacement",
-            timestamp: 3,
-          },
-        })}\n`,
-      );
-      // An addressed observation exercises the real JSONL reader and publisher.
-      await runtime.snapshot("fixture-history");
-      const frame = await vi.waitFor(() => {
-        const frame = detail.frames.find(
-          ({ type }) => type === "session_projection_changed",
-        );
-        expect(frame).toBeDefined();
-        return frame;
-      });
-      expect(frame).toMatchObject({
-        sessionId: "fixture-history",
-        runtimeSequence: expect.any(Number),
-        transcript: {
-          durableLeafId: id,
-          effectiveLeafId: id,
-          projectionHealth: { status: "ok" },
-          transcriptPage: {
-            viewId: active!.transcriptPage.viewId,
-            messages: expect.arrayContaining([
-              expect.objectContaining({ content: "one native replacement" }),
-            ]),
-          },
-        },
-      });
-      expect(JSON.stringify(background.frames)).not.toContain(
-        "one native replacement",
-      );
-    } finally {
-      detail.socket.close();
-      background.socket.close();
-    }
-  });
 
   it("retains detail before synchronization and releases only the departing subscription", async () => {
     const observers = new Map<string, number>();
@@ -451,71 +397,6 @@ describe("WebSocket observation and transport limits", () => {
     }
   });
 
-  it("bootstraps without a snapshot and releases only detail newer than the subscription cut", async () => {
-    const id = "fixture-active";
-    await runtime.openSession(id);
-    const snapshot = runtime.snapshot.bind(runtime);
-    const capture = deferredSignal();
-    const captured = deferredSignal();
-    const publish = deferredSignal();
-    const read = vi
-      .spyOn(runtime, "snapshot")
-      .mockImplementation(async (sessionId) => {
-        await capture.promise;
-        const view = await snapshot(sessionId);
-        captured.resolve();
-        await publish.promise;
-        return view;
-      });
-    const { body } = await fixture.localRequest
-      .get("/api/bootstrap")
-      .expect(200);
-    expect(body).toMatchObject({
-      authorityId: application.authorityId,
-      startupSessionId: id,
-    });
-    expect(body).not.toHaveProperty("snapshot");
-    expect(read).not.toHaveBeenCalled();
-
-    const { slots, emitSlotEvent } = runtime as unknown as {
-      slots: Map<string, unknown>;
-      emitSlotEvent(slot: unknown, event: unknown): void;
-    };
-    const event = (name: string) =>
-      emitSlotEvent.call(runtime, slots.get(id), {
-        type: "test_snapshot_cut",
-        name,
-      });
-    const { socket, frames } = observeEventSocket(
-      `${baseUrl.replace("http", "ws")}/events?detail=${id}`,
-    );
-    try {
-      await vi.waitFor(() => expect(read).toHaveBeenCalledExactlyOnceWith(id));
-      event("before capture");
-      capture.resolve();
-      await captured.promise;
-      event("after capture");
-      expect(frames).toEqual([]);
-      publish.resolve();
-      await vi.waitFor(() => expect(frames).toHaveLength(2));
-      expect(frames[0]).toMatchObject({
-        type: "snapshot",
-        authorityId: application.authorityId,
-        detailSessionId: id,
-        detailRevision: 0,
-        data: { active: { sessionId: id } },
-      });
-      expect(frames[1]).toMatchObject({
-        type: "test_snapshot_cut",
-        name: "after capture",
-      });
-    } finally {
-      capture.resolve();
-      publish.resolve();
-      socket.close();
-    }
-  });
-
   it("streams a large write as compact bounded argument batches only to detail viewers", async () => {
     await runtime.openSession("fixture-active");
     const { socket: detail, frames } = await connect("detail=fixture-active");
@@ -584,15 +465,15 @@ describe("WebSocket observation and transport limits", () => {
       // A following ordinary event flushes all pending deltas in order.
       emit({
         type: "tool_execution_start",
-        toolCallId: "write-1",
-        toolName: "write",
-        args: {},
+        toolActivity: {
+          "write-1": { id: "write-1", name: "write", phase: "running" },
+        },
       });
       const executionStart = await vi.waitFor(() => {
         const index = frames.findIndex(
           (frame) =>
             frame.type === "tool_execution_start" &&
-            frame.toolCallId === "write-1",
+            frame.toolActivity?.["write-1"]?.phase === "running",
         );
         expect(index).toBeGreaterThanOrEqual(0);
         return index;

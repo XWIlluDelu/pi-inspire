@@ -61,8 +61,7 @@ function modelSearchHighlights(model: ModelOption, query: string) {
     ),
   };
 }
-function fuzzyCategory(value: string, queryValue: string): number | null {
-  const query = queryValue.trim().toLocaleLowerCase();
+function fuzzyCategory(value: string, query: string): number | null {
   if (!query) return 0;
   const text = value.toLocaleLowerCase();
   const direct = text.indexOf(query);
@@ -83,73 +82,10 @@ interface ModelCandidate {
   common?: boolean;
 }
 
-interface ModelGroup {
-  provider: string;
-  models: ModelOption[];
-  common?: boolean;
-}
-function prepareModelOptions(models: readonly ModelOption[]): ModelOption[] {
-  return [...models].sort((left, right) => {
-    const [a, b] =
-      left.provider === right.provider
-        ? [left.id, right.id]
-        : [left.provider, right.provider];
-    return a < b ? -1 : a > b ? 1 : 0;
-  });
-}
-function groupPreparedModels(
-  models: readonly ModelOption[],
-  recent: readonly ModelIdentity[],
-  query: string,
-  common: readonly ModelIdentity[],
-): ModelGroup[] {
-  const recentRank = new Map(
-    recent.map((model, index) => [modelIdentityKey(model), index]),
-  );
-  type Bucket = {
-    recent: Array<ModelOption | undefined>;
-    ordinary: ModelOption[];
-  };
-  const groups = new Map<string, Bucket[]>();
-  const byKey = new Map(
-    models.map((model) => [modelIdentityKey(model), model]),
-  );
-  const commonOptions = common.flatMap((identity) => {
-    const model = byKey.get(modelIdentityKey(identity));
-    return model && fuzzyCategory(modelSearchText(model), query) !== null
-      ? [model]
-      : [];
-  });
-  const commonKeys = new Set(commonOptions.map(modelIdentityKey));
-  for (const model of models) {
-    if (commonKeys.has(modelIdentityKey(model))) continue;
-    const category = fuzzyCategory(modelSearchText(model), query);
-    if (category === null) continue;
-    let buckets = groups.get(model.provider);
-    if (!buckets) {
-      buckets = Array.from({ length: 3 }, () => ({ recent: [], ordinary: [] }));
-      groups.set(model.provider, buckets);
-    }
-    const bucket = buckets[category]!;
-    const rank = recentRank.get(modelIdentityKey(model));
-    if (rank === undefined) bucket.ordinary.push(model);
-    else bucket.recent[rank] = model;
-  }
-  return [
-    ...(commonOptions.length
-      ? [{ provider: "Common models", models: commonOptions, common: true }]
-      : []),
-    ...[...groups].map(([provider, buckets]) => ({
-      provider,
-      models: buckets.flatMap((bucket) => [
-        ...bucket.recent.filter((model): model is ModelOption =>
-          Boolean(model),
-        ),
-        ...bucket.ordinary,
-      ]),
-    })),
-  ];
-}
+const identityRanks = (models: readonly ModelIdentity[]) =>
+  new Map(models.map((model, index) => [modelIdentityKey(model), index]));
+const lexicalOrder = (left: string, right: string) =>
+  left < right ? -1 : left > right ? 1 : 0;
 
 /** Shared searchable model list. Actions belong to the selected model outside the list. */
 export function ModelList({
@@ -188,31 +124,53 @@ export function ModelList({
     initialQuery ? undefined : currentKey,
     autoFocus,
   );
-  const recentKeys = useMemo(
-    () => new Set(recent.map(modelIdentityKey)),
-    [recent],
-  );
-  const prepared = useMemo(() => prepareModelOptions(models), [models]);
-  const groups = useMemo(
-    () => groupPreparedModels(prepared, recent, query, common),
-    [prepared, recent, query, common],
-  );
-  const options = useMemo(
-    () =>
-      groups.flatMap(({ provider, common, models }) =>
-        models.map((model): ListOption<ModelCandidate> => {
-          const key = modelIdentityKey(model);
-          return {
-            key,
-            value: { model, common },
-            selected: key === currentKey,
-            group: provider,
-            title: `${model.name ?? model.id} — ${model.provider}/${model.id}`,
-          };
-        }),
-      ),
-    [groups, currentKey],
-  );
+  const recentRank = useMemo(() => identityRanks(recent), [recent]);
+  const commonRank = useMemo(() => identityRanks(common), [common]);
+  const options = useMemo<ListOption<ModelCandidate>[]>(() => {
+    const needle = query.trim().toLocaleLowerCase();
+    const matches = models.flatMap((model) => {
+      const category = fuzzyCategory(modelSearchText(model), needle);
+      const key = modelIdentityKey(model);
+      return category === null
+        ? []
+        : [
+            {
+              model,
+              key,
+              category,
+              common: commonRank.get(key) ?? common.length,
+            },
+          ];
+    });
+    return matches
+      .sort(
+        (left, right) =>
+          left.common - right.common ||
+          lexicalOrder(left.model.provider, right.model.provider) ||
+          left.category - right.category ||
+          (recentRank.get(left.key) ?? recent.length) -
+            (recentRank.get(right.key) ?? recent.length) ||
+          lexicalOrder(left.model.id, right.model.id),
+      )
+      .map(({ key, model }) => {
+        const common = commonRank.has(key);
+        return {
+          key,
+          value: { model, common },
+          selected: key === currentKey,
+          group: common ? "Common models" : model.provider,
+          title: `${model.name ?? model.id} — ${model.provider}/${model.id}`,
+        };
+      });
+  }, [
+    models,
+    query,
+    currentKey,
+    recentRank,
+    recent.length,
+    commonRank,
+    common.length,
+  ]);
   const pick = onSelect
     ? ({ model }: ModelCandidate) => onSelect(model)
     : undefined;
@@ -304,7 +262,7 @@ export function ModelList({
                 </span>
               </span>
               <span className="model-picker__badges">
-                {!selected && recentKeys.has(key) ? (
+                {!selected && recentRank.has(key) ? (
                   <span className="model-picker__badge">Recent</span>
                 ) : null}
                 {model.reasoning === false ? (

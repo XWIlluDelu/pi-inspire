@@ -141,6 +141,22 @@ export function parseConfigurationObject(
   throw requestError(invalid, 409);
 }
 
+export async function readConfigurationDocument(
+  file: ConfigurationAuthority,
+  recipe: JsonDocument,
+) {
+  const { source, revision } = await readConfigurationFile(file);
+  try {
+    return { value: parseConfigurationObject(source, recipe), revision };
+  } catch (error) {
+    return {
+      value: {},
+      revision,
+      error: error instanceof Error ? error.message : recipe.invalid,
+    };
+  }
+}
+
 /** Omission preserves the native field. Null removes it. */
 export function applyConfigurationPatch(
   current: ConfigurationObject,

@@ -201,14 +201,14 @@ export function TerminalSettingsDialog({
       aria-labelledby="terminal-settings-title"
       onDismiss={onClose}
     >
-      <div className="dialog terminal-settings">
-        <header className="settings__header terminal-settings__header">
-          <h2 id="terminal-settings-title" className="settings__title">
+      <div className="dialog dialog--flush terminal-settings">
+        <header className="dialog__header dialog__header--bar">
+          <h2 id="terminal-settings-title" className="dialog__title">
             Terminal settings
           </h2>
           <button
             type="button"
-            className="icon-button settings__close-btn"
+            className="icon-button"
             onClick={onClose}
             aria-label="Close terminal settings"
             title="Close"
@@ -221,7 +221,6 @@ export function TerminalSettingsDialog({
           categories={CATEGORIES}
           navigation={navigation}
           onNavigate={(category) => setNavigation({ category })}
-          contentClass="terminal-settings__body"
           footer={
             <footer className="terminal-settings__footer">
               {serviceError && serviceSettings ? (

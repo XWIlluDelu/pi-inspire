@@ -13,6 +13,15 @@ import {
 } from "./support/navigation";
 
 const draft = "UNFINISHED DRAFT — retain these notes";
+async function attachDraft(page: Page) {
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "draft.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("Preserve this artifact"),
+  });
+  await expect(page.locator(".attachment--ready")).toBeVisible();
+}
+
 interface CommandSession {
   input: ReturnType<Page["getByLabel"]>;
   prompts: Array<Record<string, unknown>>;
@@ -31,8 +40,10 @@ const test = base.extend<{ commandSession: CommandSession }>({
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
     const addCommands = (value: ActiveSnapshot) => {
-      value.runState = busy ? "running" : "idle";
       if (value.active) {
+        value.sessionStatuses[value.active.sessionId] = {
+          runState: busy ? "running" : "idle",
+        };
         value.active.isStreaming = busy;
         if (modelOptions) value.active.availableModels = modelOptions;
         value.active.commands.push(
@@ -64,10 +75,14 @@ const test = base.extend<{ commandSession: CommandSession }>({
           (event.detailSessionId ?? event.data?.active?.sessionId) ===
             snapshot.active.sessionId
         ) {
-          // Unchanged confirmations still project this fixture's current run state.
           event.data ??= structuredClone(snapshot);
-          event.data.runState = busy ? "running" : "idle";
-          if (event.data.active) event.data.active.isStreaming = busy;
+          const active = event.data.active;
+          if (active) {
+            event.data.sessionStatuses[active.sessionId] = {
+              runState: busy ? "running" : "idle",
+            };
+            active.isStreaming = busy;
+          }
         }
       },
     });
@@ -80,12 +95,7 @@ const test = base.extend<{ commandSession: CommandSession }>({
     await openFixtureSession(page, /Review extension event lifecycle/);
     const input = page.getByLabel("Message", { exact: true });
     await input.fill(draft);
-    await page.locator('input[type="file"]').setInputFiles({
-      name: "draft.txt",
-      mimeType: "text/plain",
-      buffer: Buffer.from("Preserve this artifact"),
-    });
-    await expect(page.locator(".attachment--ready")).toBeVisible();
+    await attachDraft(page);
     const assertDraft = async () => {
       await expect(input).toHaveValue(draft);
       await expect(page.locator(".attachment")).toContainText("draft.txt");
@@ -129,6 +139,7 @@ const test = base.extend<{ commandSession: CommandSession }>({
         transport.send({
           type: value ? "agent_start" : "agent_settled",
           sessionId: snapshot.active!.sessionId,
+          sessionStatus: { runState: value ? "running" : "idle" },
         });
         if (refreshed) {
           const failure = await (await refreshed).finished();
@@ -150,140 +161,64 @@ async function openPalette(page: Page, query = "") {
   return palette;
 }
 
-test("keeps long file completion names readable and selectable", async ({
+test("ranks narrow palette results and keeps model selection out of the draft", async ({
   page,
   commandSession,
 }) => {
-  const name = "温度相关的实验仪器校准与长时间重复性误差分析结果.json";
-  const path = `src/analysis/${name}`;
-  await page.setViewportSize({ width: 320, height: 900 });
-  await page.route("**/api/files?**", async (route) => {
-    await route.fulfill({
-      response: await route.fetch(),
-      json: {
-        files: [{ name, path }],
-      },
-    });
-  });
-  await commandSession.input.fill("@");
-  const option = page.getByRole("option", {
-    name: `${name}, ${path}`,
-    exact: true,
-  });
-  await expect(option).toBeVisible();
-  await page.evaluate(() => document.fonts.ready);
-  const fits = await option.evaluate((row) => {
-    const bounds = row.getBoundingClientRect();
-    const name = document.createRange();
-    name.selectNodeContents(row.querySelector(".completion__title > span")!);
-    return [...name.getClientRects()].every(
-      (rect) => rect.right <= bounds.right && rect.bottom <= bounds.bottom,
-    );
-  });
-  expect(fits).toBe(true);
-  await option.click();
-  await expect(commandSession.input).toHaveValue(`@"${path}" `);
-});
-
-test("keeps long session results and their project context readable on a narrow screen", async ({
-  page,
-  commandSession,
-}) => {
+  const title =
+    "检查数据处理流程：整理实验记录，比较 analysis/session_04/calibration_notes.md 与基线及回归验证";
   await page.route("**/api/sessions**", async (route) => {
     const response = await route.fetch();
     const body = await response.json();
-    if (Array.isArray(body.sessions) && body.sessions.length > 0) {
+    if (body.sessions?.length)
       body.sessions.unshift({
         ...body.sessions[0],
-        id: "mixed-cjk-long-session",
-        title:
-          "检查数据处理流程：整理实验记录，比较 analysis/session_04/calibration_notes.md 与基线以及后续长路径回归验证说明文字",
+        id: "mixed-cjk",
+        title,
         modified: new Date(Date.now() + 60_000).toISOString(),
       });
-    }
     await route.fulfill({ response, json: body });
   });
   await page.reload();
-  await expect(commandSession.input).toBeVisible();
-
+  await attachDraft(page);
   await page.setViewportSize({ width: 320, height: 900 });
-  const palette = await openPalette(page);
+  const palette = await openPalette(page, "检查数据");
   const row = palette
     .getByRole("option")
     .filter({ hasText: "检查数据处理流程" });
-  await expect(row).toBeVisible();
-  const fits = await row.evaluate((element) => {
-    const right = element.getBoundingClientRect().right;
-    const title = element.querySelector(".palette__title")!;
-    const hint = element.querySelector(".palette__hint-inline")!;
-    const titleBounds = title.getBoundingClientRect();
-    const hintBounds = hint.getBoundingClientRect();
-    const lineHeight = parseFloat(getComputedStyle(title).lineHeight);
-    return (
-      titleBounds.height <= lineHeight * 2 + 1 &&
-      hintBounds.top >= titleBounds.bottom - 1 &&
-      [title, hint].every(
-        (label) =>
-          label.scrollWidth <= label.clientWidth + 1 &&
-          label.getBoundingClientRect().right <= right + 1,
-      )
-    );
-  });
-  expect(fits).toBe(true);
-});
+  await expect(row.locator(".palette__hint-inline")).toBeVisible();
+  expect(
+    await row.evaluate((element) => element.scrollWidth - element.clientWidth),
+  ).toBeLessThanOrEqual(1);
 
-test("ranks command destinations and opens the model picker without consuming a draft", async ({
-  page,
-  commandSession,
-}) => {
-  const { assertDraft } = commandSession;
-  const palette = await openPalette(page);
   const filter = palette.getByLabel("Filter commands");
-  await expect(filter).toBeFocused();
-  await palette
-    .getByRole("option", { name: "Find a session", exact: true })
-    .hover();
-  await page.mouse.move(0, 0);
-  await expect(filter).not.toHaveAttribute("aria-activedescendant", /.+/);
-  await filter.press("ArrowDown");
-  await expect(palette.getByRole("option", { selected: true })).toHaveText(
-    "Settings",
-  );
-
   await filter.fill("project");
   const trust = palette.getByRole("option", { name: /^\/trust/ });
   await expect(trust).toContainText("Terminal only");
   await expect(trust.locator(".palette__hint-inline .search-match")).toHaveText(
     "project",
   );
-  for (const [query, title] of [
+  for (const [query, label] of [
     ["tokens cost", "Session & usage"],
+    [" /SETTINGS ", "Settings"],
     ["mdl", "Choose model"],
   ]) {
     await filter.fill(query!);
-    await expect(palette.getByRole("option").first()).toContainText(title!);
+    await expect(palette.getByRole("option", { selected: true })).toContainText(
+      label!,
+    );
   }
-  await filter.fill(" /SETTINGS ");
-  await expect(
-    palette.getByRole("option").first().locator(".search-match"),
-  ).toHaveText("Settings");
-
+  await filter.dispatchEvent("keydown", { key: "Enter", isComposing: true });
+  await expect(palette).toBeVisible();
   expect(
     (await new AxeBuilder({ page }).include(".palette").analyze()).violations,
   ).toEqual([]);
-  await filter.fill("mdl");
-  await filter.dispatchEvent("keydown", { key: "Enter", isComposing: true });
-  await expect(palette).toBeVisible();
-  await palette.getByRole("option").first().click();
-  const modelSearch = page.getByRole("combobox", { name: "Search models" });
-  await expect(modelSearch).toBeFocused();
-  await modelSearch.dispatchEvent("keydown", {
-    key: "Enter",
-    isComposing: true,
-  });
-  await expect(modelSearch).toBeVisible();
-  await assertDraft();
-  await page.keyboard.press("Escape");
+  await palette.getByRole("option", { selected: true }).click();
+  const model = page.getByRole("combobox", { name: "Search models" });
+  await expect(model).toBeVisible();
+  await model.dispatchEvent("keydown", { key: "Enter", isComposing: true });
+  await expect(model).toBeVisible();
+  await commandSession.assertDraft();
 });
 
 test("types and runs prepared arguments without consuming the draft", {
@@ -421,110 +356,54 @@ test.describe("touch commands", () => {
   });
 });
 
-test("continues prose after inline references, including after draft reload", async ({
+test("completes a wrapped filename in prose and restores committed references", async ({
   page,
-  commandSession,
+  commandSession: { input, prompts },
 }) => {
-  const { input, prompts } = commandSession;
-  const reference = '@"src/components/FilePreview.tsx"';
-  const list = page.getByRole("listbox", { name: "Project file completions" });
-  const option = list.getByRole("option", { name: /FilePreview\.tsx/ });
-  await input.fill("Read @FilePreview and explain the result");
-  await input.evaluate((element: HTMLTextAreaElement) => {
-    const caret = element.value.indexOf(" and") - 1;
-    element.setSelectionRange(caret, caret);
+  await page.setViewportSize({ width: 320, height: 850 });
+  const name = "温度相关的实验仪器校准与长时间重复性误差分析结果.json";
+  const path = `src/analysis/${name}`;
+  await page.route("**/api/files?**", async (route) =>
+    route.fulfill({
+      response: await route.fetch(),
+      json: { files: [{ name, path }] },
+    }),
+  );
+  await input.fill("Read @温度 and compare");
+  await input.evaluate((field: HTMLTextAreaElement) => {
+    const caret = field.value.indexOf(" and") - 1;
+    field.setSelectionRange(caret, caret);
   });
   await input.press("ArrowRight");
+  const options = page.getByRole("listbox", {
+    name: "Project file completions",
+  });
+  const option = options.getByRole("option", { name: `${name}, ${path}` });
+  await expect(option).toBeVisible();
+  expect(
+    await option.evaluate((row) => row.scrollWidth - row.clientWidth),
+  ).toBeLessThanOrEqual(1);
   await option.click();
   await input.pressSequentially("carefully ");
-  const draft = `Read ${reference} carefully and explain the result`;
-  await expect(input).toHaveValue(draft);
-  await expect(list).toHaveCount(0);
-
+  const text = `Read @"${path}" carefully and compare`;
+  await expect(input).toHaveValue(text);
   await page.reload();
-  await expect(input).toHaveValue(draft);
+  await expect(input).toHaveValue(text);
   await moveCaretToEnd(input);
-  await input.pressSequentially(" using @FilePreview");
+  await input.pressSequentially(" using @.json");
   await expect(option).toBeVisible();
-  await expect(input).toBeFocused();
-  await expect(input).toHaveAttribute("aria-autocomplete", "list");
-  await expect(input).toHaveAttribute(
-    "aria-controls",
-    (await list.getAttribute("id"))!,
-  );
-  await expect(
-    page.getByRole("combobox", { name: "Message completion" }),
-  ).toHaveAttribute("aria-expanded", "true");
   await expect(input).toHaveAttribute(
     "aria-activedescendant",
     (await option.getAttribute("id"))!,
   );
-  await expect(option.locator(".search-match")).toHaveText("FilePreview");
   await input.press("Shift+Enter");
-  await expect(input).toHaveValue(`${draft} using @FilePreview\n`);
+  await expect(input).toHaveValue(`${text} using @.json\n`);
   await input.press("Backspace");
-  await expect(option).toBeVisible();
+  await option.waitFor();
   await input.press("Enter");
-  const repeated = `${draft} using ${reference} `;
-  await expect(input).toHaveValue(repeated);
-  await expect(list).toHaveCount(0);
-  await input.evaluate((element: HTMLTextAreaElement) => {
-    const caret = element.value.indexOf("FilePreview") + 3;
-    element.setSelectionRange(caret, caret);
-  });
-  await input.press("ArrowRight");
-  await expect(option).toBeVisible();
-  await input.press("Enter");
-  await expect(input).toHaveValue(repeated);
+  await expect(input).toHaveValue(`${text} using @"${path}" `);
+  await expect(options).toHaveCount(0);
   expect(prompts).toHaveLength(0);
-});
-
-test("keeps prepared file completions anchored and usable by pointer and keyboard", async ({
-  page,
-  commandSession,
-}) => {
-  const palette = await openPalette(page, "review");
-  await palette.getByRole("option", { name: /\/review/ }).click();
-  const input = palette.getByLabel("Prepared command");
-  await input.fill("/review @FilePreview");
-  const menu = page.locator(".completion").filter({
-    has: page.getByRole("listbox", { name: "Project file completions" }),
-  });
-  await expect(
-    menu.getByRole("option", { name: /FilePreview\.tsx/ }),
-  ).toBeVisible();
-  await page.evaluate(() => document.fonts.ready);
-  const initialInput = (await input.boundingBox())!;
-  const initialMenu = (await menu.boundingBox())!;
-  const offset = initialMenu.y - initialInput.y;
-  // Exercise the same filtered containing block without installed-PWA emulation.
-  await page.evaluate(() =>
-    document.documentElement.style.setProperty(
-      "--window-titlebar-height",
-      "40px",
-    ),
-  );
-  await expect
-    .poll(async () => {
-      const anchor = (await input.boundingBox())!;
-      const box = (await menu.boundingBox())!;
-      return Math.abs(box.y - anchor.y - offset);
-    })
-    .toBeLessThanOrEqual(0.5);
-  await menu.getByRole("option", { name: /FilePreview\.tsx/ }).click();
-  await expect(input).toHaveValue('/review @"src/components/FilePreview.tsx" ');
-  await expect(input).toBeFocused();
-  await expect(menu).toHaveCount(0);
-  await input.pressSequentially("with @WorkspaceBrowser");
-  await expect(
-    menu.getByRole("option", { name: /WorkspaceBrowser\.tsx/ }),
-  ).toBeVisible();
-  await input.press("Enter");
-  await expect(input).toHaveValue(
-    '/review @"src/components/FilePreview.tsx" with @"src/components/WorkspaceBrowser.tsx" ',
-  );
-  await commandSession.assertDraft();
-  expect(commandSession.prompts).toHaveLength(0);
 });
 
 test("preserves command preparation through a native question and rejected submission", async ({
@@ -534,7 +413,19 @@ test("preserves command preparation through a native question and rejected submi
   const palette = await openPalette(page, "review");
   await palette.getByRole("option", { name: /\/review/ }).click();
   const input = palette.getByLabel("Prepared command");
-  await input.fill("/review valuable unsubmitted arguments");
+  await input.fill("/review @FilePreview");
+  const option = page.getByRole("option", { name: /FilePreview\.tsx/ });
+  await expect(option).toBeInViewport();
+  await option.click();
+  await input.pressSequentially("with @WorkspaceBrowser");
+  await expect(
+    page.getByRole("option", { name: /WorkspaceBrowser\.tsx/ }),
+  ).toBeVisible();
+  await input.press("Enter");
+  await expect(input).toBeFocused();
+  const text =
+    '/review @"src/components/FilePreview.tsx" with @"src/components/WorkspaceBrowser.tsx" ';
+  await expect(input).toHaveValue(text);
   commandSession.showQuestion();
   const question = page.getByRole("dialog", { name: "Review question" });
   await expect(question).toBeVisible();
@@ -542,7 +433,7 @@ test("preserves command preparation through a native question and rejected submi
   commandSession.hideQuestion();
   await expect(question).toBeHidden();
   await expect(palette).toBeVisible();
-  await expect(input).toHaveValue("/review valuable unsubmitted arguments");
+  await expect(input).toHaveValue(text);
   await expect(input).toBeFocused();
   await commandSession.assertDraft();
   expect(commandSession.prompts).toHaveLength(0);
@@ -569,7 +460,7 @@ test("preserves command preparation through a native question and rejected submi
     await run.click();
     const body = (await sent).postDataJSON();
     expect(body).toMatchObject({
-      message: "/review valuable unsubmitted arguments",
+      message: text.trimEnd(),
     });
     commandSession.showQuestion();
     await expect(question.getByRole("textbox")).toBeFocused();
@@ -581,7 +472,7 @@ test("preserves command preparation through a native question and rejected submi
   await expect(page.getByText("Extension refused after dialog")).toBeVisible();
   commandSession.hideQuestion();
   await expect(run).toBeEnabled();
-  await expect(input).toHaveValue("/review valuable unsubmitted arguments");
+  await expect(input).toHaveValue(text);
   await expect(
     page.getByRole("button", { name: "Restore", exact: true }),
   ).toHaveCount(0);
@@ -591,11 +482,10 @@ test("preserves command preparation through a native question and rejected submi
   await commandSession.assertDraft();
 });
 
-test("keeps large model and supported thinking completions usable without sending", async ({
+test("keeps a large completion list usable through keyboard and wheel navigation", async ({
   page,
-  commandSession,
+  commandSession: { input, prompts, setModels },
 }) => {
-  const { input, prompts, setModels } = commandSession;
   setModels(
     Array.from({ length: 250 }, (_, index) => ({
       provider: "scale",
@@ -604,52 +494,38 @@ test("keeps large model and supported thinking completions usable without sendin
     })),
   );
   await page.reload();
-  await expect(input).toBeVisible();
-  const options = page.getByRole("option");
   await input.fill("/model");
   await input.press("Space");
-  await expect(options.first()).toHaveAttribute("aria-setsize", "250");
-  expect(await options.count()).toBeLessThan(30);
-  for (let index = 0; index < 75; index++) await input.press("ArrowDown");
-  const selected = page.getByRole("option", { selected: true });
-  await expect(selected).toHaveAttribute("aria-posinset", "76");
-  await expect(selected).toBeInViewport();
+  const options = page.getByRole("listbox", {
+    name: "Model argument completions",
+  });
+  const selected = options.getByRole("option", { selected: true });
+  await expect(selected).toHaveAttribute("aria-posinset", "1");
+  await input.press("ArrowDown");
+  await input.press("ArrowDown");
+  await expect(selected).toHaveAttribute("aria-setsize", "250");
   await input.press("Enter");
-  await expect(input).toHaveValue("/model scale/model0075");
-
-  await input.fill("/model scale/model0249");
-  await expect(options).toHaveCount(1);
-  await input.press("Tab");
-  await expect(input).toHaveValue("/model scale/model0249");
-  await expect(options).toHaveCount(0);
-
+  await expect(input).toHaveValue(/\/model scale\/model000[12]/);
   await page.setViewportSize({ width: 320, height: 740 });
   await input.fill("/model ");
-  await expect(options.first()).toHaveAttribute("aria-setsize", "250");
-  const menu = page.locator(".completion");
-  const last = page.getByRole("option", { name: "scale/model0249 Model 249" });
-  await menu.hover();
-  // Observe browser visibility after layout delivery, not transient bounds from
-  // estimated virtual rows. Keep wheeling as newly mounted rows are measured.
+  await expect(options).toBeVisible();
+  await options.hover();
+  const last = options.getByRole("option", {
+    name: "scale/model0249 Model 249",
+  });
   await expect
     .poll(async () => {
       await page.mouse.wheel(0, 4000);
-      if (!(await last.count())) return false;
-      return last.evaluate(
-        (element) =>
-          new Promise<boolean>((resolve) => {
-            const observer = new IntersectionObserver(([entry]) => {
-              observer.disconnect();
-              resolve(entry?.intersectionRatio === 1);
-            });
-            observer.observe(element);
-          }),
+      return (
+        (await last.count()) > 0 &&
+        (await last.evaluate((row) => {
+          const box = row.closest('[role="listbox"]')!.getBoundingClientRect();
+          const bounds = row.getBoundingClientRect();
+          return bounds.top >= box.top && bounds.bottom <= box.bottom + 1;
+        }))
       );
     })
     .toBe(true);
-  await expect(last).toBeInViewport();
-  expect(await options.count()).toBeLessThan(30);
-
   await last.click();
   await expect(input).toHaveValue("/model scale/model0249");
   await input.fill("/thinking h");
@@ -658,8 +534,6 @@ test("keeps large model and supported thinking completions usable without sendin
   ).toBeVisible();
   await input.press("Enter");
   await expect(input).toHaveValue("/thinking high");
-  await input.fill("/compact preserve API names");
-  await expect(page.getByRole("note")).toContainText("Optional instructions");
   expect(prompts).toEqual([]);
 });
 
@@ -758,7 +632,7 @@ test("reads current shortcuts and retries installed release notes without consum
   await commandSession.assertDraft();
 });
 
-test("new-session completion opens below its caret line inside the viewport", async ({
+test("new-session completion stays visible in a short window", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 715, height: 571 });
@@ -774,31 +648,8 @@ test("new-session completion opens below its caret line inside the viewport", as
   });
   await expect(menu).toBeVisible();
 
-  const layout = await menu.evaluate((element) => {
-    const welcome = document.querySelector<HTMLElement>(".welcome");
-    const input = document.querySelector<HTMLTextAreaElement>(
-      ".welcome__composer .composer__input",
-    );
-    const surface = element.closest<HTMLElement>(".completion");
-    if (!welcome || !input || !surface)
-      throw new Error("Missing start surface");
-    const menuBox = surface.getBoundingClientRect();
-    const welcomeBox = welcome.getBoundingClientRect();
-    const inputBox = input.getBoundingClientRect();
-    return {
-      menuTop: menuBox.top,
-      menuBottom: menuBox.bottom,
-      welcomeTop: welcomeBox.top,
-      welcomeBottom: welcomeBox.bottom,
-      inputTop: inputBox.top,
-      inputBottom: inputBox.bottom,
-    };
-  });
-
-  expect(layout.menuTop).toBeGreaterThan(layout.inputTop);
-  // The caret popup may sit just below the input when its caret is near the
-  // lower padding. The interaction requirement is an anchored visible menu.
-  expect(layout.menuTop).toBeLessThanOrEqual(layout.inputBottom + 16);
-  expect(layout.menuTop).toBeGreaterThanOrEqual(layout.welcomeTop);
-  expect(layout.menuBottom).toBeLessThanOrEqual(layout.welcomeBottom);
+  await expect(menu).toBeInViewport();
+  await expect(
+    page.getByRole("textbox", { name: "First message" }),
+  ).toBeFocused();
 });

@@ -1,4 +1,6 @@
 import type { ExtensionUiRequest } from "../../shared/contracts";
+import { CodeView } from "./CodeView";
+import { DetailSummary } from "./DetailSummary";
 import { PromptChoices, PromptInput } from "./PromptFields";
 
 export function ExtensionDialogContent({
@@ -65,11 +67,13 @@ export function ExtensionDialogContent({
             Inspire can't handle this extension request.
           </p>
           <details className="dialog__details">
-            <summary>Request details</summary>
+            <DetailSummary>Request details</DetailSummary>
             <code>{request.method}</code>
-            <pre className="card__mono">
-              {JSON.stringify(request.payload, null, 2)}
-            </pre>
+            <CodeView
+              className="activity-reader"
+              tabIndex={0}
+              text={JSON.stringify(request.payload, null, 2)}
+            />
           </details>
         </>
       ) : request.method === "select" ? (

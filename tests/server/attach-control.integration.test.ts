@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
   access,
-  lstat,
   mkdir,
   mkdtemp,
   readFile,
@@ -27,15 +26,19 @@ import {
   AttachControlRegistry,
   takeoverCandidate,
 } from "../../server/attach-control.js";
-import { AttachmentStore } from "../../server/attachments.js";
 import { piInstallation } from "../../server/pi-installation.js";
 import { PiRpcProcess } from "../../server/pi-rpc.js";
 import { RuntimeController } from "../../server/runtime.js";
-import type { SessionRecord } from "../../server/session-catalog.js";
 import { deleteSessionFile } from "../../server/session-delete.js";
+import { savedAssistant } from "../fixtures/history-session.js";
+import { hostServices } from "../fixtures/host-services.js";
 import { closeHostApiFixture, hostApiFixture } from "./fixtures/host-api.js";
-import { isolatedTestEnvironment } from "./fixtures/isolated-environment.js";
-import { catalog } from "./fixtures/runtime.js";
+import {
+  nativePiWorkspace,
+  stubNativePiEnvironment,
+} from "./fixtures/native-pi.js";
+import { writeOfflineModels } from "./fixtures/offline-model.js";
+import { jsonl, messageEntry } from "./fixtures/session-jsonl.js";
 
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => {
@@ -51,33 +54,18 @@ const pty = createRequire(import.meta.url)(
 
 function replacementRuntime({
   registry,
-  id,
-  sessionFile,
+  environment,
+  home,
   root,
-}: {
-  registry: AttachControlRegistry;
-  id: string;
-  sessionFile: string;
-  root: string;
-}) {
-  const session: SessionRecord = {
-    id,
-    path: sessionFile,
-    cwd: root,
-    source: null,
-    created: new Date(),
-    modified: new Date(),
-    messageCount: 2,
-    firstMessage: "first",
-  };
-  const attachments = new AttachmentStore(join(root, "uploads"));
+}: Awaited<ReturnType<typeof attachWorkspace>>) {
+  stubNativePiEnvironment(environment);
+  cleanup.push(async () => vi.unstubAllEnvs());
   const spawn = vi.fn(() => {
     throw new Error("An external session must reuse its live Pi");
   });
-  const source = catalog([session]);
-  const runtime = new RuntimeController(source, attachments, {
-    createProcess: spawn,
-  })
+  const services = hostServices(home, { cwd: root, createProcess: spawn });
+  const { runtime } = services;
+  runtime
     .setExternalSessionPresence((id, file, fresh, isAncestor) =>
       registry.branchLeaves(id, file, { observe: !fresh, isAncestor }),
     )
@@ -91,117 +79,108 @@ function replacementRuntime({
         ? new AttachControlConnection(registry, candidate)
         : null;
     });
-  cleanup.push(() => attachments.close());
+  cleanup.push(() => services.attachments.close());
   cleanup.push(() => runtime.close());
-  return { runtime, spawn, catalog: source, attachments, cwd: root };
+  return { ...services, spawn, cwd: root };
 }
 
-/** A real Pi with attach-control loaded, as a user's terminal Pi would be. */
+async function attachWorkspace(
+  env: NodeJS.ProcessEnv = {},
+  resume?: { id: string; sessionFile: string },
+) {
+  const macOS = process.platform === "darwin";
+  const settings = {
+    defaultProvider: "fixture",
+    defaultModel: "offline",
+    defaultThinkingLevel: "off",
+    defaultProjectTrust: "never",
+    enableInstallTelemetry: false,
+    retry: { enabled: false },
+    compaction: { enabled: false },
+  };
+  // macOS needs a short home path for the receiver's Unix socket.
+  const {
+    root: home,
+    cwd: root,
+    agent,
+    sessions,
+    env: isolated,
+  } = await nativePiWorkspace(
+    "pi-ac-",
+    settings,
+    macOS ? await realpath("/tmp") : tmpdir(),
+  );
+  cleanup.push(() =>
+    rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }),
+  );
+  const runtimeDir = env.XDG_RUNTIME_DIR ?? join(home, "run");
+  await mkdir(runtimeDir, { recursive: true, mode: 0o700 });
+  await writeOfflineModels(
+    agent,
+    "http://127.0.0.1:1/v1",
+    "fixture",
+    [{ id: "offline", reasoning: true }],
+    "$INSPIRE_TEST_ATTACH_API_KEY",
+  );
+  const id = resume?.id ?? randomUUID();
+  const sessionFile = resume?.sessionFile ?? join(sessions, `${id}.jsonl`);
+  if (!resume) {
+    const timestamp = "2026-01-01T00:00:00.000Z";
+    await writeFile(
+      sessionFile,
+      jsonl(
+        { type: "session", version: 3, id, timestamp, cwd: root },
+        messageEntry(
+          "u1",
+          null,
+          { role: "user", content: "first", timestamp: 1 },
+          timestamp,
+        ),
+        messageEntry(
+          "a1",
+          "u1",
+          savedAssistant("answer", {
+            provider: "fixture",
+            model: "offline",
+            timestamp: 2,
+          }),
+          timestamp,
+        ),
+      ),
+    );
+  }
+  const environment = {
+    ...isolated,
+    XDG_RUNTIME_DIR: runtimeDir,
+    INSPIRE_TEST_ATTACH_API_KEY: "synthetic",
+    ...env,
+  };
+  const registry = new AttachControlRegistry(
+    macOS
+      ? join(env.HOME ?? home, "Library", "Caches", "pi-attach-control")
+      : join(runtimeDir, "pi-attach-control"),
+  );
+  return {
+    registry,
+    id,
+    sessionFile,
+    home,
+    root,
+    agent,
+    settings,
+    environment,
+    runtimeDir,
+  };
+}
+
+/** A real Pi with attach-control loaded. */
 async function livePi(
   env: NodeJS.ProcessEnv = {},
   extensions: string[] = [],
   resume?: { id: string; sessionFile: string },
 ) {
-  const macOS = process.platform === "darwin";
-  // macOS uses the fixture's home cache for attach-control sockets. Its
-  // default temporary directory is too long for the Unix socket address.
-  const root = await mkdtemp(
-    macOS
-      ? join(await realpath("/tmp"), "pi-ac-")
-      : join(tmpdir(), "attach-control-pi-"),
-  );
-  cleanup.push(() =>
-    rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }),
-  );
-  const config = join(root, "config");
-  const sessions = join(root, "sessions");
-  const runtimeDir = env.XDG_RUNTIME_DIR ?? join(root, "run");
-  await Promise.all(
-    [config, sessions, runtimeDir].map((path) =>
-      mkdir(path, { recursive: true, mode: 0o700 }),
-    ),
-  );
-  await writeFile(join(config, "auth.json"), "{}\n");
-  await writeFile(
-    join(config, "settings.json"),
-    JSON.stringify({
-      defaultProvider: "fixture",
-      defaultModel: "offline",
-      defaultThinkingLevel: "off",
-      defaultProjectTrust: "never",
-      enableInstallTelemetry: false,
-      retry: { enabled: false },
-      compaction: { enabled: false },
-    }),
-  );
-  await writeFile(
-    join(config, "models.json"),
-    JSON.stringify({
-      providers: {
-        fixture: {
-          api: "openai-completions",
-          apiKey: "$INSPIRE_TEST_ATTACH_API_KEY",
-          baseUrl: "http://127.0.0.1:1/v1",
-          models: [
-            {
-              id: "offline",
-              reasoning: true,
-              contextWindow: 8192,
-              maxTokens: 128,
-            },
-          ],
-        },
-      },
-    }),
-  );
-  const id = resume?.id ?? randomUUID();
-  const sessionFile = resume?.sessionFile ?? join(sessions, `${id}.jsonl`);
-  const timestamp = "2026-01-01T00:00:00.000Z";
-  const entries = [
-    { type: "session", version: 3, id, timestamp, cwd: root },
-    {
-      type: "message",
-      id: "u1",
-      parentId: null,
-      timestamp,
-      message: { role: "user", content: "first", timestamp: 1 },
-    },
-    {
-      type: "message",
-      id: "a1",
-      parentId: "u1",
-      timestamp,
-      message: {
-        role: "assistant",
-        content: [{ type: "text", text: "answer" }],
-        api: "openai-completions",
-        provider: "fixture",
-        model: "offline",
-        usage: {
-          input: 0,
-          output: 0,
-          cacheRead: 0,
-          cacheWrite: 0,
-          totalTokens: 0,
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-        },
-        stopReason: "stop",
-        timestamp: 2,
-      },
-    },
-  ];
-  if (!resume)
-    await writeFile(
-      sessionFile,
-      `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
-    );
-  const environment = isolatedTestEnvironment(root, {
-    PI_CODING_AGENT_DIR: config,
-    PI_CODING_AGENT_SESSION_DIR: sessions,
-    XDG_RUNTIME_DIR: runtimeDir,
-    INSPIRE_TEST_ATTACH_API_KEY: "synthetic",
-    ...env,
-  });
+  const fixture = await attachWorkspace(env, resume);
+  const { root, environment, sessionFile } = fixture;
   const pi = new PiRpcProcess({
     cwd: root,
     args: [
@@ -219,21 +198,16 @@ async function livePi(
     ],
     env: environment,
   });
-  await pi.start();
   cleanup.push(() => pi.stop());
-  const registry = new AttachControlRegistry(
-    macOS
-      ? join(env.HOME ?? root, "Library", "Caches", "pi-attach-control")
-      : join(runtimeDir, "pi-attach-control"),
-  );
-  return { pi, registry, id, sessionFile, root, environment };
+  await pi.start();
+  return { ...fixture, pi };
 }
 
 async function soleReceiver({
   registry,
   id,
   sessionFile,
-}: Awaited<ReturnType<typeof livePi>>) {
+}: Awaited<ReturnType<typeof attachWorkspace>>) {
   return vi.waitFor(
     async () => {
       const records = await registry.forSession(id, sessionFile);
@@ -346,18 +320,22 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
   }, 20_000);
 
   it("acknowledges Steer and Follow up through the native terminal before its current run can finish", async () => {
-    const fixture = await livePi();
-    const { id, root, sessionFile, environment, registry } = fixture;
-    await fixture.pi.stop();
-    const config = join(root, "config", "settings.json");
-    const settings = JSON.parse(await readFile(config, "utf8"));
+    const fixture = await attachWorkspace();
+    const { id, root, sessionFile, environment, registry, agent, settings } =
+      fixture;
     await writeFile(
-      config,
+      join(agent, "settings.json"),
       JSON.stringify({ ...settings, extensions: [resolve(ATTACH_PROMPT)] }),
     );
     const terminal = pty.spawn(
       process.execPath,
-      [resolve("inspire.mjs"), "pi", "--session", sessionFile],
+      [
+        "--import",
+        resolve("node_modules/tsx/dist/loader.mjs"),
+        resolve("server/attached-pi-entry.ts"),
+        "--session",
+        sessionFile,
+      ],
       {
         cwd: root,
         name: "xterm-256color",
@@ -516,16 +494,15 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
     expect(sendUserMessage).not.toHaveBeenCalled();
   });
 
-  it("controls one native receiver, refuses remote commands, and follows it across reload", async () => {
-    const fixture = await livePi({}, [
+  it("reuses an idle native receiver, refuses stale branch controls, and follows Pi across reload", async () => {
+    const fixture = await livePi({ PI_ATTACH_CONTROL_TAG: "worker-one" }, [
       NAVIGATE,
       RELOAD,
       "extensions/attach-control.ts",
     ]);
     const { pi, registry, id, sessionFile } = fixture;
     const record = await soleReceiver(fixture);
-    // Pi records its startup model selection after the saved entries.
-    expect(record).toMatchObject({ activity: "idle" });
+    expect(record).toMatchObject({ activity: "idle", tag: "worker-one" });
     const startLeaf = record.leafId;
     expect(typeof startLeaf).toBe("string");
     const connection = new AttachControlConnection(registry, record);
@@ -563,28 +540,42 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
     });
     expect(await readFile(sessionFile, "utf8")).toBe(before);
 
-    await connection.rename("Attached name");
+    const { runtime, spawn } = replacementRuntime(fixture);
+    const release = runtime.retainSessionView(id);
+    cleanup.push(async () => release());
     await vi.waitFor(
       async () =>
-        expect(await readFile(sessionFile, "utf8")).toContain("Attached name"),
-      { timeout: 5_000 },
+        expect(await runtime.snapshot(id)).toMatchObject({
+          sessionStatuses: { [id]: { external: true } },
+        }),
+      { timeout: 10_000 },
     );
-
+    expect((await runtime.snapshot(id)).active?.readOnlyReason).toBeUndefined();
+    expect(runtime.startupSessionHint).toBeNull();
+    await runtime.rename(id, "Renamed from Inspire");
+    await vi.waitFor(async () =>
+      expect(await readFile(sessionFile, "utf8")).toContain(
+        "Renamed from Inspire",
+      ),
+    );
+    expect(spawn).not.toHaveBeenCalled();
     expect((await connection.setThinkingLevel("high")).thinkingLevel).toBe(
       "high",
     );
-    await expect(
-      connection.prompt(
-        "empty branch already advanced",
-        undefined,
-        undefined,
-        undefined,
-        null,
-      ),
-    ).rejects.toMatchObject({ code: "ATTACH_CONTROL_BRANCH_CHANGED" });
-    await expect(connection.abort(null)).rejects.toMatchObject({
-      code: "ATTACH_CONTROL_BRANCH_CHANGED",
-    });
+    const refuses = async (leaf: string | null) => {
+      const mismatch = { code: "ATTACH_CONTROL_BRANCH_CHANGED" };
+      await expect(
+        connection.prompt(
+          "wrong context",
+          undefined,
+          undefined,
+          undefined,
+          leaf,
+        ),
+      ).rejects.toMatchObject(mismatch);
+      await expect(connection.abort(leaf)).rejects.toMatchObject(mismatch);
+    };
+    await refuses(null);
 
     // The terminal user moves to another entry. The receiver checks the
     // submitted branch at the actual input/Stop boundary.
@@ -594,18 +585,7 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
         expect(await connection.read()).toMatchObject({ leafId: null }),
       { timeout: 5_000 },
     );
-    await expect(
-      connection.prompt(
-        "wrong context",
-        undefined,
-        undefined,
-        undefined,
-        startLeaf,
-      ),
-    ).rejects.toMatchObject({ code: "ATTACH_CONTROL_BRANCH_CHANGED" });
-    await expect(connection.abort(startLeaf)).rejects.toMatchObject({
-      code: "ATTACH_CONTROL_BRANCH_CHANGED",
-    });
+    await refuses(startLeaf!);
 
     // Reloading through Pi itself replaces the extension instance, and the
     // attachment follows the same process to the new socket.
@@ -613,7 +593,7 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
     await vi.waitFor(
       async () => {
         const [next] = await registry.forSession(id, sessionFile);
-        expect(next?.instanceId).toBeDefined();
+        expect(next?.pid).toBe(record.pid);
         expect(next?.instanceId).not.toBe(record.instanceId);
       },
       { timeout: 15_000 },
@@ -621,45 +601,12 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
     expect(await connection.read()).toMatchObject({ activity: "idle" });
   }, 60_000);
 
-  it("automatically attaches to an idle external Pi when observing its session", async () => {
-    const fixture = await livePi({
-      PI_ATTACH_CONTROL_TAG: "worker-one",
-    });
-    const { registry, id, sessionFile } = fixture;
-    const record = await soleReceiver(fixture);
-    expect(record.tag).toBe("worker-one");
-    const { runtime, spawn } = replacementRuntime(fixture);
-    const release = runtime.retainSessionView(id);
-    cleanup.push(async () => release());
-    await vi.waitFor(
-      async () => {
-        const snapshot = await runtime.snapshot(id);
-        expect(snapshot.sessionStatuses[id]?.external).toBe(true);
-        expect(snapshot.active?.readOnlyReason).toBeUndefined();
-      },
-      { timeout: 10_000 },
-    );
-    expect(runtime.startupSessionHint).toBeNull();
-    await runtime.rename(id, "Renamed from Inspire");
-    await vi.waitFor(
-      async () =>
-        expect(await readFile(sessionFile, "utf8")).toContain(
-          "Renamed from Inspire",
-        ),
-      { timeout: 5_000 },
-    );
-    expect(spawn).not.toHaveBeenCalled();
-    expect((await registry.forSession(id, sessionFile))[0]?.pid).toBe(
-      record.pid,
-    );
-  }, 60_000);
-
   it("Clear Hidden ends every branch instance before trashing an unopened session and leaves other sessions running", async () => {
     const first = await livePi({}, ["docs/examples/native-ui.ts"]);
     const environment =
       process.platform === "darwin"
-        ? { HOME: first.root }
-        : { XDG_RUNTIME_DIR: join(first.root, "run") };
+        ? { HOME: first.home }
+        : { XDG_RUNTIME_DIR: first.runtimeDir };
     const otherBranch = await livePi(
       { ...environment, PI_ATTACH_CONTROL_TAG: "other-branch" },
       [NAVIGATE],
@@ -707,23 +654,11 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
         ).toBe(true),
       { timeout: 10_000 },
     );
-    const { dev, ino, size, mtimeNs, ctimeNs } = await lstat(
-      first.sessionFile,
-      { bigint: true },
-    );
-    const session: SessionRecord = {
-      id: first.id,
-      path: first.sessionFile,
+    const { attachments, catalog: source } = hostServices(first.home, {
       cwd: first.root,
-      source: { dev, ino, size, mtimeNs, ctimeNs },
-      created: new Date(),
-      modified: new Date(),
-      messageCount: 2,
-      firstMessage: "first",
-    };
-    const attachments = new AttachmentStore(join(first.root, "uploads"));
+    });
     const trash = join(first.root, "trashed.jsonl");
-    const runtime = new RuntimeController(catalog([session]), attachments, {
+    const runtime = new RuntimeController(source, attachments, {
       deleteSessionRecord: (target) =>
         deleteSessionFile(target, async (payload) => {
           expect(

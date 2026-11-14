@@ -91,7 +91,7 @@ test("a narrow running composer keeps model controls and task actions reachable"
       for (const model of active.availableModels ?? []) {
         if (model.id === active.model.id) model.name = name;
       }
-      body.runState = "running";
+
       active.isStreaming = true;
       body.sessionStatuses[active.sessionId] = { runState: "running" };
     },

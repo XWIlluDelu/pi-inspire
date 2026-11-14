@@ -80,7 +80,7 @@ clear followed by a lost response leaves nothing to retry. A prompt, Stop, or Re
 match its Host authority, command and operation ID. Reconnect observes the retained ID; a missing
 or retired receipt remains unknown. The Pending observer dispatches once and applies the first
 confirmed result only once, even if another HTTP observer is still waiting. See [[session-transport]],
-`server/pending-operation-receipts.ts` and `src/controllers/pending-recovery-controller.ts`.
+`server/operation-receipts.ts` and `src/controllers/pending-recovery-controller.ts`.
 
 Host-owned private state files share `server/private-state-file.ts`: write a unique exclusive
 0600 temporary file, recheck a supplied publication lease, then atomically replace the destination.

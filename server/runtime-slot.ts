@@ -66,11 +66,13 @@ export function runtimeHistory(
 export function workerOnSeparateBranch(slot: RuntimeSlot): boolean {
   const worker = slot.workerView;
   const file = slot.projection;
+  // A running worker can know the next native leaf before Live adopts it.
+  const leaf = worker?.nativeLeafId;
   return Boolean(
     worker &&
       file &&
-      worker.index.leafId !== file.leafId &&
-      !worker.index.continues(worker.index.leafId, file.leafId),
+      leaf !== undefined &&
+      !worker.index.continues(leaf, file.leafId),
   );
 }
 
@@ -98,6 +100,7 @@ export interface WorkerView {
   contextGeneration: number;
   finishedMessages: Map<string, string | Record<string, unknown>>;
   sealedCursor: string | null;
+  nativeLeafId: string | null;
   /** View-local turn owners for native entries adopted from the current worker. */
   entryTurns: Map<string, string>;
 }

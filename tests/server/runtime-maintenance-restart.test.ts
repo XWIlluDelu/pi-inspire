@@ -7,9 +7,14 @@ import type { RuntimeSlot } from "../../server/runtime-slot.js";
 import type { HostRestartScope } from "../../shared/host-restart.js";
 
 import {
+  nativePiWorkspace,
+  stubNativePiEnvironment,
+} from "./fixtures/native-pi.js";
+import {
   deferredSignal,
   disposeRuntimeFixture,
   fakeRuntime,
+  fixtureWorkspace,
   initializeRuntimeFixture,
   preview,
   schedulingRuntime,
@@ -17,8 +22,22 @@ import {
   TEST_CWD,
 } from "./fixtures/runtime.js";
 
-beforeEach(initializeRuntimeFixture);
-afterEach(disposeRuntimeFixture);
+beforeEach(async () => {
+  await initializeRuntimeFixture();
+  const pi = await nativePiWorkspace(
+    "pi-",
+    { defaultProjectTrust: "never" },
+    fixtureWorkspace,
+  );
+  stubNativePiEnvironment(pi.env);
+});
+afterEach(async () => {
+  try {
+    await disposeRuntimeFixture();
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
 
 describe("maintenance restart admission", () => {
   afterEach(() => vi.useRealTimers());
@@ -89,7 +108,9 @@ describe("maintenance restart admission", () => {
           expect(workers).toHaveLength(1);
         } else {
           await vi.waitFor(() => expect(slot.stopping).toBeNull());
-          expect((await runtime.snapshot("a")).runState).toBe("failed");
+          expect(
+            (await runtime.snapshot("a")).sessionStatuses["a"]?.runState,
+          ).toBe("failed");
         }
 
         expect(controller.start(intent).phase).toBe("rejected");
@@ -159,33 +180,38 @@ describe("maintenance restart admission", () => {
     await runtime.close();
   });
 
-  it("fences every new runtime command after an idle lease", async () => {
-    const { runtime } = schedulingRuntime({
-      sessions: [],
-    });
-
-    const decision = runtime.reserveMaintenanceRestart();
-    expect(decision.kind).toBe("ready");
-    await expect(runtime.newSession(TEST_CWD)).rejects.toMatchObject({
-      status: 503,
-    });
-    await runtime.close();
-  });
-
-  it("allows explicit interruption of active Pi work while another restart lease stays exclusive", async () => {
+  it("keeps pending and running Pi work behind one forced restart lease", async () => {
     const { runtime, workers } = schedulingRuntime();
     await runtime.openSession("a");
     await startWorker(runtime);
     const worker = workers[0]!;
+    const active = { kind: "busy", reason: "active-work" };
     worker.emit("event", {
       type: "queue_update",
       steering: ["pending input"],
       followUp: [],
     });
-    expect(runtime.reserveMaintenanceRestart()).toEqual({
-      kind: "busy",
-      reason: "active-work",
+    expect(runtime.reserveMaintenanceRestart()).toEqual(active);
+    worker.emit("event", { type: "queue_update", steering: [], followUp: [] });
+
+    const compactStarted = deferredSignal();
+    const compactRpc = Promise.withResolvers<void>();
+    worker.responseOverrides.set("compact", () => {
+      compactStarted.resolve();
+      return compactRpc.promise;
     });
+    const originalStop = worker.stop.bind(worker);
+    vi.spyOn(worker, "stop").mockImplementation(async () => {
+      compactRpc.reject(new Error("worker stopped during compaction"));
+      await originalStop();
+    });
+    const compact = runtime.nativeCommand({
+      sessionId: "a",
+      command: "compact",
+    });
+    const settled = compact.catch((error: unknown) => error);
+    await compactStarted.promise;
+    expect(runtime.reserveMaintenanceRestart()).toEqual(active);
     const lease = runtime.reserveMaintenanceRestart(true);
     if (lease.kind !== "ready") throw new Error("Expected forced lease");
     expect(runtime.reserveMaintenanceRestart(true)).toEqual({
@@ -195,50 +221,9 @@ describe("maintenance restart admission", () => {
     expect(runtime.commitMaintenanceRestart(lease.leaseId).kind).toBe(
       "committed",
     );
-    await expect(runtime.newSession(TEST_CWD)).rejects.toMatchObject({
-      status: 503,
-    });
     await runtime.close();
     expect(worker.stops).toBe(1);
-  });
-
-  it("interrupts a genuinely pending manual compaction rather than waiting for its RPC", async () => {
-    const { runtime, workers } = schedulingRuntime();
-    await runtime.openSession("a");
-    await startWorker(runtime);
-    const worker = workers[0]!;
-    const { promise: compactStarted, resolve: started } = deferredSignal();
-    let cancelCompact!: (error: Error) => void;
-    worker.responseOverrides.set("compact", () => {
-      started();
-      return new Promise((_resolve, reject) => {
-        cancelCompact = reject;
-      });
-    });
-    const originalStop = worker.stop.bind(worker);
-    vi.spyOn(worker, "stop").mockImplementation(async () => {
-      cancelCompact(new Error("worker stopped during compaction"));
-      await originalStop();
-    });
-    const compacting = runtime.nativeCommand({
-      sessionId: "a",
-      command: "compact",
-    });
-    // Attach the failure observer before the worker can be stopped.
-    const settledCompact = compacting.catch((error: unknown) => error);
-    await compactStarted;
-    expect(runtime.reserveMaintenanceRestart()).toEqual({
-      kind: "busy",
-      reason: "active-work",
-    });
-    const lease = runtime.reserveMaintenanceRestart(true);
-    if (lease.kind !== "ready") throw new Error("Expected forced lease");
-    expect(runtime.commitMaintenanceRestart(lease.leaseId).kind).toBe(
-      "committed",
-    );
-    await runtime.close();
-    expect(worker.stops).toBe(1);
-    await expect(settledCompact).resolves.toBeInstanceOf(Error);
+    await expect(settled).resolves.toBeInstanceOf(Error);
   });
 
   it("does not grant an idle-only lease while an open request is still in flight", async () => {

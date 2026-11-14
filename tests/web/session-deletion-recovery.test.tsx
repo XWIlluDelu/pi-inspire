@@ -201,7 +201,7 @@ describe("deletion review recovery", () => {
     expect(store.getState().sessions.some((row) => row.id === target.id)).toBe(
       false,
     );
-    expect(store.getState().notices.at(-1)?.text).toContain(
+    expect(store.getState().live.notices.at(-1)?.text).toContain(
       "metadata could not be saved",
     );
     expect(remove).toHaveBeenCalledOnce();

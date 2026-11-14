@@ -17,11 +17,6 @@ function fixture() {
   let registered = slot;
   const host = {
     assertAvailable: () => {},
-    emptySnapshot: () => ({
-      active: null,
-      runState: "idle" as const,
-      sessionStatuses: {},
-    }),
     requireSlot: (id: string) => {
       if (id === slot.id) return registered;
       if (id === selected.id) return selected;
@@ -29,7 +24,6 @@ function fixture() {
     },
     useSlot: <T>(_slot: RuntimeSlot, operation: () => Promise<T>) =>
       operation(),
-    snapshotSlot: vi.fn(),
     reconcileSlot: vi.fn(async () => {}),
     promptFileName: () => null,
     skipSummaryPrompt: () => false,

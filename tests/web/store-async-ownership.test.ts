@@ -84,8 +84,10 @@ describe("completion-driven Pi operation observation", () => {
     });
     await expect(navigating).resolves.toBe(true);
     expect(store.getState()).toMatchObject({
-      transcriptViewId: "navigated-view",
       branchActionId: null,
+      view: {
+        viewId: "navigated-view",
+      },
     });
     expect(store.drafts.get("s1").text).toBe("Returned editor text");
     expect(
@@ -123,7 +125,7 @@ describe("completion-driven Pi operation observation", () => {
     retired.resolve({ body: "old history" });
     await old;
     expect(store.getState().exportingSessions).toEqual({ s1: "jsonl" });
-    expect(store.getState().notices).toEqual([]);
+    expect(store.getState().live.notices).toEqual([]);
 
     current.resolve({
       status: 503,
@@ -131,7 +133,7 @@ describe("completion-driven Pi operation observation", () => {
     });
     await replacement;
     expect(store.getState().exportingSessions).toEqual({});
-    expect(store.getState().notices.at(-1)).toMatchObject({
+    expect(store.getState().live.notices.at(-1)).toMatchObject({
       kind: "error",
       text: "Export storage unavailable",
     });
@@ -139,100 +141,73 @@ describe("completion-driven Pi operation observation", () => {
 });
 
 describe("detail snapshots and selection intent", () => {
-  it("releases a blackholed open while the socket stays healthy and permits an explicit re-open", async () => {
-    const pending = deferred<RouteResponse>();
-    let calls = 0;
-    let signal: AbortSignal | null | undefined;
-    installStoreRoutes((url, init) => {
-      if (url === "/api/sessions/open") {
-        calls += 1;
-        if (calls === 1) {
-          signal = init.signal;
-          return pending.promise;
-        }
-        return { body: activeSnapshot({ sessionId: "s2" }) };
+  it.each(["deadline", "selection", "bootstrap"] as const)(
+    "retires a pending open on %s and accepts only current authentication results",
+    async (retirement) => {
+      const pending = deferred<RouteResponse>();
+      const denied = { status: 401, body: { error: "Pairing expired" } };
+      const open = vi
+        .fn<(init: RequestInit) => RouteResponse | Promise<RouteResponse>>(
+          openResponse,
+        )
+        .mockReturnValueOnce(pending.promise);
+      installStoreRoutes((url, init) => {
+        if (url === "/api/sessions/open")
+          return jsonBody(init).id === "expired" ? denied : open(init);
+      });
+      const { store, socket } = await initStore();
+      const first = store.openSession("s2");
+      const signal = open.mock.calls[0]?.[0].signal;
+      const current =
+        retirement === "selection"
+          ? "s3"
+          : retirement === "bootstrap"
+            ? "s1"
+            : "s2";
+      if (retirement === "deadline") {
+        await store.openSession("s2");
+        expect(open).toHaveBeenCalledOnce();
+        await vi.advanceTimersByTimeAsync(30_000);
+        socket.emit({ type: "heartbeat" });
+        await vi.advanceTimersByTimeAsync(HTTP_OBSERVATION_TIMEOUT_MS - 30_000);
+        await first;
+        expect(store.getState()).toMatchObject({
+          sessionId: "s1",
+          connection: "open",
+          sessionSelectionPending: false,
+          sessionActionError: expect.stringContaining("could not confirm"),
+        });
+        await store.openSession(current);
+        expect(open).toHaveBeenCalledTimes(2);
+      } else if (retirement === "selection") {
+        await store.openSession(current);
+      } else {
+        socket.close();
+        expect(signal?.aborted).toBe(false);
+        await store.init();
       }
-    });
-    const { store, socket } = await initStore();
-    const first = store.openSession("s2");
-    await store.openSession("s2");
-    expect(calls).toBe(1);
-    await vi.advanceTimersByTimeAsync(30_000);
-    socket.emit({ type: "heartbeat" });
-    await vi.advanceTimersByTimeAsync(HTTP_OBSERVATION_TIMEOUT_MS - 30_000);
-    await first;
-    expect(signal?.aborted).toBe(true);
-    expect(store.getState()).toMatchObject({
-      sessionId: "s1",
-      connection: "open",
-      sessionSelectionPending: false,
-      sessionActionError: expect.stringContaining("could not confirm"),
-    });
-    await store.openSession("s2");
-    expect(calls).toBe(2);
-    expect(store.getState().sessionId).toBe("s2");
-    pending.resolve({ body: activeSnapshot({ sessionId: "stale" }) });
-    await vi.advanceTimersByTimeAsync(0);
-    expect(store.getState().sessionId).toBe("s2");
-  });
-
-  it("ignores a superseded 401 but retires the current selection on auth loss", async () => {
-    const pending = deferred<RouteResponse>();
-    let signal: AbortSignal | null | undefined;
-    installStoreRoutes((url, init) => {
-      if (url === "/api/sessions/open") {
-        if (jsonBody(init).id === "s2") {
-          signal = init.signal;
-          return pending.promise;
-        }
-        if (jsonBody(init).id === "s4")
-          return { status: 401, body: { error: "Current pairing expired" } };
-        return { body: activeSnapshot({ sessionId: "s3" }) };
+      await first;
+      expect(signal?.aborted).toBe(true);
+      pending.resolve(
+        retirement === "deadline"
+          ? { body: activeSnapshot({ sessionId: "stale" }) }
+          : denied,
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(store.getState()).toMatchObject({
+        sessionId: current,
+        needsToken: false,
+        sessionSelectionPending: false,
+      });
+      if (retirement === "selection") {
+        await store.openSession("expired");
+        expect(store.getState()).toMatchObject({
+          needsToken: true,
+          sessionSelectionPending: false,
+        });
       }
-    });
-    const { store } = await initStore();
-    const first = store.openSession("s2");
-    await store.openSession("s3");
-    await first;
-    expect(signal?.aborted).toBe(true);
-    pending.resolve({ status: 401, body: { error: "Stale pairing" } });
-    await vi.advanceTimersByTimeAsync(0);
-    expect(store.getState()).toMatchObject({
-      sessionId: "s3",
-      needsToken: false,
-      sessionSelectionPending: false,
-    });
-    await store.openSession("s4");
-    expect(store.getState()).toMatchObject({
-      needsToken: true,
-      sessionSelectionPending: false,
-    });
-  });
-
-  it("keeps a current HTTP selection through socket close but cancels it on bootstrap replacement", async () => {
-    const pending = deferred<RouteResponse>();
-    let signal: AbortSignal | null | undefined;
-    installStoreRoutes((url, init) => {
-      if (url === "/api/sessions/open") {
-        signal = init.signal;
-        return pending.promise;
-      }
-    });
-    const { store, socket } = await initStore();
-    const first = store.openSession("s2");
-    socket.onclose?.();
-    expect(signal?.aborted).toBe(false);
-    await store.init();
-    await first;
-    expect(signal?.aborted).toBe(true);
-    pending.resolve({ status: 401, body: { error: "Old API" } });
-    await vi.advanceTimersByTimeAsync(0);
-    expect(store.getState()).toMatchObject({
-      sessionId: "s1",
-      needsToken: false,
-      sessionSelectionPending: false,
-    });
-  });
+    },
+  );
 
   it("requires confirmation only when repeating a creation that may have been accepted", async () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
@@ -492,14 +467,14 @@ describe("runtime control completion ownership", () => {
           { detailSessionId: "s1", detailRevision: 0 },
         );
       }
-      const viewId = store.getState().transcriptViewId!;
+      const viewId = store.getState().view.viewId!;
       runtimeReady(socket);
       await vi.advanceTimersByTimeAsync(0);
       expect(snapshotReads).toBe(1);
 
       abort.resolve({ status: 409, body: { error: "Old abort failed" } });
       await stopping;
-      expect(store.getState().notices).toEqual([]);
+      expect(store.getState().live.notices).toEqual([]);
       command.resolve({
         body: {
           command: "compact",
@@ -518,12 +493,16 @@ describe("runtime control completion ownership", () => {
 
       expect(store.getState()).toMatchObject({
         sessionName: "Fresh session",
-        transcriptViewId: viewId,
         error: null,
+        view: {
+          viewId: viewId,
+        },
       });
       expect(snapshotReads).toBe(1);
       expect(store.getState().commandActivities.s1).toBeUndefined();
-      expect(store.getState().notices.at(-1)?.text).toBe("Context compacted.");
+      expect(store.getState().live.notices.at(-1)?.text).toBe(
+        "Context compacted.",
+      );
     },
   );
 
@@ -570,7 +549,7 @@ describe("runtime control completion ownership", () => {
       );
       await changing;
       expect(store.getState().thinkingLevel).toBe("low");
-      expect(store.getState().notices).toEqual([]);
+      expect(store.getState().live.notices).toEqual([]);
       current.resolve({
         body: activeSnapshot({ sessionId, sessionName: "Fresh session" }),
       });
@@ -640,9 +619,13 @@ describe("resync failure ownership", () => {
       await vi.advanceTimersByTimeAsync(0);
       expect(store.getState()).toMatchObject({
         sessionId,
-        transcriptViewId: viewId,
         error: currentError,
-        messages: [{ content: "current" }],
+        view: {
+          viewId: viewId,
+        },
+        live: {
+          messages: [{ content: "current" }],
+        },
       });
     },
   );

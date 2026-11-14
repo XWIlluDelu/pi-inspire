@@ -355,27 +355,11 @@ precede folders and keep the shared text axis. Narrow/coarse-pointer
 New/Search rows are 36px high with 14px labels; icon-only rail/close actions retain 44px targets.
 WebKit uses 16px editing text to avoid focus zoom, retaining compact resting labels.
 
-The contextual tab/tool header is 32px on fine-pointer desktop, 36px on coarse-pointer desktop,
-and at least 37px in its narrow drawer. Its icons remain 16px; desktop tool tiles are 26px high
-while coarse/narrow controls keep at least 32px targets. Open-file tabs fill the header height,
-and the short refresh separator remains centered. Narrow drawers and compact touch panes use a
-second row when a selected file or terminal tab, overflow and tools cannot fit together. An empty
-shared strip does not reserve that row.
-
-Files, Changes, History and Terminal share the contextual pane. Resource safety and change
-semantics belong to [[resource-preview]]; branch behavior belongs to [[session-branches]].
-
-The contextual header keeps file and terminal tabs in one leading strip with a shared More tabs
-menu instead of horizontal scrolling. Files, Changes and History use trailing icon tabs;
-Terminal is a default-shell creation action. File and terminal labels use the small UI tier. The rail-colored header has one weak hairline against stage-colored
-content. Selected file/terminal tabs keep content-colored fill, accent ink, weak top/left/right edges
-and small top-only corners, with an open bottom joining the content. Fixed Files/Changes/History
-selections share that connected surface and boundary, with no additional underline, as specified in
-[[workspace-layout]]. Hover, transparent close buttons and keyboard focus keep their existing roles.
-The Changes count uses tabular digits next to its icon on the same centerline, inside the tab in
-either state. The visible count caps at `99+` and the tab title gives the exact total.
-Other segmented controls keep their own selection surfaces. Count capsules use
-`--accent-tint`/`--accent-deep`, smaller text on the label baseline and a distinct gap.
+The contextual header uses the compact pane toolbar with an adjacent row of Files, Changes,
+New terminal, Refresh and drawer Close actions. File and terminal tabs share a scrollable strip
+with a searchable Open tabs list. A compact pane gives the strip its own row when tabs are present.
+Selected tabs and tool modes use the same accent tint and keep inset keyboard focus. The Changes
+tab shows up to `99+` next to its icon and gives the exact total in its title.
 
 Session, conversation and workspace search use muted icons/placeholders and ink-colored input,
 stronger hover icons and accent focus borders. Session search rests on an inset control surface with
@@ -775,37 +759,11 @@ records use 24px fine-pointer and 32px coarse-pointer targets, including in Hist
 add 2px vertical padding per side. Shell records keep their own footer padding, and notices wrap
 when their text and actions need more room.
 
-Copy, Fork, Pending Return/Clear and similar actions share three presentation types:
-
-1. **Constant:** visible, with unchanged visibility and opacity across activation conditions.
-2. **Emphasized:** visible and semi-transparent at rest; a specified condition reduces transparency,
-   possibly to full opacity.
-3. **Revealed:** absent visually at rest; a specified condition makes the action visible, possibly
-   still semi-transparent.
-
-Message/content action assignments:
-
-| Surface | Type | Activation |
-| --- | --- | --- |
-| User-message Copy and adjacent Fork | Revealed | Hover or visible keyboard focus within the whole message |
-| Tool, Thinking, CodeMode and branch/compaction header Copy | Constant | Expanded content |
-| Custom-message header Copy | Constant | Message header |
-| Extension text-widget Copy | Revealed | Hover or visible keyboard focus within the whole widget |
-| Assistant-response footer Copy | Revealed with a fine pointer; Emphasized (0.75) on touch | Whole-message hover or visible keyboard focus |
-| All Pending Copy, Return and Clear controls | Emphasized | Whole-panel hover/focus changes effective opacity from 0.75 to 1 |
-| Selected History entry, image-viewer Copy, system error/update information, code blocks, direct Shell results, file/project paths and Terminal text-reader Copy | Constant | Visibility and opacity stay unchanged |
-
-Pointer-retained focus alone does not latch Revealed actions on screen. Keyboard focus stays
-independent of the hovered row. Navigation keeps folder and session actions visible beside the
-counts and ages.
-
-Collapsible activity and context content mounts Copy only while expanded. Revealed message-footer
-actions use 0.75 touch opacity. Icon colors keep their surface roles.
-
-Pending uses 0.75 panel opacity, a transparent background and a quiet border at rest. Hover or focus
-within restores full opacity, the shared surface and normal hairline. All actions stay locally opaque
-and inherit this panel emphasis, without a second opacity layer. Content copying and source ownership
-follow the shared semantics above. [[conversation]] and [[composer]] own their behavior.
+Message Copy, Fork and Pending actions stay visible with the same targets on desktop and touch.
+Tool, Thinking, CodeMode and checkpoint Copy are available while their details are open. Extension
+text-widget Copy still appears on hover or visible keyboard focus. Pending uses a shared surface and
+keeps Copy, Return and the explicit Clear confirmation visible. [[conversation]] and [[composer]]
+own the content and operation behavior.
 
 Quiet text actions use Constant presentation: body-color ink, transparent resting fill/border and
 standard inset/control hover/pressed surfaces without a visible border. Transparent borders preserve

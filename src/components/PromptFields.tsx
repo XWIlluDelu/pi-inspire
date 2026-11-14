@@ -45,7 +45,7 @@ export function PromptInput({
   const input = (
     <input
       {...field}
-      className={inlineLabel ? undefined : "dialog__input"}
+      className={inlineLabel ? undefined : "text-field"}
       type={kind === "secret" && !revealed ? "password" : "text"}
       autoComplete="off"
     />

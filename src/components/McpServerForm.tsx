@@ -260,9 +260,13 @@ export function McpServerForm({
     env: storedSecrets(entry?.envKeys ?? []),
     headers: storedSecrets(entry?.headerKeys ?? []),
   }));
-  const [connection, setConnection] = useState<McpConnectionValues | null>(
-    null,
-  );
+  const file = snapshot.files.find((file) => file.scope === scope)!;
+  const [revealed, setRevealed] = useState<{
+    revision: string;
+    values: McpConnectionValues;
+  }>();
+  const connection =
+    revealed?.revision === file.revision ? revealed.values : undefined;
   const connectionInput = useRef<HTMLInputElement>(null);
   useLayoutEffect(() => {
     if (connection) connectionInput.current?.focus();
@@ -274,7 +278,6 @@ export function McpServerForm({
   const connectionError =
     typeof connectionStatus === "object" ? connectionStatus.error : undefined;
   const connectionOwner = useRef<string | null>(null);
-  const file = snapshot.files.find((file) => file.scope === scope)!;
   useLayoutEffect(() => {
     connectionOwner.current = file.revision;
     return () => {
@@ -304,14 +307,14 @@ export function McpServerForm({
       disabled: busy,
       value: patch[key] === null ? "" : (patch[key] ?? entry?.[key] ?? ""),
       onChange: ({
-        currentTarget: input,
+        currentTarget: field,
       }: React.ChangeEvent<HTMLInputElement>) =>
         change(
           key,
-          (input.value
+          (field.value
             ? control.type === "number"
-              ? input.valueAsNumber
-              : input.value
+              ? field.valueAsNumber
+              : field.value
             : control.required
               ? ""
               : null) as McpConfigValues[Key],
@@ -331,7 +334,7 @@ export function McpServerForm({
       if (connectionOwner.current === null) return;
       if (connectionOwner.current !== revision)
         throw new Error("Configuration changed. Show the saved values again.");
-      setConnection(value);
+      setRevealed({ revision, values: value });
       setConnectionStatus(undefined);
     } catch (error) {
       if (connectionOwner.current !== null)
@@ -425,6 +428,7 @@ export function McpServerForm({
   return (
     <ConfigurationForm
       busy={busy}
+      error={oauthError ?? connectionError ?? error ?? file.error}
       saveDisabled={blocked || unchangedPolicy}
       pendingLabel="Saving…"
       onSave={submit}
@@ -532,7 +536,7 @@ export function McpServerForm({
             />
             <fieldset className="mcp-fields models-form__wide">
               <legend>Arguments</legend>
-              {entry && !connection ? (
+              {entry && !connection && patch.args === undefined ? (
                 <>
                   <p className="models-status">
                     {entry.argumentCount} saved arguments
@@ -595,7 +599,7 @@ export function McpServerForm({
                       className="models-text-button"
                       disabled={busy}
                       onClick={() => {
-                        setConnection(null);
+                        setRevealed(undefined);
                         change("args", undefined);
                       }}
                     >
@@ -780,11 +784,6 @@ export function McpServerForm({
       {entry?.extraFieldCount ? (
         <p className="models-status">
           {entry.extraFieldCount} additional fields will be preserved.
-        </p>
-      ) : null}
-      {file.error || error || oauthError || connectionError ? (
-        <p className="settings__error" role="alert">
-          {oauthError ?? connectionError ?? error ?? file.error}
         </p>
       ) : null}
     </ConfigurationForm>

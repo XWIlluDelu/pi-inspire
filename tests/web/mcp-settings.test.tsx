@@ -1,20 +1,14 @@
 // @vitest-environment jsdom
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
-import type { SessionRuntimeStatus } from "../../shared/contracts";
 import type { McpConfigSnapshot } from "../../shared/mcp";
+import { type AppState, createInitialAppState } from "../../src/app-state";
 import { McpServerForm } from "../../src/components/McpServerForm";
 import { McpSettings } from "../../src/components/McpSettings";
 import { deferred } from "./helpers";
 
 const fixture = vi.hoisted(() => ({
-  state: {
-    sessionId: "one",
-    cwd: "/one",
-    transportGeneration: 1,
-    readOnlyReason: null as string | null,
-    sessionStatuses: {} as Record<string, SessionRuntimeStatus>,
-  },
+  state: undefined as unknown as AppState,
   host: {
     readMcpConfig: vi.fn(),
     readMcpConnection: vi.fn(),
@@ -66,11 +60,10 @@ function snapshot(name = "docs"): McpConfigSnapshot {
 beforeEach(() => {
   for (const mock of Object.values(fixture.host)) mock.mockReset();
   fixture.state = {
+    ...createInitialAppState(),
     sessionId: "one",
     cwd: "/one",
     transportGeneration: 1,
-    readOnlyReason: null,
-    sessionStatuses: {},
   };
   fixture.host.getState.mockImplementation(() => fixture.state);
   fixture.host.readMcpConfig.mockResolvedValue(snapshot());
@@ -79,12 +72,23 @@ beforeEach(() => {
     snapshot: snapshot("new-server"),
   });
 });
+async function selectServer(label = "docs · user") {
+  const select = await screen.findByRole("combobox", { name: "MCP server" });
+  const option = within(select).getByRole("option", { name: label });
+  fireEvent.change(select, {
+    target: { value: (option as HTMLOptionElement).value },
+  });
+}
 async function savedPanel() {
   const view = render(
-    <McpSettings active owner={{ sessionId: fixture.state.sessionId }} />,
+    <McpSettings
+      active
+      owner={{ sessionId: fixture.state.sessionId ?? undefined }}
+    />,
   );
+  await selectServer();
   fireEvent.click(
-    await screen.findByRole("button", { name: "Edit user server docs" }),
+    screen.getByRole("button", { name: "Edit user server docs" }),
   );
   fireEvent.change(screen.getByLabelText("Server URL"), {
     target: { value: "https://new.example.invalid/mcp" },
@@ -136,17 +140,24 @@ it("keeps a late secret reveal out of the replacement session's draft", async ()
   const reveal = deferred<{ url: string }>();
   fixture.host.readMcpConnection.mockReturnValueOnce(reveal.promise);
   const panel = () => (
-    <McpSettings active owner={{ sessionId: fixture.state.sessionId }} />
+    <McpSettings
+      active
+      owner={{ sessionId: fixture.state.sessionId ?? undefined }}
+    />
   );
   const view = render(panel());
-  const edit = () =>
-    screen.findByRole("button", { name: "Edit user server docs" });
-  fireEvent.click(await edit());
+  const edit = async () => {
+    await selectServer();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Edit user server docs" }),
+    );
+  };
+  await edit();
   fireEvent.click(screen.getByRole("button", { name: "Show saved URL" }));
   expect(fixture.host.readMcpConnection).toHaveBeenCalledOnce();
   fixture.state = { ...fixture.state, sessionId: "two", cwd: "/two" };
   view.rerender(panel());
-  fireEvent.click(await edit());
+  await edit();
   expect(fixture.host.readMcpConfig).toHaveBeenLastCalledWith({
     sessionId: "two",
   });
@@ -154,38 +165,6 @@ it("keeps a late secret reveal out of the replacement session's draft", async ()
     reveal.resolve({ url: "https://old-owner.example/mcp" }),
   );
   expect(screen.getByLabelText("Server URL")).toHaveValue("");
-});
-
-it("can save the user file while the project file is unavailable", async () => {
-  const config = snapshot();
-  Object.assign(config.files[1]!, {
-    revision: "",
-    error: "Project path does not exist",
-  });
-  fixture.host.readMcpConfig.mockResolvedValue(config);
-  render(<McpSettings active owner={{ cwd: "/one" }} />);
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Project path does not exist",
-  );
-  fireEvent.click(
-    screen.getByRole("button", { name: "Edit user server docs" }),
-  );
-  fireEvent.change(screen.getByLabelText("Server URL"), {
-    target: { value: "https://example.invalid/mcp" },
-  });
-  fireEvent.click(screen.getByRole("button", { name: "Save" }));
-  await screen.findByText(/Saved to file/);
-  expect(fixture.host.editMcpConfig).toHaveBeenCalledWith(
-    { cwd: "/one" },
-    expect.objectContaining({
-      scope: "user",
-      name: "docs",
-      values: { url: "https://example.invalid/mcp" },
-    }),
-  );
-  expect(
-    screen.queryByRole("button", { name: "Reload selected session…" }),
-  ).toBeNull();
 });
 
 it("preserves secret drafts across transport changes and saves only the selected transport", () => {

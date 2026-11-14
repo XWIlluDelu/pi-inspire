@@ -29,7 +29,9 @@ async function connectCalibration(page: Page) {
 }
 
 async function inspect(history: Locator, text: string, id: string) {
-  await history.getByRole("textbox", { name: "Search this branch" }).fill(text);
+  await history
+    .getByRole("searchbox", { name: "Search this branch" })
+    .fill(text);
   await history.getByRole("button", { name: "Search", exact: true }).click();
   await history
     .getByRole("button", { name: /^Turn \d+:/ })
@@ -143,16 +145,6 @@ test("recovers a History image and opens local references in the authorized sess
   await connectCalibration(page);
   let imageAvailable = false;
   const imageRequests: string[] = [];
-  let entryRequests = 0;
-  await page.route("**/api/history?kind=entry&**", async (route) => {
-    entryRequests++;
-    const response = await route.fetch();
-    const body = await response.json();
-    body.text =
-      "Compare the calibration strategies. Read `README.md` or [the project document](README.md); see [external docs](https://example.com/docs).";
-    body.nextOffset = null;
-    await route.fulfill({ response, json: body });
-  });
   await page.route("**/api/branches/image?**", async (route) => {
     imageRequests.push(route.request().url());
     // Fail the selected resource, not an arbitrary first request that a
@@ -164,19 +156,8 @@ test("recovers a History image and opens local references in the authorized sess
       });
     else await route.continue();
   });
-  const selectInput = async () => {
-    const history = await openHistoryPane(page);
-    if (
-      !(await history.getByRole("link", { name: "external docs" }).isVisible())
-    )
-      await inspect(
-        history,
-        "Compare the calibration strategies",
-        "history-u-0",
-      );
-    return history;
-  };
-  let history = await selectInput();
+  const history = await openHistoryPane(page);
+  await inspect(history, "Compare the calibration strategies", "history-u-0");
   await expect(
     history.getByText("Loading image…", { exact: true }),
   ).toBeVisible();
@@ -198,7 +179,6 @@ test("recovers a History image and opens local references in the authorized sess
     .toBeGreaterThan(0);
   expect(imageRequests.length).toBeGreaterThan(failedReads);
   expect(new Set(imageRequests).size).toBe(1);
-  expect(entryRequests).toBe(1);
   await image.press("Enter");
   const viewer = page.getByRole("dialog", { name: "Image preview" });
   await expect(viewer).toBeVisible();
@@ -206,18 +186,19 @@ test("recovers a History image and opens local references in the authorized sess
   await expect(viewer).toHaveCount(0);
   await expect(image).toBeFocused();
 
-  const external = history.getByRole("link", { name: "external docs" });
+  const body = history.locator(".native-history__body");
+  const external = body.getByRole("link", { name: "external docs" });
   await expect(external).toHaveAttribute("href", "https://example.com/docs");
   await expect(external).toHaveAttribute("target", "_blank");
   const appUrl = page.url();
   for (const markdown of [false, true]) {
-    if (markdown) history = await selectInput();
+    if (markdown) await openHistoryPane(page);
     const resolved = page.waitForRequest(
       (request) => new URL(request.url()).pathname === "/api/resources/resolve",
     );
     await (markdown
-      ? history.getByRole("link", { name: "the project document" })
-      : history.getByRole("button", { name: "README.md", exact: true })
+      ? body.getByRole("link", { name: "the project document" })
+      : body.getByRole("button", { name: "README.md", exact: true })
     ).click();
     expect((await resolved).postDataJSON()).toMatchObject({
       sessionId: "fixture-calibration-history",
@@ -226,16 +207,7 @@ test("recovers a History image and opens local references in the authorized sess
     await expect(page.locator(".file-preview")).toBeVisible();
     expect(page.url()).toBe(appUrl);
   }
-});
-
-test("finds saved shell output and opens its full log through History", async ({
-  page,
-}) => {
-  await connectCalibration(page);
-  const fullOutput = "COMPLETE_NATIVE_SHELL_LOG_END";
-  const reference = resolve(browserWorkspace, "native-shell.log");
-
-  const history = await openHistoryPane(page);
+  await openHistoryPane(page);
   await inspect(
     history,
     "native-shell-excluded-result",
@@ -246,7 +218,11 @@ test("finds saved shell output and opens its full log through History", async ({
   });
   await expect(shellPreview).toContainText("Excluded from context");
 
-  await inspect(history, fullOutput, "history-shell-included");
+  await inspect(
+    history,
+    "COMPLETE_NATIVE_SHELL_LOG_END",
+    "history-shell-included",
+  );
   await expect(shellPreview).toContainText("Included in context");
   await expect(
     history.getByRole("button", { name: "Continue here", exact: true }),
@@ -256,6 +232,10 @@ test("finds saved shell output and opens its full log through History", async ({
   ).toHaveCount(0);
 
   await page.setViewportSize({ width: 600, height: 900 });
+  const context = page.getByRole("dialog", { name: "Context panel" });
+  await context.getByRole("button", { name: "Close context pane" }).click();
+  await expect(context).toBeHidden();
+  const reference = resolve(browserWorkspace, "native-shell.log");
   const resolvedLog = page.waitForRequest(
     (request) => new URL(request.url()).pathname === "/api/resources/resolve",
   );
@@ -396,16 +376,10 @@ test("earlier-branch restore remains reachable when its diagnostic wraps", async
       const banner = element.getBoundingClientRect();
       const reader = element.closest(".reading-stage")!.getBoundingClientRect();
       const transcript = element.parentElement!.querySelector(".transcript")!;
-      const content = transcript.querySelector(".transcript__content")!;
-      const needed = banner.bottom - transcript.getBoundingClientRect().top;
-      const clearance = Math.min(
-        Number.parseFloat(getComputedStyle(content).paddingTop),
-        Number.parseFloat(getComputedStyle(transcript).scrollPaddingTop),
-      );
       return (
         banner.left >= reader.left &&
         banner.right <= reader.right &&
-        clearance >= needed - 0.5
+        banner.bottom <= transcript.getBoundingClientRect().top + 0.5
       );
     });
   await expect.poll(fitsReader).toBe(true);

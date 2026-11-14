@@ -84,7 +84,7 @@ describe("session switching guard", () => {
     const { store } = await initStore(emptySnapshot);
     await expect(store.newSession()).resolves.toBeNull();
     expect(creating).not.toHaveBeenCalled();
-    expect(store.getState().notices.at(-1)).toMatchObject({
+    expect(store.getState().live.notices.at(-1)).toMatchObject({
       kind: "warning",
       text: "Enter a project directory to start a session",
     });
@@ -219,7 +219,7 @@ describe("navigation curation", () => {
       expect(store.getState().curationPending).toBe(false),
     );
     expect(store.getState().prefs.pinnedSessionIds).toEqual([]);
-    expect(store.getState().notices.at(-1)?.text).toBe(
+    expect(store.getState().live.notices.at(-1)?.text).toBe(
       "preference write rejected",
     );
   });
@@ -313,7 +313,7 @@ describe("navigation curation", () => {
     failLookup = true;
     store.toggleSessionHidden(child.id);
     await vi.waitFor(() =>
-      expect(store.getState().notices.at(-1)?.text).toBe(
+      expect(store.getState().live.notices.at(-1)?.text).toBe(
         "Folder lookup failed",
       ),
     );

@@ -8,7 +8,7 @@ import {
   eventsOf,
   fixture,
   settled,
-} from "./fixtures/native-operation.js";
+} from "./operation-fixture";
 
 afterEach(disposeOperationFixture);
 
@@ -298,7 +298,10 @@ describe("native shell input", () => {
       await vi.waitFor(async () =>
         expect((await f.runtime.snapshot(f.sessionId)).bashRunning).toBe(true),
       );
-      expect((await f.runtime.snapshot(f.sessionId)).runState).toBe("idle");
+      expect(
+        (await f.runtime.snapshot(f.sessionId)).sessionStatuses[f.sessionId]
+          ?.runState,
+      ).toBe("idle");
       await f.api.prompt(f.delivery("Explicit model input during shell."));
       await vi.waitFor(() => expect(f.modelRequests).toHaveLength(1));
       await f.api.abort(f.sessionId);
@@ -335,7 +338,10 @@ describe("native shell input", () => {
       await f.api.prompt(f.delivery("Background model turn."));
       await vi.waitFor(() => expect(f.modelRequests).toHaveLength(1));
       await f.api.prompt(f.delivery("!printf 'WHILE_MODEL_ACTIVE'"));
-      expect((await f.runtime.snapshot(f.sessionId)).runState).toBe("running");
+      expect(
+        (await f.runtime.snapshot(f.sessionId)).sessionStatuses[f.sessionId]
+          ?.runState,
+      ).toBe("running");
       expect(await readFile(f.sessionFile, "utf8")).not.toContain(
         "WHILE_MODEL_ACTIVE",
       );

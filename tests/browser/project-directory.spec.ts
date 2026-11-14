@@ -1,4 +1,4 @@
-import { mkdtemp, realpath, rm, stat } from "node:fs/promises";
+import { mkdtemp, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
@@ -163,10 +163,21 @@ for (const width of [980, 390]) {
         await page.reload();
         const message = page.getByRole("textbox", { name: "First message" });
         await expect(message).toBeVisible();
-        await page
-          .getByRole("textbox", { name: "Project directory" })
-          .fill(directory);
+        const project = page.getByRole("textbox", {
+          name: "Project directory",
+        });
+        const file = join(root, "not-a-folder");
+        await writeFile(file, "fixture");
+        await project.fill(file);
         await message.fill("Review the new project");
+        await expect(page.getByRole("alert")).toContainText(
+          "Project path is not a directory",
+        );
+        await expect(
+          page.getByRole("button", { name: "Create folder and start" }),
+        ).toHaveCount(0);
+        await project.fill(directory);
+        await expect(message).toHaveValue("Review the new project");
         const create = page.getByRole("button", {
           name: "Create folder and start",
         });
@@ -220,6 +231,10 @@ for (const width of [980, 390]) {
           )
         ).json();
         expect(snapshot.active.cwd).toBe(await realpath(directory));
+        expect(snapshot.active).toMatchObject({
+          model: { provider: "workbench", id: "offline" },
+          thinkingLevel: "medium",
+        });
       } finally {
         await rm(root, { recursive: true, force: true });
       }

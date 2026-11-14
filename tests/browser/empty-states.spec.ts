@@ -23,7 +23,6 @@ test("empty session, search and terminal states keep their next actions availabl
       if (emptyCatalog)
         Object.assign(snapshot, {
           active: null,
-          runState: "idle",
           sessionStatuses: {},
           pendingQueues: emptyPendingQueues(),
         });

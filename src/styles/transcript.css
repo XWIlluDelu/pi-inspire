@@ -1,7 +1,6 @@
 /* --- Transcript --- */
 
 .transcript-wrap {
-  --earlier-branch-inset: 0px;
   position: relative;
   flex: 1 0 var(--reading-min-height, 0px);
   min-height: 0;
@@ -10,10 +9,7 @@
 }
 
 .earlier-branch-banner {
-  position: absolute;
-  z-index: 4;
-  top: calc(var(--space-3) + 40px);
-  left: 50%;
+  align-self: center;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
@@ -26,7 +22,7 @@
   background: var(--bg-surface);
   box-shadow: var(--shadow-1);
   color: var(--ink);
-  transform: translateX(-50%);
+  margin-block-end: var(--space-2);
 }
 
 .earlier-branch-banner__header {
@@ -78,12 +74,7 @@
   min-height: 0;
   overflow-y: auto;
   padding-inline: var(--space-6);
-  /* Search jumps and row anchors land below the open search row
-     (top 12 + row 32 + breathing room) instead of sliding underneath it. */
-  scroll-padding-top: max(
-    calc(var(--space-3) + 44px),
-    var(--earlier-branch-inset)
-  );
+  scroll-padding-top: var(--space-3);
   /* With no hairline under the topbar, scrolled content dissolves just
      before reaching it instead of colliding with the session title. */
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 20px);
@@ -95,13 +86,9 @@
 .transcript__content {
   min-height: 100%;
   padding-block:
-    max(var(--transcript-padding-top, var(--space-16)), var(--earlier-branch-inset))
+    var(--space-3)
     var(--transcript-padding-bottom, var(--space-16));
   display: flow-root;
-}
-
-.transcript-mobile-toolbar {
-  display: none;
 }
 
 .transcript ::highlight(transcript-match) {
@@ -113,122 +100,95 @@
   color: var(--on-accent);
 }
 
-.transcript-search {
-  --transcript-search-inset: max(var(--space-6), calc((100% - var(--content-max)) / 2));
-  --transcript-search-action-size: 24px;
-  position: absolute;
-  z-index: 3;
-  top: var(--space-3);
-  right: var(--transcript-search-inset);
-  width: min(384px, calc(100% - var(--transcript-search-inset) - var(--space-6)));
+.transcript-tools {
+  --transcript-tool-size: 24px;
+  align-self: center;
+  width: min(var(--content-max), calc(100% - 2 * var(--space-4)));
+  padding-block: var(--space-2);
   display: flex;
   align-items: center;
-  gap: clamp(2px, 0.7cqi, var(--space-1));
-  min-height: 32px;
-  padding: 3px 5px 3px var(--space-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
-  /* A distinct opaque surface stays legible over scrolling conversation content. */
-  background: var(--bg-surface);
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.transcript-tools__history.button,
+.transcript-tools__open.button {
+  min-height: 34px;
+  padding: 0 var(--space-2);
+  border-color: var(--line);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+
+.transcript-tools__history { margin-inline-end: auto; }
+
+.transcript-search {
+  width: min(384px, 100%);
+  min-width: 0;
+}
+
+.transcript-search__field.search-field {
+  --search-height: auto;
+  --search-inset: var(--space-2);
+  --search-border: var(--line);
+  gap: var(--space-1);
+  min-height: 34px;
+  padding-block: 2px;
   box-shadow: var(--shadow-1);
-  color: var(--muted);
-  transition:
-    border-color var(--dur-micro) var(--ease-standard),
-    color var(--dur-micro) var(--ease-standard);
 }
 
-.transcript-search:hover,
-.transcript-search:focus-within,
-.transcript-search--active {
-  color: var(--ink);
+.transcript-search__field:has([data-query-active]) {
+  --search-border: var(--accent-deep);
 }
 
-.transcript-search--active {
-  border-color: var(--accent-deep);
-}
-
-.transcript-search:focus-within {
-  border-color: var(--accent-focus);
-}
-
-.transcript-search__icon {
-  flex-shrink: 0;
-}
-
-.transcript-search__scope {
-  flex: 0 0 auto;
-  background: transparent;
+.transcript-search__scope.native-select {
+  flex: none;
+  min-height: var(--transcript-tool-size);
   border-color: transparent;
-  min-height: var(--transcript-search-action-size);
-  padding: 2px var(--space-1);
-  color: var(--body);
+  background-color: transparent;
   font-size: var(--text-xs);
 }
 
-.transcript-search input {
-  flex: 1;
-  min-width: 0;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: var(--ink);
-  font: inherit;
-  font-size: var(--text-sm);
-}
-
-.transcript-search input::placeholder {
-  color: var(--muted);
-  opacity: 1;
+.transcript-search__field .icon-button {
+  width: var(--transcript-tool-size);
+  height: var(--transcript-tool-size);
 }
 
 .transcript-search__count {
   flex: none;
-  max-inline-size: 8ch;
+  max-width: 7ch;
   overflow: hidden;
-  font-size: var(--text-xs);
-  font-variant-numeric: tabular-nums;
-  color: var(--muted);
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.transcript-search > button {
-  padding: 0;
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  width: var(--transcript-search-action-size);
-  height: var(--transcript-search-action-size);
-  border: 0;
-  border-radius: var(--radius-control);
-  background: transparent;
   color: var(--muted);
-  cursor: pointer;
-  transition:
-    color var(--dur-micro) var(--ease-standard),
-    background var(--dur-micro) var(--ease-standard);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
 }
 
-.transcript-search > button:hover:not(:disabled),
-.transcript-search > button:focus-visible {
-  background: var(--bg-inset);
-  color: var(--ink);
+.transcript-tools__open.button,
+.transcript-tools__close.icon-button { display: none; }
+
+@media (pointer: coarse), (max-width: 900px) {
+  .transcript-tools { --transcript-tool-size: 36px; }
 }
 
-.transcript-search > button:disabled {
-  cursor: default;
-  opacity: 0.35;
-}
-
-.transcript-search > .transcript-search__close {
-  display: none;
-}
-
-@media (max-width: 600px), (pointer: coarse) {
-  .transcript-search {
-    --transcript-search-action-size: 36px;
+@media (max-width: 900px) {
+  .transcript-tools {
+    width: calc(100% - max(var(--space-3), var(--safe-left)) - max(var(--space-3), var(--safe-right)));
   }
+
+  .transcript-tools__history.button,
+  .transcript-tools__open.button,
+  .transcript-search__field.search-field { min-height: 44px; }
+
+  .transcript-tools__history { margin-inline-end: 0; }
+  .transcript-tools__open.button { display: inline-flex; width: 44px; justify-content: center; }
+  .transcript-tools__close.icon-button { display: inline-flex; }
+
+  .transcript-tools:not([data-search-open]) > .transcript-search,
+  .transcript-tools[data-search-open] > button { display: none; }
+
+  .transcript-search { width: 100%; }
 }
 
 .transcript__column {
@@ -264,37 +224,16 @@
 }
 
 .activity-fold__disclosure {
-  display: flex;
-  /* Hang the hit row into the reading gutter: the 4px button inset and
-     chevron's own blank side must not indent its visible stroke twice. */
   width: calc(100% + var(--disclosure-outdent));
   margin-inline-start: calc(-1 * var(--disclosure-outdent));
-  align-items: center;
   gap: 6px;
-  max-width: calc(100% + var(--disclosure-outdent));
-  min-height: 28px;
-  padding: 4px var(--space-1);
+  padding: 0 var(--space-1);
   border: 0;
-  border-radius: var(--radius-control);
   background: transparent;
   color: var(--muted);
-  font-size: var(--text-sm);
-  line-height: var(--leading-ui);
-  text-align: left;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-  transition:
-    color var(--dur-micro) var(--ease-standard),
-    background var(--dur-micro) var(--ease-standard);
-}
-
-/* Activity headings are an ornament, not content: a small tracked mono
-   eyebrow in regular weight, so the conversation's prose stays the voice. */
-.activity-fold__disclosure {
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  font-weight: 400;
+  font: var(--text-xs)/var(--leading-ui) var(--font-mono);
   letter-spacing: 0.08em;
+  text-align: start;
   text-transform: uppercase;
 }
 
@@ -322,21 +261,7 @@
   color: var(--error-ink);
 }
 
-.activity-fold__disclosure:active {
-  color: var(--ink);
-}
-
-@media (hover: hover) {
-  .activity-fold__disclosure:hover {
-    color: var(--ink);
-  }
-}
-
-.activity-fold__disclosure:focus-visible {
-  outline: 2px solid var(--accent-focus);
-  outline-offset: -2px;
-  color: var(--ink);
-}
+.activity-fold__disclosure:is(:hover, :focus-visible) { color: var(--ink); }
 
 .activity-fold__content {
   display: flex;
@@ -364,18 +289,6 @@
   gap: var(--space-2);
   color: var(--muted);
   font-size: var(--text-xs);
-}
-
-.activity-fold__pages button {
-  min-height: 28px;
-  color: inherit;
-}
-
-@media (pointer: coarse) {
-  .activity-fold__disclosure,
-  .activity-fold__pages button {
-    min-height: 32px;
-  }
 }
 
 /* User turns read as compact bubbles; assistant turns are open documents.
@@ -421,69 +334,14 @@
   margin: 0;
   color: var(--muted);
 }
-.context-checkpoint .rich-text > :first-child {
-  margin-top: 0;
-}
-.context-checkpoint .rich-text > :last-child {
-  margin-bottom: 0;
-}
-
-/* Message actions stay quiet until the turn is pointed or keyboard-focused.
-   Response actions remain faintly discoverable at the content's true end. */
 .turn__actions {
   display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  margin-left: auto;
-  opacity: 0;
-  transition: opacity var(--dur-micro) var(--ease-standard);
-}
-
-/* The bubble keeps its content width. Actions use the spare space to its left,
-   or wrap below at the same right edge when the whole group no longer fits.
-   DOM order remains message first, then Copy/Fork. */
-.turn--user > .turn__actions {
-  flex: 0 0 auto;
-  gap: 4px;
-  margin: 0;
-}
-
-.turn__actions--response {
   align-self: flex-start;
-  margin-top: 2px;
-  margin-left: 0;
-  opacity: 0.5;
+  align-items: center;
+  gap: var(--space-1);
 }
 
-.turn:hover .turn__actions,
-.turn--user:has(:focus-visible) .turn__actions,
-.turn:not(.turn--user):focus-within .turn__actions {
-  opacity: 1;
-}
-
-@media (hover: none) {
-  .turn__actions {
-    opacity: 0.75;
-  }
-}
-
-/* With a mouse, reply Copy waits for the reply: hover or keyboard focus. */
-@media (hover: hover) {
-  .turn__actions--response {
-    opacity: 0;
-  }
-
-  .turn:hover .turn__actions--response,
-  .turn:has(:focus-visible) .turn__actions--response {
-    opacity: 1;
-  }
-}
-
-.turn__action.icon-button {
-  width: 24px;
-  height: 24px;
-  color: var(--faint);
-}
+.turn--user > .turn__actions { align-self: flex-end; }
 
 /* A quiet caret marks where streamed text is still arriving. */
 .turn--streaming
@@ -589,23 +447,12 @@
   line-height: var(--leading-reading);
 }
 
-/* Extension-authored context stays readable independently of tool activity. */
-.custom-message {
-  min-width: 0;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-surface);
-  background: var(--bg-surface);
-}
-
 .custom-message__head {
-  display: grid;
-  grid-template-columns: 14px minmax(0, 1fr) auto;
-  align-items: center;
-  column-gap: var(--space-2);
   margin-bottom: var(--space-2);
   color: var(--activity-event);
 }
+
+.custom-message__head > svg { flex: none; }
 
 .custom-message__identity {
   display: flex;
@@ -613,8 +460,8 @@
   align-items: baseline;
   align-content: center;
   column-gap: var(--space-2);
+  flex: 1;
   min-width: 0;
-  min-height: 28px;
   line-height: var(--leading-ui);
 }
 .custom-message__title {
@@ -634,77 +481,11 @@
   min-width: 0;
   margin-left: calc(14px + var(--space-2));
 }
-.custom-message__body > .rich-text:first-child > :first-child {
-  margin-top: 0;
-}
-.custom-message__body > .rich-text:last-child > :last-child {
-  margin-bottom: 0;
-}
-.custom-message__details {
-  margin-top: var(--space-2);
-  color: var(--muted);
-  font-size: var(--text-xs);
-}
-.custom-message__details > summary {
-  width: fit-content;
-  min-height: 28px;
-  padding: var(--space-1) 0;
-  border-radius: var(--radius-control);
-  -webkit-tap-highlight-color: transparent;
-  cursor: pointer;
-}
-@media (hover: hover) {
-  .custom-message__details > summary:hover {
-    color: var(--ink);
-  }
-}
-.custom-message__details > summary:active {
-  color: var(--ink);
-}
-.custom-message__details > summary:focus-visible {
-  outline: 2px solid var(--accent-focus);
-  outline-offset: 2px;
-}
-.custom-message__raw {
-  margin: var(--space-1) 0 0;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-control);
-  background: var(--bg-inset);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  font-family: var(--font-mono);
-  font-size: var(--text-reading-small);
-  line-height: var(--leading-mono);
-  color: var(--body);
-}
-@media (pointer: coarse) {
-  .custom-message__details > summary {
-    min-height: 32px;
-    align-content: center;
-  }
-}
+.custom-message__details { margin-top: var(--space-2); }
 
 /* Errors need a readable local boundary, not elevation or an all-red panel. */
-.assistant-error {
-  min-width: 0;
-  padding: var(--space-2) var(--space-3);
+.activity-surface.assistant-error {
   border: 1px solid color-mix(in srgb, var(--error) 24%, var(--hairline));
-  border-radius: var(--radius-surface);
-  background: var(--bg-surface);
-}
-
-/* Reuse the error styling; cancellation needs no diagnostic spacing. */
-.assistant-error--stopped .assistant-error__head {
-  margin-bottom: 0;
-}
-
-.assistant-error__head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-height: 24px;
-  margin-bottom: var(--space-1);
 }
 
 .assistant-error__icon {
@@ -720,7 +501,7 @@
 }
 
 .assistant-error__message {
-  margin-left: calc(14px + var(--space-2));
+  margin: var(--space-1) 0 0 calc(14px + var(--space-2));
   overflow-wrap: anywhere;
   color: var(--body);
   font-size: var(--text-reading-small);
@@ -739,14 +520,10 @@
   overscroll-behavior: contain;
 }
 
-.assistant-error__diagnostics {
-  margin: var(--space-2) 0 0;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-control);
-  background: var(--bg-inset);
-  white-space: pre-wrap;
-  font: var(--text-reading-code)/var(--leading-mono) var(--font-mono);
+.assistant-error__message > .activity-reader {
+  --reader-max-height: none;
+  overflow: visible;
+  margin-top: var(--space-2);
 }
 
 .assistant-error__message--expanded:focus-visible {
@@ -755,50 +532,10 @@
 }
 
 .assistant-error__disclosure {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  min-height: 24px;
-  margin: var(--space-1) 0 0 calc(14px + var(--space-2) - var(--space-1));
+  margin-inline-start: calc(14px + var(--space-2) - var(--space-1));
   padding: 0 var(--space-1);
   border: 0;
-  border-radius: var(--radius-control);
   background: transparent;
-  color: var(--muted);
-  font: 400 var(--text-xs)/var(--leading-ui) var(--font-sans);
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.assistant-error__disclosure > svg {
-  display: block;
-  flex: 0 0 auto;
-}
-
-@media (hover: hover) {
-  .assistant-error__disclosure:hover {
-    color: var(--ink);
-  }
-}
-
-.assistant-error__disclosure:active {
-  background: var(--bg-control);
-  color: var(--ink);
-}
-
-.assistant-error__disclosure:focus-visible {
-  outline: 2px solid var(--accent-focus);
-  outline-offset: 1px;
-}
-
-.assistant-error__disclosure[aria-expanded="true"] > svg {
-  transform: rotate(180deg);
-}
-
-@media (pointer: coarse) {
-  .assistant-error__disclosure {
-    min-height: 32px;
-  }
 }
 
 .assistant-activity {
@@ -854,169 +591,52 @@
   border-radius: var(--radius-surface);
   background: var(--bg-surface);
   overflow: hidden;
-  transition:
-    opacity var(--dur-standard) var(--ease-standard),
-    background var(--dur-standard) var(--ease-standard),
-    border-color var(--dur-standard) var(--ease-standard),
-    box-shadow var(--dur-standard) var(--ease-standard);
 }
 
-.extension-surface {
-  box-shadow: var(--shadow-1);
-}
-
-/* Pending is secondary at rest; direct interaction brings it forward. */
-.pending-groups {
-  opacity: 0.75;
-  background: transparent;
-  border-color: color-mix(in srgb, var(--hairline) 75%, transparent);
-}
-
-.pending-groups:hover,
-.pending-groups:focus-within {
-  opacity: 1;
-  background: var(--bg-surface);
-  border-color: var(--hairline);
-  box-shadow: var(--shadow-1);
+.pending-groups__head,
+.extension-surface__head,
+.pending-groups__lead,
+.pending-groups__actions,
+.pending-groups__confirm {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
 }
 
 .pending-groups__head,
 .extension-surface__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  min-height: 32px;
-  padding: 3px var(--space-3);
+  flex-wrap: wrap;
+  padding: var(--space-1) var(--space-3);
   border-bottom: 1px solid var(--hairline);
   background: var(--bg-inset);
   color: var(--muted);
   font-size: var(--text-xs);
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  line-height: var(--leading-ui);
 }
 
-.pending-groups__lead {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-}
-
-.pending-groups__title {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  font-family: var(--font-sans);
-  font-size: var(--text-xs);
-  font-weight: 600;
-  color: var(--muted);
-}
+.pending-groups__title { font-weight: 600; }
 
 .pending-groups__count {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--muted);
   font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
 
-.pending-groups__actions {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-}
+.pending-groups__actions { margin-inline-start: auto; }
 
-.pending-group__control.icon-button {
-  width: 24px;
-  height: 24px;
-  color: var(--muted);
-  border-radius: var(--radius-control);
-  transition:
-    color var(--dur-micro) var(--ease-standard),
-    background var(--dur-micro) var(--ease-standard),
-    border-color var(--dur-micro) var(--ease-standard);
-}
-
-@media (hover: hover) {
-  .pending-group__control.icon-button:hover:where(:not(:disabled)) {
-    color: var(--ink);
-    background: var(--bg-control);
-  }
-
-  .pending-group__control--clear.icon-button:hover:where(:not(:disabled)) {
-    color: var(--error);
-    background: var(--error-tint);
-  }
-}
-
-.pending-group__control--clear.icon-button:focus-visible:where(:not(:disabled)) {
-  color: var(--error);
+.pending-group__clear.icon-button:is(:hover, :focus-visible):not(:disabled) {
+  color: var(--error-ink);
   background: var(--error-tint);
 }
 
 .pending-groups__confirm {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  padding: 1px 3px;
-  border: 1px solid color-mix(in srgb, var(--error) 35%, var(--hairline));
-  border-radius: var(--radius-xs);
-  background: var(--bg-surface);
-  font-size: var(--text-xs);
-  box-shadow: var(--shadow-1);
-}
-
-.pending-groups__confirm-label {
   color: var(--error-ink);
-  font-size: 11px;
-  font-weight: 500;
-  padding: 0 2px;
+  font-size: var(--text-xs);
+  white-space: nowrap;
 }
 
-.pending-groups__confirm-btn {
-  height: 18px;
-  padding: 0 6px;
-  border: 1px solid color-mix(in srgb, var(--error) 40%, transparent);
-  border-radius: var(--radius-xs);
-  background: var(--error);
-  color: var(--on-status);
-  font-family: var(--font-sans);
-  font-size: 11px;
-  font-weight: 500;
-  cursor: pointer;
-  line-height: 16px;
-  transition: opacity var(--dur-micro) var(--ease-standard);
-}
-
-.pending-groups__confirm-btn:hover {
-  opacity: 0.9;
-}
-
-.pending-groups__confirm-cancel {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  transition:
-    color var(--dur-micro) var(--ease-standard),
-    background var(--dur-micro) var(--ease-standard);
-}
-
-.pending-groups__confirm-cancel:hover {
-  color: var(--ink);
-  background: color-mix(in srgb, var(--ink) 8%, transparent);
+.pending-groups__confirm .button {
+  min-height: var(--activity-copy-size);
+  padding: 0 var(--space-1);
+  font-size: inherit;
 }
 
 .pending-groups__omitted {
@@ -1053,21 +673,13 @@
 .pending-group__item {
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr) auto;
-  align-items: start;
   gap: var(--space-2);
-  min-width: 0;
-  padding: 5px var(--space-3);
-  color: var(--muted);
+  padding: var(--space-1) var(--space-3);
   border-top: 1px solid var(--hairline);
-  transition: background var(--dur-micro) var(--ease-standard);
 }
 
 .pending-group__item:first-of-type {
   border-top: 0;
-}
-
-.pending-group__item:hover {
-  background: color-mix(in srgb, var(--ink) 2.5%, var(--bg-surface));
 }
 
 .pending-group__number {
@@ -1080,12 +692,6 @@
   color: var(--faint);
   user-select: none;
   font-variant-numeric: tabular-nums;
-}
-
-.pending-groups button:disabled {
-  cursor: default;
-  opacity: 0.45;
-  pointer-events: none;
 }
 
 .pending-group__content {
@@ -1149,59 +755,6 @@
   font-style: italic;
 }
 
-.pending-group__item-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  min-height: 20px;
-}
-
-.pending-group__copy.icon-button {
-  width: 24px;
-  height: 24px;
-  margin-block: -2px;
-  border-radius: var(--radius-xs);
-  color: var(--muted);
-  transition:
-    color var(--dur-micro) var(--ease-standard),
-    background var(--dur-micro) var(--ease-standard);
-}
-
-@media (pointer: coarse) {
-  .pending-groups__head {
-    flex-wrap: wrap;
-  }
-  .pending-groups__actions {
-    margin-left: auto;
-  }
-  .pending-group__copy.icon-button,
-  .pending-group__control.icon-button,
-  .pending-groups__confirm-cancel {
-    width: 32px;
-    height: 32px;
-  }
-  .pending-groups__confirm-btn {
-    height: 32px;
-  }
-  .pending-group__item {
-    padding-block: var(--space-2);
-  }
-  .pending-group__copy.icon-button {
-    /* Center on the first 20px line without pushing long previews down. */
-    margin-block: -6px;
-  }
-}
-
-/* All Pending actions stay visible and inherit the panel's 0.75 → 1
-   emphasis, without a second opacity layer on individual buttons. */
-
-@media (hover: hover) {
-  .pending-group__copy.icon-button:hover:where(:not(:disabled)) {
-    color: var(--ink);
-    background: var(--bg-inset);
-  }
-}
-
 .extension-surface__item {
   border-top: 1px solid var(--hairline);
 }
@@ -1210,35 +763,10 @@
   border-top: 0;
 }
 
-.extension-surface__item summary {
-  display: flex;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  cursor: pointer;
-  color: var(--muted);
-  font-size: var(--text-sm);
-  transition: background var(--dur-micro) var(--ease-standard);
-}
-
-.extension-surface__item summary:hover {
-  background: var(--bg-inset);
-  color: var(--ink);
-}
+.extension-surface__item summary { padding-inline: var(--space-3); }
 
 .extension-surface__item summary code {
   color: var(--ink);
-}
-
-.extension-surface__item > pre {
-  max-height: 280px;
-  overflow: auto;
-  margin: 0;
-  padding: var(--space-2) var(--space-3);
-  border-top: 1px solid var(--hairline);
-  background: var(--bg-inset);
-  font-family: var(--font-mono);
-  font-size: var(--text-reading-small);
-  line-height: var(--leading-mono);
 }
 
 .empty-state--conversation {
@@ -1258,9 +786,8 @@
   max-width: 46ch;
 }
 
-.transcript-live { display: flex; flex: 1; min-width: 0; min-height: 0; }
+.transcript-live { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }
 .transcript-live[hidden] { display: none; }
-.native-history-launcher { position: absolute; z-index: 3; inset: 8px auto auto 8px; }
 .native-history {
   flex: 1;
   min-width: 0;
@@ -1269,13 +796,17 @@
   padding: var(--space-2);
   gap: var(--space-2);
 }
-.native-history__controls,
 .native-history__entry,
 .native-history__controls form {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
+}
+.native-history__controls .button {
+  min-height: var(--pane-tool-size);
+  padding: 0 var(--space-2);
+  font-size: var(--text-sm);
 }
 .native-history__page {
   position: relative;
@@ -1288,5 +819,3 @@
   padding-block: var(--space-2);
 }
 .native-history__page pre { white-space: pre-wrap; overflow-wrap: anywhere; }
-
-@media (max-width: 900px) { .native-history-launcher { display: none; } }

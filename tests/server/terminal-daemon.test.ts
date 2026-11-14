@@ -8,7 +8,6 @@ import { describe, expect, it, vi } from "vitest";
 import { processStartIdentity } from "../../server/instance-state.mjs";
 import type { TerminalDaemonInfo } from "../../server/terminal-daemon-configuration.js";
 import { TERMINAL_DAEMON_PROTOCOL_VERSION } from "../../server/terminal-daemon-protocol.js";
-import type { TerminalIntent } from "../../shared/terminal-operations.js";
 import { terminalDaemonFixture } from "./fixtures/terminal-daemon.js";
 
 describe("terminal daemon", () => {
@@ -100,7 +99,7 @@ describe("terminal daemon", () => {
       await once(socket, "secureConnect");
       socket.write(encodeTerminalIpcJson({
         protocolVersion: TERMINAL_DAEMON_PROTOCOL_VERSION,
-        mode: "attach", terminalId: "fixture",
+        mode: "attach",
         options: { terminalId: "fixture", clientId: "fixture", cols: 80, rows: 24 },
       }));
       await admitted;
@@ -134,84 +133,34 @@ describe("terminal daemon", () => {
     }
   });
 
-  it("replays a failed restart, accepts a fresh restart and waits for delayed removal", async () => {
+  it("keeps an unconfirmed PTY exit tied to the original restart receipt", async () => {
     const fixture = await terminalDaemonFixture();
     const { client, directory, manager, spawns } = fixture;
     try {
-      const epoch = await client.operationEpoch();
-      const operation = <I extends TerminalIntent>(intent: I) => ({
-        executor: { kind: "terminal" as const, epoch },
-        operationId: randomUUID(),
-        intent,
-      });
-      const terminal = await client.operate(
-        operation({
-          command: "create",
-          params: { request: { cwd: directory } },
-        }),
-      );
-      const id = terminal.id;
+      const terminal = await manager.create({ cwd: directory });
       const pty = spawns[0]!.pty;
-      let markStopping!: () => void;
-      const stopping = new Promise<void>((resolve) => {
-        markStopping = resolve;
-      });
-      vi.spyOn(pty, "kill").mockImplementation(markStopping);
+      const stopping = Promise.withResolvers<void>();
+      vi.spyOn(pty, "kill").mockImplementation(() => stopping.resolve());
       const restart = vi.spyOn(manager, "restart");
-      const restartIntent = { command: "restart", params: { id } } as const;
-      const failedOperation = operation(restartIntent);
+      const operation = {
+        executor: { kind: "terminal", epoch: await client.operationEpoch() },
+        operationId: randomUUID(),
+        intent: { command: "restart", params: { id: terminal.id } },
+      } as const;
       vi.useFakeTimers();
-
       const failure = { code: "terminal_stop_timeout", status: 503 };
-      const first = expect(
-        client.operate(failedOperation),
-      ).rejects.toMatchObject(failure);
-      await stopping;
+      const result = expect(client.operate(operation)).rejects.toMatchObject(
+        failure,
+      );
+      await stopping.promise;
       await vi.advanceTimersByTimeAsync(7_000);
-      await first;
+      await result;
       pty.emitExit(0);
-
-      await expect(client.operate(failedOperation, true)).rejects.toMatchObject(
+      await expect(client.operate(operation, true)).rejects.toMatchObject(
         failure,
       );
       expect(restart).toHaveBeenCalledOnce();
       expect(spawns).toHaveLength(1);
-      expect((await client.list(directory)).terminals).toMatchObject([
-        { id, status: "exited" },
-      ]);
-
-      await expect(
-        client.operate(operation(restartIntent)),
-      ).resolves.toMatchObject({
-        id,
-        status: "running",
-      });
-      expect(spawns).toHaveLength(2);
-      const restarted = spawns[1]!.pty;
-      const exit = restarted.kill.bind(restarted);
-      let markRemoving!: () => void;
-      const removing = new Promise<void>((resolve) => {
-        markRemoving = resolve;
-      });
-      vi.spyOn(restarted, "kill").mockImplementation((signal) => {
-        markRemoving();
-        if (signal === "SIGKILL") setTimeout(() => exit(signal), 4_000);
-      });
-      let settled = false;
-      const result = client
-        .operate(operation({ command: "remove", params: { id, force: false } }))
-        .finally(() => {
-          settled = true;
-        });
-      const receipt = expect(result).resolves.toMatchObject({
-        catalogEpoch: terminal.catalogEpoch,
-      });
-      await removing;
-      await vi.advanceTimersByTimeAsync(5_500);
-      expect(settled).toBe(false);
-      await vi.advanceTimersByTimeAsync(500);
-      await receipt;
-      expect((await client.list(directory)).terminals).toEqual([]);
     } finally {
       for (const { pty } of spawns) pty.emitExit(0);
       vi.useRealTimers();

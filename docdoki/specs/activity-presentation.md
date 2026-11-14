@@ -133,7 +133,9 @@ confirmed lifecycle state.
 ## Tool states and streaming
 
 Call IDs correlate argument generation, execution updates, final results, and failure. Pi's
-`toolcall_start` creates the card immediately.
+`toolcall_start` creates the card immediately. The Host publishes the affected tool's bounded
+activity record for Live and includes the same record in a reconnect snapshot. Native execution
+events do not carry partial results to the browser. The final result arrives as a transcript row.
 
 | State | Display |
 | --- | --- |
