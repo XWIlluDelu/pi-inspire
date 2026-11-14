@@ -5,7 +5,7 @@ import {
   VISIBILITY_PREFERENCES,
 } from "../shared/contracts";
 
-export function preferenceOptions<const Value extends string>(
+function preferenceOptions<const Value extends string>(
   values: readonly Value[],
   label: (value: Value) => string = (value) =>
     value === "dynamic" ? "Adaptive" : value[0]!.toUpperCase() + value.slice(1),

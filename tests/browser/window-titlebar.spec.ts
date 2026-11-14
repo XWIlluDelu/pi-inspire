@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
-import { openSettings, pairAndOpen } from "./support/navigation";
+import { pairAndOpen } from "./support/navigation";
 
 // Chromium's media emulation does not implement display-mode. Exercise the
 // production rules, replacing only that predicate and browser-owned geometry.
@@ -104,77 +104,28 @@ test("Overlay adds a quiet corner icon, retains the centered wordmark and restor
 }, async ({ page }) => {
   const brand = page.locator(".window-titlebar__brand-button");
   await expect(brand).toBeHidden();
-  for (const [left, right, height, top] of [
-    [0, 138, 24, 0],
-    [80, 0, 32, 6],
-  ]) {
+  for (const [left, right, height, top] of [[0, 138, 24, 0], [80, 0, 32, 6]]) {
     await overlay(page, true, left, right, height, top);
     await expect(brand).toBeVisible();
-    if ((await brand.getAttribute("aria-pressed")) !== "true")
-      await brand.click();
-    const decoration = page.locator(".window-titlebar__needles");
-    await expect(decoration).toHaveCSS("pointer-events", "none");
-    expect(await decoration.boundingBox()).toEqual({
-      x: 0,
-      y: top,
-      width: 1280,
-      height,
-    });
-    const safe = await page.locator(".window-titlebar__safe").boundingBox();
-    expect(safe).toEqual({
+    const safe = page.locator(".window-titlebar__safe");
+    expect(await safe.boundingBox()).toEqual({
       x: left,
       y: top,
       width: 1280 - left - right,
       height,
     });
-    for (const x of [left > 0 ? 4 : null, right > 0 ? 1276 : null]) {
-      if (x === null) continue;
-      expect(
-        await page.evaluate(
-          ({ x, y }) =>
-            !!document.elementFromPoint(x, y)?.closest(".window-titlebar"),
-          { x, y: top + height / 2 },
-        ),
-      ).toBe(false);
-    }
-    await expect(page.locator(".nav__brand-lockup")).toBeHidden();
-    const corner = page.locator(".window-titlebar__corner-logo");
-    const icon = (await corner.boundingBox())!;
-    if (left === 0) {
-      const navIcon = (await page
-        .locator(".nav__new-session-icon")
-        .boundingBox())!;
-      expect(icon.x + icon.width / 2).toBeCloseTo(
-        navIcon.x + navIcon.width / 2,
-      );
-    } else {
-      // Native left-hand controls take precedence over the sidebar axis.
-      expect(icon.x).toBeGreaterThanOrEqual(left + 12);
-    }
-    expect(icon.width).toBe(16);
-    expect(icon.x + icon.width).toBeLessThan(1280 - right);
-    await expect(corner).toHaveCSS("pointer-events", "none");
-    const box = (await brand.boundingBox())!;
-    expect(box.x).toBeGreaterThanOrEqual(left);
-    expect(Math.abs(box.x + box.width / 2 - 640)).toBeLessThan(1);
-    expect(box.x + box.width).toBeLessThan(1280 - right);
-    expect(Math.abs(box.y + box.height / 2 - (top + height / 2))).toBeLessThan(
-      1,
-    );
-    await brand.focus();
-    const ring = await brand.evaluate((el) =>
-      Number.parseFloat(getComputedStyle(el).outlineWidth),
-    );
-    expect(box.y - ring).toBeGreaterThanOrEqual(top);
-    expect(box.y + box.height + ring).toBeLessThanOrEqual(top + height);
-    const stage = (await page.getByRole("main").boundingBox())!;
-    expect(stage.y).toBeGreaterThanOrEqual(top + height);
+    const x = left ? 4 : 1276;
+    expect(await page.evaluate(({ x, y }) =>
+      Boolean(document.elementFromPoint(x, y)?.closest(".window-titlebar")),
+      { x, y: top + height / 2 },
+    )).toBe(false);
+    expect((await page.getByRole("main").boundingBox())!.y)
+      .toBeGreaterThanOrEqual(top + height);
   }
+  await expect(page.locator(".nav__brand-lockup")).toBeHidden();
   await overlay(page, true);
   await page.getByRole("button", { name: "Collapse navigation" }).click();
   await expect(page.locator(".nav__brand-icon--rail")).toBeHidden();
-  const centered = (await brand.boundingBox())!;
-  expect(Math.abs(centered.x + centered.width / 2 - 640)).toBeLessThan(1);
   await page.getByRole("button", { name: "Expand navigation" }).click();
   await page.setViewportSize({ width: 320, height: 700 });
   await overlay(page, true, 80, 120, 28);
@@ -187,11 +138,7 @@ test("Overlay adds a quiet corner icon, retains the centered wordmark and restor
   await expect(brand).toBeHidden();
   await expect(page.locator(".window-titlebar__corner-logo")).toBeHidden();
   await expect(page.locator(".nav__brand-lockup")).toBeVisible();
-  const create = (await page
-    .getByRole("button", { name: "New session", exact: true })
-    .boundingBox())!;
-  const header = (await page.locator(".nav__header").boundingBox())!;
-  expect(create.y).toBeGreaterThanOrEqual(header.y + header.height);
+
 });
 
 test("needles reach both titlebar edges and foreground marks without taking their hit targets", {
@@ -240,85 +187,4 @@ test("needles reach both titlebar edges and foreground marks without taking thei
       delete state.needleRandom;
     });
   }
-});
-
-test("Overlay chrome and needle colors respond to palette and luminosity, and revert on exit", {
-  tag: "@platform-ui",
-}, async ({ page }) => {
-  await overlay(page, true);
-  await openSettings(page);
-  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
-  for (const [theme, palette] of [
-    ["Light", "Wisteria"],
-    ["Dark", "Hydrangea"],
-  ]) {
-    await settings
-      .getByRole("combobox", { name: "Theme", exact: true })
-      .selectOption({ label: theme });
-    await settings
-      .getByRole("group", { name: "Color palette", exact: true })
-      .getByRole("button", { name: palette, exact: true })
-      .click();
-    // Sample the production needle styles without waiting for random arrivals.
-    const colors = await page
-      .locator(".window-titlebar__safe")
-      .evaluate((safe) =>
-        ["tool", "think"].map((role) => {
-          const needle = document.createElement("span");
-          needle.className = `window-titlebar__needle window-titlebar__needle--${role}`;
-          const identity = document.createElement("span");
-          identity.style.color = `var(--activity-${role})`;
-          safe.append(needle, identity);
-          const actual = getComputedStyle(needle).backgroundColor;
-          const expected = getComputedStyle(identity).color;
-          needle.remove();
-          identity.remove();
-          return { role, actual, expected };
-        }),
-      );
-    for (const { role, actual, expected } of colors)
-      expect(actual, `${palette} ${theme} ${role} needle`).toBe(expected);
-    await expect
-      .poll(() =>
-        page.evaluate(() => {
-          // Compare resolved colors, not custom-property source spelling:
-          // minification can turn 0.4 into .4 without changing the scrim.
-          const sample = document.createElement("span");
-          sample.style.transition = "none";
-          document.body.append(sample);
-          sample.style.color = "var(--bg-rail)";
-          const base = getComputedStyle(sample)
-            .color.match(/[\d.]+/g)!
-            .map(Number);
-          sample.style.color = "var(--bg-overlay)";
-          const scrim = getComputedStyle(sample).color;
-          sample.remove();
-          const hint = document.querySelector<HTMLMetaElement>(
-            'meta[name="theme-color"]',
-          )!.content;
-          const rgba = scrim.match(/[\d.]+/g)!.map(Number);
-          const actual = hint.match(/[\d.]+/g)?.map(Number) ?? [];
-          return (
-            actual.length === 3 &&
-            actual.every(
-              (value, index) =>
-                Math.abs(
-                  value -
-                    (base[index]! * (1 - rgba[3]!) + rgba[index]! * rgba[3]!),
-                ) <= 1,
-            ) &&
-            getComputedStyle(
-              document.querySelector(".window-titlebar")!,
-              "::after",
-            ).backgroundImage.includes(scrim)
-          );
-        }),
-      )
-      .toBe(true);
-  }
-  await overlay(page, false);
-  await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute(
-    "content",
-    "#14171A",
-  );
 });

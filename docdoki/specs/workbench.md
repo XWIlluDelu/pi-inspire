@@ -91,7 +91,6 @@ covers:
   - tests/web/composer-*.test.tsx
   - tests/web/notices.test.tsx
   - tests/web/store-feedback.test.ts
-  - tests/browser/feedback.spec.ts
   - tests/web/settings-navigation.test.tsx
   - tests/browser/loading-states.spec.ts
   - tests/browser/{session-navigation,navigation-feedback}.spec.ts

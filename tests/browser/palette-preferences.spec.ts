@@ -1,12 +1,12 @@
 import { expect, test } from "@playwright/test";
 import { preferenceChoices } from "../../src/preference-labels";
 import { VISUAL_PREFERENCES_STORAGE_KEY } from "../../src/visual-preferences";
-import { renderedColors, resolvedColor } from "./support/colors";
 import {
   openCommandPalette,
   openSettings,
   pairAndOpen,
 } from "./support/navigation";
+import { renderedColors, resolvedColor } from "./support/colors";
 
 test("palette settings stay independent of luminosity from first paint through Host bootstrap", async ({
   page,
@@ -15,7 +15,7 @@ test("palette settings stay independent of luminosity from first paint through H
   await pairAndOpen(page);
   await openSettings(page);
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
-  const picker = settings.getByRole("group", {
+  const picker = settings.getByRole("combobox", {
     name: "Color palette",
     exact: true,
   });
@@ -34,40 +34,17 @@ test("palette settings stay independent of luminosity from first paint through H
   await expect(html).toHaveAttribute("data-theme", "dark");
 
   await page.setViewportSize({ width: 320, height: 900 });
-  for (const { label } of preferenceChoices.palette.options)
-    await expect(
-      picker.getByRole("button", {
-        name: label,
-        exact: true,
-      }),
-    ).toBeVisible();
-  expect(
-    await picker.evaluate(
-      (el) =>
-        el.getBoundingClientRect().right <= innerWidth &&
-        [...el.querySelectorAll("button"), el].every(
-          (item) => item.scrollWidth <= item.clientWidth,
-        ),
-    ),
-  ).toBe(true);
-
-  const wisteria = picker.getByRole("button", {
-    name: "Wisteria",
-    exact: true,
-  });
+  await expect(picker).toBeInViewport();
+  await expect(picker.locator("option")).toHaveText(
+    preferenceChoices.palette.options.map(({ label }) => label),
+  );
   const paletteSave = savePreference("palette");
-  await wisteria.press("Enter");
+  await picker.selectOption("wisteria");
   expect(await (await paletteSave).json()).toMatchObject({
     preferences: { palette: "wisteria", theme: "dark" },
   });
   await expect(html).toHaveAttribute("data-palette", "wisteria");
-  await expect(wisteria).toHaveAttribute("aria-pressed", "true");
-  await expect(picker.locator('[aria-pressed="true"]')).toHaveCount(1);
-  await expect(wisteria).toHaveCSS(
-    "color",
-    await resolvedColor(wisteria, "accent-deep"),
-  );
-  expect((await renderedColors(wisteria)).contrast).toBeGreaterThanOrEqual(4.5);
+  await expect(picker).toHaveValue("wisteria");
 
   const lightSave = savePreference("theme");
   await settings
@@ -78,6 +55,19 @@ test("palette settings stay independent of luminosity from first paint through H
   });
 
   await settings.getByRole("button", { name: "Close settings" }).click();
+  const resources = page.getByRole("button", { name: "Toggle resources panel" });
+  if ((await resources.getAttribute("aria-expanded")) === "false")
+    await resources.click();
+  const files = page.getByRole("tab", { name: "Files", exact: true });
+  await files.click();
+  await page.keyboard.press("Tab");
+  await files.focus();
+  await expect(files).toHaveCSS(
+    "outline-color",
+    await resolvedColor(files, "accent-focus"),
+  );
+  expect((await renderedColors(files)).contrast).toBeGreaterThanOrEqual(4.5);
+  await page.getByRole("button", { name: "Close context pane" }).click();
   const palette = await openCommandPalette(page);
   await palette.getByLabel("Filter commands").fill("Palette:");
   await expect(

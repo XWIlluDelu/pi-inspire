@@ -1,8 +1,8 @@
 import { RefreshCw } from "lucide-react";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { hostRestartClient } from "../controllers/host-restart-controller";
+import { ConfirmationDialog } from "./Modal";
 import { SettingField } from "./SettingsControls";
-import { SettingsConfirmation } from "./SettingsDialog";
 
 type SettingsRestartScope = "host" | "all-pi";
 
@@ -203,7 +203,7 @@ export function HostRestartSettings({
         ) : null}
       </div>
       {confirmation && !suspended ? (
-        <SettingsConfirmation
+        <ConfirmationDialog
           id="host-restart"
           title={`${RESTART_NAMES[confirmation.scope]}?`}
           description={
@@ -213,15 +213,17 @@ export function HostRestartSettings({
                 : "Your Pi sessions outside Herdr will close. Project terminals will close and running tasks will stop."
               : "Inspire's Pi workers will restart. Project terminals keep running. The page will briefly disconnect."
           }
-          confirmLabel={RESTART_NAMES[confirmation.scope]}
           onClose={() => setConfirmation(null)}
-          onConfirm={() => {
-            void hostRestartClient.start(
-              confirmation.scope,
-              confirmation.hostId,
-              confirmation.scope === "all-pi",
-            );
-            setConfirmation(null);
+          confirm={{
+            label: RESTART_NAMES[confirmation.scope],
+            run: () => {
+              void hostRestartClient.start(
+                confirmation.scope,
+                confirmation.hostId,
+                confirmation.scope === "all-pi",
+              );
+              setConfirmation(null);
+            },
           }}
         />
       ) : null}

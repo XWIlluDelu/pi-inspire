@@ -1,12 +1,5 @@
 import { Puzzle } from "lucide-react";
-import {
-  memo,
-  useEffect,
-  useId,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
+import { memo, useId, useRef, useState } from "react";
 import type {
   ExtensionDisplay,
   ExtensionWidgetDisplay,
@@ -77,67 +70,43 @@ export const ExtensionStatus = memo(function ExtensionStatus() {
       const text = stripTerminalSequences(status);
       return text.trim() ? [text] : [];
     });
-  const text = visible.join(" · ");
-  const textRef = useRef<HTMLSpanElement>(null);
+  return visible.length ? <ExtensionStatusReader key={sessionId} values={visible} /> : null;
+});
+
+function ExtensionStatusReader({ values }: { values: string[] }) {
+  const text = values.join(" · ");
   const toggleRef = useRef<HTMLButtonElement>(null);
   const panelId = useId();
-  const [truncated, setTruncated] = useState(false);
   const [open, setOpen] = useState(false);
-
-  useLayoutEffect(() => {
-    const element = textRef.current;
-    if (!element) return;
-    const measure = () =>
-      setTruncated(
-        element.scrollWidth > element.clientWidth || text.includes("\n"),
-      );
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    measure();
-    return () => observer.disconnect();
-  }, [text]);
-  useEffect(() => setOpen(false), [sessionId]);
-  useLayoutEffect(() => {
-    if (!truncated || !text) setOpen(false);
-  }, [truncated, text]);
-
-  if (!text) return null;
   return (
     <div className="topbar__extension-status">
-      <span
-        ref={textRef}
-        className="topbar__extension-text"
-        aria-hidden={truncated || undefined}
+      <button
+        ref={toggleRef}
+        type="button"
+        className="button button--quiet topbar__extension-toggle"
+        aria-label="Extension status"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-controls={open ? panelId : undefined}
+        title={text}
+        onClick={() => setOpen(!open)}
       >
-        {text}
-      </span>
-      {truncated ? (
-        <button
-          ref={toggleRef}
-          type="button"
-          className="topbar__extension-toggle"
-          aria-label="Extension status"
-          aria-haspopup="dialog"
-          aria-expanded={open}
-          aria-controls={open ? panelId : undefined}
-          title={text}
-          onClick={() => setOpen((value) => !value)}
-        />
-      ) : null}
+        <span className="topbar__extension-text">{text}</span>
+      </button>
       <AnchoredPanel
         id={panelId}
         label="Extension status"
-        open={open && truncated}
+        open={open}
         anchorRef={toggleRef}
         onClose={() => setOpen(false)}
         constraints={STATUS_POPOVER}
         readOnly
       >
-        <CodeView text={visible.join("\n\n")} />
+        <CodeView text={values.join("\n\n")} />
       </AnchoredPanel>
     </div>
   );
-});
+}
 
 /** Unknown one-way display methods stay in the Transcript. */
 export function ExtensionDisplaySurface({

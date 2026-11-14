@@ -71,35 +71,6 @@
     }
   }
 
-  .overlay.settings-overlay {
-    background: transparent;
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-    animation: none;
-  }
-
-  .settings-overlay::before {
-    content: "";
-    position: fixed;
-    inset: 0;
-    z-index: -1;
-    pointer-events: none;
-    background: var(--bg-overlay);
-    backdrop-filter: blur(2px);
-    -webkit-backdrop-filter: blur(2px);
-    animation: overlay-in var(--dur-standard) var(--ease-standard);
-  }
-
-  .dialog.settings {
-    animation-name: settings-sheet-in;
-  }
-
-  @keyframes settings-sheet-in {
-    from {
-      transform: translateY(8px);
-    }
-  }
-
   .pane-resize {
     display: none;
   }
@@ -272,14 +243,6 @@
     padding: var(--space-2) var(--space-4);
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-    scroll-padding-inline: var(--space-4);
-    mask-image: linear-gradient(to right, transparent, black var(--space-4), black calc(100% - var(--space-4)), transparent);
-    -webkit-mask-image: linear-gradient(to right, transparent, black var(--space-4), black calc(100% - var(--space-4)), transparent);
-  }
-
-  .settings__sidebar::-webkit-scrollbar {
-    display: none;
   }
 
   .settings__nav-list {
@@ -303,32 +266,8 @@
     outline-offset: -2px;
   }
 
-  .settings__nav-item--active,
-  .settings__nav-item--active:hover {
-    border-color: transparent;
-    background: transparent;
-    box-shadow: none;
-  }
-
-  .settings__nav-item--active::before {
-    top: auto;
-    bottom: 0;
-    left: 4px;
-    right: 4px;
-    width: auto;
-    height: 2px;
-  }
-
   .settings__content {
     padding: var(--space-3) var(--space-3) var(--space-5);
-  }
-
-  .settings__footer.terminal-settings__footer {
-    padding: var(--space-2) var(--space-3);
-  }
-
-  .settings__field-help {
-    max-width: none;
   }
 
   .settings__footer {
@@ -360,27 +299,6 @@
 
   .welcome__row-project {
     display: none;
-  }
-}
-
-/* Keep all footer utilities on one line when installation adds another item. */
-@media (max-width: 380px) {
-  .settings__footer:has(.settings__install, .settings__installed) {
-    gap: var(--space-1);
-    padding-inline: var(--space-2);
-  }
-
-  .settings__footer:has(.settings__install, .settings__installed) .settings__footer-status {
-    gap: 2px;
-    font-family: var(--font-sans);
-  }
-
-  .settings__footer:has(.settings__install, .settings__installed) .settings__version-dot {
-    display: none;
-  }
-
-  .settings__footer:has(.settings__install, .settings__installed) .settings__utility {
-    padding-inline: var(--space-1);
   }
 }
 

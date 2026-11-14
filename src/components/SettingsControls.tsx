@@ -206,34 +206,23 @@ export function SettingsSwitch({
   onChange,
   disabled = false,
   busy = false,
-  state,
 }: {
   label: string;
   checked: boolean;
   onChange: (checked: boolean) => void;
   disabled?: boolean;
   busy?: boolean;
-  state?: string;
 }) {
   return (
-    <label className="settings-switch">
-      <input
-        type="checkbox"
-        role="switch"
-        aria-label={label}
-        checked={checked}
-        disabled={disabled}
-        aria-busy={busy}
-        onChange={(event) => onChange(event.currentTarget.checked)}
-      />
-      <span className="settings-switch__track" aria-hidden>
-        <span className="settings-switch__thumb" />
-      </span>
-      {state ? (
-        <span className="settings-switch__state" aria-hidden>
-          {state}
-        </span>
-      ) : null}
-    </label>
+    <button
+      type="button"
+      role="switch"
+      className="settings-switch"
+      aria-label={label}
+      aria-checked={checked}
+      aria-busy={busy}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+    />
   );
 }

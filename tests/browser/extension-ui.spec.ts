@@ -1,6 +1,5 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
 import type {
   ActiveSnapshot,
@@ -8,10 +7,8 @@ import type {
   ExtensionUiRequest,
   SupportedExtensionUiRequest,
 } from "../../shared/contracts";
-import { browserWorkspace } from "./fixtures/workspace.mjs";
 import { clipboardLines } from "./support/clipboard";
-import { routeSnapshots } from "./support/host-events";
-import { completeOperation } from "./support/host-operations";
+import { routeSnapshots, startEventSession } from "./support/host-events";
 import { hostRequest } from "./support/host-request";
 import { moveCaretToEnd } from "./support/native-input";
 import {
@@ -73,29 +70,16 @@ async function openExample(page: Page, theme: "light" | "dark") {
     answer(route.request().postDataJSON());
     await route.fulfill({ json: { ok: true } });
   });
-  await pairedPage(page);
-  const created = await hostRequest(page).post("/api/sessions/new", {
-    data: { cwd: browserWorkspace, name: "Native UI example" },
+  await startEventSession(page, "Native UI example", transport, (id) => {
+    sessionId = id;
   });
-  expect(created.ok()).toBe(true);
-  const createdSnapshot: ActiveSnapshot = await created.json();
-  expect(createdSnapshot.active?.sessionId).toBeTruthy();
-  const exampleSessionId = createdSnapshot.active!.sessionId;
-  sessionId = exampleSessionId;
-  await transport.reload(exampleSessionId, () =>
-    reloadSession(page, exampleSessionId),
-  );
-  await expect(
-    page.getByRole("button", { name: /^Session actions:/ }),
-  ).toHaveText("Native UI example");
   return {
     answer,
     responses,
-    emit,
     question(fields: DemoQuestion) {
       const request = { ...fields, sessionId: sessionId! };
       pending.set(request.id, request);
-      emit({ type: "extension_ui_request", ...request });
+      emit({ type: "extension_ui_pending", request });
     },
     display(event: {
       id: string;
@@ -110,7 +94,7 @@ async function openExample(page: Page, theme: "light" | "dark") {
   };
 }
 
-test("phone Back and Escape respect native question ownership during Settings, work and recovery", async ({
+test("phone Back waits for native question cancellation before closing Settings", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 700 });
@@ -197,58 +181,6 @@ test("phone Back and Escape respect native question ownership during Settings, w
   await expect(settings).toHaveCount(0);
   await expect(draft).toHaveValue("Keep this draft through the questions");
 
-  let aborts = 0;
-  await page.route("**/api/control/abort", (route) => {
-    aborts++;
-    return completeOperation(route, "abort", { steering: [], followUp: [] });
-  });
-  demo.emit({ type: "agent_start", sessionStatus: { runState: "running" } });
-  await expect(
-    page.getByRole("button", { name: "Abort running task" }),
-  ).toBeVisible();
-  demo.question({
-    id: "during-run",
-    method: "confirm",
-    title: "Continue work?",
-  });
-  const normal = page.getByRole("dialog", { name: "Continue work?" });
-  await expect(normal).toBeVisible();
-  await page.keyboard.press("Escape");
-  await expect(normal).toHaveCount(0);
-  expect(demo.responses.at(-1)).toMatchObject({
-    id: "during-run",
-    cancelled: true,
-  });
-  expect(aborts).toBe(0);
-  demo.question({
-    id: "during-conflict",
-    method: "confirm",
-    title: "Pending question",
-  });
-  demo.emit({
-    type: "session_projection_conflict",
-    conflict: {
-      kind: "external-change",
-      message: "External writer conflict",
-      revision: 2,
-      incidentId: "inc_extension_recovery",
-    },
-    sessionStatus: { runState: "conflict" },
-  });
-  const blocked = page.getByRole("dialog", { name: "Pending question" });
-  await expect(blocked).toBeVisible();
-  await expect(page.locator(".banner")).toContainText(
-    "External writer conflict",
-  );
-  await page.keyboard.press("Escape");
-  await expect.poll(() => aborts).toBe(1);
-  expect(demo.responses).toHaveLength(3);
-  demo.emit({
-    type: "extension_ui_remove",
-    id: "during-conflict",
-    reason: "aborted",
-  });
-  await expect(blocked).toHaveCount(0);
   await page.goBack();
   await expect(page).toHaveURL("about:blank#outside-inspire");
 });
@@ -297,10 +229,6 @@ test("real Pi questions preserve workbench edits and restore the native deadline
   await page.keyboard.press("ArrowDown");
   await expect(code).toBeFocused();
   await expect(code).toHaveAttribute("aria-selected", "true");
-  expect(
-    (await new AxeBuilder({ page }).include(".extension-dialog").analyze())
-      .violations,
-  ).toEqual([]);
   await page.keyboard.press("Enter");
   const confirm = page.getByRole("dialog", { name: "Prepare this review?" });
   await expect(confirm).toContainText("Code");
@@ -461,12 +389,10 @@ test.describe("short touch workbench", () => {
   test.use({ hasTouch: true });
   test("keeps the transcript, draft and both widgets usable in a short window", async ({
     page,
-    context,
   }) => {
-    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
     const fixture = await openExample(page, "light");
     const input = page.getByRole("textbox", { name: "Message", exact: true });
-    const draft = "First line of the draft\nSecond line of the draft";
+    const draft = Array.from({ length: 20 }, (_, i) => `Draft line ${i + 1}`).join("\n");
     await input.fill(draft);
     const lines = Array.from(
       { length: 8 },
@@ -512,23 +438,6 @@ test.describe("short touch workbench", () => {
     await page
       .getByRole("button", { name: "Send message", exact: true })
       .tap({ trial: true });
-    for (const [placement] of placements) {
-      const widget = page.getByRole("region", {
-        name: `Extension content ${placement} composer`,
-      });
-      await widget
-        .getByRole("button", {
-          name: "Copy extension widget",
-          exact: true,
-        })
-        .tap();
-      await expect.poll(() => clipboardLines(page)).toEqual(lines);
-      await widget.focus();
-      await widget.press("End");
-      await expect
-        .poll(() => widget.evaluate((el) => el.scrollTop))
-        .toBeGreaterThan(0);
-    }
     await input.evaluate((element: HTMLTextAreaElement) => {
       element.setSelectionRange(0, 0);
       element.scrollTop = 0;
@@ -544,28 +453,10 @@ test.describe("short touch workbench", () => {
 
 test.describe("narrow touch reading", () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
-  test("chooses directly and reads complete topbar status on touch", async ({
+  test("reads complete extension status and unsupported details on touch", async ({
     page,
   }) => {
     const fixture = await openExample(page, "dark");
-    const selected =
-      "Review this document: " + "documentation-reference-".repeat(6);
-    fixture.question({
-      id: "select-touch",
-      method: "select",
-      title: choiceTitle,
-      options: [selected, "Code"],
-    });
-    const question = page.getByRole("dialog", { name: choiceTitle });
-    await expect
-      .poll(() => question.evaluate((el) => el.scrollWidth - el.clientWidth))
-      .toBe(0);
-    await question.getByRole("option", { name: selected, exact: true }).tap();
-    await expect(page.getByRole("dialog")).toHaveCount(0);
-    expect(fixture.responses.at(-1)).toMatchObject({
-      id: "select-touch",
-      value: selected,
-    });
     const unsupportedTitle =
       "Choose files under /workspace/calibration/reference_measurement_comparison_for_multichannel_calibration_and_residual_validation_results.json";
     fixture.question({
@@ -579,16 +470,6 @@ test.describe("narrow touch reading", () => {
       name: unsupportedTitle,
       exact: true,
     });
-    await expect
-      .poll(() =>
-        unsupported
-          .locator(".extension-dialog")
-          .evaluate((el) => el.scrollWidth - el.clientWidth),
-      )
-      .toBe(0);
-    await expect(unsupported).toContainText(
-      "Inspire can't handle this extension request",
-    );
     await unsupported.getByText("Request details", { exact: true }).click();
     await expect(unsupported.getByText(/report\.md/)).toBeVisible();
     await unsupported.getByRole("button", { name: "Cancel request" }).click();
@@ -622,20 +503,6 @@ test.describe("narrow touch reading", () => {
     await expect
       .poll(() => full.evaluate((element) => element.scrollTop))
       .toBeGreaterThan(0);
-    expect(
-      await page
-        .locator(".center")
-        .evaluate((element) => element.scrollWidth <= element.clientWidth),
-    ).toBe(true);
-    expect(
-      (
-        await new AxeBuilder({ page })
-          .include(".topbar__extension-status")
-          .include(".choice-panel__body--reader")
-          .analyze()
-      ).violations,
-    ).toEqual([]);
-
     await summary.tap();
     await expect(full).toBeHidden();
     fixture.display({

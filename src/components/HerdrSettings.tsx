@@ -98,7 +98,7 @@ export function HerdrSettings({
             </span>
             <button
               type="button"
-              className="settings__utility"
+              className="button button--quiet"
               aria-label="Review Host restart"
               onClick={onNavigateRestart}
             >

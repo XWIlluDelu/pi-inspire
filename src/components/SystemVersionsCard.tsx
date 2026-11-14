@@ -1,8 +1,8 @@
-import { Check, Layers, RefreshCw } from "lucide-react";
+import { Layers, RefreshCw } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { shallowEqual, store, useAppState } from "../store";
 import { availableUpdates, updateDetailsText } from "../update-availability";
-import { useCopied } from "../use-copied";
+import { ButtonLabel } from "./ButtonLabel";
 import { CopyAction } from "./CopyAction";
 import { PiLoader } from "./PiLoader";
 import { SettingsSection } from "./SettingsSection";
@@ -13,35 +13,18 @@ const checkLabels = {
   checked: "Check again",
 };
 
-function UpdateCommand({ command }: { command: string }) {
-  const [error, setError] = useState<string | null>(null);
-  const { copied, copy } = useCopied({ onError: setError });
+function CommandSnippet({
+  command,
+  onError,
+}: {
+  command: string;
+  onError: (message: string) => void;
+}) {
   return (
-    <>
-      <button
-        type="button"
-        className={`file-path-action${copied ? " file-path-action--copied" : ""}`}
-        aria-label={`Copy ${command}`}
-        title={copied ? "Copied" : "Click to copy"}
-        onClick={() => {
-          setError(null);
-          void copy(command);
-        }}
-      >
-        <code className="file-path-action__text">{command}</code>
-        {copied ? (
-          <Check size={11} className="file-path-action__check" aria-hidden />
-        ) : null}
-        <span className="visually-hidden" aria-live="polite">
-          {copied ? "Copied" : ""}
-        </span>
-      </button>
-      {error ? (
-        <span className="system-versions__error" role="alert">
-          {error}
-        </span>
-      ) : null}
-    </>
+    <span className="system-versions__command">
+      <code>{command}</code>
+      <CopyAction text={command} label={command} className="" onError={onError} />
+    </span>
   );
 }
 
@@ -72,6 +55,7 @@ function VersionValue({
   status,
   update,
   command,
+  onCopyError,
 }: {
   version: string | null;
   versionTitle?: string;
@@ -79,6 +63,7 @@ function VersionValue({
   status: string;
   update?: { version: string; url: string };
   command?: string;
+  onCopyError?: (message: string) => void;
 }) {
   return (
     <div className="system-versions__value">
@@ -91,7 +76,9 @@ function VersionValue({
           v{update.version} available ↗
         </a>
       ) : null}
-      {update && command ? <UpdateCommand command={command} /> : null}
+      {update && command && onCopyError && (
+        <CommandSnippet command={command} onError={onCopyError} />
+      )}
       {restartRequired || !update ? (
         <span>{restartRequired ? "Restart Host to apply" : status}</span>
       ) : null}
@@ -180,25 +167,14 @@ export function SystemVersionsCard() {
               void store.checkInspireUpdate();
             }}
           >
-            <span className="system-versions__check-content">
-              {checking ? (
-                <PiLoader size={13} aria-hidden />
-              ) : (
-                <RefreshCw size={13} aria-hidden />
-              )}
-              <span className="system-versions__check-label">
-                {checkLabels[checkState]}
-              </span>
-            </span>
-            {Object.values(checkLabels).map((label) => (
-              <span
-                key={label}
-                className="system-versions__check-reserve"
-                aria-hidden
-              >
-                {label}
-              </span>
-            ))}
+            {checking ? (
+              <PiLoader size={13} aria-hidden />
+            ) : (
+              <RefreshCw size={13} aria-hidden />
+            )}
+            <ButtonLabel reserve={Object.values(checkLabels)}>
+              {checkLabels[checkState]}
+            </ButtonLabel>
           </button>
         </div>
       }
@@ -218,7 +194,7 @@ export function SystemVersionsCard() {
           {copyError}
         </p>
       ) : null}
-      <dl className="system-versions__list">
+      <dl className="system-versions__list" onClickCapture={() => setCopyError(null)}>
         <VersionRow
           label="Pi"
           links={
@@ -262,6 +238,7 @@ export function SystemVersionsCard() {
                 : undefined
             }
             command="pi update"
+            onCopyError={setCopyError}
           />
         </VersionRow>
 
@@ -273,7 +250,7 @@ export function SystemVersionsCard() {
                   {extensions.updates.length} package{" "}
                   {extensions.updates.length === 1 ? "update" : "updates"}
                 </span>
-                <UpdateCommand command="pi update --extensions" />
+                <CommandSnippet command="pi update --extensions" onError={setCopyError} />
               </>
             ) : (
               <span>

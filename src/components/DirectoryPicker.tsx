@@ -5,7 +5,7 @@ import { ApiError } from "../api";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import { isTransientFailure, recoverableRead } from "../recovery-backoff";
 import { store, useAppState } from "../store";
-import { Modal } from "./Modal";
+import { DialogHeader, Modal } from "./Modal";
 import { PiLoader } from "./PiLoader";
 
 /**
@@ -161,8 +161,7 @@ export function DirectoryPicker({
   return (
     <Modal aria-label="Choose project directory" onDismiss={onCancel}>
       <div className="dialog dirpicker">
-        <header className="dialog__header">
-          <h2 className="dialog__title">Choose project directory</h2>
+        <DialogHeader title="Choose project directory" bar={false}>
           <button
             type="button"
             className="icon-button dirpicker__hidden"
@@ -182,7 +181,7 @@ export function DirectoryPicker({
               <EyeOff size={16} aria-hidden />
             )}
           </button>
-        </header>
+        </DialogHeader>
         <textarea
           rows={2}
           className="dialog__editor dirpicker__path"

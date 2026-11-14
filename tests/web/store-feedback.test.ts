@@ -45,7 +45,7 @@ describe("feedback scope", () => {
           ? { status: 503, body: { error: "Snapshot unavailable" } }
           : { body: activeSnapshot() };
       if (url === "/api/prompt")
-        return { body: { accepted: true, historyEntry: null } };
+        return { body: { accepted: true } };
       if (failedActions.includes(url)) {
         requested.push(url);
         return { status: 409, body: { error: "Action refused" } };
@@ -108,12 +108,15 @@ describe("feedback scope", () => {
       });
       const { store, socket } = await initStore();
       socket.emit({
-        type: "extension_ui_request",
+        type: "extension_ui_pending",
         sessionId: "s1",
-        id: "choice",
-        method: "select",
-        title: "Choose",
-        options: ["One"],
+        request: {
+          sessionId: "s1",
+          id: "choice",
+          method: "select",
+          title: "Choose",
+          options: ["One"],
+        },
       });
       const answering = store.respondExtensionUi({
         id: "choice",

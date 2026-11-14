@@ -27,7 +27,7 @@ covers:
   - shared/contracts.ts
   - src/**/*.tsx
   - tests/web/theme-init.test.ts
-  - tests/browser/{shell-layout,settings-layout,reading-navigation,palette-preferences,responsive-inputs,theme-colors}.spec.ts
+  - tests/browser/{shell-layout,settings-layout,reading-navigation,palette-preferences,responsive-inputs}.spec.ts
   - tests/browser/support/colors.ts
   - tests/browser/loading-states.spec.ts
 ---
@@ -149,12 +149,6 @@ scale with density. Resize and run-state changes retime future arrivals without 
 Needles neither spin nor fall. Reduced motion, a hidden document, inactive Overlay or toggle-off
 immediately suppresses/cleans up the animation.
 
-#### Completion cue
-
-An observed successful run in the selected session gives Π one 800ms glow. Snapshots, session switches,
-failures and aborts do not trigger it; hidden pages never replay it on return. Reduced motion disables
-both this glow and wordmark color transitions.
-
 ### Theme selection and semantic roles
 
 - Palette and luminosity are independent. **Wisteria** (`wisteria`) uses mineral purple,
@@ -165,9 +159,8 @@ both this glow and wordmark color transitions.
   and monochrome interface emphasis, inspired by VS Code Light Modern / Dark Modern.
   Chimonanthus is the default. Light, Dark, and System select luminosity independently of the
   palette.
-- Display presents seven named color swatches in two columns, keeping complete names reachable on
-  narrow screens. The botanical palettes come first, then Jade and Amber; Carbon & Silicon is last
-  and spans the full picker row. The selected choice has a border and pressed state, not color alone.
+- Display offers all seven palettes in the same named native select used by other finite preferences.
+  The botanical palettes come first, then Jade, Amber and Carbon & Silicon.
 - Semantic role mappings stay consistent across palettes while botanical and classic families
   retain their distinct character. Roles may share a color value.
 - The first-paint cache recognizes current palette identifiers. A retired saved identifier falls
@@ -179,9 +172,9 @@ both this glow and wordmark color transitions.
   | --- | --- |
   | `--accent` / `--accent-deep` | Theme marks and running feedback / readable accent text. |
   | `--accent-fill` + `--on-accent` | Solid actions and checked switches use white foreground in light mode and dark foreground in dark mode. Hover and press darken light fills and lift dark fills. |
-  | `--on-status` | Foreground for semantic error fills, with the same luminosity-aware hover/active treatment. |
+  | `--error` + `--on-accent` | Solid error actions use the same foreground and luminosity-aware hover and press treatment. |
   | `--accent-focus` | Outlines, focused borders and inset focus strokes. Maps to `--accent` in botanical palettes and `--accent-deep` in Jade/Amber. Focus leaves text, semantic errors and other selection markers unchanged. |
-  | `--nav-active-bg` | Selected-session `--accent-tint`; the extra `--accent-soft` inset outline is transparent. |
+  | `--nav-active-bg` | Selected-session `--accent-tint`. |
 
 ### Control states
 
@@ -375,11 +368,10 @@ targets, with 36px targets for touch and phone layouts, clear of the count.
 Workspace and History search share a 34px field, 13px search icon, 12px inner inset and
 8px icon/text gap, starting 4px below the contextual tool header.
 
-Selected session rows have a translucent lifted surface; collapsed folders containing the selection
-have a quiet accent tint. Both use an inset straight, round-ended accent marker, with neutral ordinary
-hover that lifts toward the ink (6%) in light and dark alike, never an inset well. The row retains selection fill even when its select button is disabled. Folder rows/headings
-use control-radius corners, a clear icon gutter beside the marker and a common text axis with their
-sessions. Folder, Workspace and Hidden keyboard outlines remain inset within clipping boundaries.
+Selected session rows and collapsed folders containing the selection use a quiet accent tint. The
+row retains its selection fill when its select button is disabled. Folder rows and headings share a
+text axis with their sessions. Folder, Workspace and Hidden keyboard outlines remain inset within
+clipping boundaries.
 
 Folder groups use an 8px margin plus the 2px list gap in the catalog and Hidden. Pinning, expansion,
 and input mode keep the same spacing between folder groups. The titled Pinned sessions section
@@ -449,10 +441,8 @@ truncate inside their trigger. Steer/Queue split their row equally. Constrained 
 compact arrangement under [[workspace-layout]]. Completion titles wrap without displacing
 adjacent path hints. Model badges and selected rows keep AA contrast.
 
-Running uses a close, low-opacity theme halo with a 3.6-second opacity cycle. It intercepts no pointer
-input and changes neither geometry nor shadow properties; the normal border and independent focus
-border remain. Reduced motion keeps a static low-intensity halo. Retry and Compaction use their own
-static semantic halos; conflict recovery keeps warning treatment. [[composer]] owns delivery state,
+Running, Retry and Compaction use static semantic halos. Conflict recovery keeps its warning
+treatment. The cue does not change layout or intercept input. [[composer]] owns delivery state,
 including when recovery is the sole action.
 
 Command feedback uses neutral surfaces and semantic icons/text, without panel-wide status washes or
@@ -583,13 +573,11 @@ bands. General and Terminal settings share shell/content insets across viewport 
 empty/error messages use the field rows' content inset. Asynchronous descriptions anchor at the top,
 with actions before feedback; meaningful feedback remains readable in normal flow without reserving
 blank space for routine progress. Cards and sections do not clip menus or focus. Checked switches use
-the shared accent fill/foreground pair, and category/palette selection retains explicit markers.
+the shared accent fill/foreground pair, and the selected category and current palette remain explicit.
 
 Settings and Terminal settings share 32px mouse / 40px touch fields, switches and steppers.
-Ordinary finite choices use native selects. Selects and the palette grid share a choice-column
-width. Named palettes use independent bordered tiles with a tinted selected surface, accent
-border and stronger text. Palette names and hue markers stay visible; section icons use accent
-ink and headings stay neutral.
+Ordinary finite choices, including palettes, use native selects and share a choice-column width.
+Section icons use accent ink and headings stay neutral.
 
 Fields wrap controls according to available space and keep descriptions readable. Narrow cards let
 wrapped controls fill the row; switches, font steppers and model summaries remain compact. In
@@ -789,19 +777,14 @@ follows [Content copying](#content-copying), independently of presentation type.
   drawers that slide in from their respective edges as opaque surfaces. Fixed narrow surfaces honor
   all four safe insets. Each drawer has its own close button inside the focus boundary. Navigation uses the
   theme's darkening overlay token; the full-width context pane has no redundant scrim. Narrow
-  Settings enters with an opaque 8px rise while only its backdrop fades. Dismissal is immediate,
-  and reduced motion removes entry animation.
+  Settings shares the standard dialog entrance and dismissal.
 - Motion explains a transient surface, disclosure, or live work. Shared durations are 90ms micro,
   150ms standard, and 180ms panel. Short card/palette entrance and disclosure transforms are
   permitted. [Composer presentation](#composer-presentation) defines its state halo. Reduced motion
   removes nonessential animation and collapses transitions to a negligible duration; each live-state
   surface keeps a static indication.
-  - Indeterminate loading/execution uses a seven-point square Π (11.6×11.6 in a 16×16 viewBox)
-    inside the existing square icon slot. Patterns are row/column sweeps, outline tracing,
-    breathing, outward propagation, side relay and gathering. Every complete 2.4-second cycle
-    independently selects the next pattern with equal probability; repeats are allowed. Rerenders
-    and status-label updates neither reselect nor interrupt the current cycle. Reduced motion shows
-    a static Π.
+  - Indeterminate work uses one seven-point Π, with a staggered pulse in the square icon
+    slot. Reduced motion keeps the same glyph static.
   - Sidebar working states use Π; unread completion/failure use matching linked-dot check/cross.
     Tool rows and nested calls use the same settled glyphs. Not-executed and missing-result tools,
     and cancelled/unfinished child calls, use a static eight-point perimeter with an empty center in

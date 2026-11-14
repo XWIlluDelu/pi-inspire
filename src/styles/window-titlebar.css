@@ -11,13 +11,12 @@
   }
 
   .window-titlebar {
-    --chrome-bg: var(--bg-rail);
     position: fixed;
     inset: 0 0 auto;
     z-index: 70;
     display: block;
     height: var(--window-titlebar-height);
-    background: var(--chrome-bg);
+    background: var(--bg-rail);
     color: var(--chrome-ink);
     transition: color 180ms ease-out;
     user-select: none;
@@ -109,58 +108,29 @@
     z-index: 1;
   }
 
-  .window-titlebar__identity {
+  .window-titlebar__brand-button {
     position: absolute;
     top: 0;
     bottom: 0;
-    /* Center over the whole window, clamped inside the native safe rect. */
-    left: clamp(
-      0px,
-      calc(50vw - env(titlebar-area-x, 0px) - 36px),
-      calc(100% - 72px)
-    );
+    left: clamp(0px, calc(50vw - env(titlebar-area-x, 0px) - 36px), calc(100% - 72px));
     width: 72px;
-    max-width: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    pointer-events: none;
-    z-index: 1;
-  }
-
-  /* Native controls can leave very little width in a narrow/zoomed window.
-     Keep the corner mark rather than crowding it with the optional wordmark. */
-  @container window-titlebar (max-width: 160px) {
-    .window-titlebar__identity {
-      display: none;
-    }
-  }
-
-  .window-titlebar__brand-button {
-    background: transparent;
-    border: none;
-    padding: 0 4px;
-    margin: 0;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    color: inherit;
-    font: inherit;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    border: 0;
     border-radius: var(--radius-sm);
-    cursor: pointer;
+    background: transparent;
+    color: inherit;
     pointer-events: auto;
+    cursor: pointer;
     -webkit-app-region: no-drag;
     app-region: no-drag;
-    transition: opacity 180ms ease-out;
   }
 
-  .window-titlebar__brand-button:hover {
-    opacity: 0.85;
-  }
+  .window-titlebar__brand-button:focus-visible { outline-offset: -2px; }
 
-  .window-titlebar__brand-button:focus-visible {
-    outline: 2px solid var(--accent-focus);
-    outline-offset: 0;
+  @container window-titlebar (max-width: 160px) {
+    .window-titlebar__brand-button { display: none; }
   }
 
   .window-titlebar .wordmark {
@@ -168,17 +138,5 @@
     font-size: var(--text-xs);
     font-weight: 500;
     letter-spacing: 0.1em;
-  }
-
-  /* Letter spacing also trails the final glyph; exclude it from centering. */
-  .window-titlebar .wordmark__text {
-    margin-inline-end: -0.1em;
-    /* Optical centering for the uppercase glyphs, not the button box. */
-    transform: translateY(0.5px);
-  }
-
-  .window-titlebar .wordmark__pi {
-    font-weight: 500;
-    transition: color 180ms ease-out;
   }
 }

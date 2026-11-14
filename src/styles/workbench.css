@@ -344,9 +344,7 @@ body.pane-resizing .nav {
   font-weight: 600;
 }
 
-/* One selected-ink rule for value choices and compact view-mode groups. */
-:is(.segmented, .palette-picker)
-  > button:is([aria-pressed="true"], [aria-selected="true"]):not(:disabled) {
+.segmented > button:is([aria-pressed="true"], [aria-selected="true"]):not(:disabled) {
   color: var(--accent-deep);
 }
 
@@ -722,52 +720,6 @@ body.pane-resizing .nav {
   white-space: nowrap;
 }
 
-.file-path-action {
-  display: inline-flex;
-  min-width: 0;
-  max-width: 100%;
-  height: 24px;
-  align-items: center;
-  gap: var(--space-1);
-  border: 0;
-  border-radius: var(--radius-control);
-  background: transparent;
-  padding: 2px var(--space-1);
-  color: var(--muted);
-  font: var(--text-xs)/var(--leading-mono) var(--font-mono);
-  text-align: left;
-  cursor: pointer;
-  transition:
-    color var(--dur-micro) var(--ease-standard),
-    background var(--dur-micro) var(--ease-standard);
-}
-
-.file-path-action:hover {
-  color: var(--ink);
-  background: var(--bg-inset);
-}
-
-.file-path-action:focus-visible {
-  /* Keep confirmation focus inside the compact control. */
-  outline-offset: -2px;
-}
-
-.file-path-action__text {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.file-path-action__check {
-  flex: 0 0 auto;
-  color: var(--success);
-}
-
-.file-path-action--copied {
-  color: var(--success-ink);
-}
-
 .changes__position {
   min-width: var(--change-position-width, 3ch);
   padding-inline: 2px;
@@ -921,7 +873,7 @@ body.pane-resizing .nav {
 }
 
 .git-deco--conflict {
-  color: var(--git-conflict);
+  color: var(--error);
 }
 
 .git-mark.git-deco--modified,
@@ -938,8 +890,8 @@ body.pane-resizing .nav {
 
 .git-mark.git-deco--conflict,
 .git-deco--conflict .git-mark {
-  color: var(--git-conflict);
-  background: color-mix(in srgb, var(--git-conflict) 14%, transparent);
+  color: var(--error);
+  background: color-mix(in srgb, var(--error) 14%, transparent);
 }
 
 .changes__inline-action {
@@ -1266,14 +1218,6 @@ body.pane-resizing .nav {
   padding: 0 var(--space-2);
 }
 
-/* A smaller execution prompt shares the first code line, not the cell top.
-   Keep image and rich-document outputs top-aligned instead of using their bottom baseline. */
-.notebook-preview__cell--code,
-.notebook-preview__cell--raw,
-.notebook-preview__output:has(> .notebook-preview__output-body > pre) {
-  align-items: first baseline;
-}
-
 .notebook-preview__output {
   grid-column: 1 / -1;
   display: grid;
@@ -1315,21 +1259,6 @@ body.pane-resizing .nav {
 .notebook-preview__more {
   grid-column: 2;
   padding: var(--space-4) 0 0;
-}
-
-.notebook-preview--state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-1);
-  color: var(--muted);
-  text-align: center;
-}
-
-.notebook-preview--state strong {
-  color: var(--ink);
-  font-size: var(--text-sm);
 }
 
 @container (max-width: 360px) {
@@ -1506,22 +1435,9 @@ body.pane-resizing .nav {
   width: 0;
   min-width: 0;
   max-width: 100%;
-  border: 1px solid var(--hairline-strong);
-  border-radius: var(--radius-sm);
-  background: var(--bg-canvas);
-  padding: var(--space-2) var(--space-3);
-  transition:
-    border-color var(--dur-micro) var(--ease-standard),
-    box-shadow var(--dur-micro) var(--ease-standard);
 }
 
 .token-gate form .button {
   flex: 0 0 auto;
   white-space: nowrap;
-}
-
-.token-gate input:focus-visible {
-  outline: none;
-  border-color: var(--accent-focus);
-  box-shadow: 0 0 0 3px var(--accent-tint);
 }

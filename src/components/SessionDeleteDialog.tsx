@@ -1,9 +1,9 @@
-import { AlertTriangle, Trash2, X } from "lucide-react";
+import { Trash2 } from "lucide-react";
 import { isBusyRunState, type SessionSummary } from "../../shared/contracts";
 import type { AppState } from "../app-state";
 import { shallowEqual, store, useAppState } from "../store";
 import { ButtonLabel } from "./ButtonLabel";
-import { Modal } from "./Modal";
+import { ConfirmationDialog } from "./Modal";
 import { PiLoader } from "./PiLoader";
 
 /** A live worker, terminal Pi, or busy run is closed by moving its file. */
@@ -61,72 +61,24 @@ export function TrashConfirmDialog({
   const label = reviewRequired ? "Review Hidden" : confirmLabel;
 
   return (
-    <Modal
+    <ConfirmationDialog
+      id={id}
       owner={focusKey}
-      role="alertdialog"
-      aria-labelledby={`${id}-title`}
-      aria-describedby={`${id}-description${warning ? ` ${id}-warning` : ""}`}
-      onDismiss={deleting ? undefined : onClose}
-    >
-      <div className="dialog session-delete">
-        <header className="dialog__header">
-          <span className="session-delete__icon" aria-hidden>
-            <Trash2 size={17} />
-          </span>
-          <h2 className="dialog__title" id={`${id}-title`}>
-            {title}
-          </h2>
-          <button
-            type="button"
-            className="icon-button"
-            onClick={onClose}
-            disabled={deleting}
-            aria-label={closeLabel}
-            title="Close"
-          >
-            <X size={15} aria-hidden />
-          </button>
-        </header>
-
-        <div className="session-delete__session" title={subjectTitle}>
+      title={title}
+      closeLabel={closeLabel}
+      subject={
+        <strong className="dialog__subject" title={subjectTitle}>
           {subject}
-        </div>
-        <p
-          className="dialog__message session-delete__description"
-          id={`${id}-description`}
-        >
-          {description.map((line) => (
-            <span key={line}>{line}</span>
-          ))}
-        </p>
-        {warning ? (
-          <p className="session-delete__warning" id={`${id}-warning`}>
-            <AlertTriangle size={14} aria-hidden />
-            {warning}
-          </p>
-        ) : null}
-        {error ? (
-          <p className="session-delete__error" role="alert">
-            {error}
-          </p>
-        ) : null}
-
-        <footer className="dialog__actions">
-          <button
-            type="button"
-            className="button button--quiet"
-            onClick={onClose}
-            disabled={deleting}
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            className={`button ${reviewRequired ? "button--primary" : "button--danger"}`}
-            onClick={reviewRequired ? onClose : onConfirm}
-            disabled={deleting || (curationPending && !reviewRequired)}
-            aria-busy={deleting || curationPending}
-          >
+        </strong>
+      }
+      description={description.join(" ")}
+      warning={warning}
+      error={error}
+      busy={deleting}
+      onClose={onClose}
+      confirm={{
+        label: (
+          <>
             {deleting ? (
               <PiLoader size={14} aria-hidden />
             ) : !reviewRequired ? (
@@ -135,10 +87,14 @@ export function TrashConfirmDialog({
             <ButtonLabel reserve={label}>
               {deleting ? busyLabel : label}
             </ButtonLabel>
-          </button>
-        </footer>
-      </div>
-    </Modal>
+          </>
+        ),
+        run: reviewRequired ? onClose : onConfirm,
+        primary: reviewRequired,
+        disabled: curationPending && !reviewRequired,
+        busy: deleting || curationPending,
+      }}
+    />
   );
 }
 

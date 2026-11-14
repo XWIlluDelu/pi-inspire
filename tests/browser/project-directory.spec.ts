@@ -14,8 +14,11 @@ test("directory navigation keeps focus and never shows entries for a failed path
 }, async ({ page }) => {
   const late = Promise.withResolvers<void>();
   const entered = Promise.withResolvers<void>();
+  const childListing = Promise.withResolvers<void>();
+  let delayChild = false;
   await page.route("**/api/host/dirs**", async (route) => {
     const path = new URL(route.request().url()).searchParams.get("path");
+    if (delayChild && path === "/workspace/src") await childListing.promise;
     if (path === "/pending-directory") {
       entered.resolve();
       await late.promise;
@@ -60,6 +63,18 @@ test("directory navigation keeps focus and never shows entries for a failed path
   ).toHaveValue("/workspace/src");
   await dialog.getByRole("button", { name: "..", exact: true }).press("Enter");
   await expect(entry).toBeVisible();
+  const hidden = dialog.getByRole("button", { name: "Show hidden folders" });
+  delayChild = true;
+  try {
+    await entry.press("Enter");
+    await hidden.focus();
+  } finally {
+    childListing.resolve();
+  }
+  await expect(
+    dialog.getByRole("button", { name: "..", exact: true }),
+  ).toBeVisible();
+  await expect(hidden).toBeFocused();
   const path = dialog.getByRole("textbox", { name: "Project directory" });
   const use = dialog.getByRole("button", { name: "Use this directory" });
   await path.fill("/missing-directory");
@@ -174,9 +189,8 @@ test("directory picker preserves hidden visibility across opaque Host roots and 
   await expect(browse).toBeFocused();
 });
 
-for (const width of [980, 390]) {
-  test.describe(`New project at ${width}px`, { tag: "@cross-browser" }, () => {
-    test.use({ viewport: { width, height: 844 }, hasTouch: width === 390 });
+test.describe("New project on a phone", { tag: "@cross-browser" }, () => {
+    test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
     test("creates only after explicit activation and starts with the original first message", async ({
       page,
     }) => {
@@ -212,19 +226,9 @@ for (const width of [980, 390]) {
         await expect(
           page.getByRole("button", { name: "Start session", exact: true }),
         ).toBeDisabled();
-        if (width !== 390) await message.press("Control+Enter");
         await expect(stat(join(root, "projects"))).rejects.toMatchObject({
           code: "ENOENT",
         });
-        expect(
-          await page
-            .locator("body")
-            .evaluate((node) => node.scrollWidth <= innerWidth),
-        ).toBe(true);
-        const box = (await create.boundingBox())!;
-        if (width === 390) expect(box.height).toBeGreaterThanOrEqual(44);
-        expect(box.x).toBeGreaterThanOrEqual(0);
-        expect(box.x + box.width).toBeLessThanOrEqual(width);
         const created = page.waitForRequest(
           (request) =>
             request.method() === "POST" &&
@@ -235,11 +239,7 @@ for (const width of [980, 390]) {
             request.method() === "POST" &&
             new URL(request.url()).pathname === "/api/prompt",
         );
-        if (width === 390) await create.tap();
-        else {
-          await create.focus();
-          await create.press("Enter");
-        }
+        await create.tap();
         expect((await created).postDataJSON()).toEqual({
           cwd: directory,
           createDirectory: true,
@@ -267,4 +267,3 @@ for (const width of [980, 390]) {
       }
     });
   });
-}

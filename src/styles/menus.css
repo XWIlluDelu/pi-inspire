@@ -104,7 +104,7 @@
 .picker__row,
 .choice-panel__body [role="menuitem"],
 .terminal-menu__popover button,
-.terminal-menu__group > summary,
+.terminal-menu__projects > summary,
 .dirpicker__row {
   display: flex;
   min-width: 0;
@@ -123,7 +123,7 @@
 
 .choice-panel__body [role="menuitem"],
 .terminal-menu__popover button,
-.terminal-menu__group > summary { min-height: var(--menu-row-height, 32px); }
+.terminal-menu__projects > summary { min-height: var(--menu-row-height, 32px); }
 
 .picker__row { padding: var(--space-2); }
 .picker__row[data-highlighted="true"] { background: var(--accent-tint); }
@@ -138,7 +138,7 @@
 .choice-panel__body button,
 .palette__row,
 .terminal-menu__popover button,
-.terminal-menu__group > summary {
+.terminal-menu__projects > summary {
   transition:
     background var(--dur-micro) var(--ease-standard),
     color var(--dur-micro) var(--ease-standard);
@@ -148,14 +148,14 @@
   [data-keyboard-active="false"] .picker__row:hover:where(:not(:disabled)),
   .choice-panel__body [role="menuitem"]:hover:not(:disabled),
   .terminal-menu__popover button:hover:not(:disabled),
-  .terminal-menu__group > summary:hover {
+  .terminal-menu__projects > summary:hover {
     background: var(--accent-tint);
   }
 }
 
 .choice-panel__body [role="menuitem"]:active:not(:disabled),
 .terminal-menu__popover button:active:not(:disabled),
-.terminal-menu__group > summary:active {
+.terminal-menu__projects > summary:active {
   background: var(--accent-tint);
 }
 

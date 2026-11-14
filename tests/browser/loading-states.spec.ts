@@ -25,62 +25,6 @@ async function holdRequests(page: Page, pattern: RegExp, abort = false) {
   return release;
 }
 
-test("Π chooses again at a complete animation boundary and stays static with reduced motion", async ({
-  page,
-}) => {
-  await page.emulateMedia({ reducedMotion: "no-preference" });
-  await page.addInitScript(() => {
-    Math.random = () => 0;
-  });
-  await pairedPage(page);
-  const release = await holdRequests(page, settingsModule);
-  try {
-    await page.setViewportSize({ width: 390, height: 844 });
-    await openSettings(page);
-    const dialog = page.getByRole("dialog", { name: "Settings", exact: true });
-    const close = dialog.getByRole("button", { name: "Close settings" });
-    await expect(close).toBeFocused();
-    const status = dialog.getByRole("status");
-    const loader = status.locator(".pi-loading");
-    await expect(loader).toHaveAttribute("data-variant", "rows");
-    await expect(loader).toHaveCSS("animation-duration", "2.4s");
-    await dialog.evaluate((el) =>
-      Promise.all(
-        el
-          .getAnimations({ subtree: true })
-          .filter((animation) =>
-            Number.isFinite(animation.effect?.getComputedTiming().endTime),
-          )
-          .map((animation) => animation.finished),
-      ),
-    );
-    const before = await status.boundingBox();
-    await page.evaluate(() => {
-      Math.random = () => 0.999;
-    });
-    // Real CSS iteration, including the standard AnimationEvent path in Chromium.
-    await expect(loader).toHaveAttribute("data-variant", "gather", {
-      timeout: 4000,
-    });
-    const after = await status.boundingBox();
-    for (const axis of ["x", "y", "width", "height"] as const)
-      expect(after?.[axis]).toBeCloseTo(before![axis], 1);
-    await page.emulateMedia({ reducedMotion: "reduce" });
-    await expect(loader).toHaveCSS("animation-name", "none");
-    release();
-    await expect(
-      dialog.getByRole("navigation", { name: "Settings categories" }),
-    ).toBeVisible();
-    await expect(close).toBeFocused();
-    await close.press("Escape");
-    await expect(
-      page.getByRole("button", { name: "Toggle navigation", exact: true }),
-    ).toBeFocused();
-  } finally {
-    release();
-  }
-});
-
 test("deferred Settings and Context failures retain focus and recover after reload", async ({
   page,
 }) => {

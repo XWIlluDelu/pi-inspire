@@ -135,6 +135,7 @@ export function PromptChoices({
       <div
         ref={list}
         className="dialog__options"
+        data-keyboard-active="false"
         role="listbox"
         aria-label={label}
         onKeyDown={(event) => {
@@ -160,7 +161,7 @@ export function PromptChoices({
         }}
       >
         {options.map((option, index) => (
-          <div className="prompt-choice" key={index}>
+          <div key={index}>
             <button
               type="button"
               className="picker__row"
@@ -171,7 +172,7 @@ export function PromptChoices({
               onFocus={() => setActive(index)}
               onClick={() => onChoose(option.value)}
             >
-              <span className="extension-dialog__choice">{option.label}</span>
+              {option.label}
             </button>
             {option.details}
           </div>

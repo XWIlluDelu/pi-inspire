@@ -307,18 +307,6 @@
   .nav__catalog-views button, .nav__catalog-clear { min-height: 36px; }
 }
 
-/* With a mouse, the column header's buttons match the conversation header:
-   28px targets, 15px glyphs, 4px apart. Touch keeps its 36px targets. */
-@media (min-width: 901px) and (pointer: fine) {
-  .nav__close,
-  .nav__settings {
-    flex-basis: 28px;
-    width: 28px;
-    height: 28px;
-  }
-
-}
-
 .nav__error {
   margin: calc(var(--space-3) * -1) var(--space-3) var(--space-3);
   padding: var(--space-2) var(--space-3);
@@ -346,9 +334,7 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  /* Compact navigation keeps its original gutter. Desktop aligns row surfaces
-     with the controls while preserving their existing icon/text axes below. */
-  padding: 0 var(--space-3) var(--space-3) var(--space-2);
+  padding: 0 var(--space-3) var(--space-3);
 }
 
 /* Selection and curation are separate buttons within the same row. */
@@ -359,19 +345,6 @@
   position: relative;
   border-radius: var(--radius-sm);
   transition: background var(--dur-micro) var(--ease-standard);
-}
-
-.nav__row--active::before,
-.nav__group-title--active::before {
-  content: "";
-  position: absolute;
-  left: 2px;
-  top: 6px;
-  bottom: 6px;
-  width: 2.5px;
-  border-radius: 2px;
-  background: var(--accent-deep);
-  z-index: 1;
 }
 
 .nav__row-main {
@@ -403,7 +376,6 @@
 .nav__row--active,
 .nav__row--active:hover {
   background: var(--nav-active-bg);
-  box-shadow: inset 0 0 0 1px var(--accent-soft);
 }
 
 .nav__row--highlighted {
@@ -420,48 +392,15 @@
   margin-inline-end: var(--space-1);
 }
 
-.nav__row-action {
-  --nav-action-ink: var(--accent-deep);
-  --nav-action-fill: color-mix(in srgb, var(--ink) 8%, transparent);
+.nav__row .nav__row-action,
+.nav__group-title .nav__row-action {
   width: var(--nav-action-size, 24px);
   height: var(--nav-action-size, 24px);
-  padding: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--faint);
-  cursor: pointer;
-  transition:
-    color var(--dur-micro) var(--ease-standard),
-    background var(--dur-micro) var(--ease-standard);
 }
 
-.nav__row-action--danger {
-  --nav-action-ink: var(--error);
-  --nav-action-fill: var(--error-tint);
-}
-
-.nav__row-action:active:not(:disabled),
-.nav__row-action--danger:focus-visible:not(:disabled) {
-  color: var(--nav-action-ink);
-  background: var(--nav-action-fill);
-}
-
-@media (hover: hover) {
-  .nav__row-action:hover:not(:disabled) {
-    color: var(--nav-action-ink);
-    background: var(--nav-action-fill);
-  }
-}
-
-.nav__row-action:disabled {
-  color: var(--faint);
-  background: transparent;
-  cursor: default;
-  opacity: 0.5;
+.nav__row-action--danger:is(:hover, :active, :focus-visible):not(:disabled) {
+  color: var(--error-ink);
+  background: var(--error-tint);
 }
 
 .nav__list .search-match {
@@ -499,12 +438,6 @@
   justify-content: end;
 }
 
-.nav__row-state > :is(.pi-loading, .pi-status) {
-  /* Render the 12px mark at 10px, anchored to its painted right edge
-     (13.8 / 16), while retaining its slot and vertical centre. */
-  transform-origin: 86.25% 50%;
-  transform: scale(0.8333333333);
-}
 .nav__row-state--running { color: var(--warning); }
 
 .nav__row-dot--attention {
@@ -596,26 +529,6 @@
 .empty-state__hint {
   font-size: var(--text-xs);
   color: var(--faint);
-}
-
-/* Desktop row surfaces align with New/Search while preserving the text axis. */
-@media (min-width: 901px) {
-  .nav__list {
-    --nav-row-inset: var(--space-1);
-    padding-inline-start: var(--space-3);
-  }
-
-  .nav__list .nav__group-toggle,
-  .nav__list > .nav__group--pinned > .nav__group-title {
-    padding-inline-start: var(--space-1);
-  }
-
-  /* Keep the 16px slot and label origin; leave room beside the active marker. */
-  .nav__group-toggle > svg {
-    width: 14px;
-    height: 14px;
-    margin-inline-start: 2px;
-  }
 }
 
 /* --- Shared workspace browser --- */
@@ -759,46 +672,6 @@ button.workspace-tree__status:hover:where(:not(.workspace-tree__status--error)) 
   font-variant-numeric: tabular-nums;
 }
 
-.nav__pagination-button {
-  min-height: 30px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-1);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-control);
-  background: transparent;
-  color: var(--muted);
-  font: inherit;
-  font-size: var(--text-xs);
-  cursor: pointer;
-}
-
-.nav__pagination-button:hover:not(:disabled),
-.nav__pagination-button:focus-visible {
-  color: var(--accent-deep);
-  background: var(--accent-tint);
-}
-
-.nav__pagination-button:hover:not(:disabled) {
-  border-color: var(--accent-deep);
-}
-
-.nav__pagination-button:focus-visible:not(:disabled) {
-  border-color: var(--accent-focus);
-}
-
-.nav__pagination-button:disabled {
-  cursor: default;
-  opacity: 0.7;
-}
-
-@media (hover: none) {
-  .nav__pagination-button {
-    min-height: 40px;
-  }
-}
-
 /* Folder and session actions share a trailing column. */
 .nav__group-title {
   position: relative;
@@ -847,7 +720,6 @@ button.workspace-tree__status:hover:where(:not(.workspace-tree__status--error)) 
   border: 0;
   border-radius: inherit;
   background: transparent;
-  /* Reserve a clear gutter beside the inset active marker. */
   padding: 0 var(--space-2);
   font: inherit;
   color: inherit;

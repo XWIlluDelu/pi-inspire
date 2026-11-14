@@ -35,22 +35,21 @@ import { shallowEqual, store, useAppState } from "../store";
 import { HerdrSettings } from "./HerdrSettings";
 import { HostRestartSettings } from "./HostRestartSettings";
 import { McpSettings } from "./McpSettings";
+import { ConfirmationDialog } from "./Modal";
 import { ModelsSettings } from "./ModelsSettings";
 import { PresentationAdapterSettings } from "./PresentationAdapterSettings";
 import { SessionActionsSettings } from "./SessionActionsSettings";
 import {
   SelectField,
-  SettingField,
   SettingsFeedback,
   SettingsLayout,
   SettingsPage,
   SwitchField,
 } from "./SettingsControls";
-import { SettingsConfirmation } from "./SettingsDialog";
 import { SettingsSection as Section } from "./SettingsSection";
 import { SystemVersionsCard } from "./SystemVersionsCard";
 
-type ChoicePreference = Exclude<keyof typeof preferenceChoices, "palette">;
+type ChoicePreference = keyof typeof preferenceChoices;
 
 function PreferenceChoice({
   name,
@@ -201,7 +200,6 @@ export const SettingsContent = memo(function SettingsContent({
         footer={
           <footer className="settings__footer">
             <div className="settings__footer-status">
-              <span className="settings__version-dot" aria-hidden />
               <span>
                 INSΠRE{" "}
                 {state.version ? `v${state.version}` : "version unavailable"}
@@ -212,7 +210,7 @@ export const SettingsContent = memo(function SettingsContent({
               {install === "available" ? (
                 <button
                   type="button"
-                  className="settings__utility settings__install"
+                  className="button button--quiet"
                   onClick={() => void requestInstall()}
                 >
                   <Laptop size={13} aria-hidden />
@@ -223,7 +221,7 @@ export const SettingsContent = memo(function SettingsContent({
             <div className="settings__footer-actions">
               <button
                 type="button"
-                className="settings__utility settings__utility--reset"
+                className="button button--quiet"
                 onClick={() => setConfirmingReset(true)}
                 title="Reset appearance and behavior preferences"
               >
@@ -237,29 +235,7 @@ export const SettingsContent = memo(function SettingsContent({
           <Section id="display" icon={<Palette size={14} />} title="Display">
             <PreferenceChoice name="theme" prefs={prefs} />
 
-            <SettingField label={preferenceChoices.palette.label}>
-              <div
-                className="palette-picker"
-                role="group"
-                aria-label={preferenceChoices.palette.label}
-              >
-                {preferenceChoices.palette.options.map(
-                  ({ value: palette, label }) => (
-                    <button
-                      type="button"
-                      key={palette}
-                      className="palette-picker__choice"
-                      data-palette-choice={palette}
-                      aria-pressed={prefs.palette === palette}
-                      onClick={() => store.setPreference("palette", palette)}
-                    >
-                      <span className="palette-picker__swatch" aria-hidden />
-                      <span>{label}</span>
-                    </button>
-                  ),
-                )}
-              </div>
-            </SettingField>
+            <PreferenceChoice name="palette" prefs={prefs} />
 
             {(
               ["contentTextSize", "readingWidth", "projectDisplay"] as const
@@ -530,15 +506,17 @@ export const SettingsContent = memo(function SettingsContent({
         </SettingsPage>
       </SettingsLayout>
       {confirmingReset && !suspended ? (
-        <SettingsConfirmation
+        <ConfirmationDialog
           id="reset-preferences"
           title="Reset preferences?"
           description="Restore Display, Conversation, Behavior, and Herdr preferences to their defaults. Pi session settings, models, credentials, MCP servers, and pinned or hidden sessions stay unchanged."
-          confirmLabel="Reset preferences"
           onClose={() => setConfirmingReset(false)}
-          onConfirm={() => {
-            store.restoreDefaultSettings();
-            setConfirmingReset(false);
+          confirm={{
+            label: "Reset preferences",
+            run: () => {
+              store.restoreDefaultSettings();
+              setConfirmingReset(false);
+            },
           }}
         />
       ) : null}

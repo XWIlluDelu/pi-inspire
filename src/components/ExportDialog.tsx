@@ -1,8 +1,7 @@
-import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { store, useAppState } from "../store";
 import { ButtonLabel } from "./ButtonLabel";
-import { Modal } from "./Modal";
+import { DialogHeader, Modal } from "./Modal";
 
 export function ExportDialog({
   sessionId,
@@ -58,19 +57,13 @@ export function ExportDialog({
           void download();
         }}
       >
-        <header className="dialog__header">
-          <h2 className="dialog__title" id="export-title">
-            Export session
-          </h2>
-          <button
-            type="button"
-            className="icon-button"
-            aria-label="Close export"
-            onClick={onClose}
-          >
-            <X size={15} aria-hidden />
-          </button>
-        </header>
+        <DialogHeader
+          title="Export session"
+          id="export-title"
+          bar={false}
+          closeLabel="Close export"
+          onClose={onClose}
+        />
         <fieldset
           className="export-dialog__formats"
           aria-label="Export format"

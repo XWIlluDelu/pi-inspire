@@ -1,31 +1,24 @@
 import type { ReactNode } from "react";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
+import { StartupCard } from "./StartupCard";
 
-interface AppErrorBoundaryProps {
-  children: ReactNode;
-}
-
-/** Keep an unexpected render failure recoverable instead of leaving the local
- * workbench as an unexplained blank page. Error details remain in the browser
- * console; the UI does not expose session content or implementation internals. */
-export function AppErrorBoundary({ children }: AppErrorBoundaryProps) {
+export function AppErrorBoundary({ children }: { children: ReactNode }) {
   return (
     <RenderErrorBoundary
       fallback={
-        <main
-          className="app-error"
+        <StartupCard
           role="alert"
-          aria-labelledby="app-error-title"
+          title="The workbench hit an error"
+          hint="Reload the page. Any running Pi session continues."
         >
-          <div className="app-error__card">
-            <div className="app-error__eyebrow">INSΠRE</div>
-            <h1 id="app-error-title">The workbench hit an error</h1>
-            <p>Reload the page. Any running Pi session continues.</p>
-            <button type="button" onClick={() => window.location.reload()}>
-              Reload page
-            </button>
-          </div>
-        </main>
+          <button
+            type="button"
+            className="button button--primary"
+            onClick={() => window.location.reload()}
+          >
+            Reload page
+          </button>
+        </StartupCard>
       }
     >
       {children}

@@ -69,50 +69,11 @@ test("copies complete saved messages and images from bounded conversation previe
     transcript.locator(".turn--user").filter({ hasText: text });
   const mixed = userTurn("Inspect mixed attachments");
   await expect(mixed).not.toContainText("Multiply coordinates");
-  const mixedBubbles = transcript.locator(".user-bubble").filter({
-    has: page.getByRole("list", { name: "Referenced files" }),
-  });
-  await expect(mixedBubbles).toHaveCount(2);
-  await page.setViewportSize({ width: 320, height: 900 });
-  for (const bubble of await mixedBubbles.all()) {
-    await bubble.scrollIntoViewIfNeeded();
-    const image = bubble.getByRole("group", { name: "Attached images" });
-    const files = bubble.getByRole("list", { name: "Referenced files" });
-    await expect(image.locator("img")).toBeVisible();
-    await expect(files).toHaveText("report.md");
-    const imageBox = (await image.boundingBox())!;
-    expect(imageBox.y + imageBox.height).toBeLessThan(
-      (await files.boundingBox())!.y,
-    );
-  }
-  const files = (await mixed
-    .getByRole("list", { name: "Referenced files" })
-    .boundingBox())!;
-  const prose = (await mixed.locator(".rich-text").boundingBox())!;
-  expect(files.y + files.height).toBeLessThan(prose.y);
-  await expect(mixedBubbles.last().locator(".rich-text")).toHaveCount(0);
-  await page.setViewportSize({ width: 1280, height: 900 });
-
   const search = await openConversationSearch(page);
   const matches = page.getByLabel("Transcript search matches");
   await search.fill("report.md");
   await expect(matches).toHaveText("3 matches");
-  for (const attachment of [true, false, true]) {
-    await search.press("Enter");
-    await expect
-      .poll(() =>
-        page.evaluate(() => {
-          const range = CSS.highlights
-            .get("transcript-current-match")
-            ?.values()
-            .next().value as Range | undefined;
-          const element = range?.startContainer.parentElement;
-          if (!element) return null;
-          return Boolean(element.closest(".user-bubble__file"));
-        }),
-      )
-      .toBe(attachment);
-  }
+  await search.press("Enter");
   await search.fill("Multiply coordinates");
   await expect(matches).toHaveText("0 matches");
   await search.press("Escape");
@@ -153,7 +114,28 @@ test("copies complete saved messages and images from bounded conversation previe
       .poll(() => page.evaluate(() => window.gestureClipboardWrites.at(-1)))
       .toEqual({ text, imageWidth });
   }
+  await page.setViewportSize({ width: 320, height: 1000 });
+  const messageCopy = mixed.getByRole("button", {
+    name: /^(Copy message|Message copied)$/i,
+  });
+  const fork = mixed.getByRole("button", { name: "Fork session from this input" });
+  await messageCopy.press("Tab");
+  await expect(fork).toBeFocused();
   await expect(transcript).not.toContainText(copyTail);
+
+  await openFixtureSession(page, /Compaction checkpoint fixture/);
+  await page.setViewportSize({ width: 320, height: 844 });
+  const checkpoint = page.locator(".context-checkpoint");
+  const disclosure = checkpoint.getByRole("button", { name: "Context compacted", exact: true });
+  await disclosure.press("Enter");
+  await disclosure.press("Tab");
+  const copy = checkpoint.getByRole("button", { name: "Copy compaction summary" });
+  await expect(copy).toBeFocused();
+  await copy.press("Enter");
+  await expect.poll(() => page.evaluate(() => window.gestureClipboardWrites.at(-1))).toEqual({
+    text: "## Preserved context\n\nKeep the parser decisions and remaining work.",
+    imageWidth: null,
+  });
 });
 
 test("starts History Copy at the gesture and delivers complete text and saved PNG without expanding the reader", {
