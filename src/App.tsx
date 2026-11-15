@@ -39,7 +39,6 @@ import { Nav } from "./components/Nav";
 import { Notices } from "./components/Notices";
 import { PaneResizeHandle } from "./components/PaneResizeHandle";
 import { PiLoader } from "./components/PiLoader";
-import { RenameSessionDialog } from "./components/RenameSessionDialog";
 import { RenderErrorBoundary } from "./components/RenderErrorBoundary";
 import type { SettingsCategoryId } from "./components/Settings";
 import { SettingsDialog } from "./components/SettingsDialog";
@@ -551,7 +550,9 @@ export function App() {
   const settingsOpen = inspection?.kind === "settings";
   const closeInspection = useCallback(() => setInspection(null), []);
   const closeCommandPalette = useCallback(() => {
-    setInspection((current) => (current?.kind === "palette" ? null : current));
+    setInspection((current) =>
+      current?.kind === "palette" || current?.kind === "rename" ? null : current,
+    );
   }, []);
   const openCommandHelp = useCallback((mode: "hotkeys" | "changelog") => {
     setInspection({ kind: "help", mode });
@@ -1139,7 +1140,8 @@ export function App() {
       (inspection?.kind === "rename" && inspection.fromPalette) ? (
         <CommandPalette
           active={!extensionOverlayOpen}
-          renameOpen={inspection.kind === "rename"}
+          rename={inspection.kind === "rename" ? inspection : undefined}
+          onRenameBack={closeRename}
           onClose={closeCommandPalette}
           onExportSession={openExport}
           onRenameSession={openRename}
@@ -1147,15 +1149,6 @@ export function App() {
           onToggleCtx={toggleResources}
           onOpenSession={openSession}
           destinations={destinations}
-        />
-      ) : null}
-      {inspection?.kind === "rename" &&
-      inspection.sessionId === state.sessionId ? (
-        <RenameSessionDialog
-          sessionId={inspection.sessionId}
-          initialName={inspection.name}
-          active={!extensionOverlayOpen && !state.readOnlyReason}
-          onClose={closeRename}
         />
       ) : null}
       {inspection?.kind === "help" && !extensionOverlayOpen ? (

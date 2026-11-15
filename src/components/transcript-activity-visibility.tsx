@@ -296,7 +296,7 @@ export function ActivityItemOwner({
   children,
 }: {
   toolCallId?: string;
-  onFocus: () => void;
+  onFocus?: () => void;
   children: ReactNode;
 }) {
   return (

@@ -71,8 +71,8 @@ opens in a floating list near the caret and replaces the token at that caret.
 ### Retained prompt history
 
 Up at the start of the first visual line recalls the preceding input. Down at the last visual
-line moves toward the latest input and restores the unsent draft on reaching it. Escape restores
-the draft. Editing or sending the preview applies its text and artifacts after checking the owner
+line moves toward the latest input and restores the unsent draft on reaching it. Editing or sending
+the preview applies its text and artifacts after checking the owner
 and draft revision. Saved inputs come from the selected branch's retained user messages, including
 pre-compaction messages and reopened sessions.
 
@@ -299,9 +299,11 @@ their own keyboard focus, deadlines and cancellation under [[pi-integration]].
 
 Submission, including the first Welcome message, synchronously hands the exact draft/artifacts to
 an operation keyed by its original receipt and leaves the editor ready for the next input.
-Sending, unknown acceptance and draft recovery belong to that record. On definitive failure or
-unknown acceptance, input returns to the unedited draft left by the handoff. Restore offers it
-alongside later edits. While text or artifacts occupy the
+Sending, unknown acceptance and draft recovery belong to that record. On definitive failure,
+input returns to the unedited draft left by the handoff. Restore offers it alongside later edits.
+An ambiguous response is checked silently against its original receipt, including on reopening a
+tab. If the check still cannot confirm delivery, one quiet notice offers another receipt check
+when the Host can address it. It can be dismissed and the normal Send action keeps working. While text or artifacts occupy the
 editor, Restore's compact quiet action uses the shared neutral unavailable state and keeps its 32px
 target. Artifacts are released only on confirmed acceptance, explicit Clear, or withdrawal after
 restoration. Known acceptance remains non-retryable even if later projection reconciliation

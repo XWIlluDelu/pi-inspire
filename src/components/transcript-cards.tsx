@@ -1272,7 +1272,7 @@ export function GenericCard({
 
 /** Tool identity is part of the annotation grammar: the glyph carries the
  * tool type so a settled batch of cards or tiles scans without reading. */
-function toolIcon(name: string): React.ReactNode {
+export function toolIcon(name: string): React.ReactNode {
   switch (name.toLowerCase()) {
     case "read":
       return <FileText size={14} aria-hidden />;

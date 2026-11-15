@@ -118,6 +118,7 @@ import {
   forgetFileReading,
   lastWorkbenchSession,
   readFileReading,
+  readHistoryReading,
   readWorkbench,
   rememberWorkbenchSession,
   saveWorkbench,
@@ -1804,10 +1805,6 @@ export class AppStore {
       this.composer.forgetUnsupportedDeliveries(this.state.sessionId);
   };
 
-  detachComposerPrompt = (): void => {
-    if (this.state.sessionId) this.composer.detach(this.state.sessionId);
-  };
-
   sendPrompt = async (
     message: string,
     behavior?: "steer" | "followUp",
@@ -1817,8 +1814,6 @@ export class AppStore {
     if (sessionId) {
       const draft = this.drafts.get(sessionId);
       if (editorDraft && editorDraft.revision !== draft.revision) return false;
-      const receipt = this.composer.retryIfTracking(sessionId);
-      if (receipt) return receipt;
     }
     return this.dispatchComposerInput(message, behavior, editorDraft);
   };
@@ -3022,6 +3017,8 @@ export class AppStore {
 
   openContextMode = (contextMode: AppState["contextMode"]): void =>
     this.changeContext(true, contextMode);
+
+  historyReadingState = () => readHistoryReading(this.workbenchKey());
 
   branchCopyContent = (
     targetId: string,

@@ -82,7 +82,7 @@ interface DeliveryRecord {
   attachments: PendingAttachment[];
   projectFiles: string[];
   /** Controls the available recovery action after observation. */
-  recovery: "draft" | "previous" | "reloaded" | "palette";
+  recovery: "draft" | "previous" | "palette";
   refused?: boolean;
   confirmation: ReceiptRead<Api, PromptAcceptedResponse | false>;
   handoffRevision?: number;
@@ -178,24 +178,19 @@ export class ComposerController {
 
   getDeliveryVersion = () => this.deliveryVersion;
 
-  deliveryState = (sessionId: string | null) => ({
-    failedCount: this.deliveriesFor(sessionId, "draft").length,
-    storageIssue: sessionId ? this.storageIssue(sessionId) : undefined,
-    reloaded: this.reloadedDelivery(sessionId)?.receipt.operationId,
-    previous: this.deliveriesFor(sessionId, "previous")[0]?.receipt.operationId,
-  });
+  deliveryState = (sessionId: string | null) => {
+    const previous = this.deliveriesFor(sessionId, "previous").at(-1)?.receipt;
+    return {
+      failedCount: this.deliveriesFor(sessionId, "draft").length,
+      storageIssue: sessionId ? this.storageIssue(sessionId) : undefined,
+      previous: previous?.operationId,
+      canCheckPrevious: previous?.authorityId === this.host.authorityId(),
+    };
+  };
 
   private storageIssue(sessionId: string): ReceiptStorageIssue | undefined {
     const issue = this.storageState.get(sessionId);
     return issue === "unread" ? "storage" : (issue ?? undefined);
-  }
-
-  private reloadedDelivery(
-    sessionId: string | null,
-  ): DeliveryRecord | undefined {
-    return this.deliveriesFor(sessionId).find(
-      ({ recovery }) => recovery === "reloaded",
-    );
   }
 
   private deliveriesFor(
@@ -226,16 +221,19 @@ export class ComposerController {
         : null);
     this.storageState.set(sessionId, issue === "storage" ? "unread" : issue);
     if (!issue)
-      for (const receipt of operations)
-        this.deliveries.set(receipt.operationId, {
+      for (const receipt of operations) {
+        const record: DeliveryRecord = {
           sessionId,
           receipt,
           message: "",
           attachments: [],
           projectFiles: [],
-          recovery: "reloaded",
+          recovery: "previous",
           confirmation: new ReceiptRead(),
-        });
+        };
+        this.deliveries.set(receipt.operationId, record);
+        if (receipt.authorityId === this.host.authorityId()) void this.observe(record);
+      }
     if (issue || operations.length || previous === "unread") this.publish();
   }
 
@@ -243,20 +241,16 @@ export class ComposerController {
     try {
       const issue = this.storageState.get(sessionId);
       if (issue === "format" || issue === "unread") return false;
-      const operations = this.deliveriesFor(sessionId)
-        .filter(({ refused }) => !refused)
-        .map(({ receipt }) => receipt);
-      if (operations.length > MAX_SAVED_DELIVERIES) {
-        this.host.notifyVisible(
-          sessionId,
-          "Check earlier delivery receipts before sending more prompts.",
-        );
-        return false;
+      const records = this.deliveriesFor(sessionId).filter(({ refused }) => !refused);
+      const overflow = Math.max(0, records.length - MAX_SAVED_DELIVERIES);
+      const retired = new Set(this.deliveriesFor(sessionId, "previous").slice(0, overflow));
+      if (retired.size < overflow) return false;
+      const operations = records.filter((record) => !retired.has(record)).map(({ receipt }) => receipt);
+      deliveryStorage.write(DELIVERY_STORAGE + sessionId, operations.length ? operations : null);
+      for (const record of retired) {
+        this.deliveries.delete(record.receipt.operationId);
+        for (const item of record.attachments) this.retireFile(item);
       }
-      deliveryStorage.write(
-        DELIVERY_STORAGE + sessionId,
-        operations.length ? operations : null,
-      );
       this.storageState.set(sessionId, null);
       return true;
     } catch {
@@ -276,17 +270,11 @@ export class ComposerController {
       staged.upload = undefined;
       staged.recovery.reset();
     }
-    let deliveryOutcomeUnknown = false;
     for (const record of this.deliveries.values()) {
       if (!record.confirmation.pending) continue;
-      deliveryOutcomeUnknown = true;
       this.settleDelivery(record);
     }
-    if (deliveryOutcomeUnknown)
-      this.host.notify(
-        "warning",
-        "Connection changed while sending. If the Host restarted, check the conversation before retrying.",
-      );
+
   }
 
   /** Upload handles belong to one Host process, unlike a dropped event socket.
@@ -486,13 +474,6 @@ export class ComposerController {
     this.loadDeliveries(sessionId);
     this.reconcileAuthority(authorityId);
     const draft = this.host.drafts.get(sessionId);
-    if (this.reloadedDelivery(sessionId)) {
-      this.host.notifyVisible(
-        sessionId,
-        "Check or stop tracking the prompt from before this tab reloaded.",
-      );
-      return false;
-    }
     const included = independent ? [] : draft.attachments;
     const blocked = included.find((item) => item.status !== "ready");
     if (blocked) {
@@ -658,10 +639,6 @@ export class ComposerController {
     const api = this.host.api();
     if (!api || record.confirmation.pending || record.refused) return false;
     if (this.host.authorityId() !== authorityId) {
-      this.host.notifyVisible(
-        sessionId,
-        "The Host restarted before delivery was confirmed. Check the conversation before starting a new input.",
-      );
       return false;
     }
     return record.confirmation.observe(api, async (signal) => {
@@ -689,7 +666,19 @@ export class ComposerController {
         return { accepted: true };
       } catch (error) {
         if (!ownsTransport()) return false;
-        const rejection = inputRejection(error);
+        let failure = error;
+        if (!inputRejection(failure) && request && ownsTransport()) {
+          try {
+            await api.observePrompt(receipt, signal);
+            if (!ownsTransport()) return false;
+            this.finishDelivery(record, "accepted");
+            return { accepted: true };
+          } catch (observationError) {
+            if (!ownsTransport()) return false;
+            failure = observationError;
+          }
+        }
+        const rejection = inputRejection(failure);
         if (rejection) {
           for (const item of record.attachments) {
             const staged = this.stagedFiles.get(item.localId);
@@ -702,39 +691,24 @@ export class ComposerController {
           return this.finishDelivery(record, "cleared");
         if (rejection?.code === "ATTACHMENTS_EXPIRED") {
           for (const item of record.attachments) {
-            if (
-              !item.uploadedId ||
-              !rejection.matches?.includes(item.uploadedId)
-            )
+            if (!item.uploadedId || !rejection.matches?.includes(item.uploadedId))
               continue;
             this.patchAttachment(
-              sessionId,
-              item.localId,
+              sessionId, item.localId,
               this.stagedFiles.has(item.localId)
                 ? { status: "uploading" }
-                : {
-                    status: "error",
-                    error:
-                      "This attachment is no longer available. Add it again.",
-                  },
+                : { status: "error", error: "This attachment is no longer available. Add it again." },
             );
           }
         }
         this.settleDelivery(record, Boolean(rejection));
         if (rejection?.code === "ATTACHMENTS_EXPIRED") this.resumeUploads();
         if (rejection?.code === "PROMPT_ABORTED") return false;
-        if (error instanceof ApiError && error.status === 401) {
+        if (failure instanceof ApiError && failure.status === 401) {
           this.host.handleAuthFailure();
-        } else {
-          const message =
-            rejection?.message ??
-            (error instanceof ApiError &&
-            error.code === "ATTACH_CONTROL_OUTCOME_UNKNOWN"
-              ? "The attached Pi did not confirm delivery. Check its conversation before sending again."
-              : "Message delivery is unconfirmed. Retry checks its original receipt.");
-          if (record.recovery === "palette")
-            this.host.notify("warning", message);
-          else this.host.notifyVisible(sessionId, message);
+        } else if (rejection) {
+          if (record.recovery === "palette") this.host.notify("warning", rejection.message);
+          else this.host.notifyVisible(sessionId, rejection.message);
         }
         return false;
       }
@@ -821,17 +795,16 @@ export class ComposerController {
     } = record;
     record.confirmation.cancel();
     const draft = this.host.drafts.get(sessionId);
-    if (this.isLinked(record)) {
-      if (refused) this.host.drafts.update(sessionId, { intentId: undefined });
+    if (!refused) {
+      record.recovery = "previous";
+      if (this.isLinked(record)) this.host.drafts.update(sessionId, { intentId: undefined });
+    } else if (this.isLinked(record)) {
+      this.host.drafts.update(sessionId, { intentId: undefined });
     } else if (record.recovery === "draft") {
-      if (refused) record.refused = true;
-      if (
-        !draft.intentId &&
-        draft.revision === record.handoffRevision &&
-        !hasDraftInput(draft)
-      )
+      record.refused = true;
+      if (!draft.intentId && draft.revision === record.handoffRevision && !hasDraftInput(draft))
         this.restore(record);
-    } else if (refused) {
+    } else {
       this.finishDelivery(record, "cleared");
       return;
     }
@@ -842,13 +815,8 @@ export class ComposerController {
     this.publish();
   }
 
-  retryIfTracking(sessionId: string) {
-    const record = this.currentDelivery(sessionId);
-    if (record) return this.observe(record);
-  }
-
   async retryPrevious(sessionId: string): Promise<void> {
-    const record = this.deliveriesFor(sessionId, "previous")[0];
+    const record = this.deliveriesFor(sessionId, "previous").at(-1);
     if (record && (await this.observe(record)))
       this.host.notifyVisible(sessionId, "The original prompt was accepted.");
   }
@@ -862,56 +830,8 @@ export class ComposerController {
   }
 
   forgetPrevious(sessionId: string): void {
-    const record = this.deliveriesFor(sessionId, "previous")[0];
+    const record = this.deliveriesFor(sessionId, "previous").at(-1);
     if (record) this.forget(record);
-  }
-
-  detach(sessionId: string): void {
-    const draft = this.host.drafts.get(sessionId);
-    const record = this.currentDelivery(sessionId);
-    if (!record || record.confirmation.pending) return;
-    if (record.recovery === "reloaded") return this.forget(record);
-    const submittedIds = new Set(
-      record.attachments.map((item) => item.localId),
-    );
-    // Keep the previous request for inspection. Files already sent to a
-    // possibly completed operation need fresh staging before another send.
-    record.recovery = "previous";
-    const attachments = draft.attachments.flatMap((item) => {
-      if (!submittedIds.has(item.localId)) return [item];
-      const file = this.stagedFiles.get(item.localId)?.file;
-      if (!file && !item.recalledArtifact) return [];
-      const localId = crypto.randomUUID();
-      if (file) this.stage(sessionId, localId, file);
-      return [
-        {
-          ...item,
-          localId,
-          previewUrl:
-            file && item.previewUrl ? URL.createObjectURL(file) : undefined,
-          uploadedId: undefined,
-          uploadedAuthorityId: undefined,
-          status: file ? ("uploading" as const) : ("ready" as const),
-          error: undefined,
-        },
-      ];
-    });
-    if (attachments.length < draft.attachments.length) {
-      this.host.notifyVisible(
-        sessionId,
-        "Re-add attachments whose original bytes are no longer in this tab.",
-      );
-    }
-    this.host.drafts.update(sessionId, { intentId: undefined, attachments });
-    this.publish();
-    this.resumeUploads();
-  }
-
-  private currentDelivery(sessionId: string): DeliveryRecord | undefined {
-    const { intentId } = this.host.drafts.get(sessionId);
-    return intentId
-      ? this.deliveries.get(intentId)
-      : this.reloadedDelivery(sessionId);
   }
 
   restoreFailedPrompt(sessionId: string): boolean {

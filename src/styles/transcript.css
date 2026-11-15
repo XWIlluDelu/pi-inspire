@@ -284,15 +284,6 @@
 .activity-item-boundary {
   display: contents;
 }
-.activity-fold__pages {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  color: var(--muted);
-  font-size: var(--text-xs);
-}
-
 /* User turns read as compact bubbles; assistant turns are open documents.
    Extra space before each user turn groups every prompt with its response. */
 .turn {
@@ -860,6 +851,12 @@
 body.srail-dragging {
   cursor: grabbing;
   user-select: none;
+}
+
+.transcript__persistence-notice {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  margin-block: var(--space-2);
 }
 
 .transcript__history-status {

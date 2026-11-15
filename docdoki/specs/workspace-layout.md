@@ -94,9 +94,10 @@ The strip renders file and terminal descriptors directly and uses the same descr
 Focused terminal windows use the same tab strip and keyboard navigation. Focused layout changes
 which documents the strip lists and preserves the mounted terminal view.
 
-Files and Changes use the same selection tint as open file and terminal tabs. The Terminal shortcut
+Files, Changes and History use the same selection tint as open file and terminal tabs. The Terminal shortcut
 creates a terminal. A pane at most 400px wide gives open tabs a second row when present.
-File, PDF and terminal actions use the same compact toolbar above their content. Terminal search
+File and terminal actions float over their content. PDF keeps its compact control row and reserves
+clearance below the file actions in a narrow pane. Terminal search
 and selection overlays stay within the output area.
 Desktop HTML previews use the context perimeter instead of a second complete inner frame.
 

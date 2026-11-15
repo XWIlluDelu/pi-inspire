@@ -778,6 +778,13 @@
     display: flex;
     gap: 4px;
     overflow-x: auto;
+    scrollbar-width: none;
+    scroll-snap-type: x mandatory;
+  }
+
+  .terminal-touch-keys__scroller > button {
+    scroll-snap-align: start;
+    scroll-snap-stop: always;
   }
 
   .terminal-touch-keys__arrows {
@@ -833,4 +840,12 @@
     color: var(--accent-deep);
     background: var(--accent-tint);
   }
+}
+
+.terminal-menu__group > div { padding-inline-start: var(--space-2); }
+.terminal-menu__popover .terminal-menu__focus { display: none; }
+
+@media (max-width: 480px) {
+  .terminal-toolbar__focus.icon-button { display: none; }
+  .terminal-menu__popover .terminal-menu__focus { display: flex; }
 }

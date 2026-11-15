@@ -368,14 +368,6 @@ test("real Pi questions preserve workbench edits and restore the native deadline
   await page.keyboard.press("Escape");
   await expect(timed).toBeHidden();
   await expect(above).toContainText(summaryLines.join("\n"));
-  const retry = page.getByRole("button", {
-    name: "Retry delivery",
-    exact: true,
-  });
-  if (await retry.isVisible()) {
-    await retry.click();
-    await expect(retry).toHaveCount(0);
-  }
   await expect(draft).toHaveValue("Keep this unsent draft");
 
   await run("clear");

@@ -93,9 +93,11 @@ test("updates and removes real provider credentials through /login while preserv
     await settings.getByText("Remote login", { exact: true }).tap();
     await expect(settings.getByText(/enter the displayed code/)).toBeVisible();
     const search = settings.getByLabel("Search providers");
-    await settings.getByRole("button", { name: "Back to providers" }).click();
     await expect(search).toHaveValue("copilot");
-    await expect(search).toBeFocused();
+    const provider = settings.getByRole("button", { name: "Set up GitHub Copilot" });
+    await provider.click();
+    await expect(provider).toHaveAttribute("aria-expanded", "false");
+    await expect(search).toBeVisible();
     await settings.getByRole("button", { name: "Close settings" }).click();
 
     await draft.fill("Keep my auth-task draft");

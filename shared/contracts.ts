@@ -949,7 +949,61 @@ export interface UserTurnAnchor {
   attachmentCount: number;
 }
 
+export type BranchNodeRole =
+  | "user"
+  | "assistant"
+  | "tool"
+  | "shell"
+  | "system"
+  | "metadata";
+
+export interface BranchTreeNode {
+  id: string;
+  parentId: string | null;
+  depth: number;
+  type: string;
+  role: BranchNodeRole;
+  label: string;
+  snippet: string;
+  timestamp: string;
+  active: boolean;
+  leaf: boolean;
+  canEdit: boolean;
+  canFork: boolean;
+  /** Complete native child count, independent of this page. */
+  childCount?: number;
+  /** Latest retained descendant for read-only route inspection. */
+  routeLeafId?: string;
+}
+
+export interface BranchTreeQuery {
+  before?: string;
+  query?: string;
+  /** Read another ancestor path without moving Pi's active leaf. */
+  leafId?: string;
+  /** List routes at this actual branch point; empty string means roots. */
+  parentId?: string;
+}
+
+export interface BranchTreeResponse {
+  sessionId: string;
+  revision: number;
+  incarnation: string;
+  durableLeafId: string | null;
+  effectiveLeafId: string | null;
+  activePath: string[];
+  nodes: BranchTreeNode[];
+  /** The containing input when this route page begins inside a long turn. */
+  leadingPrompt?: BranchTreeNode;
+  truncated: boolean;
+  nextBefore?: string | null;
+  routeLeafId?: string | null;
+  rootCount?: number;
+  skipSummaryPrompt?: boolean;
+}
+
 export interface SessionHistoryPages {
+  outline: BranchTreeResponse;
   turns: { total: number; start: number; turns: UserTurnAnchor[] };
   page: NativeTurnPage;
   branches: {
@@ -1018,6 +1072,8 @@ export interface SavedShellDetails {
 }
 
 export interface BranchEntryResponse {
+  node?: BranchTreeNode;
+  totalChars?: number;
   shell?: SavedShellDetails;
   text: string;
   nextOffset: number | null;

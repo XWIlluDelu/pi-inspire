@@ -45,9 +45,18 @@ export const historyQuerySchema = z.discriminatedUnion("kind", [
   }),
   z.strictObject({
     ...historyAddress,
+    kind: z.literal("outline"),
+    before: z.string().min(1).max(200).optional(),
+    query: z.string().max(500).optional(),
+    leafId: z.string().min(1).max(200).optional(),
+    parentId: z.string().max(200).optional(),
+  }),
+  z.strictObject({
+    ...historyAddress,
     kind: z.literal("entry"),
     targetId: z.string().min(1).max(200),
     offset: historyStart,
+    point: z.literal("1").optional(),
     format: z.literal("message").optional(),
   }),
 ]);

@@ -31,7 +31,7 @@ export function ContextPaneShell({
       if (
         event.target instanceof Element &&
         ref.current?.contains(event.target) &&
-        event.target.closest(".terminal-search, .dock-tabs .choice-panel")
+        event.target.closest(".terminal-search, .dock-tabs .choice-panel, .history-detail")
       )
         return false;
       if (!dismissTerminalMenu(ref.current, event.target)) onClose();

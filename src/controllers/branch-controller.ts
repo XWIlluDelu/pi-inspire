@@ -103,7 +103,7 @@ export class BranchController {
     return this.read(
       (api, signal) => api.sessionHistory(sessionId, viewId, query, signal),
       signal,
-      query.kind === "entry",
+      query.kind === "entry" || query.kind === "outline",
     );
   }
 

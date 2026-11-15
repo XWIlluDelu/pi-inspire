@@ -1105,3 +1105,32 @@ details > .activity-reader { margin-top: var(--space-1); }
   overflow-x: auto;
   overflow-y: hidden;
 }
+
+.activity-strip__items {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.activity-strip__item {
+  min-width: 56px;
+  min-height: var(--activity-row-h);
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--activity-tool);
+  cursor: pointer;
+}
+
+.activity-strip__item:is(:hover, :focus-visible, [aria-expanded="true"]) {
+  background: var(--bg-inset);
+}
+.activity-strip__item[aria-expanded="true"] { border-color: var(--line); }
+.activity-strip__item[data-failed] { color: var(--danger); }
+.activity-strip__detail { animation: activity-reveal var(--dur-standard) var(--ease-standard); }
+@media (prefers-reduced-motion: reduce) {
+  .activity-strip__detail { animation: none; }
+}

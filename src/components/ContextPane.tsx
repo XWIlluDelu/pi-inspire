@@ -1,6 +1,7 @@
 import {
   Folder,
   GitCompareArrows,
+  History,
   RefreshCw,
   SquareTerminal,
 } from "lucide-react";
@@ -14,6 +15,7 @@ import { type ResourceRow, resourceRows } from "../resources";
 import { shallowEqual, store, useAppState } from "../store";
 import { queueTerminalAction } from "../terminal-actions";
 import { hasActiveModal } from "../use-modal-focus";
+import { BranchTree } from "./BranchTree";
 import { ChangesPane } from "./ChangesPane";
 import { ContextPaneClose } from "./ContextPaneShell";
 import type { FileDockTab } from "./ContextTabStrip";
@@ -57,6 +59,8 @@ export const ContextPane = memo(function ContextPane({
     owner: typeof resourceOwner;
     error?: string;
   } | null>(null);
+  const [historyRefresh, setHistoryRefresh] = useState(0);
+  const historyReading = useMemo(() => store.historyReadingState(), [sessionId, cwd]);
   const [terminalReloadKey, setTerminalReloadKey] = useState(0);
   const resourceRequest = useRef<AbortController | null>(null);
   const changesScrollTop = useMemo(() => ({ current: 0 }), [sessionId, cwd]);
@@ -214,6 +218,10 @@ export const ContextPane = memo(function ContextPane({
   const refreshing = manualRefresh?.scope === refreshScope;
   const handleRefresh = async () => {
     if (refreshing) return;
+    if (state.contextMode === "history") {
+      setHistoryRefresh((value) => value + 1);
+      return;
+    }
     if (state.contextMode === "terminal") {
       setTerminalReloadKey((value) => value + 1);
       return;
@@ -258,9 +266,9 @@ export const ContextPane = memo(function ContextPane({
   });
   const tools = (
     <div className="ctx__tools">
-      {(["files", "changes"] as const).map((mode) => {
-        const label = mode === "files" ? "Files" : "Changes";
-        const Icon = mode === "files" ? Folder : GitCompareArrows;
+      {(["files", "changes", "history"] as const).map((mode) => {
+        const label = { files: "Files", changes: "Changes", history: "History" }[mode];
+        const Icon = { files: Folder, changes: GitCompareArrows, history: History }[mode];
         const selected =
           state.contextMode === mode && (mode !== "files" || !activeFile);
         const changesCount =
@@ -359,6 +367,15 @@ export const ContextPane = memo(function ContextPane({
         aria-label="Changes"
       >
         <ChangesPane state={state} browseScrollTop={changesScrollTop} />
+      </div>
+    ) : state.contextMode === "history" ? (
+      <div className="ctx__content" id="context-history-content" role="tabpanel" aria-label="History">
+        <BranchTree
+          key={`${sessionId}:${transcriptViewId}`}
+          readingState={historyReading}
+          refreshKey={historyRefresh}
+          onContextChange={isModal ? onClose : undefined}
+        />
       </div>
     ) : null;
   return (

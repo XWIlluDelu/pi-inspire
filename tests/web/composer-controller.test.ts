@@ -100,10 +100,7 @@ function fixture(receipts = false) {
     },
     send: (text: string, behavior?: "steer" | "followUp") => {
       drafts.setText(sessionId, text);
-      return (
-        controller.retryIfTracking(sessionId) ??
-        controller.send(text, behavior, drafts.get(sessionId))
-      );
+      return controller.send(text, behavior, drafts.get(sessionId));
     },
     receipt: (index = 0) => {
       const [request, , fingerprint] = transport.prompt.mock.calls[index]!;
@@ -190,25 +187,26 @@ it("ignores a retired result and observes the original operation on the new tran
   const [, signal] = f.prompt.mock.calls[0]!;
   f.replaceTransport();
   expect(signal?.aborted).toBe(true);
-  expect(f.draft()).toMatchObject({
-    text: "original",
-    intentId: f.receipt().operationId,
-  });
+  expect(f.draft().text).toBe("");
+  expect(f.draft().intentId).toBeUndefined();
+  expect(f.controller.deliveryState(owner).previous).toBe(f.receipt().operationId);
 
   f.edit("replacement");
   submission.resolve(accepted);
   expect(await sending).toBe(false);
-  expect(await f.controller.retryIfTracking(owner)).toEqual(accepted);
+  await f.controller.retryPrevious(owner);
   expect(f.observePrompt).toHaveBeenCalledExactlyOnceWith(
     f.receipt(),
     expect.any(AbortSignal),
   );
   expect(f.prompt).toHaveBeenCalledOnce();
-  expect(f.draft()).toMatchObject({ text: "replacement", intentId: undefined });
+  expect(f.draft().text).toBe("replacement");
+  expect(f.draft().intentId).toBeUndefined();
 });
 
 it("reloads a current receipt for observation and blocks writes when tab storage cannot track them", async () => {
   let submit = 0;
+  let observe = false;
   const requests = installFetch((url, init) => {
     if (url === "/api/prompt" && ++submit === 1) {
       const { authorityId, operationId } = jsonBody(init);
@@ -223,11 +221,24 @@ it("reloads a current receipt for observation and blocks writes when tab storage
         },
       };
     }
-    if (url.startsWith("/api/prompt")) return { body: accepted };
+    if (url === "/api/prompt") return { body: accepted };
+    if (url.startsWith("/api/prompt/")) {
+      if (observe) return { body: accepted };
+      const receipt = new URL(url, "http://fixture.local");
+      return {
+        status: 409,
+        body: {
+          executor: { kind: "host", authorityId: receipt.searchParams.get("authorityId") },
+          operationId: receipt.pathname.split("/").at(-1),
+          command: "prompt",
+          state: "unknown",
+          error: { status: 409, message: "No confirmation" },
+        },
+      };
+    }
   });
   const original = fixture(true);
   expect(await original.send("unconfirmed", "followUp")).toBe(false);
-  original.controller.detach(owner);
   const saved = sessionStorage.getItem(ledger);
   expect(JSON.parse(saved!)).toEqual([original.receipt()]);
 
@@ -267,22 +278,21 @@ it("reloads a current receipt for observation and blocks writes when tab storage
     reads.mockRestore();
   }
   expect(sessionStorage.getItem(ledger)).toBe(saved);
+  observe = true;
   reopened.controller.loadDeliveries(owner);
   expect(reopened.draft().text).toBe("new draft");
-  expect(await reopened.controller.send("another request")).toBe(false);
   expect(await reopened.send("new draft")).toEqual(accepted);
   const { operationId, authorityId, fingerprint } = original.receipt();
   expect(
     requests.mock.calls.map(([url, init]) => [String(url), init?.method]),
   ).toEqual([
     ["/api/prompt", "POST"],
-    [
-      `/api/prompt/${operationId}?${new URLSearchParams({ authorityId, fingerprint: fingerprint! })}`,
-      undefined,
-    ],
+    [`/api/prompt/${operationId}?${new URLSearchParams({ authorityId, fingerprint: fingerprint! })}`, undefined],
+    [`/api/prompt/${operationId}?${new URLSearchParams({ authorityId, fingerprint: fingerprint! })}`, undefined],
+    ["/api/prompt", "POST"],
   ]);
-  expect(reopened.draft().text).toBe("new draft");
-  expect(sessionStorage.getItem(ledger)).toBeNull();
+  expect(reopened.draft().text).toBe("");
+  await vi.waitFor(() => expect(sessionStorage.getItem(ledger)).toBeNull());
 
   // Old records block fresh sends until the user stops tracking them.
   const unsupported = fixture(true);
@@ -293,60 +303,30 @@ it("reloads a current receipt for observation and blocks writes when tab storage
     "format",
   );
   expect(sessionStorage.getItem(ledger)).toBe(old);
-  expect(requests).toHaveBeenCalledTimes(2);
+  expect(requests).toHaveBeenCalledTimes(4);
   unsupported.controller.forgetUnsupportedDeliveries(owner);
   expect(sessionStorage.getItem(ledger)).toBeNull();
   expect(await unsupported.send("new draft")).toEqual(accepted);
-  expect(requests).toHaveBeenCalledTimes(3);
+  expect(requests).toHaveBeenCalledTimes(5);
 });
 
-it("restores an unknown submission after newer edits and restages exact image bytes only for explicit new input", async () => {
+it("can send a new draft after an unknown delivery without resubmitting its attachments", async () => {
   const f = fixture();
-  const original = new File(["original pixels"], "same.png", {
-    type: "image/png",
-  });
-  await f.stage(image("original"), original);
+  await f.stage(image("original"));
   f.prompt
     .mockRejectedValueOnce(new ApiTransportError("request", true))
     .mockResolvedValue(accepted);
   f.observePrompt.mockRejectedValue(new ApiTransportError("request", true));
-  const sending = f.send("same caption", "steer");
-  f.edit("later");
-  f.edit("");
-  expect(await sending).toBe(false);
-  expect(f.handles()).toEqual([]);
-  expect(f.controller.restoreFailedPrompt(owner)).toBe(true);
-  expect(f.draft().text).toBe("same caption");
-  expect(await f.send("same caption")).toBe(false);
-  expect(f.observePrompt).toHaveBeenCalledExactlyOnceWith(
-    f.receipt(),
-    expect.any(AbortSignal),
-  );
 
-  f.replaceTransport(nextAuthority);
-  expect(await f.send("same caption")).toBe(false);
-  expect(f.notice).toHaveBeenLastCalledWith(
-    expect.stringContaining("Check the conversation"),
-  );
-  expect(f.prompt).toHaveBeenCalledOnce();
-  expect(f.observePrompt).toHaveBeenCalledOnce();
-  expect(f.uploadAttachments).toHaveBeenCalledOnce();
+  expect(await f.send("First caption", "steer")).toBe(false);
+  expect(f.controller.deliveryState(owner).previous).toBe(f.receipt().operationId);
+  expect(f.observePrompt).toHaveBeenCalledExactlyOnceWith(f.receipt(), expect.any(AbortSignal));
 
-  f.upload(image("restaged"));
-  f.controller.detach(owner);
-  await vi.waitFor(() => expect(f.handles()).toEqual(["restaged"]));
-  expect(f.uploadAttachments.mock.calls[1]![0]).toEqual([original]);
-  expect(f.deleteAttachment).not.toHaveBeenCalled();
-  expect(await f.send("same caption")).toEqual(accepted);
-  expect(f.prompt.mock.calls[1]![0]).toMatchObject({
-    authorityId: nextAuthority,
-    message: "same caption",
-    attachmentIds: ["restaged"],
-  });
+  expect(await f.send("New message")).toEqual(accepted);
+  expect(f.prompt.mock.calls[1]![0]).toMatchObject({ message: "New message" });
+  expect(f.prompt.mock.calls[1]![0].attachmentIds).toBeUndefined();
   expect(f.receipt(1).operationId).not.toBe(f.receipt().operationId);
-  expect(f.controller.deliveryState(owner).previous).toBe(
-    f.receipt().operationId,
-  );
+  expect(f.deleteAttachment).not.toHaveBeenCalled();
 });
 
 it("restages browser-held bytes from a failed delivery in its inactive partition after Host replacement", async () => {

@@ -42,6 +42,7 @@ import { ComposerInput } from "./ComposerInput";
 import { Modal } from "./Modal";
 import { visibleSessions } from "./nav-model";
 import { OptionList, useOptionList } from "./OptionList";
+import { RenameSessionForm } from "./RenameSessionForm";
 import { SearchMatchText } from "./SearchMatchText";
 
 interface PaletteItem {
@@ -56,6 +57,7 @@ interface PaletteItem {
 }
 
 const workspaceActions = [
+  { mode: "history", title: "Open History", aliases: ["branches", "inspect history"] },
   { mode: "files", title: "Open Files", aliases: [] },
   { mode: "changes", title: "Open Changes", aliases: [] },
   {
@@ -75,7 +77,8 @@ function runTerminalAction(action: TerminalUiAction): void {
 export const CommandPalette = memo(function CommandPalette({
   onClose,
   active = true,
-  renameOpen,
+  rename,
+  onRenameBack,
   onExportSession,
   onRenameSession,
   onToggleNav,
@@ -85,7 +88,8 @@ export const CommandPalette = memo(function CommandPalette({
 }: {
   onClose: () => void;
   active?: boolean;
-  renameOpen: boolean;
+  rename?: { sessionId: string; name: string };
+  onRenameBack: () => void;
   onExportSession: () => void;
   onRenameSession: (sessionId: string, name: string) => void;
   onToggleNav: () => void;
@@ -138,7 +142,7 @@ export const CommandPalette = memo(function CommandPalette({
     };
   }, []);
   const dialogRef = useRef<HTMLDialogElement>(null);
-  useSearchFocus(active && !preparation && !renameOpen, inputRef, dialogRef);
+  useSearchFocus(active && !preparation && !rename, inputRef, dialogRef);
 
   useEffect(() => {
     if (preparation && preparation.owner !== state.sessionId)
@@ -457,14 +461,16 @@ export const CommandPalette = memo(function CommandPalette({
       active={active}
       aria-label="Command palette"
       onDismiss={onClose}
-      focusSurface={isTouchFirstDevice() && !preparation}
+      focusSurface={isTouchFirstDevice() && !preparation && !rename}
       onEscape={() => {
-        if (preparation && !preparationSending) setPreparation(null);
+        if (rename) onRenameBack();
+        else if (preparation && !preparationSending) setPreparation(null);
         else onClose();
       }}
       onKeyDown={(event) => {
         if (
           preparation ||
+          rename ||
           event.defaultPrevented ||
           isComposingKeyboardEvent(event.nativeEvent) ||
           (event.target !== event.currentTarget &&
@@ -475,7 +481,16 @@ export const CommandPalette = memo(function CommandPalette({
       }}
     >
       <div className="dialog dialog--flush palette">
-        {preparation ? (
+        {rename ? (
+          <RenameSessionForm
+            key={rename.sessionId}
+            sessionId={rename.sessionId}
+            initialName={rename.name}
+            active={active && !state.readOnlyReason}
+            onClose={onRenameBack}
+            onSaved={onClose}
+          />
+        ) : preparation ? (
           <div className="palette__prepare">
             <h2 className="dialog__title">
               {preparedCommand

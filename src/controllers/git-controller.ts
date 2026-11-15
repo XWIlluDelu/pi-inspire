@@ -58,7 +58,7 @@ export interface GitControllerState extends FileInspectionState {
   sessionId: string | null;
   selectionGeneration: number;
   resourcesOpen: boolean;
-  contextMode: "files" | "changes" | "terminal";
+  contextMode: "files" | "changes" | "terminal" | "history";
   gitStatus: GitStatusResponse | null;
   gitStatusError: string | null;
   gitStatusPending: boolean;

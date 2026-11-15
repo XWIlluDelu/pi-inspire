@@ -606,6 +606,7 @@ body.pane-resizing .nav {
 }
 
 .file-preview {
+  container: file-preview / inline-size;
   position: relative;
   flex: 1 1 auto;
   min-height: 0;

@@ -32,14 +32,13 @@ Displayed custom messages break the group and remain independently readable.
 
 | Density | Presentation |
 | --- | --- |
-| Expanded | Starts on the first activity page in source order. |
-| Compact | Starts on the latest activity page. |
-| Collapsed | Starts with the Activity disclosure and summary. |
-| Adaptive (`dynamic`) | Opens the latest activity page while running and closes when settled unless the reader has opened or is inspecting it. |
+| Expanded | All activity in source order. |
+| Compact | Latest 24 items. Earlier activity reveals the omitted prefix in the same group. |
+| Collapsed | Shows the Activity disclosure and matrix. Opening reveals Compact. |
+| Adaptive (`dynamic`) | Starts Compact while running and closes when settled unless the reader has opened or is inspecting it. |
 
-Each group has one persistent disclosure button. Earlier and Later page through at most 24
-items at a time. The group remains open while the reader is inspecting an activity item or
-using the page controls. A selected earlier page keeps its position when new work arrives.
+The header and footer can collapse an open group. Earlier activity expands the omitted prefix
+in place. The group stays open during inspection and no page controls interrupt reading.
 
 Adjacent activity items share one spacing rhythm across assistant-message boundaries; prose and
 expanded details keep their internal spacing. On fine-pointer desktops, activity headers are at
@@ -47,8 +46,7 @@ least 28px high and adjacent Activity groups and context checkpoints are 8px apa
 
 A single neutral vertical guide connects the open group's activity. Assistant-turn attribution rows
 and divider ticks are absent inside and outside groups. The group heading uses Flux Mono at 13px,
-secondary ink. The page controls show the current page and reach every item in the bounded Live
-tail. Individual identities use the smaller compact size and medium weight. Labels retain intrinsic
+secondary ink. Individual identities use the smaller compact size and medium weight. Labels retain intrinsic
 layout width; positive 8px gaps separate label and summary without horizontal scaling or
 label-length-specific negative margins.
 
@@ -100,7 +98,8 @@ Compact. These preferences are independent of the surrounding band's density.
 
 Thinking remains separate from answer text. Terminal control formatting is removed for display;
 Pi history is unchanged. Tool Compact keeps each card header visible with its body closed.
-Tool Compact and Collapsed both use the ordinary tool disclosure row with its details closed.
+Tool Compact uses individual tool disclosure rows. Collapsed presents consecutive settled calls
+as a strip of tool icons. Choosing an icon opens its card below the strip.
 
 Empty native Thinking bodies, including whitespace-only and display-stripped terminal formatting,
 stay closed under Expanded or Adaptive preferences. Their headers remain available, and a manual

@@ -152,6 +152,10 @@ export function useTranscriptRows(options: TranscriptRowProjectionOptions) {
     const rows: Row[] = [];
     const busy = runState === undefined ? streaming : isBusyRunState(runState);
     const last = messages.at(-1);
+    const unconfirmed = messages.reduce(
+      (index, message, next) => (message.__inspireUnconfirmed ? next : index),
+      -1,
+    );
     let activity: ActivityItem[] = [];
     let group = "start";
     let band = 0;
@@ -168,6 +172,10 @@ export function useTranscriptRows(options: TranscriptRowProjectionOptions) {
             visibility={activityFoldVisibility}
             live={live}
             items={activity}
+            collapseTools={
+              toolVisibility === "collapsed" ||
+              (toolVisibility === "dynamic" && !live)
+            }
             choices={choices}
           />
         ),
@@ -318,6 +326,15 @@ export function useTranscriptRows(options: TranscriptRowProjectionOptions) {
               failed:
                 tool?.result?.isError === true ||
                 tool?.activity?.phase === "error",
+              expandedNode: tool ? (
+                <AssistantActivityCard
+                  item={item}
+                  live={false}
+                  dynamicActive={false}
+                  thinkingVisibility={thinkingVisibility}
+                  toolVisibility="expanded"
+                />
+              ) : undefined,
               node: (
                 <AssistantActivityCard
                   item={item}
@@ -359,6 +376,7 @@ export function useTranscriptRows(options: TranscriptRowProjectionOptions) {
               name: message.toolName,
               failed: message.isError === true,
               node: <ToolCard result={message} visibility={cardVisibility} />,
+              expandedNode: <ToolCard result={message} visibility="expanded" />,
             });
           break;
         default:
@@ -381,6 +399,13 @@ export function useTranscriptRows(options: TranscriptRowProjectionOptions) {
               });
           }
       }
+      if (index === unconfirmed)
+        addRow(
+          `${key}:unconfirmed`,
+          <p className="transcript__persistence-notice">
+            Output above could not be confirmed in Pi history.
+          </p>,
+        );
     }
     flushActivity(busy);
     return { rows, toolCalls, toolResults };

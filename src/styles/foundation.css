@@ -35,7 +35,7 @@
   --activity-copy-size: 24px;
   --disclosure-height: 28px;
   --reading-width-max: 820px;
-  --content-max: min(var(--reading-width-max), clamp(680px, 70vw, 980px));
+  --content-max: var(--reading-width-max);
   --composer-max: var(--content-max);
   --font-sans: "IBM Plex Sans SC", system-ui, sans-serif;
   /* Structural labels share the interface face: two type voices only. */

@@ -1,3 +1,4 @@
+import { getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
 import type {
   BranchImageRequest,
   SessionHistoryPages,
@@ -67,7 +68,8 @@ export class RuntimeReadController {
     return this.projectionRead(
       sessionId,
       (projection, slot, effectiveLeafId) => {
-        if (query.kind === "entry") this.host.throwIfConflicted(slot);
+        if (query.kind === "entry" || query.kind === "outline")
+          this.host.throwIfConflicted(slot);
         if (slot.viewId !== viewId)
           throw requestError("The branch changed; try again", 409);
         const explicitLeaf = query.kind === "page" ? query.leafId : undefined;
@@ -77,6 +79,8 @@ export class RuntimeReadController {
         if (
           query.kind === "page" ||
           query.kind === "branches" ||
+          query.kind === "outline" ||
+          (query.kind === "entry" && query.point && saved.entry(query.targetId)) ||
           query.kind === "turns"
         ) {
           history = saved;
@@ -88,6 +92,15 @@ export class RuntimeReadController {
           leaf = explicitLeaf ?? leaf;
         } else if (query.kind === "entry" && saved.entry(query.targetId)) {
           history = saved;
+        }
+        if (query.kind === "outline") {
+          const page = history.historyPage(query, leaf, slot.viewId);
+          return {
+            ...page,
+            revision: slot.branchRevision,
+            skipSummaryPrompt: SettingsManager.create(slot.cwd, getAgentDir())
+              .getBranchSummarySettings().skipPrompt ?? false,
+          } as SessionHistoryPages[Q["kind"]];
         }
         return history.historyPage(query, leaf, slot.viewId, slot.cwd, (path) =>
           this.host.promptFileName(path),

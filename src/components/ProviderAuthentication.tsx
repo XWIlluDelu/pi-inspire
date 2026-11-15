@@ -79,13 +79,11 @@ function AuthenticationPanel({
     kind: discover || initialQuery ? "connect" : "saved",
   });
   const discovering = view.kind === "connect";
-  const selected = discovering ? view.provider : undefined;
   const [attempt, setAttempt] = useState<ProviderLoginAttempt | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const backRef = useRef<HTMLButtonElement>(null);
   const targetQuery = initialQuery.trim().toLowerCase();
   const targetMatches = targetQuery
     ? providers.filter((provider) => matchesProvider(provider, targetQuery))
@@ -244,79 +242,14 @@ function AuthenticationPanel({
     detail && Boolean(detail.stored) !== discovering ? detail : undefined;
   useEffect(() => {
     if (!discovering || attempt) return;
-    if (selected) {
-      backRef.current?.focus();
-      return;
-    }
     const search = searchRef.current;
     const section = search?.closest(".settings__section");
     search?.focus({ preventScroll: Boolean(section) });
     if (section && document.activeElement === search)
       section.scrollIntoView({ block: "start", behavior: "instant" });
-  }, [discovering, selected, attempt]);
-  const providerList =
-    listed.length > 0 ? (
-      <section
-        className="models-auth__providers"
-        aria-label={discovering ? "Available providers" : "Connected providers"}
-      >
-        {listed.map((provider) => {
-          const nameMatches = searchMatchRanges(provider.name, [query.trim()]);
-          const idMatches =
-            discovering && !nameMatches.length
-              ? searchMatchRanges(provider.id, [query.trim()])
-              : [];
-          return (
-            <button
-              key={provider.id}
-              type="button"
-              className="picker__row"
-              aria-label={`${discovering ? "Set up" : "Manage"} ${provider.name}`}
-              aria-expanded={
-                discovering ? undefined : view.provider === provider.id
-              }
-              disabled={busy}
-              onClick={() => {
-                setRemoving(null);
-                setView({
-                  kind: view.kind,
-                  provider:
-                    view.provider === provider.id ? undefined : provider.id,
-                });
-              }}
-            >
-              <SearchMatchText
-                text={provider.name}
-                ranges={discovering ? nameMatches : []}
-              />
-              {idMatches.length > 0 && (
-                <code>
-                  <SearchMatchText text={provider.id} ranges={idMatches} />
-                </code>
-              )}
-              {provider.stored && (
-                <small>
-                  {provider.stored === "api_key"
-                    ? "API key configured"
-                    : "Signed in"}
-                </small>
-              )}
-            </button>
-          );
-        })}
-      </section>
-    ) : loaded && !loading && (!loadError || providers.length > 0) ? (
-      <p className="models-auth__empty">
-        {!discovering
-          ? "No connected providers."
-          : query.trim()
-            ? `No available providers matching "${query.trim()}"`
-            : "No providers available"}
-      </p>
-    ) : null;
+  }, [discovering, attempt]);
   const providerDetail = shownDetail && (
     <div className="models-provider-login__details">
-      <h4>{shownDetail.name}</h4>
       {shownDetail.methods.map((method) => (
         <div className="models-login__method" key={method.type}>
           <button
@@ -366,6 +299,71 @@ function AuthenticationPanel({
         ))}
     </div>
   );
+  const providerList =
+    listed.length > 0 ? (
+      <section
+        className="models-auth__providers"
+        aria-label={discovering ? "Available providers" : "Connected providers"}
+      >
+        {listed.map((provider) => {
+          const nameMatches = searchMatchRanges(provider.name, [query.trim()]);
+          const idMatches =
+            discovering && !nameMatches.length
+              ? searchMatchRanges(provider.id, [query.trim()])
+              : [];
+          return (
+            <div key={provider.id} className="models-provider-login">
+              <div className="models-provider-login__heading">
+                <div className="models-provider-login__copy">
+              <SearchMatchText
+                text={provider.name}
+                ranges={discovering ? nameMatches : []}
+              />
+              {idMatches.length > 0 && (
+                <code>
+                  <SearchMatchText text={provider.id} ranges={idMatches} />
+                </code>
+              )}
+              {provider.stored && (
+                <small>
+                  {provider.stored === "api_key"
+                    ? "API key configured"
+                    : "Signed in"}
+                </small>
+              )}
+                </div>
+                <button
+              type="button"
+              className="button models-provider-disclosure"
+              aria-label={`${discovering ? "Set up" : "Manage"} ${provider.name}`}
+              aria-expanded={view.provider === provider.id}
+              disabled={busy}
+              onClick={() => {
+                setRemoving(null);
+                setView({
+                  kind: view.kind,
+                  provider:
+                    view.provider === provider.id ? undefined : provider.id,
+                });
+              }}
+            >
+                  {discovering ? "Set up" : "Manage"}
+                </button>
+              </div>
+              {shownDetail?.id === provider.id && providerDetail}
+            </div>
+          );
+        })}
+      </section>
+    ) : loaded && !loading && (!loadError || providers.length > 0) ? (
+      <p className="models-auth__empty">
+        {!discovering
+          ? "No connected providers."
+          : query.trim()
+            ? `No available providers matching "${query.trim()}"`
+            : "No providers available"}
+      </p>
+    ) : null;
   const latestEvent = attempt?.events.at(-1);
   const loginStatus =
     attempt?.status === "pending"
@@ -502,34 +500,24 @@ function AuthenticationPanel({
           <>
             <button
               type="button"
-              ref={selected ? backRef : undefined}
               className="models-text-button models-auth__back"
-              onClick={() =>
-                setView(selected ? { kind: "connect" } : { kind: "saved" })
-              }
+              onClick={() => setView({ kind: "saved" })}
             >
               <ArrowLeft size={14} aria-hidden />
-              {selected ? "Back to providers" : "Back to connected providers"}
+              Back to connected providers
             </button>
-            {selected ? (
-              providerDetail
-            ) : (
-              <>
-                <SearchField
-                  inputRef={searchRef}
-                  aria-label="Search providers"
-                  value={query}
-                  onValueChange={setQuery}
-                  placeholder="Search providers…"
-                />
-                {providerList}
-              </>
-            )}
+            <SearchField
+              inputRef={searchRef}
+              aria-label="Search providers"
+              value={query}
+              onValueChange={setQuery}
+              placeholder="Search providers…"
+            />
+            {providerList}
           </>
         ) : (
           <>
             {providerList}
-            {providerDetail}
             <button
               type="button"
               className="models-text-button models-auth__connect"

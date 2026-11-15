@@ -65,6 +65,8 @@ import {
   branchEntryContent,
   branchEntryText,
   branchMessageSource,
+  projectHistoryPoint,
+  projectSessionTree,
   indexSessionEntries,
 } from "./session-tree.js";
 
@@ -907,6 +909,7 @@ class SessionEntryIndex {
     id: string,
     offset: number,
     format?: "message",
+    pointLeaf?: string | null,
   ): BranchEntryResponse {
     const entry = this.currentEntriesById.get(id);
     if (!entry) throw requestError("History point no longer exists", 404);
@@ -940,6 +943,10 @@ class SessionEntryIndex {
             },
           }
         : {}),
+      ...(pointLeaf !== undefined ? {
+        node: projectHistoryPoint(this.currentEntries, entry, pointLeaf),
+        totalChars: text.length,
+      } : {}),
       text: text.slice(offset, end),
       nextOffset: end < text.length ? end : null,
       images,
@@ -1111,6 +1118,15 @@ class SessionEntryIndex {
           }),
         };
       }
+      case "outline":
+        return {
+          sessionId: this.sessionId,
+          revision: this.revision,
+          incarnation: this.incarnation,
+          durableLeafId: this.currentLeafId,
+          effectiveLeafId,
+          ...projectSessionTree(this.currentEntries, effectiveLeafId, query),
+        };
       case "branches":
         return this.branchLeaves(effectiveLeafId);
       case "entry":
@@ -1118,6 +1134,7 @@ class SessionEntryIndex {
           query.targetId,
           query.offset ?? 0,
           query.format,
+          query.point ? effectiveLeafId : undefined,
         );
       case "composer":
         return this.composerHistoryPage(

@@ -8,7 +8,7 @@ covers:
   - server/extensions/inspire-branch-bridge.ts
   - shared/{branch-node-actions,branch-bridge-protocol}.ts
   - src/controllers/branch-controller.ts
-  - src/components/{SessionActionsMenu,EarlierBranchBanner,AppTopbar}.tsx
+  - src/components/{BranchTree,SessionActionsMenu,EarlierBranchBanner,AppTopbar}.tsx
   - server/attachments.ts
   - shared/contracts.ts
   - src/store.ts
@@ -36,7 +36,14 @@ corresponds to a Pi leaf and shows its latest user prompt. Clicking a choice ent
 under the current revision and writer admission. Fork remains available on the original user
 message and Clone remains available in the title menu.
 
-Saved pages read through the conversation scrollport and Prompt Map under [[conversation]].
+The right-side **History** tab and **Open History** in the palette open the native branch outline.
+The outline groups replies and activity by user input. It can search a literal phrase across
+saved branches and preview another route or an individual point without moving the active branch.
+Returning from detail restores the outline query, expansion, scroll position and opener. The
+selected point offers the applicable same-session continuation, Edit, Fork and Clone actions.
+The outline and entry reads use the existing view-addressed History endpoint. Saved pages also
+read through the conversation scrollport and Prompt Map under [[conversation]].
+
 Copy and image reads bind to the selected immutable entry and transcript view throughout.
 The Host delivers long text in bounded chunks and returns images in their original part order.
 Leaving the view retires its reads. Shell Copy includes retained command, status and output.
@@ -88,7 +95,8 @@ without deadlocking the mutation lane, and each accepted response is delivered o
 
 ### Native branch summary
 
-The addressed native navigation operation supports carrying Pi's summary with optional
+The History point actions show the option to carry Pi's branch summary for same-session
+continuation where Pi permits it. Summary is off by default. Enabling it reveals optional
 instructions. Cancellation follows Pi's outcome and leaves the original branch selected.
 
 ## Independent Fork and Clone

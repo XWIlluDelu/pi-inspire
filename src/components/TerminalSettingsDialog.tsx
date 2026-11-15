@@ -204,11 +204,30 @@ export function TerminalSettingsDialog({
     label: string,
     controlLabel: string,
     choices: ReadonlyArray<readonly [TerminalUiSettings[Key], string]>,
-    details: { description?: string; className?: string; disabled?: boolean } = {},
+    details: { description?: string; segmented?: boolean; disabled?: boolean; className?: string } = {},
   ) {
+    if (details.segmented)
+      return (
+        <SettingField label={label} description={details.description}>
+          <div className="segmented" role="group" aria-label={controlLabel}>
+            {choices.map(([value, label]) => (
+              <button
+                key={String(value)}
+                type="button"
+                aria-pressed={settings[key] === value}
+                onClick={() => updateUi({ [key]: value })}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </SettingField>
+      );
     return (
       <SelectField
-        {...details}
+        description={details.description}
+        disabled={details.disabled}
+        className={details.className}
         label={label}
         controlLabel={controlLabel}
         value={String(settings[key])}
@@ -300,10 +319,10 @@ export function TerminalSettingsDialog({
                 </SettingField>
                 {select("lineHeight", "Line height", "Terminal line height", [
                   [1, "Compact"], [1.2, "Comfortable"], [1.4, "Spacious"],
-                ])}
+                ], { segmented: true })}
                 {select("cursorStyle", "Cursor", "Terminal cursor shape", [
                   ["block", "Block"], ["bar", "Bar"], ["underline", "Underline"],
-                ])}
+                ], { segmented: true })}
                 {toggle("cursorBlink", "Blinking cursor", "Blinking terminal cursor")}
                 {select("scrollbackRows", "Scrollback", "Terminal scrollback lines",
                   [5000, 20000, 50000, 100000].map((rows) => [
@@ -318,7 +337,7 @@ export function TerminalSettingsDialog({
                 )}
                 {select("shortcutMode", "Shortcut priority", "Terminal shortcut priority", [
                   ["workbench", "Workbench"], ["shell", "Shell"],
-                ], { description: "Where search, copy and paste shortcuts go." })}
+                ], { description: "Where search, copy and paste shortcuts go.", segmented: true })}
                 {isMacTerminalBrowser() && toggle("macOptionIsMeta", "Option as Meta", "Use Option as Meta",
                   "Option sends shell shortcuts instead of special characters.",
                 )}

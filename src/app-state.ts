@@ -253,7 +253,7 @@ export interface AppState extends WorkspaceBrowserState, FileInspectionState {
   pendingAction: { action: "clear" | "recover" } | null;
   /** Files/resources pane visibility (Ctrl+.). */
   resourcesOpen: boolean;
-  contextMode: "files" | "changes" | "terminal";
+  contextMode: "files" | "changes" | "terminal" | "history";
   branchTreeError: string | null;
   branchActionId: string | null;
   gitStatus: GitStatusResponse | null;

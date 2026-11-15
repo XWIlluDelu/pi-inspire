@@ -135,12 +135,6 @@ export function useComposerRecall(
     )
       return;
     const input = event.currentTarget;
-    if (active && event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      select(input, null, active.selection);
-      return;
-    }
     if (input.selectionStart !== input.selectionEnd) return;
     const earlier = event.key === "ArrowUp";
     if (!earlier && event.key !== "ArrowDown") return;

@@ -12,6 +12,7 @@ import {
   Keyboard,
   Maximize2,
   Minimize2,
+  Monitor,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -957,12 +958,10 @@ export const WorkspaceDock = memo(function WorkspaceDock({
     globalGroups.set(terminal.projectCwd, group);
   }
 
-  const terminalSurface = useRef<HTMLElement>(null);
   const toolbar = (
     <FloatingPaneActions
       className="terminal-toolbar"
       label="terminal controls"
-      readingSurface={terminalSurface}
       owner={activeId ?? cwd}
       onKeyDown={onMenuKeyDown}
     >
@@ -1055,7 +1054,7 @@ export const WorkspaceDock = memo(function WorkspaceDock({
       )}
       <button
         type="button"
-        className="icon-button"
+        className="icon-button terminal-toolbar__focus"
         onClick={() => dispatchTerminalAction("focus")}
         aria-label={focused ? "Exit focused terminal" : "Focus terminal"}
         title={focused ? "Exit focus" : "Focus terminal"}
@@ -1101,8 +1100,6 @@ export const WorkspaceDock = memo(function WorkspaceDock({
                   ],
                   ["copy", "Copy all", Copy, false],
                   ["select", "Select text", TextSelect, false],
-                  ["clear", "Clear local scrollback", Eraser, false],
-                  ["reset", "Reset terminal display", RotateCcw, false],
                   [
                     "copy-last",
                     "Copy last output",
@@ -1125,8 +1122,25 @@ export const WorkspaceDock = memo(function WorkspaceDock({
                   <Icon size={14} aria-hidden /> {label}
                 </button>
               ))}
+              <details className="terminal-menu__group" data-terminal-menu-group>
+                <DetailSummary><Monitor size={14} aria-hidden /> Display</DetailSummary>
+                <div>
+                  {([
+                    ["clear", "Clear local scrollback", Eraser],
+                    ["reset", "Reset terminal display", RotateCcw],
+                  ] as const).map(([action, label, Icon]) => (
+                    <button key={action} type="button" onClick={(event) => currentView.invoke(action, event.currentTarget)}>
+                      <Icon size={14} aria-hidden /> {label}
+                    </button>
+                  ))}
+                </div>
+              </details>
             </div>
           )}
+          <button type="button" className="terminal-menu__focus" onClick={() => dispatchTerminalAction("focus")}>
+            {focused ? <Minimize2 size={14} aria-hidden /> : <Maximize2 size={14} aria-hidden />}
+            {focused ? "Exit focused terminal" : "Focus terminal"}
+          </button>
           {activeTerminal ? (
             <>
               <button type="button" onClick={() => beginRename(activeTerminal)}>
@@ -1138,6 +1152,9 @@ export const WorkspaceDock = memo(function WorkspaceDock({
               >
                 <ExternalLink size={14} aria-hidden /> Open in window
               </button>
+              <details className="terminal-menu__group" data-terminal-menu-group>
+                <DetailSummary><SquareTerminal size={14} aria-hidden /> Manage terminal</DetailSummary>
+                <div>
               {([-1, 1] as const).map((step) => {
                 const target =
                   terminals[terminals.indexOf(activeTerminal) + step];
@@ -1177,6 +1194,8 @@ export const WorkspaceDock = memo(function WorkspaceDock({
                   <X size={14} aria-hidden /> Force terminate
                 </button>
               ) : null}
+                </div>
+              </details>
             </>
           ) : null}
           <details
@@ -1315,7 +1334,6 @@ export const WorkspaceDock = memo(function WorkspaceDock({
       {showingContext ? context.body : null}
       <section
         className="terminal-pane"
-        ref={terminalSurface}
         id="context-terminal-content"
         role="tabpanel"
         aria-label="Terminal"

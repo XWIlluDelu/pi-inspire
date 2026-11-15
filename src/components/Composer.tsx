@@ -248,10 +248,9 @@ export const Composer = memo(function Composer() {
   const {
     failedCount,
     storageIssue: deliveryStorageIssue,
-    reloaded: reloadedDelivery,
     previous: previousDelivery,
+    canCheckPrevious,
   } = store.composerDeliveryState(sessionId);
-  const observingDelivery = Boolean(editorDraft.intentId || reloadedDelivery);
   const [deliveryBehavior, setDeliveryBehavior] = useState<
     "steer" | "followUp"
   >("steer");
@@ -296,12 +295,9 @@ export const Composer = memo(function Composer() {
   const canSend = Boolean(
     !sessionOpening &&
       sessionId &&
-      (observingDelivery ||
-        (deliveryStorageIssue !== "format" &&
-          !terminalQueueOnly &&
-          (editorDraft.text.trim() ||
-            editorDraft.attachments.length ||
-            editorDraft.projectFiles.length))),
+      deliveryStorageIssue !== "format" &&
+      !terminalQueueOnly &&
+      (editorDraft.text.trim() || editorDraft.attachments.length || editorDraft.projectFiles.length),
   );
   const activeBehavior = deliveryBusy
     ? deliveryBehavior
@@ -315,18 +311,14 @@ export const Composer = memo(function Composer() {
     void store.sendPrompt(current.text, behavior, current);
   };
 
-  const sendLabel = observingDelivery
-    ? "Retry delivery"
-    : shellInput
+  const sendLabel = shellInput
       ? "Run shell command"
       : !deliveryBusy
         ? "Send message"
         : deliveryBehavior === "steer"
           ? "Send as steer"
           : "Queue after current task";
-  const sendTitle = observingDelivery
-    ? "Check the original delivery receipt"
-    : !shellInput && !deliveryBusy
+  const sendTitle = !shellInput && !deliveryBusy
       ? "Send"
       : sendLabel;
   const activeModel = resolveModelMetadata(state.model, state.availableModels);
@@ -395,20 +387,7 @@ export const Composer = memo(function Composer() {
               <DeliveryNotice text="This tab cannot save delivery records." />
             )
           )}
-          {observingDelivery ? (
-            <DeliveryNotice
-              text={
-                reloadedDelivery
-                  ? "Delivery before reload is unconfirmed"
-                  : "Delivery unconfirmed"
-              }
-            >
-              {deliveryAction(
-                reloadedDelivery ? "Stop tracking" : "New input",
-                store.detachComposerPrompt,
-              )}
-            </DeliveryNotice>
-          ) : failedCount > 0 ? (
+          {failedCount > 0 ? (
             <DeliveryNotice text="Previous input">
               {deliveryAction(
                 "Restore",
@@ -417,14 +396,12 @@ export const Composer = memo(function Composer() {
               )}
             </DeliveryNotice>
           ) : null}
-          {!observingDelivery && previousDelivery && (
-            <DeliveryNotice text="Earlier delivery unconfirmed">
+          {previousDelivery && (
+            <DeliveryNotice text="Previous message unconfirmed">
+              {canCheckPrevious &&
+                deliveryAction("Check receipt", store.retryPreviousComposerDelivery)}
               {deliveryAction(
-                "Check receipt",
-                store.retryPreviousComposerDelivery,
-              )}
-              {deliveryAction(
-                "Stop tracking",
+                "Dismiss",
                 store.forgetPreviousComposerDelivery,
               )}
             </DeliveryNotice>
@@ -545,8 +522,7 @@ export const Composer = memo(function Composer() {
       send={
         !abortable ||
         deliveryBusy ||
-        state.bashRunning ||
-        (observingDelivery && state.runState !== "conflict")
+        state.bashRunning
           ? { disabled: !canSend, label: sendLabel, title: sendTitle }
           : undefined
       }

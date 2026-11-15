@@ -56,7 +56,14 @@ async function writeTerminal(input: Locator, value: string) {
 async function terminalAction(page: Page, name: string) {
   const menu = page.getByLabel("Terminal actions", { exact: true });
   await menu.click();
-  return menu.locator("..").getByRole("button", { name, exact: true });
+  const popover = menu.locator("..");
+  const group = name === "Clear local scrollback" || name === "Reset terminal display"
+    ? "Display"
+    : /^(Move tab|Restart$|Close$|Force terminate$)/u.test(name)
+      ? "Manage terminal"
+      : null;
+  if (group) await popover.locator("summary").getByText(group, { exact: true }).click();
+  return popover.getByRole("button", { name, exact: true });
 }
 
 test("a replacement terminal snapshot retires output still waiting in xterm's parser", async ({

@@ -20,33 +20,32 @@ attachment-retention and PDF experiments are outside the main plan.
 
 ## Current state
 
-The measured inventory is 197,171 source lines. This is a cumulative net reduction of
-54,770 lines from the handbook baseline, including 22,977 application and style lines and
-31,793 test lines. The current cleanup targets internal duplication and uses the current menus,
-action sequences, keyboard behavior and focus as its baseline. Restoring interactions changed
-by earlier batches follows this cleanup. The 60,000-line figure is a progress reference.
+The measured inventory is 203,143 source lines. The cleanup and interaction restoration
+together remove 48,798 lines (19.4%) from the handbook baseline, including
+16,695 application and style lines and 32,103 test lines. The inventory counts
+tracked TypeScript, JavaScript and CSS across the repository and excludes generated font styles.
+Existing menu and tab choices retained by the user stay in place. Background receipt checks keep
+the editor available for the next message. The 60,000-line figure is a progress reference.
 
 - Saved-session queries share the JSONL reader and bounded history transport. Fork and Clone use
   Pi's native branch operation in a thread over a verified prefix. Resource transfers open the
   authorized logical path and validate range versions. HTML keeps the captured document and uses
   the same resource authority.
-- The conversation separates the bounded Live tail from the saved native-turn reader. History
-  reads one page at a time, pins its leaf, searches unloaded entries and restores a saved entry
-  and body section. The title menu, palette and `/tree` open that reader. Reading, routes, search,
-  entry bodies and branch actions replaced the separate contextual outline and its transport.
-  Same-session navigation carries the inspected revision; copies retain independent admission.
-  The browser query type is inferred from the Host's history schema. Live and History share the
+- Conversation history scrolls continuously, with Prompt Map as an in-conversation navigator.
+  The restored right-side History tab inspects saved routes, searches all branches, and exposes
+  native point previews and branch actions through the same view-addressed history transport.
+  The title menu and `/tree` keep their quick branch picker. Live and saved History share the
   Shell card and keep structured log references separate from stdout.
-- Ordinary session open, reconnect and Fork/Clone do not start an owned Pi. An explicit action
-  admits a writer if needed. Cold history still observes an external owner, and normal admission
-  checks ownership again before writing.
+- Opening an ordinary browser conversation warms Pi in the background to load extension controls
+  before first input. Read-only route inspection can observe an external owner. Native writer
+  admission still checks ownership before an action can write.
 - Thinking level and per-session runtime settings keep confirmed values separate from pending
   writes. Deletion applies the committed result once and keeps confirmed navigation metadata
   when cleanup fails.
 - The workspace tab strip scrolls and offers one searchable list for files and terminals. The
   old width-based hide/show registry and mutation observer are gone. The dock renders terminal
   tab descriptors directly; terminal output and control lifetimes stay with their existing owner.
-  File and terminal actions stay in ordinary toolbar rows. The dock uses one current navigation
+  File and terminal actions float over the content. The dock uses one current navigation
   record and keeps current-schema reading positions without translating retired Git-side offsets.
 - The start and session editors render their stored text directly. Input history copies text and
   artifacts on explicit selection. Editor height follows CSS instead of measuring the textarea or

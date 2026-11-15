@@ -13,7 +13,7 @@ export function FloatingPaneActions({
   label: string;
   className: string;
   children: ReactNode;
-  readingSurface: React.RefObject<HTMLElement | null>;
+  readingSurface?: React.RefObject<HTMLElement | null>;
   owner: unknown;
   onKeyDown?: React.KeyboardEventHandler<HTMLDivElement>;
 }) {
@@ -23,7 +23,7 @@ export function FloatingPaneActions({
 
   useEffect(() => {
     setExpanded(true);
-    const surface = readingSurface.current;
+    const surface = readingSurface?.current;
     if (!surface) return;
     const collapse = (event: Event) => {
       if (

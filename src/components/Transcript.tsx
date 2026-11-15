@@ -306,7 +306,6 @@ export const Transcript = memo(function Transcript({
     else void store.openResource(reference);
   };
 
-  const unconfirmed = messages.some((message) => message.__inspireUnconfirmed);
   const selectedSearchRow = search.matches[search.currentMatch]?.rowIndex;
 
   return (
@@ -439,11 +438,6 @@ export const Transcript = memo(function Transcript({
                     Retry
                   </button>
                 )}
-              </p>
-            )}
-            {unconfirmed && (
-              <p className="transcript__persistence-notice" role="status">
-                Some live output was not confirmed in Pi history.
               </p>
             )}
             <TranscriptImageOwnerContext value={imageOwner}>
