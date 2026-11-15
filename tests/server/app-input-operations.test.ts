@@ -164,7 +164,10 @@ describe("HTTP prompt operation ownership", () => {
         outcomeUnknown: true,
       }),
     );
-    const delivery = promptDelivery({ sessionId: "fixture-active", message: "send once" });
+    const delivery = promptDelivery({
+      sessionId: "fixture-active",
+      message: "send once",
+    });
     const expected = {
       ...hostReceipt("prompt", delivery),
       state: "unknown",
@@ -175,7 +178,8 @@ describe("HTTP prompt operation ownership", () => {
       },
     };
     await localRequest.post("/api/prompt").send(delivery).expect(504, expected);
-    await localRequest.get(`/api/prompt/${delivery.operationId}`)
+    await localRequest
+      .get(`/api/prompt/${delivery.operationId}`)
       .query({ authorityId: delivery.authorityId })
       .expect(504, expected);
     expect(prompt).toHaveBeenCalledOnce();
@@ -187,7 +191,9 @@ describe("HTTP Pending recovery and abort ownership", () => {
     const action = "recover";
     const f = await start();
     const result = { steering: ["original text"], followUp: [] };
-    const operation = vi.spyOn(f.runtime, "recoverPending").mockResolvedValue(result);
+    const operation = vi
+      .spyOn(f.runtime, "recoverPending")
+      .mockResolvedValue(result);
     const body = {
       sessionId: "fixture-active",
       authorityId: f.application.authorityId,
@@ -202,10 +208,13 @@ describe("HTTP Pending recovery and abort ownership", () => {
       result,
     };
     await post().expect(200, expected);
-    await f.localRequest.post("/api/prompt").send({
-      ...body,
-      message: "This ID is already owned by a Pending command",
-    }).expect(409);
+    await f.localRequest
+      .post("/api/prompt")
+      .send({
+        ...body,
+        message: "This ID is already owned by a Pending command",
+      })
+      .expect(409);
     const { operationId, ...query } = body;
     await f.localRequest
       .get(`/api/pending/operations/${operationId}`)
@@ -216,10 +225,7 @@ describe("HTTP Pending recovery and abort ownership", () => {
       .post(path)
       .send({ ...body, expectedViewId: "another-view" })
       .expect(409);
-    await f.localRequest
-      .post("/api/control/abort")
-      .send(body)
-      .expect(409);
+    await f.localRequest.post("/api/control/abort").send(body).expect(409);
     expect(operation).toHaveBeenCalledExactlyOnceWith(
       body.sessionId,
       body.expectedViewId,

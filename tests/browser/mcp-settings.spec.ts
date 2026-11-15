@@ -6,10 +6,12 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, type Locator, type Page, test } from "@playwright/test";
-import { browserFixtureHome } from "./fixtures/workspace.mjs";
+import {
+  browserFixtureHome,
+  browserFixtureProjects,
+} from "./fixtures/workspace.mjs";
 import { expectConfigurationField } from "./support/configuration-form";
 import { routeSnapshots } from "./support/host-events";
 import {
@@ -35,7 +37,7 @@ const expectServer = async (
 
 async function scenario(page: Page, session: "live" | "new") {
   const root = await realpath(
-    await mkdtemp(join(tmpdir(), "inspire-browser-mcp-")),
+    await mkdtemp(join(browserFixtureProjects, "mcp-")),
   );
   const cwd = join(root, "project");
   const userFile = join(browserFixtureHome, "agent/mcp.json");
@@ -47,7 +49,6 @@ async function scenario(page: Page, session: "live" | "new") {
   const close = async () => {
     if (previous) await writeFile(userFile, previous);
     else await rm(userFile, { force: true });
-    await rm(root, { recursive: true, force: true });
   };
   try {
     await mkdir(join(cwd, ".pi"), { recursive: true });

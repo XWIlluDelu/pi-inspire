@@ -1,4 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
+import { COPY_FIXTURE_SESSION_ID, savedCopy } from "../fixtures/workbench-sessions";
 import { openFixtureSession, pairedPage } from "./support/navigation";
 
 test.use({ serviceWorkers: "block", viewport: { width: 1280, height: 900 } });
@@ -35,7 +36,9 @@ test("switches branches directly from the title menu and keeps the draft", async
 test("Fork restores saved images for preview, editing and explicit resend", async ({
   page,
 }) => {
-  await connectCalibration(page);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await pairedPage(page);
+  await openFixtureSession(page, /Copy saved messages/, COPY_FIXTURE_SESSION_ID);
   const composer = page.getByRole("form", { name: "Message composer" });
   const input = composer.getByRole("textbox", {
     name: "Message",
@@ -44,15 +47,11 @@ test("Fork restores saved images for preview, editing and explicit resend", asyn
   await input.fill("Keep this source draft");
   const transcript = page.getByRole("log");
   const turn = transcript.locator(".turn--user").filter({
-    hasText: "Compare the calibration strategies",
+    hasText: "User source.",
   });
-  await page.getByRole("button", { name: "Open prompt map" }).focus();
-  const prompts = page.getByRole("list", { name: "User prompts" });
-  await prompts.press("Home");
-  await prompts
-    .getByRole("button", { name: /Compare the calibration strategies/ })
-    .press("Enter");
-  await expect(turn).toBeInViewport();
+  await expect(
+    page.getByRole("button", { name: /^Session & usage/ }),
+  ).toBeVisible();
   const response = page.waitForResponse(
     (response) => new URL(response.url()).pathname === "/api/branches/fork",
   );
@@ -60,7 +59,7 @@ test("Fork restores saved images for preview, editing and explicit resend", asyn
   await turn.getByRole("button", { name: /fork/i }).click();
   const forked = await (await response).json();
   expect(forked.editorAttachments).toHaveLength(1);
-  expect(forked.editorText).toContain("Compare the calibration strategies");
+  expect(forked.editorText).toBe(savedCopy.user);
   await expect(input).toHaveValue(forked.editorText);
   const restored = composer.locator(".image-preview--attachment");
   await expect(restored).toHaveCount(1);

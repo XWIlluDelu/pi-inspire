@@ -108,5 +108,4 @@ describe("maintenance restart admission", () => {
     expect(worker.stops).toBe(1);
     await expect(settled).resolves.toBeInstanceOf(Error);
   });
-
 });

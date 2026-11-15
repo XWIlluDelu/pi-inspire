@@ -114,7 +114,8 @@ async function errorBody(
     return isJsonRecord(decoded) ? decoded : null;
   } catch (error) {
     if (aborted(error)) throw error;
-    if (!(error instanceof SyntaxError)) throw new ApiTransportError("response");
+    if (!(error instanceof SyntaxError))
+      throw new ApiTransportError("response");
     return null;
   }
 }
@@ -198,7 +199,9 @@ export async function request<T>(
       if (init.body !== undefined && !headers.has("Content-Type"))
         headers.set("Content-Type", "application/json");
       const response = await applicationFetch(
-        path, { ...init, signal, headers }, transport,
+        path,
+        { ...init, signal, headers },
+        transport,
       );
       const identity = options.matchReceipt;
       if (!identity) {

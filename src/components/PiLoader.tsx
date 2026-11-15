@@ -1,9 +1,13 @@
 import type { ComponentProps } from "react";
 
 const points = [
-  [3.1, 3.1], [8, 3.1], [12.9, 3.1],
-  [3.1, 8], [12.9, 8],
-  [3.1, 12.9], [12.9, 12.9],
+  [3.1, 3.1],
+  [8, 3.1],
+  [12.9, 3.1],
+  [3.1, 8],
+  [12.9, 8],
+  [3.1, 12.9],
+  [12.9, 12.9],
 ] as const;
 
 type Props = Omit<ComponentProps<"svg">, "children" | "width" | "height"> & {
@@ -21,7 +25,14 @@ export function PiLoader({ size = 14, className = "", ...props }: Props) {
       {...props}
     >
       {points.map(([x, y]) => (
-        <rect key={`${x}:${y}`} x={x - 0.9} y={y - 0.9} width="1.8" height="1.8" rx="0.55" />
+        <rect
+          key={`${x}:${y}`}
+          x={x - 0.9}
+          y={y - 0.9}
+          width="1.8"
+          height="1.8"
+          rx="0.55"
+        />
       ))}
     </svg>
   );

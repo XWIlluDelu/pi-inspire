@@ -250,7 +250,9 @@ it("bounds native Codemode receipts and keeps generic nested results scoped, red
   });
   tool("update", "parent/1", "read", {
     parentToolCallId,
-    partialResult: { content: [{ type: "text", text: "PRIVATE_CHILD_OUTPUT" }] },
+    partialResult: {
+      content: [{ type: "text", text: "PRIVATE_CHILD_OUTPUT" }],
+    },
   });
   tool("end", "parent/1", "read", {
     parentToolCallId,

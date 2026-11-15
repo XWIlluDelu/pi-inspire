@@ -111,6 +111,10 @@ test("Markdown and Notebook figures share scoped galleries while authored links 
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
   const source = resources.getByRole("button", { name: "Source", exact: true });
+  if (!(await source.isVisible()))
+    await resources
+      .getByRole("button", { name: "Show file actions", exact: true })
+      .click();
   await source.click();
   await expect(
     resources.getByRole("region", { name: "File source" }),
@@ -148,10 +152,15 @@ test("responsive panel history retires without dismissing a foreground Notebook 
   const prompts = notebook.locator(".notebook-preview__prompt").filter({
     hasText: "123456789012345",
   });
-  await expect(prompts).toHaveText(["In [123456789012345]", "Out [123456789012345]"]);
-  expect(await prompts.evaluateAll((cells) =>
-    cells.every((cell) => cell.scrollWidth <= cell.clientWidth + 1),
-  )).toBe(true);
+  await expect(prompts).toHaveText([
+    "In [123456789012345]",
+    "Out [123456789012345]",
+  ]);
+  expect(
+    await prompts.evaluateAll((cells) =>
+      cells.every((cell) => cell.scrollWidth <= cell.clientWidth + 1),
+    ),
+  ).toBe(true);
   await page.goBack();
   await expect(resources).toBeHidden();
 });

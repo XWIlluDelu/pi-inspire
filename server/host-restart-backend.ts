@@ -18,13 +18,19 @@ export function hostRestartBackend(
   const backend =
     options.enabled && process.send
       ? launcherRestartBackend(options.restart)
-      : systemdRestartBackend(root, options.enabled && options.systemdEnabled, options);
+      : systemdRestartBackend(
+          root,
+          options.enabled && options.systemdEnabled,
+          options,
+        );
   return { ...backend, prepare: () => prepareHostRestart(root) };
 }
 
 type RestartTransport = Omit<HostRestartBackend, "prepare">;
 
-function launcherRestartBackend(restart: () => Promise<void>): RestartTransport {
+function launcherRestartBackend(
+  restart: () => Promise<void>,
+): RestartTransport {
   const launcher = createLauncherRestartClient(process);
   return {
     async inspect() {

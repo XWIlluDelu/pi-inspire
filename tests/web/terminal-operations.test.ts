@@ -47,15 +47,20 @@ function reply(
 beforeEach(() => sessionStorage.clear());
 
 it("preserves the original intent across a mismatched receipt, reload, and daemon replacement", async () => {
-  const handle = vi.fn(reply)
+  const handle = vi
+    .fn(reply)
     .mockImplementationOnce((operation) =>
       reply(operation, { executor: { kind: "terminal", epoch: newEpoch } }),
     )
     .mockImplementationOnce((operation) =>
-      reply(operation, {
-        state: "unknown",
-        error: { message: "Receipt expired", status: 409 },
-      }, 409),
+      reply(
+        operation,
+        {
+          state: "unknown",
+          error: { message: "Receipt expired", status: 409 },
+        },
+        409,
+      ),
     )
     .mockImplementationOnce((operation) => reply(operation, { result: null }));
   await expect(

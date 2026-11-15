@@ -183,5 +183,4 @@ describe("session activity presentation", () => {
     view.rerender(row());
     expect(screen.queryByTitle(/Idle in Pi/)).toBeNull();
   });
-
 });

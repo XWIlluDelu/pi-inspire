@@ -354,7 +354,10 @@ it("replaces a preview with the current refusal when file permission is revoked"
   await f.controller.openResource("notes.txt");
   f.resolveResource.mockRejectedValue(new ApiError(403, "Read refused"));
   await f.controller.openResource("notes.txt");
-  expect(f.preview()).toMatchObject({ status: "error", message: "Read refused" });
+  expect(f.preview()).toMatchObject({
+    status: "error",
+    message: "Read refused",
+  });
 });
 
 it("authorizes linked images independently and requires complete addressed media", async () => {
@@ -394,45 +397,44 @@ it("authorizes linked images independently and requires complete addressed media
   expect(f.patch).not.toHaveBeenCalled();
 });
 
-it.each([
-  "pane closes",
-  "reader abort",
-  "transport",
-] as const)("retires image and download ownership on %s", async (change) => {
-  const f = fixture();
-  const read = f.selectDocument();
-  const gate = deferred<typeof image>();
-  const grant = deferred<typeof downloadGrant>();
-  const reader = new AbortController();
-  f.resolveResource
-    .mockRejectedValueOnce(new ApiError(401, "Pair again"))
-    .mockReturnValueOnce(gate.promise);
-  await expect(read()).rejects.toThrow("Pair again");
-  f.resourceDownloadTicket.mockReturnValueOnce(grant.promise);
-  const inline = expect(read(reader.signal)).rejects.toMatchObject({
-    name: "AbortError",
-  });
-  const downloading = f.controller.downloadResource();
-  const result =
-    change === "reader abort"
-      ? downloading
-      : expect(downloading).rejects.toMatchObject({ name: "AbortError" });
-  if (change === "pane closes") f.state.resourcesOpen = false;
-  if (change === "reader abort") reader.abort();
-  if (change === "transport") {
-    f.replaceApi();
-    grant.reject(retired);
-  } else grant.resolve(downloadGrant);
-  if (change === "reader abort")
-    expect(f.resolveResource.mock.calls[1]![1]?.aborted).toBe(true);
-  gate.resolve(image);
-  await Promise.all([inline, result]);
-  expect(f.resourceContent).not.toHaveBeenCalled();
-  expect(f.authFailure).toHaveBeenCalledOnce();
-  expect(f.saveDownload).toHaveBeenCalledTimes(
-    change === "reader abort" ? 1 : 0,
-  );
-});
+it.each(["pane closes", "reader abort", "transport"] as const)(
+  "retires image and download ownership on %s",
+  async (change) => {
+    const f = fixture();
+    const read = f.selectDocument();
+    const gate = deferred<typeof image>();
+    const grant = deferred<typeof downloadGrant>();
+    const reader = new AbortController();
+    f.resolveResource
+      .mockRejectedValueOnce(new ApiError(401, "Pair again"))
+      .mockReturnValueOnce(gate.promise);
+    await expect(read()).rejects.toThrow("Pair again");
+    f.resourceDownloadTicket.mockReturnValueOnce(grant.promise);
+    const inline = expect(read(reader.signal)).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    const downloading = f.controller.downloadResource();
+    const result =
+      change === "reader abort"
+        ? downloading
+        : expect(downloading).rejects.toMatchObject({ name: "AbortError" });
+    if (change === "pane closes") f.state.resourcesOpen = false;
+    if (change === "reader abort") reader.abort();
+    if (change === "transport") {
+      f.replaceApi();
+      grant.reject(retired);
+    } else grant.resolve(downloadGrant);
+    if (change === "reader abort")
+      expect(f.resolveResource.mock.calls[1]![1]?.aborted).toBe(true);
+    gate.resolve(image);
+    await Promise.all([inline, result]);
+    expect(f.resourceContent).not.toHaveBeenCalled();
+    expect(f.authFailure).toHaveBeenCalledOnce();
+    expect(f.saveDownload).toHaveBeenCalledTimes(
+      change === "reader abort" ? 1 : 0,
+    );
+  },
+);
 
 it.each([
   [409, "ambiguous", "ambiguous"],
@@ -443,7 +445,11 @@ it.each([
     const f = fixture();
     const matches = ["a/notes.txt", "b/notes.txt"];
     f.resolveResource.mockRejectedValue(
-      new ApiError(status, "Resolve failed", status === 409 ? matches : undefined),
+      new ApiError(
+        status,
+        "Resolve failed",
+        status === 409 ? matches : undefined,
+      ),
     );
     await f.controller.openResource("notes.txt");
     expect(f.standing("notes.txt")).toBe(standing);

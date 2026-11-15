@@ -472,7 +472,9 @@ export class ResourceController {
         "The transcript image owner changed",
         "AbortError",
       );
-    return this.readAuthorized(scope, (owner) => this.readInlineImage(owner, reference, "transcript"));
+    return this.readAuthorized(scope, (owner) =>
+      this.readInlineImage(owner, reference, "transcript"),
+    );
   }
 
   /** Both image reads and download tickets are bound to the current file. */

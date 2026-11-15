@@ -64,7 +64,9 @@ export function TerminalSettingsDialog({
     useState<TerminalServiceSettings | null>(null);
   const [serviceError, setServiceError] = useState("");
   const [loadingService, setLoadingService] = useState(true);
-  const [serviceOperation, setServiceOperation] = useState<"saving" | "clearing" | null>(null);
+  const [serviceOperation, setServiceOperation] = useState<
+    "saving" | "clearing" | null
+  >(null);
   const operationInFlight = useRef(false);
   const clearing = serviceOperation === "clearing";
   const [readRevision, setReadRevision] = useState(0);
@@ -121,14 +123,21 @@ export function TerminalSettingsDialog({
     setServiceError("");
     try {
       if (patch)
-        setServiceSettings(await api.terminalOperation({
-          command: "updateSettings",
-          params: { patch },
-        }));
+        setServiceSettings(
+          await api.terminalOperation({
+            command: "updateSettings",
+            params: { patch },
+          }),
+        );
       else await api.terminalOperation({ command: "clearHistory", params: {} });
     } catch (error) {
-      setServiceError(error instanceof Error ? error.message :
-        patch ? "Unable to save terminal settings" : "Unable to clear terminal history");
+      setServiceError(
+        error instanceof Error
+          ? error.message
+          : patch
+            ? "Unable to save terminal settings"
+            : "Unable to clear terminal history",
+      );
     } finally {
       operationInFlight.current = false;
       setServiceOperation(null);
@@ -204,7 +213,12 @@ export function TerminalSettingsDialog({
     label: string,
     controlLabel: string,
     choices: ReadonlyArray<readonly [TerminalUiSettings[Key], string]>,
-    details: { description?: string; segmented?: boolean; disabled?: boolean; className?: string } = {},
+    details: {
+      description?: string;
+      segmented?: boolean;
+      disabled?: boolean;
+      className?: string;
+    } = {},
   ) {
     if (details.segmented)
       return (
@@ -231,16 +245,25 @@ export function TerminalSettingsDialog({
         label={label}
         controlLabel={controlLabel}
         value={String(settings[key])}
-        options={choices.map(([value, label]) => ({ value: String(value), label }))}
+        options={choices.map(([value, label]) => ({
+          value: String(value),
+          label,
+        }))}
         onChange={(value) => {
-          const choice = choices.find(([candidate]) => String(candidate) === value);
+          const choice = choices.find(
+            ([candidate]) => String(candidate) === value,
+          );
           if (choice) updateUi({ [key]: choice[0] });
         }}
       />
     );
   }
   function toggle(
-    key: "cursorBlink" | "pasteProtection" | "macOptionIsMeta" | "screenReaderMode",
+    key:
+      | "cursorBlink"
+      | "pasteProtection"
+      | "macOptionIsMeta"
+      | "screenReaderMode",
     label: string,
     controlLabel: string,
     description?: string,
@@ -317,30 +340,71 @@ export function TerminalSettingsDialog({
                     {step(Plus, "Increase terminal font size", 1)}
                   </div>
                 </SettingField>
-                {select("lineHeight", "Line height", "Terminal line height", [
-                  [1, "Compact"], [1.2, "Comfortable"], [1.4, "Spacious"],
-                ], { segmented: true })}
-                {select("cursorStyle", "Cursor", "Terminal cursor shape", [
-                  ["block", "Block"], ["bar", "Bar"], ["underline", "Underline"],
-                ], { segmented: true })}
-                {toggle("cursorBlink", "Blinking cursor", "Blinking terminal cursor")}
-                {select("scrollbackRows", "Scrollback", "Terminal scrollback lines",
-                  [5000, 20000, 50000, 100000].map((rows) => [
-                    rows, `${rows.toLocaleString("en-US")} lines`,
-                  ] as const),
+                {select(
+                  "lineHeight",
+                  "Line height",
+                  "Terminal line height",
+                  [
+                    [1, "Compact"],
+                    [1.2, "Comfortable"],
+                    [1.4, "Spacious"],
+                  ],
+                  { segmented: true },
+                )}
+                {select(
+                  "cursorStyle",
+                  "Cursor",
+                  "Terminal cursor shape",
+                  [
+                    ["block", "Block"],
+                    ["bar", "Bar"],
+                    ["underline", "Underline"],
+                  ],
+                  { segmented: true },
+                )}
+                {toggle(
+                  "cursorBlink",
+                  "Blinking cursor",
+                  "Blinking terminal cursor",
+                )}
+                {select(
+                  "scrollbackRows",
+                  "Scrollback",
+                  "Terminal scrollback lines",
+                  [5000, 20000, 50000, 100000].map(
+                    (rows) =>
+                      [rows, `${rows.toLocaleString("en-US")} lines`] as const,
+                  ),
                 )}
               </>
             ) : category.id === "interaction" ? (
               <>
-                {toggle("pasteProtection", "Protect rich paste", "Protect terminal paste",
+                {toggle(
+                  "pasteProtection",
+                  "Protect rich paste",
+                  "Protect terminal paste",
                   "Confirm multiline text or control characters.",
                 )}
-                {select("shortcutMode", "Shortcut priority", "Terminal shortcut priority", [
-                  ["workbench", "Workbench"], ["shell", "Shell"],
-                ], { description: "Where search, copy and paste shortcuts go.", segmented: true })}
-                {isMacTerminalBrowser() && toggle("macOptionIsMeta", "Option as Meta", "Use Option as Meta",
-                  "Option sends shell shortcuts instead of special characters.",
+                {select(
+                  "shortcutMode",
+                  "Shortcut priority",
+                  "Terminal shortcut priority",
+                  [
+                    ["workbench", "Workbench"],
+                    ["shell", "Shell"],
+                  ],
+                  {
+                    description: "Where search, copy and paste shortcuts go.",
+                    segmented: true,
+                  },
                 )}
+                {isMacTerminalBrowser() &&
+                  toggle(
+                    "macOptionIsMeta",
+                    "Option as Meta",
+                    "Use Option as Meta",
+                    "Option sends shell shortcuts instead of special characters.",
+                  )}
                 <SelectField
                   label="Bell"
                   status={permissionStatus("bell")}
@@ -362,14 +426,26 @@ export function TerminalSettingsDialog({
                     void updateNotification({ longTaskNotifications })
                   }
                 />
-                {select("longTaskThresholdSeconds", "Long task threshold", "Long task notification threshold", [
-                  [5, "5 seconds"], [10, "10 seconds"], [30, "30 seconds"],
-                  [60, "1 minute"], [300, "5 minutes"],
-                ], {
-                  disabled: !settings.longTaskNotifications,
-                  className: "terminal-settings__field--subordinate",
-                })}
-                {toggle("screenReaderMode", "Screen reader mode", "Terminal screen reader mode",
+                {select(
+                  "longTaskThresholdSeconds",
+                  "Long task threshold",
+                  "Long task notification threshold",
+                  [
+                    [5, "5 seconds"],
+                    [10, "10 seconds"],
+                    [30, "30 seconds"],
+                    [60, "1 minute"],
+                    [300, "5 minutes"],
+                  ],
+                  {
+                    disabled: !settings.longTaskNotifications,
+                    className: "terminal-settings__field--subordinate",
+                  },
+                )}
+                {toggle(
+                  "screenReaderMode",
+                  "Screen reader mode",
+                  "Terminal screen reader mode",
                   "Make terminal output readable by screen readers. May slow rendering.",
                 )}
               </>
@@ -395,7 +471,9 @@ export function TerminalSettingsDialog({
                   label="Retention"
                   controlLabel="Terminal output retention"
                   value={String(serviceSettings.historyRetentionDays)}
-                  disabled={serviceOperation !== null || !serviceSettings.persistOutput}
+                  disabled={
+                    serviceOperation !== null || !serviceSettings.persistOutput
+                  }
                   options={[
                     { value: "1", label: "1 day" },
                     { value: "7", label: "7 days" },
@@ -418,7 +496,11 @@ export function TerminalSettingsDialog({
                     className="button button--danger-quiet"
                     disabled={serviceOperation !== null}
                     onClick={() => {
-                      if (window.confirm("Delete all terminal output saved on this Host?"))
+                      if (
+                        window.confirm(
+                          "Delete all terminal output saved on this Host?",
+                        )
+                      )
                         void changeService();
                     }}
                   >

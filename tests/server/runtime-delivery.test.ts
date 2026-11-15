@@ -89,12 +89,18 @@ it("returns a staged attachment to its editor after a definitive Pi refusal", as
     await release.promise;
     throw new Error("prompt rejected");
   });
-  const delivery = expect(f.runtime.prompt({
-    sessionId: "a", message: "First", attachmentIds: [file.id],
-  })).rejects.toThrow("prompt rejected");
+  const delivery = expect(
+    f.runtime.prompt({
+      sessionId: "a",
+      message: "First",
+      attachmentIds: [file.id],
+    }),
+  ).rejects.toThrow("prompt rejected");
   try {
     await leased.promise;
-    await expect(f.store.resolveForPrompt([file.id])).rejects.toThrow(/already belong/);
+    await expect(f.store.resolveForPrompt([file.id])).rejects.toThrow(
+      /already belong/,
+    );
   } finally {
     release.resolve();
   }
@@ -102,7 +108,9 @@ it("returns a staged attachment to its editor after a definitive Pi refusal", as
   const material = await f.store.resolveForPrompt([file.id]);
   f.store.restage([file.id]);
   await f.store.remove(file.id);
-  await expect(access(material.files[0]!.path)).rejects.toMatchObject({ code: "ENOENT" });
+  await expect(access(material.files[0]!.path)).rejects.toMatchObject({
+    code: "ENOENT",
+  });
 });
 
 it.each([
@@ -219,7 +227,9 @@ it.each([
       : [];
   worker.responseOverrides.set(operation, () => {
     if (shell)
-      vi.spyOn(slot.projection!, "reconcile").mockImplementationOnce(async () => fault());
+      vi.spyOn(slot.projection!, "reconcile").mockImplementationOnce(async () =>
+        fault(),
+      );
     if (failure === "history")
       vi.spyOn(slot.workerView!.index, "historyPage").mockImplementationOnce(
         fault,

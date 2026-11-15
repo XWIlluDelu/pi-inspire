@@ -232,7 +232,8 @@ export class ComposerController {
           confirmation: new ReceiptRead(),
         };
         this.deliveries.set(receipt.operationId, record);
-        if (receipt.authorityId === this.host.authorityId()) void this.observe(record);
+        if (receipt.authorityId === this.host.authorityId())
+          void this.observe(record);
       }
     if (issue || operations.length || previous === "unread") this.publish();
   }
@@ -241,12 +242,21 @@ export class ComposerController {
     try {
       const issue = this.storageState.get(sessionId);
       if (issue === "format" || issue === "unread") return false;
-      const records = this.deliveriesFor(sessionId).filter(({ refused }) => !refused);
+      const records = this.deliveriesFor(sessionId).filter(
+        ({ refused }) => !refused,
+      );
       const overflow = Math.max(0, records.length - MAX_SAVED_DELIVERIES);
-      const retired = new Set(this.deliveriesFor(sessionId, "previous").slice(0, overflow));
+      const retired = new Set(
+        this.deliveriesFor(sessionId, "previous").slice(0, overflow),
+      );
       if (retired.size < overflow) return false;
-      const operations = records.filter((record) => !retired.has(record)).map(({ receipt }) => receipt);
-      deliveryStorage.write(DELIVERY_STORAGE + sessionId, operations.length ? operations : null);
+      const operations = records
+        .filter((record) => !retired.has(record))
+        .map(({ receipt }) => receipt);
+      deliveryStorage.write(
+        DELIVERY_STORAGE + sessionId,
+        operations.length ? operations : null,
+      );
       for (const record of retired) {
         this.deliveries.delete(record.receipt.operationId);
         for (const item of record.attachments) this.retireFile(item);
@@ -274,7 +284,6 @@ export class ComposerController {
       if (!record.confirmation.pending) continue;
       this.settleDelivery(record);
     }
-
   }
 
   /** Upload handles belong to one Host process, unlike a dropped event socket.
@@ -691,13 +700,21 @@ export class ComposerController {
           return this.finishDelivery(record, "cleared");
         if (rejection?.code === "ATTACHMENTS_EXPIRED") {
           for (const item of record.attachments) {
-            if (!item.uploadedId || !rejection.matches?.includes(item.uploadedId))
+            if (
+              !item.uploadedId ||
+              !rejection.matches?.includes(item.uploadedId)
+            )
               continue;
             this.patchAttachment(
-              sessionId, item.localId,
+              sessionId,
+              item.localId,
               this.stagedFiles.has(item.localId)
                 ? { status: "uploading" }
-                : { status: "error", error: "This attachment is no longer available. Add it again." },
+                : {
+                    status: "error",
+                    error:
+                      "This attachment is no longer available. Add it again.",
+                  },
             );
           }
         }
@@ -707,7 +724,8 @@ export class ComposerController {
         if (failure instanceof ApiError && failure.status === 401) {
           this.host.handleAuthFailure();
         } else if (rejection) {
-          if (record.recovery === "palette") this.host.notify("warning", rejection.message);
+          if (record.recovery === "palette")
+            this.host.notify("warning", rejection.message);
           else this.host.notifyVisible(sessionId, rejection.message);
         }
         return false;
@@ -797,12 +815,17 @@ export class ComposerController {
     const draft = this.host.drafts.get(sessionId);
     if (!refused) {
       record.recovery = "previous";
-      if (this.isLinked(record)) this.host.drafts.update(sessionId, { intentId: undefined });
+      if (this.isLinked(record))
+        this.host.drafts.update(sessionId, { intentId: undefined });
     } else if (this.isLinked(record)) {
       this.host.drafts.update(sessionId, { intentId: undefined });
     } else if (record.recovery === "draft") {
       record.refused = true;
-      if (!draft.intentId && draft.revision === record.handoffRevision && !hasDraftInput(draft))
+      if (
+        !draft.intentId &&
+        draft.revision === record.handoffRevision &&
+        !hasDraftInput(draft)
+      )
         this.restore(record);
     } else {
       this.finishDelivery(record, "cleared");

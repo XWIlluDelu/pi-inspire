@@ -2,10 +2,7 @@ import { expect, type Locator, test } from "@playwright/test";
 import type { GitDiffResponse } from "../../shared/contracts";
 import { focusRingClipping } from "./support/focus-bounds";
 import { routeSnapshots } from "./support/host-events";
-import {
-  openPreviewFixture,
-  openResourceFixture,
-} from "./support/navigation";
+import { openPreviewFixture, openResourceFixture } from "./support/navigation";
 
 const changeRow = /page\.html, modified/;
 const fileTab = { name: "page.html", exact: true };
@@ -68,11 +65,19 @@ test("@cross-browser keeps renamed, conflicting and opaque paths readable in nar
     })),
   ];
   await page.route("**/api/git/status**", (route) =>
-    route.fulfill({ json: {
-      kind: "repository",
-      head: { kind: "branch", name: "review/calibration", oid: "b".repeat(40) },
-      files, total: files.length, truncated: false,
-    } }),
+    route.fulfill({
+      json: {
+        kind: "repository",
+        head: {
+          kind: "branch",
+          name: "review/calibration",
+          oid: "b".repeat(40),
+        },
+        files,
+        total: files.length,
+        truncated: false,
+      },
+    }),
   );
   const pane = await openResourceFixture(page);
   const tab = pane.getByRole("tab", { name: "Changes", exact: true });
@@ -112,7 +117,6 @@ test("@cross-browser keeps renamed, conflicting and opaque paths readable in nar
   await expect(
     pane.getByText("This Git path has no readable workspace file."),
   ).toBeVisible();
-
 });
 
 test.describe("narrow Changes controls", () => {
@@ -217,18 +221,23 @@ test("keeps long line numbers aligned during horizontal scroll", {
   const source = await selectChange(pane);
   await expect(source).toContainText("1000");
   await page.evaluate(() => document.fonts.ready);
-  const gutter = source.locator(".code-row__gutter").first();
+  const gutterInset = () =>
+    source.evaluate((element) => {
+      const gutter = element.querySelector(".code-row__gutter")!;
+      return (
+        gutter.getBoundingClientRect().left -
+        element.getBoundingClientRect().left
+      );
+    });
   const scroll = (left: number) =>
     source.evaluate(
       (element, left) => ((element.scrollLeft = left), element.scrollLeft),
       left,
     );
   expect(await scroll(80)).toBeGreaterThan(0);
-  const gutterX = (await gutter.boundingBox())!.x;
+  await expect.poll(gutterInset).toBeCloseTo(0, 0);
   expect(await scroll(160)).toBeGreaterThan(80);
-  await expect
-    .poll(async () => (await gutter.boundingBox())!.x)
-    .toBeCloseTo(gutterX, 0);
+  await expect.poll(gutterInset).toBeCloseTo(0, 0);
 });
 
 test.describe("touch source navigation", () => {
@@ -245,7 +254,6 @@ test.describe("touch source navigation", () => {
     let pending = false;
     await page.route("**/api/git/diff", async (route) => {
       if (failRefresh) {
-        failRefresh = false;
         return route.fulfill({
           status: 503,
           json: { error: "Repository temporarily unavailable" },
@@ -282,9 +290,11 @@ test.describe("touch source navigation", () => {
     const addition = source.locator('.code-row[data-kind="add"] code');
     const old = await addition.innerText();
     failRefresh = true;
-    await page.clock.fastForward(4_001);
     const stale = pane.getByText(/Source refresh failed/);
-    await expect(stale).toBeVisible();
+    await expect(async () => {
+      await page.clock.fastForward(4_001);
+      await expect(stale).toBeVisible({ timeout: 1_000 });
+    }).toPass({ timeout: 8_000 });
     await expect(addition).toHaveText(old);
     expect(await position()).toEqual(saved);
 
@@ -294,6 +304,7 @@ test.describe("touch source navigation", () => {
     try {
       // Pause the clock so a scheduled poll cannot satisfy the tool refresh.
       await page.clock.pauseAt(await page.evaluate(() => Date.now() + 500));
+      failRefresh = false;
       transport.send({
         type: "tool_execution_end",
         sessionId: "fixture-resources",
@@ -308,6 +319,5 @@ test.describe("touch source navigation", () => {
     await expect(addition).toHaveText("LATEST_VISIBLE_SOURCE");
     await expect(stale).toBeHidden();
     await expect.poll(position).toEqual(saved);
-
   });
 });

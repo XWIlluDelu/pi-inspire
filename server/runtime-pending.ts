@@ -74,7 +74,9 @@ export function projectPendingQueues(
   };
   for (const { key, id, native, held } of pendingRows(pi, host)) {
     if (remaining-- === 0) break;
-    const imageCount = native ? native.imageCount : held?.imageCount || undefined;
+    const imageCount = native
+      ? native.imageCount
+      : held?.imageCount || undefined;
     groups[key].push({
       id,
       ...pendingTextSummary(native ? native.text : held!.message),

@@ -10,7 +10,10 @@ import {
   type TerminalDaemonInfo,
   type TerminalDaemonLaunchOptions,
 } from "./terminal-daemon-configuration.js";
-import { launchTerminalDaemon, waitForTerminalDaemon } from "./terminal-daemon-launcher.js";
+import {
+  launchTerminalDaemon,
+  waitForTerminalDaemon,
+} from "./terminal-daemon-launcher.js";
 import { TERMINAL_DAEMON_PROTOCOL_VERSION } from "./terminal-daemon-protocol.js";
 import { addressAcceptsConnections } from "./terminal-daemon-socket.js";
 import { readTerminalDaemonSecret } from "./terminal-daemon-tls.js";
@@ -166,7 +169,10 @@ export async function controlTerminalDaemon(
     await handoff.release();
     if (action === "stop") return null;
     const replacement = (info: TerminalDaemonInfo) => {
-      if (status.kind === "running" && info.instanceId === status.info.instanceId)
+      if (
+        status.kind === "running" &&
+        info.instanceId === status.info.instanceId
+      )
         throw new Error("The terminal daemon was not replaced.");
       return info;
     };

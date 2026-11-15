@@ -51,11 +51,14 @@ function describeGitResult(result: GitDiffResponse) {
       return {
         icon: GitBranch,
         title: "Submodule change",
-        hint: [
-          result.state.commitChanged && "commit changed",
-          result.state.trackedModified && "tracked content modified",
-          result.state.untracked && "untracked content",
-        ].filter(Boolean).join(" · ") || "Submodule state changed.",
+        hint:
+          [
+            result.state.commitChanged && "commit changed",
+            result.state.trackedModified && "tracked content modified",
+            result.state.untracked && "untracked content",
+          ]
+            .filter(Boolean)
+            .join(" · ") || "Submodule state changed.",
       };
     case "conflict":
       return {

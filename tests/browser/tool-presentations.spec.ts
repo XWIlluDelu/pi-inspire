@@ -159,7 +159,9 @@ test.describe("narrow CodeMode details", () => {
     await expect(row.locator("summary")).toBeInViewport();
     await expect.poll(position).toBeCloseTo(reading, 0);
     await expect(script).toBeFocused();
-    const incomplete = list.locator(".child-call").filter({ hasText: "Unfinished" });
+    const incomplete = list
+      .locator(".child-call")
+      .filter({ hasText: "Unfinished" });
     await expect(incomplete).toBeAttached();
     await expect(
       card.getByRole("button", { name: "View full output" }),
@@ -329,14 +331,17 @@ test("live output and partial arguments follow the reader through native executi
   });
   await expect(card).toContainText("Waiting to execute");
   await expect(file).toBeVisible();
-
 });
 
 test("raw fallback preserves opaque results, complete copies and valid images alongside malformed blocks", async ({
   page,
 }) => {
   const send = await openReview(page);
-  const generic = tool("review_markdown", { other: "unmatched" }, "generic-output");
+  const generic = tool(
+    "review_markdown",
+    { other: "unmatched" },
+    "generic-output",
+  );
   const resultOnly = tool("imported_plot", {});
   const output = `${"Useful output\n".repeat(1000)}Final result line`;
   const png =
@@ -519,8 +524,10 @@ test("saved tool images survive presentation changes and full logs open in the n
     fallback = true;
     await page.setViewportSize({ width: 390, height: 844 });
     await reloadSession(page, selected);
+    await page
+      .getByRole("button", { name: "read tool details", exact: true })
+      .click();
     const detail = toolCard(page, "read");
-    await detail.getByRole("button", { name: "Expand read tool" }).click();
     const thumbnail = detail.getByRole("button", {
       name: "Preview Tool result image 1",
     });
@@ -536,8 +543,10 @@ test("saved tool images survive presentation changes and full logs open in the n
       .toBeGreaterThan(0);
     await page.keyboard.press("Escape");
     await expect(thumbnail).toBeFocused();
+    await page
+      .getByRole("button", { name: "bash tool details", exact: true })
+      .click();
     const shell = toolCard(page, "bash");
-    await shell.getByRole("button", { name: "Expand bash tool" }).click();
     await shell
       .getByRole("button", { name: "View full output" })
       .press("Enter");
@@ -548,7 +557,6 @@ test("saved tool images survive presentation changes and full logs open in the n
     await expect(output).toContainText("native line 1");
     await expect(output).toContainText("native line 2500");
   } finally {
-    await page.goto("about:blank");
     await rm(path, { force: true });
     if (fullOutputPath) await rm(fullOutputPath, { force: true });
   }

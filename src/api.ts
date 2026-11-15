@@ -276,25 +276,25 @@ async function deliverPrompt(
   for (;;) {
     let delay: number;
     try {
-      const receipt = body === undefined
-        ? await readHostReceipt(
-            inputRoutes.observePrompt,
-            observation,
-            identity,
-            "prompt",
-            signal,
-            PROMPT_CONFIRMATION_TIMEOUT_MS,
-          )
-        : await readHostReceipt(
-            inputRoutes.prompt,
-            { body },
-            identity,
-            "prompt",
-            signal,
-            PROMPT_CONFIRMATION_TIMEOUT_MS,
-          );
-      if (receipt.state === "completed")
-        return { accepted: true };
+      const receipt =
+        body === undefined
+          ? await readHostReceipt(
+              inputRoutes.observePrompt,
+              observation,
+              identity,
+              "prompt",
+              signal,
+              PROMPT_CONFIRMATION_TIMEOUT_MS,
+            )
+          : await readHostReceipt(
+              inputRoutes.prompt,
+              { body },
+              identity,
+              "prompt",
+              signal,
+              PROMPT_CONFIRMATION_TIMEOUT_MS,
+            );
+      if (receipt.state === "completed") return { accepted: true };
       failures = 0;
       delay = 250;
     } catch (error) {

@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       scope:
-        description: "Checks, one platform, Safari, or full acceptance"
+        description: "Checks, one platform, Safari, release, or full browser coverage"
         type: choice
         default: checks
         options:
@@ -17,6 +17,7 @@ on:
           - windows
           - macos
           - safari
+          - release
           - full
 
 # Replace obsolete development/PR runs only within the same verification scope.
@@ -30,7 +31,7 @@ permissions:
 
 jobs:
   quality:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope == 'checks' || inputs.scope == 'full' }}
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope == 'checks' || inputs.scope == 'release' || inputs.scope == 'full' }}
     runs-on: ubuntu-latest
     timeout-minutes: 50
     steps:
@@ -40,7 +41,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope == 'full' }}
+      - if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope != 'checks' }}
         run: npx playwright install --with-deps chromium firefox
       - name: Quality checks
         run: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'checks' && 'npm run check' || 'npm run ci' }}
@@ -77,7 +78,8 @@ jobs:
         run: npm run test:portable
       - name: Node and native integration tests
         if: ${{ !cancelled() && inputs.scope != 'safari' && steps.web.outcome == 'success' }}
-        run: npm test -- --project=node --project=integration --exclude 'tests/{web,shared}/**'
+        # These suites start real Pi and Host children beside the Vitest worker.
+        run: npm test -- --project=node --project=integration --exclude 'tests/{web,shared}/**' ${{ matrix.os == 'windows-latest' && '--maxWorkers=1' || '' }}
       - name: Native session Trash and recovery
         if: ${{ !cancelled() && inputs.scope != 'safari' && steps.web.outcome == 'success' }}
         env:
@@ -110,9 +112,8 @@ jobs:
           if-no-files-found: ignore
 
   release-verify:
-    # Run after main lands and on explicit full acceptance of another ref, without
-    # repeating the full packaged-host smoke for every PR edit.
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.scope == 'full')
+    # The release dispatch uses the same gates as a push to main.
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && (inputs.scope == 'release' || inputs.scope == 'full'))
     strategy:
       fail-fast: false
       matrix:

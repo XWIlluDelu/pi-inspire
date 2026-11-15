@@ -51,6 +51,10 @@ test("PDF scrolls continuously through selectable pages, preserves its reading p
   await expect(contentsButton).toHaveText("2 / 2");
   await pdf.getByRole("button", { name: "Previous PDF page" }).click();
   await expect(contentsButton).toHaveText("1 / 2");
+  const showActions = resources.getByRole("button", {
+    name: "Show file actions",
+  });
+  if (await showActions.isVisible()) await showActions.click();
   await expect(
     resources.getByRole("button", { name: "Download report.pdf" }),
   ).toBeEnabled();

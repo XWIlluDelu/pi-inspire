@@ -93,7 +93,9 @@ export class RuntimeWorkerPool {
     const projection = slot.projection;
     slot.projection = null;
     slot.preview = null;
-    return projection?.close().catch((error) => this.host.logRuntimeError(slot.id, error));
+    return projection
+      ?.close()
+      .catch((error) => this.host.logRuntimeError(slot.id, error));
   }
 
   private unclaimed(slot: RuntimeSlot): boolean {

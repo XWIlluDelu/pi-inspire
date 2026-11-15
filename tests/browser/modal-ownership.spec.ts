@@ -95,6 +95,9 @@ test.describe("phone action dialogs", () => {
     await page.goto("about:blank#outside-inspire");
     await pairAndOpen(page);
     const inspireUrl = page.url();
+    const depth = () =>
+      page.evaluate(() => history.state?.__inspireWorkbench?.depth ?? 0);
+    await expect.poll(depth).toBe(0);
     const draft = page.getByRole("textbox", { name: "Message", exact: true });
     await draft.fill("Keep this unfinished input");
     const title = page.getByRole("button", { name: /^Session actions:/ });
@@ -121,8 +124,6 @@ test.describe("phone action dialogs", () => {
       name: "Export session",
       exact: true,
     });
-    const depth = () =>
-      page.evaluate(() => history.state?.__inspireWorkbench?.depth ?? 0);
     for (const [dialog, open] of [
       [palette, () => openCommandPalette(page)],
       [exportDialog, openExport],
@@ -134,6 +135,8 @@ test.describe("phone action dialogs", () => {
       await expect(dialog).toHaveCount(0);
       await expect(page).toHaveURL(inspireUrl);
       await open();
+      await expect(dialog).toBeVisible();
+      await expect.poll(depth).toBe(1);
       await page.keyboard.press("Escape");
       await expect(dialog).toHaveCount(0);
       await expect.poll(depth).toBe(0);
@@ -157,16 +160,25 @@ test("Settings keeps modal ownership when the workspace becomes a drawer @cross-
   await openSettings(page);
   const dialog = page.getByRole("dialog", { name: "Settings", exact: true });
   await expect(dialog).toBeVisible();
-  const system = dialog.getByRole("button", { name: "System", exact: true });
+  const system = dialog
+    .getByRole("navigation", { name: "Settings categories" })
+    .getByRole("button", { name: "System", exact: true });
   await system.press("Enter");
   const content = dialog.locator(".settings__content");
-  const position = await content.evaluate((el) => (el.scrollTop = 8, el.scrollTop));
-  const background = page.getByRole("button", { name: "Toggle resources panel" });
+  const position = await content.evaluate(
+    (el) => ((el.scrollTop = 8), el.scrollTop),
+  );
+  const background = page.getByRole("button", {
+    name: "Toggle resources panel",
+  });
   await background.evaluate((element) => element.focus());
   await expect(dialog.locator(":focus")).toBeVisible();
   await page.setViewportSize({ width: 390, height: 760 });
   await expect(system).toHaveAttribute("aria-current", "location");
-  if (position) await expect.poll(() => content.evaluate((el) => el.scrollTop)).toBe(position);
+  if (position)
+    await expect
+      .poll(() => content.evaluate((el) => el.scrollTop))
+      .toBe(position);
   const close = dialog.getByRole("button", { name: "Close settings" });
   await close.focus();
   await page.keyboard.press("Shift+Tab");

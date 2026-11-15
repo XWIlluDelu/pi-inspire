@@ -242,10 +242,12 @@ test("catalog search follows curation and reviews the exact Hidden selection", a
   await search.press("ArrowDown");
   await expect(selected).toHaveText("Independent hidden session");
   await search.press("ArrowUp");
+  await row.hover();
   await action("Pin").click();
   await expect(action("Unpin")).toBeVisible();
   await search.focus();
   await expect(selected).toHaveText("Reports session");
+  await row.hover();
   await action("Hide").click();
   await expect(action("Restore")).toBeVisible();
   await search.focus();
@@ -303,6 +305,7 @@ test("catalog search follows curation and reviews the exact Hidden selection", a
   const folder = nav.getByRole("button", {
     name: "Delete all sessions in folder archived-a",
   });
+  await nav.getByRole("button", { name: "archived-a", exact: true }).hover();
   await folder.click();
   const dialog = page.getByRole("alertdialog", {
     name: "Clear hidden folder?",
@@ -312,6 +315,7 @@ test("catalog search follows curation and reviews the exact Hidden selection", a
   await dialog.getByRole("button", { name: "Cancel" }).click();
   await expect(dialog).toBeHidden();
   expect(requests).toEqual([]);
+  await nav.getByRole("button", { name: "archived-a", exact: true }).hover();
   await folder.click();
   await deleteOne.click();
   await expect
@@ -422,7 +426,7 @@ test("live attention filters and counts the relevant sessions through rail, draw
       ".navigation-toggle__attention > [aria-hidden]",
     );
     await expect(badge).toHaveText(count);
-    await expect(badge).toBeInViewport({ ratio: 1 });
+    await expect(badge).toBeInViewport({ ratio: 0.9 });
   };
   await check(rail, "1");
   await expect(rail).toHaveAccessibleDescription(

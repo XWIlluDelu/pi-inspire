@@ -1,7 +1,11 @@
 import type { PendingRecovery } from "../../shared/contracts";
 import type { PendingOperationRequest } from "../../shared/host-operations";
 import { type Api, ApiError, ApiTransportError } from "../api";
-import { deferredReceipt, inputRejection, ReceiptRead } from "../operation-observer";
+import {
+  deferredReceipt,
+  inputRejection,
+  ReceiptRead,
+} from "../operation-observer";
 
 interface Handoff {
   intent: string;
@@ -75,10 +79,16 @@ export class PendingRecoveryController {
         try {
           return await api.pendingOperation(request, "start");
         } catch (error) {
-          if (!current() || inputRejection(error, request) || !(
-            error instanceof ApiTransportError ||
-            (error instanceof ApiError && (error.outcomeUnknown || error.status >= 500))
-          )) throw error;
+          if (
+            !current() ||
+            inputRejection(error, request) ||
+            !(
+              error instanceof ApiTransportError ||
+              (error instanceof ApiError &&
+                (error.outcomeUnknown || error.status >= 500))
+            )
+          )
+            throw error;
         }
       }
       return api.pendingOperation(request);

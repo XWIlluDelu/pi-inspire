@@ -818,7 +818,7 @@ button.workspace-tree__status:hover:where(:not(.workspace-tree__status--error)) 
   gap: 2px;
 }
 
-.nav__list > :is(.nav__row, .nav__group) + .nav__group {
+:is(.nav__list, .nav__hidden-content) > :is(.nav__row, .nav__group) + .nav__group {
   margin-top: var(--space-2);
 }
 

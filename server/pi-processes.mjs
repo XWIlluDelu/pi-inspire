@@ -1,4 +1,5 @@
 import { open, readdir, readFile } from "node:fs/promises";
+import { setTimeout as sleep } from "node:timers/promises";
 
 const PI_TITLES = new Set(["pi", "pi-rpc"]);
 const EXITED_STATES = new Set(["Z", "X", "x"]);
@@ -76,7 +77,22 @@ export function createLinuxPiProcessAdapter() {
           // Herdr supplies both pane and socket markers to terminal children;
           // the enhanced runner explicitly propagates them to its nested Pi.
           // Read only target environments and never expose their contents.
-          const environment = (await readFile(`${path}/environ`, "utf8")).split("\0");
+          let environment;
+          try {
+            environment = (await readFile(`${path}/environ`, "utf8")).split("\0");
+          } catch (error) {
+            if (error?.code !== "EACCES" && error?.code !== "EPERM") throw error;
+            // Linux can deny environ before stat reaches an exited state.
+            // Observe briefly on the same proc directory. A live process
+            // whose scope cannot be read must still fail closed.
+            for (const delay of [0, 10, 20, 30]) {
+              if (delay) await sleep(delay);
+              const current = parseStat(await readFile(`${path}/stat`, "utf8"), pid);
+              if (EXITED_STATES.has(current.state))
+                return { ...current, uid, inHerdr };
+            }
+            throw error;
+          }
           inHerdr =
             environment.some((entry) => /^HERDR_PANE_ID=.+$/s.test(entry)) &&
             environment.some((entry) => /^HERDR_SOCKET_PATH=.+$/s.test(entry));
@@ -87,9 +103,7 @@ export function createLinuxPiProcessAdapter() {
     signal(pid, signal) {
       process.kill(pid, signal);
     },
-    sleep(ms) {
-      return new Promise((resolve) => setTimeout(resolve, ms));
-    },
+    sleep,
   };
 }
 

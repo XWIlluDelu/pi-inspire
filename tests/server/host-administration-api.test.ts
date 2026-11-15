@@ -31,9 +31,10 @@ async function fixture(
 
 async function restartFixture() {
   const restart = vi.fn<HostRestartBackend["request"]>(
-    async (_scope, commit) => (await commit())
-      ? { kind: "issued" }
-      : { kind: "not-issued", reason: "commit-not-authorized" },
+    async (_scope, commit) =>
+      (await commit())
+        ? { kind: "issued" }
+        : { kind: "not-issued", reason: "commit-not-authorized" },
   );
   const prepare = vi.fn<HostRestartBackend["prepare"]>(async () => {});
   const inspect = vi.fn<HostRestartBackend["inspect"]>(async () => ({
@@ -183,11 +184,7 @@ describe("Host administration API", () => {
     expect(f.restart).toHaveBeenCalledOnce();
   });
 
-  it.each([
-    "in-flight-operation",
-    "not-issued",
-    "unconfirmed",
-  ] as const)(
+  it.each(["in-flight-operation", "not-issued", "unconfirmed"] as const)(
     "fences %s at commit or submission and never replays the same receipt",
     async (fault) => {
       const f = await restartFixture();

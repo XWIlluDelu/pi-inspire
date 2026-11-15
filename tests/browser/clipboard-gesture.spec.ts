@@ -41,6 +41,11 @@ test("copies complete saved messages and images from bounded conversation previe
   const { active } = await (await opened).json();
   const copyTail = /(?:USER|ASSISTANT|CUSTOM|DETAIL)_COPY_TAIL/u;
   expect(JSON.stringify(active.transcriptPage.messages)).not.toMatch(copyTail);
+  // The native Pi worker replaces the initial saved projection on startup.
+  // Begin the saved-entry copy after the browser has adopted its view.
+  await expect(
+    page.getByRole("button", { name: /^Session & usage/ }),
+  ).toBeVisible();
   await observeWrites(page);
   const transcript = page.getByRole("log");
   const userTurn = (text: string) =>

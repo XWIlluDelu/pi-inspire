@@ -25,8 +25,8 @@ import {
 import { shallowEqual, store, useAppState } from "../store";
 import {
   queueTerminalAction,
-  terminalActions,
   type TerminalUiAction,
+  terminalActions,
 } from "../terminal-actions";
 import { terminalShortcutLabel } from "../terminal-keyboard";
 import { useSearchFocus } from "../use-search-focus";
@@ -57,7 +57,11 @@ interface PaletteItem {
 }
 
 const workspaceActions = [
-  { mode: "history", title: "Open History", aliases: ["branches", "inspect history"] },
+  {
+    mode: "history",
+    title: "Open History",
+    aliases: ["branches", "inspect history"],
+  },
   { mode: "files", title: "Open Files", aliases: [] },
   { mode: "changes", title: "Open Changes", aliases: [] },
   {
@@ -143,6 +147,12 @@ export const CommandPalette = memo(function CommandPalette({
   }, []);
   const dialogRef = useRef<HTMLDialogElement>(null);
   useSearchFocus(active && !preparation && !rename, inputRef, dialogRef);
+  const wasRenaming = useRef(false);
+  useEffect(() => {
+    if (active && !rename && wasRenaming.current)
+      inputRef.current?.focus({ preventScroll: true });
+    wasRenaming.current = Boolean(rename);
+  }, [active, rename]);
 
   useEffect(() => {
     if (preparation && preparation.owner !== state.sessionId)
@@ -522,7 +532,7 @@ export const CommandPalette = memo(function CommandPalette({
               label="Prepared command"
               placeholder="Command and arguments…"
               initialCaretAtEnd
-              autoFocus
+              autoFocus={active && !preparationSending}
               onKeyDown={(event) => {
                 if (shouldSubmitComposerEnter(event.nativeEvent, "mod-enter")) {
                   event.preventDefault();

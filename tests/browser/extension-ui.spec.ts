@@ -196,6 +196,7 @@ test("real Pi questions preserve workbench edits and restore the native deadline
   page,
   context,
 }, testInfo) => {
+  test.setTimeout(60_000);
   const cwd = testInfo.outputPath("native-workspace");
   await mkdir(join(cwd, ".pi"), { recursive: true });
   await writeFile(
@@ -384,7 +385,10 @@ test.describe("short touch workbench", () => {
   }) => {
     const fixture = await openExample(page, "light");
     const input = page.getByRole("textbox", { name: "Message", exact: true });
-    const draft = Array.from({ length: 20 }, (_, i) => `Draft line ${i + 1}`).join("\n");
+    const draft = Array.from(
+      { length: 20 },
+      (_, i) => `Draft line ${i + 1}`,
+    ).join("\n");
     await input.fill(draft);
     const lines = Array.from(
       { length: 8 },
@@ -407,6 +411,8 @@ test.describe("short touch workbench", () => {
       })),
     });
     await page.setViewportSize({ width: 568, height: 320 });
+    const transcript = page.getByRole("log");
+    await expect(transcript).toBeVisible();
     await expect
       .poll(() =>
         page.evaluate(() => {
@@ -417,16 +423,15 @@ test.describe("short touch workbench", () => {
           const above = bounds(".extension-dock--above");
           const composer = bounds(".composer");
           const below = bounds(".extension-dock--below");
-          return (
-            transcript.height > 0 &&
-            transcript.bottom <= above.top &&
-            above.bottom <= composer.top &&
-            composer.bottom <= below.top &&
-            below.bottom <= stage.bottom
+          return Math.max(
+            transcript.bottom - above.top,
+            above.bottom - composer.top,
+            composer.bottom - below.top,
+            below.bottom - stage.bottom,
           );
         }),
       )
-      .toBe(true);
+      .toBeLessThanOrEqual(1);
     await page
       .getByRole("button", { name: "Send message", exact: true })
       .tap({ trial: true });

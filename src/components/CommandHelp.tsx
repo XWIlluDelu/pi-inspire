@@ -147,7 +147,10 @@ export function CommandHelp({
       title: "Project terminal",
       rows: [
         ["Ctrl/⌘+F", "Find terminal output (Workbench shortcut mode)"],
-        [[terminalChords.previous.hint, terminalChords.next.hint], "Previous / next terminal"],
+        [
+          [terminalChords.previous.hint, terminalChords.next.hint],
+          "Previous / next terminal",
+        ],
         ["Alt+1–9", "Select a terminal tab"],
         [terminalChords.new.hint, "Create a terminal"],
         [["←", "→"], "Move focus among terminal tabs"],

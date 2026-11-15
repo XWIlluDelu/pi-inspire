@@ -63,8 +63,12 @@ test("Recent retains a literal written file during refresh recovery and opens it
   ).toBeVisible();
 });
 
-test("source follows a saved line link and keeps its position after refresh", async ({ page }) => {
-  await page.addInitScript(() => localStorage.setItem("inspire.ctx-width", "680"));
+test("source follows a saved line link and keeps its position after refresh", async ({
+  page,
+}) => {
+  await page.addInitScript(() =>
+    localStorage.setItem("inspire.ctx-width", "680"),
+  );
   const pane = await openReadingPane(page, 1500, 600);
   await openPreviewFixture(pane, "document.md");
   await pane.getByRole("tab", { name: "Files", exact: true }).click();
@@ -77,13 +81,18 @@ test("source follows a saved line link and keeps its position after refresh", as
   });
   expect(position).toEqual([100, 80]);
 
-  const file = join(browserWorkspace, "tests/browser/fixtures/file-previews/document.md");
+  const file = join(
+    browserWorkspace,
+    "tests/browser/fixtures/file-previews/document.md",
+  );
   const original = await readFile(file, "utf8");
   try {
     await writeFile(file, original.replace("Station 07", "Station 08"));
     await pane.getByRole("button", { name: "Refresh context pane" }).click();
     await expect(source).toContainText("Observation log · Station 08");
-    await expect.poll(() => source.evaluate((node) => [node.scrollTop, node.scrollLeft])).toEqual(position);
+    await expect
+      .poll(() => source.evaluate((node) => [node.scrollTop, node.scrollLeft]))
+      .toEqual(position);
   } finally {
     await writeFile(file, original);
   }

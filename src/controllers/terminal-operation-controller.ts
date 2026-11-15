@@ -116,7 +116,11 @@ export class TerminalOperationController {
     this.operations = new Map(
       saved.value.map((operation) => [
         intentKey(operation.intent),
-        { operation, outcome: "unknown", observation: new ReceiptRead<string, unknown>() },
+        {
+          operation,
+          outcome: "unknown",
+          observation: new ReceiptRead<string, unknown>(),
+        },
       ]),
     );
     this.recoveryState =
@@ -218,9 +222,10 @@ export class TerminalOperationController {
         this.transport,
       ).catch((error: unknown) => {
         if (!(error instanceof ApiError)) throw error;
-        const reason = error.message === `Request failed (${error.status})`
-          ? "Terminal operation receipts are unavailable."
-          : error.message.slice(0, 1000);
+        const reason =
+          error.message === `Request failed (${error.status})`
+            ? "Terminal operation receipts are unavailable."
+            : error.message.slice(0, 1000);
         throw new Error(`${reason} No terminal control was sent.`);
       });
       const identity = terminalOperationIdentitySchema.safeParse({
@@ -256,7 +261,9 @@ export class TerminalOperationController {
       const message =
         error instanceof ApiTransportError && error.phase === "response"
           ? "The terminal operation response was not confirmed."
-          : error instanceof Error ? error.message : "";
+          : error instanceof Error
+            ? error.message
+            : "";
       throw unknown(message);
     });
     if (receipt.state !== "completed" && receipt.state !== "rejected")

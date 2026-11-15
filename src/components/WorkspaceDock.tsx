@@ -1122,14 +1122,27 @@ export const WorkspaceDock = memo(function WorkspaceDock({
                   <Icon size={14} aria-hidden /> {label}
                 </button>
               ))}
-              <details className="terminal-menu__group" data-terminal-menu-group>
-                <DetailSummary><Monitor size={14} aria-hidden /> Display</DetailSummary>
+              <details
+                className="terminal-menu__group"
+                data-terminal-menu-group
+              >
+                <DetailSummary>
+                  <Monitor size={14} aria-hidden /> Display
+                </DetailSummary>
                 <div>
-                  {([
-                    ["clear", "Clear local scrollback", Eraser],
-                    ["reset", "Reset terminal display", RotateCcw],
-                  ] as const).map(([action, label, Icon]) => (
-                    <button key={action} type="button" onClick={(event) => currentView.invoke(action, event.currentTarget)}>
+                  {(
+                    [
+                      ["clear", "Clear local scrollback", Eraser],
+                      ["reset", "Reset terminal display", RotateCcw],
+                    ] as const
+                  ).map(([action, label, Icon]) => (
+                    <button
+                      key={action}
+                      type="button"
+                      onClick={(event) =>
+                        currentView.invoke(action, event.currentTarget)
+                      }
+                    >
                       <Icon size={14} aria-hidden /> {label}
                     </button>
                   ))}
@@ -1137,8 +1150,16 @@ export const WorkspaceDock = memo(function WorkspaceDock({
               </details>
             </div>
           )}
-          <button type="button" className="terminal-menu__focus" onClick={() => dispatchTerminalAction("focus")}>
-            {focused ? <Minimize2 size={14} aria-hidden /> : <Maximize2 size={14} aria-hidden />}
+          <button
+            type="button"
+            className="terminal-menu__focus"
+            onClick={() => dispatchTerminalAction("focus")}
+          >
+            {focused ? (
+              <Minimize2 size={14} aria-hidden />
+            ) : (
+              <Maximize2 size={14} aria-hidden />
+            )}
             {focused ? "Exit focused terminal" : "Focus terminal"}
           </button>
           {activeTerminal ? (
@@ -1152,48 +1173,53 @@ export const WorkspaceDock = memo(function WorkspaceDock({
               >
                 <ExternalLink size={14} aria-hidden /> Open in window
               </button>
-              <details className="terminal-menu__group" data-terminal-menu-group>
-                <DetailSummary><SquareTerminal size={14} aria-hidden /> Manage terminal</DetailSummary>
+              <details
+                className="terminal-menu__group"
+                data-terminal-menu-group
+              >
+                <DetailSummary>
+                  <SquareTerminal size={14} aria-hidden /> Manage terminal
+                </DetailSummary>
                 <div>
-              {([-1, 1] as const).map((step) => {
-                const target =
-                  terminals[terminals.indexOf(activeTerminal) + step];
-                if (!target) return null;
-                const Icon = step < 0 ? ArrowLeft : ArrowRight;
-                return (
+                  {([-1, 1] as const).map((step) => {
+                    const target =
+                      terminals[terminals.indexOf(activeTerminal) + step];
+                    if (!target) return null;
+                    const Icon = step < 0 ? ArrowLeft : ArrowRight;
+                    return (
+                      <button
+                        key={step}
+                        type="button"
+                        onClick={() => moveTerminal(activeTerminal, step)}
+                      >
+                        <Icon size={14} aria-hidden />{" "}
+                        {step < 0 ? "Move tab left" : "Move tab right"}
+                      </button>
+                    );
+                  })}
                   <button
-                    key={step}
                     type="button"
-                    onClick={() => moveTerminal(activeTerminal, step)}
+                    data-terminal-focus-trigger
+                    onClick={() => dispatchTerminalAction("restart")}
                   >
-                    <Icon size={14} aria-hidden />{" "}
-                    {step < 0 ? "Move tab left" : "Move tab right"}
+                    <RotateCcw size={14} aria-hidden /> Restart
                   </button>
-                );
-              })}
-              <button
-                type="button"
-                data-terminal-focus-trigger
-                onClick={() => dispatchTerminalAction("restart")}
-              >
-                <RotateCcw size={14} aria-hidden /> Restart
-              </button>
-              <button
-                type="button"
-                className="terminal-menu__danger"
-                onClick={() => dispatchTerminalAction("close")}
-              >
-                <Trash2 size={14} aria-hidden /> Close
-              </button>
-              {activeTerminal.status === "running" ? (
-                <button
-                  type="button"
-                  className="terminal-menu__danger"
-                  onClick={() => void closeTerminal(activeTerminal, true)}
-                >
-                  <X size={14} aria-hidden /> Force terminate
-                </button>
-              ) : null}
+                  <button
+                    type="button"
+                    className="terminal-menu__danger"
+                    onClick={() => dispatchTerminalAction("close")}
+                  >
+                    <Trash2 size={14} aria-hidden /> Close
+                  </button>
+                  {activeTerminal.status === "running" ? (
+                    <button
+                      type="button"
+                      className="terminal-menu__danger"
+                      onClick={() => void closeTerminal(activeTerminal, true)}
+                    >
+                      <X size={14} aria-hidden /> Force terminate
+                    </button>
+                  ) : null}
                 </div>
               </details>
             </>

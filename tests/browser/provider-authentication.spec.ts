@@ -94,7 +94,9 @@ test("updates and removes real provider credentials through /login while preserv
     await expect(settings.getByText(/enter the displayed code/)).toBeVisible();
     const search = settings.getByLabel("Search providers");
     await expect(search).toHaveValue("copilot");
-    const provider = settings.getByRole("button", { name: "Set up GitHub Copilot" });
+    const provider = settings.getByRole("button", {
+      name: "Set up GitHub Copilot",
+    });
     await provider.click();
     await expect(provider).toHaveAttribute("aria-expanded", "false");
     await expect(search).toBeVisible();

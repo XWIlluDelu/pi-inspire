@@ -10,3 +10,10 @@ export const browserFixtureHome = resolve(
   dirname(browserWorkspace),
   "fixture-home",
 );
+
+// A fixture project may remain the working directory of an idle Pi until the
+// fixture Host exits. Keep these directories under that Host's lifetime.
+export const browserFixtureProjects = resolve(
+  dirname(browserWorkspace),
+  "fixture-projects",
+);

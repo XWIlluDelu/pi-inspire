@@ -153,7 +153,8 @@ describe("Host HTTP workflows", () => {
       .send({ sessionId: address.sessionId, command: "compact" })
       .expect(401);
     await guest.get("/api/branches/image").query(image).expect(401);
-    await local.post("/api/control/native-command")
+    await local
+      .post("/api/control/native-command")
       .send({ sessionId: address.sessionId, command: "unknown" })
       .expect(400);
     await local

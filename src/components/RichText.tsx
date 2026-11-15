@@ -85,6 +85,7 @@ function TaskCheckbox({ checked }: { checked?: boolean }) {
       type="checkbox"
       className="choice-input"
       checked={checked}
+      aria-label="Task"
       disabled
     />
   );

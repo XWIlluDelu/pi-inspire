@@ -315,38 +315,38 @@ function AuthenticationPanel({
             <div key={provider.id} className="models-provider-login">
               <div className="models-provider-login__heading">
                 <div className="models-provider-login__copy">
-              <SearchMatchText
-                text={provider.name}
-                ranges={discovering ? nameMatches : []}
-              />
-              {idMatches.length > 0 && (
-                <code>
-                  <SearchMatchText text={provider.id} ranges={idMatches} />
-                </code>
-              )}
-              {provider.stored && (
-                <small>
-                  {provider.stored === "api_key"
-                    ? "API key configured"
-                    : "Signed in"}
-                </small>
-              )}
+                  <SearchMatchText
+                    text={provider.name}
+                    ranges={discovering ? nameMatches : []}
+                  />
+                  {idMatches.length > 0 && (
+                    <code>
+                      <SearchMatchText text={provider.id} ranges={idMatches} />
+                    </code>
+                  )}
+                  {provider.stored && (
+                    <small>
+                      {provider.stored === "api_key"
+                        ? "API key configured"
+                        : "Signed in"}
+                    </small>
+                  )}
                 </div>
                 <button
-              type="button"
-              className="button models-provider-disclosure"
-              aria-label={`${discovering ? "Set up" : "Manage"} ${provider.name}`}
-              aria-expanded={view.provider === provider.id}
-              disabled={busy}
-              onClick={() => {
-                setRemoving(null);
-                setView({
-                  kind: view.kind,
-                  provider:
-                    view.provider === provider.id ? undefined : provider.id,
-                });
-              }}
-            >
+                  type="button"
+                  className="button models-provider-disclosure"
+                  aria-label={`${discovering ? "Set up" : "Manage"} ${provider.name}`}
+                  aria-expanded={view.provider === provider.id}
+                  disabled={busy}
+                  onClick={() => {
+                    setRemoving(null);
+                    setView({
+                      kind: view.kind,
+                      provider:
+                        view.provider === provider.id ? undefined : provider.id,
+                    });
+                  }}
+                >
                   {discovering ? "Set up" : "Manage"}
                 </button>
               </div>

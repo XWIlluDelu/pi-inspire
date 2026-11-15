@@ -32,10 +32,7 @@ const OUTPUT_PREVIEW_CHARS = 50_000;
 export class RuntimeBashController {
   constructor(private readonly host: RuntimeBashHost) {}
 
-  async execute(
-    slot: RuntimeSlot,
-    entered: string,
-  ): Promise<void> {
+  async execute(slot: RuntimeSlot, entered: string): Promise<void> {
     const excludeFromContext = entered.startsWith("!!");
     const command = entered.slice(excludeFromContext ? 2 : 1).trim();
     if (!command) throw requestError("Enter a command after ! or !!", 400);

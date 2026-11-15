@@ -336,7 +336,9 @@ it.each([false, true])(
       sessionId,
       pageMessages: [{ role: "assistant", content: "current" }],
       transcriptPage: { viewId },
-      ...(error ? { projectionHealth: { status: "error", message: error } } : {}),
+      ...(error
+        ? { projectionHealth: { status: "error", message: error } }
+        : {}),
     });
     if (expired) await selectSession(store, current);
     else {

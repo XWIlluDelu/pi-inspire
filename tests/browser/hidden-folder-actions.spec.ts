@@ -75,18 +75,18 @@ test("deletes the visible idle session through one confirmation and returns to N
   );
   // API cloning does not replace this browser's selected session.
   await page
-    .locator(".nav__list--hidden .nav__row-main")
+    .locator(".nav__hidden-content .nav__row-main")
     .filter({ has: page.getByText(name, { exact: true }) })
     .click();
   await expect(
     page.getByRole("button", { name: /^Session actions:/ }),
   ).toHaveText(name);
-  const remove = page.locator(".nav__list--hidden").getByRole("button", {
+  const remove = page.locator(".nav__hidden-content").getByRole("button", {
     name: `Delete "${name}"`,
     exact: true,
   });
   await page
-    .locator(".nav__list--hidden .nav__row")
+    .locator(".nav__hidden-content .nav__row")
     .filter({
       has: page.getByRole("button", { name: `Delete "${name}"`, exact: true }),
     })
@@ -126,7 +126,7 @@ test("a refused deletion wraps its diagnostic, then an externally missing file r
     else await route.continue();
   });
   await page
-    .locator(".nav__list--hidden")
+    .locator(".nav__hidden-content")
     .getByRole("button", {
       name: `Delete "${name}"`,
       exact: true,
@@ -316,7 +316,7 @@ for (const { width, hasTouch } of [
 
       await page.getByRole("button", { name: "Hidden", exact: true }).click();
       const [hiddenGap] = await folderGaps(
-        page.locator(".nav__list--hidden > .nav__group"),
+        page.locator(".nav__hidden-content > .nav__group"),
       );
       expect(hiddenGap).toBeCloseTo(gap!, 0);
 

@@ -1,13 +1,6 @@
 # Changelog
 
-## Unreleased
-
-- **Restart all** closes current-user Pi sessions before restarting Inspire and project terminals.
-  Herdr Pi are included when enhancement is active and preserved otherwise.
-- `inspire restart --all` uses the same scope. The previous terminal-service-only scope is now
-  `inspire restart --terminals`.
-
-## 0.7.0 — 2026-11-09
+## 0.7.0
 
 Changes since [v0.6.5](https://github.com/XWIlluDelu/pi-inspire/tree/v0.6.5).
 
@@ -36,8 +29,12 @@ Changes since [v0.6.5](https://github.com/XWIlluDelu/pi-inspire/tree/v0.6.5).
   keeps confirmed previews available. The Changes count sits beside its icon.
 - PDF previews scroll continuously through pages. Narrow readers give opening Markdown text room
   to clear the reading controls, and the composer offers **Expand** when the editor can grow.
-- Activity headers use the mono face. Expanded groups summarize their steps, tools and failed
-  calls in one line.
+- History in the right pane searches saved branches and lets you preview entries before continuing,
+  editing, forking or cloning. Prompt Map navigates the current conversation.
+- Activity groups expand in place. Compact groups show the latest steps and reveal earlier
+  activity on request. Folded tool runs can be inspected from their tool icons.
+- Inspire checks message delivery receipts in the background. If delivery is still unconfirmed,
+  a dismissible notice leaves the composer ready for the next message.
 - Shorter confirmation and settings text puts deletion, restart and recovery consequences next
   to the action.
 - The Carbon & Silicon palette adds a monochrome option in light and dark. Structural labels use
@@ -45,13 +42,13 @@ Changes since [v0.6.5](https://github.com/XWIlluDelu/pi-inspire/tree/v0.6.5).
 
 ### Host and native Pi
 
-- Host settings offer **Restart Host**, which reloads taken-over Pi and keeps project terminals
-  open, and **Restart all**, which also restarts the installed Linux terminal service and closes
-  its project terminals. The browser tracks a submitted restart across reconnects.
+- **Restart** reloads Inspire and its Pi workers while keeping project terminals open. **Restart
+  all** also closes current-user Pi sessions and project terminals. It includes Herdr Pi when
+  enhancement is active. Use `inspire restart --terminals` for the terminal-service-only scope.
 - Inspire finds Pi installed through supported version and package managers and preserves native
   OAuth model defaults and MCP project trust. The provider chooser keeps its initial focus and
   position in the settings panel.
-- The native Pi compatibility pin moves from 1.3.0 to 1.5.0. The `inspire mock` command and
+- Native Pi integration tests now use Pi 1.5.2. The `inspire mock` command and
   `npm run start:mock` are removed. Use `npm run dev` to run a development checkout with native Pi.
 - Declared status controls keep their machine-readable state out of the header automatically.
   `INSPIRE_HERDR_ENV_EXCLUDE` can keep selected extension environment prefixes out of the shared

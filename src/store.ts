@@ -1204,7 +1204,12 @@ export class AppStore {
     sessionId: string,
     command: string,
     message: string,
-    run: () => Promise<Pick<NativeCommandActivity, "status" | "message" | "details" | "download" | "action">>,
+    run: () => Promise<
+      Pick<
+        NativeCommandActivity,
+        "status" | "message" | "details" | "download" | "action"
+      >
+    >,
     options: {
       scopedAuth?: () => boolean;
       persistent?: boolean;
@@ -1213,7 +1218,12 @@ export class AppStore {
     } = {},
   ): PromptAcceptedResponse {
     const api = this.api;
-    const id = this.presentCommandActivity(sessionId, command, "running", message);
+    const id = this.presentCommandActivity(
+      sessionId,
+      command,
+      "running",
+      message,
+    );
     // Dispatch here so clipboard reads are still in the initiating gesture.
     void (async () => {
       try {
@@ -1229,10 +1239,12 @@ export class AppStore {
         options.afterReceipt?.();
       } catch (error) {
         if (options.afterReceipt && this.api !== api) return;
-        const unauthenticated = error instanceof ApiError && error.status === 401;
+        const unauthenticated =
+          error instanceof ApiError && error.status === 401;
         const unknown =
           error instanceof ApiTransportError ||
-          (error instanceof ApiError && error.code === "PI_RPC_OUTCOME_UNKNOWN");
+          (error instanceof ApiError &&
+            error.code === "PI_RPC_OUTCOME_UNKNOWN");
         this.updateCommandActivity(sessionId, id, {
           status: unknown && !options.scopedAuth ? "warning" : "error",
           message:
@@ -1242,7 +1254,7 @@ export class AppStore {
                 ? "Could not confirm the command result. Reconnect and check the session before trying again."
                 : error instanceof Error
                   ? error.message
-                  : options.fallback ?? `/${command} failed`,
+                  : (options.fallback ?? `/${command} failed`),
         });
         if (unauthenticated && (options.scopedAuth?.() ?? true))
           this.handleAuthFailure();
@@ -1402,24 +1414,33 @@ export class AppStore {
       return false;
     }
     const selectionGeneration = this.selectionGeneration;
-    return this.runCommandActivity(sessionId, command, "", async () => {
-      const result = await api.json("nativeCommand", {
-        body: { sessionId, command, argument: argument || undefined },
-      });
-      const exporting = command === "export";
-      const path = exporting ? result.details?.[0]?.value : undefined;
-      const { downloadId, fileName } = result.export ?? {};
-      return {
-        status: result.outcome === "cancelled" ? "cancelled" : "success",
-        message: result.message,
-        details: result.details,
-        download: downloadId && fileName ? { id: downloadId, fileName } : undefined,
-        action: path ? { kind: "copy", label: "Copy path", value: path } : undefined,
-      };
-    }, {
-      persistent: command === "export",
-      afterReceipt: () => void this.resync(sessionId, selectionGeneration),
-    });
+    return this.runCommandActivity(
+      sessionId,
+      command,
+      "",
+      async () => {
+        const result = await api.json("nativeCommand", {
+          body: { sessionId, command, argument: argument || undefined },
+        });
+        const exporting = command === "export";
+        const path = exporting ? result.details?.[0]?.value : undefined;
+        const { downloadId, fileName } = result.export ?? {};
+        return {
+          status: result.outcome === "cancelled" ? "cancelled" : "success",
+          message: result.message,
+          details: result.details,
+          download:
+            downloadId && fileName ? { id: downloadId, fileName } : undefined,
+          action: path
+            ? { kind: "copy", label: "Copy path", value: path }
+            : undefined,
+        };
+      },
+      {
+        persistent: command === "export",
+        afterReceipt: () => void this.resync(sessionId, selectionGeneration),
+      },
+    );
   }
 
   private sessionCommandDetails(): NonNullable<
@@ -1571,12 +1592,17 @@ export class AppStore {
       message: string,
       action: () => Promise<CommandChangeResult>,
       confirmation: string,
-    ) => this.runCommandActivity(sessionId, name, message, async () => {
-      const result = await action();
-      return result.status === "stale"
-        ? { status: "warning", message: "The command outcome is unknown after ownership changed." }
-        : { status: result.status, message: result.message ?? confirmation };
-    });
+    ) =>
+      this.runCommandActivity(sessionId, name, message, async () => {
+        const result = await action();
+        return result.status === "stale"
+          ? {
+              status: "warning",
+              message:
+                "The command outcome is unknown after ownership changed.",
+            }
+          : { status: result.status, message: result.message ?? confirmation };
+      });
     const draft = this.drafts.get(sessionId);
     if (
       includeDraftArtifacts &&
@@ -1629,7 +1655,10 @@ export class AppStore {
       return ACCEPTED_NATIVE_COMMAND;
     }
     if (name === "fork") {
-      this.notify("info", "Choose Fork on the user message where you want to start the new branch.");
+      this.notify(
+        "info",
+        "Choose Fork on the user message where you want to start the new branch.",
+      );
       return ACCEPTED_NATIVE_COMMAND;
     }
     if (name === "clone") {
@@ -1751,7 +1780,11 @@ export class AppStore {
             current,
           );
           return written
-            ? { status: "success", message: "Copied the complete last assistant response to the clipboard." }
+            ? {
+                status: "success",
+                message:
+                  "Copied the complete last assistant response to the clipboard.",
+              }
             : {
                 status: "warning",
                 message: noResponse
@@ -1761,7 +1794,10 @@ export class AppStore {
                     : "Copy cancelled because the session or branch changed.",
               };
         },
-        { scopedAuth: current, fallback: "Failed to read the complete response." },
+        {
+          scopedAuth: current,
+          fallback: "Failed to read the complete response.",
+        },
       );
     }
     if (name === "session") {
@@ -2159,8 +2195,11 @@ export class AppStore {
   }
 
   private changeModel(provider: string, modelId: string) {
-    return this.changeNativeSetting("model", "Failed to set model", (api, sessionId) =>
-      api.json("setModel", { body: { sessionId, provider, modelId } }),
+    return this.changeNativeSetting(
+      "model",
+      "Failed to set model",
+      (api, sessionId) =>
+        api.json("setModel", { body: { sessionId, provider, modelId } }),
     );
   }
 

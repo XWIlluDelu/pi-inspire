@@ -13,6 +13,7 @@ import {
   type UserTurnAnchor,
 } from "../../shared/contracts";
 import { isComposingKeyboardEvent } from "../keyboard-input";
+
 const ROW_HEIGHT = 40;
 const MAX_TICKS = 12;
 
@@ -222,11 +223,12 @@ export function PromptMap({
     if (!firstOpen && listUserOwnedRef.current) return;
     if (!firstOpen && followedOrdinalRef.current === target) return;
     followedOrdinalRef.current = target;
-    const frame = requestAnimationFrame(() =>
-      virtualizer.scrollToIndex(target, {
-        align: firstOpen ? "center" : "auto",
-      }),
-    );
+    const frame = requestAnimationFrame(() => {
+      if (!listUserOwnedRef.current)
+        virtualizer.scrollToIndex(target, {
+          align: firstOpen ? "center" : "auto",
+        });
+    });
     return () => cancelAnimationFrame(frame);
   }, [activeOrdinal, open, total, virtualizer.scrollToIndex]);
 
@@ -429,18 +431,18 @@ export function PromptMap({
                 listUserOwnedRef.current = true;
               }}
               onKeyDown={(event) => {
-                if (
-                  [
-                    "ArrowDown",
-                    "ArrowUp",
-                    "End",
-                    "Home",
-                    "PageDown",
-                    "PageUp",
-                    " ",
-                  ].includes(event.key)
-                )
+                if (event.key === "Home" || event.key === "End") {
+                  event.preventDefault();
                   listUserOwnedRef.current = true;
+                  event.currentTarget.scrollTop =
+                    event.key === "Home" ? 0 : event.currentTarget.scrollHeight;
+                } else if (
+                  ["ArrowDown", "ArrowUp", "PageDown", "PageUp", " "].includes(
+                    event.key,
+                  )
+                ) {
+                  listUserOwnedRef.current = true;
+                }
               }}
             >
               {total === 0 ? (

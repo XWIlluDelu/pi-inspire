@@ -126,7 +126,6 @@ describe("session selection and addressed reads", () => {
       });
       expect(workers.map(({ sessionId }) => sessionId)).toEqual(["a"]);
       expect(runtime.startupSessionHint).toBe("b");
-
     } finally {
       gate.resolve();
       await Promise.allSettled([first, second]);

@@ -28,9 +28,8 @@ import { hasActiveModal } from "../use-modal-focus";
 import { EarlierBranchBanner } from "./EarlierBranchBanner";
 import { ExtensionDisplaySurface } from "./ExtensionDisplays";
 import { TranscriptImageOwnerContext } from "./ImagePreview";
-import { ScrollRail } from "./ScrollRail";
-import { useTranscriptHistory } from "./use-transcript-history";
 import { handleRichTextCopy } from "./rich-text-copy";
+import { ScrollRail } from "./ScrollRail";
 import { TranscriptPromptMap } from "./TranscriptPromptMap";
 import { TranscriptUtilities } from "./TranscriptUtilities";
 import { useTranscriptRows } from "./transcript-row-projection";
@@ -41,6 +40,7 @@ import {
 } from "./transcript-search";
 import { useTranscriptSearchHighlights } from "./transcript-search-highlights";
 import { useTranscriptViewport } from "./transcript-viewport";
+import { useTranscriptHistory } from "./use-transcript-history";
 
 // --- Transcript with pinned auto-scroll ---
 
@@ -252,7 +252,12 @@ export const Transcript = memo(function Transcript({
     const closeFromOutside = (event: PointerEvent) => {
       const target = event.target;
       if (!(target instanceof Element)) return;
-      if (!target.closest(".transcript-tools")) closeMobileSearch();
+      const tools = searchLauncherRef.current?.closest(".transcript-tools");
+      const popup = target.closest('[role="listbox"]');
+      const related = popup?.id
+        ? tools?.querySelector(`[aria-controls="${CSS.escape(popup.id)}"]`)
+        : null;
+      if (!tools?.contains(target) && !related) closeMobileSearch();
     };
     document.addEventListener("pointerdown", closeFromOutside, true);
     return () => {

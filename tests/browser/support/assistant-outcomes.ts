@@ -59,6 +59,9 @@ export async function assistantOutcomeScenario(page: Page) {
         event.sessionStatus.runState = runState;
     },
   });
+  await page.route("**/api/pending/recover", (route) =>
+    completeOperation(route, "recover", { steering: [], followUp: [] }),
+  );
   await page.route("**/api/control/abort", async (route) => {
     if (refuseStop)
       return rejectOperation(route, "abort", {

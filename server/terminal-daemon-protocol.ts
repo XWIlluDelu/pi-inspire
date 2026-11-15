@@ -6,7 +6,10 @@ import {
   type TerminalOperation,
 } from "../shared/terminal-operations.js";
 import type { TerminalDaemonInfo } from "./terminal-daemon-configuration.js";
-import { TerminalServiceError, type TerminalService } from "./terminal-service.js";
+import {
+  TerminalServiceError,
+  type TerminalService,
+} from "./terminal-service.js";
 import {
   inspireRuntimeDirectory,
   inspireStateDirectory,
@@ -111,7 +114,10 @@ export function dispatchTerminalDaemonRpc(
   method: unknown,
   params: unknown,
 ) {
-  if (typeof method !== "string" || !Object.hasOwn(terminalDaemonMethods, method))
+  if (
+    typeof method !== "string" ||
+    !Object.hasOwn(terminalDaemonMethods, method)
+  )
     throw new TerminalServiceError(
       "terminal_method_invalid",
       400,

@@ -701,7 +701,9 @@ export class TerminalSessionManager implements TerminalService {
       if (!this.closing) {
         this.sessions.delete(id);
         const { projectCwd } = session;
-        const order = this.orderByProject.get(projectCwd)?.filter((tab) => tab !== id);
+        const order = this.orderByProject
+          .get(projectCwd)
+          ?.filter((tab) => tab !== id);
         if (order?.length) this.orderByProject.set(projectCwd, order);
         else this.orderByProject.delete(projectCwd);
         this.retireSession(session, 1000, "Terminal closed");
@@ -768,9 +770,10 @@ export class TerminalSessionManager implements TerminalService {
         attachmentId: attachment.id,
         writable: attachment.writable,
         ownerToken: attachment.writable ? session.owner?.token : undefined,
-        nextInputSequence: attachment.writable && session.owner
-          ? session.owner.lastInputSequence + 1
-          : 1,
+        nextInputSequence:
+          attachment.writable && session.owner
+            ? session.owner.lastInputSequence + 1
+            : 1,
         replay,
       });
 
@@ -1379,7 +1382,10 @@ export class TerminalSessionManager implements TerminalService {
   ): "claimed" | "reconnected" | null {
     if (session.status !== "running") return null;
     const owner = session.owner;
-    if (owner && (ownerToken !== owner.token || attachment.clientId !== owner.clientId))
+    if (
+      owner &&
+      (ownerToken !== owner.token || attachment.clientId !== owner.clientId)
+    )
       return null;
     this.resizeSession(session, cols, rows, attachment.id);
     if (attachment.detached) return null;
@@ -1394,15 +1400,17 @@ export class TerminalSessionManager implements TerminalService {
     reason: "claimed" | "reconnected" | "taken",
   ): void {
     const owner = session.owner;
-    const previous = owner?.attachmentId && owner.attachmentId !== attachment.id
-      ? session.attachments.get(owner.attachmentId)
-      : undefined;
+    const previous =
+      owner?.attachmentId && owner.attachmentId !== attachment.id
+        ? session.attachments.get(owner.attachmentId)
+        : undefined;
     if (owner?.releaseTimer) clearTimeout(owner.releaseTimer);
     session.owner = {
       token: reason === "reconnected" ? owner!.token : this.uuid(),
       clientId: attachment.clientId,
       attachmentId: attachment.id,
-      lastInputSequence: reason === "reconnected" ? owner!.lastInputSequence : 0,
+      lastInputSequence:
+        reason === "reconnected" ? owner!.lastInputSequence : 0,
       releaseTimer: null,
     };
     attachment.writable = true;

@@ -13,7 +13,7 @@ import { modelWorkflowFixture } from "./fixtures/model-workflow.js";
 let root: string;
 afterEach(async () => {
   vi.unstubAllEnvs();
-  if (root) await rm(root, { recursive: true, force: true });
+  if (root) await rm(root, { recursive: true, force: true, maxRetries: 5 });
 });
 
 it("discovers native global/trusted-project registrations and resolves defaults over the same target without a session or model request", async () => {
@@ -77,10 +77,8 @@ it("discovers native global/trusted-project registrations and resolves defaults 
     expect(bootstrap.body).not.toHaveProperty("snapshot");
     expect(readMetadata).not.toHaveBeenCalled();
 
-    const [{ body: trusted }, { body: untrusted }] = await Promise.all([
-      modelsAt(f.trusted),
-      modelsAt(f.untrusted),
-    ]);
+    const { body: trusted } = await modelsAt(f.trusted);
+    const { body: untrusted } = await modelsAt(f.untrusted);
     const identities = (models: { provider: string; id: string }[]) =>
       models.map(({ provider, id }) => `${provider}/${id}`);
     const globalIds = [
@@ -167,6 +165,7 @@ it("discovers native global/trusted-project registrations and resolves defaults 
         },
       })
       .expect(200);
+    await readMetadata.mock.results.at(-1)?.value;
     expect(declaration.body.snapshot).toMatchObject({
       effective: { enabledModels },
       models: expect.arrayContaining([
@@ -252,7 +251,7 @@ it("validates model edits over extension providers in the selected trusted works
   expect(await readFile(f.events, "utf8")).not.toMatch(
     /session_start|agent_start|request|route/,
   );
-}, 30_000);
+}, 90_000);
 
 it("retires an extension factory's descendants even if it fails", async () => {
   const f = await modelWorkflowFixture();

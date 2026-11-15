@@ -14,7 +14,8 @@ export function inputRejection(
     (error.authorityId !== intent.authorityId ||
       error.operation?.operationId !== intent.operationId ||
       error.operation?.command !== intent.action)
-  ) return null;
+  )
+    return null;
   return error;
 }
 
@@ -78,4 +79,3 @@ export class ReceiptRead<Owner, Result> {
     return active.task;
   }
 }
-
