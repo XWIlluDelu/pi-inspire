@@ -49,6 +49,11 @@ describe("Live assistant activity", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Expand bash tool" }));
     const toggle = screen.getByRole("button", collapse);
+    expect(toggle).toHaveTextContent("1 step");
+    expect(
+      toggle.querySelector(".activity-fold__matrix")?.children,
+    ).toHaveLength(9);
+    expect(toggle.querySelector(".activity-fold__kind--live")).not.toBeNull();
     fireEvent.click(toggle);
     rerender(
       transcript(
@@ -62,6 +67,7 @@ describe("Live assistant activity", () => {
       ),
     );
     expect(screen.getByRole("button", expand)).toBe(toggle);
+    expect(toggle).toHaveTextContent(/^Activity$/);
     fireEvent.click(toggle);
     rerender(
       transcript(

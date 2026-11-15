@@ -312,6 +312,7 @@ export function useTranscriptRows(options: TranscriptRowProjectionOptions) {
                 ? `call:${tool.call.id}`
                 : `${partKey}:activity`,
               kind: item.kind === "thinking" ? "thinking" : "tool",
+              live: trailing || tool?.activity?.phase === "running",
               toolCallId: tool?.call.id,
               name: tool?.call.name,
               failed:

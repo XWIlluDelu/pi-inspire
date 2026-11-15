@@ -79,6 +79,9 @@ keep their semantic green/red in parent tools and nested calls; live work keeps 
 
 
 Open activity bodies share one outer rhythm; no trailing card margin is added to the fold gap.
+The activity heading shows the nine most recent Thinking or tool steps in a 3×3 matrix. Active
+steps pulse, and the matrix briefly brightens as the ninth step arrives. The step count and tool
+names appear only while the group is open.
 Thinking paragraphs keep reading line-height with a compact paragraph gap. Empty status slots
 consume no header space and do not push Copy away.
 

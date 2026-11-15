@@ -48,16 +48,22 @@ function MessageActions({
   getContent,
   forkEntryId,
   copyLabel = "Message",
+  response = false,
 }: {
   text: string;
   getContent?: CopyLoader;
   forkEntryId?: string;
   copyLabel?: string;
+  response?: boolean;
 }) {
   const [forking, setForking] = useState(false);
   if (!text && !getContent && !forkEntryId) return null;
   return (
-    <div className="turn__actions">
+    <div
+      className={
+        response ? "turn__actions turn__actions--response" : "turn__actions"
+      }
+    >
       {text || getContent ? (
         <CopyAction
           text={text}
@@ -211,6 +217,7 @@ export function AssistantResponse({
           text={copyText}
           getContent={copyContent}
           copyLabel="Response"
+          response
         />
       }
     >

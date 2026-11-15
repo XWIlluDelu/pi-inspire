@@ -80,9 +80,18 @@ function CommandActivityItem({
     >
       {message && <p>{message}</p>}
       {details.length > 0 && (
-        <dl className="command-activity__details">
+        <dl
+          className={
+            isSession
+              ? "command-activity__session"
+              : "command-activity__details"
+          }
+        >
           {details.map((detail, index) => (
-            <div key={detail.id ?? `${detail.label}:${index}`}>
+            <div
+              key={detail.id ?? `${detail.label}:${index}`}
+              className={isSession ? "command-activity__usage-cell" : undefined}
+            >
               <dt>{detail.label}</dt>
               <dd title={detail.value}>{detail.value}</dd>
             </div>

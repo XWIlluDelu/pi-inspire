@@ -208,6 +208,63 @@
 
 .activity-fold__disclosure:is(:hover, :focus-visible) { color: var(--ink); }
 
+.activity-fold__matrix {
+  display: grid;
+  flex: 0 0 auto;
+  grid-template-columns: repeat(3, 2px);
+  grid-template-rows: repeat(3, 2px);
+  gap: 2px;
+  width: 10px;
+  height: 10px;
+  margin-inline-start: 2px;
+  transform: translateY(-0.1px);
+}
+
+.activity-fold__kind,
+.activity-fold__cell-empty {
+  width: 2px;
+  height: 2px;
+  border-radius: .6px;
+}
+
+.activity-fold__cell-empty {
+  background: var(--hairline);
+}
+.activity-fold__kind--thinking {
+  color: var(--activity-think);
+  background: currentColor;
+}
+.activity-fold__kind--tool {
+  color: var(--activity-tool);
+  background: currentColor;
+}
+.activity-fold__matrix--full .activity-fold__kind {
+  box-shadow: 0 0 2px color-mix(in srgb, currentColor 35%, transparent);
+}
+.activity-fold__matrix--lighting {
+  animation: activity-matrix-filled .8s ease-out;
+}
+@keyframes activity-matrix-filled {
+  0%, 100% { filter: brightness(1); }
+  40% { filter: brightness(1.35); }
+}
+.activity-fold__kind--live {
+  animation: activity-kind-pulse 1.8s ease-in-out infinite;
+}
+@keyframes activity-kind-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .activity-fold__matrix--lighting,
+  .activity-fold__kind--live { animation: none; }
+}
 .activity-fold__content {
   display: flex;
   min-width: 0;
@@ -270,14 +327,62 @@
   margin: 0;
   color: var(--muted);
 }
+/* Message actions stay quiet until the turn is pointed or keyboard-focused.
+   Response actions remain faintly discoverable at the content's true end. */
 .turn__actions {
   display: inline-flex;
-  align-self: flex-start;
   align-items: center;
-  gap: var(--space-1);
+  gap: 2px;
+  margin-left: auto;
+  opacity: 0;
+  transition: opacity var(--dur-micro) var(--ease-standard);
 }
 
-.turn--user > .turn__actions { align-self: flex-end; }
+/* The bubble keeps its content width. Actions use the spare space to its left,
+   or wrap below at the same right edge when the whole group no longer fits.
+   DOM order remains message first, then Copy/Fork. */
+.turn--user > .turn__actions {
+  flex: 0 0 auto;
+  gap: 4px;
+  margin: 0;
+}
+
+.turn__actions--response {
+  align-self: flex-start;
+  margin-top: 2px;
+  margin-left: 0;
+  opacity: 0.5;
+}
+
+.turn:hover .turn__actions,
+.turn--user:has(:focus-visible) .turn__actions,
+.turn:not(.turn--user):focus-within .turn__actions {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .turn__actions {
+    opacity: 0.75;
+  }
+}
+
+/* With a mouse, reply Copy waits for the reply: hover or keyboard focus. */
+@media (hover: hover) {
+  .turn__actions--response {
+    opacity: 0;
+  }
+
+  .turn:hover .turn__actions--response,
+  .turn:has(:focus-visible) .turn__actions--response {
+    opacity: 1;
+  }
+}
+
+.turn__action.icon-button {
+  width: 24px;
+  height: 24px;
+  color: var(--faint);
+}
 
 /* A quiet caret marks where streamed text is still arriving. */
 .turn--streaming

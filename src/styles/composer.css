@@ -119,6 +119,39 @@
 .command-activity__details dt { flex: none; color: var(--muted); }
 .command-activity__details dd { margin: 0; font-family: var(--font-mono); }
 
+.command-activity__session {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px var(--space-4);
+  margin: var(--space-1) 0 0;
+  color: var(--ink);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+
+.command-activity__session dt {
+  color: var(--muted);
+}
+
+.command-activity__session dd {
+  min-width: 0;
+  margin: 0;
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.command-activity__usage-cell {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  max-width: 100%;
+  min-width: 0;
+}
+
+.command-activity__usage-cell dt {
+  flex-shrink: 0;
+}
+
 .command-activity__action {
   min-height: 28px;
   margin-top: var(--space-2);
@@ -221,14 +254,6 @@
   height: 1px;
   opacity: 0;
   pointer-events: none;
-}
-
-.composer__usage {
-  color: var(--muted);
-  font-size: var(--text-xs);
-  line-height: 1.5;
-  padding: var(--space-1) var(--space-3);
-  overflow-wrap: anywhere;
 }
 
 .composer__input-wrap {
@@ -386,18 +411,140 @@
   min-width: 0;
 }
 
-.composer__usage {
-  flex: none;
-  justify-content: center;
-  min-width: 44px;
-  min-height: 32px;
-  padding: 0 var(--space-1);
-  font-size: var(--text-xs);
-  font-variant-numeric: tabular-nums;
+/* Read-only context detail floats above the existing ring without reserving layout. */
+.meter-anchor {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
 }
 
-.composer__usage--warning { color: var(--warning-ink); }
-.composer__usage--error { color: var(--error-ink); }
+.meter__hint {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + var(--space-2));
+  z-index: 40;
+  width: max-content;
+  /* Leave room for Send and the page gutter on narrow touch viewports. */
+  max-width: min(
+    280px,
+    calc(100vw - var(--space-8) * 2 - var(--space-3))
+  );
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-control);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-2);
+  color: var(--muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-ui);
+  overflow-wrap: anywhere;
+}
+
+.meter__hint::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  right: 0;
+  width: 100%;
+  height: var(--space-2);
+}
+
+.meter__model {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+/* Context gauge: a small ring plus percent, both taking the occupancy tone —
+   calm while low, warning past 60%, error past 85%. */
+.meter__reading {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* Anchor the ring, not the changing label's right edge. Reserve three digits
+   and the percent sign, but let larger native readings grow rather than clip. */
+.meter__value {
+  display: inline-grid;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.meter__value::before {
+  content: "100%";
+  visibility: hidden;
+}
+
+.meter__value::before,
+.meter__value > span {
+  grid-area: 1 / 1;
+}
+
+.meter {
+  display: inline-flex;
+  align-items: center;
+  border: 0;
+  background: transparent;
+  padding: 0 var(--space-2);
+  min-height: 32px;
+  font-size: var(--text-xs);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  border-radius: var(--radius-control);
+}
+
+.meter:hover {
+  background: var(--bg-control);
+}
+
+.meter:focus-visible {
+  outline: 2px solid var(--accent-focus);
+  outline-offset: 1px;
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .meter {
+    min-width: 44px;
+  }
+}
+
+.meter__ring {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+.meter__ring-track {
+  fill: none;
+  stroke: var(--bg-inset);
+  stroke-width: 2.5;
+}
+
+.meter__ring-fill {
+  fill: none;
+  stroke: var(--accent-deep);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+
+.meter--warning {
+  color: var(--warning-ink);
+}
+
+.meter--warning .meter__ring-fill {
+  stroke: var(--warning);
+}
+
+.meter--error {
+  color: var(--error-ink);
+}
+
+.meter--error .meter__ring-fill {
+  stroke: var(--error);
+}
 
 .composer__send {
   display: inline-flex;

@@ -431,7 +431,8 @@ bounded summaries and action semantics.
 
 The editor owns its Expand or Collapse action. Its local utility-button size keeps the writing
 width fixed. The toolbar contains Model, Thinking, project files and attachments, context usage,
-optional Stop and rightmost Send. Context usage fits the same row as Send and preserves the empty
+optional Stop and rightmost Send. Context usage uses a ring and a stable-width percentage with a
+hover/focus tooltip for token counts. It fits the same row as Send and preserves the empty
 composer's height. Send is icon-only. Stop has a square glyph and filled error-color treatment,
 including compaction and shell cancellation. DOM and tab order follow visual order.
 At viewport widths up to 460px, Model and Thinking share the first row, with file tools, context
@@ -744,7 +745,8 @@ records use 24px fine-pointer and 32px coarse-pointer targets, including in Hist
 add 2px vertical padding per side. Shell records keep their own footer padding, and notices wrap
 when their text and actions need more room.
 
-Message Copy, Fork and Pending actions stay visible with the same targets on desktop and touch.
+Message Copy and Fork appear on mouse hover or keyboard focus and remain visible on touch.
+Pending actions stay visible.
 Tool, Thinking, CodeMode and checkpoint Copy are available while their details are open. Extension
 text-widget Copy stays visible. Pending uses a shared surface and
 keeps Copy, Return and the explicit Clear confirmation visible. [[conversation]] and [[composer]]
