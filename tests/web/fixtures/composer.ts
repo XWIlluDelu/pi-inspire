@@ -1,12 +1,13 @@
 import { fireEvent, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import type { ComposerHistoryEntry } from "../../../shared/contracts";
 import { discardComposerHistory } from "../../../src/composer-history";
 import { store } from "../../../src/store";
 import {
   activeSnapshot,
+  DEFAULT_PREFS,
   FakeWebSocket,
   installFakeWebSocket,
+  inputReceipt,
   installFetch,
   jsonBody,
 } from "../helpers";
@@ -26,6 +27,8 @@ export async function createComposerFixture() {
     discardComposerHistory(id);
   }
   installFakeWebSocket();
+  let preferences = DEFAULT_PREFS;
+  let preferenceRevision = 0;
   installFetch((url, init) => {
     if (url.startsWith("/api/history?kind=composer&")) {
       host.historyRequests += 1;
@@ -75,12 +78,22 @@ export async function createComposerFixture() {
       }
       return { body: { files: [{ path: "src/index.ts", name: "index.ts" }] } };
     }
-    if (url.startsWith("/api/prompt")) {
+    if (url === "/api/prompt") {
       const body = jsonBody(init);
       host.promptBodies.push(body);
-      return { status: 202, body: { accepted: true } };
+      return {
+        status: 202,
+        body: {
+          ...inputReceipt("prompt", body),
+          state: "completed",
+          result: null,
+        },
+      };
     }
-    if (url.startsWith("/api/preferences")) return { body: jsonBody(init) };
+    if (url === "/api/preferences" && init.method === "PATCH") {
+      preferences = { ...preferences, ...jsonBody(init) };
+      return { body: { preferences, revision: ++preferenceRevision } };
+    }
     return baseRoutes(url, init);
   });
   await store.init();
@@ -88,16 +101,6 @@ export async function createComposerFixture() {
 
   clearComposer();
   return host;
-}
-
-export async function attachFile() {
-  const input = document.querySelector(
-    'input[type="file"]',
-  ) as HTMLInputElement;
-  await userEvent.upload(
-    input,
-    new File(["hello"], "notes.txt", { type: "text/plain" }),
-  );
 }
 
 export function typeDraft(text: string) {

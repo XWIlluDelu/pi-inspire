@@ -79,10 +79,8 @@ it("hydrates confirmed folder curation without rereading pages and prunes it bef
     .mockReturnValue(summary([offPage]));
   const { store } = await installCatalog(catalog, {
     routes: async (url, init) => {
-      if (url === "/api/preferences") {
+      if (url === "/api/preferences" && init.method === "PATCH")
         await write.promise;
-        return { body: jsonBody(init) };
-      }
       if (url === "/api/sessions/by-cwd") return lookup();
       if (url === "/api/sessions/refresh") return { body: { ok: true } };
     },
@@ -130,7 +128,7 @@ it.each(["rejected", "confirmed"] as const)(
     });
     write.resolve(
       outcome === "confirmed"
-        ? { body: prefs({ hiddenSessionIds: [] }) }
+        ? { body: { preferences: prefs({ hiddenSessionIds: [] }), revision: 1 } }
         : { status: 409, body: { error: "Preference write rejected" } },
     );
     await vi.waitFor(() =>

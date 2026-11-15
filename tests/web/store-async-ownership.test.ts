@@ -5,6 +5,7 @@ import {
   deferred,
   emptySnapshot,
   FakeWebSocket,
+  inputReceipt,
   installFakeWebSocket,
   jsonBody,
   type RouteResponse,
@@ -272,7 +273,8 @@ it("keeps a fresh projection after delayed Stop and Compact on a new view", asyn
   const { store, socket } = await initStore();
   await store.sendPrompt("/compact");
   const stopping = store.abort();
-  expect(await sent.promise).toMatchObject({
+  const stopRequest = await sent.promise;
+  expect(stopRequest).toMatchObject({
     sessionId: "s1",
     expectedViewId: "view-s1",
   });
@@ -283,7 +285,14 @@ it("keeps a fresh projection after delayed Stop and Compact on a new view", asyn
   ready(socket);
   await tick();
   expect(read).toHaveBeenCalledOnce();
-  stop.resolve({ status: 409, body: { error: "Old abort failed" } });
+  stop.resolve({
+    status: 409,
+    body: {
+      ...inputReceipt("abort", stopRequest),
+      state: "rejected",
+      error: { status: 409, message: "Old abort failed" },
+    },
+  });
   await stopping;
   expect(store.getState().live.notices).toEqual([]);
   const message = "Context compacted.";

@@ -5,6 +5,7 @@ import {
   bootstrapPayload,
   deferred,
   installFakeWebSocket,
+  inputReceipt,
   installFetch,
   jsonBody,
   type RouteResponse,
@@ -19,7 +20,11 @@ describe("feedback scope", () => {
     installFetch((url, init) => {
       if (url === "/api/control/abort")
         return {
-          body: { steering: [], followUp: [], interruptionScope: "agent" },
+          body: {
+            ...inputReceipt("abort", jsonBody(init)),
+            state: "completed",
+            result: { steering: [], followUp: [], interruptionScope: "agent" },
+          },
         };
       return baseRoutes(url, init);
     });
@@ -45,9 +50,24 @@ describe("feedback scope", () => {
           ? { status: 503, body: { error: "Snapshot unavailable" } }
           : { body: activeSnapshot() };
       if (url === "/api/prompt")
-        return { body: { accepted: true } };
+        return {
+          body: {
+            ...inputReceipt("prompt", jsonBody(init)),
+            state: "completed",
+            result: null,
+          },
+        };
       if (failedActions.includes(url)) {
         requested.push(url);
+        if (url === "/api/control/abort")
+          return {
+            status: 409,
+            body: {
+              ...inputReceipt("abort", jsonBody(init)),
+              state: "rejected",
+              error: { status: 409, message: "Action refused" },
+            },
+          };
         return { status: 409, body: { error: "Action refused" } };
       }
       return baseRoutes(url, init);
@@ -56,7 +76,9 @@ describe("feedback scope", () => {
     await store.refreshSession();
     const warning = store.getState().error;
     expect(warning).toContain("Snapshot unavailable");
-    await store.sendPrompt("Still usable");
+    await expect(store.sendPrompt("Still usable")).resolves.toMatchObject({
+      accepted: true,
+    });
     expect(store.getState().error).toBe(warning);
     await store.abort();
     await store.clearPending();

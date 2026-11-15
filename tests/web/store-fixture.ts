@@ -4,7 +4,9 @@ import {
   activeSnapshot,
   bootstrapPayload,
   FakeWebSocket,
+  inputReceipt,
   installFetch,
+  jsonBody,
   type RouteHandler,
 } from "./helpers";
 
@@ -17,12 +19,21 @@ export function sessionPage(
   return { sessions, total, offset, limit };
 }
 
-export const baseRoutes: RouteHandler = (url) => {
+export const baseRoutes: RouteHandler = (url, init) => {
   if (url.startsWith("/api/bootstrap"))
     return { body: bootstrapPayload({ startupSessionId: "s1" }) };
   if (url.startsWith("/api/snapshot")) return { body: activeSnapshot() };
   if (url === "/api/pending/recover" || url === "/api/control/abort")
-    return { body: { steering: [], followUp: [] } };
+    return {
+      body: {
+        ...inputReceipt(
+          url === "/api/control/abort" ? "abort" : "recover",
+          jsonBody(init),
+        ),
+        state: "completed",
+        result: { steering: [], followUp: [] },
+      },
+    };
   if (url.startsWith("/api/sessions")) return { body: sessionPage([], 0) };
   return undefined;
 };

@@ -130,7 +130,7 @@ it("remembers a distinct confirmed model identity and leaves recency alone after
     if (url === "/api/preferences") {
       const patch = jsonBody(init);
       patches.push(patch);
-      return { body: { ...defaults, ...patch } };
+      return { body: { preferences: { ...defaults, ...patch }, revision: 1 } };
     }
   });
   const { store } = await initStore();

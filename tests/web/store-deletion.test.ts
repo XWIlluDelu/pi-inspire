@@ -344,7 +344,7 @@ describe("session deletion ownership", () => {
         patches.push(patch);
         if ("hiddenSessionIds" in patch) await hide.promise;
         Object.assign(initial, patch);
-        return { body: { ...initial } };
+        return { body: { preferences: { ...initial }, revision: 1 } };
       }
       if (url === "/api/sessions/delete") {
         requested.resolve();

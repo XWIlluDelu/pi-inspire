@@ -41,11 +41,14 @@ export function installCatalog(
     routes?: RouteHandler;
   } = {},
 ) {
+  let confirmed = { ...DEFAULT_PREFS, ...preferences };
+  let revision = 0;
   installStoreRoutes(async (url, init) => {
     if (url.startsWith("/api/bootstrap"))
       return {
         body: bootstrapPayload({
-          preferences: { ...DEFAULT_PREFS, ...preferences },
+          preferences: confirmed,
+          preferenceRevision: revision,
         }),
       };
     if (url.startsWith("/api/sessions?")) {
@@ -57,10 +60,14 @@ export function installCatalog(
         signal: init.signal,
       });
     }
-    return (
-      (await routes?.(url, init)) ??
-      (url === "/api/preferences" ? { body: jsonBody(init) } : undefined)
-    );
+    const route = await routes?.(url, init);
+    if (route) return route;
+    if (url === "/api/preferences" && init.method === "PATCH") {
+      confirmed = { ...confirmed, ...jsonBody(init) };
+      revision++;
+    }
+    if (url === "/api/preferences")
+      return { body: { preferences: confirmed, revision } };
   });
   return initStore(emptySnapshot);
 }

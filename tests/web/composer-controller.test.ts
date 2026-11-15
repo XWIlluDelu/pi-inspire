@@ -4,21 +4,11 @@ import type {
   PromptAcceptedResponse,
   UploadedAttachment,
 } from "../../shared/contracts";
-import {
-  type Api,
-  ApiError,
-  ApiTransportError,
-  createApi,
-} from "../../src/api";
+import { type Api, ApiError, ApiTransportError } from "../../src/api";
 import { emptyTranscriptView } from "../../src/app-state";
 import { ComposerController } from "../../src/controllers/composer-controller";
 import { SessionDrafts } from "../../src/session-drafts";
-import {
-  deferred,
-  installFetch,
-  jsonBody,
-  TEST_HOST_AUTHORITY,
-} from "./helpers";
+import { deferred, TEST_HOST_AUTHORITY } from "./helpers";
 
 const owner = "session-a";
 const other = "session-b";
@@ -41,15 +31,14 @@ function uploaded(id: string, fileName = `${id}.txt`): UploadedAttachment {
 }
 const image = (id: string) => uploaded(id, `${id}.png`);
 
-function fixture(receipts = false) {
-  const promptApi = receipts ? createApi() : undefined;
+function fixture() {
   let sessionId = owner;
   let authorityId = TEST_HOST_AUTHORITY;
   const view = emptyTranscriptView;
   const drafts = new SessionDrafts();
   const transport = {
-    prompt: vi.fn<Api["prompt"]>(promptApi?.prompt),
-    observePrompt: vi.fn<Api["observePrompt"]>(promptApi?.observePrompt),
+    prompt: vi.fn<Api["prompt"]>(),
+    observePrompt: vi.fn<Api["observePrompt"]>(),
     uploadAttachments: vi.fn<Api["uploadAttachments"]>(),
     deleteAttachment: vi
       .fn<Api["deleteAttachment"]>()
@@ -132,7 +121,10 @@ it("applies repeated recovery only to new image handles and fences over-limit se
   expect(f.handles()).toEqual(["second"]);
   apply("next", "first");
   expect(f.handles()).toEqual(["first", "second"]);
-  apply("overflow", ...Array.from({ length: MAX_ATTACHMENTS }, (_, index) => `more-${index}`));
+  apply(
+    "overflow",
+    ...Array.from({ length: MAX_ATTACHMENTS }, (_, index) => `more-${index}`),
+  );
   await expect(f.send("Recover these attachments")).resolves.toBe(false);
   expect(f.prompt).not.toHaveBeenCalled();
 });
@@ -189,7 +181,9 @@ it("ignores a retired result and observes the original operation on the new tran
   expect(signal?.aborted).toBe(true);
   expect(f.draft().text).toBe("");
   expect(f.draft().intentId).toBeUndefined();
-  expect(f.controller.deliveryState(owner).previous).toBe(f.receipt().operationId);
+  expect(f.controller.deliveryState(owner).previous).toBe(
+    f.receipt().operationId,
+  );
 
   f.edit("replacement");
   submission.resolve(accepted);
@@ -205,39 +199,10 @@ it("ignores a retired result and observes the original operation on the new tran
 });
 
 it("reloads a current receipt for observation and blocks writes when tab storage cannot track them", async () => {
-  let submit = 0;
-  let observe = false;
-  const requests = installFetch((url, init) => {
-    if (url === "/api/prompt" && ++submit === 1) {
-      const { authorityId, operationId } = jsonBody(init);
-      return {
-        status: 409,
-        body: {
-          executor: { kind: "host", authorityId },
-          operationId,
-          command: "prompt",
-          state: "unknown",
-          error: { status: 409, message: "No confirmation" },
-        },
-      };
-    }
-    if (url === "/api/prompt") return { body: accepted };
-    if (url.startsWith("/api/prompt/")) {
-      if (observe) return { body: accepted };
-      const receipt = new URL(url, "http://fixture.local");
-      return {
-        status: 409,
-        body: {
-          executor: { kind: "host", authorityId: receipt.searchParams.get("authorityId") },
-          operationId: receipt.pathname.split("/").at(-1),
-          command: "prompt",
-          state: "unknown",
-          error: { status: 409, message: "No confirmation" },
-        },
-      };
-    }
-  });
-  const original = fixture(true);
+  const original = fixture();
+  const unknown = new ApiTransportError("response", true);
+  original.prompt.mockRejectedValue(unknown);
+  original.observePrompt.mockRejectedValue(unknown);
   expect(await original.send("unconfirmed", "followUp")).toBe(false);
   const saved = sessionStorage.getItem(ledger);
   expect(JSON.parse(saved!)).toEqual([original.receipt()]);
@@ -261,7 +226,11 @@ it("reloads a current receipt for observation and blocks writes when tab storage
     writes.mockRestore();
   }
 
-  const reopened = fixture(true);
+  expect(original.prompt).toHaveBeenCalledOnce();
+  const reopened = fixture();
+  const confirmation = deferred<PromptAcceptedResponse>();
+  reopened.observePrompt.mockReturnValue(confirmation.promise);
+  reopened.prompt.mockResolvedValue(accepted);
   // A read denial must not overwrite an identity when storage is writable.
   const reads = vi.spyOn(window, "sessionStorage", "get").mockReturnValue({
     getItem() {
@@ -278,24 +247,23 @@ it("reloads a current receipt for observation and blocks writes when tab storage
     reads.mockRestore();
   }
   expect(sessionStorage.getItem(ledger)).toBe(saved);
-  observe = true;
   reopened.controller.loadDeliveries(owner);
+  expect(reopened.observePrompt).toHaveBeenCalledExactlyOnceWith(
+    original.receipt(),
+    expect.any(AbortSignal),
+  );
+  expect(reopened.prompt).not.toHaveBeenCalled();
+  confirmation.resolve(accepted);
+  await vi.waitFor(() => expect(sessionStorage.getItem(ledger)).toBeNull());
   expect(reopened.draft().text).toBe("new draft");
   expect(await reopened.send("new draft")).toEqual(accepted);
-  const { operationId, authorityId, fingerprint } = original.receipt();
-  expect(
-    requests.mock.calls.map(([url, init]) => [String(url), init?.method]),
-  ).toEqual([
-    ["/api/prompt", "POST"],
-    [`/api/prompt/${operationId}?${new URLSearchParams({ authorityId, fingerprint: fingerprint! })}`, undefined],
-    [`/api/prompt/${operationId}?${new URLSearchParams({ authorityId, fingerprint: fingerprint! })}`, undefined],
-    ["/api/prompt", "POST"],
-  ]);
+  expect(reopened.prompt).toHaveBeenCalledOnce();
   expect(reopened.draft().text).toBe("");
   await vi.waitFor(() => expect(sessionStorage.getItem(ledger)).toBeNull());
 
   // Old records block fresh sends until the user stops tracking them.
-  const unsupported = fixture(true);
+  const unsupported = fixture();
+  unsupported.prompt.mockResolvedValue(accepted);
   const old = '[{"old":true}]';
   sessionStorage.setItem(ledger, old);
   expect(await unsupported.send("new draft")).toBe(false);
@@ -303,11 +271,11 @@ it("reloads a current receipt for observation and blocks writes when tab storage
     "format",
   );
   expect(sessionStorage.getItem(ledger)).toBe(old);
-  expect(requests).toHaveBeenCalledTimes(4);
+  expect(unsupported.prompt).not.toHaveBeenCalled();
   unsupported.controller.forgetUnsupportedDeliveries(owner);
   expect(sessionStorage.getItem(ledger)).toBeNull();
   expect(await unsupported.send("new draft")).toEqual(accepted);
-  expect(requests).toHaveBeenCalledTimes(5);
+  expect(unsupported.prompt).toHaveBeenCalledOnce();
 });
 
 it("can send a new draft after an unknown delivery without resubmitting its attachments", async () => {
@@ -319,8 +287,13 @@ it("can send a new draft after an unknown delivery without resubmitting its atta
   f.observePrompt.mockRejectedValue(new ApiTransportError("request", true));
 
   expect(await f.send("First caption", "steer")).toBe(false);
-  expect(f.controller.deliveryState(owner).previous).toBe(f.receipt().operationId);
-  expect(f.observePrompt).toHaveBeenCalledExactlyOnceWith(f.receipt(), expect.any(AbortSignal));
+  expect(f.controller.deliveryState(owner).previous).toBe(
+    f.receipt().operationId,
+  );
+  expect(f.observePrompt).toHaveBeenCalledExactlyOnceWith(
+    f.receipt(),
+    expect.any(AbortSignal),
+  );
 
   expect(await f.send("New message")).toEqual(accepted);
   expect(f.prompt.mock.calls[1]![0]).toMatchObject({ message: "New message" });

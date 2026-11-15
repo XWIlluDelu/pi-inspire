@@ -8,7 +8,11 @@ import {
   type SessionSummary,
 } from "../../shared/contracts";
 
-import { hostReceipt } from "../../shared/host-operations";
+import {
+  type HostOperationCommand,
+  hostOperationIdentitySchema,
+  hostReceipt,
+} from "../../shared/host-operations";
 import { emptyToolPresentationConfiguration } from "../../shared/tool-presentation-config";
 
 let nextSelection: ActiveSnapshot | undefined;
@@ -32,61 +36,14 @@ export async function selectSession(
   }
 }
 
-function inputReceiptFixture(
-  url: string,
-  init: RequestInit,
-  route: RouteResponse,
-): unknown {
-  const path = new URL(url, "http://fixture.local");
-  const prompt =
-    path.pathname === "/api/prompt" || path.pathname.startsWith("/api/prompt/");
-  const recover = path.pathname === "/api/pending/recover";
-  const abort = path.pathname === "/api/control/abort";
-  const pending = path.pathname.startsWith("/api/pending/operations/");
-  if (!prompt && !recover && !abort && !pending) return route.body;
-  const value = route.body as Record<string, unknown> | null;
-  if (!value || typeof value !== "object" || "executor" in value) return value;
-  const action = prompt
-    ? "prompt"
-    : abort || path.searchParams.get("action") === "abort"
-      ? "abort"
-      : "recover";
-  const input =
-    init.method === "POST"
-      ? jsonBody(init)
-      : {
-          operationId: path.pathname.split("/").at(-1),
-          authorityId: path.searchParams.get("authorityId"),
-        };
-  if (
-    typeof input.operationId !== "string" ||
-    typeof input.authorityId !== "string"
-  )
-    return value;
-  const identity = hostReceipt(action, {
-    operationId: input.operationId,
-    authorityId: input.authorityId,
-  });
-  if (prompt && value.accepted === true)
-    return {
-      ...identity,
-      state: "completed",
-      result: null,
-    };
-  if (!prompt && Array.isArray(value.steering) && Array.isArray(value.followUp))
-    return { ...identity, state: "completed", result: value };
-  if (
-    prompt &&
-    typeof value.error === "string" &&
-    route.status &&
-    route.status < 500
-  )
-    return {
-      ...identity,
-      state: "rejected",
-      error: { ...value, status: route.status, message: value.error },
-    };
-  return value;
+export function inputReceipt<Command extends HostOperationCommand>(
+  command: Command,
+  { operationId, authorityId }: Record<string, unknown>,
+) {
+  return hostReceipt(
+    command,
+    hostOperationIdentitySchema.parse({ operationId, authorityId }),
+  );
 }
 
 // --- Fetch stubbing ---
@@ -106,10 +63,7 @@ export type RouteHandler = (
   | undefined
   | Promise<RouteResponse | Response | undefined>;
 
-let fixturePreferenceRevision = 0;
-
 export function installFetch(handler: RouteHandler) {
-  let preferences = defaultPreferences;
   const fn = vi.fn(async (input: unknown, init?: RequestInit) => {
     const url = String(input);
     const selected = nextSelection;
@@ -130,25 +84,7 @@ export function installFetch(handler: RouteHandler) {
       body: { error: `No mock route for ${url}` },
     };
     if (route instanceof Response) return route;
-    let body = inputReceiptFixture(url, init ?? {}, route);
-    if ((route.status ?? 200) < 400 && body && typeof body === "object") {
-      if (url === "/api/preferences" && !("revision" in body)) {
-        preferences = { ...preferences, ...body };
-        body = { preferences, revision: ++fixturePreferenceRevision };
-      } else if (
-        (url.startsWith("/api/bootstrap") ||
-          url.startsWith("/api/sessions/") ||
-          url.startsWith("/api/presentation-adapters")) &&
-        "preferences" in body &&
-        body.preferences &&
-        typeof body.preferences === "object"
-      ) {
-        preferences = { ...defaultPreferences, ...body.preferences };
-        if (!("preferenceRevision" in body))
-          body = { ...body, preferenceRevision: ++fixturePreferenceRevision };
-      }
-    }
-    return new Response(JSON.stringify(body), {
+    return new Response(JSON.stringify(route.body), {
       status: route.status ?? 200,
       headers: { "Content-Type": "application/json", ...route.headers },
     });
@@ -355,6 +291,7 @@ export function bootstrapPayload(overrides: Partial<BootstrapResponse> = {}) {
     piVersion: "0.80.10",
     updateStatus: hostUpdateStatus(),
     preferences: DEFAULT_PREFS,
+    preferenceRevision: 0,
     toolPresentations: emptyToolPresentationConfiguration(),
     availableModels: [
       {

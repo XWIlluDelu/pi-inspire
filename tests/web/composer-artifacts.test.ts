@@ -5,6 +5,7 @@ import {
   bootstrapPayload,
   deferred,
   FakeWebSocket,
+  inputReceipt,
   installFakeWebSocket,
   jsonBody,
   type RouteResponse,
@@ -107,8 +108,16 @@ it("reuploads browser-held attachments only after a different Host confirms its 
         },
       };
     if (url === "/api/prompt") {
-      prompt(jsonBody(init));
-      return { status: 202, body: { accepted: true } };
+      const body = jsonBody(init);
+      prompt(body);
+      return {
+        status: 202,
+        body: {
+          ...inputReceipt("prompt", body),
+          state: "completed",
+          result: null,
+        },
+      };
     }
   });
   const { store } = await initStore();
@@ -129,7 +138,9 @@ it("reuploads browser-held attachments only after a different Host confirms its 
     }),
   );
   expect(prompt).not.toHaveBeenCalled();
-  await store.sendPrompt("send");
+  await expect(store.sendPrompt("send")).resolves.toMatchObject({
+    accepted: true,
+  });
   expect(prompt).toHaveBeenCalledExactlyOnceWith(
     expect.objectContaining({ authorityId, attachmentIds: ["upload-2"] }),
   );

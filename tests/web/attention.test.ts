@@ -2,6 +2,8 @@
 import { MessageChannel } from "node:worker_threads";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TaskAlertSettings } from "../../shared/notifications";
+import { createApi } from "../../src/api";
+import { createInitialAppState } from "../../src/app-state";
 import { TaskNotificationController } from "../../src/notifications";
 import { AppStore } from "../../src/store";
 import { sessionPage } from "./fixtures/session-catalog";
@@ -13,6 +15,7 @@ import {
   installFakeWebSocket,
   installFetch,
   jsonBody,
+  type RouteHandler,
   type RouteResponse,
   sessionSummary,
 } from "./helpers";
@@ -90,6 +93,53 @@ function visibleFocused(value: boolean) {
     value: () => value,
   });
 }
+const notificationRoutes: RouteHandler = (url, init) => {
+  if (url === "/api/notifications") {
+    if (init.method === "PUT") {
+      const body = jsonBody(init);
+      mutations.push(body);
+      if (body.mode !== undefined) mode = body.mode as typeof mode;
+      if (body.grouping !== undefined && body.grouping !== grouping) {
+        grouping = body.grouping as typeof grouping;
+        groupingUpdatedAt++;
+      }
+      if (body.subscription !== undefined)
+        subscribed = mode === "desktop" && Boolean(body.subscription);
+      if (body.subscription)
+        subscriptionEndpoint = (body.subscription as { endpoint: string })
+          .endpoint;
+    }
+    return { body: hostSettings() };
+  }
+  if (url === "/api/notifications/ack") {
+    acknowledgments.push(String(jsonBody(init).id));
+    return { body: { ok: true } };
+  }
+  if (url === "/api/notifications/test")
+    return (
+      testResponse ?? { body: { transport: subscribed ? "push" : "page" } }
+    );
+};
+
+async function notificationController(choice: typeof mode = "desktop") {
+  mode = choice;
+  installFetch(notificationRoutes);
+  const api = createApi();
+  let state = createInitialAppState();
+  const controller = new TaskNotificationController({
+    state: () => state,
+    patch: (patch) => {
+      state = { ...state, ...patch };
+    },
+    api: () => api,
+    mark: vi.fn(),
+    clear: vi.fn(),
+    openSession: vi.fn(),
+  });
+  await controller.initialize();
+  return { controller, alerts: () => state.taskAlerts };
+}
+
 async function initialized(
   choice: typeof mode = "desktop",
   open?: (id: string) => RouteResponse | Promise<RouteResponse>,
@@ -98,31 +148,8 @@ async function initialized(
 ) {
   mode = choice;
   installFetch((url, init) => {
-    if (url === "/api/notifications") {
-      if (init.method === "PUT") {
-        const body = jsonBody(init);
-        mutations.push(body);
-        if (body.mode !== undefined) mode = body.mode as typeof mode;
-        if (body.grouping !== undefined && body.grouping !== grouping) {
-          grouping = body.grouping as typeof grouping;
-          groupingUpdatedAt++;
-        }
-        if (body.subscription !== undefined)
-          subscribed = mode === "desktop" && Boolean(body.subscription);
-        if (body.subscription)
-          subscriptionEndpoint = (body.subscription as { endpoint: string })
-            .endpoint;
-      }
-      return { body: hostSettings() };
-    }
-    if (url === "/api/notifications/ack") {
-      acknowledgments.push(String(jsonBody(init).id));
-      return { body: { ok: true } };
-    }
-    if (url === "/api/notifications/test")
-      return (
-        testResponse ?? { body: { transport: subscribed ? "push" : "page" } }
-      );
+    const route = notificationRoutes(url, init);
+    if (route) return route;
     if (url.startsWith("/api/bootstrap"))
       return {
         body: bootstrapPayload({ startupSessionId: "s1" }),
@@ -156,16 +183,20 @@ async function initialized(
   socket.join(activeSnapshot());
   return { store, socket };
 }
+function failedOutcome(id: string, sessionId: string) {
+  return {
+    id,
+    sessionId,
+    outcome: "failed" as const,
+    project: "research-project",
+    createdAt: Date.now(),
+  };
+}
+
 function outcome(socket: FakeWebSocket, id = "outcome-one", sessionId = "bg") {
   socket.emit({
     type: "task_notification",
-    notification: {
-      id,
-      sessionId,
-      outcome: "failed",
-      project: "research-project",
-      createdAt: Date.now(),
-    },
+    notification: failedOutcome(id, sessionId),
   });
 }
 
@@ -337,7 +368,7 @@ describe("device-local task alerts", () => {
   );
 
   it("keeps a failed grouping choice until retry saves it independently of enrollment", async () => {
-    const { store, socket } = await initialized("off");
+    const { controller, alerts } = await notificationController("off");
     let accept = false;
     installFetch((url, init) => {
       if (url !== "/api/notifications") return;
@@ -354,14 +385,12 @@ describe("device-local task alerts", () => {
       return { body: hostSettings() };
     });
 
-    await expect(store.setTaskNotificationGrouping("project")).resolves.toBe(
-      false,
-    );
-    socket.emit({ type: "task_alert_settings", settings: hostSettings() });
-    await store.refreshTaskAlerts();
+    await expect(controller.setGrouping("project")).resolves.toBe(false);
+    controller.applySettings(hostSettings());
+    await controller.initialize();
     worker.dispatchEvent(new Event("controllerchange"));
     await vi.waitFor(() =>
-      expect(store.getState().taskAlerts).toMatchObject({
+      expect(alerts()).toMatchObject({
         grouping: "project",
         groupingError: expect.stringContaining("unavailable"),
         groupingBusy: false,
@@ -370,15 +399,13 @@ describe("device-local task alerts", () => {
     expect(workerSettings.at(-1)).toMatchObject({ grouping: "session" });
 
     accept = true;
-    await expect(store.setTaskNotificationGrouping("project")).resolves.toBe(
-      true,
-    );
-    await store.refreshTaskAlerts();
+    await expect(controller.setGrouping("project")).resolves.toBe(true);
+    await controller.initialize();
     expect(mutations).toEqual([
       { grouping: "project" },
       { grouping: "project" },
     ]);
-    expect(store.getState().taskAlerts).toMatchObject({
+    expect(alerts()).toMatchObject({
       mode: "off",
       grouping: "project",
       groupingError: null,
@@ -394,7 +421,7 @@ describe("device-local task alerts", () => {
   });
 
   it("reconciles worker replacement and ignores an older worker's late error", async () => {
-    const { store } = await initialized("off");
+    const { controller, alerts } = await notificationController("off");
     const registration = await navigator.serviceWorker.getRegistration();
     let oldReply: MessagePort | undefined;
     vi.spyOn(registration!.active!, "postMessage").mockImplementationOnce(
@@ -404,14 +431,14 @@ describe("device-local task alerts", () => {
           | undefined;
       },
     );
-    const oldRefresh = store.refreshTaskAlerts();
+    const oldRefresh = controller.initialize();
     await vi.waitFor(() => expect(oldReply).toBeDefined());
     worker.dispatchEvent(new Event("controllerchange"));
-    await store.refreshTaskAlerts();
+    await controller.initialize();
     oldReply!.postMessage({ error: "Retired worker error" });
     oldReply!.close();
     await oldRefresh;
-    expect(store.getState().taskAlerts.groupingError).toBeNull();
+    expect(alerts().groupingError).toBeNull();
   });
 
   it("accepts grouping updates in order within each Host", async () => {
@@ -567,14 +594,14 @@ describe("device-local task alerts", () => {
 
   it("preserves alert intent after permission denial and reports test delivery after enrollment", async () => {
     Permission.permission = "default";
-    const { store } = await initialized("off");
+    const { controller, alerts } = await notificationController("off");
     expect(Permission.requestPermission).not.toHaveBeenCalled();
     Permission.requestPermission.mockImplementationOnce(async () => {
       Permission.permission = "denied";
       return "denied";
     });
-    await expect(store.setCompletionAttention("desktop")).resolves.toBe(false);
-    expect(store.getState().taskAlerts).toMatchObject({
+    await expect(controller.setMode("desktop")).resolves.toBe(false);
+    expect(alerts()).toMatchObject({
       mode: "desktop",
       permission: "denied",
       subscribed: false,
@@ -585,20 +612,18 @@ describe("device-local task alerts", () => {
 
     // The user unblocks notifications in their browser settings.
     Permission.permission = "granted";
-    await expect(store.setCompletionAttention("desktop")).resolves.toBe(true);
+    await expect(controller.setMode("desktop")).resolves.toBe(true);
     expect(Permission.requestPermission).toHaveBeenCalledOnce();
     expect(subscribe).toHaveBeenCalledWith(
       expect.objectContaining({ userVisibleOnly: true }),
     );
-    expect(store.getState().taskAlerts.subscribed).toBe(true);
-    await store.testTaskNotification();
-    expect(store.getState().taskAlerts.testResult).toContain(
-      "Sent to the browser push service",
-    );
+    expect(alerts().subscribed).toBe(true);
+    await controller.test();
+    expect(alerts().testResult).toContain("Sent to the browser push service");
 
     const response = deferred<RouteResponse>();
     testResponse = response.promise;
-    const pending = store.testTaskNotification();
+    const pending = controller.test();
     worker.dispatchEvent(
       new MessageEvent("message", {
         data: { type: "inspire-notification-shown", test: true },
@@ -606,16 +631,16 @@ describe("device-local task alerts", () => {
     );
     response.resolve({ body: { transport: "push" } });
     await pending;
-    expect(store.getState().taskAlerts.testResult).toBe(
+    expect(alerts().testResult).toBe(
       "Display request accepted. Check your system notifications.",
     );
   });
 
   it("ignores a retired notification test error after Off", async () => {
-    const { store } = await initialized();
+    const { controller, alerts } = await notificationController();
     const response = deferred<RouteResponse>();
     testResponse = response.promise;
-    const pendingTest = store.testTaskNotification();
+    const pendingTest = controller.test();
     const local = browserSubscription();
     const unsubscribe = deferred<boolean>();
     local.unsubscribe.mockReturnValueOnce(unsubscribe.promise);
@@ -624,12 +649,12 @@ describe("device-local task alerts", () => {
       local,
     );
 
-    const disabling = store.setCompletionAttention("off");
+    const disabling = controller.setMode("off");
     await vi.waitFor(() => expect(local.unsubscribe).toHaveBeenCalledOnce());
     response.reject(new Error("Old notification test failed"));
     await pendingTest;
 
-    expect(store.getState().taskAlerts).toMatchObject({
+    expect(alerts()).toMatchObject({
       mode: "off",
       busy: true,
       error: null,
@@ -637,7 +662,7 @@ describe("device-local task alerts", () => {
     });
     unsubscribe.resolve(true);
     await expect(disabling).resolves.toBe(true);
-    expect(store.getState().taskAlerts.busy).toBe(false);
+    expect(alerts().busy).toBe(false);
   });
 
   it.each(["resolves", "rejects"] as const)(
@@ -674,29 +699,29 @@ describe("device-local task alerts", () => {
   );
 
   it("replaces an expired browser subscription only when the user enables notifications", async () => {
-    const { store } = await initialized();
+    const { controller, alerts } = await notificationController();
     const local = browserSubscription();
     expiredEndpoint = local.endpoint;
     const registration = (await navigator.serviceWorker.getRegistration())!;
     vi.spyOn(registration.pushManager, "getSubscription").mockResolvedValue(
       local,
     );
-    await store.refreshTaskAlerts();
+    await controller.initialize();
     expect(mutations).toEqual([]);
-    expect(store.getState().taskAlerts.subscribed).toBe(false);
+    expect(alerts().subscribed).toBe(false);
     expect(subscribe).not.toHaveBeenCalled();
 
     const renewed = browserSubscription(local.endpoint + "-renewed");
     subscribe.mockResolvedValueOnce(renewed);
-    await expect(store.setCompletionAttention("desktop")).resolves.toBe(true);
+    await expect(controller.setMode("desktop")).resolves.toBe(true);
     expect(local.unsubscribe).toHaveBeenCalledOnce();
     expect(subscribe).toHaveBeenCalledOnce();
     expect(mutations.at(-1)).toEqual({ subscription: renewed.toJSON() });
-    expect(store.getState().taskAlerts.subscribed).toBe(true);
+    expect(alerts().subscribed).toBe(true);
   });
 
   it("retires a pending page display when alerts are disabled before worker readiness", async () => {
-    const { store, socket } = await initialized();
+    const { controller, alerts } = await notificationController();
     const registration = await navigator.serviceWorker.ready;
     const ready = deferred<ServiceWorkerRegistration>();
     const waiting = vi.fn(() => ready.promise);
@@ -704,24 +729,22 @@ describe("device-local task alerts", () => {
       configurable: true,
       get: waiting,
     });
-    const receive = vi.spyOn(TaskNotificationController.prototype, "receive");
-    outcome(socket, "before-disable");
+    const pending = controller.receive(failedOutcome("before-disable", "bg"));
     expect(waiting).toHaveBeenCalledOnce();
-    const pending = receive.mock.results[0]!.value as Promise<void>;
 
-    await store.setCompletionAttention("off");
+    await controller.setMode("off");
     ready.resolve(registration);
     await pending;
 
     expect(workerMessages).toEqual([]);
-    expect(store.getState().taskAlerts).toMatchObject({
+    expect(alerts()).toMatchObject({
       mode: "off",
       error: null,
     });
   });
 
   it("leaves a failed display unacknowledged for Host push fallback", async () => {
-    const { store, socket } = await initialized();
+    const { controller, alerts } = await notificationController();
     const registration = await navigator.serviceWorker.ready;
     vi.spyOn(registration.active!, "postMessage").mockImplementation(
       (_data, transfer) => {
@@ -731,10 +754,8 @@ describe("device-local task alerts", () => {
       },
     );
     visibleFocused(false);
-    outcome(socket, "display-failed", "s1");
-    await vi.waitFor(() =>
-      expect(store.getState().taskAlerts.error).toBe("Display refused"),
-    );
+    await controller.receive(failedOutcome("display-failed", "s1"));
+    await vi.waitFor(() => expect(alerts().error).toBe("Display refused"));
     expect(acknowledgments).toEqual([]);
   });
 });
