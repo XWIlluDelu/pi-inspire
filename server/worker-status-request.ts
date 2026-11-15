@@ -15,8 +15,70 @@ interface StatusRequest {
   malformedError: Error;
 }
 
-/** The hidden command's prompt receipt fences its status packets. Callers own
- * packet validation/completion, including multi-packet evidence ordering. */
+export interface WorkerStatusOwner {
+  nonce: string;
+  workerId: string;
+  sessionId: string;
+}
+
+export function watchWorkerStatus(
+  rpc: PiRpcProcess,
+  statusKey: string,
+  owner: WorkerStatusOwner,
+  maxBytes: number,
+  receive: (value: Record<string, unknown>) => void,
+  malformed: () => void,
+  mismatch?: () => void,
+): () => void {
+  const onEvent = (event: Record<string, unknown>) => {
+    if (
+      !event ||
+      event.type !== "extension_ui_request" ||
+      event.method !== "setStatus" ||
+      event.statusKey !== statusKey
+    )
+      return;
+    try {
+      const value = decodeBranchBridgeJson(event.statusText, maxBytes) as
+        | Record<string, unknown>
+        | null;
+      if (
+        !value ||
+        value.nonce !== owner.nonce ||
+        value.workerId !== owner.workerId ||
+        value.sessionId !== owner.sessionId
+      ) {
+        mismatch?.();
+        return;
+      }
+      receive(value);
+    } catch {
+      malformed();
+    }
+  };
+  rpc.on("event", onEvent);
+  return () => {
+    rpc.off("event", onEvent);
+  };
+}
+
+export function sendWorkerStatusRequest(
+  rpc: PiRpcProcess,
+  command: string,
+  argument: Record<string, unknown>,
+  maxBytes: number,
+  timeoutMs: number | null,
+) {
+  return rpc.request(
+    {
+      type: "prompt",
+      message: `/${command} ${encodeBranchBridgeJson(argument, maxBytes)}`,
+    },
+    timeoutMs,
+  );
+}
+
+/** The hidden command's prompt receipt fences its status packets. */
 export async function requestWorkerStatus(
   rpc: PiRpcProcess,
   bridge: BranchBridgeIdentity,
@@ -24,46 +86,19 @@ export async function requestWorkerStatus(
   options: StatusRequest,
   receive: (value: Record<string, unknown>) => void,
 ): Promise<void> {
-  const nonce = runtimeToken("status");
+  const owner = { nonce: runtimeToken("status"), workerId: bridge.workerId, sessionId };
   let invalid = false;
-  const onEvent = (event: Record<string, unknown>) => {
-    if (
-      event.type !== "extension_ui_request" ||
-      event.method !== "setStatus" ||
-      event.statusKey !== `${bridge.statusKey}${options.suffix}`
-    )
-      return;
-    try {
-      const value = decodeBranchBridgeJson(
-        event.statusText,
-        options.maxResultBytes,
-      ) as Record<string, unknown> | null;
-      if (
-        !value ||
-        value.nonce !== nonce ||
-        value.workerId !== bridge.workerId ||
-        value.sessionId !== sessionId
-      )
-        return;
-      receive(value);
-    } catch {
-      invalid = true;
-    }
-  };
-  rpc.on("event", onEvent);
+  const unwatch = watchWorkerStatus(
+    rpc, `${bridge.statusKey}${options.suffix}`, owner, options.maxResultBytes,
+    receive, () => { invalid = true; },
+  );
   try {
-    await rpc.request(
-      {
-        type: "prompt",
-        message: `/${bridge.command}${options.suffix} ${encodeBranchBridgeJson(
-          { ...options.argument, nonce, workerId: bridge.workerId, sessionId },
-          options.maxArgumentBytes,
-        )}`,
-      },
-      options.timeoutMs ?? 30_000,
+    await sendWorkerStatusRequest(
+      rpc, `${bridge.command}${options.suffix}`, { ...options.argument, ...owner },
+      options.maxArgumentBytes, options.timeoutMs ?? 30_000,
     );
     if (invalid) throw options.malformedError;
   } finally {
-    rpc.off("event", onEvent);
+    unwatch();
   }
 }

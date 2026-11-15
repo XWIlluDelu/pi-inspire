@@ -611,39 +611,34 @@ describe("device-local task alerts", () => {
     );
   });
 
-  it.each(["resolves", "rejects"] as const)(
-    "keeps a newer mode choice in control when an older notification test %s",
-    async (settlement) => {
-      const { store } = await initialized();
-      const response = deferred<RouteResponse>();
-      testResponse = response.promise;
-      const pendingTest = store.testTaskNotification();
-      const local = browserSubscription();
-      const unsubscribe = deferred<boolean>();
-      local.unsubscribe.mockReturnValueOnce(unsubscribe.promise);
-      const registration = (await navigator.serviceWorker.getRegistration())!;
-      vi.spyOn(registration.pushManager, "getSubscription").mockResolvedValue(
-        local,
-      );
+  it("ignores a retired notification test error after Off", async () => {
+    const { store } = await initialized();
+    const response = deferred<RouteResponse>();
+    testResponse = response.promise;
+    const pendingTest = store.testTaskNotification();
+    const local = browserSubscription();
+    const unsubscribe = deferred<boolean>();
+    local.unsubscribe.mockReturnValueOnce(unsubscribe.promise);
+    const registration = (await navigator.serviceWorker.getRegistration())!;
+    vi.spyOn(registration.pushManager, "getSubscription").mockResolvedValue(
+      local,
+    );
 
-      const disabling = store.setCompletionAttention("off");
-      await vi.waitFor(() => expect(local.unsubscribe).toHaveBeenCalledOnce());
-      if (settlement === "resolves")
-        response.resolve({ body: { transport: "push" } });
-      else response.reject(new Error("Old notification test failed"));
-      await pendingTest;
+    const disabling = store.setCompletionAttention("off");
+    await vi.waitFor(() => expect(local.unsubscribe).toHaveBeenCalledOnce());
+    response.reject(new Error("Old notification test failed"));
+    await pendingTest;
 
-      expect(store.getState().taskAlerts).toMatchObject({
-        mode: "off",
-        busy: true,
-        error: null,
-        testResult: null,
-      });
-      unsubscribe.resolve(true);
-      await expect(disabling).resolves.toBe(true);
-      expect(store.getState().taskAlerts.busy).toBe(false);
-    },
-  );
+    expect(store.getState().taskAlerts).toMatchObject({
+      mode: "off",
+      busy: true,
+      error: null,
+      testResult: null,
+    });
+    unsubscribe.resolve(true);
+    await expect(disabling).resolves.toBe(true);
+    expect(store.getState().taskAlerts.busy).toBe(false);
+  });
 
   it.each(["resolves", "rejects"] as const)(
     "keeps another window's Off choice when pending enrollment %s",
@@ -700,34 +695,30 @@ describe("device-local task alerts", () => {
     expect(store.getState().taskAlerts.subscribed).toBe(true);
   });
 
-  it.each(["resolves", "rejects"] as const)(
-    "retires a pending page display when alerts are disabled before worker readiness %s",
-    async (settlement) => {
-      const { store, socket } = await initialized();
-      const registration = await navigator.serviceWorker.ready;
-      const ready = deferred<ServiceWorkerRegistration>();
-      const waiting = vi.fn(() => ready.promise);
-      Object.defineProperty(navigator.serviceWorker, "ready", {
-        configurable: true,
-        get: waiting,
-      });
-      const receive = vi.spyOn(TaskNotificationController.prototype, "receive");
-      outcome(socket, "before-disable");
-      expect(waiting).toHaveBeenCalledOnce();
-      const pending = receive.mock.results[0]!.value as Promise<void>;
+  it("retires a pending page display when alerts are disabled before worker readiness", async () => {
+    const { store, socket } = await initialized();
+    const registration = await navigator.serviceWorker.ready;
+    const ready = deferred<ServiceWorkerRegistration>();
+    const waiting = vi.fn(() => ready.promise);
+    Object.defineProperty(navigator.serviceWorker, "ready", {
+      configurable: true,
+      get: waiting,
+    });
+    const receive = vi.spyOn(TaskNotificationController.prototype, "receive");
+    outcome(socket, "before-disable");
+    expect(waiting).toHaveBeenCalledOnce();
+    const pending = receive.mock.results[0]!.value as Promise<void>;
 
-      await store.setCompletionAttention("off");
-      if (settlement === "resolves") ready.resolve(registration);
-      else ready.reject(new Error("Worker startup failed"));
-      await pending;
+    await store.setCompletionAttention("off");
+    ready.resolve(registration);
+    await pending;
 
-      expect(workerMessages).toEqual([]);
-      expect(store.getState().taskAlerts).toMatchObject({
-        mode: "off",
-        error: null,
-      });
-    },
-  );
+    expect(workerMessages).toEqual([]);
+    expect(store.getState().taskAlerts).toMatchObject({
+      mode: "off",
+      error: null,
+    });
+  });
 
   it("leaves a failed display unacknowledged for Host push fallback", async () => {
     const { store, socket } = await initialized();

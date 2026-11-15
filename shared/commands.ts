@@ -31,7 +31,9 @@ interface PiNativeCommandDescriptor {
   surface?: CommandSurface;
   modelSettingsFocus?: "credentials" | "common";
   selectionHint?: string;
-  palette?: "prepare" | "export";
+  paletteTitle?: string;
+  usage?: string;
+  palette?: "prepare";
   terminalGuidance?: string;
   requiresIdleOwnedPi?: true;
   /** Can be used while the retained session's project folder is unavailable. */
@@ -53,6 +55,8 @@ export const PI_NATIVE_COMMANDS = [
   },
   {
     name: "model",
+    usage: "Choose a candidate or enter an exact provider/model.",
+    paletteTitle: "Choose model",
     description: "Choose or set the active model",
     argumentHint: "[provider/model]",
     execution: "client",
@@ -66,6 +70,8 @@ export const PI_NATIVE_COMMANDS = [
   },
   {
     name: "thinking",
+    usage: "Choose a level supported by the active model.",
+    paletteTitle: "Choose thinking level",
     description: "Choose or set the thinking level",
     argumentHint: "[level]",
     execution: "client",
@@ -79,7 +85,8 @@ export const PI_NATIVE_COMMANDS = [
   },
   {
     name: "export",
-    palette: "export",
+    usage:
+      "Omit the path for HTML. A .jsonl path exports only the current branch. Quote paths containing spaces.",
     description: "Export session HTML or current-branch JSONL",
     argumentHint: "[path.html|path.jsonl]",
     execution: "host",
@@ -108,18 +115,21 @@ export const PI_NATIVE_COMMANDS = [
   },
   {
     name: "copy",
+    paletteTitle: "Copy last response",
     availableWithoutWorkspace: true,
     description: "Copy the last assistant response",
     execution: "client",
   },
   {
     name: "name",
+    usage: "Enter a session name; omit it to show the current name.",
     description: "Show or set the session name",
     argumentHint: "[name]",
     execution: "client",
   },
   {
     name: "session",
+    paletteTitle: "Session & usage",
     availableWithoutWorkspace: true,
     description: "Show session, usage, and cost information",
     execution: "informational",
@@ -140,6 +150,7 @@ export const PI_NATIVE_COMMANDS = [
   },
   {
     name: "fork",
+    paletteTitle: "Fork from History",
     surface: "history",
     selectionHint: "Choose a user message in History, then select Fork",
     description: "Open History to fork from a user message",
@@ -181,6 +192,8 @@ export const PI_NATIVE_COMMANDS = [
   },
   {
     name: "compact",
+    usage: "Optional instructions for the compaction summary.",
+    paletteTitle: "Compact context…",
     requiresIdleOwnedPi: true,
     palette: "prepare",
     description: "Compact the current context",
@@ -196,12 +209,14 @@ export const PI_NATIVE_COMMANDS = [
   },
   {
     name: "reload",
+    paletteTitle: "Reload Pi resources",
     requiresIdleOwnedPi: true,
     description: "Reload Pi extensions, skills, prompts, and context files",
     execution: "host",
   },
   {
     name: "quit",
+    paletteTitle: "Leave Inspire",
     availableWithoutWorkspace: true,
     description: "Explain how to leave the browser client",
     execution: "informational",

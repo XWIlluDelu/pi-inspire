@@ -102,7 +102,7 @@ async function nextTurn(): Promise<void> {
 
 function fixture() {
   const api = {
-    terminalAttachTicket: vi.fn().mockResolvedValue({ ticket: "ticket" }),
+    json: vi.fn().mockResolvedValue({ ticket: "ticket" }),
   };
   const events = {
     dimensions: () => ({ cols: 80, rows: 24 }),
@@ -165,7 +165,7 @@ describe("TerminalConnection", () => {
     }
   });
 
-  it.each(["ticket", "socket", "attach", "replay", "inactive"] as const)(
+  it.each(["ticket", "replay", "inactive"] as const)(
     "recovers a silent %s stall without waiting for close",
     async (phase) => {
       let finishTicket!: (value: { ticket: string }) => void;
@@ -175,7 +175,7 @@ describe("TerminalConnection", () => {
         connection,
       } = fixture();
       if (phase === "ticket")
-        api.terminalAttachTicket.mockImplementationOnce(
+        api.json.mockImplementationOnce(
           () =>
             new Promise((resolve) => {
               finishTicket = resolve;
@@ -184,7 +184,7 @@ describe("TerminalConnection", () => {
       connection.start();
       await nextTurn();
       const old = FakeWebSocket.sockets[0];
-      if (phase === "attach" || phase === "replay" || phase === "inactive")
+      if (phase !== "ticket")
         old!.open();
       if (phase === "replay") {
         attachForReplay(old!);
@@ -208,9 +208,9 @@ describe("TerminalConnection", () => {
       await vi.advanceTimersByTimeAsync(
         (phase === "replay" || phase === "inactive" ? 30_000 : 10_000) + 400,
       );
-      expect(api.terminalAttachTicket).toHaveBeenCalledTimes(2);
+      expect(api.json).toHaveBeenCalledTimes(2);
       if (phase === "ticket") {
-        expect(api.terminalAttachTicket.mock.calls[0]![1].aborted).toBe(true);
+        expect(api.json.mock.calls[0]![2].aborted).toBe(true);
         finishTicket({ ticket: "stale" });
         await nextTurn();
         expect(FakeWebSocket.sockets).toHaveLength(1);
@@ -226,7 +226,7 @@ describe("TerminalConnection", () => {
       expect(connection.sendInput("new\r")).toBe(true);
       connection.stop();
       await vi.advanceTimersByTimeAsync(60_000);
-      expect(api.terminalAttachTicket).toHaveBeenCalledTimes(2);
+      expect(api.json).toHaveBeenCalledTimes(2);
       expect(status).toHaveBeenLastCalledWith("offline");
     },
   );

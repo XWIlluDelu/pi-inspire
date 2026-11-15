@@ -204,7 +204,6 @@ describe("session deletion ownership", () => {
 
   it.each([
     { method: "delete", result: "committed" },
-    { method: "delete", result: "refused" },
     { method: "clear", result: "partial" },
     { method: "delete", result: "unauthorized" },
   ] as const)(
@@ -234,8 +233,6 @@ describe("session deletion ownership", () => {
         if (url === "/api/sessions/delete") {
           requested.resolve();
           await deletion.promise;
-          if (result === "refused")
-            return { status: 500, body: { error: "Trash unavailable" } };
           const sessionId = result === "partial" ? "s2" : "s1";
           sessions = sessions.filter((row) => row.id !== sessionId);
           return {

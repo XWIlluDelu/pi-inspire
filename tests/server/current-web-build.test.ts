@@ -172,8 +172,7 @@ it("retires an already connected page after a new manifest is published", async 
     id: "peer",
     terminalId: "terminal",
     detach,
-    writeInput: vi.fn(),
-    control: vi.fn(),
+    send: vi.fn(),
   }));
   const host = await hostApiFixture({
     distDir: dist,

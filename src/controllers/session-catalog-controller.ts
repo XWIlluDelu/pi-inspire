@@ -350,7 +350,11 @@ export class SessionCatalogController {
         target > nextOffset
           ? Math.min(MAX_SESSION_LIST_PAGE_SIZE, target - nextOffset)
           : SESSION_PAGE_SIZE;
-      page = await api.sessions(query, nextOffset, limit, signal);
+      page = await api.json(
+        "sessions",
+        { query: { q: query, offset: nextOffset, limit } },
+        signal,
+      );
       if (
         page.offset !== nextOffset ||
         (!page.sessions.length && nextOffset < page.total)
@@ -520,13 +524,15 @@ export class SessionCatalogController {
           (id) => !baseIds.has(id) && !this.hydration.has(id),
         ),
         limit: MAX_SESSION_ID_HYDRATION_IDS,
-        read: (chunk: string[]) => api.sessionsByIds(chunk, signal),
+        read: (chunk: string[]) =>
+          api.json("sessionsByIds", { body: { ids: chunk } }, signal),
       },
       {
         field: "cwd",
         owners: [...cwds],
         limit: MAX_SESSION_CWD_HYDRATION_CWDS,
-        read: (chunk: string[]) => api.sessionsByCwds(chunk, signal),
+        read: (chunk: string[]) =>
+          api.json("sessionsByCwds", { body: { cwds: chunk } }, signal),
       },
     ] as const;
     for (const { field, owners, limit, read } of reads) {
@@ -577,7 +583,7 @@ export class SessionCatalogController {
       do {
         try {
           const { sessions } = await request.read((signal) =>
-            api.sessionsByIds([id], signal),
+            api.json("sessionsByIds", { body: { ids: [id] } }, signal),
           );
           if (this.hasSession(id)) return;
           const session = sessions.find((row) => row.id === id);

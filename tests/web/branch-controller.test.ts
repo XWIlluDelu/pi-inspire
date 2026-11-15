@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
   BranchForkResponse,
   BranchNavigateResponse,
@@ -12,7 +12,7 @@ import {
 } from "../../src/controllers/branch-controller";
 import { activeSnapshot, deferred } from "./helpers";
 
-function createHarness(initial: Partial<BranchControllerState> = {}) {
+function createHarness() {
   let state: BranchControllerState = {
     sessionId: "s1",
     view: {
@@ -20,13 +20,11 @@ function createHarness(initial: Partial<BranchControllerState> = {}) {
       viewId: "view-1",
       incarnation: "incarnation-1",
       composerHistoryVersion: "history-1",
-      durableLeafId: "a1",
       effectiveLeafId: "a1",
       branchRevision: 1,
     },
     branchTreeError: null,
     branchActionId: null,
-    ...initial,
   };
   let selectionGeneration = 1;
   let selectionRequest = 1;
@@ -35,12 +33,14 @@ function createHarness(initial: Partial<BranchControllerState> = {}) {
   const cloneBranch = vi.fn();
   const sessionHistory = vi.fn();
   const branchImage = vi.fn();
+  const deleteAttachment = vi.fn().mockResolvedValue(undefined);
   const commands = { navigateBranch, forkBranch, cloneBranch };
   let api = {
     json: (name: keyof typeof commands, { body }: { body: unknown }) =>
       commands[name](body),
     sessionHistory,
     branchImage,
+    deleteAttachment,
   } as unknown as Api;
   const applyNavigation = vi.fn();
   const applyFork = vi.fn();
@@ -92,6 +92,7 @@ function createHarness(initial: Partial<BranchControllerState> = {}) {
     cloneBranch,
     sessionHistory,
     branchImage,
+    deleteAttachment,
     applyNavigation,
     applyFork,
     refreshSessionCatalog,
@@ -101,29 +102,16 @@ function createHarness(initial: Partial<BranchControllerState> = {}) {
 }
 
 describe("BranchController", () => {
-  afterEach(() => vi.useRealTimers());
-
-  it.each([
-    { branchActionId: "another-action" },
-    {
-      view: {
-        ...emptyTranscriptView,
-        health: { status: "error" as const, message: "Unreadable source" },
-      },
-    },
-    { readOnlyReason: "workspace-unavailable" as const },
-  ])("rejects Clone while its source cannot be copied: %j", async (initial) => {
-    const harness = createHarness(initial);
-    expect(await harness.controller.clone()).toBe(false);
-    expect(harness.cloneBranch).not.toHaveBeenCalled();
-  });
-
   it.each(["entry", "image"] as const)(
     "keeps immutable %s reads through same-view append, but rejects replaced owners",
     async (kind) => {
       const read = (harness: ReturnType<typeof createHarness>) =>
         kind === "entry"
-          ? harness.controller.readEntry("retained-point")
+          ? harness.controller.history("s1", "view-1", {
+              kind: "entry",
+              targetId: "retained-point",
+              offset: 0,
+            })
           : harness.controller.readImage("retained-point", 1);
       const endpoint = kind === "entry" ? "sessionHistory" : "branchImage";
       const result =
@@ -132,25 +120,9 @@ describe("BranchController", () => {
       const pending = deferred<typeof result>();
       harness[endpoint].mockReturnValue(pending.promise);
       const reading = read(harness);
-      if (kind === "entry")
-        expect(harness.sessionHistory).toHaveBeenCalledWith(
-          "s1",
-          "view-1",
-          {
-            kind: "entry",
-            targetId: "retained-point",
-            offset: 0,
-          },
-          expect.any(AbortSignal),
-        );
-      else
-        expect(harness.branchImage.mock.calls[0]?.[0]).toMatchObject({
-          sessionId: "s1",
-          viewId: "view-1",
-          targetId: "retained-point",
-        });
+      expect(harness[endpoint]).toHaveBeenCalledOnce();
       harness.patch({
-        view: { effectiveLeafId: "appended", durableLeafId: "appended" },
+        view: { effectiveLeafId: "appended" },
       });
       pending.resolve(result);
       await expect(reading).resolves.toBe(result);
@@ -173,48 +145,17 @@ describe("BranchController", () => {
     },
   );
 
-  it.each(["caller", "selection", "transport"] as const)(
-    "settles a paused inspection without another request after %s cancellation",
-    async (change) => {
-      vi.useFakeTimers();
-      const harness = createHarness();
-      harness.sessionHistory.mockRejectedValue(
-        new ApiError(503, "Temporary read failure"),
-      );
-      const caller = new AbortController();
-      const reading = harness.controller.readEntry("point", 0, caller.signal);
-      void reading.catch(() => {});
-      await vi.advanceTimersByTimeAsync(0);
-      if (change === "caller") caller.abort();
-      else if (change === "selection") harness.invalidateSelection();
-      else harness.replaceTransport();
-      await expect(reading).resolves.toBeNull();
-      await vi.advanceTimersByTimeAsync(20_000);
-      expect(harness.sessionHistory).toHaveBeenCalledOnce();
-    },
-  );
-
-  it("bounds persistent inspection recovery and keeps authorization failures definitive", async () => {
-    vi.useFakeTimers();
-    for (const status of [503, 403, 401]) {
-      const harness = createHarness();
-      harness.sessionHistory.mockRejectedValue(
-        new ApiError(status, "Read failed"),
-      );
-      const reading = harness.controller.readEntry("point");
-      const outcome =
-        status === 401
-          ? expect(reading).resolves.toBeNull()
-          : expect(reading).rejects.toMatchObject({ status });
-      await vi.advanceTimersByTimeAsync(14_000);
-      await outcome;
-      expect(harness.sessionHistory).toHaveBeenCalledTimes(
-        status === 503 ? 4 : 1,
-      );
-      expect(harness.handleAuthFailure).toHaveBeenCalledTimes(
-        status === 401 ? 1 : 0,
-      );
-    }
+  it("reports current History authorization failure", async () => {
+    const f = createHarness();
+    f.sessionHistory.mockRejectedValue(new ApiError(401, "Expired"));
+    await expect(
+      f.controller.history("s1", "view-1", {
+        kind: "entry",
+        targetId: "point",
+        offset: 0,
+      }),
+    ).resolves.toBeNull();
+    expect(f.handleAuthFailure).toHaveBeenCalledOnce();
   });
 
   it.each(["append", "view replacement"] as const)(
@@ -280,25 +221,6 @@ describe("BranchController", () => {
     },
   );
 
-  it("discards complete-content Copy if its view changes while reading the image", async () => {
-    const h = createHarness();
-    const image = deferred<Blob>();
-    h.sessionHistory.mockResolvedValue({
-      text: "saved input",
-      nextOffset: null,
-      images: [{ index: 0, mimeType: "image/png" }],
-    });
-    h.branchImage.mockReturnValue(image.promise);
-    const copying = h.controller.copyContent(
-      "u1",
-      new AbortController().signal,
-    );
-    await vi.waitFor(() => expect(h.branchImage).toHaveBeenCalledOnce());
-    h.patch({ view: { viewId: "next" } });
-    image.resolve(new Blob(["saved pixels"]));
-    await expect(copying).resolves.toBeNull();
-  });
-
   it("applies the returned editor text when the socket publishes this same navigation first", async () => {
     const harness = createHarness();
     const pending = deferred<BranchNavigateResponse>();
@@ -321,18 +243,26 @@ describe("BranchController", () => {
     expect(harness.state().branchActionId).toBeNull();
   });
 
-  it("does not apply a successful Clone after returning to the same session", async () => {
-    const harness = createHarness();
+  it.each(["clone", "fork"] as const)("retires a successful %s even after reselecting its source", async (action) => {
+    const f = createHarness();
     const response = deferred<BranchForkResponse>();
-    harness.cloneBranch.mockReturnValue(response.promise);
-    const cloning = harness.controller.clone();
-    harness.invalidateSelection();
-    harness.patch({ sessionId: "s2" });
-    harness.invalidateSelection();
-    harness.patch({ sessionId: "s1" });
-    response.resolve({} as BranchForkResponse);
-    expect(await cloning).toBe(false);
-    expect(harness.cloneBranch).toHaveBeenCalledOnce();
-    expect(harness.applyFork).not.toHaveBeenCalled();
+    (action === "clone" ? f.cloneBranch : f.forkBranch).mockReturnValue(response.promise);
+    const copying = action === "clone" ? f.controller.clone() : f.controller.fork("u1");
+    for (const sessionId of ["s2", "s1"]) {
+      f.invalidateSelection();
+      f.patch({ sessionId });
+    }
+    response.resolve({
+      sessionId: "forked",
+      snapshot: activeSnapshot({ sessionId: "forked" }),
+      editorText: "",
+      editorAttachments: action === "fork"
+        ? [{ id: "discarded-image", fileName: "image.png", mimeType: "image/png", size: 1, kind: "image" }]
+        : [],
+    });
+    expect(await copying).toBe(false);
+    if (action === "fork")
+      expect(f.deleteAttachment).toHaveBeenCalledExactlyOnceWith("discarded-image");
+    expect(f.applyFork).not.toHaveBeenCalled();
   });
 });

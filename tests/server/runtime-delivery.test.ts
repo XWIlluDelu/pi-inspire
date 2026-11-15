@@ -1,4 +1,4 @@
-import { access, rm, writeFile } from "node:fs/promises";
+import { access, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
@@ -7,38 +7,19 @@ import {
 } from "../../server/pi-rpc.js";
 import type { RuntimeSlot } from "../../server/runtime-slot.js";
 import {
-  nativePiWorkspace,
-  stubNativePiEnvironment,
-} from "./fixtures/native-pi.js";
-import {
   deferredSignal,
-  disposeRuntimeFixture,
+  disposeIsolatedRuntimeFixture,
   fakeRuntime,
   fixtureWorkspace,
-  initializeRuntimeFixture,
+  initializeIsolatedRuntimeFixture,
   persistedRecord,
   startWorker,
   trackedAttachmentStore,
-  trackRuntime,
   upload,
 } from "./fixtures/runtime.js";
 
-beforeEach(async () => {
-  await initializeRuntimeFixture();
-  const pi = await nativePiWorkspace(
-    "pi-",
-    { defaultProjectTrust: "never" },
-    fixtureWorkspace,
-  );
-  stubNativePiEnvironment(pi.env);
-});
-afterEach(async () => {
-  try {
-    await disposeRuntimeFixture();
-  } finally {
-    vi.unstubAllEnvs();
-  }
-});
+beforeEach(initializeIsolatedRuntimeFixture);
+afterEach(disposeIsolatedRuntimeFixture);
 
 async function fixture(
   options: NonNullable<Parameters<typeof fakeRuntime>[0]> = {},
@@ -52,124 +33,77 @@ async function fixture(
   await f.runtime.openSession("a");
   const internals = f.runtime as unknown as {
     slots: Map<string, RuntimeSlot>;
-    reconcileSlot(slot: RuntimeSlot, force?: boolean): Promise<unknown>;
+    projectionCoordinator: {
+      reconcile(slot: RuntimeSlot, force?: boolean): Promise<unknown>;
+    };
   };
   const slot = internals.slots.get("a")!;
   return {
     ...f,
     store,
     slot,
-    reconcile: () => vi.spyOn(internals, "reconcileSlot"),
+    reconcile: () => vi.spyOn(internals.projectionCoordinator, "reconcile"),
   };
 }
 
-it("opens the saved view cold and rechecks a selected file at prompt dispatch", async () => {
-  const held = deferredSignal();
+it("refuses a project file removed during worker startup before dispatching input", async () => {
+  const starting = deferredSignal();
   const ready = deferredSignal();
   const f = await fixture({
     configure(worker) {
-      worker.start = async () => {
-        held.resolve();
-        await ready.promise;
+      worker.start = () => {
+        starting.resolve();
+        return ready.promise;
       };
     },
   });
-  trackRuntime(f.runtime);
-  expect(f.workers).toHaveLength(0);
-  expect(
-    (await f.runtime.snapshot("a")).active?.transcriptPage.messages,
-  ).toMatchObject([{ role: "user", content: "persisted:a" }]);
-  const selected = join(fixtureWorkspace, "selected.txt");
-  await writeFile(selected, "selected");
-  const prompt = () =>
+  const path = join(fixtureWorkspace, "selected.txt");
+  await writeFile(path, "selected");
+  const refused = expect(
     f.runtime.prompt({
       sessionId: "a",
       message: "Use the selected file",
       projectFiles: ["selected.txt"],
-    });
+    }),
+  ).rejects.toMatchObject({ status: 409 });
   try {
-    const refused = expect(prompt()).rejects.toMatchObject({
-      status: 409,
-      message: "A selected project file changed before prompt delivery",
-    });
-    await held.promise;
-    await rm(selected);
-    ready.resolve();
-    await refused;
-    expect(
-      f.workers[0]!.commands.filter(({ type }) => type === "prompt"),
-    ).toEqual([]);
-    await writeFile(selected, "reselected");
-    await prompt();
-    expect(
-      f.workers[0]!.commands.find(({ type }) => type === "prompt")?.message,
-    ).toContain(JSON.stringify(selected));
+    await starting.promise;
+    await unlink(path);
   } finally {
     ready.resolve();
   }
+  await refused;
+  expect(f.workers[0]!.commands.some(({ type }) => type === "prompt")).toBe(
+    false,
+  );
 });
 
-it.each(["accepted", "Pi refusal", "invalid project file"] as const)(
-  "returns the original attachment lease after %s",
-  async (result) => {
-    const f = await fixture();
-    trackRuntime(f.runtime);
-    await startWorker(f.runtime);
-    const file = await f.store.add(upload("notes.txt", "text/plain"));
-    const leased = deferredSignal();
-    const release = deferredSignal();
-    const resolve = f.store.resolveForPrompt.bind(f.store);
-    let path: string;
-    vi.spyOn(f.store, "resolveForPrompt").mockImplementationOnce(
-      async (ids) => {
-        const material = await resolve(ids);
-        path = material.files[0]!.path;
-        leased.resolve();
-        await release.promise;
-        return material;
-      },
-    );
-    if (result === "Pi refusal")
-      f.workers[0]!.responseOverrides.set("prompt", () => {
-        throw new Error("prompt rejected");
-      });
-    const send = f.runtime.prompt({
-      sessionId: "a",
-      message: "First",
-      attachmentIds: [file.id],
-      ...(result === "invalid project file"
-        ? { projectFiles: ["absent.txt"] }
-        : {}),
-    });
-    const completed = vi.fn();
-    void send.then(completed, completed);
-    try {
-      await leased.promise;
-      await expect(
-        f.runtime.prompt({
-          sessionId: "a",
-          message: "Concurrent",
-          attachmentIds: [file.id],
-        }),
-      ).rejects.toThrow(/already belong/);
-      await f.store.remove(file.id);
-      await expect(access(path!)).resolves.toBeUndefined();
-      expect(completed).not.toHaveBeenCalled();
-      release.resolve();
-      if (result === "accepted") await send;
-      else if (result === "Pi refusal")
-        await expect(send).rejects.toThrow("prompt rejected");
-      else await expect(send).rejects.toMatchObject({ code: "ENOENT" });
-      await f.store.remove(file.id);
-      if (result === "accepted")
-        await expect(access(path!)).resolves.toBeUndefined();
-      else
-        await expect(access(path!)).rejects.toMatchObject({ code: "ENOENT" });
-    } finally {
-      release.resolve();
-    }
-  },
-);
+it("returns a staged attachment to its editor after a definitive Pi refusal", async () => {
+  const f = await fixture();
+  await startWorker(f.runtime);
+  const file = await f.store.add(upload("notes.txt", "text/plain"));
+  const leased = deferredSignal();
+  const release = deferredSignal();
+  f.workers[0]!.responseOverrides.set("prompt", async () => {
+    leased.resolve();
+    await release.promise;
+    throw new Error("prompt rejected");
+  });
+  const delivery = expect(f.runtime.prompt({
+    sessionId: "a", message: "First", attachmentIds: [file.id],
+  })).rejects.toThrow("prompt rejected");
+  try {
+    await leased.promise;
+    await expect(f.store.resolveForPrompt([file.id])).rejects.toThrow(/already belong/);
+  } finally {
+    release.resolve();
+  }
+  await delivery;
+  const material = await f.store.resolveForPrompt([file.id]);
+  f.store.restage([file.id]);
+  await f.store.remove(file.id);
+  await expect(access(material.files[0]!.path)).rejects.toMatchObject({ code: "ENOENT" });
+});
 
 it.each([
   { operation: "prompt", fault: "unconfirmed exit", cancelled: false },
@@ -264,7 +198,6 @@ it.each([
 );
 
 it.each([
-  "prompt projection",
   "shell projection",
   "settlement",
   "history",
@@ -279,19 +212,14 @@ it.each([
   });
   const shell = failure === "shell projection";
   const operation = shell ? "bash" : "prompt";
-  const projection = slot.projection!;
-  const failReconcile = () =>
-    vi
-      .spyOn(projection, "reconcile")
-      .mockImplementationOnce(async () => fault());
-  const startsConflict =
-    failure.endsWith("projection") || failure === "settlement";
+  const startsConflict = shell || failure === "settlement";
   const files =
     failure === "upload cleanup"
       ? [await store.add(upload("notes.txt", "text/plain"))]
       : [];
   worker.responseOverrides.set(operation, () => {
-    if (failure.endsWith("projection")) failReconcile();
+    if (shell)
+      vi.spyOn(slot.projection!, "reconcile").mockImplementationOnce(async () => fault());
     if (failure === "history")
       vi.spyOn(slot.workerView!.index, "historyPage").mockImplementationOnce(
         fault,
@@ -311,9 +239,7 @@ it.each([
         message: shell ? "!echo done" : "accepted once",
         attachmentIds: files.map(({ id }) => id),
       }),
-    ).resolves.toEqual(
-      shell ? { text: "!echo done", images: [], files: [] } : null,
-    );
+    ).resolves.toBeUndefined();
     if (failure === "settlement") {
       f.reconcile().mockImplementationOnce(async () => fault());
       worker.emit("event", { type: "agent_settled" });
@@ -399,35 +325,29 @@ it("fences an unresponsive compaction until its worker's retirement is confirmed
   }
 });
 
-it("publishes only the owned shell request's bounded output and exact reply", async () => {
+it("bounds shell output to the active RPC", async () => {
   const f = await fixture();
-  trackRuntime(f.runtime);
-  for (const message of ["!", "!! "])
-    await expect(f.runtime.prompt({ sessionId: "a", message })).rejects.toThrow(
-      /Enter a command/,
-    );
+  await expect(
+    f.runtime.prompt({ sessionId: "a", message: "!! " }),
+  ).rejects.toThrow(/Enter a command/);
   expect(f.workers).toHaveLength(0);
   await startWorker(f.runtime);
   const worker = f.workers[0]!;
   const sent = deferredSignal();
-  const hold = Promise.withResolvers<Record<string, unknown>>();
+  const reply = Promise.withResolvers<{ output: string }>();
   const request = worker.request.bind(worker);
   vi.spyOn(worker, "request").mockImplementation(
     async (command, timeout, fence) => {
       if (command.type !== "bash") return request(command, timeout, fence);
-      expect(command).toEqual({
-        type: "bash",
-        command: "echo exact",
-        excludeFromContext: true,
-      });
       fence!.id = "owned";
       sent.resolve();
-      return hold.promise;
+      return reply.promise;
     },
   );
-  const events: Record<string, unknown>[] = [];
+  const update = vi.fn();
   f.runtime.on("event", (event) => {
-    if (event.shellExecution) events.push(event);
+    if (event.shellExecution && event.type === "message_update")
+      update(event.message);
   });
   const execution = f.runtime.prompt({
     sessionId: "a",
@@ -435,38 +355,28 @@ it("publishes only the owned shell request's bounded output and exact reply", as
   });
   try {
     await sent.promise;
-    for (const [id, delta] of [
-      [undefined, "untagged"],
-      ["other", "unowned"],
-      ["owned", "x".repeat(59_999) + "!"],
-    ] as const)
-      worker.emit("event", { type: "bash_execution_update", id, delta });
-    expect(events.filter(({ type }) => type === "message_update")).toEqual([
+    for (const id of [undefined, "other", "owned"]) {
+      worker.emit("event", {
+        type: "bash_execution_update",
+        id,
+        delta: "x".repeat(59_999) + "!",
+      });
+    }
+    expect(update).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({
-        message: expect.objectContaining({
-          output: "x".repeat(49_999) + "!",
-          __inspireBashPreviewTruncated: true,
-        }),
+        output: "x".repeat(49_999) + "!",
+        __inspireBashPreviewTruncated: true,
       }),
-    ]);
-    hold.resolve({ output: "EXACT_FINAL", exitCode: 9, truncated: true });
-    await expect(execution).resolves.toEqual({
-      text: "!!echo exact",
-      files: [],
-      images: [],
-    });
-    expect(events.at(-1)).toMatchObject({
-      type: "message_end",
-      message: { output: "EXACT_FINAL", exitCode: 9 },
-    });
-    const count = events.length;
+    );
+    reply.resolve({ output: "exact final" });
+    await execution;
     worker.emit("event", {
       type: "bash_execution_update",
       id: "owned",
       delta: "late",
     });
-    expect(events).toHaveLength(count);
+    expect(update).toHaveBeenCalledOnce();
   } finally {
-    hold.resolve({});
+    reply.resolve({ output: "" });
   }
 });

@@ -568,7 +568,7 @@ const EXTENSION_DIALOG_METHODS = new Set([
   "input",
   "editor",
 ] as const);
-export const EXTENSION_ONE_WAY_METHODS = new Set([
+const EXTENSION_ONE_WAY_METHODS = new Set([
   "notify",
   "setStatus",
   "setWidget",
@@ -692,14 +692,6 @@ export interface PendingInput {
   followUp: string[];
 }
 
-export type PendingOperationRequest = import("zod").infer<
-  typeof import("./host-operations.js").pendingOperationRequestSchema
->;
-export type PendingOperationIdentity = Omit<
-  PendingOperationRequest,
-  "sessionId" | "action"
->;
-
 export interface PendingRecovery extends PendingInput {
   /** Native extension interruption does not include terminal user Bash. */
   interruptionScope?: "agent";
@@ -732,7 +724,7 @@ export interface PendingQueues {
   followUp: PendingMessageSummary[];
 }
 
-export function parsePendingMessageSummary(
+function parsePendingMessageSummary(
   value: unknown,
 ): PendingMessageSummary | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -866,78 +858,50 @@ function extensionUiExpiry(
   };
 }
 
-interface ParsedExtensionUiEvent {
-  event: Record<string, unknown>;
-  sessionId: string;
-  id: string;
-  method: string;
-}
-
-function parseExtensionUiEvent(value: unknown): ParsedExtensionUiEvent | null {
+/** Unknown methods can own a reply unless Pi identifies them as one-way. */
+export function parsePendingExtensionUiRequest(
+  value: unknown,
+): ExtensionUiRequest | null {
   if (!value || typeof value !== "object") return null;
   const event = value as Record<string, unknown>;
-  const sessionId = typeof event.sessionId === "string" ? event.sessionId : "";
-  const id = typeof event.id === "string" ? event.id : "";
-  const method = typeof event.method === "string" ? event.method : "";
-  return sessionId && id && method ? { event, sessionId, id, method } : null;
-}
-
-function supportedExtensionUiRequest(
-  parsed: ParsedExtensionUiEvent,
-): SupportedExtensionUiRequest | null {
-  const { event, sessionId, id, method } = parsed;
+  const { sessionId, id, method } = event;
+  if (
+    typeof sessionId !== "string" ||
+    !sessionId ||
+    typeof id !== "string" ||
+    !id ||
+    typeof method !== "string" ||
+    !method
+  )
+    return null;
+  const addressed = {
+    sessionId,
+    id,
+    title: typeof event.title === "string" ? event.title : undefined,
+    message: typeof event.message === "string" ? event.message : undefined,
+    ...extensionUiExpiry(event),
+  };
   if (
     !EXTENSION_DIALOG_METHODS.has(
       method as SupportedExtensionUiRequest["method"],
     )
-  )
-    return null;
+  ) {
+    if (
+      EXTENSION_ONE_WAY_METHODS.has(method) ||
+      event.responseRequired === false
+    )
+      return null;
+    return { ...addressed, method, unsupported: true, payload: event };
+  }
   return {
-    sessionId,
-    id,
+    ...addressed,
     method: method as SupportedExtensionUiRequest["method"],
-    title: typeof event.title === "string" ? event.title : undefined,
-    message: typeof event.message === "string" ? event.message : undefined,
-    ...extensionUiExpiry(event),
     options: Array.isArray(event.options)
       ? event.options.map(String)
       : undefined,
     placeholder:
       typeof event.placeholder === "string" ? event.placeholder : undefined,
     prefill: typeof event.prefill === "string" ? event.prefill : undefined,
-  };
-}
-
-export function parseExtensionUiRequest(
-  value: unknown,
-): SupportedExtensionUiRequest | null {
-  const parsed = parseExtensionUiEvent(value);
-  return parsed ? supportedExtensionUiRequest(parsed) : null;
-}
-
-/** Unknown extension UI methods are conservatively response-bearing unless Pi
- * explicitly identifies them as one-way display output. This prevents a
- * future dialog promise from hanging while still giving future display
- * methods a generic, inspectable projection. */
-export function parsePendingExtensionUiRequest(
-  value: unknown,
-): ExtensionUiRequest | null {
-  const parsed = parseExtensionUiEvent(value);
-  if (!parsed) return null;
-  const supported = supportedExtensionUiRequest(parsed);
-  if (supported) return supported;
-  const { event, sessionId, id, method } = parsed;
-  if (EXTENSION_ONE_WAY_METHODS.has(method) || event.responseRequired === false)
-    return null;
-  return {
-    sessionId,
-    id,
-    method,
-    unsupported: true,
-    title: typeof event.title === "string" ? event.title : undefined,
-    message: typeof event.message === "string" ? event.message : undefined,
-    ...extensionUiExpiry(event),
-    payload: event,
   };
 }
 
@@ -1167,7 +1131,7 @@ export interface ActiveSnapshot {
      * worker is viewing an uncommitted earlier branch. */
     durableLeafId?: string | null;
     effectiveLeafId?: string | null;
-    navigationLeased?: boolean;
+    restoreSavedLeafId?: string | null;
     branchRevision?: number;
     stats?: unknown;
     /** Settings that affect the live Pi session rather than INSΠRE chrome. */
@@ -1198,7 +1162,7 @@ export type LiveTranscript = Pick<
   | "projectionConflict"
   | "durableLeafId"
   | "effectiveLeafId"
-  | "navigationLeased"
+  | "restoreSavedLeafId"
   | "branchRevision"
   | "activeAssistantMessageKey"
 >;
@@ -1311,8 +1275,6 @@ export interface PromptRequest {
   behavior?: "steer" | "followUp";
 }
 
-export type SessionExportRequest = Body<"exportSession">;
-
 export interface SessionExportResponse {
   downloadId: string;
   fileName: string;
@@ -1348,5 +1310,4 @@ export type PromptDeliveryRequest = import("zod").infer<
 
 export interface PromptAcceptedResponse {
   accepted: true;
-  historyEntry: ComposerHistoryEntry | null;
 }

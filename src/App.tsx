@@ -1,3 +1,4 @@
+import { AlertTriangle } from "lucide-react";
 import {
   lazy,
   memo,
@@ -24,7 +25,7 @@ import { CommandHelp } from "./components/CommandHelp";
 import { CommandPalette } from "./components/CommandPalette";
 import { Composer } from "./components/Composer";
 import {
-  ContextPaneLoading,
+  ContextPaneLoadingHeader,
   ContextPaneShell,
 } from "./components/ContextPaneShell";
 import { ContextPaneState } from "./components/ContextPaneState";
@@ -41,10 +42,10 @@ import { PiLoader } from "./components/PiLoader";
 import { RenameSessionDialog } from "./components/RenameSessionDialog";
 import { RenderErrorBoundary } from "./components/RenderErrorBoundary";
 import type { SettingsCategoryId } from "./components/Settings";
-import { SettingsDialog, SettingsLoading } from "./components/SettingsDialog";
+import { SettingsDialog } from "./components/SettingsDialog";
+import { StartupCard } from "./components/StartupCard";
 import { Transcript, type TranscriptNavigation } from "./components/Transcript";
 import { Welcome, type WelcomeInheritance } from "./components/Welcome";
-import { BrandLogo, Wordmark } from "./components/Wordmark";
 import { isComposingKeyboardEvent } from "./keyboard-input";
 import { thinkingLevelLabel } from "./model-options";
 import { runStop, type WorkbenchDestinations } from "./session-actions";
@@ -72,22 +73,45 @@ const DeferredSettingsSurface = lazy(() =>
 );
 
 function DeferredPanel({
-  loading,
-  error,
+  surface,
+  header,
   children,
 }: {
-  loading: ReactNode;
-  error: ReactNode;
+  surface: "Settings" | "Context";
+  header?: ReactNode;
   children: ReactNode;
 }) {
   // Commit the loading panel immediately so focus can enter while code loads.
   const showContent = useDeferredValue(true, false);
+  const fallback = (error: boolean) => (
+    <>
+      {header}
+      <ContextPaneState
+        className={error ? undefined : "deferred-loading"}
+        icon={
+          error ? (
+            <AlertTriangle size={17} aria-hidden />
+          ) : (
+            <PiLoader size={17} aria-hidden />
+          )
+        }
+        title={
+          error
+            ? `${surface} could not be opened.`
+            : `Loading ${surface.toLowerCase()}`
+        }
+        role={error ? "alert" : "status"}
+        action={error ? { label: "Reload", run: reloadPage } : undefined}
+      />
+    </>
+  );
+  const loading = fallback(false);
   return (
     <RenderErrorBoundary
       onError={(error) =>
         console.error("Deferred surface failed to load", error)
       }
-      fallback={error}
+      fallback={fallback(true)}
     >
       <Suspense fallback={loading}>{showContent ? children : loading}</Suspense>
     </RenderErrorBoundary>
@@ -106,8 +130,8 @@ function DeferredContextPane({
   return (
     <ContextPaneShell isModal={isModal} onClose={onClose}>
       <DeferredPanel
-        loading={<ContextPaneLoading onClose={onClose} />}
-        error={<ContextPaneLoading onClose={onClose} onRetry={reloadPage} />}
+        surface="Context"
+        header={<ContextPaneLoadingHeader onClose={onClose} />}
       >
         <DeferredContextSurface isModal={isModal} onClose={onClose} />
       </DeferredPanel>
@@ -130,10 +154,7 @@ function DeferredSettings({
 }) {
   return (
     <SettingsDialog suspended={suspended} onClose={onClose}>
-      <DeferredPanel
-        loading={<SettingsLoading />}
-        error={<SettingsLoading onRetry={reloadPage} />}
-      >
+      <DeferredPanel surface="Settings">
         <DeferredSettingsSurface
           suspended={suspended}
           initialCategory={initialCategory}
@@ -168,62 +189,52 @@ function TokenGate() {
   const [pairing, setPairing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   return (
-    <div className="token-gate">
-      <div className="token-gate__card">
-        <div className="token-gate__lockup">
-          <BrandLogo size={28} />
-          <Wordmark large />
-        </div>
-        <div>
-          <h1 className="token-gate__title">Pair this browser</h1>
-          <p className="token-gate__hint">
-            Open the link from the Inspire launcher or paste its access token.
-            Pair only on a device you trust. This browser can control your
-            sessions, files and terminals.
-          </p>
-        </div>
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            const token = value.trim();
-            if (!token || pairing) return;
-            setPairing(true);
-            setError(null);
-            void pairBrowser(token)
-              .then(() => store.init())
-              .catch((reason: unknown) => {
-                setError(
-                  reason instanceof Error
-                    ? reason.message
-                    : "Could not reach the Host. Try pairing again.",
-                );
-              })
-              .finally(() => setPairing(false));
-          }}
+    <StartupCard
+      title="Pair this browser"
+      hint="Open the link from the Inspire launcher or paste its access token. Pair only on a device you trust. This browser can control your sessions, files and terminals."
+    >
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          const token = value.trim();
+          if (!token || pairing) return;
+          setPairing(true);
+          setError(null);
+          void pairBrowser(token)
+            .then(() => store.init())
+            .catch((reason: unknown) => {
+              setError(
+                reason instanceof Error
+                  ? reason.message
+                  : "Could not reach the Host. Try pairing again.",
+              );
+            })
+            .finally(() => setPairing(false));
+        }}
+      >
+        <input
+          type="password"
+          className="text-field"
+          value={value}
+          onChange={(event) => setValue(event.target.value)}
+          placeholder="Access token"
+          aria-label="Access token"
+          autoComplete="off"
+        />
+        <button
+          type="submit"
+          className="button button--primary"
+          disabled={!value.trim() || pairing}
         >
-          <input
-            type="password"
-            value={value}
-            onChange={(event) => setValue(event.target.value)}
-            placeholder="Access token"
-            aria-label="Access token"
-            autoComplete="off"
-          />
-          <button
-            type="submit"
-            className="button button--primary"
-            disabled={!value.trim() || pairing}
-          >
-            {pairing ? "Pairing…" : "Pair"}
-          </button>
-        </form>
-        {error ? (
-          <p className="token-gate__error" role="alert">
-            {error}
-          </p>
-        ) : null}
-      </div>
-    </div>
+          {pairing ? "Pairing…" : "Pair"}
+        </button>
+      </form>
+      {error ? (
+        <p className="token-gate__error" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </StartupCard>
   );
 }
 
@@ -277,42 +288,32 @@ function HostUnavailable({
   );
   const copy = connectionProblemText(problem, host);
   return (
-    <div className="token-gate">
-      <div className="token-gate__card">
-        <div className="token-gate__lockup">
-          <BrandLogo size={28} />
-          <Wordmark large />
+    <StartupCard title={copy.title} hint={copy.detail}>
+      {localHost &&
+      (problem.kind === "address-unreachable" ||
+        problem.kind === "service-error") ? (
+        <div className="token-gate__instruction">
+          <span>Installed version</span>
+          <code>inspire restart</code>
+          <span>From the source folder</span>
+          <code>npm run inspire -- restart</code>
         </div>
-        <div>
-          <h1 className="token-gate__title">{copy.title}</h1>
-          <p className="token-gate__hint">{copy.detail}</p>
-        </div>
-        {localHost &&
-        (problem.kind === "address-unreachable" ||
-          problem.kind === "service-error") ? (
-          <div className="token-gate__instruction">
-            <span>Installed version</span>
-            <code>inspire restart</code>
-            <span>From the source folder</span>
-            <code>npm run inspire -- restart</code>
-          </div>
+      ) : null}
+      <div className="token-gate__actions">
+        <button
+          type="button"
+          className="button button--primary"
+          onClick={() => store.retryConnection()}
+        >
+          {problem.kind === "browser-upgrade" ? "Reload" : "Try again"}
+        </button>
+        {problem.kind !== "browser-upgrade" ? (
+          <span>
+            <PiLoader size={12} aria-hidden /> Reconnecting automatically
+          </span>
         ) : null}
-        <div className="token-gate__actions">
-          <button
-            type="button"
-            className="button button--primary"
-            onClick={() => store.retryConnection()}
-          >
-            {problem.kind === "browser-upgrade" ? "Reload" : "Try again"}
-          </button>
-          {problem.kind !== "browser-upgrade" ? (
-            <span>
-              <PiLoader size={12} aria-hidden /> Reconnecting automatically
-            </span>
-          ) : null}
-        </div>
       </div>
-    </div>
+    </StartupCard>
   );
 }
 

@@ -1,7 +1,5 @@
-import { type BranchBridgeResult } from "../shared/branch-bridge-protocol.js";
 import {
   type ActiveSnapshot,
-  type ComposerHistoryEntry,
   type ExtensionDisplay,
   type ExtensionUiRequest,
   emptyPendingQueues,
@@ -15,6 +13,7 @@ import {
 } from "../shared/contracts.js";
 import type { PiRpcProcess } from "./pi-rpc.js";
 import type { NativeBashExecution } from "./runtime-bash.js";
+import type { startBranchNavigation } from "./runtime-branch-bridge.js";
 import type { PendingImageRecovery } from "./runtime-pending-images.js";
 import type {
   SessionProjectionView,
@@ -82,23 +81,14 @@ export interface BranchBridgeIdentity {
   statusKey: string;
 }
 
-export interface PendingBranchBridge {
-  nonce: string;
-  bridge: BranchBridgeIdentity;
-  settled: boolean;
-  duplicate: boolean;
-  resolve: (result: BranchBridgeResult) => void;
-  reject: (error: Error) => void;
-  result: Promise<BranchBridgeResult>;
-  summarize?: boolean;
-  /** The stock command response fences the completed branch handler. */
-  finished?: Promise<void>;
-}
+type PendingBranchBridge = ReturnType<typeof startBranchNavigation> & {
+  summarize: boolean;
+};
 
 export interface WorkerView {
   index: WorkerEntryIndex;
   contextGeneration: number;
-  finishedMessages: Map<string, string | Record<string, unknown>>;
+  finishedMessages: Map<string, string>;
   sealedCursor: string | null;
   nativeLeafId: string | null;
   /** View-local turn owners for native entries adopted from the current worker. */
@@ -163,7 +153,7 @@ export interface RuntimeSlot {
     worker: PiRpcProcess;
     navigationEpoch: number;
     incarnationId: string;
-    resolve: (entry: ComposerHistoryEntry | null) => void;
+    resolve: () => void;
     reject: (error: Error) => void;
   }>;
   drainingDeferredPrompts: boolean;

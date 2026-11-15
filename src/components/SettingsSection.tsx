@@ -57,17 +57,15 @@ export function SettingsSection({
     >
       <div className="settings__section-header">
         <div className="settings__section-title-wrap">
-          <div className="settings__section-heading">
-            <span className="settings__section-icon" aria-hidden>
-              {icon}
-            </span>
-            <h3 id={headingId} className="settings__section-title">
-              {title}
-            </h3>
-          </div>
-          {headerAction ? (
+          <span className="settings__section-icon" aria-hidden>
+            {icon}
+          </span>
+          <h3 id={headingId} className="settings__section-title">
+            {title}
+          </h3>
+          {headerAction && (
             <div className="settings__section-action">{headerAction}</div>
-          ) : null}
+          )}
         </div>
         {description ? (
           <p className="settings__section-desc">{description}</p>

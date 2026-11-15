@@ -4,7 +4,6 @@ import type {
 } from "../extensions/attach-control.js";
 import { parseCommandInvocation } from "../shared/commands.js";
 import {
-  type ComposerHistoryEntry,
   isBusyRunState,
   MAX_PROMPT_CHARS,
   type PromptRequest,
@@ -129,16 +128,24 @@ export class RuntimeExternalSessions {
     return c;
   }
 
+  private assertModelReceiver(
+    slot: RuntimeSlot,
+    connection: Connection,
+    instanceId: string,
+  ): void {
+    if (this.connections.get(slot) !== connection || !this.host.current(slot))
+      throw requestError("The external Pi connection has ended.", 409);
+    if (connection.state.taskRuns.instanceId !== instanceId)
+      throw requestError("The native Pi model receiver changed.", 409);
+  }
+
   private applyModelState(
     slot: RuntimeSlot,
     c: Connection,
     state: NativeModelSelection | NativeModelCatalog,
     instanceId: string,
   ): void {
-    if (this.connections.get(slot) !== c || !this.host.current(slot))
-      throw requestError("The external Pi connection has ended.", 409);
-    if (c.state.taskRuns.instanceId !== instanceId)
-      throw requestError("The native Pi model receiver changed.", 409);
+    this.assertModelReceiver(slot, c, instanceId);
     if ("models" in state) slot.availableModels = state.models;
     c.selectionRevision++;
     c.state = {
@@ -180,10 +187,7 @@ export class RuntimeExternalSessions {
     const c = this.modelConnection(slot);
     const instanceId = c.state.taskRuns.instanceId;
     const result = await change(c.native, () => {
-      if (this.connections.get(slot) !== c)
-        throw requestError("The external Pi connection has ended.", 409);
-      if (c.state.taskRuns.instanceId !== instanceId)
-        throw requestError("The native Pi model receiver changed.", 409);
+      this.assertModelReceiver(slot, c, instanceId);
       this.host.assertUsable(slot);
     });
     this.applyModelState(slot, c, result, instanceId);
@@ -485,7 +489,7 @@ export class RuntimeExternalSessions {
     request: PromptRequest,
     epoch: number,
     assertView: () => void,
-  ): Promise<ComposerHistoryEntry | null> {
+  ): Promise<void> {
     if (this.connections.get(slot) !== connection)
       throw requestError("The external Pi connection has ended.", 409);
     if (slot.readOnlyReason === "workspace-unavailable")
@@ -608,7 +612,6 @@ export class RuntimeExternalSessions {
       } finally {
         connection.sending -= 1;
       }
-      return null;
     } finally {
       if (uncertain) {
         this.attachments.restageUncertainPrompt(originalIds, copied);

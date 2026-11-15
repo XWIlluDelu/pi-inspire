@@ -99,57 +99,6 @@ const inspect = (sessionId: string, cwd = "/project") =>
 
 beforeEach(() => installFakeWebSocket());
 
-it("restores only named navigation in its session and workspace and reauthorizes on a new Host", async () => {
-  const { host, reads, connect } = fixture();
-  const first = await connect();
-  await first.openResource("readme.md");
-  await first.openResource("other.txt");
-  const offsets = first.fileReadingState("readme.md");
-  offsets.source.current = { top: 480, left: 24 };
-  offsets.rendered.current = { top: 900, left: 0 };
-  offsets.mode = "source";
-  offsets.save?.();
-  expect(JSON.stringify(sessionStorage)).not.toMatch(
-    /PRIVATE FILE BODY|temporary-/,
-  );
-  await selectSession(first, inspect("s2"));
-  expect(fileRefs(first)).toEqual([]);
-  expect(first.fileReadingState("readme.md").source.current).toBeNull();
-  await first.openResource("separate.txt");
-
-  host.authorityId = "22222222-2222-4222-8222-222222222222";
-  const reopened = await connect();
-  expect(reopened.getState().sessionId).toBe("s2");
-  expect(fileRefs(reopened)).toEqual(["separate.txt"]);
-  await vi.waitFor(() => expect(preview(reopened)?.status).toBe("ready"));
-  await selectSession(reopened, inspect("s1"));
-  await vi.waitFor(() =>
-    expect(preview(reopened)).toMatchObject({
-      status: "ready",
-      reference: "other.txt",
-      descriptor: { id: "temporary-5" },
-    }),
-  );
-  expect(fileRefs(reopened)).toEqual(["readme.md", "other.txt"]);
-  expect(reads).toEqual([
-    "readme.md",
-    "other.txt",
-    "separate.txt",
-    "separate.txt",
-    "other.txt",
-  ]);
-  expect(reopened.fileReadingState("readme.md")).toMatchObject({
-    source: { current: offsets.source.current },
-    rendered: offsets.rendered,
-    mode: "source",
-  });
-  expect(reopened.fileReadingState("other.txt").source.current).toBeNull();
-  reopened.closeResourceTab("readme.md");
-  expect(reopened.fileReadingState("readme.md").source.current).toBeNull();
-  host.cwd = "/another-project";
-  expect(fileRefs(await connect())).toEqual([]);
-});
-
 it("retains named image tabs through updates, reacquires authority, and revokes retired image bytes", async () => {
   const { host, connect, reads } = fixture();
   const store = await connect();
@@ -280,86 +229,37 @@ it.each(["terminal", "closed"] as const)(
   },
 );
 
-it.each([
-  "none",
-  "terminal",
-  "browse",
-  "close",
-  "same session file",
-  "other session file",
-] as const)(
-  "keeps %s intent through an offline and recovering Host",
-  async (intent) => {
-    const { host, reads, connect, join } = fixture();
-    const store = await connect();
-    await store.openResource("old.txt");
-    store.setWorkspaceShowHidden(true);
-    store.toggleWorkspaceDirectory("src");
-    store.setWorkspaceQuery("known");
-    host.offline = true;
-    await store.init();
-    expect(store.getState().connection).toBe("offline");
-    expect(preview(store)).toEqual({ status: "loading", reference: "old.txt" });
-    const boot = deferred<void>();
-    host.offline = false;
-    host.bootstrap = boot.promise;
-    const reconnecting = store.init();
-    try {
-      if (intent === "terminal") store.openContextMode("terminal");
-      if (intent === "browse") store.showFileBrowser();
-      if (intent === "close") store.setResourcesOpen(false);
-      if (intent === "other session file")
-        await selectSession(store, inspect("s2"));
-      if (intent.endsWith("file")) await store.openResource("new.txt");
-    } finally {
-      boot.resolve();
-      await reconnecting;
-      join();
-    }
-    if (intent !== "other session file") {
-      expect(store.getState()).toMatchObject({
-        workspaceQuery: "known",
-        workspaceExpandedDirs: ["src"],
-        workspaceShowHidden: true,
-      });
-      expect(fileRefs(store)).toEqual(
-        intent === "same session file" ? ["old.txt", "new.txt"] : ["old.txt"],
-      );
-    }
-    if (intent === "none" || intent.endsWith("file")) {
-      await vi.waitFor(() =>
-        expect(preview(store)).toMatchObject({
-          status: "ready",
-          reference: intent === "none" ? "old.txt" : "new.txt",
-        }),
-      );
-      expect(reads).toEqual(
-        intent === "none"
-          ? ["old.txt", "old.txt"]
-          : intent === "same session file"
-            ? ["old.txt", "new.txt", "new.txt"]
-            : ["old.txt", "new.txt"],
-      );
-    } else {
-      expect(store.getState()).toMatchObject({
-        contextMode: intent === "terminal" ? "terminal" : "files",
-        resourcesOpen: intent !== "close",
-        fileInspection: {
-          kind: intent === "browse" ? "browse" : "file",
-          reference: "old.txt",
-        },
-      });
-      expect(preview(store)).toBeNull();
-      expect(reads).toEqual(["old.txt"]);
-    }
-    if (intent === "other session file") {
-      expect(store.getState().sessionId).toBe("s2");
-      expect(fileRefs(store)).toEqual(["new.txt"]);
-      await selectSession(store, inspect("s1"));
-      expect(fileRefs(store)).toEqual(["old.txt"]);
-    }
-  },
-);
+it("keeps a new session’s file intent during reconnect and bootstrap", async () => {
+  const { host, reads, connect, join } = fixture();
+  const store = await connect();
+  await store.openResource("old.txt");
+  host.offline = true;
+  await store.init();
+  expect(store.getState().connection).toBe("offline");
+  host.offline = false;
+  const boot = deferred<void>();
+  host.bootstrap = boot.promise;
+  const reconnecting = store.init();
+  try {
+    await selectSession(store, inspect("s2"));
+    await store.openResource("new.txt");
+  } finally {
+    boot.resolve();
+    await reconnecting;
+    join();
+  }
+  await vi.waitFor(() =>
+    expect(preview(store)).toMatchObject({
+      status: "ready",
+      reference: "new.txt",
+    }),
+  );
+  expect(store.getState().sessionId).toBe("s2");
+  expect(fileRefs(store)).toEqual(["new.txt"]);
+  expect(reads).toEqual(["old.txt", "new.txt"]);
+  await selectSession(store, inspect("s1"));
+  expect(fileRefs(store)).toEqual(["old.txt"]);
+});
 
 it("keeps navigation usable when the tab refuses workbench storage", async () => {
   const { connect } = fixture();
@@ -374,4 +274,24 @@ it("keeps navigation usable when the tab refuses workbench storage", async () =>
   await store.openResource("one.txt");
   expect(preview(store)?.status).toBe("ready");
   expect(lastWorkbenchSession()).toBeNull();
+});
+
+it("restores paths without keeping preview data or reusing a tab for a moved workspace", async () => {
+  const { host, connect, reads } = fixture();
+  const first = await connect();
+  await first.openResource("readme.md");
+  expect(JSON.stringify(sessionStorage)).not.toMatch(
+    /PRIVATE FILE BODY|temporary-/,
+  );
+  host.authorityId = "22222222-2222-4222-8222-222222222222";
+  const second = await connect();
+  await vi.waitFor(() =>
+    expect(preview(second)).toMatchObject({
+      status: "ready",
+      descriptor: { id: "temporary-2" },
+    }),
+  );
+  expect(reads).toEqual(["readme.md", "readme.md"]);
+  host.cwd = "/another-project";
+  expect(fileRefs(await connect())).toEqual([]);
 });

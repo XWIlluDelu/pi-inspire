@@ -8,7 +8,7 @@ export function ContextPaneState({
   children,
   className,
   role = "status",
-  onRetry,
+  action,
 }: {
   icon: ReactNode;
   title: string;
@@ -16,7 +16,7 @@ export function ContextPaneState({
   children?: ReactNode;
   className?: string;
   role?: "status" | "alert";
-  onRetry?: () => void;
+  action?: { label?: string; run: () => void };
 }) {
   return (
     <div className={`empty-state res__state ${className ?? ""}`} role={role}>
@@ -24,13 +24,14 @@ export function ContextPaneState({
       <p className="empty-state__title">{title}</p>
       {hint ? <p className="empty-state__hint">{hint}</p> : null}
       {children}
-      {onRetry && (
+      {action && (
         <button
           type="button"
           className="button button--quiet"
-          onClick={onRetry}
+          onClick={action.run}
         >
-          <RotateCw size={12} aria-hidden /> Retry
+          {!action.label && <RotateCw size={12} aria-hidden />}
+          {action.label ?? "Retry"}
         </button>
       )}
     </div>

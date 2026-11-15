@@ -8,15 +8,10 @@ import {
   type PendingInput,
 } from "../../shared/contracts.js";
 import {
-  nativePiWorkspace,
-  stubNativePiEnvironment,
-} from "./fixtures/native-pi.js";
-import {
   deferredSignal,
-  disposeRuntimeFixture,
+  disposeIsolatedRuntimeFixture,
   fakeRuntime,
-  fixtureWorkspace,
-  initializeRuntimeFixture,
+  initializeIsolatedRuntimeFixture,
   persistedRecord,
   startWorker,
   trackedAttachmentStore,
@@ -27,22 +22,8 @@ import {
 const trailer = `${ATTACHMENT_CONTEXT_HEADING}\n- "/demo/report.csv"`;
 const emptyInput = (): PendingInput => ({ steering: [], followUp: [] });
 
-beforeEach(async () => {
-  await initializeRuntimeFixture();
-  const pi = await nativePiWorkspace(
-    "pi-",
-    { defaultProjectTrust: "never" },
-    fixtureWorkspace,
-  );
-  stubNativePiEnvironment(pi.env);
-});
-afterEach(async () => {
-  try {
-    await disposeRuntimeFixture();
-  } finally {
-    vi.unstubAllEnvs();
-  }
-});
+beforeEach(initializeIsolatedRuntimeFixture);
+afterEach(disposeIsolatedRuntimeFixture);
 
 async function fixture({ running = true, track = true } = {}) {
   const store = trackedAttachmentStore();

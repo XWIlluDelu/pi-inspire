@@ -65,7 +65,7 @@ export interface GitControllerState extends FileInspectionState {
   gitDiff: GitDiffView | null;
 }
 
-export interface GitControllerPatch {
+interface GitControllerPatch {
   gitStatus?: GitStatusResponse | null;
   gitStatusError?: string | null;
   gitStatusPending?: boolean;
@@ -230,7 +230,7 @@ export class GitController {
     const task = (async () => {
       try {
         const result = await scope.read((signal) =>
-          api.gitDiff(sessionId, pathId, signal),
+          api.json("gitDiff", { body: { sessionId, pathId } }, signal),
         );
         if (result.path.id !== pathId)
           throw new Error("The Host returned a diff for another selection");
@@ -314,7 +314,9 @@ export class GitController {
       const refreshIntent = this.refreshIntent;
       const selectionEpoch = this.selectionEpoch;
       try {
-        const status = await read((signal) => api.gitStatus(sessionId, signal));
+        const status = await read((signal) =>
+          api.json("gitStatus", { query: { sessionId } }, signal),
+        );
         const currentState = this.host.state();
         const selectedChange = inspectedGitChange(currentState, status);
         const selectionChanged =

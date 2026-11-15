@@ -592,7 +592,7 @@ export const Nav = memo(function Nav({
             </details>
             <button
               type="button"
-              className="nav__pagination-button"
+              className="button button--quiet"
               disabled={sessionListBusy}
               onClick={() => void store.refreshSessions()}
             >
@@ -613,7 +613,7 @@ export const Nav = memo(function Nav({
             {sessionListError ? (
               <button
                 type="button"
-                className="nav__pagination-button"
+                className="button button--quiet"
                 onClick={() => void store.retrySessionList()}
               >
                 {retrySessionLabel}
@@ -621,7 +621,7 @@ export const Nav = memo(function Nav({
             ) : foregroundSessionListBusy ? (
               <button
                 type="button"
-                className="nav__pagination-button"
+                className="button button--quiet"
                 disabled
                 aria-busy="true"
               >
@@ -631,7 +631,7 @@ export const Nav = memo(function Nav({
             ) : hasOlderSessions ? (
               <button
                 type="button"
-                className="nav__pagination-button"
+                className="button button--quiet"
                 disabled={sessionListBusy}
                 onClick={() => void store.loadOlderSessions()}
               >

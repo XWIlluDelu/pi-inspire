@@ -35,8 +35,8 @@ import { recoverableRead } from "../recovery-backoff";
 import { hasDraftInput, useSessionDraft } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
 import {
-  readNavigationDisclosure,
-  saveNavigationDisclosure,
+  readRecentSessionsOpen,
+  saveRecentSessionsOpen,
 } from "../workbench-session";
 import { ThinkingControl } from "./ComposerThinkingControl";
 import { DirectoryPicker } from "./DirectoryPicker";
@@ -96,13 +96,11 @@ export function Welcome({
   const [directory, setDirectory] = useState(() => inheritance?.cwd ?? "");
   const [starting, setStarting] = useState(false);
   const [showHiddenFiles, setShowHiddenFiles] = useState(false);
-  const [recentOpen, setRecentOpen] = useState(() =>
-    readNavigationDisclosure("recentSessions"),
-  );
+  const [recentOpen, setRecentOpen] = useState(readRecentSessionsOpen);
   const toggleRecent = () => {
     const open = !recentOpen;
     setRecentOpen(open);
-    saveNavigationDisclosure("recentSessions", open);
+    saveRecentSessionsOpen(open);
   };
   const [browsing, setBrowsing] = useState(false);
   const [explicit, chooseModel] = useState<{
@@ -479,7 +477,7 @@ export function Welcome({
             <div className="welcome__directory">
               <button
                 type="button"
-                className="icon-button welcome__directory-browse"
+                className="icon-button"
                 aria-label="Browse host directories"
                 title="Browse host directories"
                 disabled={starting}
@@ -513,7 +511,7 @@ export function Welcome({
                 <span>Folder doesn't exist.</span>
                 <button
                   type="button"
-                  className="button welcome__dir-action-btn"
+                  className="button button--quiet"
                   disabled={!canCreate}
                   aria-busy={starting || modelChecking}
                   onClick={() => void start(true)}
@@ -661,7 +659,7 @@ export function Welcome({
           <h2 className="welcome__recent-title">
             <button
               type="button"
-              className="welcome__recent-toggle"
+              className="button button--quiet disclosure-row welcome__recent-toggle"
               aria-expanded={recentOpen}
               onClick={toggleRecent}
             >
@@ -674,24 +672,22 @@ export function Welcome({
             </button>
           </h2>
           {recentOpen ? (
-            <div role="list">
+            <div role="list" data-keyboard-active="false">
               {recent.map((session) => (
                 <div role="listitem" key={session.id}>
                   <button
                     type="button"
-                    className="welcome__row"
+                    className="picker__row welcome__row"
                     title={session.title || "New session"}
                     onClick={() => void store.openSession(session.id)}
                   >
                     <span className="welcome__row-title">
                       {session.title || "New session"}
                     </span>
-                    <span className="welcome__row-project">
+                    <small className="welcome__row-project">
                       {session.project}
-                    </span>
-                    <span className="welcome__row-time">
-                      {relativeTime(session.modified)}
-                    </span>
+                    </small>
+                    <small>{relativeTime(session.modified)}</small>
                   </button>
                 </div>
               ))}

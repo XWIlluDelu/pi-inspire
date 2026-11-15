@@ -34,7 +34,7 @@ import { requestError } from "./request-error.js";
 import { openCanonicalResourceFile } from "./resources.js";
 
 export type { GitRunner };
-export { GIT_TIMEOUT_MS, GitInspectionError, spawnGit };
+export { GIT_TIMEOUT_MS, spawnGit };
 
 const GIT_STATUS_OUTPUT_BYTES = 4 * 1024 * 1024;
 const GIT_DIFF_OUTPUT_BYTES = 1024 * 1024;

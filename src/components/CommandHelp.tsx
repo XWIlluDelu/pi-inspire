@@ -1,7 +1,8 @@
 import { AlertTriangle } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { isMacKeyboardPlatform } from "../keyboard-input";
 import { store, useAppState } from "../store";
+import { terminalChords } from "../terminal-keyboard";
 import {
   modelCycleShortcut,
   workbenchShortcutLabel,
@@ -22,14 +23,12 @@ function ShortcutKeys({ shortcut }: { shortcut: Shortcut }) {
   return (
     <>
       {steps.map((step, index) => (
-        <span className="command-help__key-step" key={index}>
-          {index > 0 ? <span>·</span> : null}
-          <span className="command-help__key-chords">
-            {(typeof step === "string" ? [step] : step).map((chord) => (
-              <kbd key={chord}>{chord}</kbd>
-            ))}
-          </span>
-        </span>
+        <Fragment key={index}>
+          {index > 0 && <span aria-hidden>·</span>}
+          {(typeof step === "string" ? [step] : step).map((chord) => (
+            <kbd key={chord}>{chord}</kbd>
+          ))}
+        </Fragment>
       ))}
     </>
   );
@@ -148,9 +147,9 @@ export function CommandHelp({
       title: "Project terminal",
       rows: [
         ["Ctrl/⌘+F", "Find terminal output (Workbench shortcut mode)"],
-        [["Ctrl/⌘+PgUp", "Ctrl/⌘+PgDn"], "Previous / next terminal"],
+        [[terminalChords.previous.hint, terminalChords.next.hint], "Previous / next terminal"],
         ["Alt+1–9", "Select a terminal tab"],
-        ["Ctrl/⌘+Shift+`", "Create a terminal"],
+        [terminalChords.new.hint, "Create a terminal"],
         [["←", "→"], "Move focus among terminal tabs"],
         [
           ["Ctrl/⌘+Shift+←", "Ctrl/⌘+Shift+→"],
@@ -190,38 +189,31 @@ export function CommandHelp({
         <div className="command-help__body" tabIndex={0}>
           {mode === "hotkeys" ? (
             <div className="command-help__grid">
-              {[0, 1].map((column) => (
-                <div className="command-help__column" key={column}>
-                  {sections
-                    .filter((_, index) => index % 2 === column)
-                    .map((section) => (
-                      <section key={section.title}>
-                        <h3>{section.title}</h3>
-                        {section.title === "Project terminal" ? (
-                          <p className="command-help__note">
-                            With terminal focus, in Workbench shortcut mode.
-                          </p>
-                        ) : null}
-                        <dl>
-                          {section.rows.map(([key, value]) => (
-                            <div key={value}>
-                              <dt className="command-help__keys">
-                                <ShortcutKeys shortcut={key} />
-                              </dt>
-                              <dd>{value}</dd>
-                            </div>
-                          ))}
-                        </dl>
-                        {section.title === "Composer" ? (
-                          <p className="command-help__note">
-                            On touch screens, Return adds a line. Tap Send. With
-                            an input method, Enter confirms text while you
-                            compose.
-                          </p>
-                        ) : null}
-                      </section>
+              {sections.map(({ title, rows }) => (
+                <section key={title}>
+                  <h3>{title}</h3>
+                  {title === "Project terminal" && (
+                    <p className="command-help__note">
+                      With terminal focus, in Workbench shortcut mode.
+                    </p>
+                  )}
+                  <dl>
+                    {rows.map(([keys, description]) => (
+                      <div key={description}>
+                        <dt>
+                          <ShortcutKeys shortcut={keys} />
+                        </dt>
+                        <dd>{description}</dd>
+                      </div>
                     ))}
-                </div>
+                  </dl>
+                  {title === "Composer" && (
+                    <p className="command-help__note">
+                      On touch screens, Return adds a line. Tap Send. With an
+                      input method, Enter confirms text while you compose.
+                    </p>
+                  )}
+                </section>
               ))}
             </div>
           ) : error ? (
@@ -230,15 +222,11 @@ export function CommandHelp({
               title="Release notes unavailable"
               hint={error === "Release notes unavailable" ? undefined : error}
               role="alert"
-            >
-              <button
-                type="button"
-                className="button button--quiet res__state-action"
-                onClick={() => setAttempt((value) => value + 1)}
-              >
-                Retry
-              </button>
-            </ContextPaneState>
+              action={{
+                label: "Retry",
+                run: () => setAttempt((value) => value + 1),
+              }}
+            />
           ) : release ? (
             <>
               <p className="palette__hint">

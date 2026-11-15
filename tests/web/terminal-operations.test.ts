@@ -2,7 +2,6 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import type { TerminalOperation } from "../../shared/terminal-operations";
 import { TerminalOperationController } from "../../src/controllers/terminal-operation-controller";
-import { deferred } from "./helpers";
 
 const oldEpoch = "11111111-1111-4111-8111-111111111111";
 const newEpoch = "22222222-2222-4222-8222-222222222222";
@@ -47,49 +46,18 @@ function reply(
 
 beforeEach(() => sessionStorage.clear());
 
-it("joins one terminal intent while the daemon still owns the result", async () => {
-  const gate = deferred<void>();
-  const handle = vi.fn(async (operation) => {
-    await gate.promise;
-    return reply(operation);
-  });
-  const request = transport(handle);
-  const controller = new TerminalOperationController(request);
-  const first = controller.run({
-    command: "create",
-    params: { request: { ...create.params.request, profileId: "bash" } },
-  });
-  const second = controller.run({
-    command: "create",
-    params: { request: { profileId: "bash", ...create.params.request } },
-  });
-  await vi.waitFor(() => expect(handle).toHaveBeenCalledOnce());
-  gate.resolve();
-  expect(await Promise.all([first, second])).toEqual([
-    { id: "terminal" },
-    { id: "terminal" },
-  ]);
-  expect(request).toHaveBeenCalledTimes(2);
-});
-
 it("preserves the original intent across a mismatched receipt, reload, and daemon replacement", async () => {
-  const responses = [
-    (operation: TerminalOperation) =>
+  const handle = vi.fn(reply)
+    .mockImplementationOnce((operation) =>
       reply(operation, { executor: { kind: "terminal", epoch: newEpoch } }),
-    (operation: TerminalOperation) =>
-      reply(
-        operation,
-        {
-          state: "unknown",
-          error: { message: "Receipt expired", status: 409 },
-        },
-        409,
-      ),
-    (operation: TerminalOperation) => reply(operation, { result: null }),
-  ];
-  const handle = vi.fn((operation: TerminalOperation) =>
-    responses.shift()!(operation),
-  );
+    )
+    .mockImplementationOnce((operation) =>
+      reply(operation, {
+        state: "unknown",
+        error: { message: "Receipt expired", status: 409 },
+      }, 409),
+    )
+    .mockImplementationOnce((operation) => reply(operation, { result: null }));
   await expect(
     new TerminalOperationController(transport(handle)).run(remove),
   ).rejects.toThrow("outcome is unknown");

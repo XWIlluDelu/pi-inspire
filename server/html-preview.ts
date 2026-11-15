@@ -21,13 +21,10 @@ export async function serveHtmlPreview(
 ): Promise<void> {
   const id = String(request.params.id);
   const grant = resources.getHtmlPreview(id);
-  const context = await getContext(grant.resource.descriptor.sessionId);
-  resources.get(
-    grant.resource.descriptor.id,
-    context.sessionId,
-    context.viewId,
+  await resources.authorize(
+    grant.resourceId,
+    await getContext(grant.sessionId),
   );
-  await resources.revalidate(grant.resource, context);
   const root = await realpath(grant.root).catch(() => null);
   if (root !== grant.root)
     throw requestError("The preview folder changed on disk", 409);

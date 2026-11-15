@@ -37,7 +37,6 @@ import type { Api } from "../api";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import {
   hasTerminalInsertion,
-  subscribeTerminalActions,
   subscribeTerminalInsertion,
   takeTerminalInsertion,
 } from "../terminal-actions";
@@ -74,6 +73,7 @@ import { TerminalTouchKeys } from "./TerminalTouchKeys";
 
 type TerminalViewAction =
   | "focus"
+  | "take-control"
   | "search"
   | "paste"
   | "copy"
@@ -734,31 +734,6 @@ export const TerminalView = memo(function TerminalView({
     return () => cancelAnimationFrame(frame);
   }, [active, fitAndResize]);
 
-  useEffect(
-    () =>
-      subscribeTerminalActions(({ action, projectCwd }) => {
-        if (
-          projectCwd !== descriptor.projectCwd ||
-          action !== "take-control" ||
-          !active ||
-          !ready ||
-          descriptor.status !== "running"
-        )
-          return false;
-        const dimensions = currentDimensions();
-        connectionRef.current?.takeControl(dimensions.cols, dimensions.rows);
-        xtermRef.current?.focus();
-        return true;
-      }),
-    [
-      active,
-      currentDimensions,
-      descriptor.projectCwd,
-      descriptor.status,
-      ready,
-    ],
-  );
-
   useEffect(() => {
     const deliver = () => {
       const xterm = xtermRef.current;
@@ -941,6 +916,13 @@ export const TerminalView = memo(function TerminalView({
         updateModifiers(pending);
         break;
       }
+      case "take-control": {
+        if (!ready || descriptor.status !== "running") break;
+        const { cols, rows } = currentDimensions();
+        connectionRef.current?.takeControl(cols, rows);
+        xtermRef.current?.focus();
+        break;
+      }
       case "search":
         if (searchStateRef.current.open) closeSearch(false);
         else setSearch((current) => ({ ...current, open: true }));
@@ -1049,59 +1031,43 @@ export const TerminalView = memo(function TerminalView({
                 aria-label="Search terminal output"
                 placeholder="Find"
               />
-              <button
-                type="button"
-                className="icon-button terminal-search__option"
-                aria-pressed={search.caseSensitive}
-                aria-label="Match case"
-                title="Match case"
-                onClick={() => toggleSearchOption("caseSensitive")}
-              >
-                Aa
-              </button>
-              <button
-                type="button"
-                className="icon-button terminal-search__option"
-                aria-pressed={search.wholeWord}
-                aria-label="Match whole word"
-                title="Match whole word"
-                onClick={() => toggleSearchOption("wholeWord")}
-              >
-                ab
-              </button>
-              <button
-                type="button"
-                className="icon-button terminal-search__option"
-                aria-pressed={search.regex}
-                aria-label="Use regular expression"
-                title="Use regular expression"
-                onClick={() => toggleSearchOption("regex")}
-              >
-                .*
-              </button>
+              {([
+                ["caseSensitive", "Match case", "Aa"],
+                ["wholeWord", "Match whole word", "ab"],
+                ["regex", "Use regular expression", ".*"],
+              ] as const).map(([option, label, text]) => (
+                <button
+                  key={option}
+                  type="button"
+                  className="icon-button terminal-search__option"
+                  aria-pressed={search[option]}
+                  aria-label={label}
+                  title={label}
+                  onClick={() => toggleSearchOption(option)}
+                >
+                  {text}
+                </button>
+              ))}
               <span className="terminal-search__count" aria-live="polite">
                 {search.resultCount > 0
                   ? `${search.resultIndex + 1}/${search.resultCount}`
                   : "0/0"}
               </span>
-              <button
-                type="button"
-                className="icon-button"
-                onClick={() => find("previous")}
-                aria-label="Previous terminal match"
-                title="Previous match"
-              >
-                <ChevronUp size={14} aria-hidden />
-              </button>
-              <button
-                type="button"
-                className="icon-button"
-                onClick={() => find("next")}
-                aria-label="Next terminal match"
-                title="Next match"
-              >
-                <ChevronDown size={14} aria-hidden />
-              </button>
+              {([
+                ["previous", "Previous", ChevronUp],
+                ["next", "Next", ChevronDown],
+              ] as const).map(([direction, label, Icon]) => (
+                <button
+                  key={direction}
+                  type="button"
+                  className="icon-button"
+                  aria-label={`${label} terminal match`}
+                  title={`${label} match`}
+                  onClick={() => find(direction)}
+                >
+                  <Icon size={14} aria-hidden />
+                </button>
+              ))}
               <button
                 type="button"
                 className="icon-button terminal-search__close"
@@ -1166,14 +1132,7 @@ export const TerminalView = memo(function TerminalView({
               <button
                 type="button"
                 className="button terminal-view__control"
-                onClick={() => {
-                  const dimensions = currentDimensions();
-                  connectionRef.current?.takeControl(
-                    dimensions.cols,
-                    dimensions.rows,
-                  );
-                  xtermRef.current?.focus();
-                }}
+                onClick={() => invokeRef.current("take-control")}
               >
                 <Keyboard size={13} aria-hidden /> Take control
               </button>

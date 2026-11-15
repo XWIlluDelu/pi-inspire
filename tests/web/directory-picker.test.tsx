@@ -7,7 +7,6 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HostDirListing } from "../../shared/contracts";
 import { ApiError } from "../../src/api";
@@ -100,75 +99,6 @@ describe("read recovery", () => {
     expect(confirm()).toBeEnabled();
     expect(screen.queryByRole("alert")).toBeNull();
   });
-
-  it("lets directory navigation continue while advisory drive discovery retries", async () => {
-    vi.useFakeTimers();
-    const roots = vi
-      .mocked(store.browseHostRoots)
-      .mockRejectedValueOnce(new ApiError(503, "Drive service unavailable"))
-      .mockResolvedValue({
-        roots: [
-          { name: "/", path: "/" },
-          { name: "Z:", path: "Z:\\" },
-        ],
-      });
-    vi.mocked(store.browseHostDirs).mockImplementation(async (path) =>
-      path === project.path ? project : home,
-    );
-    render(<DirectoryPicker onCancel={vi.fn()} onPick={vi.fn()} />);
-    await act(() => vi.advanceTimersByTimeAsync(0));
-    fireEvent.click(screen.getByRole("button", { name: "project" }));
-    await act(() => vi.advanceTimersByTimeAsync(0));
-    expect(confirm()).toBeEnabled();
-    expect(screen.queryByText(/Drive list unavailable/)).toBeNull();
-    await act(() => vi.advanceTimersByTimeAsync(1_000));
-    expect(roots).toHaveBeenCalledTimes(2);
-    expect(screen.getByRole("button", { name: "Z:" })).toBeEnabled();
-    expect(
-      screen.getByRole("textbox", { name: "Project directory" }),
-    ).toHaveValue(project.path);
-  });
-
-  it("retires scheduled directory reads after navigation, visibility changes, and dismissal", async () => {
-    vi.useFakeTimers();
-    vi.mocked(store.browseHostRoots).mockResolvedValue({
-      roots: [
-        { name: "/", path: "/" },
-        { name: "Z:", path: "Z:\\" },
-      ],
-    });
-    const browse = vi
-      .mocked(store.browseHostDirs)
-      .mockRejectedValueOnce(new ApiError(503, "Directory service unavailable"))
-      .mockRejectedValueOnce(new ApiError(503, "Directory service unavailable"))
-      .mockResolvedValue({ path: "/", parent: null, dirs: [] });
-    const view = render(
-      <DirectoryPicker
-        initial={home.path}
-        onCancel={vi.fn()}
-        onPick={vi.fn()}
-      />,
-    );
-    await act(() => vi.advanceTimersByTimeAsync(0));
-    fireEvent.click(screen.getByRole("button", { name: "/" }));
-    await act(() => vi.advanceTimersByTimeAsync(0));
-    fireEvent.click(toggle());
-    await act(() => vi.advanceTimersByTimeAsync(20_000));
-    expect(browse.mock.calls).toEqual([
-      [home.path, false],
-      ["/", false],
-      ["/", true],
-    ]);
-
-    browse.mockRejectedValue(
-      new ApiError(503, "Directory service unavailable"),
-    );
-    fireEvent.click(toggle());
-    await act(() => vi.advanceTimersByTimeAsync(0));
-    view.unmount();
-    await act(() => vi.advanceTimersByTimeAsync(20_000));
-    expect(browse).toHaveBeenCalledTimes(4);
-  });
 });
 
 describe("hidden project directories", () => {
@@ -224,22 +154,6 @@ describe("hidden project directories", () => {
     expect(browse).toHaveBeenLastCalledWith(undefined, true);
     await act(async () => oldFallback.resolve(home));
     expect(screen.getByRole("button", { name: ".hidden" })).toBeInTheDocument();
-  });
-
-  it("does not steal focus after a pending directory navigation", async () => {
-    const user = userEvent.setup();
-    const pending = deferred<HostDirListing>();
-    vi.mocked(store.browseHostDirs).mockImplementation(async (path) =>
-      path === project.path ? pending.promise : home,
-    );
-    render(<DirectoryPicker onCancel={vi.fn()} onPick={vi.fn()} />);
-    const entry = await screen.findByRole("button", { name: "project" });
-    entry.focus();
-    await user.keyboard("{Enter}");
-    toggle().focus();
-    await act(async () => pending.resolve(project));
-    expect(screen.getByRole("button", { name: ".." })).toBeVisible();
-    expect(toggle()).toHaveFocus();
   });
 
   it("does not start a late home fallback after dismissal", async () => {

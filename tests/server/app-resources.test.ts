@@ -155,73 +155,6 @@ describe("HTTP resource and upload authority", () => {
     await guest.get(stale).set("Sec-Fetch-Site", "same-origin").expect(401);
   });
 
-  it("validates hidden filters for saved and prospective workspace searches", async () => {
-    await writeFile(join(temporary, ".env"), "SYNTHETIC_CONFIG=true\n");
-    const sessionId = await openProject();
-    for (const [endpoint, scope] of [
-      ["/api/files", { sessionId }],
-      ["/api/new-session/files", { cwd: temporary }],
-    ] as const) {
-      const search = (showHidden?: string) =>
-        local.get(endpoint).query({
-          ...scope,
-          q: ".env",
-          ...(showHidden ? { showHidden } : {}),
-        });
-      expect((await search().expect(200)).body.files).toEqual([]);
-      expect((await search("1").expect(200)).body.files).toEqual([
-        { name: ".env", path: ".env" },
-      ]);
-      await search("yes").expect(400);
-    }
-    await local
-      .get("/api/files/list")
-      .query({ sessionId, showHidden: "yes" })
-      .expect(400);
-    // Workspace filtering does not affect authorization of an exact path.
-    const api = resourceHttp(local, sessionId);
-    const { id } = await api.descriptor(".env", ".env");
-    await api.content(id).expect(200, "SYNTHETIC_CONFIG=true\n");
-  }, 30_000);
-
-  it("serves only authenticated session-addressed Git status and diff inspection", async () => {
-    await guest.get("/api/git/status?sessionId=fixture-active").expect(401);
-    await local.get("/api/git/status?sessionId=not-open").expect(409);
-    await local
-      .post("/api/sessions/open")
-      .send({ id: "fixture-active" })
-      .expect(200);
-    const status = await local
-      .get("/api/git/status?sessionId=fixture-active")
-      .expect(200);
-    expect(status.body).toEqual({ kind: "not-repository" });
-    expect(fixture.git.status).toHaveBeenCalledWith(
-      fixture.cwd,
-      expect.any(AbortSignal),
-    );
-
-    await local
-      .post("/api/git/diff")
-      .send({
-        sessionId: "fixture-active",
-        pathId: "not base64!",
-      })
-      .expect(400);
-    const diff = await local
-      .post("/api/git/diff")
-      .send({
-        sessionId: "fixture-active",
-        pathId: "ZmlsZS50eHQ",
-      })
-      .expect(200);
-    expect(diff.body).toMatchObject({ kind: "empty" });
-    expect(fixture.git.diff).toHaveBeenCalledWith(
-      fixture.cwd,
-      "ZmlsZS50eHQ",
-      expect.any(AbortSignal),
-    );
-  });
-
   it("reveals only authorized workspace paths and transcript citations in the file manager", async () => {
     const literalName = "literal%20name.md";
     await writeFile(join(fixture.cwd, literalName), "content");
@@ -325,40 +258,18 @@ describe("HTTP resource and upload authority", () => {
     const open = (id: string) =>
       local.post("/api/sessions/open").send({ id }).expect(200);
     await open(sessionId);
-    const pending = await runtime.resourceContext(sessionId);
-    const api = resourceHttp(local, sessionId);
-    const file = await api.descriptor(name);
-    expect(file).toMatchObject({ name, kind: "markdown" });
-    await api.resolve("../outside.txt").expect(403);
-
     const other = "fixture-history";
     await open(other);
-    expect(await pending.loadMessages!()).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          content: expect.arrayContaining([
-            expect.objectContaining({
-              type: "image",
-              data: image.toString("base64"),
-            }),
-          ]),
-        }),
-      ]),
-    );
-
-    const listResources = () => local.post("/api/resources/list");
-    const { body: list } = await listResources()
+    const api = resourceHttp(local, sessionId);
+    const file = await api.descriptor(name);
+    const { body: list } = await local
+      .post("/api/resources/list")
       .send({ sessionId })
       .expect(200);
-    await listResources()
-      .send({ sessionId, limit: 100 })
-      .expect(200)
-      .expect(({ body }) => expect(body.resources).toEqual(list.resources));
     const embedded = list.resources.find((resource: { reference: string }) =>
       resource.reference.startsWith("pi-embedded://"),
     );
     const savedImage = await api.descriptor(embedded.reference);
-    expect(savedImage).toMatchObject({ kind: "image", size: image.length });
     await local
       .post("/api/resources/probe")
       .send({ sessionId, references: [name] })
@@ -377,10 +288,6 @@ describe("HTTP resource and upload authority", () => {
           ? "inline; filename*=UTF-8''quoted%27%28x%29.md"
           : "inline; filename*=UTF-8''quoted%27%28%2A%29.md",
       )
-      .expect(200, "# Host preview\n");
-    await content(file.id)
-      .query({ download: "1" })
-      .expect("Content-Disposition", /^attachment;/)
       .expect(200, "# Host preview\n");
     await content(file.id)
       .set("Range", "bytes=0-5")

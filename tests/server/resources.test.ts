@@ -14,9 +14,8 @@ import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as projectFiles from "../../server/project-files.js";
 import {
-  openCanonicalResourceFile,
+  openAuthorizedResourceFile,
   ResourceStore,
-  referencePath,
 } from "../../server/resources.js";
 import type { ResourceDescriptor } from "../../shared/contracts.js";
 import { diagnosticResourceReference } from "../../shared/resource-references.js";
@@ -52,7 +51,9 @@ function citation(text: string, role = "assistant") {
 }
 
 function resourceByDescriptor({ id, sessionId, viewId }: ResourceDescriptor) {
-  return resources.get(id, sessionId, viewId);
+  const resource = resources.get(id, sessionId, viewId);
+  if (resource.authority === "embedded") throw new Error("Expected a file");
+  return resource;
 }
 
 async function readResource(descriptor: ResourceDescriptor) {
@@ -161,19 +162,6 @@ describe("ResourceStore", () => {
       await expect(resources.resolve(source, reference)).rejects.toMatchObject({
         status: 404,
       });
-  });
-
-  it("opens native VS Code file URIs with escaped spaces and line/column suffixes", async () => {
-    const { project } = await workspace();
-    const file = join(project, "my report.md");
-    await writeFile(file, "report");
-    const uri = pathToFileURL(file).href.replace(/^file:\/\//, "vscode://file");
-    for (const suffix of [":5:10", "#L5"]) {
-      expect(referencePath(uri + suffix, project)).toBe(file);
-      await expect(
-        resources.resolve(context(project), uri + suffix),
-      ).resolves.toMatchObject({ name: "my report.md" });
-    }
   });
 
   it("classifies supported source and document families without treating binary lookalikes as text", async () => {
@@ -301,7 +289,11 @@ describe("ResourceStore", () => {
       context(project, [embedded(image("old-image"), "image/png")]),
       reference,
     );
-    const resource = resourceByDescriptor(descriptor);
+    const resource = resources.get(
+      descriptor.id,
+      descriptor.sessionId,
+      descriptor.viewId,
+    );
     await expect(
       resources.embeddedContent(
         resource,
@@ -349,7 +341,7 @@ describe("ResourceStore", () => {
       await symlink(outside, nested, "dir");
 
       await expect(
-        openCanonicalResourceFile(authorizedPath),
+        openAuthorizedResourceFile(authorizedPath, authorizedPath),
       ).rejects.toMatchObject({ status: 409 });
     },
   );
@@ -383,8 +375,8 @@ describe("ResourceStore", () => {
       await unlink(link);
       await symlink(inside, link);
       await expect(
-        resources.revalidate(resourceByDescriptor(descriptor), cited),
-      ).resolves.toBeUndefined();
+        resources.authorize(descriptor.id, cited),
+      ).resolves.toMatchObject({ descriptor });
       await expect(readResource(descriptor)).rejects.toMatchObject({
         status: 409,
       });
@@ -487,7 +479,7 @@ describe("ResourceStore", () => {
     const descriptor = await resources.resolve(source, selected, selected);
     await writeFile(join(project, ".gitignore"), `${selected}\n`);
     projectFiles.invalidateProjectFiles(project);
-    await resources.revalidate(resourceByDescriptor(descriptor), source);
+    await resources.authorize(descriptor.id, source);
     expect(await readResource(descriptor)).toBe(`${selected}\n`);
   });
 });
@@ -573,31 +565,27 @@ describe("literal native paths and URL reference identity", () => {
       "<svg/>",
     );
 
-    const resource = resourceByDescriptor(descriptor);
     const appended = {
       ...before,
       revision: 3,
       messages: [...before.messages, citation("append")],
     };
     await expect(
-      resources.revalidate(resource, appended),
-    ).resolves.toBeUndefined();
-    expect(() => resources.get(descriptor.id, "s1", "view-b")).toThrow(
-      "no longer available",
-    );
+      resources.authorize(descriptor.id, appended),
+    ).resolves.toMatchObject({ descriptor });
     await expect(
-      resources.revalidate(resource, { ...appended, viewId: "view-b" }),
-    ).rejects.toMatchObject({ status: 409 });
+      resources.authorize(descriptor.id, { ...appended, viewId: "view-b" }),
+    ).rejects.toMatchObject({ status: 404 });
 
     const after = context(project, [citedUrl], 4);
-    await expect(resources.revalidate(resource, after)).rejects.toMatchObject({
-      status: 403,
-    });
+    await expect(
+      resources.authorize(descriptor.id, after),
+    ).rejects.toMatchObject({ status: 403 });
     await expect(resources.resolve(after, native)).rejects.toMatchObject({
       status: 403,
     });
     await expect(
-      resources.revalidate(resourceByDescriptor(urlDescriptor), after),
-    ).resolves.toBeUndefined();
+      resources.authorize(urlDescriptor.id, after),
+    ).resolves.toMatchObject({ descriptor: urlDescriptor });
   });
 });

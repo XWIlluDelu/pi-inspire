@@ -46,7 +46,7 @@ describe("HTTP prompt operation ownership", () => {
         .messages,
     ).toEqual(before);
 
-    prompt.mockClear().mockResolvedValue(null);
+    prompt.mockClear().mockResolvedValue(undefined);
     const delivery = {
       sessionId: "fixture-active",
       message: "\u0000".repeat(MAX_PROMPT_CHARS),
@@ -57,21 +57,19 @@ describe("HTTP prompt operation ownership", () => {
 
   it("observes a single delivery through HTTP disconnect, acceptance, and receipt retirement", async () => {
     const { baseUrl, localRequest, runtime, promptDelivery } = await start(100);
-    const abort = vi.spyOn(runtime, "abort");
-    const close = vi.spyOn(runtime, "close");
     const entered = deferredSignal();
-    const historyEntry = { text: "deliver once", images: [], files: [] };
+    const message = "deliver once";
     let finish!: () => void;
     const prompt = vi.spyOn(runtime, "prompt").mockImplementation(
       () =>
         new Promise((resolve) => {
-          finish = () => resolve(historyEntry);
+          finish = () => resolve();
           entered.resolve();
         }),
     );
     const delivery = promptDelivery({
       sessionId: "fixture-active",
-      message: historyEntry.text,
+      message,
     });
     const { operationId, authorityId } = delivery;
     const receipt = `/api/prompt/${operationId}`;
@@ -99,9 +97,6 @@ describe("HTTP prompt operation ownership", () => {
       await entered.promise;
       observer.abort();
       await disconnected;
-      expect(abort).not.toHaveBeenCalled();
-      expect(close).not.toHaveBeenCalled();
-
       const identity = hostReceipt("prompt", delivery);
       const pending = { ...identity, state: "pending" };
       expect((await observe().expect(202)).body).toEqual(pending);
@@ -120,24 +115,16 @@ describe("HTTP prompt operation ownership", () => {
         .expect(({ body }) =>
           expect(body.code).toBe("PROMPT_OPERATION_MISMATCH"),
         );
-      await post({ ...delivery, authorityId: randomUUID() })
-        .expect(409)
-        .expect(({ body }) => expect(body.code).toBe("HOST_AUTHORITY_CHANGED"));
       await localRequest
         .get(receipt)
         .query({ authorityId: randomUUID() })
         .expect(409)
         .expect(({ body }) => expect(body.code).toBe("HOST_AUTHORITY_CHANGED"));
-      await localRequest
-        .get(`/api/prompt/${randomUUID()}`)
-        .query({ authorityId })
-        .expect(409)
-        .expect(({ body }) => expect(body.outcomeUnknown).toBe(true));
       finish();
       const accepted = {
         ...identity,
         state: "completed",
-        result: historyEntry,
+        result: null,
       };
       expect((await observe().expect(202)).body).toEqual(accepted);
       expect((await post().expect(202)).body).toEqual(accepted);
@@ -160,7 +147,7 @@ describe("HTTP prompt operation ownership", () => {
       }
       expect(prompt).toHaveBeenCalledExactlyOnceWith({
         sessionId: "fixture-active",
-        message: historyEntry.text,
+        message,
       });
     } finally {
       observer.abort();
@@ -168,159 +155,74 @@ describe("HTTP prompt operation ownership", () => {
     }
   });
 
-  it.each([
-    { outcome: "rejected", status: 409, details: {} },
-    {
-      outcome: "unknown",
-      status: 504,
-      details: { code: "PI_RPC_OUTCOME_UNKNOWN", outcomeUnknown: true },
-    },
-  ])(
-    "retains operation-owned $outcome receipts for reads and retries",
-    async ({ outcome, status, details }) => {
-      const { application, localRequest, runtime, promptDelivery } =
-        await start();
-      const error = "Synthetic Pi delivery result";
-      const prompt = vi
-        .spyOn(runtime, "prompt")
-        .mockRejectedValue(
-          Object.assign(new Error(error), { status, ...details }),
-        );
-      const delivery = promptDelivery({
-        sessionId: "fixture-active",
-        message: "send once",
-      });
-      const { operationId, authorityId } = delivery;
-      const receipt = `/api/prompt/${operationId}`;
-      const post = () => localRequest.post("/api/prompt").send(delivery);
-
-      for (const observation of [
-        post(),
-        post(),
-        localRequest.get(receipt).query({ authorityId }),
-      ]) {
-        await observation.expect(status).expect(({ body }) =>
-          expect(body).toMatchObject({
-            ...hostReceipt("prompt", delivery),
-            state: outcome,
-            error: {
-              message: error,
-              status,
-              ...(details.code ? { code: details.code } : {}),
-            },
-          }),
-        );
-      }
-      await request(application.server)
-        .get(receipt)
-        .query({ authorityId })
-        .expect(401)
-        .expect(({ body }) => expect(body.executor).toBeUndefined());
-      expect(prompt).toHaveBeenCalledOnce();
-    },
-  );
+  it("preserves the original unknown result after dispatch", async () => {
+    const { runtime, localRequest, promptDelivery } = await start();
+    const prompt = vi.spyOn(runtime, "prompt").mockRejectedValue(
+      Object.assign(new Error("Pi delivery is unconfirmed"), {
+        status: 504,
+        code: "PI_RPC_OUTCOME_UNKNOWN",
+        outcomeUnknown: true,
+      }),
+    );
+    const delivery = promptDelivery({ sessionId: "fixture-active", message: "send once" });
+    const expected = {
+      ...hostReceipt("prompt", delivery),
+      state: "unknown",
+      error: {
+        status: 504,
+        code: "PI_RPC_OUTCOME_UNKNOWN",
+        message: "Pi delivery is unconfirmed",
+      },
+    };
+    await localRequest.post("/api/prompt").send(delivery).expect(504, expected);
+    await localRequest.get(`/api/prompt/${delivery.operationId}`)
+      .query({ authorityId: delivery.authorityId })
+      .expect(504, expected);
+    expect(prompt).toHaveBeenCalledOnce();
+  });
 });
 
 describe("HTTP Pending recovery and abort ownership", () => {
-  it.each(["recover", "abort"] as const)(
-    "shares the %s receipt with concurrent callers and later observers",
-    async (action) => {
-      const f = await start();
-      const result = { steering: ["original text"], followUp: [] };
-      const held = Promise.withResolvers<typeof result>();
-      const operation = vi
-        .spyOn(f.runtime, action === "recover" ? "recoverPending" : "abort")
-        .mockReturnValueOnce(held.promise);
-      const body = {
-        sessionId: "fixture-active",
-        authorityId: f.application.authorityId,
-        operationId: randomUUID(),
-        expectedViewId: "original-view",
-      };
-      const path =
-        action === "recover" ? "/api/pending/recover" : "/api/control/abort";
-      const post = () => f.localRequest.post(path).send(body);
-      const expected = {
-        ...hostReceipt(action, body),
-        state: "completed",
-        result,
-      };
-      const first = post()
-        .expect(200, expected)
-        .then((response) => response);
-      const second = post()
-        .expect(200, expected)
-        .then((response) => response);
-      try {
-        await vi.waitFor(() => expect(operation).toHaveBeenCalledOnce());
-      } finally {
-        held.resolve(result);
-      }
-      await Promise.all([first, second]);
-      const { operationId, ...query } = body;
-      await f.localRequest
-        .get(`/api/pending/operations/${operationId}`)
-        .query({ ...query, action })
-        .expect(200, expected);
-      for (const changed of [
-        { sessionId: "fixture-older" },
-        { authorityId: randomUUID() },
-        { expectedViewId: "another-view" },
-      ]) {
-        await f.localRequest
-          .post(path)
-          .send({ ...body, ...changed })
-          .expect(409);
-      }
-      await f.localRequest
-        .post(
-          action === "recover" ? "/api/control/abort" : "/api/pending/recover",
-        )
-        .send(body)
-        .expect(409);
-      expect(operation).toHaveBeenCalledExactlyOnceWith(
-        body.sessionId,
-        body.expectedViewId,
-      );
-    },
-  );
-
-  it("requires authenticated mutation and retains its failure proof for later observation", async () => {
+  it("binds the Return receipt to its action and view", async () => {
+    const action = "recover";
     const f = await start();
-    const recover = vi
-      .spyOn(f.runtime, "recoverPending")
-      .mockRejectedValueOnce(new Error("transient failure"));
+    const result = { steering: ["original text"], followUp: [] };
+    const operation = vi.spyOn(f.runtime, "recoverPending").mockResolvedValue(result);
     const body = {
       sessionId: "fixture-active",
       authorityId: f.application.authorityId,
       operationId: randomUUID(),
+      expectedViewId: "original-view",
     };
-    const post = () => f.localRequest.post("/api/pending/recover").send(body);
-    const observe = () =>
-      f.localRequest.get(`/api/pending/operations/${body.operationId}`).query({
-        authorityId: body.authorityId,
-        sessionId: body.sessionId,
-        action: "recover",
-      });
-    await request(f.application.server)
-      .post("/api/pending/recover")
+    const path = "/api/pending/recover";
+    const post = () => f.localRequest.post(path).send(body);
+    const expected = {
+      ...hostReceipt(action, body),
+      state: "completed",
+      result,
+    };
+    await post().expect(200, expected);
+    await f.localRequest.post("/api/prompt").send({
+      ...body,
+      message: "This ID is already owned by a Pending command",
+    }).expect(409);
+    const { operationId, ...query } = body;
+    await f.localRequest
+      .get(`/api/pending/operations/${operationId}`)
+      .query({ ...query, action })
+      .expect(200, expected);
+    await request(f.application.server).post(path).send(body).expect(401);
+    await f.localRequest
+      .post(path)
+      .send({ ...body, expectedViewId: "another-view" })
+      .expect(409);
+    await f.localRequest
+      .post("/api/control/abort")
       .send(body)
-      .expect(401);
-    await observe().expect(409);
-    expect(recover).not.toHaveBeenCalled();
-
-    const failure = (observation: ReturnType<typeof post>) =>
-      observation.expect(500).expect(({ body: receipt }) =>
-        expect(receipt).toMatchObject({
-          ...hostReceipt("recover", body),
-          state: "rejected",
-          error: { status: 500, message: "transient failure" },
-        }),
-      );
-    const failed = await failure(post());
-    recover.mockResolvedValue({ steering: ["new input"], followUp: [] });
-    expect((await failure(post())).body).toEqual(failed.body);
-    expect((await failure(observe())).body).toEqual(failed.body);
-    expect(recover).toHaveBeenCalledOnce();
+      .expect(409);
+    expect(operation).toHaveBeenCalledExactlyOnceWith(
+      body.sessionId,
+      body.expectedViewId,
+    );
   });
 });

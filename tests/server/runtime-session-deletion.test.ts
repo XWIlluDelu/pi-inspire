@@ -6,16 +6,12 @@ import { deleteSessionFile } from "../../server/session-delete.js";
 import { SessionProjection } from "../../server/session-projection.js";
 import type { SessionDeletionRequest } from "../../shared/contracts.js";
 import {
-  nativePiWorkspace,
-  stubNativePiEnvironment,
-} from "./fixtures/native-pi.js";
-import {
   deferredSignal,
-  disposeRuntimeFixture,
+  disposeIsolatedRuntimeFixture,
   fakeRuntime,
   fixtureWorkspace,
   HIDDEN_FOLDER_CWD,
-  initializeRuntimeFixture,
+  initializeIsolatedRuntimeFixture,
   persistedRecord,
   startWorker,
   trackRuntime,
@@ -23,22 +19,10 @@ import {
 import { jsonl } from "./fixtures/session-jsonl.js";
 
 beforeEach(async () => {
-  await initializeRuntimeFixture();
-  const pi = await nativePiWorkspace(
-    "pi-",
-    { defaultProjectTrust: "never" },
-    fixtureWorkspace,
-  );
-  stubNativePiEnvironment(pi.env);
+  await initializeIsolatedRuntimeFixture();
   vi.stubEnv("PI_CODING_AGENT_SESSION_DIR", fixtureWorkspace);
 });
-afterEach(async () => {
-  try {
-    await disposeRuntimeFixture();
-  } finally {
-    vi.unstubAllEnvs();
-  }
-});
+afterEach(disposeIsolatedRuntimeFixture);
 
 async function fixture({
   catalogFailure,

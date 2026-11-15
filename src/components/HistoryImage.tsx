@@ -1,7 +1,6 @@
 import { useCallback, useState } from "react";
 import { store } from "../store";
-import { useImageUrl } from "../use-image-url";
-import { ImagePreview } from "./ImagePreview";
+import { LoadedImagePreview } from "./ImagePreview";
 
 export function HistoryImage({
   targetId,
@@ -15,25 +14,24 @@ export function HistoryImage({
     (signal: AbortSignal) => store.readBranchImage(targetId, index, signal),
     [targetId, index, attempt],
   );
-  const { src: url, error } = useImageUrl(loadImage);
-  return error ? (
-    <div className="history-image-error">
-      <span>Image unavailable</span>
-      <button
-        type="button"
-        className="button button--quiet"
-        onClick={() => setAttempt((value) => value + 1)}
-      >
-        Retry image
-      </button>
-    </div>
-  ) : url ? (
-    <ImagePreview
+  return (
+    <LoadedImagePreview
+      load={loadImage}
       className="history-detail__image"
-      src={url}
       alt="image in this history entry"
+      pending={<span role="status">Loading image…</span>}
+      unavailable={
+        <div className="history-image-error">
+          <span>Image unavailable</span>
+          <button
+            type="button"
+            className="button button--quiet"
+            onClick={() => setAttempt((value) => value + 1)}
+          >
+            Retry image
+          </button>
+        </div>
+      }
     />
-  ) : (
-    <span role="status">Loading image…</span>
   );
 }

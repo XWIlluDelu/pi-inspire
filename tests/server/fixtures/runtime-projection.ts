@@ -23,16 +23,18 @@ const runtimes: RuntimeController[] = [];
 export function runtimeProjection(runtime: RuntimeController) {
   const internals = runtime as unknown as {
     slots: Map<string, RuntimeSlot>;
-    reconcileSlot(slot: RuntimeSlot, force: boolean): Promise<unknown>;
+    projectionCoordinator: {
+      reconcile(slot: RuntimeSlot, force: boolean): Promise<unknown>;
+    };
   };
   const slot = internals.slots.get("session-a")!;
   return {
     slot,
-    reconcile: () => internals.reconcileSlot(slot, true),
+    reconcile: () => internals.projectionCoordinator.reconcile(slot, true),
   };
 }
 
-export class ProjectionRpc extends FakeRpc {
+class ProjectionRpc extends FakeRpc {
   declare readonly sessionPath: string;
   onStop: (() => void) | null = null;
   onStart: (() => Promise<void>) | null = null;

@@ -10,6 +10,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
+import { vi } from "vitest";
 import { AttachmentStore } from "../../../server/attachments.js";
 import type {
   PiRpcOptions,
@@ -35,6 +36,7 @@ import {
   CHECKPOINT_CHUNK_CHARS,
   CHECKPOINT_SUFFIX,
 } from "../../../shared/worker-checkpoint.js";
+import { nativePiWorkspace, stubNativePiEnvironment } from "./native-pi.js";
 import { jsonl, messageEntry } from "./session-jsonl.js";
 
 export class FakeRpc extends EventEmitter {
@@ -497,6 +499,24 @@ export async function initializeRuntimeFixture() {
     ),
   );
   HIDDEN_FOLDER_CWD = fixtureCwd("/folder");
+}
+
+export async function initializeIsolatedRuntimeFixture() {
+  await initializeRuntimeFixture();
+  const pi = await nativePiWorkspace(
+    "pi-",
+    { defaultProjectTrust: "never" },
+    fixtureWorkspace,
+  );
+  stubNativePiEnvironment(pi.env);
+}
+
+export async function disposeIsolatedRuntimeFixture() {
+  try {
+    await disposeRuntimeFixture();
+  } finally {
+    vi.unstubAllEnvs();
+  }
 }
 
 export async function disposeRuntimeFixture() {

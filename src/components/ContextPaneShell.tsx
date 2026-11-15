@@ -1,9 +1,7 @@
-import { AlertTriangle, X } from "lucide-react";
+import { X } from "lucide-react";
 import type { ReactNode } from "react";
 import { dismissTerminalMenu } from "../terminal-menus";
 import { recoverModalFocus, useModalFocus } from "../use-modal-focus";
-import { ContextPaneState } from "./ContextPaneState";
-import { PiLoader } from "./PiLoader";
 
 /** Keep the pane and its focus owner mounted across deferred body states. */
 export function ContextPaneShell({
@@ -54,50 +52,26 @@ export function ContextPaneShell({
   );
 }
 
-export function ContextPaneLoading({
-  onClose,
-  onRetry,
-}: {
-  onClose: () => void;
-  onRetry?: () => void;
-}) {
+export function ContextPaneLoadingHeader({ onClose }: { onClose: () => void }) {
   return (
-    <>
-      <div className="pane-toolbar ctx__header" ref={recoverModalFocus}>
-        <div className="ctx__tools">
-          <button
-            type="button"
-            className="icon-button ctx__close"
-            title="Close"
-            aria-label="Close context pane"
-            onClick={onClose}
-          >
-            <X size={15} aria-hidden />
-          </button>
-        </div>
+    <div className="pane-toolbar ctx__header" ref={recoverModalFocus}>
+      <div className="ctx__tools">
+        <ContextPaneClose onClose={onClose} />
       </div>
-      <ContextPaneState
-        className={onRetry ? undefined : "deferred-loading"}
-        icon={
-          onRetry ? (
-            <AlertTriangle size={17} aria-hidden />
-          ) : (
-            <PiLoader size={17} aria-hidden />
-          )
-        }
-        title={onRetry ? "Context could not be opened." : "Loading context"}
-        role={onRetry ? "alert" : "status"}
-      >
-        {onRetry ? (
-          <button
-            type="button"
-            className="button button--quiet res__state-action"
-            onClick={onRetry}
-          >
-            Reload
-          </button>
-        ) : null}
-      </ContextPaneState>
-    </>
+    </div>
+  );
+}
+
+export function ContextPaneClose({ onClose }: { onClose: () => void }) {
+  return (
+    <button
+      type="button"
+      className="icon-button ctx__close"
+      title="Close"
+      aria-label="Close context pane"
+      onClick={onClose}
+    >
+      <X size={15} aria-hidden />
+    </button>
   );
 }

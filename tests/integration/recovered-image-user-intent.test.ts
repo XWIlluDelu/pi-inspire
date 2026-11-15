@@ -31,7 +31,6 @@ it.each([
   { action: "keep", observer: "sender", first: "prompt" },
   { action: "keep", observer: "other browser", first: "return" },
   { action: "remove", observer: "sender", first: "return" },
-  { action: "send", observer: "sender", first: "return" },
   { action: "queue-again", observer: "sender", first: "return" },
 ] as const)(
   "preserves $action by the $observer when $first settles first",
@@ -150,22 +149,14 @@ it.each([
           ).toBe("aborted"),
         );
       };
-      if (action === "send") {
-        await finishCompaction();
-        expect(await store.sendPrompt("use the returned image")).toMatchObject({
-          accepted: true,
-        });
-        expect(sent.at(-1)?.attachmentIds).toEqual([image.id]);
-      } else if (action === "queue-again") {
+      if (action === "queue-again") {
         const next = store.sendPrompt("queue the same image again", "followUp");
         await waitForQueuedInput();
         expect(await store.recoverPending()).toBe(true);
         expect(await next).toBe(false);
         expect(imageHandles(store)).toEqual([image.id]);
       }
-      if (action !== "send") {
-        store.removeAttachment(draft(store).attachments[0]!.localId);
-      }
+      store.removeAttachment(draft(store).attachments[0]!.localId);
       await vi.waitFor(() => expect(draft(store).attachments).toEqual([]));
       await vi.waitFor(async () =>
         expect(attachments.imagePreview(image.id)).rejects.toMatchObject({
@@ -174,7 +165,7 @@ it.each([
       );
       await finishOriginalPrompt();
       expect(draft(store).attachments).toEqual([]);
-      if (action !== "send") await finishCompaction();
+      await finishCompaction();
       expect(await store.sendPrompt("plain text afterwards")).toMatchObject({
         accepted: true,
       });

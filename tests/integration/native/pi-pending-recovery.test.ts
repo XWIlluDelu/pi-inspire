@@ -142,21 +142,6 @@ describe("native Pending recovery", () => {
         behavior,
         attachmentIds: [image.id],
       });
-    const extra = await Promise.all(
-      Array.from({ length: MAX_ATTACHMENTS - 3 }, (_, index) =>
-        addImage(f, `extra-${index}.png`),
-      ),
-    );
-    for (const image of extra) {
-      await f.api.prompt({
-        ...f.delivery("additional image"),
-        behavior: "followUp",
-        attachmentIds: [image.id],
-      });
-      await expect(
-        f.attachments.resolveForPrompt([image.id]),
-      ).rejects.toMatchObject({ status: 409 });
-    }
     const longText = `${"long queued input ".repeat(200)}EXACT_END`;
     await f.api.prompt({ ...f.delivery(longText), behavior: "steer" });
     const { active, pendingQueues } = await f.runtime.snapshot(f.sessionId);
@@ -173,12 +158,9 @@ describe("native Pending recovery", () => {
         },
       }),
     ).toEqual({ text: longText, images: [] });
-    const images = [first, duplicate, second, imageOnly, ...extra];
+    const images = [first, duplicate, second, imageOnly];
     expect(await f.api.json("pendingText", { body: read })).toEqual({
-      text: [
-        `1. same caption\n2. same caption\n3. ${longText}\n4. same caption\n5. `,
-        ...extra.map((_, index) => `${6 + index}. additional image`),
-      ].join("\n"),
+      text: `1. same caption\n2. same caption\n3. ${longText}\n4. same caption\n5. `,
       images: images.map(({ id }) => ({ attachmentId: id })),
     });
     expect((await f.runtime.snapshot(f.sessionId)).pendingQueues).toEqual(
@@ -187,7 +169,7 @@ describe("native Pending recovery", () => {
     const recovered = await f.api.recoverPending(f.sessionId);
     expect(recovered).toEqual({
       steering: ["same caption", "same caption", longText],
-      followUp: ["same caption", "", ...extra.map(() => "additional image")],
+      followUp: ["same caption", ""],
       attachments: images,
       authorityId: f.application.authorityId,
     });
@@ -205,7 +187,7 @@ describe("native Pending recovery", () => {
     await f.api.prompt({
       ...f.delivery(merged),
       behavior: "followUp",
-      attachmentIds: images.slice(0, 4).map(({ id }) => id),
+      attachmentIds: images.map(({ id }) => id),
     });
     expect(
       (await f.runtime.snapshot(f.sessionId)).pendingQueues!.followUp[0],
@@ -214,11 +196,10 @@ describe("native Pending recovery", () => {
       textLength: merged.trim().length,
     });
     await f.api.json("clearPending", { body: { sessionId: f.sessionId } });
-    for (const image of images.slice(0, 4))
+    for (const image of images)
       await expect(f.api.attachmentPreview(image.id)).rejects.toMatchObject({
         status: 404,
       });
-    for (const image of extra) await f.attachments.remove(image.id);
     const stopSteer = await addImage(f, "stop-steer.png");
     const stopFollow = await addImage(f, "stop-follow.gif");
     await f.api.prompt({

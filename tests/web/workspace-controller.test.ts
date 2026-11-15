@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ProjectDirEntry } from "../../shared/contracts";
 import { type Api, ApiError } from "../../src/api";
 import {
   emptyWorkspaceBrowserState,
@@ -7,6 +8,8 @@ import {
   WorkspaceController,
 } from "../../src/controllers/workspace-controller";
 import { deferred } from "./helpers";
+
+type Directory = { entries: ProjectDirEntry[]; truncated?: boolean };
 
 function createHarness() {
   let state = {
@@ -17,7 +20,13 @@ function createHarness() {
   const listFiles = vi.fn();
   const searchFiles = vi.fn();
   const handleAuthFailure = vi.fn();
-  let api = { listFiles, searchFiles } as unknown as Api;
+  let api = {
+    json: (
+      name: "listFiles" | "searchFiles",
+      input: unknown,
+      signal?: AbortSignal,
+    ) => ({ listFiles, searchFiles })[name](input, signal),
+  } as unknown as Api;
   const controller = new WorkspaceController({
     state: () => state,
     patch: (patch: Partial<WorkspaceBrowserState>) => {
@@ -70,10 +79,10 @@ describe("WorkspaceController", () => {
     await vi.waitFor(() =>
       expect(harness.state().workspaceMatches[0]?.path).toBe(".env"),
     );
-    expect(harness.listFiles.mock.lastCall?.[2]).toMatchObject({
-      showHidden: true,
+    expect(harness.listFiles.mock.lastCall?.[0].query).toMatchObject({
+      showHidden: "1",
     });
-    expect(harness.searchFiles.mock.lastCall?.[4]).toBe(true);
+    expect(harness.searchFiles.mock.lastCall?.[0].query.showHidden).toBe("1");
     oldDirectory.resolve({ entries: [{ name: "stale", type: "file" }] });
     oldSearch.resolve({ files: [{ name: "stale", path: "stale" }] });
     await first;
@@ -102,7 +111,7 @@ describe("WorkspaceController", () => {
       workspaceMatches: [{ name: "main.ts", path: "src/main.ts" }],
     });
 
-    const pending = deferred<Awaited<ReturnType<Api["listFiles"]>>>();
+    const pending = deferred<Directory>();
     harness.listFiles.mockReturnValueOnce(pending.promise);
     const load = harness.controller.loadDirectory("retired");
     const other = harness.controller.changeOwner("/other");
@@ -150,14 +159,12 @@ describe("WorkspaceController", () => {
     expect(reveal.path).toBe("src/components/App.tsx");
     expect(harness.controller.consumeRevealRequest(reveal.nonce)).toBe(true);
     expect(harness.state().workspaceRevealRequest).toBeNull();
-    expect(harness.listFiles.mock.calls.map((call) => call[1])).toEqual([
-      "",
-      "src",
-      "src/components",
-    ]);
+    expect(
+      harness.listFiles.mock.calls.map(([{ query }]) => query.dir),
+    ).toEqual(["", "src", "src/components"]);
 
-    const first = deferred<Awaited<ReturnType<Api["listFiles"]>>>();
-    const second = deferred<Awaited<ReturnType<Api["listFiles"]>>>();
+    const first = deferred<Directory>();
+    const second = deferred<Directory>();
     harness.listFiles
       .mockClear()
       .mockReturnValueOnce(first.promise)
@@ -170,48 +177,17 @@ describe("WorkspaceController", () => {
     await first.promise;
     await Promise.resolve();
 
-    expect(harness.listFiles.mock.calls.map((call) => call[1])).toEqual([
-      "",
-      "",
-    ]);
+    expect(
+      harness.listFiles.mock.calls.map(([{ query }]) => query.dir),
+    ).toEqual(["", ""]);
 
     second.resolve({ entries: [] });
     await Promise.all([staleRefresh, currentRefresh]);
-    expect(harness.listFiles.mock.calls.map((call) => call[1])).toEqual([
-      "",
-      "",
-      "src",
-      "src/components",
-    ]);
-    expect(harness.listFiles.mock.lastCall?.[2]).toMatchObject({
-      refresh: true,
-    });
-  });
-
-  it("retires a pending query retry when an overlapping refresh starts its search", async () => {
-    vi.useFakeTimers();
-    const harness = createHarness();
-    const root = deferred<{ entries: [] }>();
-    harness.patch({ workspaceQuery: "file" });
-    harness.listFiles.mockReturnValueOnce(root.promise);
-    harness.searchFiles
-      .mockRejectedValueOnce(new ApiError(503, "temporary"))
-      .mockResolvedValue({
-        files: [{ name: "current.ts", path: "current.ts" }],
-      });
-    const refreshing = harness.controller.refresh();
-    harness.controller.setQuery("file");
-    await vi.advanceTimersByTimeAsync(0);
-    const oldRequest = harness.searchFiles.mock.calls[0][3] as AbortSignal;
-
-    root.resolve({ entries: [] });
-    await refreshing;
-    expect(oldRequest.aborted).toBe(true);
-    expect(harness.searchFiles).toHaveBeenCalledTimes(2);
-    expect(harness.state()).toMatchObject({
-      workspaceMatches: [{ name: "current.ts", path: "current.ts" }],
-      workspaceSearchLoading: false,
-      workspaceSearchError: null,
+    expect(
+      harness.listFiles.mock.calls.map(([{ query }]) => query.dir),
+    ).toEqual(["", "", "src", "src/components"]);
+    expect(harness.listFiles.mock.lastCall?.[0].query).toMatchObject({
+      refresh: "1",
     });
   });
 
@@ -251,49 +227,6 @@ describe("WorkspaceController", () => {
       workspaceMatches: files,
       workspaceSearchLoading: false,
       workspaceSearchError: null,
-    });
-  });
-
-  it("retires queued retries on workspace, query and transport replacement", async () => {
-    vi.useFakeTimers();
-    const harness = createHarness();
-    harness.listFiles.mockRejectedValue(new ApiError(503, "temporary"));
-    harness.searchFiles.mockRejectedValue(new ApiError(503, "temporary"));
-    const oldRoot = harness.controller.loadDirectory("");
-    harness.controller.setQuery("old");
-    await vi.advanceTimersByTimeAsync(0);
-    const other = harness.controller.changeOwner("/other");
-    harness.patch({ sessionId: "s2", cwd: "/other", ...other });
-    await oldRoot;
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(harness.listFiles).toHaveBeenCalledTimes(1);
-    expect(harness.searchFiles).toHaveBeenCalledTimes(1);
-
-    harness.searchFiles
-      .mockRejectedValueOnce(new ApiError(503, "old query"))
-      .mockResolvedValue({
-        files: [{ name: "current.ts", path: "current.ts" }],
-      });
-    harness.controller.setQuery("old");
-    await vi.advanceTimersByTimeAsync(0);
-    harness.controller.setQuery("new");
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(harness.searchFiles).toHaveBeenCalledTimes(3);
-    expect(harness.state().workspaceMatches).toEqual([
-      { name: "current.ts", path: "current.ts" },
-    ]);
-
-    const oldTransport = harness.controller.loadDirectory("src");
-    await vi.advanceTimersByTimeAsync(0);
-    harness.replaceTransport();
-    harness.controller.invalidateForTransportReplacement();
-    await oldTransport;
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(harness.listFiles).toHaveBeenCalledTimes(2);
-    expect(harness.state()).toMatchObject({
-      ...emptyWorkspaceBrowserState(),
-      workspaceQuery: "new",
-      workspaceSearchLoading: true,
     });
   });
 

@@ -33,62 +33,49 @@ function pathName(change: GitFileChange): string {
   return change.path.utf8Path ?? change.path.display;
 }
 
-function GitResultState({ result }: { result: GitDiffResponse }) {
-  if (result.kind === "empty")
-    return (
-      <ContextPaneState
-        icon={<History size={17} aria-hidden />}
-        title="No diff available"
-        hint="Git no longer reports this comparison. Refresh Changes to check its current state."
-      />
-    );
-  if (result.kind === "binary")
-    return (
-      <ContextPaneState
-        icon={<FileText size={17} aria-hidden />}
-        title="Binary change"
-        hint="This file has no line-based source view."
-      />
-    );
-  if (result.kind === "submodule")
-    return (
-      <ContextPaneState
-        icon={<GitBranch size={17} aria-hidden />}
-        title="Submodule change"
-        hint={
-          [
-            result.state.commitChanged && "commit changed",
-            result.state.trackedModified && "tracked content modified",
-            result.state.untracked && "untracked content",
-          ]
-            .filter(Boolean)
-            .join(" · ") || "Submodule state changed."
-        }
-      />
-    );
-  if (result.kind === "conflict")
-    return (
-      <ContextPaneState
-        icon={<AlertTriangle size={17} aria-hidden />}
-        title="Unresolved conflict"
-        hint={`Conflict state ${result.code}`}
-      />
-    );
-  if (result.kind === "unsupported" && result.reason === "path-encoding")
-    return (
-      <ContextPaneState
-        icon={<AlertTriangle size={17} aria-hidden />}
-        title="Source unavailable"
-        hint="This Git path cannot be represented as UTF-8."
-      />
-    );
-  return (
-    <ContextPaneState
-      icon={<FileText size={17} aria-hidden />}
-      title="Changes unavailable"
-      hint="Git cannot provide a line-based comparison for this file."
-    />
-  );
+function describeGitResult(result: GitDiffResponse) {
+  switch (result.kind) {
+    case "empty":
+      return {
+        icon: History,
+        title: "No diff available",
+        hint: "Git no longer reports this comparison. Refresh Changes to check its current state.",
+      };
+    case "binary":
+      return {
+        icon: FileText,
+        title: "Binary change",
+        hint: "This file has no line-based source view.",
+      };
+    case "submodule":
+      return {
+        icon: GitBranch,
+        title: "Submodule change",
+        hint: [
+          result.state.commitChanged && "commit changed",
+          result.state.trackedModified && "tracked content modified",
+          result.state.untracked && "untracked content",
+        ].filter(Boolean).join(" · ") || "Submodule state changed.",
+      };
+    case "conflict":
+      return {
+        icon: AlertTriangle,
+        title: "Unresolved conflict",
+        hint: `Conflict state ${result.code}`,
+      };
+    case "unsupported":
+      if (result.reason === "path-encoding")
+        return {
+          icon: AlertTriangle,
+          title: "Source unavailable",
+          hint: "This Git path cannot be represented as UTF-8.",
+        };
+  }
+  return {
+    icon: FileText,
+    title: "Changes unavailable",
+    hint: "Git cannot provide a line-based comparison for this file.",
+  };
 }
 
 const ChangeRow = memo(function ChangeRow({
@@ -167,8 +154,7 @@ function ChangeGroup({
 function ChangesIndex({ state }: { state: ContextPaneView }) {
   const status = state.gitStatus;
   if (!status) {
-    const error =
-      state.gitStatusPending && !state.gitStatus ? null : state.gitStatusError;
+    const error = state.gitStatusPending ? null : state.gitStatusError;
     return (
       <ContextPaneState
         icon={
@@ -399,33 +385,30 @@ export function useFileChanges({
   };
   if (!enabled) return null;
 
-  const noComparison = !hasComparison
-    ? waitingForStatus
+  const readingStatus =
+    waitingForStatus || (!state.gitStatus && !state.gitStatusError);
+  const noComparison = hasComparison
+    ? null
+    : readingStatus
       ? "Reading Git status"
-      : state.gitStatusError || !state.gitStatus
+      : state.gitStatusError
         ? "Git status unavailable"
-        : state.gitStatus.kind !== "repository"
+        : state.gitStatus?.kind !== "repository"
           ? "Not in a Git repository"
           : state.gitStatus.truncated
             ? "Git status incomplete"
-            : "No Git comparison"
-    : null;
+            : "No Git comparison";
 
   let content: ReactNode;
-  if (!hasComparison) {
-    content =
-      waitingForStatus || (!state.gitStatus && !state.gitStatusError) ? (
-        <ContextPaneState
-          icon={<PiLoader size={17} aria-hidden />}
-          title="Reading Git status"
-        />
-      ) : (
-        <ContextPaneState
-          icon={<History size={17} aria-hidden />}
-          title={noComparison ?? "No Git comparison"}
-          hint={state.gitStatusError ?? undefined}
-        />
-      );
+  if (noComparison) {
+    const Icon = readingStatus ? PiLoader : History;
+    content = (
+      <ContextPaneState
+        icon={<Icon size={17} aria-hidden />}
+        title={noComparison}
+        hint={readingStatus ? undefined : (state.gitStatusError ?? undefined)}
+      />
+    );
   } else if (!diffView || diffView.status === "loading") {
     content = (
       <ContextPaneState
@@ -440,7 +423,7 @@ export function useFileChanges({
         icon={<AlertTriangle size={17} aria-hidden />}
         title="Source unavailable"
         hint={diffView.message}
-        onRetry={() => void store.openGitDiff(diffView.pathId)}
+        action={{ run: () => void store.openGitDiff(diffView.pathId) }}
       />
     );
   } else if (textResult && projection?.rows.length) {
@@ -473,8 +456,16 @@ export function useFileChanges({
         )}
       </SourceReader>
     );
-  } else if (result) content = <GitResultState result={result} />;
-  else content = null;
+  } else if (result) {
+    const { icon: Icon, title, hint } = describeGitResult(result);
+    content = (
+      <ContextPaneState
+        icon={<Icon size={17} aria-hidden />}
+        title={title}
+        hint={hint}
+      />
+    );
+  } else content = null;
 
   const controls = (
     <>

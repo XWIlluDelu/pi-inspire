@@ -83,33 +83,6 @@ describe("session activity presentation", () => {
     });
   });
 
-  it("clears unseen outcomes on selection but still announces when input is needed", () => {
-    const view = render(row());
-    for (const [runState, indicator, label] of [
-      ["idle", "completed", "Completed"],
-      ["failed", "failed", "Failed"],
-    ] as const) {
-      state.sessionStatuses = { external: { runState, indicator } };
-      view.rerender(row());
-      expect(screen.getByRole("img", { name: label })).toBeVisible();
-      view.rerender(
-        <SessionRow
-          session={external}
-          selectedSessionId={external.id}
-          onSelect={() => {}}
-        />,
-      );
-      expect(screen.queryByRole("img", { name: label })).toBeNull();
-    }
-    state.sessionStatuses = {
-      external: { runState: "running", indicator: "running", needsInput: true },
-    };
-    view.rerender(row());
-    expect(
-      screen.getByRole("img", { name: "Waiting for input" }),
-    ).toBeVisible();
-  });
-
   it("warns before deleting an externally owned session regardless of its observation source", () => {
     state.prefs.hiddenSessionIds = [external.id];
     events.apply({
@@ -209,20 +182,6 @@ describe("session activity presentation", () => {
     observe();
     view.rerender(row());
     expect(screen.queryByTitle(/Idle in Pi/)).toBeNull();
-    expect(state.completedRunSequence).toBe(0);
   });
 
-  it("uses an addressed completion from the Host for the title cue", () => {
-    state.sessionId = "s1";
-    const settled = {
-      type: "agent_settled",
-      completed: true,
-      sessionStatus: { runState: "idle" as const },
-    };
-    events.apply({ ...settled, sessionId: external.id });
-    events.apply({ ...settled, sessionId: "s1", completed: false });
-    expect(state.completedRunSequence).toBe(0);
-    events.apply({ ...settled, sessionId: "s1" });
-    expect(state.completedRunSequence).toBe(1);
-  });
 });

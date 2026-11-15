@@ -28,7 +28,7 @@ import {
   discardComposerHistory,
   rememberComposerHistory,
 } from "../composer-history";
-import { ReceiptRead } from "../operation-observer";
+import { inputRejection, ReceiptRead } from "../operation-observer";
 import { type ReceiptStorageIssue, receiptStorage } from "../receipt-storage";
 import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
 import {
@@ -627,25 +627,26 @@ export class ComposerController {
         this.host.api() === api &&
         this.deliveries.get(operationId) === record;
       try {
-        const response = request
-          ? await api.prompt(request, signal, fingerprint)
-          : await api.observePrompt(receipt, signal);
+        if (request) await api.prompt(request, signal, fingerprint);
+        else await api.observePrompt(receipt, signal);
         if (!ownsTransport()) return false;
-        if (record.historyScope)
-          rememberComposerHistory(
-            record.historyScope,
-            response.historyEntry ?? {
-              text: record.message.trim(),
-              images: [],
-              files: [],
-            },
-          );
+        // Saved material stays in the native reader. A recent shortcut must
+        // never silently turn a message with attachments into a text-only draft.
+        if (
+          record.historyScope &&
+          !record.attachments.length &&
+          !record.projectFiles.length
+        )
+          rememberComposerHistory(record.historyScope, {
+            text: record.message.trim(),
+            images: [],
+            files: [],
+          });
         this.finishDelivery(record, "accepted");
-        return { accepted: true, historyEntry: response.historyEntry };
+        return { accepted: true };
       } catch (error) {
         if (!ownsTransport()) return false;
-        const rejection =
-          error instanceof ApiError && !error.outcomeUnknown ? error : null;
+        const rejection = inputRejection(error);
         if (rejection) {
           for (const item of record.attachments) {
             const staged = this.stagedFiles.get(item.localId);

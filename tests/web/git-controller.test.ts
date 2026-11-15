@@ -78,9 +78,24 @@ function fixture(files = [changed(path)], visible = true) {
         }
       : {}),
   };
-  const gitStatus = vi.fn<Api["gitStatus"]>().mockResolvedValue(status(files));
-  const gitDiff = vi.fn<Api["gitDiff"]>().mockResolvedValue(before);
-  const api = { gitStatus, gitDiff } as unknown as Api;
+  const gitStatus = vi
+    .fn<() => Promise<GitStatusResponse>>()
+    .mockResolvedValue(status(files));
+  const gitDiff = vi
+    .fn<
+      (
+        input: { body: { pathId: string } },
+        signal: AbortSignal,
+      ) => Promise<GitDiffResponse>
+    >()
+    .mockResolvedValue(before);
+  const api = {
+    json: (
+      name: "gitStatus" | "gitDiff",
+      input: { body: { pathId: string } },
+      signal: AbortSignal,
+    ) => ({ gitStatus, gitDiff })[name](input, signal),
+  } as unknown as Api;
   const patch = (next: Partial<GitControllerState>) => {
     state = { ...state, ...next };
   };
@@ -149,7 +164,12 @@ it("starts net Changes without waiting for the file and cancels an obsolete comp
   f.gitDiff.mockReturnValueOnce(stale.promise);
   const starting = f.controller.openChange(conflict.path.id);
   await vi.waitFor(() => expect(f.gitDiff).toHaveBeenCalledTimes(2));
-  const [, id, signal] = f.gitDiff.mock.calls[1]!;
+  const [
+    {
+      body: { pathId: id },
+    },
+    signal,
+  ] = f.gitDiff.mock.calls[1]!;
   expect(id).toBe("conflict");
   f.gitStatus.mockResolvedValueOnce(status([]));
   await f.controller.refreshStatus();
@@ -161,7 +181,7 @@ it("starts net Changes without waiting for the file and cancels an obsolete comp
   expect(f.state.gitDiff).toBeNull();
 });
 
-it("coalesces repeated status hints and ignores an old session's result", async () => {
+it("coalesces repeated status hints into one follow-up read", async () => {
   const f = fixture();
   const first = deferred<GitDiffResponse>();
   const latest = deferred<GitDiffResponse>();
@@ -184,25 +204,12 @@ it("coalesces repeated status hints and ignores an old session's result", async 
   expect(f.gitStatus).toHaveBeenCalledTimes(2);
   expect(f.state.gitDiff).toMatchObject({ result: diff("latest update") });
 
-  const stale = deferred<GitStatusResponse>();
-  f.gitStatus.mockReturnValueOnce(stale.promise);
-  const reading = f.controller.refreshStatus();
-  await vi.waitFor(() => expect(f.gitStatus).toHaveBeenCalledTimes(3));
-  f.patch({
-    sessionId: "s2",
-    selectionGeneration: 2,
-    gitStatus: null,
-  });
-  stale.resolve({ kind: "not-repository" });
-  await reading;
-  expect(f.state.gitStatus).toBeNull();
+
 });
 
 it.each([
   "changed diff",
-  "status error",
   "diff error",
-  "manual",
   "page visibility",
 ] as const)(
   "returns to fast polling after %s breaks a stable comparison",
@@ -221,12 +228,9 @@ it.each([
       expect(f.gitStatus).toHaveBeenCalledTimes(3);
       const updated = diff("edited while status remains modified");
       if (intent === "changed diff") f.gitDiff.mockResolvedValueOnce(updated);
-      if (intent === "status error")
-        f.gitStatus.mockRejectedValueOnce(new Error("Status failed"));
       if (intent === "diff error")
         f.gitDiff.mockRejectedValueOnce(new Error("Diff failed"));
-      if (intent === "manual") await f.controller.refreshStatus();
-      else if (intent === "page visibility") {
+      if (intent === "page visibility") {
         visibility = "hidden";
         document.dispatchEvent(new Event("visibilitychange"));
         await advance(30_000);
@@ -236,8 +240,6 @@ it.each([
         await advance();
       } else await advance(1);
       expect(f.gitStatus).toHaveBeenCalledTimes(4);
-      if (intent === "status error")
-        expect(f.state.gitStatusError).toBe("Status failed");
       expect(f.state.gitStatus).toEqual(status());
       expect(f.state.gitDiff).toMatchObject({
         status: "ready",

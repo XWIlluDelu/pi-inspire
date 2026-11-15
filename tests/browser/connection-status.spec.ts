@@ -37,8 +37,19 @@ test("a retired build keeps the open draft and offers manual reload", async ({
 
 test("initial workspace loading recovers through retry", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
+  const catalog = "**/api/sessions?**";
+  await page.route(catalog, (route) =>
+    route.fulfill({ json: { sessions: [], total: 0, offset: 0, limit: 40 } }),
+  );
   await pairedPage(page);
   await expect(page.locator(".welcome")).toBeVisible();
+  await page.getByRole("button", { name: "Toggle navigation" }).click();
+  const empty = page.locator(".nav .empty-state");
+  await expect(empty).toContainText("No sessions yet");
+  await page.getByRole("searchbox", { name: "Search sessions" }).fill("no match");
+  await expect(empty).toContainText("No sessions found");
+  await page.getByRole("button", { name: "Close navigation" }).click();
+  await page.unroute(catalog);
   let release!: () => void;
   const gate = new Promise<void>((resolve) => {
     release = resolve;
@@ -91,15 +102,8 @@ test("reconnect and offline feedback fit Welcome and a narrow session, then clea
   socket.close();
   const topbar = page.locator(".topbar");
   const reconnect = topbar.getByTitle("Reconnecting", { exact: true });
-  const loader = reconnect.locator(".pi-loading");
   await expect(reconnect).toBeVisible();
   await expect(reconnect).toHaveAttribute("role", "status");
-  await expect(loader).toHaveCount(1);
-  const header = (await topbar.boundingBox())!;
-  const spinner = (await loader.boundingBox())!;
-  expect(
-    Math.abs(spinner.y + spinner.height / 2 - header.y - header.height / 2),
-  ).toBeLessThanOrEqual(1);
 
   await page.setViewportSize({ width: 320, height: 900 });
   const title = /Formula rendering and spectral analysis/;

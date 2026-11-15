@@ -13,10 +13,10 @@ type TerminalKeyEvent = Pick<
   | "getModifierState"
 >;
 
-const terminalChords = {
-  new: { key: "Backquote", hint: "Ctrl+Shift+`" },
-  next: { key: "PageDown", hint: "Ctrl+PageDown" },
-  previous: { key: "PageUp", hint: "Ctrl+PageUp" },
+export const terminalChords = {
+  new: { key: "Backquote", hint: "Ctrl/⌘+Shift+`" },
+  next: { key: "PageDown", hint: "Ctrl/⌘+PgDn" },
+  previous: { key: "PageUp", hint: "Ctrl/⌘+PgUp" },
 } as const;
 type TerminalChord = keyof typeof terminalChords;
 

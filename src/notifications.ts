@@ -251,7 +251,8 @@ export class TaskNotificationController {
       generation === this.generation && api === this.host.api();
     const groupingGeneration = this.groupingGeneration;
     try {
-      let settings = initialSettings ?? (await api.taskAlertSettings());
+      let settings =
+        initialSettings ?? (await api.json("taskAlertSettings", {}));
       if (!current()) return;
       this.initialSettingsApi = null;
       if (settings.mode === "desktop") {
@@ -540,7 +541,9 @@ export class TaskNotificationController {
     // The worker also consumes foreground results so it can remove that
     // session from an existing project notification without losing its peers.
     if (mode !== "desktop") {
-      await api?.acknowledgeTaskAlert(event.id).catch(() => {});
+      await api
+        ?.json("acknowledgeTaskAlert", { body: { id: event.id } })
+        .catch(() => {});
       return;
     }
     if (browserNotificationPermission() !== "granted") return;
@@ -555,7 +558,7 @@ export class TaskNotificationController {
         notification: event,
       });
       if (!current()) return;
-      await api?.acknowledgeTaskAlert(event.id);
+      await api?.json("acknowledgeTaskAlert", { body: { id: event.id } });
       if (current() && event.test)
         this.patch({
           testResult:
@@ -578,7 +581,7 @@ export class TaskNotificationController {
       this.host.api() === api && this.generation === generation;
     this.patch({ busy: true, testResult: null, error: null });
     try {
-      const result = await api?.testTaskAlert();
+      const result = await api?.json("testTaskAlert", {});
       // Push delivery can beat the HTTP response. Do not downgrade a worker's
       // display acceptance to the earlier "sent" stage when that response arrives.
       if (

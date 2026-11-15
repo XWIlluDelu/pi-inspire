@@ -24,16 +24,6 @@ export type BranchControllerState = Pick<
   "sessionId" | "view" | "branchTreeError" | "branchActionId"
 > & { readOnlyReason?: SessionReadOnlyReason | null };
 
-export function hasEarlierContinuation({
-  view,
-}: Pick<BranchControllerState, "view">): boolean {
-  return (
-    view.navigationLeased &&
-    view.durableLeafId !== null &&
-    view.durableLeafId !== view.effectiveLeafId
-  );
-}
-
 /** Independent copies need a readable source, not control of its writer. */
 function branchCopyBlockReason(state: BranchControllerState): string | null {
   if (state.readOnlyReason === "workspace-unavailable")
@@ -106,7 +96,6 @@ export class BranchController {
     viewId: string,
     query: Q,
     signal?: AbortSignal,
-    retry = false,
   ) {
     const current = this.host.state();
     if (current.sessionId !== sessionId || current.view.viewId !== viewId)
@@ -114,7 +103,7 @@ export class BranchController {
     return this.read(
       (api, signal) => api.sessionHistory(sessionId, viewId, query, signal),
       signal,
-      retry,
+      query.kind === "entry",
     );
   }
 
@@ -199,22 +188,6 @@ export class BranchController {
         );
       return null;
     }
-  }
-
-  readEntry(targetId: string, offset = 0, signal?: AbortSignal) {
-    const {
-      sessionId,
-      view: { viewId: transcriptViewId },
-    } = this.host.state();
-    return sessionId && transcriptViewId
-      ? this.history(
-          sessionId,
-          transcriptViewId,
-          { kind: "entry", targetId, offset },
-          signal,
-          true,
-        )
-      : Promise.resolve(null);
   }
 
   readImage(targetId: string, index: number, signal?: AbortSignal) {
@@ -502,10 +475,8 @@ export class BranchController {
   }
 
   returnToLatest(): Promise<boolean> {
-    const state = this.host.state();
-    if (!state.view.durableLeafId || !hasEarlierContinuation(state))
-      return Promise.resolve(false);
-    return this.navigate(state.view.durableLeafId, "switch");
+    const target = this.host.state().view.restoreSavedLeafId;
+    return target ? this.navigate(target, "switch") : Promise.resolve(false);
   }
 
   private viewTicket(state: BranchControllerState): BranchViewTicket {

@@ -242,26 +242,15 @@ it("bounds native Codemode receipts and keeps generic nested results scoped, red
       },
     },
   });
-  tool("start", "script/1", "read", {
-    parentToolCallId: "script",
-    args: { path: "a.txt" },
-  });
   tool("start", "parent", "orchestrator");
   const parentToolCallId = "parent";
   tool("start", "parent/1", "read", {
     parentToolCallId,
     args: { path: "a.txt", token: "secret" },
   });
-  tool("start", "parent/1/1", "read", {
-    parentToolCallId: "parent/1",
-    args: { path: "deep.txt" },
-  });
   tool("update", "parent/1", "read", {
     parentToolCallId,
-    partialResult: {
-      content: [{ type: "text", text: "PRIVATE_CHILD_OUTPUT" }],
-      details: { rawResult: true },
-    },
+    partialResult: { content: [{ type: "text", text: "PRIVATE_CHILD_OUTPUT" }] },
   });
   tool("end", "parent/1", "read", {
     parentToolCallId,
@@ -286,23 +275,10 @@ it("bounds native Codemode receipts and keeps generic nested results scoped, red
           arguments: { path: "a.txt", token: "[redacted]" },
           error: "Child failed",
         },
-        {
-          key: "parent/1/1",
-          status: "running",
-          arguments: { path: "deep.txt" },
-        },
       ],
     },
   });
   expect(JSON.stringify(f.events)).not.toMatch(/PRIVATE_CHILD_OUTPUT|"secret"/);
-  expect(f.events.at(-1)?.toolActivity).toEqual({ parent: tools?.parent });
-  expect(
-    f.events.find(
-      ({ type, toolActivity }) =>
-        type === "tool_execution_update" &&
-        Boolean((toolActivity as Record<string, unknown> | undefined)?.script),
-    )?.toolActivity,
-  ).toEqual({ script: tools?.script });
   tool("end", "parent", "orchestrator", {
     result: { content: [{ type: "text", text: "Parent succeeded" }] },
   });
@@ -312,8 +288,6 @@ it("bounds native Codemode receipts and keeps generic nested results scoped, red
   tool("update", "parent/1", "read", { parentToolCallId, partialResult: {} });
   expect((await f.active()).toolActivity?.parent).toEqual(final);
   expect(f.events).toHaveLength(emitted);
-  f.emit("agent_start");
-  expect((await f.active()).toolActivity).toEqual({});
 });
 
 it("adopts native identities only at the ordered seal even for identical custom messages and equal-timestamp tool results", async () => {

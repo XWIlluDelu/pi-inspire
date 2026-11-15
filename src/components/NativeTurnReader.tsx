@@ -235,7 +235,13 @@ export function NativeTurnReader({
 
   function readBody(entryId: string, offset = 0, leafId = page?.leafId) {
     return observe(
-      (signal) => store.readBranchEntry(entryId, offset, signal),
+      (signal) =>
+        store.readNativeHistory(
+          sessionId,
+          viewId,
+          { kind: "entry", targetId: entryId, offset },
+          signal,
+        ),
       (result) => {
         setBody({ entryId, offset, result });
         saveLocation(key, {

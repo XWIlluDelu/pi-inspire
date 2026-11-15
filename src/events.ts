@@ -6,7 +6,6 @@ import {
 } from "../shared/assistant-stream";
 import { fileReferenceName } from "../shared/attachment-context";
 import {
-  EXTENSION_ONE_WAY_METHODS,
   type ExtensionDisplay,
   type ExtensionUiRequest,
   emptyPendingQueues,
@@ -16,10 +15,7 @@ import {
   MAX_EXTENSION_WIDGET_LINES,
   type PendingQueues,
   parseExtensionStatuses,
-  parseExtensionUiRequest,
-  parsePendingExtensionUiRequest,
   parsePendingQueues,
-  parseRetryInfo,
   type RetryInfo,
   type SessionRuntimeStatus,
 } from "../shared/contracts";
@@ -174,6 +170,9 @@ export interface WireEvent {
   data?: unknown;
   sessionStatus?: SessionRuntimeStatus;
   toolActivity?: Record<string, ActivityTool>;
+  request?: ExtensionUiRequest;
+  retry?: RetryInfo | null;
+  summarizationRetry?: RetryInfo | null;
   [key: string]: unknown;
 }
 
@@ -386,6 +385,11 @@ export function reduceEvent(
     slice.tools = { ...current.tools, ...event.toolActivity };
     changed = true;
   }
+  if (event.retry !== undefined || event.summarizationRetry !== undefined) {
+    slice.retry = event.retry ?? null;
+    slice.summarizationRetry = event.summarizationRetry ?? null;
+    changed = true;
+  }
   switch (event.type) {
     case "message_start": {
       const message = asMessage(event.message);
@@ -493,33 +497,23 @@ export function reduceEvent(
     }
     case "agent_start": {
       slice.pendingRetryError = null;
-      slice.summarizationRetry = null;
       slice.streaming = true;
       slice.activeAssistantMessageKey = null;
-      slice.retry = null;
       changed = true;
       break;
     }
     case "agent_settled": {
-      slice.summarizationRetry = null;
       slice.streaming = false;
       slice.activeAssistantMessageKey = null;
       if (event.aborted !== true && slice.pendingRetryError)
         pushNotice(slice, "error", `Retry failed: ${slice.pendingRetryError}`);
       slice.pendingRetryError = null;
       slice.tools = {};
-      slice.retry = null;
       changed = true;
       resync = true;
       break;
     }
-    case "compaction_start": {
-      slice.summarizationRetry = null;
-      changed = true;
-      break;
-    }
     case "compaction_end": {
-      slice.summarizationRetry = null;
       // Manual is a Pi trigger, not proof that this browser owns an HTTP
       // receipt. Late joiners and other clients need the same failure detail.
       const label =
@@ -542,30 +536,6 @@ export function reduceEvent(
       }
       // Successful summaries are reconstructed from persisted chronological history.
       resync = true;
-      break;
-    }
-    case "summarization_retry_scheduled": {
-      slice.summarizationRetry = parseRetryInfo({
-        attempt: event.attempt,
-        maxAttempts: event.maxAttempts,
-        message: event.errorMessage,
-      });
-      changed = true;
-      break;
-    }
-    case "summarization_retry_attempt_start":
-    case "summarization_retry_finished": {
-      slice.summarizationRetry = null;
-      changed = true;
-      break;
-    }
-    case "auto_retry_start": {
-      changed = true;
-      slice.retry = parseRetryInfo({
-        attempt: event.attempt,
-        maxAttempts: event.maxAttempts,
-        message: event.errorMessage,
-      });
       break;
     }
     case "auto_retry_end": {
@@ -653,42 +623,30 @@ export function reduceEvent(
       resync = true;
       break;
     }
-    case "extension_ui_request": {
-      const id = typeof event.id === "string" ? event.id : "";
-      const method = typeof event.method === "string" ? event.method : "";
-      if (!id) break;
-      const dialog = parseExtensionUiRequest(event);
-      if (dialog) {
-        changed = true;
+    case "extension_ui_pending": {
+      const request = event.request;
+      if (request?.id && request.sessionId === event.sessionId) {
         slice.extensionUiRequests = upsertExtensionUiRequest(
           current.extensionUiRequests,
-          dialog,
+          request,
         );
-      } else if (method === "notify") {
+        changed = true;
+      }
+      break;
+    }
+    case "extension_ui_request": {
+      if (!event.id) break;
+      if (event.method === "notify") {
         const kind =
           event.notifyType === "warning" || event.notifyType === "error"
             ? event.notifyType
             : "info";
         pushNotice(slice, kind, String(event.message ?? ""));
         changed = true;
-      } else if (method === "setTitle") {
+      } else if (event.method === "setTitle") {
         slice.windowTitle =
           typeof event.title === "string" && event.title ? event.title : null;
         changed = true;
-      } else {
-        if (
-          !EXTENSION_ONE_WAY_METHODS.has(method) &&
-          event.responseRequired !== false
-        ) {
-          const unsupported = parsePendingExtensionUiRequest(event);
-          if (unsupported) {
-            slice.extensionUiRequests = upsertExtensionUiRequest(
-              current.extensionUiRequests,
-              unsupported,
-            );
-            changed = true;
-          }
-        }
       }
       break;
     }

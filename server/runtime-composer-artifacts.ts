@@ -307,7 +307,7 @@ export async function preparePromptArtifacts(
   staged: Awaited<ReturnType<AttachmentStore["resolveForPrompt"]>>,
   selected: readonly string[],
   history: PromptArtifacts,
-): Promise<PromptArtifacts> {
+) {
   const files = [...staged.files, ...history.files];
   const fileBytes = staged.files.reduce(
     (sum, file) => sum + (file.kind === "file" ? file.size : 0),
@@ -330,7 +330,7 @@ export async function preparePromptArtifacts(
     fileBytes,
     images,
   );
-  return { files, images, projectFiles, fileBytes };
+  return { files, images, projectFiles };
 }
 
 /** Read recalled images without preparing files or transferring upload ownership. */

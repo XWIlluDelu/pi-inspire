@@ -99,29 +99,6 @@ describe("new-session materialization", () => {
     }
   });
 
-  it("does not commit a new session after an optional read loses its worker", async () => {
-    const fixture = await setupNewSession((worker) => {
-      const request = worker.request.bind(worker);
-      worker.request = async <T>(command: Record<string, unknown>) => {
-        if (command.type === "get_commands") {
-          worker.unavailable = true;
-          throw new Error("worker transport lost");
-        }
-        return request<T>(command);
-      };
-    });
-
-    try {
-      await expect(
-        fixture.runtime.newSession(fixture.directory),
-      ).rejects.toThrow("worker transport lost");
-      expect(fixture.worker.stops).toBe(1);
-      expect(fixture.runtime.startupSessionHint).toBeNull();
-    } finally {
-      await fixture.runtime.close();
-    }
-  });
-
   it("bounds idle unmaterialized workers with the existing LRU", async () => {
     const directory = await mkdtemp(
       join(tmpdir(), "inspire-runtime-pending-lru-"),

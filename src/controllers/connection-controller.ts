@@ -249,18 +249,7 @@ export class ConnectionController {
     const handshakeStartedAt = performance.now();
     this.reconnectPending = false;
     this.clearReconnectTimer();
-    this.clearStreamTimers();
-    this.synchronized = false;
-    this.lastFrameAt = 0;
-
-    const previous = this.socket;
-    if (previous) {
-      // Detach before close so this deliberate replacement cannot be observed
-      // as an unexpected disconnect.
-      this.socket = null;
-      this.host.onTransportReplaced();
-      previous.close();
-    }
+    this.retireSocket("replaced");
     let ticket: string;
     try {
       ticket = await socketTicket("events");
@@ -368,14 +357,9 @@ export class ConnectionController {
         });
         return;
       }
-      const canResume = this.synchronized || phase === "bootstrap";
-      this.socket = null;
-      this.socketPhase = null;
-      this.synchronized = false;
-      this.lastFrameAt = 0;
-      this.clearStreamTimers();
-      this.host.onTransportClosed();
-      this.scheduleReconnectAfterDelay(canResume ? "resume" : "bootstrap");
+      const resume = this.canResume();
+      this.retireSocket("remote");
+      this.scheduleReconnectAfterDelay(resume ? "resume" : "bootstrap");
     };
     socket.onerror = () => this.failSocket(socket);
   }
@@ -387,13 +371,7 @@ export class ConnectionController {
     this.scheduledReconnectKind = null;
     this.reconnectDelay = 1_000;
     this.clearReconnectTimer();
-    this.clearStreamTimers();
-    this.synchronized = false;
-    this.lastFrameAt = 0;
-    const socket = this.socket;
-    this.socket = null;
-    this.socketPhase = null;
-    socket?.close();
+    this.retireSocket("stop");
   }
 
   retry(): void {
@@ -402,16 +380,7 @@ export class ConnectionController {
     this.scheduledReconnectKind = null;
     this.reconnectDelay = 1_000;
     this.clearReconnectTimer();
-    this.clearStreamTimers();
-    const socket = this.socket;
-    if (socket) {
-      this.socket = null;
-      this.socketPhase = null;
-      this.synchronized = false;
-      this.lastFrameAt = 0;
-      this.host.onTransportReplaced();
-      socket.close();
-    }
+    this.retireSocket("replaced");
     this.requestReconnect("bootstrap");
   }
 
@@ -438,22 +407,30 @@ export class ConnectionController {
 
   private recoverNow(): void {
     if (this.reconnectPending) return;
-    const canResume =
-      (this.socket !== null && this.synchronized) ||
-      this.scheduledReconnectKind === "resume" ||
-      this.socketPhase === "bootstrap";
+    const resume = this.canResume() || this.scheduledReconnectKind === "resume";
     this.clearReconnectTimer();
-    this.clearStreamTimers();
+    this.retireSocket("interrupted");
+    this.requestReconnect(resume ? "resume" : "bootstrap");
+  }
+
+  private canResume(): boolean {
+    return this.synchronized || this.socketPhase === "bootstrap";
+  }
+
+  private retireSocket(
+    reason: "stop" | "replaced" | "remote" | "interrupted",
+  ): void {
     const socket = this.socket;
-    if (socket) {
-      this.socket = null;
-      this.socketPhase = null;
-      this.synchronized = false;
-      this.lastFrameAt = 0;
+    this.socket = null;
+    this.socketPhase = null;
+    this.synchronized = false;
+    this.lastFrameAt = 0;
+    this.clearStreamTimers();
+    if (!socket) return;
+    if (reason === "replaced") this.host.onTransportReplaced();
+    if (reason === "remote" || reason === "interrupted")
       this.host.onTransportClosed();
-      socket.close();
-    }
-    this.requestReconnect(canResume ? "resume" : "bootstrap");
+    if (reason !== "remote") socket.close();
   }
 
   private requestReconnect(kind: "resume" | "bootstrap"): void {
@@ -558,18 +535,9 @@ export class ConnectionController {
     recovery?: "resume" | "bootstrap",
   ): void {
     if (this.socket !== socket) return;
-    const canResume =
-      recovery === "resume" ||
-      (recovery !== "bootstrap" &&
-        (this.synchronized || this.socketPhase === "bootstrap"));
-    this.socket = null;
-    this.socketPhase = null;
-    this.synchronized = false;
-    this.lastFrameAt = 0;
-    this.clearStreamTimers();
-    this.host.onTransportClosed();
-    socket.close();
-    this.scheduleReconnectAfterDelay(canResume ? "resume" : "bootstrap");
+    const kind = recovery ?? (this.canResume() ? "resume" : "bootstrap");
+    this.retireSocket("interrupted");
+    this.scheduleReconnectAfterDelay(kind);
   }
 
   private scheduleReconnectAfterDelay(kind: "resume" | "bootstrap"): void {

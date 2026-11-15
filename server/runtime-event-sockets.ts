@@ -8,6 +8,7 @@ import {
   isSessionRuntimeStatus,
   MAX_SESSION_ID_CHARS,
 } from "../shared/contracts.js";
+import { maintainBrowserSockets, terminateUpgradedSockets } from "./browser-socket-lifecycle.js";
 import type { RuntimeController } from "./runtime.js";
 import type {
   NotificationPrincipal,
@@ -71,7 +72,7 @@ export function createRuntimeEventSockets({
     principal?: NotificationPrincipal;
     unsubscribe?: () => void;
     backgroundStatuses: Map<string, string>;
-    browserBuild?: string;
+    browserBuild: string | null;
   };
   const peers = new Map<WebSocket, Peer>();
   const setDetailInterest = (peer: Peer, interest: DetailInterest) => {
@@ -133,46 +134,10 @@ export function createRuntimeEventSockets({
       return false;
     }
   };
-  const heartbeatMessage = JSON.stringify({ type: "heartbeat" });
-  let checkingBuild = false;
-  const heartbeatInterval = setInterval(() => {
-    if (!checkingBuild && currentBrowserBuild) {
-      checkingBuild = true;
-      void currentBrowserBuild()
-        .then((current) => {
-          for (const [socket, peer] of peers) {
-            if (current && peer.browserBuild && current !== peer.browserBuild) {
-              forgetSocket(socket);
-              socket.close(BROWSER_UPGRADE_CLOSE, "Reload Inspire");
-            }
-          }
-        })
-        .catch(() => {})
-        .finally(() => {
-          checkingBuild = false;
-        });
-    }
-    for (const [socket, peer] of peers) {
-      if (socket.readyState !== WebSocket.OPEN) continue;
-      if (!peer.responsive) {
-        peer.backlog = undefined;
-        socket.terminate();
-        continue;
-      }
-      peer.responsive = false;
-      try {
-        socket.ping();
-      } catch {
-        peer.backlog = undefined;
-        socket.terminate();
-        continue;
-      }
-      // Never overtake the authoritative first snapshot. Once joined, this
-      // application frame also gives browser clients an observable watchdog.
-      if (!peer.backlog) sendBounded(socket, heartbeatMessage);
-    }
-  }, heartbeatIntervalMs);
-  heartbeatInterval.unref();
+  const stopHeartbeat = maintainBrowserSockets(
+    peers, heartbeatIntervalMs, currentBrowserBuild,
+    (peer) => !peer.backlog, sendBounded, forgetSocket,
+  );
 
   const queueOrSend = (socket: WebSocket, peer: Peer, frame: EventFrame) => {
     const queue = peer.backlog;
@@ -581,14 +546,14 @@ export function createRuntimeEventSockets({
           interest,
           backgroundStatuses: new Map(),
           principal: notificationPrincipal,
-          browserBuild,
+          browserBuild: browserBuild ?? null,
         };
         setDetailInterest(peer, interest);
         startPeer(client, peer);
       });
     },
     close(): void {
-      clearInterval(heartbeatInterval);
+      stopHeartbeat();
       if (streamBatchTimer) clearTimeout(streamBatchTimer);
       streamBatchTimer = null;
       pendingStreamBatch = null;
@@ -599,17 +564,6 @@ export function createRuntimeEventSockets({
         socket.close(1001, "Server shutting down");
       }
     },
-    async terminateRemaining(): Promise<void> {
-      // Closing sockets can already be absent from the projection's set.
-      await Promise.all(
-        [...websocket.clients].map(
-          (socket) =>
-            new Promise<void>((resolveClosed) => {
-              socket.once("close", () => resolveClosed());
-              socket.terminate();
-            }),
-        ),
-      );
-    },
+    terminateRemaining: () => terminateUpgradedSockets(websocket),
   };
 }

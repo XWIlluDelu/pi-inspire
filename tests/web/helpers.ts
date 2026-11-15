@@ -71,7 +71,7 @@ function inputReceiptFixture(
     return {
       ...identity,
       state: "completed",
-      result: value.historyEntry ?? null,
+      result: null,
     };
   if (!prompt && Array.isArray(value.steering) && Array.isArray(value.followUp))
     return { ...identity, state: "completed", result: value };

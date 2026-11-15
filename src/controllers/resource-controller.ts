@@ -199,7 +199,7 @@ export class ResourceController {
     const { api, sessionId, viewId } = scope;
     try {
       const response = await scope.read(
-        (signal) => api.listResources(sessionId, signal),
+        (signal) => api.json("listResources", { body: { sessionId } }, signal),
         new RecoveryBackoff(),
       );
       if (
@@ -259,7 +259,11 @@ export class ResourceController {
           this.host.state().resourceStanding[reference];
         try {
           const response = await request.read((signal) =>
-            api.probeResources(sessionId, batch, signal),
+            api.json(
+              "probeResources",
+              { body: { sessionId, references: batch } },
+              signal,
+            ),
           );
           if (
             response.sessionId !== sessionId ||
@@ -340,13 +344,17 @@ export class ResourceController {
       throw new Error(
         "Load the complete HTML file before enabling interaction",
       );
-    const result = await api.createHtmlPreview(
-      preview.descriptor.id,
-      sessionId,
-      preview.text,
-    );
+    const result = await api.json("createHtmlPreview", {
+      params: { id: preview.descriptor.id },
+      body: { sessionId, html: preview.text },
+    });
     const release = () => {
-      void api.deleteHtmlPreview(result.id, sessionId).catch(() => undefined);
+      void api
+        .json("deleteHtmlPreview", {
+          params: { id: result.id },
+          query: { sessionId },
+        })
+        .catch(() => undefined);
     };
     const current = this.host.state();
     if (
@@ -401,7 +409,7 @@ export class ResourceController {
       source === "transcript" && isEmbeddedImageReference(reference);
     const { api, sessionId, viewId } = scope;
     const descriptor = await scope.read((signal) =>
-      api.resolveResource(sessionId, reference, signal),
+      api.json("resolveResource", { body: { sessionId, reference } }, signal),
     );
     if (
       descriptor.sessionId !== sessionId ||
@@ -464,13 +472,7 @@ export class ResourceController {
         "The transcript image owner changed",
         "AbortError",
       );
-    try {
-      return await this.readInlineImage(scope, reference, "transcript");
-    } catch (error) {
-      scope.check();
-      this.authFailed(error, scope);
-      throw error;
-    }
+    return this.readAuthorized(scope, (owner) => this.readInlineImage(owner, reference, "transcript"));
   }
 
   /** Both image reads and download tickets are bound to the current file. */
@@ -491,6 +493,13 @@ export class ResourceController {
     }, signal);
     if (!scope)
       throw new DOMException("The file selection changed", "AbortError");
+    return this.readAuthorized(scope, perform);
+  }
+
+  private async readAuthorized<T>(
+    scope: ResourceRead,
+    perform: (owner: ResourceRead) => Promise<T>,
+  ): Promise<T> {
     try {
       scope.check();
       return await perform(scope);
@@ -536,9 +545,12 @@ export class ResourceController {
       () => true,
       async (owner) => {
         const grant = await owner.read((signal) =>
-          owner.api.resourceDownloadTicket(
-            descriptor.id,
-            owner.sessionId,
+          owner.api.json(
+            "resourceDownloadTicket",
+            {
+              params: { id: descriptor.id },
+              body: { sessionId: owner.sessionId },
+            },
             signal,
           ),
         );
@@ -624,7 +636,13 @@ export class ResourceController {
     try {
       const descriptor = await request.read(
         (signal) =>
-          api.resolveResource(sessionId, reference, signal, knownWorkspacePath),
+          api.json(
+            "resolveResource",
+            {
+              body: { sessionId, reference, workspacePath: knownWorkspacePath },
+            },
+            signal,
+          ),
         backoff,
       );
       // Bare filename recovery intentionally returns the canonical workspace

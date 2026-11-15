@@ -62,19 +62,6 @@ export type ResourceContext = ResourceContextIdentity &
     | { messages?: never; loadMessages: () => Promise<unknown[]> }
   );
 
-interface FileIdentity {
-  dev: bigint;
-  ino: bigint;
-}
-
-function fileIdentity(stats: BigIntStats): FileIdentity {
-  return { dev: stats.dev, ino: stats.ino };
-}
-
-function sameFileObject(left: FileIdentity, right: FileIdentity): boolean {
-  return left.dev === right.dev && left.ino === right.ino;
-}
-
 const RESOURCE_OPEN_FLAGS = constants.O_RDONLY | constants.O_NONBLOCK;
 
 function changedResourceError(): Error & { status: number } {
@@ -117,7 +104,8 @@ export async function openAuthorizedResourceFile(
     ]);
     if (
       openedPath !== canonicalPath ||
-      !sameFileObject(fileIdentity(details), fileIdentity(linked))
+      details.dev !== linked.dev ||
+      details.ino !== linked.ino
     )
       throw changedResourceError();
     if (!details.isFile() || !linked.isFile()) {
@@ -137,19 +125,24 @@ export function openCanonicalResourceFile(canonicalPath: string) {
   return openAuthorizedResourceFile(canonicalPath, canonicalPath);
 }
 
-interface ResourceCandidate {
+type ResourceLocator =
+  | { authority: "embedded" }
+  | {
+      /** Absolute path selected by the reference before symlink resolution. */
+      selectedPath: string;
+      /** Canonical target pinned by this opaque handle. */
+      path: string;
+      /** Index root to invalidate if an indexed serving path disappears. */
+      workspaceRoot?: string;
+      authority: "workspace" | "filesystem" | "citation";
+    };
+type ResourceCandidate = ResourceLocator & {
   descriptor: Omit<ResourceDescriptor, "id">;
-  /** Absolute path selected by the reference before symlink resolution. */
-  selectedPath?: string;
-  /** Canonical target pinned by this opaque handle. */
-  path?: string;
-  /** Index root to invalidate if an indexed serving path disappears. */
-  workspaceRoot?: string;
-  authority: "embedded" | "workspace" | "filesystem" | "citation";
-}
+};
 
 interface HtmlPreview {
-  resource: ResolvedResource;
+  resourceId: string;
+  sessionId: string;
   root: string;
   entryPath: string;
   html: string;
@@ -590,7 +583,7 @@ export class ResourceStore {
       reference,
       workspacePath,
     );
-    if (!resource.path)
+    if (resource.authority === "embedded")
       throw requestError("This resource has no file on disk", 400);
     return resource.path;
   }
@@ -752,11 +745,8 @@ export class ResourceStore {
 
   /** Open the currently authorized logical file for one response. */
   async openForServing(
-    resource: ResolvedResource,
+    resource: Extract<ResolvedResource, { path: string }>,
   ): Promise<{ handle: FileHandle; details: BigIntStats }> {
-    if (!resource.selectedPath || !resource.path)
-      throw requestError("The resource preview is no longer available", 404);
-
     try {
       return await openAuthorizedResourceFile(
         resource.selectedPath,
@@ -791,8 +781,7 @@ export class ResourceStore {
   private forgetHandle(id: string): void {
     this.handles.delete(id);
     for (const [previewId, preview] of this.htmlPreviews) {
-      if (preview.resource.descriptor.id === id)
-        this.htmlPreviews.delete(previewId);
+      if (preview.resourceId === id) this.htmlPreviews.delete(previewId);
     }
   }
 
@@ -816,17 +805,24 @@ export class ResourceStore {
     context: ResourceContext,
     html: string,
   ): Promise<HtmlPreviewResponse> {
-    const resource = this.get(resourceId, context.sessionId, context.viewId);
-    if (resource.descriptor.kind !== "html" || !resource.path)
-      throw requestError("Only HTML files support interactive preview", 400);
     if (Buffer.byteLength(html) > HTML_PREVIEW_BYTES)
       throw requestError("The HTML is too large for interactive preview", 413);
-    await this.revalidate(resource, context);
-    this.get(resourceId, context.sessionId, context.viewId);
+    const resource = await this.authorize(resourceId, context);
+    if (
+      resource.descriptor.kind !== "html" ||
+      resource.authority === "embedded"
+    )
+      throw requestError("Only HTML files support interactive preview", 400);
     const root = resource.workspaceRoot ?? dirname(resource.path);
     const entryPath = relative(root, resource.path);
     const id = randomUUID();
-    this.htmlPreviews.set(id, { resource, root, entryPath, html });
+    this.htmlPreviews.set(id, {
+      resourceId,
+      sessionId: context.sessionId,
+      root,
+      entryPath,
+      html,
+    });
     if (this.htmlPreviews.size > 32)
       this.htmlPreviews.delete(this.htmlPreviews.keys().next().value!);
     return {
@@ -836,7 +832,7 @@ export class ResourceStore {
   }
 
   removeHtmlPreview(id: string, sessionId: string): void {
-    if (this.htmlPreviews.get(id)?.resource.descriptor.sessionId === sessionId)
+    if (this.htmlPreviews.get(id)?.sessionId === sessionId)
       this.htmlPreviews.delete(id);
   }
 
@@ -858,19 +854,19 @@ export class ResourceStore {
     return resource;
   }
 
-  async revalidate(
+  async authorize(
+    id: string,
+    context: ResourceContext,
+  ): Promise<ResolvedResource> {
+    const resource = this.get(id, context.sessionId, context.viewId);
+    await this.checkAuthority(resource, context);
+    return this.get(id, context.sessionId, context.viewId);
+  }
+
+  private async checkAuthority(
     resource: ResolvedResource,
     context: ResourceContext,
   ): Promise<void> {
-    if (
-      resource.descriptor.sessionId !== context.sessionId ||
-      resource.descriptor.viewId !== context.viewId
-    ) {
-      throw requestError(
-        "The resource preview belongs to another branch view",
-        409,
-      );
-    }
     // embeddedContent revalidates an embedded reference against the same message
     // load from which it reads bytes, avoiding a second full transcript load.
     if (resource.authority === "embedded") return;
@@ -880,17 +876,10 @@ export class ResourceStore {
     ) {
       const workspaceRoot = await realpath(context.cwd).catch(() => null);
       const within =
-        workspaceRoot && resource.path
+        workspaceRoot && workspaceRoot === resource.workspaceRoot
           ? await filesystemRelativePath(workspaceRoot, resource.path)
           : null;
-      if (
-        workspaceRoot &&
-        workspaceRoot === resource.workspaceRoot &&
-        resource.path &&
-        within !== null &&
-        within !== ""
-      )
-        return;
+      if (within) return;
       // Exact selections are literal paths, never reinterpreted as citations.
       // Serving additionally checks that the selected path still resolves to the authorized path.
       if (resource.authority === "workspace") {

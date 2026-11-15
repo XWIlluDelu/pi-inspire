@@ -221,13 +221,13 @@ describe("native Pi History and branch workflows", () => {
       expect(earlier.snapshot.active).toMatchObject({
         durableLeafId: "saved",
         effectiveLeafId: "older",
-        navigationLeased: true,
+        restoreSavedLeafId: "saved",
       });
       const restored = await navigate("saved", "switch");
       expect(restored.editorText).toBeUndefined();
       expect(restored.snapshot.active).toMatchObject({
         effectiveLeafId: "saved",
-        navigationLeased: false,
+        restoreSavedLeafId: null,
       });
       expect(workers).toHaveLength(1);
       expect(workers[0]!.available).toBe(false);
@@ -467,7 +467,7 @@ export default function (pi) {
     const staleTree = (await runtime.snapshot(SESSION_ID)).active!;
     expect((await navigate("a1", "switch")).snapshot.active).toMatchObject({
       effectiveLeafId: "a1",
-      navigationLeased: true,
+      restoreSavedLeafId: "a2",
     });
     await expect(
       runtime.navigateBranch({
@@ -542,7 +542,7 @@ export default function (pi) {
       { timeout: 10_000 },
     );
     const source = (await runtime.snapshot(SESSION_ID)).active;
-    expect(source?.navigationLeased).toBe(false);
+    expect(source?.restoreSavedLeafId).toBeNull();
     const transcript = JSON.stringify(source?.transcriptPage.messages);
     expect(transcript).toContain("active question");
     expect(transcript).toContain(REPLY);

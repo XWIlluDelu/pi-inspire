@@ -6,35 +6,16 @@ import {
   MAX_EXTENSION_STATUSES,
 } from "../../shared/contracts.js";
 import {
-  nativePiWorkspace,
-  stubNativePiEnvironment,
-} from "./fixtures/native-pi.js";
-import {
-  disposeRuntimeFixture,
+  disposeIsolatedRuntimeFixture,
   fakeRuntime,
-  fixtureWorkspace,
-  initializeRuntimeFixture,
+  initializeIsolatedRuntimeFixture,
   persistedRecord,
   startWorker,
   trackRuntime,
 } from "./fixtures/runtime.js";
 
-beforeEach(async () => {
-  await initializeRuntimeFixture();
-  const pi = await nativePiWorkspace(
-    "pi-",
-    { defaultProjectTrust: "never" },
-    fixtureWorkspace,
-  );
-  stubNativePiEnvironment(pi.env);
-});
-afterEach(async () => {
-  try {
-    await disposeRuntimeFixture();
-  } finally {
-    vi.unstubAllEnvs();
-  }
-});
+beforeEach(initializeIsolatedRuntimeFixture);
+afterEach(disposeIsolatedRuntimeFixture);
 
 async function fixture() {
   const f = fakeRuntime({
@@ -121,10 +102,15 @@ it("only publishes bounded extension display fields and allows cancellation of a
   const statuses = (await snapshot()).extensionStatuses!;
   expect(Object.keys(statuses)).toHaveLength(MAX_EXTENSION_STATUSES);
   expect(statuses).not.toHaveProperty("unicode");
-  emit("chooseFiles", { id: "future", paths: ["a", "b"] });
-  expect((await snapshot()).pendingExtensionUiRequests).toMatchObject([
+  emit("chooseFiles", { id: "future", paths: ["a", "b"], timeout: 30_000 });
+  const pending = (await snapshot()).pendingExtensionUiRequests;
+  expect(pending).toMatchObject([
     { id: "future", method: "chooseFiles", unsupported: true },
   ]);
+  expect(events.at(-1)).toMatchObject({
+    type: "extension_ui_pending",
+    request: pending?.[0],
+  });
   await answer("future", true);
   expect(worker.uiResponses).toEqual([{ id: "future", cancelled: true }]);
 });

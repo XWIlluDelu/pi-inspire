@@ -7,7 +7,14 @@ import {
   MousePointer2,
   MousePointerClick,
 } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { ResourceDescriptor } from "../../shared/contracts";
 import {
   resourceReferenceLabel,
@@ -38,18 +45,6 @@ import { PiLoader } from "./PiLoader";
 import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
 import { ReaderQuoteAction } from "./ReaderQuoteAction";
 import { TablePreview } from "./TablePreview";
-
-export function PathCopyButton({ path }: { path: string }) {
-  return (
-    <CopyAction
-      text={path}
-      label="Path"
-      copyLabel={`Copy path ${path}`}
-      className="file-path-action"
-      iconSize={16}
-    />
-  );
-}
 
 function tableDelimiter(descriptor: ResourceDescriptor): "," | "\t" | null {
   return descriptor.kind === "text" ? delimiterForFile(descriptor.name) : null;
@@ -376,16 +371,18 @@ function ResourcePreviewContent({
         icon={<AlertTriangle size={17} aria-hidden />}
         title={invalid ? "Not a file" : "Preview unavailable"}
         hint={preview.message}
-        onRetry={
+        action={
           invalid
             ? undefined
-            : () =>
-                void store.openResource(
-                  preview.reference,
-                  state.fileInspection.kind === "file"
-                    ? state.fileInspection.workspacePath
-                    : undefined,
-                )
+            : {
+                run: () =>
+                  void store.openResource(
+                    preview.reference,
+                    state.fileInspection.kind === "file"
+                      ? state.fileInspection.workspacePath
+                      : undefined,
+                  ),
+              }
         }
       />
     );
@@ -540,19 +537,15 @@ export function FilePreview({
     url?: string;
     error?: string;
   } | null>(null);
-  const retireInteraction = () => {
+  const retireInteraction = useCallback(() => {
     interactionGeneration.current++;
     interactionLease.current?.release();
     interactionLease.current = null;
-  };
+  }, []);
   useEffect(() => {
     setInteraction(null);
-    return () => {
-      interactionGeneration.current++;
-      interactionLease.current?.release();
-      interactionLease.current = null;
-    };
-  }, [htmlScope]);
+    return retireInteraction;
+  }, [htmlScope, retireInteraction]);
   const currentInteraction =
     interaction?.scope === htmlScope ? interaction : null;
   const previewRefreshError =
@@ -695,7 +688,13 @@ export function FilePreview({
             )}
           </button>
         ) : null}
-        <PathCopyButton path={displayPath} />
+        <CopyAction
+          text={displayPath}
+          label="Path"
+          copyLabel={`Copy path ${displayPath}`}
+          className=""
+          iconSize={16}
+        />
         <button
           type="button"
           className="icon-button"

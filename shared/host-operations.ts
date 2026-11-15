@@ -4,7 +4,6 @@ import {
   COMPOSER_HISTORY_IMAGE_REFERENCE,
 } from "./composer-artifact-references.js";
 import type {
-  ComposerHistoryEntry,
   PendingRecovery,
   UploadedAttachment,
 } from "./contracts.js";
@@ -95,10 +94,18 @@ export function promptFingerprintInput(
   ]);
 }
 
-export const pendingOperationSchema = addressedOperation.strict();
-export const pendingOperationRequestSchema = pendingOperationSchema.extend({
+const pendingOperationSchema = addressedOperation.strict();
+const pendingOperationRequestSchema = pendingOperationSchema.extend({
   action: z.enum(["recover", "abort"]),
 });
+
+export type PendingOperationRequest = z.infer<
+  typeof pendingOperationRequestSchema
+>;
+export type PendingOperationIdentity = Omit<
+  PendingOperationRequest,
+  "sessionId" | "action"
+>;
 
 export type HostOperationIdentity = z.infer<typeof hostOperationIdentitySchema>;
 
@@ -112,7 +119,7 @@ export interface HostOperationError {
 }
 
 export type HostOperationResults = {
-  prompt: ComposerHistoryEntry | null;
+  prompt: null;
   recover: PendingRecovery;
   abort: PendingRecovery;
 };
@@ -129,7 +136,7 @@ export type OperationReceipt<Executor, Command, Result> = {
   | { state: "rejected" | "unknown"; error: HostOperationError }
 );
 
-type MatchedReceipt = Record<string, unknown> &
+export type MatchedReceipt = Record<string, unknown> &
   (
     | { state: "pending" }
     | { state: "completed"; result: unknown }
@@ -145,6 +152,7 @@ export function matchOperationReceipt(
     OperationReceipt<Record<string, string>, string, unknown>,
     "executor" | "operationId" | "command"
   >,
+  httpStatus?: number,
 ): MatchedReceipt | null {
   if (
     !isJsonRecord(value) ||
@@ -161,17 +169,20 @@ export function matchOperationReceipt(
     )
   )
     return null;
-  if (
-    value.state === "pending" ||
-    (value.state === "completed" && "result" in value)
-  )
-    return value as MatchedReceipt;
+  if (value.state === "pending" || value.state === "completed") {
+    if (httpStatus !== undefined && (httpStatus < 200 || httpStatus >= 300))
+      return null;
+    if (value.state === "pending" || "result" in value)
+      return value as MatchedReceipt;
+  }
   if (value.state === "unknown" || value.state === "rejected") {
     const error = value.error;
     if (
       isJsonRecord(error) &&
       typeof error.message === "string" &&
-      typeof error.status === "number"
+      typeof error.status === "number" &&
+      (httpStatus === undefined ||
+        (httpStatus >= 400 && httpStatus === error.status && error.message.length > 0))
     )
       return value as MatchedReceipt;
   }

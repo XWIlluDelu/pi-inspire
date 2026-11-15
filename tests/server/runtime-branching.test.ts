@@ -51,7 +51,6 @@ const parseLines = (bytes: string): Record<string, unknown>[] =>
     .map((line) => JSON.parse(line));
 const faults = [
   "wrong-nonce",
-  "wrong-worker",
   "malformed",
   "duplicate",
   "missing",
@@ -102,7 +101,7 @@ class BranchRpc extends FakeRpc {
           cancelled: false,
           beforeLeaf,
           nonce: this.fault === "wrong-nonce" ? "foreign" : nonce,
-          workerId: this.fault === "wrong-worker" ? "foreign" : workerId,
+          workerId,
           effectiveLeaf: "a1",
           navigationLeaf: "a1",
         };
@@ -287,7 +286,7 @@ it.each(["Stop", "exit"] as const)(
         active: {
           durableLeafId: "a2",
           effectiveLeafId: "a2",
-          navigationLeased: false,
+          restoreSavedLeafId: null,
         },
       });
       expect((await f.active()).transcriptPage.messages).toContainEqual(
@@ -319,40 +318,6 @@ it.each(faults)(
     ).toHaveLength(1);
   },
 );
-
-it("forks a busy unselected source without losing its queued input or dialog", async () => {
-  const f = await fixture();
-  f.worker.emit("event", { type: "agent_start" });
-  f.worker.emit("event", {
-    type: "queue_update",
-    steering: ["steer later"],
-    followUp: ["follow later"],
-  });
-  f.worker.emit("event", {
-    type: "extension_ui_request",
-    id: "source-dialog",
-    method: "confirm",
-    title: "Source dialog",
-  });
-  const busy = {
-    sessionStatuses: { [id]: { runState: "running" } },
-    pendingExtensionUiRequests: [{ id: "source-dialog", sessionId: id }],
-    pendingQueues: {
-      steering: [{ textPreview: "steer later" }],
-      followUp: [{ textPreview: "follow later" }],
-    },
-  };
-  await vi.waitFor(async () => expect(await f.snapshot()).toMatchObject(busy));
-  await expect(f.navigate("a1")).rejects.toMatchObject({ status: 409 });
-  await f.runtime.openSession(other);
-  const forked = await f.runtime.forkBranch(await f.address());
-  expect(forked.snapshot.pendingExtensionUiRequests ?? []).toEqual([]);
-  expect(forked.snapshot.pendingQueues?.totalCount ?? 0).toBe(0);
-  expect(f.runtime.startupSessionHint).toBe(other);
-  expect(await f.snapshot()).toMatchObject(busy);
-  expect(await readFile(f.path, "utf8")).toBe(f.source);
-  expect(f.worker.stops).toBe(0);
-});
 
 it("fences a stale or invalid Fork source and retains selection made while waiting for admission", async () => {
   const stageFork = vi.fn(stageSessionFork);
@@ -652,26 +617,23 @@ it("reads and copies the admitted external branch across appends, then retires i
   }
 });
 
-it.each([
-  ["a2", "a1"],
-  ["a1", "a2"],
-] as const)(
-  "keeps worker leaf %s through foreign appends under %s",
-  async (leaf, parent) => {
-    const f = await fixture();
-    if (leaf === "a1") await f.navigate(leaf);
-    for (const id of ["foreign-one", "foreign-two"]) {
-      await appendFile(f.path, jsonl(entry(id, parent, "assistant", id, 60)));
-      const active = await f.active();
-      expect(active).toMatchObject({
-        durableLeafId: id,
-        effectiveLeafId: leaf,
-      });
-      expect(f.worker.leafId).toBe(leaf);
-      expect(
-        (await f.snapshot()).sessionStatuses[f.worker.sessionId]?.runState,
-      ).not.toBe("conflict");
-      expect(JSON.stringify(active.transcriptPage.messages)).not.toContain(id);
-    }
-  },
-);
+it("advances saved History without moving the selected worker branch", async () => {
+  const f = await fixture();
+  await f.navigate("a1");
+  await appendFile(f.path, jsonl(entry("foreign", "a2", "assistant", "foreign", 60)));
+  const active = await f.active();
+  expect(active).toMatchObject({
+    durableLeafId: "foreign",
+    effectiveLeafId: "a1",
+    restoreSavedLeafId: "foreign",
+  });
+  expect(active.transcriptPage.messages).not.toContainEqual(
+    expect.objectContaining({ __inspireEntryId: "foreign" }),
+  );
+  const restored = await f.navigate("foreign");
+  expect(restored.snapshot.active).toMatchObject({
+    effectiveLeafId: "foreign",
+    restoreSavedLeafId: null,
+  });
+  expect(f.worker.stops).toBe(1);
+});

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { messageFallbackCorrelation } from "../shared/message-identity.js";
+import { canonicalPersistedJson } from "./persisted-json.js";
 import type { RuntimeSlot } from "./runtime-slot.js";
 import {
   assistantDeltaProjectionBytes,
@@ -25,48 +26,22 @@ function nativeMessage(
 
 /** Retain bounded evidence for equality of large native messages without
  * keeping a second copy of images, thinking or tool output in the live tail. */
-function messageEvidence(
-  message: Record<string, unknown>,
-): string | Record<string, unknown> {
-  if (message.role === "custom" || message.role === "bashExecution") {
-    const keys =
-      message.role === "custom"
-        ? ["role", "customType", "content", "display", "details"]
-        : [
-            "role",
-            "command",
-            "output",
-            "exitCode",
-            "cancelled",
-            "truncated",
-            "fullOutputPath",
-            "excludeFromContext",
-            "__inspireBashRunning",
-          ];
-    return {
-      role: message.role,
-      digest: evidence(
-        Object.fromEntries(keys.map((key) => [key, message[key]])),
-      ),
-    };
-  }
-  return evidence(message);
-}
-
-function evidence(value: unknown): string {
-  return createHash("sha256")
-    .update(
-      JSON.stringify(value, (_key, item) =>
-        item && typeof item === "object" && !Array.isArray(item)
-          ? Object.fromEntries(
-              Object.keys(item)
-                .sort()
-                .map((key) => [key, item[key]]),
-            )
-          : item,
-      ),
-    )
-    .digest("hex");
+function messageEvidence(message: Record<string, unknown>): string {
+  const { role } = message;
+  const keys = role === "custom"
+    ? ["role", "customType", "content", "display", "details"]
+    : role === "bashExecution"
+      ? [
+          "role", "command", "output", "exitCode", "cancelled", "truncated",
+          "fullOutputPath", "excludeFromContext", "__inspireBashRunning",
+        ]
+      : null;
+  const value = keys
+    ? Object.fromEntries(keys.map((key) => [key, message[key]]))
+    : message;
+  return `${String(role)}:${createHash("sha256")
+    .update(canonicalPersistedJson(value))
+    .digest("hex")}`;
 }
 
 function entryEvidence(entry: SessionEntry) {
@@ -264,14 +239,10 @@ export class RuntimeLiveTail {
       if (!id || !seen) return true;
       worker.finishedMessages.delete(id);
       const match = candidates.findIndex(
-        ({ evidence: value }, index) =>
-          index >= next &&
-          (typeof seen === "string"
-            ? seen === value
-            : typeof value === "object" && seen.digest === value.digest),
+        ({ evidence }, index) => index >= next && evidence === seen,
       );
       if (match === -1) {
-        if (typeof seen === "object" && seen.role === "bashExecution") {
+        if (seen.startsWith("bashExecution:")) {
           worker.finishedMessages.set(id, seen);
           return true;
         }

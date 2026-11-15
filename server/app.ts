@@ -17,9 +17,7 @@ import {
   type BootstrapResponse,
   MAX_ATTACHMENT_FILE_BYTES,
   MAX_ATTACHMENTS,
-  type PendingOperationRequest,
   type SessionDeletionResponse,
-  type UploadedAttachment,
 } from "../shared/contracts.js";
 import type { HerdrEnhancementStatus } from "../shared/herdr.js";
 import { historyAddress } from "../shared/history-query.js";
@@ -31,6 +29,7 @@ import {
   type HostOperationResults,
   hostReceipt,
   inputOperationEndpoints as inputRoutes,
+  type PendingOperationRequest,
   promptFingerprintInput,
 } from "../shared/host-operations.js";
 import { restartObservation } from "../shared/host-restart.js";
@@ -62,7 +61,7 @@ import type { NativeModelCatalog } from "./model-metadata.js";
 import type { ModelSettingsService } from "./model-settings.js";
 import { commonModelOptions } from "./model-settings.js";
 import { registerModelSettingsRoutes } from "./model-settings-routes.js";
-import { OperationReceipts } from "./operation-receipts.js";
+import { HostOperationReceipts, settleOperation } from "./operation-receipts.js";
 import { resolveProjectDirectory } from "./paths.js";
 import { installedPiChangelog } from "./pi-changelog.js";
 import type { PreferencesStore } from "./preferences.js";
@@ -292,73 +291,42 @@ export function createInspireServer(deps: AppDependencies): {
   const updateCoordinator =
     deps.updateCoordinator ??
     new UpdateCoordinator({ currentPiVersion: deps.piVersion });
-  const pendingOperations = new OperationReceipts<
-    HostOperationResults["recover"]
-  >("pending");
-  const promptOperations = new OperationReceipts<
-    HostOperationResults["prompt"]
-  >("prompt");
+  const inputOperations = new HostOperationReceipts();
 
   async function observeOperation<Command extends HostOperationCommand>(
     command: Command,
     identity: HostOperationIdentity,
-    completion: Promise<HostOperationResults[Command]>,
+    fingerprint: string | undefined,
     response: Response,
-    windowMs?: number,
+    execute?: () => Promise<HostOperationResults[Command]>,
   ): Promise<HostOperationReceipt<Command>> {
     const receipt = hostReceipt(command, identity);
-    const completed = completion.then(
-      (result): HostOperationReceipt<Command> => ({
-        ...receipt,
-        state: "completed",
-        result,
-      }),
-      (error: unknown): HostOperationReceipt<Command> => {
-        const detail = error as
-          | (Error & {
-              code?: string;
-              status?: number;
-              matches?: string[];
-              outcomeUnknown?: boolean;
-              recoveredAttachments?: UploadedAttachment[];
-              recoveryId?: string;
-            })
-          | null;
-        return {
-          ...receipt,
-          state: detail?.outcomeUnknown === true ? "unknown" : "rejected",
-          error: {
-            message:
-              detail instanceof Error ? detail.message : "Operation failed",
-            status: detail?.status ?? 500,
-            matches: detail?.matches,
-            code: detail?.code,
-            recoveredAttachments: detail?.recoveredAttachments,
-            recoveryId: detail?.recoveryId,
-          },
-        };
-      },
+    const completion = inputOperations.read(
+      command, identity.operationId, fingerprint, execute,
+    );
+    const completed = settleOperation(
+      receipt, () => completion, (error) => error.outcomeUnknown === true,
     );
     let timer: ReturnType<typeof setTimeout> | undefined;
     let disconnected: (() => void) | undefined;
     try {
-      const outcome =
-        windowMs === undefined
-          ? await completed
-          : await Promise.race([
-              completed,
-              new Promise<HostOperationReceipt<Command>>((resolve) => {
-                disconnected = () => resolve({ ...receipt, state: "pending" });
-                timer = setTimeout(disconnected, windowMs);
-                response.once("close", disconnected);
-              }),
-            ]);
+      const outcome = command !== "prompt"
+        ? await completed
+        : await Promise.race([
+            completed,
+            new Promise<HostOperationReceipt<Command>>((resolve) => {
+              disconnected = () => resolve({ ...receipt, state: "pending" });
+              timer = setTimeout(
+                disconnected,
+                deps.promptObservationWindowMs ?? PROMPT_OBSERVATION_WINDOW_MS,
+              );
+              response.once("close", disconnected);
+            }),
+          ]);
       response.status(
         outcome.state === "unknown" || outcome.state === "rejected"
           ? outcome.error.status
-          : command === "prompt"
-            ? 202
-            : 200,
+          : command === "prompt" ? 202 : 200,
       );
       return outcome;
     } finally {
@@ -366,19 +334,6 @@ export function createInspireServer(deps: AppDependencies): {
       if (disconnected) response.off("close", disconnected);
     }
   }
-
-  const observePrompt = (
-    operationId: string,
-    completion: Promise<HostOperationResults["prompt"]>,
-    response: Response,
-  ) =>
-    observeOperation(
-      "prompt",
-      { operationId, authorityId },
-      completion,
-      response,
-      deps.promptObservationWindowMs ?? PROMPT_OBSERVATION_WINDOW_MS,
-    );
 
   // The host itself remains loopback-only. A local reverse proxy may report
   // the original HTTPS protocol, but arbitrary network hops never gain trust.
@@ -907,21 +862,22 @@ export function createInspireServer(deps: AppDependencies): {
     const fingerprint = createHash("sha256")
       .update(promptFingerprintInput(prompt))
       .digest("hex");
-    const completion = promptOperations.run(
-      prompt.operationId,
+    return observeOperation(
+      "prompt",
+      prompt,
       fingerprint,
+      response,
       async () => {
         const {
           operationId: _operationId,
           authorityId: _authorityId,
           ...input
         } = prompt;
-        const historyEntry = await deps.runtime.prompt(input);
+        await deps.runtime.prompt(input);
         void updateCoordinator.promptAccepted();
-        return historyEntry;
+        return null;
       },
     );
-    return observePrompt(prompt.operationId, completion, response);
   });
   jsonRoute(
     app,
@@ -939,11 +895,7 @@ export function createInspireServer(deps: AppDependencies): {
           code: "HOST_AUTHORITY_CHANGED",
           outcomeUnknown: true,
         });
-      return observePrompt(
-        operationId,
-        promptOperations.observe(operationId, fingerprint),
-        response,
-      );
+      return observeOperation("prompt", { operationId, authorityId }, fingerprint, response);
     },
   );
   jsonRoute(app, routes.piChangelog, installedPiChangelog);
@@ -1052,10 +1004,7 @@ export function createInspireServer(deps: AppDependencies): {
       return observeOperation(
         operation.action,
         operation,
-        pendingOperations.observe(
-          operation.operationId,
-          pendingFingerprint(operation),
-        ),
+        pendingFingerprint(operation),
         response,
       );
     },
@@ -1065,10 +1014,12 @@ export function createInspireServer(deps: AppDependencies): {
       app,
       inputRoutes[action],
       ({ body: operation }, _request, response) => {
-        const { operationId, sessionId, expectedViewId } = operation;
-        const completion = pendingOperations.run(
-          operationId,
+        const { sessionId, expectedViewId } = operation;
+        return observeOperation(
+          action,
+          operation,
           pendingFingerprint({ ...operation, action }),
+          response,
           async () => {
             const recovered =
               action === "abort"
@@ -1079,7 +1030,6 @@ export function createInspireServer(deps: AppDependencies): {
               : recovered;
           },
         );
-        return observeOperation(action, operation, completion, response);
       },
     );
   }
@@ -1246,10 +1196,7 @@ export function createInspireServer(deps: AppDependencies): {
     routes.resourceDownloadTicket,
     async ({ params: { id }, body: { sessionId } }, request) => {
       const context = await deps.runtime.resourceContext(sessionId);
-      await deps.resources.revalidate(
-        deps.resources.get(id, sessionId, context.viewId),
-        context,
-      );
+      await deps.resources.authorize(id, context);
       return browserAuth.downloadTicket(requestOrigin(request), id, sessionId);
     },
   );
@@ -1273,8 +1220,7 @@ export function createInspireServer(deps: AppDependencies): {
     // Handles are bound to the opaque branch view that authorized them. The
     // current authority is rechecked before any headers or bytes are sent.
     const context = await deps.runtime.resourceContext(sessionId);
-    const resource = deps.resources.get(resourceId, sessionId, context.viewId);
-    await deps.resources.revalidate(resource, context);
+    const resource = await deps.resources.authorize(resourceId, context);
     if (response.destroyed) return;
     const setResourceHeaders = (
       mimeType = resource.descriptor.mimeType,
@@ -1292,13 +1238,9 @@ export function createInspireServer(deps: AppDependencies): {
       sendResourceBytes(request, response, data, () =>
         setResourceHeaders(mimeType),
       );
-    } else if (resource.path) {
+    } else {
       const opened = await deps.resources.openForServing(resource);
       await sendResourceFile(request, response, opened, setResourceHeaders);
-    } else {
-      response
-        .status(404)
-        .json({ error: "The resource preview is no longer available" });
     }
   }
 

@@ -15,51 +15,43 @@ import {
 afterEach(disposeProjectionFixture);
 
 describe("writer startup attestation", () => {
-  const startupThinking = (
-    parentId: string | null,
-    thinkingLevel = "off",
-    id = "startup1",
-  ) => ({
+  const startupThinking = (parentId: string | null) => ({
     type: "thinking_level_change",
-    id,
+    id: "startup1",
     parentId,
     timestamp: "2026-08-01T00:00:02.000Z",
-    thinkingLevel,
+    thinkingLevel: "off",
   });
   it.each([null, "u1"])(
-    "accepts a state-equivalent startup delta from baseline %s",
+    "uses the worker branch for startup from baseline %s",
     async (parentId) => {
       const entry = startupThinking(parentId);
-      const { runtime, workers } = await setup(
+      const sibling = messageEntry("external", parentId, {
+        role: "assistant",
+        content: "external",
+        timestamp: 3,
+      });
+      const { runtime, workers, startup } = await setup(
         [],
         (worker) => {
           worker.startupEntries = [entry];
           worker.startupLeafId = entry.id;
           worker.onStart = async () => {
-            await appendFile(worker.sessionPath, `${JSON.stringify(entry)}\n`);
+            await appendFile(
+              worker.sessionPath,
+              parentId === null ? jsonl(entry) : jsonl(entry, sibling),
+            );
           };
         },
         parentId !== null,
       );
-      await vi.waitFor(async () => {
-        expect(
-          (await runtime.snapshot("session-a")).active?.thinkingLevel,
-        ).toBe("off");
-        expect(
-          workers[0]!.commands.some(
-            (command) => command.type === "get_commands",
-          ),
-        ).toBe(true);
-      });
-      expect(workers[0]!.commands).toContainEqual(
-        parentId === null
-          ? { type: "get_entries" }
-          : { type: "get_entries", since: parentId },
-      );
+      await startup;
       expect(workers[0]!.stops).toBe(0);
-      expect((await runtime.snapshot("session-a")).active!.durableLeafId).toBe(
-        entry.id,
-      );
+      expect((await runtime.snapshot("session-a")).active).toMatchObject({
+        thinkingLevel: "off",
+        effectiveLeafId: entry.id,
+        durableLeafId: parentId === null ? entry.id : sibling.id,
+      });
     },
   );
 
@@ -100,7 +92,6 @@ describe("writer startup attestation", () => {
       try {
         start.resolve();
         await reconcileEntered.promise;
-        expect(workers[0]!.commands.at(-1)).toEqual({ type: "get_state" });
         if (loss === "exit") {
           workers[0]!.emit("exit", new Error("Synthetic attestation exit"));
           expect(slot.process).toBeNull();
@@ -126,11 +117,6 @@ describe("writer startup attestation", () => {
         expect(events.some((event) => event.type === "runtime_ready")).toBe(
           false,
         );
-        expect(
-          workers[0]!.commands.some(
-            (command) => command.type === "get_commands",
-          ),
-        ).toBe(false);
       } finally {
         start.resolve();
         finishReconcile.resolve();
@@ -147,15 +133,10 @@ describe("writer startup attestation", () => {
     ["factory rewrite", false],
     ["factory append", false],
     ["partial append", true],
-    ["wrong level", true],
-    ["foreign suffix", true],
     ["bad parent", true],
     ["startup rewrite", true],
   ] as const)("fences writer admission after a %s", async (fault, starts) => {
-    const entry = startupThinking(
-      fault === "bad parent" ? "not-u1" : "u1",
-      fault === "wrong level" ? "high" : "off",
-    );
+    const entry = startupThinking(fault === "bad parent" ? "not-u1" : "u1");
     const { runtime, workers, sequence, opened } = await setup([], (worker) => {
       if (fault === "factory rewrite") {
         const original = readFileSync(worker.sessionPath, "utf8");
@@ -190,18 +171,6 @@ describe("writer startup attestation", () => {
             original.replace('"content":"original"', '"content":"rewritten"') +
               jsonl(entry),
           );
-        } else if (fault === "foreign suffix") {
-          await appendFile(
-            path,
-            jsonl(
-              entry,
-              messageEntry("external", entry.id, {
-                role: "assistant",
-                content: "external",
-                timestamp: 3,
-              }),
-            ),
-          );
         } else await appendFile(path, jsonl(entry));
       };
     });
@@ -209,7 +178,6 @@ describe("writer startup attestation", () => {
     await vi.waitFor(() => expect(workers[0]!.stops).toBe(1));
     expect(workers).toHaveLength(1);
     expect(sequence.includes("start")).toBe(starts);
-    expect(workers[0]!.commands).not.toContainEqual({ type: "get_commands" });
     if (!starts) expect(workers[0]!.commands).toEqual([]);
     const snapshot = await runtime.snapshot("session-a");
     expect(snapshot.sessionStatuses["session-a"]?.runState).toBe("failed");

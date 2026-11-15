@@ -92,8 +92,8 @@ worker cold. Switch and Edit retain their native mutation admission and use the 
 
 Navigation requires an idle, fresh, conflict-free worker with no queued input or pre-existing dialog.
 Reject native shell requests while navigation is pending, including while an extension hook awaits
-input. Deliberate switching creates a non-evictable in-memory navigation lease until the next append
-durably commits that branch.
+input. The worker's native branch determines its eligibility for idle reclamation. If it has
+moved away from the file's current leaf, the view offers the address of that saved position.
 
 Branch switching is reversible and non-destructive. Edit-from-here confirms only when replacing a
 nonempty Composer draft. Capture that draft's text/material revision; returned text may replace only

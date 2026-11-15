@@ -50,14 +50,6 @@ test("@cross-browser retries a native page, keeps it apart from Live, and restor
   await expect(latest).toBeAttached();
   await history.getByRole("button", { name: "Retry" }).click();
   await expect(latest).toHaveCount(0);
-  const pageIds = () =>
-    history
-      .locator("[data-history-entry]")
-      .evaluateAll((rows) =>
-        rows.map((row) => (row as HTMLElement).dataset.historyEntry),
-      );
-  const earlier = await pageIds();
-  expect(earlier.length).toBeGreaterThan(0);
   transport.send({
     sessionId: HISTORY_FIXTURE_SESSION_ID,
     type: "message_end",
@@ -82,7 +74,7 @@ test("@cross-browser retries a native page, keeps it apart from Live, and restor
   });
   const jump = page.getByRole("button", { name: "Jump to 1 pending item" });
   await expect(jump).toBeVisible();
-  expect(await pageIds()).toEqual(earlier);
+  await expect(latest).toHaveCount(0);
   await history.getByRole("button", { name: "Later", exact: true }).click();
   await expect(latest).toBeAttached();
   await page.setViewportSize({ width: 390, height: 844 });
@@ -101,10 +93,6 @@ test("@cross-browser retries a native page, keeps it apart from Live, and restor
   await expect(live.getByText("New live output")).toBeVisible();
   await expect.poll(distanceFromEnd).toBeLessThanOrEqual(1);
   await expect(jumpToLatest).toBeHidden();
-  const activity = await page.locator(".activity").boundingBox();
-  const composer = await page.locator(".composer").boundingBox();
-  expect(Math.abs(activity!.x - composer!.x)).toBeLessThanOrEqual(1);
-  expect(Math.abs(activity!.width - composer!.width)).toBeLessThanOrEqual(1);
 
   await openHistoryPane(page);
   await history

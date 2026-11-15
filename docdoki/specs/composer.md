@@ -73,7 +73,8 @@ replace the token at the caret.
 
 Input history opens from the composer or Alt+Up. Saved inputs come from the selected branch's
 retained user messages, including pre-compaction messages and reopened sessions. Recent inputs
-show accepted sends in this browser separately. Browsing and Cancel preserve the live draft.
+show accepted text-only sends in this browser separately. Select inputs with original artifacts
+from Saved inputs. Browsing and Cancel preserve the live draft.
 **Use this input** replaces its text and artifacts together if the branch and draft still match.
 
 Image-prompt recall omits Pi's appended dimension and coordinate-mapping notes from editable text
@@ -435,18 +436,14 @@ partial/preview. Selection/branch change invalidates the read before clipboard m
 
 ## Context and usage
 
-The context ring is an occupancy indicator. Its numeric slot reserves room for three digits and a
-percent sign, so the ring and adjacent actions stay put as readings change from unknown to single-,
-double- or triple-digit percentages; larger native values grow without clipping. Pi percentages
-above 100% are reported as-is; only the ring/range is clamped. Unknown post-compaction usage shows
-`—`, keeps capacity and explains “Updates after the next reply”, never zero. Historical checkpoints
-show persisted tokens-before; after-token receipt estimates stay labelled and are not fabricated
-after reload.
+The context button displays occupancy, including Pi percentages above 100%. Unknown
+post-compaction usage shows `—`. Activating the button or running `/session` opens the same local
+Session & usage result without consuming the draft or calling a model. It shows the used tokens
+and capacity, or “Updates after the next reply” when used tokens are unknown. Historical
+checkpoints show persisted tokens-before; after-token receipt estimates stay labelled and are
+not fabricated after reload.
 
-Hover/focus reveals a non-interactive model and used-token/window hint within the viewport. Escape
-closes the hint after menus/completion/modals/IME but before Stop. Activating the control by click,
-touch or keyboard opens the local Session & usage result without consuming the draft or calling a
-model; the command palette and `/session` reach the same result. Repeating `/session`, bare `/name`
+Repeating `/session`, bare `/name`
 or `/quit` replaces that query's existing readout in place and renews its reading dwell; `/session`
 reads the current local snapshot synchronously. Runtime progress and prompt handoff do not interrupt
 a requested readout. Leaving the selected session discards its query readouts but not operational

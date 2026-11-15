@@ -298,7 +298,9 @@ export class PreferenceController {
     if (!api) return;
     const revision = this.curationRevision;
     try {
-      const { sessions } = await api.sessionsByCwds([cwd]);
+      const { sessions } = await api.json("sessionsByCwds", {
+        body: { cwds: [cwd] },
+      });
       if (this.host.api() !== api || this.curationBlocked()) return;
       const prefs = this.host.state().prefs;
       if (revision !== this.curationRevision) {

@@ -71,7 +71,8 @@
   overflow-wrap: anywhere;
 }
 
-.command-activity {
+.command-activity,
+.extension-dock {
   min-height: 32px;
   width: 100%;
   max-width: var(--composer-max);
@@ -129,18 +130,7 @@
   .command-activity__action { min-height: 44px; }
 }
 
-.extension-dock {
-  min-height: 32px;
-  width: 100%;
-  max-width: var(--composer-max);
-  max-height: min(28dvh, 240px);
-  margin: 0 auto var(--space-2);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
+.extension-dock { max-height: min(28dvh, 240px); }
 
 .extension-dock--below {
   max-height: min(16dvh, 112px);
@@ -201,7 +191,7 @@
 }
 
 /* Focus lights the surface being typed into with clean accent border */
-.composer:focus-within:not(:where(:has(.welcome__directory:focus-within))) {
+.composer:focus-within {
   border-color: var(--accent-focus);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-focus) 12%, transparent);
 }
@@ -212,54 +202,17 @@
   background: var(--accent-tint);
 }
 
-/* A separate halo breathes without animating the surface or repainting its
-   shadow on every frame. Focus keeps its own border; the halo never takes input. */
-.composer--running::before {
-  content: "";
-  position: absolute;
-  inset: -1px;
-  border-radius: inherit;
-  pointer-events: none;
-  box-shadow:
-    0 0 0 2px color-mix(in srgb, var(--running-glow) 10%, transparent),
-    0 4px 14px -4px color-mix(in srgb, var(--running-glow) 18%, transparent);
-  animation: composer-running-breathe 3.6s ease-in-out infinite;
+.composer--running { --state-color: var(--running-glow); }
+.composer--retrying { --state-color: var(--warning); }
+.composer--compacting { --state-color: var(--activity-event); }
+.composer--failed { --state-color: var(--error); }
+
+.composer:where(.composer--running, .composer--retrying, .composer--compacting, .composer--failed) {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--state-color) 35%, transparent);
 }
 
-@keyframes composer-running-breathe {
-  0%, 100% { opacity: 0.4; }
-  50% { opacity: 1; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .composer--running::before {
-    animation: none;
-    opacity: 0.65;
-  }
-}
-
-.composer--retrying,
-.composer--retrying:focus-within {
-  border-color: var(--warning);
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--warning) 42%, transparent),
-    0 0 10px var(--warning-tint);
-}
-
-.composer--compacting,
-.composer--compacting:focus-within {
-  border-color: var(--activity-event);
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--activity-event) 42%, transparent),
-    0 0 10px color-mix(in srgb, var(--activity-event) 18%, transparent);
-}
-
-.composer--failed,
-.composer--failed:focus-within {
-  border-color: var(--error);
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--error) 42%, transparent),
-    0 0 10px var(--error-tint);
+.composer:is(.composer--retrying, .composer--compacting, .composer--failed) {
+  border-color: var(--state-color);
 }
 
 .composer__file-input {
@@ -453,140 +406,18 @@
   min-width: 0;
 }
 
-/* Read-only context detail floats above the existing ring without reserving layout. */
-.meter-anchor {
-  position: relative;
-  display: inline-flex;
-  flex-shrink: 0;
-}
-
-.meter__hint {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + var(--space-2));
-  z-index: 40;
-  width: max-content;
-  /* Leave room for Send and the page gutter on narrow touch viewports. */
-  max-width: min(
-    280px,
-    calc(100vw - var(--space-8) * 2 - var(--space-3))
-  );
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-control);
-  background: var(--bg-raised);
-  box-shadow: var(--shadow-2);
-  color: var(--muted);
-  font-size: var(--text-xs);
-  line-height: var(--leading-ui);
-  overflow-wrap: anywhere;
-}
-
-.meter__hint::after {
-  content: "";
-  position: absolute;
-  top: 100%;
-  right: 0;
-  width: 100%;
-  height: var(--space-2);
-}
-
-.meter__model {
-  color: var(--ink);
-  font-weight: 500;
-}
-
-/* Context gauge: a small ring plus percent, both taking the occupancy tone —
-   calm while low, warning past 60%, error past 85%. */
-.meter__reading {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-}
-
-/* Anchor the ring, not the changing label's right edge. Reserve three digits
-   and the percent sign, but let larger native readings grow rather than clip. */
-.meter__value {
-  display: inline-grid;
-  text-align: left;
-  white-space: nowrap;
-}
-
-.meter__value::before {
-  content: "100%";
-  visibility: hidden;
-}
-
-.meter__value::before,
-.meter__value > span {
-  grid-area: 1 / 1;
-}
-
-.meter {
-  display: inline-flex;
-  align-items: center;
-  border: 0;
-  background: transparent;
-  padding: 0 var(--space-2);
+.composer__usage {
+  flex: none;
+  justify-content: center;
+  min-width: 44px;
   min-height: 32px;
+  padding: 0 var(--space-1);
   font-size: var(--text-xs);
-  color: var(--muted);
   font-variant-numeric: tabular-nums;
-  border-radius: var(--radius-control);
 }
 
-.meter:hover {
-  background: var(--bg-control);
-}
-
-.meter:focus-visible {
-  outline: 2px solid var(--accent-focus);
-  outline-offset: 1px;
-}
-
-@media (hover: none) and (pointer: coarse) {
-  .meter {
-    min-width: 44px;
-  }
-}
-
-.meter__ring {
-  width: 14px;
-  height: 14px;
-  flex: 0 0 auto;
-}
-
-.meter__ring-track {
-  fill: none;
-  stroke: var(--bg-inset);
-  stroke-width: 2.5;
-}
-
-.meter__ring-fill {
-  fill: none;
-  stroke: var(--accent-deep);
-  stroke-width: 2.5;
-  stroke-linecap: round;
-}
-
-.meter--warning {
-  color: var(--warning-ink);
-}
-
-.meter--warning .meter__ring-fill {
-  stroke: var(--warning);
-}
-
-.meter--error {
-  color: var(--error-ink);
-}
-
-.meter--error .meter__ring-fill {
-  stroke: var(--error);
-}
+.composer__usage--warning { color: var(--warning-ink); }
+.composer__usage--error { color: var(--error-ink); }
 
 .composer__send {
   display: inline-flex;
@@ -620,7 +451,7 @@
 
 .composer__send--abort {
   background: var(--error);
-  color: var(--on-status);
+  color: var(--on-accent);
 }
 
 .composer__send--abort:hover:not(:disabled) {
@@ -630,7 +461,7 @@
 
 .composer__send--recover {
   background: var(--warning);
-  color: var(--on-status);
+  color: var(--on-accent);
 }
 
 .composer__send--recover:hover:not(:disabled) {

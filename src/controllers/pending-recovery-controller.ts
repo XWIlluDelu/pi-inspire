@@ -1,9 +1,7 @@
-import type {
-  PendingOperationRequest,
-  PendingRecovery,
-} from "../../shared/contracts";
+import type { PendingRecovery } from "../../shared/contracts";
+import type { PendingOperationRequest } from "../../shared/host-operations";
 import { type Api, ApiError, ApiTransportError } from "../api";
-import { deferredReceipt, ReceiptRead } from "../operation-observer";
+import { deferredReceipt, inputRejection, ReceiptRead } from "../operation-observer";
 
 interface Handoff {
   intent: string;
@@ -60,50 +58,46 @@ export class PendingRecoveryController {
     };
     this.handoffs.set(intent, handoff);
     this.resume(handoff);
-    return this.observe(handoff, api, !previous);
+    return this.observe(handoff, api, previous ? "observe" : "start");
   }
 
   private observe(
     handoff: Handoff,
     api: Api,
-    dispatch = false,
+    phase: "start" | "observe",
   ): Promise<boolean> {
     const { intent, request, observation, completion } = handoff;
     const { promise: settled, resolve: complete, reject } = completion;
-    const { authorityId, operationId, sessionId, action } = request;
+    const { authorityId, sessionId } = request;
     const current = () => this.handoffs.get(intent) === handoff;
-    const rejected = (error: unknown): boolean =>
-      error instanceof ApiError &&
-      error.authorityId === authorityId &&
-      error.operation?.operationId === operationId &&
-      error.operation.command === action &&
-      !error.outcomeUnknown;
-    const read = () => api.pendingOperation(request);
+    const read = async () => {
+      if (phase === "start") {
+        try {
+          return await api.pendingOperation(request, "start");
+        } catch (error) {
+          if (!current() || inputRejection(error, request) || !(
+            error instanceof ApiTransportError ||
+            (error instanceof ApiError && (error.outcomeUnknown || error.status >= 500))
+          )) throw error;
+        }
+      }
+      return api.pendingOperation(request);
+    };
     const task = observation.observe(api, async () => {
       try {
-        const result =
-          handoff.confirmed ??
-          (await (dispatch
-            ? api.pendingOperation(request, "start").catch((error: unknown) => {
-                if (
-                  current() &&
-                  (error instanceof ApiTransportError ||
-                    (error instanceof ApiError &&
-                      !rejected(error) &&
-                      (error.outcomeUnknown || error.status >= 500)))
-                )
-                  return read();
-                throw error;
-              })
-            : read()));
-        handoff.confirmed ??= result;
+        if (!handoff.confirmed) {
+          const receipt = await read();
+          handoff.confirmed ??= receipt;
+        }
       } catch (error) {
         if (!current()) return settled;
-        if (!handoff.confirmed && rejected(error)) {
-          this.handoffs.delete(intent);
-          reject(error);
+        if (!handoff.confirmed) {
+          if (inputRejection(error, request)) {
+            this.handoffs.delete(intent);
+            reject(error);
+          }
+          throw error;
         }
-        if (!handoff.confirmed) throw error;
       }
       if (!current()) return settled;
       if (api !== this.host.api() || authorityId !== this.host.authorityId())
@@ -149,7 +143,7 @@ export class PendingRecoveryController {
       if (!api) continue;
       // Observe even while the old POST is held. Either receipt can settle the handoff.
       handoff.observation.cancel();
-      void this.observe(handoff, api).catch((error) => {
+      void this.observe(handoff, api, "observe").catch((error) => {
         if (
           api === this.host.api() &&
           error instanceof ApiError &&

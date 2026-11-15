@@ -1,5 +1,5 @@
 import { Bell, FileText, MoreHorizontal, X } from "lucide-react";
-import { type DragEvent, useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import type { TerminalDescriptor } from "../../shared/terminal-contracts";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import { ChoicePanel } from "./ChoicePanel";
@@ -34,7 +34,6 @@ export type TerminalDockTab = DocumentTab & {
   };
   beginRename(): void;
   move(direction: -1 | 1): void;
-  drop(from: string, position: "before" | "after"): void;
 };
 
 type DockTab = FileDockTab | TerminalDockTab;
@@ -49,13 +48,9 @@ function selector(tab: DockTab) {
 
 function DockTabButton({
   tab,
-  drag,
-  drop,
   onClose,
 }: {
   tab: DockTab;
-  drag(id: string): void;
-  drop(tab: TerminalDockTab, event: DragEvent<HTMLDivElement>): void;
   onClose(hadFocus: boolean): void;
 }) {
   const terminal = tab.kind === "terminal" ? tab : null;
@@ -65,10 +60,6 @@ function DockTabButton({
       className="dock-tab"
       data-selected={tab.selected || undefined}
       role="presentation"
-      draggable={Boolean(terminal)}
-      onDragStart={terminal ? () => drag(terminal.id) : undefined}
-      onDragOver={terminal ? (event) => event.preventDefault() : undefined}
-      onDrop={terminal ? (event) => drop(terminal, event) : undefined}
     >
       {rename ? (
         <input
@@ -159,26 +150,11 @@ function DockTabButton({
 
 export function ContextTabStrip({ tabs }: { tabs: readonly DockTab[] }) {
   const stripRef = useRef<HTMLDivElement>(null);
-  const dragged = useRef<string | null>(null);
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const list = useOptionList<DockTab>();
   const selected = tabs.find((tab) => tab.selected);
   const activeSelector = selected ? selector(selected) : null;
-  const drag = (id: string) => {
-    dragged.current = id;
-  };
-  const drop = (target: TerminalDockTab, event: DragEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    const from = dragged.current;
-    dragged.current = null;
-    if (!from) return;
-    const bounds = event.currentTarget.getBoundingClientRect();
-    target.drop(
-      from,
-      event.clientX > bounds.left + bounds.width / 2 ? "after" : "before",
-    );
-  };
   const focusTab = (target: string) =>
     requestAnimationFrame(() =>
       stripRef.current
@@ -230,8 +206,6 @@ export function ContextTabStrip({ tabs }: { tabs: readonly DockTab[] }) {
           <DockTabButton
             key={tabKey(tab)}
             tab={tab}
-            drag={drag}
-            drop={drop}
             onClose={(hadFocus) => {
               tab.close();
               if (tab.kind === "file" && hadFocus)

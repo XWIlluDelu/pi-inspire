@@ -262,8 +262,7 @@
 }
 
 .terminal-menu__view {
-  display: flex;
-  flex-direction: column;
+  display: grid;
   gap: 2px;
   margin-bottom: 4px;
   border-bottom: 1px solid var(--hairline);
@@ -274,25 +273,10 @@
   border-top: 1px solid var(--hairline);
 }
 
-.terminal-menu__group .detail-summary > span {
-  display: inline-flex;
+.terminal-menu__projects .detail-summary__label {
+  display: flex;
   align-items: center;
   gap: var(--space-2);
-}
-
-.terminal-menu__group > div {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin: 2px 0 4px 14px;
-  border-left: 1px solid var(--hairline);
-  padding-left: 5px;
-}
-
-.terminal-menu__projects > div {
-  margin-left: 0;
-  border: 0;
-  padding: 4px 2px;
 }
 
 .terminal-menu__search { --search-height: 28px; --search-inset: var(--space-2); }
@@ -753,7 +737,7 @@
   }
 
   .terminal-menu__popover button,
-  .terminal-menu__group > summary {
+  .terminal-menu__projects > summary {
     min-height: 44px;
   }
 
@@ -788,30 +772,12 @@
     background: var(--terminal-bg);
   }
 
-  .terminal-touch-keys__extras {
-    position: relative;
-    min-width: 0;
-    flex: 1 1 auto;
-  }
-
   .terminal-touch-keys__scroller {
-    overflow-x: auto;
-    scrollbar-width: none;
-    scroll-snap-type: x mandatory;
-  }
-
-  .terminal-touch-keys__buttons {
-    display: grid;
-    grid-auto-flow: column;
-    grid-auto-columns: calc(
-      (100% - (var(--visible-keys) - 1) * 4px) / var(--visible-keys)
-    );
+    min-width: 0;
+    flex: 1;
+    display: flex;
     gap: 4px;
-  }
-
-  .terminal-touch-keys__buttons button {
-    scroll-snap-align: start;
-    scroll-snap-stop: always;
+    overflow-x: auto;
   }
 
   .terminal-touch-keys__arrows {
@@ -820,28 +786,6 @@
     flex: 0 0 auto;
     border-left: 1px solid color-mix(in srgb, var(--terminal-fg) 12%, transparent);
     padding-left: 8px;
-  }
-
-  .terminal-touch-keys__extras::before,
-  .terminal-touch-keys__extras::after {
-    position: absolute;
-    bottom: -4px;
-    border: 2px solid transparent;
-    pointer-events: none;
-  }
-
-  .terminal-touch-keys__extras[data-scroll-start="true"]::before {
-    content: "";
-    left: 0;
-    border-left: 0;
-    border-right: 3px solid var(--terminal-fg);
-  }
-
-  .terminal-touch-keys__extras[data-scroll-end="true"]::after {
-    content: "";
-    right: 0;
-    border-right: 0;
-    border-left: 3px solid var(--terminal-fg);
   }
 
   .terminal-touch-keys button {

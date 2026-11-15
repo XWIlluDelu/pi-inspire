@@ -285,18 +285,10 @@ export class RuntimeEventController {
       this.host.state().live,
       event,
     );
-    const completed =
-      eventSessionId !== null &&
-      event.type === "agent_settled" &&
-      event.completed === true &&
-      event.sessionStatus?.runState === "idle";
-    if (changed || sessionStatuses || completed)
+    if (changed || sessionStatuses)
       this.host.patch({
         ...(changed ? { live: slice } : {}),
         ...(sessionStatuses ? { sessionStatuses } : {}),
-        ...(completed
-          ? { completedRunSequence: this.host.state().completedRunSequence + 1 }
-          : {}),
       });
     if (resync) {
       const sessionId = eventSessionId ?? this.host.state().sessionId;

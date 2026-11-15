@@ -16,7 +16,6 @@ import { baseRoutes } from "../store-fixture";
 export async function createComposerFixture() {
   const host = {
     promptBodies: [] as Record<string, unknown>[],
-    abortBodies: [] as Record<string, unknown>[],
     slowSearchGate: null as Promise<void> | null,
     historyEntries: [] as ComposerHistoryEntry[],
     historyRequests: 0,
@@ -75,14 +74,6 @@ export async function createComposerFixture() {
         }));
       }
       return { body: { files: [{ path: "src/index.ts", name: "index.ts" }] } };
-    }
-    if (url.startsWith("/api/pending/recover"))
-      return {
-        body: { steering: ["recovered steer"], followUp: ["recovered follow"] },
-      };
-    if (url.startsWith("/api/control/abort")) {
-      host.abortBodies.push(jsonBody(init));
-      return { body: { steering: [], followUp: [] } };
     }
     if (url.startsWith("/api/prompt")) {
       const body = jsonBody(init);

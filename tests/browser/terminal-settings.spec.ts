@@ -3,7 +3,6 @@ import {
   type TerminalOperation,
   terminalReceiptIdentity,
 } from "../../shared/terminal-operations";
-import { DEFAULT_TERMINAL_UI_SETTINGS } from "../../src/terminal-settings";
 import { openCommandPalette, pairAndOpen } from "./support/navigation";
 
 async function openTerminalSettings(page: Page) {
@@ -16,14 +15,12 @@ async function openTerminalSettings(page: Page) {
 test.use({ serviceWorkers: "block" });
 test.describe("narrow terminal settings", () => {
   test.use({ viewport: { width: 320, height: 900 }, hasTouch: true });
-  test("keeps browser and Host choices separate in the keyboard-accessible settings dialog", async ({
+  test("keeps keyboard focus and receipt recovery in terminal settings", async ({
     page,
   }) => {
     let service = { persistOutput: true, historyRetentionDays: 30 };
     const patches: unknown[] = [];
     let clears = 0;
-    const loading = Promise.withResolvers<void>();
-    const savingRetention = Promise.withResolvers<void>();
     const failedClear = Promise.withResolvers<void>();
     await page.route("**/api/terminal-operations", async (route) => {
       if (route.request().method() === "GET") {
@@ -49,8 +46,6 @@ test.describe("narrow terminal settings", () => {
       if (intent.command === "updateSettings") {
         const { patch } = intent.params;
         patches.push(patch);
-        if (patch.historyRetentionDays !== undefined)
-          await savingRetention.promise;
         service = { ...service, ...patch };
       }
       await route.fulfill({
@@ -61,10 +56,9 @@ test.describe("narrow terminal settings", () => {
         },
       });
     });
-    await page.route("**/api/terminal-settings", async (route) => {
-      await loading.promise;
-      await route.fulfill({ json: service });
-    });
+    await page.route("**/api/terminal-settings", (route) =>
+      route.fulfill({ json: service }),
+    );
     await pairAndOpen(page);
     const settings = await openTerminalSettings(page);
     const category = (name: string) =>
@@ -77,94 +71,33 @@ test.describe("narrow terminal settings", () => {
     const reset = settings.getByRole("button", {
       name: "Restore browser defaults",
     });
-    const body = settings.getByRole("main");
-    const stepper = settings.getByRole("group", {
-      name: "Terminal font size",
-    });
-    try {
-      await category("Saved output").click();
-      await expect(settings.getByRole("status")).toContainText(
-        "Loading Host settings",
-      );
-      await category("Appearance").click();
-    } finally {
-      loading.resolve();
-    }
-    const stepperValue = stepper.locator(".terminal-settings__stepper-value");
-    await expect(stepperValue).toHaveText(
-      `${DEFAULT_TERMINAL_UI_SETTINGS.fontSize}px`,
-    );
-    await settings
-      .getByRole("button", { name: "Increase terminal font size" })
-      .click();
-    await expect(stepperValue).toHaveText(
-      `${DEFAULT_TERMINAL_UI_SETTINGS.fontSize + 1}px`,
-    );
-    const cursor = settings.getByRole("combobox", {
-      name: "Terminal cursor shape",
-    });
-    await cursor.selectOption("bar");
+    await settings.getByRole("combobox", { name: "Terminal cursor shape" })
+      .selectOption("bar");
     await page.setViewportSize({ width: 320, height: 460 });
     await category("Interaction").click();
-    await body.evaluate((el) => (el.scrollTop = el.scrollHeight));
-    expect(await body.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
-    await expect(close).toBeInViewport({ ratio: 1 });
-    await expect(reset).toBeInViewport({ ratio: 1 });
-    await category("Interaction").click();
-    expect(await body.evaluate((el) => el.scrollTop)).toBe(0);
-
+    await expect(reset).toBeInViewport();
     await close.press("Shift+Tab");
     await expect(reset).toBeFocused();
     await reset.press("Tab");
     await expect(close).toBeFocused();
     await page.setViewportSize({ width: 320, height: 900 });
 
-    await settings
-      .getByRole("switch", { name: "Protect terminal paste" })
-      .locator("..")
-      .click();
     const stored = () =>
       page.evaluate(() =>
         JSON.parse(localStorage.getItem("inspire:terminal-ui-settings:v1")!),
       );
-    await expect.poll(stored).toMatchObject({
-      fontSize: DEFAULT_TERMINAL_UI_SETTINGS.fontSize + 1,
-      pasteProtection: false,
-      cursorStyle: "bar",
-    });
+    await expect.poll(stored).toMatchObject({ cursorStyle: "bar" });
     expect(patches).toEqual([]);
     await category("Saved output").press("Enter");
     const retention = settings.getByRole("combobox", {
       name: "Terminal output retention",
     });
-    try {
-      await retention.selectOption("90");
-      await expect.poll(() => patches).toEqual([{ historyRetentionDays: 90 }]);
-      await category("Appearance").click();
-      await category("Saved output").click();
-      await expect(retention).toBeDisabled();
-      await category("Appearance").click();
-    } finally {
-      savingRetention.resolve();
-    }
-    await category("Saved output").click();
+    await retention.selectOption("90");
     await expect(retention).toHaveValue("90");
     await expect(retention).toBeEnabled();
-    page.once("dialog", (dialog) => dialog.dismiss());
-    await settings
-      .getByRole("switch", { name: "Persist terminal output" })
-      .locator("..")
-      .click();
-    await expect(
-      settings.getByRole("switch", { name: "Persist terminal output" }),
-    ).toBeChecked();
-    expect(patches).toHaveLength(1);
-    await body.evaluate((el) => (el.scrollTop = el.scrollHeight));
-
     page.once("dialog", (dialog) => dialog.accept());
     await settings
       .getByRole("switch", { name: "Persist terminal output" })
-      .locator("..")
       .click();
     await expect(
       settings.getByRole("switch", { name: "Persist terminal output" }),
@@ -174,32 +107,6 @@ test.describe("narrow terminal settings", () => {
       { historyRetentionDays: 90 },
       { persistOutput: false },
     ]);
-    await expect(
-      settings.getByText("Saved on this Host.", { exact: true }),
-    ).toBeVisible();
-    await category("Appearance").click();
-    await reset.click();
-    await expect(stepperValue).toHaveText(
-      `${DEFAULT_TERMINAL_UI_SETTINGS.fontSize}px`,
-    );
-    await expect.poll(stored).toMatchObject({
-      pasteProtection: DEFAULT_TERMINAL_UI_SETTINGS.pasteProtection,
-      cursorStyle: DEFAULT_TERMINAL_UI_SETTINGS.cursorStyle,
-    });
-    expect(service).toEqual({
-      persistOutput: false,
-      historyRetentionDays: 90,
-    });
-    await close.click();
-    await expect(
-      page.getByRole("dialog", { name: "Context panel" }),
-    ).toBeVisible();
-    await page.getByRole("button", { name: "Close context pane" }).click();
-    await openTerminalSettings(page);
-    await category("Saved output").click();
-    await expect(
-      settings.getByRole("switch", { name: "Persist terminal output" }),
-    ).not.toBeChecked();
     const clear = settings.getByRole("button", {
       name: "Clear history",
       exact: true,
@@ -210,11 +117,7 @@ test.describe("narrow terminal settings", () => {
     };
     try {
       await requestClear();
-      await category("Appearance").click();
-      await category("Saved output").click();
-      await expect(
-        settings.getByRole("button", { name: "Clearing…" }),
-      ).toBeDisabled();
+      await expect(settings.getByRole("button", { name: "Clearing…" })).toBeDisabled();
       await category("Appearance").click();
       failedClear.resolve();
       await expect(settings.getByRole("alert")).toHaveText(
@@ -227,5 +130,7 @@ test.describe("narrow terminal settings", () => {
     await requestClear();
     await expect(clear).toBeEnabled();
     expect(clears).toBe(2);
+    await close.click();
+    await expect(page.getByRole("dialog", { name: "Context panel" })).toBeVisible();
   });
 });

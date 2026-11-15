@@ -43,7 +43,6 @@ export function PresentationAdapterSettings() {
             disabled={pending !== null}
             busy={pending === adapter.id}
             onChange={(enabled) => void toggle(adapter.id, enabled)}
-            state={adapter.enabled ? "On" : "Off"}
           />
         ))
       ) : (

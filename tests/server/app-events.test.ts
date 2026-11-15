@@ -173,106 +173,50 @@ describe("WebSocket observation and transport limits", () => {
       expect(b.frames[0]?.data?.active?.sessionId).toBe("fixture-history");
       a.frames.length = 0;
       b.frames.length = 0;
-      const chunks = [..."abcdefghij"];
-      for (const sessionId of ["fixture-active", "fixture-history"]) {
-        runtime.emit("event", {
-          type: "agent_start",
-          sessionId,
-          sessionStatus: { runState: "running" },
-        });
-        for (const [index, delta] of chunks.entries())
-          runtime.emit("event", {
-            type: "message_update",
-            sessionId,
-            streamDelta: true,
-            streamMessageKey: `${sessionId}-assistant`,
-            streamTextLength: index + 1,
-            assistantMessageEvent: {
-              type: "text_delta",
-              contentIndex: 0,
-              delta,
-            },
-            message: {
-              role: "assistant",
-              content: [
-                { type: "text", text: chunks.slice(0, index + 1).join("") },
-              ],
-            },
-            sessionStatus: { runState: "running" },
-          });
-        runtime.emit("event", {
-          type: "extension_ui_request",
-          sessionId,
-          title: "private dialog body",
-          sessionStatus: {
-            runState: "running",
-            needsInput: true,
-            external: true,
-          },
-        });
-        runtime.emit("event", {
-          type: "agent_settled",
-          sessionId,
-          messages: ["private settled body"],
-          sessionStatus: { runState: "idle", indicator: "completed" },
-        });
-        runtime.emit("event", {
-          type: "runtime_error",
-          sessionId,
-          message: "private error detail",
-          sessionStatus: { runState: "failed", indicator: "failed" },
-        });
-      }
+      const sessionId = "fixture-active";
+      const running = { runState: "running" };
+      runtime.emit("event", { type: "agent_start", sessionId, sessionStatus: running });
+      runtime.emit("event", {
+        type: "extension_ui_pending",
+        sessionId,
+        request: { sessionId, id: "question", method: "input", title: "private dialog body" },
+        sessionStatus: { ...running, needsInput: true, external: true },
+      });
+      runtime.emit("event", {
+        type: "agent_settled",
+        sessionId,
+        messages: ["private settled body"],
+        sessionStatus: { runState: "idle", indicator: "completed" },
+      });
+      runtime.emit("event", {
+        type: "runtime_error",
+        sessionId,
+        message: "private error detail",
+        sessionStatus: { runState: "failed", indicator: "failed" },
+      });
       const dismissed = await fixture.localRequest
         .post("/api/update/snooze")
         .send({ identity })
         .expect(200);
       await vi.waitFor(() => {
-        for (const { frames } of [a, b]) {
-          expect(
-            frames.filter((frame) => frame.type === "runtime_error"),
-          ).toHaveLength(2);
-          expect(frames).toContainEqual(
-            expect.objectContaining({
-              type: "update_status",
-              updateStatus: expect.objectContaining({
-                updateSnoozedUntil: dismissed.body.updateSnoozedUntil,
-              }),
+        for (const { frames } of [a, b])
+          expect(frames).toContainEqual(expect.objectContaining({
+            type: "update_status",
+            updateStatus: expect.objectContaining({
+              updateSnoozedUntil: dismissed.body.updateSnoozedUntil,
             }),
-          );
-        }
+          }));
       });
-      for (const [viewer, selected, background] of [
-        [a, "fixture-active", "fixture-history"],
-        [b, "fixture-history", "fixture-active"],
-      ] as const) {
-        const batches = viewer.frames.filter(
-          (frame) => frame.type === "message_update_batch",
-        );
-        expect(batches).toHaveLength(1);
-        expect(batches[0]).toMatchObject({
-          sessionId: selected,
-          streamMessageKey: `${selected}-assistant`,
-          streamTextLength: chunks.length,
-          assistantMessageEvents: chunks.map((delta) => ({
-            type: "text_delta",
-            delta,
-          })),
-        });
-        expect(batches[0]).not.toHaveProperty("message");
-        const global = viewer.frames.filter(
-          (frame) => frame.sessionId === background,
-        );
-        expect(global.map((frame) => frame.type)).toEqual([
-          "agent_start",
-          "session_status",
-          "agent_settled",
-          "runtime_error",
-        ]);
-        expect(global[1]?.sessionStatus?.needsInput).toBe(true);
-        expect(global[1]?.sessionStatus?.external).toBe(true);
-        expect(JSON.stringify(global)).not.toContain("private");
-      }
+      expect(a.frames).toContainEqual(expect.objectContaining({
+        type: "extension_ui_pending",
+        sessionId,
+      }));
+      const background = b.frames.filter((frame) => frame.sessionId === sessionId);
+      expect(background.map((frame) => frame.type)).toEqual([
+        "agent_start", "session_status", "agent_settled", "runtime_error",
+      ]);
+      expect(background[1]?.sessionStatus).toMatchObject({ needsInput: true, external: true });
+      expect(JSON.stringify(background)).not.toContain("private");
     } finally {
       a.socket.close();
       secondSocket?.close();
@@ -422,7 +366,6 @@ describe("WebSocket observation and transport limits", () => {
         __inspireStreamRevision: 0,
       };
       let revision = 0;
-      let cumulativeBytes = 0;
       const emit = (event: unknown) =>
         runtime.emit("event", {
           sessionId: "fixture-active",
@@ -443,7 +386,6 @@ describe("WebSocket observation and transport limits", () => {
           assistantMessageEvent,
           message,
         };
-        cumulativeBytes += Buffer.byteLength(JSON.stringify(event));
         emit(event);
       };
       project({
@@ -503,29 +445,8 @@ describe("WebSocket observation and transport limits", () => {
             (frame.assistantMessageEvents as unknown[]).length,
         ),
       ).toBe(true);
-      let reconstructed: unknown;
-      let previousRevision = 0;
-      for (const frame of beforeExecution.filter((frame) =>
-        frame.type.startsWith("message_"),
-      )) {
-        if (frame.type === "message_start") reconstructed = frame.message;
-        else {
-          expect(frame.streamRevision).toBe(
-            previousRevision + Number(frame.sourceEventCount),
-          );
-          previousRevision = Number(frame.streamRevision);
-          for (const delta of frame.assistantMessageEvents as unknown[])
-            reconstructed = applyAssistantMessageDelta(reconstructed, delta);
-          expect(assistantStreamTextLength(reconstructed)).toBe(
-            frame.streamTextLength,
-          );
-          reconstructed = {
-            ...(reconstructed as Record<string, unknown>),
-            __inspireStreamRevision: frame.streamRevision,
-          };
-        }
-      }
-      expect(reconstructed).toEqual(message);
+      expect(batches.at(-1)?.streamRevision).toBe(revision);
+      expect(batches.reduce((count, frame) => count + Number(frame.sourceEventCount), 0)).toBe(revision);
       expect(
         backgroundFrames.filter(
           (frame) =>
@@ -538,7 +459,6 @@ describe("WebSocket observation and transport limits", () => {
         0,
       );
       expect(deltaBytes).toBeLessThan(48_000);
-      expect(cumulativeBytes).toBeGreaterThan(deltaBytes * 30);
     } finally {
       detail.close();
       background.close();

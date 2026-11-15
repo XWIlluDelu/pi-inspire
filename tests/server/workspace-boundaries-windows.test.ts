@@ -183,6 +183,7 @@ async function preview() {
       reference: "index.html",
     },
     authority: "workspace",
+    selectedPath: join(root, "index.html"),
     path: join(root, "index.html"),
     workspaceRoot: root,
   });

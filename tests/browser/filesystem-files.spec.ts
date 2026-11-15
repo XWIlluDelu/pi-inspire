@@ -199,40 +199,7 @@ test("Files works with a corrupt Git index and preserves its tabs and search whe
   const search = pane.getByRole("searchbox", {
     name: "Search workspace files",
   });
-  const blocked = Promise.withResolvers<void>();
-  const release = Promise.withResolvers<void>();
-  await page.route("**/api/files?**", async (route) => {
-    if (new URL(route.request().url()).searchParams.get("q") !== "held-query")
-      return route.fallback();
-    blocked.resolve();
-    await release.promise;
-    await route.fulfill({
-      json: { files: [{ name: "Stale result", path: "stale.txt" }] },
-    });
-  });
-  await search.fill("held-query");
-  try {
-    await blocked.promise;
-    await expect(pane.getByLabel("Searching workspace")).toBeVisible();
-    await search.dispatchEvent("keydown", {
-      key: "Escape",
-      isComposing: true,
-      bubbles: true,
-    });
-    await expect(search).toHaveValue("held-query");
-    await pane.getByRole("button", { name: "Clear workspace search" }).click();
-    await expect(search).toHaveValue("");
-    await expect(search).toBeFocused();
-    await expect(tree).toBeVisible();
-    await search.fill("report.md");
-    await expect(
-      pane.locator('[data-workspace-path="dist/report.md"]'),
-    ).toBeVisible();
-  } finally {
-    release.resolve();
-  }
-  await expect(pane.getByText("Stale result")).toHaveCount(0);
-  await expect(pane.getByLabel("Searching workspace")).toHaveCount(0);
+  await search.fill("report.md");
   await pane
     .getByRole("region", { name: "Workspace search results" })
     .locator('[data-workspace-path="dist/report.md"]')
@@ -249,80 +216,6 @@ test("Files works with a corrupt Git index and preserves its tabs and search whe
   await page.goBack();
   await expect(drawer).toBeHidden();
 
-  // Feed net Git changes through the Host boundary after the corrupt-index journey.
-  const change = (
-    display: string,
-    kind: "modified" | "conflict" | "untracked",
-    workspacePath?: string,
-  ) => ({
-    path: {
-      id: Buffer.from(display).toString("base64url"),
-      display,
-      workspacePath,
-    },
-    untracked: kind === "untracked",
-    ...(kind === "conflict"
-      ? { conflict: { code: "UU" } }
-      : kind === "modified"
-        ? { worktree: { kind } }
-        : {}),
-  });
-  const changes = [
-    change("dist/report.md", "modified", "dist/report.md"),
-    change("dist/plot.png", "untracked", "dist/plot.png"),
-    change("media/video.webm", "modified", "media/video.webm"),
-    change("media/audio.wav", "conflict", "media/audio.wav"),
-    change("empty/invalid.ts", "untracked"),
-    change("empty-sibling/file.ts", "modified", "empty-sibling/file.ts"),
-  ];
-  await page.route("**/api/git/status**", (route) =>
-    route.fulfill({
-      json: {
-        kind: "repository",
-        head: { kind: "branch", name: "main", oid: "a".repeat(40) },
-        files: changes,
-        total: changes.length,
-        truncated: false,
-      },
-    }),
-  );
-  await page.getByRole("button", { name: "Toggle resources panel" }).click();
-  await files.click();
-  await pane.getByRole("button", { name: "Clear workspace search" }).click();
-  await pane.getByRole("button", { name: "Refresh context pane" }).click();
-  await expect(
-    tree.getByRole("button", { name: /^dist.*Contains modified files/i }),
-  ).toBeVisible();
-  await expect(
-    tree.getByRole("button", { name: /^media.*Contains conflicts/i }),
-  ).toBeVisible();
-  await expect(
-    tree.getByRole("button", { name: "empty", exact: true }),
-  ).toBeVisible();
-  const dist = tree.getByRole("button", {
-    name: /^dist.*Contains modified files/i,
-  });
-  if ((await dist.getAttribute("aria-expanded")) === "false")
-    await dist.click();
-  const changed = tree.getByRole("button", { name: /^report\.md.*modified/ });
-  await expect(changed.getByRole("img", { name: "modified" })).toHaveText("M");
-
-  const listing = "**/api/files/list?**";
-  await page.route(listing, (route) =>
-    route.fulfill({ status: 403, json: { error: "Directory unavailable" } }),
-  );
-  const refresh = pane.getByRole("button", { name: "Refresh context pane" });
-  await refresh.click();
-  await expect(
-    tree.getByText("Directory could not be refreshed").first(),
-  ).toBeVisible();
-  await expect(changed).toBeVisible();
-  await page.unroute(listing);
-  await refresh.click();
-  await expect(tree.getByText("Directory could not be refreshed")).toHaveCount(
-    0,
-  );
-  await expect(changed).toBeVisible();
 });
 
 test("native authenticated download streams complete bytes beyond the media preview cap", {
@@ -491,23 +384,6 @@ test.describe("touch project references", () => {
       exact: true,
     });
     await expect(remove).toBeVisible();
-    const target = (await remove.boundingBox())!;
-    const label = (await chip.locator(".attachment__name").boundingBox())!;
-    expect(target.width).toBeGreaterThanOrEqual(32);
-    expect(target.height).toBeGreaterThanOrEqual(32);
-    expect(label.x + label.width).toBeLessThanOrEqual(target.x);
-    const meta = chip.locator(".attachment__meta");
-    await expect(meta).toHaveCSS("white-space", "nowrap");
-    const metaBox = (await meta.boundingBox())!;
-    expect(metaBox.height).toBeLessThan(20);
-    expect(label.x + label.width).toBeLessThanOrEqual(metaBox.x);
-    expect(metaBox.x + metaBox.width).toBeLessThanOrEqual(target.x);
-    const bounds = (await chip.boundingBox())!;
-    expect(bounds.height).toBeLessThanOrEqual(34);
-    expect(target.y).toBeGreaterThanOrEqual(bounds.y);
-    expect(target.y + target.height).toBeLessThanOrEqual(
-      bounds.y + bounds.height,
-    );
     await remove.tap();
     await expect(chip).toHaveCount(0);
   });

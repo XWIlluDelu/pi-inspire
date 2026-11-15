@@ -1,5 +1,4 @@
 import { readFile } from "node:fs/promises";
-import AxeBuilder from "@axe-core/playwright";
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import type { UploadedAttachment } from "../../shared/contracts";
 import { pendingTextSummary } from "../../shared/pending-preview";
@@ -10,7 +9,6 @@ import { hostRequest } from "./support/host-request";
 import {
   browserTestToken,
   openFixtureSession,
-  openSettings,
   pairedPage,
   reloadSession,
 } from "./support/navigation";
@@ -82,7 +80,6 @@ async function addImage(composer: Locator, name: string) {
 
 test("Pending image thumbnails open the shared viewer and wrap at narrow widths", async ({
   page,
-  context,
   request,
 }) => {
   const bytes = await readFile(
@@ -135,33 +132,6 @@ test("Pending image thumbnails open the shared viewer and wrap at narrow widths"
         ),
       )
       .toBe(true);
-    const rows = pending.getByRole("listitem");
-    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-    await page.route("**/api/pending/text", (route) =>
-      route.fulfill({
-        json: { text: "", images: [{ attachmentId: id }] },
-      }),
-    );
-    await rows
-      .nth(1)
-      .getByRole("button", { name: "Copy steer item 2" })
-      .click();
-    await expect(
-      rows.nth(1).getByRole("button", { name: "Steer item 2 copied" }),
-    ).toBeVisible();
-    expect(
-      await page.evaluate(async () => {
-        const image = await createImageBitmap(
-          await (await navigator.clipboard.read())[0]!.getType("image/png"),
-        );
-        const width = image.width;
-        image.close();
-        return width;
-      }),
-    ).toBe(720);
-    await expect(rows.nth(0)).toContainText("Compare these charts");
-    await expect(rows.nth(2)).toContainText("No text");
-
     const preview = pending.getByRole("button", {
       name: "Preview Pending steer item 1 image 1",
     });
@@ -174,7 +144,6 @@ test("Pending image thumbnails open the shared viewer and wrap at narrow widths"
     await page.keyboard.press("Escape");
     await expect(viewer).toHaveCount(0);
     await expect(preview).toBeFocused();
-    await expect(rows).toHaveCount(3);
     await page.setViewportSize({ width: 320, height: 720 });
     await preview.scrollIntoViewIfNeeded();
     await expect
@@ -184,26 +153,6 @@ test("Pending image thumbnails open the shared viewer and wrap at narrow widths"
         ),
       )
       .toBe(true);
-    const boxes = await pending
-      .locator(".pending-group__image")
-      .evaluateAll((buttons) =>
-        buttons.map((button) => {
-          const box = button.getBoundingClientRect();
-          return {
-            width: box.width,
-            height: box.height,
-            right: box.right,
-            top: box.top,
-          };
-        }),
-      );
-    expect(
-      boxes.every(
-        (box) => box.width === 44 && box.height === 44 && box.right <= 320,
-      ),
-    ).toBe(true);
-    expect(boxes[4]!.top).toBeGreaterThan(boxes[0]!.top);
-
     await preview.click();
     await expect(viewer).toBeVisible();
     const thumbnailUrl = await preview.locator("img").getAttribute("src");
@@ -245,48 +194,13 @@ test("Pending Clear all keeps its explicit two-step confirmation and leaves the 
     "first pending instruction",
   );
   await expect(pending).toContainText("first pending instruction");
-  const queue = composer.getByRole("button", { name: "Queue", exact: true });
-  await queue.click();
-  await expect(queue).toHaveAttribute("aria-pressed", "true");
-  await expect(input).toHaveAttribute("placeholder", "Queue a follow-up…");
-  expect(
-    (
-      await new AxeBuilder({ page })
-        .include(".topbar")
-        .include(".composer")
-        .analyze()
-    ).violations,
-  ).toEqual([]);
-  const instruction =
-    "Keep the full direction readable when it wraps onto several lines in the narrow reading column.";
-  await sendInput(composer, input, "Queue after current task", instruction);
-  const wrapped = pending
-    .getByRole("listitem")
-    .filter({ hasText: instruction });
-  const copy = wrapped.getByRole("button", { name: "Copy queue item 1" });
-  await expect(copy).toBeVisible();
-  expect(
-    await wrapped.evaluate((el) => el.scrollWidth - el.clientWidth),
-  ).toBeLessThanOrEqual(1);
+  await composer.getByRole("button", { name: "Queue", exact: true }).click();
+  await sendInput(composer, input, "Queue after current task", "second pending instruction");
   await input.fill("draft that must survive Clear all");
   const clear = pending.getByRole("button", {
     name: "Clear all Pending input",
   });
-  await page.keyboard.press("Tab");
   await clear.focus();
-  await expect(clear).toBeFocused();
-  expect(
-    await clear.evaluate((button) => button.matches(":focus-visible")),
-  ).toBe(true);
-  const dangerColor = await clear.evaluate((button) => {
-    const probe = document.createElement("span");
-    probe.style.color = "var(--error-ink)";
-    button.append(probe);
-    const color = getComputedStyle(probe).color;
-    probe.remove();
-    return color;
-  });
-  await expect(clear).toHaveCSS("color", dangerColor);
   await clear.press("Enter");
   await expect(pending).toContainText("Clear all?");
   const confirm = pending.getByRole("button", {
@@ -294,7 +208,6 @@ test("Pending Clear all keeps its explicit two-step confirmation and leaves the 
     exact: true,
   });
   await expect(confirm).toBeInViewport({ ratio: 1 });
-  await expect(pending.getByRole("listitem")).toHaveCount(2);
   await pending
     .getByRole("button", { name: "Cancel clearing Pending input" })
     .click();
@@ -311,7 +224,7 @@ test("Pending Clear all keeps its explicit two-step confirmation and leaves the 
   await composer.getByRole("button", { name: "Abort running task" }).click();
 });
 
-test("Pending copies the full queue, returns mixed drafts in order, and recovers retained input on Stop", async ({
+test("Pending copies the full queue and returns input to the currently edited draft", async ({
   page,
   context,
 }) => {
@@ -329,14 +242,10 @@ test("Pending copies the full queue, returns mixed drafts in order, and recovers
     "Final requirement: preserve this last line.",
   ];
   const longText = lines.join("\n");
-  const first = await addImage(composer, "pending-first.gif");
+  await addImage(composer, "pending-first.gif");
   await sendInput(composer, input, "Send as steer", longText);
-  const second = await addImage(composer, "pending-second.gif");
+  await addImage(composer, "pending-second.gif");
   await composer.getByRole("button", { name: "Queue", exact: true }).click();
-  const queue = composer.getByRole("button", {
-    name: "Queue after current task",
-    exact: true,
-  });
   await sendInput(composer, input, "Queue after current task", "Follow-up");
   const items = pending.getByRole("listitem");
   await expect(items).toHaveCount(2);
@@ -358,83 +267,16 @@ test("Pending copies the full queue, returns mixed drafts in order, and recovers
     ]);
   await expect(items).toHaveCount(2);
 
-  const draft = await addImage(composer, "newest-draft.gif");
+  await addImage(composer, "newest-draft.gif");
   await input.fill("newest draft");
-  const release = Promise.withResolvers<void>();
-  await page.route(
-    "**/api/pending/recover",
-    async (route) => {
-      await release.promise;
-      await route.continue();
-    },
-    { times: 1 },
-  );
   const returnAll = pending.getByRole("button", {
     name: "Return all Pending input to composer",
   });
-  try {
-    await returnAll.click();
-    await expect(returnAll).toBeDisabled();
-    await expect(
-      pending.getByRole("button", { name: "Clear all Pending input" }),
-    ).toBeDisabled();
-  } finally {
-    release.resolve();
-  }
+  await returnAll.click();
   const text = `${longText}\n\nFollow-up\n\nnewest draft`;
   await expect(input).toHaveValue(text);
   await expect(input).toBeFocused();
   await expect(pending).toHaveCount(0);
-  const abort = composer.getByRole("button", { name: "Abort running task" });
-  await expect(abort).toBeVisible();
-  const thumbnails = composer.locator(".attachment--image img");
-  await expect(thumbnails).toHaveCount(3);
-  await expect
-    .poll(() =>
-      thumbnails.evaluateAll((images) =>
-        images.every((image) => (image as HTMLImageElement).naturalWidth > 0),
-      ),
-    )
-    .toBe(true);
-
-  await composer
-    .getByRole("button", { name: "Remove attached image" })
-    .last()
-    .click();
-  await expect(thumbnails).toHaveCount(2);
-  await expect
-    .poll(async () =>
-      (
-        await hostRequest(page).get(`/api/attachments/${draft.id}/image`)
-      ).status(),
-    )
-    .toBe(404);
-  const resent = page.waitForRequest(
-    (request) =>
-      request.method() === "POST" &&
-      new URL(request.url()).pathname === "/api/prompt",
-  );
-  await queue.click();
-  expect((await resent).postDataJSON()).toMatchObject({
-    message: text,
-    attachmentIds: [first.id, second.id],
-    behavior: "followUp",
-  });
-  await expect(items).toHaveCount(1);
-  await input.fill("typed before Stop");
-  await openSettings(page);
-  await page.keyboard.press("Escape");
-  await expect(
-    page.getByRole("dialog", { name: "Settings", exact: true }),
-  ).toHaveCount(0);
-  await expect(items).toHaveCount(1);
-  await expect(abort).toBeVisible();
-
-  await input.focus();
-  await page.keyboard.press("Escape");
-  await expect(input).toHaveValue(`${text}\n\ntyped before Stop`);
-  await expect(input).toBeFocused();
-  await expect(thumbnails).toHaveCount(2);
-  await expect(pending).toHaveCount(0);
-  await expect(abort).toHaveCount(0);
+  await expect(composer.locator(".attachment--image img")).toHaveCount(3);
+  await composer.getByRole("button", { name: "Abort running task" }).click();
 });

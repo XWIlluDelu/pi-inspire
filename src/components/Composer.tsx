@@ -3,7 +3,6 @@ import {
   memo,
   type ReactNode,
   useEffect,
-  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -27,14 +26,10 @@ import {
 } from "../model-options";
 import { hasDraftInput, useSessionDraft } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
-import { hasActiveModal } from "../use-modal-focus";
 import { ComposerHistoryDialog } from "./ComposerHistoryDialog";
 import { ComposerThinkingControl } from "./ComposerThinkingControl";
 import { MessageEditor } from "./MessageEditor";
 import { ModelSelector } from "./ModelSelector";
-
-const RING_RADIUS = 5;
-const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 
 function DeliveryNotice({
   text,
@@ -51,132 +46,25 @@ function DeliveryNotice({
   );
 }
 
-const ContextMeter = memo(function ContextMeter() {
-  const { stats, model, sessionId } = useAppState(
-    (state) => ({
-      stats: state.sessionStats,
-      model: state.model,
-      sessionId: state.sessionId,
-    }),
-    shallowEqual,
-  );
-  const usage = contextUsage(stats);
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const hintId = useId();
-  useEffect(() => setOpen(false), [sessionId]);
-  useEffect(() => {
-    if (!open) return;
-    const dismiss = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
-    };
-    const dismissKey = (event: KeyboardEvent) => {
-      if (
-        event.key !== "Escape" ||
-        event.defaultPrevented ||
-        isComposingKeyboardEvent(event) ||
-        hasActiveModal()
-      )
-        return;
-      event.preventDefault();
-      event.stopPropagation();
-      setOpen(false);
-    };
-    window.addEventListener("pointerdown", dismiss);
-    // Focused controls dismiss first; the hint precedes window-level Stop.
-    document.addEventListener("keydown", dismissKey);
-    return () => {
-      window.removeEventListener("pointerdown", dismiss);
-      document.removeEventListener("keydown", dismissKey);
-    };
-  }, [open]);
-  if (!usage) return null;
-  const percent = usage.percent;
-  const fillPercent = Math.max(0, Math.min(100, percent ?? 0));
+function ContextUsageButton() {
+  const stats = useAppState((state) => state.sessionStats);
+  const reading = contextUsage(stats);
+  if (!reading) return null;
+  const percent = reading.percent === null ? null : Math.round(reading.percent);
   const tone =
-    percent !== null && percent >= 85
-      ? "meter--error"
-      : percent !== null && percent >= 60
-        ? "meter--warning"
-        : "";
-  const tokens = `${usage.tokens?.toLocaleString() ?? "—"} / ${usage.contextWindow.toLocaleString()} tokens`;
+    percent === null ? "" : percent >= 85 ? " composer__usage--error" :
+    percent >= 60 ? " composer__usage--warning" : "";
   return (
-    <div
-      className="meter-anchor"
-      ref={rootRef}
-      onPointerEnter={(event) => {
-        if (event.pointerType !== "touch") setOpen(true);
-      }}
-      onPointerLeave={(event) => {
-        if (
-          event.pointerType !== "touch" &&
-          !rootRef.current?.contains(document.activeElement)
-        )
-          setOpen(false);
-      }}
+    <button
+      type="button"
+      className={`button button--quiet composer__usage${tone}`}
+      aria-label={`Session & usage, context ${percent === null ? "unknown" : `${percent} percent full`}`}
+      onClick={() => void store.runPaletteNativeCommand("/session")}
     >
-      <button
-        type="button"
-        className={`meter ${tone}`}
-        aria-label={`Session & usage, context ${percent === null ? "unknown" : `${Math.round(percent)} percent full`}`}
-        aria-describedby={open ? hintId : undefined}
-        onFocus={() => setOpen(true)}
-        onBlur={() => setOpen(false)}
-        onClick={() => {
-          setOpen(false);
-          void store.runPaletteNativeCommand("/session");
-        }}
-      >
-        <span
-          className="meter__reading"
-          {...(percent === null
-            ? { role: "img", "aria-label": "Context usage unknown" }
-            : {
-                role: "meter",
-                "aria-label": `Context ${Math.round(percent)} percent full`,
-                "aria-valuemin": 0,
-                "aria-valuemax": 100,
-                "aria-valuenow": Math.round(fillPercent),
-                "aria-valuetext": `${Math.round(percent)}%`,
-              })}
-        >
-          <svg className="meter__ring" viewBox="0 0 14 14" aria-hidden>
-            <circle
-              className="meter__ring-track"
-              cx="7"
-              cy="7"
-              r={RING_RADIUS}
-            />
-            {percent !== null && (
-              <circle
-                className="meter__ring-fill"
-                cx="7"
-                cy="7"
-                r={RING_RADIUS}
-                strokeDasharray={`${(fillPercent / 100) * RING_CIRCUMFERENCE} ${RING_CIRCUMFERENCE}`}
-                transform="rotate(-90 7 7)"
-              />
-            )}
-          </svg>
-          <span className="meter__value" aria-hidden>
-            <span>{percent === null ? "—" : `${Math.round(percent)}%`}</span>
-          </span>
-        </span>
-      </button>
-      {open && (
-        <div className="meter__hint" id={hintId} role="tooltip">
-          {model && (
-            <span className="meter__model">{model.name ?? model.id}</span>
-          )}
-          <span>
-            {percent === null ? tokens : `${Math.round(percent)}% · ${tokens}`}
-          </span>
-          {usage.tokens === null && <span>Updates after the next reply</span>}
-        </div>
-      )}
-    </div>
+      {percent === null ? "—" : `${percent}%`}
+    </button>
   );
-});
+}
 
 export const Composer = memo(function Composer() {
   const state = useAppState(
@@ -571,7 +459,7 @@ export const Composer = memo(function Composer() {
       }
       actions={
         <>
-          <ContextMeter />
+          <ContextUsageButton />
           {abortable ? (
             <button
               type="button"

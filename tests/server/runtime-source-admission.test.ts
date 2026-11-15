@@ -15,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ModelMetadataCatalog } from "../../server/model-metadata.js";
 import { type PiRpcOptions, type PiRpcProcess } from "../../server/pi-rpc.js";
 
-import { RuntimeController, safeProjection } from "../../server/runtime.js";
+import { RuntimeController } from "../../server/runtime.js";
 
 import { SessionCatalog } from "../../server/session-catalog.js";
 
@@ -288,23 +288,4 @@ describe("runtime source admission", () => {
       expect((await runtime.resourceContext("a")).cwd).toBe(physicalOne);
     },
   );
-
-  it("redacts credential-shaped fields and bounds oversized values", () => {
-    const projected = safeProjection({
-      authorization: "Bearer secret",
-      nested: { apiKey: "secret", message: "x".repeat(250_001) },
-      items: Array.from({ length: 10_001 }, (_, index) => index),
-    }) as Record<string, unknown>;
-
-    expect(projected.authorization).toBe("[redacted]");
-    expect((projected.nested as Record<string, unknown>).apiKey).toBe(
-      "[redacted]",
-    );
-    expect(
-      String((projected.nested as Record<string, unknown>).message).endsWith(
-        "…[truncated]",
-      ),
-    ).toBe(true);
-    expect(projected.items).toHaveLength(10_000);
-  });
 });

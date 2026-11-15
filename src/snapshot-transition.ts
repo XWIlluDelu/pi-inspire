@@ -20,10 +20,9 @@ export function deriveSnapshotTransition(
           viewId: page.viewId,
           incarnation: page.incarnation ?? null,
           revision: page.revision,
-          durableLeafId: active.durableLeafId ?? null,
           effectiveLeafId:
             page.effectiveLeafId ?? active.effectiveLeafId ?? null,
-          navigationLeased: active.navigationLeased === true,
+          restoreSavedLeafId: active.restoreSavedLeafId ?? null,
           branchRevision: active.branchRevision ?? null,
           composerHistoryVersion: page.composerHistoryVersion,
           hasOlder: page.hasOlder,

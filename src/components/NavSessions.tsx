@@ -93,7 +93,7 @@ function CurationActions({
     <span className="nav__row-actions">
       <button
         type="button"
-        className="nav__row-action"
+        className="icon-button nav__row-action"
         aria-pressed={remove ? undefined : pinned}
         aria-label={`${remove ? "Restore" : pin} ${label}`}
         title={remove ? `Move ${noun} back out of Hidden` : `${pin} ${noun}`}
@@ -110,7 +110,7 @@ function CurationActions({
       </button>
       <button
         type="button"
-        className={`nav__row-action${remove ? " nav__row-action--danger" : ""}`}
+        className={`icon-button nav__row-action${remove ? " nav__row-action--danger" : ""}`}
         aria-label={remove?.label ?? `Hide ${label}`}
         title={remove?.title ?? `Hide ${noun}`}
         disabled={remove ? remove.disabled : disabled}

@@ -1,13 +1,13 @@
 import type { GitDiffLine, GitDiffResponse } from "../shared/contracts";
 import { highlightSourceLines, languageForFile } from "./syntax-highlighting";
 
-export interface SourceDiffRow extends GitDiffLine {
+interface SourceDiffRow extends GitDiffLine {
   html: string;
   changeIndex: number | null;
   startsChange: boolean;
 }
 
-export interface SourceDiffProjection {
+interface SourceDiffProjection {
   rows: SourceDiffRow[];
   changes: number;
 }

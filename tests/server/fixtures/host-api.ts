@@ -3,9 +3,9 @@ import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
-import { vi } from "vitest";
 import { type ClientOptions, WebSocket } from "ws";
 import { createInspireServer } from "../../../server/app.js";
+import { GitInspectionService } from "../../../server/git-inspection.js";
 import {
   type HostRestartBackend,
   HostRestartController,
@@ -152,19 +152,6 @@ export async function hostApiFixture({
     services = workbench;
   }
   const { cwd, runtime, catalog, attachments } = services;
-  const git: HostDependencies["git"] = {
-    status: vi.fn(async () => ({ kind: "not-repository" as const })),
-    diff: vi.fn(async (_cwd, pathId) => ({
-      kind: "empty" as const,
-      path: {
-        id: pathId,
-        display: "file.txt",
-        utf8Path: "file.txt",
-        workspacePath: "file.txt",
-      },
-      reason: "no-changes" as const,
-    })),
-  };
   const application = createInspireServer({
     token,
     runtime,
@@ -178,7 +165,7 @@ export async function hostApiFixture({
       join(temporary, "tool-presentations.json"),
     ),
     resources,
-    git,
+    git: new GitInspectionService(),
     version: "0.1.0-test",
     piVersion,
     updateCoordinator: new UpdateCoordinator({
@@ -244,7 +231,6 @@ export async function hostApiFixture({
     resources,
     attachments,
     runtime,
-    git,
     application,
     baseUrl,
     fetchHost,

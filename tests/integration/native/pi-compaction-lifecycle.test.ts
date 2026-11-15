@@ -17,11 +17,13 @@ async function compactThenReturnToEarlierPoint(
   await f.api.json("nativeCommand", {
     body: { sessionId: f.sessionId, command: "compact" },
   });
-  const tree = (await f.api.snapshot(f.sessionId)).active!;
+  const { active: tree } = await f.api.json("snapshot", {
+    query: { detail: f.sessionId },
+  });
   await f.api.json("navigateBranch", {
     body: {
       sessionId: f.sessionId,
-      revision: tree.branchRevision!,
+      revision: tree!.branchRevision!,
       targetId: f.earlierEntryId,
       mode: "switch",
       summarize: false,

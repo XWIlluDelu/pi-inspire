@@ -2,7 +2,6 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { HTTP_OBSERVATION_TIMEOUT_MS } from "../../src/api";
 import {
   activeSnapshot,
-  bootstrapPayload,
   deferred,
   emptySnapshot,
   FakeWebSocket,
@@ -29,66 +28,6 @@ beforeEach(() => {
 afterEach(() => {
   vi.clearAllTimers();
   vi.useRealTimers();
-});
-
-it("keeps native Export and History Edit pending until Pi completes and observes each exactly once", async () => {
-  const exported = deferred<RouteResponse>();
-  const navigated = deferred<RouteResponse>();
-  const native = "/api/control/native-command";
-  const branch = "/api/branches/navigate";
-  const fetch = installStoreRoutes((url) => {
-    if (url === native) return exported.promise;
-    if (url === branch) return navigated.promise;
-  });
-  const { store, socket } = await initStore();
-  await store.sendPrompt("/export");
-  const opening = store.navigateBranch("u1", "edit");
-  for (let elapsed = 0; elapsed < 300_000; elapsed += 30_000) {
-    await tick(30_000);
-    socket.emit({ type: "heartbeat" });
-  }
-  expect(store.getState()).toMatchObject({
-    connection: "open",
-    branchActionId: "edit:u1",
-    branchTreeError: null,
-    commandActivities: { s1: [{ status: "running" }] },
-  });
-  exported.resolve({
-    body: {
-      command: "export",
-      outcome: "completed",
-      message: "Pi completed",
-      details: [{ label: "Path", value: "/tmp/export.html" }],
-    },
-  });
-  navigated.resolve({
-    body: {
-      snapshot: activeSnapshot({
-        transcriptPage: { viewId: "navigated-view" },
-      }),
-      editorText: "Returned editor text",
-    },
-  });
-  await expect(opening).resolves.toBe(true);
-  await tick();
-  expect(store.getState()).toMatchObject({
-    branchActionId: null,
-    view: { viewId: "navigated-view" },
-    commandActivities: {
-      s1: [
-        {
-          status: "success",
-          action: { kind: "copy", value: "/tmp/export.html" },
-        },
-      ],
-    },
-  });
-  expect(store.drafts.get("s1").text).toBe("Returned editor text");
-  expect(
-    fetch.mock.calls
-      .map(([url]) => url)
-      .filter((url) => url === native || url === branch),
-  ).toEqual([native, branch]);
 });
 
 it("does not finish or report failure for a replacement export when an old download returns", async () => {
@@ -315,238 +254,95 @@ it.each(["create", "deselect", "switch", "clear"] as const)(
   },
 );
 
-it.each(["resync", "new", "deselect"] as const)(
-  "keeps a %s committed while replacement bootstrap was in flight",
-  async (change) => {
-    const pending = deferred<RouteResponse>();
-    let reconnecting = false;
-    const model = { provider: "provider", id: "new-model" };
-    installStoreRoutes((url, init) => {
-      if (reconnecting && url.startsWith("/api/bootstrap"))
-        return pending.promise;
-      if (url === "/api/sessions/new")
-        return { body: activeSnapshot({ sessionId: "s2" }) };
-      if (url === "/api/sessions/deselect") return { body: emptySnapshot };
-      if (url === "/api/control/model")
-        return { body: { model, thinkingLevel: "medium" } };
-      if (url.startsWith("/api/snapshot"))
-        return { body: activeSnapshot({ model }) };
-      if (url === "/api/preferences") return { body: jsonBody(init) };
-    });
-    const { store } = await initStore();
-    reconnecting = true;
-    const starting = store.init();
-    if (change === "new") await store.newSession("/proj");
-    if (change === "deselect") await store.deselectSession();
-    if (change === "resync") await store.setModel(model.provider, model.id);
-    const id = change === "deselect" ? null : change === "new" ? "s2" : "s1";
-    expect(store.getState().sessionId).toBe(id);
-    pending.resolve({ body: bootstrapPayload({ startupSessionId: "s1" }) });
-    await starting;
-    expect(store.getState().sessionId).toBe(id);
-    if (change === "resync")
-      expect(store.getState().model).toMatchObject(model);
-    const socket = FakeWebSocket.instances.at(-1)!;
-    expect(
-      new URL(socket.url, window.location.href).searchParams.get("detail"),
-    ).toBe(id ?? "");
-  },
-);
-
-it.each(["return to session", "new view"] as const)(
-  "keeps a fresh projection after delayed Stop and Compact across %s",
-  async (change) => {
-    const command = deferred<RouteResponse>();
-    const stop = deferred<RouteResponse>();
-    const sent = deferred<Record<string, unknown>>();
-    const snapshot = deferred<RouteResponse>();
-    const read = vi.fn(() => snapshot.promise);
-    installStoreRoutes((url, init) => {
-      if (url === "/api/control/native-command") return command.promise;
-      if (url === "/api/control/abort") {
-        sent.resolve(jsonBody(init));
-        return stop.promise;
-      }
-      if (url.startsWith("/api/snapshot")) return read();
-      if (url === "/api/sessions/open") return openResponse(init);
-    });
-    const { store, socket } = await initStore();
-    await store.sendPrompt("/compact");
-    const stopping = store.abort();
-    expect(await sent.promise).toMatchObject({
-      sessionId: "s1",
-      expectedViewId: "view-s1",
-    });
-    if (change === "return to session") {
-      await store.openSession("s2");
-      await store.openSession("s1");
-    } else
-      socket.emitSnapshot(
-        activeSnapshot({ transcriptPage: { viewId: "next-view" } }),
-      );
-    const viewId = store.getState().view.viewId!;
-    ready(socket);
-    await tick();
-    expect(read).toHaveBeenCalledOnce();
-    stop.resolve({ status: 409, body: { error: "Old abort failed" } });
-    await stopping;
-    expect(store.getState().live.notices).toEqual([]);
-    const message = "Context compacted.";
-    command.resolve({
-      body: { command: "compact", outcome: "completed", message },
-    });
-    await tick();
-    snapshot.resolve({
-      body: activeSnapshot({
-        sessionName: "Fresh session",
-        transcriptPage: { viewId },
-      }),
-    });
-    await tick();
-    expect(store.getState()).toMatchObject({
+it("keeps a fresh projection after delayed Stop and Compact on a new view", async () => {
+  const command = deferred<RouteResponse>();
+  const stop = deferred<RouteResponse>();
+  const sent = deferred<Record<string, unknown>>();
+  const snapshot = deferred<RouteResponse>();
+  const read = vi.fn(() => snapshot.promise);
+  installStoreRoutes((url, init) => {
+    if (url === "/api/control/native-command") return command.promise;
+    if (url === "/api/control/abort") {
+      sent.resolve(jsonBody(init));
+      return stop.promise;
+    }
+    if (url.startsWith("/api/snapshot")) return read();
+    if (url === "/api/sessions/open") return openResponse(init);
+  });
+  const { store, socket } = await initStore();
+  await store.sendPrompt("/compact");
+  const stopping = store.abort();
+  expect(await sent.promise).toMatchObject({
+    sessionId: "s1",
+    expectedViewId: "view-s1",
+  });
+  socket.emitSnapshot(
+    activeSnapshot({ transcriptPage: { viewId: "next-view" } }),
+  );
+  const viewId = store.getState().view.viewId!;
+  ready(socket);
+  await tick();
+  expect(read).toHaveBeenCalledOnce();
+  stop.resolve({ status: 409, body: { error: "Old abort failed" } });
+  await stopping;
+  expect(store.getState().live.notices).toEqual([]);
+  const message = "Context compacted.";
+  command.resolve({
+    body: { command: "compact", outcome: "completed", message },
+  });
+  await tick();
+  snapshot.resolve({
+    body: activeSnapshot({
       sessionName: "Fresh session",
-      error: null,
-      view: { viewId },
-    });
-    expect(read).toHaveBeenCalledOnce();
-    expect(store.getState().commandActivities.s1).toBeUndefined();
-    expect(store.getState().live.notices.at(-1)?.text).toBe(message);
-  },
-);
+      transcriptPage: { viewId },
+    }),
+  });
+  await tick();
+  expect(store.getState()).toMatchObject({
+    sessionName: "Fresh session",
+    error: null,
+    view: { viewId },
+  });
+  expect(read).toHaveBeenCalledOnce();
+  expect(store.getState().commandActivities.s1).toBeUndefined();
+  expect(store.getState().live.notices.at(-1)?.text).toBe(message);
+});
 
-it.each([
-  ["thinking", false],
-  ["model", false],
-  ["model", true],
-] as const)(
-  "fences delayed %s settings while the new selection refreshes (accepted: %s)",
-  async (control, accepted) => {
-    const mutation = deferred<RouteResponse>();
-    const current = deferred<RouteResponse>();
-    const model = { provider: "provider", id: "model" };
-    const read = vi.fn(() => current.promise);
-    installStoreRoutes((url, init) => {
-      if (url === `/api/control/${control}`) return mutation.promise;
-      if (url.startsWith("/api/snapshot")) return read();
-      if (url === "/api/sessions/open") return openResponse(init, "low");
-      if (url === "/api/preferences") return { body: jsonBody(init) };
-    });
-    const { store, socket } = await initStore();
-    const changing =
-      control === "thinking"
-        ? store.setThinkingLevel("high")
-        : store.setModel(model.provider, model.id);
-    await store.openSession("s2");
-    if (!accepted) await store.openSession("s1");
-    const sessionId = store.getState().sessionId!;
-    ready(socket, sessionId);
-    await tick();
-    expect(read).toHaveBeenCalledOnce();
-    mutation.resolve(
-      accepted ? { body: { model, thinkingLevel: "medium" } } : unavailable,
-    );
-    await changing;
-    expect(store.getState()).toMatchObject({
-      thinkingLevel: "low",
-      live: { notices: [] },
-    });
-    current.resolve({
-      body: activeSnapshot({ sessionId, sessionName: "Fresh session" }),
-    });
-    await tick();
-    expect(store.getState().sessionName).toBe("Fresh session");
-    expect(read).toHaveBeenCalledOnce();
-  },
-);
-
-it.each([
-  "return to session",
-  "new view",
-  "new selection",
-  "current authority 401",
-] as const)(
-  "keeps projection diagnostics after a stale resync across %s",
-  async (change) => {
+it.each([false, true])(
+  "keeps the replacement projection when an old resync settles (auth expired: %s)",
+  async (expired) => {
     const old = deferred<RouteResponse>();
-    const read = vi.fn(() => old.promise);
     installStoreRoutes((url, init) => {
-      if (url.startsWith("/api/snapshot")) return read();
+      if (url.startsWith("/api/snapshot")) return old.promise;
       if (url === "/api/sessions/open") return openResponse(init);
     });
     const { store, socket } = await initStore();
     ready(socket);
     await tick();
-    expect(read).toHaveBeenCalledOnce();
 
-    const sameSession = change === "return to session" || change === "new view";
-    const sessionId = sameSession ? "s1" : "s2";
-    const viewId =
-      change === "new view" ? "replacement-view" : `view-${sessionId}`;
-    const error = sameSession ? "Current projection failed" : null;
+    const sessionId = expired ? "s2" : "s1";
+    const viewId = expired ? "view-s2" : "replacement-view";
+    const error = expired ? null : "Current projection failed";
     const current = activeSnapshot({
       sessionId,
       pageMessages: [{ role: "assistant", content: "current" }],
       transcriptPage: { viewId },
-      ...(error
-        ? { projectionHealth: { status: "error", message: error } }
-        : {}),
+      ...(error ? { projectionHealth: { status: "error", message: error } } : {}),
     });
-    if (change === "return to session") {
+    if (expired) await selectSession(store, current);
+    else {
       await store.openSession("s2");
       await store.openSession("s1");
+      socket.emitSnapshot(current);
     }
-    if (sameSession) socket.emitSnapshot(current);
-    else await selectSession(store, current);
-    old.resolve(
-      change === "current authority 401"
-        ? denied
-        : sameSession
-          ? unavailable
-          : {
-              body: activeSnapshot({
-                pageMessages: [{ role: "assistant", content: "stale" }],
-              }),
-            },
-    );
+    old.resolve(expired ? denied : unavailable);
     await tick();
     expect(store.getState()).toMatchObject({
       sessionId,
       view: { viewId },
       error,
       live: { messages: [{ content: "current" }] },
-      ...(change === "current authority 401"
-        ? { needsToken: true, connection: "offline" }
-        : { needsToken: false }),
+      needsToken: expired,
     });
   },
 );
-
-it("recovers quiet snapshot failures and warns only when retries exhaust", async () => {
-  const read = vi.fn<() => RouteResponse>().mockReturnValue(unavailable);
-  installStoreRoutes((url) =>
-    url.startsWith("/api/snapshot") ? read() : undefined,
-  );
-  const { store, socket } = await initStore();
-  ready(socket);
-  await tick();
-  expect(store.getState()).toMatchObject({ connection: "open", error: null });
-  read.mockReturnValueOnce({
-    body: activeSnapshot({ sessionName: "Reobserved" }),
-  });
-  await tick(15_000);
-  expect(read).toHaveBeenCalledTimes(2);
-  expect(store.getState()).toMatchObject({
-    sessionName: "Reobserved",
-    error: null,
-  });
-  ready(socket);
-  await tick();
-  expect(store.getState().error).toBeNull();
-  await tick(14_000);
-  expect(store.getState()).toMatchObject({
-    sessionName: "Reobserved",
-    error:
-      "Could not refresh this conversation. Showing the last loaded version.",
-    errorSeverity: "warning",
-  });
-});

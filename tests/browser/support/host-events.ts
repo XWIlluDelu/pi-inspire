@@ -85,6 +85,29 @@ export async function routeSnapshots(
   };
 }
 
+export async function startEventSession(
+  page: Page,
+  name: string,
+  transport: Awaited<ReturnType<typeof routeSnapshots>>,
+  onCreated?: (sessionId: string) => void,
+) {
+  await pairedPage(page);
+  const created = await hostRequest(page).post("/api/sessions/new", {
+    data: { cwd: browserWorkspace, name },
+  });
+  expect(created.ok()).toBe(true);
+  const createdSnapshot: ActiveSnapshot = await created.json();
+  const createdSessionId = createdSnapshot.active!.sessionId;
+  onCreated?.(createdSessionId);
+  await transport.reload(createdSessionId, () =>
+    reloadSession(page, createdSessionId),
+  );
+  await expect(
+    page.getByRole("button", { name: /^Session actions:/ }),
+  ).toHaveText(name);
+  return createdSessionId;
+}
+
 // Tool/custom-message presentations both need an empty owned session and a
 // synchronized live event stream, not the Host selection left by another test.
 export async function openEventSession(
@@ -102,19 +125,7 @@ export async function openEventSession(
         body.presentationAdapters = presentationAdapters;
     },
   });
-  await pairedPage(page);
-  const created = await hostRequest(page).post("/api/sessions/new", {
-    data: { cwd: browserWorkspace, name },
-  });
-  expect(created.ok()).toBe(true);
-  const createdSnapshot: ActiveSnapshot = await created.json();
-  const createdSessionId = createdSnapshot.active!.sessionId;
-  await transport.reload(createdSessionId, () =>
-    reloadSession(page, createdSessionId),
-  );
-  await expect(
-    page.getByRole("button", { name: /^Session actions:/ }),
-  ).toHaveText(name);
+  const createdSessionId = await startEventSession(page, name, transport);
   let status: SessionRuntimeStatus = { runState: "idle" };
   return (...events: Record<string, unknown>[]) => {
     for (const event of events) {

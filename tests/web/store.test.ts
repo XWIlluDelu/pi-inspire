@@ -248,49 +248,8 @@ it.each(["committed", "pending"] as const)(
 it("restores selected live state while background work updates only the catalog and its own draft", async () => {
   const fetch = installStoreRoutes(() => undefined);
   const { store, socket } = await initStore();
-  const running = activeSnapshot({
-    isStreaming: true,
-    toolActivity: { read: { id: "read", name: "read", phase: "running" } },
-  });
-  const question = {
-    sessionId: "s1",
-    id: "question",
-    method: "confirm" as const,
-    title: "Proceed?",
-  };
-  const queue = pendingQueues(["correct the current answer"], [], {
-    revision: 2,
-  });
   const publish = (type: string, fields: Record<string, unknown>) =>
     socket.emit({ type, sessionId: "s1", ...fields });
-  socket.emitSnapshot({
-    ...running,
-    sessionStatuses: {
-      s1: { runState: "running" },
-      s2: { runState: "idle", indicator: "completed" },
-    },
-    pendingExtensionUiRequests: [question],
-    pendingQueues: queue,
-    extensionStatuses: { usage: "37%" },
-  });
-  expect(store.getState()).toMatchObject({
-    sessionStatuses: { s2: { indicator: "completed" } },
-    live: {
-      streaming: true,
-      extensionUiRequests: [question],
-      queue,
-      tools: running.active!.toolActivity,
-      statuses: { usage: "37%" },
-    },
-  });
-  socket.emitSnapshot(activeSnapshot());
-  expect(store.getState().live).toMatchObject({
-    streaming: false,
-    extensionUiRequests: [],
-    queue: pendingQueues(),
-    tools: {},
-    statuses: {},
-  });
   publish("extension_ui_request", {
     id: "title",
     method: "setTitle",

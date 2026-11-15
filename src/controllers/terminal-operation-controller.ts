@@ -1,4 +1,4 @@
-import { matchOperationReceipt } from "../../shared/host-operations";
+import type { MatchedReceipt } from "../../shared/host-operations";
 import {
   TERMINAL_OPERATIONS_PATH,
   type TerminalIntent,
@@ -9,7 +9,8 @@ import {
   terminalOperationSchema,
   terminalReceiptIdentity,
 } from "../../shared/terminal-operations";
-import { authenticatedFetch } from "../browser-auth";
+import { ApiError, ApiTransportError, request } from "../http-request";
+import { ReceiptRead } from "../operation-observer";
 import { receiptStorage } from "../receipt-storage";
 
 const STORAGE_KEY = "inspire:terminal-operations:v2";
@@ -21,7 +22,7 @@ type RecoveryOutcome = "unknown" | "completed" | "rejected";
 interface TrackedOperation {
   operation?: TerminalOperation;
   outcome?: RecoveryOutcome;
-  task?: Promise<unknown>;
+  observation: ReceiptRead<string, unknown>;
 }
 
 function intentKey(intent: TerminalIntent): string {
@@ -115,7 +116,7 @@ export class TerminalOperationController {
     this.operations = new Map(
       saved.value.map((operation) => [
         intentKey(operation.intent),
-        { operation, outcome: "unknown" },
+        { operation, outcome: "unknown", observation: new ReceiptRead<string, unknown>() },
       ]),
     );
     this.recoveryState =
@@ -142,8 +143,10 @@ export class TerminalOperationController {
 
   private dispatch<T>(intent: TerminalIntent): Promise<T> {
     const key = intentKey(intent);
-    const tracked = this.operations.get(key) ?? {};
-    if (tracked.task) return tracked.task as Promise<T>;
+    const tracked = this.operations.get(key) ?? {
+      observation: new ReceiptRead<string, unknown>(),
+    };
+    if (tracked.observation.task) return tracked.observation.task as Promise<T>;
     if (!tracked.operation && this.operations.size >= MAX_PENDING)
       return Promise.reject(
         new Error(
@@ -154,23 +157,23 @@ export class TerminalOperationController {
     // Retire its stored recovery record before admitting that new intent.
     if (tracked.outcome && tracked.outcome !== "unknown")
       this.removeOperation(tracked);
-    const task = Promise.resolve()
-      .then(() => this.deliver<T>(tracked, intent))
-      .finally(() => {
-        delete tracked.task;
+    const task = tracked.observation.observe(
+      key,
+      () => Promise.resolve().then(() => this.deliver<T>(tracked, intent)),
+      () => {
         if (!tracked.operation) this.operations.delete(key);
         this.publish();
-      });
-    tracked.task = task;
+      },
+    );
     this.operations.set(key, tracked);
     this.publish();
-    return task;
+    return task as Promise<T>;
   }
 
   async retry(key: string): Promise<unknown> {
     this.restore();
     const tracked = this.operations.get(key);
-    if (tracked?.task) return tracked.task;
+    if (tracked?.observation.task) return tracked.observation.task;
     if (tracked?.outcome === "unknown")
       return this.dispatch(tracked.operation!.intent);
     if (tracked?.operation) this.stopTracking(key);
@@ -186,7 +189,7 @@ export class TerminalOperationController {
       return;
     }
     const tracked = this.operations.get(key);
-    if (tracked?.task)
+    if (tracked?.observation.pending)
       throw new Error(
         "Wait for the current terminal operation check to finish.",
       );
@@ -208,24 +211,18 @@ export class TerminalOperationController {
   ): Promise<T> {
     const previous = tracked.operation;
     if (!previous) {
-      const response = await authenticatedFetch(
+      const { epoch } = await request<{ epoch?: unknown }>(
         TERMINAL_OPERATIONS_PATH,
-        {
-          signal: AbortSignal.timeout(10_000),
-        },
+        {},
+        { timeoutMs: 10_000 },
         this.transport,
-      );
-      if (!response.ok) {
-        const problem = (await response.json().catch(() => null)) as {
-          error?: unknown;
-        } | null;
-        const reason =
-          typeof problem?.error === "string"
-            ? problem.error.slice(0, 1000)
-            : "Terminal operation receipts are unavailable.";
+      ).catch((error: unknown) => {
+        if (!(error instanceof ApiError)) throw error;
+        const reason = error.message === `Request failed (${error.status})`
+          ? "Terminal operation receipts are unavailable."
+          : error.message.slice(0, 1000);
         throw new Error(`${reason} No terminal control was sent.`);
-      }
-      const { epoch } = (await response.json()) as { epoch?: unknown };
+      });
       const identity = terminalOperationIdentitySchema.safeParse({
         executor: { kind: "terminal", epoch },
         operationId: crypto.randomUUID(),
@@ -244,53 +241,38 @@ export class TerminalOperationController {
     }
     tracked.outcome = "unknown";
     const operation = tracked.operation!;
-    try {
-      const response = await authenticatedFetch(
-        previous
-          ? `${TERMINAL_OPERATIONS_PATH}?observe=1`
-          : TERMINAL_OPERATIONS_PATH,
-        {
-          method: "POST",
-          body: JSON.stringify(operation),
-          headers: { "Content-Type": "application/json" },
-          signal: AbortSignal.timeout(20_000),
-        },
-        this.transport,
-      );
-      const receipt = matchOperationReceipt(
-        await response.json(),
-        terminalReceiptIdentity(operation),
-      );
+    const identity = terminalReceiptIdentity(operation);
+    const path = previous
+      ? `${TERMINAL_OPERATIONS_PATH}?observe=1`
+      : TERMINAL_OPERATIONS_PATH;
+    const unknown = (detail: string) =>
+      new Error(`Terminal operation outcome is unknown. ${detail}`);
+    const receipt = await request<MatchedReceipt>(
+      path,
+      { method: "POST", body: JSON.stringify(operation) },
+      { timeoutMs: 20_000, matchReceipt: identity },
+      this.transport,
+    ).catch((error: unknown) => {
       const message =
-        receipt?.state === "rejected" || receipt?.state === "unknown"
+        error instanceof ApiTransportError && error.phase === "response"
+          ? "The terminal operation response was not confirmed."
+          : error instanceof Error ? error.message : "";
+      throw unknown(message);
+    });
+    if (receipt.state !== "completed" && receipt.state !== "rejected")
+      throw unknown(
+        receipt.state === "unknown"
           ? receipt.error.message
-          : undefined;
-      const completed = receipt?.state === "completed" && response.ok;
-      const rejected =
-        receipt?.state === "rejected" &&
-        !response.ok &&
-        receipt.error.status === response.status &&
-        Boolean(message);
-      if (completed || rejected) {
-        try {
-          this.removeOperation(tracked);
-        } catch {
-          // Local bookkeeping failure cannot undo the daemon's confirmed result.
-          // Keep the identity for cleanup without reporting an unknown operation.
-          tracked.outcome = completed ? "completed" : "rejected";
-        }
-        if (completed) return receipt.result as T;
-        throw new TerminalDefiniteRefusal(message);
-      }
-      throw new Error(
-        message ?? "The terminal operation response was not confirmed.",
+          : "The terminal operation response was not confirmed.",
       );
-    } catch (error) {
-      if (error instanceof TerminalDefiniteRefusal) throw error;
-      throw new Error(
-        `Terminal operation outcome is unknown. ${error instanceof Error ? error.message : ""}`,
-      );
+    try {
+      this.removeOperation(tracked);
+    } catch {
+      // Keep the confirmed terminal outcome available for local cleanup.
+      tracked.outcome = receipt.state;
     }
+    if (receipt.state === "rejected") throw new Error(receipt.error.message);
+    return receipt.result as T;
   }
 
   private persist(retiring?: TrackedOperation): void {
@@ -314,12 +296,12 @@ export class TerminalOperationController {
             },
           ]
         : [];
-    for (const [key, { operation, outcome, task }] of this.operations) {
+    for (const [key, { operation, outcome, observation }] of this.operations) {
       if (!operation || !outcome) continue;
       rows.push({
         key,
         label: operationLabel(operation.intent),
-        busy: Boolean(task),
+        busy: observation.pending,
         outcome,
         canRetry: true,
       });
@@ -329,5 +311,4 @@ export class TerminalOperationController {
   }
 }
 
-class TerminalDefiniteRefusal extends Error {}
 export const terminalOperations = new TerminalOperationController();

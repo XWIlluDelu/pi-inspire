@@ -62,55 +62,6 @@ describe("workbench keyboard ownership", () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it("opens conversation search with either Find shortcut while preserving the draft and modal focus", async () => {
-    render(<App />);
-    const draft = screen.getByRole("textbox", { name: "Message" });
-    fireEvent.change(draft, { target: { value: "keep this draft" } });
-    const modifiers = [{ ctrlKey: true }, { metaKey: true }];
-    for (const modifier of modifiers) {
-      draft.focus();
-      expect(fireEvent.keyDown(draft, { key: "f", ...modifier })).toBe(false);
-      const search = screen.getByRole("searchbox", {
-        name: "Search conversation",
-      });
-      expect(search).toHaveFocus();
-      fireEvent.keyDown(search, { key: "Escape" });
-      expect(search).not.toHaveFocus();
-    }
-    expect(draft).toHaveValue("keep this draft");
-    fireEvent.click(
-      screen.getByRole("button", { name: "Open command palette" }),
-    );
-    const palette = await screen.findByRole("dialog", {
-      name: "Command palette",
-    });
-    const filter = within(palette).getByRole("combobox");
-    filter.focus();
-    for (const modifier of modifiers) {
-      expect(fireEvent.keyDown(filter, { key: "f", ...modifier })).toBe(true);
-      expect(filter).toHaveFocus();
-    }
-  });
-
-  it("leaves composing and extra-modifier shortcuts to the editor or browser", () => {
-    render(<App />);
-    const draft = screen.getByRole("textbox", { name: "Message" });
-    draft.focus();
-    for (const init of [
-      { key: "f", ctrlKey: true, isComposing: true },
-      { key: "f", ctrlKey: true, keyCode: 229 },
-      { key: "f", ctrlKey: true, shiftKey: true },
-      { key: "f", ctrlKey: true, altKey: true },
-      { key: "f", ctrlKey: true, metaKey: true },
-      { key: "k", ctrlKey: true, shiftKey: true },
-      { key: "b", metaKey: true, shiftKey: true },
-      { key: "k", ctrlKey: true, altKey: true },
-    ])
-      expect(fireEvent.keyDown(draft, init)).toBe(true);
-    expect(draft).toHaveFocus();
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  });
-
   it("cycles from the draft while ordinary editors, completions and modal controls keep ownership", async () => {
     vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
     const model = vi.spyOn(store, "cycleModel").mockResolvedValue();

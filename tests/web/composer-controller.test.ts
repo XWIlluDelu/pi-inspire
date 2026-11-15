@@ -1,3 +1,4 @@
+import { MAX_ATTACHMENTS } from "../../shared/contracts";
 import { afterEach, expect, it, vi } from "vitest";
 import type {
   PromptAcceptedResponse,
@@ -25,7 +26,6 @@ const nextAuthority = "22222222-2222-4222-8222-222222222222";
 const ledger = `inspire:composer-operations:v1:${owner}`;
 const accepted = {
   accepted: true,
-  historyEntry: null,
 } satisfies PromptAcceptedResponse;
 const file = (name: string) => new File([name], name);
 
@@ -120,7 +120,7 @@ function fixture(receipts = false) {
 
 afterEach(() => vi.useRealTimers());
 
-it("applies repeated recovery only to new image handles from that handoff", () => {
+it("applies repeated recovery only to new image handles and fences over-limit sends", async () => {
   const f = fixture();
   const apply = (recovery: string, ...ids: string[]) =>
     f.controller.restoreStagedAttachments(
@@ -135,6 +135,9 @@ it("applies repeated recovery only to new image handles from that handoff", () =
   expect(f.handles()).toEqual(["second"]);
   apply("next", "first");
   expect(f.handles()).toEqual(["first", "second"]);
+  apply("overflow", ...Array.from({ length: MAX_ATTACHMENTS }, (_, index) => `more-${index}`));
+  await expect(f.send("Recover these attachments")).resolves.toBe(false);
+  expect(f.prompt).not.toHaveBeenCalled();
 });
 
 it.each([true, false])(

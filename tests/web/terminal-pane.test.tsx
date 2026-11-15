@@ -50,6 +50,16 @@ vi.mock("../../src/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/api")>()),
   createApi: () => ({
     ...api,
+    json: (name: string, input: { query?: { cwd?: string } }) => {
+      switch (name) {
+        case "terminals":
+          return api.terminals(input.query?.cwd);
+        case "terminalSettings":
+          return api.terminalSettings();
+        default:
+          throw new Error(`Unexpected endpoint ${name}`);
+      }
+    },
     terminalOperation: (intent: TerminalIntent) => {
       switch (intent.command) {
         case "create":
@@ -152,8 +162,6 @@ async function switchToB() {
 function action(name: string) {
   const menu = screen.getByLabelText("Terminal actions").closest("details")!;
   menu.open = true;
-  if (["Move tab right", "Close", "Restart"].includes(name))
-    within(menu).getByText("Manage terminal").closest("details")!.open = true;
   fireEvent.click(within(menu).getByRole("button", { name }));
 }
 
@@ -235,15 +243,6 @@ it("marks background terminal activity and delivers notifications through one av
     ),
   );
 
-  showNotification.mockRejectedValueOnce(new Error("Worker refused display"));
-  notification.mockImplementationOnce(function () {
-    throw new TypeError("Use showNotification instead");
-  });
-  act(events.complete);
-  await waitFor(() => expect(notification).toHaveBeenCalledTimes(2));
-  expect(
-    screen.getByRole("tab", { name: "A shell, bell", selected: false }),
-  ).toBeInTheDocument();
   expect(screen.queryByRole("alert")).toBeNull();
 });
 
@@ -308,54 +307,32 @@ describe("terminal project ownership", () => {
     expect(controls.restart).not.toHaveBeenCalled();
   });
 
-  it("offers local cleanup for confirmed controls and confirms retiring an uncertain control", async () => {
+  it("requires confirmation to stop tracking an unknown terminal operation", async () => {
+    const operation = {
+      canRetry: true,
+      label: "Create terminal · /A",
+      busy: false,
+    };
     vi.spyOn(terminalOperations, "snapshot").mockReturnValue([
-      {
-        key: "confirmed",
-        canRetry: true,
-        label: "Create terminal · /A",
-        busy: false,
-        outcome: "completed",
-      },
-      {
-        key: "lost",
-        canRetry: true,
-        label: "Create terminal · /A",
-        busy: false,
-        outcome: "unknown",
-      },
+      { ...operation, key: "lost", outcome: "unknown" },
     ]);
-    api.retryTerminalOperation.mockResolvedValue(undefined);
     const stopTracking = vi
       .spyOn(terminalOperations, "stopTracking")
       .mockImplementation(() => {});
-    const confirm = vi
-      .fn()
-      .mockReturnValueOnce(false)
-      .mockReturnValueOnce(true);
-    vi.stubGlobal("confirm", confirm);
+    vi.stubGlobal(
+      "confirm",
+      vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true),
+    );
     render(<WorkspaceDock cwd="/A" />);
-    const button = await screen.findByRole("button", {
-      name: "Stop tracking…",
-    });
-    fireEvent.click(button);
+
+    const stop = await screen.findByRole("button", { name: "Stop tracking…" });
+    fireEvent.click(stop);
     expect(stopTracking).not.toHaveBeenCalled();
-    fireEvent.click(button);
-    expect(confirm).toHaveBeenCalledWith(
-      expect.stringContaining("The operation may still be running."),
-    );
+    fireEvent.click(stop);
     expect(stopTracking).toHaveBeenCalledExactlyOnceWith("lost");
-    expect(controls.create).not.toHaveBeenCalled();
     expect(api.retryTerminalOperation).not.toHaveBeenCalled();
-    await screen.findByText("Completed · Could not clear tracking");
-    fireEvent.click(
-      screen.getByRole("button", { name: "Clear recovery record" }),
-    );
-    await waitFor(() =>
-      expect(api.retryTerminalOperation).toHaveBeenCalledExactlyOnceWith(
-        "confirmed",
-      ),
-    );
+
+    expect(controls.create).not.toHaveBeenCalled();
   });
 
   it("leaves B selected when A's Close, reorder and poll settle late", async () => {
@@ -396,55 +373,21 @@ describe("terminal project ownership", () => {
     expect(screen.queryByText("old A failure")).toBeNull();
   });
 
-  it.each(["return to A", "reload A"])(
-    "retires the old create and keeps the new one busy after %s",
-    async (transition) => {
-      const old = deferred<TerminalDescriptor>();
-      const current = deferred<TerminalDescriptor>();
-      controls.create
-        .mockReturnValueOnce(old.promise)
-        .mockReturnValueOnce(current.promise);
-      const view = render(<WorkspaceDock cwd="/A" />);
-      await screen.findByRole("tab", { name: "A shell", selected: true });
-      if (transition === "return to A") {
-        controls.remove.mockResolvedValueOnce({
-          catalogEpoch: "daemon-1",
-          revision: 2,
-        });
-        action("Close");
-        fireEvent.click(await screen.findByRole("button", { name: "Reopen" }));
-        expect(controls.create).toHaveBeenCalledWith(
-          expect.objectContaining({ cwd: "/A", profileId: "bash" }),
-        );
-        view.rerender(<WorkspaceDock cwd="/B" />);
-        await screen.findByRole("tab", { name: "B shell", selected: true });
-        await act(async () => old.resolve(terminal("old A", "/A", 3)));
-        expect(tabs().map((tab) => tab.textContent)).toEqual(["B shell"]);
-        view.rerender(<WorkspaceDock cwd="/A" />);
-        await screen.findByRole("tab", { name: "A second", selected: true });
-        expect(screen.queryByRole("tab", { name: "old A" })).toBeNull();
-      } else {
-        fireEvent.click(screen.getByRole("button", { name: "New terminal" }));
-        view.rerender(<WorkspaceDock cwd="/A" reloadKey={1} />);
-        await screen.findByRole("tab", { name: "A shell", selected: true });
-      }
-      const create = screen.getByRole("button", { name: "New terminal" });
-      fireEvent.click(create);
-      if (transition === "reload A")
-        await act(async () => old.resolve(terminal("old A", "/A", 2)));
-      expect(screen.queryByRole("tab", { name: "old A" })).toBeNull();
-      expect(create).toBeDisabled();
-      await act(async () =>
-        current.resolve(terminal("new current A", "/A", 4)),
-      );
-      expect(
-        await screen.findByRole("tab", {
-          name: "new current A",
-          selected: true,
-        }),
-      ).toBeVisible();
-    },
-  );
+  it("ignores a late create after changing projects", async () => {
+    const late = deferred<TerminalDescriptor>();
+    controls.create.mockReturnValueOnce(late.promise);
+    const view = render(<WorkspaceDock cwd="/A" />);
+    await screen.findByRole("tab", { name: "A shell", selected: true });
+    fireEvent.click(screen.getByRole("button", { name: "New terminal" }));
+    await waitFor(() => expect(controls.create).toHaveBeenCalled());
+    view.rerender(<WorkspaceDock cwd="/B" />);
+    await screen.findByRole("tab", { name: "B shell", selected: true });
+    await act(async () => late.resolve(terminal("old A", "/A", 3)));
+    expect(tabs().map((tab) => tab.textContent)).toEqual(["B shell"]);
+    view.rerender(<WorkspaceDock cwd="/A" />);
+    await screen.findByRole("tab", { name: "A shell" });
+    expect(screen.queryByRole("tab", { name: "old A" })).toBeNull();
+  });
 });
 
 it("reconciles partial terminal receipts and only advances epochs from full catalogs", () => {

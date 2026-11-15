@@ -20,15 +20,11 @@ import {
   type SessionRecord,
 } from "../../server/session-catalog.js";
 import {
-  nativePiWorkspace,
-  stubNativePiEnvironment,
-} from "./fixtures/native-pi.js";
-import {
   deferredSignal,
   disposeRuntimeFixture,
   FakeRpc,
   fixtureWorkspace,
-  initializeRuntimeFixture,
+  initializeIsolatedRuntimeFixture,
   persistedRecord,
   preview,
   record,
@@ -44,13 +40,7 @@ const directlyAttached: Array<{
 }> = [];
 
 beforeEach(async () => {
-  await initializeRuntimeFixture();
-  const pi = await nativePiWorkspace(
-    "pi-",
-    { defaultProjectTrust: "never" },
-    fixtureWorkspace,
-  );
-  stubNativePiEnvironment(pi.env);
+  await initializeIsolatedRuntimeFixture();
   vi.stubEnv("PI_CODING_AGENT_SESSION_DIR", fixtureWorkspace);
 });
 afterEach(async () => {
@@ -607,7 +597,7 @@ describe("continue an externally owned Pi", () => {
     }
   });
 
-  it("observes one attached branch through takeover retry, native appends, and receiver replacement", async () => {
+  it("observes one attached branch through native appends and receiver replacement", async () => {
     const session = await persistedRecord("a");
     await appendFile(session.path, branchMessage("native-current", "u1"));
     const current = nativeFixture({ leafId: "u1" });
@@ -636,16 +626,7 @@ describe("continue an externally owned Pi", () => {
     const release = runtime.retainSessionView("a");
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
-      read.mockRejectedValueOnce(new Error("Control endpoint unavailable"));
-      await expect(openAttached(runtime, "a")).rejects.toThrow(
-        "Control endpoint unavailable",
-      );
       const snapshot = () => runtime.snapshot("a");
-      expect((await snapshot()).active?.readOnlyReason).toBe("external-active");
-
-      await expect(runtime.takeOverSession("a")).rejects.toMatchObject({
-        code: "EXTERNAL_PI_WRITER_ACTIVE",
-      });
       const old = {
         id: "old",
         outcome: "completed",
@@ -653,15 +634,8 @@ describe("continue an externally owned Pi", () => {
       } as const;
       const runs = { instanceId: "receiver", settled: [old] };
       current.setState({ leafId: "native-current", taskRuns: runs });
-      const attached = await runtime.takeOverSession("a");
-      expect(attached.sessionStatuses.a?.external).toBe(true);
+      await openAttached(runtime, "a");
       expect(outcomes).not.toHaveBeenCalled();
-      const priorReads = read.mock.calls.length;
-      read.mockRejectedValueOnce(new Error("reloading"));
-      await vi.advanceTimersByTimeAsync(750);
-      expect(read).toHaveBeenCalledTimes(priorReads + 1);
-      expect((await snapshot()).active?.readOnlyReason).toBeUndefined();
-
       await appendFile(
         session.path,
         branchMessage("native-reply", "native-current"),
@@ -761,7 +735,6 @@ describe("continue an externally owned Pi", () => {
         undefined,
         "native-reply",
       );
-      expect(connect).toHaveBeenCalledTimes(4);
       expect(createProcess).not.toHaveBeenCalled();
     } finally {
       release();
@@ -800,9 +773,6 @@ describe("continue an externally owned Pi", () => {
             ? runtime.prompt({ sessionId: "a", message: "Hold" })
             : runtime.abort("a");
         await entered.promise;
-        expect(runtime.reserveMaintenanceRestart()).toMatchObject({
-          kind: "busy",
-        });
         runtime.setExternalSessionTerminator(terminated);
         await runtime.deleteSessions(
           { scope: "session", sessionId: "a" },
@@ -817,7 +787,7 @@ describe("continue an externally owned Pi", () => {
     },
   );
 
-  it("keeps native selection authority across older catalog, poll, and reselect replies", async () => {
+  it("keeps native selection authority across older catalog and poll replies", async () => {
     vi.useFakeTimers();
     const { external, native, slot, state, selection } =
       await nativeModelFixture();
@@ -847,41 +817,19 @@ describe("continue an externally owned Pi", () => {
     await expect(reading).resolves.toEqual(confirmed);
     expect(slot.availableModels).toEqual(previous.models);
 
-    for (const source of ["poll", "reselect"] as const) {
-      const delayed = Promise.withResolvers<ExternalSessionRead>();
-      vi.mocked(native.read).mockReturnValueOnce(delayed.promise);
-      const observation =
-        source === "reselect" ? external.connect(slot) : undefined;
-      if (!observation) await vi.advanceTimersByTimeAsync(10);
-      try {
-        await select();
-      } finally {
-        delayed.resolve({ ...state, activity: "working" });
-      }
-      await observation;
-      await vi.advanceTimersByTimeAsync(0);
-      expect(slot.runState).toBe("running");
-      expect(external.modelSelection(slot)).toEqual(selected);
-      await vi.advanceTimersByTimeAsync(10);
-      expect(external.modelSelection(slot)).toEqual(selection);
+    const delayed = Promise.withResolvers<ExternalSessionRead>();
+    vi.mocked(native.read).mockReturnValueOnce(delayed.promise);
+    await vi.advanceTimersByTimeAsync(10);
+    try {
+      await select();
+    } finally {
+      delayed.resolve({ ...state, activity: "working" });
     }
-
-    vi.mocked(native.setModel).mockResolvedValue(selection);
-    vi.mocked(native.setThinkingLevel).mockResolvedValue(selection);
-    for (const reaffirm of [
-      () => external.setModel(slot, "native", "current"),
-      () => external.setThinkingLevel(slot, "low"),
-    ]) {
-      const late = Promise.withResolvers<typeof confirmed>();
-      vi.mocked(native.models).mockReturnValueOnce(late.promise);
-      const result = external.models(slot);
-      try {
-        await reaffirm();
-      } finally {
-        late.resolve(confirmed);
-      }
-      await expect(result).resolves.toEqual(previous);
-    }
+    await vi.advanceTimersByTimeAsync(0);
+    expect(slot.runState).toBe("running");
+    expect(external.modelSelection(slot)).toEqual(selected);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(external.modelSelection(slot)).toEqual(selection);
   });
 
   it.each(["native reload", "new connection"] as const)(

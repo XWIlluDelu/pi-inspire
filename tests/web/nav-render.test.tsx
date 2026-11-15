@@ -1,9 +1,6 @@
 // @vitest-environment jsdom
 import { act, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import type { SessionRuntimeStatus } from "../../shared/contracts";
-import { createInitialAppState } from "../../src/app-state";
-import { Nav } from "../../src/components/Nav";
 import { ProjectGroup, SessionRow } from "../../src/components/NavSessions";
 import {
   buildSessionCatalog,
@@ -13,7 +10,6 @@ import {
 } from "../../src/components/nav-model";
 import { compactAge } from "../../src/format";
 import { needsYouRows } from "../../src/needs-you";
-import { store } from "../../src/store";
 import { sessionSummary } from "./helpers";
 
 const alpha = sessionSummary({
@@ -23,13 +19,6 @@ const alpha = sessionSummary({
   project: "alpha",
   modified: "2026-07-20T10:00:00Z",
 });
-const navProps = {
-  collapsed: false,
-  onToggleNavigation: () => {},
-  onNewSession: () => {},
-  onSelectSession: () => {},
-};
-
 it("updates a mounted row's relative age without a session update", () => {
   vi.useFakeTimers();
   try {
@@ -81,66 +70,6 @@ describe("session navigation search captions", () => {
       );
     },
   );
-
-  it("keeps matched parent context in cross-project session captions only during search", () => {
-    const props = {
-      session: alpha,
-      selectedSessionId: null,
-      showProject: true,
-      onSelect: vi.fn(),
-    };
-    const { container, rerender } = render(
-      <SessionRow {...props} searchQuery="work" />,
-    );
-    expect(container.querySelector(".nav__row-project")).toHaveTextContent(
-      "work/alpha",
-    );
-    expect(
-      container.querySelector(".nav__row-project .search-match"),
-    ).toHaveTextContent("work");
-    expect(container.querySelector(".nav__row-age")).toBeNull();
-    rerender(<SessionRow {...props} searchQuery="" />);
-    expect(container.querySelector(".nav__row-age")).not.toBeNull();
-    expect(container.querySelector(".nav__row-project")).toHaveTextContent(
-      /^alpha$/,
-    );
-    rerender(
-      <SessionRow
-        {...props}
-        session={{ ...alpha, title: "Work plan" }}
-        searchQuery="work"
-      />,
-    );
-    expect(container.querySelector(".nav__row-project")).toHaveTextContent(
-      /^alpha$/,
-    );
-    expect(container.querySelector(".nav__row-age")).not.toBeNull();
-    rerender(<SessionRow {...props} searchQuery="re:work" />);
-    expect(container.querySelector(".nav__row-project")).toHaveTextContent(
-      /^alpha$/,
-    );
-  });
-});
-
-it("refreshes a populated session list quietly and explains an empty initial wait", () => {
-  const snapshot = vi.spyOn(store, "getState").mockReturnValue({
-    ...createInitialAppState(),
-    sessions: [alpha],
-    sessionListLoading: true,
-    sessionListOperation: "refresh",
-  });
-  const populated = render(<Nav {...navProps} />);
-  expect(screen.getByRole("button", { name: /^Alpha session/ })).toBeVisible();
-  expect(
-    screen.queryByRole("button", { name: "Refreshing sessions…" }),
-  ).toBeNull();
-  populated.unmount();
-  snapshot.mockReturnValue({ ...snapshot(), sessions: [] });
-  render(<Nav {...navProps} />);
-  expect(
-    screen.getByRole("button", { name: "Refreshing sessions…" }),
-  ).toBeDisabled();
-  expect(screen.queryByText("No sessions yet")).toBeNull();
 });
 
 const curation = (overrides: Partial<NavCuration> = {}): NavCuration => ({
@@ -187,10 +116,6 @@ describe("hidden deletion eligibility", () => {
         sessionListIssues: [{ path: "/offline", message: "Access denied" }],
       }),
     ).toMatch(/unavailable session sources/);
-  });
-
-  it("allows deletion of a complete settled selection", () => {
-    expect(hiddenDeletionBlockReason(targets, idle())).toBeNull();
   });
 });
 
@@ -272,27 +197,6 @@ it("orders Needs you by urgency then activity, including blocked native Pi", () 
     ["newer-completion", "completed"],
     ["older-completion", "completed"],
   ]);
-});
-
-it("clears the viewed outcome while keeping its row in Needs you until selection changes", () => {
-  const sessions = ["completed", "failed"].map((id) => sessionSummary({ id }));
-  const statuses: Record<string, SessionRuntimeStatus> = {
-    completed: { runState: "idle", indicator: "completed" },
-    failed: { runState: "failed", indicator: "failed" },
-  };
-  const retained = { id: "completed", reason: "completed" as const };
-  const visible = (selected: string, keep: typeof retained | null) =>
-    needsYouRows(sessions, statuses, {}, selected, keep).map(
-      ({ session, reason }) => [session.id, reason],
-    );
-
-  expect(visible("completed", null)).toEqual([["failed", "failed"]]);
-  expect(visible("completed", retained)).toEqual([
-    ["failed", "failed"],
-    ["completed", null],
-  ]);
-  statuses.completed = { runState: "idle" };
-  expect(visible("failed", retained)).toEqual([]);
 });
 
 describe("compactAge", () => {

@@ -11,7 +11,6 @@ const LAST_SESSION = `${PREFIX}last-session`;
 const NAV_COLLAPSED = `${PREFIX}nav-collapsed`;
 const NAV_DISCLOSURES = `${PREFIX}navigation-disclosures`;
 const NAV_CATALOG = `${PREFIX}session-catalog`;
-type NavigationDisclosure = "recentSessions";
 export type SessionCatalogView = "all" | "needs-you" | "hidden";
 
 export interface FileReadingState {
@@ -93,19 +92,12 @@ export function saveSessionCatalogView(view: SessionCatalogView): void {
   write(NAV_CATALOG, view);
 }
 
-export function readNavigationDisclosure(name: NavigationDisclosure): boolean {
-  const value = jsonRecord(read(NAV_DISCLOSURES))?.[name];
-  return value !== false;
+export function readRecentSessionsOpen(): boolean {
+  return jsonRecord(read(NAV_DISCLOSURES))?.recentSessions !== false;
 }
 
-export function saveNavigationDisclosure(
-  name: NavigationDisclosure,
-  open: boolean,
-): void {
-  write(NAV_DISCLOSURES, {
-    ...jsonRecord(read(NAV_DISCLOSURES)),
-    [name]: open,
-  });
+export function saveRecentSessionsOpen(open: boolean): void {
+  write(NAV_DISCLOSURES, { recentSessions: open });
 }
 
 export function readWorkbench(key: string | null): SavedWorkbench | null {

@@ -89,17 +89,15 @@ At startup the bridge reports a digest of the previously admitted number of norm
 entries, before later extension hooks can change that context. Pi may have added its own missing
 settings; compare those with the post-start suffix instead of the old prefix.
 
-After start, Pi and its extensions may persist entries. Require a complete, direct, contiguous
-append within the existing RPC transport limit, without an extra startup size/count cap or entry-type
-whitelist. `get_entries`, `get_state`, and disk must agree on every entry, parent, final leaf, session,
-path, thinking level and append lineage. After the final filesystem observation, the same worker must
-still own the slot and remain RPC-available before readiness and its native index are published.
-A retired worker cannot reset failure to idle or emit `runtime_ready`.
+After start, Pi and its extensions may persist entries. `get_entries` provides the worker
+continuation and actual leaf within the RPC transport limit. Its parent chain must extend the
+admitted prefix and its entries must be present in the intact saved file. `get_state` confirms
+the session and path. The file can also contain valid independent appends, which advance its
+saved leaf without changing the worker's branch. Incomplete frames, source replacement and
+prefix rewrites fence admission.
 
-RPC/disk disagreement, incorrect lineage or values, identity/path changes, incomplete entries and
-rewrites stop the worker. Legitimate extension persistence is allowed. Attestation proves state
-equivalence at startup. Later appends by independent Pi instances follow the ordinary same-file
-prefix rules below.
+After the final filesystem observation, the same worker must still own the slot and remain
+RPC-available before readiness and its native index are published.
 
 A response-bearing `extension_ui_request` before RPC startup completes is unsupported. Stop and
 clean the child immediately and return `PI_STARTUP_RESPONSE_UI_UNSUPPORTED` instead of exposing an

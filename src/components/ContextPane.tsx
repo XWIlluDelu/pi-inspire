@@ -3,28 +3,27 @@ import {
   GitCompareArrows,
   RefreshCw,
   SquareTerminal,
-  X,
 } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fencedMarkdown } from "../../shared/markdown-fence";
-import {
-  resourceReferenceLabel,
-  type SessionResourceListResponse,
-} from "../../shared/resource-references";
+import { resourceReferenceLabel } from "../../shared/resource-references";
 import { gitChangeCount } from "../git-presentation";
 import { appendDraftBlock } from "../reader-quote";
 import { inspectedFileTab } from "../resource-preview";
-import { resourceRows as toResourceRows } from "../resources";
+import { type ResourceRow, resourceRows } from "../resources";
 import { shallowEqual, store, useAppState } from "../store";
 import { queueTerminalAction } from "../terminal-actions";
 import { hasActiveModal } from "../use-modal-focus";
 import { ChangesPane } from "./ChangesPane";
+import { ContextPaneClose } from "./ContextPaneShell";
 import type { FileDockTab } from "./ContextTabStrip";
 import { selectContextPaneView } from "./context-pane-view";
 import type { FileReadingState } from "./FilePreview";
 import { FilesPane } from "./FilesPane";
 import { PiLoader } from "./PiLoader";
 import { WorkspaceDock } from "./WorkspaceDock";
+
+const NO_RECENT_FILES: ResourceRow[] = [];
 
 export const ContextPane = memo(function ContextPane({
   isModal = false,
@@ -52,7 +51,7 @@ export const ContextPane = memo(function ContextPane({
   );
   const [resourcePage, setResourcePage] = useState<{
     owner: typeof resourceOwner;
-    data: SessionResourceListResponse;
+    rows: ResourceRow[];
   } | null>(null);
   const [resourceRead, setResourceRead] = useState<{
     owner: typeof resourceOwner;
@@ -86,14 +85,11 @@ export const ContextPane = memo(function ContextPane({
   const fileReading = selectedReference
     ? fileReadings.get(selectedReference)
     : undefined;
-  const recentRows = useMemo(
-    () =>
-      resourcePage?.owner.sessionId === sessionId &&
-      resourcePage.owner.transcriptViewId === transcriptViewId
-        ? toResourceRows(resourcePage.data.resources)
-        : [],
-    [resourcePage, sessionId, transcriptViewId],
-  );
+  const recentRows =
+    resourcePage?.owner.sessionId === sessionId &&
+    resourcePage.owner.transcriptViewId === transcriptViewId
+      ? resourcePage.rows
+      : NO_RECENT_FILES;
   const browsingFiles =
     state.resourcesOpen &&
     state.contextMode === "files" &&
@@ -107,7 +103,11 @@ export const ContextPane = memo(function ContextPane({
     try {
       const response = await store.loadSessionResources(request.signal);
       if (request.signal.aborted) return;
-      if (response) setResourcePage({ owner: resourceOwner, data: response });
+      if (response)
+        setResourcePage({
+          owner: resourceOwner,
+          rows: resourceRows(response.resources),
+        });
       setResourceRead(null);
     } catch (error) {
       if (!request.signal.aborted)
@@ -326,17 +326,7 @@ export const ContextPane = memo(function ContextPane({
           <RefreshCw size={14} aria-hidden />
         )}
       </button>
-      {onClose ? (
-        <button
-          type="button"
-          className="icon-button ctx__close"
-          title="Close"
-          aria-label="Close context pane"
-          onClick={onClose}
-        >
-          <X size={15} aria-hidden />
-        </button>
-      ) : null}
+      {onClose && <ContextPaneClose onClose={onClose} />}
     </div>
   );
   const body =

@@ -39,7 +39,6 @@ import {
 } from "../shared/tool-activity.js";
 import type { PiRpcProcess } from "./pi-rpc.js";
 import { requestError } from "./request-error.js";
-import { parseBridgeResult } from "./runtime-branch-bridge.js";
 import { exactPendingInput } from "./runtime-pending.js";
 import type { RuntimeSlot } from "./runtime-slot.js";
 import type { ReducedAssistantDelta } from "./runtime-stream-budget.js";
@@ -312,6 +311,7 @@ export class RuntimeEventController {
       event && typeof event === "object"
         ? (event as Record<string, unknown>)
         : {};
+    const { retry, summarizationRetry } = slot;
     if (
       record.type === "agent_settled" ||
       ((record.type === "message_start" || record.type === "message_end") &&
@@ -543,11 +543,7 @@ export class RuntimeEventController {
         this.updateExtensionStatus(slot, owned);
         const displayChanged = this.updateExtensionDisplay(slot, owned);
         if (pending) {
-          forwardedEvent = {
-            ...owned,
-            timeout: pending.timeout,
-            expiresAt: pending.expiresAt,
-          };
+          forwardedEvent = { type: "extension_ui_pending", request: pending };
         } else if (statusMethod || displayChanged) {
           // The normalized projection is authoritative. Do not duplicate an
           // unbounded or private producer payload in the browser event.
@@ -581,10 +577,7 @@ export class RuntimeEventController {
           maxAttempts: record.maxAttempts,
           message: record.errorMessage,
         });
-        forwardedEvent = {
-          ...record,
-          errorMessage: slot.summarizationRetry?.message ?? "",
-        };
+        forwardedEvent = { type: record.type };
         break;
       case "summarization_retry_attempt_start":
       case "summarization_retry_finished":
@@ -646,7 +639,7 @@ export class RuntimeEventController {
           maxAttempts: record.maxAttempts,
           message: record.errorMessage,
         });
-        forwardedEvent = { ...record, errorMessage: slot.retry?.message ?? "" };
+        forwardedEvent = { type: record.type };
         break;
       case "auto_retry_end":
         slot.runState = record.success === false ? "failed" : "running";
@@ -704,7 +697,16 @@ export class RuntimeEventController {
     }
     if (slot.runState !== "retrying") slot.retry = null;
     if (!isBusyRunState(slot.runState)) slot.summarizationRetry = null;
-    this.host.emitSlotEvent(slot, forwardedEvent);
+    this.host.emitSlotEvent(
+      slot,
+      retry === slot.retry && summarizationRetry === slot.summarizationRetry
+        ? forwardedEvent
+        : {
+            ...jsonRecord(forwardedEvent),
+            retry: slot.retry,
+            summarizationRetry: slot.summarizationRetry,
+          },
+    );
     if (
       record.type === "compaction_end" ||
       record.type === "agent_start" ||
@@ -717,43 +719,6 @@ export class RuntimeEventController {
       (record.type === "message_end" && !isBusyRunState(slot.runState))
     )
       this.host.refreshCheckpoint(slot);
-  }
-
-  private interceptBranchStatus(
-    slot: RuntimeSlot,
-    rpc: PiRpcProcess,
-    record: Record<string, unknown>,
-  ): boolean {
-    const bridge = slot.bridge;
-    if (
-      !bridge ||
-      slot.process !== rpc ||
-      record.type !== "extension_ui_request" ||
-      record.method !== "setStatus" ||
-      record.statusKey !== bridge.statusKey
-    )
-      return false;
-    const pending = slot.pendingBranchBridge;
-    if (!pending || pending.bridge !== bridge) return true;
-    if (pending.settled) {
-      pending.duplicate = true;
-      return true;
-    }
-    try {
-      const result = parseBridgeResult(record.statusText);
-      if (
-        result.nonce !== pending.nonce ||
-        result.workerId !== bridge.workerId ||
-        result.sessionId !== slot.id
-      )
-        throw new Error("Mismatched branch bridge result");
-      pending.settled = true;
-      pending.resolve(result);
-    } catch (error) {
-      pending.settled = true;
-      pending.reject(error instanceof Error ? error : new Error(String(error)));
-    }
-    return true;
   }
 
   private rejectUnsupportedStartupUi(
@@ -880,6 +845,7 @@ export class RuntimeEventController {
       record.type === "extension_ui_request" &&
       record.method === "setStatus" &&
       [
+        slot.bridge.statusKey,
         `${slot.bridge.statusKey}${MODEL_REFRESH_SUFFIX}`,
         `${slot.bridge.statusKey}${PROVIDER_AUTH_SUFFIX}`,
         `${slot.bridge.statusKey}${RETRY_STATE_SUFFIX}`,
@@ -888,7 +854,6 @@ export class RuntimeEventController {
     )
       return;
     if (this.host.checkpoint(slot, rpc, record)) return;
-    if (this.interceptBranchStatus(slot, rpc, record)) return;
     if (this.rejectUnsupportedStartupUi(slot, rpc, record)) return;
     this.dispatchNativeEvent(slot, rpc, event, record);
   }

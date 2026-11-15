@@ -1,17 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { type PiRpcProcess } from "../../server/pi-rpc.js";
-
 import { MAX_IDLE_WORKERS, RuntimeController } from "../../server/runtime.js";
 
 import {
   catalog,
   deferredSignal,
   disposeRuntimeFixture,
-  FakeRpc,
   initializeRuntimeFixture,
   persistedRecord,
-  preview,
   record,
   schedulingRuntime,
   startWorker,
@@ -230,37 +226,22 @@ describe("worker and projection retention", () => {
       sessions: ids.map((id) => record(id, "/tmp")),
     });
     try {
-      type ReclaimSlot = {
-        projection: { close(): Promise<void> } | null;
-        runState: string;
-        ready: boolean;
-      };
-      const slots = (runtime as unknown as { slots: Map<string, ReclaimSlot> })
-        .slots;
-      let projectionsClosed = 0;
-      for (const [index, id] of ids.entries()) {
+      const slots = (runtime as unknown as {
+        slots: Map<string, { projection: unknown }>;
+      }).slots;
+      for (const id of ids) {
         await runtime.openSession(id);
         await startWorker(runtime, id);
-        const projection = slots.get(id)!.projection!;
-        const close = projection.close.bind(projection);
-        projection.close = async () => {
-          projectionsClosed += 1;
-          await close();
-        };
-        workers
-          .find((worker) => worker.sessionId === id)!
-          .emit("exit", new Error(`exit-${index}`));
+        workers.find((worker) => worker.sessionId === id)!
+          .emit("exit", new Error("worker exited"));
       }
       await vi.waitFor(() =>
-        expect(
-          [...slots.values()].filter((slot) => slot.projection).length,
-        ).toBeLessThanOrEqual(1),
+        expect([...slots.values()].filter((slot) => slot.projection).length)
+          .toBeLessThanOrEqual(1),
       );
-      expect(projectionsClosed).toBeGreaterThanOrEqual(ids.length - 1);
-      expect(slots.size).toBe(ids.length);
-      expect(
-        [...slots.values()].every((slot) => slot.runState === "failed"),
-      ).toBe(true);
+      const { sessionStatuses } = await runtime.snapshot(null);
+      expect(ids.map((id) => sessionStatuses[id]?.runState))
+        .toEqual(ids.map(() => "failed"));
 
       await runtime.openSession(ids[0]!);
       await startWorker(runtime, ids[0]!);
@@ -324,55 +305,5 @@ describe("worker and projection retention", () => {
         2,
       ),
     );
-  });
-
-  it("keeps a reconciliation conflict sticky across agent settlement", async () => {
-    const store = trackedAttachmentStore();
-    let worker: FakeRpc | undefined;
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      store,
-      {
-        createProcess: (options) => {
-          worker = new FakeRpc(options);
-          return worker as unknown as PiRpcProcess;
-        },
-        openSessionProjection: preview,
-      },
-    );
-    type InternalSlot = {
-      conflict: {
-        kind: "external-change";
-        message: string;
-        revision: number;
-      } | null;
-      runState: string;
-      ready: boolean;
-    };
-    const slots = (runtime as unknown as { slots: Map<string, InternalSlot> })
-      .slots;
-    trackRuntime(runtime);
-    await runtime.openSession("a");
-    await startWorker(runtime);
-    expect(worker?.starts).toBe(1);
-    const slot = slots.get("a")!;
-    slot.conflict = {
-      kind: "external-change",
-      message: "Session changed on disk",
-      revision: 2,
-    };
-    slot.runState = "conflict";
-    worker!.emit("event", { type: "agent_settled" });
-    await vi.waitFor(() => expect(worker?.stops).toBe(1));
-    expect(slot.conflict).toEqual({
-      kind: "external-change",
-      message: "Session changed on disk",
-      revision: 2,
-    });
-    expect(slot.runState).toBe("conflict");
-    await expect(
-      runtime.prompt({ sessionId: "a", message: "must not restart" }),
-    ).rejects.toThrow("Session changed on disk");
-    expect(worker?.starts).toBe(1);
   });
 });

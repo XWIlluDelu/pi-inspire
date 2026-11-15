@@ -3,7 +3,6 @@ import { expect, test } from "@playwright/test";
 import { emptyToolPresentationConfiguration } from "../../shared/tool-presentation-config";
 import { observeClipboardWrites } from "./support/clipboard";
 import { openEventSession } from "./support/host-events";
-import { openConversationSearch } from "./support/navigation";
 
 // Exercise native artifact admission and persisted file references through the Host.
 test.use({ serviceWorkers: "block" });
@@ -80,54 +79,6 @@ test("sent file prompts retain readable names, original bytes, and history acros
     .evaluateAll((items) => items.map((item) => item.getAttribute("title")!));
   expect(sourcePaths.map((path) => readFileSync(path))).toEqual(payloads);
 
-  await page.setViewportSize({ width: 320, height: 900 });
-  await bubble.scrollIntoViewIfNeeded();
-  expect(
-    await files.evaluate((list) => {
-      const bounds = list.closest(".user-bubble")!.getBoundingClientRect();
-      return [...list.children].every((chip) => {
-        const { left, right } = chip.getBoundingClientRect();
-        return left >= bounds.left && right <= bounds.right + 1;
-      });
-    }),
-  ).toBe(true);
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await openConversationSearch(page);
-  const search = page.getByRole("searchbox", {
-    name: "Search conversation",
-  });
-  await page
-    .getByRole("combobox", { name: "Search scope" })
-    .selectOption("user");
-  await search.fill(names[0]!);
-  await expect(page.getByLabel("Transcript search matches")).toHaveText(
-    "1 match",
-  );
-  await search.press("Enter");
-  await expect
-    .poll(() =>
-      page.evaluate(() => {
-        const range = CSS.highlights
-          .get("transcript-current-match")
-          ?.values()
-          .next().value as Range | undefined;
-        return range?.startContainer.parentElement?.closest(
-          ".user-bubble__file",
-        )
-          ? range.toString()
-          : null;
-      }),
-    )
-    .toBe(names[0]);
-  await search.fill(names.at(-1)!);
-  await expect(page.getByLabel("Transcript search matches")).toHaveText(
-    "1 match",
-  );
-  await search.fill("JSON paths");
-  await expect(page.getByLabel("Transcript search matches")).toHaveText(
-    "0 matches",
-  );
-  await search.fill("");
   await bubble.locator("..").hover();
   await bubble
     .locator("..")

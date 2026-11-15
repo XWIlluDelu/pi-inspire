@@ -1,3 +1,23 @@
+import type {
+  HostOperationCommand,
+  HostOperationIdentity,
+} from "../shared/host-operations";
+import { ApiError } from "./http-request";
+
+export function inputRejection(
+  error: unknown,
+  intent?: HostOperationIdentity & { action: HostOperationCommand },
+): ApiError | null {
+  if (!(error instanceof ApiError) || error.outcomeUnknown) return null;
+  if (
+    intent &&
+    (error.authorityId !== intent.authorityId ||
+      error.operation?.operationId !== intent.operationId ||
+      error.operation?.command !== intent.action)
+  ) return null;
+  return error;
+}
+
 export function deferredReceipt<Result>() {
   let resolve!: (result: Result) => void;
   let reject!: (error: unknown) => void;
@@ -33,6 +53,7 @@ export class ReceiptRead<Owner, Result> {
   observe(
     owner: Owner,
     read: (signal: AbortSignal) => Promise<Result>,
+    settled?: () => void,
   ): Promise<Result> {
     const previous = this.active;
     if (previous && previous.owner === owner) return previous.task;
@@ -43,7 +64,9 @@ export class ReceiptRead<Owner, Result> {
       owner,
       controller,
       task: promise.finally(() => {
-        if (this.active === active) this.active = undefined;
+        if (this.active !== active) return;
+        this.active = undefined;
+        settled?.();
       }),
     };
     this.active = active;
@@ -55,3 +78,4 @@ export class ReceiptRead<Owner, Result> {
     return active.task;
   }
 }
+

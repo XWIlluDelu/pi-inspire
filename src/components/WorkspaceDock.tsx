@@ -12,7 +12,6 @@ import {
   Keyboard,
   Maximize2,
   Minimize2,
-  Monitor,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -41,7 +40,6 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { createPortal } from "react-dom";
 import {
   parentSegment,
   projectNameFromCwd as projectLabel,
@@ -294,7 +292,7 @@ export const WorkspaceDock = memo(function WorkspaceDock({
     if (!launchTarget) return;
     let cancelled = false;
     void api
-      .terminals()
+      .json("terminals", { query: {} })
       .then((next) => {
         if (cancelled) return;
         const target = next.terminals.find(
@@ -334,7 +332,7 @@ export const WorkspaceDock = memo(function WorkspaceDock({
         setError(null);
       }
       try {
-        const next = await api.terminals(cwd);
+        const next = await api.json("terminals", { query: { cwd } });
         if (!current() || !catalogController.replace(next)) return;
         if (!poll)
           setActiveId((id) => {
@@ -362,7 +360,7 @@ export const WorkspaceDock = memo(function WorkspaceDock({
     if (globalLoading) return;
     setGlobalLoading(true);
     try {
-      setGlobalCatalog(await api.terminals());
+      setGlobalCatalog(await api.json("terminals", { query: {} }));
     } catch (loadError) {
       setError(
         loadError instanceof Error
@@ -488,6 +486,18 @@ export const WorkspaceDock = memo(function WorkspaceDock({
     return () => window.clearTimeout(timer);
   }, [recentlyClosed]);
 
+  const runControl = useCallback(
+    async (fallback: string, perform: () => Promise<void>) => {
+      try {
+        await perform();
+      } catch (error) {
+        if (catalogController.active)
+          setError(error instanceof Error ? error.message : fallback);
+      }
+    },
+    [catalogController],
+  );
+
   const commitDescriptor = useCallback(
     async (terminal: TerminalDescriptor, select = false) => {
       const result = catalogController.upsert(terminal);
@@ -513,26 +523,18 @@ export const WorkspaceDock = memo(function WorkspaceDock({
       if (!cwd || creating) return;
       setCreating(true);
       setError(null);
-      try {
+      await runControl("Terminal could not be created", async () => {
         const terminal = await api.terminalOperation({
           command: "create",
           params: {
-            request: { cwd, ...(profile ? { profileId: profile.id } : {}) },
+            request: profile ? { cwd, profileId: profile.id } : { cwd },
           },
         });
         await commitDescriptor(terminal, true);
-      } catch (createError) {
-        if (!catalogController.active) return;
-        setError(
-          createError instanceof Error
-            ? createError.message
-            : "Terminal could not be created",
-        );
-      } finally {
-        if (catalogController.active) setCreating(false);
-      }
+      });
+      if (catalogController.active) setCreating(false);
     },
-    [api, creating, cwd, catalogController, commitDescriptor],
+    [api, creating, cwd, catalogController, commitDescriptor, runControl],
   );
 
   const availableProfiles =
@@ -683,7 +685,7 @@ export const WorkspaceDock = memo(function WorkspaceDock({
     )
       return;
     setError(null);
-    try {
+    await runControl("Terminal could not be closed", async () => {
       const removed = await api.terminalOperation({
         command: "remove",
         params: { id: terminal.id, force },
@@ -703,14 +705,7 @@ export const WorkspaceDock = memo(function WorkspaceDock({
             : current,
         );
       }
-    } catch (closeError) {
-      if (!catalogController.active) return;
-      setError(
-        closeError instanceof Error
-          ? closeError.message
-          : "Terminal could not be closed",
-      );
-    }
+    });
   };
 
   const restartTerminal = async (terminal: TerminalDescriptor) => {
@@ -722,21 +717,14 @@ export const WorkspaceDock = memo(function WorkspaceDock({
       )
     )
       return;
-    try {
+    await runControl("Terminal could not be restarted", async () => {
       await commitDescriptor(
         await api.terminalOperation({
           command: "restart",
           params: { id: terminal.id },
         }),
       );
-    } catch (restartError) {
-      if (!catalogController.active) return;
-      setError(
-        restartError instanceof Error
-          ? restartError.message
-          : "Terminal could not be restarted",
-      );
-    }
+    });
   };
 
   const beginRename = (terminal: TerminalDescriptor) => {
@@ -750,20 +738,13 @@ export const WorkspaceDock = memo(function WorkspaceDock({
     renamePendingRef.current = false;
     const id = renameId;
     setRenameId(null);
-    try {
+    await runControl("Terminal could not be renamed", async () => {
       const renamed = await api.terminalOperation({
         command: "rename",
         params: { id, title: renameValue.trim() || null },
       });
       await commitDescriptor(renamed);
-    } catch (renameError) {
-      if (!catalogController.active) return;
-      setError(
-        renameError instanceof Error
-          ? renameError.message
-          : "Terminal could not be renamed",
-      );
-    }
+    });
   };
 
   const reopenClosed = async () => {
@@ -771,7 +752,7 @@ export const WorkspaceDock = memo(function WorkspaceDock({
     if (!closed) return;
     const targetCwd = closed.terminal.projectCwd;
     setRecentlyClosed(null);
-    try {
+    await runControl("Terminal could not be reopened", async () => {
       const terminal = await api.terminalOperation({
         command: "create",
         params: {
@@ -797,63 +778,55 @@ export const WorkspaceDock = memo(function WorkspaceDock({
         setCwd(targetCwd);
         setActiveId(restored.id);
       }
-    } catch (restoreError) {
-      if (!catalogController.active) return;
-      setError(
-        restoreError instanceof Error
-          ? restoreError.message
-          : "Terminal could not be reopened",
-      );
-    }
-  };
-
-  const reorder = async (
-    fromId: string,
-    targetId: string,
-    position: "before" | "after" = "before",
-  ) => {
-    if (!cwd || fromId === targetId) return;
-    const next = [...terminals];
-    const fromIndex = next.findIndex((terminal) => terminal.id === fromId);
-    if (fromIndex < 0 || !next.some((terminal) => terminal.id === targetId))
-      return;
-    const [moved] = next.splice(fromIndex, 1);
-    if (!moved) return;
-    const targetIndex = next.findIndex((terminal) => terminal.id === targetId);
-    next.splice(position === "after" ? targetIndex + 1 : targetIndex, 0, moved);
-    try {
-      catalogController.replace(
-        await api.terminalOperation({
-          command: "reorder",
-          params: { projectCwd: cwd, ids: next.map(({ id }) => id) },
-        }),
-      );
-    } catch (reorderError) {
-      if (!catalogController.active) return;
-      setError(
-        reorderError instanceof Error
-          ? reorderError.message
-          : "Terminal order could not be saved",
-      );
-    }
+    });
   };
 
   const moveTerminal = (terminal: TerminalDescriptor, direction: -1 | 1) => {
-    const target = terminals[terminals.indexOf(terminal) + direction];
-    if (target)
-      void reorder(terminal.id, target.id, direction < 0 ? "before" : "after");
+    const from = terminals.indexOf(terminal);
+    const to = from + direction;
+    if (!cwd || from < 0 || to < 0 || to >= terminals.length) return;
+    const ids = terminals.map(({ id }) => id);
+    [ids[from], ids[to]] = [ids[to]!, ids[from]!];
+    void runControl("Terminal order could not be saved", async () => {
+      catalogController.replace(
+        await api.terminalOperation({
+          command: "reorder",
+          params: { projectCwd: cwd, ids },
+        }),
+      );
+    });
   };
 
-  terminalActionHandlerRef.current = ({ action, projectCwd }) => {
-    if (
-      !active ||
-      projectCwd !== cwd ||
-      !catalogController.active ||
-      (!launchTarget && sessionCwd !== lastSessionCwdRef.current)
-    )
-      return false;
-    if (action === "take-control")
-      return activeTerminal ? activeTerminal.status !== "running" : false;
+  const switchTerminal = useCallback(
+    (action: "next" | "previous" | number) => {
+      const current = terminals.findIndex(({ id }) => id === activeId);
+      const index =
+        typeof action === "number"
+          ? action
+          : current + (action === "next" ? 1 : -1);
+      const target =
+        terminals[
+          ((index % terminals.length) + terminals.length) % terminals.length
+        ];
+      if (target) setActiveId(target.id);
+    },
+    [activeId, terminals],
+  );
+
+  const currentView =
+    active &&
+    activeTerminal &&
+    viewActions?.owner === `${activeTerminal.id}:${activeTerminal.outputEpoch}`
+      ? viewActions
+      : null;
+  const dispatchTerminalAction = (action: TerminalActionIntent["action"]) => {
+    if (!catalogController.active) return false;
+    if (action === "take-control") {
+      if (!currentView?.ready || activeTerminal?.status !== "running")
+        return false;
+      currentView.invoke(action);
+      return true;
+    }
     if (action === "new") {
       if (!cwd) return false;
       void createTerminal();
@@ -870,15 +843,14 @@ export const WorkspaceDock = memo(function WorkspaceDock({
     if (!activeTerminal) return false;
     if (action === "close") void closeTerminal(activeTerminal);
     else if (action === "restart") void restartTerminal(activeTerminal);
-    else {
-      const index = terminals.indexOf(activeTerminal);
-      const offset = action === "next" ? 1 : -1;
-      const next =
-        terminals[(index + offset + terminals.length) % terminals.length];
-      if (next) setActiveId(next.id);
-    }
+    else switchTerminal(action);
     return true;
   };
+  terminalActionHandlerRef.current = ({ action, projectCwd }) =>
+    active &&
+    projectCwd === cwd &&
+    (Boolean(launchTarget) || sessionCwd === lastSessionCwdRef.current) &&
+    dispatchTerminalAction(action);
 
   useEffect(
     () =>
@@ -902,33 +874,22 @@ export const WorkspaceDock = memo(function WorkspaceDock({
         return;
       const shortcut = terminalShortcut(event);
       if (shortcut === null) return;
-      if (shortcut === "new") {
-        event.preventDefault();
-        void createTerminal();
-        return;
-      }
-      if (!terminals.length) return;
+      if (typeof shortcut === "number") {
+        if (!terminals.length) return;
+        switchTerminal(shortcut);
+      } else if (
+        !cwd ||
+        !terminalActionHandlerRef.current({ action: shortcut, projectCwd: cwd })
+      ) return;
       event.preventDefault();
-      const index = activeTerminal ? terminals.indexOf(activeTerminal) : -1;
-      const target =
-        typeof shortcut === "number"
-          ? shortcut
-          : shortcut === "next"
-            ? index + 1
-            : index - 1;
-      const terminal =
-        terminals[
-          ((target % terminals.length) + terminals.length) % terminals.length
-        ];
-      if (terminal) setActiveId(terminal.id);
     };
     window.addEventListener("keydown", handleShortcut, true);
     return () => window.removeEventListener("keydown", handleShortcut, true);
   }, [
     active,
-    activeTerminal,
-    createTerminal,
-    terminals,
+    cwd,
+    switchTerminal,
+    terminals.length,
     uiSettings.shortcutMode,
   ]);
 
@@ -961,7 +922,6 @@ export const WorkspaceDock = memo(function WorkspaceDock({
     beginRename: () => beginRename(terminal),
     close: () => void closeTerminal(terminal),
     move: (direction) => moveTerminal(terminal, direction),
-    drop: (from, position) => void reorder(from, terminal.id, position),
   }));
 
   const terminalMatches = (text: string) =>
@@ -986,14 +946,6 @@ export const WorkspaceDock = memo(function WorkspaceDock({
     globalGroups.set(terminal.projectCwd, group);
   }
 
-  const currentView =
-    active &&
-    activeTerminal &&
-    viewActions?.owner === `${activeTerminal.id}:${activeTerminal.outputEpoch}`
-      ? viewActions
-      : null;
-  const activeViewKey =
-    activeTerminal && `${activeTerminal.id}:${activeTerminal.outputEpoch}`;
   const toolbar = (
     <div
       className="pane-toolbar terminal-toolbar"
@@ -1090,7 +1042,7 @@ export const WorkspaceDock = memo(function WorkspaceDock({
       <button
         type="button"
         className="icon-button"
-        onClick={() => setFocused((value) => !value)}
+        onClick={() => dispatchTerminalAction("focus")}
         aria-label={focused ? "Exit focused terminal" : "Focus terminal"}
         title={focused ? "Exit focus" : "Focus terminal"}
       >
@@ -1122,7 +1074,7 @@ export const WorkspaceDock = memo(function WorkspaceDock({
         </summary>
         <div className="terminal-menu__popover">
           {currentView && (
-            <div className="terminal-menu__view" key={activeViewKey}>
+            <div className="terminal-menu__view" key={currentView.owner}>
               {(
                 [
                   [
@@ -1135,6 +1087,8 @@ export const WorkspaceDock = memo(function WorkspaceDock({
                   ],
                   ["copy", "Copy all", Copy, false],
                   ["select", "Select text", TextSelect, false],
+                  ["clear", "Clear local scrollback", Eraser, false],
+                  ["reset", "Reset terminal display", RotateCcw, false],
                   [
                     "copy-last",
                     "Copy last output",
@@ -1157,32 +1111,6 @@ export const WorkspaceDock = memo(function WorkspaceDock({
                   <Icon size={14} aria-hidden /> {label}
                 </button>
               ))}
-              <details
-                className="terminal-menu__group"
-                data-terminal-menu-group
-              >
-                <DetailSummary>
-                  <Monitor size={14} aria-hidden /> Display
-                </DetailSummary>
-                <div>
-                  {(
-                    [
-                      ["clear", "Clear local scrollback", Eraser],
-                      ["reset", "Reset terminal display", RotateCcw],
-                    ] as const
-                  ).map(([action, label, Icon]) => (
-                    <button
-                      key={action}
-                      type="button"
-                      onClick={(event) =>
-                        currentView.invoke(action, event.currentTarget)
-                      }
-                    >
-                      <Icon size={14} aria-hidden /> {label}
-                    </button>
-                  ))}
-                </div>
-              </details>
             </div>
           )}
           {activeTerminal ? (
@@ -1196,59 +1124,49 @@ export const WorkspaceDock = memo(function WorkspaceDock({
               >
                 <ExternalLink size={14} aria-hidden /> Open in window
               </button>
-              <details
-                className="terminal-menu__group"
-                data-terminal-menu-group
+              {([-1, 1] as const).map((step) => {
+                const target =
+                  terminals[terminals.indexOf(activeTerminal) + step];
+                if (!target) return null;
+                const Icon = step < 0 ? ArrowLeft : ArrowRight;
+                return (
+                  <button
+                    key={step}
+                    type="button"
+                    onClick={() => moveTerminal(activeTerminal, step)}
+                  >
+                    <Icon size={14} aria-hidden />{" "}
+                    {step < 0 ? "Move tab left" : "Move tab right"}
+                  </button>
+                );
+              })}
+              <button
+                type="button"
+                data-terminal-focus-trigger
+                onClick={() => dispatchTerminalAction("restart")}
               >
-                <DetailSummary>
-                  <SquareTerminal size={14} aria-hidden /> Manage terminal
-                </DetailSummary>
-                <div>
-                  {([-1, 1] as const).map((step) => {
-                    const target =
-                      terminals[terminals.indexOf(activeTerminal) + step];
-                    if (!target) return null;
-                    const Icon = step < 0 ? ArrowLeft : ArrowRight;
-                    return (
-                      <button
-                        key={step}
-                        type="button"
-                        onClick={() => moveTerminal(activeTerminal, step)}
-                      >
-                        <Icon size={14} aria-hidden />{" "}
-                        {step < 0 ? "Move tab left" : "Move tab right"}
-                      </button>
-                    );
-                  })}
-                  <button
-                    type="button"
-                    data-terminal-focus-trigger
-                    onClick={() => void restartTerminal(activeTerminal)}
-                  >
-                    <RotateCcw size={14} aria-hidden /> Restart
-                  </button>
-                  <button
-                    type="button"
-                    className="terminal-menu__danger"
-                    onClick={() => void closeTerminal(activeTerminal)}
-                  >
-                    <Trash2 size={14} aria-hidden /> Close
-                  </button>
-                  {activeTerminal.status === "running" ? (
-                    <button
-                      type="button"
-                      className="terminal-menu__danger"
-                      onClick={() => void closeTerminal(activeTerminal, true)}
-                    >
-                      <X size={14} aria-hidden /> Force terminate
-                    </button>
-                  ) : null}
-                </div>
-              </details>
+                <RotateCcw size={14} aria-hidden /> Restart
+              </button>
+              <button
+                type="button"
+                className="terminal-menu__danger"
+                onClick={() => dispatchTerminalAction("close")}
+              >
+                <Trash2 size={14} aria-hidden /> Close
+              </button>
+              {activeTerminal.status === "running" ? (
+                <button
+                  type="button"
+                  className="terminal-menu__danger"
+                  onClick={() => void closeTerminal(activeTerminal, true)}
+                >
+                  <X size={14} aria-hidden /> Force terminate
+                </button>
+              ) : null}
             </>
           ) : null}
           <details
-            className="terminal-menu__group terminal-menu__projects"
+            className="terminal-menu__projects"
             data-terminal-menu-group
             onToggle={(event) => {
               if (
@@ -1347,7 +1265,7 @@ export const WorkspaceDock = memo(function WorkspaceDock({
                 .closest("details")
                 ?.querySelector("summary")
                 ?.focus();
-              setSettingsOpen(true);
+              dispatchTerminalAction("settings");
             }}
           >
             <Settings2 size={14} aria-hidden /> Settings
@@ -1472,19 +1390,16 @@ export const WorkspaceDock = memo(function WorkspaceDock({
             ))
         )}
 
-        {active && settingsOpen
-          ? createPortal(
-              <Suspense fallback={null}>
-                <TerminalSettingsDialog
-                  api={api}
-                  settings={uiSettings}
-                  onSettingsChange={setUiSettings}
-                  onClose={() => setSettingsOpen(false)}
-                />
-              </Suspense>,
-              document.body,
-            )
-          : null}
+        {active && settingsOpen && (
+          <Suspense fallback={null}>
+            <TerminalSettingsDialog
+              api={api}
+              settings={uiSettings}
+              onSettingsChange={setUiSettings}
+              onClose={() => setSettingsOpen(false)}
+            />
+          </Suspense>
+        )}
 
         {recentlyClosed && Date.now() - recentlyClosed.closedAt < 30_000 ? (
           <div className="pane-toolbar terminal-undo" role="status">
@@ -1537,19 +1452,13 @@ export const WorkspaceDock = memo(function WorkspaceDock({
                     disabled={operation.busy}
                     aria-busy={operation.busy}
                     onClick={() => {
-                      void api
-                        .retryTerminalOperation(operation.key)
-                        .then(() => {
-                          if (catalogController.active) return load();
-                        })
-                        .catch((retryError: unknown) => {
-                          if (catalogController.active)
-                            setError(
-                              retryError instanceof Error
-                                ? retryError.message
-                                : "Terminal outcome remains unknown",
-                            );
-                        });
+                      void runControl(
+                        "Terminal outcome remains unknown",
+                        async () => {
+                          await api.retryTerminalOperation(operation.key);
+                          if (catalogController.active) await load();
+                        },
+                      );
                     }}
                   >
                     <ButtonLabel

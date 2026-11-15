@@ -18,7 +18,7 @@ import { isMacTerminalBrowser } from "../terminal-keyboard";
 import {
   DEFAULT_TERMINAL_UI_SETTINGS,
   saveTerminalUiSettings,
-  type TerminalBellMode,
+  TERMINAL_FONT_SIZE,
   type TerminalUiSettings,
 } from "../terminal-settings";
 import { ButtonLabel } from "./ButtonLabel";
@@ -44,10 +44,7 @@ const CATEGORIES = [
 type CategoryId = (typeof CATEGORIES)[number]["id"];
 
 interface TerminalSettingsDialogProps {
-  api: Pick<
-    ReturnType<typeof createApi>,
-    "terminalSettings" | "terminalOperation"
-  >;
+  api: Pick<ReturnType<typeof createApi>, "json" | "terminalOperation">;
   settings: TerminalUiSettings;
   onSettingsChange: (settings: TerminalUiSettings) => void;
   onClose: () => void;
@@ -67,8 +64,9 @@ export function TerminalSettingsDialog({
     useState<TerminalServiceSettings | null>(null);
   const [serviceError, setServiceError] = useState("");
   const [loadingService, setLoadingService] = useState(true);
-  const [savingService, setSavingService] = useState(false);
-  const [clearing, setClearing] = useState(false);
+  const [serviceOperation, setServiceOperation] = useState<"saving" | "clearing" | null>(null);
+  const operationInFlight = useRef(false);
+  const clearing = serviceOperation === "clearing";
   const [readRevision, setReadRevision] = useState(0);
   const [permissionFeedback, setPermissionFeedback] = useState<{
     target: "bell" | "task";
@@ -83,7 +81,7 @@ export function TerminalSettingsDialog({
     setLoadingService(true);
     setServiceError("");
     void api
-      .terminalSettings()
+      .json("terminalSettings", {})
       .then((value) => {
         if (!cancelled) setServiceSettings(value);
       })
@@ -116,29 +114,26 @@ export function TerminalSettingsDialog({
     [onSettingsChange],
   );
 
-  const updateService = useCallback(
-    async (patch: Partial<TerminalServiceSettings>) => {
-      setSavingService(true);
-      setServiceError("");
-      try {
-        setServiceSettings(
-          await api.terminalOperation({
-            command: "updateSettings",
-            params: { patch },
-          }),
-        );
-      } catch (error) {
-        setServiceError(
-          error instanceof Error
-            ? error.message
-            : "Unable to save terminal settings",
-        );
-      } finally {
-        setSavingService(false);
-      }
-    },
-    [api],
-  );
+  async function changeService(patch?: Partial<TerminalServiceSettings>) {
+    if (operationInFlight.current) return;
+    operationInFlight.current = true;
+    setServiceOperation(patch ? "saving" : "clearing");
+    setServiceError("");
+    try {
+      if (patch)
+        setServiceSettings(await api.terminalOperation({
+          command: "updateSettings",
+          params: { patch },
+        }));
+      else await api.terminalOperation({ command: "clearHistory", params: {} });
+    } catch (error) {
+      setServiceError(error instanceof Error ? error.message :
+        patch ? "Unable to save terminal settings" : "Unable to clear terminal history");
+    } finally {
+      operationInFlight.current = false;
+      setServiceOperation(null);
+    }
+  }
 
   const requestDesktopPermission = useCallback(
     async (target: "bell" | "task"): Promise<boolean | null> => {
@@ -165,42 +160,82 @@ export function TerminalSettingsDialog({
         <span role="status">{permissionFeedback.message}</span>
       </SettingsFeedback>
     ) : undefined;
-  const selectBell = useCallback(
-    async (bell: TerminalBellMode) => {
-      setPermissionFeedback(null);
-      const allowed =
-        bell !== "desktop" || (await requestDesktopPermission("bell"));
-      if (allowed !== null) updateUi({ bell: allowed ? bell : "visual" });
-    },
-    [requestDesktopPermission, updateUi],
+  async function updateNotification(
+    choice:
+      | { bell: TerminalUiSettings["bell"] }
+      | { longTaskNotifications: boolean },
+  ) {
+    setPermissionFeedback(null);
+    const target = "bell" in choice ? "bell" : "task";
+    const needsPermission =
+      "bell" in choice
+        ? choice.bell === "desktop"
+        : choice.longTaskNotifications;
+    const allowed =
+      !needsPermission || (await requestDesktopPermission(target));
+    if (allowed === null) return;
+    updateUi(
+      allowed
+        ? choice
+        : target === "bell"
+          ? { bell: "visual" }
+          : { longTaskNotifications: false },
+    );
+  }
+  const step = (Icon: typeof Minus, label: string, delta: -1 | 1) => (
+    <button
+      type="button"
+      className="icon-button"
+      aria-label={label}
+      disabled={
+        delta < 0
+          ? settings.fontSize <= TERMINAL_FONT_SIZE.min
+          : settings.fontSize >= TERMINAL_FONT_SIZE.max
+      }
+      onClick={() =>
+        updateUi({ fontSize: settingsRef.current.fontSize + delta })
+      }
+    >
+      <Icon size={13} aria-hidden />
+    </button>
   );
-  const setLongTaskNotifications = useCallback(
-    async (enabled: boolean) => {
-      setPermissionFeedback(null);
-      const allowed = !enabled || (await requestDesktopPermission("task"));
-      if (allowed !== null)
-        updateUi({ longTaskNotifications: enabled && allowed });
-    },
-    [requestDesktopPermission, updateUi],
-  );
-  const clearHistory = useCallback(async () => {
-    if (!window.confirm("Delete all terminal output saved on this Host?"))
-      return;
-    setClearing(true);
-    setServiceError("");
-    try {
-      await api.terminalOperation({ command: "clearHistory", params: {} });
-    } catch (error) {
-      setServiceError(
-        error instanceof Error
-          ? error.message
-          : "Unable to clear terminal history",
-      );
-    } finally {
-      setClearing(false);
-    }
-  }, [api]);
-
+  function select<Key extends keyof TerminalUiSettings>(
+    key: Key,
+    label: string,
+    controlLabel: string,
+    choices: ReadonlyArray<readonly [TerminalUiSettings[Key], string]>,
+    details: { description?: string; className?: string; disabled?: boolean } = {},
+  ) {
+    return (
+      <SelectField
+        {...details}
+        label={label}
+        controlLabel={controlLabel}
+        value={String(settings[key])}
+        options={choices.map(([value, label]) => ({ value: String(value), label }))}
+        onChange={(value) => {
+          const choice = choices.find(([candidate]) => String(candidate) === value);
+          if (choice) updateUi({ [key]: choice[0] });
+        }}
+      />
+    );
+  }
+  function toggle(
+    key: "cursorBlink" | "pasteProtection" | "macOptionIsMeta" | "screenReaderMode",
+    label: string,
+    controlLabel: string,
+    description?: string,
+  ) {
+    return (
+      <SwitchField
+        label={label}
+        controlLabel={controlLabel}
+        description={description}
+        checked={settings[key]}
+        onChange={(checked) => updateUi({ [key]: checked })}
+      />
+    );
+  }
   const category = CATEGORIES.find(({ id }) => id === navigation.category)!;
   const browserSettings = category.id !== "output";
   return (
@@ -253,108 +288,40 @@ export function TerminalSettingsDialog({
                     role="group"
                     aria-label="Terminal font size"
                   >
-                    <button
-                      type="button"
-                      className="icon-button"
-                      aria-label="Decrease terminal font size"
-                      disabled={settings.fontSize <= 10}
-                      onClick={() =>
-                        updateUi({ fontSize: settings.fontSize - 1 })
-                      }
-                    >
-                      <Minus size={13} aria-hidden />
-                    </button>
+                    {step(Minus, "Decrease terminal font size", -1)}
                     <span
                       className="terminal-settings__stepper-value"
                       aria-live="polite"
                     >
                       {settings.fontSize}px
                     </span>
-                    <button
-                      type="button"
-                      className="icon-button"
-                      aria-label="Increase terminal font size"
-                      disabled={settings.fontSize >= 24}
-                      onClick={() =>
-                        updateUi({ fontSize: settings.fontSize + 1 })
-                      }
-                    >
-                      <Plus size={13} aria-hidden />
-                    </button>
+                    {step(Plus, "Increase terminal font size", 1)}
                   </div>
                 </SettingField>
-                <SelectField
-                  label="Line height"
-                  controlLabel="Terminal line height"
-                  value={String(settings.lineHeight)}
-                  options={[
-                    { value: "1", label: "Compact" },
-                    { value: "1.2", label: "Comfortable" },
-                    { value: "1.4", label: "Spacious" },
-                  ]}
-                  onChange={(value) => updateUi({ lineHeight: Number(value) })}
-                />
-                <SelectField
-                  label="Cursor"
-                  controlLabel="Terminal cursor shape"
-                  value={settings.cursorStyle}
-                  options={[
-                    { value: "block", label: "Block" },
-                    { value: "bar", label: "Bar" },
-                    { value: "underline", label: "Underline" },
-                  ]}
-                  onChange={(cursorStyle) => updateUi({ cursorStyle })}
-                />
-                <SwitchField
-                  label="Blinking cursor"
-                  controlLabel="Blinking terminal cursor"
-                  checked={settings.cursorBlink}
-                  onChange={(cursorBlink) => updateUi({ cursorBlink })}
-                />
-                <SelectField
-                  label="Scrollback"
-                  controlLabel="Terminal scrollback lines"
-                  value={String(settings.scrollbackRows)}
-                  options={[5000, 20000, 50000, 100000].map((rows) => ({
-                    value: String(rows),
-                    label: `${rows.toLocaleString("en-US")} lines`,
-                  }))}
-                  onChange={(value) =>
-                    updateUi({ scrollbackRows: Number(value) })
-                  }
-                />
+                {select("lineHeight", "Line height", "Terminal line height", [
+                  [1, "Compact"], [1.2, "Comfortable"], [1.4, "Spacious"],
+                ])}
+                {select("cursorStyle", "Cursor", "Terminal cursor shape", [
+                  ["block", "Block"], ["bar", "Bar"], ["underline", "Underline"],
+                ])}
+                {toggle("cursorBlink", "Blinking cursor", "Blinking terminal cursor")}
+                {select("scrollbackRows", "Scrollback", "Terminal scrollback lines",
+                  [5000, 20000, 50000, 100000].map((rows) => [
+                    rows, `${rows.toLocaleString("en-US")} lines`,
+                  ] as const),
+                )}
               </>
             ) : category.id === "interaction" ? (
               <>
-                <SwitchField
-                  label="Protect rich paste"
-                  controlLabel="Protect terminal paste"
-                  description="Confirm multiline text or control characters."
-                  checked={settings.pasteProtection}
-                  onChange={(pasteProtection) => updateUi({ pasteProtection })}
-                />
-                <SelectField
-                  label="Shortcut priority"
-                  description="Where search, copy and paste shortcuts go."
-                  controlLabel="Terminal shortcut priority"
-                  value={settings.shortcutMode}
-                  options={[
-                    { value: "workbench", label: "Workbench" },
-                    { value: "shell", label: "Shell" },
-                  ]}
-                  onChange={(shortcutMode) => updateUi({ shortcutMode })}
-                />
-                {isMacTerminalBrowser() ? (
-                  <SwitchField
-                    label="Option as Meta"
-                    controlLabel="Use Option as Meta"
-                    description="Option sends shell shortcuts instead of special characters."
-                    checked={settings.macOptionIsMeta}
-                    onChange={(macOptionIsMeta) =>
-                      updateUi({ macOptionIsMeta })
-                    }
-                  />
-                ) : null}
+                {toggle("pasteProtection", "Protect rich paste", "Protect terminal paste",
+                  "Confirm multiline text or control characters.",
+                )}
+                {select("shortcutMode", "Shortcut priority", "Terminal shortcut priority", [
+                  ["workbench", "Workbench"], ["shell", "Shell"],
+                ], { description: "Where search, copy and paste shortcuts go." })}
+                {isMacTerminalBrowser() && toggle("macOptionIsMeta", "Option as Meta", "Use Option as Meta",
+                  "Option sends shell shortcuts instead of special characters.",
+                )}
                 <SelectField
                   label="Bell"
                   status={permissionStatus("bell")}
@@ -365,43 +332,27 @@ export function TerminalSettingsDialog({
                     { value: "visual", label: "Mark terminal tab" },
                     { value: "desktop", label: "Desktop notification" },
                   ]}
-                  onChange={(value) =>
-                    void selectBell(value as TerminalBellMode)
-                  }
+                  onChange={(bell) => void updateNotification({ bell })}
                 />
                 <SwitchField
                   label="Long task notifications"
                   description="Notify when a background command finishes. Command text isn't shown."
                   status={permissionStatus("task")}
                   checked={settings.longTaskNotifications}
-                  onChange={setLongTaskNotifications}
-                />
-                <SelectField
-                  label="Long task threshold"
-                  className="terminal-settings__field--subordinate"
-                  controlLabel="Long task notification threshold"
-                  value={String(settings.longTaskThresholdSeconds)}
-                  disabled={!settings.longTaskNotifications}
-                  options={[
-                    { value: "5", label: "5 seconds" },
-                    { value: "10", label: "10 seconds" },
-                    { value: "30", label: "30 seconds" },
-                    { value: "60", label: "1 minute" },
-                    { value: "300", label: "5 minutes" },
-                  ]}
-                  onChange={(value) =>
-                    updateUi({ longTaskThresholdSeconds: Number(value) })
+                  onChange={(longTaskNotifications) =>
+                    void updateNotification({ longTaskNotifications })
                   }
                 />
-                <SwitchField
-                  label="Screen reader mode"
-                  controlLabel="Terminal screen reader mode"
-                  description="Make terminal output readable by screen readers. May slow rendering."
-                  checked={settings.screenReaderMode}
-                  onChange={(screenReaderMode) =>
-                    updateUi({ screenReaderMode })
-                  }
-                />
+                {select("longTaskThresholdSeconds", "Long task threshold", "Long task notification threshold", [
+                  [5, "5 seconds"], [10, "10 seconds"], [30, "30 seconds"],
+                  [60, "1 minute"], [300, "5 minutes"],
+                ], {
+                  disabled: !settings.longTaskNotifications,
+                  className: "terminal-settings__field--subordinate",
+                })}
+                {toggle("screenReaderMode", "Screen reader mode", "Terminal screen reader mode",
+                  "Make terminal output readable by screen readers. May slow rendering.",
+                )}
               </>
             ) : serviceSettings ? (
               <>
@@ -410,7 +361,7 @@ export function TerminalSettingsDialog({
                   controlLabel="Persist terminal output"
                   description="Keep output after a system restart. It may contain secrets. Turning this off deletes saved output."
                   checked={serviceSettings.persistOutput}
-                  disabled={savingService}
+                  disabled={serviceOperation !== null}
                   onChange={(persistOutput) => {
                     if (
                       persistOutput ||
@@ -418,14 +369,14 @@ export function TerminalSettingsDialog({
                         "Stop saving output and delete all saved terminal output on this Host?",
                       )
                     )
-                      void updateService({ persistOutput });
+                      void changeService({ persistOutput });
                   }}
                 />
                 <SelectField
                   label="Retention"
                   controlLabel="Terminal output retention"
                   value={String(serviceSettings.historyRetentionDays)}
-                  disabled={savingService || !serviceSettings.persistOutput}
+                  disabled={serviceOperation !== null || !serviceSettings.persistOutput}
                   options={[
                     { value: "1", label: "1 day" },
                     { value: "7", label: "7 days" },
@@ -434,7 +385,7 @@ export function TerminalSettingsDialog({
                     { value: "365", label: "1 year" },
                   ]}
                   onChange={(value) =>
-                    void updateService({
+                    void changeService({
                       historyRetentionDays: Number(value),
                     })
                   }
@@ -446,8 +397,11 @@ export function TerminalSettingsDialog({
                   <button
                     type="button"
                     className="button button--danger-quiet"
-                    disabled={clearing}
-                    onClick={() => void clearHistory()}
+                    disabled={serviceOperation !== null}
+                    onClick={() => {
+                      if (window.confirm("Delete all terminal output saved on this Host?"))
+                        void changeService();
+                    }}
                   >
                     <Trash2 size={13} aria-hidden />
                     <ButtonLabel reserve="Clear history">

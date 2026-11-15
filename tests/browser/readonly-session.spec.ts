@@ -105,14 +105,6 @@ test("unavailable-project history keeps its reading surface at desktop and phone
     page.getByRole("region", { name: "Turn history" }),
   ).toContainText("Show me a formula-rich example");
 
-  const usagePalette = await openCommandPalette(page);
-  await usagePalette.getByLabel("Filter commands").fill("/session");
-  await usagePalette.getByRole("option", { name: /Session & usage/ }).click();
-  await expect(
-    page.getByText("Usage information is unavailable."),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Dismiss /session result" }).click();
-
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 844 });
     await expect(note).toBeVisible();

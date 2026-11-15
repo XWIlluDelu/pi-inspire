@@ -208,17 +208,18 @@ the bounded grace period.
 
 HTTP controls use explicit bearer authentication; WebSocket upgrades use the origin/audience-bound
 socket tickets defined by [[host-lifecycle]]. Terminal attachment additionally consumes its
-short-lived, terminal-bound ticket. Dimensions, titles, paths, messages, replay, IPC connections, pending input, and
-outbound buffers are bounded. A slow viewer detaches independently of its PTY and other viewers.
+short-lived, terminal-bound ticket. The Host forwards the same control and binary input frames
+to the daemon, which validates them at the PTY attachment. Runtime and terminal sockets share the
+Host liveness, current build and drain checks. Dimensions, titles, paths, messages, replay, IPC
+connections, pending input and outbound buffers are bounded. A slow viewer detaches independently of its PTY and other viewers.
 Diagnostics omit terminal input, output, and internal path-bearing failures.
 
 ## Tabs, menus, and settings
 
 Each project terminal occupies a tab beside open files in the shared contextual strip. Terminal
 tabs use the file tab's padding, close slot, 132px minimum, 180px cap and overflow rules
-([[workspace-layout]]); each 6px status dot sits within the same 13px icon slot. Tabs that do not
-fit move into the shared trailing More tabs menu, without horizontal scrolling or reducing that
-minimum. Selecting a file or tool hides the terminal view without replacing its process or changing
+([[workspace-layout]]); each 6px status dot sits within the same 13px icon slot. The shared strip
+scrolls horizontally, and the searchable Open tabs list reaches every tab. Selecting a file or tool hides the terminal view without replacing its process or changing
 input ownership. Terminal rename inputs share the session rename editor's surface, border, corners
 and focus treatment, while keeping the tab's compact type and label-aligned width. Enter or blur
 saves; Escape cancels. A manual name overrides automatic titles, and clearing it restores automatic
@@ -243,8 +244,9 @@ Focus stays in the toolbar across widths. Focus mode and same-origin focused win
 attach the existing terminal and display the tab strip above the toolbar. Changing the active
 terminal keeps the tab strip mounted and preserves its keyboard focus and rename target.
 
-Rename, drag/keyboard ordering, close/force-close confirmation, recent-close recreation,
-status/unread/bell indicators and the all-project navigator keep their behavior. Closing a
+The action menu and keyboard can move a terminal tab left or right. Rename, close/force-close
+confirmation, recent-close recreation, status/unread/bell indicators and the all-project navigator
+remain available. Closing a
 running command requires confirmation. Command/keyboard New creates the default profile. The input-focus icon uses
 neutral action color; process dots and connecting/reconnecting indicators retain their state colors.
 
@@ -254,9 +256,9 @@ and yields if another control takes focus; font loading, replay, reconnect, and 
 not reclaim it. Explicit Take control retains its user-gesture focus behavior.
 
 Profile and More menus share one pane owner and a native named disclosure group for synchronous
-mutual exclusion; inner groups remain independent. More contains clipboard/output actions, inline display
-and management groups, the navigator, and settings. Escape closes the innermost group first and restores
-its summary, without also closing a narrow drawer. A newer modal has priority. Menus fit and scroll
+mutual exclusion. More lists clipboard, display, terminal management and settings actions directly.
+The all-project navigator retains its own disclosure. Escape closes that disclosure before More and
+restores its summary without closing the narrow drawer. A newer modal has priority. Menus fit and scroll
 within the pane; header controls align across desktop/touch layouts, and hidden views publish no controls.
 Profile names wrap within their text column when needed; the Default marker remains visible on the
 first-line baseline. Short entries retain centered content, standard menu height, and target size.
@@ -332,12 +334,10 @@ Workbench New terminal uses the physical modified Backquote key, including layou
 produces a tilde; shell shortcut mode yields it to the PTY. Shell history remains native; the view adds neither command reruns nor a separate history interface.
 
 The non-wrapping, single-row touch bar keeps four 44px arrows fixed in a compact trailing group.
-Esc, Ctrl+C, one-shot Ctrl/Alt, Tab, Home/End, and Page Up/Down scroll independently in equal-width
-slots sized to fit complete buttons (two at 320px, three at 390px). Scrolling snaps to whole-key
-boundaries, including the final position. Small directional cues use the existing bottom padding
-only on sides with hidden keys; no fade covers button labels. Input ownership, readiness and process
-state gate every key. Touch keys preserve input focus. Navigation and direct Ctrl+C also work with
-the software keyboard closed; the header keyboard button explicitly focuses input. Ctrl/Alt are
+Esc, Ctrl+C, one-shot Ctrl/Alt, Tab, Home/End, and Page Up/Down use a horizontally scrollable strip
+with complete equal-width keys. Input ownership, readiness and process state gate every key. Touch
+keys preserve input focus. Navigation and direct Ctrl+C also work with the software keyboard
+closed; the header keyboard button explicitly focuses input. Ctrl/Alt are
 one-shot modifiers for user keystrokes, cleared by blur, loss of control, or paste; they do not
 modify pasted text or terminal replies.
 

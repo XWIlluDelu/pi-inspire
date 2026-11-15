@@ -94,7 +94,7 @@ test("deletes the visible idle session through one confirmation and returns to N
   await expect(remove).toBeEnabled();
   await remove.click();
   const dialog = page.getByRole("alertdialog", { name: "Delete session?" });
-  await expect(dialog.locator(".session-delete__warning")).toHaveCount(0);
+  await expect(dialog.locator(".dialog__warning")).toHaveCount(0);
   await dialog
     .getByRole("button", { name: "Delete session", exact: true })
     .click();
@@ -173,7 +173,9 @@ test("a refused deletion wraps its diagnostic, then an externally missing file r
       })
     ).ok(),
   ).toBe(true);
-  expect((await hostRequest(page).post("/api/sessions/refresh")).ok()).toBe(true);
+  expect((await hostRequest(page).post("/api/sessions/refresh")).ok()).toBe(
+    true,
+  );
   await dialog
     .getByRole("button", { name: "Delete session", exact: true })
     .click();

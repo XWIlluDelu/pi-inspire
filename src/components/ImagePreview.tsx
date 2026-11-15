@@ -1,5 +1,6 @@
 import { AlertTriangle } from "lucide-react";
 import {
+  type ComponentProps,
   createContext,
   type ReactNode,
   useCallback,
@@ -173,6 +174,23 @@ function Thumbnail({
   );
 }
 
+export function LoadedImagePreview({
+  load,
+  unavailable,
+  pending,
+  ...props
+}: Omit<ComponentProps<typeof ImagePreview>, "src" | "loading" | "error"> & {
+  load: Parameters<typeof useImageUrl>[0];
+  unavailable?: ReactNode;
+  pending?: ReactNode;
+}) {
+  const { src, error } = useImageUrl(load);
+  if (error && unavailable) return unavailable;
+  const loading = !src && !error;
+  if (loading && pending) return pending;
+  return <ImagePreview {...props} src={src} error={error} loading={loading} />;
+}
+
 export function TranscriptImage({
   sessionId,
   viewId,
@@ -205,18 +223,14 @@ export function TranscriptImage({
       ),
     [projectionKey, reference, sessionId, viewId],
   );
-  const { src, error } = useImageUrl(loadImage);
-
-  if (error && unavailable) return unavailable;
   return (
-    <ImagePreview
-      src={src}
+    <LoadedImagePreview
+      load={loadImage}
+      unavailable={unavailable}
       alt={alt}
       name={name}
       title={title}
       className={className}
-      loading={!src && !error}
-      error={error}
     />
   );
 }

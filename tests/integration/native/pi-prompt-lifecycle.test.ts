@@ -63,10 +63,12 @@ describe("native prompt admission and extension dialogs", () => {
       // messages and attests them through the ordinary get_entries protocol.
       const internals = f.runtime as unknown as {
         slots: Map<string, RuntimeSlot>;
-        reconcileSlot(slot: RuntimeSlot, force: boolean): Promise<unknown>;
+        projectionCoordinator: {
+          reconcile(slot: RuntimeSlot, force: boolean): Promise<unknown>;
+        };
       };
       const slot = internals.slots.get(f.sessionId)!;
-      await internals.reconcileSlot(slot, true);
+      await internals.projectionCoordinator.reconcile(slot, true);
       release();
       await settled(f, 1);
       await vi.waitFor(() => {

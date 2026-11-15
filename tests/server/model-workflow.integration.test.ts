@@ -124,18 +124,18 @@ it("keeps native virtual selection/effort across replies, real navigation, copie
     expect(navigated.snapshot.active).toMatchObject({
       model: selected,
       thinkingLevel: nativeState.thinkingLevel,
-      navigationLeased: true,
+      restoreSavedLeafId: tree.durableLeafId,
       effectiveLeafId: firstReply.id,
     });
     expect((await runtime.snapshot(id)).active).toMatchObject({
       model: selected,
       thinkingLevel: nativeState.thinkingLevel,
-      navigationLeased: true,
+      restoreSavedLeafId: tree.durableLeafId,
     });
     await runtime.prompt({ sessionId: id, message: "continue earlier route" });
     const continued = await settle(id);
     expect(continued.model).toMatchObject(selected);
-    expect(continued.navigationLeased).toBe(false);
+    expect(continued.restoreSavedLeafId).toBeNull();
     expect(continued.stats).toMatchObject({
       contextUsage: { contextWindow: 64_000 },
     });

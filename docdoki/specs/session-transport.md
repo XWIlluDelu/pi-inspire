@@ -216,9 +216,10 @@ ordinary staging ownership under [[composer]].
 A matched rejected receipt ends that intent. A retired or missing receipt, plain HTTP 500,
 mismatched proof and transport loss stay uncertain; retrying the same intent only observes.
 
-Prompt and Pending each retain at most 2,048 settled results and 32 MiB for 15 minutes.
-Process-lifetime tombstones prevent redispatch. Each 65,536-identity limit refuses further admission.
-They use one receipt implementation with separate capacities and delivery fingerprints.
+Prompt, Return and Stop share one Host receipt table with command-specific fingerprints. It retains
+at most 2,048 settled results and 32 MiB for 15 minutes. Process-lifetime tombstones prevent
+redispatch or reuse of an ID for another command. The table refuses admission beyond 65,536
+identities. Terminal receipts retain their own daemon admission epoch and expiry policy.
 
 ## Transcript views
 

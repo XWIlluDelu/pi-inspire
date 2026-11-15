@@ -14,6 +14,7 @@ import {
   isBusyRunState,
   type LiveTranscript,
   type ModelOption,
+  type ModelSelectionResponse,
   type NewSessionOptions,
   type PendingRecovery,
   type PiRuntimeSettings,
@@ -49,6 +50,7 @@ import {
 } from "./api";
 import {
   type AppState,
+  contextUsage,
   createInitialAppState,
   isCommandQuery,
   type NativeCommandActivity,
@@ -126,7 +128,6 @@ import {
 const MAX_COMMAND_ACTIVITIES = 4;
 const ACCEPTED_NATIVE_COMMAND: PromptAcceptedResponse = {
   accepted: true,
-  historyEntry: null,
 };
 
 function finiteNumber(value: unknown): number | null {
@@ -231,8 +232,8 @@ export class AppStore {
     patch: (patch) => this.set(patch),
     api: () => this.api,
     selectionGeneration: () => this.selectionGeneration,
-    selectionRequest: () => this.selectionRequest,
-    beginForkSelection: () => ++this.selectionRequest,
+    selectionRequest: () => this.selection.generation,
+    beginForkSelection: () => this.selection.beginForkSelection(),
     handleAuthFailure: () => this.handleAuthFailure(),
     draftRevision: () => this.drafts.get(this.state.sessionId).revision,
     applyNavigation: (response, draftRevision) => {
@@ -287,33 +288,19 @@ export class AppStore {
     api: () => this.api,
     handleAuthFailure: () => this.handleAuthFailure(),
   });
-  /** SessionSelectionController owns only latest-wins open/new/deselect
-   * requests. Snapshot publication, branch invalidation, and visible composer
-   * partition changes stay with AppStore. */
   private readonly selection = new SessionSelectionController({
     state: () => this.state,
     api: () => this.api,
-    beginOpening: (sessionId) => {
+    patch: (patch) => this.set(patch),
+    onOpenIntent: () => {
       this.branches.invalidate();
+      this.nativeSettings.clear();
       this.set({
         sessionActionError: null,
         pendingRuntimeSettings: {},
         thinkingLevelPending: false,
       });
-      this.selectionIntentGeneration += 1;
-      const ticket = ++this.selectionRequest;
-      this.claimOpening(ticket, sessionId);
-      return ticket;
     },
-    invalidateOpening: () => {
-      this.selectionRequest += 1;
-      this.releaseOpening();
-    },
-    ownsOpening: (ticket, api) =>
-      ticket === this.selectionRequest &&
-      this.openingOwner === ticket &&
-      this.api === api,
-    releaseOpening: (ticket) => this.releaseOpening(ticket),
     applySnapshot: (snapshot) => this.applySnapshot(snapshot),
     ensureSessionVisible: (sessionId) => this.ensureSessionVisible(sessionId),
     setActionError: (sessionActionError) => this.set({ sessionActionError }),
@@ -490,24 +477,10 @@ export class AppStore {
   });
   private autoContinued = false;
   private selectionGeneration = 0;
-  /** Explicit open, create, and deselect intent. Unlike selectionRequest, this
-   * does not advance for authoritative transport snapshots. */
-  private selectionIntentGeneration = 0;
-  /** Latest-wins guard for explicit selection and replacement authority.
-   * Addressed detail snapshots only refresh the visible projection; they
-   * must not retire a newer open/new/deselect request. */
-  private selectionRequest = 0;
-  /** The request that owns the visible opening marker. Stale completions may
-   * never clear a newer owner. */
-  private openingOwner: number | null = null;
   private resyncRequest = 0;
   private resyncRecovery = new RecoveryBackoff();
   private pausedSessionReads: ReadonlySet<string> | null = null;
-  private thinkingLevelRequest = 0;
-  private readonly runtimeSettingOwners = new Map<
-    keyof PiRuntimeSettings,
-    symbol
-  >();
+  private readonly nativeSettings = new Map<string, symbol>();
   private bootstrapRequest: AbortController | null = null;
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -648,6 +621,8 @@ export class AppStore {
     this.catalog.invalidate();
     this.invalidateTransportRequests();
     this.runtimeEvents.invalidateTransport();
+    this.nativeSettings.clear();
+    this.set({ pendingRuntimeSettings: {}, thinkingLevelPending: false });
     this.preferences.invalidateTransport();
   }
 
@@ -662,30 +637,6 @@ export class AppStore {
       connection: "offline",
       connectionProblem: null,
     });
-  }
-
-  // --- Bootstrap ---
-
-  private claimOpening(owner: number, sessionId: string | null): void {
-    this.openingOwner = owner;
-    this.set({ openingSessionId: sessionId, sessionSelectionPending: true });
-  }
-
-  private releaseOpening(owner?: number): void {
-    if (owner !== undefined && this.openingOwner !== owner) return;
-    this.openingOwner = null;
-    if (
-      this.state.openingSessionId !== null ||
-      this.state.sessionSelectionPending
-    ) {
-      this.set({
-        openingSessionId: null,
-        sessionSelectionPending: false,
-        ...(owner !== undefined && this.state.bootstrapped
-          ? { startupPending: false }
-          : {}),
-      });
-    }
   }
 
   async init(): Promise<void> {
@@ -703,7 +654,7 @@ export class AppStore {
     );
     this.api = api;
     const ownsBootstrap = (): boolean => this.api === api;
-    const autoContinueIntent = this.selectionIntentGeneration;
+    const autoContinueIntent = this.selection.openIntent;
     const initial = !this.workbenchSelectionResolved;
     const rememberedSession = initial ? lastWorkbenchSession() : null;
     try {
@@ -750,7 +701,7 @@ export class AppStore {
       const detailSessionId =
         initial &&
         !this.workbenchSelectionResolved &&
-        this.selectionIntentGeneration === autoContinueIntent
+        this.selection.openIntent === autoContinueIntent
           ? rememberedSession
             ? rememberedSession.sessionId
             : (boot.startupSessionId ?? null)
@@ -768,7 +719,7 @@ export class AppStore {
           this.autoContinued ||
           preferences.launch !== "continue" ||
           this.state.sessionId ||
-          this.selectionIntentGeneration !== autoContinueIntent
+          this.selection.openIntent !== autoContinueIntent
         )
           this.set({ startupPending: false });
         void catalog.then(async () => {
@@ -776,7 +727,7 @@ export class AppStore {
           if (!this.autoContinued) {
             this.autoContinued = true;
             if (
-              this.selectionIntentGeneration === autoContinueIntent &&
+              this.selection.openIntent === autoContinueIntent &&
               preferences.launch === "continue" &&
               !this.state.sessionId &&
               !this.state.sessionSelectionPending
@@ -966,6 +917,7 @@ export class AppStore {
   private replaceView(transition: ReturnType<typeof deriveSnapshotTransition>) {
     const { sessionChanged, cwd, replaced, revisionChanged } = transition;
     if (replaced) {
+      this.nativeSettings.clear();
       this.selectionGeneration += 1;
       this.resyncRequest += 1;
       if (sessionChanged) this.branches.retireAction();
@@ -1043,7 +995,9 @@ export class AppStore {
     const request = ++this.resyncRequest;
     const current = () => request === this.resyncRequest && ownsView();
     try {
-      const snapshot = await api.snapshot(expectedSessionId);
+      const snapshot = await api.json("snapshot", {
+        query: { detail: expectedSessionId ?? "" },
+      });
       const snapshotSessionId = snapshot.active?.sessionId ?? null;
       const page = snapshot.active?.transcriptPage;
       if (
@@ -1246,29 +1200,55 @@ export class AppStore {
     this.set({ commandActivities });
   };
 
-  private finishSimpleCommand(
+  private runCommandActivity(
     sessionId: string,
-    id: number,
-    result: CommandChangeResult,
-    confirmation: string,
-  ): void {
-    if (result.status === "success") {
-      this.dismissCommandActivity(sessionId, id);
-      if (this.state.sessionId === sessionId)
-        this.notify("info", result.message ?? confirmation);
-    } else {
-      this.updateCommandActivity(
-        sessionId,
-        id,
-        result.status === "error"
-          ? { status: "error", message: result.message }
-          : {
-              status: "warning",
-              message:
-                "The command outcome is unknown after ownership changed.",
-            },
-      );
-    }
+    command: string,
+    message: string,
+    run: () => Promise<Pick<NativeCommandActivity, "status" | "message" | "details" | "download" | "action">>,
+    options: {
+      scopedAuth?: () => boolean;
+      persistent?: boolean;
+      fallback?: string;
+      afterReceipt?: () => void;
+    } = {},
+  ): PromptAcceptedResponse {
+    const api = this.api;
+    const id = this.presentCommandActivity(sessionId, command, "running", message);
+    // Dispatch here so clipboard reads are still in the initiating gesture.
+    void (async () => {
+      try {
+        const result = await run();
+        if (options.afterReceipt && this.api !== api) return;
+        if (result.status === "success" && !options.persistent) {
+          this.dismissCommandActivity(sessionId, id);
+          if (this.state.sessionId === sessionId)
+            this.notify("info", result.message);
+        } else {
+          this.updateCommandActivity(sessionId, id, result);
+        }
+        options.afterReceipt?.();
+      } catch (error) {
+        if (options.afterReceipt && this.api !== api) return;
+        const unauthenticated = error instanceof ApiError && error.status === 401;
+        const unknown =
+          error instanceof ApiTransportError ||
+          (error instanceof ApiError && error.code === "PI_RPC_OUTCOME_UNKNOWN");
+        this.updateCommandActivity(sessionId, id, {
+          status: unknown && !options.scopedAuth ? "warning" : "error",
+          message:
+            unauthenticated && !options.scopedAuth
+              ? "Host authentication expired before the command completed."
+              : unknown && !options.scopedAuth
+                ? "Could not confirm the command result. Reconnect and check the session before trying again."
+                : error instanceof Error
+                  ? error.message
+                  : options.fallback ?? `/${command} failed`,
+        });
+        if (unauthenticated && (options.scopedAuth?.() ?? true))
+          this.handleAuthFailure();
+      }
+    })();
+    return ACCEPTED_NATIVE_COMMAND;
   }
 
   private requestNativeCommandUi(
@@ -1421,66 +1401,25 @@ export class AppStore {
       this.notify("warning", "Wait for the active command to finish");
       return false;
     }
-    const id = this.presentCommandActivity(sessionId, command, "running", "");
     const selectionGeneration = this.selectionGeneration;
-    void (async () => {
-      try {
-        const result = await api.json("nativeCommand", {
-          body: { sessionId, command, argument: argument || undefined },
-        });
-        if (this.api !== api) return;
-        if (result.outcome !== "cancelled" && command !== "export") {
-          this.finishSimpleCommand(
-            sessionId,
-            id,
-            { status: "success" },
-            result.message,
-          );
-        } else {
-          const path =
-            command === "export" ? result.details?.[0]?.value : undefined;
-          const { downloadId, fileName } = result.export ?? {};
-          this.updateCommandActivity(sessionId, id, {
-            status: result.outcome === "cancelled" ? "cancelled" : "success",
-            message: result.message,
-            details: result.details,
-            ...(downloadId && fileName
-              ? { download: { id: downloadId, fileName } }
-              : {}),
-            ...(path
-              ? { action: { kind: "copy", label: "Copy path", value: path } }
-              : {}),
-          });
-        }
-        void this.resync(sessionId, selectionGeneration);
-      } catch (error) {
-        if (this.api !== api) return;
-        if (error instanceof ApiError && error.status === 401) {
-          this.updateCommandActivity(sessionId, id, {
-            status: "error",
-            message:
-              "Host authentication expired before the command completed.",
-          });
-          this.handleAuthFailure();
-        } else if (
-          error instanceof ApiTransportError ||
-          (error instanceof ApiError && error.code === "PI_RPC_OUTCOME_UNKNOWN")
-        ) {
-          this.updateCommandActivity(sessionId, id, {
-            status: "warning",
-            message:
-              "Could not confirm the command result. Reconnect and check the session before trying again.",
-          });
-        } else {
-          this.updateCommandActivity(sessionId, id, {
-            status: "error",
-            message:
-              error instanceof Error ? error.message : `/${command} failed`,
-          });
-        }
-      }
-    })();
-    return ACCEPTED_NATIVE_COMMAND;
+    return this.runCommandActivity(sessionId, command, "", async () => {
+      const result = await api.json("nativeCommand", {
+        body: { sessionId, command, argument: argument || undefined },
+      });
+      const exporting = command === "export";
+      const path = exporting ? result.details?.[0]?.value : undefined;
+      const { downloadId, fileName } = result.export ?? {};
+      return {
+        status: result.outcome === "cancelled" ? "cancelled" : "success",
+        message: result.message,
+        details: result.details,
+        download: downloadId && fileName ? { id: downloadId, fileName } : undefined,
+        action: path ? { kind: "copy", label: "Copy path", value: path } : undefined,
+      };
+    }, {
+      persistent: command === "export",
+      afterReceipt: () => void this.resync(sessionId, selectionGeneration),
+    });
   }
 
   private sessionCommandDetails(): NonNullable<
@@ -1488,7 +1427,7 @@ export class AppStore {
   > {
     const stats = jsonRecord(this.state.sessionStats);
     const tokens = jsonRecord(stats?.tokens);
-    const context = jsonRecord(stats?.contextUsage);
+    const context = contextUsage(stats);
     const details: NonNullable<NativeCommandActivity["details"]> = [];
     const totalMessages = formattedInteger(stats?.totalMessages);
     if (totalMessages)
@@ -1507,15 +1446,16 @@ export class AppStore {
           maximumFractionDigits: 4,
         }).format(cost),
       });
-    const used = formattedInteger(context?.tokens);
-    const window = formattedInteger(context?.contextWindow);
-    const percent = finiteNumber(context?.percent);
-    if (used && window)
+    if (context) {
+      const { tokens: used, contextWindow, percent } = context;
       details.push({
         id: "context",
         label: "Context",
-        value: `${used} / ${window}${percent === null ? "" : ` (${Math.round(percent)}%)`}`,
+        value: `${used?.toLocaleString() ?? "—"} / ${contextWindow.toLocaleString()}${
+          percent === null ? "" : ` (${Math.round(percent)}%)`
+        }${used === null ? " · Updates after the next reply" : ""}`,
       });
+    }
     return details;
   }
 
@@ -1631,13 +1571,12 @@ export class AppStore {
       message: string,
       action: () => Promise<CommandChangeResult>,
       confirmation: string,
-    ) => {
-      const id = report("running", message);
-      void action().then((result) =>
-        this.finishSimpleCommand(sessionId, id, result, confirmation),
-      );
-      return ACCEPTED_NATIVE_COMMAND;
-    };
+    ) => this.runCommandActivity(sessionId, name, message, async () => {
+      const result = await action();
+      return result.status === "stale"
+        ? { status: "warning", message: "The command outcome is unknown after ownership changed." }
+        : { status: result.status, message: result.message ?? confirmation };
+    });
     const draft = this.drafts.get(sessionId);
     if (
       includeDraftArtifacts &&
@@ -1786,56 +1725,42 @@ export class AppStore {
         );
         return ACCEPTED_NATIVE_COMMAND;
       }
-      const id = report("running", "Copying the last assistant response…");
       const current = () =>
         this.api === api &&
         this.selectionGeneration === selectionGeneration &&
         this.state.sessionId === sessionId &&
         this.state.view.viewId === viewId;
-      let noResponse = false;
-      void writeCopyContent(
-        copyLoader(async (signal) => {
-          const { text } = await api.json(
-            "lastAssistantText",
-            { query: { sessionId, viewId } },
-            signal,
+      return this.runCommandActivity(
+        sessionId,
+        name,
+        "Copying the last assistant response…",
+        async () => {
+          let noResponse = false;
+          const written = await writeCopyContent(
+            copyLoader(async (signal) => {
+              const { text } = await api.json(
+                "lastAssistantText",
+                { query: { sessionId, viewId } },
+                signal,
+              );
+              noResponse = text === null;
+              return text;
+            }),
+            current,
           );
-          noResponse = text === null;
-          return text;
-        }),
-        current,
-      )
-        .then((written) => {
-          if (!written) {
-            this.updateCommandActivity(sessionId, id, {
-              status: "warning",
-              message: noResponse
-                ? "There is no assistant response to copy in this branch."
-                : current()
-                  ? "Copy cancelled by another clipboard action."
-                  : "Copy cancelled because the session or branch changed.",
-            });
-            return;
-          }
-          this.finishSimpleCommand(
-            sessionId,
-            id,
-            { status: "success" },
-            "Copied the complete last assistant response to the clipboard.",
-          );
-        })
-        .catch((error: unknown) => {
-          if (current() && error instanceof ApiError && error.status === 401)
-            this.handleAuthFailure();
-          this.updateCommandActivity(sessionId, id, {
-            status: "error",
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to read the complete response.",
-          });
-        });
-      return ACCEPTED_NATIVE_COMMAND;
+          return written
+            ? { status: "success", message: "Copied the complete last assistant response to the clipboard." }
+            : {
+                status: "warning",
+                message: noResponse
+                  ? "There is no assistant response to copy in this branch."
+                  : current()
+                    ? "Copy cancelled by another clipboard action."
+                    : "Copy cancelled because the session or branch changed.",
+              };
+        },
+        { scopedAuth: current, fallback: "Failed to read the complete response." },
+      );
     }
     if (name === "session") {
       report("info", "", {
@@ -2219,190 +2144,137 @@ export class AppStore {
     }
   };
 
-  setModel = async (provider: string, modelId: string): Promise<boolean> => {
-    const sessionId = this.state.sessionId;
-    const selectionGeneration = this.selectionGeneration;
-    const result = await this.changeModel(provider, modelId);
+  setModel = (provider: string, modelId: string): Promise<boolean> =>
+    this.reportSelectionChange(() => this.changeModel(provider, modelId));
+
+  private async reportSelectionChange(
+    change: () => Promise<CommandChangeResult>,
+  ): Promise<boolean> {
+    const { sessionId } = this.state;
+    const generation = this.selectionGeneration;
+    const result = await change();
     if (
       result.status === "error" &&
       this.state.sessionId === sessionId &&
-      this.selectionGeneration === selectionGeneration
+      this.selectionGeneration === generation
     )
       this.notify("warning", result.message);
     return result.status === "success";
-  };
+  }
 
-  private changeModel = async (
-    provider: string,
-    modelId: string,
-  ): Promise<CommandChangeResult> => {
-    const sessionId = this.state.sessionId;
-    const selectionGeneration = this.selectionGeneration;
+  private changeModel(provider: string, modelId: string) {
+    return this.changeNativeSetting("model", "Failed to set model", (api, sessionId) =>
+      api.json("setModel", { body: { sessionId, provider, modelId } }),
+    );
+  }
+
+  setThinkingLevel = (level: ThinkingLevel): Promise<boolean> =>
+    this.reportSelectionChange(() => this.changeThinkingLevel(level));
+
+  private changeThinkingLevel(level: ThinkingLevel) {
+    return this.changeNativeSetting(
+      "thinking",
+      "Failed to set thinking level",
+      (api, sessionId) =>
+        api.json("setThinkingLevel", { body: { sessionId, level } }),
+    );
+  }
+
+  setPiRuntimeSetting = (setting: RuntimeSetting): Promise<boolean> =>
+    this.reportSelectionChange(() =>
+      this.changeNativeSetting(
+        setting.key,
+        "Failed to update Pi runtime settings",
+        async (api, sessionId) => {
+          await api.json("setRuntimeSetting", { body: { sessionId, setting } });
+        },
+      ),
+    );
+
+  private showNativeSetting(
+    key: "thinking" | keyof PiRuntimeSettings,
+    active: boolean,
+  ) {
+    if (key === "thinking") {
+      this.set({ thinkingLevelPending: active });
+    } else {
+      const pending = { ...this.state.pendingRuntimeSettings };
+      if (active) pending[key] = true;
+      else delete pending[key];
+      this.set({ pendingRuntimeSettings: pending });
+    }
+  }
+
+  private async changeNativeSetting(
+    key: "model" | "thinking" | keyof PiRuntimeSettings,
+    failure: string,
+    write: (
+      api: Api,
+      sessionId: string,
+    ) => Promise<ModelSelectionResponse | void>,
+  ): Promise<CommandChangeResult> {
+    const { sessionId } = this.state;
+    const generation = this.selectionGeneration;
+    const selection = this.selection.generation;
+    const snapshot = this.snapshotGeneration;
     const api = this.api;
-    const ownsTransport = (): boolean => this.api === api;
     if (!api || !sessionId) return { status: "stale" };
+    const viewId = this.state.view.viewId;
+    const intent = Symbol(key);
+    this.nativeSettings.set(key, intent);
+    const ownsIntent = () =>
+      this.api === api && this.nativeSettings.get(key) === intent;
+    const ownsView = () =>
+      ownsIntent() &&
+      this.state.sessionId === sessionId &&
+      this.selectionGeneration === generation &&
+      (key === "model" ||
+        key === "thinking" ||
+        (this.selection.generation === selection && this.state.view.viewId === viewId));
+    if (key !== "model") this.showNativeSetting(key, true);
     try {
-      const selection = await api.json("setModel", {
-        body: { sessionId, provider, modelId },
-      });
-      if (!ownsTransport()) return { status: "stale" };
-      // Recency records only successful runtime changes. Keep unavailable
-      // identities in the source preference; the picker filters its display.
-      if (selection.model) this.preferences.rememberModel(selection.model);
-      await this.resync(sessionId, selectionGeneration);
-      return {
-        status: "success",
-        message: selection.model
-          ? `Active model is now ${selection.model.provider}/${selection.model.id}; thinking ${selection.thinkingLevel}.`
-          : "Pi has no active model.",
-      };
+      const result = await write(api, sessionId);
+      if (key === "model" && this.api === api && result && result.model)
+        this.preferences.rememberModel(result.model);
+      if (ownsView()) {
+        if (
+          key === "thinking" &&
+          result &&
+          !this.nativeSettings.has("model") &&
+          snapshot === this.snapshotGeneration
+        ) {
+          // A snapshot requested before this receipt cannot replace its values.
+          this.resyncRecovery.reset();
+          this.resyncRequest += 1;
+          this.set({ model: result.model, thinkingLevel: result.thinkingLevel });
+        } else {
+          await this.resync(sessionId, generation);
+        }
+      }
+      if (this.api !== api || (key === "thinking" && !ownsIntent()))
+        return { status: "stale" };
+      let message: string | undefined;
+      if (result) {
+        message = key === "thinking"
+          ? `Thinking level is now ${result.thinkingLevel}.`
+          : result.model
+            ? `Active model is now ${result.model.provider}/${result.model.id}; thinking ${result.thinkingLevel}.`
+            : "Pi has no active model.";
+      }
+      return { status: "success", message };
     } catch (error) {
-      if (!ownsTransport()) return { status: "stale" };
+      if (this.api !== api) return { status: "stale" };
       if (error instanceof ApiError && error.status === 401)
         this.handleAuthFailure();
-      return {
-        status: "error",
-        message: error instanceof Error ? error.message : "Failed to set model",
-      };
-    }
-  };
-
-  setThinkingLevel = async (level: ThinkingLevel): Promise<boolean> => {
-    const sessionId = this.state.sessionId;
-    const selectionGeneration = this.selectionGeneration;
-    const result = await this.changeThinkingLevel(level);
-    if (
-      result.status === "error" &&
-      this.state.sessionId === sessionId &&
-      this.selectionGeneration === selectionGeneration
-    )
-      this.notify("warning", result.message);
-    return result.status === "success";
-  };
-
-  private changeThinkingLevel = async (
-    level: ThinkingLevel,
-  ): Promise<CommandChangeResult> => {
-    const sessionId = this.state.sessionId;
-    const selectionGeneration = this.selectionGeneration;
-    const api = this.api;
-    const ownsTransport = (): boolean => this.api === api;
-    if (!api || !sessionId) return { status: "stale" };
-    const snapshotGeneration = this.snapshotGeneration;
-    const request = ++this.thinkingLevelRequest;
-    this.set({ thinkingLevelPending: true });
-    try {
-      const selection = await api.json("setThinkingLevel", {
-        body: { sessionId, level },
-      });
-      if (!ownsTransport() || request !== this.thinkingLevelRequest)
-        return { status: "stale" };
-      if (
-        this.state.sessionId === sessionId &&
-        this.selectionGeneration === selectionGeneration
-      ) {
-        // In-flight snapshots may predate this confirmed mutation. Empty
-        // sessions may emit no projection event to retire those reads, so
-        // they must not overwrite the confirmed model/effort pair.
-        this.resyncRecovery.reset();
-        this.resyncRequest += 1;
-        // A model change or native update may have published a newer snapshot
-        // while this receipt was in transit. Read current state instead of
-        // replacing it with the earlier operation's model/effort pair.
-        if (this.snapshotGeneration !== snapshotGeneration)
-          await this.resync(sessionId, selectionGeneration);
-        else
-          this.set({
-            model: selection.model,
-            thinkingLevel: selection.thinkingLevel,
-          });
-      }
-      if (!ownsTransport() || request !== this.thinkingLevelRequest)
-        return { status: "stale" };
-      return {
-        status: "success",
-        message: `Thinking level is now ${selection.thinkingLevel}.`,
-      };
-    } catch (error) {
-      if (!ownsTransport()) return { status: "stale" };
-      if (error instanceof ApiError && error.status === 401)
-        this.handleAuthFailure();
-      if (request !== this.thinkingLevelRequest) return { status: "stale" };
-      // Refresh authoritative state after a failed observation.
-      if (
-        this.state.sessionId === sessionId &&
-        this.selectionGeneration === selectionGeneration
-      ) {
-        void this.resync();
-      }
-      return {
-        status: "error",
-        message:
-          error instanceof Error
-            ? error.message
-            : "Failed to set thinking level",
-      };
+      if (key !== "model" && !ownsIntent()) return { status: "stale" };
+      if (ownsView() && key !== "model") void this.resync(sessionId, generation);
+      return { status: "error", message: error instanceof Error ? error.message : failure };
     } finally {
-      if (
-        ownsTransport() &&
-        request === this.thinkingLevelRequest &&
-        this.state.sessionId === sessionId &&
-        this.selectionGeneration === selectionGeneration
-      )
-        this.set({ thinkingLevelPending: false });
+      if (ownsView() && key !== "model") this.showNativeSetting(key, false);
+      if (this.nativeSettings.get(key) === intent)
+        this.nativeSettings.delete(key);
     }
-  };
-
-  setPiRuntimeSetting = async (setting: RuntimeSetting): Promise<boolean> => {
-    const { key } = setting;
-    const {
-      sessionId,
-      view: { viewId: transcriptViewId },
-    } = this.state;
-    const api = this.api;
-    if (!api || !sessionId) return false;
-    const selection = this.selectionRequest;
-    const owner = Symbol();
-    this.runtimeSettingOwners.set(key, owner);
-    const owns = () =>
-      this.api === api &&
-      this.selectionRequest === selection &&
-      this.state.sessionId === sessionId &&
-      this.state.view.viewId === transcriptViewId &&
-      this.runtimeSettingOwners.get(key) === owner;
-    this.set({
-      pendingRuntimeSettings: {
-        ...this.state.pendingRuntimeSettings,
-        [key]: true,
-      },
-    });
-    try {
-      await api.json("setRuntimeSetting", { body: { sessionId, setting } });
-      if (owns()) await this.resync();
-      return this.api === api;
-    } catch (error) {
-      if (this.api === api && error instanceof ApiError && error.status === 401)
-        this.handleAuthFailure();
-      if (owns()) {
-        void this.resync();
-        this.notify(
-          "warning",
-          error instanceof Error
-            ? error.message
-            : "Failed to update Pi runtime settings",
-        );
-      }
-      return false;
-    } finally {
-      if (owns()) {
-        const pending = { ...this.state.pendingRuntimeSettings };
-        delete pending[key];
-        this.set({ pendingRuntimeSettings: pending });
-      }
-      if (this.runtimeSettingOwners.get(key) === owner)
-        this.runtimeSettingOwners.delete(key);
-    }
-  };
+  }
 
   // --- Composer attachments & project files ---
 
@@ -2452,13 +2324,14 @@ export class AppStore {
   ): Promise<ProjectFileSearchResult> => {
     const sessionId = this.state.sessionId;
     if (!this.api || !sessionId) return { files: [] };
-    return this.api.searchFiles(
-      sessionId,
-      query,
-      50,
-      undefined,
-      this.state.workspaceShowHidden,
-    );
+    return this.api.json("searchFiles", {
+      query: {
+        sessionId,
+        q: query,
+        limit: 50,
+        showHidden: this.state.workspaceShowHidden ? "1" : undefined,
+      },
+    });
   };
 
   setWorkspaceShowHidden = (value: boolean): void =>
@@ -2572,7 +2445,6 @@ export class AppStore {
   ) => this.settingsApi().json("editMcpConfig", { query: owner, body: edit });
 
   // Publishing a settings-write snapshot retires earlier catalog reads.
-  private modelSettingsRevision = 0;
   private modelCatalogRead = 0;
 
   private settingsApi(): Api {
@@ -2600,14 +2472,10 @@ export class AppStore {
 
   private modelSettingsRead(owner: { sessionId?: string; cwd?: string }) {
     const { api, current } = this.modelSettingsOperation(owner);
-    const revision = this.modelSettingsRevision;
     const read = current() ? ++this.modelCatalogRead : -1;
     return {
       api,
-      current: () =>
-        current() &&
-        read === this.modelCatalogRead &&
-        revision === this.modelSettingsRevision,
+      current: () => current() && read === this.modelCatalogRead,
     };
   }
 
@@ -2638,7 +2506,7 @@ export class AppStore {
       body: { revision, patch },
     });
     if (result.snapshot && current()) {
-      this.modelSettingsRevision++;
+      this.modelCatalogRead++;
       this.set({ commonModels: result.snapshot.commonModels });
     }
     return result;
@@ -2655,7 +2523,7 @@ export class AppStore {
       body: { revision, edit },
     });
     if (result.snapshot && current()) {
-      this.modelSettingsRevision++;
+      this.modelCatalogRead++;
       this.set({
         availableModels: result.snapshot.models,
         commonModels: result.snapshot.commonModels,
@@ -2675,7 +2543,12 @@ export class AppStore {
   }): Promise<string | undefined> => {
     const requested = owner ?? { sessionId: this.state.sessionId ?? undefined };
     const { api, current } = this.modelSettingsRead(requested);
-    const result = await api.refreshModels(requested.sessionId, requested.cwd);
+    const result = await api.json("refreshModels", {
+      query: {
+        sessionId: requested.sessionId || undefined,
+        cwd: requested.cwd || undefined,
+      },
+    });
     if (current())
       this.set({
         availableModels: result.models,
@@ -2694,7 +2567,17 @@ export class AppStore {
     const transport = this.state.transportGeneration;
     if (!api) throw new Error("The Host is unavailable");
     const result = await api
-      .refreshModels(sessionId, cwd, inherit, signal)
+      .json(
+        "refreshModels",
+        {
+          query: {
+            sessionId: sessionId || undefined,
+            cwd: cwd || undefined,
+            inherit: inherit ? "1" : undefined,
+          },
+        },
+        signal,
+      )
       .catch((error) => {
         // New may inherit a session's catalog, but creating a new session does
         // not require ownership of the source or access to its saved history.
@@ -2711,7 +2594,7 @@ export class AppStore {
             error.code === "SESSION_OWNER_UNAVAILABLE" ||
             error.code === "SESSION_WORKSPACE_UNAVAILABLE")
         )
-          return api.refreshModels(undefined, cwd, false, signal);
+          return api.json("refreshModels", { query: { cwd } }, signal);
         throw error;
       });
     if (this.api !== api || this.state.transportGeneration !== transport)
@@ -2725,12 +2608,14 @@ export class AppStore {
     showHidden = false,
   ): Promise<ProjectFileSearchResult> => {
     if (!this.api) return { files: [] };
-    const result = await this.api.searchNewSessionFiles(
-      cwd,
-      query,
-      50,
-      showHidden,
-    );
+    const result = await this.api.json("searchNewSessionFiles", {
+      query: {
+        cwd,
+        q: query,
+        limit: 50,
+        showHidden: showHidden ? "1" : undefined,
+      },
+    });
     return {
       ...result,
       files: result.files.map((file) => ({
@@ -2772,12 +2657,9 @@ export class AppStore {
     const sessionId = this.state.sessionId;
     if (!api || !sessionId) return;
     try {
-      await api.showInFileManager(
-        sessionId,
-        reference,
-        workspacePath,
-        directory,
-      );
+      await api.json("showInFileManager", {
+        body: { sessionId, reference, workspacePath, directory },
+      });
     } catch (error) {
       if (this.api !== api) return;
       if (error instanceof ApiError && error.status === 401)
@@ -2797,7 +2679,7 @@ export class AppStore {
   /** Filesystem roots for cross-volume navigation in the host picker. */
   browseHostRoots = async (): Promise<HostRootsResponse> => {
     if (!this.api) throw new Error("Not connected to the Inspire host");
-    return this.api.browseHostRoots();
+    return this.api.json("browseHostRoots", {});
   };
 
   /** One level of the host directory picker; the dialog renders failures. */
@@ -2806,7 +2688,12 @@ export class AppStore {
     showHidden = false,
   ): Promise<HostDirListing> => {
     if (!this.api) throw new Error("Not connected to the Inspire host");
-    return this.api.browseHostDirs(path, showHidden);
+    return this.api.json("browseHostDirs", {
+      query: {
+        path: path || undefined,
+        showHidden: showHidden ? "1" : undefined,
+      },
+    });
   };
 
   // --- Extension UI ---
@@ -3124,8 +3011,6 @@ export class AppStore {
   openContextMode = (contextMode: AppState["contextMode"]): void =>
     this.changeContext(true, contextMode);
 
-  readBranchEntry = (targetId: string, offset = 0, signal?: AbortSignal) =>
-    this.branches.readEntry(targetId, offset, signal);
   branchCopyContent = (
     targetId: string,
     signal: AbortSignal,

@@ -182,11 +182,18 @@ export class WorkspaceController {
     });
     try {
       const response = await request.read((signal) =>
-        api.listFiles(sessionId, dir, {
+        api.json(
+          "listFiles",
+          {
+            query: {
+              sessionId,
+              dir,
+              refresh: options.refresh ? "1" : undefined,
+              showHidden: before.workspaceShowHidden ? "1" : undefined,
+            },
+          },
           signal,
-          refresh: options.refresh,
-          showHidden: before.workspaceShowHidden,
-        }),
+        ),
       );
       if (!request.current()) return;
       const current = this.host.state();
@@ -298,7 +305,18 @@ export class WorkspaceController {
     });
     try {
       const response = await request.read((signal) =>
-        api.searchFiles(sessionId, query, 100, signal, showHidden),
+        api.json(
+          "searchFiles",
+          {
+            query: {
+              sessionId,
+              q: query,
+              limit: 100,
+              showHidden: showHidden ? "1" : undefined,
+            },
+          },
+          signal,
+        ),
       );
       if (!request.current()) return;
       this.host.patch({

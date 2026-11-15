@@ -8,7 +8,6 @@ import {
   resolveCommandInventory,
 } from "../composer-completion";
 import { shouldSubmitComposerEnter } from "../composer-keyboard";
-import { hasEarlierContinuation } from "../controllers/branch-controller";
 import { relativeTime } from "../format";
 import { isTouchFirstDevice } from "../input-device";
 import { isComposingKeyboardEvent } from "../keyboard-input";
@@ -26,6 +25,7 @@ import {
 import { shallowEqual, store, useAppState } from "../store";
 import {
   queueTerminalAction,
+  terminalActions,
   type TerminalUiAction,
 } from "../terminal-actions";
 import { terminalShortcutLabel } from "../terminal-keyboard";
@@ -65,31 +65,6 @@ const workspaceActions = [
   },
 ] as const;
 
-const terminalActions: {
-  action: TerminalUiAction;
-  title: string;
-}[] = [
-  { action: "new", title: "New terminal" },
-  { action: "next", title: "Next terminal" },
-  { action: "previous", title: "Previous terminal" },
-  { action: "take-control", title: "Take control of terminal" },
-  { action: "restart", title: "Restart terminal" },
-  { action: "close", title: "Close terminal" },
-  { action: "focus", title: "Toggle terminal focus" },
-  { action: "settings", title: "Terminal settings" },
-];
-
-const nativeTitles: Partial<Record<string, string>> = {
-  model: "Choose model",
-  thinking: "Choose thinking level",
-  compact: "Compact context…",
-  copy: "Copy last response",
-  fork: "Fork from History",
-  session: "Session & usage",
-  reload: "Reload Pi resources",
-  quit: "Leave Inspire",
-};
-
 function runTerminalAction(action: TerminalUiAction): void {
   const projectCwd = store.getState().cwd;
   if (!projectCwd) return;
@@ -128,7 +103,7 @@ export const CommandPalette = memo(function CommandPalette({
       ),
       runState: selectedRunState(source),
       abortable: canStop(source),
-      earlierContinuation: hasEarlierContinuation(source),
+      earlierContinuation: source.view.restoreSavedLeafId !== null,
       prefs: source.prefs,
       sessions: source.sessions,
       commands: source.commands,
@@ -261,11 +236,11 @@ export const CommandPalette = memo(function CommandPalette({
             run: runInSession(() => store.openContextMode(mode)),
           }),
         ),
-        ...terminalActions.map(
-          ({ action, title }): PaletteItem => ({
+        ...(Object.keys(terminalActions) as TerminalUiAction[]).map(
+          (action): PaletteItem => ({
             id: `terminal-${action}`,
             group: "Terminal",
-            title,
+            title: terminalActions[action].title,
             hint: terminalShortcutLabel(action),
             run: runInSession(() => runTerminalAction(action)),
           }),
@@ -368,7 +343,7 @@ export const CommandPalette = memo(function CommandPalette({
             descriptor &&
             (state.external && descriptor.requiresIdleOwnedPi
               ? `${descriptor.name === "compact" ? "Compact" : "Reload"} in native Pi…`
-              : nativeTitles[descriptor.name]);
+              : descriptor.paletteTitle);
           return [
             {
               id: `cmd-${command.name}`,

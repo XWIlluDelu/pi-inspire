@@ -122,9 +122,8 @@ export interface TranscriptView {
   viewId: string | null;
   incarnation: string | null;
   revision: number;
-  durableLeafId: string | null;
   effectiveLeafId: string | null;
-  navigationLeased: boolean;
+  restoreSavedLeafId: string | null;
   composerHistoryVersion: string | null;
   hasOlder: boolean;
   branchRevision: number | null;
@@ -136,9 +135,8 @@ export const emptyTranscriptView: TranscriptView = {
   viewId: null,
   incarnation: null,
   revision: 0,
-  durableLeafId: null,
   effectiveLeafId: null,
-  navigationLeased: false,
+  restoreSavedLeafId: null,
   composerHistoryVersion: null,
   hasOlder: false,
   branchRevision: null,
@@ -243,8 +241,6 @@ export interface AppState extends WorkspaceBrowserState, FileInspectionState {
   /** Unseen terminal transitions currently contributing a title marker. */
   attentionSessionIds: string[];
   taskAlerts: TaskAlertState;
-  /** Ephemeral cue for observed successful runs finishing in the selected session. */
-  completedRunSequence: number;
   /** Session currently owned by the newest open operation, if any. */
   openingSessionId: string | null;
   /** Whether an open, deselect, or create request still owns selection. */
@@ -354,7 +350,6 @@ export function createInitialAppState(): AppState {
     externalSessionActivities: {},
     attentionSessionIds: [],
     taskAlerts: { ...initialTaskAlerts },
-    completedRunSequence: 0,
     openingSessionId: null,
     sessionSelectionPending: false,
     deletingSessionId: null,

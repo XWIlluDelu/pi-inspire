@@ -208,9 +208,6 @@ describe("SessionProjection framing and last-good state", () => {
       image,
       other,
     ]);
-    expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThanOrEqual(
-      TRANSCRIPT_PAGE_MAX_BYTES,
-    );
     expect(
       collectSessionResourceReferences([projected])
         .map((item) => item.reference)
@@ -230,13 +227,6 @@ describe("SessionProjection framing and last-good state", () => {
         { index: 2, mimeType: "image/webp" },
       ],
     });
-    expect(
-      projection.historyPage({ kind: "routes", parentId: "" }).nodes[0]?.label,
-    ).toBe(`${caption} report.csv [Image: image/png] [Image: image/webp]`);
-    expect(
-      projection.historyPage({ kind: "search", text: reference }).matches[0]
-        ?.snippet,
-    ).toContain(reference);
     expect(projection.userText("mixed-input", text.length)).toBe(text);
     expect(() => projection.userText("mixed-input", 3)).toThrow(
       /composer limit/,

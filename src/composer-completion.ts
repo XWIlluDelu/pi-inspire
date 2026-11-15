@@ -189,15 +189,7 @@ export function commandUsageHint(
     (!includeNativeCommands && command.name !== "compact")
   )
     return null;
-  const usage: Record<string, string> = {
-    model: "Choose a candidate or enter an exact provider/model.",
-    thinking: "Choose a level supported by the active model.",
-    name: "Enter a session name; omit it to show the current name.",
-    compact: "Optional instructions for the compaction summary.",
-    export:
-      "Omit the path for HTML. A .jsonl path exports only the current branch. Quote paths containing spaces.",
-  };
-  return `/${command.name} ${command.argumentHint} — ${usage[command.name] ?? command.description}${command.execution === "terminal" ? " (Terminal only)" : ""}`;
+  return `/${command.name} ${command.argumentHint} — ${command.usage ?? command.description}${command.execution === "terminal" ? " (Terminal only)" : ""}`;
 }
 
 export function fuzzyScore(

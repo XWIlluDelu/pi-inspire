@@ -38,11 +38,9 @@
 
 .welcome__composer {
   --editor-compact-height: 45dvh;
-  width: min(var(--composer-max), 100%);
 }
 
 .welcome__error {
-  width: min(var(--composer-max), 100%);
   margin: var(--space-2) 0 0;
   color: var(--error-ink);
   font-size: var(--text-sm);
@@ -63,44 +61,24 @@
   color: var(--error-ink);
 }
 
-/* A missing project is a normal creation flow, not an error panel. */
-.welcome__dir-action {
+.welcome__dir-action,
+.welcome__directory {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  min-width: 0;
+}
+
+.welcome__dir-action {
   flex-wrap: wrap;
   gap: var(--space-2);
-  min-width: 0;
-  padding: 0 var(--space-1);
   color: var(--muted);
   font-size: var(--text-xs);
 }
 
-.welcome__dir-action-btn {
-  justify-content: center;
-  min-height: 32px;
-  max-width: 100%;
-  font-size: var(--text-xs);
-  white-space: normal;
-}
-
-@media (max-width: 480px) {
-  .welcome__dir-action {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .welcome__dir-action-btn {
-    min-height: 44px;
-    width: 100%;
-  }
-}
+.welcome__dir-action .button { white-space: normal; }
 
 .welcome__directory {
-  display: flex;
   width: 100%;
-  min-width: 0;
-  align-items: center;
   gap: 2px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
@@ -114,10 +92,6 @@
 .welcome__directory:focus-within {
   border-color: var(--accent-focus);
   box-shadow: inset 2px 0 0 0 var(--accent-focus);
-}
-
-.welcome__directory-browse {
-  flex: none;
 }
 
 .welcome__dir {
@@ -136,83 +110,46 @@
   color: var(--faint);
 }
 
-.welcome__recent {
+.welcome__composer, .welcome__error, .welcome__recent {
   width: min(var(--composer-max), 100%);
+}
+
+.welcome__recent {
   margin-top: var(--space-4);
 }
 
 .welcome__recent-title {
   margin: 0 0 var(--space-2);
+}
+
+.welcome__recent-toggle.button {
   font-size: var(--text-xs);
-  font-weight: 600;
-  color: var(--faint);
-}
-
-.welcome__recent-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  border: 0;
-  background: transparent;
-  padding: 2px var(--space-1);
-  border-radius: var(--radius-sm);
-  font: inherit;
-  color: inherit;
-  cursor: pointer;
-  transition: color var(--dur-micro) var(--ease-standard);
-}
-
-.welcome__recent-toggle:hover {
   color: var(--muted);
 }
 
-.welcome__row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
+.welcome__row.picker__row {
   width: 100%;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--bg-surface);
-  /* Titles start on the composer's writing column above them. */
-  padding: var(--space-2) var(--space-4);
-  margin-bottom: var(--space-1);
-  text-align: left;
-  transition:
-    border-color var(--dur-micro) var(--ease-standard),
-    background var(--dur-micro) var(--ease-standard);
+  padding-inline: var(--space-4);
 }
 
-.welcome__row:hover,
-.welcome__row:active {
-  border-color: var(--line-strong);
-  background: var(--bg-inset);
-}
-
-.welcome__row-title {
-  flex: 1;
+.welcome__row-title,
+.welcome__row-project {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-weight: 500;
-  color: var(--ink);
 }
 
-.welcome__row-project {
-  flex: 0 0 auto;
-  font-size: var(--text-xs);
-  color: var(--muted);
-  background: var(--bg-inset);
-  border-radius: var(--radius-control);
-  padding: 0 var(--space-2);
-}
-
-.welcome__row-time {
-  flex: 0 0 auto;
+.welcome__row-title { flex: 1; font-weight: 500; }
+.welcome__row-project { max-width: 33%; }
+.welcome__row small {
   font-size: var(--text-xs);
   color: var(--muted);
   white-space: nowrap;
+}
+
+@media (pointer: coarse) {
+  .welcome__row { min-height: 44px; }
 }
 
 kbd {

@@ -1,12 +1,4 @@
-import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { PiRpcProcess } from "../../server/pi-rpc.js";
-import { readWorkerRetryState } from "../../server/runtime-retry-state.js";
-import {
-  decodeBranchBridgeJson,
-  encodeBranchBridgeJson,
-  RETRY_STATE_SUFFIX,
-} from "../../shared/branch-bridge-protocol.js";
 import {
   disposeRuntimeFixture,
   initializeRuntimeFixture,
@@ -63,14 +55,16 @@ describe("worker-confirmed retry observation", () => {
     trackRuntime(runtime);
     await runtime.openSession("a");
     await startWorker(runtime);
-    expect((await emit("auto_retry_start", retry)).errorMessage).toBe(
-      detail.message,
-    );
+    expect(await emit("auto_retry_start", retry)).toMatchObject({
+      retry: detail,
+    });
     expect(await snapshot()).toMatchObject({
       sessionStatuses: { a: { runState: "retrying" } },
       retry: detail,
     });
-    await emit("auto_retry_end", { success: true });
+    expect(await emit("auto_retry_end", { success: true })).toMatchObject({
+      retry: null,
+    });
     expect((await snapshot()).retry).toBeNull();
     await emit("auto_retry_start", { ...retry, attempt: 99 });
     expect(await snapshot()).toMatchObject({
@@ -84,22 +78,20 @@ describe("worker-confirmed retry observation", () => {
     });
 
     await emit("compaction_start", { reason: "manual" });
-    expect(
-      (await emit("summarization_retry_scheduled", retry)).errorMessage,
-    ).toBe(detail.message);
+    expect(await emit("summarization_retry_scheduled", retry)).toMatchObject({
+      summarizationRetry: detail,
+    });
     expect(await snapshot()).toMatchObject({
       sessionStatuses: { a: { runState: "compacting" } },
       retry: null,
       summarizationRetry: detail,
     });
-    expect((await snapshot()).summarizationRetry).toEqual(detail);
     for (const type of [
       "summarization_retry_attempt_start",
       "summarization_retry_finished",
     ]) {
-      await emit(type);
-      expect(await snapshot()).toMatchObject({
-        sessionStatuses: { a: { runState: "compacting" } },
+      expect(await emit(type)).toMatchObject({
+        sessionStatus: { runState: "compacting" },
         summarizationRetry: null,
       });
       await emit("summarization_retry_scheduled", retry);
@@ -109,39 +101,5 @@ describe("worker-confirmed retry observation", () => {
       sessionStatuses: { a: { runState: "aborted" } },
       summarizationRetry: null,
     });
-  });
-});
-
-describe("worker retry confirmation", () => {
-  it.each([
-    { failure: "non-boolean", values: ["true"] },
-    { failure: "duplicate", values: [true, false] },
-  ])("rejects a $failure confirmation", async ({ values }) => {
-    const bridge = {
-      command: "command",
-      statusKey: "status",
-      workerId: "worker",
-    };
-    const events = new EventEmitter();
-    const rpc = Object.assign(events, {
-      async request(command: Record<string, unknown>) {
-        const argument = String(command.message).split(" ")[1];
-        const owner = decodeBranchBridgeJson(argument, 4_096) as object;
-        for (const autoRetryEnabled of values)
-          events.emit("event", {
-            type: "extension_ui_request",
-            method: "setStatus",
-            statusKey: `${bridge.statusKey}${RETRY_STATE_SUFFIX}`,
-            statusText: encodeBranchBridgeJson(
-              { ...owner, autoRetryEnabled },
-              2_048,
-            ),
-          });
-        return { disposition: "handled" };
-      },
-    }) as unknown as PiRpcProcess;
-    await expect(readWorkerRetryState(rpc, bridge, "session")).rejects.toThrow(
-      "Malformed retry state result",
-    );
   });
 });

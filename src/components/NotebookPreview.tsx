@@ -2,6 +2,7 @@ import { useContext, useMemo } from "react";
 import { jsonRecord } from "../../shared/json-record";
 import { stripTerminalSequences } from "../ansi";
 import { CodeView } from "./CodeView";
+import { ContextPaneState } from "./ContextPaneState";
 import {
   DocumentResourceContext,
   MarkdownAttachmentsContext,
@@ -276,17 +277,14 @@ export function NotebookPreview({ text }: { text: string }) {
   const notebook = useMemo(() => parseNotebook(text), [text]);
   if (!notebook)
     return (
-      <div className="notebook-preview notebook-preview--state">
-        <strong>Notebook preview unavailable</strong>
-        <span>Open Source to inspect this file.</span>
-      </div>
+      <ContextPaneState
+        icon={null}
+        title="Notebook preview unavailable"
+        hint="Open Source to inspect this file."
+      />
     );
   if (notebook.cells.length === 0)
-    return (
-      <div className="notebook-preview notebook-preview--state">
-        <strong>Empty notebook</strong>
-      </div>
-    );
+    return <ContextPaneState icon={null} title="Empty notebook" />;
   return (
     <div
       className="notebook-preview"

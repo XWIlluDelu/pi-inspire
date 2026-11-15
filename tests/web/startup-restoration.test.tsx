@@ -120,49 +120,6 @@ describe("initial workbench restoration", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows Host recovery on bootstrap failure and keeps welcome hidden during retry", async () => {
-    route = (url) =>
-      url.startsWith("/api/bootstrap")
-        ? { status: 500, body: { error: "Host unavailable" } }
-        : undefined;
-    render(<App />);
-    await act(async () => {
-      await current.init();
-    });
-    expect(
-      screen.getByRole("button", { name: "Try again" }),
-    ).toBeInTheDocument();
-    expect(screen.queryByText("Loading workspace")).toBeNull();
-    expect(screen.queryByRole("form", { name: "Start a session" })).toBeNull();
-    const boot = deferred<ReturnType<typeof bootstrapPayload>>();
-    const catalog = deferred<ReturnType<typeof sessionPage>>();
-    route = async (url) => {
-      if (url.startsWith("/api/bootstrap")) return { body: await boot.promise };
-      if (url.startsWith("/api/sessions"))
-        return { body: await catalog.promise };
-    };
-    let startup!: Promise<void>;
-    await act(async () => {
-      startup = current.init();
-    });
-    expect(screen.queryByRole("form", { name: "Start a session" })).toBeNull();
-    expect(
-      screen.getByRole("heading", { name: "Host needs attention" }),
-    ).toBeInTheDocument();
-    await act(async () => {
-      boot.resolve(continueBootstrap);
-      await startup;
-      FakeWebSocket.instances.at(-1)!.join();
-    });
-    expectRestoring();
-    await act(async () => {
-      catalog.resolve(sessionPage([], 0));
-    });
-    expect(
-      screen.getByRole("form", { name: "Start a session" }),
-    ).toBeInTheDocument();
-  });
-
   it("lets an explicit new-session choice settle before the startup catalog returns", async () => {
     const catalog = deferred<ReturnType<typeof sessionPage>>();
     const open = vi.fn();
@@ -226,27 +183,5 @@ describe("portable Host recovery guidance", () => {
     rerender(<App />);
     expect(screen.queryByRole("button", { name: "Retry now" })).toBeNull();
     unmount();
-  });
-
-  it("gives launcher guidance for pairing and portable commands for Host recovery", () => {
-    const state = store.getState();
-    const getState = vi.spyOn(store, "getState").mockReturnValue({
-      ...state,
-      needsToken: true,
-      bootstrapped: false,
-    });
-    const { rerender } = render(<App />);
-    expect(screen.getByText(/link from the Inspire launcher/)).toBeVisible();
-
-    getState.mockReturnValue({
-      ...state,
-      needsToken: false,
-      bootstrapped: false,
-      connection: "offline",
-      connectionProblem: { kind: "address-unreachable" },
-    });
-    rerender(<App />);
-    expect(screen.getByText("inspire restart")).toBeVisible();
-    expect(screen.getByText("npm run inspire -- restart")).toBeVisible();
   });
 });

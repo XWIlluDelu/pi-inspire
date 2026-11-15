@@ -185,7 +185,7 @@ export function ImageLightbox({
         ) : null}
         <div
           ref={viewport.canvasRef}
-          className={`image-lightbox__canvas ${panningClass(viewport.panning)}`}
+          className={`image-lightbox__canvas${viewport.panning ? " image-lightbox__canvas--panning" : ""}`}
           role="region"
           aria-label="Image canvas"
           aria-describedby={instructions}
@@ -352,8 +352,4 @@ export function ImageLightbox({
       </div>
     </Modal>
   );
-}
-
-function panningClass(panning: boolean) {
-  return panning ? "image-lightbox__canvas--panning" : "";
 }

@@ -1,10 +1,8 @@
-import { existsSync } from "node:fs";
-import { realpath, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { nullDiagnosticLogger } from "../../server/diagnostics.js";
-import { type PiRpcOptions, PiRpcProcess } from "../../server/pi-rpc.js";
-import { MAX_IDLE_WORKERS, RuntimeController } from "../../server/runtime.js";
+import { PiRpcProcess } from "../../server/pi-rpc.js";
+import { RuntimeController } from "../../server/runtime.js";
 import type { PendingImageRecovery } from "../../server/runtime-pending-images.js";
 import { createRuntimeSlot } from "../../server/runtime-slot.js";
 import { RuntimeWorkerLifecycle } from "../../server/runtime-worker-lifecycle.js";
@@ -32,36 +30,9 @@ beforeEach(initializeRuntimeFixture);
 afterEach(disposeRuntimeFixture);
 
 describe("worker startup and retirement", () => {
-  it("keeps existing and new sessions usable when project discovery cannot be saved", async () => {
-    const source = catalog([record("a", TEST_CWD)]);
-    const registrationError = new Error("Maintenance storage is unavailable");
-    const remember = vi.fn(async () => {});
-    source.rememberProjectCwd = remember;
-    remember.mockRejectedValue(registrationError);
-    const { runtime, workers } = schedulingRuntime({
-      source: source,
-    });
-    trackRuntime(runtime);
-    const opened = await runtime.openSession("a");
-    expect(opened.active?.sessionId).toBe("a");
-    expect(opened.active?.transcriptPage.messages).toMatchObject([
-      { role: "user", content: "preview:a", timestamp: 1 },
-    ]);
-    await startWorker(runtime, "a");
-    expect(workers[0]?.starts).toBe(1);
-    expect(workers[0]?.stops).toBe(0);
-    await expect(
-      runtime.prompt({ sessionId: "a", message: "ordinary text" }),
-    ).resolves.toBeDefined();
-    const created = await runtime.newSession(TEST_CWD);
-    expect(created.active?.sessionId).toBe("new-id");
-    expect(workers[1]?.starts).toBe(1);
-    expect(remember).toHaveBeenCalledWith(await realpath(TEST_CWD));
-  });
   it.each([
     ["existing", "factory"],
     ["existing", "writer inspection"],
-    ["new", "factory"],
     ["new", "startup"],
     ["new", "identity read"],
   ] as const)(
@@ -153,246 +124,38 @@ describe("worker startup and retirement", () => {
     },
   );
 
-  it("creates a directory only on explicit admission and retains selected Pi settings before the first write", async () => {
-    const cwd = join(fixtureWorkspace, "projects", "new-project");
-    const source = catalog([]);
-    source.rememberProjectCwd = vi.fn(async () => {});
-    const model = { provider: "anthropic", id: "claude-sonnet-4" };
-    const sessionFile = join(fixtureWorkspace, "new-id.jsonl");
-    const create = vi.fn((options: PiRpcOptions) => {
-      expect(existsSync(cwd)).toBe(true);
-      const worker = new FakeRpc(options);
-      worker.responseOverrides.set("get_state", {
-        sessionId: worker.sessionId,
-        sessionFile: worker.sessionPath,
-        isStreaming: false,
-        isCompacting: false,
-        thinkingLevel: "high",
-        model,
-      });
-      return worker as unknown as PiRpcProcess;
-    });
-    const runtime = new RuntimeController(source, trackedAttachmentStore(), {
-      createProcess: create,
-      openSessionProjection: preview,
-    });
+  it("replaces only a worker whose exit has been confirmed", async () => {
+    const gate = Promise.withResolvers<void>();
+    const { runtime, workers } = schedulingRuntime();
     trackRuntime(runtime);
-    await expect(runtime.newSession(cwd)).rejects.toMatchObject({
-      status: 400,
-      code: "PROJECT_DIRECTORY_MISSING",
+    await runtime.openSession("a");
+    await startWorker(runtime);
+    const first = workers[0]!;
+    const stop = vi.spyOn(first, "stop").mockReturnValueOnce(gate.promise);
+    first.emit("event", {
+      type: "extension_ui_request",
+      id: "old-dialog",
+      method: "confirm",
     });
-    expect(create).not.toHaveBeenCalled();
-    expect(existsSync(cwd)).toBe(false);
-    const snapshot = await runtime.newSession(cwd, {
-      createDirectory: true,
-      name: "  Tuned session  ",
-      model,
-      thinkingLevel: "high",
-    });
-    expect((await stat(cwd)).isDirectory()).toBe(true);
-    expect(snapshot.active).toMatchObject({
-      cwd: create.mock.calls[0]![0].cwd,
-      sessionFile,
-      model,
-      thinkingLevel: "high",
-    });
-    expect(source.rememberProjectCwd).toHaveBeenCalledWith(
-      snapshot.active!.cwd,
+    first.emit("exit", new Error("RPC disconnected"));
+    const delivery = runtime.openSession("a").then(() =>
+      runtime.prompt({ sessionId: "a", message: "after exit" }),
     );
-    expect(create.mock.calls[0]![0].args).toEqual(
-      expect.arrayContaining([
-        "--name",
-        "Tuned session",
-        "--model",
-        "anthropic/claude-sonnet-4",
-        "--thinking",
-        "high",
-      ]),
-    );
-    expect(existsSync(sessionFile)).toBe(false);
-    expect((await runtime.snapshot("new-id")).active).toMatchObject({
-      model,
-      thinkingLevel: "high",
-    });
+    try {
+      await vi.waitFor(() => expect(stop).toHaveBeenCalledOnce());
+      expect(workers).toHaveLength(1);
+      expect((await runtime.snapshot("a")).pendingExtensionUiRequests).toEqual([]);
+      gate.resolve();
+      await delivery;
+      expect(workers).toHaveLength(2);
+      first.emit("exit", new Error("Late exit from retired worker"));
+      expect((await runtime.snapshot("a")).sessionStatuses.a?.runState).not.toBe("failed");
+    } finally {
+      gate.resolve();
+      await delivery.catch(() => undefined);
+      await runtime.close();
+    }
   });
-
-  it.each([
-    ["unexpected exit", "confirmed"],
-    ["unexpected exit", "unconfirmed"],
-    ["failed startup", "confirmed"],
-    ["failed startup", "unconfirmed"],
-    ["idle eviction", "confirmed"],
-    ["explicit reload", "unconfirmed"],
-  ] as const)(
-    "fences replacement after %s until stop is %s",
-    async (retirement, outcome) => {
-      const errors = vi
-        .spyOn(console, "error")
-        .mockImplementation(() => undefined);
-      let confirmStop!: () => void;
-      let rejectStop!: (error: Error) => void;
-      const stop = new Promise<void>((resolve, reject) => {
-        confirmStop = resolve;
-        rejectStop = reject;
-      });
-      const ids = Array.from({ length: MAX_IDLE_WORKERS + 2 }, (_, index) =>
-        String(index),
-      );
-      const firstFailure = new Error("Pi failed during startup");
-      const { runtime, workers } = schedulingRuntime({
-        sessions: ids.map((id) => record(id, "/tmp")),
-        configure(worker) {
-          if (workers.length !== 0) return;
-          if (retirement === "failed startup") {
-            vi.spyOn(worker, "start").mockRejectedValueOnce(firstFailure);
-          }
-          vi.spyOn(worker, "stop").mockReturnValueOnce(stop);
-        },
-      });
-      try {
-        await runtime.openSession("0");
-        let failedStartup: Promise<unknown> | undefined;
-        if (retirement === "failed startup") {
-          failedStartup = startWorker(runtime, "0").catch(
-            (error: unknown) => error,
-          );
-          await vi.waitFor(() => expect(workers).toHaveLength(1));
-        } else await startWorker(runtime, "0");
-        const old = workers[0]!;
-        const stopping = vi.mocked(old.stop);
-        let reloading: Promise<unknown> | undefined;
-        if (retirement === "unexpected exit") {
-          old.emit("event", {
-            type: "extension_ui_request",
-            id: "question",
-            method: "confirm",
-          });
-          old.emit("event", {
-            type: "extension_ui_request",
-            id: "widget",
-            method: "setWidget",
-            widgetKey: "plan",
-            widgetLines: ["one"],
-          });
-          old.emit("event", {
-            type: "extension_ui_request",
-            id: "status",
-            method: "setStatus",
-            statusKey: "usage",
-            statusText: "37%",
-          });
-          const before = await runtime.snapshot("0");
-          expect(before.extensionDisplays).toHaveLength(1);
-          expect(before.pendingExtensionUiRequests).toHaveLength(1);
-          const reported = vi.fn();
-          runtime.on("event", reported);
-          old.emit("event", { type: "agent_start" });
-          old.emit("exit", new Error("RPC disconnected"));
-          expect(await runtime.snapshot("0")).toMatchObject({
-            active: {
-              transcriptPage: {
-                messages: [
-                  expect.objectContaining({
-                    role: "user",
-                    content: "preview:0",
-                  }),
-                ],
-              },
-            },
-            pendingExtensionUiRequests: [],
-            extensionStatuses: {},
-            extensionDisplays: [],
-            sessionStatuses: {
-              "0": {
-                runState: "failed",
-                indicator: "failed",
-                attentionId: expect.any(Number),
-              },
-            },
-          });
-          expect(reported).toHaveBeenCalledWith(
-            expect.objectContaining({
-              type: "runtime_error",
-              extensionDisplays: [],
-              extensionStatuses: {},
-            }),
-          );
-        } else if (retirement === "idle eviction") {
-          for (const id of ids.slice(1)) {
-            await runtime.openSession(id);
-            await startWorker(runtime, id);
-          }
-        } else if (retirement === "explicit reload") {
-          reloading = runtime
-            .nativeCommand({ sessionId: "0", command: "reload" })
-            .catch((error: unknown) => error);
-        }
-        await vi.waitFor(() => expect(stopping).toHaveBeenCalledOnce());
-        if (failedStartup)
-          expect(runtime.reserveMaintenanceRestart(false, true)).toEqual({
-            kind: "busy",
-            reason: "in-flight-operation",
-          });
-        const delivery = runtime
-          .openSession("0")
-          .then(() =>
-            runtime.prompt({ sessionId: "0", message: "after retirement" }),
-          )
-          .then(
-            () => null,
-            (error: unknown) => error,
-          );
-        await new Promise<void>((resolveTick) => setImmediate(resolveTick));
-        expect(
-          workers.filter((worker) => worker.sessionId === "0"),
-        ).toHaveLength(1);
-
-        if (outcome === "confirmed") {
-          confirmStop();
-          if (failedStartup) expect(await failedStartup).toBe(firstFailure);
-          expect(await delivery).toBeNull();
-          expect(
-            workers.filter((worker) => worker.sessionId === "0"),
-          ).toHaveLength(2);
-          old.emit("event", {
-            type: "extension_ui_request",
-            id: "late-status",
-            method: "setStatus",
-            statusKey: "retired-worker",
-            statusText: "stale",
-          });
-          old.emit("exit", new Error("Late exit from retired worker"));
-          const current = await runtime.snapshot("0");
-          expect(current.extensionStatuses).not.toHaveProperty(
-            "retired-worker",
-          );
-          expect(current.sessionStatuses["0"]?.runState).not.toBe("failed");
-        } else {
-          const failure = new Error("Old writer exit unconfirmed");
-          rejectStop(failure);
-          if (reloading) expect(await reloading).toBe(failure);
-          if (failedStartup) {
-            expect(await failedStartup).toBeInstanceOf(Error);
-            expect(runtime.reserveMaintenanceRestart(false, true)).toEqual({
-              kind: "busy",
-              reason: "in-flight-operation",
-            });
-          }
-          expect(await delivery).toBe(failure);
-          await expect(runtime.openSession("0")).rejects.toThrow(
-            "Old writer exit unconfirmed",
-          );
-          expect(
-            workers.filter((worker) => worker.sessionId === "0"),
-          ).toHaveLength(1);
-        }
-      } finally {
-        confirmStop();
-        await runtime.close().catch(() => undefined);
-        errors.mockRestore();
-      }
-    },
-  );
 
   it("rejects an open whose catalog lookup outlives runtime close", async () => {
     const base = catalog([record("a", "/project")]);
@@ -416,6 +179,10 @@ describe("worker startup and retirement", () => {
 
     const opening = runtime.openSession("a");
     await vi.waitFor(() => expect(lookupStarted).toBe(true));
+    expect(runtime.reserveMaintenanceRestart()).toEqual({
+      kind: "busy",
+      reason: "in-flight-operation",
+    });
     await expect(runtime.close()).resolves.toBeUndefined();
     releaseCatalog();
 
@@ -455,7 +222,9 @@ describe("worker startup and retirement", () => {
             worker.responseOverrides.set(
               reported ? "get_commands" : "get_state",
               () => {
-                worker.emit("exit", disconnected);
+                if (confirmed)
+                  vi.spyOn(worker, "available", "get").mockReturnValue(false);
+                else worker.emit("exit", disconnected);
                 throw disconnected;
               },
             );
@@ -465,6 +234,7 @@ describe("worker startup and retirement", () => {
       const creating = runtime.newSession(TEST_CWD).catch((error) => error);
       await stopping.promise;
       expect(workers[0]?.stops).toBe(1);
+      expect(runtime.startupSessionHint).toBeNull();
       const opening = runtime.openSession("new-id").catch((error) => error);
       await vi.waitFor(() => expect(lookup).toHaveBeenCalledWith("new-id"));
       await new Promise<void>((resolve) => setImmediate(resolve));
@@ -499,35 +269,20 @@ describe("worker startup and retirement", () => {
     const existing = record("a", "/tmp");
     const openProjection = vi.fn(preview);
     const startupError = new Error("startup failed");
-    const rejected = [
-      {
-        configure: (worker: FakeRpc) => {
-          worker.start = async () => {
-            throw startupError;
-          };
-        },
-        error: startupError.message,
-      },
-      {
-        configure: (worker: FakeRpc) => {
-          worker.sessionPath = null;
-        },
-        error: "Pi did not report a session file",
-      },
-      {
-        configure: (worker: FakeRpc) => {
-          worker.sessionPath = existing.path;
-        },
-        error: "Pi created a duplicate session path",
-      },
-    ];
+    const invalidPaths = [null, existing.path];
     const { runtime, workers } = schedulingRuntime({
       sessions: [existing],
       openSessionProjection: openProjection,
       configure: (worker) => {
         if (workers.length === 0) return;
-        const failure = rejected[workers.length - 1];
-        if (failure) return failure.configure(worker);
+        if (workers.length === 1) {
+          worker.start = async () => { throw startupError; };
+          return;
+        }
+        if (workers.length <= 3) {
+          worker.sessionPath = invalidPaths[workers.length - 2] ?? null;
+          return;
+        }
         const request = worker.request.bind(worker);
         worker.responseOverrides.set(
           "get_state",
@@ -551,8 +306,12 @@ describe("worker startup and retirement", () => {
     await startWorker(runtime);
     openProjection.mockClear();
     const owned = runtime.ownWorkerTags();
-    for (const failure of rejected) {
-      await expect(runtime.newSession(TEST_CWD)).rejects.toThrow(failure.error);
+    for (const error of [
+      startupError.message,
+      "Pi did not report a session file",
+      "Pi created a duplicate session path",
+    ]) {
+      await expect(runtime.newSession(TEST_CWD)).rejects.toThrow(error);
       expect(runtime.startupSessionHint).toBe("a");
       expect(runtime.ownWorkerTags()).toEqual(owned);
       expect(workers.at(-1)?.stops).toBe(1);

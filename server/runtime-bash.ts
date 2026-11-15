@@ -1,4 +1,3 @@
-import type { ComposerHistoryEntry } from "../shared/contracts.js";
 import type { PiRpcProcess, PiRpcResponseFence } from "./pi-rpc.js";
 import { requestError } from "./request-error.js";
 import type { RuntimeSlot } from "./runtime-slot.js";
@@ -36,7 +35,7 @@ export class RuntimeBashController {
   async execute(
     slot: RuntimeSlot,
     entered: string,
-  ): Promise<ComposerHistoryEntry> {
+  ): Promise<void> {
     const excludeFromContext = entered.startsWith("!!");
     const command = entered.slice(excludeFromContext ? 2 : 1).trim();
     if (!command) throw requestError("Enter a command after ! or !!", 400);
@@ -101,7 +100,6 @@ export class RuntimeBashController {
       // During an agent run Pi defers this message until agent_end. The ordinary
       // reconciler adopts its exact result then, without disturbing tool order.
       await this.host.reconcile(slot);
-      return { text: entered, images: [], files: [] };
     } catch (error) {
       if (slot.process === worker) {
         execution.message = {

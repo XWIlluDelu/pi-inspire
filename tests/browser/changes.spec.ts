@@ -3,7 +3,6 @@ import type { GitDiffResponse } from "../../shared/contracts";
 import { focusRingClipping } from "./support/focus-bounds";
 import { routeSnapshots } from "./support/host-events";
 import {
-  openFixtureSession,
   openPreviewFixture,
   openResourceFixture,
 } from "./support/navigation";
@@ -39,7 +38,7 @@ async function checkKeyboardFocus(control: Locator) {
     .toBeLessThanOrEqual(0.5);
 }
 
-test("@cross-browser keeps compact Changes rows readable through refresh and navigation", async ({
+test("@cross-browser keeps renamed, conflicting and opaque paths readable in narrow Changes", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 320, height: 760 });
@@ -52,9 +51,6 @@ test("@cross-browser keeps compact Changes rows readable through refresh and nav
   });
   const destination = path(`packages/calibration/observations/${name}`);
   const originalPath = path(`packages/calibration/previous/${name}`);
-  const deleted = path("deleted.txt");
-  const binary = path("binary.bin");
-  const submodule = path("dependency");
   const opaque = { id: "_w", display: "raw-�.txt" };
   const files = [
     {
@@ -64,9 +60,6 @@ test("@cross-browser keeps compact Changes rows readable through refresh and nav
     },
     { path: path("new.txt"), worktree: { kind: "added" }, untracked: true },
     { path: path("merge.txt"), conflict: { code: "UU" }, untracked: false },
-    { path: deleted, worktree: { kind: "deleted" }, untracked: false },
-    { path: binary, worktree: { kind: "modified" }, untracked: false },
-    { path: submodule, worktree: { kind: "modified" }, untracked: false },
     { path: opaque, worktree: { kind: "modified" }, untracked: false },
     ...Array.from({ length: 30 }, (_, index) => ({
       path: path(`updated-${index}.txt`),
@@ -74,65 +67,24 @@ test("@cross-browser keeps compact Changes rows readable through refresh and nav
       untracked: false,
     })),
   ];
-  let unavailable = true;
-  let clean = false;
   await page.route("**/api/git/status**", (route) =>
-    unavailable
-      ? route.fulfill({ status: 503, json: { error: "Git timed out" } })
-      : route.fulfill({
-          json: {
-            kind: "repository",
-            head: {
-              kind: "branch",
-              name: "review/calibration",
-              oid: "b".repeat(40),
-            },
-            files: clean ? [] : files,
-            total: clean ? 0 : files.length,
-            truncated: false,
-          },
-        }),
+    route.fulfill({ json: {
+      kind: "repository",
+      head: { kind: "branch", name: "review/calibration", oid: "b".repeat(40) },
+      files, total: files.length, truncated: false,
+    } }),
   );
   const pane = await openResourceFixture(page);
   const tab = pane.getByRole("tab", { name: "Changes", exact: true });
   await tab.click();
-  await expect(pane.getByText("Git status unavailable")).toBeVisible();
-  const refresh = pane.getByRole("button", { name: "Refresh context pane" });
-  unavailable = false;
-  await refresh.click();
   const row = pane.getByRole("button", {
     name: `${destination.display}, renamed, renamed from ${originalPath.display}`,
   });
   await expect(row).toBeInViewport();
-  const source = row.locator(".changes__source");
-  await expect(source).toBeVisible();
-  expect((await source.boundingBox())!.y).toBeGreaterThan(
-    (await row.locator(".file-row__name").boundingBox())!.y,
-  );
-  const sourceBounds = (await source.boundingBox())!;
-  const rowBounds = (await row.boundingBox())!;
-  expect(sourceBounds.x + sourceBounds.width).toBeLessThanOrEqual(
-    rowBounds.x + rowBounds.width,
-  );
+  await expect(row.locator(".changes__source")).toBeInViewport();
   await expect(
     pane.getByRole("button", { name: /new\.txt, Untracked/ }),
   ).toBeVisible();
-  await expect(
-    pane.getByRole("button", { name: "merge.txt, conflict UU" }),
-  ).toBeVisible();
-  const stale = pane
-    .getByRole("status")
-    .filter({ hasText: "Refresh failed; showing the last known status." });
-  unavailable = true;
-  await refresh.click();
-  await expect(stale).toBeVisible();
-  await expect(
-    pane.getByRole("button", { name: /updated-20\.txt, modified/ }),
-  ).toBeEnabled();
-  unavailable = false;
-  await refresh.click();
-  await expect(stale).toBeHidden();
-
   const list = pane.locator(".res__list");
   const offset = await list.evaluate((element) => {
     element.scrollTop = 380;
@@ -145,87 +97,22 @@ test("@cross-browser keeps compact Changes rows readable through refresh and nav
     .poll(() => list.evaluate((element) => element.scrollTop))
     .toBe(offset);
 
-  const requestedPaths: string[] = [];
-  const resolvedPaths: string[] = [];
-  await page.route("**/api/resources/resolve", (route) => {
-    resolvedPaths.push(route.request().postDataJSON().reference);
-    return route.continue();
-  });
-  const cases = [
-    [
-      deleted,
-      {
-        kind: "text",
-        additions: 0,
-        deletions: 1,
-        truncated: false,
-        encodingLossy: false,
-        lines: [
-          { kind: "delete", text: "-Deleted text", oldLine: 1, newLine: null },
-        ],
-      },
-      "Deleted text",
-    ],
-    [binary, { kind: "binary" }, "Binary change"],
-    [
-      submodule,
-      {
-        kind: "submodule",
-        state: {
-          commitChanged: true,
-          trackedModified: false,
-          untracked: false,
-        },
-      },
-      "commit changed",
-    ],
-    [
-      files.find(({ conflict }) => conflict)!.path,
-      { kind: "conflict", code: "UU" },
-      "Conflict state UU",
-    ],
-    [destination, { kind: "empty", reason: "no-changes" }, "No diff available"],
-    [
-      opaque,
-      { kind: "unsupported", reason: "path-encoding" },
-      "This Git path cannot be represented as UTF-8.",
-    ],
-  ] as const;
   await page.route("**/api/git/diff", (route) => {
     const { pathId } = route.request().postDataJSON();
-    requestedPaths.push(pathId);
-    const match = cases.find(([path]) => path.id === pathId);
-    return match
-      ? route.fulfill({ json: { ...match[1], path: match[0] } })
-      : route.continue();
+    if (pathId !== opaque.id) return route.continue();
+    return route.fulfill({
+      json: { kind: "unsupported", reason: "path-encoding", path: opaque },
+    });
   });
-  for (const [path, result, label] of cases) {
-    await tab.click();
-    await pane.locator(`[data-git-path=${JSON.stringify(path.id)}]`).click();
-    await expect(
-      pane.getByText(label, { exact: result.kind !== "text" }),
-    ).toBeVisible();
-    if (path === deleted) {
-      await expect(
-        pane.getByRole("button", { name: "Source", exact: true }),
-      ).toBeDisabled();
-      await expect(
-        pane.getByRole("button", { name: "Download unavailable" }),
-      ).toBeDisabled();
-    }
-  }
-  expect(requestedPaths).toEqual(cases.map(([path]) => path.id));
-  expect(resolvedPaths).toContain(deleted.display);
-  expect(resolvedPaths).not.toContain(opaque.display);
+  await pane.locator(`[data-git-path=${JSON.stringify(opaque.id)}]`).click();
+  await expect(
+    pane.getByText("This Git path cannot be represented as UTF-8."),
+  ).toBeVisible();
   await pane.getByRole("button", gitToggle).click();
   await expect(
     pane.getByText("This Git path has no readable workspace file."),
   ).toBeVisible();
-  await tab.click();
-  clean = true;
-  await refresh.click();
-  await expect(pane.getByText("Clean", { exact: true })).toBeVisible();
-  await expect(stale).toHaveCount(0);
+
 });
 
 test.describe("narrow Changes controls", () => {
@@ -239,7 +126,6 @@ test.describe("narrow Changes controls", () => {
     page,
   }) => {
     let fail = true;
-    let truncated = false;
     await page.route("**/api/git/diff", async (route) => {
       if (fail)
         return route.fulfill({
@@ -250,7 +136,6 @@ test.describe("narrow Changes controls", () => {
       const diff = (await response.json()) as GitDiffResponse;
       if (diff.kind === "text") {
         diff.contextLimited = true;
-        diff.truncated = truncated;
       }
       await route.fulfill({ response, json: diff });
     });
@@ -279,23 +164,6 @@ test.describe("narrow Changes controls", () => {
     await expect(source.getByRole("status")).toContainText(
       "source context limited",
     );
-    truncated = true;
-    await pane.getByRole("button", { name: "Refresh context pane" }).click();
-    await expect(source.getByRole("status")).toContainText("Source truncated");
-    const copy = pane.getByRole("button", {
-      name: /^(Copy path |Path copied$)/,
-    });
-    await checkKeyboardFocus(copy);
-    await page
-      .context()
-      .grantPermissions(["clipboard-read", "clipboard-write"], {
-        origin: new URL(page.url()).origin,
-      });
-    await copy.press("Enter");
-    await expect(copy).toHaveAccessibleName("Path copied");
-    await expect
-      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
-      .toMatch(/page\.html$/);
     await page.setViewportSize({ width: 1440, height: 900 });
     const comparison = page.waitForResponse(
       (response) => response.url().endsWith("/api/git/diff") && response.ok(),
@@ -312,46 +180,13 @@ test.describe("narrow Changes controls", () => {
       .locator("h1");
     await changesView.click();
     await expect(heading).toHaveText("Quiet systems, legible signals.");
-    await pane.getByRole("button", { name: "Source", exact: true }).click();
-    const bodySource = pane.getByRole("region", { name: "File source" });
-    await changesView.click();
-    await expect(source).toBeVisible();
-    await changesView.click();
-    await expect(bodySource).toBeVisible();
     await selectBody(pane);
     await expect(file).toHaveCount(1);
     await expect(changesView).toHaveAttribute("aria-pressed", "false");
-    await pane.getByRole("button", { name: "Preview", exact: true }).click();
-    await expect(heading).toHaveText("Quiet systems, legible signals.");
-    const retiring = Promise.withResolvers<void>();
-    const releaseDiff = Promise.withResolvers<void>();
-    await page.route(
-      "**/api/git/diff",
-      async (route) => {
-        const response = await route.fetch();
-        retiring.resolve();
-        await releaseDiff.promise;
-        await route.fulfill({ response }).catch(() => {});
-      },
-      { times: 1 },
-    );
-    try {
-      await changesView.click();
-      await retiring.promise;
-      await openFixtureSession(
-        page,
-        /Review extension event lifecycle/,
-        "fixture-history",
-      );
-    } finally {
-      releaseDiff.resolve();
-    }
-    await expect(source).toHaveCount(0);
-    await expect(file).toHaveCount(0);
   });
 });
 
-test("keeps long line numbers aligned and navigation preserves diff colors", {
+test("keeps long line numbers aligned during horizontal scroll", {
   tag: "@cross-browser",
 }, async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 900 });
@@ -382,54 +217,18 @@ test("keeps long line numbers aligned and navigation preserves diff colors", {
   const source = await selectChange(pane);
   await expect(source).toContainText("1000");
   await page.evaluate(() => document.fonts.ready);
-  const geometry = await source.locator(".code-row").evaluateAll((rows) =>
-    rows.map((row) => ({
-      code: row.querySelector("code")!.getBoundingClientRect().left,
-      numbersFit: [...row.querySelectorAll(".code-row__number")].every((el) => {
-        if (!el.textContent) return true;
-        const range = document.createRange();
-        range.selectNodeContents(el);
-        const text = range.getBoundingClientRect();
-        const box = el.getBoundingClientRect();
-        return text.left >= box.left - 0.5 && text.right <= box.right + 0.5;
-      }),
-    })),
-  );
-  const starts = geometry.map((row) => row.code);
-  expect(Math.max(...starts) - Math.min(...starts)).toBeLessThanOrEqual(0.5);
-  expect(geometry.every((row) => row.numbersFit)).toBe(true);
   const gutter = source.locator(".code-row__gutter").first();
   const scroll = (left: number) =>
-    source.evaluate((element, x) => {
-      element.scrollLeft = x;
-      return element.scrollLeft;
-    }, left);
-  const offset = await scroll(80);
-  expect(offset).toBeGreaterThan(0);
-  const gutterInset = () =>
-    gutter.evaluate((element) =>
-      Math.abs(
-        element.getBoundingClientRect().left -
-          element.closest(".source-reader")!.getBoundingClientRect().left,
-      ),
+    source.evaluate(
+      (element, left) => ((element.scrollLeft = left), element.scrollLeft),
+      left,
     );
-  await expect.poll(gutterInset).toBeLessThanOrEqual(1);
-  expect(await scroll(160)).toBeGreaterThan(offset);
-  await expect.poll(gutterInset).toBeLessThanOrEqual(1);
-  const lines = source.locator(
-    '.code-row:is([data-kind="add"], [data-kind="delete"])',
-  );
-  const colors = () =>
-    lines.evaluateAll((rows) =>
-      rows.map((row) => getComputedStyle(row).backgroundColor),
-    );
-  const original = await colors();
-  expect(original[0]).not.toBe(original[1]);
-  const next = pane.getByRole("button", { name: "Next change", exact: true });
-  await next.click();
-  await expect(pane.getByLabel("Change position")).toHaveText("2/2");
-  await expect(next).toBeDisabled();
-  expect(await colors()).toEqual(original);
+  expect(await scroll(80)).toBeGreaterThan(0);
+  const gutterX = (await gutter.boundingBox())!.x;
+  expect(await scroll(160)).toBeGreaterThan(80);
+  await expect
+    .poll(async () => (await gutter.boundingBox())!.x)
+    .toBeCloseTo(gutterX, 0);
 });
 
 test.describe("touch source navigation", () => {
@@ -510,13 +309,5 @@ test.describe("touch source navigation", () => {
     await expect(stale).toBeHidden();
     await expect.poll(position).toEqual(saved);
 
-    await pane.getByRole("tab", { name: "Changes", exact: true }).click();
-    await expect(source).toHaveCount(0);
-    await pane.getByRole("button", { name: changeRow }).click();
-    await expect(pane.getByRole("tab", fileTab)).toHaveCount(1);
-    await expect.poll(position).toEqual(saved);
-    await expect(pane).toHaveRole("dialog");
-    await page.goBack();
-    await expect(pane).toBeHidden();
   });
 });

@@ -11,7 +11,7 @@ import { deferred, installLocalStorage } from "./helpers";
 
 const service = { persistOutput: true, historyRetentionDays: 30 };
 const api = {
-  terminalSettings: vi.fn(),
+  json: vi.fn(),
   terminalOperation: vi.fn(),
 };
 function Dialog() {
@@ -35,7 +35,7 @@ function navigate(name: string) {
 beforeEach(() => {
   vi.resetAllMocks();
   installLocalStorage();
-  api.terminalSettings.mockResolvedValue(service);
+  api.json.mockResolvedValue(service);
 });
 
 afterEach(() => vi.unstubAllGlobals());

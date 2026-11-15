@@ -58,21 +58,37 @@ function fixture() {
     results,
   });
   const transport = {
-    probeResources: vi.fn<Api["probeResources"]>(async (_session, refs) =>
-      probeResponse(
-        refs.map((reference) => ({ reference, availability: "available" })),
-      ),
+    probeResources: vi.fn(
+      async ({ body: { references } }: { body: { references: string[] } }) =>
+        probeResponse(
+          references.map((reference) => ({
+            reference,
+            availability: "available",
+          })),
+        ),
     ),
-    resourceDownloadTicket: vi.fn<Api["resourceDownloadTicket"]>(),
+    resourceDownloadTicket: vi.fn<() => Promise<typeof downloadGrant>>(),
     resolveResource: vi
-      .fn<Api["resolveResource"]>()
+      .fn<(input: unknown, signal?: AbortSignal) => Promise<typeof image>>()
       .mockResolvedValue(fakeResourceDescriptor("notes.txt", { viewId: "v1" })),
     resourceContent: vi.fn<Api["resourceContent"]>().mockResolvedValue({
       blob: new Blob(["Notes"], { type: "text/plain" }),
       totalSize: 5,
     }),
   };
-  let api = transport as unknown as Api;
+  let api = {
+    resourceContent: transport.resourceContent,
+    json: (
+      name: "probeResources" | "resolveResource" | "resourceDownloadTicket",
+      input: { body: { references: string[] } },
+      signal: AbortSignal,
+    ) => {
+      if (name === "probeResources") return transport.probeResources(input);
+      if (name === "resolveResource")
+        return transport.resolveResource(input, signal);
+      return transport.resourceDownloadTicket();
+    },
+  } as unknown as Api;
   const authFailure = vi.fn();
   const saveDownload = vi.fn();
   const patch = vi.fn((partial: Parameters<Host["patch"]>[0]) => {
@@ -146,11 +162,9 @@ it("keeps verified probe batches, retries only failed references and drops retri
     f.standing(remaining[0]!),
   ]).toEqual(["missing", "unavailable", "unknown"]);
   await vi.advanceTimersByTimeAsync(1_000);
-  expect(f.probeResources.mock.calls.map(([, refs]) => refs)).toEqual([
-    batch,
-    remaining,
-    remaining,
-  ]);
+  expect(
+    f.probeResources.mock.calls.map(([{ body }]) => body.references),
+  ).toEqual([batch, remaining, remaining]);
   f.state.view.revision++;
   f.probeResources.mockRejectedValueOnce(temporary);
   await f.controller.probeResources([...remaining, "after-append.md"]);
@@ -163,63 +177,6 @@ it("keeps verified probe batches, retries only failed references and drops retri
   expect(f.state.resourceStanding).toEqual({});
   expect(f.resourceContent).not.toHaveBeenCalled();
 });
-
-it.each(["newer resolve", "revision", "transport"] as const)(
-  "does not publish an old probe after %s",
-  async (change) => {
-    const f = fixture();
-    const late = deferred<ResourceProbeResponse>();
-    f.probeResources.mockReturnValueOnce(late.promise);
-    const pending = f.controller.probeResources(["notes.txt", "other.txt"]);
-    if (change === "newer resolve")
-      await f.controller.openResource("notes.txt");
-    if (change === "revision") f.state.view.revision++;
-    if (change === "transport") {
-      f.replaceApi();
-      f.controller.invalidateForTransportReplacement();
-      late.reject(retired);
-    } else
-      late.resolve(
-        f.probeResponse(
-          [
-            { reference: "notes.txt", availability: "missing" },
-            { reference: "other.txt", availability: "available" },
-          ],
-          1,
-        ),
-      );
-    await pending;
-    if (change === "newer resolve") {
-      expect(f.standing("notes.txt")).toBe("available");
-      expect(f.standing("other.txt")).toBe("available");
-    } else expect(f.state.resourceStanding).toEqual({});
-    expect(f.authFailure).not.toHaveBeenCalled();
-  },
-);
-
-it.each(["resolveResource", "resourceContent"] as const)(
-  "recovers %s until the view retires its retry",
-  async (endpoint) => {
-    const f = fixture();
-    f[endpoint].mockRejectedValueOnce(temporary);
-    const reading = f.controller.openResource("notes.txt");
-    await vi.advanceTimersByTimeAsync(0);
-    expect(f.preview()?.status).toBe("loading");
-    await vi.advanceTimersByTimeAsync(1_000);
-    await reading;
-    expect(f.preview()).toMatchObject({ status: "ready", text: "Notes" });
-    expect(f[endpoint]).toHaveBeenCalledTimes(2);
-
-    f[endpoint].mockRejectedValueOnce(temporary);
-    const refreshing = f.controller.openResource("notes.txt");
-    await vi.advanceTimersByTimeAsync(0);
-    f.state.view.viewId = "replacement";
-    f.controller.invalidate();
-    await refreshing;
-    await vi.advanceTimersByTimeAsync(20_000);
-    expect(f[endpoint]).toHaveBeenCalledTimes(3);
-  },
-);
 
 it("retains only a still-authorized media URL across refresh failure, replacement and close", async () => {
   const f = fixture();
@@ -392,52 +349,13 @@ it.each(["incarnation", "transport"] as const)(
   },
 );
 
-it("keeps distinct standing for ambiguity, a missing file, and a failed transfer", async () => {
+it("replaces a preview with the current refusal when file permission is revoked", async () => {
   const f = fixture();
-  const matches = ["a/notes.txt", "b/notes.txt"];
-  f.resolveResource.mockRejectedValueOnce(
-    new ApiError(409, "Ambiguous", matches),
-  );
   await f.controller.openResource("notes.txt");
-  expect(f.preview()).toMatchObject({ status: "ambiguous", matches });
-  expect(f.state.resourceStanding["notes.txt"]).toMatchObject({
-    availability: "ambiguous",
-    matches,
-  });
-  f.resolveResource.mockRejectedValueOnce(new ApiError(404, "Missing"));
+  f.resolveResource.mockRejectedValue(new ApiError(403, "Read refused"));
   await f.controller.openResource("notes.txt");
-  expect(f.preview()).toMatchObject({ status: "error", message: "Missing" });
-  expect(f.standing("notes.txt")).toBe("missing");
-  expect(f.resourceContent).not.toHaveBeenCalled();
-  f.resourceContent.mockRejectedValueOnce(
-    new ApiError(404, "Bytes unavailable"),
-  );
-  await f.controller.openResource("notes.txt");
-  expect(f.preview()).toMatchObject({
-    status: "error",
-    message: "Bytes unavailable",
-  });
-  expect(f.standing("notes.txt")).toBe("available");
+  expect(f.preview()).toMatchObject({ status: "error", message: "Read refused" });
 });
-
-it.each([401, 403])(
-  "does not retry a definitive %i or preserve revoked file bytes",
-  async (status) => {
-    const f = fixture();
-    await f.controller.openResource("notes.txt");
-    f.resolveResource.mockRejectedValue(new ApiError(status, "Read refused"));
-    await f.controller.openResource("notes.txt");
-    await vi.advanceTimersByTimeAsync(20_000);
-    expect(f.resolveResource).toHaveBeenCalledTimes(2);
-    expect(f.resourceContent).toHaveBeenCalledOnce();
-    expect(f.authFailure).toHaveBeenCalledTimes(status === 401 ? 1 : 0);
-    if (status === 403)
-      expect(f.preview()).toMatchObject({
-        status: "error",
-        message: "Read refused",
-      });
-  },
-);
 
 it("authorizes linked images independently and requires complete addressed media", async () => {
   const f = fixture();
@@ -466,8 +384,7 @@ it("authorizes linked images independently and requires complete addressed media
   });
   await expect(read()).resolves.toBe(pixels);
   expect(f.resolveResource).toHaveBeenLastCalledWith(
-    "s1",
-    image.reference,
+    { body: { sessionId: "s1", reference: image.reference } },
     expect.any(AbortSignal),
   );
   expect(f.resourceContent).toHaveBeenLastCalledWith(image.id, "s1", {
@@ -479,8 +396,6 @@ it("authorizes linked images independently and requires complete addressed media
 
 it.each([
   "pane closes",
-  "another file",
-  "controller abort",
   "reader abort",
   "transport",
 ] as const)("retires image and download ownership on %s", async (change) => {
@@ -503,15 +418,13 @@ it.each([
       ? downloading
       : expect(downloading).rejects.toMatchObject({ name: "AbortError" });
   if (change === "pane closes") f.state.resourcesOpen = false;
-  if (change === "another file") f.state.fileInspection = { kind: "browse" };
-  if (change === "controller abort") f.controller.cancelRequest();
   if (change === "reader abort") reader.abort();
   if (change === "transport") {
     f.replaceApi();
     grant.reject(retired);
   } else grant.resolve(downloadGrant);
-  if (change === "controller abort" || change === "reader abort")
-    expect(f.resolveResource.mock.calls[1]![2]?.aborted).toBe(true);
+  if (change === "reader abort")
+    expect(f.resolveResource.mock.calls[1]![1]?.aborted).toBe(true);
   gate.resolve(image);
   await Promise.all([inline, result]);
   expect(f.resourceContent).not.toHaveBeenCalled();
@@ -520,3 +433,24 @@ it.each([
     change === "reader abort" ? 1 : 0,
   );
 });
+
+it.each([
+  [409, "ambiguous", "ambiguous"],
+  [404, "missing", "error"],
+] as const)(
+  "distinguishes resource standing after resolve status %s",
+  async (status, standing, preview) => {
+    const f = fixture();
+    const matches = ["a/notes.txt", "b/notes.txt"];
+    f.resolveResource.mockRejectedValue(
+      new ApiError(status, "Resolve failed", status === 409 ? matches : undefined),
+    );
+    await f.controller.openResource("notes.txt");
+    expect(f.standing("notes.txt")).toBe(standing);
+    expect(f.preview()).toMatchObject({
+      status: preview,
+      ...(status === 409 && { matches }),
+    });
+    expect(f.resourceContent).not.toHaveBeenCalled();
+  },
+);

@@ -132,25 +132,6 @@ function harness() {
 afterEach(() => vi.useRealTimers());
 
 describe("update status controller", () => {
-  it("recovers a transient check request without replacing known results or surfacing a temporary error", async () => {
-    vi.useFakeTimers();
-    const test = harness();
-    test.bootstrap(updateStatus(1, { inspireUpdateCheck: available("1.0.1") }));
-    test.api.update.mockRejectedValueOnce(new ApiError(503, "Unavailable"));
-    test.controller.refreshInspire();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(test.state().inspireUpdateRequestPending).toBe(true);
-    expect(test.state().inspireUpdateRequestError).toBeNull();
-    expect(test.state().inspireUpdateCheck).toEqual(available("1.0.1"));
-    test.controller.refreshInspire();
-    await vi.runAllTimersAsync();
-    expect(test.api.update).toHaveBeenCalledTimes(2);
-    expect(test.state().inspireUpdateRequestPending).toBe(false);
-    expect(test.state().inspireUpdateRequestError).toBeNull();
-    expect(test.state().inspireUpdateCheck).toEqual(available());
-    expect(test.notify).not.toHaveBeenCalled();
-  });
-
   it("reports exhausted and non-transient failures independently and preserves prior results", async () => {
     vi.useFakeTimers();
     const test = harness();

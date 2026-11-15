@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PiRuntimeSettings } from "../../shared/contracts";
 import {
   activeSnapshot,
-  bootstrapPayload,
   deferred,
   installFakeWebSocket,
   installFetch,
@@ -62,25 +61,9 @@ describe("Pi native command dispatch", () => {
       argument: "focus on decisions",
     });
     await store.sendPrompt("/session");
-    await store.sendPrompt("/hotkeys");
-    await store.sendPrompt("/quit");
-    await store.sendPrompt("/share");
-
-    expect(store.getState().commandActivities.s1).toHaveLength(4);
-    expect(store.getState().commandActivities.s1).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ command: "compact", status: "running" }),
-        expect.objectContaining({
-          command: "share",
-          status: "warning",
-          details: [{ label: "Run in Pi", value: "/share" }],
-          action: {
-            kind: "open-terminal",
-            label: "Open terminal & copy command",
-            value: "/share",
-          },
-        }),
-      ]),
+    expect(latest()).toMatchObject({ command: "session" });
+    expect(store.getState().commandActivities.s1).toContainEqual(
+      expect.objectContaining({ command: "compact", status: "running" }),
     );
 
     native.resolve({
@@ -103,72 +86,11 @@ describe("Pi native command dispatch", () => {
     ).toBe(false);
   });
 
-  it("uses the same native destinations from Composer and the palette before model discovery", async () => {
-    const prompts: unknown[] = [];
-    const calls = installFetch((url, init) => {
-      if (url === "/api/prompt") {
-        prompts.push(jsonBody(init));
-        return { status: 202, body: { accepted: true } };
-      }
-      return baseRoutes(url, init);
-    });
-    const { store, socket } = await initStore();
-    socket.emitSnapshot(
-      activeSnapshot({
-        availableModels: [],
-        commands: [
-          { name: "model", source: "extension" },
-          { name: "plugin:model", source: "extension" },
-        ],
-      }),
-    );
-    for (const run of [store.sendPrompt, store.runPaletteNativeCommand]) {
-      for (const [input, action, modelSettingsFocus, query] of [
-        ["/model", "model"],
-        ["/login provider", "models", "credentials", "provider"],
-        ["/logout", "models", "credentials"],
-        ["/scoped-models", "models", "common"],
-        ["/fork", "history"],
-      ] as const) {
-        const previous = store.getState().nativeCommandUiRequest?.id;
-        await run(input);
-        expect(store.getState().nativeCommandUiRequest).toMatchObject({
-          action,
-          ...(modelSettingsFocus && { modelSettingsFocus }),
-          ...(query && { query }),
-        });
-        expect(store.getState().nativeCommandUiRequest?.id).not.toBe(previous);
-      }
-    }
-    await store.sendPrompt("/model\tmissing");
-    expect(store.getState().commandActivities.s1?.at(-1)).toMatchObject({
-      command: "model",
-      status: "warning",
-    });
-    expect(prompts).toEqual([]);
-    await store.sendPrompt("/plugin:model\tcustom");
-    expect(prompts).toEqual([
-      expect.objectContaining({
-        sessionId: "s1",
-        message: "/plugin:model custom",
-      }),
-    ]);
-    expect(
-      calls.mock.calls.some(([url]) => url === "/api/control/native-command"),
-    ).toBe(false);
-  });
-
   it("gates Compact during active work and reports an unknown Export without retrying", async () => {
     const settings = activeSnapshot();
 
     settings.sessionStatuses.s1 = { runState: "running" };
     const calls = installFetch((url, init) => {
-      const selection = {
-        model: settings.active!.model,
-        thinkingLevel: "low",
-      };
-      if (url === "/api/control/model" || url === "/api/control/thinking")
-        return { body: selection };
       if (url === "/api/control/native-command")
         return {
           status: 504,
@@ -192,12 +114,7 @@ describe("Pi native command dispatch", () => {
       message: expect.stringContaining("Wait for the current Pi operation"),
     });
 
-    await store.sendPrompt("/model kimi-coding/kimi-k3");
-    await store.sendPrompt("/thinking low");
     await store.sendPrompt("/export");
-    expect(calls.mock.calls.map(([url]) => url)).toEqual(
-      expect.arrayContaining(["/api/control/model", "/api/control/thinking"]),
-    );
     await vi.waitFor(() =>
       expect(store.getState().commandActivities.s1?.at(-1)).toMatchObject({
         command: "export",
@@ -210,168 +127,56 @@ describe("Pi native command dispatch", () => {
     ]);
   });
 
-  describe("runtime setting writes", () => {
-    function installSettingRoutes(
-      settings: PiRuntimeSettings,
-      mutate: (
-        url: string,
-        body: Record<string, unknown>,
-      ) => RouteResponse | Promise<RouteResponse>,
-    ) {
-      return installFetch((url, init) => {
-        if (url.startsWith("/api/control/")) return mutate(url, jsonBody(init));
-        const snapshot = activeSnapshot({ runtimeSettings: settings });
-        if (url.startsWith("/api/bootstrap"))
-          return { body: bootstrapPayload({ startupSessionId: "s1" }) };
-        if (url.startsWith("/api/snapshot")) return { body: snapshot };
+  it.each([true, false])(
+    "retains the latest confirmed runtime setting (%s)",
+    async (accepted) => {
+      const settings: PiRuntimeSettings = {
+        autoCompactionEnabled: false,
+        autoRetryEnabled: false,
+        steeringMode: "all",
+        followUpMode: "all",
+      };
+      const old = deferred<RouteResponse>();
+      const latest = deferred<RouteResponse>();
+      const send = vi
+        .fn()
+        .mockReturnValueOnce(old.promise)
+        .mockReturnValueOnce(latest.promise);
+      installFetch((url, init) => {
+        if (url === "/api/control/runtime-setting") return send(jsonBody(init));
+        if (url.startsWith("/api/snapshot"))
+          return { body: activeSnapshot({ runtimeSettings: settings }) };
         return baseRoutes(url, init);
       });
-    }
-
-    it.each([false, true])(
-      "reconciles overlapping changes when the latest write is accepted: %s",
-      async (accepted) => {
-        const settings: PiRuntimeSettings = {
-          autoCompactionEnabled: false,
-          autoRetryEnabled: false,
-          steeringMode: "all",
-          followUpMode: "all",
-        };
-        const old = deferred<RouteResponse>();
-        const latest = deferred<RouteResponse>();
-        const send = vi
-          .fn()
-          .mockReturnValueOnce(old.promise)
-          .mockReturnValueOnce(latest.promise);
-        installSettingRoutes(settings, send);
-        const { store } = await initStore(
-          activeSnapshot({ runtimeSettings: settings }),
-        );
-        const olderWrite = store.setPiRuntimeSetting({
-          key: "autoRetryEnabled",
-          value: true,
-        });
-        expect(store.getState().runtimeSettings?.autoRetryEnabled).toBe(false);
-        expect(store.getState().pendingRuntimeSettings.autoRetryEnabled).toBe(
-          true,
-        );
-        const latestWrite = store.setPiRuntimeSetting({
-          key: "autoRetryEnabled",
-          value: accepted,
-        });
-        expect(send.mock.calls).toEqual(
-          [true, accepted].map((value) => [
-            "/api/control/runtime-setting",
-            { sessionId: "s1", setting: { key: "autoRetryEnabled", value } },
-          ]),
-        );
-        if (accepted) {
-          settings.autoRetryEnabled = true;
-          latest.resolve({ body: { ok: true } });
-          expect(await latestWrite).toBe(true);
-          old.resolve({ status: 400, body: { error: "old failure" } });
-          expect(await olderWrite).toBe(false);
-        } else {
-          old.resolve({ status: 400, body: { error: "old failure" } });
-          expect(await olderWrite).toBe(false);
-          latest.resolve({ status: 400, body: { error: "latest failure" } });
-          expect(await latestWrite).toBe(false);
-        }
-        await vi.waitFor(() =>
-          expect(store.getState().runtimeSettings?.autoRetryEnabled).toBe(
-            accepted,
-          ),
-        );
-      },
-    );
-  });
-
-  it("retires an in-flight /copy when its branch changes", async () => {
-    const writeText = vi.fn(async () => undefined);
-    Object.defineProperty(navigator, "clipboard", {
-      configurable: true,
-      value: { writeText },
-    });
-    const response = deferred<RouteResponse>();
-    const fetch = installFetch((url, init) =>
-      url.startsWith("/api/transcript/assistant-text")
-        ? response.promise
-        : baseRoutes(url, init),
-    );
-    const { store, socket } = await initStore();
-    socket.emitSnapshot({
-      ...activeSnapshot({
-        pageMessages: [
-          {
-            role: "assistant",
-            content: "settled response",
-          },
-          {
-            role: "assistant",
-            content: "unfinished response",
-            __inspireLiveId: "live-1",
-            __inspireSettled: false,
-          },
-        ],
-      }),
-      sessionStatuses: { s1: { runState: "running" } },
-    });
-
-    await expect(store.sendPrompt("/copy")).resolves.toMatchObject({
-      accepted: true,
-    });
-    await vi.waitFor(() =>
-      expect(fetch).toHaveBeenCalledWith(
-        expect.stringContaining("/api/transcript/assistant-text?"),
-        expect.anything(),
-      ),
-    );
-    const request = fetch.mock.calls.find(([url]) =>
-      String(url).startsWith("/api/transcript/assistant-text?"),
-    );
-    const query = new URL(String(request![0]), "http://localhost").searchParams;
-    expect(query.get("sessionId")).toBe("s1");
-    expect(query.get("viewId")).toBe(store.getState().view.viewId);
-    const snapshot = activeSnapshot();
-    snapshot.active!.transcriptPage.viewId = "another-branch";
-    socket.emitSnapshot(snapshot);
-    response.resolve({ body: { text: "old branch" } });
-    await vi.waitFor(() =>
-      expect(store.getState().commandActivities.s1?.at(-1)?.status).toBe(
-        "warning",
-      ),
-    );
-    expect(writeText).not.toHaveBeenCalled();
-  });
-
-  it("clears the successful rename receipt and retains a refusal as a command result", async () => {
-    const rename = vi
-      .fn()
-      .mockReturnValueOnce({ body: { ok: true } })
-      .mockReturnValueOnce({
-        status: 400,
-        body: { error: "Pi rejected the name" },
-      });
-    installFetch((url, init) =>
-      url === "/api/sessions/rename" ? rename() : baseRoutes(url, init),
-    );
-    const { store } = await initStore();
-    const latest = () => store.getState().commandActivities.s1?.at(-1);
-    await store.sendPrompt("/name New session");
-    await vi.waitFor(() =>
-      expect(store.getState().live.notices.at(-1)?.kind).toBe("info"),
-    );
-    expect(latest()).toBeUndefined();
-
-    await store.sendPrompt("/name Refused title");
-    await vi.waitFor(() =>
-      expect(latest()).toMatchObject({
-        command: "name",
-        status: "error",
-        message: "Pi rejected the name",
-      }),
-    );
-  });
+      const { store } = await initStore(
+        activeSnapshot({ runtimeSettings: settings }),
+      );
+      const change = (value: boolean) =>
+        store.setPiRuntimeSetting({ key: "autoRetryEnabled", value });
+      const first = change(!accepted);
+      const second = change(accepted);
+      expect(store.getState().runtimeSettings?.autoRetryEnabled).toBe(false);
+      expect(store.getState().pendingRuntimeSettings.autoRetryEnabled).toBe(
+        true,
+      );
+      expect(send.mock.calls).toEqual(
+        [!accepted, accepted].map((value) => [
+          { sessionId: "s1", setting: { key: "autoRetryEnabled", value } },
+        ]),
+      );
+      settings.autoRetryEnabled = accepted;
+      const refusal = { status: 400, body: { error: "Pi refused" } };
+      latest.resolve(accepted ? { body: { ok: true } } : refusal);
+      expect(await second).toBe(accepted);
+      old.resolve(refusal);
+      expect(await first).toBe(false);
+      await vi.waitFor(() =>
+        expect(store.getState().runtimeSettings?.autoRetryEnabled).toBe(
+          accepted,
+        ),
+      );
+    },
+  );
 
   it("keeps a delayed command failure in its original session without notifying the new one", async () => {
     const response = deferred<RouteResponse>();
@@ -401,8 +206,6 @@ describe("Pi native command dispatch", () => {
     const readouts = () => store.getState().commandActivities.s1;
     await store.sendPrompt("/unknown-query-test");
     await store.sendPrompt("/session");
-    await store.sendPrompt("/name");
-    await store.sendPrompt("/quit");
 
     const showStats = async (stats: unknown) => {
       socket.emitSnapshot(
@@ -433,11 +236,9 @@ describe("Pi native command dispatch", () => {
     expect(readouts()?.map(({ command }) => command)).toEqual([
       "unknown-query-test",
       "session",
-      "name",
-      "quit",
     ]);
     socket.emit({ type: "agent_start", sessionId: "s1" });
-    expect(store.getState().commandActivities.s1).toHaveLength(4);
+    expect(store.getState().commandActivities.s1).toHaveLength(2);
     await selectSession(store, activeSnapshot({ sessionId: "s2" }));
     expect(
       store.getState().commandActivities.s1?.map((item) => item.command),

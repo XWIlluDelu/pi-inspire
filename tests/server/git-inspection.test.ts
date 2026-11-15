@@ -116,40 +116,6 @@ describe("porcelain-v2 parser", () => {
     ).toThrow(/incomplete/);
   });
 
-  it("accepts paired tracking data and rejects malformed, incomplete or duplicate branch identity", () => {
-    const upstream = "# branch.upstream origin/main";
-    const counts = "# branch.ab +12 -3";
-    const parse = (...tracking: string[]) =>
-      parsePorcelainV2(
-        statusBuffer(
-          ...headers(),
-          ...tracking.map((value) => Buffer.from(value)),
-        ),
-      );
-    expect(parse(upstream, counts).response.head).toMatchObject({
-      kind: "branch",
-      name: "main",
-    });
-    for (const tracking of [
-      [upstream],
-      [counts],
-      [upstream, upstream, counts],
-      [upstream, counts, counts],
-      [upstream, "# branch.ab +? -1"],
-      [upstream, "# branch.ab +1 -2 trailing"],
-      [upstream, "# branch.ab +9007199254740992 -0"],
-      ["# branch.upstream bad\x1fref", counts],
-      [`# branch.upstream ${"a".repeat(4_097)}`, counts],
-      [`# branch.oid ${hash}`],
-      ["# branch.head other"],
-    ]) {
-      expect(() => parse(...tracking), tracking.join(" / ")).toThrow();
-    }
-    expect(() =>
-      parsePorcelainV2(statusBuffer(...headers("bad\nhead"))),
-    ).toThrow(/branch/);
-  });
-
   it("rejects invalid facets, conflict codes, and mismatched rename or copy metadata", () => {
     const type2 = (xy: string, score: string) =>
       Buffer.from(

@@ -111,7 +111,6 @@ export interface ProjectionReconcileResult {
   replacesRows: boolean;
   previousRevision: number;
   revision: number;
-  previousFingerprint: string;
   previousLeafId: string | null;
   healthChanged: boolean;
   /** Full file identity or unresolved-tail state moved even if no entry committed. */
@@ -164,7 +163,6 @@ export interface SessionProjectionView {
   attestInitialMaterialization(
     workerEntries: readonly SessionEntry[],
   ): InitialMaterializationAttestation;
-  hasActiveEntryType(type: string): boolean;
   suspendReconciliation(): Promise<void>;
   resumeReconciliation(): void;
   /** The Host consumes each observation inside the read FIFO, before the next read. */
@@ -850,20 +848,6 @@ class SessionEntryIndex {
     while (id !== null) {
       if (id === from) return true;
       id = this.currentEntriesById.get(id)?.parentId ?? null;
-    }
-    return false;
-  }
-
-  hasActiveEntryType(type: string): boolean {
-    const seen = new Set<string>();
-    let id = this.currentLeafId;
-    while (id !== null) {
-      if (seen.has(id)) return false;
-      seen.add(id);
-      const entry = this.currentEntriesById.get(id);
-      if (!entry) return false;
-      if (entry.type === type) return true;
-      id = entry.parentId;
     }
     return false;
   }
@@ -1695,7 +1679,6 @@ export class SessionProjection
   ): Promise<ProjectionReconcileResult> {
     if (this.closed) throw new Error("Session projection is closed");
     const previousRevision = this.revision;
-    const previousFingerprint = this.fingerprint;
     const previousLeafId = this.currentLeafId;
     const previousHealth = this.health;
     const previousSourceVersion = this.sourceVersion;
@@ -1709,7 +1692,6 @@ export class SessionProjection
       replacesRows: result?.replacesRows ?? false,
       previousRevision,
       revision: this.revision,
-      previousFingerprint,
       previousLeafId,
       healthChanged:
         previousHealth.status !== this.health.status ||

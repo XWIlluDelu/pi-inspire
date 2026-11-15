@@ -4,10 +4,8 @@ import { resolve } from "node:path";
 import { expect, vi } from "vitest";
 import { PiRpcProcess } from "../../../server/pi-rpc";
 import { piInstallation, SessionManager } from "../../../server/pi-runtime";
-import type {
-  PendingOperationIdentity,
-  PromptDeliveryRequest,
-} from "../../../shared/contracts";
+import type { PromptDeliveryRequest } from "../../../shared/contracts";
+import type { PendingOperationIdentity } from "../../../shared/host-operations";
 import { type Api, createApi } from "../../../src/api";
 import { savedAssistant } from "../../fixtures/history-session";
 import { hostServices } from "../../fixtures/host-services";
@@ -31,7 +29,7 @@ const cleanups: Array<() => Promise<void>> = [];
 type ObservedEvent = Record<string, unknown> & { type: string };
 type NativeOperationApi = Pick<
   Api,
-  "attachmentPreview" | "json" | "pendingOperation" | "prompt" | "snapshot"
+  "attachmentPreview" | "json" | "pendingOperation" | "prompt"
 > &
   Record<
     "recoverPending" | "abort",

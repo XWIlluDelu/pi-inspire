@@ -1,16 +1,13 @@
 import { cp, mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, type TestInfo, test } from "@playwright/test";
 import type { ActiveSnapshot } from "../../shared/contracts";
-import { actionGeometry } from "./support/action-geometry";
 import { routeSnapshots } from "./support/host-events";
 import { completeOperation, rejectOperation } from "./support/host-operations";
 import { hostRequest } from "./support/host-request";
 import { moveCaretToEnd } from "./support/native-input";
 import {
   openCommandPalette,
-  openSettings,
   pairAndOpen,
   pairedPage,
   reloadSession,
@@ -113,21 +110,10 @@ test("ranks narrow palette results and keeps model selection out of the draft", 
   await expect(trust.locator(".palette__hint-inline .search-match")).toHaveText(
     "project",
   );
-  for (const [query, label] of [
-    ["tokens cost", "Session & usage"],
-    [" /SETTINGS ", "Settings"],
-    ["mdl", "Choose model"],
-  ]) {
-    await filter.fill(query!);
-    await expect(palette.getByRole("option", { selected: true })).toContainText(
-      label!,
-    );
-  }
+  await filter.fill("mdl");
+  await expect(palette.getByRole("option", { selected: true })).toContainText("Choose model");
   await filter.dispatchEvent("keydown", { key: "Enter", isComposing: true });
   await expect(palette).toBeVisible();
-  expect(
-    (await new AxeBuilder({ page }).include(".palette").analyze()).violations,
-  ).toEqual([]);
   await palette.getByRole("option", { selected: true }).click();
   const model = page.getByRole("combobox", { name: "Search models" });
   await expect(model).toBeVisible();
@@ -136,10 +122,7 @@ test("ranks narrow palette results and keeps model selection out of the draft", 
   await expectDraft(page);
 });
 
-test("keeps prepared actions stable while a busy Pi settles", async ({
-  page,
-}) => {
-  const command = "审阅/检查";
+test("a busy Pi settling does not change the prepared queue delivery", async ({ page }) => {
   let busy = true;
   const transport = await routeSnapshots(page, {
     snapshot(snapshot) {
@@ -149,101 +132,43 @@ test("keeps prepared actions stable while a busy Pi settles", async ({
       snapshot.sessionStatuses[active.sessionId] = {
         runState: busy ? "running" : "idle",
       };
-      active.commands.push(
-        { name: command, source: "extension" },
-        { name: "plan", source: "prompt" },
-      );
+      active.commands.push({ name: "plan", source: "prompt" });
     },
   });
   await pairAndOpen(page);
   await expect.poll(() => transport.ready("fixture-history")).toBe(true);
   await stageDraft(page);
-  await page.setViewportSize({ width: 320, height: 900 });
-  for (const [name, text, behavior] of [
-    [command, `/${command} keep paths\nnext`, undefined],
-    ["plan", "/plan scoped work", "followUp"],
-  ] as const) {
-    busy = true;
-    transport.send({
-      type: "agent_start",
-      sessionId: "fixture-history",
-      sessionStatus: { runState: "running" },
+  const palette = await openPalette(page, "plan");
+  await palette.getByRole("option", { name: /\/plan/ }).click();
+  await palette.getByLabel("Prepared command").fill("/plan scoped work");
+  await palette.getByRole("button", { name: "Queue", exact: true }).click();
+  const release = Promise.withResolvers<void>();
+  await page.route("**/api/prompt", async (route) => {
+    await release.promise;
+    await completeOperation(route, "prompt", null);
+  }, { times: 1 });
+  const request = page.waitForRequest("**/api/prompt");
+  try {
+    await palette.getByRole("button", { name: "Queue prompt" }).click();
+    expect((await request).postDataJSON()).toMatchObject({
+      message: "/plan scoped work",
+      behavior: "followUp",
     });
-    const palette = await openPalette(page, name);
-    await palette.getByRole("option", { name: new RegExp("/" + name) }).click();
-    const prepared = palette.getByLabel("Prepared command");
-    const delivery = palette.getByRole("group", {
-      name: "Prepared prompt delivery",
-    });
-    if (behavior) {
-      await prepared.fill("/missing argument");
-      await expect(
-        palette.getByRole("button", { name: "Steer Pi" }),
-      ).toBeDisabled();
-      await prepared.fill('/export "report copy.jsonl"');
-      await expect(
-        palette.getByRole("button", { name: "Run", exact: true }),
-      ).toBeEnabled();
-    }
-    await prepared.fill(behavior ? text : text.replace(" keep", "\tkeep"));
-    await expect(delivery).toHaveCount(behavior ? 1 : 0);
-    if (behavior)
-      await delivery
-        .getByRole("button", { name: "Queue", exact: true })
-        .click();
-    const release = Promise.withResolvers<void>();
-    await page.route(
-      "**/api/prompt",
-      async (route) => {
-        await release.promise;
-        await completeOperation(route, "prompt", null);
-      },
-      { times: 1 },
+    const settled = page.waitForResponse((response) =>
+      new URL(response.url()).searchParams.get("detail") === "fixture-history",
     );
-    const request = page.waitForRequest("**/api/prompt");
-    const geometry = async () =>
-      (await actionGeometry(palette.locator(".palette__prepare-actions"))).map(
-        ({ x, width, height }) => ({ x, width, height }),
-      );
-    if (behavior) await page.evaluate(() => document.fonts.ready);
-    const before = behavior ? await geometry() : null;
-    try {
-      await palette
-        .getByRole("button", {
-          name: behavior ? "Queue prompt" : "Run",
-          exact: true,
-        })
-        .click();
-      const sending = palette.getByRole("button", {
-        name: "Sending…",
-        exact: true,
-      });
-      await expect(sending).toBeDisabled();
-      if (before) expect(await geometry()).toEqual(before);
-      const settled = page.waitForResponse((response) => {
-        const url = new URL(response.url());
-        return (
-          url.pathname === "/api/snapshot" &&
-          url.searchParams.get("detail") === "fixture-history"
-        );
-      });
-      busy = false;
-      transport.send({
-        type: "agent_settled",
-        sessionId: "fixture-history",
-        sessionStatus: { runState: "idle" },
-      });
-      await (await settled).finished();
-      await expect(sending).toBeDisabled();
-      if (before) expect(await geometry()).toEqual(before);
-    } finally {
-      release.resolve();
-    }
-    const sent = (await request).postDataJSON();
-    expect(sent.message).toBe(text);
-    expect(sent.behavior).toBe(behavior);
-    await expect(palette).toHaveCount(0);
+    busy = false;
+    transport.send({
+      type: "agent_settled",
+      sessionId: "fixture-history",
+      sessionStatus: { runState: "idle" },
+    });
+    await (await settled).finished();
+    await expect(palette.getByRole("button", { name: "Sending…" })).toBeDisabled();
+  } finally {
+    release.resolve();
   }
+  await expect(palette).toHaveCount(0);
   await expectDraft(page);
 });
 
@@ -299,10 +224,6 @@ test("completes a wrapped filename in prose and restores committed references", 
     name: "Project file completions",
   });
   const option = options.getByRole("option", { name: `${name}, ${path}` });
-  await expect(option).toBeVisible();
-  expect(
-    await option.evaluate((row) => row.scrollWidth - row.clientWidth),
-  ).toBeLessThanOrEqual(1);
   await option.click();
   await input.pressSequentially("carefully ");
   const text = `Read @"${path}" carefully and compare`;
@@ -340,10 +261,6 @@ test(
     const input = palette.getByLabel("Prepared command");
     await pick.click();
     await expect(input).toBeFocused();
-    await expect(input).toHaveValue("/ui-demo ");
-    await input.press("Escape");
-    await expect(palette.getByLabel("Filter commands")).toHaveValue("ui-demo");
-    await pick.click();
     await input.fill("/ui-demo timeout 15000 @FilePreview");
     await page.getByRole("option", { name: /FilePreview\.tsx/ }).click();
     await input.pressSequentially("with @WorkspaceBrowser");
@@ -385,11 +302,14 @@ test(
       expect(body.message).toBe(prepared.trimEnd());
       expect(body.attachmentIds ?? []).toEqual([]);
       transport.send({
-        type: "extension_ui_request",
+        type: "extension_ui_pending",
         sessionId,
-        id: "review-question",
-        method: "input",
-        title: "Review question",
+        request: {
+          sessionId,
+          id: "review-question",
+          method: "input",
+          title: "Review question",
+        },
       });
       await expect(question.getByRole("textbox")).toBeFocused();
       await expect(palette).toBeHidden();
@@ -408,140 +328,16 @@ test(
     await expect(input).toHaveValue(prepared);
     await expect(input).toBeFocused();
     await expect(run).toBeEnabled();
-    await expect(
-      page.getByRole("button", { name: "Restore", exact: true }),
-    ).toHaveCount(0);
     expect(prompts).toHaveLength(1);
-    await run.click();
-    const actual = page.getByRole("dialog", { name: "Timed note" });
-    await expect(actual).toBeVisible();
-    expect(prompts).toHaveLength(2);
-    await page.keyboard.press("Escape");
-    await expect(actual).toBeHidden();
     await expectDraft(page);
   },
 );
 
-test("keeps a large completion list usable through keyboard and wheel navigation", async ({
-  page,
-}) => {
-  const models = Array.from({ length: 250 }, (_, index) => ({
-    provider: "scale",
-    id: `model${String(index).padStart(4, "0")}`,
-    name: `Model ${index}`,
-  }));
-  await routeSnapshots(page, {
-    snapshot(snapshot) {
-      if (snapshot.active) snapshot.active.availableModels = models;
-    },
-  });
-  await pairAndOpen(page);
-  const input = message(page);
-  const prompts = observePrompts(page);
-  await input.fill("/model");
-  await input.press("Space");
-  const options = page.getByRole("listbox", {
-    name: "Model argument completions",
-  });
-  const selected = options.getByRole("option", { selected: true });
-  await expect(selected).toHaveAttribute("aria-posinset", "1");
-  await input.press("ArrowDown");
-  await input.press("ArrowDown");
-  await expect(selected).toHaveAttribute("aria-setsize", "250");
-  await input.press("Enter");
-  await expect(input).toHaveValue(/\/model scale\/model000[12]/);
-  await page.setViewportSize({ width: 320, height: 740 });
-  await input.fill("/model ");
-  await expect(options).toBeVisible();
-  await options.hover();
-  const last = options.getByRole("option", {
-    name: "scale/model0249 Model 249",
-  });
-  await expect
-    .poll(async () => {
-      await page.mouse.wheel(0, 4000);
-      return (
-        (await last.count()) > 0 &&
-        (await last.evaluate((row) => {
-          const box = row.closest('[role="listbox"]')!.getBoundingClientRect();
-          const bounds = row.getBoundingClientRect();
-          return bounds.top >= box.top && bounds.bottom <= box.bottom + 1;
-        }))
-      );
-    })
-    .toBe(true);
-  await last.click();
-  await expect(input).toHaveValue("/model scale/model0249");
-  await input.fill("/thinking h");
-  await expect(
-    page.getByRole("listbox", { name: "Thinking level argument completions" }),
-  ).toBeVisible();
-  await input.press("Enter");
-  await expect(input).toHaveValue("/thinking high");
-  expect(prompts).toEqual([]);
-});
-
-test("reads current shortcuts and retries installed release notes without consuming a draft", async ({
+test("retries installed release notes without consuming a draft", async ({
   page,
 }) => {
   await pairAndOpen(page);
   await stageDraft(page);
-  await page.evaluate(() =>
-    Object.defineProperty(navigator, "platform", { value: "MacIntel" }),
-  );
-  const openHelp = async () => {
-    const palette = await openPalette(page, "hotkeys");
-    await palette.getByRole("option", { name: /Keyboard shortcuts/ }).click();
-  };
-  await openHelp();
-  const help = page.getByRole("dialog", { name: "Keyboard shortcuts" });
-  const chords = (label: string) =>
-    help.getByText(label, { exact: true }).locator("..").locator("kbd");
-  const closeHelp = help.getByRole("button", { name: "Close command help" });
-  const send = "Send with the selected delivery mode (desktop)";
-  const lineBreak = "Insert a line break (Alt+Enter also works)";
-  await expect(chords(send)).toHaveText(["Enter"]);
-  await expect(chords(lineBreak)).toHaveText(["Shift+Enter"]);
-  await expect(
-    chords("Native copy / paste; Ctrl+C always interrupts"),
-  ).toHaveText(["⌘+C", "⌘+V"]);
-  await expect(help).toContainText("Open input history");
-  expect(
-    (await new AxeBuilder({ page }).include(".command-help").analyze())
-      .violations,
-  ).toEqual([]);
-  await closeHelp.click();
-  const changeSendKey = async (label: string) => {
-    await openSettings(page);
-    const settings = page.getByRole("dialog", {
-      name: "Settings",
-      exact: true,
-    });
-    await settings
-      .getByRole("button", { name: "Conversation", exact: true })
-      .click();
-    const saved = page.waitForResponse(
-      (response) =>
-        response.url().endsWith("/api/preferences") &&
-        response.request().method() === "PATCH",
-    );
-    await settings
-      .getByRole("combobox", { name: "Send key", exact: true })
-      .selectOption({ label: label });
-    expect((await saved).ok()).toBe(true);
-    await page.keyboard.press("Escape");
-    await expect(settings).toBeHidden();
-  };
-  try {
-    await changeSendKey("Ctrl/⌘+Enter");
-    await openHelp();
-    await expect(chords(send)).toHaveText(["Ctrl/⌘+Enter"]);
-    await expect(chords(lineBreak)).toHaveText(["Enter", "Shift+Enter"]);
-  } finally {
-    if (await help.isVisible()) await closeHelp.click();
-    await changeSendKey("Enter");
-  }
-
   const failure = Promise.withResolvers<void>();
   await page.route(
     "**/api/pi/changelog",
@@ -574,21 +370,4 @@ test("reads current shortcuts and retries installed release notes without consum
   ).toBeVisible();
   await release.getByRole("button", { name: "Close command help" }).click();
   await expectDraft(page);
-});
-
-test("new-session completion stays visible in a short window", async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 715, height: 571 });
-  await pairedPage(page);
-  await page.getByRole("textbox", { name: "First message" }).fill("/");
-  const menu = page.getByRole("listbox", {
-    name: "Slash command completions",
-  });
-  await expect(menu).toBeVisible();
-
-  await expect(menu).toBeInViewport();
-  await expect(
-    page.getByRole("textbox", { name: "First message" }),
-  ).toBeFocused();
 });

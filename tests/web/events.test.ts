@@ -221,9 +221,8 @@ it.each([false, true])(
     });
     const before = emit("auto_retry_start", {
       sessionStatus: { runState: "retrying" },
-      attempt: 2,
-      maxAttempts: 5,
-      errorMessage: "rate limited",
+      retry: { attempt: 2, maxAttempts: 5, message: "rate limited" },
+      summarizationRetry: null,
     }).slice;
     expect(before.retry).toEqual({
       attempt: 2,
@@ -245,6 +244,8 @@ it.each([false, true])(
         sessionStatus: { runState: "failed" },
         success: false,
         finalError: "overloaded",
+        retry: null,
+        summarizationRetry: null,
       }).slice,
     ).toMatchObject({ retry: null, notices: [] });
     const settled = emit("agent_settled", {
@@ -279,9 +280,10 @@ it("keeps the remaining addressed dialog through ordinary settlement and retires
     expiresAt: 2000,
   };
   const second = { sessionId: "s1", id: "second", method: "input" };
-  emit("extension_ui_request", first);
+  emit("extension_ui_pending", { sessionId: "s1", request: first });
   expect(
-    emit("extension_ui_request", second).slice.extensionUiRequests,
+    emit("extension_ui_pending", { sessionId: "s1", request: second }).slice
+      .extensionUiRequests,
   ).toMatchObject([first, second]);
   expect(
     emit("extension_ui_remove", {

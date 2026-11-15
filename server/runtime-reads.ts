@@ -1,4 +1,7 @@
-import type { SessionHistoryPages } from "../shared/contracts.js";
+import type {
+  BranchImageRequest,
+  SessionHistoryPages,
+} from "../shared/contracts.js";
 import type { SessionHistoryQuery } from "../shared/history-query.js";
 import { lastAssistantText } from "./assistant-text.js";
 import { requestError } from "./request-error.js";
@@ -38,16 +41,22 @@ export class RuntimeReadController {
       slot: RuntimeSlot,
       effectiveLeafId: string | null,
     ) => T,
+    resource?: { slot: RuntimeSlot; viewId: string; revision: number },
   ): Promise<T> {
     this.host.assertAvailable();
-    const slot = this.host.requireSlot(sessionId);
-    return this.host.useSlot(slot, async () => {
-      // The projection validates source identity/version on every read; only
-      // changed files need byte revalidation. Writer admission remains forced.
-      await this.host.reconcileSlot(slot, false);
+    const slot = resource?.slot ?? this.host.requireSlot(sessionId);
+    const projection = () => {
+      if (resource)
+        return this.visibleProjection(slot, resource.viewId, resource.revision);
       if (this.host.requireSlot(sessionId) !== slot)
         throw requestError("The session view changed while reading", 409);
-      return read(requireProjection(slot), slot, effectiveRuntimeLeaf(slot));
+      return requireProjection(slot);
+    };
+    return this.host.useSlot(slot, async () => {
+      if (resource) projection();
+      // Source reconciliation checks identity before publishing any branch read.
+      await this.host.reconcileSlot(slot, false);
+      return read(projection(), slot, effectiveRuntimeLeaf(slot));
     });
   }
 
@@ -121,6 +130,22 @@ export class RuntimeReadController {
     );
   }
 
+  branchImage(
+    { sessionId, viewId, targetId }: BranchImageRequest,
+    index: number,
+  ) {
+    return this.projectionRead(sessionId, (projection, slot) => {
+      this.host.throwIfConflicted(slot);
+      if (slot.viewId !== viewId)
+        throw requestError(
+          "The branch changed; reopen this History point",
+          409,
+        );
+      const source = projection.entry(targetId) ? projection : slot.projection!;
+      return source.branchImage(targetId, index);
+    });
+  }
+
   resourceContext(sessionId: string): Promise<ResourceContext> {
     return this.projectionRead(sessionId, (projection, slot) => {
       const viewId = slot.viewId;
@@ -140,19 +165,15 @@ export class RuntimeReadController {
     viewId: string,
     revision: number,
   ): Promise<unknown[]> {
-    this.host.assertAvailable();
-    return this.host.useSlot(slot, async () => {
-      this.visibleProjection(slot, viewId, revision);
-      await this.host.reconcileSlot(slot, false);
-      const projection = this.visibleProjection(slot, viewId, revision);
-      const leaf = effectiveRuntimeLeaf(slot);
-      // Context coordinates remain unchanged. History adds separately named,
-      // entry-bound images from retained USER prompts on this same branch.
-      return [
+    return this.projectionRead(
+      slot.id,
+      (projection, _slot, leaf) => [
         ...projection.viewMessages(leaf),
+        // Entry-bound images use separate coordinates from live messages.
         ...projection.composerHistoryMessages(leaf),
-      ];
-    });
+      ],
+      { slot, viewId, revision },
+    );
   }
 
   private visibleProjection(

@@ -13,17 +13,19 @@ interface SessionSelectionState {
   cwd: string | null;
   openingSessionId: string | null;
   sessionSelectionPending: boolean;
+  bootstrapped: boolean;
   readOnlyReason?: SessionReadOnlyReason | null;
 }
 
 interface SessionSelectionControllerHost {
   state(): SessionSelectionState;
   api(): Api | null;
-  /** Starts a new explicit selection intent and returns its unique owner. */
-  beginOpening(sessionId: string | null): number;
-  invalidateOpening(): void;
-  ownsOpening(ticket: number, api: Api): boolean;
-  releaseOpening(ticket: number): void;
+  patch(state: {
+    openingSessionId: string | null;
+    sessionSelectionPending: boolean;
+    startupPending?: false;
+  }): void;
+  onOpenIntent(): void;
   applySnapshot(snapshot: ActiveSnapshot): void;
   ensureSessionVisible(sessionId: string): void;
   setActionError(message: string | null): void;
@@ -42,14 +44,41 @@ interface SessionSelectionControllerHost {
 export class SessionSelectionController {
   private observation: AbortController | null = null;
   private creation: "pending" | "uncertain" | null = null;
+  private request = 0;
+  private intent = 0;
 
   constructor(private readonly host: SessionSelectionControllerHost) {}
 
+  get generation(): number {
+    return this.request;
+  }
+
+  /** Startup continuation yields only to an explicit open, new, or deselect. */
+  get openIntent(): number {
+    return this.intent;
+  }
+
+  beginForkSelection(): number {
+    return ++this.request;
+  }
+
   /** A replacement transport retires every in-flight selection. */
   invalidateForReplacement(): void {
-    this.host.invalidateOpening();
-    this.observation?.abort();
+    this.request++;
+    this.releaseOpening();
+  }
+
+  private releaseOpening(owner?: AbortController): void {
+    if (owner && owner !== this.observation) return;
+    if (!owner) this.observation?.abort();
     this.observation = null;
+    const state = this.host.state();
+    if (state.sessionSelectionPending)
+      this.host.patch({
+        openingSessionId: null,
+        sessionSelectionPending: false,
+        ...(owner && state.bootstrapped ? { startupPending: false } : {}),
+      });
   }
 
   async open(id: string): Promise<SessionOpenResult> {
@@ -166,18 +195,25 @@ export class SessionSelectionController {
     afterApply: (snapshot: ActiveSnapshot) => T,
     onFailure?: (error: unknown) => T,
   ): Promise<T> {
-    const ticket = this.host.beginOpening(openingSessionId);
+    this.host.onOpenIntent();
+    this.intent++;
+    const ticket = ++this.request;
     this.observation?.abort();
     const observation = new AbortController();
     this.observation = observation;
+    this.host.patch({ openingSessionId, sessionSelectionPending: true });
+    const owns = () =>
+      ticket === this.request &&
+      this.observation === observation &&
+      api === this.host.api();
     try {
       const snapshot = await request(observation.signal);
-      if (!this.host.ownsOpening(ticket, api)) return staleResult;
+      if (!owns()) return staleResult;
       this.host.applySnapshot(snapshot);
       this.host.setActionError(null);
       return afterApply(snapshot);
     } catch (error) {
-      if (this.host.ownsOpening(ticket, api)) {
+      if (owns()) {
         if (error instanceof ApiError && error.status === 401)
           this.host.handleAuthFailure();
         else {
@@ -191,8 +227,7 @@ export class SessionSelectionController {
       }
       return staleResult;
     } finally {
-      if (this.observation === observation) this.observation = null;
-      this.host.releaseOpening(ticket);
+      this.releaseOpening(observation);
     }
   }
 }
