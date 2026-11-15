@@ -20,6 +20,57 @@ beforeEach(initializeRuntimeFixture);
 afterEach(disposeRuntimeFixture);
 
 describe("native commands and worker-local catalogs", () => {
+  it("keeps quick extension commands visually idle and exposes Stop for waiting commands", async () => {
+    const fixture = schedulingRuntime({
+      configure: (rpc) => {
+        rpc.responseOverrides.set("get_commands", {
+          commands: [{ name: "tier", source: "extension" }],
+        });
+        rpc.responseOverrides.set("prompt", { disposition: "handled" });
+      },
+    });
+    const { runtime } = fixture;
+    trackRuntime(runtime);
+    await runtime.openSession("a");
+    await startWorker(runtime);
+    fixture.worker.responseOverrides.set("get_state", {
+      sessionId: fixture.worker.sessionId,
+      sessionFile: fixture.worker.sessionPath,
+      isStreaming: false,
+      isCompacting: false,
+      pendingMessageCount: 0,
+    });
+    const admissions = vi.fn();
+    runtime.on("event", (event) => {
+      if (event.type === "prompt_pending") admissions(event.sessionStatus);
+    });
+    await runtime.prompt({ sessionId: "a", message: "/tier fast" });
+    expect(admissions).not.toHaveBeenCalled();
+
+    const gate = deferredSignal();
+    fixture.worker.responseOverrides.set("prompt", async () => {
+      await gate.promise;
+      return { disposition: "handled" };
+    });
+    const command = runtime.prompt({
+      sessionId: "a",
+      message: "/tier standard",
+    });
+    try {
+      await vi.waitFor(() =>
+        expect(admissions).toHaveBeenCalledWith(
+          expect.objectContaining({ runState: "queued" }),
+        ),
+      );
+    } finally {
+      gate.resolve();
+      await command;
+    }
+    expect((await runtime.snapshot("a")).sessionStatuses.a?.runState).toBe(
+      "idle",
+    );
+  });
+
   it("routes native and extension commands without settling active model work", async () => {
     const fixture = schedulingRuntime({
       configure: (worker) => {

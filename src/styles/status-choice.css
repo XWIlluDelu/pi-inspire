@@ -40,7 +40,8 @@
 .status-choice__labels span { cursor: pointer; padding: 0; }
 .status-choice__labels [data-selected="true"] { color: var(--accent-deep); font-weight: 600; }
 .status-choice__hint { margin: 7px 4px 0; font-size: var(--text-xs); color: var(--muted); }
-.status-choice[data-pending="true"] .status-choice__track, .status-choice[data-unknown="true"]:has(input:disabled) .status-choice__track { opacity: .4; }
+.status-choice__dots span[data-pending] { outline: 1px solid var(--accent-deep); outline-offset: 2px; }
+.status-choice[data-unknown="true"]:has(input:disabled) .status-choice__track { opacity: .4; }
 .status-choice-indicator { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; color: inherit; vertical-align: middle; }
 .status-choice-indicator[data-inactive="true"] { color: var(--faint); }
 .status-choice__confirmation { color: var(--body); font-size: var(--text-sm); }

@@ -300,6 +300,10 @@ export class RuntimeController extends EventEmitter {
     Set<string>
   >();
   private lastOpenedSessionId: string | null = null;
+  private readonly quietCommandAdmission = new WeakMap<
+    RuntimeSlot,
+    { worker: PiRpcProcess; previousState: RuntimeSlot["runState"] }
+  >();
   private modelMetadata?: ModelMetadataCatalog;
   // Null means discovery failed, not that no virtual definitions exist.
   private readonly previewModels = new WeakMap<
@@ -1682,8 +1686,13 @@ export class RuntimeController extends EventEmitter {
   }
 
   private statusFor(slot: RuntimeSlot): SessionRuntimeStatus {
+    const quiet = this.quietCommandAdmission.get(slot);
+    const runState =
+      quiet && quiet.worker === slot.process && slot.runState === "queued"
+        ? quiet.previousState
+        : slot.runState;
     let indicator: SessionRuntimeStatus["indicator"];
-    if (isBusyRunState(slot.runState) || slot.nativeBash) {
+    if (isBusyRunState(runState) || slot.nativeBash) {
       indicator = "running";
     } else if (slot.conflict) {
       indicator =
@@ -1696,7 +1705,7 @@ export class RuntimeController extends EventEmitter {
       this.externalSessions?.needsInput(slot) === true;
     if (needsInput) indicator = "attention";
     return {
-      runState: slot.runState,
+      runState,
       ...(indicator ? { indicator } : {}),
       ...(slot.attention &&
       indicator === slot.attention &&
@@ -2129,7 +2138,9 @@ export class RuntimeController extends EventEmitter {
             live ? slot.preview.thinkingLevel : undefined,
           ),
         ...this.liveTranscript(slot),
-        isStreaming: isBusyRunState(slot.runState),
+        isStreaming: isBusyRunState(
+          sessionStatuses[slot.id]?.runState ?? slot.runState,
+        ),
         toolActivity: slot.toolActivity,
       },
       bashRunning: Boolean(slot.nativeBash),
@@ -3156,7 +3167,26 @@ export class RuntimeController extends EventEmitter {
           // prompt receipt. Publish admission so a silent hook is stoppable.
           if (!isBusyRunState(previousRunState)) slot.runState = "queued";
           slot.pendingPromptCount += 1;
-          this.emitSlotEvent(slot, { type: "prompt_pending" });
+          let admissionTimer: ReturnType<typeof setTimeout> | undefined;
+          if (
+            !isBusyRunState(previousRunState) &&
+            command &&
+            runtimeResourceOwnsCommand(slot, command.name, "extension")
+          ) {
+            // A fast setting command should not flash Stop and queue controls.
+            // Native activity still publishes immediately.
+            this.quietCommandAdmission.set(slot, {
+              worker: readyProcess,
+              previousState: previousRunState,
+            });
+            admissionTimer = setTimeout(() => {
+              this.quietCommandAdmission.delete(slot);
+              if (slot.process === readyProcess && slot.runState === "queued")
+                this.emitSlotEvent(slot, { type: "prompt_pending" });
+            }, 180);
+          } else {
+            this.emitSlotEvent(slot, { type: "prompt_pending" });
+          }
           try {
             // Publication/listeners cannot admit work prepared before Stop.
             assertPromptView();
@@ -3230,6 +3260,16 @@ export class RuntimeController extends EventEmitter {
             }
             throw error;
           } finally {
+            if (admissionTimer) {
+              clearTimeout(admissionTimer);
+              const stillQuiet = this.quietCommandAdmission.delete(slot);
+              if (
+                stillQuiet &&
+                slot.process === readyProcess &&
+                slot.runState === "queued"
+              )
+                this.emitSlotEvent(slot, { type: "prompt_pending" });
+            }
             if (slot.process === readyProcess) slot.pendingPromptCount -= 1;
           }
         } catch (error) {

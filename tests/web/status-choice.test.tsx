@@ -65,7 +65,8 @@ it("retires a confirmation warning when the requested selection arrives late", a
   const input = screen.getByRole("slider", { name: "Choice" });
   fireEvent.change(input, { target: { value: "1" } });
   expect(input).toBeDisabled();
-  expect(input).toHaveAttribute("aria-valuetext", "Low");
+  expect(input).toHaveValue("1");
+  expect(input).toHaveAttribute("aria-valuetext", "Applying High");
   expect(input.closest(".status-choice")).toHaveAttribute("aria-busy", "true");
   await act(async () => {
     await vi.advanceTimersByTimeAsync(10_000);
