@@ -2,7 +2,7 @@ import { Puzzle } from "lucide-react";
 import { useState } from "react";
 import { usePresentationAdapters } from "../presentation-adapters";
 import { store } from "../store";
-import { SettingField, SettingsSwitch } from "./SettingsControls";
+import { SwitchField } from "./SettingsControls";
 import { SettingsCardMessage, SettingsSection } from "./SettingsSection";
 
 export function PresentationAdapterSettings() {
@@ -27,11 +27,11 @@ export function PresentationAdapterSettings() {
       id="extension-adapters"
       icon={<Puzzle size={14} />}
       title="Extension adapters"
-      description="Choose how Pi extensions appear in Inspire. These switches change the GUI, not which extensions Pi runs."
+      description="Choose how Pi extensions appear in Inspire."
     >
       {adapters.length ? (
         adapters.map((adapter) => (
-          <SettingField
+          <SwitchField
             key={adapter.id}
             label={adapter.name}
             status={
@@ -39,20 +39,15 @@ export function PresentationAdapterSettings() {
                 <span role="alert">{adapter.warning}</span>
               ) : undefined
             }
-          >
-            <SettingsSwitch
-              label={adapter.name}
-              checked={adapter.enabled}
-              disabled={pending !== null}
-              busy={pending === adapter.id}
-              onChange={(enabled) => void toggle(adapter.id, enabled)}
-              state={adapter.enabled ? "On" : "Off"}
-            />
-          </SettingField>
+            checked={adapter.enabled}
+            disabled={pending !== null}
+            busy={pending === adapter.id}
+            onChange={(enabled) => void toggle(adapter.id, enabled)}
+          />
         ))
       ) : (
         <SettingsCardMessage>
-          No adapters configured. Add adapter files to your custom presentation
+          No adapters configured. Add adapter files to your presentation
           profile.
         </SettingsCardMessage>
       )}

@@ -8,11 +8,8 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  addAttachmentContext,
-  resolveProjectFiles,
-} from "../../server/attachments.js";
+import { afterEach, expect, it, vi } from "vitest";
+import { resolveProjectFiles } from "../../server/attachments.js";
 import {
   assertPromptArtifactBudget,
   resolveComposerHistoryArtifacts,
@@ -21,219 +18,81 @@ import {
 import type { RuntimeSlot } from "../../server/runtime-slot.js";
 
 const roots: string[] = [];
-
 afterEach(async () => {
   await Promise.all(
     roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
   );
 });
-
-describe("composer-history artifacts", () => {
-  it("keeps an explicit root navigation separate from the durable leaf", async () => {
-    const composerHistoryMessages = vi.fn(() => []);
-    const slot = {
-      viewId: "root-view",
-      navigationLease: { effectiveLeafId: null },
-      projection: {
-        incarnation: "source-a",
-        leafId: "durable-leaf",
-        composerHistoryMessages,
-      },
-    } as unknown as RuntimeSlot;
-    await resolveComposerHistoryArtifacts(
-      slot,
-      {
-        sessionId: "session-a",
-        message: "",
-        historyArtifacts: {
-          viewId: "root-view",
-          incarnation: "source-a",
-          effectiveLeafId: null,
-          imageReferences: [],
-          fileReferences: [],
-        },
-      },
-      { ready: async () => {}, ownsPromptFile: () => false },
-    );
-    expect(composerHistoryMessages).toHaveBeenCalledWith(null);
-  });
-
-  it("rejects non-canonical or empty prompt image data before budgeting it", () => {
-    for (const data of ["T Q==", ""]) {
-      expect(() => assertPromptArtifactBudget(1, 0, [{ data }])).toThrow(
-        "A prompt image is invalid",
-      );
-    }
-  });
-
-  it.each([false, true])(
-    "retains Host-owned attachments inside the project (image hint: %s)",
-    async (withImage) => {
-      const root = await realpath(
-        await mkdtemp(join(tmpdir(), "inspire-prompt-files-")),
-      );
-      roots.push(root);
-      const attachment = join(root, "owned.txt");
-      await writeFile(attachment, "owned attachment\n");
-      const prompt = addAttachmentContext(
-        "Use this file",
-        [{ kind: "file", path: attachment }],
-        [],
-      );
-      const slot = {
-        cwd: root,
-        viewId: "view-a",
-        navigationLease: null,
-        projection: {
-          incarnation: "incarnation-a",
-          leafId: null,
-          composerHistoryMessages: () => [
-            {
-              role: "user",
-              content: withImage
-                ? [
-                    {
-                      type: "text",
-                      text:
-                        prompt +
-                        "\n\n[Image: original 2560x133, displayed at 2000x104. Multiply coordinates by 1.28 to map to original image.]",
-                    },
-                    { type: "image", data: "cGl4ZWxz", mimeType: "image/png" },
-                  ]
-                : prompt,
-              __inspireMessageIndex: 0,
-            },
-          ],
-        },
-      } as unknown as RuntimeSlot;
-
-      await expect(
-        resolveComposerHistoryArtifacts(
-          slot,
-          {
-            sessionId: "session-a",
-            message: "Use this file",
-            historyArtifacts: {
-              viewId: "view-a",
-              incarnation: "incarnation-a",
-              effectiveLeafId: null,
-              imageReferences: [],
-              fileReferences: ["pi-file://0/0"],
-            },
-          },
-          {
-            ready: async () => {},
-            ownsPromptFile: (path) => path === attachment,
-          },
-        ),
-      ).resolves.toMatchObject({
-        files: [{ kind: "file", path: attachment }],
-        projectFiles: [],
-      });
-    },
+async function workspace() {
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), "inspire-prompt-files-")),
   );
+  roots.push(root);
+  const cwd = join(root, "workspace");
+  await mkdir(cwd);
+  return { root, cwd };
+}
+
+it("revalidates one canonical file after Git changes and refuses symlink retargeting", async () => {
+  const { root, cwd } = await workspace();
+  const hidden = join(cwd, ".settings");
+  await mkdir(hidden);
+  await mkdir(join(cwd, ".git"));
+  const file = join(hidden, "config.txt");
+  const replacement = join(cwd, "replacement.txt");
+  const outside = join(root, "outside.txt");
+  await Promise.all(
+    [file, replacement, outside].map((path) => writeFile(path, "fixture")),
+  );
+  const link = join(cwd, "selected.txt");
+  await symlink(file, link);
+  const expected = await resolveProjectFiles(cwd, ["selected.txt"]);
+  await writeFile(join(cwd, ".gitignore"), ".settings/\n");
+  await writeFile(join(cwd, ".git", "index"), "unreadable Git metadata");
+  await expect(resolveProjectFiles(cwd, [".settings"])).rejects.toThrow(
+    /not a regular file/,
+  );
+  await expect(
+    revalidateProjectFiles(cwd, ["selected.txt", file], expected),
+  ).resolves.toEqual([file]);
+  for (const target of [replacement, outside]) {
+    await rm(link);
+    await symlink(target, link);
+    await expect(
+      revalidateProjectFiles(cwd, ["selected.txt"], expected),
+    ).rejects.toMatchObject({ status: 409 });
+  }
 });
 
-describe("prompt project-file revalidation", () => {
-  it("accepts hidden and newly ignored project files at delivery and history recall", async () => {
-    const root = await realpath(
-      await mkdtemp(join(tmpdir(), "inspire-prompt-files-")),
-    );
-    roots.push(root);
-    await mkdir(join(root, ".settings"));
-    const selected = join(root, ".settings", "config.txt");
-    await writeFile(selected, "synthetic configuration\n");
-    const expected = await resolveProjectFiles(root, [selected]);
-    await writeFile(join(root, ".gitignore"), ".settings/\n");
-    await mkdir(join(root, ".git"));
-    await writeFile(join(root, ".git", "index"), "invalid Git fixture");
-    await expect(
-      revalidateProjectFiles(root, [selected], expected),
-    ).resolves.toEqual(expected);
-    const slot = {
-      cwd: root,
-      viewId: "view-a",
-      navigationLease: null,
-      projection: {
-        incarnation: "incarnation-a",
-        leafId: null,
-        composerHistoryMessages: () => [
-          {
-            role: "user",
-            content: addAttachmentContext("Use", [], expected),
-            __inspireMessageIndex: 0,
-          },
-        ],
+it("keeps an explicitly recalled root separate from the durable branch and rejects malformed image bytes", async () => {
+  const composerHistoryMessages = vi.fn(() => []);
+  const slot = {
+    viewId: "root-view",
+    viewLeafId: null,
+    projection: {
+      incarnation: "source-a",
+      leafId: "durable-leaf",
+      composerHistoryMessages,
+    },
+  } as unknown as RuntimeSlot;
+  await resolveComposerHistoryArtifacts(
+    slot,
+    {
+      sessionId: "a",
+      message: "",
+      historyArtifacts: {
+        viewId: "root-view",
+        incarnation: "source-a",
+        effectiveLeafId: null,
+        imageReferences: [],
+        fileReferences: [],
       },
-    } as unknown as RuntimeSlot;
-    await expect(
-      resolveComposerHistoryArtifacts(
-        slot,
-        {
-          sessionId: "session-a",
-          message: "Use",
-          historyArtifacts: {
-            viewId: "view-a",
-            incarnation: "incarnation-a",
-            effectiveLeafId: null,
-            imageReferences: [],
-            fileReferences: ["pi-file://0/0"],
-          },
-        },
-        { ready: async () => {}, ownsPromptFile: () => false },
-      ),
-    ).resolves.toMatchObject({ projectFiles: expected });
-  });
-
-  it("still refuses an in-workspace symlink retarget between selection and delivery", async () => {
-    const root = await realpath(
-      await mkdtemp(join(tmpdir(), "inspire-prompt-files-")),
+    },
+    { ready: async () => {}, ownsPromptFile: () => false },
+  );
+  expect(composerHistoryMessages).toHaveBeenCalledExactlyOnceWith(null);
+  for (const data of ["T Q==", ""])
+    expect(() => assertPromptArtifactBudget(1, 0, [{ data }])).toThrow(
+      "A prompt image is invalid",
     );
-    roots.push(root);
-    for (const name of ["first.txt", "second.txt"])
-      await writeFile(join(root, name), name);
-    await symlink(join(root, "first.txt"), join(root, "selected.txt"));
-    const expected = await resolveProjectFiles(root, ["selected.txt"]);
-    await rm(join(root, "selected.txt"));
-    await symlink(join(root, "second.txt"), join(root, "selected.txt"));
-    await expect(
-      revalidateProjectFiles(root, ["selected.txt"], expected),
-    ).rejects.toMatchObject({ status: 409 });
-  });
-
-  it("rejects a selected path replaced by an outside symlink before delivery", async () => {
-    const root = await mkdtemp(join(tmpdir(), "inspire-prompt-files-"));
-    roots.push(root);
-    const workspace = join(root, "workspace");
-    const selected = join(workspace, "source.ts");
-    const outside = join(root, "outside.txt");
-    await mkdir(workspace);
-    await writeFile(selected, "export const safe = true;\n");
-    await writeFile(outside, "outside\n");
-
-    const expected = await resolveProjectFiles(workspace, ["source.ts"]);
-    await rm(selected);
-    await symlink(outside, selected);
-
-    await expect(
-      revalidateProjectFiles(workspace, ["source.ts"], expected),
-    ).rejects.toMatchObject({ status: 409 });
-  });
-
-  it("returns freshly authorized canonical paths when they are unchanged", async () => {
-    const root = await mkdtemp(join(tmpdir(), "inspire-prompt-files-"));
-    roots.push(root);
-    const workspace = join(root, "workspace");
-    const selected = join(workspace, "source.ts");
-    await mkdir(workspace);
-    await writeFile(selected, "export const safe = true;\n");
-
-    const expected = await resolveProjectFiles(workspace, ["source.ts"]);
-    await expect(
-      revalidateProjectFiles(workspace, ["source.ts"], expected),
-    ).resolves.toEqual(expected);
-    await expect(
-      revalidateProjectFiles(workspace, ["source.ts", selected], expected),
-    ).resolves.toEqual(expected);
-  });
 });

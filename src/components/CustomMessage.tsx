@@ -1,16 +1,16 @@
 import { Package } from "lucide-react";
-import { memo, useId, useState, useSyncExternalStore } from "react";
-import { type ChatMessage, messageText } from "../events";
+import { memo, useId } from "react";
+import type { ChatMessage } from "../events";
 import { messageCopyLoader } from "../message-copy";
-import {
-  getCustomMessagePresentationRegistry,
-  subscribeCustomMessagePresentations,
-} from "../tool-presentations/registry";
-import { CopyAction } from "./CopyAction";
-import { DetailSummary } from "./DetailSummary";
+import { usePresentationAdapters } from "../presentation-adapters";
 import { ImageGallery } from "./ImageGallery";
-import { ImagePreview, PersistedImage } from "./ImagePreview";
+import { messageImage } from "./ImagePreview";
 import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
+import {
+  ActivityDetails,
+  ActivityHeader,
+  ActivityText,
+} from "./transcript-activity-visibility";
 
 function inspect(value: unknown): string {
   return typeof value === "string"
@@ -31,16 +31,13 @@ export const CustomMessage = memo(function CustomMessage({
   projectionKey: string;
 }) {
   const titleId = useId();
-  const [detailsOpen, setDetailsOpen] = useState(false);
+  const { customMessages } = usePresentationAdapters();
+  if (message.display === false) return null;
   const type =
     (typeof message.customType === "string" &&
       message.customType.trim().slice(0, 80)) ||
     "custom";
-  const registry = useSyncExternalStore(
-    subscribeCustomMessagePresentations,
-    getCustomMessagePresentationRegistry,
-  );
-  const presentation = registry.resolve(message);
+  const presentation = customMessages.resolve(message);
   const title =
     presentation?.title ??
     (type === "custom"
@@ -50,7 +47,17 @@ export const CustomMessage = memo(function CustomMessage({
           .replace(/[-_:]+/g, " ")
           .replace(/^./, (character) => character.toUpperCase()));
   const hasDetails = message.details !== undefined && message.details !== null;
-  const text = messageText(message);
+  const owner = { sessionId, viewId, projectionKey };
+  const { content } = message;
+  const parts = Array.isArray(content)
+    ? content
+    : content == null
+      ? []
+      : [
+          typeof content === "string"
+            ? { type: "text", text: content }
+            : content,
+        ];
   const copyText = (source = message) => {
     const parts = [
       title,
@@ -63,122 +70,85 @@ export const CustomMessage = memo(function CustomMessage({
     return parts.join("\n\n");
   };
 
-  if (message.display === false) return null;
   return (
-    <article className="turn turn--custom" aria-labelledby={titleId}>
-      <div className="custom-message">
-        <div className="custom-message__head">
-          <Package size={14} aria-hidden />
-          <div className="custom-message__identity">
-            <span id={titleId} className="custom-message__title">
-              {title}
+    <article
+      className="activity-surface custom-message"
+      aria-labelledby={titleId}
+    >
+      <ActivityHeader
+        className="custom-message__head"
+        icon={<Package size={14} aria-hidden />}
+        copy={{
+          getContent: messageCopyLoader(message, copyText, owner),
+          label: `${title} block`,
+          className: "custom-message__copy",
+        }}
+      >
+        <div className="custom-message__identity">
+          <span id={titleId} className="custom-message__title">
+            {title}
+          </span>
+          {presentation ? (
+            <span className="custom-message__source">
+              {presentation.source}
             </span>
-            {presentation ? (
-              <span className="custom-message__source">
-                {presentation.source}
-              </span>
-            ) : null}
-          </div>
-          <CopyAction
-            getContent={messageCopyLoader(message, copyText, {
-              sessionId,
-              viewId,
-              projectionKey,
-            })}
-            label={`${title} block`}
-            className="custom-message__copy"
-          />
+          ) : null}
         </div>
-        <ImageGallery>
-          <div className="custom-message__body">
-            {typeof message.content === "string" ? (
-              <RichText text={presentation?.body ?? text} variant="user" />
-            ) : Array.isArray(message.content) ? (
-              message.content.map((part: unknown, index: number) => {
-                if (!part || typeof part !== "object")
-                  return (
-                    <pre key={index} className="custom-message__raw">
-                      {inspect(part)}
-                    </pre>
-                  );
-                const item = part as Record<string, unknown>;
-                if (item.type === "text" && typeof item.text === "string") {
-                  return (
-                    <RichText key={index} text={item.text} variant="user" />
-                  );
-                }
-                if (item.type === "image") {
-                  if (
-                    Number.isSafeInteger(message.__inspireMessageIndex) &&
-                    sessionId &&
-                    viewId
-                  ) {
-                    return (
-                      <PersistedImage
-                        key={index}
-                        sessionId={sessionId}
-                        viewId={viewId}
-                        projectionKey={projectionKey}
-                        reference={`pi-embedded://${message.__inspireMessageIndex}/${index}`}
-                      />
-                    );
-                  }
-                  if (
-                    typeof item.data === "string" &&
-                    typeof item.mimeType === "string" &&
-                    /^image\//i.test(item.mimeType)
-                  ) {
-                    return (
-                      <ImagePreview
-                        key={index}
-                        src={`data:${item.mimeType};base64,${item.data}`}
-                        className="image-preview--message"
-                      />
-                    );
-                  }
-                }
-                return (
-                  <pre key={index} className="custom-message__raw">
-                    {inspect(part)}
-                  </pre>
-                );
-              })
-            ) : message.content != null ? (
-              <pre className="custom-message__raw">
-                {inspect(message.content)}
-              </pre>
-            ) : null}
-          </div>
-        </ImageGallery>
-        {hasDetails || presentation ? (
-          <details className="custom-message__details" open={detailsOpen}>
-            <DetailSummary
-              onClick={(event) => {
-                event.preventDefault();
-                setDetailsOpen(!detailsOpen);
-              }}
-            >
-              Details
-            </DetailSummary>
-            {detailsOpen ? (
-              <pre className="custom-message__raw">
-                {inspect(
-                  presentation
-                    ? {
-                        customType: message.customType,
-                        content: message.content,
-                        details: message.details,
-                      }
-                    : {
-                        customType: message.customType,
-                        details: message.details,
-                      },
-                )}
-              </pre>
-            ) : null}
-          </details>
-        ) : null}
-      </div>
+      </ActivityHeader>
+      <ImageGallery>
+        <div className="custom-message__body">
+          {parts.map((part: unknown, index) => {
+            const item =
+              part && typeof part === "object"
+                ? (part as Record<string, unknown>)
+                : null;
+            if (item?.type === "text" && typeof item.text === "string")
+              return (
+                <RichText
+                  key={index}
+                  text={presentation?.body ?? item.text}
+                  variant="user"
+                />
+              );
+            return (
+              (Array.isArray(content) &&
+                messageImage(
+                  part,
+                  message.__inspireMessageIndex,
+                  index,
+                  owner,
+                  message.__inspireSavedHistory
+                    ? message.__inspireEntryId
+                    : undefined,
+                )) || (
+                <ActivityText
+                  key={index}
+                  label="Extension content"
+                  text={inspect(part)}
+                />
+              )
+            );
+          })}
+        </div>
+      </ImageGallery>
+      {hasDetails || presentation ? (
+        <ActivityDetails
+          reader="custom-details"
+          label="Details"
+          className="custom-message__details"
+        >
+          {() => (
+            <ActivityText
+              label="Extension details"
+              text={inspect({
+                customType: message.customType,
+                ...(presentation && { content }),
+                details: message.details,
+              })}
+            />
+          )}
+        </ActivityDetails>
+      ) : null}
     </article>
   );
 });

@@ -20,13 +20,7 @@
     cached?.theme === "system"
       ? cached.theme
       : "system";
-  // Mirror the Host's legacy identifier migration, without owning persistence.
-  const savedPalette =
-    cached?.palette === "amber"
-      ? "chimonanthus"
-      : cached?.palette === "teal"
-        ? "hydrangea"
-        : cached?.palette;
+  const savedPalette = cached?.palette;
   const palette = [
     "wisteria",
     "hydrangea",
@@ -34,6 +28,7 @@
     "chimonanthus",
     "classic-jade",
     "classic-amber",
+    "mono",
   ].includes(savedPalette)
     ? savedPalette
     : "chimonanthus";
@@ -58,6 +53,7 @@
     lycoris: ["#EFE9E6", "#141010"],
     "classic-amber": ["#EFEEEB", "#13161A"],
     "classic-jade": ["#EDF1EF", "#131815"],
+    mono: ["#F8F8F8", "#181818"],
   };
   const themeColor = document.querySelector('meta[name="theme-color"]');
   if (themeColor) {

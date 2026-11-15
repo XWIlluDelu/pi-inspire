@@ -1,11 +1,50 @@
+import { act, fireEvent, screen } from "@testing-library/react";
 import { vi } from "vitest";
 import {
   type ActiveSnapshot,
-  type BranchTreeResponse,
+  type BootstrapResponse,
   defaultPreferences,
   type HostUpdateStatus,
   type SessionSummary,
 } from "../../shared/contracts";
+
+import {
+  type HostOperationCommand,
+  hostOperationIdentitySchema,
+  hostReceipt,
+} from "../../shared/host-operations";
+import { emptyToolPresentationConfiguration } from "../../shared/tool-presentation-config";
+
+let nextSelection: ActiveSnapshot | undefined;
+
+/** Commit a fixture navigation through the same HTTP owner as production. */
+export async function selectSession(
+  store: {
+    openSession(id: string): Promise<void>;
+    deselectSession(): Promise<boolean>;
+  },
+  snapshot: ActiveSnapshot,
+): Promise<void> {
+  nextSelection = snapshot;
+  try {
+    await act(async () => {
+      if (snapshot.active) await store.openSession(snapshot.active.sessionId);
+      else await store.deselectSession();
+    });
+  } finally {
+    nextSelection = undefined;
+  }
+}
+
+export function inputReceipt<Command extends HostOperationCommand>(
+  command: Command,
+  { operationId, authorityId }: Record<string, unknown>,
+) {
+  return hostReceipt(
+    command,
+    hostOperationIdentitySchema.parse({ operationId, authorityId }),
+  );
+}
 
 // --- Fetch stubbing ---
 
@@ -18,29 +57,33 @@ export interface RouteResponse {
 export type RouteHandler = (
   url: string,
   init: RequestInit,
-) => RouteResponse | undefined | Promise<RouteResponse | undefined>;
+) =>
+  | RouteResponse
+  | Response
+  | undefined
+  | Promise<RouteResponse | Response | undefined>;
 
 export function installFetch(handler: RouteHandler) {
   const fn = vi.fn(async (input: unknown, init?: RequestInit) => {
     const url = String(input);
+    const selected = nextSelection;
+    if (
+      selected &&
+      (selected.active
+        ? url === "/api/sessions/open" &&
+          jsonBody(init ?? {}).id === selected.active.sessionId
+        : url === "/api/sessions/deselect")
+    ) {
+      nextSelection = undefined;
+      return new Response(JSON.stringify(selected), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
     const route = (await handler(url, init ?? {})) ?? {
       status: 404,
       body: { error: `No mock route for ${url}` },
     };
-    if (
-      url.startsWith("/api/bootstrap") &&
-      (route.status ?? 200) < 400 &&
-      route.body &&
-      typeof route.body === "object" &&
-      "snapshot" in route.body
-    ) {
-      const bootstrap = route.body as {
-        snapshot: ActiveSnapshot;
-        updateStatus?: HostUpdateStatus;
-      };
-      FakeWebSocket.bootstrapSnapshot = bootstrap.snapshot;
-      FakeWebSocket.bootstrapUpdateStatus = bootstrap.updateStatus;
-    }
+    if (route instanceof Response) return route;
     return new Response(JSON.stringify(route.body), {
       status: route.status ?? 200,
       headers: { "Content-Type": "application/json", ...route.headers },
@@ -80,24 +123,30 @@ export function installLocalStorage(): void {
 // --- WebSocket stubbing (never connects unless told to) ---
 
 export const TEST_HOST_AUTHORITY = "11111111-1111-4111-8111-111111111111";
-export const TEST_SNAPSHOT_DIGEST = "a".repeat(64);
+
+type SnapshotEnvelope = {
+  authorityId?: string;
+  updateStatus?: HostUpdateStatus;
+  runtimeSequence?: number;
+  detailSessionId?: string | null;
+  detailRevision?: number;
+  missingDetail?: boolean;
+};
 
 export class FakeWebSocket {
   static OPEN = 1;
+  static instances: FakeWebSocket[] = [];
   readyState = 0;
   sent: string[] = [];
+  closeCount = 0;
   send(data: string): void {
     this.sent.push(data);
   }
-  static instances: FakeWebSocket[] = [];
-  static bootstrapSnapshot: ActiveSnapshot | undefined;
-  static bootstrapUpdateStatus: HostUpdateStatus | undefined;
   onopen: ((event: unknown) => void) | null = null;
   onmessage: ((event: { data: unknown }) => void) | null = null;
   onclose: (() => void) | null = null;
   onerror: (() => void) | null = null;
   extensions = "";
-  private opened = false;
 
   constructor(public url: string) {
     FakeWebSocket.instances.push(this);
@@ -105,97 +154,56 @@ export class FakeWebSocket {
 
   close(): void {
     this.readyState = 3;
+    this.closeCount++;
+    this.onclose?.();
   }
-  open(
-    snapshot = FakeWebSocket.bootstrapSnapshot,
-    authorityId = TEST_HOST_AUTHORITY,
-  ): void {
-    if (this.opened) return;
-    this.opened = true;
+  open(): void {
     this.readyState = 1;
     this.onopen?.({});
-    if (snapshot)
-      this.emit({
-        type: "snapshot",
-        authorityId,
-        snapshotDigest: TEST_SNAPSHOT_DIGEST,
-        updateStatus: FakeWebSocket.bootstrapUpdateStatus ?? hostUpdateStatus(),
-        data: snapshot,
-      });
+  }
+  join(data = emptySnapshot, envelope?: SnapshotEnvelope): void {
+    if (this.readyState !== 0) return;
+    this.open();
+    this.emitSnapshot(data, envelope);
+  }
+  emitSnapshot(data: ActiveSnapshot, envelope?: SnapshotEnvelope): void {
+    const interest = this.sent.length
+      ? (JSON.parse(this.sent.at(-1)!) as {
+          sessionId: string | null;
+          revision: number;
+        })
+      : {
+          sessionId: new URL(this.url).searchParams.get("detail") || null,
+          revision: 0,
+        };
+    this.emit({
+      type: "snapshot",
+      authorityId: TEST_HOST_AUTHORITY,
+      updateStatus: hostUpdateStatus(),
+      detailSessionId: interest.sessionId,
+      detailRevision: interest.revision,
+      runtimeSequence: data.runtimeSequence,
+      ...envelope,
+      data,
+    });
   }
   emit(event: unknown): void {
-    const wire =
-      event &&
-      typeof event === "object" &&
-      !Array.isArray(event) &&
-      (event as { type?: unknown }).type === "snapshot"
-        ? {
-            authorityId: TEST_HOST_AUTHORITY,
-            snapshotDigest: TEST_SNAPSHOT_DIGEST,
-            updateStatus:
-              FakeWebSocket.bootstrapUpdateStatus ?? hostUpdateStatus(),
-            ...event,
-          }
-        : event;
-    this.onmessage?.({ data: JSON.stringify(wire) });
+    this.onmessage?.({ data: JSON.stringify(event) });
   }
 }
 
 export function installFakeWebSocket(): void {
   FakeWebSocket.instances = [];
-  FakeWebSocket.bootstrapSnapshot = undefined;
-  FakeWebSocket.bootstrapUpdateStatus = undefined;
   vi.stubGlobal("WebSocket", FakeWebSocket);
 }
 
 // --- Payloads ---
 
 export const DEFAULT_PREFS = defaultPreferences;
-
-export function branchTree(): BranchTreeResponse {
-  return {
-    sessionId: "s1",
-    revision: 1,
-    incarnation: "tree-1",
-    durableLeafId: "a1",
-    effectiveLeafId: null,
-    activePath: ["u1", "a1"],
-    truncated: false,
-    health: { status: "ok" },
-    nodes: [
-      {
-        id: "u1",
-        parentId: null,
-        depth: 0,
-        type: "message",
-        role: "user",
-        label: "user",
-        snippet: "user",
-        timestamp: "2026-08-01",
-        active: true,
-        leaf: false,
-        canSwitch: false,
-        canEdit: false,
-        canFork: true,
-      },
-      {
-        id: "a1",
-        parentId: "u1",
-        depth: 1,
-        type: "message",
-        role: "assistant",
-        label: "assistant",
-        snippet: "answer",
-        timestamp: "2026-08-01",
-        active: true,
-        leaf: true,
-        canSwitch: true,
-        canEdit: false,
-        canFork: false,
-      },
-    ],
-  };
-}
+export const emptySnapshot: ActiveSnapshot = {
+  active: null,
+  sessionStatuses: {},
+};
 
 type ActiveSnapshotValue = NonNullable<ActiveSnapshot["active"]>;
 type ActiveSnapshotOverrides = Omit<
@@ -212,19 +220,18 @@ export function activeSnapshot(
   const { pageMessages = [], transcriptPage, ...activeOverrides } = overrides;
   const sessionId = activeOverrides.sessionId ?? "s1";
   const active: ActiveSnapshotValue = {
+    branchRevision: 1,
     sessionId,
     sessionName: "Test session",
     cwd: "/proj",
     model: { provider: "kimi-coding", id: "kimi-k3" },
     thinkingLevel: "medium",
     isStreaming: false,
-    isCompacting: false,
     projectionHealth: { status: "ok" as const },
     projectionConflict: null,
     stats: {
       contextUsage: { tokens: 12_640, contextWindow: 131_072, percent: 9.64 },
     },
-    availableModels: [],
     commands: [],
     ...activeOverrides,
     transcriptPage: {
@@ -236,14 +243,12 @@ export function activeSnapshot(
       appendFromRevision: 1,
       messages: pageMessages,
       hasOlder: false,
-      olderCursor: null,
       ...transcriptPage,
     },
   };
   return {
     active,
-    runState: "idle",
-    sessionStatuses: { [String(active.sessionId)]: { runState: "idle" } },
+    sessionStatuses: { [sessionId]: { runState: "idle" } },
   };
 }
 
@@ -277,16 +282,17 @@ function hostUpdateStatus(
   };
 }
 
-export function bootstrapPayload(overrides: Record<string, unknown> = {}) {
+export function bootstrapPayload(overrides: Partial<BootstrapResponse> = {}) {
   return {
-    appName: "inspire",
+    appName: "inspire" as const,
     authorityId: TEST_HOST_AUTHORITY,
-    snapshotDigest: TEST_SNAPSHOT_DIGEST,
+    startupSessionId: null,
     version: "0.1.0",
     piVersion: "0.80.10",
-    mock: false,
     updateStatus: hostUpdateStatus(),
     preferences: DEFAULT_PREFS,
+    preferenceRevision: 0,
+    toolPresentations: emptyToolPresentationConfiguration(),
     availableModels: [
       {
         provider: "kimi-coding",
@@ -301,7 +307,16 @@ export function bootstrapPayload(overrides: Record<string, unknown> = {}) {
         reasoning: true,
       },
     ],
-    snapshot: { active: null, runState: "idle", sessionStatuses: {} },
     ...overrides,
   };
+}
+
+// --- Transcript search ---
+
+/** Focus desktop search or open the narrow row through its keyboard shortcut. */
+export function openTranscriptSearch(): HTMLInputElement {
+  fireEvent.keyDown(screen.getByRole("log"), { key: "f", ctrlKey: true });
+  return screen.getByRole("searchbox", {
+    name: "Search conversation",
+  }) as HTMLInputElement;
 }

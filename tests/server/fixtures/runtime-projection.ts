@@ -9,15 +9,32 @@ import {
   type PiRpcProcess,
 } from "../../../server/pi-rpc.js";
 import { RuntimeController } from "../../../server/runtime.js";
+import type { RuntimeSlot } from "../../../server/runtime-slot.js";
 import type { SessionRecord } from "../../../server/session-catalog.js";
 import { RETRY_STATE_SUFFIX } from "../../../shared/branch-bridge-protocol.js";
 
 import { catalog, FakeRpc, workerAttachmentStore } from "./runtime.js";
+import { jsonl } from "./session-jsonl.js";
 
 export const directories: string[] = [];
 export const stores: AttachmentStore[] = [];
+const runtimes: RuntimeController[] = [];
 
-export class ProjectionRpc extends FakeRpc {
+export function runtimeProjection(runtime: RuntimeController) {
+  const internals = runtime as unknown as {
+    slots: Map<string, RuntimeSlot>;
+    projectionCoordinator: {
+      reconcile(slot: RuntimeSlot, force: boolean): Promise<unknown>;
+    };
+  };
+  const slot = internals.slots.get("session-a")!;
+  return {
+    slot,
+    reconcile: () => internals.projectionCoordinator.reconcile(slot, true),
+  };
+}
+
+class ProjectionRpc extends FakeRpc {
   declare readonly sessionPath: string;
   onStop: (() => void) | null = null;
   onStart: (() => Promise<void>) | null = null;
@@ -30,6 +47,7 @@ export class ProjectionRpc extends FakeRpc {
     private readonly sequence: string[],
   ) {
     super(options);
+    this.sessionId = "session-a";
     this.responseOverrides.set("get_state", () => ({
       sessionId: "session-a",
       sessionFile: this.sessionPath,
@@ -114,6 +132,7 @@ export class NewSessionRpc extends FakeRpc {
   }
 
   override async request<T>(command: Record<string, unknown>): Promise<T> {
+    if (this.isCheckpoint(command)) return { disposition: "handled" } as T;
     if (
       !["get_state", "get_entries", "set_session_name", "prompt"].includes(
         String(command.type),
@@ -194,7 +213,7 @@ export class NewSessionRpc extends FakeRpc {
         },
       ];
       this.entries.push(...promptEntries);
-      if (this.emitEventsBeforeWrite) this.emitPromptEvents();
+      if (this.emitEventsBeforeWrite) this.emitPromptEvents(false);
       if (this.materialized) {
         await appendFile(
           this.sessionPath,
@@ -227,17 +246,27 @@ export class NewSessionRpc extends FakeRpc {
           await appendFile(this.sessionPath, remainder);
         this.materialized = true;
       }
+      if (this.emitEventsBeforeWrite) this.publishPendingCheckpoint();
       return {} as T;
     }
     return {} as T;
   }
-  emitPromptEvents() {
+  private publishedCount = 0;
+  private publishPendingCheckpoint() {
+    this.publishCheckpoint(this.entries.slice(this.publishedCount), {
+      sealed: "settled",
+    });
+    this.publishedCount = this.entries.length;
+    this.emit("event", { type: "agent_settled" });
+  }
+  emitPromptEvents(settle = true) {
     if (!this.promptMessages) return;
     const messages = this.promptMessages;
     this.promptMessages = null;
     this.emit("event", { type: "agent_start" });
     this.emit("event", { type: "message_end", message: messages.user });
     this.emit("event", { type: "message_end", message: messages.assistant });
+    if (settle) this.publishPendingCheckpoint();
   }
 }
 
@@ -252,10 +281,12 @@ export async function setupNewSession(
   const attachments = workerAttachmentStore(join(directory, "uploads"));
   stores.push(attachments);
   let worker!: NewSessionRpc;
-  const runtime = new RuntimeController(catalog([]), attachments, (options) => {
-    worker = new NewSessionRpc(options, path);
-    configure?.(worker);
-    return worker as unknown as PiRpcProcess;
+  const runtime = new RuntimeController(catalog([]), attachments, {
+    createProcess: (options) => {
+      worker = new NewSessionRpc(options, path);
+      configure?.(worker);
+      return worker as unknown as PiRpcProcess;
+    },
   });
   return {
     directory,
@@ -297,7 +328,8 @@ export async function setup(
   };
   await writeFile(
     path,
-    `${[header, ...(includeUser ? [user] : []), ...extraEntries].map((entry) => JSON.stringify(entry)).join("\n")}\n${trailingBytes}`,
+    jsonl(header, ...(includeUser ? [user] : []), ...extraEntries) +
+      trailingBytes,
   );
   const record: SessionRecord = {
     id: "session-a",
@@ -314,31 +346,34 @@ export async function setup(
   stores.push(attachments);
   const workers: ProjectionRpc[] = [];
   const sequence: string[] = [];
-  const runtime = new RuntimeController(
-    source,
-    attachments,
-    (options) => {
+  const runtime = new RuntimeController(source, attachments, {
+    createProcess: (options) => {
       const worker = new ProjectionRpc(options, sequence);
       configure?.(worker);
       workers.push(worker);
       return worker as unknown as PiRpcProcess;
     },
-    undefined,
-    undefined,
-    undefined,
-    undefined,
     diagnostics,
-  );
+  });
+  runtimes.push(runtime);
   const opened = await runtime.openSession("session-a");
+  const startup = expectWorker
+    ? runtime.setRuntimeSetting("session-a", {
+        key: "steeringMode",
+        value: "one-at-a-time",
+      })
+    : null;
+  void startup?.catch(() => undefined);
   if (expectWorker) await vi.waitFor(() => expect(workers).toHaveLength(1));
-  return { runtime, workers, sequence, path, opened };
+  return { runtime, workers, sequence, path, opened, startup };
 }
 
 export async function disposeProjectionFixture() {
-  await Promise.all(stores.splice(0).map((store) => store.close()));
-  await Promise.all(
-    directories
-      .splice(0)
-      .map((directory) => rm(directory, { recursive: true, force: true })),
-  );
+  try {
+    await Promise.all(runtimes.splice(0).map((runtime) => runtime.close()));
+  } finally {
+    await Promise.all(stores.splice(0).map((store) => store.close()));
+    for (const directory of directories.splice(0).reverse())
+      await rm(directory, { recursive: true, force: true, maxRetries: 3 });
+  }
 }

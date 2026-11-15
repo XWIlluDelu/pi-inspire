@@ -1,28 +1,31 @@
 import type {
-  NativeModelCatalog,
-  NativeModelSelection,
-} from "../extensions/inspire-session-bridge.js";
+  ModelCatalog as NativeModelCatalog,
+  ModelSelection as NativeModelSelection,
+} from "../extensions/attach-control.js";
+import { parseCommandInvocation } from "../shared/commands.js";
 import {
-  type ComposerHistoryEntry,
   isBusyRunState,
   MAX_PROMPT_CHARS,
   type PromptRequest,
 } from "../shared/contracts.js";
+import type { TaskOutcome } from "../shared/notifications.js";
 import {
   type AttachmentStore,
   addAttachmentContext,
   resolveProjectFiles,
 } from "./attachments.js";
-import type {
-  ConnectExternalSession,
-  ExternalSessionConnection,
-  ExternalSessionState,
+import {
+  type AttachmentEnd,
+  type ConnectExternalSession,
+  type ExternalSessionConnection,
+  type ExternalSessionRead,
+  type ExternalSessionState,
+  PI_STATE_OBSERVATION_TIMEOUT_MS,
 } from "./external-session.js";
 import { requestError } from "./request-error.js";
 import {
-  assertPromptArtifactBudget,
+  preparePromptArtifacts,
   resolveComposerHistoryArtifacts,
-  revalidateProjectFiles,
 } from "./runtime-composer-artifacts.js";
 import type { RuntimeSlot } from "./runtime-slot.js";
 
@@ -30,8 +33,10 @@ interface Connection {
   native: ExternalSessionConnection;
   state: ExternalSessionState;
   timer?: ReturnType<typeof setTimeout>;
-  interrupted: boolean;
+  /** The last read failed; logged once per failure run. */
+  failing: boolean;
   sending: number;
+  latestRead: number;
   selectionRevision: number;
   modelRefresh?: Promise<NativeModelCatalog>;
 }
@@ -39,10 +44,17 @@ interface Connection {
 interface ExternalSessionHost {
   current(slot: RuntimeSlot): boolean;
   emit(slot: RuntimeSlot, event: unknown): void;
+  taskOutcome(slot: RuntimeSlot, outcome: TaskOutcome, id?: string): void;
   reconcile(slot: RuntimeSlot, force: boolean): Promise<unknown>;
   assertUsable(slot: RuntimeSlot): void;
   log(slot: RuntimeSlot, error: unknown): void;
   released(slot: RuntimeSlot): void;
+  followLeaf(slot: RuntimeSlot, leafId: string | null): void;
+  renewView(slot: RuntimeSlot): void;
+  /** Whether a leaf still continues this view's branch. */
+  corresponds(slot: RuntimeSlot, leafId: string | null): boolean;
+  /** A confirmed leaf at or after the selected position. */
+  continues(slot: RuntimeSlot, leafId: string | null): boolean;
 }
 
 /** Conversation access to externally owned sessions, deliberately outside the
@@ -50,6 +62,7 @@ interface ExternalSessionHost {
 export class RuntimeExternalSessions {
   private readonly connections = new Map<RuntimeSlot, Connection>();
   private readonly connecting = new Map<RuntimeSlot, Promise<boolean>>();
+  private readSequence = 0;
   private closed = false;
 
   constructor(
@@ -63,12 +76,17 @@ export class RuntimeExternalSessions {
     return this.connections.has(slot);
   }
 
-  supportsModels(slot: RuntimeSlot): boolean {
-    const c = this.connections.get(slot);
-    return (
-      c?.state.modelControls === true &&
-      Boolean(c.native.models && c.native.setModel && c.native.setThinkingLevel)
-    );
+  canQueue(slot: RuntimeSlot): boolean {
+    return this.connections.get(slot)?.state.queueAdmission === true;
+  }
+
+  connection(slot: RuntimeSlot): ExternalSessionConnection | undefined {
+    return this.connections.get(slot)?.native;
+  }
+
+  /** The attached Pi's current leaf; undefined when not attached. */
+  reportedLeaf(slot: RuntimeSlot): string | null | undefined {
+    return this.connections.get(slot)?.state.leafId;
   }
 
   modelSelection(slot: RuntimeSlot): NativeModelSelection | undefined {
@@ -79,8 +97,8 @@ export class RuntimeExternalSessions {
     const c = this.modelConnection(slot);
     if (c.modelRefresh) return c.modelRefresh;
     const selectionRevision = c.selectionRevision;
-    const receiverId = c.state.taskRuns?.receiverId;
-    const pending = c.native.models!().then((result) => {
+    const instanceId = c.state.taskRuns.instanceId;
+    const pending = c.native.models().then((result) => {
       if (c.modelRefresh !== pending)
         throw requestError("The native Pi model receiver changed.", 409);
       // Catalog reads run alongside setters. A delayed read can still supply
@@ -89,7 +107,7 @@ export class RuntimeExternalSessions {
         c.selectionRevision === selectionRevision
           ? result
           : { ...result, ...c.state.modelSelection };
-      this.applyModelState(slot, c, current, receiverId);
+      this.applyModelState(slot, c, current, instanceId);
       return current;
     });
     c.modelRefresh = pending;
@@ -102,32 +120,32 @@ export class RuntimeExternalSessions {
 
   private modelConnection(slot: RuntimeSlot): Connection {
     const c = this.connections.get(slot);
-    if (!c || c.interrupted)
-      throw requestError(
-        "The original Pi connection is unavailable. Inspire is checking for recovery.",
-        409,
-        { code: "SESSION_OWNER_UNAVAILABLE" },
-      );
-    if (!this.supportsModels(slot))
-      throw requestError(
-        "Load the updated Inspire session bridge extension with /reload in the original Pi terminal.",
-        409,
-        { code: "NATIVE_ACTIONS_UNAVAILABLE" },
-      );
+    if (!c)
+      throw requestError("The attached Pi connection has ended.", 409, {
+        code: "SESSION_OWNER_UNAVAILABLE",
+      });
     this.host.assertUsable(slot);
     return c;
+  }
+
+  private assertModelReceiver(
+    slot: RuntimeSlot,
+    connection: Connection,
+    instanceId: string,
+  ): void {
+    if (this.connections.get(slot) !== connection || !this.host.current(slot))
+      throw requestError("The external Pi connection has ended.", 409);
+    if (connection.state.taskRuns.instanceId !== instanceId)
+      throw requestError("The native Pi model receiver changed.", 409);
   }
 
   private applyModelState(
     slot: RuntimeSlot,
     c: Connection,
     state: NativeModelSelection | NativeModelCatalog,
-    receiverId: string | undefined,
+    instanceId: string,
   ): void {
-    if (this.connections.get(slot) !== c || !this.host.current(slot))
-      throw requestError("The external Pi connection has ended.", 409);
-    if (c.state.taskRuns?.receiverId !== receiverId)
-      throw requestError("The native Pi model receiver changed.", 409);
+    this.assertModelReceiver(slot, c, instanceId);
     if ("models" in state) slot.availableModels = state.models;
     c.selectionRevision++;
     c.state = {
@@ -146,7 +164,7 @@ export class RuntimeExternalSessions {
     modelId: string,
   ): Promise<NativeModelSelection> {
     return this.changeSelection(slot, (native, beforeSend) =>
-      native.setModel!(provider, modelId, beforeSend),
+      native.setModel(provider, modelId, beforeSend),
     );
   }
 
@@ -155,7 +173,7 @@ export class RuntimeExternalSessions {
     level: NativeModelSelection["thinkingLevel"],
   ): Promise<NativeModelSelection> {
     return this.changeSelection(slot, (native, beforeSend) =>
-      native.setThinkingLevel!(level, beforeSend),
+      native.setThinkingLevel(level, beforeSend),
     );
   }
 
@@ -167,128 +185,166 @@ export class RuntimeExternalSessions {
     ) => Promise<NativeModelSelection>,
   ): Promise<NativeModelSelection> {
     const c = this.modelConnection(slot);
-    const receiverId = c.state.taskRuns?.receiverId;
+    const instanceId = c.state.taskRuns.instanceId;
     const result = await change(c.native, () => {
-      if (this.connections.get(slot) !== c)
-        throw requestError("The external Pi connection has ended.", 409);
-      if (c.state.taskRuns?.receiverId !== receiverId)
-        throw requestError("The native Pi model receiver changed.", 409);
+      this.assertModelReceiver(slot, c, instanceId);
       this.host.assertUsable(slot);
     });
-    this.applyModelState(slot, c, result, receiverId);
+    this.applyModelState(slot, c, result, instanceId);
     await this.host.reconcile(slot, false);
     return { model: result.model, thinkingLevel: result.thinkingLevel };
   }
 
   needsInput(slot: RuntimeSlot): boolean {
-    return this.connections.get(slot)?.state.status === "blocked";
+    return this.connections.get(slot)?.state.activity === "blocked";
   }
 
-  async connect(slot: RuntimeSlot): Promise<boolean> {
+  async connect(slot: RuntimeSlot, idleOnly = false): Promise<boolean> {
     const pending = this.connecting.get(slot);
     if (pending) return pending;
-    const operation = this.connectInside(slot);
+    const operation = this.connectInside(slot, idleOnly);
     this.connecting.set(slot, operation);
     try {
       return await operation;
     } finally {
-      if (this.connecting.get(slot) === operation) this.connecting.delete(slot);
+      this.connecting.delete(slot);
     }
   }
 
-  private async connectInside(slot: RuntimeSlot): Promise<boolean> {
+  private async connectInside(
+    slot: RuntimeSlot,
+    idleOnly: boolean,
+  ): Promise<boolean> {
     if (this.closed || slot.process || !slot.sessionPath) return false;
     const previous = this.connections.get(slot);
     if (previous) {
-      const selectionRevision = previous.selectionRevision;
-      let state: ExternalSessionState | null | undefined;
-      try {
-        state = await previous.native.read();
-      } catch {
-        // An interrupted current connection stays fenced during rediscovery.
-      }
+      if (await this.refreshConnection(slot, previous, "reconnect"))
+        return true;
       if (this.closed || !this.host.current(slot) || slot.process) return false;
-      // The owner poll may have retired this connection during the read.
-      if (this.connections.get(slot) === previous) {
-        if (state) {
-          previous.interrupted = false;
-          this.setUnavailable(slot, false);
-          this.applyState(slot, previous, state, false, selectionRevision);
-          return true;
-        }
-        if (state === null) this.detach(slot);
-        else {
-          previous.interrupted = true;
-          this.setUnavailable(slot, true);
-        }
-      }
     }
-    const ownerUnavailable = () =>
-      requestError(
-        "The original Pi connection is unavailable. Its ownership has not been released.",
-        409,
-        { code: "SESSION_OWNER_UNAVAILABLE" },
-      );
-    const native = await this.connector(slot.id, slot.sessionPath);
-    if (native === null) {
-      if (this.connections.has(slot)) throw ownerUnavailable();
+    const native = await this.connector(
+      slot.id,
+      slot.sessionPath,
+      (leaf) => {
+        if (this.host.continues(slot, leaf)) return "continues";
+        if (
+          this.host.corresponds(slot, leaf) ||
+          (leaf !== null && !slot.projection?.entry(leaf))
+        )
+          return "possible";
+        return "other";
+      },
+      idleOnly,
+    );
+    if (!native || this.closed || !this.host.current(slot) || slot.process)
       return false;
-    }
-    if (this.closed || !this.host.current(slot) || slot.process) {
-      native.close();
+    const state = await native.read(
+      idleOnly ? PI_STATE_OBSERVATION_TIMEOUT_MS : undefined,
+    );
+    await this.reconcileReportedLeaf(slot, state);
+    if (
+      "ended" in state ||
+      (idleOnly && state.activity !== "idle") ||
+      !this.host.continues(slot, state.leafId) ||
+      this.closed ||
+      !this.host.current(slot) ||
+      slot.process
+    )
       return false;
-    }
-    let state: ExternalSessionState | null;
-    try {
-      state = await native.read();
-    } catch (error) {
-      if (this.closed || !this.host.current(slot) || slot.process) {
-        native.close();
-        throw error;
-      }
-      // Retain the identified owner even if its endpoint cannot be observed.
-      // Losing a connection is not permission to start another writer.
-      this.detach(slot, native);
-      const connection: Connection = {
-        native,
-        state: { status: "unknown" },
-        interrupted: true,
-        sending: 0,
-        selectionRevision: 0,
-      };
-      this.connections.set(slot, connection);
-      this.setUnavailable(slot, true);
-      this.schedule(slot, connection);
-      throw error;
-    }
-    if (!state || this.closed || !this.host.current(slot) || slot.process) {
-      native.close();
-      if (this.connections.has(slot)) throw ownerUnavailable();
-      return false;
-    }
     const connection: Connection = {
       native,
       state,
-      interrupted: false,
+      failing: false,
       sending: 0,
+      latestRead: 0,
       selectionRevision: 0,
     };
-    this.detach(slot, native);
     this.connections.set(slot, connection);
-    this.setUnavailable(slot, false);
+    this.host.renewView(slot);
+    // Attached Pi accepts input: the view is no longer read-only.
+    if (slot.readOnlyReason === "external-active") slot.readOnlyReason = null;
     this.applyState(slot, connection, state, true);
     this.schedule(slot, connection);
     this.host.emit(slot, { type: "runtime_ready" });
     return true;
   }
 
-  private setUnavailable(slot: RuntimeSlot, unavailable: boolean): boolean {
-    if (slot.readOnlyReason === "workspace-unavailable") return false;
-    const reason = unavailable ? "external-unavailable" : null;
-    if (slot.readOnlyReason === reason) return false;
-    slot.readOnlyReason = reason;
-    this.host.emit(slot, { type: "runtime_ready" });
+  private async reconcileReportedLeaf(
+    slot: RuntimeSlot,
+    state: ExternalSessionRead,
+  ): Promise<void> {
+    if (
+      !("ended" in state) &&
+      state.leafId &&
+      slot.projection &&
+      !slot.projection.entry(state.leafId)
+    )
+      await this.host.reconcile(slot, false);
+  }
+
+  private async refreshConnection(
+    slot: RuntimeSlot,
+    connection: Connection,
+    mode: "read" | "background" | "reconnect" | "restart" = "read",
+    read = ++this.readSequence,
+  ): Promise<boolean> {
+    const selectionRevision = connection.selectionRevision;
+    let state: ExternalSessionRead | undefined;
+    try {
+      state = await connection.native.read();
+    } catch (error) {
+      if (mode === "background" || mode === "restart") throw error;
+      // A transient failure keeps the attachment; its poll continues.
+    }
+    if (mode === "background") {
+      if (this.closed || this.connections.get(slot) !== connection)
+        return false;
+      if (!this.host.current(slot)) {
+        this.detach(slot);
+        return false;
+      }
+    }
+    if (state) await this.reconcileReportedLeaf(slot, state);
+    if (
+      this.closed ||
+      !this.host.current(slot) ||
+      slot.process ||
+      this.connections.get(slot) !== connection
+    )
+      return false;
+    if (!state || read < connection.latestRead) return true;
+    if (mode === "restart" && "ended" in state && state.ended === "unreachable")
+      throw requestError("The attached Pi could not confirm its state.", 409);
+    connection.latestRead = read;
+    if ("ended" in state || !this.host.corresponds(slot, state.leafId)) {
+      this.end(
+        slot,
+        "ended" in state ? state.ended : "left-branch",
+        mode !== "reconnect",
+      );
+      return false;
+    }
+    this.applyState(slot, connection, state, false, selectionRevision);
+    // Background history may be reclaimed without interrupting the native poll.
+    if (mode === "background" && slot.projection)
+      await this.host.reconcile(slot, false);
+    connection.failing = false;
     return true;
+  }
+
+  /** Revalidate the current receiver without attaching or starting another Pi. */
+  async withAttachment<T>(
+    slot: RuntimeSlot,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const connection = this.connections.get(slot);
+    if (
+      !connection ||
+      !(await this.refreshConnection(slot, connection)) ||
+      this.connections.get(slot) !== connection
+    )
+      throw requestError("The external Pi connection has ended.", 409);
+    return operation();
   }
 
   private applyState(
@@ -303,13 +359,16 @@ export class RuntimeExternalSessions {
     if (selectionRevision !== connection.selectionRevision)
       state = { ...state, modelSelection: connection.state.modelSelection };
     const priorState = connection.state;
-    const changed = priorState.status !== state.status;
+    const changed =
+      priorState.activity !== state.activity ||
+      priorState.queueAdmission !== state.queueAdmission;
     const selectionChanged =
       JSON.stringify(priorState.modelSelection) !==
       JSON.stringify(state.modelSelection);
     const receiverChanged =
-      priorState.taskRuns?.receiverId !== state.taskRuns?.receiverId;
+      priorState.taskRuns.instanceId !== state.taskRuns.instanceId;
     connection.state = state;
+    this.host.followLeaf(slot, state.leafId);
     if (selectionChanged) connection.selectionRevision++;
     if (force || receiverChanged) {
       slot.availableModels = null;
@@ -317,65 +376,54 @@ export class RuntimeExternalSessions {
       // New discovery must not join or publish the retired receiver's result.
       connection.modelRefresh = undefined;
     }
-    if (
-      priorState.modelControls !== state.modelControls ||
-      selectionChanged ||
-      receiverChanged
-    ) {
+    if (selectionChanged || receiverChanged) {
       this.host.emit(slot, { type: "model_metadata_changed" });
     }
-    const sameReceiver =
-      !force &&
-      state.taskRuns &&
-      priorState.taskRuns?.receiverId === state.taskRuns.receiverId;
+    const sameReceiver = !force && !receiverChanged;
     const oldResults = new Set(
-      priorState.taskRuns?.settled.map((item) => item.id),
+      priorState.taskRuns.settled.map((item) => item.id),
     );
     const newResults = sameReceiver
-      ? state.taskRuns!.settled.filter(
+      ? state.taskRuns.settled.filter(
           (item) =>
             !oldResults.has(item.id) &&
             item.settledAt > Date.now() - 15 * 60_000,
         )
       : [];
     for (const result of newResults) {
-      this.host.emit(slot, {
-        type: "native_task_outcome",
-        outcomeId: state.taskRuns!.receiverId + ":" + result.id,
-        outcome: result.outcome,
-      });
+      if (result.outcome !== "aborted")
+        this.host.taskOutcome(
+          slot,
+          result.outcome,
+          state.taskRuns.instanceId + ":" + result.id,
+        );
     }
-    if (connection.sending > 0 && state.status === "idle") return;
-    if (state.status === "unknown") return;
+    if (connection.sending > 0 && state.activity === "idle") return;
     const previous = slot.runState;
     if (slot.conflict) {
       slot.runState = "conflict";
-    } else if (state.status !== "idle") {
+    } else if (state.activity !== "idle") {
       slot.runState = "running";
-    } else if (
-      state.outcome === "failed" ||
-      state.taskRuns?.settled.at(-1)?.outcome === "failed"
-    ) {
-      slot.runState = "failed";
-    } else if (state.taskRuns?.settled.at(-1)?.outcome === "aborted") {
-      slot.runState = "aborted";
     } else {
-      slot.runState = "idle";
+      const outcome = state.taskRuns.settled.at(-1)?.outcome;
+      slot.runState =
+        outcome === "failed" || outcome === "aborted" ? outcome : "idle";
     }
     if (
       !force &&
       !changed &&
       previous === slot.runState &&
-      !(newResults.length && state.status !== "idle")
+      !(newResults.length && state.activity !== "idle")
     )
       return;
-    if (state.status === "idle") {
-      if (isBusyRunState(previous))
+    if (state.activity === "idle") {
+      if (isBusyRunState(previous)) {
         slot.attention = slot.runState === "failed" ? "failed" : null;
+        if (!sameReceiver) this.host.taskOutcome(slot, "ended");
+      }
       this.host.emit(slot, {
         type: "agent_settled",
-        taskOutcomeReported: Boolean(sameReceiver),
-        outcomeUnknown: !sameReceiver && state.outcome !== "failed",
+        completed: newResults.at(-1)?.outcome === "completed",
       });
     } else {
       this.host.emit(slot, { type: "agent_start" });
@@ -388,87 +436,98 @@ export class RuntimeExternalSessions {
       () => void this.poll(slot, connection),
       this.pollMs,
     );
-    connection.timer.unref?.();
+    connection.timer.unref();
   }
 
   private async poll(slot: RuntimeSlot, connection: Connection): Promise<void> {
-    const selectionRevision = connection.selectionRevision;
+    const read = ++this.readSequence;
     try {
-      const state = await connection.native.read().catch((error) => {
-        if (this.connections.get(slot) === connection)
-          this.setUnavailable(slot, true);
-        throw error;
-      });
-      if (this.closed || this.connections.get(slot) !== connection) return;
-      if (!this.host.current(slot)) {
-        this.detach(slot);
-        return;
-      }
-      if (!state) {
-        if (
-          connection.native.retirementReason === "process-exit" &&
-          isBusyRunState(slot.runState)
-        ) {
-          slot.runState = "failed";
-          this.host.emit(slot, {
-            type: "runtime_error",
-            error: "The native Pi process exited during work.",
-          });
-        }
-        this.detach(slot);
-        if (slot.runState !== "failed")
-          slot.runState = slot.conflict ? "conflict" : "idle";
-        if (!this.setUnavailable(slot, true))
-          this.host.emit(slot, { type: "runtime_ready" });
-        this.host.released(slot);
-        return;
-      }
-      this.setUnavailable(slot, false);
-      this.applyState(slot, connection, state, false, selectionRevision);
-      // Background history may be intentionally reclaimed. Keep observing Pi
-      // without rebuilding it; retained projections use their version fast path.
-      if (slot.projection) await this.host.reconcile(slot, false);
-      connection.interrupted = false;
+      await this.refreshConnection(slot, connection, "background", read);
     } catch (error) {
-      if (!connection.interrupted && this.connections.get(slot) === connection)
-        this.host.log(slot, error);
-      connection.interrupted = true;
+      if (
+        this.connections.get(slot) !== connection ||
+        read < connection.latestRead
+      )
+        return;
+      if (!connection.failing) this.host.log(slot, error);
+      connection.failing = true;
     } finally {
       this.schedule(slot, connection);
     }
   }
 
-  async prompt(
-    slot: RuntimeSlot,
-    request: PromptRequest,
-    epoch = slot.inputStopEpoch,
-  ): Promise<ComposerHistoryEntry | null> {
+  /** Stops following the attached Pi. Inspire never learns how a task the
+   * Pi was running turns out, so a busy view settles with no outcome claimed;
+   * the event's reason says what was actually observed. */
+  private end(slot: RuntimeSlot, reason: AttachmentEnd, release = true): void {
+    const duringWork = isBusyRunState(slot.runState);
+    if (duringWork && reason === "exited") this.host.taskOutcome(slot, "ended");
+    this.detach(slot);
+    this.host.renewView(slot);
+    if (slot.runState !== "failed")
+      slot.runState = slot.conflict ? "conflict" : "idle";
+    this.host.emit(slot, {
+      type: "external_attachment_ended",
+      reason,
+      duringWork,
+    });
+    if (!release) return;
+    this.host.emit(slot, { type: "runtime_ready" });
+    this.host.released(slot);
+  }
+
+  bindPrompt(slot: RuntimeSlot) {
     const connection = this.connections.get(slot);
-    if (!connection)
+    if (!connection) return undefined;
+    return (request: PromptRequest, epoch: number, assertView: () => void) =>
+      this.prompt(slot, connection, request, epoch, assertView);
+  }
+
+  private async prompt(
+    slot: RuntimeSlot,
+    connection: Connection,
+    request: PromptRequest,
+    epoch: number,
+    assertView: () => void,
+  ): Promise<void> {
+    if (this.connections.get(slot) !== connection)
       throw requestError("The external Pi connection has ended.", 409);
-    if (slot.readOnlyReason)
+    if (slot.readOnlyReason === "workspace-unavailable")
       throw requestError(
-        "The external Pi connection is unavailable. Inspire is checking for recovery.",
+        "This session is read-only because its project folder is unavailable",
         409,
+        { code: "SESSION_WORKSPACE_UNAVAILABLE" },
       );
     const message = request.message.trim();
     if (message.length > MAX_PROMPT_CHARS)
       throw requestError("Message is too long", 413);
+    const command = parseCommandInvocation(message);
+    if (message.startsWith("!") || command)
+      throw requestError(
+        command
+          ? `/${command.name} is unavailable while this session is attached to another Pi.`
+          : "Shell commands are unavailable while this session is attached to another Pi.",
+        409,
+        { code: "NATIVE_ACTION_UNSUPPORTED" },
+      );
+    assertView();
+    if (!(await this.refreshConnection(slot, connection)))
+      throw requestError("The external Pi connection has ended.", 409);
+    assertView();
     if (
-      (message.startsWith("/") || message.startsWith("!")) &&
-      (request.attachmentIds?.length ||
-        request.projectFiles?.length ||
-        request.historyArtifacts)
+      connection.state.activity === "working" &&
+      connection.state.queueAdmission !== true
     )
       throw requestError(
-        "Pi commands cannot include attachments or project-file references",
+        "Queue input in the original Pi terminal. This connection cannot confirm Steer or Follow up.",
         409,
+        { code: "ATTACH_CONTROL_QUEUE_ACK_UNAVAILABLE" },
       );
-    const prepared = await this.attachments.resolveForPrompt(
-      request.attachmentIds,
-    );
+    const originalIds = request.attachmentIds ?? [];
+    const prepared = await this.attachments.resolveForPrompt(originalIds);
     const copied: string[] = [];
     let delivered = false;
+    let uncertain = false;
     try {
       const history = await resolveComposerHistoryArtifacts(
         slot,
@@ -479,34 +538,33 @@ export class RuntimeExternalSessions {
         slot.cwd,
         request.projectFiles,
       );
-      const expected = [...new Set([...selected, ...history.projectFiles])];
-      const projectFiles = await revalidateProjectFiles(
-        slot.cwd,
-        [...(request.projectFiles ?? []), ...history.projectFiles],
-        expected,
+      const artifacts = await preparePromptArtifacts(
+        slot,
+        request,
+        prepared,
+        selected,
+        history,
       );
-      assertPromptArtifactBudget(
-        prepared.files.length + history.files.length + history.images.length,
-        prepared.files
-          .filter((file) => file.kind === "file")
-          .reduce((size, file) => size + file.size, 0) + history.fileBytes,
-        [...prepared.images, ...history.images],
+      // The receiver may outlive a lost receipt. Its copies have a separate
+      // lifetime from the editor's original upload handles.
+      const transportImages = await this.attachments.prepareTransportImages(
+        artifacts.images,
       );
-      // Recalled images need managed files for the native receiver. Uploaded
-      // images already have leased copies; neither becomes a text reference.
-      const stagedImages = await this.attachments.stageImages(history.images);
-      copied.push(...stagedImages.map((image) => image.id));
-      const recovered = await this.attachments.resolveForPrompt(copied);
-      const files = [...prepared.files, ...history.files].filter(
-        (file) => file.kind === "file",
+      copied.push(...transportImages.map((image) => image.id));
+      const files = artifacts.files.filter((file) => file.kind === "file");
+      const images = transportImages.map(({ path, mimeType }) => ({
+        path,
+        mimeType,
+      }));
+      const fullMessage = addAttachmentContext(
+        message,
+        files,
+        artifacts.projectFiles,
       );
-      const images = [...prepared.files, ...recovered.files]
-        .filter((file) => file.kind === "image")
-        .map(({ path, mimeType }) => ({ path, mimeType }));
-      const fullMessage = addAttachmentContext(message, files, projectFiles);
       if (!fullMessage && images.length === 0)
         throw requestError("Message or attachment is required", 400);
       const beforeSend = () => {
+        assertView();
         if (
           this.connections.get(slot) !== connection ||
           !this.host.current(slot) ||
@@ -531,6 +589,7 @@ export class RuntimeExternalSessions {
           request.behavior,
           beforeSend,
           images.length ? images : undefined,
+          connection.state.leafId,
         );
         delivered = true;
         if (this.connections.get(slot) === connection) {
@@ -539,7 +598,7 @@ export class RuntimeExternalSessions {
             .catch((error) => this.host.log(slot, error));
         }
       } catch (error) {
-        delivered = Boolean(
+        uncertain = Boolean(
           (error as { outcomeUnknown?: boolean })?.outcomeUnknown,
         );
         if (
@@ -553,13 +612,13 @@ export class RuntimeExternalSessions {
       } finally {
         connection.sending -= 1;
       }
-      return null;
     } finally {
-      const ids = [...(request.attachmentIds ?? []), ...copied];
-      if (delivered) {
-        await this.attachments.releaseConsumed(ids);
+      if (uncertain) {
+        this.attachments.restageUncertainPrompt(originalIds, copied);
+      } else if (delivered) {
+        await this.attachments.releaseConsumed([...originalIds, ...copied]);
       } else {
-        this.attachments.restage(ids);
+        this.attachments.restage([...originalIds, ...copied]);
         await Promise.allSettled(
           copied.map((id) => this.attachments.remove(id)),
         );
@@ -571,8 +630,6 @@ export class RuntimeExternalSessions {
     const connection = this.connections.get(slot);
     if (!connection)
       throw requestError("The external Pi connection has ended.", 409);
-    if (!connection.native.rename)
-      throw requestError("Rename this Pi in its original terminal.", 409);
     await connection.native.rename(name, () => {
       if (this.connections.get(slot) !== connection || !this.host.current(slot))
         throw requestError("The external Pi connection has ended.", 409);
@@ -580,28 +637,36 @@ export class RuntimeExternalSessions {
     });
   }
 
-  async abort(slot: RuntimeSlot): Promise<"agent" | undefined> {
+  async abort(slot: RuntimeSlot, forRestart = false): Promise<void> {
     const connection = this.connections.get(slot);
     if (!connection)
       throw requestError("The external Pi connection has ended.", 409);
+    let leafId = connection.state.leafId;
+    if (forRestart) {
+      const attached = await this.refreshConnection(
+        slot,
+        connection,
+        "restart",
+      );
+      if (!attached || connection.state.activity === "idle") return;
+      leafId ??= connection.state.leafId;
+    }
     if (slot.stoppingInput)
       throw requestError("Stop is already in progress", 409);
     slot.inputStopEpoch += 1;
     slot.stoppingInput = true;
     try {
-      await connection.native.abort();
-      return connection.native.interruptionScope;
+      await connection.native.abort(leafId);
     } finally {
       slot.stoppingInput = false;
     }
   }
 
-  detach(slot: RuntimeSlot, replacement?: ExternalSessionConnection): void {
+  detach(slot: RuntimeSlot): void {
     const connection = this.connections.get(slot);
     if (!connection) return;
     this.connections.delete(slot);
     clearTimeout(connection.timer);
-    if (connection.native !== replacement) connection.native.close();
   }
 
   close(): void {

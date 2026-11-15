@@ -1,93 +1,143 @@
 import { expect, test } from "@playwright/test";
-import { PALETTE_PREFERENCES } from "../../shared/contracts";
-import { PALETTE_LABELS } from "../../src/preference-labels";
-import { pairAndOpen } from "./support/navigation";
+import { preferenceChoices } from "../../src/preference-labels";
+import { VISUAL_PREFERENCES_STORAGE_KEY } from "../../src/visual-preferences";
+import {
+  openCommandPalette,
+  openSettings,
+  pairAndOpen,
+} from "./support/navigation";
+import { renderedColors, resolvedColor } from "./support/colors";
 
-test("botanical swatches persist independently of luminosity and fit narrow Settings", async ({
+test("palette settings stay independent of luminosity from first paint through Host bootstrap", async ({
   page,
 }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await pairAndOpen(page);
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await openSettings(page);
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
   const picker = settings.getByRole("group", {
     name: "Color palette",
     exact: true,
   });
+  const html = page.locator("html");
+  const savePreference = (field: string) =>
+    page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/api/preferences") &&
+        response.request().method() === "PATCH" &&
+        field in response.request().postDataJSON(),
+    );
 
-  for (const theme of ["Light", "Dark"]) {
-    await settings.getByRole("button", { name: theme, exact: true }).click();
-    for (const palette of PALETTE_PREFERENCES) {
-      const choice = picker.getByRole("button", {
-        name: PALETTE_LABELS[palette],
-        exact: true,
-      });
-      const saved = page.waitForResponse(
-        (response) =>
-          response.url().endsWith("/api/preferences") &&
-          response.request().method() === "PATCH" &&
-          response.request().postDataJSON().palette === palette,
-      );
-      await choice.click();
-      const response = await saved;
-      expect(response.ok()).toBe(true);
-      expect(await response.json()).toMatchObject({
-        palette,
-        theme: theme.toLowerCase(),
-      });
-      await expect(choice).toHaveAttribute("aria-pressed", "true");
-      await expect(picker.locator('[aria-pressed="true"]')).toHaveCount(1);
-      await expect(page.locator("html")).toHaveAttribute(
-        "data-palette",
-        palette,
-      );
-      await expect(page.locator("html")).toHaveAttribute(
-        "data-theme",
-        theme.toLowerCase(),
-      );
-    }
-  }
+  const theme = settings.getByRole("group", { name: "Theme", exact: true });
+  await theme.getByRole("button", { name: "Dark", exact: true }).click();
+  await expect(html).toHaveAttribute("data-theme", "dark");
 
-  for (const width of [1280, 390, 320]) {
-    await page.setViewportSize({ width, height: 900 });
-    for (const palette of PALETTE_PREFERENCES) {
-      const choice = picker.getByRole("button", {
-        name: PALETTE_LABELS[palette],
-        exact: true,
-      });
-      await expect(choice).toBeVisible();
-      expect(
-        await choice.evaluate(
-          (element) => element.scrollWidth <= element.clientWidth,
-        ),
-      ).toBe(true);
-    }
-    expect(
-      await picker.evaluate((element) => {
-        const bounds = element.getBoundingClientRect();
-        return (
-          bounds.left >= 0 &&
-          bounds.right <= innerWidth &&
-          element.scrollWidth <= element.clientWidth
-        );
-      }),
-    ).toBe(true);
-  }
+  await page.setViewportSize({ width: 320, height: 900 });
+  await expect(picker).toBeInViewport();
+  for (const { label } of preferenceChoices.palette.options)
+    await expect(
+      picker.getByRole("button", { name: label, exact: true }),
+    ).toBeVisible();
+  const paletteSave = savePreference("palette");
+  const wisteria = picker.getByRole("button", {
+    name: "Wisteria",
+    exact: true,
+  });
+  await wisteria.click();
+  expect(await (await paletteSave).json()).toMatchObject({
+    preferences: { palette: "wisteria", theme: "dark" },
+  });
+  await expect(html).toHaveAttribute("data-palette", "wisteria");
+  await expect(wisteria).toHaveAttribute("aria-pressed", "true");
 
-  await picker.getByRole("button", { name: "Wisteria", exact: true }).focus();
-  await page.keyboard.press("Enter");
-  await expect(page.locator("html")).toHaveAttribute(
-    "data-palette",
-    "wisteria",
+  const lightSave = savePreference("theme");
+  await theme.getByRole("button", { name: "Light", exact: true }).click();
+  expect(await (await lightSave).json()).toMatchObject({
+    preferences: { palette: "wisteria", theme: "light" },
+  });
+
+  await settings.getByRole("button", { name: "Close settings" }).click();
+  const resources = page.getByRole("button", {
+    name: "Toggle resources panel",
+  });
+  if ((await resources.getAttribute("aria-expanded")) === "false")
+    await resources.click();
+  const files = page.getByRole("tab", { name: "Files", exact: true });
+  await files.click();
+  await page.keyboard.press("Tab");
+  await files.focus();
+  await expect(files).toHaveCSS(
+    "outline-color",
+    await resolvedColor(files, "accent-focus"),
   );
-  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  expect((await renderedColors(files)).contrast).toBeGreaterThanOrEqual(4.5);
+  await page.getByRole("button", { name: "Close context pane" }).click();
+  const palette = await openCommandPalette(page);
+  await palette.getByLabel("Filter commands").fill("Palette:");
   await expect(
-    picker.getByRole("button", { name: "Wisteria", exact: true }),
-  ).toHaveAttribute("aria-pressed", "true");
-  await page.reload();
-  await expect(page.getByRole("main")).toBeVisible();
-  await expect(page.locator("html")).toHaveAttribute(
-    "data-palette",
-    "wisteria",
+    palette.getByRole("option", { name: /^Palette: Wisteria/ }),
+  ).toContainText("current");
+  const commandSave = savePreference("palette");
+  await palette
+    .getByRole("option", { name: /^Palette: Carbon & Silicon/ })
+    .click();
+  expect((await commandSave).ok()).toBe(true);
+  await expect(html).toHaveAttribute("data-palette", "mono");
+
+  const visualCache = () =>
+    page.evaluate(
+      (key) => JSON.parse(localStorage.getItem(key) ?? "null"),
+      VISUAL_PREFERENCES_STORAGE_KEY,
+    );
+  await expect
+    .poll(visualCache)
+    .toMatchObject({ palette: "mono", theme: "light" });
+  await page.evaluate(
+    (key) =>
+      localStorage.setItem(
+        key,
+        JSON.stringify({
+          palette: "hydrangea",
+          theme: "dark",
+          contentTextSize: "large",
+          readingWidth: "wide",
+        }),
+      ),
+    VISUAL_PREFERENCES_STORAGE_KEY,
   );
-  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+
+  let releaseBootstrap!: () => void;
+  const bootstrapGate = new Promise<void>((resolve) => {
+    releaseBootstrap = resolve;
+  });
+  const bootstrapUrl = "**/api/bootstrap**";
+  await page.route(bootstrapUrl, async (route) => {
+    await bootstrapGate;
+    await route.continue();
+  });
+  try {
+    const bootstrap = page.waitForRequest(bootstrapUrl);
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await bootstrap;
+    await expect(html).toHaveAttribute("data-palette", "hydrangea");
+    await expect(html).toHaveAttribute("data-theme", "dark");
+    await expect(html).toHaveAttribute("data-content-text-size", "large");
+    await expect(html).toHaveAttribute("data-reading-width", "wide");
+    await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute(
+      "content",
+      "#14171A",
+    );
+  } finally {
+    releaseBootstrap();
+  }
+  await expect(page.getByRole("main")).toBeVisible();
+  await expect(html).toHaveAttribute("data-palette", "mono");
+  await expect(html).toHaveAttribute("data-theme", "light");
+  await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute(
+    "content",
+    "#F4F5F6",
+  );
+  await expect
+    .poll(visualCache)
+    .toMatchObject({ palette: "mono", theme: "light" });
 });

@@ -24,8 +24,7 @@ export interface HerdrWorkerScope {
 }
 
 export interface HerdrProcessGroup extends HerdrProcessIdentity {
-  // Absent only on leases from before scope-based tool ownership.
-  scope?: HerdrWorkerScope;
+  scope: HerdrWorkerScope;
 }
 
 /** Probe the same user-manager operation used by pane launch. No privileged
@@ -274,13 +273,6 @@ export async function stopHerdrProcessGroup(
   diagnostic: PiRpcStopDiagnostic,
 ): Promise<void> {
   if ((await bootIdentity()) !== group.boot) return;
-  if (!group.scope)
-    throw Object.assign(
-      new Error(
-        "This legacy Herdr worker has no retained tool scope; detached tool exit cannot be verified",
-      ),
-      { code: "HERDR_LEGACY_WORKER_LEASE" },
-    );
   const directory = await openOwnedScope(group.scope);
   if (!directory) return;
   const started = Date.now();

@@ -1,29 +1,12 @@
 import { useEffect, useRef } from "react";
 
-/**
- * Overlay scrollbar riding a pane boundary (technique learned from the
- * docdoki panel library): the native bar is hidden and a fixed-position
- * thumb straddles the pane's edge — the nav's right border, the context
- * pane's left border — or, for the reading column, floats in the margin
- * beside the text, or follows a composer-adjacent dock's trailing edge.
- * It is purely a pointer affordance: wheel and keyboard
- * scrolling stay native, so it renders aria-hidden and never takes focus.
- */
+/** A drag target beside the reading column. Wheel and keyboard remain native. */
 export function ScrollRail({
   container,
-  scroller,
-  variant,
   onUserScroll,
 }: {
-  /** Stable ancestor that defines the boundary and hosts the scroller. */
   container: React.RefObject<HTMLElement | null>;
-  /** Selector resolving the scroller inside container; omit when the
-   * container scrolls itself. Re-resolved on every sync, so swapped
-   * elements (preview kinds) rebind automatically. */
-  scroller?: string;
-  variant: "nav" | "ctx" | "reading" | "dock";
-  /** Called before this overlay directly moves the scroller. */
-  onUserScroll?: () => void;
+  onUserScroll: () => void;
 }) {
   const railRef = useRef<HTMLDivElement>(null);
   const thumbRef = useRef<HTMLDivElement>(null);
@@ -31,11 +14,8 @@ export function ScrollRail({
   useEffect(() => {
     const rail = railRef.current;
     const thumb = thumbRef.current;
-    const root = container.current;
-    if (!rail || !thumb || !root) return;
-
-    let el: HTMLElement | null = null;
-    let resizeObserver: ResizeObserver | null = null;
+    const el = container.current;
+    if (!rail || !thumb || !el) return;
     let hideTimer: number | null = null;
     let frame: number | null = null;
     let drag: { y: number; top: number; maxTop: number; range: number } | null =
@@ -46,56 +26,12 @@ export function ScrollRail({
       if (frame === null) frame = requestAnimationFrame(sync);
     };
 
-    const resolve = () => {
-      const next = scroller ? root.querySelector<HTMLElement>(scroller) : root;
-      if (next === el) return;
-      resizeObserver?.disconnect();
-      resizeObserver = null;
-      el = next;
-      if (el) {
-        resizeObserver = new ResizeObserver(schedule);
-        resizeObserver.observe(el);
-        // An earlier sibling can move a dock without resizing the dock itself.
-        if (variant === "dock" && root.parentElement)
-          resizeObserver.observe(root.parentElement);
-      }
-    };
-
-    /** Thumb center line x plus travel top/height, in viewport coordinates. */
-    const geometry = (): {
-      x: number;
-      top: number;
-      height: number;
-      hitWidth?: number;
-    } => {
-      const rect = el!.getBoundingClientRect();
-      if (variant === "nav") {
-        const bounds = root.getBoundingClientRect();
-        const top = Math.max(rect.top, bounds.top) + 6;
-        return {
-          x: bounds.right,
-          top,
-          height: Math.min(rect.bottom, bounds.bottom) - 6 - top,
-        };
-      }
-      if (variant === "ctx") {
-        return {
-          x: root.getBoundingClientRect().left,
-          top: rect.top + 6,
-          height: rect.height - 12,
-        };
-      }
-      if (variant === "dock") {
-        return {
-          x: rect.right - 1,
-          top: rect.top + 4,
-          height: rect.height - 8,
-        };
-      }
+    const geometry = () => {
+      const rect = el.getBoundingClientRect();
       // reading: a mid-height rail floating in the margin right of the
       // reading column — offset grows with the available whitespace so it
       // never crowds the text, and the long travel keeps dragging precise.
-      const column = el!
+      const column = el
         .querySelector(".transcript__column")
         ?.getBoundingClientRect();
       const columnRight = column ? column.right : rect.left + rect.width / 2;
@@ -126,12 +62,6 @@ export function ScrollRail({
 
     const sync = () => {
       frame = null;
-      resolve();
-      if (!el || !el.isConnected) {
-        rail.style.display = "none";
-        geo = null;
-        return;
-      }
       const sh = el.scrollHeight;
       const ch = el.clientHeight;
       const g = geometry();
@@ -140,14 +70,13 @@ export function ScrollRail({
         geo = null;
         return;
       }
-      const minThumb = variant === "reading" ? 48 : 32;
       const th = Math.min(
         g.height,
-        Math.max(minThumb, Math.round((g.height * ch) / sh)),
+        Math.max(48, Math.round((g.height * ch) / sh)),
       );
       const maxTop = g.height - th;
       rail.style.display = "block";
-      rail.style.width = g.hitWidth === undefined ? "" : `${g.hitWidth}px`;
+      rail.style.width = `${g.hitWidth}px`;
       rail.style.left = `${Math.round(g.x)}px`;
       rail.style.top = `${Math.round(g.top)}px`;
       rail.style.height = `${Math.round(g.height)}px`;
@@ -164,21 +93,14 @@ export function ScrollRail({
       }, 900);
     };
 
-    // scroll does not bubble but reaches document in the capture phase, so
-    // one listener follows the scroller even after it is swapped out.
-    const onScroll = (event: Event) => {
-      if (event.target === el) {
-        schedule();
-        reveal();
-      } else if (event.target === root) {
-        // A short navigation can scroll around its independent list bodies.
-        schedule();
-      }
+    const onScroll = () => {
+      schedule();
+      reveal();
     };
     const onThumbDown = (event: MouseEvent) => {
       if (event.button !== 0 || !geo || geo.maxTop <= 0) return;
       event.preventDefault();
-      onUserScroll?.();
+      onUserScroll();
       drag = {
         y: event.clientY,
         top: thumb.offsetTop,
@@ -189,8 +111,8 @@ export function ScrollRail({
       document.body.classList.add("srail-dragging");
     };
     const onMove = (event: MouseEvent) => {
-      if (!drag || !el) return;
-      onUserScroll?.();
+      if (!drag) return;
+      onUserScroll();
       const top = Math.max(
         0,
         Math.min(drag.maxTop, drag.top + event.clientY - drag.y),
@@ -206,21 +128,19 @@ export function ScrollRail({
     };
     // The thumb sits above the scroller, so hand wheel gestures through.
     const onWheel = (event: WheelEvent) => {
-      if (!el) return;
       event.preventDefault();
-      onUserScroll?.();
+      onUserScroll();
       el.scrollTop += event.deltaY;
     };
 
-    // Content growth, row insertion, and scroller swaps all surface as
-    // subtree mutations of the container.
-    const mutationObserver = new MutationObserver(schedule);
-    mutationObserver.observe(root, {
-      childList: true,
-      subtree: true,
-      characterData: true,
+    const resizeObserver = new ResizeObserver(schedule);
+    resizeObserver.observe(el);
+    if (el.firstElementChild) resizeObserver.observe(el.firstElementChild);
+    const readingWidthObserver = new MutationObserver(schedule);
+    readingWidthObserver.observe(document.documentElement, {
+      attributeFilter: ["data-reading-width"],
     });
-    document.addEventListener("scroll", onScroll, true);
+    el.addEventListener("scroll", onScroll, { passive: true });
     window.addEventListener("resize", schedule);
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
@@ -229,9 +149,9 @@ export function ScrollRail({
     sync();
 
     return () => {
-      mutationObserver.disconnect();
-      resizeObserver?.disconnect();
-      document.removeEventListener("scroll", onScroll, true);
+      readingWidthObserver.disconnect();
+      resizeObserver.disconnect();
+      el.removeEventListener("scroll", onScroll);
       window.removeEventListener("resize", schedule);
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
@@ -241,7 +161,7 @@ export function ScrollRail({
       if (frame !== null) cancelAnimationFrame(frame);
       document.body.classList.remove("srail-dragging");
     };
-  }, [container, scroller, variant, onUserScroll]);
+  }, [container, onUserScroll]);
 
   return (
     <div className="srail" ref={railRef} aria-hidden="true">

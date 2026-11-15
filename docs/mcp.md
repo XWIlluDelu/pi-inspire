@@ -16,16 +16,17 @@ User configuration stays available without a selected project or when the select
 directory is unavailable. Project-file errors do not block user-file edits; project edits require an
 existing project directory and do not recreate missing directories.
 
-Each group shows the configuration file's path. A full project definition replaces the same-name
+Settings shows each configuration file's path. The **MCP server** selector identifies entries by
+name and scope. A full project definition replaces the same-name
 user definition. Policy-only project entries inherit the user connection
 and override enabled state, exposure or per-tool rules. Their editor offers **Inherit from user**
 for enabled/exposure and keeps connection settings and credentials in the user file.
 
 To customize an existing user server for the current project, choose **Customize for this project**
-on its User row. The name and project are fixed; settings start at **Inherit from user**. Choose only
+after selecting its User entry. The name and project are fixed; settings start at **Inherit from user**. Choose only
 the policy you want to override, such as **Enabled in this project → Disabled**, then save. Inspire
 writes just that policy, not a second copy of the connection or credentials. Edit the resulting
-Project row to change the policy; remove that row to restore user inheritance. The shortcut is shown
+Project entry to change the policy; remove it to restore user inheritance. The shortcut is shown
 only when the project file is editable and has no same-name entry yet.
 
 Saving does not grant project trust; use Pi's native trust workflow. Keep personal servers and
@@ -34,7 +35,7 @@ credentials in the user file.
 ## Add or edit a server
 
 Choose **Add server**, enter its name and select **User · all projects** or **This project** as the
-destination. To change an existing entry, open its editor in the corresponding group.
+destination. To change an existing entry, select it and choose **Edit**.
 
 Choose **HTTP** for a streamable HTTP endpoint, or **Stdio** for an executable and separate argument
 rows. The program is one executable, not a shell command. Each argument row is one argument,
@@ -54,10 +55,13 @@ Environment/header values and OAuth client secrets can use Pi's `${NAME}` refere
 `!command` syntax. Inspire stores these literally; it does not execute or resolve them when opening
 Settings. Pi may resolve them when loading/connecting the server.
 
-The OAuth **Client registration** field shows the saved method. Use **Client ID or dynamic
-registration** for a supplied client ID or dynamic registration, or **Pi metadata document (CIMD)**
-when the server requires Pi's published client metadata. CIMD cannot be combined with a client ID
-or client name; switching to it requires explicitly removing any stored values in those fields.
+The OAuth **Client registration** field shows the saved method. **Automatic (Pi default)** lets Pi
+choose its published client metadata document when supported, otherwise dynamic registration.
+A supplied client ID stays in use; a client name or nonstandard callback selects dynamic registration.
+Use **Client ID or dynamic registration** to explicitly select that path, or **Pi metadata document
+(CIMD)** to require the published document. CIMD cannot be combined with a client ID or client name;
+switching to it requires explicitly removing any stored values in those fields.
+Leaving the default untouched does not add a registration field to the file.
 A custom CIMD callback must use `http://localhost` or `http://127.0.0.1` with the path `/callback`.
 Invalid combinations are rejected without changing the file.
 
@@ -82,8 +86,8 @@ project are not editable here.
 replace a running worker. New Pi workers read the saved configuration.
 
 After saving in an Inspire-owned session, **Reload selected session…** offers a confirmed restart
-of that idle worker. Other sessions stay unchanged. For a connected native Pi, Settings instead asks
-you to run `/reload` in its original terminal; restarting the Host does not reload that Pi.
+of that idle worker. Other sessions stay unchanged. For a taken-over Pi, run `/reload` in its
+original terminal or use [Restart](host.md#host-and-terminal-maintenance).
 Removing an entry likewise changes only the file, leaving running connections and Pi's separate
 saved OAuth credentials alone.
 

@@ -1,8 +1,8 @@
-import { Check, Layers, RefreshCw } from "lucide-react";
+import { Layers, RefreshCw } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { shallowEqual, store, useAppState } from "../store";
 import { availableUpdates, updateDetailsText } from "../update-availability";
-import { useCopied } from "../use-copied";
+import { ButtonLabel } from "./ButtonLabel";
 import { CopyAction } from "./CopyAction";
 import { PiLoader } from "./PiLoader";
 import { SettingsSection } from "./SettingsSection";
@@ -13,35 +13,23 @@ const checkLabels = {
   checked: "Check again",
 };
 
-function UpdateCommand({ command }: { command: string }) {
-  const [error, setError] = useState<string | null>(null);
-  const { copied, copy } = useCopied({ onError: setError });
+function CommandSnippet({
+  command,
+  onError,
+}: {
+  command: string;
+  onError: (message: string) => void;
+}) {
   return (
-    <>
-      <button
-        type="button"
-        className={`file-path-action${copied ? " file-path-action--copied" : ""}`}
-        aria-label={`Copy ${command}`}
-        title={copied ? "Copied" : "Click to copy"}
-        onClick={() => {
-          setError(null);
-          void copy(command);
-        }}
-      >
-        <code className="file-path-action__text">{command}</code>
-        {copied ? (
-          <Check size={11} className="file-path-action__check" aria-hidden />
-        ) : null}
-        <span className="visually-hidden" aria-live="polite">
-          {copied ? "Copied" : ""}
-        </span>
-      </button>
-      {error ? (
-        <span className="system-versions__error" role="alert">
-          {error}
-        </span>
-      ) : null}
-    </>
+    <span className="system-versions__command">
+      <code>{command}</code>
+      <CopyAction
+        text={command}
+        label={command}
+        className=""
+        onError={onError}
+      />
+    </span>
   );
 }
 
@@ -72,6 +60,7 @@ function VersionValue({
   status,
   update,
   command,
+  onCopyError,
 }: {
   version: string | null;
   versionTitle?: string;
@@ -79,6 +68,7 @@ function VersionValue({
   status: string;
   update?: { version: string; url: string };
   command?: string;
+  onCopyError?: (message: string) => void;
 }) {
   return (
     <div className="system-versions__value">
@@ -87,16 +77,16 @@ function VersionValue({
       </span>
       <span aria-hidden>·</span>
       {update ? (
-        <>
-          <a href={update.url} target="_blank" rel="noreferrer noopener">
-            v{update.version} available ↗
-          </a>
-          {command ? <UpdateCommand command={command} /> : null}
-          {restartRequired ? <span>Restart Host to apply</span> : null}
-        </>
-      ) : (
-        <span>{restartRequired ? "Restart Host to apply" : status}</span>
+        <a href={update.url} target="_blank" rel="noreferrer noopener">
+          v{update.version} available ↗
+        </a>
+      ) : null}
+      {update && command && onCopyError && (
+        <CommandSnippet command={command} onError={onCopyError} />
       )}
+      {restartRequired || !update ? (
+        <span>{restartRequired ? "Restart Host to apply" : status}</span>
+      ) : null}
     </div>
   );
 }
@@ -121,10 +111,9 @@ export function SystemVersionsCard() {
   const updates = availableUpdates(state);
   const details = updates ? updateDetailsText(updates) : null;
   const piCheck = state.piUpdateCheck;
-  const installedPiVersion =
-    piCheck?.installedVersion === undefined
-      ? piCheck?.currentVersion || state.piVersion
-      : piCheck.installedVersion;
+  const installedPiVersion = piCheck
+    ? piCheck.installedVersion
+    : state.piVersion;
   const piRestartRequired =
     Boolean(installedPiVersion) &&
     Boolean(piCheck) &&
@@ -132,9 +121,11 @@ export function SystemVersionsCard() {
   const pi = piCheck?.pi;
   const extensions = state.piUpdateCheck?.extensions;
   const inspire = state.inspireUpdateCheck;
-  const pending =
-    state.piUpdateRequestPending || state.inspireUpdateRequestPending;
-  const checking = state.piUpdateChecking || state.inspireUpdateChecking;
+  const checking =
+    state.piUpdateChecking ||
+    state.inspireUpdateChecking ||
+    state.piUpdateRequestPending ||
+    state.inspireUpdateRequestPending;
   const checkError =
     state.piUpdateRequestError && state.inspireUpdateRequestError
       ? "Couldn't check for updates."
@@ -144,8 +135,11 @@ export function SystemVersionsCard() {
       (state.inspireUpdateRequestError && inspire),
   );
   const bothChecked = state.piUpdateCheck !== null && inspire !== null;
-  const checkState =
-    pending || checking ? "checking" : bothChecked ? "checked" : "initial";
+  const checkState = checking
+    ? "checking"
+    : bothChecked
+      ? "checked"
+      : "initial";
 
   return (
     <SettingsSection
@@ -171,25 +165,21 @@ export function SystemVersionsCard() {
             className="button system-versions__check"
             aria-label="Check for updates"
             aria-describedby={checkError ? "update-check-error" : undefined}
-            disabled={pending || checking}
-            aria-busy={pending || checking}
+            disabled={checking}
+            aria-busy={checking}
             onClick={() => {
               void store.checkPiUpdate();
               void store.checkInspireUpdate();
             }}
           >
-            {pending || checking ? (
+            {checking ? (
               <PiLoader size={13} aria-hidden />
             ) : (
               <RefreshCw size={13} aria-hidden />
             )}
-            <span className="system-versions__check-label">
-              {Object.entries(checkLabels).map(([status, label]) => (
-                <span key={status} aria-hidden={status !== checkState}>
-                  {label}
-                </span>
-              ))}
-            </span>
+            <ButtonLabel reserve={Object.values(checkLabels)}>
+              {checkLabels[checkState]}
+            </ButtonLabel>
           </button>
         </div>
       }
@@ -209,7 +199,10 @@ export function SystemVersionsCard() {
           {copyError}
         </p>
       ) : null}
-      <dl className="system-versions__list">
+      <dl
+        className="system-versions__list"
+        onClickCapture={() => setCopyError(null)}
+      >
         <VersionRow
           label="Pi"
           links={
@@ -236,7 +229,7 @@ export function SystemVersionsCard() {
             version={installedPiVersion}
             versionTitle={
               piRestartRequired
-                ? `Installed Pi version; Host loaded v${piCheck?.currentVersion}.`
+                ? `The Host is running Pi v${piCheck?.currentVersion}.`
                 : undefined
             }
             restartRequired={piRestartRequired}
@@ -253,6 +246,7 @@ export function SystemVersionsCard() {
                 : undefined
             }
             command="pi update"
+            onCopyError={setCopyError}
           />
         </VersionRow>
 
@@ -264,7 +258,10 @@ export function SystemVersionsCard() {
                   {extensions.updates.length} package{" "}
                   {extensions.updates.length === 1 ? "update" : "updates"}
                 </span>
-                <UpdateCommand command="pi update --extensions" />
+                <CommandSnippet
+                  command="pi update --extensions"
+                  onError={setCopyError}
+                />
               </>
             ) : (
               <span>

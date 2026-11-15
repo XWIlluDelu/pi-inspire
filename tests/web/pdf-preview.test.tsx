@@ -8,6 +8,11 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PdfPreview, pdfRenderSize } from "../../src/components/PdfPreview";
+import {
+  markOccurrence,
+  normalizeFindQuery,
+  pageMatches,
+} from "../../src/pdf-find";
 import { deferred } from "./helpers";
 
 const mocks = vi.hoisted(() => ({ load: vi.fn(), cancelText: vi.fn() }));
@@ -27,14 +32,14 @@ vi.mock("../../src/pdf-renderer", () => ({
   },
 }));
 
-function fakePdf() {
+function fakePdf(numPages = 2) {
   const renderPage = vi.fn(() => ({
     promise: Promise.resolve(),
     cancel: vi.fn(),
   }));
   const cleanup = vi.fn();
   const document = {
-    numPages: 2,
+    numPages,
     getPage: vi.fn(async (number: number) => ({
       getViewport: ({ scale }: { scale: number }) => ({
         width: 600 * scale,
@@ -59,47 +64,68 @@ describe("static PDF preview", () => {
     mocks.load.mockReset();
     mocks.cancelText.mockReset();
     vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(424);
+    vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(424);
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(500);
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(500);
+    vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(
+      function (this: HTMLElement) {
+        return Number.parseFloat(
+          this.querySelector<HTMLElement>(".pdf-preview__pages")?.style
+            .height ?? "500",
+        );
+      },
+    );
   });
   afterEach(() => vi.restoreAllMocks());
 
-  it("renders one page with selectable text, page navigation and zoom, never active embeds", async () => {
-    const pdf = fakePdf();
+  it("keeps a bounded page window and releases rendering work when closed", async () => {
+    const pdf = fakePdf(100);
     mocks.load.mockReturnValue(pdf.task);
     const { container, unmount } = render(
-      <PdfPreview blob={pdfBlob()} name="report.pdf" />,
+      <PdfPreview blob={pdfBlob()} name="long-report.pdf" />,
     );
     await screen.findByText("Page 1 selectable text");
-    expect(container.querySelectorAll("canvas")).toHaveLength(1);
-    expect(
-      container.querySelector("iframe, object, embed, a, form"),
-    ).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "Previous PDF page" }),
-    ).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "Next PDF page" }));
-    await screen.findByText("Page 2 selectable text");
-    expect(
-      screen.getByRole("button", { name: "Next PDF page" }),
-    ).toBeDisabled();
-    expect(container.querySelectorAll("canvas")).toHaveLength(1);
-    const scroll = screen.getByRole("region", { name: "PDF page 2" });
-    scroll.scrollTop = 80;
-    fireEvent.click(screen.getByRole("button", { name: "Zoom in PDF" }));
+    expect(pdf.document.getPage.mock.calls.length).toBeLessThanOrEqual(3);
+    const scroll = screen.getByRole("region", { name: "PDF pages" });
+    vi.useFakeTimers();
+    try {
+      scroll.scrollTop = 20_000;
+      fireEvent.scroll(scroll);
+      // Finish the virtualizer's scroll-end fallback while its view is mounted.
+      await act(() => vi.runOnlyPendingTimersAsync());
+    } finally {
+      vi.useRealTimers();
+    }
     await waitFor(() =>
-      expect(
-        Math.abs(container.querySelector("canvas")!.width - 500),
-      ).toBeLessThanOrEqual(1),
+      expect(screen.queryByRole("region", { name: "PDF page 1" })).toBeNull(),
     );
-    await waitFor(() => expect(scroll.scrollTop).toBeCloseTo(100));
-    fireEvent.click(screen.getByRole("button", { name: "Fit PDF to width" }));
-    await waitFor(() =>
-      expect(container.querySelector("canvas")!.width).toBe(400),
-    );
-    await waitFor(() => expect(scroll.scrollTop).toBeCloseTo(80));
-    expect(mocks.load).toHaveBeenCalledWith(expect.any(ArrayBuffer));
+    await waitFor(() => expect(pdf.cleanup).toHaveBeenCalled());
+    expect(container.querySelectorAll("canvas").length).toBeLessThanOrEqual(4);
+    expect(pdf.document.getPage.mock.calls.length).toBeLessThan(12);
     unmount();
-    expect(pdf.task.destroy).toHaveBeenCalledTimes(1);
+    expect(pdf.task.destroy).toHaveBeenCalledOnce();
     expect(mocks.cancelText).toHaveBeenCalled();
+  });
+
+  it("fits mixed portrait and landscape pages independently", async () => {
+    const pdf = fakePdf();
+    const original = pdf.document.getPage.getMockImplementation()!;
+    pdf.document.getPage.mockImplementation(async (number) => ({
+      ...(await original(number)),
+      getViewport: ({ scale }: { scale: number }) => ({
+        width: (number === 1 ? 600 : 800) * scale,
+        height: (number === 1 ? 800 : 400) * scale,
+      }),
+    }));
+    mocks.load.mockReturnValue(pdf.task);
+    render(<PdfPreview blob={pdfBlob()} name="mixed.pdf" />);
+    await screen.findByText("Page 2 selectable text");
+    const portrait = screen.getByRole("region", { name: "PDF page 1" });
+    const landscape = screen.getByRole("region", { name: "PDF page 2" });
+    await waitFor(() =>
+      expect(parseFloat(landscape.style.height)).toBeCloseTo(200),
+    );
+    expect(parseFloat(portrait.style.height)).toBeCloseTo((400 * 800) / 600);
   });
 
   it("does not start a worker if byte decoding finishes after closing the preview", async () => {
@@ -128,15 +154,15 @@ describe("static PDF preview", () => {
     expect(stale.document.getPage).not.toHaveBeenCalled();
   });
 
-  it("cancels a page render when navigating, without letting its completion replace the next page", async () => {
+  it("cancels obsolete page renders on zoom without letting their completion replace the new surface", async () => {
     const pdf = fakePdf();
     const first = deferred<void>();
     const cancel = vi.fn(() => first.reject(new Error("cancelled")));
     pdf.renderPage.mockReturnValueOnce({ promise: first.promise, cancel });
     mocks.load.mockReturnValue(pdf.task);
     render(<PdfPreview blob={pdfBlob()} name="report.pdf" />);
-    await waitFor(() => expect(pdf.renderPage).toHaveBeenCalledTimes(1));
-    fireEvent.click(screen.getByRole("button", { name: "Next PDF page" }));
+    await waitFor(() => expect(pdf.renderPage).toHaveBeenCalledTimes(2));
+    fireEvent.click(screen.getByRole("button", { name: "Zoom in PDF" }));
     await screen.findByText("Page 2 selectable text");
     expect(cancel).toHaveBeenCalledTimes(1);
     expect(screen.queryByText("PDF page unavailable")).toBeNull();
@@ -154,8 +180,8 @@ describe("static PDF preview", () => {
       expect(
         screen.getByText(
           name === "PasswordException"
-            ? /needs a password/
-            : /could not be read/,
+            ? /Password required/
+            : "Download to open in another reader.",
         ),
       ).toBeVisible();
     },
@@ -177,4 +203,28 @@ describe("static PDF preview", () => {
       expect(Math.max(size.width, size.height)).toBeLessThanOrEqual(16_384);
     }
   });
+});
+
+it("finds repeated text in nested PDF text spans and clears the previous highlight", () => {
+  const layer = document.createElement("div");
+  layer.innerHTML =
+    '<span>Sample A</span><span class="markedContent"><span>none</span><span>sample a twice SAMPLE  A</span></span>';
+  const needle = normalizeFindQuery("  Sample   A ");
+  const matches = pageMatches(
+    2,
+    ["Sample A", "none", "sample a twice SAMPLE  A"],
+    needle,
+  );
+  expect(matches).toEqual([
+    { page: 2, occurrence: 0 },
+    { page: 2, occurrence: 1 },
+    { page: 2, occurrence: 2 },
+  ]);
+  expect(
+    markOccurrence(layer, needle, matches[2]!.occurrence, "hit")?.textContent,
+  ).toBe("sample a twice SAMPLE  A");
+  expect(
+    markOccurrence(layer, needle, matches[0]!.occurrence, "hit")?.textContent,
+  ).toBe("Sample A");
+  expect(layer.querySelectorAll(".hit")).toHaveLength(1);
 });

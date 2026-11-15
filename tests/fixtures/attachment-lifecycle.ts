@@ -1,6 +1,6 @@
 import { AttachmentStore } from "../../server/attachments.js";
 
-const [root, mode] = process.argv.slice(2);
+const [root] = process.argv.slice(2);
 const store = new AttachmentStore(root, null, { sweepIntervalMs: 0 });
 const inputs = [
   {
@@ -15,13 +15,12 @@ const inputs = [
   },
 ];
 const uploads = await store.addMany(
-  inputs.map((input) => ({
+  [...inputs, ...inputs].map((input) => ({
     ...input,
     size: input.buffer.length,
   })) as Express.Multer.File[],
 );
-if (mode === "prepared")
-  await store.resolveForPrompt(uploads.map((upload) => upload.id));
+await store.resolveForPrompt(uploads.slice(inputs.length).map(({ id }) => id));
 process.stdout.write(JSON.stringify(uploads) + "\n");
 // Parent controls the owner lifetime, including exit without AttachmentStore.close().
 process.stdin.resume();

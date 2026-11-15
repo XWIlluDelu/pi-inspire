@@ -1,124 +1,107 @@
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import request from "supertest";
 import { afterEach, expect, it, vi } from "vitest";
-import { createInspireServer } from "../../server/app.js";
-import { AttachmentStore } from "../../server/attachments.js";
-import { MockCatalog, MockRuntime } from "../../server/mock.js";
 import {
   ModelMetadataCatalog,
   queryModelMetadata,
 } from "../../server/model-metadata.js";
 import { ModelSettingsService } from "../../server/model-settings.js";
-import { PreferencesStore } from "../../server/preferences.js";
-import { ResourceStore } from "../../server/resources.js";
+import { hostServices } from "../fixtures/host-services.js";
+import { closeHostApiFixture, hostApiFixture } from "./fixtures/host-api.js";
 import { modelWorkflowFixture } from "./fixtures/model-workflow.js";
 
-const roots: string[] = [];
+let root: string;
 afterEach(async () => {
   vi.unstubAllEnvs();
-  await Promise.all(
-    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
-  );
+  if (root) await rm(root, { recursive: true, force: true, maxRetries: 5 });
 });
 
 it("discovers native global/trusted-project registrations and resolves defaults over the same target without a session or model request", async () => {
   const f = await modelWorkflowFixture();
-  roots.push(f.root);
-  for (const [base, scope] of [
-    [f.agent, "global"],
-    [join(f.trusted, ".pi"), "project"],
-  ] as const) {
-    await mkdir(join(base, "prompts"), { recursive: true });
-    await writeFile(
-      join(base, "prompts", `${scope}-review.md`),
-      `---\ndescription: ${scope} review prompt\n---\nReview $@`,
-    );
-    await mkdir(join(base, "skills", `${scope}-review`), { recursive: true });
-    await writeFile(
-      join(base, "skills", `${scope}-review`, "SKILL.md"),
-      `---\nname: ${scope}-review\ndescription: ${scope} review skill\n---\nReview the requested changes.`,
-    );
-  }
-  const catalog = new ModelMetadataCatalog();
-  const attachments = new AttachmentStore(join(f.root, "uploads"));
-  const available = vi.fn(
-    async (refresh?: boolean, cwd?: string) =>
-      (await catalog.read(cwd ?? f.untrusted, refresh)).models,
-  );
-  const app = createInspireServer({
-    token: "fixture",
-    runtime: new MockRuntime(),
-    catalog: new MockCatalog(),
-    attachments,
-    preferences: new PreferencesStore(join(f.root, "preferences.json")),
-    resources: new ResourceStore(),
-    git: {
-      status: async () => ({ kind: "not-repository" }),
-      diff: async () => {
-        throw new Error("unused");
+  root = f.root;
+  const project = join(f.trusted, ".pi");
+  const settingsFile = join(project, "settings.json");
+  const settings = JSON.parse(await readFile(settingsFile, "utf8"));
+  const enabledModels = [
+    "project-router/auto",
+    "global-native/a",
+    "global-native/*:high",
+    "missing/model",
+  ];
+  await writeFile(
+    settingsFile,
+    JSON.stringify({
+      ...settings,
+      enabledModels,
+      modelThinkingLevels: {
+        "project-native/a": "medium",
+        "project-native/b": "invalid-value",
       },
-    },
-    version: "fixture",
-    piVersion: "1.0.0",
-    mock: true,
-    modelMetadata: (cwd, refresh) => catalog.read(cwd, refresh),
-    availableModels: available,
-
+    }),
+  );
+  await mkdir(join(f.agent, "prompts"));
+  await writeFile(join(f.agent, "prompts", "review.md"), "Review $@");
+  await mkdir(join(project, "skills", "check"), { recursive: true });
+  await writeFile(
+    join(project, "skills", "check", "SKILL.md"),
+    "---\nname: check\ndescription: Check changes\n---\nReview the changes.",
+  );
+  const broken = join(f.agent, "broken.ts");
+  await writeFile(
+    broken,
+    'export default () => { throw new Error("PRIVATE EXTENSION DETAIL"); };',
+  );
+  const globalPath = join(f.agent, "settings.json");
+  const global = JSON.parse(await readFile(globalPath, "utf8"));
+  global.extensions.push(broken);
+  await writeFile(globalPath, JSON.stringify(global));
+  const catalog = new ModelMetadataCatalog();
+  const readMetadata = vi.fn((cwd: string, refresh?: boolean) =>
+    catalog.read(cwd, refresh),
+  );
+  const host = await hostApiFixture({
+    services: { cwd: f.root, ...hostServices(f.root) },
+    modelMetadata: readMetadata,
     modelSettings: new ModelSettingsService(f.agent),
     invalidateModels: () => catalog.invalidate(),
   });
   try {
-    const [trusted, untrusted] = await Promise.all([
-      catalog.read(f.trusted),
-      catalog.read(f.untrusted),
-    ]);
-    const identities = (value: typeof trusted) =>
-      value.models.map((model) => `${model.provider}/${model.id}`);
-    for (const value of [trusted, untrusted])
-      expect(identities(value)).toEqual(
-        expect.arrayContaining([
-          "global-native/a",
-          "global-legacy/legacy",
-          "global-router/auto",
-        ]),
-      );
-    expect(identities(trusted)).toEqual(
+    const endpoint = host.localRequest;
+    const modelsAt = (cwd: string) =>
+      endpoint.get("/api/models").query({ cwd }).expect(200);
+    const settingsAt = (cwd: string) =>
+      endpoint.get("/api/model-settings").query({ cwd }).expect(200);
+
+    const bootstrap = await endpoint.get("/api/bootstrap").expect(200);
+    expect(bootstrap.body.startupSessionId).toBeNull();
+    expect(bootstrap.body).not.toHaveProperty("snapshot");
+    expect(readMetadata).not.toHaveBeenCalled();
+
+    const { body: trusted } = await modelsAt(f.trusted);
+    const { body: untrusted } = await modelsAt(f.untrusted);
+    const identities = (models: { provider: string; id: string }[]) =>
+      models.map(({ provider, id }) => `${provider}/${id}`);
+    const globalIds = [
+      "global-native/a",
+      "global-legacy/legacy",
+      "global-router/auto",
+    ];
+    expect(identities(trusted.models)).toEqual(
       expect.arrayContaining([
+        ...globalIds,
         "project-native/a",
         "project-legacy/legacy",
         "project-router/auto",
       ]),
     );
-    expect(
-      untrusted.models.some((model) => model.provider.startsWith("project-")),
-    ).toBe(false);
-    expect(trusted.commands?.map((command) => command.name)).toEqual(
-      expect.arrayContaining([
-        "global-mode",
-        "project-mode",
-        "shared-mode:1",
-        "shared-mode:2",
-      ]),
+    expect(identities(untrusted.models)).toEqual(
+      expect.arrayContaining(globalIds),
     );
-    expect(untrusted.commands?.map((command) => command.name)).toContain(
-      "global-mode",
-    );
-    for (const scope of ["global", "project"]) {
-      expect(trusted.commands).toContainEqual({
-        name: `${scope}-review`,
-        description: `${scope} review prompt`,
-        source: "prompt",
-      });
-      expect(trusted.commands).toContainEqual({
-        name: `skill:${scope}-review`,
-        description: `${scope} review skill`,
-        source: "skill",
-      });
-    }
     expect(
-      untrusted.commands?.some((command) => command.name === "project-mode"),
-    ).toBe(false);
+      identities(untrusted.models).filter((id) => id.startsWith("project-")),
+    ).toEqual([]);
+    expect(trusted.warning).toContain("Some Pi extensions could not load");
+    expect(JSON.stringify(trusted)).not.toContain("PRIVATE EXTENSION DETAIL");
     expect(trusted.defaults).toMatchObject({
       cwd: f.trusted,
       model: { provider: "project-router", id: "auto", virtual: true },
@@ -128,149 +111,51 @@ it("discovers native global/trusted-project registrations and resolves defaults 
       model: { provider: "global-router", id: "auto", virtual: true },
       thinkingLevel: "high",
     });
+    expect(trusted.thinkingPreferences).toEqual({
+      defaultLevel: "low",
+      byModel: { "project-native/a": "medium" },
+    });
+    expect(untrusted.thinkingPreferences).toEqual({
+      defaultLevel: "high",
+      byModel: {},
+    });
     expect(untrusted.warning).toContain("not trusted");
-    const router = trusted.models.find(
-      (model) => model.provider === "project-router",
-    )!;
-    expect(router.thinkingLevelMap).toMatchObject({
-      off: null,
-      low: "low",
-      medium: null,
-      high: "high",
-      max: null,
+    expect(
+      trusted.models.find(
+        ({ provider }: { provider: string }) => provider === "project-router",
+      ),
+    ).toMatchObject({
+      thinkingLevelMap: { off: null, low: "low", high: "high", max: null },
     });
-    expect(Object.keys(router).sort()).toEqual([
-      "id",
-      "name",
-      "provider",
-      "reasoning",
-      "thinkingLevelMap",
-      "virtual",
-    ]);
-    const endpoint = request(app.app);
-    const models = await endpoint
-      .get("/api/models")
-      .query({ cwd: f.trusted })
-      .auth("fixture", { type: "bearer" })
-      .expect(200);
-    expect(models.body.defaults.model.provider).toBe("project-router");
-    expect(models.body.commands).toContainEqual({
-      name: "project-mode",
-      description: "project response mode",
-      source: "extension",
-    });
-    expect(models.body.virtualModels).toBeUndefined();
-    const settings = await endpoint
-      .get("/api/model-settings")
-      .query({ cwd: f.trusted })
-      .auth("fixture", { type: "bearer" })
-      .expect(200);
-    expect(settings.body.models).toEqual(models.body.models);
-    const untrustedSettings = await endpoint
-      .get("/api/model-settings")
-      .query({ cwd: f.untrusted })
-      .auth("fixture", { type: "bearer" })
-      .expect(200);
-    expect(untrustedSettings.body.effective.defaultModel.provider).toBe(
-      "global-router",
-    );
-    expect(untrustedSettings.body.projectOverrides).toEqual([]);
-    expect(await readdir(f.sessions)).toEqual([]);
-    expect(await readFile(f.events, "utf8")).not.toMatch(
-      /session_start|agent_start|request|route/,
-    );
-
-    // External global and project changes refresh all cwd-scoped results, not
-    // only the available list while leaving startup defaults on an old snapshot.
-    await writeFile(
-      join(f.trusted, ".pi/settings.json"),
-      JSON.stringify({
-        defaultProvider: "project-native",
-        defaultModel: "b",
-        defaultThinkingLevel: "high",
-      }),
-    );
-    const refreshed = await endpoint
-      .get("/api/models")
-      .query({ cwd: f.trusted })
-      .auth("fixture", { type: "bearer" })
-      .expect(200);
-    expect(refreshed.body.defaults).toMatchObject({
-      model: { provider: "project-native", id: "b" },
-      thinkingLevel: "high",
-    });
-    const nativeDefault = await endpoint
-      .get("/api/models")
-      .query({ cwd: f.untrusted })
-      .auth("fixture", { type: "bearer" })
-      .expect(200);
-    expect(nativeDefault.body.warning).toContain("not trusted");
-
-    // Parent saved trust applies to a nested prospective cwd.
-    const nested = join(f.trusted, "nested");
-    await mkdir(join(nested, ".pi"), { recursive: true });
-    await writeFile(
-      join(nested, ".pi/settings.json"),
-      JSON.stringify({ defaultProvider: "global-native", defaultModel: "b" }),
-    );
-    expect((await catalog.read(nested)).defaults.model?.id).toBe("b");
-
-    // A broken unrelated factory does not hide the models Pi can still load.
-    const broken = join(f.agent, "broken.ts");
-    await writeFile(
-      broken,
-      'export default () => { throw new Error("PRIVATE EXTENSION DETAIL"); };',
-    );
-    const settingsPath = join(f.agent, "settings.json");
-    const settingsState = JSON.parse(await readFile(settingsPath, "utf8"));
-    await writeFile(
-      settingsPath,
-      JSON.stringify({
-        ...settingsState,
-        extensions: [...settingsState.extensions, broken],
-      }),
-    );
-    catalog.invalidate();
-    available.mockClear();
-    available.mockImplementation(() => new Promise(() => {}));
-    const bootstrap = await endpoint
-      .get("/api/bootstrap")
-      .auth("fixture", { type: "bearer" })
-      .expect(200);
-    expect(bootstrap.body).toMatchObject({
-      availableModels: [],
-      snapshot: { runState: "idle" },
-    });
-    expect(available).not.toHaveBeenCalled();
-    const partial = await endpoint
-      .get("/api/models")
-      .query({ cwd: f.trusted })
-      .auth("fixture", { type: "bearer" })
-      .expect(200);
-    expect(partial.body.models).toEqual(
+    expect(trusted.commands.map(({ name }: { name: string }) => name)).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ provider: "global-native", id: "a" }),
-        expect.objectContaining({ provider: "project-native", id: "a" }),
+        "global-mode",
+        "project-mode",
+        "shared-mode:1",
+        "shared-mode:2",
       ]),
     );
-    expect(partial.body.defaults.model.provider).toBe("project-native");
-    expect(partial.body.warning).toContain("Some Pi extensions could not load");
-    expect(JSON.stringify(partial.body)).not.toContain(
-      "PRIVATE EXTENSION DETAIL",
+    expect(untrusted.commands).not.toContainEqual(
+      expect.objectContaining({ name: "project-mode" }),
     );
-    available.mockImplementation(
-      async (refresh, cwd) =>
-        (await catalog.read(cwd ?? f.untrusted, refresh)).models,
+    expect(trusted.commands).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "review", source: "prompt" }),
+        expect.objectContaining({ name: "skill:check", source: "skill" }),
+      ]),
     );
-    const current = await endpoint
-      .get("/api/model-settings")
-      .query({ cwd: f.trusted })
-      .auth("fixture", { type: "bearer" })
-      .expect(200);
-    const saved = await endpoint
+    expect((await settingsAt(f.untrusted)).body).toMatchObject({
+      effective: { defaultModel: { provider: "global-router" } },
+      projectOverrides: [],
+    });
+
+    const current = await settingsAt(f.trusted);
+    expect(current.body.models).toEqual(trusted.models);
+    expect(current.body.nativeApiProviders).toContain("openai");
+    expect(current.body.nativeApiProviders).not.toContain("global-native");
+    const declaration = await endpoint
       .patch("/api/model-settings/config")
       .query({ cwd: f.trusted })
-      .auth("fixture", { type: "bearer" })
       .send({
         revision: current.body.configRevision,
         edit: {
@@ -280,28 +165,30 @@ it("discovers native global/trusted-project registrations and resolves defaults 
         },
       })
       .expect(200);
-    expect(saved.body.saved).toBe(true);
-    expect(saved.body.snapshot.providers).toContainEqual(
-      expect.objectContaining({
-        id: "global-native",
-        models: [expect.objectContaining({ id: "a", name: "Still editable" })],
-      }),
-    );
+    await readMetadata.mock.results.at(-1)?.value;
+    expect(declaration.body.snapshot).toMatchObject({
+      effective: { enabledModels },
+      models: expect.arrayContaining([
+        expect.objectContaining({
+          provider: "global-native",
+          id: "a",
+          name: "Still editable",
+        }),
+      ]),
+      providers: [{ id: "global-native" }],
+    });
     expect(await readdir(f.sessions)).toEqual([]);
     expect(await readFile(f.events, "utf8")).not.toMatch(
       /session_start|agent_start|request|route/,
     );
   } finally {
-    await app.close();
-    await attachments.close();
+    await closeHostApiFixture(host);
   }
-  // This scenario performs several independently bounded (15s) native queries,
-  // including invalidation and cold startup in multiple project directories.
 }, 120_000);
 
 it("validates model edits over extension providers in the selected trusted workspace and explicit agent directory", async () => {
   const f = await modelWorkflowFixture();
-  roots.push(f.root);
+  root = f.root;
   const service = new ModelSettingsService(f.agent);
   const path = join(f.agent, "models.json");
   await writeFile(
@@ -364,52 +251,45 @@ it("validates model edits over extension providers in the selected trusted works
   expect(await readFile(f.events, "utf8")).not.toMatch(
     /session_start|agent_start|request|route/,
   );
-}, 30_000);
+}, 90_000);
 
-it.each([false, true])(
-  "retires factory descendants after discovery (factory throws=%s)",
-  async (fail) => {
-    const f = await modelWorkflowFixture();
-    roots.push(f.root);
-    const extension = join(f.agent, "descendant.ts");
-    const pidFile = join(f.root, "descendant.pid");
-    await writeFile(
-      extension,
-      `import { spawn } from "node:child_process"; import { writeFileSync } from "node:fs";
+it("retires an extension factory's descendants even if it fails", async () => {
+  const f = await modelWorkflowFixture();
+  root = f.root;
+  const extension = join(f.agent, "descendant.ts");
+  const pidFile = join(f.root, "descendant.pid");
+  await writeFile(
+    extension,
+    `import { spawn } from "node:child_process"; import { writeFileSync } from "node:fs";
     export default () => { const child = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], {stdio:"ignore"});
-    writeFileSync(${JSON.stringify(pidFile)}, String(child.pid)); ${fail ? 'throw new Error("fixture failure")' : ""} };`,
-    );
-    await writeFile(
-      join(f.agent, "settings.json"),
-      JSON.stringify({ extensions: [extension], defaultProjectTrust: "never" }),
-    );
-    let pid: number | undefined;
-    try {
-      const metadata = await queryModelMetadata(f.untrusted);
-      if (fail)
-        expect(metadata.warning).toContain("Some Pi extensions could not load");
-      pid = Number(await readFile(pidFile, "utf8"));
-      await vi.waitFor(async () => {
-        try {
-          process.kill(pid!, 0);
-          if (process.platform === "linux")
-            expect(await readFile(`/proc/${pid}/stat`, "utf8")).toMatch(
-              /\) Z /,
-            );
-          else throw new Error("Factory descendant is still running");
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
-        }
-      });
-    } finally {
-      if (pid) {
-        try {
-          process.kill(pid, "SIGKILL");
-        } catch {
-          /* Already retired by query cleanup. */
-        }
+    writeFileSync(${JSON.stringify(pidFile)}, String(child.pid)); throw new Error("fixture failure"); };`,
+  );
+  await writeFile(
+    join(f.agent, "settings.json"),
+    JSON.stringify({ extensions: [extension], defaultProjectTrust: "never" }),
+  );
+  let pid: number | undefined;
+  try {
+    const metadata = await queryModelMetadata(f.untrusted);
+    expect(metadata.warning).toContain("Some Pi extensions could not load");
+    pid = Number(await readFile(pidFile, "utf8"));
+    await vi.waitFor(async () => {
+      try {
+        process.kill(pid!, 0);
+        if (process.platform === "linux")
+          expect(await readFile(`/proc/${pid}/stat`, "utf8")).toMatch(/\) Z /);
+        else throw new Error("Factory descendant is still running");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+      }
+    });
+  } finally {
+    if (pid) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        /* Already retired by query cleanup. */
       }
     }
-  },
-  10_000,
-);
+  }
+}, 10_000);

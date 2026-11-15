@@ -1,38 +1,17 @@
-import { execFile } from "node:child_process";
-import {
-  access,
-  mkdtemp,
-  mkdir,
-  rename as renamePath,
-  rm,
-  stat,
-  symlink,
-  writeFile,
-} from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { promisify } from "node:util";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
-  GIT_DIFF_OUTPUT_BYTES,
-  GIT_STATUS_OUTPUT_BYTES,
-  GIT_STDERR_BYTES,
   GIT_TIMEOUT_MS,
-  GitInspectionError,
   GitInspectionService,
-  parsePorcelainV2,
-  spawnGit,
-  parseUnifiedDiff,
   type GitRunner,
+  parsePorcelainV2,
+  parseUnifiedDiff,
+  spawnGit,
 } from "../../server/git-inspection.js";
 
-vi.mock("node:fs/promises", async (importOriginal) => {
-  const fs = await importOriginal<typeof import("node:fs/promises")>();
-  return { ...fs, stat: vi.fn(fs.stat) };
-});
-
-const exec = promisify(execFile);
 const hash = "0123456789012345678901234567890123456789";
 const headers = (head = "main", oid = hash) => [
   Buffer.from(`# branch.oid ${oid}`),
@@ -51,39 +30,20 @@ function runnerForStatus(
   extra?: (
     args: readonly string[],
   ) => { stdout: Buffer; truncated?: boolean } | undefined,
+  netChanges = Buffer.alloc(0),
 ) {
-  const calls: readonly string[][] = [];
+  const outputs = new Map([
+    ["--is-inside-work-tree", Buffer.from("true\n")],
+    ["--show-toplevel", Buffer.from("/repo\n")],
+    ["--show-prefix", Buffer.from("\n")],
+    ["status", output],
+    ["--name-status", netChanges],
+  ]);
   const runner: GitRunner = async (args) => {
-    (calls as string[][]).push([...args]);
-    if (args.includes("--is-inside-work-tree"))
-      return {
-        stdout: Buffer.from("true\n"),
-        stderr: Buffer.alloc(0),
-        truncated: false,
-        code: 0,
-      };
-    if (args.includes("--show-toplevel"))
-      return {
-        stdout: Buffer.from("/repo\n"),
-        stderr: Buffer.alloc(0),
-        truncated: false,
-        code: 0,
-      };
-    if (args.includes("--show-prefix"))
-      return {
-        stdout: Buffer.from("\n"),
-        stderr: Buffer.alloc(0),
-        truncated: false,
-        code: 0,
-      };
-    if (args.includes("status"))
-      return {
-        stdout: output,
-        stderr: Buffer.alloc(0),
-        truncated: false,
-        code: 0,
-      };
-    const result = extra?.(args);
+    const key = args.find((arg) => outputs.has(arg));
+    const result = key
+      ? { stdout: outputs.get(key)!, truncated: false }
+      : extra?.(args);
     if (!result) throw new Error(`unexpected Git call: ${args.join(" ")}`);
     return {
       stdout: result.stdout,
@@ -92,7 +52,7 @@ function runnerForStatus(
       code: 0,
     };
   };
-  return { runner, calls };
+  return new GitInspectionService(runner);
 }
 
 describe("porcelain-v2 parser", () => {
@@ -116,11 +76,6 @@ describe("porcelain-v2 parser", () => {
       staged: { kind: "modified" },
       unstaged: { kind: "modified" },
     });
-    expect(parsed.response.groups.staged).toEqual([both.path.id]);
-    expect(parsed.response.groups.unstaged).toEqual([
-      both.path.id,
-      Buffer.from("deleted.txt").toString("base64url"),
-    ]);
     const arbitrary = parsed.response.files[1]!;
     expect(arbitrary.path.id).toBe(invalid.toString("base64url"));
     expect(arbitrary.path.utf8Path).toBeUndefined();
@@ -128,48 +83,17 @@ describe("porcelain-v2 parser", () => {
     expect(parsed.response.files[2]?.unstaged).toEqual({ kind: "deleted" });
   });
 
-  it("parses rename sources, conflict codes, submodules, unborn and detached heads", () => {
-    const rename = Buffer.from(
-      `2 R. N... 100644 100644 100644 ${hash} ${hash} R100 new name`,
-    );
+  it("keeps both paths of a copied entry", () => {
     const copy = Buffer.from(
       `2 C. N... 100644 100644 100644 ${hash} ${hash} C075 copied name`,
     );
-    const conflict = Buffer.from(
-      `u UU N... 100644 100644 100644 100644 ${hash} ${hash} ${hash} conflict`,
+    const { response } = parsePorcelainV2(
+      statusBuffer(...headers(), copy, Buffer.from("source name")),
     );
-    const parsed = parsePorcelainV2(
-      statusBuffer(
-        ...headers("feature", "(initial)"),
-        rename,
-        Buffer.from("old name"),
-        copy,
-        Buffer.from("source name"),
-        conflict,
-        ordinary(".M", "SCMU", Buffer.from("module")),
-      ),
-    );
-    expect(parsed.response.head).toEqual({ kind: "unborn", name: "feature" });
-    expect(parsed.response.files[0]?.staged).toMatchObject({
-      kind: "renamed",
-      originalPath: { utf8Path: "old name" },
+    expect(response.files[0]).toMatchObject({
+      path: { utf8Path: "copied name" },
+      staged: { kind: "copied", originalPath: { utf8Path: "source name" } },
     });
-    expect(parsed.response.files[1]?.staged).toMatchObject({
-      kind: "copied",
-      originalPath: { utf8Path: "source name" },
-    });
-    expect(parsed.response.files[2]?.conflict).toEqual({ code: "UU" });
-    expect(parsed.response.groups.conflicted).toEqual([
-      Buffer.from("conflict").toString("base64url"),
-    ]);
-    expect(parsed.response.files[3]?.submodule).toEqual({
-      commitChanged: true,
-      trackedModified: true,
-      untracked: true,
-    });
-    expect(
-      parsePorcelainV2(statusBuffer(...headers("(detached)"))).response.head,
-    ).toEqual({ kind: "detached", oid: hash });
   });
 
   it("rejects malformed, duplicate and truncated status wholesale", () => {
@@ -192,224 +116,71 @@ describe("porcelain-v2 parser", () => {
     ).toThrow(/incomplete/);
   });
 
-  it("validates branch tracking headers, controls, bounds, and duplicates", () => {
-    const upstream = Buffer.from("# branch.upstream origin/main");
-    const aheadBehind = Buffer.from("# branch.ab +12 -3");
-    const unknownAheadBehind = Buffer.from("# branch.ab +? -?");
-    expect(() =>
-      parsePorcelainV2(statusBuffer(...headers(), upstream, aheadBehind)),
-    ).not.toThrow();
-    expect(() =>
-      parsePorcelainV2(
-        statusBuffer(...headers(), upstream, unknownAheadBehind),
-      ),
-    ).not.toThrow();
-
-    const malformed = [
-      Buffer.from("# branch.upstream "),
-      Buffer.from("# branch.upstream origin//main"),
-      Buffer.from("# branch.upstream bad ref"),
-      Buffer.from("# branch.upstream bad\x1fref"),
-      Buffer.from(`# branch.upstream ${"a".repeat(4_097)}`),
-      Buffer.from("# branch.ab +? -1"),
-      Buffer.from("# branch.ab +1 -?"),
-      Buffer.from("# branch.ab -1 +2"),
-      Buffer.from("# branch.ab +1 +2"),
-      Buffer.from("# branch.ab +1 -2 trailing"),
-      Buffer.from([
-        0x23, 0x20, 0x62, 0x72, 0x61, 0x6e, 0x63, 0x68, 0x2e, 0x61, 0x62, 0x20,
-        0x2b, 0xb1, 0x20, 0x2d, 0x30,
-      ]),
-      Buffer.from("# branch.ab +9007199254740992 -0"),
-      Buffer.concat([
-        Buffer.from("# branch.ab +"),
-        Buffer.alloc(65, 0x31),
-        Buffer.from(" -0"),
-      ]),
-    ];
-    for (const record of malformed) {
+  it("rejects invalid facets, conflict codes, and mismatched rename or copy metadata", () => {
+    const type2 = (xy: string, score: string) =>
+      Buffer.from(
+        `2 ${xy} N... 100644 100644 100644 ${hash} ${hash} ${score} destination`,
+      );
+    const file = Buffer.from("file");
+    const source = Buffer.from("source");
+    for (const record of [
+      ordinary("..", "N...", file),
+      ordinary(".U", "N...", file),
+    ]) {
       expect(() =>
         parsePorcelainV2(statusBuffer(...headers(), record)),
-      ).toThrow(/branch/);
+      ).toThrow(/facets/);
     }
-    expect(() =>
-      parsePorcelainV2(
-        statusBuffer(...headers(), upstream, upstream, aheadBehind),
-      ),
-    ).toThrow(/duplicate/);
-    expect(() =>
-      parsePorcelainV2(
-        statusBuffer(...headers(), upstream, aheadBehind, aheadBehind),
-      ),
-    ).toThrow(/duplicate/);
-    expect(() =>
-      parsePorcelainV2(statusBuffer(...headers(), upstream)),
-    ).toThrow(/tracking/);
-    expect(() =>
-      parsePorcelainV2(statusBuffer(...headers(), aheadBehind)),
-    ).toThrow(/tracking/);
-    expect(() =>
-      parsePorcelainV2(
-        statusBuffer(
-          Buffer.from(`# branch.oid ${hash}`),
-          Buffer.from("# branch.head bad\nhead"),
-        ),
-      ),
-    ).toThrow(/branch/);
-    expect(() =>
-      parsePorcelainV2(
-        statusBuffer(
-          Buffer.from(`# branch.oid ${hash}`),
-          Buffer.from(`# branch.head ${"a".repeat(4_097)}`),
-        ),
-      ),
-    ).toThrow(/branch/);
-    expect(() =>
-      parsePorcelainV2(
-        statusBuffer(...headers(), Buffer.from(`# branch.oid ${hash}`)),
-      ),
-    ).toThrow(/duplicate/);
-    expect(() =>
-      parsePorcelainV2(
-        statusBuffer(...headers(), Buffer.from("# branch.head other")),
-      ),
-    ).toThrow(/duplicate/);
-    expect(() =>
-      parsePorcelainV2(
-        statusBuffer(
-          Buffer.concat([Buffer.from("# branch.oid "), Buffer.alloc(40, 0xe1)]),
-          Buffer.from("# branch.head main"),
-        ),
-      ),
-    ).toThrow(/branch/);
-  });
-
-  it("rejects no-facet ordinary records, invalid conflicts, U facets, and malformed rename/copy grammar", () => {
-    expect(() =>
-      parsePorcelainV2(
-        statusBuffer(
-          ...headers(),
-          ordinary("..", "N...", Buffer.from("unchanged")),
-        ),
-      ),
-    ).toThrow(/facets/);
-    const noFacetType2 = statusBuffer(
-      ...headers(),
-      Buffer.from(
-        `2 .. N... 100644 100644 100644 ${hash} ${hash} R100 destination`,
-      ),
-      Buffer.from("source"),
-    );
-    expect(() => parsePorcelainV2(noFacetType2)).toThrow(/facets/);
-    const conflict = (xy: string) =>
-      Buffer.from(
-        `u ${xy} N... 100644 100644 100644 100644 ${hash} ${hash} ${hash} conflict`,
-      );
-    expect(() =>
-      parsePorcelainV2(statusBuffer(...headers(), conflict("AD"))),
-    ).toThrow(/conflict/);
-    for (const code of ["DD", "AU", "UD", "UA", "DU", "AA", "UU"]) {
+    for (const [xy, score] of [
+      ["..", "R100"],
+      ["M.", "R100"],
+      ["R.", "C100"],
+      ["R.", "R101"],
+      ["RC", "R050"],
+    ]) {
       expect(() =>
-        parsePorcelainV2(statusBuffer(...headers(), conflict(code))),
-      ).not.toThrow();
-    }
-
-    expect(() =>
-      parsePorcelainV2(
-        statusBuffer(...headers(), ordinary(".U", "N...", Buffer.from("bad"))),
-      ),
-    ).toThrow(/facets/);
-    const type2 = (xy: string, score: string) =>
-      statusBuffer(
-        ...headers(),
-        Buffer.from(
-          `2 ${xy} N... 100644 100644 100644 ${hash} ${hash} ${score} destination`,
+        parsePorcelainV2(
+          statusBuffer(...headers(), type2(xy!, score!), source),
         ),
-        Buffer.from("source"),
-      );
-    expect(() => parsePorcelainV2(type2("M.", "R100"))).toThrow(/rename/);
-    expect(() => parsePorcelainV2(type2("R.", "C100"))).toThrow(/rename/);
-    expect(() => parsePorcelainV2(type2("R.", "R101"))).toThrow(/rename/);
-    expect(() => parsePorcelainV2(type2("RC", "R050"))).toThrow(/rename/);
-  });
-
-  it("projects at most the explicit status cardinality while declaring the total", () => {
-    const records = Array.from({ length: 1_005 }, (_, index) =>
-      Buffer.from(`? file-${String(index).padStart(4, "0")}`),
+      ).toThrow();
+    }
+    const invalidConflict = Buffer.from(
+      `u AD N... 100644 100644 100644 100644 ${hash} ${hash} ${hash} conflict`,
     );
-    const parsed = parsePorcelainV2(statusBuffer(...headers(), ...records));
-    expect(parsed.response).toMatchObject({ total: 1_005, truncated: true });
-    expect(parsed.response.files).toHaveLength(1_000);
-    expect(parsed.response.groups.untracked).toHaveLength(1_000);
-    expect(new Set(parsed.response.groups.untracked).size).toBe(1_000);
+    expect(() =>
+      parsePorcelainV2(statusBuffer(...headers(), invalidConflict)),
+    ).toThrow(/conflict/);
   });
 });
 
 describe("bounded diff contract", () => {
-  it("applies status cardinality projection through the service contract", async () => {
-    const records = Array.from({ length: 1_005 }, (_, index) =>
-      Buffer.from(`? service-file-${String(index).padStart(4, "0")}`),
+  it("caps visible status after excluding canceled index edits", async () => {
+    const canceled = Array.from({ length: 1_005 }, (_, index) =>
+      ordinary("MM", "N...", Buffer.from(`tracked-${index}`)),
     );
-    const fake = runnerForStatus(statusBuffer(...headers(), ...records));
-    const result = await new GitInspectionService(fake.runner).status(
-      "/workspace",
+    const untracked = Array.from({ length: 1_001 }, (_, index) =>
+      Buffer.from(`? untracked-${index}`),
     );
+    const status = statusBuffer(...headers(), ...canceled, ...untracked);
+    const service = runnerForStatus(
+      status,
+      undefined,
+      Buffer.from("M\0tracked-1004\0"),
+    );
+    const result = await service.status("/workspace");
     expect(result).toMatchObject({
       kind: "repository",
-      total: 1_005,
+      total: 1_002,
       truncated: true,
     });
-    if (result.kind === "repository") {
-      expect(result.files).toHaveLength(1_000);
-      expect(result.groups.untracked).toHaveLength(1_000);
-    }
-  });
-
-  it("numbers unified text, including omitted and zero hunk counts", () => {
-    const parsed = parseUnifiedDiff(
-      Buffer.from(
-        [
-          "diff --git a/a b/a",
-          "--- a/a",
-          "+++ b/a",
-          "@@ -2,2 +2,3 @@",
-          " old",
-          "-gone",
-          "+new",
-          "+more",
-          "\\ No newline at end of file",
-          "@@ -0,0 +1 @@",
-          "+first",
-          "",
-        ].join("\n"),
-      ),
-    );
+    if (result.kind !== "repository") throw new Error("Expected repository");
+    expect(result.files).toHaveLength(1_000);
     expect(
-      parsed.lines.map((line) => [line.kind, line.oldLine, line.newLine]),
-    ).toEqual([
-      ["meta", null, null],
-      ["meta", null, null],
-      ["meta", null, null],
-      ["hunk", null, null],
-      ["context", 2, 2],
-      ["delete", 3, null],
-      ["add", null, 3],
-      ["add", null, 4],
-      ["meta", null, null],
-      ["hunk", null, null],
-      ["add", null, 1],
-    ]);
-    const truncated = parseUnifiedDiff(
-      Buffer.from("@@ -1 +1 @@\n-old\n+incomplete"),
-      true,
-    );
-    expect(truncated.lines.at(-1)).toMatchObject({
-      kind: "meta",
-      text: expect.stringContaining("truncated"),
+      result.files.find(({ path }) => path.utf8Path === "tracked-1004"),
+    ).toMatchObject({
+      worktree: { kind: "modified" },
     });
-    expect(truncated.lines.some((line) => line.text === "+incomplete")).toBe(
-      false,
-    );
+    expect(result.files.filter(({ untracked }) => untracked)).toHaveLength(999);
   });
 
   it("distinguishes marker-like hunk content from the next file's headers", () => {
@@ -418,11 +189,12 @@ describe("bounded diff contract", () => {
         [
           "--- a/first.md",
           "+++ b/first.md",
-          "@@ -1,3 +1,3 @@",
+          "@@ -2,3 +2,3 @@",
           " before",
           "----",
           "++++",
           " after",
+          "\\ No newline at end of file",
           "--- a/second.md",
           "+++ b/second.md",
           "@@ -0,0 +1 @@",
@@ -440,10 +212,11 @@ describe("bounded diff contract", () => {
       ["meta", null, null],
       ["meta", null, null],
       ["hunk", null, null],
-      ["context", 1, 1],
-      ["delete", 2, null],
-      ["add", null, 2],
-      ["context", 3, 3],
+      ["context", 2, 2],
+      ["delete", 3, null],
+      ["add", null, 3],
+      ["context", 4, 4],
+      ["meta", null, null],
       ["meta", null, null],
       ["meta", null, null],
       ["hunk", null, null],
@@ -462,18 +235,15 @@ describe("bounded diff contract", () => {
         "",
       ].join("\n"),
     );
-    const fake = runnerForStatus(
+    const service = runnerForStatus(
       statusBuffer(...headers(), ordinary(".M", "N...", path)),
       (args) =>
         args.includes("--numstat")
           ? { stdout: Buffer.from("2100\t2100\tmany.txt\0") }
           : { stdout: patch },
+      Buffer.from("M\0many.txt\0"),
     );
-    const result = await new GitInspectionService(fake.runner).diff(
-      "/workspace",
-      path.toString("base64url"),
-      "unstaged",
-    );
+    const result = await service.diff("/workspace", path.toString("base64url"));
     expect(result).toMatchObject({ kind: "text", truncated: true });
     if (result.kind === "text") {
       expect(result.lines).toHaveLength(2_000);
@@ -484,129 +254,25 @@ describe("bounded diff contract", () => {
     }
   });
 
-  it("authorizes a fresh facet and uses only the closed safe diff argv", async () => {
-    const path = Buffer.from("file.txt");
-    const fixture = statusBuffer(...headers(), ordinary("MM", "N...", path));
-    const fake = runnerForStatus(fixture, (args) =>
-      args.includes("--numstat")
-        ? { stdout: Buffer.from("1\t1\tfile.txt\0") }
-        : {
-            stdout: Buffer.from(
-              "--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-old\n+new\n",
-            ),
-          },
-    );
-    const result = await new GitInspectionService(fake.runner).diff(
-      "/workspace",
-      path.toString("base64url"),
-      "staged",
-    );
-    expect(result).toMatchObject({
-      kind: "text",
-      side: "staged",
-      truncated: false,
-    });
-    const diffCalls = fake.calls.filter((args) => args.includes("diff"));
-    expect(diffCalls).toHaveLength(2);
-    for (const args of fake.calls) {
-      expect(args).toEqual(
-        expect.arrayContaining(["-c", "core.fsmonitor=false"]),
-      );
-    }
-    const statusCall = fake.calls.find((args) => args.includes("status"));
-    expect(statusCall).toBeDefined();
-    expect(statusCall).toContain("--no-ahead-behind");
-    for (const args of diffCalls) {
-      expect(args).toContain("--no-ext-diff");
-      expect(args).toContain("--no-textconv");
-      expect(args.at(-2)).toBe("--");
-      expect(args.at(-1)).toBe("file.txt");
-      expect(args).not.toEqual(
-        expect.arrayContaining([
-          "add",
-          "commit",
-          "restore",
-          "checkout",
-          "reset",
-          "push",
-          "fetch",
-          "blame",
-          "log",
-        ]),
-      );
-    }
-    expect(diffCalls.every((args) => args.includes("--cached"))).toBe(true);
-  });
-
-  it("returns explicit binary, conflict, submodule, empty, unsupported and truncated states", async () => {
-    const binaryPath = Buffer.from("binary.dat");
-    const binaryFixture = statusBuffer(
-      ...headers(),
-      ordinary(".M", "N...", binaryPath),
-    );
-    const binary = runnerForStatus(binaryFixture, (args) =>
-      args.includes("--numstat")
-        ? { stdout: Buffer.from("-\t-\tbinary.dat\0") }
-        : undefined,
-    );
-    expect(
-      await new GitInspectionService(binary.runner).diff(
-        "/w",
-        binaryPath.toString("base64url"),
-        "unstaged",
-      ),
-    ).toMatchObject({ kind: "binary" });
-
-    const conflictPath = Buffer.from("conflict");
-    const conflictRecord = Buffer.from(
-      `u UU N... 100644 100644 100644 100644 ${hash} ${hash} ${hash} conflict`,
-    );
-    const conflict = runnerForStatus(
-      statusBuffer(...headers(), conflictRecord),
-    );
-    expect(
-      await new GitInspectionService(conflict.runner).diff(
-        "/w",
-        conflictPath.toString("base64url"),
-        "unstaged",
-      ),
-    ).toMatchObject({ kind: "conflict", code: "UU" });
-
-    const modulePath = Buffer.from("module");
-    const module = runnerForStatus(
-      statusBuffer(...headers(), ordinary(".M", "SC..", modulePath)),
-    );
-    expect(
-      await new GitInspectionService(module.runner).diff(
-        "/w",
-        modulePath.toString("base64url"),
-        "unstaged",
-      ),
-    ).toMatchObject({ kind: "submodule" });
-
+  it("distinguishes opaque paths, empty comparisons and truncated patches", async () => {
     const invalid = Buffer.from([0xff]);
     const unsupported = runnerForStatus(
       statusBuffer(...headers(), ordinary(".M", "N...", invalid)),
+      undefined,
+      Buffer.concat([Buffer.from("M\0"), invalid, Buffer.from([0])]),
     );
     expect(
-      await new GitInspectionService(unsupported.runner).diff(
-        "/w",
-        invalid.toString("base64url"),
-        "unstaged",
-      ),
+      await unsupported.diff("/w", invalid.toString("base64url")),
     ).toMatchObject({ kind: "unsupported", reason: "path-encoding" });
 
     const textPath = Buffer.from("empty.txt");
     const empty = runnerForStatus(
       statusBuffer(...headers(), ordinary(".M", "N...", textPath)),
       () => ({ stdout: Buffer.alloc(0) }),
+      Buffer.from("M\0empty.txt\0"),
     );
     expect(
-      await new GitInspectionService(empty.runner).diff(
-        "/w",
-        textPath.toString("base64url"),
-        "unstaged",
-      ),
+      await empty.diff("/w", textPath.toString("base64url")),
     ).toMatchObject({ kind: "empty" });
 
     const truncated = runnerForStatus(
@@ -618,103 +284,88 @@ describe("bounded diff contract", () => {
               stdout: Buffer.from("@@ -1 +1 @@\n-old\n+partial"),
               truncated: true,
             },
+      Buffer.from("M\0empty.txt\0"),
     );
-    const truncatedResult = await new GitInspectionService(
-      truncated.runner,
-    ).diff("/w", textPath.toString("base64url"), "unstaged");
+    const truncatedResult = await truncated.diff(
+      "/w",
+      textPath.toString("base64url"),
+    );
     expect(truncatedResult).toMatchObject({ kind: "text", truncated: true });
-    if (truncatedResult.kind === "text")
+    if (truncatedResult.kind === "text") {
       expect(truncatedResult.lines.at(-1)?.text).toContain("truncated");
+      expect(
+        truncatedResult.lines.some(({ text }) => text === "+partial"),
+      ).toBe(false);
+    }
   });
 
   it.runIf(process.platform !== "win32")(
     "sanitizes environment and kills hostile descendant groups on cap, timeout, and abort",
     async () => {
       const directory = await mkdtemp(join(tmpdir(), "inspire-fake-git-"));
-      const marker = join(directory, "descendant-alive");
-      const previous = {
-        PATH: process.env.PATH,
-        GIT_DIR: process.env.GIT_DIR,
-        GIT_ASKPASS: process.env.GIT_ASKPASS,
-        GIT_EXTERNAL_DIFF: process.env.GIT_EXTERNAL_DIFF,
-        SSH_ASKPASS: process.env.SSH_ASKPASS,
-        LD_PRELOAD: process.env.LD_PRELOAD,
-        DESCENDANT_MARKER: process.env.DESCENDANT_MARKER,
-      };
+      const keys = [
+        "GIT_DIR",
+        "GIT_ASKPASS",
+        "GIT_EXTERNAL_DIFF",
+        "SSH_ASKPASS",
+        "LD_PRELOAD",
+      ];
+      const output = "x".repeat(64);
       try {
-        const childCode = `setTimeout(() => require("node:fs").writeFileSync(${JSON.stringify(marker)}, "alive"), Number(process.argv[1]))`;
         await writeFile(
           join(directory, "git"),
-          `#!${process.execPath}\nconst { spawn } = require("node:child_process");\nconst mode = process.argv[2];\nconst childCode = ${JSON.stringify(childCode)};\nconst descendant = (delay) => spawn(process.execPath, ["-e", childCode, String(delay)], { stdio: "ignore" });\nif (mode === "env") process.stdout.write(JSON.stringify({ GIT_DIR: process.env.GIT_DIR, GIT_ASKPASS: process.env.GIT_ASKPASS, GIT_EXTERNAL_DIFF: process.env.GIT_EXTERNAL_DIFF, SSH_ASKPASS: process.env.SSH_ASKPASS, LD_PRELOAD: process.env.LD_PRELOAD }));\nelse if (mode === "slow") { descendant(4500); setTimeout(() => {}, 10_000); }\nelse if (mode === "cap") { descendant(500); process.stdout.write(Buffer.alloc(64, 120)); setTimeout(() => {}, 10_000); }\nelse if (mode === "abort") { descendant(500); setTimeout(() => {}, 10_000); }\nelse if (mode === "stderr") process.stderr.write(Buffer.alloc(${GIT_STDERR_BYTES + 1}, 120));\nelse process.stdout.write(Buffer.alloc(64, 120));\n`,
+          `#!/bin/sh
+case "$1" in
+  env) printf '%s' "$GIT_DIR$GIT_ASKPASS$GIT_EXTERNAL_DIFF$SSH_ASKPASS$LD_PRELOAD" ;;
+  stderr) printf '${output}' >&2 ;;
+  big) printf '${output}' ;;
+  *)
+    (sleep "$4"; printf alive > "$3") >/dev/null 2>&1 &
+    printf '%s' "$!" > "$2"
+    [ "$1" != cap ] || printf '${output}'
+    wait
+    ;;
+esac
+`,
           { mode: 0o755 },
         );
-        process.env.PATH = directory;
-        process.env.GIT_DIR = "/attacker/repository";
-        process.env.GIT_ASKPASS = "/attacker/askpass";
-        process.env.GIT_EXTERNAL_DIFF = "/attacker/diff";
-        process.env.SSH_ASKPASS = "/attacker/ssh-askpass";
-        process.env.LD_PRELOAD = "/attacker/preload";
-        process.env.DESCENDANT_MARKER = marker;
-
+        vi.stubEnv("PATH", directory + ":/bin:/usr/bin");
+        for (const key of keys) vi.stubEnv(key, "must-not-pass");
         const sanitized = await spawnGit(["env"], { stdoutLimit: 1_024 });
-        expect(JSON.parse(sanitized.stdout.toString("utf8"))).toEqual({});
-        await expect(spawnGit(["big"], { stdoutLimit: 32 })).rejects.toThrow(
-          /output exceeded/,
-        );
-        await expect(spawnGit(["stderr"], { stdoutLimit: 32 })).rejects.toThrow(
-          /output exceeded/,
-        );
-
-        await expect(spawnGit(["cap"], { stdoutLimit: 32 })).rejects.toThrow(
-          /output exceeded/,
-        );
-        await delay(700);
-        await expect(access(marker)).rejects.toThrow();
-
-        const controller = new AbortController();
-        const aborted = spawnGit(["abort"], {
-          stdoutLimit: 32,
-          signal: controller.signal,
-        });
-        setTimeout(() => controller.abort(), 50);
-        await expect(aborted).rejects.toMatchObject({
-          status: 499,
-          message: "Git inspection was cancelled",
-        });
-        await delay(700);
-        await expect(access(marker)).rejects.toThrow();
-
-        let registrationAborted = false;
-        const registrationRaceSignal = {
-          get aborted() {
-            return registrationAborted;
-          },
-          addEventListener() {
-            registrationAborted = true;
-          },
-          removeEventListener() {},
-        } as unknown as AbortSignal;
+        expect(sanitized.stdout.toString("utf8")).toBe("");
         await expect(
-          spawnGit(["abort"], {
-            stdoutLimit: 32,
-            signal: registrationRaceSignal,
-            timeoutMs: 250,
-          }),
-        ).rejects.toMatchObject({
-          status: 499,
-          message: "Git inspection was cancelled",
-        });
-        await delay(700);
-        await expect(access(marker)).rejects.toThrow();
+          spawnGit(["stderr"], { stdoutLimit: 32, stderrLimit: 32 }),
+        ).rejects.toThrow(/output exceeded/);
 
-        await expect(
-          spawnGit(["slow"], { stdoutLimit: 32 }),
-        ).rejects.toMatchObject({
-          status: 503,
-          message: "Git inspection timed out",
-        });
-        await delay(700);
-        await expect(access(marker)).rejects.toThrow();
+        for (const [mode, status, message] of [
+          ["cap", 502, /output exceeded/],
+          ["abort", 499, /cancelled/],
+          ["slow", 503, /timed out/],
+        ] as const) {
+          const started = join(directory, mode + "-started");
+          const marker = join(directory, mode + "-alive");
+          const controller = new AbortController();
+          const result = expect(
+            spawnGit([mode, started, marker, "0.7"], {
+              stdoutLimit: 32,
+              signal: controller.signal,
+              timeoutMs: 500,
+            }),
+          ).rejects.toMatchObject({
+            status,
+            message: expect.stringMatching(message),
+          });
+          if (mode === "abort") {
+            await expect.poll(() => readFile(started, "utf8")).toMatch(/^\d+$/);
+            controller.abort();
+          }
+          await result;
+          expect(await readFile(started, "utf8")).toMatch(/^\d+$/);
+          await delay(800);
+          await expect(access(marker)).rejects.toMatchObject({
+            code: "ENOENT",
+          });
+        }
 
         const partial = await spawnGit(["big"], {
           stdoutLimit: 32,
@@ -723,495 +374,10 @@ describe("bounded diff contract", () => {
         expect(partial).toMatchObject({ truncated: true });
         expect(partial.stdout).toHaveLength(32);
       } finally {
-        for (const [key, value] of Object.entries(previous)) {
-          if (value === undefined) delete process.env[key];
-          else process.env[key] = value;
-        }
+        vi.unstubAllEnvs();
         await rm(directory, { recursive: true, force: true });
       }
     },
     GIT_TIMEOUT_MS + 8_000,
-  );
-
-  it("rejects forged IDs before any diff command and preserves operational failures", async () => {
-    const path = Buffer.from("safe.txt");
-    const fixture = statusBuffer(...headers(), ordinary(".M", "N...", path));
-    const fake = runnerForStatus(fixture);
-    await expect(
-      new GitInspectionService(fake.runner).diff(
-        "/w",
-        Buffer.from("other").toString("base64url"),
-        "unstaged",
-      ),
-    ).rejects.toMatchObject({ status: 409 });
-    expect(fake.calls.some((args) => args.includes("diff"))).toBe(false);
-
-    const failure: GitRunner = async () => {
-      throw new GitInspectionError("Git inspection timed out", 503);
-    };
-    await expect(
-      new GitInspectionService(failure).status("/w"),
-    ).rejects.toMatchObject({ status: 503 });
-    const nonrepo: GitRunner = async () => {
-      throw new GitInspectionError(
-        "Git inspection failed",
-        502,
-        "not a repo",
-        128,
-      );
-    };
-    const metadata = vi
-      .mocked(stat)
-      .mockResolvedValueOnce({
-        isDirectory: () => true,
-      } as Awaited<ReturnType<typeof stat>>)
-      .mockRejectedValue(
-        Object.assign(new Error("absent"), { code: "ENOENT" }),
-      );
-    try {
-      await expect(
-        new GitInspectionService(nonrepo).status("/synthetic/nonrepo"),
-      ).resolves.toEqual({ kind: "not-repository" });
-    } finally {
-      metadata.mockReset();
-    }
-    expect({
-      GIT_TIMEOUT_MS,
-      GIT_STATUS_OUTPUT_BYTES,
-      GIT_DIFF_OUTPUT_BYTES,
-      GIT_STDERR_BYTES,
-    }).toEqual({
-      GIT_TIMEOUT_MS: 4_000,
-      GIT_STATUS_OUTPUT_BYTES: 4 * 1024 * 1024,
-      GIT_DIFF_OUTPUT_BYTES: 1024 * 1024,
-      GIT_STDERR_BYTES: 64 * 1024,
-    });
-  });
-});
-
-describe("real temporary repository", () => {
-  const directories: string[] = [];
-  afterEach(async () =>
-    Promise.all(
-      directories
-        .splice(0)
-        .map((path) => rm(path, { recursive: true, force: true })),
-    ),
-  );
-
-  it("accepts Git's paired unknown ahead/behind tracking header through the real service", async () => {
-    const origin = await mkdtemp(join(tmpdir(), "inspire-tracking-origin-"));
-    const root = await mkdtemp(join(tmpdir(), "inspire-tracking-work-"));
-    directories.push(origin, root);
-    await exec("git", ["init", "-q", "--bare", origin]);
-    await exec("git", ["init", "-q", root]);
-    await exec("git", [
-      "-C",
-      root,
-      "config",
-      "user.email",
-      "test@example.invalid",
-    ]);
-    await exec("git", ["-C", root, "config", "user.name", "Test"]);
-    await writeFile(join(root, "tracked.txt"), "base\n");
-    await exec("git", ["-C", root, "add", "."]);
-    await exec("git", ["-C", root, "commit", "-qm", "base"]);
-    await exec("git", ["-C", root, "remote", "add", "origin", origin]);
-    await exec("git", ["-C", root, "push", "-qu", "origin", "HEAD"]);
-    await writeFile(join(root, "tracked.txt"), "local-commit\n");
-    await exec("git", ["-C", root, "commit", "-qam", "ahead"]);
-    await writeFile(join(root, "tracked.txt"), "working-change\n");
-
-    const raw = await exec("git", [
-      "-C",
-      root,
-      "status",
-      "--porcelain=v2",
-      "--branch",
-      "-z",
-      "--no-ahead-behind",
-    ]);
-    expect(raw.stdout).toContain("# branch.ab +? -?\0");
-    const status = await new GitInspectionService().status(root);
-    expect(status).toMatchObject({
-      kind: "repository",
-      head: { kind: "branch" },
-    });
-    if (status.kind === "repository") {
-      expect(
-        status.files.find((file) => file.path.utf8Path === "tracked.txt")
-          ?.unstaged?.kind,
-      ).toBe("modified");
-    }
-  });
-
-  it.runIf(process.platform !== "win32")(
-    "handles unborn, nested cwd, staged+unstaged, untracked and binary",
-    async () => {
-      const root = await mkdtemp(join(tmpdir(), "inspire-git-"));
-      directories.push(root);
-      await exec("git", ["init", "-q", root]);
-      await exec("git", [
-        "-C",
-        root,
-        "config",
-        "user.email",
-        "test@example.invalid",
-      ]);
-      await exec("git", ["-C", root, "config", "user.name", "Test"]);
-      const service = new GitInspectionService();
-      expect(await service.status(root)).toMatchObject({
-        kind: "repository",
-        head: { kind: "unborn" },
-      });
-
-      await mkdir(join(root, "nested"));
-      await writeFile(join(root, "nested", "both.txt"), "base\n");
-      await writeFile(join(root, ":(glob)*.txt"), "magic-base\n");
-      await writeFile(join(root, "other.txt"), "other-base\n");
-      await exec("git", ["-C", root, "add", "."]);
-      await exec("git", ["-C", root, "commit", "-qm", "initial"]);
-      await exec("git", ["-C", root, "checkout", "-q", "--detach"]);
-      expect(await service.status(root)).toMatchObject({
-        kind: "repository",
-        head: { kind: "detached" },
-      });
-      await writeFile(join(root, "nested", "both.txt"), "staged\n");
-      await exec("git", ["-C", root, "add", "nested/both.txt"]);
-      await writeFile(join(root, "nested", "both.txt"), "unstaged\n");
-      await writeFile(join(root, ":(glob)*.txt"), "magic-new\n");
-      await exec("git", ["-C", root, "mv", "other.txt", "renamed.txt"]);
-      await writeFile(join(root, "renamed.txt"), "renamed-new\n");
-      await writeFile(join(root, "nested", "new file.txt"), "new\n");
-      await writeFile(
-        join(root, "nested", "binary.dat"),
-        Buffer.from([0, 1, 2]),
-      );
-      await symlink("both.txt", join(root, "nested", "link.txt"));
-      const newlineCwd = join(root, "line\nbreak");
-      await mkdir(newlineCwd);
-      await writeFile(join(newlineCwd, "inside.txt"), "inside\n");
-
-      const monitorDirectory = await mkdtemp(
-        join(tmpdir(), "inspire-fsmonitor-"),
-      );
-      directories.push(monitorDirectory);
-      const monitorMarker = join(monitorDirectory, "executed");
-      const monitor = join(monitorDirectory, "monitor");
-      await writeFile(
-        monitor,
-        `#!${process.execPath}\nrequire("node:fs").writeFileSync(${JSON.stringify(monitorMarker)}, "executed");\nprocess.stdout.write("0\\n");\n`,
-        { mode: 0o755 },
-      );
-      await exec("git", ["-C", root, "config", "core.fsmonitor", monitor]);
-
-      const status = await service.status(join(root, "nested"));
-      await expect(access(monitorMarker)).rejects.toThrow();
-      expect(status.kind).toBe("repository");
-      if (status.kind !== "repository") return;
-      const newlineStatus = await service.status(newlineCwd);
-      expect(newlineStatus.kind).toBe("repository");
-      if (newlineStatus.kind === "repository") {
-        expect(
-          newlineStatus.files.find(
-            (file) => file.path.utf8Path === "line\nbreak/inside.txt",
-          )?.path.workspacePath,
-        ).toBe("inside.txt");
-      }
-      await expect(access(monitorMarker)).rejects.toThrow();
-      const both = status.files.find(
-        (file) => file.path.utf8Path === "nested/both.txt",
-      )!;
-      expect(both.path.workspacePath).toBe("both.txt");
-      expect(both).toMatchObject({
-        staged: { kind: "modified" },
-        unstaged: { kind: "modified" },
-      });
-      expect(
-        (await service.diff(join(root, "nested"), both.path.id, "staged")).kind,
-      ).toBe("text");
-      expect(
-        (await service.diff(join(root, "nested"), both.path.id, "unstaged"))
-          .kind,
-      ).toBe("text");
-      const magic = status.files.find(
-        (file) => file.path.utf8Path === ":(glob)*.txt",
-      )!;
-      expect(magic.path.workspacePath).toBeUndefined();
-      const magicDiff = await service.diff(
-        join(root, "nested"),
-        magic.path.id,
-        "unstaged",
-      );
-      expect(magicDiff.kind).toBe("text");
-      if (magicDiff.kind === "text")
-        expect(
-          magicDiff.lines.map((line) => line.text).join("\n"),
-        ).not.toContain("renamed.txt");
-      const renamed = status.files.find(
-        (file) => file.path.utf8Path === "renamed.txt",
-      )!;
-      expect(renamed.staged).toMatchObject({
-        kind: "renamed",
-        originalPath: { utf8Path: "other.txt" },
-      });
-      expect(
-        (await service.diff(join(root, "nested"), renamed.path.id, "staged"))
-          .kind,
-      ).toBe("text");
-      for (const workspacePath of ["new file.txt", "binary.dat", "link.txt"]) {
-        const untracked = status.files.find(
-          (file) => file.path.workspacePath === workspacePath,
-        )!;
-        expect(
-          await service.diff(
-            join(root, "nested"),
-            untracked.path.id,
-            "unstaged",
-          ),
-        ).toMatchObject({ kind: "unsupported", reason: "untracked-content" });
-      }
-    },
-  );
-
-  it.runIf(process.platform !== "win32")(
-    "never opens untracked content through symlinks, directory swaps, FIFOs, or device targets",
-    async () => {
-      const root = await mkdtemp(join(tmpdir(), "inspire-untracked-"));
-      const outside = await mkdtemp(join(tmpdir(), "inspire-outside-"));
-      directories.push(root, outside);
-      await exec("git", ["init", "-q", root]);
-      await writeFile(join(outside, "secret"), "must-not-be-read\n");
-      await symlink(join(outside, "secret"), join(root, "final-link"));
-      await symlink(outside, join(root, "intermediate-link"));
-      await symlink("/dev/null", join(root, "device-link"));
-      await exec("mkfifo", [join(root, "named-pipe")]);
-      await mkdir(join(root, "swap"));
-      await writeFile(join(root, "swap", "victim"), "before-swap\n");
-
-      const service = new GitInspectionService();
-      const initial = await service.status(root);
-      expect(initial.kind).toBe("repository");
-      if (initial.kind !== "repository") return;
-      const byPath = (path: string) =>
-        initial.files.find((file) => file.path.utf8Path === path)!;
-      const bounded = <T>(operation: Promise<T>) =>
-        Promise.race([
-          operation,
-          delay(750).then(() => {
-            throw new Error("untracked inspection hung");
-          }),
-        ]);
-      for (const path of ["final-link", "intermediate-link", "device-link"]) {
-        const change = byPath(path);
-        expect(change, path).toBeDefined();
-        await expect(
-          bounded(service.diff(root, change.path.id, "unstaged")),
-        ).resolves.toMatchObject({
-          kind: "unsupported",
-          reason: "untracked-content",
-        });
-      }
-
-      await expect(
-        bounded(
-          service.diff(
-            root,
-            Buffer.from("named-pipe").toString("base64url"),
-            "unstaged",
-          ),
-        ),
-      ).rejects.toMatchObject({ status: 409 });
-
-      const victim = byPath("swap/victim");
-      expect(victim).toBeDefined();
-      await renamePath(join(root, "swap"), join(root, "swap-original"));
-      await symlink(outside, join(root, "swap"));
-      await expect(
-        bounded(service.diff(root, victim.path.id, "unstaged")),
-      ).rejects.toMatchObject({ status: 409 });
-    },
-  );
-
-  it("compares both sides of a staged rename without inventing added source", async () => {
-    const root = await mkdtemp(join(tmpdir(), "inspire-rename-"));
-    directories.push(root);
-    await exec("git", ["init", "-q", root]);
-    await exec("git", [
-      "-C",
-      root,
-      "config",
-      "user.email",
-      "test@example.invalid",
-    ]);
-    await exec("git", ["-C", root, "config", "user.name", "Test"]);
-    const source = Array.from(
-      { length: 10 },
-      (_, index) => `line ${index}\n`,
-    ).join("");
-    await writeFile(join(root, "old name.txt"), source);
-    await exec("git", ["-C", root, "add", "."]);
-    await exec("git", ["-C", root, "commit", "-qm", "base"]);
-    await exec("git", ["-C", root, "mv", "old name.txt", "new name.txt"]);
-    const service = new GitInspectionService();
-    const pathId = Buffer.from("new name.txt").toString("base64url");
-
-    const pureRename = await service.diff(root, pathId, "staged");
-    expect(pureRename).toMatchObject({
-      kind: "text",
-      additions: 0,
-      deletions: 0,
-    });
-    if (pureRename.kind === "text") {
-      expect(pureRename.lines.every((line) => line.kind === "meta")).toBe(true);
-      expect(pureRename.lines.map((line) => line.text)).toContain(
-        "rename from old name.txt",
-      );
-    }
-
-    await writeFile(
-      join(root, "new name.txt"),
-      source.replace("line 2\n", "staged\n"),
-    );
-    await exec("git", ["-C", root, "add", "new name.txt"]);
-    await writeFile(
-      join(root, "new name.txt"),
-      source.replace("line 2\n", "working\n"),
-    );
-    const staged = await service.diff(root, pathId, "staged");
-    const working = await service.diff(root, pathId, "unstaged");
-    for (const diff of [staged, working]) {
-      expect(diff).toMatchObject({ kind: "text", additions: 1, deletions: 1 });
-    }
-    if (staged.kind === "text" && working.kind === "text") {
-      expect(
-        staged.lines
-          .filter((line) => line.kind === "delete" || line.kind === "add")
-          .map((line) => line.text),
-      ).toEqual(["-line 2", "+staged"]);
-      expect(
-        working.lines
-          .filter((line) => line.kind === "delete" || line.kind === "add")
-          .map((line) => line.text),
-      ).toEqual(["-staged", "+working"]);
-      expect(
-        working.lines.some((line) => line.text.startsWith("rename from")),
-      ).toBe(false);
-    }
-  });
-
-  it("parses a real merge conflict", async () => {
-    const root = await mkdtemp(join(tmpdir(), "inspire-conflict-"));
-    directories.push(root);
-    await exec("git", ["init", "-q", root]);
-    await exec("git", [
-      "-C",
-      root,
-      "config",
-      "user.email",
-      "test@example.invalid",
-    ]);
-    await exec("git", ["-C", root, "config", "user.name", "Test"]);
-    await writeFile(join(root, "conflict.txt"), "base\n");
-    await exec("git", ["-C", root, "add", "."]);
-    await exec("git", ["-C", root, "commit", "-qm", "base"]);
-    const { stdout } = await exec("git", [
-      "-C",
-      root,
-      "branch",
-      "--show-current",
-    ]);
-    const mainBranch = stdout.trim();
-    await exec("git", ["-C", root, "checkout", "-qb", "other"]);
-    await writeFile(join(root, "conflict.txt"), "other\n");
-    await exec("git", ["-C", root, "commit", "-qam", "other"]);
-    await exec("git", ["-C", root, "checkout", "-q", mainBranch]);
-    await writeFile(join(root, "conflict.txt"), "main\n");
-    await exec("git", ["-C", root, "commit", "-qam", "main"]);
-    await expect(
-      exec("git", ["-C", root, "merge", "other"]),
-    ).rejects.toBeDefined();
-
-    const service = new GitInspectionService();
-    const status = await service.status(root);
-    expect(status.kind).toBe("repository");
-    if (status.kind !== "repository") return;
-    const conflict = status.files.find(
-      (file) => file.path.utf8Path === "conflict.txt",
-    )!;
-    expect(conflict.conflict).toEqual({ code: "UU" });
-    await expect(
-      service.diff(root, conflict.path.id, "unstaged"),
-    ).resolves.toMatchObject({ kind: "conflict", code: "UU" });
-  });
-
-  it.runIf(process.platform !== "win32")(
-    "parses a real local submodule without invoking content helpers",
-    async () => {
-      const source = await mkdtemp(join(tmpdir(), "inspire-submodule-source-"));
-      const root = await mkdtemp(join(tmpdir(), "inspire-submodule-parent-"));
-      directories.push(source, root);
-      for (const repository of [source, root]) {
-        await exec("git", ["init", "-q", repository]);
-        await exec("git", [
-          "-C",
-          repository,
-          "config",
-          "user.email",
-          "test@example.invalid",
-        ]);
-        await exec("git", ["-C", repository, "config", "user.name", "Test"]);
-      }
-      await writeFile(join(source, "tracked.txt"), "base\n");
-      await exec("git", ["-C", source, "add", "."]);
-      await exec("git", ["-C", source, "commit", "-qm", "base"]);
-      await exec("git", [
-        "-c",
-        "protocol.file.allow=always",
-        "-C",
-        root,
-        "submodule",
-        "add",
-        "-q",
-        source,
-        "modules/local",
-      ]);
-      await exec("git", ["-C", root, "commit", "-qam", "submodule"]);
-      await writeFile(
-        join(root, "modules", "local", "tracked.txt"),
-        "modified\n",
-      );
-      const monitorDirectory = await mkdtemp(
-        join(tmpdir(), "inspire-submodule-monitor-"),
-      );
-      directories.push(monitorDirectory);
-      const monitorMarker = join(monitorDirectory, "executed");
-      const monitor = join(monitorDirectory, "monitor");
-      await writeFile(
-        monitor,
-        `#!${process.execPath}\nrequire("node:fs").writeFileSync(${JSON.stringify(monitorMarker)}, "executed");\nprocess.stdout.write("0\\n");\n`,
-        { mode: 0o755 },
-      );
-      await exec("git", [
-        "-C",
-        join(root, "modules", "local"),
-        "config",
-        "core.fsmonitor",
-        monitor,
-      ]);
-
-      const service = new GitInspectionService();
-      const status = await service.status(root);
-      await expect(access(monitorMarker)).rejects.toThrow();
-      expect(status.kind).toBe("repository");
-      if (status.kind !== "repository") return;
-      const module = status.files.find(
-        (file) => file.path.utf8Path === "modules/local",
-      )!;
-      expect(module.submodule).toMatchObject({ trackedModified: true });
-      await expect(
-        service.diff(root, module.path.id, "unstaged"),
-      ).resolves.toMatchObject({ kind: "submodule" });
-    },
   );
 });

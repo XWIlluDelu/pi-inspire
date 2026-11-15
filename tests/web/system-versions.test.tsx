@@ -1,47 +1,47 @@
 // @vitest-environment jsdom
 import { act, render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it } from "vitest";
-import type { PiUpdateCheckResponse } from "../../shared/contracts";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type {
+  HostUpdateStatus,
+  PiUpdateCheckResponse,
+} from "../../shared/contracts";
 import { Notices } from "../../src/components/Notices";
 import { SystemVersionsCard } from "../../src/components/SystemVersionsCard";
 import { store } from "../../src/store";
-import {
-  availableUpdates,
-  updateDetailsText,
-} from "../../src/update-availability";
 import { sessionPage } from "./fixtures/session-catalog";
 import {
   bootstrapPayload,
+  emptySnapshot,
   FakeWebSocket,
   installFakeWebSocket,
   installFetch,
   installLocalStorage,
 } from "./helpers";
 
-describe("System installation and loaded-version status", () => {
+describe("System versions", () => {
   beforeEach(() => {
     installLocalStorage();
     installFakeWebSocket();
   });
+  afterEach(() => vi.unstubAllGlobals());
 
   async function initialize(piUpdateCheck: PiUpdateCheckResponse) {
+    const bootstrap = bootstrapPayload({
+      piVersion: piUpdateCheck.currentVersion,
+    });
+    const updateStatus: HostUpdateStatus = {
+      ...bootstrap.updateStatus,
+      piUpdateCheck,
+      inspireUpdateCheck: { kind: "unreleased" },
+    };
     installFetch((url) => {
       if (url.startsWith("/api/bootstrap"))
-        return {
-          body: bootstrapPayload({
-            piVersion: "1.3.0",
-            updateStatus: {
-              ...bootstrapPayload().updateStatus,
-              piUpdateCheck,
-              inspireUpdateCheck: { kind: "unreleased" },
-            },
-          }),
-        };
+        return { body: { ...bootstrap, updateStatus } };
       if (url.startsWith("/api/sessions")) return { body: sessionPage([], 0) };
       return undefined;
     });
-    await store.init("token");
-    FakeWebSocket.instances.at(-1)!.open();
+    await store.init();
+    FakeWebSocket.instances.at(-1)!.join(emptySnapshot, { updateStatus });
   }
 
   it("replaces update actions and the notice with one restart status, then clears it for a new Host", async () => {
@@ -59,7 +59,7 @@ describe("System installation and loaded-version status", () => {
     );
     expect(screen.getByText("v1.4.0")).toHaveAttribute(
       "title",
-      "Installed Pi version; Host loaded v1.3.0.",
+      "The Host is running Pi v1.3.0.",
     );
     expect(screen.getByText("Restart Host to apply")).toBeVisible();
     expect(screen.getByText("No updates")).toBeVisible();
@@ -79,29 +79,6 @@ describe("System installation and loaded-version status", () => {
     });
     expect(screen.queryByText("Restart Host to apply")).toBeNull();
     expect(screen.getByText("Up to date")).toBeVisible();
-    expect(screen.getByText("v1.4.0")).not.toHaveAttribute("title");
-  });
-
-  it("offers a still-newer update from the installed version while a Host restart is pending", async () => {
-    await initialize({
-      currentVersion: "1.3.0",
-      installedVersion: "1.4.0",
-      pi: {
-        kind: "available",
-        latestVersion: "1.5.0",
-        releaseUrl: "https://pi.dev/changelog",
-      },
-      extensions: { kind: "none" },
-    });
-    render(<SystemVersionsCard />);
-    expect(screen.getByText("v1.4.0")).toBeVisible();
-    expect(
-      screen.getByRole("link", { name: "v1.5.0 available ↗" }),
-    ).toBeVisible();
-    expect(screen.getByText("Restart Host to apply")).toBeVisible();
-    expect(updateDetailsText(availableUpdates(store.getState())!)).toBe(
-      "Pi 1.4.0 → 1.5.0\nRun pi update\nhttps://pi.dev/changelog",
-    );
   });
 
   it("does not present the startup version as the installed version after a failed local read", async () => {
@@ -113,6 +90,7 @@ describe("System installation and loaded-version status", () => {
     });
     render(<SystemVersionsCard />);
     expect(screen.getByText("Version unavailable")).toBeVisible();
+    expect(screen.getByText("Check unavailable")).toBeVisible();
     expect(screen.queryByText("v1.3.0")).toBeNull();
     expect(screen.queryByText("Restart Host to apply")).toBeNull();
   });

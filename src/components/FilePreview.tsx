@@ -1,52 +1,54 @@
 import {
   AlertTriangle,
-  ArrowLeft,
-  Check,
+  CodeXml,
   Download,
   FileText,
-  RotateCw,
+  GitCompareArrows,
+  MousePointer2,
+  MousePointerClick,
 } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { ResourceDescriptor } from "../../shared/contracts";
 import {
   resourceReferenceLabel,
   resourceReferenceLine,
 } from "../../shared/resource-references";
+import { delimiterForFile } from "../delimited-text";
 import { formatBytes } from "../format";
+import {
+  type FileSourceJump,
+  inspectedFileTab,
+  inspectedPreview,
+  type ResourcePreview,
+} from "../resource-preview";
 import { store } from "../store";
-import { highlightSource, languageForFile } from "../syntax-highlighting";
-import { useCopied } from "../use-copied";
+import { languageForFile } from "../syntax-highlighting";
+import type { FileReadingState } from "../workbench-session";
+import { useFileChanges } from "./ChangesPane";
+import { CodeView, SourceReader } from "./CodeView";
 import { ContextPaneState } from "./ContextPaneState";
+import { CopyAction } from "./CopyAction";
+import { FloatingPaneActions } from "./FloatingPaneActions";
 import type { ContextPaneView } from "./context-pane-view";
+import { DocumentOutline } from "./DocumentOutline";
 import { DocumentPreview } from "./DocumentPreview";
 import { ImagePreview } from "./ImagePreview";
 import { NotebookPreview } from "./NotebookPreview";
 import { PdfPreview } from "./PdfPreview";
 import { PiLoader } from "./PiLoader";
 import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
-import { ResourcePathLabel } from "./ResourcePathLabel";
+import { ReaderQuoteAction } from "./ReaderQuoteAction";
+import { TablePreview } from "./TablePreview";
 
-export function PathCopyButton({ path }: { path: string }) {
-  const { copied, copy } = useCopied({
-    scope: path,
-    onError: store.reportCopyError,
-  });
-  return (
-    <button
-      type="button"
-      className={`file-path-action ${copied ? "file-path-action--copied" : ""}`}
-      onClick={() => void copy(path, store.copyOwnership())}
-      aria-label={copied ? "Path copied" : `Copy path ${path}`}
-      title={copied ? "Copied" : `Click to copy — ${path}`}
-    >
-      <span className="file-path-action__text">
-        <ResourcePathLabel path={path} />
-      </span>
-      {copied ? (
-        <Check size={11} className="file-path-action__check" aria-hidden />
-      ) : null}
-    </button>
-  );
+function tableDelimiter(descriptor: ResourceDescriptor): "," | "\t" | null {
+  return descriptor.kind === "text" ? delimiterForFile(descriptor.name) : null;
 }
 
 function hasSourceAndPreview(
@@ -58,17 +60,14 @@ function hasSourceAndPreview(
     (descriptor.kind === "html" ||
       descriptor.kind === "markdown" ||
       descriptor.kind === "notebook" ||
-      descriptor.mimeType === "image/svg+xml")
+      descriptor.mimeType === "image/svg+xml" ||
+      tableDelimiter(descriptor) !== null)
   );
-}
-
-interface LineJump {
-  line: number;
-  request: number;
 }
 
 interface SourceReadingPosition {
   current: { top: number; left: number } | null;
+  save?: () => void;
 }
 
 function SourceCodePreview({
@@ -80,20 +79,16 @@ function SourceCodePreview({
 }: {
   text: string;
   language: string;
-  jump: LineJump | null;
+  jump: FileSourceJump | null;
   readingPosition?: SourceReadingPosition;
   truncated?: boolean;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
-  const lines = useMemo(() => text.split("\n"), [text]);
   const lineNumbers = useMemo(
-    () => lines.map((_, index) => index + 1).join("\n"),
-    [lines],
+    () => text.split("\n").map((_, index) => index + 1),
+    [text],
   );
-  const highlighted = useMemo(
-    () => highlightSource(text, language),
-    [language, text],
-  );
+  const targetLine = jump ? Math.min(lineNumbers.length, jump.line) : null;
   useLayoutEffect(() => {
     const root = rootRef.current;
     if (!root) return;
@@ -105,7 +100,7 @@ function SourceCodePreview({
     }
     root.scrollTop = 0;
     root.scrollLeft = 0;
-    if (!jump) return;
+    if (targetLine === null) return;
     const lineHeight = Number.parseFloat(getComputedStyle(root).lineHeight);
     const source = root.querySelector<HTMLElement>(".source-view__pre");
     const paddingTop = source
@@ -114,41 +109,36 @@ function SourceCodePreview({
     if (!Number.isFinite(lineHeight) || lineHeight <= 0) return;
     root.scrollTop = Math.max(
       0,
-      (jump.line - 1) * lineHeight +
+      (targetLine - 1) * lineHeight +
         (Number.isFinite(paddingTop) ? paddingTop : 0) -
         root.clientHeight / 3,
     );
-  }, [jump, readingPosition]);
+  }, [jump, readingPosition, targetLine]);
   return (
-    <div
-      className="source-view source-reader"
+    <SourceReader
+      className="source-view"
+      label="File source"
       ref={rootRef}
       onScroll={(event) => {
-        if (readingPosition)
+        if (readingPosition) {
           readingPosition.current = {
             top: event.currentTarget.scrollTop,
             left: event.currentTarget.scrollLeft,
           };
+          readingPosition.save?.();
+        }
       }}
-      tabIndex={0}
-      role="region"
-      data-pane-scroll-active="true"
-      aria-label="File source"
     >
-      <div className="source-view__gutter" aria-hidden>
-        <pre>{lineNumbers}</pre>
-      </div>
-      <pre className="source-view__pre">
-        <code
-          className={`hljs language-${language}`}
-          // highlight.js escapes the input and emits span elements only.
-          dangerouslySetInnerHTML={{ __html: highlighted }}
-        />
-      </pre>
+      <CodeView
+        className="source-view__gutter"
+        aria-hidden
+        text={lineNumbers.join("\n")}
+      />
+      <CodeView className="source-view__pre" text={text} language={language} />
       {truncated ? (
-        <div className="source-view__boundary">Preview ends here</div>
+        <div className="source-boundary">Preview ends here</div>
       ) : null}
-    </div>
+    </SourceReader>
   );
 }
 
@@ -157,18 +147,27 @@ type FileViewMode = "preview" | "source";
 function FileViewControl({
   mode,
   onChange,
+  disabled = false,
 }: {
   mode: FileViewMode;
   onChange: (mode: FileViewMode) => void;
+  disabled?: boolean;
 }) {
   const target = mode === "preview" ? "source" : "preview";
   return (
     <button
       type="button"
-      className="file-detail-header__view"
+      className="icon-button"
+      aria-label={target === "source" ? "Source" : "Preview"}
+      title={target === "source" ? "Source" : "Preview"}
+      disabled={disabled}
       onClick={() => onChange(target)}
     >
-      {target === "source" ? "Source" : "Preview"}
+      {target === "source" ? (
+        <CodeXml size={16} aria-hidden />
+      ) : (
+        <FileText size={16} aria-hidden />
+      )}
     </button>
   );
 }
@@ -184,31 +183,34 @@ function sourceLanguage(descriptor: ResourceDescriptor): string {
 function TruncatedRenderedNotice() {
   return (
     <div className="file-preview__notice" role="status">
-      Rendered preview truncated · Source shows the preview boundary
+      Preview truncated. See the cutoff in Source.
     </div>
   );
 }
 
 function ReadyResource({
-  state,
+  preview,
   jump,
   viewMode,
   readingPosition,
   interactiveUrl,
 }: {
-  state: ContextPaneView;
-  jump: LineJump | null;
+  preview: Extract<ResourcePreview, { status: "ready" }>;
+  jump: FileSourceJump | null;
   viewMode: FileViewMode;
   readingPosition?: SourceReadingPosition;
   interactiveUrl?: string;
 }) {
-  const preview = state.resourcePreview;
-  if (!preview || preview.status !== "ready") return null;
   const { descriptor } = preview;
-  if (viewMode === "source" && hasSourceAndPreview(descriptor, preview.text))
+  const delimiter = tableDelimiter(descriptor);
+  if (
+    preview.text !== undefined &&
+    ((descriptor.kind === "text" && !delimiter) ||
+      (viewMode === "source" && hasSourceAndPreview(descriptor, preview.text)))
+  )
     return (
       <SourceCodePreview
-        text={preview.text!}
+        text={preview.text}
         language={sourceLanguage(descriptor)}
         jump={jump}
         readingPosition={readingPosition}
@@ -223,22 +225,21 @@ function ReadyResource({
         hint={formatBytes(descriptor.size)}
       />
     );
-  if (descriptor.kind === "text" && preview.text !== undefined)
+  if (delimiter && preview.text !== undefined)
     return (
-      <SourceCodePreview
+      <TablePreview
         text={preview.text}
-        language={languageForFile(descriptor.name)}
-        jump={jump}
-        readingPosition={readingPosition}
+        delimiter={delimiter}
         truncated={preview.truncated}
+        name={descriptor.name}
       />
     );
   if (descriptor.kind === "notebook" && preview.text !== undefined)
     return preview.truncated ? (
       <ContextPaneState
         icon={<FileText size={17} aria-hidden />}
-        title="Notebook preview not loaded"
-        hint="Open Source to inspect this large notebook."
+        title="Notebook too large to render"
+        hint="Open Source to see the available text."
       />
     ) : (
       <DocumentPreview descriptor={descriptor} className="res__preview-fill">
@@ -272,18 +273,25 @@ function ReadyResource({
         />
       </>
     );
-  if (descriptor.kind === "image" && preview.objectUrl)
+  if (
+    (descriptor.kind === "image" || descriptor.kind === "video") &&
+    preview.objectUrl
+  )
     return (
       <div
         className="res__preview-fill res__preview-media"
         data-pane-scroll-active="true"
       >
-        <ImagePreview
-          src={preview.objectUrl}
-          alt={descriptor.name}
-          name={descriptor.name}
-          className="image-preview--file"
-        />
+        {descriptor.kind === "image" ? (
+          <ImagePreview
+            src={preview.objectUrl}
+            alt={descriptor.name}
+            name={descriptor.name}
+            className="image-preview--file"
+          />
+        ) : (
+          <video controls src={preview.objectUrl} />
+        )}
       </div>
     );
   if (descriptor.kind === "pdf" && preview.pdfBlob)
@@ -296,25 +304,16 @@ function ReadyResource({
     );
   if (descriptor.kind === "audio" && preview.objectUrl)
     return <audio className="res__media" controls src={preview.objectUrl} />;
-  if (descriptor.kind === "video" && preview.objectUrl)
-    return (
-      <div
-        className="res__preview-fill res__preview-media"
-        data-pane-scroll-active="true"
-      >
-        <video controls src={preview.objectUrl} />
-      </div>
-    );
   return (
     <ContextPaneState
       icon={<FileText size={17} aria-hidden />}
       title="Binary file"
-      hint="This file type is not rendered inline."
+      hint="Download to open this file."
     />
   );
 }
 
-export function ResourcePreviewContent({
+function ResourcePreviewContent({
   state,
   jump = null,
   viewMode = "preview",
@@ -322,18 +321,17 @@ export function ResourcePreviewContent({
   interactiveUrl,
 }: {
   state: ContextPaneView;
-  jump?: LineJump | null;
+  jump?: FileSourceJump | null;
   viewMode?: FileViewMode;
   readingPosition?: SourceReadingPosition;
   interactiveUrl?: string;
 }) {
-  const preview = state.resourcePreview;
+  const preview = inspectedPreview(state.fileInspection);
   if (!preview)
     return (
       <ContextPaneState
         icon={<FileText size={17} aria-hidden />}
         title="Select a file"
-        hint="Choose a workspace or recent file to preview it."
       />
     );
   if (preview.status === "loading")
@@ -355,10 +353,10 @@ export function ResourcePreviewContent({
           {preview.matches.map((match) => (
             <button
               type="button"
-              className="res__more res__choice"
+              className="button res__choice"
               key={match}
               title={match}
-              onClick={() => void store.openResource(match, "files", match)}
+              onClick={() => void store.openResource(match, match)}
             >
               {match}
             </button>
@@ -368,34 +366,31 @@ export function ResourcePreviewContent({
     );
   if (preview.status === "error") {
     const invalid =
-      state.resourceAvailability[preview.reference]?.availability === "invalid";
+      state.resourceStanding[preview.reference]?.availability === "invalid";
     return (
       <ContextPaneState
         icon={<AlertTriangle size={17} aria-hidden />}
         title={invalid ? "Not a file" : "Preview unavailable"}
         hint={preview.message}
-      >
-        {!invalid ? (
-          <button
-            type="button"
-            className="res__more button--quiet res__state-action"
-            onClick={() =>
-              void store.openResource(
-                preview.reference,
-                "files",
-                state.selectedResourceWorkspacePath ?? undefined,
-              )
-            }
-          >
-            <RotateCw size={12} aria-hidden /> Retry
-          </button>
-        ) : null}
-      </ContextPaneState>
+        action={
+          invalid
+            ? undefined
+            : {
+                run: () =>
+                  void store.openResource(
+                    preview.reference,
+                    state.fileInspection.kind === "file"
+                      ? state.fileInspection.workspacePath
+                      : undefined,
+                  ),
+              }
+        }
+      />
     );
   }
   return (
     <ReadyResource
-      state={state}
+      preview={preview}
       jump={jump}
       viewMode={viewMode}
       readingPosition={readingPosition}
@@ -404,32 +399,55 @@ export function ResourcePreviewContent({
   );
 }
 
-export function FilePreview({ state }: { state: ContextPaneView }) {
-  const preview = state.resourcePreview;
+export type { FileReadingState } from "../workbench-session";
+
+export function FilePreview({
+  state,
+  readingState,
+  onQuote,
+}: {
+  state: ContextPaneView;
+  readingState?: FileReadingState;
+  /** Body readers only: send a selected passage, with its location, to the composer. */
+  onQuote?: (markdown: string) => void;
+}) {
+  const { fileInspection } = state;
+  const fileTab = inspectedFileTab(state);
+  const showingChanges = fileTab?.view === "changes";
+  const changes = useFileChanges({
+    state,
+    readingState,
+    enabled: showingChanges,
+  });
+  const selectedReference = fileInspection.reference;
+  const workspacePath =
+    fileInspection.kind === "file" ? fileInspection.workspacePath : undefined;
+  const preview = inspectedPreview(fileInspection);
   const descriptor = preview?.status === "ready" ? preview.descriptor : null;
-  const reference =
-    descriptor?.reference ?? state.selectedResourceReference ?? "File";
+  const reference = descriptor?.reference ?? selectedReference ?? "File";
   const displayPath =
     descriptor?.workspacePath ??
-    state.selectedResourceWorkspacePath ??
+    workspacePath ??
+    fileTab?.git?.displayPath ??
     (/^(?:file:\/\/|vscode:\/\/file\/)/iu.test(reference)
       ? reference
       : resourceReferenceLabel(reference));
-  const [jump, setJump] = useState<LineJump | null>(null);
   // Reading choices belong to the selected file, not its renewable handle.
-  // A new selection lifetime also prevents A -> B -> A from reviving offsets.
+  // Open tabs supply their own reading state; standalone previews keep a local lifetime.
   const readingPosition = useMemo<SourceReadingPosition>(
-    () => ({ current: null }),
+    () => readingState?.source ?? { current: null },
     [
+      readingState,
       state.transportGeneration,
       state.sessionId,
       state.cwd,
-      state.selectedResourceReference,
+      selectedReference,
     ],
   );
   const [fileView, setFileView] = useState<{
     owner: SourceReadingPosition;
     mode: FileViewMode;
+    jump?: FileSourceJump;
   } | null>(null);
   const canToggle = Boolean(
     descriptor &&
@@ -438,22 +456,46 @@ export function FilePreview({ state }: { state: ContextPaneView }) {
   );
   const sourceOnly =
     descriptor?.kind === "text" &&
+    tableDelimiter(descriptor) === null &&
     preview?.status === "ready" &&
     preview.text !== undefined;
   // An exact workspace filename may literally end in ":12"; a resolved
   // path for a citation is not a reason to discard its line navigation.
   const referencedLine =
-    state.selectedResourceWorkspacePath === state.selectedResourceReference
+    workspacePath === selectedReference
       ? null
-      : resourceReferenceLine(
-          preview?.reference ?? state.selectedResourceReference ?? "",
-        );
+      : resourceReferenceLine(preview?.reference ?? selectedReference ?? "");
   const defaultView: FileViewMode =
     sourceOnly || (canToggle && referencedLine) ? "source" : "preview";
+  const activeView = fileView?.owner === readingPosition ? fileView : null;
   const viewMode =
-    descriptor && fileView?.owner === readingPosition
-      ? fileView.mode
-      : defaultView;
+    descriptor && activeView
+      ? activeView.mode
+      : (readingState?.mode ?? defaultView);
+  const fallbackJump = useMemo(
+    () => (referencedLine ? { line: referencedLine } : null),
+    [referencedLine],
+  );
+  const jump = activeView?.jump ?? fallbackJump;
+  const sourceJump = preview?.status === "ready" ? preview.sourceJump : null;
+  useLayoutEffect(() => {
+    if (!sourceJump || !store.consumeFileSourceJump(sourceJump)) return;
+    if (!sourceOnly && !canToggle) return;
+    readingPosition.current = null;
+    if (readingState) {
+      readingState.mode = "source";
+      readingState.save?.();
+    }
+    setFileView({ owner: readingPosition, mode: "source", jump: sourceJump });
+  }, [sourceJump, sourceOnly, canToggle, readingPosition, readingState]);
+  const showBody = (mode: FileViewMode) => {
+    if (readingState) {
+      readingState.mode = mode;
+      readingState.save?.();
+    }
+    setFileView({ owner: readingPosition, mode });
+    if (showingChanges) void store.setFileChangesView(false);
+  };
   const htmlScope = [
     descriptor?.id,
     preview?.status === "ready" ? preview.objectUrl : null,
@@ -463,8 +505,9 @@ export function FilePreview({ state }: { state: ContextPaneView }) {
     state.transcriptViewId,
     state.resourcesOpen,
     state.contextMode,
-    state.fileBrowserView,
+    fileInspection.kind,
     viewMode,
+    showingChanges,
   ].join("|");
   const [download, setDownload] = useState<{
     scope: string;
@@ -472,6 +515,7 @@ export function FilePreview({ state }: { state: ContextPaneView }) {
     error?: string;
   } | null>(null);
   const currentDownload = download?.scope === htmlScope ? download : null;
+  const downloadName = state.sessionId ? descriptor?.name : null;
   const downloadResource = async () => {
     setDownload({ scope: htmlScope, pending: true });
     try {
@@ -494,22 +538,30 @@ export function FilePreview({ state }: { state: ContextPaneView }) {
     url?: string;
     error?: string;
   } | null>(null);
-  const retireInteraction = () => {
+  const retireInteraction = useCallback(() => {
     interactionGeneration.current++;
     interactionLease.current?.release();
     interactionLease.current = null;
-  };
+  }, []);
   useEffect(() => {
     setInteraction(null);
-    return () => {
-      interactionGeneration.current++;
-      interactionLease.current?.release();
-      interactionLease.current = null;
-    };
-  }, [htmlScope]);
+    return retireInteraction;
+  }, [htmlScope, retireInteraction]);
   const currentInteraction =
     interaction?.scope === htmlScope ? interaction : null;
+  const previewRefreshError =
+    !showingChanges && preview?.status === "ready"
+      ? preview.refreshError
+      : null;
+  const notices = {
+    refresh:
+      previewRefreshError &&
+      `Preview refresh failed: ${previewRefreshError}. Showing the last loaded content.`,
+    download: currentDownload?.error,
+    interaction: currentInteraction?.error,
+  };
   const canInteract =
+    !showingChanges &&
     descriptor?.kind === "html" &&
     viewMode === "preview" &&
     preview?.status === "ready" &&
@@ -541,115 +593,171 @@ export function FilePreview({ state }: { state: ContextPaneView }) {
       });
     }
   };
-  const lineCount =
-    preview?.status === "ready" && preview.text !== undefined
-      ? preview.text.split("\n").length
-      : 0;
-  useEffect(() => {
-    if (!referencedLine || lineCount === 0) {
-      setJump(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const root = contentRef.current;
+    const saved = readingState?.rendered.current;
+    if (
+      !root ||
+      !saved ||
+      showingChanges ||
+      viewMode === "source" ||
+      preview?.status !== "ready"
+    )
       return;
-    }
-    setJump((previous) => ({
-      line: Math.min(lineCount, referencedLine),
-      request: (previous?.request ?? 0) + 1,
-    }));
-  }, [descriptor?.id, lineCount, referencedLine]);
+    const restore = () => {
+      const scroller =
+        root.querySelector<HTMLElement>('[data-pane-scroll-active="true"]') ??
+        root;
+      scroller.scrollTop = saved.top;
+      scroller.scrollLeft = saved.left;
+      if (Math.abs(scroller.scrollTop - saved.top) < 1) stop();
+    };
+    const observer = new MutationObserver(restore);
+    const stop = () => {
+      observer.disconnect();
+      for (const event of ["wheel", "touchstart", "pointerdown", "keydown"])
+        root.removeEventListener(event, stop, true);
+    };
+    observer.observe(root, { childList: true, subtree: true });
+    for (const event of ["wheel", "touchstart", "pointerdown", "keydown"])
+      root.addEventListener(event, stop, true);
+    restore();
+    return stop;
+  }, [readingState, viewMode, preview?.status, descriptor?.id, showingChanges]);
   return (
-    <div className="file-preview">
-      <div className="file-detail-header">
-        <div className="file-detail-header__path">
+    <div className="file-preview" ref={rootRef}>
+      <FloatingPaneActions
+        className="file-preview__actions"
+        label="file actions"
+        readingSurface={contentRef}
+        owner={readingPosition}
+      >
+        {canToggle || showingChanges ? (
+          <FileViewControl
+            mode={showingChanges ? "preview" : viewMode}
+            disabled={
+              showingChanges &&
+              (preview?.status === "error" ||
+                (preview?.status === "ready" && preview.text === undefined))
+            }
+            onChange={showBody}
+          />
+        ) : null}
+        {!showingChanges &&
+        viewMode === "preview" &&
+        (descriptor?.kind === "markdown" || descriptor?.kind === "notebook") ? (
+          <DocumentOutline contentRef={contentRef} identity={descriptor.id} />
+        ) : null}
+        <button
+          type="button"
+          className="icon-button file-detail-header__git"
+          aria-label="Git changes"
+          title="Git changes"
+          aria-pressed={showingChanges}
+          disabled={!state.sessionId || !selectedReference}
+          onClick={() => void store.setFileChangesView(!showingChanges)}
+        >
+          <GitCompareArrows size={16} aria-hidden />
+        </button>
+        {changes?.controls}
+        {canInteract ? (
           <button
             type="button"
-            className="file-preview__back"
-            onClick={() => store.showFileBrowser()}
-            aria-label="Back to Files"
-          >
-            <ArrowLeft size={15} aria-hidden />
-            <span>Files</span>
-          </button>
-          <PathCopyButton path={displayPath} />
-        </div>
-        <div className="file-detail-header__actions">
-          {descriptor && state.sessionId ? (
-            <button
-              type="button"
-              className="icon-button"
-              aria-label={`Download ${descriptor.name}`}
-              title="Download"
-              disabled={currentDownload?.pending}
-              onClick={() => void downloadResource()}
-            >
-              <Download size={14} aria-hidden />
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="icon-button"
-              aria-label="Download unavailable"
-              title="Download unavailable"
-              disabled
-            >
-              <Download size={14} aria-hidden />
-            </button>
-          )}
-          {canInteract ? (
-            <button
-              type="button"
-              className="file-detail-header__view file-detail-header__interaction"
-              aria-pressed={currentInteraction?.status === "running"}
-              aria-busy={currentInteraction?.status === "loading"}
-              disabled={preview?.status === "ready" && preview.refreshing}
-              title={
-                currentInteraction && currentInteraction.status !== "error"
-                  ? "Stop this page and return to static preview"
-                  : "Run this file's JavaScript and load its resources"
-              }
-              onClick={() => void toggleInteraction()}
-            >
-              {currentInteraction?.status === "loading" ? (
-                <PiLoader size={13} aria-hidden />
-              ) : null}
-              {currentInteraction && currentInteraction.status !== "error"
+            className="icon-button file-detail-header__interaction"
+            aria-label={
+              currentInteraction && currentInteraction.status !== "error"
                 ? "Stop interaction"
-                : "Enable interaction"}
-            </button>
-          ) : null}
-          {canToggle ? (
-            <FileViewControl
-              mode={viewMode}
-              onChange={(mode) => {
-                if (descriptor) setFileView({ owner: readingPosition, mode });
-              }}
-            />
-          ) : null}
-        </div>
-      </div>
-      <div className="file-preview__content">
-        {preview?.status === "ready" && preview.refreshError ? (
-          <div className="file-preview__notice" role="status">
-            Preview refresh failed: {preview.refreshError}. Showing the last
-            loaded content.
-          </div>
+                : "Enable interaction"
+            }
+            aria-pressed={currentInteraction?.status === "running"}
+            aria-busy={currentInteraction?.status === "loading"}
+            disabled={preview?.status === "ready" && preview.refreshing}
+            title={
+              currentInteraction && currentInteraction.status !== "error"
+                ? "Disable interaction"
+                : "Enable interaction"
+            }
+            onClick={() => void toggleInteraction()}
+          >
+            {currentInteraction?.status === "loading" ? (
+              <PiLoader size={16} aria-hidden />
+            ) : currentInteraction?.status === "running" ? (
+              <MousePointerClick size={16} aria-hidden />
+            ) : (
+              <MousePointer2 size={16} aria-hidden />
+            )}
+          </button>
         ) : null}
-        {currentDownload?.error ? (
-          <div className="file-preview__notice" role="status">
-            {currentDownload.error}
-          </div>
-        ) : null}
-        {currentInteraction?.error ? (
-          <div className="file-preview__notice" role="status">
-            {currentInteraction.error}
-          </div>
-        ) : null}
-        <ResourcePreviewContent
-          state={state}
-          jump={jump}
-          viewMode={viewMode}
-          readingPosition={readingPosition}
-          interactiveUrl={currentInteraction?.url}
+        <CopyAction
+          text={displayPath}
+          label="Path"
+          copyLabel={`Copy path ${displayPath}`}
+          className=""
+          iconSize={16}
         />
+        <button
+          type="button"
+          className="icon-button"
+          aria-label={
+            downloadName ? `Download ${downloadName}` : "Download unavailable"
+          }
+          title={downloadName ? "Download" : "Download unavailable"}
+          disabled={!downloadName || currentDownload?.pending}
+          onClick={() => void downloadResource()}
+        >
+          <Download size={16} aria-hidden />
+        </button>
+      </FloatingPaneActions>
+      <div
+        className="file-preview__content"
+        ref={contentRef}
+        onScrollCapture={(event) => {
+          const element = event.target as HTMLElement;
+          if (
+            readingState &&
+            !showingChanges &&
+            viewMode !== "source" &&
+            (element === event.currentTarget ||
+              element.matches('[data-pane-scroll-active="true"]'))
+          ) {
+            readingState.rendered.current = {
+              top: element.scrollTop,
+              left: element.scrollLeft,
+            };
+            readingState.save?.();
+          }
+        }}
+      >
+        {Object.entries(notices).map(([key, notice]) =>
+          notice ? (
+            <div className="file-preview__notice" role="status" key={key}>
+              {notice}
+            </div>
+          ) : null,
+        )}
+        {changes ? (
+          changes.content
+        ) : (
+          <ResourcePreviewContent
+            state={state}
+            jump={jump}
+            viewMode={viewMode}
+            readingPosition={readingPosition}
+            interactiveUrl={currentInteraction?.url}
+          />
+        )}
       </div>
+      {!showingChanges && onQuote ? (
+        <ReaderQuoteAction
+          rootRef={rootRef}
+          contentRef={contentRef}
+          source={displayPath}
+          enabled={preview?.status === "ready"}
+          onQuote={onQuote}
+        />
+      ) : null}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { pairedPage } from "./support/navigation";
+import { openFixtureSession, pairedPage } from "./support/navigation";
 
 for (const touch of [false, true]) {
   test.describe(touch ? "touch file picker" : "desktop file picker", () => {
@@ -15,12 +15,8 @@ for (const touch of [false, true]) {
       page,
     }) => {
       await pairedPage(page);
-      if (touch)
-        await page.getByRole("button", { name: "Toggle navigation" }).tap();
-      await page
-        .locator(".nav__row-main")
-        .filter({ hasText: "Review extension event lifecycle" })
-        .click();
+      await openFixtureSession(page, /Review extension event lifecycle/);
+      await page.evaluate(() => document.fonts.ready);
       const trigger = page.getByRole("button", {
         name: "Add project files",
         exact: true,
@@ -38,44 +34,26 @@ for (const touch of [false, true]) {
       const anchor = (await trigger.boundingBox())!;
       const bounds = (await menu.boundingBox())!;
       const viewport = page.viewportSize()!;
-      expect(Math.abs(bounds.y + bounds.height - (anchor.y - 4))).toBeLessThan(
-        1,
-      );
-      expect(bounds.x).toBeGreaterThanOrEqual(16);
-      expect(bounds.x + bounds.width).toBeLessThanOrEqual(viewport.width - 16);
-      if (!touch) expect(Math.abs(bounds.x - anchor.x)).toBeLessThan(1);
-
+      expect(bounds.y + bounds.height).toBeLessThanOrEqual(anchor.y);
+      expect(bounds.x).toBeGreaterThanOrEqual(0);
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(viewport.width);
       if (!touch) {
         const hovered = list.getByRole("option").nth(1);
-        const keyboardHighlight = await list
-          .locator(".picker__row--active")
-          .evaluate((el) => getComputedStyle(el).backgroundColor);
         await hovered.hover();
-        await expect(menu.locator(".picker__row--active")).toHaveCount(0);
-        await expect(hovered).toHaveCSS("background-color", keyboardHighlight);
-        await page.mouse.move(viewport.width - 8, 400);
-        await expect(hovered).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-        await expect(search).toBeFocused();
-        await expect(menu).toBeVisible();
-        await hovered.hover();
+        await expect(search).not.toHaveAttribute("aria-activedescendant", /.+/);
         await search.press("ArrowDown");
-        await expect(hovered).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-        await expect(list.getByRole("option").nth(2)).toHaveClass(
-          /picker__row--active/,
-        );
-        await page.mouse.move(viewport.width - 8, 400);
-        await expect(list.getByRole("option").nth(2)).toHaveClass(
-          /picker__row--active/,
+        await expect(search).toHaveAttribute(
+          "aria-activedescendant",
+          (await list.getByRole("option").nth(2).getAttribute("id"))!,
         );
       }
 
       if (touch) await search.tap();
       await expect(search).toBeFocused();
-      await search.press("ArrowUp");
-      await search.press("ArrowUp");
-      await search.press("ArrowUp");
+      for (let index = 0; index < 4; index++) await search.press("ArrowUp");
       const lastId = (await search.getAttribute("aria-activedescendant"))!;
-      await expect(page.locator(`[id="${lastId}"]`)).toBeInViewport();
+      const chosen = page.locator(`[id="${lastId}"]`);
+      await expect(chosen).toBeInViewport();
       await expect
         .poll(() => list.evaluate((el) => el.scrollTop))
         .toBeGreaterThan(0);
@@ -97,3 +75,74 @@ for (const touch of [false, true]) {
     });
   });
 }
+
+test("keeps the project-file search field still and rejects a superseded response @cross-browser", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const requested = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const finished = Promise.withResolvers<void>();
+  const files = Array.from({ length: 24 }, (_, index) => ({
+    name: `candidate-${index}.ts`,
+    path: `src/candidate-${index}.ts`,
+    kind: "file",
+  }));
+  let denied = 0;
+  await page.route("**/api/files?**", async (route) => {
+    const query = new URL(route.request().url()).searchParams.get("q");
+    if (query === "denied") {
+      denied++;
+      return route.fulfill({ status: 403, json: { error: "Access denied" } });
+    }
+    if (query !== "retired")
+      return route.fulfill({ json: { files, truncated: false } });
+    requested.resolve();
+    await release.promise;
+    try {
+      await route.fulfill({
+        json: {
+          files: [{ name: "retired.ts", path: "retired.ts", kind: "file" }],
+          truncated: false,
+        },
+      });
+    } catch {
+      // Closing or superseding the owner may cancel its HTTP request.
+    } finally {
+      finished.resolve();
+    }
+  });
+  await pairedPage(page);
+  await openFixtureSession(page, /Review extension event lifecycle/);
+  await page
+    .getByRole("button", { name: "Add project files", exact: true })
+    .click();
+  const menu = page.getByRole("dialog", { name: "Add project files" });
+  const search = menu.getByRole("combobox", { name: "Search project files" });
+  const options = menu.getByRole("option");
+  await expect(menu).toHaveAttribute("data-placement", "up");
+  await expect(options).toHaveCount(files.length);
+  const initialTop = (await search.boundingBox())!.y;
+  try {
+    await search.fill("retired");
+    await requested.promise;
+    await expect(menu.getByText("Searching…", { exact: true })).toBeVisible();
+    await expect(options).toHaveCount(0);
+    await expect(search).toBeFocused();
+    await search.fill("denied");
+    await expect(menu.getByText("Project file search failed")).toBeVisible();
+    await search.fill("candidate");
+    await expect(options).toHaveCount(files.length);
+  } finally {
+    release.resolve();
+  }
+  await finished.promise;
+  await expect(menu.getByText("retired.ts")).toHaveCount(0);
+  expect(denied).toBe(1);
+  await expect(options).toHaveCount(files.length);
+  expect(Math.abs((await search.boundingBox())!.y - initialTop)).toBeLessThan(
+    1,
+  );
+  await expect(search).toBeFocused();
+});

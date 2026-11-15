@@ -1,4 +1,3 @@
-import type { ComposerHistoryEntry } from "../shared/contracts.js";
 import type { PiRpcProcess, PiRpcResponseFence } from "./pi-rpc.js";
 import { requestError } from "./request-error.js";
 import type { RuntimeSlot } from "./runtime-slot.js";
@@ -33,35 +32,31 @@ const OUTPUT_PREVIEW_CHARS = 50_000;
 export class RuntimeBashController {
   constructor(private readonly host: RuntimeBashHost) {}
 
-  async execute(
-    slot: RuntimeSlot,
-    entered: string,
-  ): Promise<ComposerHistoryEntry> {
+  async execute(slot: RuntimeSlot, entered: string): Promise<void> {
     const excludeFromContext = entered.startsWith("!!");
     const command = entered.slice(excludeFromContext ? 2 : 1).trim();
     if (!command) throw requestError("Enter a command after ! or !!", 400);
-    if (slot.nativeBash)
-      throw requestError(
-        "A shell command is already running; stop it first",
-        409,
-      );
+    const assertAvailable = () => {
+      if (slot.nativeBash)
+        throw requestError(
+          "A shell command is already running; stop it first",
+          409,
+        );
+      if (slot.stoppingInput)
+        throw requestError(
+          "Stop is in progress; send again after it finishes",
+          409,
+        );
+      if (slot.pendingBranchBridge)
+        throw requestError(
+          "Branch navigation is in progress; run the shell command after it finishes",
+          409,
+        );
+    };
+    assertAvailable();
     const worker = await this.host.admit(slot);
     // Admission is asynchronous: another delivery, Stop or navigation can win.
-    if (slot.nativeBash)
-      throw requestError(
-        "A shell command is already running; stop it first",
-        409,
-      );
-    if (slot.stoppingInput)
-      throw requestError(
-        "Stop is in progress; send again after it finishes",
-        409,
-      );
-    if (slot.pendingBranchBridge)
-      throw requestError(
-        "Branch navigation is in progress; run the shell command after it finishes",
-        409,
-      );
+    assertAvailable();
     const message: Record<string, unknown> = {
       role: "bashExecution",
       command,
@@ -70,14 +65,13 @@ export class RuntimeBashController {
       timestamp: Date.now(),
       __inspireBashRunning: true,
     };
-    let finish!: () => void;
+    const { promise: finished, resolve: finish } =
+      Promise.withResolvers<void>();
     const execution: NativeBashExecution = {
       worker,
       fence: { received: false },
       message,
-      finished: new Promise<void>((resolve) => {
-        finish = resolve;
-      }),
+      finished,
     };
     slot.nativeBash = execution;
     this.publish(slot, execution, "start");
@@ -102,7 +96,6 @@ export class RuntimeBashController {
       // During an agent run Pi defers this message until agent_end. The ordinary
       // reconciler adopts its exact result then, without disturbing tool order.
       await this.host.reconcile(slot);
-      return { text: entered, images: [], files: [] };
     } catch (error) {
       if (slot.process === worker) {
         execution.message = {

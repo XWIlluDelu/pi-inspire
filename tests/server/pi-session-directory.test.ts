@@ -4,36 +4,46 @@ import { join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 import lockfile from "proper-lockfile";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { resolvePiSessionDirectory } from "../../server/pi-session-directory.js";
 import { SettingsManager } from "../../server/pi-runtime.js";
+import { createPiSessionDirectoryResolver } from "../../server/pi-session-directory.js";
 import { PreferencesStore } from "../../server/preferences.js";
 import {
   createHostSessionCatalog,
   SessionCatalog,
 } from "../../server/session-catalog.js";
-import { SessionMetadataIndex } from "../../server/session-metadata.js";
 
 let root: string;
 let cwd: string;
 let agent: string;
+
+const resolveFreshDirectory = (cwd: string) =>
+  createPiSessionDirectoryResolver()(cwd);
 
 async function settings(directory: string, value: object) {
   await mkdir(directory, { recursive: true });
   await writeFile(join(directory, "settings.json"), JSON.stringify(value));
 }
 
-async function session(directory: string, id: string, project = cwd) {
+async function session(
+  directory: string,
+  id: string,
+  project = cwd,
+  parentSession?: string,
+) {
+  const path = join(directory, `${id}.jsonl`);
   await mkdir(directory, { recursive: true });
   await writeFile(
-    join(directory, `${id}.jsonl`),
+    path,
     `${JSON.stringify({
       type: "session",
       version: 3,
       id,
       cwd: project,
+      parentSession,
       timestamp: "2026-01-01T00:00:00Z",
     })}\n`,
   );
+  return path;
 }
 
 beforeEach(async () => {
@@ -56,13 +66,13 @@ describe("Pi session-directory selection", () => {
     "falls through an absent/empty env (%j) to project then global settings",
     async (environment) => {
       vi.stubEnv("PI_CODING_AGENT_SESSION_DIR", environment);
-      expect(await resolvePiSessionDirectory(cwd)).toBeUndefined();
+      expect(await resolveFreshDirectory(cwd)).toBeUndefined();
       await settings(agent, { sessionDir: "global" });
-      expect(await resolvePiSessionDirectory(cwd)).toBe(join(cwd, "global"));
+      expect(await resolveFreshDirectory(cwd)).toBe(join(cwd, "global"));
       await settings(join(cwd, ".pi"), { sessionDir: "local" });
-      expect(await resolvePiSessionDirectory(cwd)).toBe(join(cwd, "local"));
+      expect(await resolveFreshDirectory(cwd)).toBe(join(cwd, "local"));
       await settings(join(cwd, ".pi"), { sessionDir: "" });
-      expect(await resolvePiSessionDirectory(cwd)).toBeUndefined();
+      expect(await resolveFreshDirectory(cwd)).toBeUndefined();
     },
   );
 
@@ -75,7 +85,7 @@ describe("Pi session-directory selection", () => {
       const release = await lockfile.lock(path, { realpath: false });
       let released = false;
       let completed = false;
-      const pending = resolvePiSessionDirectory(cwd).finally(() => {
+      const pending = resolveFreshDirectory(cwd).finally(() => {
         completed = true;
       });
       try {
@@ -88,9 +98,7 @@ describe("Pi session-directory selection", () => {
         released = true;
         await expect(pending).resolves.toBe(join(cwd, "after"));
         await settings(directory, { sessionDir: "next-scan" });
-        expect(await resolvePiSessionDirectory(cwd)).toBe(
-          join(cwd, "next-scan"),
-        );
+        expect(await resolveFreshDirectory(cwd)).toBe(join(cwd, "next-scan"));
       } finally {
         if (!released) await release();
         await pending.catch(() => undefined);
@@ -102,12 +110,9 @@ describe("Pi session-directory selection", () => {
     await settings(agent, { sessionDir: "global" });
     await settings(join(cwd, ".pi"), { sessionDir: "local" });
     vi.stubEnv("PI_CODING_AGENT_SESSION_DIR", " env sessions ");
-    expect(await resolvePiSessionDirectory(cwd)).toBe(
-      join(cwd, " env sessions "),
-    );
-    expect(await resolvePiSessionDirectory(root)).toBe(
-      join(root, " env sessions "),
-    );
+    const resolveDirectory = createPiSessionDirectoryResolver();
+    expect(await resolveDirectory(cwd)).toBe(join(cwd, " env sessions "));
+    expect(await resolveDirectory(root)).toBe(join(root, " env sessions "));
   });
 
   it("uses Pi normalization for absolute paths, tilde and file URLs", async () => {
@@ -118,17 +123,30 @@ describe("Pi session-directory selection", () => {
       pathToFileURL(directory).href,
     ]) {
       vi.stubEnv("PI_CODING_AGENT_SESSION_DIR", value);
-      expect(await resolvePiSessionDirectory(cwd)).toBe(directory);
+      expect(await resolveFreshDirectory(cwd)).toBe(directory);
       vi.stubEnv("PI_CODING_AGENT_SESSION_DIR", undefined);
       await settings(agent, { sessionDir: value });
-      expect(await resolvePiSessionDirectory(cwd)).toBe(directory);
+      expect(await resolveFreshDirectory(cwd)).toBe(directory);
     }
     vi.stubEnv("PI_CODING_AGENT_SESSION_DIR", "~");
-    expect(await resolvePiSessionDirectory(cwd)).toBe(homedir());
+    expect(await resolveFreshDirectory(cwd)).toBe(homedir());
     vi.stubEnv("PI_CODING_AGENT_SESSION_DIR", "~someone/sessions");
-    expect(await resolvePiSessionDirectory(cwd)).toBe(
+    expect(await resolveFreshDirectory(cwd)).toBe(
       join(cwd, "~someone/sessions"),
     );
+  });
+
+  it("uses one global settings observation per scan and preserves project overrides", async () => {
+    const local = join(root, "local");
+    const other = join(root, "other");
+    await settings(join(local, ".pi"), { sessionDir: "project" });
+    await settings(agent, { sessionDir: "before" });
+    const resolveDirectory = createPiSessionDirectoryResolver();
+    expect(await resolveDirectory(cwd)).toBe(join(cwd, "before"));
+    await settings(agent, { sessionDir: "after" });
+    expect(await resolveDirectory(local)).toBe(join(local, "project"));
+    expect(await resolveDirectory(other)).toBe(join(other, "before"));
+    expect(await resolveFreshDirectory(other)).toBe(join(other, "after"));
   });
 });
 
@@ -167,47 +185,57 @@ describe("catalog storage discovery", () => {
     ]);
   });
 
-  it("deduplicates a custom root overlapping default storage without hiding distinct duplicate ids", async () => {
+  it("deduplicates overlapping storage but withholds ambiguous sessions and their fork links until repaired", async () => {
     const nested = join(agent, "sessions", "--project--");
-    await session(nested, "shared");
-    expect(
-      await new SessionMetadataIndex().list([undefined, nested]),
-    ).toHaveLength(1);
-    await settings(join(cwd, ".pi"), { sessionDir: nested });
+    const parent = await session(nested, "shared");
+    await session(nested, "fork", cwd, parent);
+    const overlap = join(root, "overlap");
+    await settings(join(overlap, ".pi"), { sessionDir: nested });
     const other = join(root, "other");
     await settings(join(other, ".pi"), { sessionDir: "custom" });
-    await session(join(other, "custom"), "shared", other);
-    const catalog = new SessionCatalog(cwd, undefined, async () => [other]);
-    expect((await catalog.list()).sessions).toEqual([]);
+    const catalog = new SessionCatalog(cwd, undefined, async () => [
+      overlap,
+      other,
+    ]);
+    expect((await catalog.list()).sessions).toMatchObject([
+      { id: "fork", parentSessionId: "shared" },
+      { id: "shared" },
+    ]);
+
+    const duplicate = await session(join(other, "custom"), "shared", other);
+    await catalog.refresh(true);
+    const remaining = (await catalog.list()).sessions;
+    expect(remaining.map(({ id }) => id)).toEqual(["fork"]);
+    expect(remaining[0]).not.toHaveProperty("parentSessionId");
     await expect(catalog.get("shared")).rejects.toMatchObject({ status: 409 });
+    await expect(catalog.listByIds(["shared"])).rejects.toMatchObject({
+      status: 409,
+    });
+
+    await rm(duplicate);
+    catalog.invalidate();
+    await expect(catalog.get("shared")).resolves.toMatchObject({
+      path: parent,
+    });
   });
 
-  it("discovers only the selected flat env directory, including after reconstruction", async () => {
+  it("reads only the selected flat env directory and never falls back to overridden storage", async () => {
     const selected = join(root, "selected");
     const overridden = join(root, "overridden");
     await settings(agent, { sessionDir: overridden });
     await session(overridden, "settings-session");
     await session(join(agent, "sessions", "--default--"), "default-session");
-    await session(selected, "selected-session");
+    const path = await session(selected, "selected-session");
     await session(join(selected, "nested"), "not-flat");
     vi.stubEnv("PI_CODING_AGENT_SESSION_DIR", selected);
-    for (let restart = 0; restart < 2; restart++) {
-      const catalog = new SessionCatalog(cwd);
-      expect((await catalog.list()).sessions.map((row) => row.id)).toEqual([
-        "selected-session",
-      ]);
-      expect(await catalog.get("selected-session")).toMatchObject({
-        path: join(selected, "selected-session.jsonl"),
-        cwd,
-      });
-    }
-  });
+    const catalog = new SessionCatalog(cwd);
+    expect((await catalog.list()).sessions.map(({ id }) => id)).toEqual([
+      "selected-session",
+    ]);
+    expect(await catalog.get("selected-session")).toMatchObject({ path, cwd });
 
-  it("does not search overridden storage when the env directory is absent", async () => {
-    await settings(agent, { sessionDir: "local" });
-    await session(join(cwd, "local"), "overridden");
     vi.stubEnv("PI_CODING_AGENT_SESSION_DIR", join(root, "absent"));
-    expect((await new SessionCatalog(cwd).list()).sessions).toEqual([]);
+    expect(await catalog.refresh(true)).toEqual([]);
   });
 
   it("reconstructs project-local storage from existing saved pinned and hidden folders", async () => {

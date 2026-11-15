@@ -4,26 +4,6 @@
   gap: var(--space-2);
 }
 
-.system-versions__check {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-}
-
-/* All state labels share one cell so the longest reserves the button width. */
-.system-versions__check-label {
-  display: grid;
-  text-align: center;
-}
-
-.system-versions__check-label > span {
-  grid-area: 1 / 1;
-}
-
-.system-versions__check-label > [aria-hidden="true"] {
-  visibility: hidden;
-}
-
 .system-versions__error {
   margin: 0;
   padding: var(--set-row-pad);
@@ -91,6 +71,13 @@
   overflow-wrap: anywhere;
 }
 
+.system-versions__command {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
 .system-versions__version {
   color: var(--ink);
   font-family: var(--font-mono);
@@ -129,8 +116,7 @@
   text-underline-offset: 2px;
 }
 
-.system-versions__row a:focus-visible,
-.system-versions__row .file-path-action:focus-visible {
+.system-versions__row a:focus-visible {
   outline: 2px solid var(--accent-focus);
   outline-offset: 2px;
   border-radius: var(--radius-xs);

@@ -1,16 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { toolPresentationConfigurationSchema } from "../../shared/tool-presentation-config";
+import { parseUnifiedDiff } from "../../src/diff";
 import type { ChatMessage, ToolCallContent } from "../../src/events";
 import { compileToolPresentationRules } from "../../src/tool-presentations/declarative";
-import {
-  type ToolPresentationRule,
-  toolPresentationSummaryText,
-} from "../../src/tool-presentations/model";
+import { toolPresentationSummaryText } from "../../src/tool-presentations/model";
 import {
   createThinkingPresentationRegistry,
   createToolPresentationRegistry,
-  toolPresentationRegistry,
 } from "../../src/tool-presentations/registry";
+
+const toolPresentationRegistry = createToolPresentationRegistry();
 
 function call(name: string, args: Record<string, unknown>): ToolCallContent {
   return { type: "toolCall", id: `${name}-1`, name, arguments: args };
@@ -23,68 +22,6 @@ function result(
 ): ChatMessage {
   return { role: "toolResult", content, details, isError };
 }
-
-describe("tool presentation registry", () => {
-  it("lets one explicit user mapping replace a shipped name binding", () => {
-    const shipped: ToolPresentationRule = {
-      id: "inspire.pi.grep",
-      present: () => ({
-        summary: { parts: [{ kind: "text", text: "Pi grep" }] },
-        blocks: () => [],
-      }),
-    };
-    const fff: ToolPresentationRule = {
-      id: "user.fff.grep",
-      present: () => ({
-        summary: { parts: [{ kind: "text", text: "FFF grep" }] },
-        blocks: () => [],
-      }),
-    };
-    const registry = createToolPresentationRegistry({
-      builtInRules: [shipped],
-      builtInMappings: { grep: shipped.id },
-      userRules: [fff],
-      userMappings: { grep: fff.id },
-    });
-
-    const resolved = registry.resolve({ call: call("grep", { pattern: "x" }) });
-    expect(resolved?.ruleId).toBe("user.fff.grep");
-    expect(resolved && toolPresentationSummaryText(resolved.summary)).toBe(
-      "FFF grep",
-    );
-  });
-
-  it("falls directly to raw when the selected override is missing or incompatible", () => {
-    const shipped: ToolPresentationRule = {
-      id: "inspire.pi.grep",
-      present: () => ({
-        summary: { parts: [{ kind: "text", text: "Pi grep" }] },
-        blocks: () => [],
-      }),
-    };
-    const incompatible: ToolPresentationRule = {
-      id: "user.fff.grep",
-      present: () => null,
-    };
-    const input = { call: call("grep", { pattern: "x" }) };
-
-    expect(
-      createToolPresentationRegistry({
-        builtInRules: [shipped],
-        builtInMappings: { grep: shipped.id },
-        userMappings: { grep: "user.missing.grep" },
-      }).resolve(input),
-    ).toBeNull();
-    expect(
-      createToolPresentationRegistry({
-        builtInRules: [shipped],
-        builtInMappings: { grep: shipped.id },
-        userRules: [incompatible],
-        userMappings: { grep: incompatible.id },
-      }).resolve(input),
-    ).toBeNull();
-  });
-});
 
 describe("declarative tool presentation rules", () => {
   const configuration = toolPresentationConfigurationSchema.parse({
@@ -118,12 +55,12 @@ describe("declarative tool presentation rules", () => {
     },
     mappings: { grep: "user.fff.grep" },
   });
+  const registry = createToolPresentationRegistry({
+    userRules: compileToolPresentationRules(configuration),
+    userMappings: configuration.mappings,
+  });
 
   it("compiles an explicit override and parses grouped custom search output", () => {
-    const registry = createToolPresentationRegistry({
-      userRules: compileToolPresentationRules(configuration),
-      userMappings: configuration.mappings,
-    });
     const presentation = registry.resolve({
       call: call("grep", { pattern: "needle", path: "src" }),
       result: result(
@@ -165,10 +102,6 @@ describe("declarative tool presentation rules", () => {
   });
 
   it("bounds declarative structured output without discarding the selected rule", () => {
-    const registry = createToolPresentationRegistry({
-      userRules: compileToolPresentationRules(configuration),
-      userMappings: configuration.mappings,
-    });
     const output = [
       "src/large.ts",
       ...Array.from(
@@ -247,10 +180,6 @@ describe("declarative tool presentation rules", () => {
   });
 
   it("returns raw fallback when selected data does not match the declaration", () => {
-    const registry = createToolPresentationRegistry({
-      userRules: compileToolPresentationRules(configuration),
-      userMappings: configuration.mappings,
-    });
     expect(
       registry.resolve({ call: call("grep", { path: "src" }) }),
     ).toBeNull();
@@ -295,7 +224,7 @@ describe("declarative tool presentation rules", () => {
     ).toBe(false);
   });
 
-  it("rejects executable or expensive summary shapes at validation", () => {
+  it("rejects executable HTML at validation", () => {
     const unsafe = {
       version: 1,
       rules: {
@@ -453,61 +382,6 @@ describe("shipped Pi tool rules", () => {
     ]);
   });
 
-  it("projects native read images only inside the lazy body", () => {
-    const presentation = toolPresentationRegistry.resolve({
-      call: call("read", { path: "assets/pixel.png" }),
-      result: {
-        role: "toolResult",
-        content: [
-          { type: "text", text: "Read image file [image/png]" },
-          { type: "image", data: "cG5n", mimeType: "image/png" },
-        ],
-        isError: false,
-      },
-    });
-
-    expect(
-      presentation && toolPresentationSummaryText(presentation.summary),
-    ).toBe("assets/pixel.png · PNG image");
-    expect(presentation?.blocks()).toContainEqual({
-      type: "image",
-      label: "Preview",
-      data: "cG5n",
-      mimeType: "image/png",
-      alt: "assets/pixel.png",
-    });
-  });
-
-  it("uses the successful edit result patch rather than requested replacement text", () => {
-    const patch = [
-      "--- src/app.ts",
-      "+++ src/app.ts",
-      "@@ -1,1 +1,1 @@",
-      "-const value = 1;",
-      "+const value = 2;",
-      "",
-    ].join("\n");
-    const presentation = toolPresentationRegistry.resolve({
-      call: call("edit", {
-        path: "src/app.ts",
-        edits: [{ oldText: "value = 1", newText: "value = 2" }],
-      }),
-      result: result("Successfully replaced 1 block(s) in src/app.ts.", {
-        diff: "-1 const value = 1;\n+1 const value = 2;",
-        patch,
-      }),
-    });
-
-    expect(presentation?.blocks()).toEqual([
-      {
-        type: "diff",
-        label: "Applied changes",
-        path: "src/app.ts",
-        text: patch,
-      },
-    ]);
-  });
-
   it("keeps Pi's persisted single-edit shape renderable", () => {
     const presentation = toolPresentationRegistry.resolve({
       call: call("edit", {
@@ -529,6 +403,63 @@ describe("shipped Pi tool rules", () => {
     ]);
   });
 
+  it.each([
+    ["streaming", { path: 12, edits: [{ oldText: "", newText: "" }] }],
+    ["streaming", { path: "a", edits: null }],
+    ["streaming", { path: "a", edits: [7] }],
+    ["streaming", { path: "a", edits: [{ oldText: false }] }],
+    ["streaming", { path: "a", newText: 5 }],
+    ["completed", {}],
+    ["completed", { path: "a", edits: [] }],
+    ["completed", { path: "a", edits: [{ oldText: "a" }] }],
+    ["completed", { path: "a", newText: "b" }],
+  ] as const)(
+    "rejects malformed %s native edit arguments: %j",
+    (phase, args) => {
+      const toolCall = call("edit", args);
+      expect(
+        toolPresentationRegistry.resolve({
+          call:
+            phase === "streaming"
+              ? {
+                  ...toolCall,
+                  __inspireToolCall: { phase, characters: 0, truncated: false },
+                }
+              : toolCall,
+        }),
+      ).toBeNull();
+    },
+  );
+
+  it("shows applied edits only when the result carries an authoritative patch", () => {
+    const path = "src/experiment.ts";
+    const toolCall = call("edit", {
+      path,
+      edits: [{ oldText: "before", newText: "after" }],
+    });
+    const patch = `--- ${path}\n+++ ${path}\n@@ -1 +1 @@\n-applied before\n+applied after\n`;
+    const blocks = (output?: ChatMessage) =>
+      toolPresentationRegistry
+        .resolve({ call: toolCall, result: output })
+        ?.blocks();
+    const requested = {
+      type: "replacement",
+      label: "Requested replacement",
+      path,
+      oldText: "before",
+      newText: "after",
+    };
+    expect(blocks()).toEqual([requested]);
+    expect(
+      blocks(result("done", { diff: "-1 ignored\n+1 ignored", patch })),
+    ).toEqual([{ type: "diff", label: "Applied changes", path, text: patch }]);
+    expect(blocks(result("rejected", { patch }, true))).toEqual([
+      requested,
+      expect.objectContaining({ label: "Error", text: "rejected" }),
+    ]);
+    expect(blocks(result("done", { diff: "-1 a\n+1 b" }))).toBeNull();
+  });
+
   it("groups native grep matches and separates authoritative limit metadata", () => {
     const presentation = toolPresentationRegistry.resolve({
       call: call("grep", {
@@ -541,6 +472,8 @@ describe("shipped Pi tool rules", () => {
         [
           "a.ts-4- before",
           "a.ts:5: needle here",
+          "a.ts-5- needle here",
+          "a.ts-5- changed context",
           "a.ts-6- after",
           "b.ts:9: another needle",
           "",
@@ -558,6 +491,7 @@ describe("shipped Pi tool rules", () => {
           matches: [
             { line: 4, text: "before", match: false },
             { line: 5, text: "needle here", match: true },
+            { line: 5, text: "changed context", match: false },
             { line: 6, text: "after", match: false },
           ],
         },
@@ -574,20 +508,48 @@ describe("shipped Pi tool rules", () => {
     });
   });
 
-  it("rejects malformed native calls and incompatible successful edit results", () => {
+  it("rejects malformed native read calls", () => {
     expect(
-      toolPresentationRegistry.resolve({
-        call: call("read", { path: 17 }),
-      }),
+      toolPresentationRegistry.resolve({ call: call("read", { path: 17 }) }),
     ).toBeNull();
-    const incompatible = toolPresentationRegistry.resolve({
-      call: call("edit", {
-        path: "a.ts",
-        edits: [{ oldText: "a", newText: "b" }],
-      }),
-      result: result("done", { diff: "-1 a\n+1 b" }),
-    });
-    expect(incompatible).not.toBeNull();
-    expect(incompatible?.blocks()).toBeNull();
+  });
+});
+
+describe("unified tool patches", () => {
+  it("separates a tool preamble and keeps marker-like changed lines inside a hunk", () => {
+    const lines = parseUnifiedDiff(
+      [
+        "Edited source files:",
+        "--- a/a.md",
+        "+++ b/a.md",
+        "@@ -1,2 +1,2 @@",
+        " context",
+        "----",
+        "++++",
+        "--- a/b.md",
+        "+++ b/b.md",
+        "@@ -0,0 +1 @@",
+        "+new",
+      ].join("\n"),
+    );
+    expect(lines?.map(({ kind }) => kind)).toEqual([
+      "meta",
+      "meta",
+      "meta",
+      "hunk",
+      "context",
+      "delete",
+      "add",
+      "meta",
+      "meta",
+      "hunk",
+      "add",
+    ]);
+    expect(lines?.[0]?.text).toBe("Edited source files:");
+  });
+
+  it("does not color prose or headerless changes as a patch", () => {
+    expect(parseUnifiedDiff("- bullet one\n+ emphasis")).toBeNull();
+    expect(parseUnifiedDiff("@@ -1 +1 @@\n----\n++++")).toBeNull();
   });
 });

@@ -1,6 +1,8 @@
+import { AlertTriangle } from "lucide-react";
 import {
   lazy,
   memo,
+  type ReactNode,
   type RefObject,
   Suspense,
   useCallback,
@@ -11,9 +13,11 @@ import {
   useRef,
   useState,
 } from "react";
+import { flushSync } from "react-dom";
 import { isAbortableRunState, type ThemePreference } from "../shared/contracts";
 import type { ModelSettingsDestination } from "../shared/model-settings";
-import { pairHost } from "./api";
+import { selectedRunState } from "./app-state";
+import { pairBrowser } from "./browser-auth";
 import { ActivityBar } from "./components/ActivityBar";
 import { AppTopbar } from "./components/AppTopbar";
 import { CommandActivity } from "./components/CommandActivity";
@@ -21,9 +25,10 @@ import { CommandHelp } from "./components/CommandHelp";
 import { CommandPalette } from "./components/CommandPalette";
 import { Composer } from "./components/Composer";
 import {
-  ContextPaneLoading,
+  ContextPaneLoadingHeader,
   ContextPaneShell,
 } from "./components/ContextPaneShell";
+import { ContextPaneState } from "./components/ContextPaneState";
 import { ExportDialog } from "./components/ExportDialog";
 import { ExtensionDisplayDock } from "./components/ExtensionDisplays";
 import {
@@ -35,17 +40,14 @@ import { Notices } from "./components/Notices";
 import { PaneResizeHandle } from "./components/PaneResizeHandle";
 import { PiLoader } from "./components/PiLoader";
 import { RenderErrorBoundary } from "./components/RenderErrorBoundary";
-import {
-  SessionTerminalDialog,
-  TerminalSessionNotice,
-} from "./components/SessionTerminalDialog";
 import type { SettingsCategoryId } from "./components/Settings";
-import { SettingsDialog, SettingsLoading } from "./components/SettingsDialog";
+import { SettingsDialog } from "./components/SettingsDialog";
+import { StartupCard } from "./components/StartupCard";
 import { Transcript, type TranscriptNavigation } from "./components/Transcript";
 import { Welcome, type WelcomeInheritance } from "./components/Welcome";
-import { BrandLogo, Wordmark } from "./components/Wordmark";
 import { isComposingKeyboardEvent } from "./keyboard-input";
 import { thinkingLevelLabel } from "./model-options";
+import { runStop, type WorkbenchDestinations } from "./session-actions";
 import { shallowEqual, store, useAppState } from "./store";
 import { useInspectionHistory } from "./use-inspection-history";
 import { hasActiveModal, useModalDepth } from "./use-modal-focus";
@@ -53,7 +55,12 @@ import {
   applyBrowserTheme,
   cacheVisualPreferences,
 } from "./visual-preferences";
-import { modelCycleAction } from "./workbench-keyboard";
+import {
+  modelCycleAction,
+  runModelCycle,
+  workbenchShortcut,
+} from "./workbench-keyboard";
+import { readNavCollapsed, saveNavCollapsed } from "./workbench-session";
 
 const loadContextPane = () => import("./components/ContextPane");
 const loadSettings = () => import("./components/Settings");
@@ -64,9 +71,53 @@ const DeferredSettingsSurface = lazy(() =>
   loadSettings().then((module) => ({ default: module.SettingsContent })),
 );
 
-function reportDeferredSurfaceError(error: unknown): void {
-  console.error("Deferred surface failed to load", error);
+function DeferredPanel({
+  surface,
+  header,
+  children,
+}: {
+  surface: "Settings" | "Context";
+  header?: ReactNode;
+  children: ReactNode;
+}) {
+  // Commit the loading panel immediately so focus can enter while code loads.
+  const showContent = useDeferredValue(true, false);
+  const fallback = (error: boolean) => (
+    <>
+      {header}
+      <ContextPaneState
+        className={error ? undefined : "deferred-loading"}
+        icon={
+          error ? (
+            <AlertTriangle size={17} aria-hidden />
+          ) : (
+            <PiLoader size={17} aria-hidden />
+          )
+        }
+        title={
+          error
+            ? `${surface} could not be opened.`
+            : `Loading ${surface.toLowerCase()}`
+        }
+        role={error ? "alert" : "status"}
+        action={error ? { label: "Reload", run: reloadPage } : undefined}
+      />
+    </>
+  );
+  const loading = fallback(false);
+  return (
+    <RenderErrorBoundary
+      onError={(error) =>
+        console.error("Deferred surface failed to load", error)
+      }
+      fallback={fallback(true)}
+    >
+      <Suspense fallback={loading}>{showContent ? children : loading}</Suspense>
+    </RenderErrorBoundary>
+  );
 }
+
+const reloadPage = () => window.location.reload();
 
 function DeferredContextPane({
   isModal,
@@ -75,27 +126,14 @@ function DeferredContextPane({
   isModal: boolean;
   onClose: () => void;
 }) {
-  // Commit loading as ordinary content; suspended background work adds no fallback retry delay.
-  const showContent = useDeferredValue(true, false);
   return (
     <ContextPaneShell isModal={isModal} onClose={onClose}>
-      <RenderErrorBoundary
-        onError={reportDeferredSurfaceError}
-        fallback={
-          <ContextPaneLoading
-            onClose={onClose}
-            onRetry={() => window.location.reload()}
-          />
-        }
+      <DeferredPanel
+        surface="Context"
+        header={<ContextPaneLoadingHeader onClose={onClose} />}
       >
-        <Suspense fallback={<ContextPaneLoading onClose={onClose} />}>
-          {showContent ? (
-            <DeferredContextSurface isModal={isModal} onClose={onClose} />
-          ) : (
-            <ContextPaneLoading onClose={onClose} />
-          )}
-        </Suspense>
-      </RenderErrorBoundary>
+        <DeferredContextSurface isModal={isModal} onClose={onClose} />
+      </DeferredPanel>
     </ContextPaneShell>
   );
 }
@@ -113,26 +151,16 @@ function DeferredSettings({
   workspaceOwner: { sessionId?: string; cwd?: string };
   onClose: () => void;
 }) {
-  const showContent = useDeferredValue(true, false);
   return (
     <SettingsDialog suspended={suspended} onClose={onClose}>
-      <RenderErrorBoundary
-        onError={reportDeferredSurfaceError}
-        fallback={<SettingsLoading onRetry={() => window.location.reload()} />}
-      >
-        <Suspense fallback={<SettingsLoading />}>
-          {showContent ? (
-            <DeferredSettingsSurface
-              suspended={suspended}
-              initialCategory={initialCategory}
-              modelDestination={modelDestination}
-              workspaceOwner={workspaceOwner}
-            />
-          ) : (
-            <SettingsLoading />
-          )}
-        </Suspense>
-      </RenderErrorBoundary>
+      <DeferredPanel surface="Settings">
+        <DeferredSettingsSurface
+          suspended={suspended}
+          initialCategory={initialCategory}
+          modelDestination={modelDestination}
+          workspaceOwner={workspaceOwner}
+        />
+      </DeferredPanel>
     </SettingsDialog>
   );
 }
@@ -160,64 +188,52 @@ function TokenGate() {
   const [pairing, setPairing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   return (
-    <div className="token-gate">
-      <div className="token-gate__card">
-        <div className="token-gate__lockup">
-          <BrandLogo size={28} />
-          <Wordmark large />
-        </div>
-        <div>
-          <h1 className="token-gate__title">Pair this browser</h1>
-          <p className="token-gate__hint">
-            The host is running, but this browser has not been paired yet. Open
-            the URL printed by your Inspire launcher, or paste its access token
-            once below. The pairing is remembered on this device. Pair only a
-            device you trust: it can control Pi, project files, and terminals
-            with your user account&apos;s permissions.
-          </p>
-        </div>
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            const token = value.trim();
-            if (!token || pairing) return;
-            setPairing(true);
-            setError(null);
-            void pairHost(token)
-              .then(() => store.init(null))
-              .catch((reason: unknown) => {
-                setError(
-                  reason instanceof Error
-                    ? reason.message
-                    : "The host became unavailable before pairing completed.",
-                );
-              })
-              .finally(() => setPairing(false));
-          }}
+    <StartupCard
+      title="Pair this browser"
+      hint="Open the link from the Inspire launcher or paste its access token. Pair only on a device you trust. This browser can control your sessions, files and terminals."
+    >
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          const token = value.trim();
+          if (!token || pairing) return;
+          setPairing(true);
+          setError(null);
+          void pairBrowser(token)
+            .then(() => store.init())
+            .catch((reason: unknown) => {
+              setError(
+                reason instanceof Error
+                  ? reason.message
+                  : "Could not reach the Host. Try pairing again.",
+              );
+            })
+            .finally(() => setPairing(false));
+        }}
+      >
+        <input
+          type="password"
+          className="text-field"
+          value={value}
+          onChange={(event) => setValue(event.target.value)}
+          placeholder="Access token"
+          aria-label="Access token"
+          autoComplete="off"
+        />
+        <button
+          type="submit"
+          className="button button--primary"
+          disabled={!value.trim() || pairing}
         >
-          <input
-            type="password"
-            value={value}
-            onChange={(event) => setValue(event.target.value)}
-            placeholder="Access token"
-            aria-label="Access token"
-            autoComplete="off"
-          />
-          <button
-            type="submit"
-            className="button button--primary"
-            disabled={!value.trim() || pairing}
-          >
-            {pairing ? "Pairing…" : "Pair"}
-          </button>
-        </form>
-        {error ? (
-          <p className="token-gate__error" role="alert">
-            {error}
-          </p>
-        ) : null}
-      </div>
-    </div>
+          {pairing ? "Pairing…" : "Pair"}
+        </button>
+      </form>
+      {error ? (
+        <p className="token-gate__error" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </StartupCard>
   );
 }
 
@@ -226,30 +242,36 @@ function connectionProblemText(
   host: string,
 ): { title: string; detail: string } {
   switch (problem.kind) {
+    case "browser-upgrade":
+      return {
+        title: "Reload Inspire",
+        detail:
+          "A newer build is available. Reload when ready. Draft text stays in this tab; keep a copy of any unsent attachments.",
+      };
     case "device-offline":
       return {
         title: "This device is offline",
-        detail: `The browser reports no network connection, so ${host} cannot be checked yet.`,
+        detail: "Reconnect to your network and try again.",
       };
     case "relay-unavailable":
       return {
-        title: "Reverse tunnel unavailable",
-        detail: `The public entry at ${host} answered, but its SSH reverse path to the INSΠRE Host is unavailable.`,
+        title: "Relay cannot reach the Host",
+        detail: "Check that the Host and its tunnel are running.",
       };
     case "service-error":
       return {
         title: "Host needs attention",
-        detail: `The address answered at ${host}, but INSΠRE could not initialize: ${problem.message}`,
+        detail: problem.message,
       };
     case "stream-interrupted":
       return {
         title: "Live connection interrupted",
-        detail: `The last confirmed state remains visible while INSΠRE reconnects to ${host}.`,
+        detail: `Reconnecting to ${host}. Recent content stays visible.`,
       };
     default:
       return {
         title: "INSΠRE address not reachable",
-        detail: `No usable response arrived from ${host}.`,
+        detail: `Could not connect to ${host}.`,
       };
   }
 }
@@ -265,40 +287,32 @@ function HostUnavailable({
   );
   const copy = connectionProblemText(problem, host);
   return (
-    <div className="token-gate">
-      <div className="token-gate__card">
-        <div className="token-gate__lockup">
-          <BrandLogo size={28} />
-          <Wordmark large />
+    <StartupCard title={copy.title} hint={copy.detail}>
+      {localHost &&
+      (problem.kind === "address-unreachable" ||
+        problem.kind === "service-error") ? (
+        <div className="token-gate__instruction">
+          <span>Installed version</span>
+          <code>inspire restart</code>
+          <span>From the source folder</span>
+          <code>npm run inspire -- restart</code>
         </div>
-        <div>
-          <h1 className="token-gate__title">{copy.title}</h1>
-          <p className="token-gate__hint">{copy.detail}</p>
-        </div>
-        {localHost &&
-        (problem.kind === "address-unreachable" ||
-          problem.kind === "service-error") ? (
-          <div className="token-gate__instruction">
-            <span>Start or restart the Host with the installed launcher:</span>
-            <code>inspire restart</code>
-            <span>Or, from a source checkout:</span>
-            <code>npm run inspire -- restart</code>
-          </div>
-        ) : null}
-        <div className="token-gate__actions">
-          <button
-            type="button"
-            className="button button--primary"
-            onClick={() => store.retryConnection()}
-          >
-            Try again
-          </button>
+      ) : null}
+      <div className="token-gate__actions">
+        <button
+          type="button"
+          className="button button--primary"
+          onClick={() => store.retryConnection()}
+        >
+          {problem.kind === "browser-upgrade" ? "Reload" : "Try again"}
+        </button>
+        {problem.kind !== "browser-upgrade" ? (
           <span>
             <PiLoader size={12} aria-hidden /> Reconnecting automatically
           </span>
-        </div>
+        ) : null}
       </div>
-    </div>
+    </StartupCard>
   );
 }
 
@@ -331,31 +345,21 @@ const ConversationStage = memo(function ConversationStage({
       readOnlyReason: source.readOnlyReason,
       model: source.model,
       thinkingLevel: source.thinkingLevel,
-      messages: source.messages,
-      transcriptActivityRanges: source.transcriptActivityRanges,
-      promptMapTurns: source.promptMapTurns,
-      promptMapTotal: source.promptMapTotal,
-      promptMapLoadedStarts: source.promptMapLoadedStarts,
-      promptMapLoadingStarts: source.promptMapLoadingStarts,
-      promptMapError: source.promptMapError,
-      promptMapNavigatingOrdinal: source.promptMapNavigatingOrdinal,
-      streaming: source.streaming,
-      runState: source.runState,
-      activeAssistantMessageKey: source.activeAssistantMessageKey,
-      tools: source.tools,
-      transcriptViewId: source.transcriptViewId,
-      transcriptIncarnation: source.transcriptIncarnation,
-      transcriptDurableLeafId: source.transcriptDurableLeafId,
-      transcriptEffectiveLeafId: source.transcriptEffectiveLeafId,
-      queue: source.queue,
-      pendingAction: source.pendingAction,
-      extensionDisplays: source.extensionDisplays,
+      messages: source.live.messages,
+      streaming: source.live.streaming,
+      runState: selectedRunState(source),
+      activeAssistantMessageKey: source.live.activeAssistantMessageKey,
+      tools: source.live.tools,
+      transcriptViewId: source.view.viewId,
+      transcriptIncarnation: source.view.incarnation,
+      transcriptHasOlder: source.view.hasOlder,
+      historyVersion: source.view.composerHistoryVersion,
+      queue: source.live.queue,
+      pendingAction: source.pendingAction?.action ?? null,
+      extensionDisplays: source.live.extensionDisplays,
       thinkingVisibility: source.prefs.thinkingVisibility,
       toolVisibility: source.prefs.toolVisibility,
       activityFoldVisibility: source.prefs.activityFoldVisibility,
-      hasOlderMessages: source.hasOlderMessages,
-      loadingOlderMessages: source.loadingOlderMessages,
-      olderMessagesError: source.olderMessagesError,
     }),
     shallowEqual,
   );
@@ -368,13 +372,6 @@ const ConversationStage = memo(function ConversationStage({
     <Transcript
       ref={transcriptRef}
       messages={state.messages}
-      activityRanges={state.transcriptActivityRanges}
-      promptMapTurns={state.promptMapTurns}
-      promptMapTotal={state.promptMapTotal}
-      promptMapLoadedStarts={state.promptMapLoadedStarts}
-      promptMapLoadingStarts={state.promptMapLoadingStarts}
-      promptMapError={state.promptMapError}
-      promptMapNavigatingOrdinal={state.promptMapNavigatingOrdinal}
       streaming={state.streaming}
       runState={state.runState}
       activeAssistantMessageKey={state.activeAssistantMessageKey}
@@ -382,20 +379,14 @@ const ConversationStage = memo(function ConversationStage({
       sessionId={state.sessionId}
       viewId={state.transcriptViewId ?? ""}
       projectionIncarnation={state.transcriptIncarnation ?? ""}
-      viewingEarlierBranch={Boolean(
-        state.transcriptDurableLeafId &&
-          state.transcriptEffectiveLeafId &&
-          state.transcriptDurableLeafId !== state.transcriptEffectiveLeafId,
-      )}
+      hasOlder={state.transcriptHasOlder}
+      historyVersion={state.historyVersion ?? ""}
       queue={state.queue}
       pendingAction={state.pendingAction}
       extensionDisplays={state.extensionDisplays}
       thinkingVisibility={state.thinkingVisibility}
       toolVisibility={state.toolVisibility}
       activityFoldVisibility={state.activityFoldVisibility}
-      hasOlder={state.hasOlderMessages}
-      loadingOlder={state.loadingOlderMessages}
-      olderError={state.olderMessagesError}
     />
   );
   const composer = (
@@ -429,18 +420,13 @@ const ConversationStage = memo(function ConversationStage({
               <dd>{thinkingLevelLabel(state.thinkingLevel)}</dd>
             </div>
           </dl>
-          {state.readOnlyReason === "terminal" ? (
-            <TerminalSessionNotice
-              key={state.sessionId}
-              sessionId={state.sessionId}
-            />
+          {state.readOnlyReason === "external-active" && state.sessionId ? (
+            <TakeOverNotice key={state.sessionId} sessionId={state.sessionId} />
           ) : (
             <p role="status">
               {state.readOnlyReason === "workspace-unavailable"
                 ? "Project folder unavailable. This session is read-only."
-                : state.readOnlyReason === "external-active"
-                  ? "Open in another Pi. Writing will resume automatically when it releases the session."
-                  : "Pi connection unavailable. History remains readable while Inspire checks for recovery."}
+                : "Pi is unavailable. You can still read this session."}
             </p>
           )}
         </div>
@@ -461,6 +447,38 @@ const ConversationStage = memo(function ConversationStage({
   );
 });
 
+/** Another Pi is running this branch: watch here, or take it over. Taking
+ * over attaches to that Pi; its terminal keeps working alongside Inspire. */
+function TakeOverNotice({ sessionId }: { sessionId: string }) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const takeOver = async () => {
+    setPending(true);
+    setError(null);
+    try {
+      await store.takeOverSession(sessionId);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Take over failed");
+    } finally {
+      setPending(false);
+    }
+  };
+  return (
+    <div className="composer-readonly__notice" role="status">
+      <p>Running in another Pi.</p>
+      <button
+        type="button"
+        className="button button--quiet"
+        disabled={pending}
+        onClick={() => void takeOver()}
+      >
+        {pending ? "Taking over…" : "Take over"}
+      </button>
+      {error ? <p role="alert">{error}</p> : null}
+    </div>
+  );
+}
+
 function focusedTerminalLaunchRequested(): boolean {
   const params = new URLSearchParams(window.location.search);
   return Boolean(
@@ -468,32 +486,41 @@ function focusedTerminalLaunchRequested(): boolean {
   );
 }
 
+type Inspection =
+  | {
+      kind: "settings";
+      category: SettingsCategoryId;
+      destination?: ModelSettingsDestination;
+    }
+  | { kind: "palette" }
+  | { kind: "rename"; sessionId: string; name: string; fromPalette: boolean }
+  | { kind: "export"; sessionId: string }
+  | { kind: "help"; mode: "hotkeys" | "changelog" };
+
 export function App() {
   const transcriptRef = useRef<TranscriptNavigation>(null);
   const state = useAppState(
     (source) => ({
       needsToken: source.needsToken,
       bootstrapped: source.bootstrapped,
+      startupPending: source.startupPending,
       connection: source.connection,
       connectionProblem: source.connectionProblem,
-      extensionOverlayOpen: source.extensionUiRequests.length > 0,
+      extensionOverlayOpen: source.live.extensionUiRequests.length > 0,
       resourcesOpen: source.resourcesOpen,
       contextMode: source.contextMode,
       prefs: source.prefs,
-      windowTitle: source.windowTitle,
+      windowTitle: source.live.windowTitle,
       sessionName: source.sessionName,
       attentionCount: source.attentionSessionIds.length,
       sessionId: source.sessionId,
-      runState: source.runState,
-      bashRunning: source.bashRunning,
+      runState: selectedRunState(source),
+      bashRunning: source.live.bashRunning,
       error: source.error,
       errorSeverity: source.errorSeverity,
-      projectionConflict: source.projectionConflict,
+      projectionConflict: source.view.conflict,
       nativeCommandUiRequest: source.nativeCommandUiRequest,
       readOnlyReason: source.readOnlyReason,
-      fileBrowserView: source.fileBrowserView,
-      selectedGitPathId: source.selectedGitPathId,
-      selectedResourceReference: source.selectedResourceReference,
     }),
     shallowEqual,
   );
@@ -513,42 +540,48 @@ export function App() {
     (connectionDelayed ||
       (state.connectionProblem !== null &&
         state.connectionProblem.kind !== "stream-interrupted"));
-  const [navCollapsed, setNavCollapsed] = useState(false);
+  const [navCollapsed, setNavCollapsed] = useState(readNavCollapsed);
+  useEffect(() => saveNavCollapsed(navCollapsed), [navCollapsed]);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const mobileNavToggleRef = useRef<HTMLButtonElement>(null);
   const navSearchRef = useRef<HTMLInputElement>(null);
   const narrowViewport = useMediaQuery("(max-width: 900px)");
-  const [paletteOpen, setPaletteOpen] = useState(false);
-  const [terminalSessionId, setTerminalSessionId] = useState<string | null>(
-    null,
-  );
-  const [exportSessionId, setExportSessionId] = useState<string | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [commandHelp, setCommandHelp] = useState<
-    "hotkeys" | "changelog" | null
-  >(null);
-  const openCommandHelp = useCallback((mode: "hotkeys" | "changelog") => {
-    setPaletteOpen(false);
-    setSettingsOpen(false);
-    setCommandHelp(mode);
+  const [inspection, setInspection] = useState<Inspection | null>(null);
+  const settingsOpen = inspection?.kind === "settings";
+  const closeInspection = useCallback(() => setInspection(null), []);
+  const closeCommandPalette = useCallback(() => {
+    setInspection((current) =>
+      current?.kind === "palette" || current?.kind === "rename"
+        ? null
+        : current,
+    );
   }, []);
-  const closeCommandHelp = useCallback(() => setCommandHelp(null), []);
-  const [settingsCategory, setSettingsCategory] =
-    useState<SettingsCategoryId>("display");
-  const [modelDestination, setModelDestination] =
-    useState<ModelSettingsDestination>();
+  const openCommandHelp = useCallback((mode: "hotkeys" | "changelog") => {
+    setInspection({ kind: "help", mode });
+  }, []);
   const openSettings = useCallback(
     (category: SettingsCategoryId, destination?: ModelSettingsDestination) => {
-      setPaletteOpen(false);
-      setSettingsCategory(category);
-      setModelDestination(destination);
-      setSettingsOpen(true);
+      setInspection({ kind: "settings", category, destination });
     },
     [],
   );
-  const openPaletteSettings = useCallback(
-    () => openSettings("behavior"),
-    [openSettings],
-  );
+  const openRename = useCallback((sessionId: string, name: string) => {
+    setInspection((current) => ({
+      kind: "rename",
+      sessionId,
+      name,
+      fromPalette: current?.kind === "palette",
+    }));
+  }, []);
+  const closeRename = useCallback(() => {
+    setInspection((current) =>
+      current?.kind === "rename"
+        ? current.fromPalette
+          ? { kind: "palette" }
+          : null
+        : current,
+    );
+  }, []);
   const extensionOverlayOpen = state.extensionOverlayOpen;
   const extensionDialogRef = useRef<ExtensionUiDialogHandle>(null);
   const [welcomeInheritance, setWelcomeInheritance] =
@@ -563,15 +596,13 @@ export function App() {
   );
 
   const openSession = useCallback((id: string) => {
-    setPaletteOpen(false);
-    setSettingsOpen(false);
+    setInspection(null);
     setMobileNavOpen(false);
     void store.openSession(id);
   }, []);
 
   const newSession = useCallback(() => {
-    setPaletteOpen(false);
-    setSettingsOpen(false);
+    setInspection(null);
     setMobileNavOpen(false);
     const current = store.getState();
     if (current.sessionId && current.cwd) {
@@ -595,37 +626,36 @@ export function App() {
 
   useEffect(() => {
     if (state.sessionId) setWelcomeInheritance(null);
-    setExportSessionId(null);
-    setTerminalSessionId(null);
+    setInspection((current) =>
+      (current?.kind === "export" || current?.kind === "rename") &&
+      current.sessionId !== state.sessionId
+        ? current.kind === "rename" && current.fromPalette
+          ? { kind: "palette" }
+          : null
+        : current,
+    );
   }, [state.sessionId]);
 
   const closeMobileNavigation = useCallback(() => {
     setMobileNavOpen(false);
   }, []);
+  const openNavigationSettings = useCallback(() => {
+    // The drawer closes, so Settings returns focus to the toggle that reopens
+    // it. Commit the close first: the header is inert while the drawer is open.
+    flushSync(() => setMobileNavOpen(false));
+    mobileNavToggleRef.current?.focus();
+    openSettings("display");
+  }, [openSettings]);
   const closeResources = useCallback(() => {
     store.setResourcesOpen(false);
   }, []);
-  const closeCommandPalette = useCallback(() => setPaletteOpen(false), []);
-  const closeSettings = useCallback(() => setSettingsOpen(false), []);
   const inspectionLayers = [
-    ...(state.resourcesOpen
-      ? [
-          "context",
-          ...(state.contextMode === "files" &&
-          state.fileBrowserView === "preview"
-            ? ["file"]
-            : []),
-          ...(state.contextMode === "changes" &&
-          (state.selectedGitPathId || state.selectedResourceReference)
-            ? ["change"]
-            : []),
-        ]
-      : []),
+    ...(state.resourcesOpen ? ["context"] : []),
     ...(mobileNavOpen ? ["navigation"] : []),
-    ...(settingsOpen ? ["settings"] : []),
-    ...(paletteOpen ? ["palette"] : []),
-    ...(exportSessionId ? ["export"] : []),
-    ...(terminalSessionId ? ["terminal-handoff"] : []),
+    ...(inspection ? ["inspection"] : []),
+    ...(inspection?.kind === "rename" && inspection.fromPalette
+      ? ["rename"]
+      : []),
     ...(extensionOverlayOpen ? ["extension"] : []),
   ];
   useInspectionHistory(
@@ -634,23 +664,21 @@ export function App() {
       const remaining = inspectionLayers.slice(0, depth);
       if (!remaining.includes("extension"))
         extensionDialogRef.current?.cancel();
-      if (!remaining.includes("terminal-handoff")) setTerminalSessionId(null);
-      if (!remaining.includes("export")) setExportSessionId(null);
-      if (!remaining.includes("palette")) setPaletteOpen(false);
-      if (!remaining.includes("settings")) setSettingsOpen(false);
+      if (!remaining.includes("inspection")) setInspection(null);
+      else if (
+        !remaining.includes("rename") &&
+        inspection?.kind === "rename" &&
+        inspection.fromPalette
+      )
+        closeRename();
       if (!remaining.includes("navigation")) setMobileNavOpen(false);
       if (!remaining.includes("context")) store.setResourcesOpen(false);
-      else if (!remaining.includes("file") && state.contextMode === "files")
-        store.showFileBrowser();
-      else if (!remaining.includes("change") && state.contextMode === "changes")
-        store.showChangesBrowser();
     },
     "__inspireWorkbench",
+    { background: true },
   );
   const openSessionSearch = useCallback(() => {
-    setPaletteOpen(false);
-    setSettingsOpen(false);
-    setCommandHelp(null);
+    setInspection(null);
     if (narrowViewport) {
       store.setResourcesOpen(false);
       setMobileNavOpen(true);
@@ -698,13 +726,12 @@ export function App() {
   // export drafts. Read-only command help can close instead of resuming.
   useEffect(() => {
     if (!extensionOverlayOpen) return;
-    setCommandHelp(null);
+    setInspection((current) => (current?.kind === "help" ? null : current));
   }, [extensionOverlayOpen]);
 
   const showCommandPalette = useCallback(() => {
-    setSettingsOpen(false);
     setMobileNavOpen(false);
-    setPaletteOpen(true);
+    setInspection({ kind: "palette" });
   }, []);
   const openCommandPalette = useCallback(() => {
     if (extensionOverlayOpen || hasActiveModal()) return;
@@ -712,18 +739,18 @@ export function App() {
   }, [extensionOverlayOpen, showCommandPalette]);
   const openExport = useCallback(() => {
     const sessionId = store.getState().sessionId;
-    setPaletteOpen(false);
+    if (!sessionId) return;
+    closeCommandPalette();
     // Let the invoking menu/palette restore focus before taking modal ownership.
     requestAnimationFrame(() => {
       if (store.getState().sessionId === sessionId)
-        setExportSessionId(sessionId);
+        setInspection((current) => current ?? { kind: "export", sessionId });
     });
-  }, []);
-  const closeExport = useCallback(() => setExportSessionId(null), []);
+  }, [closeCommandPalette]);
 
   const toggleSettings = useCallback(() => {
     if (settingsOpen) {
-      setSettingsOpen(false);
+      setInspection(null);
       return;
     }
     if (extensionOverlayOpen || hasActiveModal()) return;
@@ -735,6 +762,23 @@ export function App() {
     openSettings("updates");
   }, [extensionOverlayOpen, settingsOpen, openSettings]);
 
+  const destinations = useMemo<WorkbenchDestinations>(
+    () => ({
+      models: (request) =>
+        openSettings("models", {
+          query: request?.query,
+          focus: request?.modelSettingsFocus,
+          owner: request?.modelSettingsOwner,
+        }),
+      settings: () => openSettings("behavior"),
+      updates: () => openSettings("updates"),
+      hotkeys: () => openCommandHelp("hotkeys"),
+      changelog: () => openCommandHelp("changelog"),
+      sessions: openSessionSearch,
+      new: newSession,
+    }),
+    [newSession, openCommandHelp, openSessionSearch, openSettings],
+  );
   useEffect(() => {
     const request = state.nativeCommandUiRequest;
     if (!request) return;
@@ -742,39 +786,21 @@ export function App() {
       store.consumeNativeCommandUiRequest(request.id);
       return;
     }
-    if (request.action === "model" || request.action === "thinking") return;
-    if (extensionOverlayOpen) return;
-    if (request.action === "models") {
-      openSettings("models", {
-        query: request.query,
-        focus: request.modelSettingsFocus,
-        owner: request.modelSettingsOwner,
-      });
-    } else if (request.action === "settings") {
-      openSettings("behavior");
-    } else if (request.action === "updates") {
-      openSettings("updates");
-    } else if (request.action === "hotkeys" || request.action === "changelog") {
-      openCommandHelp(request.action);
-    } else if (request.action === "sessions") {
-      openSessionSearch();
-    } else if (request.action === "new") {
-      newSession();
-    }
+    if (
+      request.action === "model" ||
+      request.action === "thinking" ||
+      request.action === "branches" ||
+      extensionOverlayOpen
+    )
+      return;
+    destinations[request.action](request);
     store.consumeNativeCommandUiRequest(request.id);
-  }, [
-    extensionOverlayOpen,
-    newSession,
-    openCommandHelp,
-    openSessionSearch,
-    openSettings,
-    state.nativeCommandUiRequest,
-  ]);
+  }, [destinations, extensionOverlayOpen, state.nativeCommandUiRequest]);
 
   useLayoutEffect(() => {
     if (!state.bootstrapped || !focusedTerminalLaunchRequested()) return;
-    if (state.contextMode !== "terminal") store.setContextMode("terminal");
-    if (!state.resourcesOpen) store.setResourcesOpen(true);
+    if (state.contextMode !== "terminal" || !state.resourcesOpen)
+      store.openContextMode("terminal");
   }, [state.bootstrapped, state.contextMode, state.resourcesOpen]);
 
   useEffect(() => {
@@ -867,7 +893,7 @@ export function App() {
         if (
           !store.getState().sessionId ||
           target?.closest(
-            ".xterm, .dropdown__menu, .model-picker__menu, [role=listbox], [role=menu]",
+            ".xterm, .choice-panel__body, [role=listbox], [role=menu]",
           ) ||
           (combobox &&
             (!draft || combobox.getAttribute("aria-expanded") !== "false")) ||
@@ -875,18 +901,15 @@ export function App() {
         )
           return;
         event.preventDefault();
-        if (cycleAction === "thinking") void store.cycleThinking();
-        else void store.cycleModel(cycleAction === "next-model" ? 1 : -1);
+        void runModelCycle(cycleAction);
         return;
       }
-      const mod =
-        event.ctrlKey !== event.metaKey && !event.altKey && !event.shiftKey;
-      if (mod && event.key.toLowerCase() === "k") {
+      const action = workbenchShortcut(event);
+      if (action === "palette") {
         event.preventDefault();
         openCommandPalette();
       } else if (
-        mod &&
-        event.key.toLowerCase() === "f" &&
+        action === "find" &&
         transcriptRef.current &&
         target?.closest(".center") &&
         !target.closest(
@@ -895,10 +918,10 @@ export function App() {
       ) {
         event.preventDefault();
         transcriptRef.current.openSearch();
-      } else if (mod && event.key.toLowerCase() === "b") {
+      } else if (action === "nav") {
         event.preventDefault();
         toggleNavigation();
-      } else if (mod && event.key === ".") {
+      } else if (action === "ctx") {
         event.preventDefault();
         toggleResources();
       } else if (event.key === "Escape" && narrowViewport && mobileNavOpen) {
@@ -916,7 +939,7 @@ export function App() {
         !event.defaultPrevented &&
         (isAbortableRunState(state.runState) || state.bashRunning)
       ) {
-        void store.abort();
+        runStop(state.sessionId);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -924,6 +947,7 @@ export function App() {
   }, [
     state.runState,
     state.bashRunning,
+    state.sessionId,
     state.resourcesOpen,
     narrowViewport,
     mobileNavOpen,
@@ -951,8 +975,8 @@ export function App() {
         collapsed={narrowViewport ? false : navCollapsed}
         isModal={isNavModal}
         onClose={closeMobileNavigation}
+        onOpenSettings={openNavigationSettings}
         onToggleNavigation={toggleNavigation}
-        selectedSessionId={state.sessionId}
         searchInputRef={navSearchRef}
         onNewSession={newSession}
         onSelectSession={openSession}
@@ -983,7 +1007,6 @@ export function App() {
           min={220}
           max={() => 460}
           label="Resize navigation"
-          variant="nav"
           layoutKey={String(state.resourcesOpen)}
           peerPane={{ cssVar: "--ctx-w", paneSelector: ".ctx" }}
         />
@@ -992,11 +1015,11 @@ export function App() {
         <AppTopbar
           narrowViewport={narrowViewport}
           mobileNavOpen={mobileNavOpen}
+          mobileNavToggleRef={mobileNavToggleRef}
           settingsOpen={settingsOpen}
           onToggleNavigation={toggleNavigation}
           onOpenCommandPalette={openCommandPalette}
           onExportSession={openExport}
-          onTerminalSession={() => setTerminalSessionId(state.sessionId)}
           onToggleSettings={toggleSettings}
           onToggleResources={toggleResources}
         />
@@ -1039,7 +1062,9 @@ export function App() {
             </div>
           </div>
         ) : null}
-        {showConnectionBanner && !state.error ? (
+        {showConnectionBanner &&
+        (!state.error ||
+          state.connectionProblem?.kind === "browser-upgrade") ? (
           <div className="banner banner--warning" role="status">
             <span>
               {state.connectionProblem
@@ -1047,15 +1072,23 @@ export function App() {
                     state.connectionProblem,
                     window.location.host,
                   ).detail
-                : "The live INSΠRE connection was interrupted. The last confirmed state remains visible."}
+                : "Connection lost. Recent content stays visible."}
             </span>
             <button type="button" onClick={() => store.retryConnection()}>
-              Retry now
+              {state.connectionProblem?.kind === "browser-upgrade"
+                ? "Reload"
+                : "Retry now"}
             </button>
           </div>
         ) : null}
         {state.sessionId ? (
           <ConversationStage transcriptRef={transcriptRef} />
+        ) : !state.bootstrapped || state.startupPending ? (
+          <ContextPaneState
+            className="deferred-loading"
+            icon={<PiLoader size={17} aria-hidden />}
+            title="Loading workspace"
+          />
         ) : (
           <Welcome
             showRecent={narrowViewport ? !mobileNavOpen : navCollapsed}
@@ -1073,9 +1106,8 @@ export function App() {
               paneSelector=".ctx"
               edge="start"
               min={320}
-              max={() => 920}
+              max={(viewportWidth) => viewportWidth}
               label="Resize files panel"
-              variant="ctx"
               layoutKey={String(navCollapsed)}
               peerPane={{
                 cssVar: "--nav-w",
@@ -1087,51 +1119,45 @@ export function App() {
           {resourcesContent}
         </>
       ) : null}
-      {settingsOpen ? (
+      {inspection?.kind === "settings" ? (
         <DeferredSettings
           suspended={extensionOverlayOpen}
-          initialCategory={settingsCategory}
-          modelDestination={modelDestination}
+          initialCategory={inspection.category}
+          modelDestination={inspection.destination}
           workspaceOwner={settingsOwner}
-          onClose={closeSettings}
+          onClose={closeInspection}
         />
       ) : null}
-      {terminalSessionId ? (
-        <SessionTerminalDialog
-          key={terminalSessionId}
-          sessionId={terminalSessionId}
-          active={!extensionOverlayOpen}
-          onClose={() => setTerminalSessionId(null)}
-        />
-      ) : null}
-      {exportSessionId && exportSessionId === state.sessionId ? (
+      {inspection?.kind === "export" &&
+      inspection.sessionId === state.sessionId ? (
         <ExportDialog
-          key={exportSessionId}
-          sessionId={exportSessionId}
+          key={inspection.sessionId}
+          sessionId={inspection.sessionId}
           readOnly={Boolean(state.readOnlyReason)}
           active={!extensionOverlayOpen}
-          onClose={closeExport}
+          onClose={closeInspection}
         />
       ) : null}
-      {paletteOpen ? (
+      {inspection?.kind === "palette" ||
+      (inspection?.kind === "rename" && inspection.fromPalette) ? (
         <CommandPalette
-          onExportSession={openExport}
           active={!extensionOverlayOpen}
+          rename={inspection.kind === "rename" ? inspection : undefined}
+          onRenameBack={closeRename}
           onClose={closeCommandPalette}
+          onExportSession={openExport}
+          onRenameSession={openRename}
           onToggleNav={toggleNavigation}
           onToggleCtx={toggleResources}
-          onNewSession={newSession}
           onOpenSession={openSession}
-          onFindSession={openSessionSearch}
-          onOpenSettings={openPaletteSettings}
-          onOpenHelp={openCommandHelp}
+          destinations={destinations}
         />
       ) : null}
-      {commandHelp && !extensionOverlayOpen ? (
+      {inspection?.kind === "help" && !extensionOverlayOpen ? (
         <CommandHelp
-          key={commandHelp}
-          mode={commandHelp}
-          onClose={closeCommandHelp}
+          key={inspection.mode}
+          mode={inspection.mode}
+          onClose={closeInspection}
         />
       ) : null}
       <ExtensionUiDialog ref={extensionDialogRef} />

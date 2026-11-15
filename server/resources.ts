@@ -1,12 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { type BigIntStats, constants } from "node:fs";
 import { type FileHandle, lstat, open, realpath } from "node:fs/promises";
-import { basename, extname, isAbsolute, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
 import {
-  COMPOSER_HISTORY_IMAGE_REFERENCE,
-  composerArtifactReference,
-} from "../shared/composer-artifact-references.js";
+  basename,
+  dirname,
+  extname,
+  isAbsolute,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
+import { fileURLToPath } from "node:url";
+import { composerArtifactReference } from "../shared/composer-artifact-references.js";
 import {
   MAX_PROMPT_IMAGE_BYTES,
   type ResourceDescriptor,
@@ -14,17 +19,21 @@ import {
   type ResourceProbeResult,
 } from "../shared/contracts.js";
 import {
+  HTML_PREVIEW_BYTES,
+  type HtmlPreviewResponse,
+} from "../shared/html-preview.js";
+import { isSupportedPromptImageMimeType } from "../shared/image-types.js";
+import {
   collectSessionResourceReferences,
   fileResourceReference,
+  isEmbeddedImageReference,
   isTextFileName,
   MAX_RESOURCE_LIST_PAGE_SIZE,
   MAX_RESOURCE_PATH_LENGTH,
-  RESOURCE_LIST_INITIAL_SIZE,
-  type SessionResourceListResponse,
+  resourceRefusal,
   type SessionResourceReference,
   stripResourceLocation,
 } from "../shared/resource-references.js";
-import { isSupportedPromptImageMimeType } from "../shared/image-types.js";
 import { filesystemRelativePath } from "./filesystem-containment.js";
 import {
   canonicalBase64DecodedSize,
@@ -53,19 +62,6 @@ export type ResourceContext = ResourceContextIdentity &
     | { messages?: never; loadMessages: () => Promise<unknown[]> }
   );
 
-interface FileIdentity {
-  dev: bigint;
-  ino: bigint;
-}
-
-function fileIdentity(stats: BigIntStats): FileIdentity {
-  return { dev: stats.dev, ino: stats.ino };
-}
-
-function sameFileObject(left: FileIdentity, right: FileIdentity): boolean {
-  return left.dev === right.dev && left.ino === right.ino;
-}
-
 const RESOURCE_OPEN_FLAGS = constants.O_RDONLY | constants.O_NONBLOCK;
 
 function changedResourceError(): Error & { status: number } {
@@ -75,20 +71,31 @@ function changedResourceError(): Error & { status: number } {
   );
 }
 
+function nonFileResourceError(): Error & { status: number } {
+  return requestError("The reference is not a file", 400);
+}
+
 /** Open the path the user actually selected and prove that its descriptor
  * is the canonical file we authorized. For an already-canonical path,
  * `O_NOFOLLOW` also rejects a final-component exchange. For a selected symlink
  * or symlinked cwd, the post-open path and inode witnesses bind the followed
  * chain to the retained descriptor without relying on a platform-specific
  * descriptor filesystem. */
-async function openAuthorizedResourceFile(
+export async function openAuthorizedResourceFile(
   selectedPath: string,
   canonicalPath: string,
+  purpose: "resolve" | "serve" = "serve",
 ): Promise<{ handle: FileHandle; details: BigIntStats }> {
   const flags =
     RESOURCE_OPEN_FLAGS |
     (selectedPath === canonicalPath ? constants.O_NOFOLLOW : 0);
-  const handle = await open(selectedPath, flags);
+  const handle = await open(selectedPath, flags).catch(
+    (error: NodeJS.ErrnoException) => {
+      if (purpose === "resolve" && error.code === "EISDIR")
+        throw nonFileResourceError();
+      throw error;
+    },
+  );
   try {
     const [openedPath, details, linked] = await Promise.all([
       realpath(selectedPath),
@@ -97,43 +104,51 @@ async function openAuthorizedResourceFile(
     ]);
     if (
       openedPath !== canonicalPath ||
-      !details.isFile() ||
-      !linked.isFile() ||
-      !sameFileObject(fileIdentity(details), fileIdentity(linked))
+      details.dev !== linked.dev ||
+      details.ino !== linked.ino
     )
       throw changedResourceError();
+    if (!details.isFile() || !linked.isFile()) {
+      if (purpose === "resolve") throw nonFileResourceError();
+      throw changedResourceError();
+    }
     return { handle, details };
   } catch (error) {
     await handle.close().catch(() => undefined);
-    if ((error as { status?: unknown }).status === 409) throw error;
+    const status = (error as { status?: unknown }).status;
+    if (status === 400 || status === 409) throw error;
     throw changedResourceError();
   }
 }
 
-export function openCanonicalResourceFile(
-  canonicalPath: string,
-): Promise<{ handle: FileHandle; details: BigIntStats }> {
+export function openCanonicalResourceFile(canonicalPath: string) {
   return openAuthorizedResourceFile(canonicalPath, canonicalPath);
 }
 
-interface ResolvedResource {
-  descriptor: ResourceDescriptor;
-  /** Absolute path selected by the reference before symlink resolution. */
-  selectedPath?: string;
-  /** Canonical target pinned by this opaque handle. */
-  path?: string;
-  /** Index root to invalidate if an indexed serving path disappears. */
-  workspaceRoot?: string;
-  /** Filesystem object captured at resolve time. The retained anchor keeps
-   * that inode allocated, making the device/inode pair non-reusable while this
-   * opaque resource handle is live. */
-  fileId?: FileIdentity;
-  /** Never streamed: it anchors fileId until eviction, session deletion, or
-   * server shutdown. A separately opened serving handle can still observe a
-   * legitimate in-place rewrite of this same filesystem object. */
-  anchor?: FileHandle;
-  authority: "embedded" | "workspace" | "filesystem" | "citation";
+type ResourceLocator =
+  | { authority: "embedded" }
+  | {
+      /** Absolute path selected by the reference before symlink resolution. */
+      selectedPath: string;
+      /** Canonical target pinned by this opaque handle. */
+      path: string;
+      /** Index root to invalidate if an indexed serving path disappears. */
+      workspaceRoot?: string;
+      authority: "workspace" | "filesystem" | "citation";
+    };
+type ResourceCandidate = ResourceLocator & {
+  descriptor: Omit<ResourceDescriptor, "id">;
+};
+
+interface HtmlPreview {
+  resourceId: string;
+  sessionId: string;
+  root: string;
+  entryPath: string;
+  html: string;
 }
+
+type ResolvedResource = ResourceCandidate & { descriptor: ResourceDescriptor };
 
 const MAX_HANDLES = 256;
 const MAX_CITATION_INDEXES = 32;
@@ -323,125 +338,35 @@ function contextMessages(context: ResourceContext): Promise<unknown[]> {
     : Promise.resolve(context.messages);
 }
 
-function classifiedProbeFailure(
-  reference: string,
-  error: unknown,
-): ResourceProbeResult | null {
-  const record =
-    error && typeof error === "object"
-      ? (error as { status?: unknown; message?: unknown; matches?: unknown })
-      : null;
-  const status = typeof record?.status === "number" ? record.status : null;
-  const message =
-    typeof record?.message === "string" ? record.message : undefined;
-  if (status === 409 && Array.isArray(record?.matches)) {
-    return {
-      reference,
-      availability: "ambiguous",
-      ...(message ? { message } : {}),
-      matches: record.matches.map(String),
-    };
-  }
-  if (status === 404)
-    return {
-      reference,
-      availability: "missing",
-      ...(message ? { message } : {}),
-    };
-  if (status === 403)
-    return {
-      reference,
-      availability: "unavailable",
-      ...(message ? { message } : {}),
-    };
-  if (status === 400)
-    return {
-      reference,
-      availability: "invalid",
-      ...(message ? { message } : {}),
-    };
-  return null;
-}
-
 interface EmbeddedCitation {
   messageIndex: number;
-  partIndex: number;
   mimeType: string;
   size: number;
 }
 
 interface ResourceCitationIndex {
-  sessionId: string;
-  viewId: string;
-  revision: number;
   resources: SessionResourceReference[];
   citedPaths: Set<string>;
   embedded: Map<string, EmbeddedCitation>;
-}
-
-interface ResourceListOptions {
-  cursor?: string;
-  limit?: number;
 }
 
 function citationIndexKey(context: ResourceContext): string {
   return JSON.stringify([context.sessionId, context.viewId, context.revision]);
 }
 
-function encodeResourceCursor(
-  index: ResourceCitationIndex,
-  offset: number,
-): string {
-  return Buffer.from(
-    JSON.stringify({
-      sessionId: index.sessionId,
-      viewId: index.viewId,
-      revision: index.revision,
-      offset,
-    }),
-  ).toString("base64url");
-}
-
-function resourceCursorOffset(
-  cursor: string,
-  index: ResourceCitationIndex,
-): number {
-  let value: unknown;
-  try {
-    value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
-  } catch {
-    throw requestError("The resource cursor is not valid", 400);
-  }
-  if (!value || typeof value !== "object") {
-    throw requestError("The resource cursor is not valid", 400);
-  }
-  const record = value as Record<string, unknown>;
-  if (
-    record.sessionId !== index.sessionId ||
-    record.viewId !== index.viewId ||
-    record.revision !== index.revision
-  ) {
-    throw requestError(
-      "The referenced-file view changed; reload the list",
-      409,
-    );
-  }
-  if (
-    !Number.isSafeInteger(record.offset) ||
-    Number(record.offset) < 0 ||
-    Number(record.offset) > index.resources.length
-  ) {
-    throw requestError("The resource cursor is not valid", 400);
-  }
-  return Number(record.offset);
-}
-
-function embeddedCitations(messages: unknown[]): Map<string, EmbeddedCitation> {
-  const embedded = new Map<string, EmbeddedCitation>();
+function visitEmbeddedImages(
+  messages: unknown[],
+  visit: (reference: string, image: EmbeddedCitation, encoded: string) => void,
+  expectedReference?: string,
+): void {
   messages.forEach((message, messageIndex) => {
     if (!message || typeof message !== "object") return;
     const record = message as Record<string, unknown>;
     if (record.display === false || !Array.isArray(record.content)) return;
+    const entryId = record.__inspireHistoryEntryId;
+    const contextIndex = Number.isSafeInteger(record.__inspireMessageIndex)
+      ? Number(record.__inspireMessageIndex)
+      : messageIndex;
     record.content.forEach((part, partIndex) => {
       if (!part || typeof part !== "object") return;
       const image = part as Record<string, unknown>;
@@ -452,20 +377,21 @@ function embeddedCitations(messages: unknown[]): Map<string, EmbeddedCitation> {
       )
         return;
       if (!isSupportedPromptImageMimeType(image.mimeType)) return;
+      const reference =
+        typeof entryId === "string"
+          ? composerArtifactReference("image", entryId, partIndex)
+          : `pi-embedded://${contextIndex}/${partIndex}`;
+      if (expectedReference !== undefined && reference !== expectedReference)
+        return;
       const size = canonicalBase64DecodedSize(image.data);
       if (size === null || size === 0 || size > MAX_PROMPT_IMAGE_BYTES) return;
-      embedded.set(
-        composerArtifactReference("image", record, messageIndex, partIndex),
-        {
-          messageIndex,
-          partIndex,
-          mimeType: image.mimeType,
-          size,
-        },
+      visit(
+        reference,
+        { messageIndex, mimeType: image.mimeType, size },
+        image.data,
       );
     });
   });
-  return embedded;
 }
 
 function buildCitationIndex(
@@ -494,14 +420,11 @@ function buildCitationIndex(
     }
   }
 
-  return {
-    sessionId: context.sessionId,
-    viewId: context.viewId,
-    revision: context.revision,
-    resources,
-    citedPaths,
-    embedded: embeddedCitations(messages),
-  };
+  const embedded = new Map<string, EmbeddedCitation>();
+  visitEmbeddedImages(messages, (reference, image) =>
+    embedded.set(reference, image),
+  );
+  return { resources, citedPaths, embedded };
 }
 
 function referencedByIndex(
@@ -518,6 +441,7 @@ function referencedByIndex(
 
 export class ResourceStore {
   private readonly handles = new Map<string, ResolvedResource>();
+  private readonly htmlPreviews = new Map<string, HtmlPreview>();
   private readonly citationIndexes = new Map<
     string,
     {
@@ -572,34 +496,19 @@ export class ResourceStore {
     return promise;
   }
 
-  /** Return one bounded page from the complete, revision-bound citation
-   * index. The index contains no transcript content or retained handles. */
-  async list(
-    context: ResourceContext,
-    options: ResourceListOptions = {},
-  ): Promise<
-    Omit<SessionResourceListResponse, "sessionId" | "viewId" | "revision">
-  > {
+  /** Include the newest references and the most recent writes outside that page. */
+  async list(context: ResourceContext): Promise<SessionResourceReference[]> {
     const index = await this.citationIndex(context);
-    const limit = options.limit ?? RESOURCE_LIST_INITIAL_SIZE;
-    if (
-      !Number.isSafeInteger(limit) ||
-      limit < 1 ||
-      limit > MAX_RESOURCE_LIST_PAGE_SIZE
-    ) {
-      throw requestError("The resource page size is not valid", 400);
-    }
-    const offset = options.cursor
-      ? resourceCursorOffset(options.cursor, index)
-      : 0;
-    const end = Math.min(index.resources.length, offset + limit);
-    return {
-      offset,
-      total: index.resources.length,
-      nextCursor:
-        end < index.resources.length ? encodeResourceCursor(index, end) : null,
-      resources: index.resources.slice(offset, end),
-    };
+    const recent = index.resources.slice(0, MAX_RESOURCE_LIST_PAGE_SIZE);
+    const remaining =
+      MAX_RESOURCE_LIST_PAGE_SIZE -
+      recent.filter(({ writes }) => writes).length;
+    return recent.concat(
+      index.resources
+        .slice(recent.length)
+        .filter(({ writes }) => writes)
+        .slice(0, remaining),
+    );
   }
 
   /** Check a bounded reference set without retaining content handles. Every
@@ -613,21 +522,21 @@ export class ResourceStore {
     return Promise.all(
       references.map(async (reference) => {
         try {
-          const descriptor = await this.resolveUsingIndex(
+          const resource = await this.resolveCandidate(
             context,
             reference,
-            false,
+            undefined,
             getIndex,
           );
           return {
             reference,
             availability: "available" as const,
-            ...(descriptor.workspacePath
-              ? { workspacePath: descriptor.workspacePath }
+            ...(resource.descriptor.workspacePath
+              ? { workspacePath: resource.descriptor.workspacePath }
               : {}),
           };
         } catch (error) {
-          const result = classifiedProbeFailure(reference, error);
+          const result = resourceRefusal(reference, error);
           if (result) return result;
           throw error;
         }
@@ -638,45 +547,70 @@ export class ResourceStore {
   async resolve(
     context: ResourceContext,
     reference: string,
-    retainHandle = true,
     workspacePath?: string,
   ): Promise<ResourceDescriptor> {
-    let index: Promise<ResourceCitationIndex> | null = null;
-    return this.resolveUsingIndex(
+    const resource = await this.resolveCandidate(
       context,
       reference,
-      retainHandle,
-      () => (index ??= this.citationIndex(context)),
       workspacePath,
     );
+    const descriptor = { id: randomUUID(), ...resource.descriptor };
+    this.remember({ ...resource, descriptor });
+    return descriptor;
   }
 
-  private async resolveUsingIndex(
+  async fileManagerPath(
     context: ResourceContext,
     reference: string,
-    retainHandle: boolean,
-    getIndex: () => Promise<ResourceCitationIndex>,
     workspacePath?: string,
-  ): Promise<ResourceDescriptor> {
-    if (COMPOSER_HISTORY_IMAGE_REFERENCE.test(reference)) {
+    directory = false,
+  ): Promise<string> {
+    if (directory) {
+      if (workspacePath === undefined)
+        throw requestError("Choose a workspace directory", 400);
+      const selected = await exactWorkspacePath(workspacePath, context.cwd);
+      const root = await realpath(context.cwd);
+      const path = await realpath(selected).catch(() => null);
+      if (path === null) throw requestError("The directory was not found", 404);
+      if ((await filesystemRelativePath(root, path)) === null)
+        throw requestError("The directory is outside the project", 403);
+      if (!(await lstat(path)).isDirectory())
+        throw requestError("The reference is not a directory", 400);
+      return path;
+    }
+    const resource = await this.resolveCandidate(
+      context,
+      reference,
+      workspacePath,
+    );
+    if (resource.authority === "embedded")
+      throw requestError("This resource has no file on disk", 400);
+    return resource.path;
+  }
+
+  private async resolveCandidate(
+    context: ResourceContext,
+    reference: string,
+    workspacePath?: string,
+    getIndex = () => this.citationIndex(context),
+  ): Promise<ResourceCandidate> {
+    if (isEmbeddedImageReference(reference)) {
       const embedded = (await getIndex()).embedded.get(reference);
       if (!embedded) {
         throw requestError("The embedded image is no longer available", 404);
       }
-      const descriptor: ResourceDescriptor = {
-        id: randomUUID(),
-        sessionId: context.sessionId,
-        viewId: context.viewId,
-        reference,
-        name: `embedded-image-${embedded.messageIndex + 1}`,
-        mimeType: embedded.mimeType,
-        size: embedded.size,
-        kind: "image",
+      return {
+        descriptor: {
+          sessionId: context.sessionId,
+          viewId: context.viewId,
+          reference,
+          name: `embedded-image-${embedded.messageIndex + 1}`,
+          mimeType: embedded.mimeType,
+          size: embedded.size,
+          kind: "image",
+        },
+        authority: "embedded",
       };
-      if (retainHandle) {
-        this.remember({ descriptor, authority: "embedded" });
-      }
-      return descriptor;
     }
 
     const exactWorkspaceSelection = workspacePath !== undefined;
@@ -763,27 +697,22 @@ export class ResourceStore {
       );
     }
 
-    let anchor: FileHandle | undefined;
+    const { handle, details } = await openAuthorizedResourceFile(
+      selectedPath,
+      path,
+      "resolve",
+    );
     try {
-      // The descriptor-path witness proves the opened object is still the
-      // canonical object authorized above. Retaining that descriptor then pins
-      // its inode until the opaque handle expires; probes close it immediately.
-      const opened = await openAuthorizedResourceFile(selectedPath, path);
-      anchor = opened.handle;
-      const details = opened.details;
-      if (!details.isFile())
-        throw requestError("The reference is not a file", 400);
       if (details.size > BigInt(Number.MAX_SAFE_INTEGER)) {
         throw requestError("The referenced file is too large to preview", 413);
       }
-      const mimeType = await openedResourceMimeType(path, anchor);
+      const mimeType = await openedResourceMimeType(path, handle);
       const workspacePath = within
         ? sep === "\\"
           ? within.split(sep).join("/")
           : within
         : undefined;
-      const descriptor: ResourceDescriptor = {
-        id: randomUUID(),
+      const descriptor: ResourceCandidate["descriptor"] = {
         sessionId: context.sessionId,
         viewId: context.viewId,
         // A recovery answers with the location it actually opened, so the
@@ -797,69 +726,32 @@ export class ResourceStore {
         size: Number(details.size),
         kind: kindFor(mimeType),
       };
-      const authority: ResolvedResource["authority"] = insideWorkspace
+      const authority: ResourceCandidate["authority"] = insideWorkspace
         ? exactWorkspaceSelection
           ? "workspace"
           : "filesystem"
         : "citation";
-      if (retainHandle) {
-        this.remember({
-          descriptor,
-          selectedPath,
-          path,
-          ...(insideWorkspace && workspaceRoot ? { workspaceRoot } : {}),
-          fileId: fileIdentity(details),
-          anchor,
-          authority,
-        });
-        anchor = undefined;
-      } else {
-        await anchor.close();
-        anchor = undefined;
-      }
-      return descriptor;
-    } catch (error) {
-      await anchor?.close().catch(() => undefined);
-      throw error;
+      return {
+        descriptor,
+        selectedPath,
+        path,
+        ...(insideWorkspace && workspaceRoot ? { workspaceRoot } : {}),
+        authority,
+      };
+    } finally {
+      await handle.close();
     }
   }
 
-  /** Open the resource for serving. The retained anchor keeps the originally
-   * authorized inode allocated, then this method proves the current pathname
-   * still resolves to that same object before streaming a fresh handle. */
+  /** Open the currently authorized logical file for one response. */
   async openForServing(
-    resource: ResolvedResource,
-  ): Promise<{ handle: FileHandle; size: number }> {
-    if (
-      !resource.selectedPath ||
-      !resource.path ||
-      !resource.fileId ||
-      !resource.anchor
-    ) {
-      throw requestError("The resource preview is no longer available", 404);
-    }
-    let anchored: BigIntStats;
+    resource: Extract<ResolvedResource, { path: string }>,
+  ): Promise<{ handle: FileHandle; details: BigIntStats }> {
     try {
-      anchored = await resource.anchor.stat({ bigint: true });
-    } catch {
-      throw changedResourceError();
-    }
-    if (
-      !anchored.isFile() ||
-      !sameFileObject(fileIdentity(anchored), resource.fileId)
-    ) {
-      throw changedResourceError();
-    }
-
-    let handle: FileHandle;
-    let details: BigIntStats;
-    try {
-      const opened = await openAuthorizedResourceFile(
+      return await openAuthorizedResourceFile(
         resource.selectedPath,
         resource.path,
       );
-      handle = opened.handle;
-      details = opened.details;
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (code === "ENOENT") {
@@ -878,58 +770,76 @@ export class ResourceStore {
       // evidence that the authorized pathname changed.
       throw error;
     }
-    try {
-      if (
-        !details.isFile() ||
-        !sameFileObject(fileIdentity(details), resource.fileId)
-      ) {
-        throw changedResourceError();
-      }
-      if (details.size > BigInt(Number.MAX_SAFE_INTEGER)) {
-        throw requestError("The referenced file is too large to preview", 413);
-      }
-      return { handle, size: Number(details.size) };
-    } catch (error) {
-      await handle.close().catch(() => undefined);
-      throw error;
-    }
-  }
-
-  private release(resource: ResolvedResource): void {
-    void resource.anchor?.close().catch(() => undefined);
   }
 
   private remember(resource: ResolvedResource): void {
     this.handles.set(resource.descriptor.id, resource);
-    if (this.handles.size > MAX_HANDLES) {
-      const id = this.handles.keys().next().value as string;
-      const evicted = this.handles.get(id);
-      this.handles.delete(id);
-      if (evicted) this.release(evicted);
+    if (this.handles.size > MAX_HANDLES)
+      this.forgetHandle(this.handles.keys().next().value!);
+  }
+
+  private forgetHandle(id: string): void {
+    this.handles.delete(id);
+    for (const [previewId, preview] of this.htmlPreviews) {
+      if (preview.resourceId === id) this.htmlPreviews.delete(previewId);
     }
   }
 
-  async close(): Promise<void> {
-    const resources = [...this.handles.values()];
+  close(): void {
     this.handles.clear();
+    this.htmlPreviews.clear();
     this.citationIndexes.clear();
-    await Promise.all(
-      resources.map(async (resource) =>
-        resource.anchor?.close().catch(() => undefined),
-      ),
-    );
   }
 
   forgetSession(sessionId: string): void {
     for (const [id, resource] of this.handles) {
-      if (resource.descriptor.sessionId === sessionId) {
-        this.handles.delete(id);
-        this.release(resource);
-      }
+      if (resource.descriptor.sessionId === sessionId) this.forgetHandle(id);
     }
     for (const [key, entry] of this.citationIndexes) {
       if (entry.sessionId === sessionId) this.citationIndexes.delete(key);
     }
+  }
+
+  async createHtmlPreview(
+    resourceId: string,
+    context: ResourceContext,
+    html: string,
+  ): Promise<HtmlPreviewResponse> {
+    if (Buffer.byteLength(html) > HTML_PREVIEW_BYTES)
+      throw requestError("The HTML is too large for interactive preview", 413);
+    const resource = await this.authorize(resourceId, context);
+    if (
+      resource.descriptor.kind !== "html" ||
+      resource.authority === "embedded"
+    )
+      throw requestError("Only HTML files support interactive preview", 400);
+    const root = resource.workspaceRoot ?? dirname(resource.path);
+    const entryPath = relative(root, resource.path);
+    const id = randomUUID();
+    this.htmlPreviews.set(id, {
+      resourceId,
+      sessionId: context.sessionId,
+      root,
+      entryPath,
+      html,
+    });
+    if (this.htmlPreviews.size > 32)
+      this.htmlPreviews.delete(this.htmlPreviews.keys().next().value!);
+    return {
+      id,
+      url: `/html-preview/${id}/${entryPath.split(sep).map(encodeURIComponent).join("/")}`,
+    };
+  }
+
+  removeHtmlPreview(id: string, sessionId: string): void {
+    if (this.htmlPreviews.get(id)?.sessionId === sessionId)
+      this.htmlPreviews.delete(id);
+  }
+
+  getHtmlPreview(id: string): HtmlPreview {
+    const preview = this.htmlPreviews.get(id);
+    if (!preview) throw requestError("The interactive preview has ended", 404);
+    return preview;
   }
 
   get(id: string, sessionId: string, viewId: string): ResolvedResource {
@@ -944,19 +854,19 @@ export class ResourceStore {
     return resource;
   }
 
-  async revalidate(
+  async authorize(
+    id: string,
+    context: ResourceContext,
+  ): Promise<ResolvedResource> {
+    const resource = this.get(id, context.sessionId, context.viewId);
+    await this.checkAuthority(resource, context);
+    return this.get(id, context.sessionId, context.viewId);
+  }
+
+  private async checkAuthority(
     resource: ResolvedResource,
     context: ResourceContext,
   ): Promise<void> {
-    if (
-      resource.descriptor.sessionId !== context.sessionId ||
-      resource.descriptor.viewId !== context.viewId
-    ) {
-      throw requestError(
-        "The resource preview belongs to another branch view",
-        409,
-      );
-    }
     // embeddedContent revalidates an embedded reference against the same message
     // load from which it reads bytes, avoiding a second full transcript load.
     if (resource.authority === "embedded") return;
@@ -966,19 +876,12 @@ export class ResourceStore {
     ) {
       const workspaceRoot = await realpath(context.cwd).catch(() => null);
       const within =
-        workspaceRoot && resource.path
+        workspaceRoot && workspaceRoot === resource.workspaceRoot
           ? await filesystemRelativePath(workspaceRoot, resource.path)
           : null;
-      if (
-        workspaceRoot &&
-        workspaceRoot === resource.workspaceRoot &&
-        resource.path &&
-        within !== null &&
-        within !== ""
-      )
-        return;
+      if (within) return;
       // Exact selections are literal paths, never reinterpreted as citations.
-      // Serving additionally checks the original pinned filesystem object.
+      // Serving additionally checks that the selected path still resolves to the authorized path.
       if (resource.authority === "workspace") {
         throw requestError("The file is no longer inside this workspace", 403);
       }
@@ -997,29 +900,19 @@ export class ResourceStore {
     context: ResourceContext,
   ): Promise<{ data: Buffer; mimeType: string }> {
     const messages = await contextMessages(context);
-    const embedded = embeddedCitations(messages).get(
+    let encoded = "";
+    let mimeType = "";
+    visitEmbeddedImages(
+      messages,
+      (_reference, image, value) => {
+        encoded = value;
+        mimeType = image.mimeType;
+      },
       resource.descriptor.reference,
     );
-    const message = embedded ? messages[embedded.messageIndex] : undefined;
-    const content =
-      message && typeof message === "object"
-        ? (message as Record<string, unknown>).content
-        : undefined;
-    const part =
-      embedded && Array.isArray(content)
-        ? content[embedded.partIndex]
-        : undefined;
-    const record =
-      part && typeof part === "object"
-        ? (part as Record<string, unknown>)
-        : undefined;
-    const data =
-      record && record.type === "image" && typeof record.data === "string"
-        ? decodeCanonicalBase64(record.data)
-        : null;
-    if (!data || !embedded) {
+    const data = decodeCanonicalBase64(encoded);
+    if (!data?.length)
       throw requestError("The embedded image is no longer available", 404);
-    }
-    return { data, mimeType: embedded.mimeType };
+    return { data, mimeType };
   }
 }

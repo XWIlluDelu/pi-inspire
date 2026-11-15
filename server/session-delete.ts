@@ -84,13 +84,9 @@ type TrashSessionPath = (
   payloadPath: string,
   originalPath: string,
 ) => Promise<void>;
-export type SessionDeletionVersion = "catalog" | "current";
-
 export type DeleteSessionRecord = (
   session: SessionRecord,
-  version?: SessionDeletionVersion,
 ) => Promise<SessionDeleteDisposition>;
-export type ValidateSessionRecord = (session: SessionRecord) => Promise<void>;
 
 async function readFirstLine(handle: FileHandle): Promise<string> {
   const chunks: Buffer[] = [];
@@ -127,7 +123,6 @@ async function existingSessionStats(path: string): Promise<BigIntStats> {
 
 async function inspectSessionFile(
   session: SessionRecord,
-  version: SessionDeletionVersion = "catalog",
 ): Promise<SessionFileIdentity> {
   const path = resolve(session.path);
   if (extname(path).toLowerCase() !== ".jsonl") {
@@ -138,12 +133,10 @@ async function inspectSessionFile(
   if (!before.isFile() || before.isSymbolicLink()) {
     throw requestError("The catalog entry is not a regular session file", 409);
   }
+  // Catalog identity authorizes the inode. Pi may have appended before inspection.
   if (
     !session.source ||
-    !(version === "current" ? sameFileObject : sameFileVersion)(
-      fileIdentity(before),
-      session.source,
-    )
+    !sameFileObject(fileIdentity(before), session.source)
   ) {
     throw requestError(
       "The session changed since the catalog was loaded",
@@ -397,10 +390,9 @@ export async function deleteSessionFile(
   session: SessionRecord,
   moveToTrash: TrashSessionPath = moveToDesktopTrash,
   removeDirectory: RemoveEmptyDirectory = removeEmptyDirectory,
-  version: SessionDeletionVersion = "catalog",
 ): Promise<SessionDeleteDisposition> {
   const path = resolve(session.path);
-  const inspected = await inspectSessionFile(session, version);
+  const inspected = await inspectSessionFile(session);
   const quarantine = await quarantineSession(path, inspected);
   let trashError: unknown;
   try {

@@ -1,4 +1,5 @@
 import {
+  appendFile,
   mkdir,
   mkdtemp,
   readFile,
@@ -6,20 +7,28 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import request from "supertest";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createInspireServer } from "../../server/app.js";
 import { AttachmentStore } from "../../server/attachments.js";
-import { PiRpcProcess } from "../../server/pi-rpc.js";
 import { GitInspectionService } from "../../server/git-inspection.js";
+import { PiRpcProcess } from "../../server/pi-rpc.js";
+import { createPiSessionDirectoryResolver } from "../../server/pi-session-directory.js";
 import { PreferencesStore } from "../../server/preferences.js";
 import { ResourceStore } from "../../server/resources.js";
 import { RuntimeController } from "../../server/runtime.js";
-import { createHostSessionCatalog } from "../../server/session-catalog.js";
+import {
+  createHostSessionCatalog,
+  SessionCatalog,
+} from "../../server/session-catalog.js";
+
+import {
+  startOfflineModel,
+  writeOfflineModels,
+} from "./fixtures/offline-model.js";
+import { jsonl, messageEntry, writeSession } from "./fixtures/session-jsonl.js";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -58,10 +67,8 @@ function host(
   // curation nor a test provider supplies the new session's project directory.
   const preferences = new PreferencesStore(preferencesPath);
   const catalog = createHostSessionCatalog(startup, preferences);
-  const runtime = new RuntimeController(
-    catalog,
-    attachments,
-    (options) =>
+  const runtime = new RuntimeController(catalog, attachments, {
+    createProcess: (options) =>
       new PiRpcProcess({
         ...options,
         args: [
@@ -73,7 +80,7 @@ function host(
         ],
         env: { ...options.env, PI_OFFLINE: "1" },
       }),
-  );
+  });
   const application = createInspireServer({
     token: "test",
     runtime,
@@ -82,7 +89,6 @@ function host(
     attachments,
     resources: new ResourceStore(),
     git: new GitInspectionService(),
-    mock: false,
     version: "test",
     piVersion: "test",
   });
@@ -103,187 +109,223 @@ const api = (application: ReturnType<typeof createInspireServer>) => ({
 });
 
 describe("Host project discovery continuity", () => {
-  it.each(["relative-env", "local-setting", "global-relative-setting"])(
-    "reconstructs a never-pinned new project using %s, independently of Pin/Hidden",
-    async (selection) => {
-      const { root, startup, project, agent, preferencesPath } =
-        await fixture();
-      if (selection === "relative-env")
-        vi.stubEnv("PI_CODING_AGENT_SESSION_DIR", "sessions");
-      else {
-        const settingsRoot =
-          selection === "local-setting" ? join(project, ".pi") : agent;
-        await mkdir(settingsRoot, { recursive: true });
-        await writeFile(
-          join(settingsRoot, "settings.json"),
-          JSON.stringify({ sessionDir: "sessions" }),
-        );
-      }
-      // A loopback model makes stock Pi materialize its own new JSONL without
-      // credentials, external requests, or an Inspire-selected --session-dir.
-      const model = createServer(async (req, response) => {
-        for await (const _chunk of req) {
-          /* consume request */
-        }
-        response.writeHead(200, { "content-type": "text/event-stream" });
-        for (const [delta, finish_reason] of [
-          [{ role: "assistant", content: "offline answer" }, null],
-          [{}, "stop"],
-        ]) {
-          response.write(
-            `data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", created: 1, model: "offline", choices: [{ index: 0, delta, finish_reason }] })}\n\n`,
-          );
-        }
-        response.end("data: [DONE]\n\n");
-      });
-      await new Promise<void>((done) => model.listen(0, "127.0.0.1", done));
-      await writeFile(
-        join(agent, "models.json"),
-        JSON.stringify({
-          providers: {
-            fixture: {
-              baseUrl: `http://127.0.0.1:${(model.address() as AddressInfo).port}/v1`,
-              api: "openai-completions",
-              apiKey: "fixture-placeholder",
-              models: [
-                {
-                  id: "offline",
-                  name: "Offline",
-                  reasoning: false,
-                  input: ["text"],
-                  contextWindow: 8192,
-                  maxTokens: 256,
-                },
-              ],
-            },
-          },
-        }),
-      );
-      const reconstruct = () =>
-        host(
-          startup,
-          preferencesPath,
-          new AttachmentStore(join(root, "uploads")),
-        );
-      let current = reconstruct();
-      try {
-        const created = await api(current.application)
-          .newSession(project)
-          .expect(200);
-        const id = created.body.active.sessionId as string;
-        expect((await current.preferences.read()).pinnedProjectCwds).toEqual(
-          [],
-        );
-        expect(await current.preferences.projectDirectories.read()).toContain(
-          project,
-        );
-        await current.runtime.prompt({
-          sessionId: id,
-          message: "first message",
-        });
-        await vi.waitFor(
-          async () => {
-            expect(
-              await readFile(created.body.active.sessionFile, "utf8"),
-            ).toContain("offline answer");
-            expect((await current.runtime.snapshot()).runState).toBe("idle");
-          },
-          { timeout: 10_000 },
-        );
-        await current.application.close();
-        current = reconstruct();
-        expect(
-          (await current.catalog.list()).sessions.map((row) => row.id),
-        ).toEqual([id]);
-        const opened = await current.runtime.openSession(id);
-        expect(opened.active?.sessionId).toBe(id);
-        await current.runtime.prompt({
-          sessionId: id,
-          message: "continue after reconstruction",
-        });
-        await vi.waitFor(
-          async () => {
-            expect(
-              await readFile(created.body.active.sessionFile, "utf8"),
-            ).toContain("continue after reconstruction");
-            expect((await current.runtime.snapshot()).runState).toBe("idle");
-          },
-          { timeout: 10_000 },
-        );
-        // Exercise the actual preference route, including clearing both kinds
-        // of folder curation. Neither transition removes storage knowledge.
-        await api(current.application)
-          .curate({ pinnedProjectCwds: [project] })
-          .expect(200);
-        await api(current.application)
-          .curate({ pinnedProjectCwds: [], hiddenProjectCwds: [project] })
-          .expect(200);
-        await api(current.application)
-          .curate({ hiddenProjectCwds: [] })
-          .expect(200);
-        await current.application.close();
-        current = reconstruct();
-        expect(
-          (await current.catalog.list()).sessions.map((row) => row.id),
-        ).toEqual([id]);
-        // Remember only cwd: a current override must not scan old session paths.
-        vi.stubEnv("PI_CODING_AGENT_SESSION_DIR", "replacement");
-        expect(await current.catalog.refresh(true)).toEqual([]);
-        vi.stubEnv(
-          "PI_CODING_AGENT_SESSION_DIR",
-          selection === "relative-env" ? "sessions" : undefined,
-        );
-        expect(
-          (await current.catalog.refresh(true)).map((row) => row.id),
-        ).toEqual([id]);
-        // Removing the file/root must not resurrect a cached session on restart.
-        await rm(join(project, "sessions"), { recursive: true });
-        expect(await current.catalog.refresh(true)).toEqual([]);
-        await current.application.close();
-        current = reconstruct();
-        expect(await current.catalog.refresh()).toEqual([]);
-        expect(await current.preferences.projectDirectories.read()).toContain(
-          project,
-        );
-      } finally {
-        await current.application.close();
-        await new Promise<void>((done, reject) =>
-          model.close((error) => (error ? reject(error) : done())),
-        );
-      }
-    },
-    30_000,
-  );
-
-  it("remembers the cwd of an opened existing session without pinning it", async () => {
+  it("rediscovers a never-pinned native session after Host reconstruction and curation changes", async () => {
     const { root, startup, project, agent, preferencesPath } = await fixture();
-    const storage = join(agent, "sessions", "--existing--");
-    await mkdir(storage, { recursive: true });
+    await mkdir(join(project, ".pi"));
     await writeFile(
-      join(storage, "existing.jsonl"),
-      `${JSON.stringify({ type: "session", version: 3, id: "existing", cwd: project, timestamp: new Date().toISOString() })}\n`,
+      join(project, ".pi", "settings.json"),
+      JSON.stringify({ sessionDir: "sessions" }),
     );
-    const current = host(
-      startup,
-      preferencesPath,
-      new AttachmentStore(join(root, "uploads")),
-    );
-    try {
-      await request(current.application.server)
-        .post("/api/sessions/open")
-        .set("Authorization", "Bearer test")
-        .send({ id: "existing" })
-        .expect(200);
-      await vi.waitFor(async () =>
-        expect(
-          await new PreferencesStore(preferencesPath).projectDirectories.read(),
-        ).toContain(project),
+    // A loopback model makes stock Pi materialize its own new JSONL without
+    // credentials, external requests, or an Inspire-selected --session-dir.
+    const model = await startOfflineModel({ reply: "offline answer" });
+    const reconstruct = () =>
+      host(
+        startup,
+        preferencesPath,
+        new AttachmentStore(join(root, "uploads")),
       );
+    let current = reconstruct();
+    try {
+      await writeOfflineModels(agent, model.baseUrl, "fixture", [
+        { id: "offline", name: "Offline", maxTokens: 256 },
+      ]);
+      const created = await api(current.application)
+        .newSession(project)
+        .expect(200);
+      const { sessionId: id, sessionFile } = created.body.active as {
+        sessionId: string;
+        sessionFile: string;
+      };
+      const settled = (evidence: string) =>
+        vi.waitFor(
+          async () => {
+            expect(await readFile(sessionFile, "utf8")).toContain(evidence);
+            expect(
+              (await current.runtime.snapshot(id)).sessionStatuses[id]
+                ?.runState,
+            ).toBe("idle");
+          },
+          { timeout: 10_000 },
+        );
       expect((await current.preferences.read()).pinnedProjectCwds).toEqual([]);
+      expect(await current.preferences.projectDirectories.read()).toContain(
+        project,
+      );
+      await current.runtime.prompt({
+        sessionId: id,
+        message: "first message",
+      });
+      await settled("offline answer");
+      await current.application.close();
+      current = reconstruct();
+      expect(
+        (await current.catalog.list()).sessions.map((row) => row.id),
+      ).toEqual([id]);
+      const opened = await current.runtime.openSession(id);
+      expect(opened.active?.sessionId).toBe(id);
+      await current.runtime.prompt({
+        sessionId: id,
+        message: "continue after reconstruction",
+      });
+      await settled("continue after reconstruction");
+      // Exercise the actual preference route, including clearing both kinds
+      // of folder curation. Neither transition removes storage knowledge.
+      await api(current.application)
+        .curate({ pinnedProjectCwds: [project] })
+        .expect(200);
+      await api(current.application)
+        .curate({ pinnedProjectCwds: [], hiddenProjectCwds: [project] })
+        .expect(200);
+      await api(current.application)
+        .curate({ hiddenProjectCwds: [] })
+        .expect(200);
+      await current.application.close();
+      current = reconstruct();
+      expect(
+        (await current.catalog.list()).sessions.map((row) => row.id),
+      ).toEqual([id]);
+      // Remember only cwd: a current override must not scan old session paths.
+      vi.stubEnv("PI_CODING_AGENT_SESSION_DIR", "replacement");
+      expect(await current.catalog.refresh(true)).toEqual([]);
+      vi.stubEnv("PI_CODING_AGENT_SESSION_DIR", undefined);
+      expect(
+        (await current.catalog.refresh(true)).map((row) => row.id),
+      ).toEqual([id]);
+      // Removing the file/root must not resurrect a cached session on restart.
+      await rm(join(project, "sessions"), { recursive: true });
+      expect(await current.catalog.refresh(true)).toEqual([]);
+      await current.application.close();
+      current = reconstruct();
+      expect(await current.catalog.refresh()).toEqual([]);
+      expect(await current.preferences.projectDirectories.read()).toContain(
+        project,
+      );
     } finally {
       await current.application.close();
+      await model.close();
     }
-  });
+  }, 30_000);
+
+  it("finds an externally forked session and keeps its native cursor separate from later disk appends", async () => {
+    const { root, project, agent } = await fixture();
+    await mkdir(join(project, ".pi"));
+    await writeFile(
+      join(project, ".pi", "settings.json"),
+      JSON.stringify({ sessionDir: "project-sessions" }),
+    );
+    await writeFile(
+      join(agent, "settings.json"),
+      JSON.stringify({ sessionDir: "global-sessions" }),
+    );
+    vi.stubEnv("PI_CODING_AGENT_SESSION_DIR", "external-sessions");
+    const source = join(root, "source.jsonl");
+    const timestamp = "2026-01-01T00:00:00Z";
+    const usage = (
+      id: string,
+      parentId: string,
+      kind: string,
+      tokens: number,
+    ) => ({
+      type: "usage",
+      id,
+      parentId,
+      timestamp,
+      kind,
+      provider: "fixture",
+      model: "offline",
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: tokens,
+        cacheWrite: 0,
+        totalTokens: tokens,
+        cost: {
+          input: 0,
+          output: 0,
+          cacheRead: tokens / 8_000,
+          cacheWrite: 0,
+          total: tokens / 8_000,
+        },
+      },
+    });
+    await writeSession(
+      source,
+      project,
+      "55555555-5555-4555-8555-555555555555",
+      [
+        messageEntry("u1", null, {
+          role: "user",
+          content: "External Pi session",
+          timestamp: 1,
+        }),
+        usage("cache", "u1", "cache_warm", 1_000),
+        usage("worker-tail", "cache", "future-usage-kind", 2_000),
+      ],
+    );
+    const rpc = new PiRpcProcess({
+      cwd: project,
+      args: [
+        "--no-extensions",
+        "--no-skills",
+        "--no-prompt-templates",
+        "--no-themes",
+        "--fork",
+        source,
+      ],
+      env: { PI_OFFLINE: "1" },
+    });
+    await rpc.start();
+    try {
+      const { sessionId, sessionFile } = await rpc.request<{
+        sessionId: string;
+        sessionFile: string;
+      }>({ type: "get_state" });
+      const file = resolve(project, sessionFile);
+      const expected = join(project, "external-sessions");
+      expect(dirname(file)).toBe(expected);
+      expect(await createPiSessionDirectoryResolver()(project)).toBe(expected);
+      expect(await readFile(file, "utf8")).toContain("External Pi session");
+      const catalog = new SessionCatalog(project);
+      expect((await catalog.list()).sessions.map(({ id }) => id)).toEqual([
+        sessionId,
+      ]);
+      expect(await catalog.get(sessionId)).toMatchObject({
+        path: file,
+        cwd: project,
+      });
+      await expect(
+        rpc.request({ type: "get_session_stats" }),
+      ).resolves.toMatchObject({
+        sessionId,
+        tokens: { cacheRead: 3_000, total: 3_000 },
+        cost: 0.375,
+      });
+      const { leafId } = await rpc.request<{ leafId: string }>({
+        type: "get_entries",
+      });
+      expect(leafId).toEqual(expect.any(String));
+      await appendFile(
+        file,
+        jsonl({
+          type: "custom",
+          id: "disk-tail",
+          parentId: leafId,
+          timestamp,
+          customType: "external",
+          data: {},
+        }),
+      );
+      await expect(
+        rpc.request({ type: "get_entries", since: leafId }),
+      ).resolves.toEqual({ entries: [], leafId });
+      await expect(
+        rpc.request({ type: "get_entries", since: "disk-tail" }),
+      ).rejects.toThrow(/not found/i);
+    } finally {
+      await rpc.stop();
+    }
+  }, 30_000);
 
   it("remembers an uncertain start without making the index a launch gate", async () => {
     const { root, startup, project, preferencesPath } = await fixture();
@@ -295,15 +337,19 @@ describe("Host project discovery continuity", () => {
       const rpc = new PiRpcProcess(options);
       vi.spyOn(rpc, "start").mockImplementation(async () => {
         await mkdir(join(project, "sessions"), { recursive: true });
-        await writeFile(
+        await writeSession(
           join(project, "sessions", "uncertain.jsonl"),
-          `${JSON.stringify({ type: "session", version: 3, id: "uncertain", cwd: project, timestamp: new Date().toISOString() })}\n`,
+          project,
+          "uncertain",
+          [],
         );
         throw new Error("startup response lost");
       });
       return rpc;
     });
-    const runtime = new RuntimeController(catalog, attachments, create);
+    const runtime = new RuntimeController(catalog, attachments, {
+      createProcess: create,
+    });
     try {
       await expect(runtime.newSession(project)).rejects.toThrow(
         "startup response lost",

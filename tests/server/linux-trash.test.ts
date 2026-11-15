@@ -99,35 +99,43 @@ describe("Linux mountinfo", () => {
 describe.skipIf(process.platform !== "linux")(
   "source-volume Freedesktop Trash",
   () => {
-    it("uses private topdir Trash across distinct logical bind mounts on the same device", async () => {
-      const { volume, payload, original, options } = await fixture();
-      const before = await lstat(payload);
-      const { root, restorePath } = await selectLinuxTrash(
-        payload,
-        original,
-        options,
-      );
-      expect(root).toBe(join(volume, ".Trash-" + uid));
-      expect(restorePath).toBe("sessions/session 空格 #%.jsonl");
-      await moveToDesktopTrash(payload, original, {
-        platform: "linux",
-        ...options,
-        linux: options,
-      });
-      const entries = await readdir(join(root, "files"));
-      expect(entries).toHaveLength(1);
-      const moved = await lstat(join(root, "files", entries[0]!));
-      expect([moved.dev, moved.ino]).toEqual([before.dev, before.ino]);
-      const info = await readFile(
-        join(root, "info", entries[0] + ".trashinfo"),
-        "utf8",
-      );
-      expect(info).toContain(
-        "Path=sessions/session%20%E7%A9%BA%E6%A0%BC%20%23%25.jsonl\n",
-      );
-      expect(info).not.toContain(".inspire-delete-");
-      await expect(lstat(payload)).rejects.toMatchObject({ code: "ENOENT" });
-    });
+    it.each(["home", "bind-mount"] as const)(
+      "moves to %s Trash with the original path and inode",
+      async (location) => {
+        const { home, volume, payload, original, options } = await fixture();
+        if (location === "home") options.mounts = async () => [mount(home, 1)];
+        const before = await lstat(payload);
+        const contents = await readFile(payload, "utf8");
+        const root =
+          location === "home"
+            ? join(options.environment.XDG_DATA_HOME, "Trash")
+            : join(volume, ".Trash-" + uid);
+        await moveToDesktopTrash(payload, original, {
+          platform: "linux",
+          ...options,
+          linux: options,
+        });
+        const entries = await readdir(join(root, "files"));
+        expect(entries).toHaveLength(1);
+        const destination = join(root, "files", entries[0]!);
+        const moved = await lstat(destination);
+        expect([moved.dev, moved.ino]).toEqual([before.dev, before.ino]);
+        expect(await readFile(destination, "utf8")).toBe(contents);
+        const info = await readFile(
+          join(root, "info", entries[0] + ".trashinfo"),
+          "utf8",
+        );
+        const prefix =
+          location === "home"
+            ? encodeURIComponent(volume).replaceAll("%2F", "/") + "/"
+            : "";
+        expect(info).toContain(
+          `Path=${prefix}sessions/session%20%E7%A9%BA%E6%A0%BC%20%23%25.jsonl\n`,
+        );
+        expect(info).not.toContain(".inspire-delete-");
+        await expect(lstat(payload)).rejects.toMatchObject({ code: "ENOENT" });
+      },
+    );
 
     it("uses available source-volume Trash when same-mount home Trash is unsafe", async () => {
       const { volume, home, payload, original, options } = await fixture();

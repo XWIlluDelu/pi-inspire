@@ -1,32 +1,37 @@
 import type { Page } from "@playwright/test";
 import type { SessionSummary } from "../../../shared/contracts";
-import { routeMockSnapshots } from "../support/mock-host";
+import { routeSnapshots } from "../support/host-events";
 
-/** Isolated curation model: grouped projects, including a Hidden former pin.
- * MockRuntime.newSession is transient, not a file-backed catalog entry. Seeded
- * native IDs retain their real open/history envelopes; only the catalog
+/** Isolated curation model: grouped projects, a Hidden former pin and a hidden session.
+ * Seeded native IDs retain their real open/history envelopes; only the catalog
  * summaries and matching selected identity are fixture-owned. No Host preference
  * or canonical session file is changed. */
 export async function navigationGroupsFixture(page: Page) {
   const records: SessionSummary[] = [
-    ["mock-history", "/projects/calibration", "Geometry session", "05"],
+    ["fixture-history", "/projects/calibration", "Geometry session", "05"],
     [
-      "mock-calibration-history",
+      "fixture-calibration-history",
       "/projects/acquisition",
       "Residual session",
       "04",
     ],
-    ["mock-active", "/projects/reports", "Reports session", "03"],
+    ["fixture-active", "/projects/reports", "Reports session", "03"],
     [
-      "mock-compaction",
+      "fixture-compaction",
       "/projects/archived-a",
       "Archived measurement session",
       "02",
     ],
     [
-      "mock-errors",
+      "fixture-errors",
       "/projects/archived-b",
       "Archived validation session",
+      "01",
+    ],
+    [
+      "hidden-independent",
+      "/projects/reports",
+      "Independent hidden session",
       "01",
     ],
   ].map(([id, cwd, title, day]) => ({
@@ -39,22 +44,24 @@ export async function navigationGroupsFixture(page: Page) {
     messageCount: 1,
   }));
   let preferences: Record<string, unknown>;
-  const transport = await routeMockSnapshots(page, {
+  let revision = 0;
+  const transport = await routeSnapshots(page, {
     bootstrap: (body) => {
       if (!preferences)
         preferences = {
           ...body.preferences,
           pinnedSessionIds: [],
-          hiddenSessionIds: [],
+          hiddenSessionIds: ["hidden-independent"],
           pinnedProjectCwds: [
             "/projects/calibration",
             "/projects/acquisition",
             "/projects/archived-a",
           ],
           hiddenProjectCwds: ["/projects/archived-a", "/projects/archived-b"],
-          navCollapsedGroups: records.map((record) => record.cwd),
+          navCollapsedGroups: [...new Set(records.map((record) => record.cwd))],
         };
       Object.assign(body.preferences, preferences);
+      body.preferenceRevision = ++revision;
     },
     snapshot: (snapshot) => {
       const record = records.find(
@@ -65,12 +72,15 @@ export async function navigationGroupsFixture(page: Page) {
         snapshot.active.sessionName = record.title;
       }
     },
+    event: (event) => {
+      if (event.type === "external_session_activity") return false;
+    },
   });
   await page.route("**/api/preferences", async (route) => {
     Object.assign(preferences, route.request().postDataJSON());
     await route.fulfill({
       headers: { "X-Inspire-Authority": transport.authority() },
-      json: preferences,
+      json: { preferences, revision: ++revision },
     });
   });
   await page.route(/\/api\/sessions(?:\?|$)/, async (route) => {
@@ -102,4 +112,5 @@ export async function navigationGroupsFixture(page: Page) {
         },
       });
     });
+  return transport;
 }

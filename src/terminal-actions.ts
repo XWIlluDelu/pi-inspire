@@ -1,15 +1,18 @@
 const MAX_PENDING_INSERTIONS = 20;
 const MAX_TOTAL_INSERTION_CHARS = 200_000;
 
-export type TerminalUiAction =
-  | "new"
-  | "next"
-  | "previous"
-  | "take-control"
-  | "close"
-  | "restart"
-  | "focus"
-  | "settings";
+export const terminalActions = {
+  new: { title: "New terminal", acceptsDeferred: true },
+  next: { title: "Next terminal" },
+  previous: { title: "Previous terminal" },
+  "take-control": { title: "Take control of terminal" },
+  restart: { title: "Restart terminal" },
+  close: { title: "Close terminal" },
+  focus: { title: "Toggle terminal focus", acceptsDeferred: true },
+  settings: { title: "Terminal settings", acceptsDeferred: true },
+} as const;
+
+export type TerminalUiAction = keyof typeof terminalActions;
 
 export interface TerminalActionIntent {
   action: TerminalUiAction;
@@ -76,7 +79,7 @@ export function queueTerminalAction(
   }
   // Only opening surfaces may wait for lazy mounting. Terminal operations
   // must resolve a concrete target synchronously or end without a request.
-  if (action !== "new" && action !== "focus" && action !== "settings") return;
+  if (!("acceptsDeferred" in terminalActions[action])) return;
   pendingActions.push(intent);
   if (pendingActions.length > MAX_PENDING_INSERTIONS) pendingActions.shift();
 }

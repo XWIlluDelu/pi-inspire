@@ -1,6 +1,8 @@
+import { jsonRecord } from "../../shared/json-record";
 import { stripTerminalSequences } from "../ansi";
 import { parseUnifiedDiff } from "../diff";
 import { type ChatMessage, toolResultText } from "../events";
+import { formatCount } from "../format";
 import type {
   ToolImageMimeType,
   ToolListItem,
@@ -12,15 +14,9 @@ import type {
   ToolProperty,
   ToolSearchGroup,
 } from "./model";
-import { mergeSearchContext, toolResultImage } from "./model";
+import { joinResourcePath, mergeSearchContext, toolResultImage } from "./model";
 
 const PI_RULE_PREFIX = "inspire.pi";
-
-function record(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
 
 function stringValue(
   source: Record<string, unknown>,
@@ -44,7 +40,7 @@ function positiveInteger(value: number | null, fallback: number): number {
 function detailsOf(
   input: ToolPresentationInput,
 ): Record<string, unknown> | null {
-  return record(input.result?.details);
+  return jsonRecord(input.result?.details);
 }
 
 function summary(
@@ -58,10 +54,6 @@ function presentation(
   blocks: ToolPresentation["blocks"],
 ): ToolPresentation {
   return { summary: compact, blocks };
-}
-
-function formatCount(value: number, noun: string): string {
-  return `${value.toLocaleString()} ${noun}${value === 1 ? "" : "s"}`;
 }
 
 function compactSummary(value: string, maximum = 90): string {
@@ -124,7 +116,7 @@ function nativeImageResult(
 ): Extract<ToolPresentationBlock, { type: "image" }> | null | undefined {
   if (!Array.isArray(input.result?.content)) return undefined;
   const index = input.result.content.findIndex(
-    (part) => record(part)?.type === "image",
+    (part) => jsonRecord(part)?.type === "image",
   );
   return index < 0 ? undefined : toolResultImage(input.result, index, alt);
 }
@@ -137,7 +129,7 @@ function truncationNotice(
   details: Record<string, unknown> | null,
   subject: string,
 ): string | null {
-  const truncation = record(details?.truncation);
+  const truncation = jsonRecord(details?.truncation);
   if (!truncation || truncation.truncated !== true) return null;
   const shown =
     typeof truncation.outputLines === "number"
@@ -170,7 +162,7 @@ function readRule(): ToolPresentationRule {
   return {
     id: `${PI_RULE_PREFIX}.read`,
     present(input) {
-      const args = record(input.call.arguments);
+      const args = jsonRecord(input.call.arguments);
       if (!args) return null;
       const path = stringValue(args, "path");
       if (path === null || path.length === 0) return null;
@@ -291,7 +283,7 @@ function writeRule(): ToolPresentationRule {
   return {
     id: `${PI_RULE_PREFIX}.write`,
     present(input) {
-      const args = record(input.call.arguments);
+      const args = jsonRecord(input.call.arguments);
       if (!args) return null;
       const partial = Boolean(input.call.__inspireToolCall);
       const path =
@@ -352,7 +344,7 @@ function editReplacement(
   value: unknown,
   partial: boolean,
 ): EditReplacement | null {
-  const item = record(value);
+  const item = jsonRecord(value);
   if (!item) return null;
   const { oldText, newText } = item;
   // A streaming array starts each new item as {}. Only absent fields are
@@ -394,7 +386,7 @@ function editRule(): ToolPresentationRule {
   return {
     id: `${PI_RULE_PREFIX}.edit`,
     present(input) {
-      const args = record(input.call.arguments);
+      const args = jsonRecord(input.call.arguments);
       if (!args) return null;
       const partial = Boolean(input.call.__inspireToolCall);
       const path =
@@ -461,7 +453,7 @@ function shellRule(name: "bash" | "powershell"): ToolPresentationRule {
   return {
     id: `${PI_RULE_PREFIX}.${name}`,
     present(input) {
-      const args = record(input.call.arguments);
+      const args = jsonRecord(input.call.arguments);
       if (!args) return null;
       const rawCommand = stringValue(args, "command");
       if (rawCommand === null || rawCommand.length === 0) return null;
@@ -496,7 +488,7 @@ function shellRule(name: "bash" | "powershell"): ToolPresentationRule {
           ];
           if (!input.result) return blocks;
           const details = detailsOf(input);
-          const truncated = Boolean(record(details?.truncation)?.truncated);
+          const truncated = Boolean(jsonRecord(details?.truncation)?.truncated);
           const output = stripStructuredTrailingNotice(
             toolResultText(input.result),
             truncated,
@@ -583,7 +575,7 @@ function grepRule(): ToolPresentationRule {
   return {
     id: `${PI_RULE_PREFIX}.grep`,
     present(input) {
-      const args = record(input.call.arguments);
+      const args = jsonRecord(input.call.arguments);
       if (!args) return null;
       const pattern = stringValue(args, "pattern");
       if (pattern === null) return null;
@@ -627,7 +619,7 @@ function grepRule(): ToolPresentationRule {
           const hasNotice = Boolean(
             details?.matchLimitReached ||
               details?.linesTruncated ||
-              record(details?.truncation)?.truncated,
+              jsonRecord(details?.truncation)?.truncated,
           );
           const output = stripStructuredTrailingNotice(raw, hasNotice);
           const groups = parseGrepOutput(output.text);
@@ -653,12 +645,6 @@ function grepRule(): ToolPresentationRule {
   };
 }
 
-function joinResourcePath(root: string, child: string): string {
-  if (/^(?:\/|[A-Za-z]:[\\/])/.test(child)) return child;
-  if (!root || root === ".") return child;
-  return `${root.replace(/[\\/]$/, "")}/${child.replace(/^[\\/]/, "")}`;
-}
-
 function listOutput(
   text: string,
   root: string,
@@ -677,11 +663,62 @@ function listOutput(
     });
 }
 
+function pathListBlocks(
+  input: ToolPresentationInput,
+  root: string,
+  tool: "find" | "ls",
+): ToolPresentationBlock[] {
+  if (!input.result) return [];
+  if (input.result.isError) {
+    const error = resultTextBlock(input, "Error");
+    return error ? [error] : [];
+  }
+
+  const raw = toolResultText(input.result);
+  const listing = tool === "ls";
+  const label = listing ? "Contents" : "Results";
+  if (
+    raw === (listing ? "(empty directory)" : "No files found matching pattern")
+  )
+    return [
+      {
+        type: "list",
+        label,
+        path: root,
+        items: [],
+        emptyText: listing ? "Empty directory" : "No files found",
+      },
+    ];
+
+  const details = detailsOf(input);
+  const limit = details?.[listing ? "entryLimitReached" : "resultLimitReached"];
+  const hasNotice = Boolean(
+    limit || jsonRecord(details?.truncation)?.truncated,
+  );
+  const output = stripStructuredTrailingNotice(raw, hasNotice);
+  const blocks: ToolPresentationBlock[] = [
+    {
+      type: "list",
+      label,
+      path: root,
+      items: listOutput(output.text, root, listing),
+    },
+  ];
+  const notices: string[] = [];
+  if (typeof limit === "number")
+    notices.push(`${limit} ${listing ? "entry" : "result"} limit reached`);
+  const truncated = truncationNotice(details, label);
+  if (truncated) notices.push(truncated);
+  if (notices.length > 0)
+    blocks.push({ type: "notice", text: notices.join(" · "), tone: "warning" });
+  return blocks;
+}
+
 function findRule(): ToolPresentationRule {
   return {
     id: `${PI_RULE_PREFIX}.find`,
     present(input) {
-      const args = record(input.call.arguments);
+      const args = jsonRecord(input.call.arguments);
       if (!args) return null;
       const pattern = stringValue(args, "pattern");
       if (pattern === null) return null;
@@ -692,50 +729,7 @@ function findRule(): ToolPresentationRule {
           { kind: "text", text: "in", separator: "space", subdued: true },
           { kind: "resource", text: root, reference: root, separator: "space" },
         ]),
-        () => {
-          if (!input.result) return [];
-          const raw = toolResultText(input.result);
-          if (input.result.isError)
-            return raw
-              ? [{ type: "text", label: "Error", text: raw, error: true }]
-              : [];
-          if (raw === "No files found matching pattern")
-            return [
-              {
-                type: "list",
-                label: "Results",
-                path: root,
-                items: [],
-                emptyText: "No files found",
-              },
-            ];
-          const details = detailsOf(input);
-          const hasNotice = Boolean(
-            details?.resultLimitReached ||
-              record(details?.truncation)?.truncated,
-          );
-          const output = stripStructuredTrailingNotice(raw, hasNotice);
-          const blocks: ToolPresentationBlock[] = [
-            {
-              type: "list",
-              label: "Results",
-              path: root,
-              items: listOutput(output.text, root, false),
-            },
-          ];
-          const notices: string[] = [];
-          if (typeof details?.resultLimitReached === "number")
-            notices.push(`${details.resultLimitReached} result limit reached`);
-          const truncated = truncationNotice(details, "Results");
-          if (truncated) notices.push(truncated);
-          if (notices.length > 0)
-            blocks.push({
-              type: "notice",
-              text: notices.join(" · "),
-              tone: "warning",
-            });
-          return blocks;
-        },
+        () => pathListBlocks(input, root, "find"),
       );
     },
   };
@@ -745,57 +739,14 @@ function lsRule(): ToolPresentationRule {
   return {
     id: `${PI_RULE_PREFIX}.ls`,
     present(input) {
-      const args = record(input.call.arguments);
+      const args = jsonRecord(input.call.arguments);
       if (!args) return null;
       const pathValue = args.path;
       if (pathValue !== undefined && typeof pathValue !== "string") return null;
       const root = typeof pathValue === "string" && pathValue ? pathValue : ".";
       return presentation(
         summary([{ kind: "resource", text: root, reference: root }]),
-        () => {
-          if (!input.result) return [];
-          const raw = toolResultText(input.result);
-          if (input.result.isError)
-            return raw
-              ? [{ type: "text", label: "Error", text: raw, error: true }]
-              : [];
-          if (raw === "(empty directory)")
-            return [
-              {
-                type: "list",
-                label: "Contents",
-                path: root,
-                items: [],
-                emptyText: "Empty directory",
-              },
-            ];
-          const details = detailsOf(input);
-          const hasNotice = Boolean(
-            details?.entryLimitReached ||
-              record(details?.truncation)?.truncated,
-          );
-          const output = stripStructuredTrailingNotice(raw, hasNotice);
-          const blocks: ToolPresentationBlock[] = [
-            {
-              type: "list",
-              label: "Contents",
-              path: root,
-              items: listOutput(output.text, root, true),
-            },
-          ];
-          const notices: string[] = [];
-          if (typeof details?.entryLimitReached === "number")
-            notices.push(`${details.entryLimitReached} entry limit reached`);
-          const truncated = truncationNotice(details, "Contents");
-          if (truncated) notices.push(truncated);
-          if (notices.length > 0)
-            blocks.push({
-              type: "notice",
-              text: notices.join(" · "),
-              tone: "warning",
-            });
-          return blocks;
-        },
+        () => pathListBlocks(input, root, "ls"),
       );
     },
   };
@@ -804,9 +755,13 @@ function lsRule(): ToolPresentationRule {
 /** Result-only imports use the same native output and recorded-file reader. */
 export function codeModeResultBlocks(
   result: ChatMessage,
-): ToolPresentationBlock[] {
-  const blocks: ToolPresentationBlock[] = [{ type: "codemode-result", result }];
-  const fullOutputPath = record(result.details)?.fullOutputPath;
+): Array<
+  Extract<ToolPresentationBlock, { type: "codemode-result" | "notice" }>
+> {
+  const blocks: Array<
+    Extract<ToolPresentationBlock, { type: "codemode-result" | "notice" }>
+  > = [{ type: "codemode-result", result }];
+  const fullOutputPath = jsonRecord(result.details)?.fullOutputPath;
   if (typeof fullOutputPath === "string" && fullOutputPath)
     blocks.push({
       type: "notice",
@@ -821,7 +776,7 @@ function codemodeRule(): ToolPresentationRule {
   return {
     id: `${PI_RULE_PREFIX}.codemode`,
     present(input) {
-      const args = record(input.call.arguments);
+      const args = jsonRecord(input.call.arguments);
       if (!args || typeof args.code !== "string") return null;
       return presentation(
         summary([{ kind: "text", text: "JavaScript" }]),

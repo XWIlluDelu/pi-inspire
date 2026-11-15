@@ -9,12 +9,11 @@ import {
   X,
 } from "lucide-react";
 import { useId, useState } from "react";
-import { createPortal } from "react-dom";
 import { copyLoader, imageSourceBlob } from "../content-copy";
 import { MAX_IMAGE_SCALE } from "../image-viewport";
 import { useImageViewport } from "../use-image-viewport";
-import { useModalFocus } from "../use-modal-focus";
 import { CopyAction } from "./CopyAction";
+import { Modal } from "./Modal";
 import { PiLoader } from "./PiLoader";
 
 export interface PreviewImage {
@@ -27,18 +26,17 @@ const BACKGROUNDS = ["Checkerboard", "White", "Black"] as const;
 
 export function ImageLightbox({
   image,
-  index = 0,
-  count = 1,
+  index,
+  count,
   onNavigate,
   onClose,
 }: {
   image: PreviewImage;
-  index?: number;
-  count?: number;
-  onNavigate?: (index: number) => void;
+  index: number;
+  count: number;
+  onNavigate: (index: number) => void;
   onClose: () => void;
 }) {
-  const dialogRef = useModalFocus<HTMLDivElement>(true, true, onClose);
   const instructions = useId();
   const [background, setBackground] =
     useState<(typeof BACKGROUNDS)[number]>("Checkerboard");
@@ -61,24 +59,17 @@ export function ImageLightbox({
     // Two figures can share one document-owned URL. Navigation still resets the
     // view, without refetching/redecoding the same bytes or changing background.
     viewport.fit();
-    onNavigate?.(next);
+    onNavigate(next);
   };
 
-  return createPortal(
-    <div
-      className="overlay image-lightbox"
-      role="presentation"
-      onClick={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
+  return (
+    <Modal
+      overlayClassName="image-lightbox"
+      aria-label="Image preview"
+      onDismiss={onClose}
     >
       <div
-        ref={dialogRef}
         className="image-lightbox__dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Image preview"
-        tabIndex={-1}
         onKeyDown={(event) => {
           if (
             event.defaultPrevented ||
@@ -194,7 +185,7 @@ export function ImageLightbox({
         ) : null}
         <div
           ref={viewport.canvasRef}
-          className={`image-lightbox__canvas ${panningClass(viewport.panning)}`}
+          className={`image-lightbox__canvas${viewport.panning ? " image-lightbox__canvas--panning" : ""}`}
           role="region"
           aria-label="Image canvas"
           aria-describedby={instructions}
@@ -359,11 +350,6 @@ export function ImageLightbox({
           Up and Page Down switch images. Escape closes the preview.
         </p>
       </div>
-    </div>,
-    document.body,
+    </Modal>
   );
-}
-
-function panningClass(panning: boolean) {
-  return panning ? "image-lightbox__canvas--panning" : "";
 }

@@ -1,7 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
-import { resolveToken } from "./api";
+import { browserBuildId, captureBrowserBootstrap } from "./browser-auth";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
 import { WindowTitlebar } from "./components/WindowTitlebar";
 import { store } from "./store";
@@ -10,7 +10,11 @@ import "./styles.css";
 // Strip a one-use launch transfer before render. Ordinary PWA launches use the
 // origin-stored non-extractable browser key, never a persistent bearer/cookie.
 store.captureNotificationTarget();
-const initialization = store.init(resolveToken());
+captureBrowserBootstrap();
+window.addEventListener("inspire-browser-upgrade", () =>
+  store.requireBrowserUpgrade(),
+);
+const initialization = store.init();
 
 // Browser freezes and network changes can strand an apparently open socket
 // without promptly delivering `close`. Re-enter through the same bootstrap +
@@ -47,11 +51,7 @@ if (import.meta.env.PROD && "serviceWorker" in navigator) {
   window.addEventListener(
     "load",
     () => {
-      const assetPath =
-        [...document.scripts]
-          .map((script) => script.src)
-          .find((source) => source.includes("/assets/index-")) ?? "production";
-      const buildId = assetPath.split("/").at(-1) ?? "production";
+      const buildId = browserBuildId();
       void navigator.serviceWorker
         .register(`/service-worker.js?v=${encodeURIComponent(buildId)}`)
         .catch(() => undefined);

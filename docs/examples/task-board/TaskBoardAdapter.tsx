@@ -12,7 +12,7 @@ import {
 /** Mount this boundary, not the inner view, so session/view changes clear local UI. */
 export function TaskBoardAdapter() {
   const owner = useAppState(
-    (s) => `${s.transportGeneration}:${s.sessionId}:${s.transcriptViewId}`,
+    (s) => `${s.transportGeneration}:${s.sessionId}:${s.view.viewId}`,
   );
   return <SessionTaskBoard key={owner} />;
 }
@@ -21,7 +21,7 @@ function SessionTaskBoard() {
   const state = useAppState(
     (s) => ({
       sessionId: s.sessionId,
-      messages: s.messages,
+      messages: s.live.messages,
       commands: s.commands,
       readOnly: Boolean(s.readOnlyReason),
     }),

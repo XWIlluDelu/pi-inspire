@@ -1,11 +1,9 @@
 # SSH reverse connection
 
-This optional module targets Linux hosts with systemd user services. The core
-INSΠRE Host and browser workbench support macOS and Windows independently; the
-connection dispatcher rejects this module explicitly on those systems. Local
-lifecycle commands require `flock` (normally provided by Linux's `util-linux`).
-
-The `ssh-reverse` connection module exposes one local INSΠRE host through a server you control without binding INSΠRE to a public interface. INSΠRE and Pi remain on the local machine; the module owns only the local SSH tunnel.
+The optional `ssh-reverse` module exposes one local INSΠRE Host through a server you control,
+without binding INSΠRE to a public interface. INSΠRE and Pi stay on the local machine; the module
+owns only the SSH tunnel. It requires Linux with systemd user services and `flock` (from
+`util-linux`); the Host itself also runs on macOS and Windows, where this module is unavailable.
 
 ```text
 local INSΠRE host 127.0.0.1:4587
@@ -132,16 +130,18 @@ Open the public HTTPS address, then pair that browser:
 
 1. Run `inspire token` in a private terminal on the Host (`./inspire token` from a source checkout).
    The command verifies the matching Host before explicitly printing the credential.
-2. Paste the token into the browser's **Pair** form once. Do not append it to the URL: requests
-   through the trusted HTTPS proxy remove `?token=` without pairing. The local launcher's one-use
-   loopback pairing link cannot pair a remote browser.
+2. Paste the token into the remote browser's **Pair** form once. The launcher's one-use pairing
+   link is for the local browser.
 
 The proxy must preserve the public Host header and overwrite `X-Forwarded-Proto` with `https`.
 See [Browser pairing](host.md#browser-pairing) for the browser-key and session lifetime details.
 
 Project terminals use a dedicated `/terminal` WebSocket over this same HTTPS proxy and SSH tunnel; no additional listener is exposed. Their PTYs remain in the local terminal daemon when the tunnel disconnects and the browser resumes them after transport recovery. Pairing also grants the browser authority to take control of a real shell running as the local Host user, so a paired browser profile must be trusted as fully as that operating-system account.
 
-The Host token remains a shared personal credential. Rotate it if exposed, and keep it out of public server configuration, shell history, remote URLs and logs. Browser pairing keys are isolated by scheme, hostname and port; API bearers are never sent as cookies to another port. Trust the entire browser-facing origin (including its reverse proxy and any content served on it), not just one path. If an older browser was paired with an explicit `INSPIRE_TOKEN`, operator rotation is required: see [cookie-pairing migration](host.md#migration-from-cookie-pairing).
+Keep the Host token out of public configuration, shell history, remote URLs and logs. Rotate any
+token that was exposed or stored in a browser cookie. Pairing keys are isolated by scheme, hostname
+and port. Trust the entire browser-facing origin, including its reverse proxy and the content it
+serves.
 
 ## Automatic recovery
 

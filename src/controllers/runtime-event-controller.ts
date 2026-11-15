@@ -1,56 +1,42 @@
 import {
   type ActiveSnapshot,
-  isSessionRuntimeStatus,
+  type LiveTranscript,
   type ProjectionConflict,
-  type ProjectionHealth,
-  projectionConflictSeverity,
   type SessionRuntimeStatus,
 } from "../../shared/contracts";
 import { isExternalSessionActivities } from "../../shared/session-activity";
-import type { AppState } from "../app-state";
-import {
-  type ChatMessage,
-  type EventSlice,
-  messageKey,
-  type Notice,
-  reduceEvent,
-  type WireEvent,
-} from "../events";
+import { type AppState, transcriptDiagnostic } from "../app-state";
+import { reduceEvent, type WireEvent } from "../events";
 
 interface RuntimeEventHost {
   state(): AppState;
   patch(patch: Partial<AppState>): void;
-  notify(kind: Notice["kind"], text: string): void;
+  setEditorText?(sessionId: string, text: string): void;
   applySnapshot(snapshot: ActiveSnapshot): void;
-  invalidateSelection(): void;
+  applyTranscript(
+    sessionId: string,
+    data: LiveTranscript,
+    sequence: number,
+    statuses?: Record<string, SessionRuntimeStatus>,
+  ): void;
   ensureSessionVisible(sessionId: string): void;
-  recordRuntimeReady(sessionId: string): void;
-  clearRuntimeReady(sessionId: string): void;
   refreshLoadedSessions(): Promise<void>;
   hasVisibleGitSurface(): boolean;
   refreshGitStatus(): Promise<void>;
-  markProjectionStale(): void;
   selectionGeneration(): number;
   invalidateResync(): void;
-  resync(
-    sessionId: string | null,
-    generation: number,
-    minimumRevision?: number,
-  ): Promise<void>;
+  resync(sessionId: string | null, generation: number): Promise<void>;
 }
 
 /** Owns ordered runtime-event reduction and user-attention correlation.
  * Snapshots remain AppStore transactions; this controller routes live deltas
  * without giving event producers a second browser-state authority. */
 export class RuntimeEventController {
-  private settledKeys = new Set<string>();
-  private readonly observedRuns = new Set<string>();
   private readonly titleAttention = new Set<string>();
-  private resyncTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly acknowledgedStatus = new Map<string, number>();
   private pendingResync: {
-    sessionId: string | null;
     generation: number;
-    minimumRevision?: number;
+    timer: ReturnType<typeof setTimeout>;
   } | null = null;
 
   constructor(private readonly host: RuntimeEventHost) {}
@@ -84,33 +70,43 @@ export class RuntimeEventController {
       this.clearAttentionFor(this.host.state().sessionId);
   }
 
-  /** Track live runs only for the selected conversation's completion UI.
-   * Task notification identity and standalone compaction belong to the Host.
-   * Snapshots retire observations but never manufacture a completed run. */
-  reconcileObservedRuns(
-    sessionStatuses: Readonly<Record<string, SessionRuntimeStatus>>,
-  ): void {
-    const liveAgentStates = new Set([
-      "running",
-      "retrying",
-      "queued",
-      "compacting",
-    ]);
-    for (const sessionId of this.observedRuns) {
-      const runState = sessionStatuses[sessionId]?.runState;
-      if (!runState || !liveAgentStates.has(runState))
-        this.observedRuns.delete(sessionId);
+  projectSessionStatuses(
+    statuses: Record<string, SessionRuntimeStatus>,
+    viewedSessionId: string | null,
+  ): Record<string, SessionRuntimeStatus> {
+    if (viewedSessionId)
+      this.viewStatus(viewedSessionId, statuses[viewedSessionId]);
+    return Object.fromEntries(
+      Object.entries(statuses).map(([id, status]) => [
+        id,
+        this.displayStatus(id, status),
+      ]),
+    );
+  }
+
+  private viewStatus(id: string, status?: SessionRuntimeStatus): void {
+    if (status?.attentionId === undefined) return;
+    this.acknowledgedStatus.delete(id);
+    this.acknowledgedStatus.set(id, status.attentionId);
+    if (this.acknowledgedStatus.size > 512) {
+      const oldest = this.acknowledgedStatus.keys().next().value;
+      if (oldest !== undefined) this.acknowledgedStatus.delete(oldest);
     }
   }
 
-  private statusOutcome(event: WireEvent): "completed" | "failed" | "aborted" {
-    const status = event.sessionStatus as
-      | Partial<SessionRuntimeStatus>
-      | undefined;
-    if (status?.runState === "failed" || status?.runState === "conflict")
-      return "failed";
-    if (status?.runState === "aborted") return "aborted";
-    return "completed";
+  private displayStatus(
+    id: string,
+    status: SessionRuntimeStatus,
+  ): SessionRuntimeStatus {
+    if (
+      status.attentionId === undefined ||
+      this.acknowledgedStatus.get(id) !== status.attentionId
+    )
+      return status;
+    const { indicator, ...acknowledged } = status;
+    return indicator === "completed" || indicator === "failed"
+      ? acknowledged
+      : status;
   }
 
   markTaskAttention(sessionId: string): void {
@@ -124,48 +120,27 @@ export class RuntimeEventController {
   }
 
   invalidateTransport(): void {
-    this.observedRuns.clear();
-    this.cancelScheduledResync();
-  }
-
-  private cancelScheduledResync(): void {
-    if (this.resyncTimer !== null) clearTimeout(this.resyncTimer);
-    this.resyncTimer = null;
+    if (this.pendingResync) clearTimeout(this.pendingResync.timer);
     this.pendingResync = null;
   }
 
-  private scheduleResync(
-    sessionId: string | null,
-    minimumRevision?: number,
-  ): void {
+  resetStatusAcknowledgements(): void {
+    this.acknowledgedStatus.clear();
+  }
+
+  private scheduleResync(sessionId: string | null): void {
     // Fence an older response as soon as the event arrives, even while the
     // next observation is waiting for the rest of this event burst.
     this.host.invalidateResync();
     const generation = this.host.selectionGeneration();
-    const pending = this.pendingResync;
-    if (pending?.sessionId === sessionId && pending.generation === generation) {
-      if (minimumRevision !== undefined)
-        pending.minimumRevision = Math.max(
-          pending.minimumRevision ?? minimumRevision,
-          minimumRevision,
-        );
-      return;
-    }
-    this.cancelScheduledResync();
-    const request = { sessionId, generation, minimumRevision };
-    this.pendingResync = request;
-    // Pi can publish the final projection and agent_settled within a single
-    // frame. Keep one fixed deadline so live projection changes cannot defer
-    // their authoritative refresh indefinitely.
-    this.resyncTimer = setTimeout(() => {
-      this.resyncTimer = null;
+    if (this.pendingResync?.generation === generation) return;
+    if (this.pendingResync) clearTimeout(this.pendingResync.timer);
+    // Settlement can arrive in a burst. Keep a fixed deadline for the refresh.
+    const timer = setTimeout(() => {
       this.pendingResync = null;
-      void this.host.resync(
-        request.sessionId,
-        request.generation,
-        request.minimumRevision,
-      );
+      void this.host.resync(sessionId, generation);
     }, 16);
+    this.pendingResync = { generation, timer };
   }
 
   clearTitleAttention(): void {
@@ -175,44 +150,10 @@ export class RuntimeEventController {
 
   forgetAttention(sessionIds: ReadonlySet<string>): void {
     for (const sessionId of sessionIds) {
-      this.observedRuns.delete(sessionId);
       this.titleAttention.delete(sessionId);
+      this.acknowledgedStatus.delete(sessionId);
     }
     this.publishTitleAttention();
-  }
-
-  replaceSettledMessages(messages: readonly ChatMessage[]): void {
-    this.settledKeys = new Set(
-      messages.map(messageKey).filter((key): key is string => key !== null),
-    );
-  }
-
-  markSettled(key: string): void {
-    this.settledKeys.add(key);
-  }
-
-  private eventSlice(): EventSlice {
-    const s = this.host.state();
-    return {
-      messages: s.messages,
-      streaming: s.streaming,
-      bashRunning: s.bashRunning,
-      activeAssistantMessageKey: s.activeAssistantMessageKey,
-      runState: s.runState,
-      tools: s.tools,
-      retry: s.retry,
-      pendingRetryError: s.pendingRetryError,
-      summarizationRetry: s.summarizationRetry,
-      queue: s.queue,
-      extensionUiRequests: s.extensionUiRequests,
-      extensionUiRespondingId: s.extensionUiRespondingId,
-      extensionDisplays: s.extensionDisplays,
-      notices: s.notices,
-      statuses: s.statuses,
-      editorText: s.editorText,
-      windowTitle: s.windowTitle,
-      nextNoticeId: s.nextNoticeId,
-    };
   }
 
   apply(event: WireEvent): void {
@@ -233,13 +174,14 @@ export class RuntimeEventController {
     }
     if (event.type === "snapshot") {
       if (event.data) {
-        // Addressed snapshots refresh an existing detail interest, not a new
-        // selection intent. A later open/new/deselect may still be pending.
-        // Bootstrap replacement is fenced by AppStore's transport boundary;
-        // unaddressed selection pushes retain their replacement semantics.
-        if (event.detailRevision === undefined) this.host.invalidateSelection();
         const snapshot = event.data as ActiveSnapshot;
-        this.host.applySnapshot(snapshot);
+        this.host.applySnapshot({
+          ...snapshot,
+          runtimeSequence:
+            typeof event.runtimeSequence === "number"
+              ? event.runtimeSequence
+              : snapshot.runtimeSequence,
+        });
         if (snapshot.active?.sessionId)
           this.host.ensureSessionVisible(snapshot.active.sessionId);
       }
@@ -250,33 +192,10 @@ export class RuntimeEventController {
     // into the map before any transcript routing.
     const eventSessionId =
       typeof event.sessionId === "string" ? event.sessionId : null;
-    if (eventSessionId) this.host.ensureSessionVisible(eventSessionId);
     const sessionStatuses = this.mergeSessionStatus(
       eventSessionId,
       event.sessionStatus,
     );
-    if (eventSessionId) {
-      if (event.type === "agent_start" || event.type === "auto_retry_start") {
-        this.observedRuns.add(eventSessionId);
-      } else if (event.type === "agent_settled") {
-        if (this.observedRuns.delete(eventSessionId)) {
-          const outcome = this.statusOutcome(event);
-          if (
-            outcome === "completed" &&
-            eventSessionId === this.host.state().sessionId
-          ) {
-            this.host.patch({
-              completedRunSequence: this.host.state().completedRunSequence + 1,
-            });
-          }
-          // System/title attention arrives independently from the Host.
-        }
-      } else if (event.type === "runtime_error") {
-        // Runtime death terminates every operation owned by this worker.
-        this.observedRuns.delete(eventSessionId);
-      }
-    }
-
     if (
       eventSessionId !== null &&
       eventSessionId !== this.host.state().sessionId
@@ -286,18 +205,13 @@ export class RuntimeEventController {
       // changes; a settle refreshes the list so folder/time ordering catches
       // up. Unchanged statuses (token-level chatter) publish nothing.
       if (sessionStatuses) this.host.patch({ sessionStatuses });
-      if (
-        event.type === "runtime_ready" &&
-        eventSessionId === this.host.state().openingSessionId
-      ) {
-        this.host.recordRuntimeReady(eventSessionId);
-      }
-      if (event.type === "runtime_error")
-        this.host.clearRuntimeReady(eventSessionId);
+      this.host.ensureSessionVisible(eventSessionId);
       if (event.type === "agent_settled")
         void this.host.refreshLoadedSessions();
       return;
     }
+
+    if (eventSessionId) this.host.ensureSessionVisible(eventSessionId);
 
     if (
       event.type === "tool_execution_end" &&
@@ -306,80 +220,47 @@ export class RuntimeEventController {
       void this.host.refreshGitStatus();
     }
 
-    if (event.type === "session_projection_changed") {
-      const rawHealth = event.health as Partial<ProjectionHealth> | undefined;
-      const health: ProjectionHealth =
-        rawHealth?.status === "error" || rawHealth?.status === "pending"
-          ? {
-              status: rawHealth.status,
-              ...(typeof rawHealth.message === "string"
-                ? { message: rawHealth.message }
-                : {}),
-            }
-          : rawHealth?.status === "ok"
-            ? { status: "ok" }
-            : this.host.state().projectionHealth;
-      const conflict =
-        event.conflict === null
-          ? null
-          : event.conflict && typeof event.conflict === "object"
-            ? (event.conflict as ProjectionConflict)
-            : this.host.state().projectionConflict;
-      const projectionError =
-        conflict?.message ??
-        (health.status !== "ok"
-          ? (health.message ?? "Session persistence is not yet confirmed")
-          : null);
-      const projectionSeverity =
-        projectionConflictSeverity(conflict) === "attention" ||
-        (!conflict && health.status === "pending")
-          ? "warning"
-          : "error";
-      const clearedProjectionError =
-        !projectionError &&
-        this.host.state().error === this.host.state().projectionError;
-      this.host.patch({
-        ...(sessionStatuses ? { sessionStatuses } : {}),
-        projectionHealth: health,
-        projectionConflict: conflict,
-        projectionError,
-        ...(projectionError
-          ? { error: projectionError, errorSeverity: projectionSeverity }
-          : clearedProjectionError
-            ? { error: null, errorSeverity: "error" }
-            : {}),
-      });
-      this.host.markProjectionStale();
-      const revision =
-        typeof event.revision === "number" ? event.revision : undefined;
-      this.scheduleResync(
-        eventSessionId ?? this.host.state().sessionId,
-        revision,
+    if (
+      event.type === "session_projection_changed" ||
+      event.type === "branch_changed"
+    ) {
+      const transcript = event.transcript as LiveTranscript;
+      const page = transcript?.transcriptPage;
+      if (
+        !eventSessionId ||
+        typeof event.runtimeSequence !== "number" ||
+        !Number.isSafeInteger(event.runtimeSequence) ||
+        page?.sessionId !== eventSessionId ||
+        typeof page.viewId !== "string" ||
+        !Number.isSafeInteger(page.revision) ||
+        !Array.isArray(page.messages)
+      )
+        throw new Error("Invalid transcript replacement");
+      this.host.applyTranscript(
+        eventSessionId,
+        transcript,
+        event.runtimeSequence,
+        sessionStatuses ?? undefined,
       );
       return;
     }
 
     if (event.type === "session_projection_conflict") {
-      if (sessionStatuses) this.host.patch({ sessionStatuses });
       const conflict = event.conflict as ProjectionConflict | undefined;
-      if (typeof conflict?.message === "string") {
+      const statusPatch = sessionStatuses ? { sessionStatuses } : {};
+      if (conflict && typeof conflict.message === "string") {
+        const view = { ...this.host.state().view, conflict };
         this.host.patch({
-          projectionConflict: conflict,
-          projectionError: conflict.message,
-          runState: "conflict",
-          error: conflict.message,
-          errorSeverity:
-            projectionConflictSeverity(conflict) === "attention"
-              ? "warning"
-              : "error",
+          ...statusPatch,
+          view,
+          ...transcriptDiagnostic(view),
         });
-      }
+      } else this.host.patch(statusPatch);
       return;
     }
 
-    // An unopened session is shown from its read-only Pi-file preview while
-    // extensions initialize off the critical path. Replace that preview with
-    // the worker's live state as soon as its own runtime becomes ready.
+    // Refresh the selected view when a requested worker, attachment, or
+    // background model discovery publishes new capabilities.
     if (
       event.type === "runtime_ready" ||
       event.type === "model_metadata_changed"
@@ -389,17 +270,26 @@ export class RuntimeEventController {
       return;
     }
 
-    const { slice, settle, resync, changed } = reduceEvent(
-      this.eventSlice(),
-      this.settledKeys,
+    if (
+      event.type === "extension_ui_request" &&
+      event.method === "set_editor_text"
+    ) {
+      const sessionId = this.host.state().sessionId;
+      if (sessionId && typeof event.text === "string")
+        this.host.setEditorText?.(sessionId, event.text);
+      if (sessionStatuses) this.host.patch({ sessionStatuses });
+      return;
+    }
+
+    const { slice, resync, changed } = reduceEvent(
+      this.host.state().live,
       event,
     );
-    for (const key of settle) this.settledKeys.add(key);
-    if (changed) {
-      this.host.patch(sessionStatuses ? { ...slice, sessionStatuses } : slice);
-    } else if (sessionStatuses) {
-      this.host.patch({ sessionStatuses });
-    }
+    if (changed || sessionStatuses)
+      this.host.patch({
+        ...(changed ? { live: slice } : {}),
+        ...(sessionStatuses ? { sessionStatuses } : {}),
+      });
     if (resync) {
       const sessionId = eventSessionId ?? this.host.state().sessionId;
       if (event.type === "agent_settled") this.scheduleResync(sessionId);
@@ -410,17 +300,21 @@ export class RuntimeEventController {
   /** Merge an event's sessionStatus into the map; null when nothing changed. */
   private mergeSessionStatus(
     sessionId: string | null,
-    status: unknown,
+    status: SessionRuntimeStatus | undefined,
   ): Record<string, SessionRuntimeStatus> | null {
-    if (!sessionId || !isSessionRuntimeStatus(status)) return null;
-    const next = status;
+    if (!sessionId || !status) return null;
+    if (sessionId === this.host.state().sessionId)
+      this.viewStatus(sessionId, status);
+    const next = this.displayStatus(sessionId, status);
     const existing = this.host.state().sessionStatuses[sessionId];
     if (
       existing &&
       existing.runState === next.runState &&
       existing.indicator === next.indicator &&
+      existing.attentionId === next.attentionId &&
       existing.needsInput === next.needsInput &&
-      existing.external === next.external
+      existing.external === next.external &&
+      existing.queueAdmission === next.queueAdmission
     )
       return null;
     return { ...this.host.state().sessionStatuses, [sessionId]: next };

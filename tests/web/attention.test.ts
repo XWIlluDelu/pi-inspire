@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { MessageChannel } from "node:worker_threads";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import * as browserAuth from "../../src/browser-auth";
+import type { TaskAlertSettings } from "../../shared/notifications";
+import { createApi } from "../../src/api";
+import { createInitialAppState } from "../../src/app-state";
 import { TaskNotificationController } from "../../src/notifications";
 import { AppStore } from "../../src/store";
 import { sessionPage } from "./fixtures/session-catalog";
@@ -13,6 +15,7 @@ import {
   installFakeWebSocket,
   installFetch,
   jsonBody,
+  type RouteHandler,
   type RouteResponse,
   sessionSummary,
 } from "./helpers";
@@ -45,6 +48,21 @@ let mutations: Record<string, unknown>[];
 let acknowledgments: string[];
 let testResponse: Promise<RouteResponse> | undefined;
 
+function hostSettings(
+  overrides: Partial<TaskAlertSettings> = {},
+): TaskAlertSettings {
+  return {
+    mode,
+    grouping,
+    groupingUpdatedAt,
+    subscribed,
+    endpoint: subscribed ? subscriptionEndpoint : expiredEndpoint,
+    publicKey: hostPublicKey,
+    error: null,
+    ...overrides,
+  };
+}
+
 function browserSubscription(endpoint = subscriptionEndpoint) {
   const local = {
     endpoint,
@@ -75,6 +93,53 @@ function visibleFocused(value: boolean) {
     value: () => value,
   });
 }
+const notificationRoutes: RouteHandler = (url, init) => {
+  if (url === "/api/notifications") {
+    if (init.method === "PUT") {
+      const body = jsonBody(init);
+      mutations.push(body);
+      if (body.mode !== undefined) mode = body.mode as typeof mode;
+      if (body.grouping !== undefined && body.grouping !== grouping) {
+        grouping = body.grouping as typeof grouping;
+        groupingUpdatedAt++;
+      }
+      if (body.subscription !== undefined)
+        subscribed = mode === "desktop" && Boolean(body.subscription);
+      if (body.subscription)
+        subscriptionEndpoint = (body.subscription as { endpoint: string })
+          .endpoint;
+    }
+    return { body: hostSettings() };
+  }
+  if (url === "/api/notifications/ack") {
+    acknowledgments.push(String(jsonBody(init).id));
+    return { body: { ok: true } };
+  }
+  if (url === "/api/notifications/test")
+    return (
+      testResponse ?? { body: { transport: subscribed ? "push" : "page" } }
+    );
+};
+
+async function notificationController(choice: typeof mode = "desktop") {
+  mode = choice;
+  installFetch(notificationRoutes);
+  const api = createApi();
+  let state = createInitialAppState();
+  const controller = new TaskNotificationController({
+    state: () => state,
+    patch: (patch) => {
+      state = { ...state, ...patch };
+    },
+    api: () => api,
+    mark: vi.fn(),
+    clear: vi.fn(),
+    openSession: vi.fn(),
+  });
+  await controller.initialize();
+  return { controller, alerts: () => state.taskAlerts };
+}
+
 async function initialized(
   choice: typeof mode = "desktop",
   open?: (id: string) => RouteResponse | Promise<RouteResponse>,
@@ -83,51 +148,11 @@ async function initialized(
 ) {
   mode = choice;
   installFetch((url, init) => {
-    if (url === "/api/notifications") {
-      if (init.method === "PUT") {
-        const body = jsonBody(init);
-        mutations.push(body);
-        if (body.mode !== undefined) mode = body.mode as typeof mode;
-        if (body.grouping !== undefined && body.grouping !== grouping) {
-          grouping = body.grouping as typeof grouping;
-          groupingUpdatedAt++;
-        }
-        if (body.subscription !== undefined)
-          subscribed = mode === "desktop" && Boolean(body.subscription);
-        if (body.subscription)
-          subscriptionEndpoint = (body.subscription as { endpoint: string })
-            .endpoint;
-      }
-      return {
-        body: {
-          installationId: "device-one",
-          mode,
-          grouping,
-          groupingUpdatedAt,
-          subscribed,
-          endpoint: subscribed ? subscriptionEndpoint : expiredEndpoint,
-          publicKey: hostPublicKey,
-          error: null,
-        },
-      };
-    }
-    if (url === "/api/notifications/ack") {
-      acknowledgments.push(String(jsonBody(init).id));
-      return { body: { ok: true } };
-    }
-    if (url === "/api/notifications/test")
-      return (
-        testResponse ?? { body: { transport: subscribed ? "push" : "page" } }
-      );
+    const route = notificationRoutes(url, init);
+    if (route) return route;
     if (url.startsWith("/api/bootstrap"))
       return {
-        body: bootstrapPayload({
-          snapshot: activeSnapshot(),
-          preferences: {
-            ...bootstrapPayload().preferences,
-            completionAttention: "off",
-          },
-        }),
+        body: bootstrapPayload({ startupSessionId: "s1" }),
       };
     if (url.startsWith("/api/sessions/open"))
       return open
@@ -150,24 +175,28 @@ async function initialized(
     return undefined;
   });
   const store = existingStore ?? new AppStore();
-  await store.init("token");
+  await store.init();
   // Most cases begin after a completed device-settings refresh. Startup tests
   // instead supply the real stream settings-before-offer sequence below.
   if (refresh) await store.refreshTaskAlerts();
   const socket = FakeWebSocket.instances.at(-1)!;
-  socket.open();
+  socket.join(activeSnapshot());
   return { store, socket };
 }
+function failedOutcome(id: string, sessionId: string) {
+  return {
+    id,
+    sessionId,
+    outcome: "failed" as const,
+    project: "research-project",
+    createdAt: Date.now(),
+  };
+}
+
 function outcome(socket: FakeWebSocket, id = "outcome-one", sessionId = "bg") {
   socket.emit({
     type: "task_notification",
-    notification: {
-      id,
-      sessionId,
-      outcome: "failed",
-      project: "research-project",
-      createdAt: Date.now(),
-    },
+    notification: failedOutcome(id, sessionId),
   });
 }
 
@@ -224,65 +253,16 @@ beforeEach(() => {
 });
 
 describe("device-local task alerts", () => {
-  it("starts core navigation and consumes the first offer while enrollment is pending", async () => {
+  it("opens the conversation and consumes the first offer while repairing existing Desktop enrollment", async () => {
     const enrollment = deferred<PushSubscription | null>();
     const registration = (await navigator.serviceWorker.getRegistration())!;
-    vi.spyOn(registration.pushManager, "getSubscription").mockReturnValue(
-      enrollment.promise,
-    );
+    const getSubscription = vi
+      .spyOn(registration.pushManager, "getSubscription")
+      .mockReturnValue(enrollment.promise);
+    const local = browserSubscription();
     history.replaceState(null, "", "/#inspire-session=bg");
     const { store, socket } = await initialized(
       "desktop",
-      undefined,
-      undefined,
-      false,
-    );
-    await vi.waitFor(() => {
-      expect(store.getState().connection).toBe("open");
-      expect(store.getState().sessionId).toBe("bg");
-      expect(
-        store.getState().sessions.some((session) => session.id === "bg"),
-      ).toBe(true);
-    });
-    expect(sessionStorage.getItem("inspire-notification-target")).toBeNull();
-    expect(
-      vi
-        .mocked(fetch)
-        .mock.calls.some(([url]) => String(url) === "/api/notifications"),
-    ).toBe(false);
-
-    socket.emit({
-      type: "task_alert_settings",
-      settings: {
-        installationId: "device-one",
-        mode: "desktop",
-        subscribed: false,
-        endpoint: null,
-        publicKey,
-        error: null,
-        grouping: "session",
-        groupingUpdatedAt: 0,
-      },
-    });
-    outcome(socket, "first-offer", "other-session");
-    await vi.waitFor(() => expect(acknowledgments).toContain("first-offer"));
-    expect(workerMessages).toHaveLength(1);
-    expect(store.getState().taskAlerts.mode).toBe("desktop");
-    enrollment.resolve(null);
-    await vi.waitFor(() => expect(workerSettings).not.toHaveLength(0));
-  });
-
-  it("migrates stream settings and repairs existing enrollment through its own echoes", async () => {
-    vi.spyOn(browserAuth, "migrateTaskAlertIntent").mockResolvedValue(
-      "desktop",
-    );
-    const local = browserSubscription();
-    const registration = (await navigator.serviceWorker.getRegistration())!;
-    vi.spyOn(registration.pushManager, "getSubscription").mockResolvedValue(
-      local,
-    );
-    const { store, socket } = await initialized(
-      "off",
       undefined,
       undefined,
       false,
@@ -295,241 +275,153 @@ describe("device-local task alerts", () => {
         if (String(input) === "/api/notifications" && init?.method === "PUT") {
           socket.emit({
             type: "task_alert_settings",
-            settings: await response.clone().json(),
+            settings: hostSettings(),
           });
         }
         return response;
       }),
     );
-    const reconcile = vi.spyOn(
-      TaskNotificationController.prototype,
-      "initialize",
-    );
-    socket.emit({
-      type: "task_alert_settings",
-      settings: {
-        installationId: "device-one",
-        mode: null,
-        subscribed: false,
-        endpoint: null,
-        publicKey,
+
+    socket.emit({ type: "task_alert_settings", settings: hostSettings() });
+    outcome(socket, "first-offer", "other-session");
+    await vi.waitFor(() => {
+      expect(store.getState().connection).toBe("open");
+      expect(store.getState().sessionId).toBe("bg");
+      expect(store.getState().sessions.some(({ id }) => id === "bg")).toBe(
+        true,
+      );
+      expect(acknowledgments).toContain("first-offer");
+    });
+    expect(workerMessages).toHaveLength(1);
+
+    enrollment.resolve(local);
+    await vi.waitFor(() =>
+      expect(store.getState().taskAlerts).toMatchObject({
+        mode: "desktop",
+        subscribed: true,
         error: null,
-        grouping: "session",
-        groupingUpdatedAt: 0,
-      },
-    });
-    await reconcile.mock.results[0]!.value;
-    expect(store.getState().taskAlerts).toMatchObject({
-      mode: "desktop",
-      subscribed: true,
-      error: null,
-    });
-    expect(mutations).toEqual([
-      { mode: "desktop" },
-      { subscription: local.toJSON() },
-    ]);
+      }),
+    );
+    expect(mutations).toEqual([{ subscription: local.toJSON() }]);
     expect(Permission.requestPermission).not.toHaveBeenCalled();
     expect(subscribe).not.toHaveBeenCalled();
+
+    mutations = [];
+    await store.refreshTaskAlerts();
+    expect(mutations).toEqual([]);
+    local.endpoint += "-rotated";
+    await store.refreshTaskAlerts();
+    expect(mutations).toEqual([{ subscription: local.toJSON() }]);
+
+    getSubscription.mockResolvedValue(null);
+    await store.refreshTaskAlerts();
+    expect(mutations.at(-1)).toEqual({ subscription: null });
+    expect(store.getState().taskAlerts).toMatchObject({
+      mode: "desktop",
+      subscribed: false,
+    });
   });
 
-  it.each([false, true])(
-    "keeps an explicit Off when legacy migration resolves before pending grouping (%s)",
-    async (groupingPending) => {
-      const migration = deferred<"desktop">();
-      vi.spyOn(browserAuth, "migrateTaskAlertIntent").mockReturnValue(
-        migration.promise,
-      );
-      const { store, socket } = await initialized(
-        "off",
-        undefined,
-        undefined,
-        false,
-      );
-      const reconcile = vi.spyOn(
-        TaskNotificationController.prototype,
-        "initialize",
-      );
-      const settings = {
-        installationId: "device-one",
-        subscribed: false,
-        endpoint: null,
-        publicKey,
-        error: null,
-        grouping: "session",
-        groupingUpdatedAt: 0,
-      };
-      socket.emit({
-        type: "task_alert_settings",
-        settings: { ...settings, mode: null },
-      });
-      const groupingReply = deferred<void>();
-      if (groupingPending) {
-        const transport = fetch;
-        vi.stubGlobal(
-          "fetch",
-          vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-            const response = await transport(input, init);
-            if (
-              String(input) === "/api/notifications" &&
-              init?.method === "PUT" &&
-              jsonBody(init).grouping !== undefined
-            )
-              await groupingReply.promise;
-            return response;
-          }),
-        );
+  it.each(["this window", "another window", "a replacement Host"] as const)(
+    "ignores a delayed permission grant after Off from %s",
+    async (owner) => {
+      const { store, socket } = await initialized("title");
+      const permission = deferred<NotificationPermission>();
+      Permission.permission = "default";
+      Permission.requestPermission.mockReturnValueOnce(permission.promise);
+      const enabling = store.setCompletionAttention("desktop");
+      await vi.waitFor(() => expect(mode).toBe("desktop"));
+
+      if (owner === "this window") await store.setCompletionAttention("off");
+      else if (owner === "a replacement Host") {
+        hostPublicKey = "replacement-host-public-key";
+        await initialized("off", undefined, store);
+      } else {
+        // The earlier echo belongs to this window. The following Off was
+        // accepted for the same installation after that write.
+        socket.emit({ type: "task_alert_settings", settings: hostSettings() });
+        mode = "off";
+        socket.emit({ type: "task_alert_settings", settings: hostSettings() });
       }
-      const changingGrouping = groupingPending
-        ? store.setTaskNotificationGrouping("project")
-        : Promise.resolve();
-      if (groupingPending)
-        await vi.waitFor(() =>
-          expect(mutations).toContainEqual({ grouping: "project" }),
+
+      const accepted = [...mutations];
+      permission.resolve("granted");
+      await expect(enabling).resolves.toBe(false);
+      if (owner === "another window") {
+        expect(mutations.filter((change) => change.mode !== undefined)).toEqual(
+          accepted,
         );
-      socket.emit({
-        type: "task_alert_settings",
-        settings: { ...settings, mode: "off", grouping, groupingUpdatedAt },
-      });
-      let migrationSettled = false;
-      const migrated = reconcile.mock.results[0]!.value.then(() => {
-        migrationSettled = true;
-      });
-      migration.resolve("desktop");
-      try {
-        // Off must retire migration before a slow grouping response can flush
-        // pending settings; the old intent must never join the queued writes.
-        await vi.waitFor(() => expect(migrationSettled).toBe(true));
-        expect(store.getState().taskAlerts.mode).toBe("off");
-        expect(mutations.filter((value) => value.mode !== undefined)).toEqual(
-          [],
-        );
+        expect(mode).toBe("off");
+        expect(subscribed).toBe(false);
+        expect(subscription!.unsubscribe).toHaveBeenCalledOnce();
+      } else {
+        expect(mutations).toEqual(accepted);
         expect(subscribe).not.toHaveBeenCalled();
-      } finally {
-        groupingReply.resolve();
-        await changingGrouping;
-        await migrated;
       }
+      expect(store.getState().taskAlerts).toMatchObject({
+        mode: "off",
+        subscribed: false,
+        busy: false,
+        error: null,
+      });
     },
   );
 
-  it("does not rewrite another window's Off after a delayed permission grant", async () => {
-    const { store, socket } = await initialized("title");
-    const permission = deferred<NotificationPermission>();
-    Permission.permission = "default";
-    Permission.requestPermission.mockReturnValueOnce(permission.promise);
-    const enabling = store.setCompletionAttention("desktop");
-    await vi.waitFor(() => expect(mode).toBe("desktop"));
-    // The first echo belongs to this window; the following Off is a newer
-    // choice accepted by the same installation's Host from another window.
-    socket.emit({
-      type: "task_alert_settings",
-      settings: {
-        installationId: "device-one",
-        mode,
-        subscribed: false,
-        publicKey,
-        error: null,
-      },
-    });
-    mode = "off";
-    subscribed = false;
-    socket.emit({
-      type: "task_alert_settings",
-      settings: {
-        installationId: "device-one",
-        mode,
-        subscribed,
-        publicKey,
-        error: null,
-      },
-    });
-    permission.resolve("granted");
-    await expect(enabling).resolves.toBe(false);
-    expect(mode).toBe("off");
-    expect(subscribed).toBe(false);
-    expect(store.getState().taskAlerts).toMatchObject({
-      mode: "off",
-      subscribed: false,
-      busy: false,
-      error: null,
-    });
-    expect(mutations.filter((value) => value.mode !== undefined)).toEqual([
-      { mode: "desktop" },
-    ]);
-    expect(subscription!.unsubscribe).toHaveBeenCalledOnce();
-  });
-
-  it("retires a permission result when bootstrap replaces its API owner", async () => {
-    const { store } = await initialized("title");
-    const permission = deferred<NotificationPermission>();
-    Permission.permission = "default";
-    Permission.requestPermission.mockReturnValueOnce(permission.promise);
-    const enabling = store.setCompletionAttention("desktop");
-    await vi.waitFor(() => expect(mode).toBe("desktop"));
-    await initialized("off", undefined, store);
-    const settledIntent = [...mutations];
-    permission.resolve("granted");
-    await expect(enabling).resolves.toBe(false);
-    expect(mutations).toEqual(settledIntent);
-    expect(store.getState().taskAlerts).toMatchObject({
-      mode: "off",
-      busy: false,
-    });
-    expect(subscribe).not.toHaveBeenCalled();
-  });
-
-  it("retains a failed explicit grouping choice through unchanged refreshes and retries without touching enrollment", async () => {
-    const { store, socket } = await initialized("off");
+  it("keeps a failed grouping choice until retry saves it independently of enrollment", async () => {
+    const { controller, alerts } = await notificationController("off");
     let accept = false;
-    const saved = (choice: "session" | "project", stamp: number) => ({
-      installationId: "device-one",
-      mode: "off",
-      subscribed: false,
-      endpoint: null,
-      publicKey,
-      error: null,
-      grouping: choice,
-      groupingUpdatedAt: stamp,
+    installFetch((url, init) => {
+      if (url !== "/api/notifications") return;
+      if (init.method === "PUT") {
+        mutations.push(jsonBody(init));
+        if (!accept)
+          return {
+            status: 503,
+            body: { error: "Host temporarily unavailable" },
+          };
+        grouping = "project";
+        groupingUpdatedAt = 1;
+      }
+      return { body: hostSettings() };
     });
-    installFetch((url, init) =>
-      url === "/api/notifications"
-        ? init.method === "PUT"
-          ? accept
-            ? { body: saved("project", 1) }
-            : { status: 503, body: { error: "Host temporarily unavailable" } }
-          : { body: saved("session", 0) }
-        : undefined,
-    );
-    await expect(store.setTaskNotificationGrouping("project")).resolves.toBe(
-      false,
-    );
-    socket.emit({ type: "task_alert_settings", settings: saved("session", 0) });
-    await store.refreshTaskAlerts();
-    const settingsCount = workerSettings.length;
+
+    await expect(controller.setGrouping("project")).resolves.toBe(false);
+    controller.applySettings(hostSettings());
+    await controller.initialize();
     worker.dispatchEvent(new Event("controllerchange"));
     await vi.waitFor(() =>
-      expect(store.getState().taskAlerts).toMatchObject({
+      expect(alerts()).toMatchObject({
         grouping: "project",
         groupingError: expect.stringContaining("unavailable"),
         groupingBusy: false,
       }),
     );
-    expect(workerSettings).toHaveLength(settingsCount);
+    expect(workerSettings.at(-1)).toMatchObject({ grouping: "session" });
+
     accept = true;
-    await expect(store.setTaskNotificationGrouping("project")).resolves.toBe(
-      true,
-    );
-    expect(store.getState().taskAlerts).toMatchObject({
+    await expect(controller.setGrouping("project")).resolves.toBe(true);
+    await controller.initialize();
+    expect(mutations).toEqual([
+      { grouping: "project" },
+      { grouping: "project" },
+    ]);
+    expect(alerts()).toMatchObject({
       mode: "off",
       grouping: "project",
       groupingError: null,
       groupingBusy: false,
     });
+    expect(workerSettings.at(-1)).toMatchObject({
+      owner: publicKey,
+      grouping: "project",
+      updatedAt: 1,
+    });
     expect(Permission.requestPermission).not.toHaveBeenCalled();
+    expect(subscribe).not.toHaveBeenCalled();
   });
 
   it("reconciles worker replacement and ignores an older worker's late error", async () => {
-    const { store } = await initialized("off");
+    const { controller, alerts } = await notificationController("off");
     const registration = await navigator.serviceWorker.getRegistration();
     let oldReply: MessagePort | undefined;
     vi.spyOn(registration!.active!, "postMessage").mockImplementationOnce(
@@ -539,83 +431,38 @@ describe("device-local task alerts", () => {
           | undefined;
       },
     );
-    const oldRefresh = store.refreshTaskAlerts();
+    const oldRefresh = controller.initialize();
     await vi.waitFor(() => expect(oldReply).toBeDefined());
     worker.dispatchEvent(new Event("controllerchange"));
-    await store.refreshTaskAlerts();
+    await controller.initialize();
     oldReply!.postMessage({ error: "Retired worker error" });
     oldReply!.close();
     await oldRefresh;
-    expect(store.getState().taskAlerts.groupingError).toBeNull();
+    expect(alerts().groupingError).toBeNull();
   });
 
-  it("saves only the grouping choice without requesting permission or altering alert intent", async () => {
-    const { store } = await initialized("off");
-    await expect(store.setTaskNotificationGrouping("project")).resolves.toBe(
-      true,
-    );
-    expect(mutations.at(-1)).toEqual({ grouping: "project" });
-    expect(Permission.requestPermission).not.toHaveBeenCalled();
-    expect(store.getState().taskAlerts).toMatchObject({
-      mode: "off",
-      grouping: "project",
-      groupingBusy: false,
-      groupingError: null,
-    });
-    expect(workerSettings.at(-1)).toMatchObject({
-      grouping: "project",
-      updatedAt: 1,
-      owner: publicKey,
-    });
-    await store.refreshTaskAlerts();
-    expect(store.getState().taskAlerts.grouping).toBe("project");
-  });
-
-  it("takes a newly paired Host's default even when its revision is lower", async () => {
-    const { store } = await initialized("off");
-    await store.setTaskNotificationGrouping("project");
-    hostPublicKey = "replacement-host-public-key";
-    grouping = "session";
-    groupingUpdatedAt = 0;
-    await initialized("off", undefined, store);
-    expect(store.getState().taskAlerts).toMatchObject({
-      grouping: "session",
-      groupingUpdatedAt: 0,
-    });
-    expect(workerSettings.at(-1)).toMatchObject({
-      owner: hostPublicKey,
-      grouping: "session",
-      updatedAt: 0,
-    });
-  });
-
-  it("keeps a new grouping choice when an earlier refresh or settings echo arrives late", async () => {
+  it("accepts grouping updates in order within each Host", async () => {
     const { store, socket } = await initialized("off");
     const oldRead = deferred<RouteResponse>();
-    const settings = (choice: "session" | "project", stamp: number) => ({
-      installationId: "device-one",
-      mode: "off",
-      subscribed: false,
-      endpoint: null,
-      publicKey,
-      error: null,
-      grouping: choice,
-      groupingUpdatedAt: stamp,
-    });
     installFetch((url, init) =>
       url === "/api/notifications"
         ? init.method === "PUT"
-          ? { body: settings("project", 10) }
+          ? {
+              body: hostSettings({
+                grouping: "project",
+                groupingUpdatedAt: 10,
+              }),
+            }
           : oldRead.promise
         : undefined,
     );
     const refresh = store.refreshTaskAlerts();
     await store.setTaskNotificationGrouping("project");
-    oldRead.resolve({ body: settings("session", 0) });
+    oldRead.resolve({ body: hostSettings() });
     await refresh;
     socket.emit({
       type: "task_alert_settings",
-      settings: settings("session", 0),
+      settings: hostSettings(),
     });
     expect(store.getState().taskAlerts.grouping).toBe("project");
     expect(workerSettings.at(-1)).toMatchObject({
@@ -624,7 +471,7 @@ describe("device-local task alerts", () => {
     });
     socket.emit({
       type: "task_alert_settings",
-      settings: settings("session", 20),
+      settings: hostSettings({ groupingUpdatedAt: 20 }),
     });
     await vi.waitFor(() =>
       expect(workerSettings.at(-1)).toMatchObject({
@@ -633,10 +480,25 @@ describe("device-local task alerts", () => {
       }),
     );
     expect(store.getState().taskAlerts.grouping).toBe("session");
+
+    hostPublicKey = "replacement-host-public-key";
+    grouping = "project";
+    await initialized("off", undefined, store);
+    expect(store.getState().taskAlerts).toMatchObject({
+      grouping: "project",
+      groupingUpdatedAt: 0,
+    });
+    expect(workerSettings.at(-1)).toMatchObject({
+      owner: hostPublicKey,
+      grouping: "project",
+      updatedAt: 0,
+    });
   });
 
-  it("delivers Host outcomes without a browser start event, including after transport replacement", async () => {
-    const { store, socket } = await initialized();
+  it("uses this installation's live settings and delivers outcomes after transport replacement", async () => {
+    const { store, socket } = await initialized("off");
+    mode = "desktop";
+    socket.emit({ type: "task_alert_settings", settings: hostSettings() });
     outcome(socket);
     await vi.waitFor(() => expect(acknowledgments).toEqual(["outcome-one"]));
     expect(workerMessages).toHaveLength(1);
@@ -648,12 +510,17 @@ describe("device-local task alerts", () => {
       type: "inspire-notification-display",
       notification: { outcome: "failed", project: "research-project" },
     });
-    await store.init("token");
+    await store.init();
     const replacement = FakeWebSocket.instances.at(-1)!;
-    replacement.open();
+    replacement.join(activeSnapshot());
     outcome(replacement, "outcome-two");
     await vi.waitFor(() => expect(acknowledgments).toContain("outcome-two"));
     expect(workerMessages).toHaveLength(2);
+
+    mode = "off";
+    replacement.emit({ type: "task_alert_settings", settings: hostSettings() });
+    expect(store.getState().attentionSessionIds).toEqual([]);
+    expect(store.getState().taskAlerts.mode).toBe("off");
   });
 
   it("acknowledges viewed work without display and keeps title-only attention local", async () => {
@@ -668,30 +535,17 @@ describe("device-local task alerts", () => {
     expect(store.getState().attentionSessionIds).toEqual([]);
   });
 
-  it("opens the owning conversation from worker clicks and retains a cold-launch target", async () => {
-    const { store } = await initialized();
-    worker.dispatchEvent(
-      new MessageEvent("message", {
-        data: { type: "inspire-notification-open", sessionId: "bg" },
-      }),
-    );
-    await vi.waitFor(() => expect(store.getState().sessionId).toBe("bg"));
-    expect(sessionStorage.getItem("inspire-notification-target")).toBeNull();
-
-    history.replaceState(null, "", "/#inspire-session=s1");
-    store.captureNotificationTarget();
-    expect(location.hash).toBe("");
-    expect(sessionStorage.getItem("inspire-notification-target")).toBe("s1");
-    await store.init("token");
-    FakeWebSocket.instances.at(-1)!.open();
-    await vi.waitFor(() => expect(store.getState().sessionId).toBe("s1"));
-  });
-
-  it("keeps an unavailable click target, supersedes slow clicks, and explains a deleted target", async () => {
+  it("keeps a notification target through pairing and reconnect, then honors newer clicks", async () => {
     const slow = deferred<RouteResponse>();
     const opened: string[] = [];
     let unavailable = true;
-    const { store } = await initialized("desktop", async (id) => {
+    const click = (id: string) =>
+      worker.dispatchEvent(
+        new MessageEvent("message", {
+          data: { type: "inspire-notification-open", sessionId: id },
+        }),
+      );
+    function open(id: string): RouteResponse | Promise<RouteResponse> {
       opened.push(id);
       if (id === "slow") return slow.promise;
       if (id === "bg" && unavailable)
@@ -705,23 +559,19 @@ describe("device-local task alerts", () => {
           },
         };
       return { body: activeSnapshot({ sessionId: id }) };
-    });
-    const click = (id: string) =>
-      worker.dispatchEvent(
-        new MessageEvent("message", {
-          data: { type: "inspire-notification-open", sessionId: id },
-        }),
-      );
+    }
+    const store = new AppStore();
+    store.captureNotificationTarget();
     click("bg");
+    await initialized("desktop", open, store);
     await vi.waitFor(() =>
       expect(store.getState().sessionActionError).toContain(
         "temporarily unavailable",
       ),
     );
-    expect(sessionStorage.getItem("inspire-notification-target")).toBe("bg");
     unavailable = false;
-    await store.init("token");
-    FakeWebSocket.instances.at(-1)!.open();
+    await store.init();
+    FakeWebSocket.instances.at(-1)!.join(activeSnapshot());
     await vi.waitFor(() => expect(store.getState().sessionId).toBe("bg"));
 
     click("slow");
@@ -729,9 +579,9 @@ describe("device-local task alerts", () => {
     click("latest");
     await vi.waitFor(() => expect(store.getState().sessionId).toBe("latest"));
     slow.resolve({ body: activeSnapshot({ sessionId: "slow" }) });
-    await vi.waitFor(() =>
-      expect(sessionStorage.getItem("inspire-notification-target")).toBeNull(),
-    );
+    // Let the earlier selection response reach the Store before checking which
+    // conversation remains selected.
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(store.getState().sessionId).toBe("latest");
     click("deleted");
     await vi.waitFor(() =>
@@ -739,89 +589,41 @@ describe("device-local task alerts", () => {
         "This session was deleted",
       ),
     );
-    expect(sessionStorage.getItem("inspire-notification-target")).toBeNull();
     expect(store.getState().sessionId).toBe("latest");
   });
 
-  it("retains a worker click received on the pairing screen", async () => {
-    const store = new AppStore();
-    store.captureNotificationTarget();
-    worker.dispatchEvent(
-      new MessageEvent("message", {
-        data: { type: "inspire-notification-open", sessionId: "bg" },
-      }),
-    );
-    expect(sessionStorage.getItem("inspire-notification-target")).toBe("bg");
-    await initialized("desktop", undefined, store);
-    await vi.waitFor(() => expect(store.getState().sessionId).toBe("bg"));
-  });
-
-  it("applies this installation's shared setting before consuming an outcome", async () => {
-    const { store, socket } = await initialized("off");
-    socket.emit({
-      type: "task_alert_settings",
-      settings: {
-        installationId: "device-one",
-        mode: "desktop",
-        subscribed: true,
-        publicKey,
-        error: null,
-      },
-    });
-    outcome(socket);
-    await vi.waitFor(() => expect(workerMessages).toHaveLength(1));
-    socket.emit({
-      type: "task_alert_settings",
-      settings: {
-        installationId: "device-one",
-        mode: "off",
-        subscribed: false,
-        publicKey,
-        error: null,
-      },
-    });
-    expect(store.getState().taskAlerts.mode).toBe("off");
-    expect(store.getState().attentionSessionIds).toEqual([]);
-  });
-
-  it("requests permission only on a gesture, stores this device's intent, and keeps denial visible", async () => {
-    const { store } = await initialized("off");
-    expect(Permission.requestPermission).not.toHaveBeenCalled();
+  it("preserves alert intent after permission denial and reports test delivery after enrollment", async () => {
     Permission.permission = "default";
-    Permission.requestPermission.mockResolvedValueOnce("denied");
-    await expect(store.setCompletionAttention("desktop")).resolves.toBe(false);
-    expect(store.getState().taskAlerts).toMatchObject({
+    const { controller, alerts } = await notificationController("off");
+    expect(Permission.requestPermission).not.toHaveBeenCalled();
+    Permission.requestPermission.mockImplementationOnce(async () => {
+      Permission.permission = "denied";
+      return "denied";
+    });
+    await expect(controller.setMode("desktop")).resolves.toBe(false);
+    expect(alerts()).toMatchObject({
       mode: "desktop",
       permission: "denied",
+      subscribed: false,
       busy: false,
     });
-    expect(store.getState().prefs.completionAttention).toBe("off");
     expect(mode).toBe("desktop");
-    expect(subscribed).toBe(false);
     expect(subscribe).not.toHaveBeenCalled();
-  });
 
-  it("enrolls for background delivery and tests the actual configured transport", async () => {
-    const { store } = await initialized("off");
-    Permission.permission = "default";
-    await expect(store.setCompletionAttention("desktop")).resolves.toBe(true);
+    // The user unblocks notifications in their browser settings.
+    Permission.permission = "granted";
+    await expect(controller.setMode("desktop")).resolves.toBe(true);
     expect(Permission.requestPermission).toHaveBeenCalledOnce();
     expect(subscribe).toHaveBeenCalledWith(
       expect.objectContaining({ userVisibleOnly: true }),
     );
-    expect(store.getState().taskAlerts.subscribed).toBe(true);
-    expect(mutations.at(-1)?.subscription).not.toHaveProperty("expirationTime");
-    await store.testTaskNotification();
-    expect(store.getState().taskAlerts.testResult).toContain(
-      "Sent to the browser push service",
-    );
-  });
+    expect(alerts().subscribed).toBe(true);
+    await controller.test();
+    expect(alerts().testResult).toContain("Sent to the browser push service");
 
-  it("keeps display acceptance when push delivery beats the test HTTP response", async () => {
-    const { store } = await initialized();
     const response = deferred<RouteResponse>();
     testResponse = response.promise;
-    const pending = store.testTaskNotification();
+    const pending = controller.test();
     worker.dispatchEvent(
       new MessageEvent("message", {
         data: { type: "inspire-notification-shown", test: true },
@@ -829,9 +631,38 @@ describe("device-local task alerts", () => {
     );
     response.resolve({ body: { transport: "push" } });
     await pending;
-    expect(store.getState().taskAlerts.testResult).toBe(
+    expect(alerts().testResult).toBe(
       "Display request accepted. Check your system notifications.",
     );
+  });
+
+  it("ignores a retired notification test error after Off", async () => {
+    const { controller, alerts } = await notificationController();
+    const response = deferred<RouteResponse>();
+    testResponse = response.promise;
+    const pendingTest = controller.test();
+    const local = browserSubscription();
+    const unsubscribe = deferred<boolean>();
+    local.unsubscribe.mockReturnValueOnce(unsubscribe.promise);
+    const registration = (await navigator.serviceWorker.getRegistration())!;
+    vi.spyOn(registration.pushManager, "getSubscription").mockResolvedValue(
+      local,
+    );
+
+    const disabling = controller.setMode("off");
+    await vi.waitFor(() => expect(local.unsubscribe).toHaveBeenCalledOnce());
+    response.reject(new Error("Old notification test failed"));
+    await pendingTest;
+
+    expect(alerts()).toMatchObject({
+      mode: "off",
+      busy: true,
+      error: null,
+      testResult: null,
+    });
+    unsubscribe.resolve(true);
+    await expect(disabling).resolves.toBe(true);
+    expect(alerts().busy).toBe(false);
   });
 
   it.each(["resolves", "rejects"] as const)(
@@ -848,13 +679,7 @@ describe("device-local task alerts", () => {
       subscribed = false;
       socket.emit({
         type: "task_alert_settings",
-        settings: {
-          installationId: "device-one",
-          mode,
-          subscribed,
-          publicKey,
-          error: null,
-        },
+        settings: hostSettings(),
       });
       if (settlement === "resolves") pending.resolve(subscription!);
       else pending.reject(new Error("Push setup failed"));
@@ -873,110 +698,53 @@ describe("device-local task alerts", () => {
     },
   );
 
-  it("recovers interrupted Host enrollment, leaves it healthy, and repairs rotation without rewriting intent", async () => {
-    const { store } = await initialized();
-    const local = browserSubscription();
-    const registration = (await navigator.serviceWorker.getRegistration())!;
-    vi.spyOn(registration.pushManager, "getSubscription").mockResolvedValue(
-      local,
-    );
-    // The browser retained the subscription after the initial registration
-    // request failed. The Host has neither its endpoint nor subscribed=true.
-    await store.refreshTaskAlerts();
-    expect(mutations).toEqual([{ subscription: local.toJSON() }]);
-    expect(store.getState().taskAlerts.subscribed).toBe(true);
-    expect(subscribe).not.toHaveBeenCalled();
-    expect(Permission.requestPermission).not.toHaveBeenCalled();
-    mutations = [];
-    await store.refreshTaskAlerts();
-    expect(mutations).toEqual([]);
-    local.endpoint += "-rotated";
-    await store.refreshTaskAlerts();
-    expect(mutations).toEqual([{ subscription: local.toJSON() }]);
-    expect(store.getState().taskAlerts).toMatchObject({
-      mode: "desktop",
-      subscribed: true,
-    });
-  });
-
   it("replaces an expired browser subscription only when the user enables notifications", async () => {
-    const { store } = await initialized();
+    const { controller, alerts } = await notificationController();
     const local = browserSubscription();
     expiredEndpoint = local.endpoint;
     const registration = (await navigator.serviceWorker.getRegistration())!;
     vi.spyOn(registration.pushManager, "getSubscription").mockResolvedValue(
       local,
     );
-    await store.refreshTaskAlerts();
+    await controller.initialize();
     expect(mutations).toEqual([]);
-    expect(store.getState().taskAlerts.subscribed).toBe(false);
+    expect(alerts().subscribed).toBe(false);
     expect(subscribe).not.toHaveBeenCalled();
 
     const renewed = browserSubscription(local.endpoint + "-renewed");
     subscribe.mockResolvedValueOnce(renewed);
-    await expect(store.setCompletionAttention("desktop")).resolves.toBe(true);
+    await expect(controller.setMode("desktop")).resolves.toBe(true);
     expect(local.unsubscribe).toHaveBeenCalledOnce();
     expect(subscribe).toHaveBeenCalledOnce();
     expect(mutations.at(-1)).toEqual({ subscription: renewed.toJSON() });
-    expect(store.getState().taskAlerts.subscribed).toBe(true);
+    expect(alerts().subscribed).toBe(true);
   });
 
-  it("refreshes enrollment health when the browser has lost its subscription", async () => {
-    const { store } = await initialized("desktop");
-    await store.setCompletionAttention("desktop");
-    expect(store.getState().taskAlerts.subscribed).toBe(true);
-    await store.refreshTaskAlerts();
-    expect(store.getState().taskAlerts.subscribed).toBe(false);
-    expect(mutations.at(-1)).toEqual({ subscription: null });
+  it("retires a pending page display when alerts are disabled before worker readiness", async () => {
+    const { controller, alerts } = await notificationController();
+    const registration = await navigator.serviceWorker.ready;
+    const ready = deferred<ServiceWorkerRegistration>();
+    const waiting = vi.fn(() => ready.promise);
+    Object.defineProperty(navigator.serviceWorker, "ready", {
+      configurable: true,
+      get: waiting,
+    });
+    const pending = controller.receive(failedOutcome("before-disable", "bg"));
+    expect(waiting).toHaveBeenCalledOnce();
+
+    await controller.setMode("off");
+    ready.resolve(registration);
+    await pending;
+
+    expect(workerMessages).toEqual([]);
+    expect(alerts()).toMatchObject({
+      mode: "off",
+      error: null,
+    });
   });
-
-  it("does not let delayed permission overwrite a newer Off choice", async () => {
-    const { store } = await initialized("off");
-    const permission = deferred<NotificationPermission>();
-    Permission.permission = "default";
-    Permission.requestPermission.mockReturnValueOnce(permission.promise);
-    const old = store.setCompletionAttention("desktop");
-    await store.setCompletionAttention("off");
-    const settledIntent = [...mutations];
-    permission.resolve("granted");
-    await expect(old).resolves.toBe(false);
-    expect(store.getState().taskAlerts.mode).toBe("off");
-    expect(mutations).toEqual(settledIntent);
-    expect(mutations.at(-1)).toEqual({ mode: "off", subscription: null });
-    expect(subscribe).not.toHaveBeenCalled();
-  });
-
-  it.each(["resolves", "rejects"] as const)(
-    "retires a pending page display when alerts are disabled before worker readiness %s",
-    async (settlement) => {
-      const { store, socket } = await initialized();
-      const registration = await navigator.serviceWorker.ready;
-      const ready = deferred<ServiceWorkerRegistration>();
-      const waiting = vi.fn(() => ready.promise);
-      Object.defineProperty(navigator.serviceWorker, "ready", {
-        configurable: true,
-        get: waiting,
-      });
-      const receive = vi.spyOn(TaskNotificationController.prototype, "receive");
-      outcome(socket, "before-disable");
-      expect(waiting).toHaveBeenCalledOnce();
-      const pending = receive.mock.results[0]!.value as Promise<void>;
-
-      await store.setCompletionAttention("off");
-      if (settlement === "resolves") ready.resolve(registration);
-      else ready.reject(new Error("Worker startup failed"));
-      await pending;
-
-      expect(workerMessages).toEqual([]);
-      expect(store.getState().taskAlerts).toMatchObject({
-        mode: "off",
-        error: null,
-      });
-    },
-  );
 
   it("leaves a failed display unacknowledged for Host push fallback", async () => {
-    const { store, socket } = await initialized();
+    const { controller, alerts } = await notificationController();
     const registration = await navigator.serviceWorker.ready;
     vi.spyOn(registration.active!, "postMessage").mockImplementation(
       (_data, transfer) => {
@@ -986,10 +754,8 @@ describe("device-local task alerts", () => {
       },
     );
     visibleFocused(false);
-    outcome(socket, "display-failed", "s1");
-    await vi.waitFor(() =>
-      expect(store.getState().taskAlerts.error).toBe("Display refused"),
-    );
+    await controller.receive(failedOutcome("display-failed", "s1"));
+    await vi.waitFor(() => expect(alerts().error).toBe("Display refused"));
     expect(acknowledgments).toEqual([]);
   });
 });

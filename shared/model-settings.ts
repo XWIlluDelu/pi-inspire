@@ -1,9 +1,18 @@
+import { z } from "zod";
 import type { PiCommand } from "./commands.js";
-import type {
-  ModelIdentity,
-  ModelOption,
-  NewSessionDefaults,
-  ThinkingLevel,
+import {
+  configurationField,
+  fieldSchemas,
+  nullableEdit,
+  storedConfigurationField,
+  storedConfigurationValue,
+} from "./configuration-fields.js";
+import {
+  type ModelIdentity,
+  type ModelOption,
+  type NewSessionDefaults,
+  THINKING_LEVELS,
+  type ThinkingLevel,
 } from "./contracts.js";
 
 export interface ModelSettingsOwner {
@@ -19,6 +28,27 @@ export interface ModelSettingsDestination {
 export interface CommonModelOption extends ModelIdentity {
   thinkingLevel?: ThinkingLevel;
 }
+export const modelThinkingPreferencesSchema = z.object({
+  defaultLevel: z.enum(THINKING_LEVELS).optional(),
+  byModel: z.record(z.string(), z.enum(THINKING_LEVELS)),
+});
+export type ModelThinkingPreferences = z.infer<
+  typeof modelThinkingPreferencesSchema
+>;
+
+/** The same settings precedence Pi uses before capability clamping. */
+export function modelSwitchThinkingLevel(
+  model: ModelIdentity,
+  preferences: ModelThinkingPreferences | undefined,
+  current: ThinkingLevel,
+): ThinkingLevel {
+  return (
+    preferences?.byModel[`${model.provider}/${model.id}`] ??
+    preferences?.defaultLevel ??
+    current
+  );
+}
+
 export interface ModelCatalogResponse {
   models: ModelOption[];
   /** Registered extension commands observable before starting a session. */
@@ -26,6 +56,7 @@ export interface ModelCatalogResponse {
   defaults?: NewSessionDefaults;
   /** Addressed source selection, requested only for pending New inheritance. */
   selection?: NewSessionDefaults;
+  thinkingPreferences?: ModelThinkingPreferences;
   commonModels?: CommonModelOption[];
   warning?: string;
 }
@@ -34,26 +65,12 @@ export interface PiModelPreferences {
   defaultThinkingLevel: ThinkingLevel | null;
   enabledModels: string[];
 }
-export interface ModelDeclaration {
+export type ModelDeclaration = z.infer<typeof modelDeclarationSchema>;
+export type ProviderDeclaration = z.infer<typeof providerDeclarationSchema> & {
   id: string;
-  name?: string;
-  api?: string;
-  baseUrl?: string;
-  reasoning?: boolean;
-  input?: string[];
-  contextWindow?: number;
-  maxTokens?: number;
-  type?: string;
-  advancedFields: string[];
-}
-export interface ProviderDeclaration {
-  id: string;
-  baseUrl?: string;
-  api?: string;
   apiKeyConfigured: boolean;
   models: ModelDeclaration[];
-  advancedFields: string[];
-}
+};
 export interface ModelSettingsSnapshot {
   settingsRevision: string;
   configRevision: string;
@@ -70,44 +87,110 @@ export interface ModelSettingsSnapshot {
   /** Project overrides failed to load; global preferences are still editable. */
   projectSettingsError?: string;
   configError?: string;
+  modelDiscoveryFailed?: true;
   modelsWarning?: string;
 }
-export type ModelPreferencesPatch = Partial<PiModelPreferences>;
+const token = z.string().min(1).max(256);
+const modelId = z.string().min(1).max(512);
+export const modelPreferencesPatchSchema = z
+  .object({
+    defaultModel: nullableEdit(z.object({ provider: token, id: modelId })),
+    defaultThinkingLevel: nullableEdit(z.enum(THINKING_LEVELS)),
+    enabledModels: z.array(z.string().min(1).max(512)).max(512).optional(),
+  })
+  .strict();
+export type ModelPreferencesPatch = z.infer<typeof modelPreferencesPatchSchema>;
 export interface ModelSettingsWriteResult {
   saved: true;
   snapshot?: ModelSettingsSnapshot;
   warning?: string;
 }
 
-export type ModelConfigEdit =
-  | {
-      kind: "provider";
-      id: string;
-      values: {
-        baseUrl?: string | null;
-        api?: string | null;
-        apiKey?: string | null;
-      };
-    }
-  | { kind: "remove-provider"; id: string }
-  | {
-      kind: "model";
-      provider: string;
-      originalId?: string;
-      originalType?: string;
-      values: {
-        id: string;
-        name?: string | null;
-        api?: string | null;
-        baseUrl?: string | null;
-        reasoning?: boolean | null;
-        input?: string[] | null;
-        contextWindow?: number | null;
-        maxTokens?: number | null;
-        type?: string | null;
-      };
-    }
-  | { kind: "remove-model"; provider: string; id: string; type?: string };
+const baseUrl = storedConfigurationField(
+  z.string(),
+  {
+    label: "Base URL",
+    placeholder: "https://api.example.com/v1",
+    maxLength: 4_096,
+  },
+  z.string().max(4_096),
+);
+const api = storedConfigurationField(
+  z.string(),
+  { label: "API type", maxLength: 256 },
+  token,
+);
+const name = storedConfigurationField(
+  z.string(),
+  { label: "Display name", placeholder: "Optional", maxLength: 512 },
+  z.string().max(512),
+);
+const input = z
+  .array(z.unknown())
+  .transform((items) =>
+    items.filter((item): item is string => typeof item === "string"),
+  );
+const tokenCount = (label: string) =>
+  storedConfigurationField(z.number(), {
+    label,
+    type: "number",
+    placeholder: "Pi default",
+    step: "any",
+  });
+const apiKey = configurationField(z.string().max(16_384), {
+  label: "API key",
+  type: "password",
+  maxLength: 16_384,
+});
+export const providerDeclarationFields = { baseUrl, api };
+export const providerApiKey = apiKey.control;
+export const modelDeclarationFields = {
+  baseUrl,
+  api,
+  name,
+  contextWindow: tokenCount("Context window"),
+  maxTokens: tokenCount("Maximum output tokens"),
+};
+export const providerDeclarationSchema = z.object(
+  fieldSchemas(providerDeclarationFields, "stored"),
+);
+const providerValues = z.strictObject({
+  ...fieldSchemas(providerDeclarationFields, "schema"),
+  apiKey: apiKey.schema,
+});
+const modelFields = {
+  ...modelDeclarationFields,
+  id: { schema: modelId, stored: z.string() },
+  reasoning: storedConfigurationValue(z.boolean(), z.boolean()),
+  input: storedConfigurationValue(input, z.array(z.string().max(100)).max(8)),
+  type: storedConfigurationValue(z.string(), token),
+};
+const modelValues = z.strictObject(fieldSchemas(modelFields, "schema"));
+export const modelDeclarationSchema = z.object(
+  fieldSchemas(modelFields, "stored"),
+);
+export const modelConfigEditSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("provider"),
+    id: token,
+    values: providerValues,
+  }),
+  z.strictObject({ kind: z.literal("remove-provider"), id: token }),
+  z.strictObject({
+    kind: z.literal("model"),
+    provider: token,
+    originalId: z.string().max(512).optional(),
+    originalType: token.optional(),
+    values: modelValues,
+  }),
+  z.strictObject({
+    kind: z.literal("remove-model"),
+    provider: token,
+    id: modelId,
+    type: token.optional(),
+  }),
+]);
+export type ModelConfigEdit = z.infer<typeof modelConfigEditSchema>;
 
 export type ProviderAuthType = "api_key" | "oauth";
 export interface ProviderLoginMethod {

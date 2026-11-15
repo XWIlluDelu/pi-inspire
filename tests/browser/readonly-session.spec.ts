@@ -1,8 +1,9 @@
 import { expect, test } from "@playwright/test";
-import type { ActiveSnapshot, BootstrapPayload } from "../../shared/contracts";
+import { observeClipboardWrites } from "./support/clipboard";
+import { routeSnapshots } from "./support/host-events";
 import {
   openCommandPalette,
-  openMockSession,
+  openFixtureSession,
   pairedPage,
 } from "./support/navigation";
 
@@ -10,48 +11,22 @@ test("unavailable-project history keeps its reading surface at desktop and phone
   page,
 }) => {
   let available = false;
-  const availability = (snapshot: ActiveSnapshot) => {
-    if (snapshot.active) {
-      snapshot.active.readOnlyReason = available
-        ? undefined
-        : "workspace-unavailable";
-      if (!available) snapshot.active.stats = undefined;
-    }
-    return snapshot;
-  };
   // UI projection only: source-admission tests cover the real missing directory,
   // unchanged JSONL, and absence of any Pi/model-discovery process.
-  await page.route("**/api/bootstrap**", async (route) => {
-    const response = await route.fetch();
-    if (!response.ok()) return route.fulfill({ response });
-    const payload = (await response.json()) as BootstrapPayload;
-    payload.snapshot = availability(payload.snapshot);
-    await route.fulfill({ response, json: payload });
-  });
-  for (const url of ["**/api/snapshot**", "**/api/sessions/open"]) {
-    await page.route(url, async (route) => {
-      const response = await route.fetch();
-      if (!response.ok()) return route.fulfill({ response });
-      await route.fulfill({
-        response,
-        json: availability(await response.json()),
-      });
-    });
-  }
-
-  await page.routeWebSocket("**/events**", (client) => {
-    const upstream = client.connectToServer();
-    upstream.onMessage((message) => {
-      const event = JSON.parse(String(message));
-      if (event.type === "snapshot" && event.data)
-        event.data = availability(event.data);
-      client.send(JSON.stringify(event));
-    });
+  await routeSnapshots(page, {
+    snapshot: (snapshot) => {
+      if (snapshot.active) {
+        snapshot.active.readOnlyReason = available
+          ? undefined
+          : "workspace-unavailable";
+        if (!available) snapshot.active.stats = undefined;
+      }
+    },
   });
 
   await page.setViewportSize({ width: 1280, height: 900 });
   await pairedPage(page);
-  await openMockSession(page, /Review extension event lifecycle/);
+  await openFixtureSession(page, /Review extension event lifecycle/);
   const note = page.getByText(
     "Project folder unavailable. This session is read-only.",
   );
@@ -64,10 +39,6 @@ test("unavailable-project history keeps its reading surface at desktop and phone
     await expect(
       page.getByRole("menuitem", { name, exact: true }),
     ).toBeDisabled();
-  await page.getByRole("menuitem", { name: "More actions" }).click();
-  await expect(
-    page.getByRole("menuitem", { name: "Use in terminal…", exact: true }),
-  ).toBeDisabled();
   await page
     .getByRole("menuitem", { name: "Export session…", exact: true })
     .click();
@@ -82,36 +53,54 @@ test("unavailable-project history keeps its reading surface at desktop and phone
     exportDialog.getByRole("radio", { name: /JSONL/ }),
   ).toBeChecked();
   await expect(exportDialog).toContainText("Saved branch");
+  const downloaded = page.waitForEvent("download");
   await exportDialog
-    .getByRole("button", { name: "Cancel", exact: true })
+    .getByRole("button", { name: "Download", exact: true })
     .click();
+  expect((await downloaded).suggestedFilename()).toMatch(/\.jsonl$/);
+  await expect(exportDialog).toHaveCount(0);
 
-  const palette = await openCommandPalette(page);
-  await palette.getByLabel("Filter commands").fill("history");
-  await palette.getByRole("option", { name: /Open History/ }).click();
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await observeClipboardWrites(page);
+  const resumePalette = await openCommandPalette(page);
+  await page.route(
+    "**/api/sessions/resume-command?*",
+    async (route) => {
+      const response = await route.fetch();
+      await route.fulfill({
+        response,
+        json: { ...(await response.json()), projectDirectoryMissing: true },
+      });
+    },
+    { times: 1 },
+  );
+  const filter = resumePalette.getByLabel("Filter commands");
+  await filter.fill("resume command");
+  await expect(resumePalette.getByRole("option").first()).toHaveText(
+    /Copy resume command/,
+  );
+  const resumeResponse = page.waitForResponse(
+    "**/api/sessions/resume-command?*",
+  );
+  await filter.press("Enter");
+  const { command } = await (await resumeResponse).json();
+  expect(command).toContain("pi --session");
+  await expect
+    .poll(() => page.evaluate(() => window.gestureClipboardWrites.at(-1)?.text))
+    .toBe(command);
+  await expect(resumePalette).toBeHidden();
   await expect(
-    page.getByRole("searchbox", { name: "Find in history" }),
+    page.getByText(
+      /Run it in the new project folder and choose Fork in Pi 1\.5\.2 or later/,
+    ),
   ).toBeVisible();
-  await expect(page.locator(".history-outline")).toContainText(
+
+  await expect(page.getByRole("log")).toContainText(
     "Show me a formula-rich example",
   );
 
-  const usagePalette = await openCommandPalette(page);
-  await usagePalette.getByLabel("Filter commands").fill("/session");
-  await usagePalette.getByRole("option", { name: /Session & usage/ }).click();
-  await expect(
-    page.getByText("Usage information is unavailable."),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Dismiss /session result" }).click();
-
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 844 });
-    if (width === 390) {
-      const context = page.getByRole("dialog", { name: "Context panel" });
-      await expect(context).toBeVisible();
-      await context.getByRole("button", { name: "Close context pane" }).click();
-      await expect(context).toHaveCount(0);
-    }
     await expect(note).toBeVisible();
     await expect(
       page.getByRole("textbox", { name: "Message", exact: true }),
@@ -124,7 +113,7 @@ test("unavailable-project history keeps its reading surface at desktop and phone
   }
 
   available = true;
-  await openMockSession(page, /Review extension event lifecycle/);
+  await openFixtureSession(page, /Review extension event lifecycle/);
   await expect(note).toHaveCount(0);
   await expect(
     page.getByRole("textbox", { name: "Message", exact: true }),

@@ -12,12 +12,12 @@ covers:
   - shared/terminal-*.ts
   - src/{api,App,app-state,store,terminal-*,use-copied}.ts*
   - src/controllers/terminal-operation-controller.ts
-  - src/components/{CommandPalette,ContextPane,NoticeCard,Notices,RichText,TerminalPane,TerminalSettingsDialog,TerminalTextDialog,TerminalView}.tsx
+  - src/components/{CommandPalette,ContextPane,NoticeCard,Notices,RichText,WorkspaceDock,TerminalSettingsDialog,TerminalTextDialog,TerminalView}.tsx
   - src/styles.css
   - src/styles/{terminal,responsive,settings-overlays,workbench}.css
   - tests/{server,shared,web}/**/*terminal*
-  - tests/browser/{project-terminals,operation-lifecycles,terminal-settings,terminal-theme}.spec.ts
-  - tests/browser/fixtures/terminal-theme.ts
+  - tests/browser/{context-tabs,project-terminals,terminal-settings,terminal-theme}.spec.ts
+  - tests/browser/support/terminal-*.ts
   - tests/deploy/systemd-control.test.mjs
   - tests/launcher.test.ts
   - vite.config.ts
@@ -42,24 +42,24 @@ is a newly generated private secret, separate from any potentially disclosed pla
 Windows machine-wide pipe names include the OS account and state-directory identity as well as the
 installation. Unix socket addresses stay within the native byte limit, including long and Unicode
 temporary roots; shortening does not relax current-user ownership or private-directory checks.
-A still-listening legacy address blocks automatic replacement rather than stranding its PTYs.
-Wire/authentication compatibility gates data access; implementation version and optional lifecycle
-support do not. A failed startup connection remains recoverable through subsequent requests: one
-shared initialization at a time, no idle retry loop, no automatic daemon creation/replacement and
-no replay of dispatched controls or terminal input. Closing fences late initialization and closes
-its client without reviving the retired service.
-Only the owner that bound a socket removes it; late cleanup must not unlink a successor.
+An unverified listener at the configured address blocks automatic replacement.
+The current daemon wire protocol gates data access and maintenance. The Host gateway and daemon
+validate the same attachment and control fields. The attach ticket stays with the browser gateway.
+On-demand recovery only reconnects and shares one
+initialization across requests. It leaves dispatched controls and input untouched. Closing fences
+late initialization and releases the client. Only the owner that bound a socket removes it.
 An existing non-private POSIX parent is rejected rather than chmodded, so a custom socket, token or
 state address cannot change permissions on a shared or system directory.
 
 `inspire terminal status|stop|restart` supplies portable, instance-scoped maintenance without
-restarting the Host/Pi or expanding Restart all. Stop/restart run from an external OS terminal;
-a managed-terminal environment is refused before stopping work so the command cannot kill its own
-coordinator midway through replacement. Status remains available there. An independent lifecycle-v1 envelope over the same
-authenticated TLS transport survives terminal-data protocol changes. The caller verifies root, Host,
-port, configured IPC/state/token paths, process birth and daemon incarnation before requesting stop.
-Shutdown targets that incarnation; an old target cannot stop a replacement. Status never creates or
-rotates authority and reports missing listeners without claiming OS-process exit.
+restarting the Host/Pi. Stop/restart run from an external OS terminal; a
+managed-terminal environment is refused before stopping work, so the command cannot kill its own
+coordinator midway through replacement. Status stays available there. Maintenance uses the same authenticated version as terminal data.
+Stop the previous daemon with its installed launcher before a protocol-changing upgrade.
+The caller verifies root, Host, port, configured IPC/state/token paths, process birth and daemon
+incarnation before requesting stop. Shutdown targets that incarnation; an old target cannot stop a
+replacement. Status never creates or rotates authority and reports missing listeners without
+claiming OS-process exit.
 
 Running project terminals require explicit `--force`; it confirms ending work, not a bypass for
 authentication or unknown-PID killing. Admission fences pending creates before shutdown. Failed PTY
@@ -119,8 +119,9 @@ tab and reports failure. Native adapters capture the root birth identity at star
 before numeric tree/group operations, including the output-drain period before `onExit`. Once the
 root exits or its identity changes, its old PID/PGID cannot authorize another tree walk or group
 signal. Only previously captured descendants with matching live birth identities remain cleanup
-authority; a different observed birth never inherits prior cleanup authority. Unverifiable or unconfirmed descendant cleanup
-keeps the exited tab and its cleanup handle for an explicit retry, including service shutdown.
+authority; a different observed birth never inherits it. Unverifiable or unconfirmed descendant
+cleanup keeps the exited tab and its cleanup handle for an explicit retry, including service
+shutdown.
 Root drain and descendant confirmation share the existing hard-stop allowance. These are live OS
 identity observations, not atomic kernel handles or a sandbox against deliberate process races.
 Windows native ConPTY instance closure is the fallback when PID identity cannot be proven, and
@@ -128,9 +129,12 @@ receives no POSIX signal argument.
 
 ## Identified controls and recovery
 
-Browser mutations carry one immutable operation identity through Host and daemon. Same-content retries
-share the running operation or retained result; reuse with different parameters is refused. Lost
-responses, deadlines, and disconnects leave the outcome unresolved, rather than cancelling work.
+Browser mutations carry one immutable operation identity to the PTY manager, which owns the receipt
+epoch in both the daemon and the in-process development Host. The browser, Host and daemon use the
+same typed terminal intent. Same-content checks share the running operation or retained result.
+Observation with a missing identity leaves the outcome unknown and cannot admit a command. The
+owner refuses reuse with different parameters. Lost
+responses, deadlines, and disconnects leave the outcome unresolved; they do not cancel work.
 Read-only catalog/settings reads and attachment/input continuity remain independent. A confirmed
 completion or rejection remains authoritative even if the browser cannot remove its recovery record.
 Report that local cleanup failure separately; retrying cleanup sends no terminal mutation.
@@ -150,33 +154,36 @@ users may explicitly stop tracking an unresolved result, including an expired re
 Confirmation explains that this neither cancels the old work nor establishes its outcome. It sends no
 mutation, persists retirement before releasing the local identity, and is unavailable during a check.
 A subsequent deliberate action gets a new identity; retries never silently become new work.
-Unavailable or malformed storage blocks
-untracked writes. Every control mutation requires an operation identity and receipt support; missing
-identity is refused before dispatch. Valid identified requests rejected during route validation carry
-the matching operation ID and definite rejected outcome, including nested terminal routes.
+Unavailable or malformed storage blocks untracked writes. The browser persists the typed intent
+and submits each terminal control through one typed terminal operation entry point. Results use the same receipt shape as Host
+operations, with terminal epoch as executor identity. Validation failures with a valid identity
+return a matching rejection before dispatch. Records from a previous format remain explicitly
+unknown. The user can retire their tracking after inspecting the catalog; there is no replay.
+Browser build replacement retires the terminal
+attachment and leaves the PTY with its daemon.
 
-The in-process development owner follows the same mutation contract. Diagnostics distinguish absent
-endpoints, unverified connections and data-protocol incompatibility. Terminal errors use the shared
+Diagnostics distinguish absent endpoints, unverified connections and data-protocol incompatibility.
+Terminal errors use the shared
 notice card with complete Copy and separate Dismiss; text selection does not dismiss them.
 
 An incompatible daemon requires an explicit upgrade after its work is finished. Without verified
 maintenance controls, use its existing service owner or an inspected manual shutdown, never a PID
 claimed by an unverified listener. [Maintenance guidance](../../docs/host.md#connection-recovery-and-upgrades)
-covers this boundary and the installed-service scope of Restart all.
+covers this boundary and the installed-service scope of `inspire restart --terminals`.
 
 Catalog loads, polling, and mutations belong to one pane project/reload generation. Switching projects,
-reloading, or unmounting retires old response/error/loading/selection/rollback writebacks, while completed
+reloading, or unmounting retires old response/error/loading/selection writebacks, while completed
 server work remains effective. Full catalogs validate project and daemon epoch/revision; partial receipts
 merge by ID within that epoch and do not suppress equal-revision full reconciliation. A new epoch needs
-a complete catalog, and retired epochs cannot replace it. Optimistic-order rollback applies only to its
-still-current state. Recovery rows retain uncertainty during checks; tab relationships target mounted
+a complete catalog, and retired epochs cannot replace it. Terminal reordering publishes its confirmed
+catalog. Recovery rows retain uncertainty during checks; tab relationships target mounted
 lazy panels.
 
 Palette UI intent binds the originating project before opening a lazy pane. Close, Restart and
 other terminal-targeted actions resolve an active terminal in that scope immediately or end without
 an HTTP request; they never wait for a later project or terminal. Only New, Focus and Settings may
-wait for their matching project surface to mount. `terminal-actions.test.ts` and
-`terminal-pane.test.tsx` cover the pre-request cross-project boundary.
+wait for their matching project surface to mount. `terminal-pane.test.tsx` covers the
+pre-request cross-project boundary.
 
 ## Stream, input, and authentication
 
@@ -201,23 +208,47 @@ the bounded grace period.
 
 HTTP controls use explicit bearer authentication; WebSocket upgrades use the origin/audience-bound
 socket tickets defined by [[host-lifecycle]]. Terminal attachment additionally consumes its
-short-lived, terminal-bound ticket. Dimensions, titles, paths, messages, replay, IPC connections, pending input, and
-outbound buffers are bounded. A slow viewer detaches independently of its PTY and other viewers.
+short-lived, terminal-bound ticket. The Host forwards the same control and binary input frames
+to the daemon, which validates them at the PTY attachment. Runtime and terminal sockets share the
+Host liveness, current build and drain checks. Dimensions, titles, paths, messages, replay, IPC
+connections, pending input and outbound buffers are bounded. A slow viewer detaches independently of its PTY and other viewers.
 Diagnostics omit terminal input, output, and internal path-bearing failures.
 
 ## Tabs, menus, and settings
 
-The lazy Terminal mode provides profile choice, creation, rename, drag/keyboard ordering, restart,
-close/force-close confirmation, recent-close recreation, status/unread/bell indicators, and an
-all-project navigator. One header owns tabs, new/profile, connection/control state, search, focus, and
-More. At pane widths up to 480px, Focus moves into More to leave room for the active tab and its close
-control. Focus remains available with an empty catalog. Focus mode and a same-origin focused window
-attach the existing terminal. With multiple available profiles, compact/touch creation presents
-one Plus control that opens profile choice; the empty-state New button does the same without
-creating prematurely. A single available profile creates directly. Wider desktop layouts keep default
-New plus a separate chooser; command/keyboard New continues to create the default profile. The
-input-focus icon uses neutral action color; process dots and connecting/reconnecting indicators
-retain their state colors.
+Each project terminal occupies a tab beside open files in the shared contextual strip. Terminal
+tabs use the file tab's padding, close slot, 132px minimum, 180px cap and overflow rules
+([[workspace-layout]]); each 6px status dot sits within the same 13px icon slot. The shared strip
+scrolls horizontally, and the searchable Open tabs list reaches every tab. Selecting a file or tool hides the terminal view without replacing its process or changing
+input ownership. Terminal rename inputs share the session rename editor's surface, border, corners
+and focus treatment, while keeping the tab's compact type and label-aligned width. Enter or blur
+saves; Escape cancels. A manual name overrides automatic titles, and clearing it restores automatic
+naming.
+The top Terminal shortcut creates and activates one default-profile terminal; existing terminals
+are reached through their tabs. The pane reads the catalog when the shared strip first opens so
+existing terminal tabs remain reachable after refresh, including from Files. Background catalog
+polling remains limited to the active terminal surface.
+
+Profile choice, connection and control state, search, focus and More stay in a toolbar above
+terminal output. In the shared dock, the toolbar uses the same 28px desktop and 32px touch/narrow
+button tier as file actions, with 16px glyphs. A foreign-project context row stays above the tools
+and keeps Back to current project available. The selected view supplies search and display
+controls to the persistent toolbar through the active terminal ID and output epoch. The toolbar
+also provides profile, focus and catalog actions
+while no view is open. Writable terminals expose control state in an accessible name and tooltip.
+Non-writable terminals keep connection feedback, the ownership message and Take control where
+ready. Search, selection actions, copy confirmation and connection errors have their own output
+overlays. The Terminal shortcut creates a default terminal and the toolbar profile chooser offers
+named alternatives.
+Focus stays in the toolbar across widths. Focus mode and same-origin focused windows
+attach the existing terminal and display the tab strip above the toolbar. Changing the active
+terminal keeps the tab strip mounted and preserves its keyboard focus and rename target.
+
+The action menu and keyboard can move a terminal tab left or right. Rename, close/force-close
+confirmation, recent-close recreation, status/unread/bell indicators and the all-project navigator
+remain available. Closing a
+running command requires confirmation. Command/keyboard New creates the default profile. The input-focus icon uses
+neutral action color; process dots and connecting/reconnecting indicators retain their state colors.
 
 Selected tabs are revealed on selection or strip resize without stealing focus. Catalog reconciliation
 restores saved selection before persisting a new value. Automatic focus belongs to a fresh activation
@@ -225,9 +256,9 @@ and yields if another control takes focus; font loading, replay, reconnect, and 
 not reclaim it. Explicit Take control retains its user-gesture focus behavior.
 
 Profile and More menus share one pane owner and a native named disclosure group for synchronous
-mutual exclusion; inner groups remain independent. More contains clipboard/output actions, inline display
-and management groups, the navigator, and settings. Escape closes the innermost group first and restores
-its summary, without also closing a narrow drawer. A newer modal has priority. Menus fit and scroll
+mutual exclusion. More lists clipboard, display, terminal management and settings actions directly.
+The all-project navigator retains its own disclosure. Escape closes that disclosure before More and
+restores its summary without closing the narrow drawer. A newer modal has priority. Menus fit and scroll
 within the pane; header controls align across desktop/touch layouts, and hidden views publish no controls.
 Profile names wrap within their text column when needed; the Default marker remains visible on the
 first-line baseline. Short entries retain centered content, standard menu height, and target size.
@@ -245,18 +276,20 @@ context and filtering does not remove an existing disambiguation cue. Only match
 emphasized, not `@`; clearing search removes query-only context. Ordinary unique headings remain
 unchanged. The identity stays single-line and ellipsizes within the space left by Current.
 
-Terminal Settings is a body-level modal, above the pane's stacking context. Its header/footer remain
-visible around the scrolling body. Appearance, Interaction and Saved output are separate category views,
-with the main Settings desktop sidebar, narrow horizontal strip and safe-area-aware narrow frame.
-Only the active category exposes its controls. Switching or reselecting a category starts its content at the top; scrolling does not
+Terminal Settings is a body-level modal above the pane's stacking context. Its header/footer stay
+visible around the scrolling body. Appearance, Interaction and Saved output are separate category
+views using the main Settings desktop sidebar, narrow horizontal strip, safe-area-aware narrow
+frame, controls and dialog header, with 40px touch controls. Only the active category exposes its
+controls. Switching or reselecting a category starts its content at the top; scrolling does not
 change the selection. Browser preferences and Host loading, saving, clearing and error state survive
-category switches. Settings and Select text restore focus to the visible More summary;
-modal Escape leaves terminal focus mode and the underlying drawer unchanged. **Restore browser defaults**
-resets browser presentation/interaction preferences, not Host history. This action and the browser
-scope caption appear only in Appearance and Interaction; Saved output identifies its Host scope instead. Appearance, Interaction and
-Saved output use the main Settings controls and dialog header, with 40px touch controls. Font size
-uses an inline decrement/value/increment stepper at every width. Wide choices can move below their
-labels on narrow cards. Browser preferences remain distinct from Host output and retention settings.
+category switches. Settings and Select text restore focus to the visible More summary; modal Escape
+leaves terminal focus mode and the underlying drawer unchanged.
+
+Browser preferences stay distinct from Host output and retention settings. **Restore browser
+defaults** resets browser presentation/interaction preferences, not Host history. This action and
+the browser scope caption appear only in Appearance and Interaction; Saved output identifies its
+Host scope instead. Font size uses an inline decrement/value/increment stepper at every width. Wide
+choices can move below their labels on narrow cards.
 
 ## Rendering and input
 
@@ -285,8 +318,8 @@ Workbench shortcut mode retains native clipboard and terminal search. On macOS, 
 ETX with or without selected output; Command+C/V remain native copy/paste, and Control+V remains
 shell input. On Windows/Linux, selected Control+C stays native copy, unselected Control+C sends
 ETX, and Control+V stays native paste. Shell shortcut mode retains its existing Control-key ownership;
-macOS Command clipboard chords remain native. Native AltGraph, third-level characters, dead keys and composition take priority
-over workbench chords. Alt+digit selects a tab only when the layout produces that digit without other
+macOS Command clipboard chords remain native. Native AltGraph, third-level characters, dead keys and composition take priority over workbench
+chords. Alt+digit selects a tab only when the layout produces that digit without other
 modifiers; pane shortcuts do not capture search, rename, menu or ordinary text-editor input. A chord
 consumed by the pane must not also send terminal bytes. macOS Option produces native characters and
 accents by default. The Mac-only **Option as Meta** browser setting explicitly enables Escape-prefixed
@@ -300,15 +333,13 @@ Control+Shift+Escape handler or hint claims the Windows Task Manager shortcut.
 Workbench New terminal uses the physical modified Backquote key, including layouts where Shift
 produces a tilde; shell shortcut mode yields it to the PTY. Shell history remains native; the view adds neither command reruns nor a separate history interface.
 
-The non-wrapping touch bar keeps four 44px arrows fixed in a compact trailing group. Esc, Ctrl+C,
-one-shot Ctrl/Alt, Tab, Home/End, and Page Up/Down scroll independently in equal-width slots sized
-to fit complete buttons (two at 320px, three at 390px). Scrolling snaps to whole-key boundaries,
-including the final position. Small directional cues use the existing bottom padding only on sides
-with hidden keys; no fade covers button labels. The bar keeps its single-row height.
-Input ownership, readiness and process state
-gate every key. Touch keys preserve input focus. Navigation and direct Ctrl+C also work with the
-software keyboard closed; the header keyboard button explicitly focuses input. Ctrl/Alt are one-shot modifiers for user
-keystrokes, cleared by blur, loss of control, or paste. They do not modify pasted text or terminal replies.
+The non-wrapping, single-row touch bar keeps four 44px arrows fixed in a compact trailing group.
+Esc, Ctrl+C, one-shot Ctrl/Alt, Tab, Home/End, and Page Up/Down use a horizontally scrollable strip
+with complete equal-width keys. Input ownership, readiness and process state gate every key. Touch
+keys preserve input focus. Navigation and direct Ctrl+C also work with the software keyboard
+closed; the header keyboard button explicitly focuses input. Ctrl/Alt are
+one-shot modifiers for user keystrokes, cleared by blur, loss of control, or paste; they do not
+modify pasted text or terminal replies.
 
 Pending menu paste belongs to its originating activation and control epoch. Switching views, losing
 control, or replacing the connection retires its completion/error/focus effects. A current paste returns
@@ -332,8 +363,8 @@ columns. It excludes the next prompt and joins soft wraps while preserving Unico
 Marker eviction, buffer replacement/reset, or column reflow invalidates that range; height-only changes
 preserve it. Other copy paths remain independent.
 
-Shell completion coalesces Git refresh. Optional, user-gesture-authorized bell and long-task notifications
-describe the outcome without exposing output content. They share browser permission discovery,
+Shell completion coalesces Git refresh. Optional, user-gesture-authorized bell and long-task
+notifications describe the outcome without exposing output content. They share browser permission discovery,
 requests and permission messages with task alerts, while keeping terminal delivery and preferences
 independent. A denied, dismissed or unavailable permission leaves long-task alerts off or falls back
 to a tab-marking bell, with an explanation beside the initiating setting. A delayed permission result
@@ -350,9 +381,10 @@ Writes run one batch at a time; output arriving during a slow write stays in the
 Browser-local preferences never become process authority.
 
 Source, npm-release, direct-launch, and installed Linux service paths include the daemon and its runtime
-dependencies. The terminal user service is separate from `inspire-host.service`, so Host-only
-lifecycle operations preserve PTYs. Disabling the terminal service ends them. [[host-lifecycle]] defines CLI stop and
-Restart all, which address both installed services, and Host-only ordinary/automatic restart.
+dependencies. The terminal user service is separate from `inspire-host.service`, so ordinary
+lifecycle operations preserve PTYs; disabling the terminal service ends them. [[host-lifecycle]]
+defines CLI stop and `inspire restart --terminals`, which address both installed services,
+ordinary restart, and **Restart all**, which additionally closes Pi processes.
 
 ## Boundaries
 

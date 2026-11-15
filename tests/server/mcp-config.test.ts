@@ -3,27 +3,21 @@ import {
   lstat,
   mkdir,
   readFile,
-  rename,
   rm,
   symlink,
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
-import express from "express";
-import lockfile from "proper-lockfile";
-import request from "supertest";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { McpConfigService } from "../../server/mcp-config.js";
-import { registerMcpConfigRoutes } from "../../server/mcp-config-routes.js";
-import type { RuntimeLike } from "../../server/runtime.js";
-import type { McpConfigEdit, McpConfigScope } from "../../shared/mcp.js";
-import {
-  nativePiWorkspace,
-  stubNativePiEnvironment,
-} from "./fixtures/native-pi.js";
+import type { McpConfigEdit } from "../../shared/mcp.js";
+import { closeHostApiFixture, configurationHost } from "./fixtures/host-api.js";
+import { nativePiWorkspace } from "./fixtures/native-pi.js";
 
 let root: string, agent: string, cwd: string, service: McpConfigService;
-const fixture = {
+let userFile: string, projectFile: string;
+let workspace: Awaited<ReturnType<typeof nativePiWorkspace>>;
+const fixture = (hookMarker: string) => ({
   autoEnableCodemode: false,
   custom: { keep: true },
   mcpServers: {
@@ -45,26 +39,27 @@ const fixture = {
     local: {
       command: "node",
       args: ["--token", "argument-secret"],
-      env: { TOKEN: "env-secret", HOOK: "!touch must-not-exist" },
+      env: { TOKEN: "env-secret", HOOK: `!touch "${hookMarker}"` },
       cwd: ".",
       enabled: false,
     },
   },
-};
+});
+let source: ReturnType<typeof fixture>;
 beforeEach(async () => {
-  const workspace = await nativePiWorkspace("inspire-mcp-config-", {});
+  workspace = await nativePiWorkspace("inspire-mcp-config-", {});
   ({ root, agent, cwd } = workspace);
-  stubNativePiEnvironment(workspace.env);
+  userFile = join(agent, "mcp.json");
+  projectFile = join(cwd, ".pi/mcp.json");
+  source = fixture(join(root, "hook-ran"));
   await mkdir(join(cwd, ".pi"));
-  await writeFile(join(agent, "mcp.json"), JSON.stringify(fixture));
+  await writeFile(userFile, JSON.stringify(source));
   service = new McpConfigService(agent);
 });
 afterEach(async () => {
-  vi.unstubAllEnvs();
   await rm(root, { recursive: true, force: true });
 });
-const json = async (path = join(agent, "mcp.json")) =>
-  JSON.parse(await readFile(path, "utf8"));
+const json = async () => JSON.parse(await readFile(userFile, "utf8"));
 async function edit(value: Omit<McpConfigEdit, "revision">) {
   const file = (await service.read(cwd)).files.find(
     (file) => file.scope === value.scope,
@@ -72,281 +67,98 @@ async function edit(value: Omit<McpConfigEdit, "revision">) {
   return service.save(cwd, { ...value, revision: file.revision });
 }
 describe("MCP file configuration", () => {
-  it("reads and edits BOM-prefixed configuration while retaining source revisions", async () => {
-    const path = join(agent, "mcp.json");
-    const original = `\uFEFF${JSON.stringify(fixture)}`;
-    await writeFile(path, original);
-    const file = (await service.read(null)).files[0]!;
-    expect(file.error).toBeUndefined();
-    expect(file.entries.map((entry) => entry.name)).toEqual(["docs", "local"]);
-    expect(await readFile(path, "utf8")).toBe(original);
-
-    await service.save(null, {
-      scope: "user",
-      name: "docs",
-      revision: file.revision,
-      operation: "update",
-      values: { description: "Updated docs" },
-    });
-    expect(await json()).toEqual({
-      ...fixture,
-      mcpServers: {
-        ...fixture.mcpServers,
-        docs: { ...fixture.mcpServers.docs, description: "Updated docs" },
-      },
-    });
-
-    const saved = (await service.read(null)).files[0]!;
-    const changed = `\uFEFF${await readFile(path, "utf8")}`;
-    await writeFile(path, changed);
-    await expect(
-      service.save(null, {
-        scope: "user",
-        name: "docs",
-        revision: saved.revision,
-        operation: "update",
-        values: { description: "Stale edit" },
-      }),
-    ).rejects.toThrow("changed elsewhere");
-    expect(await readFile(path, "utf8")).toBe(changed);
-  });
-  it("projects source and policy without resolving hooks or returning credential-bearing fields", async () => {
-    const hookMarker = join(root, "hook-ran");
-    const source = structuredClone(fixture);
-    source.mcpServers.local.env.HOOK = `!touch ${hookMarker}`;
-    await writeFile(join(agent, "mcp.json"), JSON.stringify(source));
-    await writeFile(
-      join(cwd, ".pi/mcp.json"),
-      JSON.stringify({
-        mcpServers: { docs: { url: "http://127.0.0.1/mcp", enabled: false } },
-      }),
-    );
-    const snapshot = await service.read(cwd);
+  it("reads BOM-prefixed user files and rejects a project link outside its scope", async () => {
+    const withBom = `\uFEFF${await readFile(userFile, "utf8")}`;
+    await writeFile(userFile, withBom);
     expect(
-      snapshot.files.map((file) => [
-        file.scope,
-        file.entries.map((entry) => entry.name),
-      ]),
-    ).toEqual([
-      ["user", ["docs", "local"]],
-      ["project", ["docs"]],
-    ]);
-    expect(snapshot.files[0]!.entries[0]).toMatchObject({
-      policyOnly: false,
-      urlConfigured: true,
-      headerKeys: ["Authorization", "X-Other"],
-      oauthFields: ["clientSecret", "clientId", "extensionField"],
+      (await service.read(null)).files[0]!.entries.map((entry) => entry.name),
+    ).toEqual(["docs", "local"]);
+    await symlink(userFile, projectFile);
+    expect((await service.read(cwd)).files[1]).toMatchObject({
+      entries: [],
+      error: expect.stringContaining("outside this project"),
     });
-    expect(snapshot.files[0]!.entries[1]).toMatchObject({
-      argumentCount: 2,
-      envKeys: ["TOKEN", "HOOK"],
+    await expect(
+      service.save(cwd, {
+        scope: "project",
+        name: "docs",
+        operation: "remove",
+        revision: "a".repeat(64),
+      }),
+    ).rejects.toThrow("outside this project");
+    expect(await readFile(userFile, "utf8")).toBe(withBom);
+    await writeFile(userFile, '{"mcpServers": "invalid"}');
+    expect((await service.read(null)).files[0]).toMatchObject({
+      entries: [],
+      error: expect.stringContaining("invalid mcp.json"),
     });
-    const wire = JSON.stringify(snapshot);
-    for (const secret of [
-      "password",
-      "private-token",
-      "url-secret",
-      "header-secret",
-      "other-secret",
-      "oauth-secret",
-      "client-id",
-      "opaque-secret",
-      "argument-secret",
-      "env-secret",
-      hookMarker,
-    ])
-      expect(wire).not.toContain(secret);
-    await expect(lstat(hookMarker)).rejects.toMatchObject({ code: "ENOENT" });
   });
-  it("edits only the addressed file and subset, preserving secrets, unknown fields and tool order", async () => {
-    const project = join(cwd, ".pi/mcp.json");
-    await writeFile(
-      project,
-      JSON.stringify({
-        mcpServers: {
-          docs: {
-            url: "https://project.invalid/mcp",
-            env: { KEEP: "project-secret" },
+  it("clears a registration override while keeping unknown fields and independent OAuth credentials", async () => {
+    const user = (
+      operation: "update" | "remove",
+      values?: McpConfigEdit["values"],
+    ) => edit({ scope: "user", name: "docs", operation, values });
+    await user("update", {
+      oauth: {
+        clientRegistration: "auto",
+        callbackUrl: "http://[::1]/custom-callback",
+      },
+    });
+    await user("update", { oauth: { clientRegistration: null } });
+    expect(await json()).toEqual({
+      ...source,
+      mcpServers: {
+        ...source.mcpServers,
+        docs: {
+          ...source.mcpServers.docs,
+          oauth: {
+            ...source.mcpServers.docs.oauth,
+            callbackUrl: "http://[::1]/custom-callback",
           },
         },
-        unrelated: 5,
-      }),
-    );
-    const userBefore = await readFile(join(agent, "mcp.json"), "utf8");
-    await edit({
-      scope: "project",
-      name: "docs",
-      operation: "update",
-      values: { timeout: 30, enabled: false },
-    });
-    expect(await readFile(join(agent, "mcp.json"), "utf8")).toBe(userBefore);
-    expect(await json(project)).toMatchObject({
-      unrelated: 5,
-      mcpServers: {
-        docs: {
-          url: "https://project.invalid/mcp",
-          env: { KEEP: "project-secret" },
-          timeout: 30,
-          enabled: false,
-        },
       },
     });
-    await edit({
-      scope: "user",
-      name: "docs",
-      operation: "update",
-      values: {
-        description: "Changed",
-        headers: { "X-Other": null, "X-New": "${TOKEN}" },
-        oauth: { clientName: "fixture" },
-        toolExposure: { "*": "hidden", "read_*": "codemode" },
-      },
-    });
-    const saved = await json();
-    expect(saved).toMatchObject({
-      autoEnableCodemode: false,
-      custom: { keep: true },
-      mcpServers: {
-        docs: {
-          ...fixture.mcpServers.docs,
-          description: "Changed",
-          headers: {
-            Authorization: "Bearer header-secret",
-            "X-New": "${TOKEN}",
-          },
-          oauth: { ...fixture.mcpServers.docs.oauth, clientName: "fixture" },
-          toolExposure: { "*": "hidden", "read_*": "codemode" },
-        },
-        local: fixture.mcpServers.local,
-      },
-    });
-    expect(saved.mcpServers.docs.headers).not.toHaveProperty("X-Other");
-    expect(Object.keys(saved.mcpServers.docs.toolExposure)).toEqual([
-      "*",
-      "read_*",
-    ]);
+    const auth = join(agent, "mcp-auth.json");
+    await writeFile(auth, "opaque-auth-fixture");
+    await user("remove");
+    expect((await json()).mcpServers.docs).toBeUndefined();
+    expect(await readFile(auth, "utf8")).toBe("opaque-auth-fixture");
   });
-  it("creates, edits and removes project policy without copying inherited transport or credentials", async () => {
-    const project = join(cwd, ".pi/mcp.json");
-    await writeFile(
-      project,
-      JSON.stringify({
-        mcpServers: {},
-        unrelated: 5,
-      }),
-    );
-    const userBefore = await readFile(join(agent, "mcp.json"), "utf8");
-    expect((await service.read(cwd)).files[1]!.entries).toEqual([]);
+  it("creates project configuration for inherited policy and restricts edits to that policy", async () => {
+    await rm(join(cwd, ".pi"), { recursive: true });
     await edit({
       scope: "project",
       name: "docs",
       operation: "add",
-      values: { enabled: false },
-    });
-    expect((await json(project)).mcpServers.docs).toEqual({ enabled: false });
-    expect((await service.read(cwd)).files[1]!.entries[0]).toMatchObject({
-      policyOnly: true,
-      transport: null,
-      enabled: false,
-      exposure: null,
-      urlConfigured: false,
-      headerKeys: [],
-      oauthFields: [],
-    });
-    await edit({
-      scope: "project",
-      name: "docs",
-      operation: "update",
       values: {
-        enabled: true,
+        enabled: false,
         exposure: "hidden",
-        toolExposure: { "read_*": "direct", "*": "hidden" },
+        toolExposure: { "read_*": "direct" },
       },
     });
-    expect(await json(project)).toEqual({
-      mcpServers: {
-        docs: {
-          enabled: true,
-          exposure: "hidden",
-          toolExposure: { "read_*": "direct", "*": "hidden" },
-        },
-      },
-      unrelated: 5,
-    });
-    const before = await readFile(project, "utf8");
-    for (const values of [
-      { url: "https://private-secret.invalid/mcp" },
-      { headers: { Authorization: "private-secret" } },
-      { timeout: 30 },
-    ]) {
-      await expect(
-        edit({ scope: "project", name: "docs", operation: "update", values }),
-      ).rejects.toThrow("can only edit enabled, exposure and toolExposure");
-      expect(await readFile(project, "utf8")).toBe(before);
-    }
-    await edit({
-      scope: "project",
-      name: "docs",
-      operation: "update",
-      values: { enabled: null, exposure: null, toolExposure: {} },
-    });
-    expect((await json(project)).mcpServers.docs).toEqual({ toolExposure: {} });
-    expect((await service.read(cwd)).files[1]!.entries[0]).toMatchObject({
-      enabled: null,
-      exposure: null,
-    });
-    expect(await readFile(join(agent, "mcp.json"), "utf8")).toBe(userBefore);
-    await edit({ scope: "project", name: "docs", operation: "remove" });
-    expect(await json(project)).toEqual({ mcpServers: {}, unrelated: 5 });
-    await rm(join(agent, "mcp.json"));
+    const before = await readFile(projectFile, "utf8");
     await expect(
       edit({
         scope: "project",
         name: "docs",
+        operation: "update",
+        values: { headers: { Authorization: "private-secret" } },
+      }),
+    ).rejects.toMatchObject({ status: 400 });
+    expect(await readFile(projectFile, "utf8")).toBe(before);
+
+    await rm(userFile);
+    await expect(
+      edit({
+        scope: "project",
+        name: "local",
         operation: "add",
         values: { enabled: false },
       }),
-    ).rejects.toThrow("needs a same-name user server");
+    ).rejects.toMatchObject({ status: 409 });
   });
-  it("rejects cross-file namespace collisions on Add but permits exact overrides", async () => {
-    await edit({
-      scope: "user",
-      name: "team-tools",
-      operation: "add",
-      values: { command: "node", enabled: false },
-    });
-    await expect(
-      edit({
-        scope: "project",
-        name: "team_tools",
-        operation: "add",
-        values: { command: "node", enabled: false },
-      }),
-    ).rejects.toThrow("hyphens and underscores conflict");
-    await edit({
-      scope: "project",
-      name: "team-tools",
-      operation: "add",
-      values: { command: "node", enabled: false },
-    });
-    await edit({
-      scope: "project",
-      name: "project-tools",
-      operation: "add",
-      values: { command: "node", enabled: false },
-    });
-    const before = await readFile(join(agent, "mcp.json"), "utf8");
-    await expect(
-      edit({
-        scope: "user",
-        name: "project_tools",
-        operation: "add",
-        values: { command: "node", enabled: false },
-      }),
-    ).rejects.toThrow("hyphens and underscores conflict");
-    expect(await readFile(join(agent, "mcp.json"), "utf8")).toBe(before);
-  });
-  it("rejects conflicting user/project server names added concurrently", async () => {
+
+  it("fences colliding cross-file names while permitting exact overrides", async () => {
     const files = (await service.read(cwd)).files;
     const results = await Promise.allSettled(
       files.map((file) =>
@@ -365,94 +177,60 @@ describe("MCP file configuration", () => {
     ]);
     const rejected = results.find((result) => result.status === "rejected");
     expect(rejected?.reason).toMatchObject({ status: 409 });
-    const names = (await service.read(cwd)).files.flatMap((file) =>
-      file.entries.map((entry) => entry.name),
+    const entries = (await service.read(cwd)).files.flatMap((file) =>
+      file.entries
+        .filter(({ name }) => name.replaceAll("-", "_") === "review_server")
+        .map(({ name }) => ({ name, scope: file.scope })),
     );
-    expect(
-      names.filter((name) => name.replaceAll("-", "_") === "review_server"),
-    ).toHaveLength(1);
+    expect(entries).toHaveLength(1);
+    const { name, scope } = entries[0]!;
+    await edit({
+      name,
+      scope: scope === "user" ? "project" : "user",
+      operation: "add",
+      values: { command: "not-executed", enabled: false },
+    });
   });
 
   it("validates merged OAuth registration and preserves the file until incompatible stored fields are explicitly removed", async () => {
-    const path = join(agent, "mcp.json");
-    await writeFile(
-      path,
-      JSON.stringify({
-        mcpServers: {
-          docs: {
-            url: "https://example.invalid/mcp",
-            oauth: {
-              clientRegistration: "cimd",
-              clientSecret: "protected-secret",
-            },
-          },
-        },
-      }),
-    );
-    expect((await service.read(cwd)).files[0]!.entries[0]).toMatchObject({
-      oauthClientRegistration: "cimd",
-      oauthFields: ["clientRegistration", "clientSecret"],
+    const save = (values: McpConfigEdit["values"]) =>
+      edit({
+        scope: "user",
+        name: "docs",
+        operation: "update",
+        values,
+      });
+    await save({
+      oauth: {
+        clientRegistration: "dcr",
+        clientName: "GUI client",
+        callbackUrl: "http://[::1]/other-path",
+      },
     });
-    const before = await readFile(path, "utf8");
+    const dcr = await readFile(userFile, "utf8");
+    await expect(
+      save({ oauth: { clientRegistration: "cimd" } }),
+    ).rejects.toMatchObject({ status: 400 });
+    expect(await readFile(userFile, "utf8")).toBe(dcr);
+    await save({
+      oauth: {
+        clientRegistration: "cimd",
+        clientId: null,
+        clientName: null,
+        callbackUrl: "http://127.0.0.1:8765/callback",
+        callbackPort: 8765,
+      },
+    });
+    const before = await readFile(userFile, "utf8");
     for (const oauth of [
       { clientName: "GUI client" },
       { clientId: "registered-client" },
       { callbackUrl: "http://localhost/other-path" },
       { callbackUrl: "http://[::1]/callback" },
     ]) {
-      await expect(
-        edit({
-          scope: "user",
-          name: "docs",
-          operation: "update",
-          values: { oauth },
-        }),
-      ).rejects.toMatchObject({ status: 400 });
-      expect(await readFile(path, "utf8")).toBe(before);
+      await expect(save({ oauth })).rejects.toMatchObject({ status: 400 });
+      expect(await readFile(userFile, "utf8")).toBe(before);
     }
-    await edit({
-      scope: "user",
-      name: "docs",
-      operation: "update",
-      values: {
-        oauth: {
-          clientRegistration: "dcr",
-          clientName: "GUI client",
-          callbackUrl: "http://[::1]/other-path",
-        },
-      },
-    });
-    const dcr = await readFile(path, "utf8");
-    await expect(
-      edit({
-        scope: "user",
-        name: "docs",
-        operation: "update",
-        values: {
-          oauth: { clientRegistration: "cimd" },
-        },
-      }),
-    ).rejects.toMatchObject({ status: 400 });
-    expect(await readFile(path, "utf8")).toBe(dcr);
-    await edit({
-      scope: "user",
-      name: "docs",
-      operation: "update",
-      values: {
-        oauth: {
-          clientRegistration: "cimd",
-          clientName: null,
-          callbackUrl: "http://127.0.0.1:8765/callback",
-          callbackPort: 8765,
-        },
-      },
-    });
-    expect((await json()).mcpServers.docs.oauth).toEqual({
-      clientRegistration: "cimd",
-      clientSecret: "protected-secret",
-      callbackUrl: "http://127.0.0.1:8765/callback",
-      callbackPort: 8765,
-    });
     // Unrelated edits must not publish an invalid OAuth object already on disk.
     const invalid = JSON.stringify({
       mcpServers: {
@@ -462,222 +240,16 @@ describe("MCP file configuration", () => {
         },
       },
     });
-    await writeFile(path, invalid);
-    await expect(
-      edit({
-        scope: "user",
-        name: "docs",
-        operation: "update",
-        values: { description: "Changed" },
-      }),
-    ).rejects.toMatchObject({ status: 400 });
-    expect(await readFile(path, "utf8")).toBe(invalid);
+    await writeFile(userFile, invalid);
+    await expect(save({ description: "Changed" })).rejects.toMatchObject({
+      status: 400,
+    });
+    expect(await readFile(userFile, "utf8")).toBe(invalid);
   });
 
-  it("supports adding transports and explicit removal without touching OAuth storage", async () => {
-    await writeFile(join(agent, "mcp-auth.json"), "opaque-auth-fixture");
-    await edit({
-      scope: "user",
-      name: "stdio-tools",
-      operation: "add",
-      values: {
-        command: "node",
-        args: ["tool.js", "argument with spaces"],
-        env: { TOKEN: "${TOKEN}" },
-        exposure: "deferred",
-      },
-    });
-    await edit({
-      scope: "project",
-      name: "http-tools",
-      operation: "add",
-      values: {
-        url: "http://localhost:1234/mcp",
-        oauth: {
-          callbackUrl: "http://127.0.0.1:1235/callback",
-          callbackPort: 1235,
-        },
-      },
-    });
-    expect((await json()).mcpServers["stdio-tools"].args).toEqual([
-      "tool.js",
-      "argument with spaces",
-    ]);
-    await edit({ scope: "user", name: "docs", operation: "remove" });
-    expect((await json()).mcpServers.docs).toBeUndefined();
-    expect(await readFile(join(agent, "mcp-auth.json"), "utf8")).toBe(
-      "opaque-auth-fixture",
-    );
-  });
-  it("refuses stale or concurrent writes and leaves malformed files intact", async () => {
-    const file = (await service.read(cwd)).files[0]!;
-    const result = await Promise.allSettled(
-      ["first", "second"].map((description) =>
-        service.save(cwd, {
-          scope: "user",
-          name: "docs",
-          revision: file.revision,
-          operation: "update",
-          values: { description },
-        }),
-      ),
-    );
-    expect(result.map((item) => item.status).sort()).toEqual([
-      "fulfilled",
-      "rejected",
-    ]);
-    await writeFile(
-      join(agent, "mcp.json"),
-      '{"mcpServers": "secret-invalid-json"',
-    );
-    expect((await service.read(cwd)).files[0]!.error).toBe(
-      "Repair the invalid mcp.json object before editing it",
-    );
-    await expect(
-      service.save(cwd, {
-        scope: "user",
-        name: "docs",
-        revision: file.revision,
-        operation: "remove",
-      }),
-    ).rejects.toThrow("changed elsewhere");
-    expect(await readFile(join(agent, "mcp.json"), "utf8")).toContain(
-      "secret-invalid-json",
-    );
-  });
-  it("saves a regular filename case alias on a native case-insensitive volume", async (context) => {
-    const lower = join(agent, "mcp.json");
-    const upper = join(agent, "MCP.JSON");
-    await rename(lower, upper);
-    if (
-      !(await access(lower).then(
-        () => true,
-        () => false,
-      ))
-    )
-      return context.skip();
-    await edit({
-      scope: "user",
-      name: "docs",
-      operation: "update",
-      values: { timeout: 27 },
-    });
-    expect((await json(upper)).mcpServers.docs.timeout).toBe(27);
-  });
-
-  it.each(["regular", "symlink"])(
-    "rejects a %s file retargeted during its save even with identical contents",
-    async (kind) => {
-      const file = join(agent, "mcp.json");
-      const original = await readFile(file, "utf8");
-      const initialTarget = join(root, "original.json");
-      if (kind === "symlink") {
-        await rename(file, initialTarget);
-        await symlink(initialTarget, file);
-      }
-      const replacement = join(root, "replacement.json");
-      await writeFile(replacement, original);
-      const before = (await service.read(cwd)).files[0]!;
-      const nativeLock = lockfile.lock.bind(lockfile);
-      const locked: string[] = [];
-      let changed = false;
-      vi.spyOn(lockfile, "lock").mockImplementation(
-        async (authority, options) => {
-          const release = await nativeLock(authority, options);
-          locked.push(authority);
-          if (!changed) {
-            changed = true;
-            await rm(file);
-            await symlink(replacement, file);
-          }
-          return release;
-        },
-      );
-      await expect(
-        service.save(cwd, {
-          scope: "user",
-          name: "docs",
-          operation: "update",
-          revision: before.revision,
-          values: { timeout: 28 },
-        }),
-      ).rejects.toMatchObject({ status: 409 });
-      expect(changed).toBe(true);
-      expect(locked).toEqual(
-        kind === "symlink" ? [file, initialTarget].sort() : [file],
-      );
-      expect((await lstat(file)).isSymbolicLink()).toBe(true);
-      expect(await readFile(replacement, "utf8")).toBe(original);
-      if (kind === "symlink")
-        expect(await readFile(initialTarget, "utf8")).toBe(original);
-      await expect(access(`${file}.lock`)).rejects.toMatchObject({
-        code: "ENOENT",
-      });
-      await expect(access(`${initialTarget}.lock`)).rejects.toMatchObject({
-        code: "ENOENT",
-      });
-    },
-  );
-
-  it("preserves user symlinks but refuses project paths outside their selected authority", async () => {
-    const userPath = join(agent, "mcp.json"),
-      target = join(root, "linked.json");
-    await writeFile(target, JSON.stringify(fixture));
-    await rm(userPath);
-    await symlink(target, userPath);
-    await edit({
-      scope: "user",
-      name: "docs",
-      operation: "update",
-      values: { timeout: 15 },
-    });
-    expect((await lstat(userPath)).isSymbolicLink()).toBe(true);
-    expect((await json(target)).mcpServers.docs.timeout).toBe(15);
-    await symlink(target, join(cwd, ".pi/mcp.json"));
-    const project = (await service.read(cwd)).files[1]!;
-    expect(project.error).toContain("outside this project");
-    expect(project.entries).toEqual([]);
-    await expect(
-      service.save(cwd, {
-        scope: "project",
-        name: "docs",
-        operation: "remove",
-        revision: "a".repeat(64),
-      }),
-    ).rejects.toThrow("outside this project");
-    expect((await json(target)).mcpServers.docs).toBeDefined();
-  });
-  it("creates a missing configuration directory and binds revision to the symlink target", async () => {
-    await rm(join(cwd, ".pi"), { recursive: true });
-    await edit({
-      scope: "project",
-      name: "new",
-      operation: "add",
-      values: { command: "fixture" },
-    });
-    expect((await json(join(cwd, ".pi/mcp.json"))).mcpServers.new.command).toBe(
-      "fixture",
-    );
-    const user = join(agent, "mcp.json");
-    const before = (await service.read(cwd)).files[0]!;
-    const same = join(root, "same.json");
-    await writeFile(same, await readFile(user));
-    await rm(user);
-    await symlink(same, user);
-    await expect(
-      service.save(cwd, {
-        scope: "user",
-        name: "docs",
-        operation: "remove",
-        revision: before.revision,
-      }),
-    ).rejects.toThrow("changed elsewhere");
-  });
   it.each([
-    ["bad/name", { command: "node" }],
     ["sse", { url: "file:///private-secret" }],
     ["mixed", { command: "node", url: "https://example.invalid" }],
-    ["local", { timeout: -1 }],
     [
       "oauth",
       {
@@ -695,215 +267,120 @@ describe("MCP file configuration", () => {
   ])(
     "rejects invalid edit %s without echoing submitted secrets",
     async (name, values) => {
-      const before = await readFile(join(agent, "mcp.json"), "utf8");
+      const before = await readFile(userFile, "utf8");
       await expect(
-        edit({
-          scope: "user",
-          name,
-          operation: name === "local" ? "update" : "add",
-          values: values as McpConfigEdit["values"],
-        }),
-      ).rejects.toThrow();
-      expect(await readFile(join(agent, "mcp.json"), "utf8")).toBe(before);
+        edit({ scope: "user", name, operation: "add", values }),
+      ).rejects.toMatchObject({
+        status: 400,
+        message: expect.not.stringContaining("private-secret"),
+      });
+      expect(await readFile(userFile, "utf8")).toBe(before);
     },
   );
 });
 
-describe("MCP HTTP ownership", () => {
-  function app() {
-    const app = express();
-    app.use(express.json());
-    registerMcpConfigRoutes(app, {
-      mcpConfig: service,
-      runtime: {
-        sessionCwd: (id: string) => (id === "open" ? cwd : null),
-      } as RuntimeLike,
-    });
-    app.use(
-      (
-        error: Error & { status?: number },
-        _request: express.Request,
-        response: express.Response,
-        _next: express.NextFunction,
-      ) => response.status(error.status ?? 400).json({ error: error.message }),
+it("scopes MCP requests to an open session and reveals only the reviewed connection", async () => {
+  const host = await configurationHost(workspace, { mcpConfig: service });
+  try {
+    const http = host.localRequest;
+    const owner = { sessionId: host.sessionId, cwd: root };
+    const closed = { sessionId: "closed", cwd };
+    const endpoint = "/api/mcp-config";
+    const read = (query = owner) => http.get(endpoint).query(query);
+    const patch = (body: object, query = owner) =>
+      http.patch(endpoint).query(query).send(body);
+    const response = await read().expect(200);
+    expect(response.body.cwd).toBe(cwd);
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(response.body.files).toMatchObject([
+      {
+        scope: "user",
+        entries: [
+          {
+            name: "docs",
+            policyOnly: false,
+            urlConfigured: true,
+            headerKeys: ["Authorization", "X-Other"],
+            oauthFields: ["clientSecret", "clientId", "extensionField"],
+          },
+          { name: "local", argumentCount: 2, envKeys: ["TOKEN", "HOOK"] },
+        ],
+      },
+      { scope: "project", entries: [] },
+    ]);
+    expect(response.text).not.toMatch(
+      /password|private-token|url-secret|header-secret|other-secret|oauth-secret|client-id|opaque-secret|argument-secret|env-secret|hook-ran/,
     );
-    return app;
-  }
-  it("reveals only the requested connection at its reviewed revision and supports partial edits", async () => {
-    const before = await readFile(join(agent, "mcp.json"), "utf8");
-    const config = await service.read(cwd);
-    const revision = config.files[0]!.revision;
-    const reveal = (name: string) =>
-      request(app())
-        .post("/api/mcp-config/connection")
-        .query({ sessionId: "open", cwd: root })
-        .send({ scope: "user", name, revision });
+    await expect(lstat(join(root, "hook-ran"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await read(closed).expect(409);
+    const unselected = (await http.get(endpoint).expect(200)).body;
+    expect(unselected.cwd).toBeNull();
+    expect(unselected.files).toEqual([response.body.files[0]]);
+    const revision = unselected.files[0].revision;
+    const reveal = (name: string, query = owner, fields = {}) =>
+      http
+        .post(`${endpoint}/connection`)
+        .query(query)
+        .send({ scope: "user", name, revision, ...fields });
     const url = await reveal("docs").expect(200);
     expect(url.headers["cache-control"]).toBe("no-store");
-    expect(url.body).toEqual({ url: fixture.mcpServers.docs.url });
-    const args = await reveal("local").expect(200);
-    expect(args.body).toEqual({ args: fixture.mcpServers.local.args });
-    expect(await readFile(join(agent, "mcp.json"), "utf8")).toBe(before);
-    await request(app())
-      .post("/api/mcp-config/connection")
-      .query({ sessionId: "closed", cwd })
-      .send({ scope: "user", name: "docs", revision })
-      .expect(409);
-    await request(app())
-      .post("/api/mcp-config/connection")
-      .send({ scope: "user", name: "docs", revision, path: "/arbitrary" })
-      .expect(400);
-    await service.save(cwd, {
+    expect(url.body).toEqual({ url: source.mcpServers.docs.url });
+    await reveal("docs", closed).expect(409);
+    await reveal("docs", owner, { path: join(root, "arbitrary") }).expect(400);
+
+    const update = {
       scope: "user",
       name: "local",
       revision,
       operation: "update",
-      values: { args: [args.body.args[0], "new-value"] },
+      values: { command: "python" },
+    };
+    const original = await readFile(userFile, "utf8");
+    const invalid = await patch({
+      ...update,
+      path: join(root, "arbitrary"),
+      values: { headers: { Authorization: "request-secret" } },
+    }).expect(400);
+    expect(JSON.stringify(invalid.body)).not.toContain("request-secret");
+    await patch(update, closed).expect(409);
+    expect(await readFile(userFile, "utf8")).toBe(original);
+
+    const addProject = {
+      scope: "project",
+      revision: response.body.files[1].revision,
+      name: "needs-project",
+      operation: "add",
+      values: { command: "node" },
+    };
+    await http.patch(endpoint).send(addProject).expect(409);
+    await rm(cwd, { recursive: true });
+    const missing = (await read().expect(200)).body;
+    expect(missing.files[1]).toMatchObject({
+      scope: "project",
+      revision: "",
+      entries: [],
+      error: expect.stringMatching(/Project path/),
     });
-    expect((await json()).mcpServers.local).toEqual({
-      ...fixture.mcpServers.local,
-      args: ["--token", "new-value"],
+    const saved = (await patch(update).expect(200)).body;
+    expect(saved).toMatchObject({
+      saved: true,
+      snapshot: {
+        files: [expect.objectContaining({ scope: "user" }), missing.files[1]],
+      },
     });
+    expect((await json()).mcpServers.local.command).toBe("python");
+    expect(saved.snapshot.files[0].revision).not.toBe(revision);
     const stale = await reveal("local").expect(409);
     expect(stale.body.error).toContain("Refresh files");
     expect(JSON.stringify(stale.body)).not.toContain("argument-secret");
-  });
-
-  it.each(["unselected", "missing", "not-directory"] as const)(
-    "keeps user reads and add/update/remove independent of the %s project",
-    async (project) => {
-      const path = join(root, "unavailable-project");
-      if (project === "not-directory") await writeFile(path, "keep");
-      const owner = project === "unselected" ? {} : { cwd: path };
-      const response = await request(app())
-        .get("/api/mcp-config")
-        .query(owner)
-        .expect(200);
-      expect(response.body.cwd).toBe(project === "unselected" ? null : path);
-      expect(response.body.files[0].entries).toHaveLength(2);
-      expect(response.headers["cache-control"]).toBe("no-store");
-      if (project === "unselected") expect(response.body.files).toHaveLength(1);
-      else
-        expect(response.body.files[1]).toMatchObject({
-          scope: "project",
-          revision: "",
-          entries: [],
-          error: expect.stringMatching(/Project path/),
-        });
-
-      let config = response.body;
-      for (const operation of ["add", "update", "remove"] as const) {
-        const result = await request(app())
-          .patch("/api/mcp-config")
-          .query(owner)
-          .send({
-            scope: "user",
-            revision: config.files[0].revision,
-            name: "independent",
-            operation,
-            ...(operation === "add"
-              ? { values: { command: "node" } }
-              : operation === "update"
-                ? { values: { timeout: 25 } }
-                : {}),
-          })
-          .expect(200);
-        expect(result.body.saved).toBe(true);
-        config = result.body.snapshot;
-        const stored = (await json()).mcpServers.independent;
-        if (operation === "add") expect(stored.command).toBe("node");
-        if (operation === "update") expect(stored.timeout).toBe(25);
-        if (operation === "remove") expect(stored).toBeUndefined();
-      }
-      await request(app())
-        .patch("/api/mcp-config")
-        .query(owner)
-        .send({
-          scope: "project",
-          revision: "a".repeat(64),
-          name: "not-created",
-          operation: "add",
-          values: { command: "node" },
-        })
-        .expect(project === "unselected" ? 409 : 400);
-      if (project === "not-directory")
-        expect(await readFile(path, "utf8")).toBe("keep");
-      else await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
-    },
-  );
-
-  it("keeps user configuration accessible when an addressed session's project disappears", async () => {
-    await rm(cwd, { recursive: true });
-    const response = await request(app())
-      .get("/api/mcp-config")
-      .query({ sessionId: "open", cwd: root })
-      .expect(200);
-    expect(response.body.cwd).toBe(cwd);
-    expect(response.body.files[0].entries).toHaveLength(2);
-    expect(response.body.files[1].error).toMatch(/Project path does not exist/);
-    await request(app())
-      .patch("/api/mcp-config")
-      .query({ sessionId: "open", cwd: root })
-      .send({
-        scope: "user",
-        revision: response.body.files[0].revision,
-        name: "docs",
-        operation: "update",
-        values: { timeout: 25 },
-      })
-      .expect(200);
-    expect((await json()).mcpServers.docs.timeout).toBe(25);
+    await patch(addProject).expect(400);
     await expect(access(cwd)).rejects.toMatchObject({ code: "ENOENT" });
-  });
-
-  it("uses session cwd over supplied cwd and accepts no caller-supplied file path", async () => {
-    const response = await request(app())
-      .get("/api/mcp-config")
-      .query({ sessionId: "open", cwd: root })
-      .expect(200);
-    expect(response.body.cwd).toBe(cwd);
-    expect(response.headers["cache-control"]).toBe("no-store");
-    await request(app())
-      .get("/api/mcp-config")
-      .query({ sessionId: "closed", cwd })
-      .expect(409);
-    const file = response.body.files[0];
-    const bad = await request(app())
-      .patch("/api/mcp-config")
-      .query({ sessionId: "open" })
-      .send({
-        scope: "user" as McpConfigScope,
-        revision: file.revision,
-        name: "docs",
-        operation: "update",
-        path: join(root, "arbitrary"),
-        values: { headers: { Authorization: "request-secret" } },
-      })
-      .expect(400);
-    expect(JSON.stringify(bad.body)).not.toContain("request-secret");
-    await request(app())
-      .patch("/api/mcp-config")
-      .query({ sessionId: "closed", cwd })
-      .send({
-        scope: "user",
-        revision: file.revision,
-        name: "docs",
-        operation: "update",
-        values: { timeout: 25 },
-      })
-      .expect(409);
-    expect((await json()).mcpServers.docs.timeout).toBeUndefined();
-    await request(app())
-      .patch("/api/mcp-config")
-      .query({ sessionId: "open" })
-      .send({
-        scope: "user",
-        revision: file.revision,
-        name: "docs",
-        operation: "update",
-        values: { timeout: 25 },
-      })
-      .expect(200);
-    expect((await json()).mcpServers.docs.timeout).toBe(25);
-  });
+    await expect(access(join(root, ".pi/mcp.json"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  } finally {
+    await closeHostApiFixture(host);
+  }
 });

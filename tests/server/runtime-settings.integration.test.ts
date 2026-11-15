@@ -3,17 +3,18 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AttachmentStore } from "../../server/attachments.js";
 import { PiRpcProcess } from "../../server/pi-rpc.js";
-import { piInstallation } from "../../server/pi-runtime.js";
 import { RuntimeController } from "../../server/runtime.js";
-import type {
-  SessionCatalogLike,
-  SessionRecord,
-} from "../../server/session-catalog.js";
-
+import { SessionCatalog } from "../../server/session-catalog.js";
+import { savedAssistant } from "../fixtures/history-session.js";
 import {
   nativePiWorkspace,
   stubNativePiEnvironment,
 } from "./fixtures/native-pi.js";
+import {
+  messageEntry,
+  thinkingOff,
+  writeSession,
+} from "./fixtures/session-jsonl.js";
 
 const directories: string[] = [];
 const IDS = [
@@ -48,112 +49,53 @@ async function fixture(trust: "always" | "never", enabled?: boolean) {
       followUpMode: "one-at-a-time",
     }),
   );
-  const records: SessionRecord[] = [];
-  for (const [index, id] of IDS.entries()) {
-    const cwd = join(root, `project-${index}`);
-    await mkdir(join(cwd, ".pi"), { recursive: true });
-    if (index === 0)
-      await writeFile(
-        join(cwd, ".pi/settings.json"),
-        JSON.stringify({
-          retry: { enabled: false },
-          compaction: { enabled: false },
+  const records = await Promise.all(
+    IDS.map(async (id, index) => {
+      const cwd = join(root, `project-${index}`);
+      await mkdir(join(cwd, ".pi"), { recursive: true });
+      if (index === 0)
+        await writeFile(
+          join(cwd, ".pi/settings.json"),
+          JSON.stringify({
+            retry: { enabled: false },
+            compaction: { enabled: false },
+          }),
+        );
+      return writeSession(join(sessions, `${id}.jsonl`), cwd, id, [
+        thinkingOff,
+        messageEntry("u1", thinkingOff.id, {
+          role: "user",
+          content: "offline fixture",
+          timestamp: 1,
         }),
-      );
-    const path = join(sessions, `${id}.jsonl`);
-    const timestamp = "2026-01-01T00:00:00.000Z";
-    await writeFile(
-      path,
-      [
-        { type: "session", version: 3, id, cwd, timestamp },
-        {
-          type: "thinking_level_change",
-          id: "t1",
-          parentId: null,
-          timestamp,
-          thinkingLevel: "off",
-        },
-        {
-          type: "message",
-          id: "u1",
-          parentId: "t1",
-          timestamp,
-          message: { role: "user", content: "offline fixture", timestamp: 1 },
-        },
-        {
-          type: "message",
-          id: "a1",
-          parentId: "u1",
-          timestamp,
-          message: {
-            role: "assistant",
-            content: [{ type: "text", text: "offline answer" }],
-            timestamp: 2,
-            api: "openai-completions",
-            provider: "fixture",
-            model: "fixture",
-            stopReason: "stop",
-            usage: {
-              input: 0,
-              output: 0,
-              cacheRead: 0,
-              cacheWrite: 0,
-              totalTokens: 0,
-              cost: {
-                input: 0,
-                output: 0,
-                cacheRead: 0,
-                cacheWrite: 0,
-                total: 0,
-              },
-            },
-          },
-        },
-      ]
-        .map((entry) => JSON.stringify(entry))
-        .join("\n") + "\n",
-    );
-    records.push({
-      id,
-      cwd,
-      path,
-      source: null,
-      created: new Date(timestamp),
-      modified: new Date(timestamp),
-      messageCount: 2,
-      firstMessage: "offline fixture",
-    });
-  }
-  const catalog: SessionCatalogLike = {
-    refresh: async () => records,
-    get: async (id) => records.find((record) => record.id === id),
-    list: async () => ({
-      sessions: [],
-      total: 0,
-      offset: 0,
-      limit: 40,
+        messageEntry(
+          "a1",
+          "u1",
+          savedAssistant("offline answer", { timestamp: 2 }),
+        ),
+      ]);
     }),
-    listByIds: async () => [],
-    listByCwds: async () => [],
-    invalidate() {},
-  };
+  );
+  const catalog = new SessionCatalog(workspace.cwd);
   const attachments = new AttachmentStore(join(root, "uploads"));
   const workers: PiRpcProcess[] = [];
-  const runtime = new RuntimeController(catalog, attachments, (options) => {
-    const worker = new PiRpcProcess({
-      ...options,
-      args: [
-        "--no-extensions",
-        "--no-skills",
-        "--no-prompt-templates",
-        "--no-themes",
-        "--no-context-files",
-        "--no-tools",
-        ...(options.args ?? []),
-      ],
-    });
-    workers.push(worker);
-    return worker;
+  const runtime = new RuntimeController(catalog, attachments, {
+    createProcess: (options) => {
+      const worker = new PiRpcProcess({
+        ...options,
+        args: [
+          "--no-extensions",
+          "--no-skills",
+          "--no-prompt-templates",
+          "--no-themes",
+          "--no-context-files",
+          "--no-tools",
+          ...(options.args ?? []),
+        ],
+      });
+      workers.push(worker);
+      return worker;
+    },
   });
   const events: Record<string, unknown>[] = [];
   runtime.on("event", (event) => events.push(event));
@@ -177,16 +119,16 @@ describe("native effective retry settings", () => {
   it.each(["always", "never"] as const)(
     "respects %s project trust before and after the native setters",
     async (trust) => {
-      expect(
-        Number(piInstallation.version.split(".")[0]),
-      ).toBeGreaterThanOrEqual(1);
       const { runtime, records, workers, events, globalPath, close } =
         await fixture(trust, true);
       const record = records[0]!;
       const original = await readFile(record.path, "utf8");
       try {
         await runtime.openSession(record.id);
-        await runtime.setSteeringMode(record.id, "all");
+        await runtime.setRuntimeSetting(record.id, {
+          key: "steeringMode",
+          value: "all",
+        });
         const effective = trust === "never";
         expect(
           (await runtime.snapshot(record.id)).active?.runtimeSettings,
@@ -196,9 +138,12 @@ describe("native effective retry settings", () => {
           steeringMode: "all",
           followUpMode: "one-at-a-time",
         });
-        await runtime.setAutoRetry(record.id, true);
-        await runtime.setAutoCompaction(record.id, true);
-        await runtime.setFollowUpMode(record.id, "all");
+        for (const setting of [
+          { key: "autoRetryEnabled", value: true },
+          { key: "autoCompactionEnabled", value: true },
+          { key: "followUpMode", value: "all" },
+        ] as const)
+          await runtime.setRuntimeSetting(record.id, setting);
         const snapshot = await runtime.snapshot(record.id);
         expect(snapshot.active?.runtimeSettings).toEqual({
           autoRetryEnabled: effective,
@@ -253,31 +198,24 @@ describe("native effective retry settings", () => {
     const overridden = records[0]!;
     const ordinary = records[1]!;
     try {
+      const set = (id: string, value: boolean) =>
+        runtime.setRuntimeSetting(id, { key: "autoRetryEnabled", value });
+      const retry = async (id: string) =>
+        (await runtime.snapshot(id)).active?.runtimeSettings?.autoRetryEnabled;
       await runtime.openSession(ordinary.id);
-      await runtime.setSteeringMode(ordinary.id, "all");
-      expect(
-        (await runtime.snapshot(ordinary.id)).active?.runtimeSettings
-          ?.autoRetryEnabled,
-      ).toBe(true);
-      await runtime.setAutoRetry(ordinary.id, false);
-      expect(
-        (await runtime.snapshot(ordinary.id)).active?.runtimeSettings
-          ?.autoRetryEnabled,
-      ).toBe(false);
-      await runtime.setAutoRetry(ordinary.id, true);
-      expect(
-        (await runtime.snapshot(ordinary.id)).active?.runtimeSettings
-          ?.autoRetryEnabled,
-      ).toBe(true);
+      await runtime.setRuntimeSetting(ordinary.id, {
+        key: "steeringMode",
+        value: "all",
+      });
+      expect(await retry(ordinary.id)).toBe(true);
+      for (const value of [false, true]) {
+        await set(ordinary.id, value);
+        expect(await retry(ordinary.id)).toBe(value);
+      }
       await runtime.openSession(overridden.id);
-      await runtime.setAutoRetry(overridden.id, false);
-      expect(
-        (await runtime.snapshot()).active?.runtimeSettings?.autoRetryEnabled,
-      ).toBe(false);
-      expect(
-        (await runtime.snapshot(ordinary.id)).active?.runtimeSettings
-          ?.autoRetryEnabled,
-      ).toBe(true);
+      await set(overridden.id, false);
+      expect(await retry(overridden.id)).toBe(false);
+      expect(await retry(ordinary.id)).toBe(true);
       await vi.waitFor(async () =>
         expect(JSON.parse(await readFile(globalPath, "utf8"))).toMatchObject({
           retry: { enabled: false },
@@ -291,11 +229,8 @@ describe("native effective retry settings", () => {
       expect(result.outcome).toBe("completed");
       expect(previousWorker.available).toBe(false);
       expect(workers).toHaveLength(3);
-      expect(
-        (await runtime.snapshot(ordinary.id)).active?.runtimeSettings
-          ?.autoRetryEnabled,
-      ).toBe(false);
-      await runtime.setAutoRetry(ordinary.id, true);
+      expect(await retry(ordinary.id)).toBe(false);
+      await set(ordinary.id, true);
       expect(
         (await runtime.openSession(overridden.id)).active?.runtimeSettings
           ?.autoRetryEnabled,

@@ -5,7 +5,6 @@ import type {
   BranchTreeNode,
   BranchTreeQuery,
 } from "../shared/contracts.js";
-import { fencedMarkdown } from "../shared/markdown-fence.js";
 import { userMessagePreviewText } from "../shared/user-message.js";
 import { requestError } from "./request-error.js";
 import { projectSafeValue } from "./safe-projection.js";
@@ -17,10 +16,11 @@ const completeSafeValue = (value: unknown) =>
     arrayItems: Infinity,
   });
 
-export const BRANCH_TREE_MAX_NODES = 100;
-export const BRANCH_TREE_MAX_BYTES = 512 * 1024;
-export const BRANCH_CONTENT_PAGE_CHARS = 32_000;
+const BRANCH_TREE_MAX_NODES = 100;
+const BRANCH_TREE_MAX_BYTES = 512 * 1024;
 const BRANCH_SNIPPET_CHARS = 240;
+
+export const BRANCH_CONTENT_PAGE_CHARS = 32_000;
 
 function validateEntryIdentity(
   value: unknown,
@@ -36,6 +36,32 @@ function validateEntryIdentity(
       `Session tree ${kind} identity exceeds the projection limit`,
       422,
     );
+}
+
+export function indexSessionEntries(
+  entries: readonly SessionEntry[],
+  existing?: ReadonlyMap<string, SessionEntry>,
+): Map<string, SessionEntry> {
+  const byId = new Map(existing);
+  for (const entry of entries) {
+    if (
+      typeof entry.type !== "string" ||
+      entry.type.length === 0 ||
+      entry.type.length > 200
+    )
+      throw new Error("Persisted session contains an invalid entry identity");
+    validateEntryIdentity(entry.id, "entry");
+    if (entry.parentId !== null)
+      validateEntryIdentity(entry.parentId, "parent");
+    if (byId.has(entry.id))
+      throw new Error(`Persisted session contains duplicate entry ${entry.id}`);
+    if (entry.parentId !== null && !byId.has(entry.parentId))
+      throw new Error(
+        `Persisted session entry ${entry.id} has a missing or forward parent`,
+      );
+    byId.set(entry.id, entry);
+  }
+  return byId;
 }
 
 export function branchEntryContent(entry: SessionEntry): unknown {
@@ -80,7 +106,6 @@ export function branchMessageSource(entry: SessionEntry): string {
 function* branchTextParts(
   entry: SessionEntry,
   imagePresentation: "describe" | "separate",
-  presentation: "source" | "preview" = "source",
 ): Generator<string> {
   if (
     entry.type === "message" &&
@@ -91,8 +116,8 @@ function* branchTextParts(
     const message = entry.message;
     const command = `${message.excludeFromContext ? "!!" : "!"}${message.command}`;
     yield* [
-      fencedMarkdown(command, ""),
-      fencedMarkdown(message.output, ""),
+      command,
+      message.output,
       message.cancelled
         ? "Cancelled"
         : message.exitCode !== undefined
@@ -106,22 +131,10 @@ function* branchTextParts(
     ].filter(Boolean);
     return;
   }
-  let content =
+  const content =
     entry.type === "compaction" || entry.type === "branch_summary"
       ? entry.summary
       : branchEntryContent(entry);
-  if (
-    presentation === "preview" &&
-    entry.type === "message" &&
-    entry.message.role === "user"
-  ) {
-    content = [
-      { type: "text", text: userMessagePreviewText(content) },
-      ...(Array.isArray(content)
-        ? content.filter((block) => block?.type === "image")
-        : []),
-    ];
-  }
   if (typeof content === "string") yield content;
   else if (Array.isArray(content)) {
     for (const block of content) {
@@ -156,10 +169,14 @@ function entryRole(entry: SessionEntry): BranchNodeRole {
 }
 
 function entryPreviewText(entry: SessionEntry): string {
-  const text = branchEntryText(entry);
-  return entry.type === "message" && entry.message.role === "bashExecution"
-    ? text.replace(/^`{3,}$/gmu, "")
-    : text;
+  const content = branchEntryContent(entry);
+  if (
+    entry.type === "message" &&
+    entry.message.role === "user" &&
+    Array.isArray(content)
+  )
+    return userMessagePreviewText(content);
+  return branchEntryText(entry);
 }
 
 /** Normalize only enough retained text to decide the outline snippet. */
@@ -167,7 +184,9 @@ function previewPrefix(entry: SessionEntry): string {
   const parts =
     entry.type === "message" && entry.message.role === "bashExecution"
       ? [entryPreviewText(entry)]
-      : branchTextParts(entry, "describe", "preview");
+      : entry.type === "message" && entry.message.role === "user"
+        ? [entryPreviewText(entry)]
+        : branchTextParts(entry, "describe");
   let text = "";
   let space = false;
   for (const part of parts) {
@@ -187,7 +206,7 @@ function previewPrefix(entry: SessionEntry): string {
   return text;
 }
 
-export function branchNode(
+function branchNode(
   entry: SessionEntry,
   active: boolean,
   leaf: boolean,
@@ -214,7 +233,6 @@ export function branchNode(
     timestamp: entry.timestamp,
     active,
     leaf,
-    canSwitch: !edit,
     canEdit: edit,
     canFork: role === "user",
   };
@@ -282,17 +300,38 @@ function indexSessionTree(entries: readonly SessionEntry[]) {
 
 /** One bounded page. The complete projection remains action/search authority;
  * page cursors address entries, never an arbitrary truncated array index. */
-export function projectSessionTree(
-  entries: readonly SessionEntry[],
-  effectiveLeafId: string | null,
-  query: BranchTreeQuery = {},
-) {
+function sessionTreeIndex(entries: readonly SessionEntry[]) {
   let index = treeIndexes.get(entries);
   if (!index) {
     index = indexSessionTree(entries);
     treeIndexes.set(entries, index);
   }
-  const { byId, depth, labels, children, descendant } = index;
+  return index;
+}
+
+export function projectHistoryPoint(
+  entries: readonly SessionEntry[],
+  entry: SessionEntry,
+  effectiveLeafId: string | null,
+): BranchTreeNode {
+  const { byId, children } = sessionTreeIndex(entries);
+  return {
+    ...branchNode(
+      entry,
+      ancestorPath(byId, effectiveLeafId).includes(entry.id),
+      entry.id === effectiveLeafId,
+    ),
+    childCount: children.get(entry.id) ?? 0,
+  };
+}
+
+export function projectSessionTree(
+  entries: readonly SessionEntry[],
+  effectiveLeafId: string | null,
+  query: BranchTreeQuery = {},
+) {
+  const { byId, depth, labels, children, descendant } =
+    sessionTreeIndex(entries);
   const active = new Set(ancestorPath(byId, effectiveLeafId));
   const routeLeafId = query.leafId ?? effectiveLeafId;
   const path =

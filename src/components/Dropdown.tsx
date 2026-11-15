@@ -1,363 +1,283 @@
 import { Check, ChevronDown } from "lucide-react";
 import {
+  type ComponentProps,
   type ReactNode,
   useCallback,
   useEffect,
-  useId,
   useMemo,
   useRef,
   useState,
 } from "react";
 import { createPortal } from "react-dom";
+import { isComposingKeyboardEvent } from "../keyboard-input";
 import {
-  type FloatingMenuConstraints,
+  useFloatingMenuDismissal,
   useFloatingMenuPlacement,
 } from "../use-floating-menu";
-import { useModalPortal } from "../use-modal-focus";
+import { OptionList, useOptionList } from "./OptionList";
 
-const MENU_CONSTRAINTS: FloatingMenuConstraints = {
-  gap: 4,
-  horizontalMargin: 16,
-  verticalMargin: 8,
-  maxWidth: 520,
-  maxHeight: 300,
-};
-
-interface DropdownOption {
-  value: string;
-  label: string;
-  description?: string;
-}
-
-/**
- * Quiet select replacement following the APG select-only combobox pattern:
- * focus stays on the trigger, the popover is a listbox tracked through
- * aria-activedescendant. It exists because the native option list is
- * OS-drawn and can match neither theme nor typography.
- */
-export function Dropdown({
+export function Dropdown<Value extends string>({
   label,
   value,
   options,
-  onChange,
-  disabled = false,
-  autoFocus = false,
-  direction = "down",
   display,
-  className = "",
-  menuClassName = "",
-  title,
-  openRequest,
-  onOpenRequestHandled,
+  onChange,
+  className,
   header,
   indicator,
   menuWidth,
-}: {
+  ref,
+  openRequest,
+  onOpenRequestHandled,
+  direction = "down",
+  ...props
+}: Omit<ComponentProps<"button">, "value" | "onChange" | "children"> & {
   label: string;
   value: string;
-  options: DropdownOption[];
-  onChange: (value: string) => void;
-  disabled?: boolean;
-  /** Focus the trigger on mount without opening the list. */
-  autoFocus?: boolean;
-  /** Preferred direction; the menu flips when the viewport offers more room. */
-  direction?: "up" | "down";
-  /** Trigger text when it should differ from the selected option's label. */
+  options: readonly { value: Value; label: string; description?: string }[];
   display?: string;
-  className?: string;
-  menuClassName?: string;
-  title?: string;
-  openRequest?: number;
-  onOpenRequestHandled?: (id: number) => void;
-  /** Composable controls use a dialog popup; plain selects retain listbox semantics. */
   header?: ReactNode;
   indicator?: ReactNode;
   menuWidth?: number;
+  openRequest?: number;
+  onOpenRequestHandled?: (id: number) => void;
+  direction?: "up" | "down";
+  onChange(value: Value): void;
 }) {
-  const id = useId();
-  const composed = Boolean(header);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  const handled = useRef<number | undefined>(undefined);
   const [open, setOpen] = useState(false);
-  const [active, setActive] = useState(0);
-  const [keyboardActive, setKeyboardActive] = useState(true);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const listRef = useRef<HTMLDivElement>(null);
-  const handledOpenRequest = useRef<number | null>(null);
-  const described = options.some((option) => option.description);
-  const constraints = useMemo(
-    () => ({ ...MENU_CONSTRAINTS, preferredDirection: direction }),
+  const [portal, setPortal] = useState<HTMLElement | null>(null);
+  const list = useOptionList<Value>();
+  const items = options.map((option) => ({
+    key: option.value,
+    value: option.value,
+    selected: option.value === value,
+    label: option.label,
+    description: option.description,
+  }));
+  const bounds = useMemo(
+    () => ({
+      gap: 4,
+      horizontalMargin: 12,
+      verticalMargin: 8,
+      maxWidth: 420,
+      maxHeight: 300,
+      preferredDirection: direction,
+    }),
     [direction],
   );
-  const resolveTarget = useCallback(() => {
-    const trigger = triggerRef.current;
-    if (!trigger) return null;
-    const anchor = trigger.getBoundingClientRect();
+  const resolve = useCallback(() => {
+    const context = trigger.current;
+    if (!context) return null;
+    const anchor = context.getBoundingClientRect();
     return {
-      context: trigger,
+      context,
       anchor,
-      positioningRoot: trigger.closest<HTMLElement>(".overlay"),
-      preferredWidth:
-        menuWidth ?? (described ? 320 : Math.max(148, anchor.width)),
-      observe: [trigger],
+      observe: [context],
+      positioningRoot: context.closest<HTMLElement>("dialog[open]"),
+      preferredWidth: Math.max(
+        menuWidth ?? 148,
+        anchor.width,
+        options.some((option) => option.description) ? 320 : 0,
+      ),
     };
-  }, [described, menuWidth]);
-  const placement = useFloatingMenuPlacement(open, resolveTarget, constraints);
-  useModalPortal(Boolean(open && placement), triggerRef, listRef);
-
-  const selectedIndex = options.findIndex((option) => option.value === value);
-  const shown =
-    display ?? (selectedIndex >= 0 ? options[selectedIndex]!.label : value);
-
-  const openMenu = () => {
-    if (disabled || (options.length === 0 && !header)) return;
-    setActive(Math.max(0, selectedIndex));
-    setKeyboardActive(true);
+  }, [menuWidth, options]);
+  const placement = useFloatingMenuPlacement(open, resolve, bounds);
+  useFloatingMenuDismissal(open, trigger, panel, () => setOpen(false));
+  const show = () => {
+    if (props.disabled || (!options.length && !header)) return;
+    setPortal(
+      trigger.current?.closest<HTMLElement>("dialog[open]") ?? document.body,
+    );
+    list.activate(value);
     setOpen(true);
   };
-
-  const pick = (option: DropdownOption) => {
-    if (disabled) return;
+  const select = (next: Value) => {
     setOpen(false);
-    if (option.value !== value) onChange(option.value);
+    if (next !== value) onChange(next);
   };
 
   useEffect(() => {
-    if (disabled) setOpen(false);
-  }, [disabled]);
-
+    if (props.disabled) setOpen(false);
+  }, [props.disabled]);
   useEffect(() => {
-    if (openRequest === undefined || handledOpenRequest.current === openRequest)
-      return;
-    handledOpenRequest.current = openRequest;
-    if (!disabled && (options.length > 0 || composed)) {
-      setActive(Math.max(0, selectedIndex));
-      setKeyboardActive(true);
-      setOpen(true);
-      triggerRef.current?.focus({ preventScroll: true });
+    const opener = trigger.current;
+    if (!open || !opener || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry && !entry.isIntersecting) setOpen(false);
+    });
+    observer.observe(opener);
+    return () => observer.disconnect();
+  }, [open]);
+  useEffect(() => {
+    if (openRequest === undefined || handled.current === openRequest) return;
+    handled.current = openRequest;
+    if (!props.disabled && (options.length || header)) {
+      trigger.current?.focus({ preventScroll: true });
+      show();
     }
     onOpenRequestHandled?.(openRequest);
-  }, [
-    disabled,
-    onOpenRequestHandled,
-    openRequest,
-    options.length,
-    composed,
-    selectedIndex,
-  ]);
+  });
 
-  useEffect(() => {
-    if (!open) return;
-    const onOutside = (event: Event) => {
-      const target = event.target as Node;
-      if (
-        !rootRef.current?.contains(target) &&
-        !listRef.current?.contains(target)
-      )
-        setOpen(false);
-    };
-    window.addEventListener("pointerdown", onOutside);
-    window.addEventListener("focusin", onOutside);
-    return () => {
-      window.removeEventListener("pointerdown", onOutside);
-      window.removeEventListener("focusin", onOutside);
-    };
-  }, [open]);
-
-  useEffect(() => {
-    if (!open || !keyboardActive) return;
-    listRef.current
-      ?.querySelector(`[data-dropdown-option="${active}"]`)
-      ?.scrollIntoView({ block: "nearest" });
-  }, [open, active, keyboardActive, placement]);
-
+  const close = () => {
+    setOpen(false);
+    trigger.current?.focus({ preventScroll: true });
+  };
   const placed = Boolean(placement);
+  const composed = Boolean(header);
   useEffect(() => {
     if (open && placed && composed)
-      listRef.current
-        ?.querySelector<HTMLElement>(
-          "input:not(:disabled), button:not(:disabled)",
-        )
+      panel.current
+        ?.querySelector<HTMLElement>("input:enabled, button:enabled")
         ?.focus({ preventScroll: true });
   }, [open, placed, composed]);
 
-  const closeDialog = () => {
-    setOpen(false);
-    triggerRef.current?.focus({ preventScroll: true });
-  };
-  const onDialogKeyDown = (event: React.KeyboardEvent) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      closeDialog();
-      return;
-    }
-    const option = (event.target as HTMLElement).closest<HTMLElement>(
-      "[data-dropdown-option]",
-    );
-    if (!option || !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key))
-      return;
-    event.preventDefault();
-    const index = Number(option.dataset.dropdownOption);
-    const next =
-      event.key === "Home"
-        ? 0
-        : event.key === "End"
-          ? options.length - 1
-          : (index + (event.key === "ArrowDown" ? 1 : -1) + options.length) %
-            options.length;
-    setActive(next);
-    listRef.current
-      ?.querySelector<HTMLElement>(`[data-dropdown-option="${next}"]`)
-      ?.focus();
-  };
-  const onKeyDown = (event: React.KeyboardEvent) => {
-    if (!open) {
-      if (
-        event.key === "ArrowDown" ||
-        event.key === "ArrowUp" ||
-        event.key === "Enter" ||
-        event.key === " "
-      ) {
-        event.preventDefault();
-        openMenu();
-      }
-      return;
-    }
-    if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key))
-      setKeyboardActive(true);
-    if (event.key === "Escape") {
-      // Closing the menu must not reach the global Escape abort.
-      event.preventDefault();
-      event.stopPropagation();
-      setOpen(false);
-    } else if (event.key === "ArrowDown") {
-      event.preventDefault();
-      setActive((index) => Math.min(index + 1, options.length - 1));
-    } else if (event.key === "ArrowUp") {
-      event.preventDefault();
-      setActive((index) => Math.max(index - 1, 0));
-    } else if (event.key === "Home") {
-      event.preventDefault();
-      setActive(0);
-    } else if (event.key === "End") {
-      event.preventDefault();
-      setActive(options.length - 1);
-    } else if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      const option = options[active];
-      if (option) pick(option);
-    } else if (event.key === "Tab") {
-      setOpen(false);
-    }
-  };
-
   return (
-    <div
-      className={`dropdown ${header ? "dropdown--composed " : ""}${className}`}
-      ref={rootRef}
-    >
+    <>
+      {/* biome-ignore lint/a11y/useAriaPropsSupportedByRole: Only the combobox branch carries an active descendant. */}
       <button
-        ref={triggerRef}
+        {...props}
+        ref={(node) => {
+          trigger.current = node;
+          if (typeof ref === "function") return ref(node);
+          if (ref) ref.current = node;
+        }}
         type="button"
-        className="dropdown__trigger"
+        role={composed ? undefined : "combobox"}
         aria-label={label}
+        aria-haspopup={composed ? "dialog" : "listbox"}
         aria-expanded={open}
-        aria-controls={open ? `${id}-listbox` : undefined}
-        {...(composed
-          ? { "aria-haspopup": "dialog" as const }
-          : {
-              role: "combobox",
-              "aria-haspopup": "listbox" as const,
-              "aria-activedescendant":
-                open && keyboardActive ? `${id}-option-${active}` : undefined,
-            })}
-        disabled={disabled}
-        autoFocus={autoFocus}
-        title={title ?? label}
-        onClick={() => (open ? setOpen(false) : openMenu())}
-        onKeyDown={onKeyDown}
+        aria-controls={
+          open ? (composed ? `${list.id}-panel` : list.id) : undefined
+        }
+        aria-activedescendant={
+          !composed && open ? list.descendant(items) : undefined
+        }
+        data-modal-autofocus={props.autoFocus || undefined}
+        title={props.title ?? label}
+        className={`dropdown-trigger ${className ?? ""}`}
+        onClick={() => {
+          if (open) setOpen(false);
+          else show();
+        }}
+        onKeyDown={(event) => {
+          if (isComposingKeyboardEvent(event.nativeEvent)) return;
+          if (!open) {
+            if (["ArrowDown", "ArrowUp", "Enter", " "].includes(event.key)) {
+              event.preventDefault();
+              show();
+            }
+            return;
+          }
+          if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            setOpen(false);
+          } else if (event.key === "Tab") setOpen(false);
+          else if (event.key === " ") {
+            event.preventDefault();
+            const item = items[list.indexOf(items)];
+            if (item) select(item.value);
+          } else
+            list.navigate(event, items, select, { edges: true, wrap: true });
+        }}
       >
-        <span className="dropdown__value">{shown}</span>
+        <span>
+          {display ??
+            options.find((option) => option.value === value)?.label ??
+            value}
+        </span>
         {indicator}
-        <ChevronDown size={11} aria-hidden />
+        <ChevronDown size={composed ? 13 : 11} aria-hidden />
       </button>
-      {header || (open && placement)
-        ? createPortal(
-            <div
-              className={`dropdown__menu dropdown__menu--floating${header ? " dropdown__menu--composed" : ""}${menuClassName ? ` ${menuClassName}` : ""}`}
-              hidden={!open || !placement}
-              data-placement={placement?.direction}
-              data-keyboard-active={keyboardActive}
-              style={{
-                display: !open || !placement ? "none" : undefined,
-                left: placement?.left,
-                top: placement?.top,
-                bottom: placement?.bottom,
-                width: placement?.width,
-                maxHeight: placement?.maxHeight,
-              }}
-              {...(composed
-                ? {
-                    role: "dialog",
-                    "aria-label": label,
-                    onKeyDown: onDialogKeyDown,
-                  }
-                : { role: "listbox", "aria-label": label })}
-              id={`${id}-listbox`}
-              ref={listRef}
-            >
-              {header}
-              {options.length === 0 && header ? (
-                <div className="dropdown__unavailable">
-                  Thinking unavailable
-                </div>
-              ) : null}
-              {options.map((option, index) => {
-                const Option = header ? "button" : "div";
-                return (
-                  <Option
-                    key={option.value}
-                    type={header ? "button" : undefined}
-                    role={header ? undefined : "option"}
-                    data-dropdown-option={index}
-                    id={`${id}-option-${index}`}
-                    aria-selected={header ? undefined : option.value === value}
-                    aria-pressed={header ? option.value === value : undefined}
-                    className={`dropdown__option ${option.description ? "dropdown__option--described" : ""} ${keyboardActive && index === active ? "dropdown__option--active" : ""}`}
-                    // Focus must stay on the trigger; mousedown would steal it.
-                    onMouseDown={(event) => {
-                      if (!header) event.preventDefault();
-                    }}
-                    onPointerMove={(event) => {
-                      if (event.pointerType === "touch") return;
-                      setKeyboardActive(false);
-                      setActive(index);
-                    }}
-                    onClick={() => {
-                      pick(option);
-                      if (header) triggerRef.current?.focus();
-                    }}
-                  >
-                    <span className="dropdown__option-copy">
-                      <span className="dropdown__option-label">
-                        {option.label}
+      {open &&
+        placement &&
+        portal &&
+        createPortal(
+          // biome-ignore lint/a11y/useAriaPropsSupportedByRole: The accessible name is used only for the composed dialog.
+          <div
+            ref={panel}
+            className={`dropdown-popup${composed ? " thinking-selector__menu" : ""}`}
+            id={composed ? `${list.id}-panel` : undefined}
+            role={composed ? "dialog" : undefined}
+            aria-label={composed ? label : undefined}
+            onKeyDown={(event) => {
+              if (!composed || isComposingKeyboardEvent(event.nativeEvent))
+                return;
+              if (event.key === "Escape") {
+                event.preventDefault();
+                event.stopPropagation();
+                close();
+              }
+              const active = (event.target as HTMLElement).closest(
+                '[role="option"]',
+              );
+              if (
+                !active ||
+                !["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)
+              )
+                return;
+              const entries = [
+                ...event.currentTarget.querySelectorAll<HTMLElement>(
+                  '[role="option"]',
+                ),
+              ];
+              const index = entries.indexOf(active as HTMLElement);
+              const next =
+                event.key === "Home"
+                  ? 0
+                  : event.key === "End"
+                    ? entries.length - 1
+                    : Math.max(
+                        0,
+                        Math.min(
+                          entries.length - 1,
+                          index + (event.key === "ArrowUp" ? -1 : 1),
+                        ),
+                      );
+              event.preventDefault();
+              entries[next]?.focus();
+            }}
+            style={{
+              left: placement.left,
+              top: placement.top,
+              bottom: placement.bottom,
+              width: placement.width,
+              maxHeight: placement.maxHeight,
+            }}
+          >
+            {header}
+            {items.length > 0 && (
+              <OptionList
+                list={list}
+                options={items}
+                label={label}
+                onPick={(next) => {
+                  select(next);
+                  if (composed) close();
+                }}
+                focusOptions={composed}
+                optionButtons={composed}
+                renderOption={(item) => {
+                  return (
+                    <>
+                      <span className="dropdown-popup__copy">
+                        {item.label}
+                        {item.description && <small>{item.description}</small>}
                       </span>
-                      {option.description ? (
-                        <span className="dropdown__option-description">
-                          {option.description}
-                        </span>
-                      ) : null}
-                    </span>
-                    {option.value === value ? (
-                      <Check size={12} aria-hidden />
-                    ) : null}
-                  </Option>
-                );
-              })}
-            </div>,
-            triggerRef.current?.closest(".overlay") ?? document.body,
-          )
-        : null}
-    </div>
+                      {item.selected && (
+                        <Check size={composed ? 13 : 12} aria-hidden />
+                      )}
+                    </>
+                  );
+                }}
+              />
+            )}
+          </div>,
+          portal,
+        )}
+    </>
   );
 }

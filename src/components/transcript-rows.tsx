@@ -1,25 +1,13 @@
 import {
   Archive,
-  ChevronRight,
   CornerUpLeft,
   GitFork,
   Image as ImageIcon,
-  Package,
   Trash2,
   X,
 } from "lucide-react";
-import {
-  memo,
-  type Ref,
-  useContext,
-  useEffect,
-  useId,
-  useLayoutEffect,
-  useState,
-} from "react";
-import { fileReferenceName } from "../../shared/attachment-context";
+import { memo, type Ref, useCallback, useEffect, useId, useState } from "react";
 import type {
-  GenericExtensionDisplay,
   PendingQueues,
   ToolVisibilityPreference,
   VisibilityPreference,
@@ -28,10 +16,10 @@ import { type CopyLoader, type CopySource, copyLoader } from "../content-copy";
 import {
   type ActivityTool,
   type ChatMessage,
-  contentItems,
   messageText,
   type ToolCallContent,
   userMessageDisplayContent,
+  userMessageFileName,
 } from "../events";
 import { fileIconForPath } from "../file-icons";
 import { messageCopyLoader } from "../message-copy";
@@ -43,41 +31,15 @@ import { store } from "../store";
 import { hasActiveModal } from "../use-modal-focus";
 import { CopyAction } from "./CopyAction";
 import { ImageGallery } from "./ImageGallery";
-import { ImagePreview, PersistedImage } from "./ImagePreview";
+import { LoadedImagePreview, messageImage } from "./ImagePreview";
 import { PiLoader } from "./PiLoader";
 import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
-import { useDynamicActivityGroup } from "./transcript-activity";
 import {
-  ActivityItemBoundary,
-  useActivityInspectionHeld,
-  useVisibleActivityItemIds,
-} from "./transcript-activity-visibility";
-import {
-  type CollapsedActivity,
-  CollapsedActivityStrip,
+  CollapsibleCard,
   GenericCard,
-  genericContentTitle,
-  hasRenderableAssistantContent,
-  type StaticVisibility,
   ThinkingCard,
   ToolCard,
-  ToolResultCard,
 } from "./transcript-cards";
-import { TranscriptSearchReveal } from "./transcript-search";
-
-export function relativeTime(timestamp: number | string): string {
-  const time =
-    typeof timestamp === "string" ? Date.parse(timestamp) : timestamp;
-  const seconds = Math.max(0, Math.floor((Date.now() - time) / 1_000));
-  if (seconds < 60) return "just now";
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}d ago`;
-  return new Date(time).toLocaleDateString();
-}
 
 // --- Turns and activity ---
 
@@ -86,30 +48,34 @@ function MessageActions({
   getContent,
   forkEntryId,
   copyLabel = "Message",
-  className = "",
+  response = false,
 }: {
   text: string;
   getContent?: CopyLoader;
   forkEntryId?: string;
   copyLabel?: string;
-  className?: string;
+  response?: boolean;
 }) {
   const [forking, setForking] = useState(false);
   if (!text && !getContent && !forkEntryId) return null;
   return (
-    <div className={`turn__actions ${className}`}>
+    <div
+      className={
+        response ? "turn__actions turn__actions--response" : "turn__actions"
+      }
+    >
       {text || getContent ? (
         <CopyAction
           text={text}
           getContent={getContent}
           label={copyLabel}
-          className="turn__action"
+          className="activity-copy turn__action"
         />
       ) : null}
       {forkEntryId ? (
         <button
           type="button"
-          className="icon-button turn__action"
+          className="icon-button activity-copy turn__action"
           aria-label="Fork session from this input"
           title="Fork a new session from this input"
           disabled={forking}
@@ -145,39 +111,22 @@ export const UserBubble = memo(function UserBubble({
   const timestamp = message.timestamp;
   const sourceText = messageText(message);
   const { text, references } = userMessageDisplayContent(message);
-  const images: Array<
-    { key: string; reference: string } | { key: string; src: string }
-  > = [];
-  if (Array.isArray(message.content)) {
-    message.content.forEach((part, partIndex) => {
-      if (
-        !part ||
-        typeof part !== "object" ||
-        (part as { type?: unknown }).type !== "image"
-      )
-        return;
-      const image = part as { data?: unknown; mimeType?: unknown };
-      if (
-        Number.isSafeInteger(message.__inspireMessageIndex) &&
-        sessionId &&
-        viewId
-      ) {
-        images.push({
-          key: `persisted:${partIndex}`,
-          reference: `pi-embedded://${message.__inspireMessageIndex}/${partIndex}`,
-        });
-      } else if (
-        typeof image.data === "string" &&
-        typeof image.mimeType === "string" &&
-        /^image\//i.test(image.mimeType)
-      ) {
-        images.push({
-          key: `inline:${partIndex}`,
-          src: `data:${image.mimeType};base64,${image.data}`,
-        });
-      }
-    });
-  }
+  const owner = { sessionId, viewId, projectionKey };
+  const images = Array.isArray(message.content)
+    ? message.content
+        .map((part, index) =>
+          messageImage(
+            part,
+            message.__inspireMessageIndex,
+            index,
+            owner,
+            message.__inspireSavedHistory
+              ? message.__inspireEntryId
+              : undefined,
+          ),
+        )
+        .filter((image) => image !== null)
+    : [];
   return (
     <div className="turn turn--user">
       <div
@@ -193,30 +142,14 @@ export const UserBubble = memo(function UserBubble({
               role="group"
               aria-label="Attached images"
             >
-              {images.map((image) =>
-                "reference" in image ? (
-                  <PersistedImage
-                    key={image.key}
-                    sessionId={sessionId}
-                    viewId={viewId}
-                    projectionKey={projectionKey}
-                    reference={image.reference}
-                  />
-                ) : (
-                  <ImagePreview
-                    key={image.key}
-                    src={image.src}
-                    className="image-preview--message"
-                  />
-                ),
-              )}
+              {images}
             </div>
           </ImageGallery>
         ) : null}
         {references.length > 0 ? (
           <ul className="user-bubble__files" aria-label="Referenced files">
             {references.map((path, index) => {
-              const name = fileReferenceName(path);
+              const name = userMessageFileName(message, path);
               const FileIcon = fileIconForPath(name);
               return (
                 <li
@@ -237,11 +170,7 @@ export const UserBubble = memo(function UserBubble({
         text={sourceText}
         getContent={
           sourceText || images.length
-            ? messageCopyLoader(message, sourceText, {
-                sessionId,
-                viewId,
-                projectionKey,
-              })
+            ? messageCopyLoader(message, sourceText, owner)
             : undefined
         }
         forkEntryId={message.__inspireEntryId}
@@ -250,249 +179,117 @@ export const UserBubble = memo(function UserBubble({
   );
 });
 
-function hasCollapsibleActivityRun(
-  items: ReturnType<typeof contentItems>,
-): boolean {
-  let currentToolRun = 0;
-  for (const item of items) {
-    if (item.type === "toolCall") {
-      currentToolRun += 1;
-      if (currentToolRun > 1) return true;
-    } else {
-      currentToolRun = 0;
-    }
-  }
-  return false;
-}
-
-export const AssistantTurn = memo(function AssistantTurn({
-  message,
-  toolResults,
-  toolActivity,
-  activityItemIds = [],
+function AssistantRow({
   streaming,
-  dynamicActive,
-  thinkingVisibility,
-  toolVisibility,
-  responseCopyText,
-  responseCopyContent,
+  children,
+  actions,
 }: {
-  message: ChatMessage;
-  toolResults: Map<string, ChatMessage>;
-  toolActivity: Record<string, ActivityTool>;
-  activityItemIds?: string[];
   streaming: boolean;
-  dynamicActive: boolean;
-  thinkingVisibility: VisibilityPreference;
-  toolVisibility: ToolVisibilityPreference;
-  /** Empty suppresses actions; a full-message value keeps the existing one-copy
-   * affordance on the message's final visible response fragment. */
-  responseCopyText?: string;
-  responseCopyContent?: CopyLoader;
+  children: React.ReactNode;
+  actions?: React.ReactNode;
 }) {
-  const items = contentItems(message);
-  const hasVisibleContent = hasRenderableAssistantContent(
-    message,
-    thinkingVisibility,
-    toolVisibility,
-  );
-  const dynamicTools = toolVisibility === "dynamic";
-  const visibleActivityIds = useVisibleActivityItemIds();
-  const toolKeys = items.flatMap((item, index) =>
-    item.type === "toolCall"
-      ? [
-          activityItemIds[index] ??
-            (item as ToolCallContent).id ??
-            `tool:${index}`,
-        ]
-      : [],
-  );
-  const hasActivities = toolKeys.length > 0;
-  const collapseEligible = hasCollapsibleActivityRun(items);
-  const visibleToolKeys =
-    visibleActivityIds === null
-      ? toolKeys
-      : toolKeys.filter((id) => visibleActivityIds.has(id));
-  const retainedInspectionHeld = useActivityInspectionHeld(visibleToolKeys);
-  const dynamicBatch = useDynamicActivityGroup(
-    dynamicTools,
-    dynamicActive,
-    !dynamicActive,
-    visibleToolKeys,
-    collapseEligible,
-    retainedInspectionHeld,
-  );
-  const renderedItems: React.ReactNode[] =
-    typeof message.content === "string" && message.content.length > 0
-      ? [<RichText key="text" text={message.content} variant="assistant" />]
-      : [];
-  const ordinaryToolVisibility: StaticVisibility =
-    toolVisibility === "compact" ||
-    toolVisibility === "collapsed" ||
-    dynamicTools
-      ? "collapsed"
-      : toolVisibility;
-  const collapsedActivities =
-    collapseEligible &&
-    (toolVisibility === "collapsed" ||
-      (dynamicTools && dynamicBatch.collapsed));
-  // Execution events, not membership in the current batch, own the running
-  // status. After reconnect an unobserved call stays expanded but unknown.
-  const live = streaming;
-
-  for (let index = 0; index < items.length; ) {
-    const item = items[index]!;
-    if (item.type === "toolCall" && collapsedActivities) {
-      const start = index;
-      let end = start;
-      while (end < items.length && items[end]?.type === "toolCall") end += 1;
-      const runLength = end - start;
-      if (runLength > 1) {
-        const activities: CollapsedActivity[] = [];
-        for (let cursor = start; cursor < end; cursor += 1) {
-          const call = items[cursor] as ToolCallContent;
-          activities.push({
-            kind: "tool",
-            key: activityItemIds[cursor] ?? call.id ?? `tool:${cursor}`,
-            call,
-            result: toolResults.get(call.id),
-            activity: toolActivity[call.id],
-          });
-        }
-        index = end;
-        renderedItems.push(
-          <CollapsedActivityStrip
-            key={`tools:${activities[0]?.key ?? start}`}
-            activities={activities}
-            live={live}
-          />,
-        );
-        continue;
-      }
-    }
-    if (item.type === "text") {
-      const text = (item as { text?: string }).text ?? "";
-      if (text)
-        renderedItems.push(
-          <RichText key={index} text={text} variant="assistant" />,
-        );
-    } else if (item.type === "thinking") {
-      const activityItemId =
-        activityItemIds[index] ?? `assistant-item:${index}`;
-      renderedItems.push(
-        <ActivityItemBoundary key={activityItemId} id={activityItemId}>
-          <ThinkingCard
-            text={(item as { thinking?: string }).thinking ?? ""}
-            visibility={thinkingVisibility}
-            dynamicActive={dynamicActive}
-          />
-        </ActivityItemBoundary>,
-      );
-    } else if (item.type === "toolCall") {
-      const call = item as ToolCallContent;
-      const result = toolResults.get(call.id);
-      const activity = toolActivity[call.id];
-      const activityItemId =
-        activityItemIds[index] ?? call.id ?? `assistant-item:${index}`;
-      const toolKey = activityItemId;
-      renderedItems.push(
-        <ActivityItemBoundary key={activityItemId} id={activityItemId}>
-          <ToolCard
-            call={call}
-            result={result}
-            activity={activity}
-            live={live}
-            visibility={ordinaryToolVisibility}
-            dynamic={dynamicTools}
-            dynamicActive={dynamicActive}
-            forceClosed={dynamicTools && dynamicBatch.closing}
-            onDynamicClosed={
-              dynamicTools ? () => dynamicBatch.markClosed(toolKey) : undefined
-            }
-            onManualOpenChange={
-              dynamicTools
-                ? (open) => dynamicBatch.setInspectionHeld(toolKey, open)
-                : undefined
-            }
-          />
-        </ActivityItemBoundary>,
-      );
-    } else {
-      const title = genericContentTitle(item);
-      if (title) {
-        const activityItemId =
-          activityItemIds[index] ?? `assistant-item:${index}`;
-        renderedItems.push(
-          <ActivityItemBoundary key={activityItemId} id={activityItemId}>
-            <GenericCard
-              item={item}
-              visibility={ordinaryToolVisibility}
-              title={title}
-            />
-          </ActivityItemBoundary>,
-        );
-      }
-    }
-    index += 1;
-  }
-
   return (
     <div
       className={`turn turn--assistant ${streaming ? "turn--streaming" : ""}`}
     >
-      <div className="assistant-doc">
-        {streaming && !hasVisibleContent ? (
-          <div className="assistant-activity" role="status">
-            <PiLoader size={14} aria-hidden />
-            <span>Working…</span>
-          </div>
-        ) : dynamicTools && hasActivities ? (
-          <div
-            className={`dynamic-activity-batch dynamic-activity-batch--${dynamicBatch.phase}`}
-          >
-            {renderedItems}
-          </div>
-        ) : (
-          renderedItems
-        )}
-      </div>
-      <MessageActions
-        text={responseCopyText ?? messageText(message)}
-        getContent={responseCopyContent}
-        copyLabel="Response"
-        className="turn__actions--response"
-      />
+      <div className="assistant-doc">{children}</div>
+      {actions}
     </div>
   );
-});
+}
 
-export const UnpairedToolResultRow = memo(function UnpairedToolResultRow({
-  activityItemId = "unpaired-tool-result",
-  message,
-  visibility,
+export function AssistantResponse({
+  passages,
+  streaming,
+  copyText = "",
+  copyContent,
 }: {
-  activityItemId?: string;
-  message: ChatMessage;
-  visibility: StaticVisibility;
+  passages: readonly string[];
+  streaming: boolean;
+  copyText?: string;
+  copyContent?: CopyLoader;
 }) {
   return (
-    <div className="turn">
-      <ActivityItemBoundary id={activityItemId}>
-        <ToolResultCard result={message} visibility={visibility} />
-      </ActivityItemBoundary>
-    </div>
+    <AssistantRow
+      streaming={streaming}
+      actions={
+        <MessageActions
+          text={copyText}
+          getContent={copyContent}
+          copyLabel="Response"
+          response
+        />
+      }
+    >
+      {passages.map((text, index) => (
+        <RichText key={index} text={text} variant="assistant" />
+      ))}
+    </AssistantRow>
   );
-});
+}
 
-/** Shared display content, so search does not index the elided event prefix. */
-export const contextCheckpointContent = checkpointPresentation;
+export type AssistantActivityContent =
+  | { kind: "thinking"; text: string }
+  | {
+      kind: "tool";
+      call: ToolCallContent;
+      result: ChatMessage | undefined;
+      activity?: ActivityTool;
+    }
+  | { kind: "generic"; item: object; title: string };
+
+export function AssistantActivityCard({
+  item,
+  live,
+  dynamicActive,
+  thinkingVisibility,
+  toolVisibility,
+}: {
+  item: AssistantActivityContent;
+  live: boolean;
+  dynamicActive: boolean;
+  thinkingVisibility: VisibilityPreference;
+  toolVisibility: ToolVisibilityPreference;
+}) {
+  const visibility = toolVisibility === "expanded" ? "expanded" : "collapsed";
+  switch (item.kind) {
+    case "thinking":
+      return (
+        <ThinkingCard
+          text={item.text}
+          visibility={thinkingVisibility}
+          dynamicActive={dynamicActive}
+        />
+      );
+    case "generic":
+      return (
+        <GenericCard
+          item={item.item}
+          title={item.title}
+          visibility={visibility}
+        />
+      );
+    case "tool":
+      return (
+        <ToolCard
+          call={item.call}
+          result={item.result}
+          activity={item.activity}
+          live={live}
+          visibility={visibility}
+          dynamic={toolVisibility === "dynamic"}
+          dynamicActive={dynamicActive}
+        />
+      );
+  }
+}
 
 export const ContextCheckpointRow = memo(function ContextCheckpointRow({
   message,
 }: {
   message: ChatMessage;
 }) {
-  usePresentationAdapters();
+  const { configuration } = usePresentationAdapters();
   const {
     compacted,
     summary,
@@ -500,134 +297,62 @@ export const ContextCheckpointRow = memo(function ContextCheckpointRow({
     title,
     tokensLabel,
     tokensDescription,
-  } = contextCheckpointContent(message);
+  } = checkpointPresentation(message, configuration);
   const tokens =
     compacted &&
     typeof message.tokensBefore === "number" &&
     Number.isFinite(message.tokensBefore)
       ? `${tokensLabel} ≈ ${Math.round(message.tokensBefore).toLocaleString()} tokens`
       : null;
-  const [open, setOpen] = useState(false);
-  const searchReveal = useContext(TranscriptSearchReveal);
-  useLayoutEffect(() => {
-    if (searchReveal !== null) setOpen(true);
-  }, [searchReveal]);
   const bodyId = useId();
   const metricId = `${bodyId}-metric`;
   return (
     <div className="turn turn--checkpoint">
-      <div className="context-checkpoint">
-        <div className="context-checkpoint__head">
-          <button
-            type="button"
-            className="context-checkpoint__toggle"
-            aria-label={title}
-            aria-expanded={open}
-            aria-controls={bodyId}
-            aria-describedby={tokens ? metricId : undefined}
-            onClick={() => setOpen(!open)}
-          >
-            <ChevronRight
-              className="context-checkpoint__chevron"
-              size={14}
-              aria-hidden
-            />
-            <Archive
-              size={14}
-              className="context-checkpoint__icon"
-              aria-hidden
-            />
-            <span className="context-checkpoint__title">{title}</span>
-          </button>
-          {tokens || (open && summary) ? (
-            <div className="context-checkpoint__details">
-              {tokens ? (
-                <span
-                  id={metricId}
-                  className="context-checkpoint__metric"
-                  title={tokensDescription}
-                >
-                  {tokens}
-                </span>
-              ) : null}
-              {open && summary ? (
-                <CopyAction
-                  text={summary}
-                  label={compacted ? "Compaction summary" : "Branch summary"}
-                  className="context-checkpoint__copy"
-                />
-              ) : null}
-            </div>
-          ) : null}
-        </div>
-        <div id={bodyId} className="context-checkpoint__body" hidden={!open}>
-          {open ? (
-            summary ? (
-              <RichText text={displaySummary} />
-            ) : (
-              <p>No summary was recorded.</p>
-            )
-          ) : null}
-        </div>
-      </div>
-    </div>
-  );
-});
-
-export const UnknownRoleRow = memo(function UnknownRoleRow({
-  activityItemId = "unknown-activity",
-  message,
-  visibility,
-}: {
-  activityItemId?: string;
-  message: ChatMessage;
-  visibility: StaticVisibility;
-}) {
-  return (
-    <div className="turn">
-      <ActivityItemBoundary id={activityItemId}>
-        <GenericCard
-          item={{ ...message, type: message.role }}
-          visibility={visibility}
-        />
-      </ActivityItemBoundary>
+      <CollapsibleCard
+        className="context-checkpoint"
+        defaultVisibility="collapsed"
+        icon={<Archive size={14} aria-hidden />}
+        label={title}
+        toggleLabel={title}
+        accessibleLabel={title}
+        id={bodyId}
+        revealOnSearch
+        describedBy={tokens ? metricId : undefined}
+        summaryVisibleWhenOpen
+        summary={
+          tokens && (
+            <span
+              id={metricId}
+              className="context-checkpoint__metric"
+              title={tokensDescription}
+            >
+              {tokens}
+            </span>
+          )
+        }
+        copyText={summary}
+        copyLabel={compacted ? "Compaction summary" : "Branch summary"}
+      >
+        {summary ? (
+          <RichText text={displaySummary} />
+        ) : (
+          <p>No summary was recorded.</p>
+        )}
+      </CollapsibleCard>
     </div>
   );
 });
 
 function PendingImage({ id, alt }: { id: string; alt: string }) {
-  const [src, setSrc] = useState<string>();
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const request = new AbortController();
-    let objectUrl: string | undefined;
-    void store.loadAttachmentImage(id, request.signal).then(
-      (blob) => {
-        if (request.signal.aborted) return;
-        objectUrl = URL.createObjectURL(blob);
-        setSrc(objectUrl);
-      },
-      (reason: unknown) => {
-        if (!request.signal.aborted)
-          setError(
-            reason instanceof Error ? reason.message : "Image unavailable",
-          );
-      },
-    );
-    return () => {
-      request.abort();
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [id]);
-
+  const loadImage = useCallback(
+    (signal: AbortSignal) => store.loadAttachmentImage(id, signal),
+    [id],
+  );
   return (
-    <ImagePreview
-      src={src}
+    <LoadedImagePreview
+      load={loadImage}
       alt={alt}
       className="pending-group__image"
-      loading={!src && !error}
-      error={error}
     />
   );
 }
@@ -690,7 +415,7 @@ export function PendingQueueGroups({
         !focusChanged &&
         !hasActiveModal() &&
         current.sessionId === owner.sessionId &&
-        current.transcriptViewId === owner.transcriptViewId &&
+        current.view.viewId === owner.view.viewId &&
         current.transportGeneration === owner.transportGeneration &&
         !current.sessionSelectionPending
       )
@@ -739,14 +464,14 @@ export function PendingQueueGroups({
                   : { text: true, image: queue.totalImageCount > 0 },
               )}
               label="all pending input"
-              className="pending-group__copy"
+              className="activity-copy"
             />
           ) : null}
           <button
             type="button"
-            className="icon-button pending-group__control"
+            className="icon-button activity-copy"
             aria-label="Return all Pending input to composer"
-            title="Return Pending text and images to your draft without stopping"
+            title="Return text and images to your draft. Pi keeps working."
             disabled={busy}
             onClick={() => void returnToComposer()}
           >
@@ -758,10 +483,10 @@ export function PendingQueueGroups({
           </button>
           {confirmClear ? (
             <span className="pending-groups__confirm">
-              <span className="pending-groups__confirm-label">Clear all?</span>
+              <span>Clear all?</span>
               <button
                 type="button"
-                className="pending-groups__confirm-btn"
+                className="button button--danger"
                 disabled={busy}
                 onClick={() =>
                   void onClear().then((cleared) => {
@@ -773,7 +498,7 @@ export function PendingQueueGroups({
               </button>
               <button
                 type="button"
-                className="pending-groups__confirm-cancel"
+                className="icon-button activity-copy"
                 aria-label="Cancel clearing Pending input"
                 disabled={busy}
                 onClick={() => setConfirmClear(false)}
@@ -784,7 +509,7 @@ export function PendingQueueGroups({
           ) : (
             <button
               type="button"
-              className="icon-button pending-group__control pending-group__control--clear"
+              className="icon-button activity-copy pending-group__clear"
               aria-label="Clear all Pending input"
               title="Clear all Pending input"
               disabled={busy}
@@ -853,60 +578,27 @@ export function PendingQueueGroups({
                       </span>
                     ) : null}
                   </div>
-                  <div className="pending-group__item-actions">
-                    {canCopy ? (
-                      <CopyAction
-                        key={queue.revision}
-                        getContent={copyLoader(
-                          (signal) => getText(queue.revision, entry.id, signal),
-                          queue.totalImageCount === undefined
-                            ? null
-                            : {
-                                text: entry.textLength > 0 || !entry.imageCount,
-                                image: Boolean(entry.imageCount),
-                              },
-                        )}
-                        label={`${group.label} item ${index + 1}`}
-                        className="pending-group__copy"
-                      />
-                    ) : null}
-                  </div>
+                  {canCopy ? (
+                    <CopyAction
+                      key={queue.revision}
+                      getContent={copyLoader(
+                        (signal) => getText(queue.revision, entry.id, signal),
+                        queue.totalImageCount === undefined
+                          ? null
+                          : {
+                              text: entry.textLength > 0 || !entry.imageCount,
+                              image: Boolean(entry.imageCount),
+                            },
+                      )}
+                      label={`${group.label} item ${index + 1}`}
+                      className="activity-copy"
+                    />
+                  ) : null}
                 </li>
               );
             })}
           </ol>
         </section>
-      ))}
-    </section>
-  );
-}
-
-export function ExtensionDisplaySurface({
-  displays,
-}: {
-  displays: GenericExtensionDisplay[];
-}) {
-  if (displays.length === 0) return null;
-  return (
-    <section
-      className="extension-surface"
-      aria-label="Extension display content"
-    >
-      <div className="extension-surface__head">
-        <Package size={14} aria-hidden /> Extension display
-      </div>
-      {displays.map((display) => (
-        <details key={display.id} className="extension-surface__item">
-          <summary>
-            <code>{display.method}</code>
-            <span>
-              {display.source} · {display.label}
-            </span>
-          </summary>
-          <pre className="card__mono">
-            {JSON.stringify(display.payload, null, 2)}
-          </pre>
-        </details>
       ))}
     </section>
   );

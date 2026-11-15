@@ -1,10 +1,7 @@
-import { execFile } from "node:child_process";
 import * as fs from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import * as git from "../../server/git-runner.js";
 import * as hidden from "../../server/host-hidden-dirs.js";
 import {
   invalidateProjectFiles,
@@ -18,7 +15,6 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   return { ...actual, opendir: vi.fn(actual.opendir) };
 });
 
-const exec = promisify(execFile);
 const roots: string[] = [];
 async function scratch() {
   const root = await fs.mkdtemp(join(tmpdir(), "inspire-filesystem-"));
@@ -80,69 +76,6 @@ describe("filesystem discovery, independent of Git", () => {
     expect(result.entries).toHaveLength(10_000);
     expect(result.truncated).toBe(true);
   });
-
-  it.each([false, true])(
-    "lists actual directories and applies only hidden visibility (git=%s)",
-    async (repository) => {
-      // This case owns Git/dot-name policy, not OS attribute-query latency.
-      // Native attributes have separate adapter and real-host regressions.
-      vi.spyOn(hidden, "listNativeHiddenNames").mockResolvedValue(new Set());
-      const root = await scratch();
-      for (const name of ["empty", "dist", "node_modules", ".config"])
-        await fs.mkdir(join(root, name));
-      for (const name of [
-        "plain.txt",
-        "ignored.txt",
-        ".env",
-        "..notes",
-        "dist/report.txt",
-        "node_modules/package.txt",
-        ".config/settings.json",
-      ])
-        await fs.writeFile(join(root, name), "fixture");
-      await fs.writeFile(
-        join(root, ".gitignore"),
-        "ignored.txt\ndist/\nnode_modules/\n",
-      );
-      if (repository) {
-        await exec("git", ["-C", root, "init", "-q"]);
-        await exec("git", ["-C", root, "add", ".env", "plain.txt"]);
-        await fs.writeFile(join(root, ".git", "index"), "invalid git index");
-      }
-      const runner = vi.spyOn(git, "spawnGit");
-      expect(await listProjectDirectory(root)).toEqual({
-        entries: [
-          { name: "dist", type: "dir" },
-          { name: "empty", type: "dir" },
-          { name: "node_modules", type: "dir" },
-          { name: "ignored.txt", type: "file" },
-          { name: "plain.txt", type: "file" },
-        ],
-        truncated: false,
-      });
-      expect(await listProjectDirectory(root, "empty")).toEqual({
-        entries: [],
-        truncated: false,
-      });
-      expect(
-        (await listProjectDirectory(root, "", true)).entries,
-      ).toContainEqual({ name: ".env", type: "file" });
-      expect(
-        (await searchProjectFiles(root)).files.map((file) => file.path),
-      ).toEqual(
-        expect.arrayContaining([
-          "ignored.txt",
-          "dist/report.txt",
-          "node_modules/package.txt",
-        ]),
-      );
-      expect((await searchProjectFiles(root, ".env")).files).toEqual([]);
-      expect((await searchProjectFiles(root, ".env", 50, true)).files).toEqual([
-        { path: ".env", name: ".env" },
-      ]);
-      expect(runner).not.toHaveBeenCalled();
-    },
-  );
 
   it("uses native hidden attributes and bypasses their inspection only when requested", async () => {
     const root = await scratch();

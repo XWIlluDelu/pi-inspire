@@ -9,7 +9,6 @@ import {
   mkdir,
   open,
   readFile,
-  readlink,
   realpath,
   rename,
   rm,
@@ -17,14 +16,19 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { createServer } from "node:net";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
-import { fileURLToPath } from "node:url";
-import { instanceIdentity, requestInstanceControl } from "./instance-control.mjs";
+import {
+  INSTANCE_STATE_VERSION,
+  instanceIdentity,
+  requestInstanceControl,
+} from "./instance-control.mjs";
 import { windowsPowerShellCommand } from "./platform-environment.mjs";
 
 const execFile = promisify(execFileCallback);
-export const INSTANCE_STATE_VERSION = 1;
+
+export { INSTANCE_STATE_VERSION };
 
 function displayHost(host) {
   return host === "::1" ? "[::1]" : host;
@@ -76,17 +80,25 @@ function validState(value) {
       typeof value.startedAt === "string" &&
       typeof value.processStartTime === "string" &&
       value.processStartTime.length > 0 &&
-      typeof value.mock === "boolean" &&
-      (value.shutdownControlVersion === undefined || value.shutdownControlVersion === 1) &&
-      (value.httpControlVersion === undefined || value.httpControlVersion === 1),
+      (value.systemdInvocationId === undefined ||
+        (typeof value.systemdInvocationId === "string" &&
+          /^[a-f0-9]{32}$/u.test(value.systemdInvocationId))),
   );
 }
 
-function modeMatches(state, expected) {
-  return expected.mock === undefined || state.mock === expected.mock;
+/** @public The packaged launcher loads this module from its runtime directory. */
+export async function assertInstanceTarget(path, target) {
+  const state = await readInstanceState(path);
+  if (state && !sameInstance(state, target))
+    throw new Error("The running Host changed. Inspect it before retrying restart.");
 }
 
-async function readState(path) {
+function sameInstance(state, owner) {
+  return state?.token === owner.token && instanceIdentity(state) === instanceIdentity(owner);
+}
+
+/** @public The scheduled restart entry point loads this module at runtime. */
+export async function readInstanceState(path) {
   try {
     const value = JSON.parse(await readFile(path, "utf8"));
     if (!validState(value))
@@ -114,23 +126,14 @@ async function writePrivateJson(path, state) {
 }
 
 export async function writeInstanceState(path, state) {
-  if (!validState(state)) throw new Error("Invalid Inspire instance state");
+  if (!validState(state))
+    throw new Error("Invalid Inspire instance state");
   await writePrivateJson(path, state);
 }
 
 export async function removeInstanceState(path, owner) {
-  const state = await readState(path);
-  if (
-    state?.pid === owner.pid &&
-    state.processStartTime === owner.processStartTime &&
-    state.token === owner.token &&
-    state.root === owner.root &&
-    state.host === owner.host &&
-    state.port === owner.port &&
-    state.startedAt === owner.startedAt &&
-    state.mock === owner.mock
-  )
-    await rm(path, { force: true });
+  const state = await readInstanceState(path);
+  if (sameInstance(state, owner)) await rm(path, { force: true });
 }
 
 export async function consumeStopRequest(path) {
@@ -149,6 +152,7 @@ const SHUTDOWN_DOMAIN = "inspire:local-host-shutdown:v1";
 const MAX_CONTROL_BYTES = 2_048;
 
 const shutdownTarget = instanceIdentity;
+const shutdownNonce = /^[0-9a-f-]{36}$/u;
 
 function controlMac(state, payload) {
   return createHmac("sha256", state.token)
@@ -203,7 +207,8 @@ async function readControl(path, state, kind, allowExpired = false) {
     if (kind === "request") {
       if (
         typeof value.nonce !== "string" ||
-        !/^[0-9a-f-]{36}$/u.test(value.nonce) ||
+        !shutdownNonce.test(value.nonce) ||
+        value.scope !== undefined ||
         !Number.isSafeInteger(value.expiresAt) ||
         (!allowExpired &&
           (value.expiresAt < Date.now() ||
@@ -219,7 +224,12 @@ async function readControl(path, state, kind, allowExpired = false) {
       };
     } else {
       if (typeof value.clean !== "boolean") return null;
-      payload = { version: 1, kind, target: value.target, clean: value.clean };
+      payload = {
+        version: 1,
+        kind,
+        target: value.target,
+        clean: value.clean,
+      };
     }
     if (
       !timingSafeEqual(
@@ -247,8 +257,7 @@ export async function requestInstanceShutdown(path, state, timeoutMs = 15_000) {
   });
 }
 
-/** Called only after application/worker cleanup, before state removal and exit.
- * A signed failure must not authorize a replacement even if the Host exits. */
+/** Publish the result after cleanup and before the Host exits. */
 export async function completeInstanceShutdown(path, state, clean) {
   await writeControl(path + ".shutdown-result", state, {
     version: 1,
@@ -275,8 +284,8 @@ export function watchInstanceShutdown(path, state, onShutdown) {
     if (closed || pending) return;
     pending = true;
     try {
-      if (await instanceShutdownRequested(path, state)) {
-        if (closed) return;
+      const request = await readControl(path + ".shutdown-request", state, "request");
+      if (request && !closed) {
         closed = true;
         clearInterval(timer);
         await onShutdown();
@@ -346,24 +355,19 @@ async function windowsProcessStartIdentity(pid, signal) {
   return `win32:${value}`;
 }
 
+async function linuxProcess(pid, signal) {
+  const stat = await readFile(`/proc/${pid}/stat`, { encoding: "utf8", signal });
+  const end = stat.lastIndexOf(")");
+  const fields = stat.slice(end + 2).trim().split(/\s+/u);
+  if (end < 0 || !fields[19])
+    throw new Error(`Unable to read process start time for ${pid}`);
+  return { state: fields[0], birth: fields[19] };
+}
+
 /** A PID alone is reusable. Record an OS process-birth identity wherever the
  * host exposes one, and retain a conservative PID identity on other systems. */
 async function queryProcessStartIdentity(pid, signal) {
-  if (process.platform === "linux") {
-    const processStat = await readFile(`/proc/${pid}/stat`, {
-      encoding: "utf8",
-      signal,
-    });
-    const closing = processStat.lastIndexOf(")");
-    if (closing < 0)
-      throw new Error(`Unable to read process identity for ${pid}`);
-    const fields = processStat.slice(closing + 2).trim().split(/\s+/);
-    const startTime = fields[19];
-    if (!startTime)
-      throw new Error(`Unable to read process start time for ${pid}`);
-    // Preserve the identity format published by existing Linux installations.
-    return startTime;
-  }
+  if (process.platform === "linux") return (await linuxProcess(pid, signal)).birth;
   if (process.platform === "darwin")
     return darwinProcessStartIdentity(pid, signal);
   if (process.platform === "win32")
@@ -387,52 +391,38 @@ export async function processStartIdentity(pid, signal) {
   return ownStartIdentity;
 }
 
-async function processAlive(pid) {
+function pidMayBeLive(pid) {
   try {
     process.kill(pid, 0);
-    if (process.platform === "linux") {
-      const processStat = await readFile(`/proc/${pid}/stat`, "utf8");
-      const closing = processStat.lastIndexOf(")");
-      if (
-        closing >= 0 &&
-        processStat.slice(closing + 2, closing + 3) === "Z"
-      )
-        return false;
-    }
     return true;
   } catch (error) {
-    return error?.code === "EPERM";
+    return error?.code !== "ESRCH";
   }
 }
 
-/** Exact inspection authorizes legacy Linux signal fallback. New managed
- * owners use authenticated local controls; other legacy platforms fail closed
- * rather than sending credentials or killing a merely matching PID. */
-async function verifyManagedProcess(
-  state,
-  processMarker = "server/index.ts",
-) {
-  if (!(await processAlive(state.pid))) return false;
-  if (process.platform !== "linux") return false;
+export async function processMayBeLive({ pid, processStartTime }, signal) {
+  if (!pidMayBeLive(pid)) return false;
+  // A lock owner may have acquired while native birth metadata was unavailable.
+  if (processStartTime === `pid:${pid}`) return true;
   try {
-    const [workingDirectory, commandLine, processInfo, processStartTime] =
-      await Promise.all([
-        readlink(`/proc/${state.pid}/cwd`),
-        readFile(`/proc/${state.pid}/cmdline`, "utf8"),
-        stat(`/proc/${state.pid}`),
-        processStartIdentity(state.pid),
-      ]);
-    const ownUid =
-      typeof process.getuid === "function" ? process.getuid() : processInfo.uid;
-    return (
-      processInfo.uid === ownUid &&
-      workingDirectory === state.root &&
-      processStartTime === state.processStartTime &&
-      commandLine.includes(processMarker)
-    );
+    if (process.platform === "linux") {
+      const { state, birth } = await linuxProcess(pid, signal);
+      return state !== "Z" && birth === processStartTime;
+    }
+    return (await processStartIdentity(pid, signal)) === processStartTime;
   } catch {
-    return false;
+    // Refused metadata access does not prove that this incarnation exited.
+    return pidMayBeLive(pid);
   }
+}
+
+export async function observeProcessExit(owner, timeoutMs) {
+  const signal = AbortSignal.timeout(timeoutMs);
+  while (!signal.aborted) {
+    if (!(await processMayBeLive(owner, signal))) return true;
+    await delay(100, undefined, { signal }).catch(() => undefined);
+  }
+  return false;
 }
 
 async function sameRoot(left, right) {
@@ -472,115 +462,43 @@ async function expectedState(state, expected) {
 }
 
 export async function inspectInstance(path, expected, options = {}) {
-  const state = await readState(path);
+  const state = await readInstanceState(path);
   if (!state) return { kind: "absent" };
   if (!(await expectedState(state, expected))) return { kind: "stale" };
 
-  if (!(await processAlive(state.pid))) return { kind: "stale" };
+  if (!pidMayBeLive(state.pid)) return { kind: "stale" };
   const readiness = await requestInstanceControl(
     state,
     "readiness",
     {},
     options.healthTimeoutMs ?? 1_500,
   );
-  if (readiness?.appName === "inspire" && readiness.mock === state.mock) {
-    if (!modeMatches(state, expected)) return { kind: "mode-conflict", state };
+  if (readiness?.appName === "inspire") {
     return { kind: "healthy", state, url: instanceUrl(state) };
   }
 
-  if (!(await processAlive(state.pid))) return { kind: "stale" };
-  try {
-    if ((await processStartIdentity(state.pid)) !== state.processStartTime)
-      return { kind: "stale" };
-  } catch {
-    return { kind: "unavailable", state };
-  }
-  if (
-    process.platform === "linux" &&
-    !(await verifyManagedProcess(state, options.processMarker))
-  )
-    return { kind: "stale" };
-  return { kind: "unavailable", state };
-}
-
-async function waitForProcessExit(path, state, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  let nextIdentityCheck = 0;
-  while (Date.now() < deadline) {
-    // State/socket disappearance is not proof that this process has exited.
-    if (!(await processAlive(state.pid))) {
-      await removeInstanceState(path, state);
-      return true;
-    }
-    if (Date.now() >= nextIdentityCheck) {
-      nextIdentityCheck = Date.now() + 500;
-      try {
-        if (
-          (await processStartIdentity(state.pid)) !== state.processStartTime
-        ) {
-          await removeInstanceState(path, state);
-          return true;
-        }
-      } catch {
-        // An inaccessible process identity is not proof of exit. Continue to
-        // wait for the PID or its exact process-birth identity to disappear.
-      }
-    }
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  return false;
+  return (await processMayBeLive(state)) ? { kind: "unavailable" } : { kind: "stale" };
 }
 
 export async function stopManagedInstance(path, expected, options = {}) {
-  const state = await readState(path);
+  const state = await readInstanceState(path);
   if (!state) return { kind: "absent" };
+  if (options.target && !sameInstance(state, options.target))
+    return { kind: "unavailable" };
   if (!(await expectedState(state, expected))) return { kind: "stale" };
 
-  const timeoutMs = options.timeoutMs ?? 15_000;
-  if (state.shutdownControlVersion === 1) {
-    // An already-crashed owner is stale, not a failed response to this stop.
-    // Preserve ordinary crash recovery without signalling a replacement PID.
-    if (!(await processAlive(state.pid))) {
-      await removeInstanceState(path, state);
-      return { kind: "stale" };
-    }
-    await requestInstanceShutdown(path, state, timeoutMs);
-    if (!(await waitForProcessExit(path, state, timeoutMs)))
-      return { kind: "timeout", state };
-    const result = await readControl(
-      path + ".shutdown-result",
-      state,
-      "result",
-    );
-    if (!result) return { kind: "unavailable", state };
-    return { kind: result.clean ? "stopped" : "cleanup-failed", state };
-  }
-  // Legacy HTTP cannot prove its peer before receiving a bearer. Never send
-  // the Host key, even after a separate readiness request (port reuse races).
-  // Only the existing exact-process Linux signal boundary remains available.
-  if (!(await processAlive(state.pid))) {
+  if (!(await processMayBeLive(state))) {
     await removeInstanceState(path, state);
     return { kind: "stale" };
   }
-  try {
-    if ((await processStartIdentity(state.pid)) !== state.processStartTime) {
-      await removeInstanceState(path, state);
-      return { kind: "stale" };
-    }
-  } catch {
-    return { kind: "unavailable", state };
-  }
-  if (!(await verifyManagedProcess(state, options.processMarker))) {
-    return { kind: "unavailable", state };
-  }
-  try {
-    process.kill(state.pid, "SIGTERM");
-  } catch {
-    return { kind: "unavailable", state };
-  }
-  return (await waitForProcessExit(path, state, timeoutMs))
-    ? { kind: "stopped", state }
-    : { kind: "timeout", state };
+  const timeoutMs = options.timeoutMs ?? 15_000;
+  await requestInstanceShutdown(path, state, timeoutMs);
+  if (!(await observeProcessExit(state, timeoutMs)))
+    return { kind: "timeout", state };
+  await removeInstanceState(path, state);
+  const result = await readControl(path + ".shutdown-result", state, "result");
+  if (!result) return { kind: "unavailable" };
+  return { kind: result.clean ? "stopped" : "cleanup-failed", state };
 }
 
 export async function portAvailable(host, port) {
@@ -602,55 +520,4 @@ export async function portAvailable(host, port) {
     probe.once("error", () => finish(false));
     probe.listen(port, host, () => probe.close(() => finish(true)));
   });
-}
-
-async function cli() {
-  const [command, path, root, host, portText, mockText] = process.argv.slice(2);
-  if (!command || !path || !root || !host || !portText) process.exit(64);
-  const port = Number.parseInt(portText, 10);
-  const expected = {
-    root,
-    host,
-    port,
-    mock: mockText === undefined ? undefined : mockText === "1",
-  };
-  const processMarker = fileURLToPath(import.meta.url).includes(
-    `${join("build", "server")}`,
-  )
-    ? "build/server/index.js"
-    : "server/index.ts";
-
-  if (command === "inspect") {
-    const result = await inspectInstance(path, expected, { processMarker });
-    if (result.kind === "healthy") {
-      console.log(result.url);
-      return;
-    }
-    // Inspect is observational. A launcher that owns the instance lock may
-    // replace a stale publication; this standalone probe must not race it.
-    if (result.kind === "unavailable") process.exitCode = 4;
-    else if (result.kind === "mode-conflict") process.exitCode = 5;
-    else process.exitCode = 3;
-    return;
-  }
-  if (command === "stop") {
-    const result = await stopManagedInstance(path, expected, { processMarker });
-    if (result.kind === "stopped") {
-      console.log(`Stopped INSΠRE process ${result.state.pid}.`);
-      return;
-    }
-    if (result.kind === "timeout") process.exitCode = 6;
-    else if (result.kind === "unavailable") process.exitCode = 4;
-    else process.exitCode = 3;
-    return;
-  }
-  if (command === "port") {
-    process.exitCode = (await portAvailable(host, port)) ? 0 : 7;
-    return;
-  }
-  process.exitCode = 64;
-}
-
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  await cli();
 }

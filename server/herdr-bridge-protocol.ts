@@ -7,7 +7,7 @@ export {
   writeLocalJsonLine as writeHerdrBridgeRecord,
 } from "./local-json-line.js";
 
-export const HERDR_BRIDGE_VERSION = 1;
+export const HERDR_BRIDGE_VERSION = 3;
 
 export const herdrLaunchTicketSchema = z
   .object({

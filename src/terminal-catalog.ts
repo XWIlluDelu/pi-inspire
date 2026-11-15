@@ -9,11 +9,19 @@ type PatchResult = "applied" | "stale" | "refresh";
  * catalog: an equal-revision poll must still reconcile membership and order. */
 export class TerminalCatalogController {
   active = false;
-  private value: TerminalCatalogResponse | null = null;
+  private value: TerminalCatalogResponse | null;
   private readonly listeners = new Set<() => void>();
   private readonly retiredEpochs = new Set<string>();
 
-  constructor(readonly cwd: string | null) {}
+  constructor(
+    readonly cwd: string | null,
+    previous?: TerminalCatalogController,
+  ) {
+    const sameProject = previous?.cwd === cwd ? previous : undefined;
+    this.value = sameProject?.snapshot() ?? null;
+    for (const epoch of sameProject?.retiredEpochs ?? [])
+      this.retiredEpochs.add(epoch);
+  }
 
   snapshot = () => this.value;
   subscribe = (listener: () => void) => {
@@ -84,16 +92,5 @@ export class TerminalCatalogController {
       terminals: this.value!.terminals.filter((terminal) => terminal.id !== id),
     });
     return "applied";
-  }
-
-  /** Roll back only this exact optimistic order, not a later poll/mutation. */
-  order(terminals: TerminalDescriptor[]): () => void {
-    const previous = this.value;
-    if (!this.active || !previous) return () => {};
-    const next = { ...previous, terminals };
-    this.publish(next);
-    return () => {
-      if (this.active && this.value === next) this.publish(previous);
-    };
   }
 }

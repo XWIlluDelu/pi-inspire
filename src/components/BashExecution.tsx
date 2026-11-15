@@ -5,108 +5,107 @@ import {
   isResourceReferenceText,
 } from "../../shared/resource-references";
 import { stripTerminalSequences } from "../ansi";
+import { copyLoader } from "../content-copy";
 import type { ChatMessage } from "../events";
-import { CopyAction } from "./CopyAction";
+import {
+  shellCommand,
+  shellContext,
+  shellCopyText,
+  shellStatus,
+} from "../shell-record";
+import { CodeView } from "./CodeView";
 import { PiLoader } from "./PiLoader";
+import { ActivityHeader, ActivityText } from "./transcript-activity-visibility";
 
 /** Pi's direct shell result is user activity, not an assistant tool call. */
 export const BashExecution = memo(function BashExecution({
   message,
+  history = false,
 }: {
   message: ChatMessage;
+  history?: boolean;
 }) {
   const running = message.__inspireBashRunning === true;
   const error = message.__inspireBashError;
   const interrupted = message.__inspireBashInterrupted === true;
-  const contextLabel = message.excludeFromContext
-    ? "Excluded from context"
-    : error
-      ? "Context unconfirmed"
-      : "Included in context";
   const failed =
     Boolean(error) ||
     (!running &&
       !message.cancelled &&
       message.exitCode !== undefined &&
       message.exitCode !== 0);
-  const status = running
-    ? "Running"
-    : interrupted
-      ? "Interrupted"
-      : error
-        ? "Failed"
-        : message.cancelled
-          ? "Cancelled"
-          : message.exitCode !== undefined
-            ? `Exit ${message.exitCode}`
-            : "Finished";
-  const command = `${message.excludeFromContext ? "!!" : "!"}${message.command ?? ""}`;
   const output = stripTerminalSequences(message.output ?? "");
   const previewTruncated =
     (running || interrupted) && message.__inspireBashPreviewTruncated;
-  const copy = [
-    command,
-    message.output ?? "",
-    status,
-    contextLabel,
-    message.truncated ? "Output truncated" : "",
-    message.fullOutputPath ?? "",
-    error ?? "",
-  ]
-    .filter(Boolean)
-    .join("\n");
+  const fullOutput = message.fullOutputPath;
   return (
     <section
-      className={`turn shell-execution card${failed ? " card--failed" : " card--tool"}`}
-      aria-label="Shell command"
+      className="activity-surface shell-execution"
+      aria-label={history ? "Shell record preview" : "Shell command"}
     >
-      <div className="shell-execution__header">
-        {running ? (
-          <PiLoader size={14} aria-hidden />
-        ) : (
-          <SquareTerminal size={14} aria-hidden />
-        )}
+      <ActivityHeader
+        className="shell-execution__header"
+        icon={
+          running ? (
+            <PiLoader size={14} aria-hidden />
+          ) : (
+            <SquareTerminal size={14} aria-hidden />
+          )
+        }
+        copy={
+          history
+            ? undefined
+            : {
+                getContent: copyLoader(async () =>
+                  shellCopyText(message, message.output ?? ""),
+                ),
+                label: "shell result",
+              }
+        }
+      >
         <span>Shell</span>
-        <span className="shell-execution__status" role="status">
-          {status}
+        <span
+          className="shell-execution__status"
+          data-error={failed || undefined}
+          role="status"
+        >
+          {shellStatus(message)}
         </span>
-        <span className="shell-execution__context">{contextLabel}</span>
-        <CopyAction
-          text={copy}
-          label="shell result"
-          className="shell-execution__copy"
-        />
-      </div>
-      <pre className="shell-execution__command">
-        <code>{command}</code>
-      </pre>
+        <span className="shell-execution__context">
+          {shellContext(message)}
+        </span>
+      </ActivityHeader>
+      <CodeView
+        className="activity-reader shell-execution__command"
+        text={shellCommand(message)}
+      />
       {output ? (
-        <pre className="shell-execution__output">
-          <code>{output}</code>
-        </pre>
+        <ActivityText
+          className="shell-execution__output"
+          scrollable={!history}
+          label="Shell output"
+          text={output}
+        />
       ) : null}
       {previewTruncated || message.truncated ? (
-        <p className="shell-execution__note">
+        <div className="tool-notice">
           {previewTruncated
             ? "Showing the latest streamed output."
             : "Pi truncated the recorded output."}
-          {message.fullOutputPath &&
-          isResourceReferenceText(message.fullOutputPath) ? (
-            <>
-              {" "}
-              <button
-                type="button"
-                className="tool-notice__action"
-                data-file-path={fileResourceReference(message.fullOutputPath)}
-                title={`Preview ${message.fullOutputPath}`}
-              >
-                View full output
-              </button>
-            </>
-          ) : null}
-        </p>
+          {fullOutput && isResourceReferenceText(fullOutput) && (
+            <button
+              type="button"
+              className="tool-notice__action"
+              data-file-path={fileResourceReference(fullOutput)}
+              title={`Preview ${fullOutput}`}
+              aria-label={history ? "View full shell output" : undefined}
+            >
+              View full output
+            </button>
+          )}
+        </div>
       ) : null}
-      {error ? <p className="shell-execution__error">{error}</p> : null}
+      {error && <div className="tool-notice tool-notice--error">{error}</div>}
     </section>
   );
 });

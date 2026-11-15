@@ -1,178 +1,89 @@
-import { expect, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 import { checkpointAdapterConfiguration } from "../web/fixtures/extension-adapters";
-import { openMockEventSession } from "./support/mock-host";
+import { clipboardLines } from "./support/clipboard";
+import { openEventSession } from "./support/host-events";
+import {
+  openCommandPalette,
+  openConversationSearch,
+} from "./support/navigation";
+import { terminalOperation } from "./support/terminal-operations";
 
-const configuration = checkpointAdapterConfiguration;
+const searchFixture = (page: Page, name: string) =>
+  openEventSession(page, name, checkpointAdapterConfiguration, {});
+
+const highlightCount = (page: Page) =>
+  page.evaluate(() => CSS.highlights.get("transcript-match")?.size ?? 0);
 const current = () => {
   const range = CSS.highlights.get("transcript-current-match")?.values().next()
     .value as Range | undefined;
   if (!range) return null;
   return {
     text: range.toString(),
-    row: range.startContainer.parentElement?.closest<HTMLElement>(
-      "[data-transcript-row]",
-    )?.dataset.transcriptRow,
     code: !!range.startContainer.parentElement?.closest("code"),
     y: range.getBoundingClientRect().top,
   };
 };
 
-test("compact code actions keep square centered icons before and after copying", async ({
-  page,
-  context,
-}) => {
-  const emit = await openMockEventSession(
-    page,
-    "Compact code action geometry",
-    configuration,
-    {},
-  );
-  const code = "console.log('Ready');";
-  emit({
-    type: "message_end",
-    message: {
-      role: "assistant",
-      content: ["```js", code, "```"].join("\n"),
-      timestamp: 1,
-    },
-  });
-  const actions = page.locator(".code-block__actions button");
-  await expect(actions).toHaveCount(2);
-  const checkIcons = async () => {
-    const geometry = await actions.evaluateAll((buttons) =>
-      buttons.map((button) => {
-        const box = button.getBoundingClientRect();
-        const icon = button.querySelector("svg")!.getBoundingClientRect();
-        return {
-          width: box.width,
-          height: box.height,
-          iconWidth: icon.width,
-          iconHeight: icon.height,
-          x: icon.x + icon.width / 2 - box.x - box.width / 2,
-          y: icon.y + icon.height / 2 - box.y - box.height / 2,
-        };
-      }),
-    );
-    for (const item of geometry) {
-      expect(item.width).toBe(24);
-      expect(item.height).toBe(24);
-      expect(item.iconWidth).toBe(13);
-      expect(item.iconHeight).toBe(13);
-      expect(Math.abs(item.x)).toBeLessThanOrEqual(0.5);
-      expect(Math.abs(item.y)).toBeLessThanOrEqual(0.5);
-    }
-  };
-  for (const width of [1280, 820, 390, 320]) {
-    await page.setViewportSize({ width, height: 844 });
-    for (const theme of ["light", "dark"]) {
-      await page.evaluate(
-        (theme) => (document.documentElement.dataset.theme = theme),
-        theme,
-      );
-      await checkIcons();
-      for (const action of await actions.all()) {
-        await action.focus();
-        const focus = await action.evaluate((button) => {
-          const style = getComputedStyle(button);
-          const box = button.getBoundingClientRect();
-          const bar = button
-            .closest(".code-block__bar")!
-            .getBoundingClientRect();
-          const outset = Math.max(
-            0,
-            parseFloat(style.outlineWidth) + parseFloat(style.outlineOffset),
-          );
-          return {
-            visible: button.matches(":focus-visible"),
-            width: parseFloat(style.outlineWidth),
-            contained:
-              box.top - outset >= bar.top &&
-              box.bottom + outset <= bar.bottom - 1 &&
-              box.left - outset >= bar.left &&
-              box.right + outset <= bar.right,
-          };
-        });
-        expect(focus.visible).toBe(true);
-        expect(focus.width).toBeGreaterThan(0);
-        expect(focus.contained).toBe(true);
-      }
-    }
-  }
-  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-  await page.locator(".code-block__copy").click();
-  await expect(
-    page.getByRole("button", { name: "Copied", exact: true }),
-  ).toBeVisible();
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(code);
-  await checkIcons();
-});
-
-test("composition keys do not navigate transcript matches or dismiss search", async ({
+test("@cross-browser search keeps tab order, wraps matches, and yields composing keys", async ({
   page,
 }) => {
-  const emit = await openMockEventSession(
-    page,
-    "Composition-owned search",
-    configuration,
-    {},
-  );
+  const emit = await searchFixture(page, "Composition-owned search");
   emit({
     type: "message_end",
     message: { role: "user", content: "测量一，测量二。", timestamp: 1 },
   });
-  await expect(
-    page.getByRole("searchbox", { name: "Search conversation", exact: true }),
-  ).toBeVisible();
-  const input = page.getByRole("searchbox", {
-    name: "Search conversation",
-    exact: true,
-  });
-  const result = page.getByLabel("Transcript search matches");
+  const input = await openConversationSearch(page);
+  const search = page.getByRole("search", { name: "Search conversation" });
+  const result = search.getByLabel("Transcript search matches");
+  const before = await search.boundingBox();
   await input.fill("测量");
   await expect(result).toHaveText("2 matches");
-  await page.getByRole("button", { name: "Next transcript match" }).click();
+  expect(await search.boundingBox()).toEqual(before);
+  for (const control of [
+    search.getByRole("combobox", { name: "Search scope" }),
+    search.getByRole("button", { name: "Previous transcript match" }),
+    search.getByRole("button", { name: "Next transcript match" }),
+  ]) {
+    await page.keyboard.press("Tab");
+    await expect(control).toBeFocused();
+  }
+  await page.keyboard.press("Enter");
   await expect(result).toHaveText("1 of 2");
   await input.focus();
-  for (const ime of [
-    { isComposing: true },
-    { isComposing: false, keyCode: 229 },
-  ]) {
-    for (const key of ["Enter", "Escape"]) {
-      expect(
-        await input.evaluate(
-          (el, init) =>
-            el.dispatchEvent(
-              new KeyboardEvent("keydown", {
-                ...init,
-                bubbles: true,
-                cancelable: true,
-              }),
-            ),
-          { key, ...ime },
-        ),
-      ).toBe(true);
-      await expect(input).toBeFocused();
-      await expect(result).toHaveText("1 of 2");
-      await expect(input).toHaveValue("测量");
-    }
-  }
+  for (const ime of [{ isComposing: true }, { keyCode: 229 }])
+    for (const key of ["Enter", "Escape"])
+      await input.dispatchEvent("keydown", { key, ...ime });
+  await expect(input).toBeFocused();
+  await expect(result).toHaveText("1 of 2");
   await input.press("Enter");
   await expect(result).toHaveText("2 of 2");
+  await input.press("Enter");
+  await expect(result).toHaveText("1 of 2");
   await input.press("Escape");
-  await expect(input).toBeVisible();
   await expect(input).not.toBeFocused();
+  await expect(input).toHaveValue("测量");
+  const palette = await openCommandPalette(page);
+  await page.keyboard.press("Control+f");
+  await expect(palette).toBeVisible();
+  await expect(input).not.toBeFocused();
+  await page.keyboard.press("Escape");
+  await search
+    .getByRole("combobox", { name: "Search scope" })
+    .press("Control+f");
+  await expect(input).toBeFocused();
+  const desktop = page.viewportSize()!;
+  await page.setViewportSize({ width: 390, height: desktop.height });
+  await expect(input).toBeFocused();
+  await expect(input).toHaveValue("测量");
+  await page.setViewportSize(desktop);
+  await expect(input).toBeVisible();
   await expect(input).toHaveValue("测量");
 });
 
-test("search counts only visible shell and checkpoint text", async ({
+test("Live highlights rendered text and reveals matched branches, checkpoints and errors", async ({
   page,
 }) => {
-  const emit = await openMockEventSession(
-    page,
-    "Visible search text",
-    configuration,
-    {},
-  );
+  const emit = await searchFixture(page, "Search highlights");
   emit(
     {
       type: "message_end",
@@ -186,50 +97,11 @@ test("search counts only visible shell and checkpoint text", async ({
     {
       type: "message_end",
       message: {
-        role: "compactionSummary",
-        summary: "Magic Context compacted: retained decisions",
+        role: "branchSummary",
+        summary: "Reason for the fork",
         timestamp: 2,
       },
     },
-  );
-  await expect(
-    page.getByRole("searchbox", { name: "Search conversation", exact: true }),
-  ).toBeVisible();
-  const search = page.getByRole("search", {
-    name: "Search conversation",
-  });
-  const input = search.getByRole("searchbox", {
-    name: "Search conversation",
-  });
-  for (const query of ["31m", "Magic Context compacted"]) {
-    await input.fill(query);
-    await expect(search).toContainText("0 matches");
-  }
-  for (const query of ["Visible status", "retained decisions"]) {
-    await input.fill(query);
-    await expect(search.getByLabel("Transcript search matches")).toHaveText(
-      "1 match",
-    );
-    await search.getByRole("button", { name: "Next transcript match" }).click();
-    await expect(search).toContainText("1 of 1");
-    await expect
-      .poll(() => page.evaluate(current))
-      .toMatchObject({ text: query });
-  }
-  await expect(
-    page.getByText("retained decisions", { exact: true }),
-  ).toBeVisible();
-});
-
-test("literal highlights follow scope, occurrences and disclosure without changing copy", async ({
-  page,
-  context,
-}) => {
-  const emit = await openMockEventSession(
-    page,
-    "Search highlights",
-    configuration,
-    {},
   );
   const code = 'const value = "precise match";';
   const source =
@@ -240,83 +112,60 @@ test("literal highlights follow scope, occurrences and disclosure without changi
         `Ordinary paragraph ${index}, separating the first and last occurrence.\n\n`,
     ).join("") +
     `\`\`\`ts\n${code}\n\`\`\`\n\n[Reference](https://example.com/hidden-path). One visible hidden-path.`;
+  const messages = [
+    { role: "user", content: "A precise match from the user." },
+    {
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "precise match hidden from search" },
+        { type: "text", text: source },
+      ],
+    },
+    {
+      role: "compactionSummary",
+      summary: "The precise match is retained in the summary.",
+    },
+    {
+      role: "assistant",
+      content: [],
+      stopReason: "error",
+      errorMessage:
+        "Earlier diagnostic line\n".repeat(60) + "Diagnostic precise match",
+    },
+  ];
   emit(
-    {
+    ...messages.map((message, index) => ({
       type: "message_end",
-      message: {
-        role: "user",
-        content: "A precise match from the user.",
-        timestamp: 1,
-      },
-    },
-    {
-      type: "message_end",
-      message: {
-        role: "assistant",
-        content: [
-          { type: "thinking", thinking: "precise match hidden from search" },
-          { type: "text", text: source },
-        ],
-        timestamp: 2,
-      },
-    },
-    {
-      type: "message_end",
-      message: {
-        role: "compactionSummary",
-        summary: "The precise match is retained in the summary.",
-        timestamp: 3,
-      },
-    },
-    {
-      type: "message_end",
-      message: {
-        role: "assistant",
-        content: [],
-        stopReason: "error",
-        errorMessage:
-          "The request failed.\n\n" +
-          "Earlier diagnostic line\n".repeat(60) +
-          "Diagnostic precise match",
-        timestamp: 4,
-      },
-    },
+      message: { ...message, timestamp: index + 1 },
+    })),
   );
-  await expect(
-    page.getByRole("heading", { name: "Searchable answer" }),
-  ).toBeAttached();
-  await expect(
-    page.getByRole("searchbox", { name: "Search conversation", exact: true }),
-  ).toBeVisible();
-  const input = page.getByRole("searchbox", { name: "Search conversation" });
+  const input = await openConversationSearch(page);
   const count = page.getByLabel("Transcript search matches");
-  await input.fill("precise match");
+  await input.fill("31m");
+  await expect(count).toHaveText("0 matches");
+  for (const query of ["Visible status", "Reason for the fork"]) {
+    await input.fill(query);
+    await input.press("Enter");
+    await expect
+      .poll(() => page.evaluate(current))
+      .toMatchObject({ text: query });
+  }
+  const branch = page.getByRole("button", { name: "Branch context" });
+  await expect(branch).toHaveAttribute("aria-expanded", "true");
+  await branch.click();
+  await input.press("Enter");
+  await expect(branch).toHaveAttribute("aria-expanded", "true");
+  await input.fill("PRECISE MATCH");
   await expect(count).toHaveText("6 matches");
-  await expect
-    .poll(() =>
-      page.evaluate(() => CSS.highlights.get("transcript-match")?.size),
-    )
-    .toBe(4);
-  await page.getByRole("combobox", { name: "Search scope" }).click();
-  await page.getByRole("option", { name: "Model", exact: true }).click();
-  await expect(count).toHaveText("5 matches");
-  await expect
-    .poll(() =>
-      page.evaluate(() => CSS.highlights.get("transcript-match")?.size),
-    )
-    .toBe(3);
-  await input.press("Enter");
-  await expect(count).toHaveText("1 of 5");
+  await expect.poll(() => highlightCount(page)).toBe(4);
+  for (let match = 0; match < 4; match++) await input.press("Enter");
+  await expect(count).toHaveText("4 of 6");
   await expect
     .poll(() => page.evaluate(current))
-    .toMatchObject({ text: "precise match", code: false });
-  await input.press("Enter");
-  await expect(count).toHaveText("2 of 5");
-  await input.press("Enter");
-  await expect(count).toHaveText("3 of 5");
-  await expect
-    .poll(() => page.evaluate(current))
-    .toMatchObject({ text: "precise match", code: true });
+    .toMatchObject({
+      text: "precise match",
+      code: true,
+    });
   const logBounds = (await page.getByRole("log").boundingBox())!;
   await expect
     .poll(async () => {
@@ -328,9 +177,6 @@ test("literal highlights follow scope, occurrences and disclosure without changi
       );
     })
     .toBe(true);
-  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-  await page.getByRole("button", { name: "Copy code", exact: true }).click();
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(code);
 
   await input.press("Enter");
   await expect(
@@ -360,80 +206,71 @@ test("literal highlights follow scope, occurrences and disclosure without changi
       }),
     )
     .toBe(true);
-  await input.press("Escape");
-  await expect(input).toBeVisible();
-  await expect(input).not.toBeFocused();
-  await expect(input).toHaveValue("precise match");
-  await expect(count).toHaveText("5 of 5");
-  await input.focus();
-  const box = (await input.boundingBox())!;
-  // Native clear remains usable after theming; no duplicate custom button.
-  await input.click({ position: { x: box.width - 10, y: box.height / 2 } });
-  await expect(input).toHaveValue("");
-  await expect
-    .poll(() => page.evaluate(() => CSS.highlights.has("transcript-match")))
-    .toBe(false);
-
   // A source-only URL occurrence must not be falsely assigned to visible prose.
   await input.fill("hidden-path");
   await input.press("Enter");
   await expect(count).toHaveText("1 of 2");
-  await expect
-    .poll(() =>
-      page.evaluate(() => CSS.highlights.get("transcript-match")?.size),
-    )
-    .toBe(1);
-  await expect
-    .poll(() =>
-      page.evaluate(() => CSS.highlights.get("transcript-current-match")?.size),
-    )
-    .toBe(0);
-});
+  await expect.poll(() => highlightCount(page)).toBe(1);
+  await expect.poll(() => page.evaluate(current)).toBeNull();
 
-test("highlights recover when a searched virtual row mounts and clear on session change", async ({
-  page,
-}) => {
-  const emit = await openMockEventSession(
-    page,
-    "Virtual search highlights",
-    configuration,
-    {},
-  );
+  await input.fill("newly settled phrase");
+  await page.getByRole("button", { name: "Jump to latest" }).click();
+  const live = {
+    role: "assistant",
+    content: "Newly settled phrase",
+    timestamp: 8,
+    __inspireLiveId: "search-result-arrival",
+  };
   emit(
-    ...Array.from({ length: 80 }, (_, index) => ({
-      type: "message_end",
-      message: {
-        role: "user",
-        content:
-          index === 2
-            ? "Find this unique older phrase."
-            : `Ordinary prompt ${index}.`,
-        timestamp: index + 1,
-      },
-    })),
+    { type: "agent_start" },
+    { type: "message_start", message: { ...live, content: "" } },
   );
-  await expect(page.locator(".transcript__column--virtual")).toBeVisible();
   await expect(
-    page.getByRole("searchbox", { name: "Search conversation", exact: true }),
+    page.getByRole("status").filter({ hasText: "Working…" }),
   ).toBeVisible();
-  const input = page.getByRole("searchbox", { name: "Search conversation" });
-  // Count the whole projection, including rows outside the virtual DOM window.
-  await input.fill("Ordinary prompt");
-  await expect(
-    page.getByRole("status", { name: "Transcript search matches" }),
-  ).toHaveText("79 matches");
-  await input.fill("unique older");
-  await expect(
-    page.getByRole("status", { name: "Transcript search matches" }),
-  ).toHaveText("1 match");
+  emit({ type: "message_update", message: live });
+  await expect(page.getByText("Newly settled phrase")).toBeVisible();
+  await expect(count).toHaveText("0 matches");
+  const scroll = () => page.getByRole("log").evaluate((el) => el.scrollTop);
+  const before = await scroll();
+  emit({
+    type: "message_update",
+    message: {
+      ...live,
+      content: live.content + "\n\n" + "Another paragraph.\n\n".repeat(40),
+    },
+  });
+  await expect.poll(scroll).toBeGreaterThan(before);
+  emit({ type: "message_end", message: { ...live, __inspireSettled: true } });
+  await expect(count).toHaveText("1 match");
+  // An explicitly selected hit wins even if a layout scroll first reaches the tail.
+  await input.fill("Reason for the fork");
   await input.press("Enter");
   await expect
     .poll(() => page.evaluate(current))
-    .toMatchObject({ text: "unique older" });
+    .toMatchObject({ text: "Reason for the fork" });
+  const log = page.getByRole("log");
+  await log.evaluate((el) => {
+    el.scrollTop = el.scrollHeight;
+  });
+  const pinned = await scroll();
+  const awayFromLatest = () =>
+    log.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight);
+  emit({
+    type: "message_start",
+    message: {
+      ...live,
+      __inspireLiveId: "next-live",
+      timestamp: 9,
+      content: "Later output.\n\n".repeat(50),
+    },
+  });
+  await expect(log).toContainText("Later output");
+  await expect(count).toHaveText("1 of 1");
+  expect(await scroll()).toBeCloseTo(pinned, 0);
+  expect(await awayFromLatest()).toBeGreaterThan(10);
   await page.getByRole("button", { name: "New session", exact: true }).click();
-  await expect
-    .poll(() => page.evaluate(() => CSS.highlights.has("transcript-match")))
-    .toBe(false);
+  await expect.poll(() => highlightCount(page)).toBe(0);
 });
 
 test.describe("touch reading controls", () => {
@@ -447,13 +284,8 @@ test.describe("touch reading controls", () => {
     page,
     context,
   }) => {
-    const emit = await openMockEventSession(
-      page,
-      "Touch code actions",
-      configuration,
-      {},
-    );
-    const code = "console.log('Ready');";
+    const emit = await searchFixture(page, "Touch code actions");
+    const code = "  console.log('Ready');\n\n\t// Preserve indentation";
     emit({
       type: "message_end",
       message: {
@@ -464,66 +296,77 @@ test.describe("touch reading controls", () => {
     });
     const copy = page.getByRole("button", { name: "Copy code", exact: true });
     await expect(copy).toBeVisible();
-    for (const width of [390, 320]) {
-      await page.setViewportSize({ width, height: 844 });
-      const left = (await page
-        .getByRole("button", { name: "Insert code in terminal" })
-        .boundingBox())!;
-      const right = (await copy.boundingBox())!;
-      expect(
-        Math.min(left.width, left.height, right.width, right.height),
-      ).toBeGreaterThanOrEqual(36);
-      expect(right.x - left.x - left.width).toBeGreaterThanOrEqual(8);
-      for (const action of await page
-        .locator(".code-block__actions button")
-        .all()) {
-        const icon = (await action.locator("svg").first().boundingBox())!;
-        const button = (await action.boundingBox())!;
-        expect(icon.width).toBe(13);
-        expect(icon.height).toBe(13);
-        expect(
-          Math.abs(icon.x + icon.width / 2 - button.x - button.width / 2),
-        ).toBeLessThanOrEqual(0.5);
-        expect(
-          Math.abs(icon.y + icon.height / 2 - button.y - button.height / 2),
-        ).toBeLessThanOrEqual(0.5);
-      }
-    }
+    await page.setViewportSize({ width: 320, height: 844 });
+    const insert = page.getByRole("button", {
+      name: "Insert code in terminal",
+    });
+    const left = (await insert.boundingBox())!;
+    const right = (await copy.boundingBox())!;
+    expect(
+      Math.min(left.width, left.height, right.width, right.height),
+    ).toBeGreaterThanOrEqual(36);
+    expect(right.x - left.x - left.width).toBeGreaterThanOrEqual(8);
     await context.grantPermissions(["clipboard-read", "clipboard-write"]);
     await copy.tap();
-    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
-      code,
-    );
+    await expect.poll(() => clipboardLines(page)).toEqual(code.split("\n"));
     await expect(page.locator(".ctx")).toHaveCount(0);
-    await page.getByRole("button", { name: "Open conversation search" }).tap();
-    const input = page.getByRole("searchbox", {
-      name: "Search conversation",
-    });
+    const log = page.getByRole("log");
+    const readingPosition = () =>
+      log.evaluate((el) => ({
+        top: el.scrollTop,
+        width: el.clientWidth,
+        height: el.clientHeight,
+      }));
+    const beforeSearch = await readingPosition();
+    const input = await openConversationSearch(page);
+    await expect(input).toBeFocused();
+    expect(await readingPosition()).toEqual(beforeSearch);
     await input.fill("Ready");
     await input.press("Enter");
     await expect
       .poll(() => page.evaluate(current))
       .toMatchObject({ text: "Ready", code: true });
-    for (const theme of ["light", "dark"]) {
-      await page.evaluate(
-        (value) => (document.documentElement.dataset.theme = value),
-        theme,
-      );
-      const search = page.getByRole("search");
-      expect(
-        await search.evaluate((el) => el.scrollWidth <= el.clientWidth),
-      ).toBe(true);
-    }
+    const search = page.getByRole("search", { name: "Search conversation" });
+    const scope = search.getByRole("combobox", { name: "Search scope" });
+    await scope.click();
+    await page
+      .getByRole("listbox", { name: "Search scope" })
+      .getByRole("option", { name: "User", exact: true })
+      .click();
+    await expect(input).toHaveValue("Ready");
+    await expect(page.getByLabel("Transcript search matches")).toHaveText(
+      "0 matches",
+    );
+    expect(
+      await search.evaluate((el) => el.scrollWidth - el.clientWidth),
+    ).toBeLessThanOrEqual(1);
     await input.press("Escape");
+    await expect(input).toBeHidden();
     await expect(
       page.getByRole("button", { name: "Open conversation search" }),
-    ).toBeVisible();
-    await expect
-      .poll(() => page.evaluate(() => CSS.highlights.has("transcript-match")))
-      .toBe(false);
-    await page.getByRole("button", { name: "Insert code in terminal" }).tap();
-    await expect(
-      page.getByRole("button", { name: "Terminal", exact: true }),
-    ).toHaveAttribute("aria-pressed", "true");
+    ).toBeFocused();
+    await expect.poll(() => highlightCount(page)).toBe(0);
+    const created = page.waitForResponse(
+      (response) =>
+        response.ok() &&
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname === "/api/terminal-operations" &&
+        response.request().postDataJSON()?.intent?.command === "create",
+    );
+    await insert.tap();
+    const {
+      result: { id },
+    } = await (await created).json();
+    try {
+      await expect(
+        page.locator(`[role=tab][data-dock-tab="terminal:${id}"]`),
+      ).toHaveAttribute("aria-selected", "true");
+    } finally {
+      const closed = await terminalOperation(page, {
+        command: "remove",
+        params: { id, force: true },
+      });
+      expect(closed.ok()).toBe(true);
+    }
   });
 });

@@ -1,32 +1,68 @@
 import { fork } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { PiCommand } from "../shared/commands.js";
+import { z } from "zod";
 import type { ModelOption, NewSessionDefaults } from "../shared/contracts.js";
+import {
+  type ModelCatalogResponse,
+  modelThinkingPreferencesSchema,
+} from "../shared/model-settings.js";
 import { getAgentDir, piInstallation } from "./pi-runtime.js";
 import { isolatedProcessOptions, signalProcessTree } from "./process-tree.mjs";
 
-export interface ModelMetadata {
-  models: ModelOption[];
-  commands?: PiCommand[];
+export interface NativeModelCatalog extends ModelCatalogResponse {
+  enabledModelPatterns?: string[];
+}
+
+export interface ModelMetadata extends NativeModelCatalog {
   defaults: NewSessionDefaults;
   /** Registered definitions, including routers whose physical provider lacks auth. */
   virtualModels: ModelOption[];
-  warning?: string;
 }
 
-async function queryModelWorker(
+export const modelQuerySchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("catalog") }),
+  z.object({ kind: z.literal("settings") }),
+  z.object({ kind: z.literal("validate"), path: z.string() }),
+]);
+type ModelQuery = z.infer<typeof modelQuerySchema>;
+const queryResults = {
+  catalog: z.custom<ModelMetadata>((value) => {
+    const metadata = value as Partial<ModelMetadata> | null | undefined;
+    return (
+      typeof metadata?.defaults?.cwd === "string" &&
+      Array.isArray(metadata.models) &&
+      Array.isArray(metadata.virtualModels) &&
+      modelThinkingPreferencesSchema.safeParse(metadata.thinkingPreferences)
+        .success
+    );
+  }),
+  settings: z.object({
+    effective: z.record(z.string(), z.unknown()),
+    thinkingPreferences: modelThinkingPreferencesSchema,
+    projectOverrides: z.array(z.string()),
+    globalError: z.boolean(),
+    projectError: z.boolean(),
+  }),
+  validate: z.null(),
+};
+type ModelQueryResult = {
+  [Kind in keyof typeof queryResults]: z.infer<(typeof queryResults)[Kind]>;
+};
+
+async function queryModelWorker<Query extends ModelQuery>(
   cwd: string,
   agentDir: string,
-  validationPath?: string,
-): Promise<ModelMetadata | null> {
+  query: Query,
+): Promise<ModelQueryResult[Query["kind"]]> {
+  type Result = ModelQueryResult[Query["kind"]];
   const ownPath = fileURLToPath(import.meta.url);
   const source = ownPath.endsWith(".ts");
   const child = fork(
     join(dirname(ownPath), `model-metadata-worker.${source ? "ts" : "js"}`),
-    [cwd, ...(validationPath ? [validationPath] : [])],
+    [cwd, JSON.stringify(query)],
     {
-      cwd,
+      cwd: query.kind === "settings" ? process.cwd() : cwd,
       execArgv: source ? ["--import", import.meta.resolve("tsx")] : [],
       env: {
         ...process.env,
@@ -39,22 +75,33 @@ async function queryModelWorker(
     },
   );
   return new Promise((resolve, reject) => {
-    let result: ModelMetadata | null | undefined;
+    let result: Result | undefined;
     let timedOut = false;
     let retirement: Promise<void> | undefined;
     const retire = () =>
       (retirement ??= signalProcessTree(child, "SIGKILL", { isolated: true }));
-    const timer = setTimeout(() => {
-      timedOut = true;
-      void retire();
-    }, 15_000);
-    child.on(
-      "message",
-      (message: { ok?: boolean; result?: ModelMetadata | null }) => {
-        if (message.ok) result = message.result;
-        if (typeof message.ok === "boolean") void retire();
+    const timer = setTimeout(
+      () => {
+        timedOut = true;
+        void retire();
       },
+      process.platform === "win32" ? 30_000 : 15_000,
     );
+    child.on("message", (message: { ok?: boolean; result?: unknown }) => {
+      if (message.ok) {
+        const parsed = queryResults[query.kind].safeParse(message.result);
+        if (
+          parsed.success &&
+          (query.kind !== "catalog" ||
+            (parsed.data as ModelMetadata).defaults.cwd === cwd)
+        )
+          result = parsed.data as Result;
+      }
+      if (typeof message.ok === "boolean") {
+        clearTimeout(timer);
+        void retire();
+      }
+    });
     child.once("error", (error) => {
       clearTimeout(timer);
       reject(error);
@@ -62,16 +109,7 @@ async function queryModelWorker(
     child.once("close", async () => {
       clearTimeout(timer);
       await retire();
-      if (
-        !timedOut &&
-        (validationPath
-          ? result === null
-          : result &&
-            result.defaults.cwd === cwd &&
-            Array.isArray(result.models) &&
-            Array.isArray(result.virtualModels))
-      )
-        resolve(result ?? null);
+      if (!timedOut && result !== undefined) resolve(result);
       else
         reject(
           new Error(
@@ -84,8 +122,12 @@ async function queryModelWorker(
   });
 }
 
-export async function queryModelMetadata(cwd: string): Promise<ModelMetadata> {
-  return (await queryModelWorker(cwd, getAgentDir())) as ModelMetadata;
+export function queryModelMetadata(cwd: string) {
+  return queryModelWorker(cwd, getAgentDir(), { kind: "catalog" });
+}
+
+export function readNativeModelSettings(cwd: string, agentDir: string) {
+  return queryModelWorker(cwd, agentDir, { kind: "settings" });
 }
 
 /** Validate a candidate with the same native resources and trust as discovery. */
@@ -94,7 +136,7 @@ export async function validateModelConfig(
   agentDir: string,
   path: string,
 ): Promise<void> {
-  await queryModelWorker(cwd, agentDir, path);
+  await queryModelWorker(cwd, agentDir, { kind: "validate", path });
 }
 
 /** Catalog and default previews share one native query per actual target cwd.

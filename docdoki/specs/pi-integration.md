@@ -12,10 +12,10 @@ covers:
   - src/components/{AppTopbar,ExportDialog,ExtensionDisplays,ExtensionUiDialog,ExtensionDialogContent}.tsx
   - docs/examples/task-board/**
   - tests/server/task-board-example.integration.test.ts
-  - tests/web/extension-dialog-content.test.tsx
   - tests/server/pi-*.test.ts
   - tests/server/runtime*.test.ts
-  - tests/web/{app,extension-displays,overlay-and-palette}.test.tsx
+  - tests/browser/extension-ui.spec.ts
+  - tests/web/extension-ui-ownership.test.tsx
   - tests/web/{store*,events}.test.ts
 ---
 
@@ -42,8 +42,10 @@ navigation, worker-local model-catalog refresh, effective retry reads, pending-i
 provider authentication. Attachments and selected prompt resources remain user input.
 
 The Host resolves the external `pi` executable, imports its public SDK, and starts RPC workers from
-that same package root. Startup checks the APIs it calls; version metadata is diagnostic. The
-checkout's pinned development dependency is not a production fallback. Pi's normal agent directory,
+that same package root. Official managed launchers follow their current-version pointer, including
+when reached through a symlink; discovery must not skip that installation in favor of an older Pi
+on PATH. Startup checks the APIs it calls; version metadata is diagnostic. The checkout's pinned
+development dependency is not a production fallback. Pi's normal agent directory,
 project directory, settings, credentials, models, extensions, skills, prompts, and sessions remain
 authoritative. Workers inherit the user environment defined by [[host-lifecycle]].
 
@@ -59,9 +61,8 @@ session/transport owner; stale failures cannot roll back newer requests, and cur
 reconcile with Pi. Retry reads use the owning worker's public `getSettings()` to retain its trust
 and override decisions.
 
-An effective-value read confirms runtime state, not persistence. Controls disclose their
-worker/global-save/project-override scope. Pi 1.3.0 lacks a reliable worker-owned persistence result;
-[[pi-capability-gaps]] records the missing interface and why SDK flush/error APIs are insufficient.
+Controls identify the effective worker setting and explain its relationship to global settings
+and project overrides. [[pi-capability-gaps]] tracks confirmation of worker-owned writes to disk.
 
 [[model-settings]] owns saved defaults, declarations, selection and authentication. Login/logout
 uses public `ModelRuntime` methods with the worker's provider definitions and native storage.
@@ -102,8 +103,8 @@ Reload replaces an idle worker and invalidates resource/model inventories. Openi
 instead calls public `ExtensionCommandContext.modelRegistry.refresh({ signal })` in the current
 worker, then `get_available_models`; `set_model` uses that available snapshot. The hidden bridge
 command/status pair is worker/session/nonce-owned, coalesced per worker and independent of the
-persistence/branch mutation lane. Its 15-second discovery budget does not stop Pi. Native extension registrations,
-credentials, offline policy and usable cached catalogs remain authoritative.
+persistence/branch mutation lane. Its 15-second discovery budget does not stop Pi. Native extension
+registrations, credentials, offline policy and usable cached catalogs remain authoritative.
 
 Owned RPC and connected TUI controls return effective model/thinking values. [[model-settings]]
 owns selection and discovery semantics; [[herdr-enhancement]] owns the TUI receiver;
@@ -111,10 +112,9 @@ owns selection and discovery semantics; [[herdr-enhancement]] owns the TUI recei
 
 ### Installed resources and capability gaps
 
-`/changelog` reads the installed package's matching version section. Generic argument completion
-needs a public current-worker callback invocation: Pi 1.3.0 command inventories expose metadata,
-not callable completions, and RPC autocomplete registration is a no-op. Keep that requirement in
-[[pi-capability-gaps]]; [[composer]] owns supported argument assistance and resource preparation.
+`/changelog` reads the installed package's matching version section. [[composer]] owns argument
+assistance and resource preparation. [[pi-capability-gaps]] tracks generic argument completion and
+the public callback interface it needs.
 
 ## Extension UI reuse and source DIY
 
@@ -131,8 +131,7 @@ provide subagent management or scheduling.
 The [task-board example](../../docs/extensions.md#choose-the-smallest-integration) demonstrates
 persisted custom messages, editable notes and cancellable local timers. Startup/tree navigation
 cancels local timers and restores the selected branch's saved state without resuming process-local
-work. UI state belongs
-to its session/view/transport. An explicit Show tasks action obtains a missing snapshot; selection
+work. UI state belongs to its session/view/transport. An explicit Show tasks action obtains a missing snapshot; selection
 does not silently issue commands or index full history. The view can mount in Context without
 adding a stock Tasks panel or runtime React SDK. Native confirmation remains the permission surface;
 extension authors own scheduling and permissions.
@@ -196,10 +195,11 @@ input starts a prompt. Host-held input is not history and cannot cross worker/br
 Stop recovers Pending under [[composer]] through public `clear_queue` before `abort`; abort alone can
 continue queued work. Recovery and Stop bypass blocked persistence/prompt-hook lanes, reject new
 deliveries while Stop runs and retire a preflight worker when native abort cannot interrupt its hook.
-Failed clear reports failure and retires the worker rather than leaving a live queue.
-A prompt written to Pi but stopped before its receipt remains acceptance-unknown. Unwritten image
-preparation remains with its existing owner: worker retirement rejects retained preparations back to
-staged originals rather than deleting them. A Stop epoch is rechecked after asynchronous preparation
+Failed clear reports failure and retires the worker instead of leaving a live queue.
+
+A prompt written to Pi but stopped before its receipt stays acceptance-unknown. Unwritten image
+preparation stays with its existing owner: worker retirement returns retained preparations to
+staged originals instead of deleting them. A Stop epoch is rechecked after asynchronous preparation
 and at the prompt write boundary, so completed Stop cannot admit an older preparation. A genuinely
 new post-Stop send remains available.
 
@@ -211,15 +211,16 @@ cannot resolve a message suspended before its event. Recovery transfers owned or
 staged handles; discard, consumption and retirement release only worker-owned copies. [[composer]]
 owns recovery merging, copying and unresolved-image feedback.
 
-An input hook can also accept a prompt without agent lifecycle events: an idle/empty Pi observation
-may clear that queued admission only while the same worker and sole pending prompt still own it.
-Failure of this observation does not reject an accepted prompt.
+An input hook can handle a prompt without agent events. The Host clears that preflight only after
+Pi reports an idle worker with an empty queue and the worker still owns the sole pending prompt.
+A `started` receipt can arrive before Pi appends the user message. Immediate Composer history
+uses artifact references from the reconciled session projection.
 
 Direct-worker retirement requires observed leader exit (or proven spawn failure) and completed
 process-tree signaling. Herdr additionally requires its worker scope to be empty. Replacement and
 recovery writes stay fenced while termination is pending or rejected. Protocol failure notifies
-Runtime in either case and retains the original stop result. [[state-ownership]]
-records these observation/execution/retirement distinctions.
+Runtime in either case and keeps the original stop result. [[state-ownership]] records these
+observation/execution/retirement distinctions.
 
 ## Persistence and worker identity
 
@@ -246,8 +247,8 @@ When Stop retains the worker, cancel the captured pending requests through the s
 response FIFO as explicit Cancel, sending `cancelled: true` before removing each handled ID. Questions
 created during cancellation remain answerable. Worker retirement/replacement or close clears its
 remaining requests; expiry removes timed-out requests. Model settlement leaves requests intact
-because independent extension commands may still await an answer. Fork leaves source
-requests with their worker. Startup restrictions follow [[session-persistence]] and the
+because independent extension commands may still await an answer. Fork leaves source requests with
+their worker. Startup restrictions follow [[session-persistence]] and the
 [adaptation guide](../../docs/extensions.md#startup).
 
 Select supports arrows, Enter and pointer/touch choice. Confirm shows No/Yes; Escape and narrow-screen
@@ -257,19 +258,20 @@ overlay height, editors and choice lists yield space before actions; editors kee
 minimum. Long bodies and diagnostics remain scrollable and keyboard-reachable, with input errors
 inside the owning form. Resizing preserves draft and focus.
 
-Show remaining deadline time and retain the original expiry across reopen/reconnect. Pi 1.3.0 lacks request-attributed
-extension dismissal; aggregate prompt callbacks cannot identify concurrent same-title questions.
-[[pi-capability-gaps]] retains the requirement for a request-ID-bearing cancellation event.
+Show remaining deadline time and preserve the expiry across reopen and reconnect.
+[[pi-capability-gaps]] tracks cancellation initiated by an extension for a particular request.
 
 Keyed status text is bounded at Host retention, restored on reconnect, ordered in a compact topbar
-trigger at every viewport width, and cleared with its worker. Native in-process reload also clears
-prior statuses/widgets, including shutdown updates, before the configured extensions publish startup
-UI. The first-loaded internal bridge signals Pi’s public reload startup boundary without replacing
-its worker or branch view; subsequent startup values remain current. Click, tap or keyboard activation opens
-full status text; absent status takes no space. String-array widgets
-preserve their key and above/below-Composer placement, replacing or clearing by key. Their supplied
-text and Copy are primary; internal keys and paths are not manufactured headings. Oversized keys are
-rejected to avoid identity collisions; terminal control sequences are display-cleaned.
+trigger at every viewport width, and cleared with its worker. Click, tap or keyboard activation
+opens full status text; absent status takes no space. Native in-process reload also clears prior
+statuses/widgets, including shutdown updates, before the configured extensions publish startup UI.
+The first-loaded internal bridge signals Pi’s public reload startup boundary without replacing its
+worker or branch view; subsequent startup values remain current.
+
+String-array widgets keep their key and above/below-Composer placement, replacing or clearing by
+key. Their supplied text and Copy are primary; internal keys and paths are not manufactured
+headings. Oversized keys are rejected to avoid identity collisions; terminal control sequences are
+display-cleaned.
 
 TUI component factories stay terminal-only. Malformed, oversized, and unknown one-way displays retain
 bounded attributable raw inspection. Unknown response-bearing methods use the cancellable dialog
@@ -290,6 +292,7 @@ cover same-file navigation and independent SessionManager fork with an active so
 Native PTY coverage checks actual image content at `before_agent_start`, browser input preserving
 ordinary and Stop-restored terminal drafts, native dialog blocking and agent-only Stop. Its Herdr
 terminal transport is a fixture, not a full Herdr installation check. The native RPC UI integration
-checks that retained-worker Stop resolves the Pi dialog promise and preserves a new independent question.
+checks that retained-worker Stop resolves the Pi dialog promise and preserves a new independent
+question.
 [[dependency-boundaries]] explains runtime and development ownership;
-[[native-command-compatibility]] describes dispatch and native regression setup.
+[[native-command-compatibility]] describes native regression setup and the handoff investigation.

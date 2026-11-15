@@ -3,9 +3,9 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { HostDirEntry, HostDirListing } from "../../shared/contracts";
 import { ApiError } from "../api";
 import { isComposingKeyboardEvent } from "../keyboard-input";
-import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
+import { isTransientFailure, recoverableRead } from "../recovery-backoff";
 import { store, useAppState } from "../store";
-import { useModalFocus } from "../use-modal-focus";
+import { DialogHeader, Modal } from "./Modal";
 import { PiLoader } from "./PiLoader";
 
 /**
@@ -24,27 +24,31 @@ export function DirectoryPicker({
   onCancel: () => void;
   onPick: (path: string) => void;
 }) {
-  const [listing, setListing] = useState<HostDirListing | null>(null);
-  const [path, setPath] = useState(initial?.trim() ?? "");
+  const [confirmed, setConfirmed] = useState<{
+    listing: HostDirListing;
+    transport: number;
+    hidden: boolean;
+  } | null>(null);
+  const [location, setLocation] = useState(initial?.trim() ?? "");
+  const [draftPath, setDraftPath] = useState<string | null>(null);
+  const path = draftPath ?? location;
   const [roots, setRoots] = useState<HostDirEntry[]>([]);
   const [rootsUnavailable, setRootsUnavailable] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [showHidden, setShowHidden] = useState(false);
   const transportGeneration = useAppState((state) => state.transportGeneration);
+  const listing =
+    confirmed?.transport === transportGeneration ? confirmed.listing : null;
   const initialTransport = useRef(transportGeneration);
   const pathRef = useRef(path);
   pathRef.current = path;
-  const listingTransport = useRef<number | null>(null);
-  const listingRequest = useRef<AbortController | null>(null);
-  const dialogRef = useModalFocus<HTMLDivElement>(
-    true,
-    "directory-picker",
-    onCancel,
+  // Each new read aborts its predecessor, including its pending retry and late result.
+  const listingRequest = useRef<ReturnType<typeof recoverableRead> | null>(
+    null,
   );
-  // Only the newest request may write state — rapid navigation must not
-  // let a slow earlier level overwrite a later one.
-  const ticket = useRef(0);
+  const ownsTransport = () =>
+    store.getState().transportGeneration === transportGeneration;
   const listRef = useRef<HTMLDivElement>(null);
   const restoreListFocus = useRef(false);
   useLayoutEffect(() => {
@@ -67,7 +71,7 @@ export function DirectoryPicker({
     fallbackHome?: boolean;
   }>({});
 
-  const load = (
+  const load = async (
     path?: string,
     {
       fallbackHome = false,
@@ -77,91 +81,63 @@ export function DirectoryPicker({
       hidden?: boolean;
     } = {},
   ) => {
-    const mine = ++ticket.current;
     listingRequest.current?.abort();
-    const request = new AbortController();
-    const recovery = new RecoveryBackoff();
+    const request = recoverableRead(ownsTransport);
     listingRequest.current = request;
-    const owns = () =>
-      !request.signal.aborted &&
-      ticket.current === mine &&
-      store.getState().transportGeneration === transportGeneration;
     requested.current = { path, fallbackHome };
     restoreListFocus.current = Boolean(
       listRef.current?.contains(document.activeElement),
     );
-    setPath(path ?? "");
-    if (
-      listing?.path !== path ||
-      hidden !== showHidden ||
-      listingTransport.current !== transportGeneration
-    )
-      setListing(null);
+    setLocation(path ?? "");
+    setConfirmed((current) =>
+      current?.listing.path === path &&
+      current?.hidden === hidden &&
+      current?.transport === transportGeneration
+        ? current
+        : null,
+    );
     setLoading(true);
     setError(null);
-    const read = async (
-      target?: string,
-    ): Promise<HostDirListing | undefined> => {
-      while (owns()) {
-        try {
-          return await store.browseHostDirs(target, hidden);
-        } catch (cause) {
-          if (!owns()) return undefined;
-          if (
-            !isTransientFailure(cause) ||
-            !(await recovery.wait(request.signal))
-          )
-            throw cause;
-        }
-      }
-      return undefined;
-    };
-    return read(path)
-      .catch((cause: unknown) => {
-        if (!owns()) return undefined;
+    const read = (target?: string) =>
+      request.read(() => store.browseHostDirs(target, hidden));
+    try {
+      const result = await read(path).catch((cause: unknown) => {
         if (
+          request.current() &&
           fallbackHome &&
           path &&
           cause instanceof ApiError &&
           [400, 403, 404].includes(cause.status)
-        ) {
-          recovery.reset();
+        )
           return read(undefined);
-        }
         throw cause;
-      })
-      .then((result) => {
-        if (!owns() || !result) return;
-        requested.current = { path: result.path };
-        listingTransport.current = transportGeneration;
-        setListing(result);
-        setPath(result.path);
-        return result;
-      })
-      .catch((cause: unknown) => {
-        if (!owns()) return;
-        if (!isTransientFailure(cause)) {
-          setListing(null);
-          listingTransport.current = null;
-        }
-        setError(
-          cause instanceof Error ? cause.message : "Cannot open that directory",
-        );
-      })
-      .finally(() => {
-        recovery.reset();
-        if (owns()) setLoading(false);
-        if (listingRequest.current === request) listingRequest.current = null;
       });
+      if (!request.current()) return;
+      requested.current = { path: result.path };
+      setConfirmed({ listing: result, transport: transportGeneration, hidden });
+      setLocation(result.path);
+      return result;
+    } catch (cause) {
+      if (!request.current()) return;
+      if (!isTransientFailure(cause)) setConfirmed(null);
+      setError(
+        cause instanceof Error ? cause.message : "Cannot open that directory",
+      );
+    } finally {
+      if (request.current()) setLoading(false);
+      if (listingRequest.current === request) listingRequest.current = null;
+    }
+  };
+
+  const navigate = (target?: string) => {
+    setDraftPath(null);
+    return load(target);
   };
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: transport replacement revalidates the live path; navigation and visibility own their own reads.
   useEffect(() => {
-    const request = new AbortController();
-    const recovery = new RecoveryBackoff();
-    const owns = () =>
-      !request.signal.aborted &&
-      store.getState().transportGeneration === transportGeneration;
+    const request = recoverableRead(ownsTransport);
+    setDraftPath(null);
     void load(pathRef.current.trim() || undefined, {
       fallbackHome: initialTransport.current === transportGeneration,
     });
@@ -170,47 +146,22 @@ export function DirectoryPicker({
     // Advisory drive discovery must not block directory navigation.
     void (async () => {
       try {
-        while (owns()) {
-          try {
-            const result = await store.browseHostRoots();
-            if (owns()) setRoots(result.roots);
-            return;
-          } catch (cause) {
-            if (!owns()) return;
-            if (
-              !isTransientFailure(cause) ||
-              !(await recovery.wait(request.signal))
-            )
-              throw cause;
-          }
-        }
+        const result = await request.read(() => store.browseHostRoots());
+        if (request.current()) setRoots(result.roots);
       } catch {
-        if (owns()) setRootsUnavailable(true);
-      } finally {
-        recovery.reset();
+        if (request.current()) setRootsUnavailable(true);
       }
     })();
     return () => {
       request.abort();
-      recovery.reset();
       listingRequest.current?.abort();
-      ticket.current += 1;
     };
   }, [transportGeneration]);
 
   return (
-    <div className="overlay" role="presentation" onClick={onCancel}>
-      <div
-        ref={dialogRef}
-        className="dialog dirpicker"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Choose project directory"
-        tabIndex={-1}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="dirpicker__header">
-          <h2 className="dialog__title">Choose project directory</h2>
+    <Modal aria-label="Choose project directory" onDismiss={onCancel}>
+      <div className="dialog dirpicker">
+        <DialogHeader title="Choose project directory" bar={false}>
           <button
             type="button"
             className="icon-button dirpicker__hidden"
@@ -230,32 +181,30 @@ export function DirectoryPicker({
               <EyeOff size={16} aria-hidden />
             )}
           </button>
-        </div>
-        <div className="dirpicker__path-field" data-path={path}>
-          <textarea
-            rows={1}
-            className="dirpicker__path"
-            aria-label="Project directory"
-            value={path}
-            placeholder="/path/to/project"
-            spellCheck={false}
-            readOnly={loading}
-            aria-busy={loading}
-            onChange={(event) => {
-              setPath(event.target.value);
-              setError(null);
-            }}
-            onKeyDown={(event) => {
-              if (
-                event.key === "Enter" &&
-                !isComposingKeyboardEvent(event.nativeEvent)
-              ) {
-                event.preventDefault();
-                if (path.trim() && !loading) void load(path.trim());
-              }
-            }}
-          />
-        </div>
+        </DialogHeader>
+        <textarea
+          rows={2}
+          className="dialog__editor dirpicker__path"
+          aria-label="Project directory"
+          value={path}
+          placeholder="/path/to/project"
+          spellCheck={false}
+          readOnly={loading}
+          aria-busy={loading}
+          onChange={(event) => {
+            setDraftPath(event.target.value);
+            setError(null);
+          }}
+          onKeyDown={(event) => {
+            if (
+              event.key !== "Enter" ||
+              isComposingKeyboardEvent(event.nativeEvent)
+            )
+              return;
+            event.preventDefault();
+            if (path.trim() && !loading) void navigate(path.trim());
+          }}
+        />
         {rootsUnavailable ? (
           <div className="dirpicker__note" role="status">
             Drive list unavailable. Enter a full path to browse another
@@ -272,9 +221,9 @@ export function DirectoryPicker({
               <button
                 key={root.path}
                 type="button"
-                className="dirpicker__root button--quiet"
+                className="button button--quiet dirpicker__root"
                 title={`Browse ${root.path}`}
-                onClick={() => void load(root.path)}
+                onClick={() => void navigate(root.path)}
               >
                 <HardDrive size={13} aria-hidden />
                 <span>{root.name}</span>
@@ -295,7 +244,7 @@ export function DirectoryPicker({
               type="button"
               className="dirpicker__row"
               disabled={loading}
-              onClick={() => void load(listing.parent ?? undefined)}
+              onClick={() => void navigate(listing.parent ?? undefined)}
             >
               <CornerLeftUp size={13} aria-hidden />
               <span className="dirpicker__name">..</span>
@@ -307,7 +256,7 @@ export function DirectoryPicker({
               type="button"
               className="dirpicker__row"
               disabled={loading}
-              onClick={() => void load(entry.path)}
+              onClick={() => void navigate(entry.path)}
             >
               <Folder size={13} aria-hidden />
               <span className="dirpicker__name">{entry.name}</span>
@@ -343,7 +292,7 @@ export function DirectoryPicker({
             onClick={() => {
               if (listing && path.trim() === listing.path) onPick(listing.path);
               else
-                void load(path.trim()).then((result) => {
+                void navigate(path.trim()).then((result) => {
                   if (result) onPick(result.path);
                 });
             }}
@@ -352,6 +301,6 @@ export function DirectoryPicker({
           </button>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

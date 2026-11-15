@@ -1,22 +1,22 @@
-import { AlertTriangle, ArrowLeft } from "lucide-react";
+import { AlertTriangle, PenLine } from "lucide-react";
 import {
   type MutableRefObject,
   memo,
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
 } from "react";
 import {
   projectNameFromCwd,
   type ResourceProbeResult,
 } from "../../shared/contracts";
-import { fileIconForPath } from "../file-icons";
-import { gitDecorationForChange, presentGitFacet } from "../git-presentation";
+import { presentGitFacet } from "../git-presentation";
 import type { ResourceRow } from "../resources";
 import { gitChangeForWorkspacePath, store } from "../store";
-import { ContextSplitBody } from "./ContextSplitBody";
 import type { ContextPaneView } from "./context-pane-view";
-import { FilePreview } from "./FilePreview";
+import { FileIndexRow } from "./FileIndexRow";
+import { FilePreview, type FileReadingState } from "./FilePreview";
 import { PiLoader } from "./PiLoader";
 import { parentPath, ResourcePathLabel } from "./ResourcePathLabel";
 import {
@@ -28,6 +28,9 @@ import {
 } from "./WorkspaceBrowser";
 
 type ResourceStanding = ResourceProbeResult | undefined;
+
+/** Rows shown before "Show all" in the chat's file list. */
+const RECENT_ROWS = 5;
 
 function workspaceLabel(cwd: string | null): string {
   return cwd ? projectNameFromCwd(cwd) : "Project files";
@@ -52,7 +55,6 @@ const RecentFileRow = memo(function RecentFileRow({
   availability: ResourceStanding;
   change: ReturnType<typeof gitChangeForWorkspacePath>;
 }) {
-  const Icon = fileIconForPath(workspacePath ?? row.name);
   const parent = parentPath(displayPath);
   const selected = workspacePath
     ? selectedPath === workspacePath
@@ -63,14 +65,39 @@ const RecentFileRow = memo(function RecentFileRow({
     availability.availability !== "unknown";
   const missing = availability?.availability === "missing";
   const facet = presentGitFacet(change);
-  const decoration = gitDecorationForChange(change);
   return (
-    <button
-      type="button"
-      className={`recent-file ${selected ? "recent-file--active" : ""} ${unavailable ? "recent-file--unavailable" : ""} ${missing ? "recent-file--missing" : ""}`}
+    <FileIndexRow
+      file={workspacePath ?? row.name}
+      name={row.name}
+      context={parent && <ResourcePathLabel path={parent} />}
+      change={change}
+      className={`recent-file ${unavailable ? "recent-file--unavailable" : ""} ${missing ? "recent-file--missing" : ""}`}
+      mark={
+        row.writes && (
+          <span
+            className="recent-file__produced"
+            title="Written or edited in this chat"
+          >
+            <PenLine size={11} aria-hidden />
+          </span>
+        )
+      }
+      unavailable={
+        unavailable && (
+          <AlertTriangle
+            size={12}
+            aria-label={
+              availability.availability === "ambiguous"
+                ? `File reference ambiguous: ${availability.message ?? "choose a match"}`
+                : `File unavailable: ${availability.message ?? availability.availability}`
+            }
+          />
+        )
+      }
       aria-current={selected || undefined}
       aria-label={[
         displayPath,
+        row.writes ? "written in this chat" : null,
         facet?.label,
         unavailable
           ? `File unavailable: ${availability?.message ?? availability?.availability}`
@@ -78,40 +105,13 @@ const RecentFileRow = memo(function RecentFileRow({
       ]
         .filter(Boolean)
         .join(", ")}
-      title={unavailable ? (availability?.message ?? displayPath) : displayPath}
-      onClick={() => void store.openResource(reference)}
-    >
-      <Icon size={13} aria-hidden />
-      <span
-        className={`recent-file__name ${decoration ? `git-deco--${decoration}` : ""}`}
-      >
-        {row.name}
-      </span>
-      {parent ? (
-        <span className="recent-file__path">
-          <ResourcePathLabel path={parent} />
-        </span>
-      ) : null}
-      {facet ? (
-        <span
-          className={`git-mark ${decoration ? `git-deco--${decoration}` : ""}`}
-          role="img"
-          aria-label={facet.label}
-          title={facet.label}
-        >
-          {facet.mark}
-        </span>
-      ) : unavailable ? (
-        <AlertTriangle
-          size={12}
-          aria-label={
-            availability.availability === "ambiguous"
-              ? `File reference ambiguous: ${availability.message ?? "choose a match"}`
-              : `File unavailable: ${availability.message ?? availability.availability}`
-          }
-        />
-      ) : null}
-    </button>
+      title={`${unavailable ? (availability?.message ?? displayPath) : displayPath}\nCtrl+click: Show in file manager`}
+      onClick={(event) => {
+        if (event.ctrlKey || event.metaKey)
+          void store.showInFileManager(reference, workspacePath);
+        else void store.openResource(reference);
+      }}
+    />
   );
 });
 
@@ -137,18 +137,27 @@ function FileBrowser({
       savedScrollTop.current = scroller.scrollTop;
     };
   }, [savedScrollTop]);
-  const recent = useMemo(() => {
-    const seen = new Set<string>();
-    return rows.filter((row) => {
+  const [showAll, setShowAll] = useState(false);
+  // One Recent list. Spellings of one file merge; a write under any spelling
+  // marks the row, so produced files read in place instead of on a tab.
+  const listed = useMemo(() => {
+    const seen = new Map<string, ResourceRow>();
+    for (const row of rows) {
       const reference = row.reference ?? row.label;
-      if (state.resourceAvailability[reference]?.availability === "invalid")
-        return false;
-      const key = state.resourceWorkspacePaths[reference] ?? reference;
-      if (seen.has(key) || seen.size >= 5) return false;
-      seen.add(key);
-      return true;
-    });
-  }, [rows, state.resourceAvailability, state.resourceWorkspacePaths]);
+      const standing = state.resourceStanding[reference];
+      if (standing?.availability === "invalid") continue;
+      const key = standing?.workspacePath ?? reference;
+      const existing = seen.get(key);
+      if (existing) {
+        if (row.writes && !existing.writes)
+          seen.set(key, { ...existing, writes: true });
+        continue;
+      }
+      seen.set(key, row);
+    }
+    return [...seen.values()];
+  }, [rows, state.resourceStanding]);
+  const recent = showAll ? listed : listed.slice(0, RECENT_ROWS);
   const searching = Boolean(state.workspaceQuery.trim());
   const projectLabel = workspaceLabel(state.cwd);
   const selectedPath = selectedWorkspacePath(state);
@@ -175,7 +184,8 @@ function FileBrowser({
               <div className="recent-files">
                 {recent.map((row) => {
                   const reference = row.reference ?? row.label;
-                  const workspacePath = state.resourceWorkspacePaths[reference];
+                  const standing = state.resourceStanding[reference];
+                  const workspacePath = standing?.workspacePath;
                   return (
                     <RecentFileRow
                       key={reference}
@@ -184,8 +194,8 @@ function FileBrowser({
                       displayPath={workspacePath ?? row.label}
                       workspacePath={workspacePath}
                       selectedPath={selectedPath}
-                      selectedReference={state.selectedResourceReference}
-                      availability={state.resourceAvailability[reference]}
+                      selectedReference={state.fileInspection.reference ?? null}
+                      availability={standing}
                       change={
                         workspacePath
                           ? gitChangeForWorkspacePath(
@@ -203,41 +213,32 @@ function FileBrowser({
                   </div>
                 ) : error && recent.length === 0 ? (
                   <div className="files-browser__note" role="status">
-                    Recent files are unavailable right now.
+                    Recent files unavailable.
                   </div>
                 ) : recent.length === 0 ? (
                   <div className="files-browser__note">
-                    No files referenced in this chat yet.
+                    No files referenced yet.
                   </div>
+                ) : null}
+                {listed.length > RECENT_ROWS ? (
+                  <button
+                    type="button"
+                    className="files-browser__note files-browser__more"
+                    aria-expanded={showAll}
+                    onClick={() => setShowAll(!showAll)}
+                  >
+                    {showAll ? "Show fewer" : `Show all ${listed.length}`}
+                  </button>
                 ) : null}
               </div>
             </section>
             <section className="files-browser__section files-browser__section--workspace">
               <h2 title={state.cwd ?? projectLabel}>{projectLabel}</h2>
-              <WorkspaceTree revealRequests />
+              <WorkspaceTree />
             </section>
           </>
         )}
       </div>
-    </div>
-  );
-}
-
-function WorkspaceIndexHeader({ state }: { state: ContextPaneView }) {
-  const projectLabel = workspaceLabel(state.cwd);
-  return (
-    <div className="file-search-controls res__index-header">
-      <button
-        type="button"
-        className="res__index-header--back"
-        aria-label={`Back to file browser for ${projectLabel}`}
-        title={state.cwd ?? projectLabel}
-        onClick={() => store.showFileBrowser()}
-      >
-        <ArrowLeft size={14} aria-hidden />
-        <span className="res__index-title">{projectLabel}</span>
-      </button>
-      <WorkspaceVisibilityToggle />
     </div>
   );
 }
@@ -247,14 +248,20 @@ export function FilesPane({
   rows,
   loading,
   error,
+  browseScrollTop,
+  readingState,
+  onQuote,
 }: {
   state: ContextPaneView;
   rows: ResourceRow[];
   loading: boolean;
   error: string | null;
+  browseScrollTop: MutableRefObject<number>;
+  readingState?: FileReadingState;
+  onQuote?: (markdown: string) => void;
 }) {
-  const browseScrollTop = useRef(0);
-  if (state.fileBrowserView === "browse")
+  const { fileInspection } = state;
+  if (fileInspection.kind === "browse")
     return (
       <div className="res__body res__body--files">
         <FileBrowser
@@ -267,11 +274,13 @@ export function FilesPane({
       </div>
     );
   return (
-    <ContextSplitBody
-      mode="files"
-      header={<WorkspaceIndexHeader state={state} />}
-      index={<WorkspaceTree revealRequests />}
-      detail={<FilePreview state={state} />}
-    />
+    <div className="res__body res__body--files res__body--file-tab">
+      <FilePreview
+        key={fileInspection.reference}
+        state={state}
+        readingState={readingState}
+        onQuote={onQuote}
+      />
+    </div>
   );
 }

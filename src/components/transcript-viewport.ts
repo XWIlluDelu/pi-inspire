@@ -1,4 +1,3 @@
-import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   type MutableRefObject,
   useCallback,
@@ -7,94 +6,30 @@ import {
   useState,
 } from "react";
 
-const VIRTUALIZE_AT = 60;
-const OLDER_PRELOAD_PX = 320;
-
-export interface TranscriptViewportRow {
-  key: string;
-}
-
-interface TranscriptScrollAnchor {
-  key: string;
-  offset: number;
-}
-
-interface TranscriptViewportOptions<Row extends TranscriptViewportRow> {
-  rows: readonly Row[];
+interface TranscriptViewportOptions {
   sessionId: string;
   viewId: string;
-  hasOlder: boolean;
-  olderError: string | null;
-  onLoadOlder: () => Promise<boolean>;
   /** A message-projection value whose change should preserve latest-follow. */
   followSignal: unknown;
   /** Search navigation has deliberately claimed the viewport. */
   searchOwnsViewportRef: MutableRefObject<boolean>;
 }
 
-function captureScrollAnchor(root: HTMLElement): TranscriptScrollAnchor | null {
-  const rootBounds = root.getBoundingClientRect();
-  if (rootBounds.height <= 0) return null;
-  const rootTop = rootBounds.top;
-  const visible = [
-    ...root.querySelectorAll<HTMLElement>("[data-transcript-key]"),
-  ]
-    .map((element) => ({ element, bounds: element.getBoundingClientRect() }))
-    .filter(({ bounds }) => bounds.bottom > rootTop)
-    .sort((left, right) => left.bounds.top - right.bounds.top)[0];
-  const key = visible?.element.dataset.transcriptKey;
-  return key ? { key, offset: visible.bounds.top - rootTop } : null;
-}
-
-function restoreScrollAnchor(
-  root: HTMLElement,
-  anchor: TranscriptScrollAnchor,
-): boolean {
-  const element = [
-    ...root.querySelectorAll<HTMLElement>("[data-transcript-key]"),
-  ].find((candidate) => candidate.dataset.transcriptKey === anchor.key);
-  if (!element) return false;
-  root.scrollTop +=
-    element.getBoundingClientRect().top -
-    root.getBoundingClientRect().top -
-    anchor.offset;
-  return true;
-}
-
-/**
- * Owns the transcript viewport, not transcript state: bounded older-page
- * loading, virtualized geometry, anchored prepends, and user-owned
- * latest-follow. The caller retains the canonical row projection.
- */
-export function useTranscriptViewport<Row extends TranscriptViewportRow>({
-  rows,
+export function useTranscriptViewport({
   sessionId,
   viewId,
-  hasOlder,
-  olderError,
-  onLoadOlder,
   followSignal,
   searchOwnsViewportRef,
-}: TranscriptViewportOptions<Row>) {
+}: TranscriptViewportOptions) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
-  const userScrollIntentRef = useRef(false);
+  const userScrollIntentRef = useRef<"history" | "latest" | "unknown" | null>(
+    null,
+  );
   const userScrollIntentTimerRef = useRef<number | null>(null);
   const geometricFollowFrameRef = useRef<number | null>(null);
-  const anchoredLayoutFrameRef = useRef<number | null>(null);
   const lastScrollTopRef = useRef(0);
-  const viewportIntentRef = useRef(0);
-  const olderLoadInFlightRef = useRef<object | null>(null);
-  const [loadingEarlier, setLoadingEarlier] = useState(false);
-  const onLoadOlderRef = useRef(onLoadOlder);
   const projectionIdentity = `${sessionId}\u0000${viewId}`;
-  const projectionIdentityRef = useRef(projectionIdentity);
-  const hasOlderRef = useRef(hasOlder);
-  const olderErrorRef = useRef(olderError);
-  onLoadOlderRef.current = onLoadOlder;
-  projectionIdentityRef.current = projectionIdentity;
-  hasOlderRef.current = hasOlder;
-  olderErrorRef.current = olderError;
 
   const pinnedRef = useRef(true);
   const [pinned, setPinned] = useState(true);
@@ -112,43 +47,12 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
     atLatestRef.current = latest;
     setAtLatest(latest);
   }, []);
-  const virtualize = rows.length >= VIRTUALIZE_AT;
-  const getRowKey = useCallback(
-    (index: number) => rows[index]?.key ?? index,
-    [rows],
-  );
-  const virtualizer = useVirtualizer({
-    enabled: virtualize,
-    count: virtualize ? rows.length : 0,
-    getScrollElement: () => scrollRef.current,
-    getItemKey: getRowKey,
-    estimateSize: () => 180,
-    overscan: 6,
-  });
-  const rowsRef = useRef(rows);
-  const virtualizeRef = useRef(virtualize);
-  const virtualizerRef = useRef(virtualizer);
-  rowsRef.current = rows;
-  virtualizeRef.current = virtualize;
-  virtualizerRef.current = virtualizer;
-
-  const markUserScrollIntent = useCallback(() => {
-    viewportIntentRef.current += 1;
-    userScrollIntentRef.current = true;
-    if (userScrollIntentTimerRef.current !== null)
-      window.clearTimeout(userScrollIntentTimerRef.current);
-    userScrollIntentTimerRef.current = window.setTimeout(() => {
-      userScrollIntentTimerRef.current = null;
-      userScrollIntentRef.current = false;
-    }, 400);
-  }, []);
-
   const followLatest = useCallback(() => {
     const element = scrollRef.current;
     // Input arrives before the browser's corresponding scroll event. Do not let
     // a stream delta win that race and pull the viewport back to latest.
     if (!element || !pinnedRef.current || userScrollIntentRef.current) return;
-    // Pending and extension content follow the virtual message list. The latest
+    // Pending and extension content follow the messages. The latest
     // boundary is the complete scrollport, not the end of its last message row.
     element.scrollTop = Math.max(
       0,
@@ -156,6 +60,20 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
     );
     measureLatest();
   }, [measureLatest]);
+
+  const markUserScrollIntent = useCallback(
+    (direction: "history" | "latest" | "unknown" = "unknown") => {
+      userScrollIntentRef.current = direction;
+      if (userScrollIntentTimerRef.current !== null)
+        window.clearTimeout(userScrollIntentTimerRef.current);
+      userScrollIntentTimerRef.current = window.setTimeout(() => {
+        userScrollIntentTimerRef.current = null;
+        userScrollIntentRef.current = null;
+        followLatest();
+      }, 400);
+    },
+    [followLatest],
+  );
 
   const scheduleGeometricFollow = useCallback(() => {
     if (geometricFollowFrameRef.current !== null) return;
@@ -165,93 +83,6 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
       measureLatest();
     });
   }, [followLatest, measureLatest]);
-
-  const requestOlderRef = useRef<() => boolean>(() => false);
-  const loadOlder = useCallback(async () => {
-    const element = scrollRef.current;
-    if (!element || olderLoadInFlightRef.current) return;
-    const owner = {};
-    olderLoadInFlightRef.current = owner;
-    setLoadingEarlier(true);
-    const loadingProjectionIdentity = projectionIdentityRef.current;
-    const loadingViewportIntent = viewportIntentRef.current;
-    // Keep ownership through deferred geometry, not only the page response.
-    const ownsLoad = () =>
-      olderLoadInFlightRef.current === owner &&
-      projectionIdentityRef.current === loadingProjectionIdentity &&
-      scrollRef.current === element;
-    const finish = () => {
-      olderLoadInFlightRef.current = null;
-      setLoadingEarlier(false);
-    };
-    // A slow read may finish after search, a seek, or another scroll gesture.
-    // Keep its data, but let the newer navigation own prepend geometry.
-    const ownsAnchor = () => {
-      if (!ownsLoad()) return false;
-      if (viewportIntentRef.current === loadingViewportIntent) return true;
-      finish();
-      return false;
-    };
-    const oldHeight = element.scrollHeight;
-    const oldTop = element.scrollTop;
-    const anchor = captureScrollAnchor(element);
-    pinnedRef.current = false;
-    setPinned(false);
-    const prepended = await onLoadOlderRef.current();
-    if (!ownsAnchor()) return;
-    if (!prepended) {
-      finish();
-      return;
-    }
-
-    const restore = () => {
-      if (!ownsAnchor()) return;
-      const current = scrollRef.current;
-      if (current && (!anchor || !restoreScrollAnchor(current, anchor))) {
-        current.scrollTop =
-          oldTop + Math.max(0, current.scrollHeight - oldHeight);
-      }
-      // A short visible page can legitimately require several bounded host
-      // pages. Keep one continuous loading cycle while the viewport remains in
-      // the preload zone instead of flashing between each request.
-      if (current && current.scrollTop <= OLDER_PRELOAD_PX) {
-        requestAnimationFrame(() => {
-          if (!ownsAnchor()) return;
-          olderLoadInFlightRef.current = null;
-          if (!requestOlderRef.current()) setLoadingEarlier(false);
-        });
-      } else {
-        finish();
-      }
-    };
-    requestAnimationFrame(() =>
-      requestAnimationFrame(() => {
-        if (!ownsAnchor()) return;
-        const anchorIndex = anchor
-          ? rowsRef.current.findIndex((row) => row.key === anchor.key)
-          : -1;
-        if (anchorIndex >= 0 && virtualizeRef.current) {
-          virtualizerRef.current.scrollToIndex(anchorIndex, { align: "start" });
-          requestAnimationFrame(() => requestAnimationFrame(restore));
-        } else {
-          restore();
-        }
-      }),
-    );
-  }, []);
-
-  const requestOlder = useCallback((): boolean => {
-    if (
-      !scrollRef.current ||
-      olderLoadInFlightRef.current ||
-      !hasOlderRef.current ||
-      olderErrorRef.current
-    )
-      return false;
-    void loadOlder();
-    return true;
-  }, [loadOlder]);
-  requestOlderRef.current = requestOlder;
 
   const onScroll = useCallback(() => {
     const element = scrollRef.current;
@@ -264,10 +95,9 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
     if (searchOwnsViewportRef.current) {
       pinnedRef.current = false;
       setPinned(false);
-      if (element.scrollTop <= OLDER_PRELOAD_PX) requestOlderRef.current();
       return;
     }
-    // Virtual-row measurement, Markdown reflow, and browser scroll anchoring
+    // Markdown reflow and browser scroll anchoring
     // also emit scroll events. They may maintain latest-follow while latest owns
     // the viewport, but they may never take ownership back from a user.
     if (!userScrollIntentRef.current) {
@@ -282,14 +112,16 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
     // reacquire it only by actually reaching the latest boundary.
     const movedTowardHistory = element.scrollTop < previousScrollTop;
     const nextPinned = !movedTowardHistory && remaining <= 1;
+    // A queued reflow/anchoring event can still reach latest after an upward
+    // wheel arrives but before its scroll. Keep the gesture and existing owner;
+    // geometry alone cannot turn that input into a return to latest.
+    if (nextPinned && userScrollIntentRef.current === "history") return;
     pinnedRef.current = nextPinned;
-    if (nextPinned) userScrollIntentRef.current = false;
+    if (nextPinned) userScrollIntentRef.current = null;
     setPinned(nextPinned);
-    if (element.scrollTop <= OLDER_PRELOAD_PX) requestOlderRef.current();
   }, [followLatest, measureLatest, searchOwnsViewportRef]);
 
   const restoreGeometricFollow = useCallback(() => {
-    viewportIntentRef.current += 1;
     const element = scrollRef.current;
     const isPinned = element
       ? element.scrollHeight - element.scrollTop - element.clientHeight <= 1
@@ -300,103 +132,25 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
   }, [measureLatest]);
 
   const releaseLatestFollow = useCallback(() => {
-    viewportIntentRef.current += 1;
     pinnedRef.current = false;
     setPinned(false);
   }, []);
 
-  const preserveAnchorThroughLayout = useCallback(
-    (anchorElement: HTMLElement, alignment: "start" | "center" | "end") => {
-      const root = scrollRef.current;
-      if (!root?.contains(anchorElement)) return;
-      const rootBounds = root.getBoundingClientRect();
-      const anchorBounds = anchorElement.getBoundingClientRect();
-      // An async disclosure load must not reclaim the viewport after the user
-      // has moved away from the fold that initiated it.
-      if (
-        anchorBounds.bottom < rootBounds.top ||
-        anchorBounds.top > rootBounds.bottom
-      )
-        return;
-      viewportIntentRef.current += 1;
-
-      const coordinate = (bounds: DOMRect) => {
-        if (alignment === "start") return bounds.top;
-        if (alignment === "end") return bounds.bottom;
-        return (bounds.top + bounds.bottom) / 2;
-      };
-      const offset = coordinate(anchorBounds) - rootBounds.top;
-
-      // A disclosure gesture owns the viewport before its synchronous layout
-      // change. Otherwise ResizeObserver latest-follow can pull a historical
-      // fold to the end of the session as its height changes.
-      const restoreLatestAtBoundary =
-        pinnedRef.current && !searchOwnsViewportRef.current;
-      userScrollIntentRef.current = false;
-      if (userScrollIntentTimerRef.current !== null) {
-        window.clearTimeout(userScrollIntentTimerRef.current);
-        userScrollIntentTimerRef.current = null;
-      }
-      pinnedRef.current = false;
-      setPinned(false);
-
-      if (anchoredLayoutFrameRef.current !== null)
-        cancelAnimationFrame(anchoredLayoutFrameRef.current);
-      anchoredLayoutFrameRef.current = requestAnimationFrame(() => {
-        anchoredLayoutFrameRef.current = requestAnimationFrame(() => {
-          anchoredLayoutFrameRef.current = null;
-          const currentRoot = scrollRef.current;
-          if (
-            !anchorElement.isConnected ||
-            !currentRoot?.contains(anchorElement)
-          )
-            return;
-          const delta =
-            coordinate(anchorElement.getBoundingClientRect()) -
-            currentRoot.getBoundingClientRect().top -
-            offset;
-          if (Number.isFinite(delta) && Math.abs(delta) > 0.5)
-            currentRoot.scrollTop += delta;
-          lastScrollTopRef.current = currentRoot.scrollTop;
-          measureLatest();
-          if (
-            restoreLatestAtBoundary &&
-            currentRoot.scrollHeight -
-              currentRoot.scrollTop -
-              currentRoot.clientHeight <=
-              1
-          ) {
-            pinnedRef.current = true;
-            setPinned(true);
-          }
-        });
-      });
-    },
-    [measureLatest, searchOwnsViewportRef],
-  );
-
   const jumpToLatest = useCallback(() => {
-    viewportIntentRef.current += 1;
-    userScrollIntentRef.current = false;
+    userScrollIntentRef.current = null;
     pinnedRef.current = true;
     setPinned(true);
     followLatest();
   }, [followLatest]);
 
   useEffect(() => {
-    if (anchoredLayoutFrameRef.current !== null) {
-      cancelAnimationFrame(anchoredLayoutFrameRef.current);
-      anchoredLayoutFrameRef.current = null;
-    }
     if (geometricFollowFrameRef.current !== null) {
       cancelAnimationFrame(geometricFollowFrameRef.current);
       geometricFollowFrameRef.current = null;
     }
     pinnedRef.current = true;
-    userScrollIntentRef.current = false;
+    userScrollIntentRef.current = null;
     lastScrollTopRef.current = 0;
-    olderLoadInFlightRef.current = null;
-    setLoadingEarlier(false);
     setPinned(true);
     followLatest();
   }, [followLatest, projectionIdentity]);
@@ -405,8 +159,6 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
     () => () => {
       if (userScrollIntentTimerRef.current !== null)
         window.clearTimeout(userScrollIntentTimerRef.current);
-      if (anchoredLayoutFrameRef.current !== null)
-        cancelAnimationFrame(anchoredLayoutFrameRef.current);
     },
     [],
   );
@@ -418,7 +170,7 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
     followLatest();
   }, [followLatest, followSignal]);
 
-  // Markdown layout, card animation, font loading, virtualizer measurement,
+  // Markdown layout, card animation, font loading,
   // and mobile keyboard changes can alter the content or scrollport after
   // React's message effect. Preserve latest through those real geometry changes
   // without moving a user-owned viewport. rAF coalesces a ResizeObserver burst
@@ -439,28 +191,14 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
     };
   }, [scheduleGeometricFollow, projectionIdentity]);
 
-  // The existing scroll handler is the single proximity authority. This runs
-  // after initial latest-follow so a short transcript can fill its viewport,
-  // while a normal long transcript stays at the latest message until scrolled.
-  useEffect(() => {
-    const element = scrollRef.current;
-    if (element && element.scrollTop <= OLDER_PRELOAD_PX)
-      requestOlderRef.current();
-  }, [hasOlder, olderError, projectionIdentity, rows.length]);
-
   return {
     scrollRef,
     contentRef,
-    virtualize,
-    virtualizer,
     pinned,
     atLatest,
-    loadingEarlier,
     markUserScrollIntent,
     onScroll,
-    loadOlder,
     releaseLatestFollow,
-    preserveAnchorThroughLayout,
     restoreGeometricFollow,
     jumpToLatest,
   };

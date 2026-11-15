@@ -1,74 +1,63 @@
+import { ChevronRight, FolderOpen } from "lucide-react";
 import {
-  ChevronRight,
-  FolderOpen,
-  FolderSearch,
-  Paperclip,
-  Send,
-} from "lucide-react";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
-  MAX_PROJECT_FILES,
-  type ModelIdentity,
   type ModelOption,
   modelIdentityKey,
-  type NewSessionDefaults,
   type SessionReadOnlyReason,
   THINKING_LEVELS,
   type ThinkingLevel,
 } from "../../shared/contracts";
 import {
-  isImageMimeType,
-  isSupportedPromptImageMimeType,
-} from "../../shared/image-types";
-import { ApiError, type ProjectFileResult } from "../api";
-import { selectAttachmentFiles } from "../attachment-selection";
-import { clipboardFiles } from "../clipboard-files";
+  type ModelCatalogResponse,
+  modelSwitchThinkingLevel,
+} from "../../shared/model-settings";
+import { ApiError } from "../api";
 import type { PiCommand } from "../composer-completion";
-import { shouldSubmitComposerEnter } from "../composer-keyboard";
-import type { PendingAttachment } from "../controllers/composer-controller";
+import { relativeTime } from "../format";
 import { isComposingKeyboardEvent } from "../keyboard-input";
-import { clampThinkingLevel, supportedThinkingLevels } from "../model-options";
+import {
+  clampThinkingLevel,
+  resolveModelMetadata,
+  supportedThinkingLevels,
+} from "../model-options";
 import {
   availableStatusControls,
   usePresentationAdapters,
 } from "../presentation-adapters";
-import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
-import {
-  sessionDraft,
-  setSessionDraft,
-  setStartDraft,
-  startDraft,
-} from "../session-drafts";
+import { recoverableRead } from "../recovery-backoff";
+import { hasDraftInput, useSessionDraft } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
-import { AttachmentList } from "./AttachmentList";
-import { ComposerInput } from "./ComposerInput";
+import {
+  readRecentSessionsOpen,
+  saveRecentSessionsOpen,
+} from "../workbench-session";
 import { ThinkingControl } from "./ComposerThinkingControl";
 import { DirectoryPicker } from "./DirectoryPicker";
+import { MessageEditor } from "./MessageEditor";
 import { ModelSelector } from "./ModelSelector";
 import { visibleSessions } from "./nav-model";
 import { PiLoader } from "./PiLoader";
-import { ProjectFileChips, ProjectFilePicker } from "./ProjectFiles";
-import { relativeTime } from "./transcript-rows";
 import { BrandLogo, Wordmark } from "./Wordmark";
 
 const DIRECTORY_PREVIEW_DELAY_MS = 220;
 
-interface WelcomeAttachment extends PendingAttachment {
-  file: File;
-}
-
-function localAttachment(file: File): WelcomeAttachment {
-  const image = isImageMimeType(file.type);
-  return {
-    localId: crypto.randomUUID(),
-    file,
-    fileName: file.name || "pasted-image",
-    mimeType: file.type || "application/octet-stream",
-    size: file.size,
-    kind: isSupportedPromptImageMimeType(file.type) ? "image" : "file",
-    previewUrl: image ? URL.createObjectURL(file) : undefined,
-    status: "ready",
-  };
+function candidateEffort(
+  model: ModelOption,
+  catalog: ModelCatalogResponse | undefined,
+  current: ThinkingLevel,
+): ThinkingLevel {
+  const defaults = catalog?.defaults;
+  return defaults?.model &&
+    modelIdentityKey(model) === modelIdentityKey(defaults.model)
+    ? defaults.thinkingLevel
+    : modelSwitchThinkingLevel(model, catalog?.thinkingPreferences, current);
 }
 
 export interface WelcomeInheritance {
@@ -84,9 +73,9 @@ export interface WelcomeInheritance {
 /** Landing composer. Its staged files remain browser-local until Pi has
  * assigned the new session identity, then enter the normal attachment owner
  * and prompt lifecycle before the first message is delivered. */
-export const Welcome = memo(function Welcome({
+export function Welcome({
   showRecent = true,
-  inherited,
+  inherited: inheritance = null,
   onDirectoryChange,
 }: {
   showRecent?: boolean;
@@ -95,14 +84,7 @@ export const Welcome = memo(function Welcome({
 }) {
   const state = useAppState(
     (source) => ({
-      sessionId: source.sessionId,
       transportGeneration: source.transportGeneration,
-      cwd: source.cwd,
-      model: source.model,
-      modelDiscovery: source.modelDiscovery,
-      readOnlyReason: source.readOnlyReason,
-      thinkingLevel: source.thinkingLevel,
-      commands: source.commands,
       sessions: source.sessions,
       availableModels: source.availableModels,
       prefs: source.prefs,
@@ -110,78 +92,28 @@ export const Welcome = memo(function Welcome({
     }),
     shallowEqual,
   );
-  const liveInheritance = state.cwd
-    ? ({
-        sessionId: state.sessionId ?? undefined,
-        cwd: state.cwd,
-        model: state.model,
-        modelDiscovery: state.modelDiscovery,
-        readOnlyReason: state.readOnlyReason,
-        thinkingLevel: state.thinkingLevel,
-        commands: state.commands,
-      } satisfies WelcomeInheritance)
-    : null;
-  const inheritance = liveInheritance ?? inherited ?? null;
-  const [resolvedInheritance, setResolvedInheritance] = useState<{
-    sessionId: string;
-    selection: NewSessionDefaults;
-  } | null>(null);
-  const sourceSelection =
-    resolvedInheritance?.sessionId === inheritance?.sessionId
-      ? resolvedInheritance?.selection
-      : null;
-  const inheritedModel = inheritance?.model ?? sourceSelection?.model ?? null;
-  const inheritedThinkingLevel = inheritance?.model
-    ? inheritance.thinkingLevel
-    : (sourceSelection?.thinkingLevel ??
-      inheritance?.thinkingLevel ??
-      state.thinkingLevel);
-  const sourcePending = Boolean(
-    !inheritance?.readOnlyReason &&
-      inheritance?.modelDiscovery &&
-      !sourceSelection,
-  );
-  const [draft, setDraft] = useState(startDraft);
-  const updateDraft = (text: string) => {
-    setDraft(text);
-    setStartDraft(text);
-  };
+  const draft = useSessionDraft(store.drafts, null);
   const [directory, setDirectory] = useState(() => inheritance?.cwd ?? "");
-  const [attachments, setAttachments] = useState<WelcomeAttachment[]>([]);
-  const [projectFiles, setProjectFiles] = useState<string[]>([]);
-  const [projectFileRoot, setProjectFileRoot] = useState<string | null>(null);
-  const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
-  const [pickerOpen, setPickerOpen] = useState(false);
   const [showHiddenFiles, setShowHiddenFiles] = useState(false);
-  const [dropActive, setDropActive] = useState(false);
-  const [recentOpen, setRecentOpen] = useState(true);
+  const [recentOpen, setRecentOpen] = useState(readRecentSessionsOpen);
+  const toggleRecent = () => {
+    const open = !recentOpen;
+    setRecentOpen(open);
+    saveRecentSessionsOpen(open);
+  };
   const [browsing, setBrowsing] = useState(false);
-  const [modelKey, setModelKey] = useState(() =>
-    inheritedModel ? modelIdentityKey(inheritedModel) : "",
-  );
-  const [resolvedDefaultModel, setResolvedDefaultModel] =
-    useState<ModelOption | null>(null);
-  const [modelTouched, setModelTouched] = useState(false);
-  const [modelResolveAttempt, setModelResolveAttempt] = useState(0);
-  const [modelWarning, setModelWarning] = useState<string | null>(null);
-  const [modelStatus, setModelStatus] = useState<
-    "idle" | "loading" | "ready" | "error"
-  >(inheritedModel ? "ready" : sourcePending ? "loading" : "idle");
+  const [explicit, chooseModel] = useState<{
+    model: ModelOption;
+    effort: ThinkingLevel;
+    pending?: boolean;
+  }>();
+  const explicitModel = explicit?.model;
+  const [manualThinking, chooseThinking] = useState<ThinkingLevel>();
   const { configuration } = usePresentationAdapters();
   const [controlValues, setControlValues] = useState<Record<string, string>>(
     {},
   );
-  const [thinkingTouched, setThinkingTouched] = useState(false);
-  const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>(() =>
-    THINKING_LEVELS.includes(inheritedThinkingLevel as ThinkingLevel)
-      ? (inheritedThinkingLevel as ThinkingLevel)
-      : "off",
-  );
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const projectPickerButtonRef = useRef<HTMLButtonElement>(null);
-  const attachmentsRef = useRef(attachments);
-  attachmentsRef.current = attachments;
   const recent = useMemo(
     () =>
       visibleSessions(state.sessions, {
@@ -200,526 +132,262 @@ export const Welcome = memo(function Welcome({
   useEffect(() => {
     onDirectoryChange?.(effectiveDirectory);
   }, [effectiveDirectory, onDirectoryChange]);
-  const [directoryIssue, setDirectoryIssue] = useState<{
-    path: string;
-    missing: boolean;
-    message: string;
-  } | null>(null);
-  const currentDirectoryIssue =
-    directoryIssue?.path === effectiveDirectory ? directoryIssue : null;
-  const directoryMissing = currentDirectoryIssue?.missing === true;
-  const directoryProblem =
-    currentDirectoryIssue && !directoryMissing
-      ? currentDirectoryIssue.message
-      : null;
-  const [checkingDirectory, setCheckingDirectory] = useState<string | null>(
-    null,
-  );
-  const directoryChecking = checkingDirectory === effectiveDirectory;
-  const confirmedDirectory = useRef<{
-    path: string;
-    transportGeneration: number;
-  } | null>(null);
-  const directoryConfirmed =
-    confirmedDirectory.current?.path === effectiveDirectory &&
-    confirmedDirectory.current.transportGeneration ===
-      state.transportGeneration;
-  const modelReadyRef = useRef(false);
-  modelReadyRef.current = modelStatus === "ready";
-  const [catalogRecovery] = useState(() => new RecoveryBackoff());
-  const catalogRequest = useRef<AbortController | null>(null);
-  const [catalog, setCatalog] = useState<ModelOption[] | null>(null);
-  const [catalogCommands, setCatalogCommands] = useState<{
-    cwd: string;
-    transport: number;
-    commands: PiCommand[];
-  } | null>(null);
-  const [pickedModel, setPickedModel] = useState<ModelOption | null>(null);
-  const [commonModels, setCommonModels] = useState<ModelIdentity[]>([]);
-  const catalogGeneration = useRef(0);
-  const thinkingInputGeneration = useRef(0);
-  const thinkingTouchedRef = useRef(thinkingTouched);
-  thinkingTouchedRef.current = thinkingTouched;
-  const modelOwnedRef = useRef(
-    modelTouched || Boolean(inheritedModel) || sourcePending,
-  );
-  modelOwnedRef.current =
-    modelTouched || Boolean(inheritedModel) || sourcePending;
-  const thinkingRef = useRef(thinkingLevel);
-  thinkingRef.current = thinkingLevel;
+  const transport = state.transportGeneration;
+  const inheritSession = !inheritance?.readOnlyReason
+    ? inheritance?.sessionId
+    : undefined;
+  const sourceCwd = inheritance?.cwd;
   const catalogSource =
-    !inheritance?.readOnlyReason && inheritance?.cwd === effectiveDirectory
-      ? inheritance.sessionId
-      : undefined;
-  const refreshModels = useCallback(async () => {
-    catalogRequest.current?.abort();
-    catalogRecovery.reset();
-    const request = new AbortController();
-    catalogRequest.current = request;
-    const generation = ++catalogGeneration.current;
-    const transportGeneration = state.transportGeneration;
-    const owns = () =>
-      !request.signal.aborted &&
-      catalogGeneration.current === generation &&
-      store.getState().transportGeneration === transportGeneration;
-    setCheckingDirectory(effectiveDirectory);
-    const inputGeneration = thinkingInputGeneration.current;
-    let result;
-    try {
-      while (true) {
-        if (!owns()) return undefined;
-        try {
-          result = await store.readNewSessionModels(
-            catalogSource,
-            effectiveDirectory || undefined,
-          );
-          break;
-        } catch (error) {
-          if (!owns()) return undefined;
-          if (
-            !isTransientFailure(error) ||
-            !(await catalogRecovery.wait(request.signal))
-          )
-            throw error;
-          if (!owns()) return undefined;
-        }
-      }
-    } catch (error) {
-      if (!owns()) return undefined;
-      const missing =
-        error instanceof ApiError && error.code === "PROJECT_DIRECTORY_MISSING";
-      const invalid =
-        error instanceof ApiError &&
-        (error.status === 400 || error.status === 403);
-      if (missing || invalid) confirmedDirectory.current = null;
-      const directoryWasConfirmed =
-        confirmedDirectory.current?.path === effectiveDirectory &&
-        confirmedDirectory.current.transportGeneration === transportGeneration;
-      // An observation failure cannot undo a known invalid/missing path.
-      setDirectoryIssue((previous) => {
-        if (missing || invalid) {
-          return {
-            path: effectiveDirectory,
-            missing,
-            message:
-              error instanceof Error
-                ? error.message
-                : "Project directory could not be checked",
-          };
-        }
-        if (previous?.path === effectiveDirectory) return previous;
-        return directoryWasConfirmed
-          ? null
-          : {
-              path: effectiveDirectory,
-              missing: false,
-              message:
-                error instanceof Error
-                  ? error.message
-                  : "Project directory could not be checked",
-            };
-      });
-      const keepReady = directoryWasConfirmed && modelReadyRef.current;
-      if (!modelOwnedRef.current && !keepReady) {
-        setModelWarning(
-          error instanceof Error ? error.message : "Model discovery failed",
+    sourceCwd === effectiveDirectory ? inheritSession : undefined;
+  const key = (cwd?: string, sessionId?: string) =>
+    JSON.stringify([transport, cwd, sessionId]);
+  const catalogKey = key(effectiveDirectory, catalogSource);
+  const sourceKey = key(sourceCwd, inheritSession);
+  const readSource = Boolean(
+    !explicitModel &&
+      inheritSession &&
+      !inheritance?.model &&
+      inheritance?.modelDiscovery,
+  );
+  const inheritWithCatalog = readSource && Boolean(catalogSource);
+  type Preview = {
+    key: string;
+    result?: ModelCatalogResponse;
+    error?: string;
+    missing?: boolean;
+    pending?: boolean;
+  };
+  const [catalogPreview, publishCatalog] = useState<Preview>();
+  const [sourcePreview, publishSource] = useState<Preview>();
+  const check = catalogPreview?.key === catalogKey ? catalogPreview : undefined;
+  const catalog = check?.missing || check?.error ? undefined : check?.result;
+  const source = sourcePreview?.key === sourceKey ? sourcePreview : undefined;
+  const directoryMissing = Boolean(check?.missing);
+  const directoryProblem = !directoryMissing ? check?.error : undefined;
+  const directoryChecking = Boolean(check?.pending);
+  const sourceUnresolved = readSource && !source?.result;
+  const sourceError = sourceUnresolved ? source?.error : undefined;
+  const inheritedSelection =
+    source?.result?.selection ?? source?.result?.defaults;
+  const inheritedModel = inheritance?.model ?? inheritedSelection?.model;
+  const initialEffort = inheritance?.model
+    ? inheritance.thinkingLevel
+    : (inheritedSelection?.thinkingLevel ?? inheritance?.thinkingLevel);
+  const inheritedEffort = THINKING_LEVELS.includes(
+    initialEffort as ThinkingLevel,
+  )
+    ? (initialEffort as ThinkingLevel)
+    : "off";
+  const requests = useRef<
+    Partial<Record<"catalog" | "source", ReturnType<typeof recoverableRead>>>
+  >({});
+
+  const refresh = useCallback(
+    async (target: "catalog" | "source", pick = false) => {
+      const ownCatalog = target === "catalog";
+      const previewKey = ownCatalog ? catalogKey : sourceKey;
+      const publish = ownCatalog ? publishCatalog : publishSource;
+      requests.current[target]?.abort();
+      const request = recoverableRead(
+        () => store.getState().transportGeneration === transport,
+      );
+      requests.current[target] = request;
+      publish((old) => ({
+        ...(old?.key === previewKey ? old : {}),
+        key: previewKey,
+        pending: true,
+      }));
+      try {
+        const result = await request.read((signal) =>
+          store.readNewSessionModels(
+            ownCatalog ? catalogSource : inheritSession,
+            (ownCatalog ? effectiveDirectory : sourceCwd) || undefined,
+            !ownCatalog || inheritWithCatalog,
+            signal,
+          ),
         );
-        setModelStatus("error");
+        publish({ key: previewKey, result });
+        if (ownCatalog)
+          chooseModel((choice) =>
+            choice?.pending
+              ? {
+                  model: choice.model,
+                  effort: candidateEffort(choice.model, result, choice.effort),
+                }
+              : choice,
+          );
+        if (ownCatalog && inheritWithCatalog)
+          publishSource({ key: sourceKey, result });
+        return result.warning;
+      } catch (error) {
+        if (!request.current()) return;
+        const missing =
+          ownCatalog &&
+          error instanceof ApiError &&
+          error.code === "PROJECT_DIRECTORY_MISSING";
+        const invalid =
+          error instanceof ApiError && [400, 403].includes(error.status);
+        const message =
+          error instanceof Error
+            ? error.message
+            : ownCatalog
+              ? "Project directory could not be checked"
+              : "The source model is unavailable";
+        publish((old) => {
+          if (old?.key !== previewKey) return old;
+          return !missing && !invalid && (old.result || old.error)
+            ? { ...old, pending: false }
+            : { key: previewKey, error: message, missing };
+        });
+        if (ownCatalog && inheritWithCatalog && !missing)
+          publishSource((old) =>
+            old?.key === sourceKey && old.result
+              ? old
+              : { key: sourceKey, error: message },
+          );
+        if (!missing) throw error;
+        if (pick) {
+          const result = await request.read((signal) =>
+            store.readNewSessionModels(undefined, undefined, false, signal),
+          );
+          publish({ key: previewKey, missing: true, result });
+          return result.warning;
+        }
+      } finally {
+        if (requests.current[target] === request)
+          delete requests.current[target];
       }
-      if (
-        error instanceof ApiError &&
-        error.code === "PROJECT_DIRECTORY_MISSING"
-      )
-        return undefined;
-      throw error;
-    } finally {
-      if (owns()) setCheckingDirectory(null);
-      if (catalogRequest.current === request) {
-        catalogRequest.current = null;
-        catalogRecovery.reset();
-      }
-    }
-    if (!owns()) return undefined;
-    confirmedDirectory.current = {
-      path: effectiveDirectory,
-      transportGeneration,
-    };
-    setDirectoryIssue(null);
-    setCatalog(result.models);
-    setCatalogCommands(
-      result.commands
-        ? {
-            cwd: effectiveDirectory,
-            transport: transportGeneration,
-            commands: result.commands,
-          }
-        : null,
-    );
-    setCommonModels(result.commonModels ?? []);
-    if (!modelOwnedRef.current && result.defaults) {
-      const defaults = result.defaults;
-      setResolvedDefaultModel(defaults.model);
-      setModelKey(defaults.model ? modelIdentityKey(defaults.model) : "");
-      setModelWarning(result.warning ?? null);
-      if (
-        !thinkingTouchedRef.current &&
-        thinkingInputGeneration.current === inputGeneration
-      )
-        setThinkingLevel(defaults.thinkingLevel);
-      setModelStatus(defaults.model ? "ready" : "error");
-    }
-    return result.warning;
-  }, [
-    catalogSource,
-    effectiveDirectory,
-    state.transportGeneration,
-    catalogRecovery,
-  ]);
+    },
+    [
+      catalogKey,
+      sourceKey,
+      catalogSource,
+      inheritSession,
+      effectiveDirectory,
+      sourceCwd,
+      inheritWithCatalog,
+      transport,
+    ],
+  );
+  const autoPreview = useEffectEvent((target: "catalog" | "source") => {
+    if (target === "catalog" && catalog && !sourceUnresolved) return;
+    if (!requests.current[target]?.current())
+      void refresh(target).catch(() => {});
+  });
   useEffect(() => {
-    if (!modelOwnedRef.current) {
-      setModelKey("");
-      setResolvedDefaultModel(null);
-      setModelWarning(null);
-      setModelStatus(effectiveDirectory ? "loading" : "idle");
-    }
     const timer = effectiveDirectory
-      ? setTimeout(() => {
-          void refreshModels().catch(() => {});
-        }, DIRECTORY_PREVIEW_DELAY_MS)
+      ? setTimeout(() => autoPreview("catalog"), DIRECTORY_PREVIEW_DELAY_MS)
       : undefined;
     return () => {
       clearTimeout(timer);
-      ++catalogGeneration.current;
-      catalogRequest.current?.abort();
-      catalogRecovery.reset();
+      requests.current.catalog?.abort();
     };
-  }, [effectiveDirectory, refreshModels, catalogRecovery]);
-  const availableModels = useMemo(() => {
-    const models = catalog ?? state.availableModels;
-    if (
-      !resolvedDefaultModel ||
-      models.some(
-        (model) =>
-          modelIdentityKey(model) === modelIdentityKey(resolvedDefaultModel),
-      )
-    ) {
-      return models;
-    }
-    return [...models, resolvedDefaultModel];
-  }, [catalog, resolvedDefaultModel, state.availableModels]);
-  const selectedModel = useMemo<ModelOption | null>(() => {
-    const catalogModel = availableModels.find(
-      (model) => modelIdentityKey(model) === modelKey,
-    );
-    if (catalogModel) return catalogModel;
-    if (pickedModel && modelIdentityKey(pickedModel) === modelKey)
-      return pickedModel;
-    return inheritedModel && modelIdentityKey(inheritedModel) === modelKey
-      ? inheritedModel
-      : null;
-  }, [availableModels, inheritedModel, modelKey, pickedModel]);
-  const thinkingLevels = useMemo(
-    () => supportedThinkingLevels(selectedModel),
-    [selectedModel],
+  }, [catalogKey, effectiveDirectory, inheritWithCatalog]);
+  useEffect(() => {
+    if (!sourceUnresolved || (inheritWithCatalog && !directoryMissing)) return;
+    autoPreview("source");
+    return () => requests.current.source?.abort();
+  }, [sourceKey, sourceUnresolved, inheritWithCatalog, directoryMissing]);
+
+  const refreshPickerModels = useCallback(
+    () => refresh("catalog", true),
+    [refresh],
   );
+  const retryPreview = () => {
+    const target =
+      sourceError && (!inheritWithCatalog || directoryMissing)
+        ? "source"
+        : "catalog";
+    void refresh(target).catch(() => {});
+  };
 
-  useEffect(
-    () => () => {
-      for (const attachment of attachmentsRef.current) {
-        if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
-      }
-    },
-    [],
+  const chosen = explicitModel ?? inheritedModel;
+  const chosenModel = chosen ?? catalog?.defaults?.model ?? null;
+  const catalogModels = check?.result?.models ?? state.availableModels;
+  const selectedModel = resolveModelMetadata(chosenModel, catalogModels);
+  const availableModels =
+    selectedModel && !catalogModels.includes(selectedModel)
+      ? [...catalogModels, selectedModel]
+      : catalogModels;
+  const thinkingLevels = supportedThinkingLevels(selectedModel);
+  const modelWarning =
+    sourceError ??
+    (!selectedModel && catalog?.defaults
+      ? (catalog.warning ?? "Models are unavailable")
+      : undefined);
+  const modelChecking =
+    sourceUnresolved &&
+    !directoryProblem &&
+    (!sourceError || Boolean(source?.pending || check?.pending));
+  const thinkingLevel = clampThinkingLevel(
+    selectedModel,
+    manualThinking ??
+      explicit?.effort ??
+      (chosen ? inheritedEffort : catalog?.defaults?.thinkingLevel) ??
+      inheritedEffort,
   );
-
-  useEffect(() => {
-    if (selectedModel && !thinkingLevels.includes(thinkingLevel))
-      setThinkingLevel(clampThinkingLevel(selectedModel, thinkingLevel));
-  }, [thinkingLevel, thinkingLevels, selectedModel]);
-
-  // Preview native defaults only until effort is chosen explicitly. A manual
-  // choice survives model/directory changes and retires an in-flight preview.
-  // Catalog refresh alone must not reapply defaults.
-  useEffect(() => {
-    if (!modelTouched || !effectiveDirectory || !pickedModel) return;
-    if (thinkingTouched) {
-      setModelStatus("ready");
-      return;
-    }
-    const request = new AbortController();
-    const recovery = new RecoveryBackoff();
-    const transportGeneration = state.transportGeneration;
-    const owns = () =>
-      !request.signal.aborted &&
-      store.getState().transportGeneration === transportGeneration;
-    const inputGeneration = thinkingInputGeneration.current;
-    setModelWarning(null);
-    setModelStatus("loading");
-    void (async () => {
-      while (owns()) {
-        try {
-          const level = await store.resolveNewSessionThinking(
-            effectiveDirectory,
-            pickedModel,
-            thinkingRef.current,
-          );
-          if (!owns()) return;
-          if (thinkingInputGeneration.current === inputGeneration)
-            setThinkingLevel(clampThinkingLevel(pickedModel, level));
-          setModelStatus("ready");
-          return;
-        } catch (error) {
-          if (!owns()) return;
-          if (
-            isTransientFailure(error) &&
-            (await recovery.wait(request.signal))
-          )
-            continue;
-          if (owns()) {
-            setModelWarning(
-              error instanceof Error
-                ? error.message
-                : "Thinking preview could not be loaded",
-            );
-            setModelStatus("error");
-          }
-          return;
-        }
-      }
-    })();
-    return () => {
-      request.abort();
-      recovery.reset();
-    };
-  }, [
-    effectiveDirectory,
-    modelKey,
-    modelTouched,
-    pickedModel,
-    thinkingTouched,
-    modelResolveAttempt,
-    state.transportGeneration,
-  ]);
-
-  useEffect(() => {
-    const sessionId = inheritance?.sessionId;
-    if (!sourcePending || modelTouched || !sessionId) return;
-    const request = new AbortController();
-    const recovery = new RecoveryBackoff();
-    const transportGeneration = state.transportGeneration;
-    const owns = () =>
-      !request.signal.aborted &&
-      store.getState().transportGeneration === transportGeneration;
-    setModelWarning(null);
-    setModelStatus("loading");
-    void (async () => {
-      while (owns()) {
-        try {
-          const result = await store.readNewSessionModels(
-            sessionId,
-            inheritance.cwd,
-            true,
-          );
-          if (!owns()) return;
-          if (!result.selection) {
-            setModelStatus("error");
-            return;
-          }
-          setResolvedInheritance({ sessionId, selection: result.selection });
-          setPickedModel(result.selection.model);
-          setModelWarning(result.warning ?? null);
-          setModelStatus(result.selection.model ? "ready" : "idle");
-          return;
-        } catch (error) {
-          if (!owns()) return;
-          if (
-            isTransientFailure(error) &&
-            (await recovery.wait(request.signal))
-          )
-            continue;
-          if (!owns()) return;
-          setModelWarning(
-            error instanceof Error
-              ? error.message
-              : "The source model is unavailable",
-          );
-          setModelStatus("error");
-          return;
-        }
-      }
-    })();
-    return () => {
-      request.abort();
-      recovery.reset();
-    };
-  }, [
-    inheritance?.sessionId,
-    inheritance?.cwd,
-    sourcePending,
-    modelTouched,
-    modelResolveAttempt,
-    state.transportGeneration,
-  ]);
-
-  // Until the user chooses explicitly, an inherited session model is the
-  // preferred source. The explicit inheritance survives host deselection, and
-  // a live model still closes the snapshot-arrival race in isolated renders.
-  useEffect(() => {
-    if (modelTouched || !inheritedModel) return;
-    setModelKey(modelIdentityKey(inheritedModel));
-    setModelStatus("ready");
-    if (
-      !thinkingTouched &&
-      THINKING_LEVELS.includes(inheritedThinkingLevel as ThinkingLevel)
-    ) {
-      setThinkingLevel(inheritedThinkingLevel as ThinkingLevel);
-    }
-  }, [inheritedModel, inheritedThinkingLevel, modelTouched, thinkingTouched]);
-
-  const addFiles = (files: File[]) => {
-    if (starting || files.length === 0) return;
-    const { accepted, warning } = selectAttachmentFiles(
-      attachmentsRef.current,
-      files,
-    );
-    setAttachmentError(warning);
-    if (accepted.length > 0)
-      setAttachments((current) => [
-        ...current,
-        ...accepted.map(localAttachment),
-      ]);
-  };
-
-  const removeAttachment = (localId: string) => {
-    setAttachments((current) => {
-      const target = current.find((item) => item.localId === localId);
-      if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
-      return current.filter((item) => item.localId !== localId);
-    });
-    setAttachmentError(null);
-  };
-
-  const addProjectFile = (file: ProjectFileResult) => {
-    const nextRoot = file.workspaceCwd ?? projectFileRoot;
-    const sameWorkspace =
-      projectFileRoot && nextRoot && projectFileRoot !== nextRoot
-        ? []
-        : projectFiles;
-    if (!file.path || sameWorkspace.includes(file.path)) {
-      if (sameWorkspace !== projectFiles) setProjectFiles(sameWorkspace);
-      if (nextRoot) setProjectFileRoot(nextRoot);
-      return;
-    }
-    if (sameWorkspace.length >= MAX_PROJECT_FILES) {
-      setAttachmentError(
-        `At most ${MAX_PROJECT_FILES} project files per message`,
-      );
-      return;
-    }
-    setAttachmentError(null);
-    setProjectFiles([...sameWorkspace, file.path]);
-    if (nextRoot) setProjectFileRoot(nextRoot);
-  };
-
-  const removeProjectFile = (path: string) => {
-    const next = projectFiles.filter((item) => item !== path);
-    setProjectFiles(next);
-    if (next.length === 0) setProjectFileRoot(null);
-  };
 
   const searchProjectFiles = useCallback(
     (query: string) =>
-      effectiveDirectory
-        ? store.searchNewSessionProjectFiles(
-            effectiveDirectory,
-            query,
-            showHiddenFiles,
-          )
-        : Promise.resolve({ files: [] }),
+      store.searchNewSessionProjectFiles(
+        effectiveDirectory,
+        query,
+        showHiddenFiles,
+      ),
     [effectiveDirectory, showHiddenFiles],
   );
 
   const changeDirectory = (value: string) => {
     setDirectory(value);
     if (value.trim() === effectiveDirectory) return;
-    ++catalogGeneration.current;
-    catalogRequest.current?.abort();
-    catalogRecovery.reset();
-    confirmedDirectory.current = null;
-    setDirectoryIssue(null);
-    setProjectFiles([]);
-    setProjectFileRoot(null);
-    setPickerOpen(false);
+    requests.current.catalog?.abort();
+    publishCatalog(undefined);
+    chooseModel((choice) => choice && { ...choice, pending: true });
+    if (draft.projectFiles.length)
+      store.drafts.update(null, { projectFiles: [], workspaceCwd: undefined });
   };
 
   // Inherited runtime commands apply only while the visible directory still
   // names the workspace they came from.
-  const commandScopeMatches = Boolean(
-    inheritance && effectiveDirectory === inheritance.cwd,
-  );
-  // Both completion and configurable controls consume this target-owned inventory.
-  const inheritedCommands = commandScopeMatches
-    ? (inheritance?.commands ?? [])
-    : [];
   const workspaceCommands =
-    catalogCommands?.cwd === effectiveDirectory &&
-    catalogCommands.transport === state.transportGeneration
-      ? catalogCommands.commands
-      : inheritedCommands;
-  const hasInput = Boolean(
-    draft.trim() || attachments.length > 0 || projectFiles.length > 0,
-  );
-  const sourceUnresolved = sourcePending && !modelTouched;
+    catalog?.commands ??
+    (effectiveDirectory === inheritance?.cwd ? inheritance.commands : []);
+  const hasInput = hasDraftInput({ ...draft, text: draft.text.trim() });
   const thinkingDefault =
-    directoryMissing && !thinkingTouched && modelStatus !== "ready";
+    directoryMissing &&
+    manualThinking === undefined &&
+    (!selectedModel || (explicitModel && selectedModel.reasoning !== false));
   const preparing = Boolean(
     effectiveDirectory &&
       !directoryProblem &&
-      modelStatus !== "error" &&
-      ((!directoryConfirmed && !directoryMissing) ||
-        modelStatus === "loading" ||
-        sourceUnresolved),
+      !directoryMissing &&
+      (!catalog || modelChecking),
   );
-  const startBusy = starting || (hasInput && preparing && !directoryMissing);
+  const startBusy = starting || (hasInput && preparing);
   const startReadiness =
     directoryProblem ??
-    ((directoryMissing && !sourceUnresolved) ||
-    starting ||
-    !effectiveDirectory ||
-    !hasInput ||
-    preparing
+    (directoryMissing ? sourceError : undefined) ??
+    (!hasInput || starting || !effectiveDirectory || directoryMissing
       ? null
-      : modelStatus === "error"
-        ? (modelWarning ?? "Models are unavailable")
-        : !selectedModel
-          ? "Select a model"
-          : null);
+      : (modelWarning ??
+        (preparing || selectedModel ? null : "Select a model")));
   const canStart = Boolean(
     hasInput &&
       effectiveDirectory &&
-      !directoryMissing &&
-      !directoryProblem &&
-      directoryConfirmed &&
+      catalog &&
       selectedModel &&
-      modelStatus === "ready" &&
+      !modelChecking &&
+      !modelWarning &&
       !starting,
   );
-
-  const canCreate = Boolean(
-    hasInput &&
-      effectiveDirectory &&
-      directoryMissing &&
-      !sourceUnresolved &&
-      !starting,
-  );
+  const canCreate =
+    hasInput && directoryMissing && !sourceUnresolved && !starting;
   const start = async (createDirectory = false) => {
     if (createDirectory ? !canCreate : !canStart) return;
-    const message = draft;
-    const files = attachments.map((attachment) => attachment.file);
-    const referencedProjectFiles = [...projectFiles];
+    if (store.drafts.get(null).revision !== draft.revision) return;
     // A selected pre-session file binds creation to the canonical workspace
     // that produced it, so a symlink retarget cannot reinterpret the path.
-    const target = projectFileRoot || directory.trim();
+    const target = draft.workspaceCwd || effectiveDirectory;
     const model = selectedModel;
     const selections = availableStatusControls(
       configuration,
@@ -730,64 +398,41 @@ export const Welcome = memo(function Welcome({
         ? [{ control, value }]
         : [];
     });
-    if (!model && !createDirectory) return;
     setStarting(true);
     try {
       // A displayed workspace default is a preview, not an explicit override:
       // native startup must resolve its own model after registration/trust.
-      const selected = model && (modelTouched || Boolean(inheritedModel));
+      const selected = model && chosen;
       const opened = await store.newSession(target || undefined, {
         ...(createDirectory ? { createDirectory: true } : {}),
         ...(selected
           ? { model: { provider: model.provider, id: model.id } }
           : {}),
-        ...(thinkingTouched ||
-        (selected && (!directoryMissing || modelStatus === "ready"))
+        ...(manualThinking !== undefined || (selected && !thinkingDefault)
           ? { thinkingLevel }
           : {}),
       });
       if (!opened) {
-        if (createDirectory) void refreshModels().catch(() => {});
+        if (createDirectory) void refresh("catalog").catch(() => {});
         return;
       }
 
-      // The ordinary composer may mount before this async continuation. Drive
-      // both its durable browser draft and its live nonce channel, then let the
-      // normal upload/send path own all host attachment state.
-      setSessionDraft(opened, message);
-      // Creation transfers this input to its session even if uploading/sending
-      // later fails. A newer start-surface draft keeps its separate ownership.
-      if (startDraft() === message) {
-        setStartDraft("");
-        setDraft("");
-      }
-      store.replaceComposerText(message);
-      for (const path of referencedProjectFiles) store.addProjectFile(path);
-      if (files.length > 0) await store.addFiles(files);
+      const destinationEmpty = !store.drafts.get(opened).text;
+      const upload = store.transferStartDraft(opened, draft);
+      const revision = store.drafts.get(opened).revision;
+      await upload;
+      const ownsDraft = () =>
+        destinationEmpty &&
+        store.getState().sessionId === opened &&
+        store.drafts.get(opened).revision === revision;
       if (
-        store.getState().sessionId !== opened ||
-        sessionDraft(opened) !== message
+        !ownsDraft() ||
+        !(await store.applyInitialStatusControls(opened, selections)) ||
+        !ownsDraft()
       )
         return;
-      // Creation has transferred the draft and artifacts. Do not deliver the first
-      // input until Pi confirms each explicit choice; failure leaves that draft intact.
-      if (!(await store.applyInitialStatusControls(opened, selections))) return;
-      if (
-        store.getState().sessionId !== opened ||
-        sessionDraft(opened) !== message
-      )
-        return;
-      let handedOff = false;
-      const sent = await store.sendPrompt(message, undefined, () => {
-        handedOff = true;
-        if (sessionDraft(opened) !== message) return;
-        setSessionDraft(opened, "");
-        if (store.getState().sessionId === opened)
-          store.replaceComposerText("");
-      });
-      if (!sent || handedOff || sessionDraft(opened) !== message) return;
-      setSessionDraft(opened, "");
-      if (store.getState().sessionId === opened) store.replaceComposerText("");
+      const targetDraft = store.drafts.get(opened);
+      await store.sendPrompt(targetDraft.text, undefined, targetDraft);
     } finally {
       setStarting(false);
     }
@@ -795,7 +440,6 @@ export const Welcome = memo(function Welcome({
 
   return (
     <div className="welcome">
-      <span className="welcome__mark" aria-hidden />
       <div className="welcome__hero">
         <div className="welcome__lockup">
           <BrandLogo size={36} className="welcome__hero-icon" />
@@ -804,130 +448,134 @@ export const Welcome = memo(function Welcome({
         <p className="welcome__tagline">A workbench for Pi</p>
       </div>
 
-      <form
-        className={`composer welcome__composer ${dropActive ? "composer--drop" : ""}`}
-        aria-label="Start a session"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void start();
+      <MessageEditor
+        sessionId={null}
+        draft={draft}
+        className="welcome__composer"
+        label="Start a session"
+        disabled={starting}
+        onSubmit={() => void start()}
+        files={{
+          scope: effectiveDirectory,
+          search: searchProjectFiles,
+          showHidden: showHiddenFiles,
+          onShowHiddenChange: setShowHiddenFiles,
+          pickerDisabled: !effectiveDirectory || directoryMissing,
         }}
-        onDragOver={(event) => {
-          event.preventDefault();
-          setDropActive(true);
+        input={{
+          commands: workspaceCommands,
+          includeNativeCommands: false,
+          completionScope: effectiveDirectory,
+          rows: 3,
+          placeholder: "What do you want to work on?",
+          label: "First message",
+          completionLabel: "First message completion",
+          autoFocus: true,
         }}
-        onDragLeave={() => setDropActive(false)}
-        onDrop={(event) => {
-          event.preventDefault();
-          setDropActive(false);
-          addFiles(Array.from(event.dataTransfer.files));
-        }}
-      >
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          className="composer__file-input"
-          aria-label="Attach files"
-          tabIndex={-1}
-          onChange={(event) => {
-            addFiles(Array.from(event.target.files ?? []));
-            event.target.value = "";
-          }}
-        />
-        <AttachmentList
-          sessionId={null}
-          items={attachments}
-          disabled={starting}
-          onRemove={removeAttachment}
-        />
-        <ProjectFileChips
-          paths={projectFiles}
-          disabled={starting}
-          onRemove={removeProjectFile}
-        />
-        <ComposerInput
-          value={draft}
-          onChange={updateDraft}
-          commands={workspaceCommands}
-          includeNativeCommands={false}
-          completionDisabled={starting}
-          completionScope={`new-session:${effectiveDirectory}`}
-          showHiddenFiles={showHiddenFiles}
-          onShowHiddenFilesChange={setShowHiddenFiles}
-          searchProjectFiles={
-            effectiveDirectory ? searchProjectFiles : undefined
-          }
-          rows={3}
-          maxHeightRatio={0.45}
-          placeholder="What do you want to work on?"
-          label="First message"
-          completionLabel="First message completion"
-          autoFocus
-          onPaste={(event) => {
-            const files = clipboardFiles(event.clipboardData);
-            if (files.length === 0) return;
-            event.preventDefault();
-            addFiles(files);
-          }}
-          onKeyDown={(event) => {
-            if (
-              !shouldSubmitComposerEnter(
-                event.nativeEvent,
-                state.prefs.desktopSendKey,
-              )
-            )
-              return;
-            event.preventDefault();
-            void start();
-          }}
-        />
-        <div className="composer__meta">
-          <div className="composer__selectors">
+        header={
+          <>
+            <div className="welcome__directory">
+              <button
+                type="button"
+                className="icon-button"
+                aria-label="Browse host directories"
+                title="Browse host directories"
+                disabled={starting}
+                onClick={() => setBrowsing(true)}
+              >
+                <FolderOpen size={14} aria-hidden />
+              </button>
+              <input
+                className="welcome__dir"
+                value={directory}
+                onChange={(event) => changeDirectory(event.target.value)}
+                placeholder="/path/to/project"
+                aria-label="Project directory"
+                spellCheck={false}
+                onKeyDown={(event) => {
+                  if (
+                    event.key === "Enter" &&
+                    !isComposingKeyboardEvent(event.nativeEvent)
+                  )
+                    event.preventDefault();
+                }}
+                disabled={starting}
+              />
+            </div>
+            {directoryMissing ? (
+              <div
+                className="welcome__dir-action"
+                role="status"
+                aria-busy={starting}
+              >
+                <span>Folder doesn't exist.</span>
+                <button
+                  type="button"
+                  className="button button--quiet"
+                  disabled={!canCreate}
+                  aria-busy={starting || modelChecking}
+                  onClick={() => void start(true)}
+                  title={
+                    !hasInput
+                      ? "Add a message or attachment to start"
+                      : undefined
+                  }
+                >
+                  {starting || modelChecking ? (
+                    <PiLoader size={13} aria-hidden />
+                  ) : null}
+                  {starting
+                    ? "Creating folder and starting…"
+                    : "Create folder and start"}
+                </button>
+              </div>
+            ) : null}
+          </>
+        }
+        selectors={
+          <>
             <ModelSelector
               value={selectedModel}
+              title={
+                explicitModel
+                  ? undefined
+                  : inheritedModel || sourceUnresolved
+                    ? "Inherit model from source session"
+                    : "Use workspace model defaults"
+              }
               selectCurrent
               models={availableModels}
               recent={state.prefs.recentModelIds}
-              common={commonModels}
+              common={catalog?.commonModels}
               onManageModels={() =>
                 store.openModelSettings(undefined, undefined, {
                   cwd: effectiveDirectory || undefined,
                 })
               }
               emptyLabel={
-                directoryMissing && !sourceUnresolved
+                directoryMissing
                   ? "Pi default"
-                  : modelStatus === "error"
+                  : modelWarning
                     ? "Model unavailable"
                     : "Select model"
               }
-              loading={
-                !selectedModel &&
-                (sourceUnresolved ||
-                  modelStatus === "loading" ||
-                  (modelStatus === "idle" &&
-                    Boolean(effectiveDirectory) &&
-                    !modelTouched))
-              }
+              loading={!selectedModel && preparing}
               disabled={starting}
-              refreshModels={refreshModels}
+              refreshModels={refreshPickerModels}
               onChange={(provider, id) => {
                 const model = availableModels.find(
                   (item) => item.provider === provider && item.id === id,
                 );
-                if (!model) return;
-                if (modelIdentityKey(model) === modelKey) {
-                  setModelTouched(true);
-                  return;
-                }
-                setPickedModel(model);
-                setModelWarning(null);
-                setThinkingLevel(
-                  clampThinkingLevel(model, thinkingRef.current),
-                );
-                setModelTouched(true);
-                setModelStatus("ready");
-                setModelKey(modelIdentityKey({ provider, id }));
+                if (model)
+                  chooseModel({
+                    model,
+                    effort: candidateEffort(
+                      model,
+                      check?.result,
+                      thinkingLevel,
+                    ),
+                    pending: !catalog,
+                  });
               }}
             />
             <ThinkingControl
@@ -947,10 +595,9 @@ export const Welcome = memo(function Welcome({
               label="Thinking level"
               title={
                 selectedModel?.reasoning === false
-                  ? "The selected model does not support thinking"
+                  ? "Thinking unavailable for this model"
                   : "Thinking level"
               }
-              direction="up"
               value={thinkingDefault ? "" : thinkingLevel}
               display={
                 thinkingDefault
@@ -961,159 +608,35 @@ export const Welcome = memo(function Welcome({
               }
               disabled={starting || !selectedModel}
               levels={thinkingLevels}
-              onChange={(value) => {
-                ++thinkingInputGeneration.current;
-                setThinkingTouched(true);
-                setThinkingLevel(value as ThinkingLevel);
-              }}
+              onChange={chooseThinking}
             />
-          </div>
-          <button
-            type="button"
-            className={`icon-button ${pickerOpen ? "icon-button--active" : ""}`}
-            onClick={() => setPickerOpen((value) => !value)}
-            disabled={starting || !effectiveDirectory || directoryMissing}
-            ref={projectPickerButtonRef}
-            aria-label="Add project files"
-            aria-haspopup="dialog"
-            aria-expanded={pickerOpen}
-            title="Reference project files"
-          >
-            <FolderSearch size={14} aria-hidden />
-          </button>
-          <button
-            type="button"
-            className="icon-button"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={starting}
-            aria-label="Attach files"
-            title="Attach files (or paste / drop them)"
-          >
-            <Paperclip size={14} aria-hidden />
-          </button>
-          <span className="composer__spacer" />
-          <button
-            type="submit"
-            className="composer__send"
-            disabled={!canStart}
-            aria-label="Start session"
-            aria-busy={startBusy}
-            title="Start session"
-          >
-            {startBusy ? (
-              <PiLoader size={14} aria-hidden />
-            ) : (
-              <Send size={14} aria-hidden />
-            )}
-          </button>
-        </div>
-        <div className="welcome__directory">
-          <button
-            type="button"
-            className="icon-button welcome__directory-browse"
-            aria-label="Browse host directories"
-            title="Browse host directories"
-            disabled={starting}
-            onClick={() => setBrowsing(true)}
-          >
-            <FolderOpen size={14} aria-hidden />
-          </button>
-          <input
-            className="welcome__dir"
-            value={directory}
-            onChange={(event) => changeDirectory(event.target.value)}
-            placeholder="/path/to/project"
-            aria-label="Project directory"
-            spellCheck={false}
-            onKeyDown={(event) => {
-              if (
-                event.key === "Enter" &&
-                !isComposingKeyboardEvent(event.nativeEvent)
-              )
-                event.preventDefault();
-            }}
-            disabled={starting}
-          />
-        </div>
-        {directoryMissing ? (
+          </>
+        }
+        send={{ label: "Start session", disabled: !canStart, busy: startBusy }}
+      >
+        {startReadiness && (
           <div
-            className="welcome__dir-action"
-            role="status"
-            aria-busy={starting}
-          >
-            <span>Folder does not exist yet.</span>
-            <button
-              type="button"
-              className="button welcome__dir-action-btn"
-              disabled={!canCreate}
-              aria-busy={starting || sourceUnresolved}
-              onClick={() => void start(true)}
-              title={
-                !hasInput ? "Add a message or attachment to start" : undefined
-              }
-            >
-              {starting || sourceUnresolved ? (
-                <PiLoader size={13} aria-hidden />
-              ) : null}
-              {starting
-                ? "Creating folder and starting…"
-                : "Create folder and start"}
-            </button>
-          </div>
-        ) : null}
-        {startReadiness ? (
-          <div
-            className={`welcome__readiness ${directoryProblem || modelStatus === "error" ? "welcome__readiness--error" : ""}`}
+            className={`welcome__readiness ${directoryProblem || modelWarning ? "welcome__readiness--error" : ""}`}
             role={directoryProblem ? "alert" : "status"}
           >
             <span>{startReadiness}</span>
-            {(directoryProblem || modelStatus === "error") &&
-            effectiveDirectory ? (
+            {(directoryProblem || modelWarning) && effectiveDirectory && (
               <button
                 type="button"
                 className="changes__inline-action"
-                disabled={directoryChecking || modelStatus === "loading"}
-                aria-busy={directoryChecking || modelStatus === "loading"}
-                onClick={() => {
-                  if (directoryProblem) {
-                    void refreshModels().catch(() => {});
-                    return;
-                  }
-                  setModelStatus("loading");
-                  if (modelOwnedRef.current)
-                    setModelResolveAttempt((attempt) => attempt + 1);
-                  else void refreshModels().catch(() => {});
-                }}
+                disabled={directoryChecking || modelChecking}
+                aria-busy={directoryChecking || modelChecking}
+                onClick={retryPreview}
               >
-                {directoryChecking || modelStatus === "loading" ? (
+                {(directoryChecking || modelChecking) && (
                   <PiLoader size={13} aria-hidden />
-                ) : null}
-                {directoryChecking || modelStatus === "loading"
-                  ? "Checking…"
-                  : "Retry"}
+                )}
+                {directoryChecking || modelChecking ? "Checking…" : "Retry"}
               </button>
-            ) : null}
+            )}
           </div>
-        ) : null}
-        {pickerOpen && effectiveDirectory ? (
-          <ProjectFilePicker
-            anchorRef={projectPickerButtonRef}
-            scope={effectiveDirectory}
-            showHidden={showHiddenFiles}
-            onShowHiddenChange={setShowHiddenFiles}
-            selected={projectFiles}
-            disabled={starting}
-            search={searchProjectFiles}
-            onAdd={addProjectFile}
-            onClose={() => setPickerOpen(false)}
-          />
-        ) : null}
-      </form>
-      {attachmentError ? (
-        <p className="welcome__error" role="alert">
-          {attachmentError}
-        </p>
-      ) : null}
+        )}
+      </MessageEditor>
       {state.sessionActionError ? (
         <p className="welcome__error" role="alert">
           {state.sessionActionError}
@@ -1136,9 +659,9 @@ export const Welcome = memo(function Welcome({
           <h2 className="welcome__recent-title">
             <button
               type="button"
-              className="welcome__recent-toggle"
+              className="button button--quiet disclosure-row welcome__recent-toggle"
               aria-expanded={recentOpen}
-              onClick={() => setRecentOpen((value) => !value)}
+              onClick={toggleRecent}
             >
               <ChevronRight
                 size={12}
@@ -1149,24 +672,22 @@ export const Welcome = memo(function Welcome({
             </button>
           </h2>
           {recentOpen ? (
-            <div role="list">
+            <div role="list" data-keyboard-active="false">
               {recent.map((session) => (
                 <div role="listitem" key={session.id}>
                   <button
                     type="button"
-                    className="welcome__row"
+                    className="picker__row welcome__row"
                     title={session.title || "New session"}
                     onClick={() => void store.openSession(session.id)}
                   >
                     <span className="welcome__row-title">
                       {session.title || "New session"}
                     </span>
-                    <span className="welcome__row-project">
+                    <small className="welcome__row-project">
                       {session.project}
-                    </span>
-                    <span className="welcome__row-time">
-                      {relativeTime(session.modified)}
-                    </span>
+                    </small>
+                    <small>{relativeTime(session.modified)}</small>
                   </button>
                 </div>
               ))}
@@ -1176,4 +697,4 @@ export const Welcome = memo(function Welcome({
       ) : null}
     </div>
   );
-});
+}

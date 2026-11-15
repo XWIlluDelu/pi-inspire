@@ -1,4 +1,3 @@
-import { ChevronRight } from "lucide-react";
 import type { ChildCall, ChildCallList } from "../../shared/tool-activity";
 import { stripTerminalSequences } from "../ansi";
 import { childCallSummary, isModelCall } from "../child-call-summary";
@@ -6,7 +5,8 @@ import { PiLoader } from "./PiLoader";
 import { PiStatus } from "./PiStatus";
 import { ResourcePathLabel } from "./ResourcePathLabel";
 import {
-  useActivityReaderExpanded,
+  ActivityDetails,
+  ActivityText,
   useActivityReaderScroll,
 } from "./transcript-activity-visibility";
 
@@ -28,7 +28,10 @@ export function childCallsSummary(list?: ChildCallList): string {
 }
 
 function CallRow({ call }: { call: ChildCall }) {
-  const [open, setOpen] = useActivityReaderExpanded(`child-call:${call.key}`);
+  const argumentsLabel =
+    call.argumentsPreview !== undefined
+      ? "Arguments preview"
+      : "Available arguments";
   const model = isModelCall(call.name);
   const duration =
     call.durationMs !== undefined && call.durationMs >= 1_000
@@ -55,7 +58,8 @@ function CallRow({ call }: { call: ChildCall }) {
     <>
       <code className="child-call__name">{call.name}</code>
       <span
-        className={`child-call__status child-call__status--${call.status}`}
+        className="child-call__status"
+        data-status={call.status}
         title={statusLabels[call.status]}
       >
         {icon}
@@ -72,17 +76,20 @@ function CallRow({ call }: { call: ChildCall }) {
       ) : null}
     </>
   );
-  return detail ? (
-    <details
+  if (!detail)
+    return (
+      <div className="disclosure-row child-call child-call__row">
+        <span className="detail-summary__label">{row}</span>
+      </div>
+    );
+  return (
+    <ActivityDetails
+      reader={`child-call:${call.key}`}
+      label={row}
       className="child-call"
-      open={open}
-      onToggle={(event) => setOpen(event.currentTarget.open)}
+      summaryClassName="child-call__row"
     >
-      <summary className="child-call__row">
-        <ChevronRight size={12} className="child-call__chevron" aria-hidden />
-        {row}
-      </summary>
-      {open ? (
+      {() => (
         <div className="child-call__detail">
           {duration ? (
             <span className="child-call__duration">Duration · {duration}</span>
@@ -92,45 +99,26 @@ function CallRow({ call }: { call: ChildCall }) {
           ) : null}
           {call.arguments !== undefined || (!model && call.argumentsPreview) ? (
             <>
-              <div className="card__section-label">
-                {call.argumentsPreview !== undefined
-                  ? "Arguments preview"
-                  : "Available arguments"}
-              </div>
-              <pre
-                className="card__mono"
-                tabIndex={0}
-                role="group"
-                aria-label={
-                  call.argumentsPreview !== undefined
-                    ? "Arguments preview"
-                    : "Available arguments"
-                }
-              >
-                {stripTerminalSequences(
+              <div className="card__section-label">{argumentsLabel}</div>
+              <ActivityText
+                label={argumentsLabel}
+                text={stripTerminalSequences(
                   call.argumentsPreview ??
                     JSON.stringify(call.arguments, null, 2),
                 )}
-              </pre>
+              />
             </>
           ) : null}
           {call.error ? (
-            <pre
-              className="card__mono card__mono--error"
-              tabIndex={0}
-              role="group"
-              aria-label="Call error"
-            >
-              {stripTerminalSequences(call.error)}
-            </pre>
+            <ActivityText
+              error
+              label="Call error"
+              text={stripTerminalSequences(call.error)}
+            />
           ) : null}
         </div>
-      ) : null}
-    </details>
-  ) : (
-    <div className="child-call">
-      <div className="child-call__row">{row}</div>
-    </div>
+      )}
+    </ActivityDetails>
   );
 }
 
@@ -139,11 +127,11 @@ function CallRow({ call }: { call: ChildCall }) {
 export function ChildCalls({
   list,
   running,
-  onRead,
+  unbounded = false,
 }: {
   list: ChildCallList;
   running: boolean;
-  onRead: () => void;
+  unbounded?: boolean;
 }) {
   const scroll = useActivityReaderScroll<HTMLDivElement>(
     "child-calls-scroll",
@@ -154,27 +142,13 @@ export function ChildCalls({
     <>
       <div
         className="child-calls"
-        ref={scroll.props.ref}
+        data-unbounded={unbounded || undefined}
+        {...scroll.props}
         tabIndex={0}
         role="group"
         aria-label="Child calls"
-        onFocusCapture={() => {
-          scroll.stopFollowing();
-          onRead();
-        }}
-        onPointerDown={() => {
-          scroll.stopFollowing();
-          onRead();
-        }}
-        onScroll={(event) => {
-          scroll.props.onScroll(event);
-          const element = event.currentTarget;
-          if (
-            element.scrollHeight - element.scrollTop - element.clientHeight >=
-            24
-          )
-            onRead();
-        }}
+        onFocusCapture={scroll.stopFollowing}
+        onPointerDown={scroll.stopFollowing}
       >
         {list.calls.map((call) => (
           <CallRow key={call.key} call={call} />

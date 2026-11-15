@@ -9,6 +9,7 @@ import {
   type TerminalDaemonConfiguration,
   type TerminalDaemonInfo,
 } from "./terminal-daemon-configuration.js";
+import { TERMINAL_DAEMON_PROTOCOL_VERSION } from "./terminal-daemon-protocol.js";
 import { TerminalDaemonServer } from "./terminal-daemon-server.js";
 import {
   addressAcceptsConnections,
@@ -154,7 +155,7 @@ async function main(): Promise<void> {
     };
     daemon = new TerminalDaemonServer(config.address, token, manager, {
       info: (): TerminalDaemonInfo => ({
-        lifecycleVersion: 1,
+        protocolVersion: TERMINAL_DAEMON_PROTOCOL_VERSION,
         instanceId,
         pid: process.pid,
         processStartTime,

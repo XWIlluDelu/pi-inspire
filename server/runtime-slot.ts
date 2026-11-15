@@ -1,7 +1,5 @@
-import type { SessionEntry } from "@earendil-works/pi-coding-agent";
-import { type BranchBridgeResult } from "../shared/branch-bridge-protocol.js";
 import {
-  type ComposerHistoryEntry,
+  type ActiveSnapshot,
   type ExtensionDisplay,
   type ExtensionUiRequest,
   emptyPendingQueues,
@@ -15,51 +13,66 @@ import {
 } from "../shared/contracts.js";
 import type { PiRpcProcess } from "./pi-rpc.js";
 import type { NativeBashExecution } from "./runtime-bash.js";
+import type { startBranchNavigation } from "./runtime-branch-bridge.js";
 import type { PendingImageRecovery } from "./runtime-pending-images.js";
-import type { ActiveSessionSnapshot } from "./session-preview.js";
-import type { SessionProjectionView } from "./session-projection.js";
+import type {
+  SessionProjectionView,
+  WorkerEntryIndex,
+} from "./session-projection.js";
+
+type SessionMetadata = Pick<
+  NonNullable<ActiveSnapshot["active"]>,
+  | "sessionName"
+  | "model"
+  | "thinkingLevel"
+  | "stats"
+  | "runtimeSettings"
+  | "commands"
+>;
+
+export interface PendingExtensionDialog {
+  request: ExtensionUiRequest;
+  process: PiRpcProcess;
+  timer?: ReturnType<typeof setTimeout>;
+}
 
 type CompletionAttention = "completed" | "failed";
 
-export type PersistenceMatcher = (entry: SessionEntry) => boolean;
-
-export interface PersistenceExpectation {
-  readonly token: symbol;
-  matcher: PersistenceMatcher | null;
-  readonly exactEntry: SessionEntry | null;
-  readonly ready: Promise<void>;
-  settle(matcher: PersistenceMatcher | null): void;
+export function effectiveRuntimeLeaf(slot: RuntimeSlot): string | null {
+  if (slot.workerView) return slot.workerView.index.leafId;
+  const view = slot.viewLeafId;
+  return view !== undefined && (view === null || slot.projection?.entry(view))
+    ? view
+    : (slot.projection?.leafId ?? null);
 }
 
-type OwnershipRejectionReason =
-  | "projection-unavailable"
-  | "not-append"
-  | "entries-unavailable"
-  | "revision-mismatch"
-  | "fingerprint-mismatch"
-  | "source-version-mismatch"
-  | "source-identity-mismatch"
-  | "worker-unavailable"
-  | "worker-entries-unavailable"
-  | "worker-entry-mismatch"
-  | "parent-mismatch"
-  | "missing-claim"
-  | "claim-mismatch"
-  | "initial-materialization-mismatch"
-  | "physical-progress-mismatch";
+export function runtimeHistory(
+  slot: RuntimeSlot,
+): Pick<
+  SessionProjectionView,
+  | "revision"
+  | "incarnation"
+  | "entry"
+  | "viewMessages"
+  | "branchImage"
+  | "latestPage"
+  | "historyPage"
+  | "composerHistoryMessages"
+> | null {
+  return slot.workerView?.index ?? slot.projection;
+}
 
-export interface OwnershipDecision {
-  owned: boolean;
-  source?: "expectation" | "worker-entries" | "initial-materialization";
-  reason?: OwnershipRejectionReason;
-  expectationsConsumed?: number;
-  workerWitness?: {
-    observedEntries: number;
-    workerEntries: number;
-    aheadBy: number;
-    observedLeafId: string | null;
-    workerLeafId: string | null;
-  };
+export function workerOnSeparateBranch(slot: RuntimeSlot): boolean {
+  const worker = slot.workerView;
+  const file = slot.projection;
+  // A running worker can know the next native leaf before Live adopts it.
+  const leaf = worker?.nativeLeafId;
+  return Boolean(
+    worker &&
+      file &&
+      leaf !== undefined &&
+      !worker.index.continues(leaf, file.leafId),
+  );
 }
 
 export interface BranchBridgeIdentity {
@@ -68,53 +81,31 @@ export interface BranchBridgeIdentity {
   statusKey: string;
 }
 
-export interface PendingBranchBridge {
-  nonce: string;
-  bridge: BranchBridgeIdentity;
-  settled: boolean;
-  duplicate: boolean;
-  resolve: (result: BranchBridgeResult) => void;
-  reject: (error: Error) => void;
-  result: Promise<BranchBridgeResult>;
-  navigationParentId?: string | null;
-  beforeLeafId?: string | null;
-  summarize?: boolean;
-  /** The stock command response fences the completed branch handler. */
-  finished?: Promise<void>;
+type PendingBranchBridge = ReturnType<typeof startBranchNavigation> & {
+  summarize: boolean;
+};
+
+export interface WorkerView {
+  index: WorkerEntryIndex;
+  contextGeneration: number;
+  finishedMessages: Map<string, string>;
+  sealedCursor: string | null;
+  nativeLeafId: string | null;
+  /** View-local turn owners for native entries adopted from the current worker. */
+  entryTurns: Map<string, string>;
 }
 
-export interface PendingPartialPersistence {
-  committedBytes: number;
-  bytes: number;
-  fingerprint: string;
-  sourceIdentity: string | null;
-  sourceVersion: string | null;
-  observedBytes: number;
-}
+/** What the current Pi worker publishes about its extensions and tools.
+ * Discarded together whenever that worker stops or is replaced. */
+type WorkerPresentation = Pick<
+  RuntimeSlot,
+  "extensionDisplays" | "extensionStatuses" | "toolActivity"
+>;
 
-interface NavigationLease {
-  workerId: string;
-  sourceRevision: number;
-  durableLeafId: string | null;
-  effectiveLeafId: string | null;
-  targetId: string;
-  mode: "switch" | "edit";
-}
-
-export interface CustomActivityOwnership {
-  pendingEntries: SessionEntry[];
-  pendingMessageActivityIds: string[];
-  activityIdByEntryId: Map<string, string>;
-  entryIdByActivityId: Map<string, string>;
-}
-
-export function emptyCustomActivityOwnership(): CustomActivityOwnership {
-  return {
-    pendingEntries: [],
-    pendingMessageActivityIds: [],
-    activityIdByEntryId: new Map(),
-    entryIdByActivityId: new Map(),
-  };
+export function clearWorkerPresentation(slot: WorkerPresentation): void {
+  slot.extensionDisplays = [];
+  slot.extensionStatuses = {};
+  slot.toolActivity = {};
 }
 
 export interface RuntimeOperationQueue {
@@ -136,13 +127,14 @@ export interface RuntimeSlot {
    * JSONL records its matching active-path setting. */
   startupThinkingLevel: string | null;
   process: PiRpcProcess | null;
+  unbindWorkerEvents: (() => void) | null;
   startupPhase: "idle" | "starting" | "complete";
   startupError: Error | null;
+  nativeStart: unknown;
   /** A reclaimed worker must finish stopping before the same session starts
    * another one, preserving Pi's one-writer-per-session rule. */
   stopping: Promise<void> | null;
-  /** Worker owning a prompt whose Pi receipt is still pending. */
-  pendingPrompt: PiRpcProcess | null;
+  /** Prompt RPCs still unwinding on the current worker. */
   pendingPromptCount: number;
   nativeBash: NativeBashExecution | null;
   /** Standalone compaction owns its native command boundary and cancellation evidence. */
@@ -155,31 +147,32 @@ export interface RuntimeSlot {
   deliveryNavigationEpoch: number;
   /** Host-held input awaiting a safe Pi prompt boundary; not persisted Pi history. */
   deferredPrompts: Array<{
-    request: PromptRequest;
+    request: PromptRequest & {
+      behavior: NonNullable<PromptRequest["behavior"]>;
+    };
     worker: PiRpcProcess;
     navigationEpoch: number;
     incarnationId: string;
-    resolve: (entry: ComposerHistoryEntry | null) => void;
+    resolve: () => void;
     reject: (error: Error) => void;
   }>;
   drainingDeferredPrompts: boolean;
   deliveryQueue: RuntimeOperationQueue;
   ready: boolean;
-  preview: ActiveSessionSnapshot | null;
+  preview: SessionMetadata | null;
   projection: SessionProjectionView | null;
   runState: RunState;
+  activeTask: "agent" | "compaction" | null;
   /** State to restore after the current manual or automatic compaction ends. */
   compactionReturnState: RunState | null;
   retry: RetryInfo | null;
   summarizationRetry: RetryInfo | null;
   attention: CompletionAttention | null;
-  pendingExtensionUiRequests: Map<string, ExtensionUiRequest>;
-  pendingExtensionUiOwners: Map<string, PiRpcProcess>;
-  pendingExtensionUiTimers: Map<string, ReturnType<typeof setTimeout>>;
+  attentionId?: number;
+  pendingExtensionDialogs: Map<string, PendingExtensionDialog>;
   extensionResponseQueue: RuntimeOperationQueue;
   pendingQueues: PendingQueues;
-  piPendingQueues: PendingQueues;
-  /** Latest complete public Pi queue event; never sent in a browser snapshot. */
+  /** Native queue text, or null when the observation was incomplete. */
   piPendingInput: PendingInput | null;
   /** Worker-bound artifact ownership, not a queue/scheduling authority. */
   pendingImages: PendingImageRecovery | null;
@@ -194,36 +187,26 @@ export interface RuntimeSlot {
   availableModels: unknown[] | null;
   commands: unknown[] | null;
   lastUsed: number;
+  /** Eligible for the bounded preview cache after an explicit HTTP open. */
+  opened: boolean;
   activeOperations: number;
-  workerProjectionRevision: number | null;
-  workerProjectionFingerprint: string | null;
-  workerProjectionSourceIdentity: string | null;
-  workerProjectionSourceVersion: string | null;
-  workerProjectionObservedBytes: number | null;
+  workerView: WorkerView | null;
   overlay: unknown[];
   /** Exact serialized bytes for each bounded overlay item. */
   overlayItemBytes: number[];
-  overlayBytes: number;
   nextOverlayId: number;
-  /** Fallback correlation of the assistant message whose tool batch is live.
-   * It survives live-overlay absorption without treating an older assistant
-   * as active when the current message falls outside a bounded page. */
-  activeAssistantCorrelation: string | null;
+  activeAssistantKey: string | null;
+  activeTurnId: string | null;
   activeOverlayIds: Map<string, string>;
-  /** Pi assigns persistence timestamps to custom_message and direct Bash results, so
-   * live↔durable ownership is established one-to-one from exact payload and
-   * event order rather than the ordinary role+timestamp correlation. */
-  customActivities: CustomActivityOwnership;
   conflict: ProjectionConflict | null;
-  persistenceExpectations: PersistenceExpectation[];
-  absorbedPersistenceEntries: Map<string, SessionEntry[]>;
-  pendingPartialPersistence: PendingPartialPersistence | null;
   mutationQueue: RuntimeOperationQueue;
   eventTail: Promise<void>;
   projectionTail: Promise<void>;
   bridge: BranchBridgeIdentity | null;
   pendingBranchBridge: PendingBranchBridge | null;
-  navigationLease: NavigationLease | null;
+  /** Branch leaf shown while no Inspire worker runs; undefined follows the
+   * saved default. A running worker has its own native index. */
+  viewLeafId?: string | null;
   branchRevision: number;
   incarnationId: string;
   viewId: string;
@@ -236,7 +219,7 @@ interface RuntimeSlotSeed {
   sessionPath: string | null;
   startupThinkingLevel?: string | null;
   process: PiRpcProcess | null;
-  preview: ActiveSessionSnapshot | null;
+  preview: SessionMetadata | null;
   projection: SessionProjectionView | null;
   bridge: BranchBridgeIdentity | null;
   branchRevision: number;
@@ -255,10 +238,11 @@ export function createRuntimeSlot(seed: RuntimeSlotSeed): RuntimeSlot {
     ...seed,
     readOnlyReason: seed.readOnlyReason ?? null,
     startupThinkingLevel: seed.startupThinkingLevel ?? null,
+    unbindWorkerEvents: null,
     startupPhase: "idle",
     startupError: null,
+    nativeStart: null,
     stopping: null,
-    pendingPrompt: null,
     pendingPromptCount: 0,
     nativeBash: null,
     manualCompaction: null,
@@ -268,16 +252,14 @@ export function createRuntimeSlot(seed: RuntimeSlotSeed): RuntimeSlot {
     deliveryQueue: emptyOperationQueue(),
     ready: false,
     runState: "idle",
+    activeTask: null,
     compactionReturnState: null,
     retry: null,
     summarizationRetry: null,
     attention: null,
-    pendingExtensionUiRequests: new Map(),
-    pendingExtensionUiOwners: new Map(),
-    pendingExtensionUiTimers: new Map(),
+    pendingExtensionDialogs: new Map(),
     extensionResponseQueue: emptyOperationQueue(),
     pendingQueues: emptyPendingQueues(),
-    piPendingQueues: emptyPendingQueues(),
     piPendingInput: { steering: [], followUp: [] },
     pendingImages: null,
     stoppingInput: false,
@@ -288,27 +270,19 @@ export function createRuntimeSlot(seed: RuntimeSlotSeed): RuntimeSlot {
     availableModels: null,
     commands: null,
     lastUsed: 0,
+    opened: false,
     activeOperations: 0,
-    workerProjectionRevision: null,
-    workerProjectionFingerprint: null,
-    workerProjectionSourceIdentity: null,
-    workerProjectionSourceVersion: null,
-    workerProjectionObservedBytes: null,
+    workerView: null,
     overlay: [],
     overlayItemBytes: [],
-    overlayBytes: 2,
     nextOverlayId: 0,
-    activeAssistantCorrelation: null,
+    activeAssistantKey: null,
+    activeTurnId: null,
     activeOverlayIds: new Map(),
-    customActivities: emptyCustomActivityOwnership(),
     conflict: null,
-    persistenceExpectations: [],
-    absorbedPersistenceEntries: new Map(),
-    pendingPartialPersistence: null,
     mutationQueue: emptyOperationQueue(),
     eventTail: Promise.resolve(),
     projectionTail: Promise.resolve(),
     pendingBranchBridge: null,
-    navigationLease: null,
   };
 }

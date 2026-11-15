@@ -32,6 +32,8 @@ export const DEFAULT_TERMINAL_UI_SETTINGS: TerminalUiSettings = {
   scrollbackRows: 20_000,
 };
 
+export const TERMINAL_FONT_SIZE = { min: 10, max: 24 };
+
 const STORAGE_KEY = "inspire:terminal-ui-settings:v1";
 
 function finiteRange(
@@ -55,7 +57,11 @@ export function loadTerminalUiSettings(): TerminalUiSettings {
     if (!parsed || typeof parsed !== "object")
       return { ...DEFAULT_TERMINAL_UI_SETTINGS };
     return {
-      fontSize: finiteRange(parsed.fontSize, 10, 24)
+      fontSize: finiteRange(
+        parsed.fontSize,
+        TERMINAL_FONT_SIZE.min,
+        TERMINAL_FONT_SIZE.max,
+      )
         ? Math.round(parsed.fontSize)
         : DEFAULT_TERMINAL_UI_SETTINGS.fontSize,
       lineHeight: finiteRange(parsed.lineHeight, 1, 1.6)

@@ -1,10 +1,11 @@
+import { createHash } from "node:crypto";
+import type { BigIntStats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
+import { pipeline } from "node:stream/promises";
 import type { Request, Response } from "express";
 import { requestError } from "./request-error.js";
 
-/** One range, including suffix/open-ended ranges; never silently send a whole
- * large file for an invalid range. Empty files ignore Range. */
-export function resourceByteRange(
+function resourceByteRange(
   request: Request,
   size: number,
 ): { start: number; end: number } | null {
@@ -17,45 +18,147 @@ export function resourceByteRange(
   return ranges[0]!;
 }
 
-/** Own the opened descriptor through range validation, disconnect and streaming. */
+function versionFromStats(details: BigIntStats): string {
+  return (
+    '"' +
+    createHash("sha256")
+      .update(
+        [
+          details.dev,
+          details.ino,
+          details.size,
+          details.mtimeNs,
+          details.ctimeNs,
+        ].join(":"),
+      )
+      .digest("base64url") +
+    '"'
+  );
+}
+
+function versionConflict() {
+  return requestError(
+    "The referenced file changed on disk; open it again",
+    409,
+  );
+}
+
+function checkResourceVersion(request: Request, version: string): void {
+  const ifMatch = request.get("if-match");
+  const ifRange = request.get("range") && request.get("if-range");
+  if (
+    (ifMatch &&
+      ifMatch !== "*" &&
+      !ifMatch.split(",").some((tag) => tag.trim() === version)) ||
+    (ifRange && ifRange !== version)
+  )
+    throw versionConflict();
+}
+
+function prepareTransfer(
+  request: Request,
+  response: Response,
+  size: number,
+  version: string,
+) {
+  checkResourceVersion(request, version);
+  const range = resourceByteRange(request, size);
+  return {
+    range,
+    publish() {
+      response.set({
+        "Accept-Ranges": "bytes",
+        ETag: version,
+        "Content-Length": String(range ? range.end - range.start + 1 : size),
+      });
+      if (range)
+        response
+          .status(206)
+          .set("Content-Range", `bytes ${range.start}-${range.end}/${size}`);
+    },
+  };
+}
+
+export function sendResourceBytes(
+  request: Request,
+  response: Response,
+  data: Buffer,
+  headers: () => void,
+): void {
+  if (response.destroyed) return;
+  const version = `"${createHash("sha256").update(data).digest("base64url")}"`;
+  const { range, publish } = prepareTransfer(
+    request,
+    response,
+    data.length,
+    version,
+  );
+  headers();
+  publish();
+  response.send(range ? data.subarray(range.start, range.end + 1) : data);
+}
+
+/** The transfer owns its descriptor. Withhold the last chunk until the
+ * descriptor is checked again so a changed file cannot complete the response. */
 export async function sendResourceFile(
   request: Request,
   response: Response,
-  handle: FileHandle,
-  size: number,
+  { handle, details }: { handle: FileHandle; details: BigIntStats },
+  headers: () => void = () => undefined,
 ): Promise<void> {
-  if (response.destroyed) {
-    await handle.close();
-    return;
-  }
-  let range: { start: number; end: number } | null;
   try {
-    range = resourceByteRange(request, size);
-  } catch (error) {
-    await handle.close();
-    throw error;
-  }
-  response.set("Accept-Ranges", "bytes");
-  if (range)
-    response.status(206).set({
-      "Content-Range": `bytes ${range.start}-${range.end}/${size}`,
-      "Content-Length": String(range.end - range.start + 1),
+    if (response.destroyed) return;
+    if (details.size > BigInt(Number.MAX_SAFE_INTEGER))
+      throw requestError("The referenced file is too large to preview", 413);
+    const size = Number(details.size);
+    const version = versionFromStats(details);
+    const { range, publish } = prepareTransfer(
+      request,
+      response,
+      size,
+      version,
+    );
+    const checkVersion = async () => {
+      const current = await handle.stat({ bigint: true });
+      if (
+        current.size !== details.size ||
+        current.mtimeNs !== details.mtimeNs ||
+        (current.nlink !== 0n && current.ctimeNs !== details.ctimeNs)
+      )
+        throw versionConflict();
+    };
+    await checkVersion();
+    if (response.destroyed) return;
+    headers();
+    publish();
+    if (size === 0 || request.method === "HEAD") {
+      response.end();
+      return;
+    }
+    const stream = handle.createReadStream({
+      start: range?.start ?? 0,
+      end: range?.end ?? size - 1,
+      autoClose: false,
     });
-  else response.set("Content-Length", String(size));
-  if (size === 0) {
+    try {
+      await pipeline(
+        stream,
+        async function* (source) {
+          let tail: Uint8Array | undefined;
+          for await (const chunk of source) {
+            await checkVersion();
+            if (tail) yield tail;
+            tail = chunk;
+          }
+          await checkVersion();
+          if (tail) yield tail;
+        },
+        response,
+      );
+    } catch (error) {
+      if (!response.destroyed) throw error;
+    }
+  } finally {
     await handle.close();
-    response.end();
-    return;
   }
-  const stream = handle.createReadStream(
-    range
-      ? { start: range.start, end: range.end }
-      : { start: 0, end: size - 1 },
-  );
-  response.once("close", () => stream.destroy());
-  stream.on("error", () => {
-    if (!response.headersSent) response.status(500);
-    response.end();
-  });
-  stream.pipe(response);
 }

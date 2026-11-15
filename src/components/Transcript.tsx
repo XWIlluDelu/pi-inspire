@@ -17,38 +17,30 @@ import {
   type PendingQueues,
   type RunState,
   type ToolVisibilityPreference,
-  type UserTurnAnchor,
   type VisibilityPreference,
 } from "../../shared/contracts";
-import { userTurnSummary } from "../../shared/user-turns";
-import { type ActivityTool, type ChatMessage, messageKey } from "../events";
+import { type ActivityTool, type ChatMessage } from "../events";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import { resourceReferenceFromEventTarget } from "../resources";
-import {
-  type ActivityMaterializationMode,
-  store,
-  type TranscriptActivityRangeState,
-} from "../store";
+import { store } from "../store";
 import { transcriptProjectionKey } from "../transcript-projection-key";
 import { hasActiveModal } from "../use-modal-focus";
 import { EarlierBranchBanner } from "./EarlierBranchBanner";
-import { EmbeddedImageOwnerContext } from "./ImagePreview";
-import { PiLoader } from "./PiLoader";
-import { PromptMap } from "./PromptMap";
+import { ExtensionDisplaySurface } from "./ExtensionDisplays";
+import { TranscriptImageOwnerContext } from "./ImagePreview";
 import { handleRichTextCopy } from "./rich-text-copy";
 import { ScrollRail } from "./ScrollRail";
-import {
-  type MobileTranscriptTool,
-  TranscriptUtilities,
-} from "./TranscriptUtilities";
+import { TranscriptPromptMap } from "./TranscriptPromptMap";
+import { TranscriptUtilities } from "./TranscriptUtilities";
 import { useTranscriptRows } from "./transcript-row-projection";
-import { ExtensionDisplaySurface, PendingQueueGroups } from "./transcript-rows";
+import { PendingQueueGroups } from "./transcript-rows";
 import {
   TranscriptSearchReveal,
   useTranscriptSearch,
 } from "./transcript-search";
 import { useTranscriptSearchHighlights } from "./transcript-search-highlights";
 import { useTranscriptViewport } from "./transcript-viewport";
+import { useTranscriptHistory } from "./use-transcript-history";
 
 // --- Transcript with pinned auto-scroll ---
 
@@ -62,13 +54,6 @@ export interface TranscriptNavigation {
 export const Transcript = memo(function Transcript({
   ref,
   messages,
-  activityRanges = [],
-  promptMapTurns = [],
-  promptMapTotal = 0,
-  promptMapLoadedStarts = [],
-  promptMapLoadingStarts = [],
-  promptMapError = null,
-  promptMapNavigatingOrdinal = null,
   streaming,
   runState,
   activeAssistantMessageKey = null,
@@ -76,30 +61,17 @@ export const Transcript = memo(function Transcript({
   thinkingVisibility,
   toolVisibility,
   activityFoldVisibility = "expanded",
-  hasOlder = false,
-  loadingOlder = false,
-  olderError = null,
-  onLoadOlder = store.loadOlderMessages,
-  onMaterializeActivityRanges = store.materializeActivityRanges,
-  onLoadPromptMapTurns = store.loadPromptMapTurns,
-  onNavigatePromptMapTurn = store.navigatePromptMapTurn,
   sessionId = "",
   viewId = "",
   projectionIncarnation = "",
+  hasOlder = false,
+  historyVersion = "",
   queue = emptyPendingQueues(),
   pendingAction = null,
   extensionDisplays = [],
-  viewingEarlierBranch = false,
 }: {
   ref?: Ref<TranscriptNavigation>;
   messages: ChatMessage[];
-  activityRanges?: TranscriptActivityRangeState[];
-  promptMapTurns?: UserTurnAnchor[];
-  promptMapTotal?: number;
-  promptMapLoadedStarts?: number[];
-  promptMapLoadingStarts?: number[];
-  promptMapError?: string | null;
-  promptMapNavigatingOrdinal?: number | null;
   streaming: boolean;
   runState?: RunState;
   activeAssistantMessageKey?: string | null;
@@ -107,24 +79,14 @@ export const Transcript = memo(function Transcript({
   thinkingVisibility: VisibilityPreference;
   toolVisibility: ToolVisibilityPreference;
   activityFoldVisibility?: ActivityFoldVisibilityPreference;
-  hasOlder?: boolean;
-  loadingOlder?: boolean;
-  olderError?: string | null;
-  onLoadOlder?: () => Promise<boolean>;
-  onMaterializeActivityRanges?: (
-    cursors: readonly string[],
-    beforeCommit?: () => void,
-    mode?: ActivityMaterializationMode,
-  ) => Promise<void>;
-  onLoadPromptMapTurns?: (start?: number) => Promise<readonly UserTurnAnchor[]>;
-  onNavigatePromptMapTurn?: (ordinal: number) => Promise<boolean>;
   sessionId?: string;
   viewId?: string;
   projectionIncarnation?: string;
+  hasOlder?: boolean;
+  historyVersion?: string;
   queue?: PendingQueues;
   pendingAction?: "clear" | "recover" | null;
   extensionDisplays?: ExtensionDisplay[];
-  viewingEarlierBranch?: boolean;
 }) {
   const genericExtensionDisplays = extensionDisplays.filter(
     (display): display is GenericExtensionDisplay => display.kind === "raw",
@@ -132,95 +94,31 @@ export const Transcript = memo(function Transcript({
   const pendingRef = useRef<HTMLElement>(null);
   const searchOwnsViewportRef = useRef(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const promptLauncherRef = useRef<HTMLButtonElement>(null);
   const searchLauncherRef = useRef<HTMLButtonElement>(null);
-  const [mobileTranscriptTool, setMobileTranscriptTool] =
-    useState<MobileTranscriptTool>(null);
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const projectionViewKey = transcriptProjectionKey(
     viewId,
     projectionIncarnation,
   );
+  const [mobilePromptsOpen, setMobilePromptsOpen] = useState(false);
+  const lastReadingTop = useRef(0);
+  const touchY = useRef<number>(null);
+  const hasPromptMap = Boolean(
+    sessionId &&
+      viewId &&
+      (hasOlder ||
+        messages.some(
+          (message) => message.role === "user" && message.__inspireEntryId,
+        )),
+  );
+  const historyKey = `${sessionId}:${projectionViewKey}`;
   const imageOwner = useMemo(
     () => ({ sessionId, viewId, projectionKey: projectionViewKey }),
     [sessionId, viewId, projectionViewKey],
   );
-  const promptNavigationOwnerRef = useRef<typeof imageOwner | null>(imageOwner);
-  promptNavigationOwnerRef.current = imageOwner;
-  useLayoutEffect(() => {
-    promptNavigationOwnerRef.current = imageOwner;
-    return () => {
-      if (promptNavigationOwnerRef.current === imageOwner)
-        promptNavigationOwnerRef.current = null;
-    };
-  }, [imageOwner]);
-  const preserveActivityAnchorRef = useRef<
-    (element: HTMLElement, alignment: "start" | "center" | "end") => void
-  >(() => undefined);
-  const rows = useTranscriptRows({
-    messages,
-    activityRanges,
-    sessionId,
-    viewId,
-    projectionViewKey,
-    streaming,
-    runState,
-    activeAssistantMessageKey,
-    toolActivity,
-    thinkingVisibility,
-    toolVisibility,
-    activityFoldVisibility,
-    onMaterializeActivityRanges,
-    preserveActivityAnchorRef,
-  });
-  const loadedPromptTurns = useMemo(() => {
-    const byOrdinal = new Map<number, UserTurnAnchor>();
-    let inferredOrdinal = -1;
-    for (const message of messages) {
-      if (Number.isSafeInteger(message.__inspireUserTurnIndex))
-        inferredOrdinal = message.__inspireUserTurnIndex as number;
-      if (message.role !== "user") continue;
-      if (!Number.isSafeInteger(message.__inspireUserTurnIndex))
-        inferredOrdinal += 1;
-      const id =
-        message.__inspireMessageId ??
-        messageKey(message) ??
-        `loaded-user:${inferredOrdinal}`;
-      byOrdinal.set(inferredOrdinal, {
-        id,
-        ordinal: inferredOrdinal,
-        ...userTurnSummary(message),
-      });
-    }
-    return [...byOrdinal.values()];
-  }, [messages]);
-  const effectivePromptTurns = useMemo(() => {
-    const byOrdinal = new Map(
-      promptMapTurns.map((turn) => [turn.ordinal, turn]),
-    );
-    for (const turn of loadedPromptTurns) byOrdinal.set(turn.ordinal, turn);
-    return [...byOrdinal.values()].sort(
-      (left, right) => left.ordinal - right.ordinal,
-    );
-  }, [loadedPromptTurns, promptMapTurns]);
-  const effectivePromptTotal = Math.max(
-    promptMapTotal,
-    (effectivePromptTurns.at(-1)?.ordinal ?? -1) + 1,
-  );
-  const [activePromptOrdinal, setActivePromptOrdinal] = useState<number | null>(
-    null,
-  );
-  const [pendingPromptOrdinal, setPendingPromptOrdinal] = useState<{
-    ordinal: number;
-    owner: typeof imageOwner;
-  } | null>(null);
-  const promptNavigationOverrideRef = useRef<number | null>(null);
   const viewport = useTranscriptViewport({
-    rows,
     sessionId,
     viewId: projectionViewKey,
-    hasOlder,
-    olderError,
-    onLoadOlder,
     followSignal: messages,
     searchOwnsViewportRef,
   });
@@ -232,9 +130,48 @@ export const Transcript = memo(function Transcript({
     },
     [viewport.scrollRef],
   );
-  useLayoutEffect(() => {
-    preserveActivityAnchorRef.current = viewport.preserveAnchorThroughLayout;
-  }, [viewport.preserveAnchorThroughLayout]);
+  const history = useTranscriptHistory(
+    sessionId,
+    viewId,
+    projectionViewKey,
+    messages,
+    hasOlder,
+    scrollport,
+  );
+  const readEarlierNearTop = () => {
+    if (
+      !scrollport ||
+      scrollport.scrollTop > 140 ||
+      !history.canLoad ||
+      history.status
+    )
+      return;
+    viewport.releaseLatestFollow();
+    void history.loadEarlier();
+  };
+  const readLaterNearBottom = () => {
+    if (!scrollport || !history.hasLater || history.status) return;
+    if (
+      scrollport.scrollHeight -
+        scrollport.clientHeight -
+        scrollport.scrollTop <=
+      140
+    )
+      void history.loadLater();
+  };
+  const rows = useTranscriptRows({
+    messages: history.messages,
+    sessionId,
+    viewId,
+    projectionViewKey,
+    streaming,
+    runState,
+    activeAssistantMessageKey,
+    toolActivity,
+    thinkingVisibility,
+    toolVisibility,
+    activityFoldVisibility,
+  });
   const search = useTranscriptSearch({
     rows,
     sessionId,
@@ -242,12 +179,7 @@ export const Transcript = memo(function Transcript({
     searchOwnsViewportRef,
     onClear: viewport.restoreGeometricFollow,
     onNavigate: (rowIndex) => {
-      promptNavigationOverrideRef.current = null;
       viewport.releaseLatestFollow();
-      if (viewport.virtualize) {
-        viewport.virtualizer.scrollToIndex(rowIndex, { align: "center" });
-        return;
-      }
       requestAnimationFrame(() => {
         const row = viewport.scrollRef.current?.querySelector<HTMLElement>(
           `[data-transcript-row="${rowIndex}"]`,
@@ -266,52 +198,48 @@ export const Transcript = memo(function Transcript({
     revealVersion: search.revealVersion,
   });
 
-  const closeMobileTranscriptTool = useCallback(
+  const closeMobileSearch = useCallback(
     (restoreFocus = false) => {
-      const closedTool = mobileTranscriptTool;
-      if (
-        closedTool === "search" &&
-        window.matchMedia("(max-width: 900px)").matches
-      )
+      if (mobileSearchOpen && window.matchMedia("(max-width: 900px)").matches)
         search.clear();
-      setMobileTranscriptTool(null);
-      if (restoreFocus && closedTool) {
-        requestAnimationFrame(() => {
-          (closedTool === "prompt"
-            ? promptLauncherRef.current
-            : searchLauncherRef.current
-          )?.focus();
-        });
-      }
+      setMobileSearchOpen(false);
+      if (restoreFocus)
+        requestAnimationFrame(() =>
+          searchLauncherRef.current?.focus({ preventScroll: true }),
+        );
     },
-    [mobileTranscriptTool, search],
+    [mobileSearchOpen, search],
   );
   const searchQueryRef = useRef(search.query);
   searchQueryRef.current = search.query;
 
   const openSearch = () => {
-    if (window.matchMedia("(max-width: 900px)").matches)
-      setMobileTranscriptTool("search");
+    if (window.matchMedia("(max-width: 900px)").matches) {
+      setMobilePromptsOpen(false);
+      setMobileSearchOpen(true);
+    }
     // The layout effect focuses a newly opened narrow search after it renders.
     searchInputRef.current?.focus();
     searchInputRef.current?.select();
   };
 
+  // A session or view change retires narrow tool state with its query.
   useLayoutEffect(() => {
-    if (mobileTranscriptTool !== "search") return;
+    setMobileSearchOpen(false);
+    setMobilePromptsOpen(false);
+  }, [sessionId, projectionViewKey]);
+
+  useLayoutEffect(() => {
+    if (!mobileSearchOpen) return;
     searchInputRef.current?.focus();
     searchInputRef.current?.select();
-  }, [mobileTranscriptTool]);
+  }, [mobileSearchOpen]);
 
   useEffect(() => {
     const narrow = window.matchMedia("(max-width: 900px)");
     const syncLayout = () => {
-      if (!narrow.matches) {
-        setMobileTranscriptTool(null);
-      } else {
-        if (searchQueryRef.current) setMobileTranscriptTool("search");
-        else searchInputRef.current?.blur();
-      }
+      setMobileSearchOpen(narrow.matches && Boolean(searchQueryRef.current));
+      if (!narrow.matches) setMobilePromptsOpen(false);
     };
     syncLayout();
     narrow.addEventListener("change", syncLayout);
@@ -319,222 +247,75 @@ export const Transcript = memo(function Transcript({
   }, []);
 
   useEffect(() => {
-    if (
-      mobileTranscriptTool === null ||
-      !window.matchMedia("(max-width: 900px)").matches
-    )
+    if (!mobileSearchOpen || !window.matchMedia("(max-width: 900px)").matches)
       return;
     const closeFromOutside = (event: PointerEvent) => {
       const target = event.target;
       if (!(target instanceof Element)) return;
-      if (
-        target.closest(
-          ".transcript-mobile-toolbar, .transcript-search, [data-prompt-map]",
-        )
-      )
-        return;
-      const scopeMenuId = searchInputRef.current
-        ?.closest(".transcript-search")
-        ?.querySelector("[aria-controls]")
-        ?.getAttribute("aria-controls");
-      if (scopeMenuId && document.getElementById(scopeMenuId)?.contains(target))
-        return;
-      closeMobileTranscriptTool();
+      const tools = searchLauncherRef.current?.closest(".transcript-tools");
+      const popup = target.closest('[role="listbox"]');
+      const related = popup?.id
+        ? tools?.querySelector(`[aria-controls="${CSS.escape(popup.id)}"]`)
+        : null;
+      if (!tools?.contains(target) && !related) closeMobileSearch();
     };
     document.addEventListener("pointerdown", closeFromOutside, true);
     return () => {
       document.removeEventListener("pointerdown", closeFromOutside, true);
     };
-  }, [closeMobileTranscriptTool, mobileTranscriptTool]);
+  }, [closeMobileSearch, mobileSearchOpen]);
 
-  const scrollToPromptOrdinal = useCallback(
-    (ordinal: number): boolean => {
-      const rowIndex = rows.findIndex(
-        (row) => row.turnOrdinal === ordinal && row.turnStart,
-      );
-      if (rowIndex < 0) return false;
-      promptNavigationOverrideRef.current = ordinal;
-      viewport.markUserScrollIntent();
-      viewport.releaseLatestFollow();
-      if (viewport.virtualize) {
-        viewport.virtualizer.scrollToIndex(rowIndex, { align: "start" });
-      } else {
-        const owner = promptNavigationOwnerRef.current;
-        requestAnimationFrame(() => {
-          if (promptNavigationOwnerRef.current !== owner) return;
-          viewport.scrollRef.current
-            ?.querySelector<HTMLElement>(`[data-transcript-row="${rowIndex}"]`)
-            ?.scrollIntoView({ block: "start" });
-        });
-      }
-      setActivePromptOrdinal(ordinal);
-      return true;
-    },
-    [rows, viewport],
-  );
-
-  const navigatePromptOrdinal = useCallback(
-    async (ordinal: number) => {
-      search.clearCurrentMatch();
-      if (scrollToPromptOrdinal(ordinal)) return true;
-      const owner = imageOwner;
-      setPendingPromptOrdinal({ ordinal, owner });
-      const loaded = await onNavigatePromptMapTurn(ordinal);
-      if (promptNavigationOwnerRef.current !== owner) return false;
-      if (!loaded) setPendingPromptOrdinal(null);
-      return loaded;
-    },
-    [imageOwner, onNavigatePromptMapTurn, scrollToPromptOrdinal, search],
-  );
-
-  useEffect(() => {
-    promptNavigationOverrideRef.current = null;
-    setActivePromptOrdinal(null);
-    setPendingPromptOrdinal(null);
-    setMobileTranscriptTool(null);
-  }, [sessionId, projectionViewKey]);
-
-  useLayoutEffect(() => {
-    if (!pendingPromptOrdinal || pendingPromptOrdinal.owner !== imageOwner)
-      return;
-    if (scrollToPromptOrdinal(pendingPromptOrdinal.ordinal))
-      setPendingPromptOrdinal(null);
-  }, [imageOwner, pendingPromptOrdinal, rows, scrollToPromptOrdinal]);
-
-  useEffect(() => {
+  const jumpToPending = () => {
+    const pending = pendingRef.current;
     const scroller = viewport.scrollRef.current;
-    if (!scroller) return;
-    let frame = 0;
-    const update = () => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => {
-        const bounds = scroller.getBoundingClientRect();
-        const readingLine = bounds.top + Math.min(bounds.height * 0.32, 220);
-        const candidates = [
-          ...scroller.querySelectorAll<HTMLElement>("[data-user-turn-index]"),
-        ];
-        let selected: HTMLElement | null = null;
-        const overrideOrdinal = promptNavigationOverrideRef.current;
-        if (overrideOrdinal !== null) {
-          selected =
-            candidates.find((candidate) => {
-              if (Number(candidate.dataset.userTurnIndex) !== overrideOrdinal)
-                return false;
-              const rect = candidate.getBoundingClientRect();
-              return rect.bottom > bounds.top && rect.top < bounds.bottom;
-            }) ?? null;
-          if (selected) {
-            setActivePromptOrdinal(overrideOrdinal);
-            return;
-          }
-          promptNavigationOverrideRef.current = null;
-        }
-        const latestOrdinal = effectivePromptTotal - 1;
-        const remaining =
-          scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
-        if (
-          latestOrdinal >= 0 &&
-          scroller.scrollHeight - scroller.clientHeight > 1 &&
-          remaining <= 1 &&
-          candidates.some(
-            (candidate) =>
-              Number(candidate.dataset.userTurnIndex) === latestOrdinal,
-          )
-        ) {
-          setActivePromptOrdinal(latestOrdinal);
-          return;
-        }
-        for (const candidate of candidates) {
-          const rect = candidate.getBoundingClientRect();
-          if (rect.top <= readingLine) selected = candidate;
-          else if (!selected) {
-            selected = candidate;
-            break;
-          } else break;
-        }
-        if (!selected) {
-          setActivePromptOrdinal(null);
-          return;
-        }
-        const ordinal = Number(selected.dataset.userTurnIndex);
-        if (Number.isSafeInteger(ordinal)) setActivePromptOrdinal(ordinal);
-      });
-    };
-    scroller.addEventListener("scroll", update, { passive: true });
-    const observer = new ResizeObserver(update);
-    observer.observe(scroller);
-    if (viewport.contentRef.current)
-      observer.observe(viewport.contentRef.current);
-    update();
-    return () => {
-      cancelAnimationFrame(frame);
-      scroller.removeEventListener("scroll", update);
-      observer.disconnect();
-    };
-  }, [
-    effectivePromptTotal,
-    rows,
-    sessionId,
-    projectionViewKey,
-    viewport.contentRef,
-    viewport.scrollRef,
-  ]);
+    if (!pending || !scroller) return;
+
+    search.clearCurrentMatch();
+    viewport.releaseLatestFollow();
+    const topPadding =
+      Number.parseFloat(getComputedStyle(scroller).scrollPaddingTop) || 0;
+    scroller.scrollTop +=
+      pending.getBoundingClientRect().top -
+      scroller.getBoundingClientRect().top -
+      topPadding;
+    viewport.restoreGeometricFollow();
+    pending.focus({ preventScroll: true });
+  };
 
   useImperativeHandle(ref, () => ({
     openSearch,
     jumpToPending() {
-      const pending = pendingRef.current;
-      const scroller = viewport.scrollRef.current;
-      if (!pending || !scroller) return;
-      promptNavigationOverrideRef.current = null;
-      search.clearCurrentMatch();
-      viewport.releaseLatestFollow();
-      const topPadding =
-        Number.parseFloat(getComputedStyle(scroller).scrollPaddingTop) || 0;
-      scroller.scrollTop +=
-        pending.getBoundingClientRect().top -
-        scroller.getBoundingClientRect().top -
-        topPadding;
-      viewport.restoreGeometricFollow();
-      pending.focus({ preventScroll: true });
+      if (history.hasLater) {
+        history.returnToLive();
+        requestAnimationFrame(jumpToPending);
+      } else jumpToPending();
     },
   }));
 
   const jumpToLatest = () => {
-    promptNavigationOverrideRef.current = null;
     search.clearCurrentMatch();
+    history.returnToLive();
     viewport.jumpToLatest();
   };
 
-  const onActivityFoldClickCapture = (event: React.MouseEvent) => {
-    if (!(event.target instanceof Element)) return;
-    const control = event.target.closest<HTMLElement>(
-      "[data-activity-fold-anchor]",
-    );
-    const fold = control?.closest<HTMLElement>("[data-activity-fold]");
-    const alignment = control?.dataset.activityFoldAnchor;
-    if (
-      !fold ||
-      (alignment !== "start" && alignment !== "center" && alignment !== "end")
-    )
-      return;
-    viewport.preserveAnchorThroughLayout(fold, alignment);
-  };
-
   // One delegated handler serves every data-file-path element (Markdown
-  // links/images, inline-code paths) regardless of virtualization or memoized
+  // links/images, inline-code paths) across memoized
   // rows. Elements that must not bubble (tool-card summaries) stop propagation
   // and call store.openResource themselves.
   const onClick = (event: React.MouseEvent) => {
     const reference = resourceReferenceFromEventTarget(event.target);
     if (!reference) return;
     event.preventDefault();
-    void store.openResource(reference);
+    // Ctrl/⌘+click reveals the file on the Host desktop, as in Files.
+    if (event.ctrlKey || event.metaKey) void store.showInFileManager(reference);
+    else void store.openResource(reference);
   };
+
+  const selectedSearchRow = search.matches[search.currentMatch]?.rowIndex;
 
   return (
     <div
-      className={`transcript-wrap transcript-wrap--mobile-${mobileTranscriptTool ?? "idle"} ${viewingEarlierBranch ? "transcript-wrap--earlier-branch" : ""}`}
+      className="transcript-wrap"
       tabIndex={-1}
       onKeyDownCapture={(event) => {
         if (
@@ -571,171 +352,184 @@ export const Transcript = memo(function Transcript({
             " ",
           ].includes(event.key)
         ) {
-          promptNavigationOverrideRef.current = null;
           viewport.markUserScrollIntent();
+          if (["ArrowUp", "PageUp", "Home"].includes(event.key))
+            readEarlierNearTop();
+          else readLaterNearBottom();
         }
       }}
     >
-      <EarlierBranchBanner />
-      <TranscriptUtilities
-        search={search}
-        inputRef={searchInputRef}
-        searchLauncherRef={searchLauncherRef}
-        promptLauncherRef={promptLauncherRef}
-        mobileTool={mobileTranscriptTool}
-        onOpenMobile={setMobileTranscriptTool}
-        onClose={closeMobileTranscriptTool}
-      />
-      <PromptMap
-        key={`prompt-map:${sessionId}\u0000${projectionViewKey}`}
-        container={scrollport}
-        mobileActive={mobileTranscriptTool === "prompt"}
-        onDismissMobile={() => closeMobileTranscriptTool(true)}
-        turns={effectivePromptTurns}
-        total={effectivePromptTotal}
-        activeOrdinal={activePromptOrdinal}
-        loadedStarts={promptMapLoadedStarts}
-        loadingStarts={promptMapLoadingStarts}
-        navigatingOrdinal={promptMapNavigatingOrdinal}
-        error={promptMapError}
-        onLoad={onLoadPromptMapTurns}
-        onNavigate={navigatePromptOrdinal}
-      />
-      <div
-        className="transcript"
-        role="log"
-        aria-live="polite"
-        aria-busy={streaming}
-        ref={bindScrollport}
-        onScroll={viewport.onScroll}
-        onPointerDown={() => {
-          promptNavigationOverrideRef.current = null;
-        }}
-        onWheel={() => {
-          promptNavigationOverrideRef.current = null;
-          viewport.markUserScrollIntent();
-        }}
-        onTouchStart={() => {
-          promptNavigationOverrideRef.current = null;
-          viewport.markUserScrollIntent();
-        }}
-        onTouchMove={viewport.markUserScrollIntent}
-        onClickCapture={onActivityFoldClickCapture}
-        onClick={onClick}
-        onCopy={handleRichTextCopy}
-      >
-        <div className="transcript__content" ref={viewport.contentRef}>
-          {hasOlder ? (
-            <div className="transcript__older-sentinel">
-              {loadingOlder || viewport.loadingEarlier ? (
-                <span className="transcript__older-status" role="status">
-                  <PiLoader size={13} aria-hidden />
-                  Loading earlier messages…
-                </span>
-              ) : olderError ? (
-                <button
-                  type="button"
-                  className="transcript__older-retry"
-                  title={olderError}
-                  onClick={() => void viewport.loadOlder()}
-                >
-                  Retry loading earlier messages
-                </button>
-              ) : null}
-            </div>
-          ) : null}
-          <EmbeddedImageOwnerContext value={imageOwner}>
-            {rows.length === 0 ? (
-              <div className="transcript__column">
-                <div className="empty-state empty-state--conversation">
-                  <p className="empty-state__title">Empty session</p>
-                  <p className="empty-state__hint">
-                    Send a message below to start working with Pi.
-                  </p>
-                </div>
-              </div>
-            ) : viewport.virtualize ? (
-              <div
-                className="transcript__column transcript__column--virtual"
-                style={{ height: viewport.virtualizer.getTotalSize() }}
-              >
-                {viewport.virtualizer.getVirtualItems().map((item) => (
-                  <div
-                    key={rows[item.index]!.key}
-                    data-index={item.index}
-                    data-transcript-row={item.index}
-                    data-transcript-key={rows[item.index]!.key}
-                    data-user-turn-index={
-                      rows[item.index]!.turnOrdinal ?? undefined
-                    }
-                    data-user-turn-id={rows[item.index]!.turnId ?? undefined}
-                    ref={viewport.virtualizer.measureElement}
-                    className="transcript__virtual-row"
-                    style={{ transform: `translateY(${item.start}px)` }}
+      <div className="transcript-live">
+        <TranscriptUtilities
+          search={search}
+          inputRef={searchInputRef}
+          searchLauncherRef={searchLauncherRef}
+          searchOpen={mobileSearchOpen}
+          onOpenSearch={() => {
+            setMobilePromptsOpen(false);
+            setMobileSearchOpen(true);
+          }}
+          onClose={closeMobileSearch}
+          onTogglePrompts={
+            hasPromptMap
+              ? () => {
+                  closeMobileSearch();
+                  setMobilePromptsOpen((open) => !open);
+                }
+              : undefined
+          }
+          promptsOpen={mobilePromptsOpen}
+        />
+        <EarlierBranchBanner key={`${sessionId}:${viewId}`} />
+        <div
+          className="transcript"
+          role="log"
+          aria-live="polite"
+          aria-busy={streaming}
+          ref={bindScrollport}
+          onScroll={() => {
+            viewport.onScroll();
+            if (!scrollport) return;
+            const before = lastReadingTop.current;
+            lastReadingTop.current = scrollport.scrollTop;
+            if (scrollport.scrollTop < before) readEarlierNearTop();
+            else if (scrollport.scrollTop > before) readLaterNearBottom();
+          }}
+          onWheel={(event) => {
+            if (event.deltaY < 0) readEarlierNearTop();
+            if (event.deltaY > 0) readLaterNearBottom();
+            viewport.markUserScrollIntent(
+              event.deltaY < 0
+                ? "history"
+                : event.deltaY > 0
+                  ? "latest"
+                  : "unknown",
+            );
+          }}
+          onTouchStart={(event) => {
+            touchY.current = event.touches[0]?.clientY ?? null;
+            viewport.markUserScrollIntent();
+          }}
+          onTouchMove={(event) => {
+            const y = event.touches[0]?.clientY;
+            if (y === undefined || touchY.current === null) return;
+            viewport.markUserScrollIntent(
+              y > touchY.current ? "history" : "latest",
+            );
+            if (y > touchY.current) readEarlierNearTop();
+            else readLaterNearBottom();
+            touchY.current = y;
+          }}
+          onFocus={(event) => {
+            if (
+              event.target instanceof Element &&
+              event.target.closest(".activity-fold")
+            )
+              viewport.releaseLatestFollow();
+          }}
+          onClick={onClick}
+          onCopy={handleRichTextCopy}
+        >
+          <div className="transcript__content" ref={viewport.contentRef}>
+            {history.status && (
+              <p className="transcript__history-status" role="status">
+                {history.status.error || "Loading messages…"}
+                {history.status.error && (
+                  <button
+                    type="button"
+                    className="button button--quiet"
+                    onClick={history.retry}
                   >
-                    <TranscriptSearchReveal
-                      value={
-                        search.matches[search.currentMatch]?.rowIndex ===
-                        item.index
-                          ? search.revealVersion
-                          : null
-                      }
-                    >
-                      {rows[item.index]!.node}
-                    </TranscriptSearchReveal>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="transcript__column">
-                {rows.map((row, index) => (
-                  <div
-                    key={row.key}
-                    data-transcript-row={index}
-                    data-transcript-key={row.key}
-                    data-user-turn-index={row.turnOrdinal ?? undefined}
-                    data-user-turn-id={row.turnId ?? undefined}
-                  >
-                    <TranscriptSearchReveal
-                      value={
-                        search.matches[search.currentMatch]?.rowIndex === index
-                          ? search.revealVersion
-                          : null
-                      }
-                    >
-                      {row.node}
-                    </TranscriptSearchReveal>
-                  </div>
-                ))}
-              </div>
+                    Retry
+                  </button>
+                )}
+              </p>
             )}
-          </EmbeddedImageOwnerContext>
-          {queue.totalCount > 0 || genericExtensionDisplays.length > 0 ? (
-            <div className="transcript__column transcript__pending">
-              <PendingQueueGroups
-                ref={pendingRef}
-                key={sessionId}
-                queue={queue}
-                pendingAction={pendingAction}
-                onClear={store.clearPending}
-                onRecover={store.recoverPending}
-                getText={store.pendingText}
-              />
-              <ExtensionDisplaySurface displays={genericExtensionDisplays} />
-            </div>
-          ) : null}
+            <TranscriptImageOwnerContext value={imageOwner}>
+              <div className="transcript__column">
+                {rows.length === 0 ? (
+                  <div className="empty-state empty-state--conversation">
+                    <p className="empty-state__title">Empty session</p>
+                    <p className="empty-state__hint">
+                      Send a message to start.
+                    </p>
+                  </div>
+                ) : (
+                  rows.map((row, index) => {
+                    return (
+                      <div
+                        key={`${projectionViewKey}:${row.key}`}
+                        data-transcript-row={index}
+                        data-transcript-key={row.key}
+                        data-prompt-entry={row.promptEntry}
+                      >
+                        <TranscriptSearchReveal
+                          value={
+                            selectedSearchRow === index
+                              ? search.revealVersion
+                              : null
+                          }
+                        >
+                          {row.node}
+                        </TranscriptSearchReveal>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </TranscriptImageOwnerContext>
+            {queue.totalCount > 0 || genericExtensionDisplays.length > 0 ? (
+              <div className="transcript__column transcript__pending">
+                <PendingQueueGroups
+                  ref={pendingRef}
+                  key={sessionId}
+                  queue={queue}
+                  pendingAction={pendingAction}
+                  onClear={store.clearPending}
+                  onRecover={store.recoverPending}
+                  getText={store.pendingText}
+                />
+                <ExtensionDisplaySurface displays={genericExtensionDisplays} />
+              </div>
+            ) : null}
+          </div>
         </div>
+        {hasPromptMap && (
+          <TranscriptPromptMap
+            key={JSON.stringify([historyKey, historyVersion])}
+            sessionId={sessionId}
+            viewId={viewId}
+            scrollport={scrollport}
+            mobileActive={mobilePromptsOpen}
+            onDismissMobile={() => setMobilePromptsOpen(false)}
+            onJump={async (turn) => {
+              search.clearCurrentMatch();
+              viewport.releaseLatestFollow();
+              const row = scrollport?.querySelector<HTMLElement>(
+                `[data-prompt-entry="${CSS.escape(turn.id)}"]`,
+              );
+              const reached = row
+                ? (row.scrollIntoView({ block: "start" }), true)
+                : await history.seek(turn.id);
+              if (reached) setMobilePromptsOpen(false);
+              return reached;
+            }}
+          />
+        )}
+        <ScrollRail
+          container={viewport.scrollRef}
+          onUserScroll={viewport.markUserScrollIntent}
+        />
+        {history.hasLater || !viewport.atLatest ? (
+          <button
+            type="button"
+            className="jump-to-latest"
+            onClick={jumpToLatest}
+          >
+            Jump to latest
+          </button>
+        ) : null}
       </div>
-      {!viewport.atLatest ? (
-        <button type="button" className="jump-to-latest" onClick={jumpToLatest}>
-          Jump to latest
-        </button>
-      ) : null}
-      <ScrollRail
-        container={viewport.scrollRef}
-        variant="reading"
-        onUserScroll={viewport.markUserScrollIntent}
-      />
     </div>
   );
 });

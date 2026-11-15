@@ -6,15 +6,15 @@ import {
   lstat,
   mkdir,
   open,
-  readFile,
   readdir,
+  readFile,
   rename,
   rm,
   stat,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { processStartIdentity } from "./instance-state.mjs";
+import { processMayBeLive, processStartIdentity } from "./instance-state.mjs";
 
 const FILE_LOCK_VERSION = 1;
 const DEFAULT_WAIT_MS = 5_000;
@@ -48,26 +48,10 @@ function validOwner(value, token) {
   );
 }
 
-async function processAlive(pid) {
-  try {
-    process.kill(pid, 0);
-  } catch (error) {
-    return error?.code !== "ESRCH";
-  }
-  return true;
-}
-
 async function ownerAlive(owner) {
-  if (!(await processAlive(owner.pid))) return false;
-  if (owner.pid === process.pid)
-    return (await ownProcessStartIdentity()) === owner.processStartTime;
-  if (owner.processStartTime.startsWith("pid:")) return true;
-  try {
-    return (await processStartIdentity(owner.pid)) === owner.processStartTime;
-  } catch {
-    // Inaccessibility is not evidence that a live process lost ownership.
-    return true;
-  }
+  return owner.pid === process.pid
+    ? (await ownProcessStartIdentity()) === owner.processStartTime
+    : processMayBeLive(owner);
 }
 
 let currentProcessIdentity;

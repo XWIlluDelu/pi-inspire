@@ -1,17 +1,17 @@
 // @vitest-environment jsdom
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   type ToolPresentationConfiguration,
   toolPresentationConfigurationSchema,
 } from "../../shared/tool-presentation-config";
 import { ThinkingCard } from "../../src/components/transcript-cards";
-import { configureToolPresentationRegistry } from "../../src/tool-presentations/registry";
+import { configurePresentationAdapters } from "../../src/presentation-adapters";
 
 function configureThinking(
   thinking: NonNullable<ToolPresentationConfiguration["thinking"]>,
 ) {
-  configureToolPresentationRegistry({
+  configurePresentationAdapters({
     version: 1,
     rules: {},
     mappings: {},
@@ -20,8 +20,7 @@ function configureThinking(
 }
 
 afterEach(() => {
-  configureToolPresentationRegistry();
-  vi.useRealTimers();
+  configurePresentationAdapters();
 });
 
 describe("empty Thinking disclosure", () => {
@@ -54,28 +53,6 @@ describe("empty Thinking disclosure", () => {
       expect(disclosure).toHaveAttribute("aria-expanded", "false");
     },
   );
-
-  it("starts adaptive residency when content arrives, not while the body is empty", () => {
-    vi.useFakeTimers();
-    const card = (text: string, dynamicActive: boolean) => (
-      <ThinkingCard
-        text={text}
-        visibility="dynamic"
-        dynamicActive={dynamicActive}
-      />
-    );
-    const { rerender } = render(card("", true));
-    act(() => vi.advanceTimersByTime(5_000));
-    rerender(card("Visible thought", true));
-    const disclosure = screen.getByRole("button", {
-      name: "Collapse Thinking",
-    });
-    rerender(card("Visible thought", false));
-    act(() => vi.advanceTimersByTime(1_799));
-    expect(disclosure).toHaveAttribute("aria-expanded", "true");
-    act(() => vi.advanceTimersByTime(1));
-    expect(disclosure).toHaveAttribute("aria-expanded", "false");
-  });
 });
 
 describe("custom Thinking presentations", () => {
@@ -126,9 +103,7 @@ describe("custom Thinking presentations", () => {
       name: "Expand Thinking",
     });
     expect(within(card).getByText("Trace")).toBeInTheDocument();
-    expect(card.querySelector(".tool-summary__subdued")).toHaveTextContent(
-      "# Plan",
-    );
+    expect(within(card).getByText("# Plan", { exact: true })).toBeVisible();
 
     fireEvent.click(disclosure);
     expect(

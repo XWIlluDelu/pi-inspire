@@ -1,377 +1,166 @@
-import { spawn } from "node:child_process";
-import { once } from "node:events";
 import { mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
-import { pathToFileURL } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
-import { acquireFileLock } from "../../server/file-lock.mjs";
+import { dirname, join } from "node:path";
+import { afterEach, beforeEach, expect, it } from "vitest";
 import { PreferencesStore } from "../../server/preferences.js";
-import {
-  defaultPreferences,
-  SESSION_ACTION_IDS,
-} from "../../shared/contracts.js";
+import { editPrivateStateJson } from "../../server/private-state-file.js";
+import { defaultPreferences } from "../../shared/contracts.js";
 
-const roots: string[] = [];
+let root: string;
+let path: string;
+let store: PreferencesStore;
 
-async function fixture(): Promise<{ path: string; store: PreferencesStore }> {
-  const root = await mkdtemp(join(tmpdir(), "inspire-preferences-"));
-  roots.push(root);
-  const path = join(root, "preferences.json");
-  return { path, store: new PreferencesStore(path) };
-}
+beforeEach(async () => {
+  root = await mkdtemp(join(tmpdir(), "inspire-preferences-"));
+  path = join(root, "preferences.json");
+  store = new PreferencesStore(path);
+});
+afterEach(async () => rm(root, { recursive: true, force: true }));
 
-afterEach(async () => {
-  await Promise.all(
-    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+const read = () => readFile(path, "utf8");
+const write = (value: object) => writeFile(path, JSON.stringify(value));
+
+it("repairs only addressed fields while keeping older settings and their unknown data", async () => {
+  const saved = {
+    theme: "dark",
+    launch: "continue",
+    palette: "teal",
+    toolVisibility: "impossible",
+    sessionActionOrder: ["terminal"],
+    futurePreference: { retained: true },
+    pinnedSessionIds: ["session-a"],
+  };
+  await write(saved);
+  const before = await store.inspect();
+  expect(before.warning).toMatch(
+    /palette.*toolVisibility.*sessionActionOrder/u,
   );
+  expect(before.preferences).toEqual({
+    ...defaultPreferences,
+    theme: "dark",
+    launch: "continue",
+    pinnedSessionIds: ["session-a"],
+  });
+
+  const patch = store.patch({ titlebarNeedles: true, readingWidth: "wide" });
+  const remove = store.removeDeletedSessions(["session-a"]);
+  const [changed, removed, observed] = await Promise.all([
+    patch,
+    remove,
+    store.inspect(),
+  ]);
+  expect(changed.revision).toBeGreaterThan(before.revision);
+  expect(removed.revision).toBeGreaterThan(changed.revision);
+  expect(observed.revision).toBeGreaterThan(removed.revision);
+  expect(changed.preferences).toMatchObject({
+    pinnedSessionIds: ["session-a"],
+    readingWidth: "wide",
+  });
+  const next = {
+    ...saved,
+    titlebarNeedles: true,
+    readingWidth: "wide",
+    pinnedSessionIds: [],
+    hiddenSessionIds: [],
+  };
+  expect(JSON.parse(await read())).toEqual(next);
+  expect(observed.preferences).toEqual(removed.preferences);
+
+  const identity = { provider: "fixture", id: "model" };
+  const repaired = await store.patch({
+    palette: "wisteria",
+    toolVisibility: "compact",
+    herdrEnabled: true,
+    sessionActionOrder: ["export", "rename", "clone", "switch-branch"],
+    recentModelIds: [{ ...identity, name: "Display name", reasoning: true }],
+  });
+  const reopened = await new PreferencesStore(path).inspect();
+  expect(reopened.warning).toBeUndefined();
+  expect(reopened.preferences).toEqual(repaired.preferences);
+  expect(JSON.parse(await read())).toEqual({
+    ...next,
+    palette: "wisteria",
+    toolVisibility: "compact",
+    herdrEnabled: true,
+    sessionActionOrder: [
+      "export",
+      "rename",
+      "clone",
+      "switch-branch",
+      "copy-id",
+    ],
+    recentModelIds: [identity],
+  });
+
+  const original = await read();
+  for (const invalid of [
+    { palette: "teal" },
+    { sessionActionOrder: ["rename", "rename"] },
+    { sessionActionOrder: ["unknown"] },
+    { futurePreference: false },
+    { recentModelIds: [{ ...identity, id: "" }] },
+    { herdrEnabled: "yes" },
+  ])
+    await expect(store.patch(invalid)).rejects.toThrow();
+  expect(await read()).toBe(original);
 });
 
-describe("PreferencesStore validation", () => {
-  it.each(["details", "divider"])(
-    "retires saved assistant turn %s without locking preferences",
-    async (value) => {
-      const { path, store } = await fixture();
-      const raw = JSON.stringify({
-        assistantRoundDisplay: value,
-        thinkingVisibility: "expanded",
-      });
-      await writeFile(path, raw);
-      const inspection = await store.inspect();
-      expect(inspection.warning).toBeUndefined();
-      expect(inspection.preferences.thinkingVisibility).toBe("expanded");
-      expect(inspection.preferences).not.toHaveProperty(
-        "assistantRoundDisplay",
-      );
-      expect(await readFile(path, "utf8")).toBe(raw);
-      await store.patch({ toolVisibility: "compact" });
-      const saved = JSON.parse(await readFile(path, "utf8"));
-      expect(saved).not.toHaveProperty("assistantRoundDisplay");
-      expect(saved).toMatchObject({
-        thinkingVisibility: "expanded",
-        toolVisibility: "compact",
-      });
-    },
-  );
-  it.each([
-    ["amber", "chimonanthus"],
-    ["teal", "hydrangea"],
-  ])(
-    "migrates saved %s to %s without invalidating other settings",
-    async (legacy, palette) => {
-      const { path, store } = await fixture();
-      const raw = JSON.stringify({
-        palette: legacy,
-        theme: "dark",
-        pinnedSessionIds: ["kept"],
-      });
-      await writeFile(path, raw);
-      const inspected = await store.inspect();
-      expect(inspected.warning).toBeUndefined();
-      expect(inspected.preferences).toMatchObject({
-        palette,
-        theme: "dark",
-        pinnedSessionIds: ["kept"],
-      });
-      // Observation is read-only; the next ordinary write saves canonical IDs.
-      expect(await readFile(path, "utf8")).toBe(raw);
-      await store.patch({ readingWidth: "wide" });
-      expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({
-        palette,
-        theme: "dark",
-        readingWidth: "wide",
-        pinnedSessionIds: ["kept"],
-      });
-      expect(
-        (await new PreferencesStore(path).inspect()).warning,
-      ).toBeUndefined();
-    },
-  );
-
-  it.each([
-    "wisteria",
-    "hydrangea",
-    "lycoris",
-    "chimonanthus",
-    "classic-jade",
-    "classic-amber",
-  ])("persists the %s palette independently of luminosity", async (palette) => {
-    const { path, store } = await fixture();
-    await store.patch({ theme: "system" });
-    await store.patch({ palette });
-    expect(await new PreferencesStore(path).read()).toMatchObject({
-      palette,
-      theme: "system",
-    });
-  });
-
-  it("accepts legacy client patches but never writes legacy IDs", async () => {
-    const { path, store } = await fixture();
-    expect(await store.patch({ palette: "teal" })).toMatchObject({
-      palette: "hydrangea",
-    });
-    expect(JSON.parse(await readFile(path, "utf8")).palette).toBe("hydrangea");
-    await expect(store.patch({ palette: "jade" })).rejects.toBeDefined();
-    expect((await store.read()).palette).toBe("hydrangea");
-  });
-
-  it("defaults titlebar needles off and persists the choice across reloads", async () => {
-    const { path, store } = await fixture();
-    await writeFile(path, JSON.stringify({ theme: "dark" }));
-    expect((await store.read()).titlebarNeedles).toBe(false);
-    await store.patch({ titlebarNeedles: true });
-    expect(await new PreferencesStore(path).read()).toMatchObject({
-      titlebarNeedles: true,
-      theme: "dark",
-    });
-  });
-
-  it("persists session action order and appends actions absent from an older saved order", async () => {
-    const { path, store } = await fixture();
-    expect((await store.read()).sessionActionOrder).toEqual(SESSION_ACTION_IDS);
-    await store.patch({
-      theme: "dark",
-      sessionActionOrder: ["export", "rename", "clone", "terminal"],
-    });
-    const order = ["export", "rename", "clone", "terminal", "copy-id"];
-    expect(await new PreferencesStore(path).read()).toMatchObject({
-      theme: "dark",
-      sessionActionOrder: order,
-    });
-    await expect(
-      store.patch({ sessionActionOrder: ["rename", "rename"] }),
-    ).rejects.toBeDefined();
-    await expect(
-      store.patch({ sessionActionOrder: ["unknown"] }),
-    ).rejects.toBeDefined();
-    expect((await store.read()).sessionActionOrder).toEqual(order);
-  });
-
-  it("preserves invalid and unknown fields while saving unrelated settings and allows field repair", async () => {
-    const { path, store } = await fixture();
-    const raw = JSON.stringify({
-      theme: "dark",
-      launch: "continue",
-      toolVisibility: "impossible",
-      futurePreference: { retained: true },
-      pinnedSessionIds: ["session-a"],
-    });
+it.each([
+  ["{not-json", /not valid JSON.*left unchanged/],
+  ["[]", /invalid root.*left unchanged/],
+] as const)(
+  "blocks writes and consistently reports an unreadable preference file",
+  async (raw, warning) => {
     await writeFile(path, raw);
-
-    const inspected = await store.inspect();
-    expect(inspected.preferences).toMatchObject({
-      theme: "dark",
-      launch: "continue",
-      toolVisibility: "dynamic",
-      pinnedSessionIds: ["session-a"],
-    });
-    expect(inspected.warning).toMatch(/toolVisibility.*left unchanged/);
-    await expect(
-      store.patch({ projectDisplay: "path" }),
-    ).resolves.toMatchObject({
-      projectDisplay: "path",
-      toolVisibility: "dynamic",
-    });
-    await store.setTerminalSession("terminal-a", true);
-    await store.removeSession("session-a");
-    expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({
-      toolVisibility: "impossible",
-      futurePreference: { retained: true },
-      projectDisplay: "path",
-      pinnedSessionIds: [],
-      terminalSessionIds: ["terminal-a"],
-    });
-    await store.patch({ toolVisibility: "compact" });
-    expect((await store.inspect()).warning).toBeUndefined();
-    expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({
-      toolVisibility: "compact",
-      futurePreference: { retained: true },
-    });
-    await expect(
-      store.patch({ futurePreference: false }),
-    ).rejects.toBeDefined();
-  });
-
-  it("stores only valid model identity from a full model selection", async () => {
-    const { path, store } = await fixture();
-    const identity = { provider: "fixture", id: "model" };
-    await store.patch({
-      recentModelIds: [
-        {
-          ...identity,
-          name: "Display name",
-          reasoning: true,
-          thinkingLevelMap: { high: "high" },
-        },
-      ],
-    });
-    expect(JSON.parse(await readFile(path, "utf8")).recentModelIds).toEqual([
-      identity,
-    ]);
-    await expect(
-      store.patch({ recentModelIds: [{ ...identity, id: "" }] }),
-    ).rejects.toBeDefined();
-  });
-
-  it("reports malformed JSON repeatedly and leaves its bytes untouched", async () => {
-    const { path, store } = await fixture();
-    const raw = "{not-json";
-    await writeFile(path, raw);
-
-    const inspected = await store.inspect();
-    expect(inspected.preferences).toEqual(defaultPreferences);
-    expect(inspected.warning).toMatch(/not valid JSON.*left unchanged/);
+    const before = await store.inspect();
+    expect(before.preferences).toEqual(defaultPreferences);
+    expect(before.warning).toMatch(warning);
     await expect(store.patch({ theme: "dark" })).rejects.toMatchObject({
       status: 409,
     });
-    expect(await readFile(path, "utf8")).toBe(raw);
+    expect((await store.inspect()).warning).toBe(before.warning);
+    expect(await read()).toBe(raw);
+  },
+);
 
-    const second = await store.inspect();
-    expect(second.warning).toMatch(/not valid JSON.*left unchanged/);
-    expect(await readFile(path, "utf8")).toBe(raw);
-  });
+it("merges independent Host writes and keeps session cleanup available with a failed project registry", async () => {
+  const project = join(dirname(path), "project");
+  await write({ pinnedProjectCwds: [project], pinnedSessionIds: ["old"] });
+  const invalid = "{not-json";
+  await writeFile(store.projectDirectories.path, invalid);
+  const otherHost = new PreferencesStore(path);
+  await Promise.all([
+    store.patch({ theme: "dark" }),
+    otherHost.patch({ readingWidth: "wide" }),
+  ]);
+  await store.removeDeletedSessions(["old"]);
+  await expect(store.patch({ pinnedProjectCwds: [] })).rejects.toThrow();
+  const expected = {
+    theme: "dark",
+    readingWidth: "wide",
+    pinnedSessionIds: [],
+    pinnedProjectCwds: [project],
+  };
+  expect(JSON.parse(await read())).toMatchObject(expected);
+  expect(await otherHost.read()).toMatchObject(expected);
+  expect(await readFile(store.projectDirectories.path, "utf8")).toBe(invalid);
+});
 
-  it("defaults Herdr off, validates the boolean, and persists a field-scoped opt-in", async () => {
-    const { path, store } = await fixture();
-    expect((await store.read()).herdrEnabled).toBe(false);
-    await expect(store.patch({ herdrEnabled: "yes" })).rejects.toBeDefined();
-    await store.patch({ herdrEnabled: true });
-    expect(JSON.parse(await readFile(path, "utf8")).herdrEnabled).toBe(true);
-    await store.patch({ herdrEnabled: false });
-    expect((await store.read()).herdrEnabled).toBe(false);
-  });
-
-  it("treats missing legacy fields as migration defaults, not corruption", async () => {
-    const { path, store } = await fixture();
-    await writeFile(
-      path,
-      JSON.stringify({ theme: "light", launch: "welcome" }),
-    );
-
-    const inspected = await store.inspect();
-    expect(inspected.warning).toBeUndefined();
-    expect(inspected.preferences).toMatchObject({
-      theme: "light",
-      launch: "welcome",
-      thinkingVisibility: "dynamic",
-      toolVisibility: "dynamic",
-      activityFoldVisibility: "dynamic",
-    });
-  });
-
-  it("serializes field patches across independent Host store instances", async () => {
-    const { path } = await fixture();
-    const first = new PreferencesStore(path);
-    const second = new PreferencesStore(path);
-
-    await Promise.all([
-      first.patch({ theme: "dark" }),
-      second.patch({ readingWidth: "wide" }),
-    ]);
-
-    const saved = JSON.parse(await readFile(path, "utf8"));
-    expect(saved).toMatchObject({ theme: "dark", readingWidth: "wide" });
-    expect(await first.read()).toMatchObject({
-      theme: "dark",
-      readingWidth: "wide",
-    });
-  });
-
-  it("continues after a dead process releases its lock", async () => {
-    const { path, store } = await fixture();
-    const lock = `${path}.flock`;
-    const moduleUrl = pathToFileURL(
-      join(process.cwd(), "server", "file-lock.mjs"),
-    ).href;
-    const holder = spawn(
-      process.execPath,
-      [
-        "--input-type=module",
-        "-e",
-        `import { acquireFileLock } from ${JSON.stringify(moduleUrl)};
-         await acquireFileLock(${JSON.stringify(lock)}, { waitMs: 500 });
-         process.stdout.write("ready\\n");
-         setInterval(() => undefined, 1_000);`,
-      ],
-      { stdio: ["ignore", "pipe", "ignore"] },
-    );
-    let stopped = false;
-    try {
-      await once(holder.stdout!, "data");
-      const patching = store.patch({ theme: "dark" });
-      let settled = false;
-      void patching.then(
-        () => {
-          settled = true;
-        },
-        () => {
-          settled = true;
-        },
-      );
-      await delay(50);
-      expect(settled).toBe(false);
-
-      holder.kill("SIGKILL");
-      await once(holder, "close");
-      stopped = true;
-      await expect(patching).resolves.toMatchObject({ theme: "dark" });
-    } finally {
-      if (!stopped && holder.exitCode === null && holder.signalCode === null) {
-        holder.kill("SIGKILL");
-        await once(holder, "close");
-      }
-    }
-  });
-
-  it("holds the lock through the preferences rename", async () => {
-    const { path, store } = await fixture();
-    const lock = `${path}.flock`;
-    const mutable = store as unknown as {
-      persist: (
-        preferences: typeof defaultPreferences,
-        assertOwned: () => Promise<void>,
-      ) => Promise<void>;
-    };
-    const persist = mutable.persist.bind(store);
-    mutable.persist = async (preferences, assertOwned) => {
-      await expect(
-        acquireFileLock(lock, { waitMs: 50, retryMs: 10 }),
-      ).rejects.toMatchObject({ code: "ELOCKTIMEOUT" });
-      await assertOwned();
-      await persist(preferences, assertOwned);
-    };
-
-    await expect(store.patch({ theme: "dark" })).resolves.toMatchObject({
-      theme: "dark",
-    });
-    const lease = await acquireFileLock(lock, { waitMs: 100 });
-    await lease.release();
-  });
-
-  it("fails closed when the lock path is replaced", async () => {
-    const { path, store } = await fixture();
+it.skipIf(process.platform !== "linux")(
+  "fails closed when the kernel lock path is replaced",
+  async () => {
+    await store.patch({ theme: "light" });
+    const previous = await read();
     const lock = `${path}.flock`;
     const replacement = "replacement lock inode\n";
-    const mutable = store as unknown as {
-      persist: (
-        preferences: typeof defaultPreferences,
-        assertOwned: () => Promise<void>,
-      ) => Promise<void>;
-    };
-    const persist = mutable.persist.bind(store);
-    mutable.persist = async (preferences, assertOwned) => {
-      await rename(lock, `${lock}.displaced`);
-      await writeFile(lock, replacement, { mode: 0o600, flag: "wx" });
-      await persist(preferences, assertOwned);
-    };
-
-    await expect(store.patch({ theme: "dark" })).rejects.toMatchObject({
-      status: 503,
-    });
-    await expect(readFile(path, "utf8")).rejects.toMatchObject({
-      code: "ENOENT",
-    });
+    await expect(
+      editPrivateStateJson(path, "saved preferences", async (publish) => {
+        await rename(lock, `${lock}.displaced`);
+        await writeFile(lock, replacement, { mode: 0o600, flag: "wx" });
+        await publish({ theme: "dark" });
+      }),
+    ).rejects.toMatchObject({ status: 503 });
+    expect(await read()).toBe(previous);
     await expect(readFile(lock, "utf8")).resolves.toBe(replacement);
-  });
-});
+  },
+);

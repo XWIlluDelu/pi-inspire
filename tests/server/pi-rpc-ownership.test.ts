@@ -36,6 +36,7 @@ class SyntheticChild extends EventEmitter {
       done();
     },
   });
+  stdio = [this.stdin, this.stdout, this.stderr, new PassThrough()];
   reply(command: Command | undefined, extra: Record<string, unknown> = {}) {
     if (!command) throw new Error("No synthetic command to reply to");
     this.frame({
@@ -83,55 +84,42 @@ const flush = async () => {
 };
 
 describe("Pi RPC operation-owned waits", () => {
-  it("keeps extension replies in their protocol frame when payload includes a command type", async () => {
+  it("keeps preflight compaction and human input pending unless explicitly stopped", async () => {
+    const outcome = vi.fn();
+    const pending = rpc
+      .request({ type: "prompt", message: "synthetic-secret-prompt" })
+      .then(outcome);
+    child.frame({
+      type: "compaction_start",
+      summary: "synthetic-secret-summary",
+    });
+    await vi.advanceTimersByTimeAsync(180_001);
+    expect(outcome).not.toHaveBeenCalled();
+    expect(rpc.hasPendingRequest("prompt")).toBe(true);
+    child.frame({
+      type: "extension_ui_request",
+      method: "confirm",
+      id: "dialog",
+      message: "synthetic-secret-dialog",
+    });
+    await vi.advanceTimersByTimeAsync(180_001);
+    expect(outcome).not.toHaveBeenCalled();
+    expect(boundary.signal).not.toHaveBeenCalled();
     await rpc.sendExtensionUiResponse({
-      id: "pending-dialog",
+      id: "dialog",
       type: "new_session",
-      value: "answer",
+      confirmed: true,
     });
     expect(child.commands.at(-1)).toEqual({
-      id: "pending-dialog",
+      id: "dialog",
       type: "extension_ui_response",
-      value: "answer",
+      confirmed: true,
     });
-    expect(rpc.available).toBe(true);
-  });
+    child.reply(child.commands[1]);
+    await pending;
+    expect(rpc.hasPendingRequest("prompt")).toBe(false);
+    expect(JSON.stringify(diagnostics)).not.toContain("synthetic-secret");
 
-  it.each([undefined, null])(
-    "waits through preflight compaction and human input with timeout %s",
-    async (timeout) => {
-      const outcome = vi.fn();
-      const pending = rpc
-        .request(
-          { type: "prompt", message: "synthetic-secret-prompt" },
-          timeout,
-        )
-        .then(outcome);
-      child.frame({
-        type: "compaction_start",
-        summary: "synthetic-secret-summary",
-      });
-      await vi.advanceTimersByTimeAsync(180_001);
-      expect(outcome).not.toHaveBeenCalled();
-      expect(rpc.hasPendingRequest("prompt")).toBe(true);
-      child.frame({
-        type: "extension_ui_request",
-        method: "confirm",
-        id: "dialog",
-        message: "synthetic-secret-dialog",
-      });
-      await vi.advanceTimersByTimeAsync(180_001);
-      expect(outcome).not.toHaveBeenCalled();
-      expect(boundary.signal).not.toHaveBeenCalled();
-      await rpc.sendExtensionUiResponse({ id: "dialog", confirmed: true });
-      child.reply(child.commands[1]);
-      await pending;
-      expect(rpc.hasPendingRequest("prompt")).toBe(false);
-      expect(JSON.stringify(diagnostics)).not.toContain("synthetic-secret");
-    },
-  );
-
-  it("lets explicit cancellation stop a pending preflight prompt", async () => {
     const result = rpc
       .request({ type: "prompt" }, null)
       .catch((error) => error);
@@ -151,44 +139,19 @@ describe("Pi RPC operation-owned waits", () => {
     await failure.stopped;
   });
 
-  it("keeps manual compaction unbounded by default", async () => {
-    const result = rpc.request({ type: "compact" });
-    await vi.advanceTimersByTimeAsync(1_000_000);
-    expect(rpc.hasPendingRequest("compact")).toBe(true);
-    expect(boundary.signal).not.toHaveBeenCalled();
-    child.reply(child.commands[1]);
-    await result;
-  });
-
-  it("keeps default reads bounded and explicit-null reads operation owned", async () => {
+  it("bounds default reads while explicit-null reads and native compaction stay operation owned", async () => {
     const bounded = rpc.request({ type: "get_state" }).catch((error) => error);
     const unbounded = rpc.request({ type: "get_tree" }, null);
-    await vi.advanceTimersByTimeAsync(30_001);
+    const compaction = rpc.request({ type: "compact" });
+    await vi.advanceTimersByTimeAsync(1_000_000);
     expect(await bounded).toMatchObject({
       message: "Pi command get_state response timed out",
     });
+    expect(rpc.hasPendingRequest("compact")).toBe(true);
     expect(boundary.signal).not.toHaveBeenCalled();
-    child.reply(child.commands[1]);
-    child.reply(child.commands[2]);
-    await unbounded;
+    for (const command of child.commands.slice(1)) child.reply(command);
+    await Promise.all([unbounded, compaction]);
     expect(rpc.available).toBe(true);
-  });
-
-  it("reports a bounded mutating timeout without a fictitious stopped promise", async () => {
-    const fence = { received: false };
-    const result = rpc
-      .request({ type: "prompt" }, 20, fence)
-      .catch((error) => error);
-    await vi.advanceTimersByTimeAsync(21);
-    const failure = await result;
-    expect(failure).toBeInstanceOf(PiRpcOutcomeUnknownError);
-    if (!(failure instanceof PiRpcOutcomeUnknownError))
-      throw new Error("Expected unknown outcome");
-    expect(failure.stopped).toBeNull();
-    expect(boundary.signal).not.toHaveBeenCalled();
-    child.reply(child.commands[1]);
-    expect(fence.received).toBe(true);
-    expect(rpc.hasPendingRequest("prompt")).toBe(false);
   });
 
   it("caps pending plus retired identities, refuses admission, and never evicts old ids", async () => {
@@ -287,26 +250,39 @@ describe("Pi RPC confirmed-exit writer fence", () => {
     expect(rpc.pid).toBeNull();
   });
 
-  it("retains the writer fence after a real stdin callback failure", async () => {
-    vi.spyOn(child.stdin, "write").mockImplementationOnce(
-      (...args: unknown[]) => {
-        const callback = args.at(-1) as (error: Error) => void;
-        queueMicrotask(() => callback(new Error("synthetic write failure")));
-        return false;
-      },
-    );
-    const failure = await rpc
-      .request({ type: "prompt" }, null)
-      .catch((error: unknown) => error);
-    if (!(failure instanceof PiRpcOutcomeUnknownError) || !failure.stopped)
-      throw new Error("Expected stopping unknown outcome");
-    const completed = vi.fn();
-    void failure.stopped.then(completed);
-    await vi.advanceTimersByTimeAsync(10_000);
-    expect(completed).not.toHaveBeenCalled();
-    child.exit();
-    await failure.stopped;
-  });
+  it.each(["stdin write failure", "malformed stdout"] as const)(
+    "keeps an uncertain prompt fenced until confirmed exit after %s",
+    async (failureSource) => {
+      if (failureSource === "stdin write failure")
+        vi.spyOn(child.stdin, "write").mockImplementationOnce(
+          (...args: unknown[]) => {
+            const callback = args.at(-1) as (error: Error) => void;
+            queueMicrotask(() =>
+              callback(new Error("synthetic write failure")),
+            );
+            return false;
+          },
+        );
+      const result = rpc
+        .request({ type: "prompt" }, null)
+        .catch((error: unknown) => error);
+      if (failureSource === "malformed stdout")
+        child.stdout.write("{malformed\n");
+      const failure = await result;
+      if (!(failure instanceof PiRpcOutcomeUnknownError) || !failure.stopped)
+        throw new Error("Expected stopping unknown outcome", {
+          cause: failure,
+        });
+      const completed = vi.fn();
+      void failure.stopped.then(completed);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(completed).not.toHaveBeenCalled();
+      await expect(rpc.start()).rejects.toThrow(/still stopping/);
+      child.exit();
+      await failure.stopped;
+      expect(completed).toHaveBeenCalledOnce();
+    },
+  );
 
   it("notifies the owner when protocol retirement fails without releasing its writer fence", async () => {
     const stopError = new Error("synthetic stop could not be confirmed");
@@ -347,7 +323,7 @@ describe("Pi RPC confirmed-exit writer fence", () => {
     expect(transport.stop).toHaveBeenCalledOnce();
   });
 
-  it("does not release on delayed/failed kills, close, error, or the old fake deadline", async () => {
+  it("holds the writer fence until exit despite failed signals and stream closure", async () => {
     const completed = vi.fn();
     boundary.signal.mockRejectedValue(
       new Error("synthetic-secret-kill-failure"),
@@ -385,25 +361,10 @@ describe("Pi RPC confirmed-exit writer fence", () => {
     child.exit();
     await stopped;
     expect(completed).toHaveBeenCalledOnce();
-  });
-
-  it("keeps unexpected protocol retirement fenced until confirmed exit", async () => {
-    const result = rpc
-      .request({ type: "prompt" }, null)
-      .catch((error) => error);
-    child.stdout.write("{malformed\n");
-    const failure = await result;
-    expect(failure).toBeInstanceOf(PiRpcOutcomeUnknownError);
-    if (!(failure instanceof PiRpcOutcomeUnknownError) || !failure.stopped)
-      throw new Error("Expected stopping unknown outcome");
-    const completed = vi.fn();
-    void failure.stopped.then(completed);
-    await vi.advanceTimersByTimeAsync(10_000);
-    expect(completed).not.toHaveBeenCalled();
-    await expect(rpc.start()).rejects.toThrow(/still stopping/);
-    child.exit();
-    await failure.stopped;
-    expect(completed).toHaveBeenCalledOnce();
+    child = new SyntheticChild();
+    boundary.spawn.mockReturnValue(child);
+    await rpc.start();
+    expect(rpc.available).toBe(true);
   });
 
   it("awaits slow process-tree operations even after observing the leader exit", async () => {
@@ -444,15 +405,5 @@ describe("Pi RPC confirmed-exit writer fence", () => {
     expect(completed).not.toHaveBeenCalled();
     finishes[0]!();
     await stopped;
-  });
-
-  it("allows restart only after the old writer is confirmed gone", async () => {
-    const stopped = rpc.stop();
-    child.exit();
-    await stopped;
-    child = new SyntheticChild();
-    boundary.spawn.mockReturnValue(child);
-    await rpc.start();
-    expect(rpc.available).toBe(true);
   });
 });

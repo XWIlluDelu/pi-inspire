@@ -5,45 +5,76 @@ import {
   MAX_ATTACHMENT_FILE_BYTES,
   MAX_ATTACHMENT_UPLOAD_BYTES,
   MAX_ATTACHMENTS,
+  MAX_PROJECT_FILES,
   MAX_PROMPT_IMAGE_BYTES,
   MAX_PROMPT_IMAGE_ENCODED_BYTES,
   type PromptRequest,
 } from "../shared/contracts.js";
+import { isSupportedPromptImageMimeType } from "../shared/image-types.js";
 import {
   type AttachmentContextFile,
   type AttachmentStore,
   parseAttachmentContext,
   resolveProjectFiles,
 } from "./attachments.js";
-import { isSupportedPromptImageMimeType } from "../shared/image-types.js";
+import type { ComposerHistoryMessage } from "./composer-history.js";
 import { filesystemRelativePath } from "./filesystem-containment.js";
 import { canonicalBase64DecodedSize } from "./image-content.js";
 import { requestError } from "./request-error.js";
-import type { RuntimeSlot } from "./runtime-slot.js";
+import {
+  effectiveRuntimeLeaf,
+  type RuntimeSlot,
+  runtimeHistory,
+} from "./runtime-slot.js";
 
 type HistorySelection = NonNullable<PromptRequest["historyArtifacts"]>;
 type RecalledImage = { type: "image"; data: string; mimeType: string };
 type UserMessage = Record<string, unknown>;
-type UserMessageLookup = (entry: string | number) => UserMessage;
+type UserMessageLookup = (entryId: string) => UserMessage;
 
-interface ResolvedComposerHistoryArtifacts {
+interface PromptArtifacts {
   images: RecalledImage[];
   files: AttachmentContextFile[];
   fileBytes: number;
   projectFiles: string[];
 }
 
+function equalItems<T>(
+  left: readonly T[],
+  right: readonly T[],
+  equals: (a: T, b: T) => boolean,
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every((value, index) => equals(value, right[index]!))
+  );
+}
+
+export function samePromptArtifacts(
+  left: PromptArtifacts,
+  right: PromptArtifacts,
+): boolean {
+  return (
+    left.fileBytes === right.fileBytes &&
+    equalItems(
+      left.images,
+      right.images,
+      (a, b) => a.mimeType === b.mimeType && a.data === b.data,
+    ) &&
+    equalItems(left.files, right.files, (a, b) => a.path === b.path) &&
+    equalItems(left.projectFiles, right.projectFiles, (a, b) => a === b)
+  );
+}
+
 function historyProjection(
   slot: RuntimeSlot,
   selection: HistorySelection,
 ): {
-  projection: NonNullable<RuntimeSlot["projection"]>;
+  projection: NonNullable<ReturnType<typeof runtimeHistory>>;
   effectiveLeafId: string | null;
 } {
-  const projection = slot.projection;
-  const effectiveLeafId = slot.navigationLease
-    ? slot.navigationLease.effectiveLeafId
-    : (projection?.leafId ?? null);
+  const projection = runtimeHistory(slot);
+  const effectiveLeafId = effectiveRuntimeLeaf(slot);
   if (
     !projection ||
     selection.viewId !== slot.viewId ||
@@ -58,47 +89,38 @@ function historyProjection(
   return { projection, effectiveLeafId };
 }
 
-function userMessageLookup(messages: readonly unknown[]): UserMessageLookup {
-  const byPersistedIndex = new Map<string | number, unknown>();
-  messages.forEach((message, messageIndex) => {
-    if (!message || typeof message !== "object") return;
-    const record = message as UserMessage;
-    const persistedIndex =
-      typeof record.__inspireHistoryEntryId === "string"
-        ? record.__inspireHistoryEntryId
-        : Number.isSafeInteger(record.__inspireMessageIndex)
-          ? Number(record.__inspireMessageIndex)
-          : messageIndex;
-    if (byPersistedIndex.has(persistedIndex)) {
+function userMessageLookup(
+  messages: readonly ComposerHistoryMessage[],
+): UserMessageLookup {
+  const byEntryId = new Map<string, ComposerHistoryMessage>();
+  for (const message of messages) {
+    const id = message.__inspireHistoryEntryId;
+    if (byEntryId.has(id)) {
       throw requestError(
         "The conversation contains ambiguous attachment references",
         409,
       );
     }
-    byPersistedIndex.set(persistedIndex, message);
-  });
+    byEntryId.set(id, message);
+  }
 
-  return (messageIndex) => {
-    const message = byPersistedIndex.get(messageIndex);
-    if (
-      !message ||
-      typeof message !== "object" ||
-      (message as UserMessage).role !== "user"
-    ) {
+  return (entryId) => {
+    const message = byEntryId.get(entryId);
+    if (message?.role !== "user") {
       throw requestError("A recalled attachment is no longer available", 409);
     }
-    return message as UserMessage;
+    return message;
   };
 }
 
-function referenceIndexes(
+function recalledReference(
   reference: string,
   label: "image" | "file",
-): [entry: string | number, itemIndex: number] {
-  const indexes = parseComposerArtifactReference(label, reference);
-  if (!indexes)
+): [entryId: string, itemIndex: number] {
+  const target = parseComposerArtifactReference(label, reference);
+  if (!target)
     throw requestError(`A recalled ${label} reference is invalid`, 400);
-  return indexes;
+  return target;
 }
 
 function recalledImages(
@@ -106,8 +128,8 @@ function recalledImages(
   userMessage: UserMessageLookup,
 ): RecalledImage[] {
   return references.map((reference) => {
-    const [messageIndex, partIndex] = referenceIndexes(reference, "image");
-    const record = userMessage(messageIndex);
+    const [entryId, partIndex] = recalledReference(reference, "image");
+    const record = userMessage(entryId);
     const part = Array.isArray(record.content)
       ? record.content[partIndex]
       : null;
@@ -162,8 +184,8 @@ function recalledFilePaths(
   userMessage: UserMessageLookup,
 ): string[] {
   return references.map((reference) => {
-    const [messageIndex, referenceIndex] = referenceIndexes(reference, "file");
-    const message = userMessage(messageIndex);
+    const [entryId, referenceIndex] = recalledReference(reference, "file");
+    const message = userMessage(entryId);
     const imageCount = Array.isArray(message.content)
       ? message.content.filter(
           (part) =>
@@ -279,6 +301,38 @@ export async function revalidateProjectFiles(
   return current;
 }
 
+export async function preparePromptArtifacts(
+  slot: RuntimeSlot,
+  request: PromptRequest,
+  staged: Awaited<ReturnType<AttachmentStore["resolveForPrompt"]>>,
+  selected: readonly string[],
+  history: PromptArtifacts,
+) {
+  const files = [...staged.files, ...history.files];
+  const fileBytes = staged.files.reduce(
+    (sum, file) => sum + (file.kind === "file" ? file.size : 0),
+    history.fileBytes,
+  );
+  const images = [...staged.images, ...history.images];
+  const expected = [...new Set([...selected, ...history.projectFiles])];
+  if (expected.length > MAX_PROJECT_FILES)
+    throw requestError(
+      `At most ${MAX_PROJECT_FILES} project files per message`,
+      413,
+    );
+  const projectFiles = await revalidateProjectFiles(
+    slot.cwd,
+    [...(request.projectFiles ?? []), ...history.projectFiles],
+    expected,
+  );
+  assertPromptArtifactBudget(
+    files.length + history.images.length,
+    fileBytes,
+    images,
+  );
+  return { files, images, projectFiles };
+}
+
 /** Read recalled images without preparing files or transferring upload ownership. */
 export function readComposerHistoryImages(
   slot: RuntimeSlot,
@@ -295,7 +349,7 @@ export async function resolveComposerHistoryArtifacts(
   slot: RuntimeSlot,
   request: PromptRequest,
   attachments: Pick<AttachmentStore, "ownsPromptFile" | "ready">,
-): Promise<ResolvedComposerHistoryArtifacts> {
+): Promise<PromptArtifacts> {
   const selection = request.historyArtifacts;
   if (!selection)
     return { images: [], files: [], fileBytes: 0, projectFiles: [] };

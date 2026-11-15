@@ -1,304 +1,284 @@
-import {
-  ChevronDown,
-  ChevronUp,
-  Download,
-  GitBranch,
-  GripVertical,
-  Pencil,
-  SquareTerminal,
-} from "lucide-react";
+import { Check, ChevronLeft, GitBranch, GripVertical } from "lucide-react";
 import {
   type RefObject,
-  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
   useState,
 } from "react";
-import { createPortal } from "react-dom";
-import type { SessionActionId } from "../../shared/contracts";
-import { isComposingKeyboardEvent } from "../keyboard-input";
+import type { SessionHistoryPages } from "../../shared/contracts";
+import { relativeTime } from "../format";
 import {
-  SESSION_ACTION_LABELS,
-  SESSION_ACTION_VISIBLE_COUNT,
+  runSessionAction,
+  sessionActionAvailable,
+  sessionActions,
 } from "../session-actions";
+import { shallowEqual, store, useAppState } from "../store";
 import { useCopied } from "../use-copied";
-import {
-  type FloatingMenuConstraints,
-  useFloatingMenuPlacement,
-} from "../use-floating-menu";
 import { useSessionActionReorder } from "../use-session-action-reorder";
 import { ButtonLabel } from "./ButtonLabel";
+import { AnchoredPanel } from "./ChoicePanel";
 import { CopyFeedback } from "./CopyFeedback";
-
-const CONSTRAINTS: FloatingMenuConstraints = {
-  gap: 4,
-  horizontalMargin: 8,
-  verticalMargin: 4,
-  maxWidth: 268,
-  maxHeight: 320,
-  preferredDirection: "down",
-};
-
-const EXPANDED_CONSTRAINTS = { ...CONSTRAINTS, maxHeight: 360 };
-const ACTION_ICONS = {
-  rename: Pencil,
-  clone: GitBranch,
-  terminal: SquareTerminal,
-  export: Download,
-};
 
 export function SessionActionsMenu({
   anchorRef,
+  initialBranchSelection = false,
   sessionId,
-  actionOrder,
-  onOrderChange,
-  onCopyError,
-  cloneDisabled,
-  renameDisabled = false,
   onRename,
-  onClone,
   onExport,
-  onTerminal,
-  terminalDisabled = false,
   onClose,
 }: {
   anchorRef: RefObject<HTMLButtonElement | null>;
+  initialBranchSelection?: boolean;
   sessionId: string;
-  actionOrder: readonly SessionActionId[];
-  onOrderChange: (order: SessionActionId[]) => void;
-  onCopyError: (message: string) => void;
-  cloneDisabled: boolean;
-  renameDisabled?: boolean;
-  onRename: () => void;
-  onClone: () => void;
+  onRename: (sessionId: string, name: string) => void;
   onExport: () => void;
-  onTerminal?: () => void;
-  terminalDisabled?: boolean;
-  onClose: () => void;
+  onClose: (restoreFocus?: boolean) => void;
 }) {
-  const menuRef = useRef<HTMLDivElement | null>(null);
-  const overflowRef = useRef<HTMLButtonElement | null>(null);
-  const focusRevealed = useRef(false);
-  const [expanded, setExpanded] = useState(false);
+  const { order, rename, clone, viewId, revision, readOnly, action, error } =
+    useAppState(
+      (state) => ({
+        order:
+          state.desiredPreferences.sessionActionOrder ??
+          state.prefs.sessionActionOrder,
+        viewId: state.view.viewId,
+        revision: state.view.branchRevision,
+        readOnly: Boolean(state.readOnlyReason),
+        action: state.branchActionId,
+        error: state.branchTreeError,
+        rename: sessionActionAvailable("rename", state),
+        clone: sessionActionAvailable("clone", state),
+      }),
+      shallowEqual,
+    );
   const { copied, copying, copy } = useCopied({
     scope: sessionId,
-    onError: onCopyError,
+    onError: store.reportCopyError,
   });
-  const actions: Record<
-    SessionActionId,
-    { run: () => void; disabled?: boolean }
-  > = {
-    rename: { run: onRename, disabled: renameDisabled },
-    "copy-id": {
-      run: () => {
-        if (!copying) void copy(sessionId);
-      },
-    },
-    clone: { run: onClone, disabled: cloneDisabled },
-    terminal: {
-      run: () => onTerminal?.(),
-      disabled: terminalDisabled || !onTerminal,
-    },
-    export: { run: onExport },
-  };
-  const reorder = useSessionActionReorder({
-    order: actionOrder,
-    onChange: onOrderChange,
-    containerRef: menuRef,
-    onReorderStart: () => setExpanded(true),
-  });
-  const visibleActions = expanded
-    ? reorder.order
-    : reorder.order.slice(0, SESSION_ACTION_VISIBLE_COUNT);
-
+  const [choosing, setChoosing] = useState(initialBranchSelection);
+  const [retry, setRetry] = useState(0);
+  const [branchRead, setBranchRead] = useState<{
+    viewId: string;
+    retry: number;
+    data: SessionHistoryPages["branches"] | null;
+    error?: string;
+  }>();
+  const branches =
+    branchRead?.viewId === viewId && branchRead.retry === retry
+      ? branchRead
+      : null;
+  const back = useRef<HTMLButtonElement>(null);
+  const switchAction = useRef<HTMLButtonElement>(null);
   useLayoutEffect(() => {
-    if (expanded && focusRevealed.current) {
-      focusRevealed.current = false;
-      const firstRevealed = menuRef.current?.querySelector<HTMLButtonElement>(
-        "[data-overflow-action]:not(:disabled)",
-      );
-      (firstRevealed ?? overflowRef.current)?.focus({ preventScroll: true });
-      firstRevealed?.scrollIntoView({ block: "nearest" });
-    }
-  }, [expanded]);
-  const resolveTarget = useCallback(() => {
-    const anchor = anchorRef.current;
-    if (!anchor) return null;
-    const rect = anchor.getBoundingClientRect();
-    return {
-      context: anchor,
-      anchor: rect,
-      observe: [anchor],
-    };
-  }, [anchorRef]);
-  const placement = useFloatingMenuPlacement(
-    true,
-    resolveTarget,
-    expanded ? EXPANDED_CONSTRAINTS : CONSTRAINTS,
-  );
-  const attachMenu = useCallback((node: HTMLDivElement | null) => {
-    menuRef.current = node;
-    node
-      ?.querySelector<HTMLButtonElement>("[data-session-action]:not(:disabled)")
-      ?.focus({ preventScroll: true });
-  }, []);
-
+    if (choosing) back.current?.focus({ preventScroll: true });
+  }, [choosing]);
   useEffect(() => {
-    const dismiss = (event: Event) => {
-      const target = event.target as Node;
-      if (
-        !menuRef.current?.contains(target) &&
-        !anchorRef.current?.contains(target)
+    if (!choosing || !viewId) return;
+    const request = new AbortController();
+    void store
+      .readNativeHistory(
+        sessionId,
+        viewId,
+        { kind: "branches" },
+        request.signal,
       )
-        onClose();
-    };
-    window.addEventListener("pointerdown", dismiss);
-    window.addEventListener("focusin", dismiss);
-    return () => {
-      window.removeEventListener("pointerdown", dismiss);
-      window.removeEventListener("focusin", dismiss);
-    };
-  }, [anchorRef, onClose]);
-
-  if (!placement) return null;
-  return createPortal(
-    <div
-      ref={attachMenu}
-      className="session-actions-menu"
+      .then(
+        (data) => {
+          if (!request.signal.aborted && data)
+            setBranchRead({ viewId, retry, data });
+        },
+        (error: unknown) => {
+          if (!request.signal.aborted)
+            setBranchRead({
+              viewId,
+              retry,
+              data: null,
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Could not load branches",
+            });
+        },
+      );
+    return () => request.abort();
+  }, [choosing, retry, sessionId, viewId]);
+  const list = useRef<HTMLDivElement>(null);
+  const [announcement, setAnnouncement] = useState("");
+  const reorder = useSessionActionReorder({
+    order,
+    onChange: (next) => store.setPreference("sessionActionOrder", next),
+    containerRef: list,
+    onMove: (id, index) =>
+      setAnnouncement(
+        `${sessionActions[id].title} moved to position ${index + 1}`,
+      ),
+  });
+  return (
+    <AnchoredPanel
+      anchorRef={anchorRef}
+      label="Session actions"
+      open
+      onClose={onClose}
       role="menu"
-      aria-label="Session actions"
-      style={{
-        left: placement.left,
-        top: placement.top,
-        bottom: placement.bottom,
-        width: "max-content",
-        maxWidth: placement.width,
-        maxHeight: placement.maxHeight,
-      }}
-      onPointerMove={reorder.onPointerMove}
-      onPointerUp={reorder.onPointerUp}
-      onPointerCancel={reorder.onPointerCancel}
-      onLostPointerCapture={reorder.onPointerCancel}
-      onKeyDown={(event) => {
-        if (isComposingKeyboardEvent(event.nativeEvent)) return;
-        if (reorder.onKeyDown(event)) {
-          event.preventDefault();
-          event.stopPropagation();
-          return;
-        }
-        if (event.key === "Escape" || event.key === "Tab") {
-          if (event.key === "Escape") {
-            event.preventDefault();
-            event.stopPropagation();
-          }
-          onClose();
-          anchorRef.current?.focus({ preventScroll: true });
-          return;
-        }
-        const items = [
-          ...event.currentTarget.querySelectorAll<HTMLButtonElement>(
-            "button:not(:disabled)",
-          ),
-        ];
-        const index = items.indexOf(
-          document.activeElement as HTMLButtonElement,
-        );
-        const next =
-          event.key === "ArrowDown"
-            ? (index + 1) % items.length
-            : event.key === "ArrowUp"
-              ? (index - 1 + items.length) % items.length
-              : event.key === "Home"
-                ? 0
-                : event.key === "End"
-                  ? items.length - 1
-                  : null;
-        if (next !== null) {
-          event.preventDefault();
-          items[next]?.focus();
-        }
-      }}
     >
-      {visibleActions.map((id, index) => {
-        const Icon = id === "copy-id" ? null : ACTION_ICONS[id];
-        return (
-          <div
-            key={id}
-            role="none"
-            className="session-actions-menu__row"
-            data-session-action-id={id}
-            data-dragging={reorder.draggingId === id || undefined}
-          >
-            <button
-              type="button"
-              role="menuitem"
-              data-session-action
-              data-copied={id === "copy-id" && copied ? "true" : undefined}
-              data-overflow-action={
-                index >= SESSION_ACTION_VISIBLE_COUNT || undefined
-              }
-              disabled={actions[id].disabled}
-              aria-disabled={id === "copy-id" ? copying : undefined}
-              aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
-              onClick={actions[id].run}
-            >
-              {id === "copy-id" ? (
-                <CopyFeedback copied={copied} copying={copying} size={14} />
-              ) : Icon ? (
-                <Icon size={14} aria-hidden />
-              ) : null}
-              <ButtonLabel
-                reserve={
-                  id === "copy-id" && copied ? SESSION_ACTION_LABELS[id] : []
-                }
-              >
-                {id === "copy-id" && copied
-                  ? "ID copied"
-                  : SESSION_ACTION_LABELS[id]}
-              </ButtonLabel>
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              className="session-actions-menu__handle"
-              aria-label={`Reorder ${SESSION_ACTION_LABELS[id]}`}
-              aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
-              title="Drag to reorder · Alt+↑/↓ to move"
-              onPointerDown={(event) => reorder.startDrag(event, id)}
-            >
-              <GripVertical size={14} aria-hidden />
-            </button>
-          </div>
-        );
-      })}
-      {actionOrder.length > SESSION_ACTION_VISIBLE_COUNT ? (
+      {choosing ? (
         <>
           <button
-            key="overflow"
-            ref={overflowRef}
-            type="button"
+            ref={back}
             role="menuitem"
-            className="session-actions-menu__overflow"
-            aria-expanded={expanded}
+            type="button"
             onClick={() => {
-              focusRevealed.current = !expanded;
-              setExpanded(!expanded);
+              setChoosing(false);
+              requestAnimationFrame(() =>
+                switchAction.current?.focus({ preventScroll: true }),
+              );
             }}
           >
-            {expanded ? (
-              <ChevronUp size={14} aria-hidden />
-            ) : (
-              <ChevronDown size={14} aria-hidden />
-            )}
-            <span>{expanded ? "Fewer actions" : "More actions"}</span>
+            <ChevronLeft size={14} aria-hidden />
+            Back to actions
           </button>
+          {!branches && (
+            <p className="session-actions-menu__note" role="status">
+              Loading branches…
+            </p>
+          )}
+          {branches?.error && (
+            <>
+              <p className="session-actions-menu__note" role="alert">
+                {branches.error}
+              </p>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => setRetry((value) => value + 1)}
+              >
+                Retry
+              </button>
+            </>
+          )}
+          {branches?.data?.total === 1 && (
+            <p className="session-actions-menu__note">
+              This session has no other branch.
+            </p>
+          )}
+          {branches?.data?.leaves.map((leaf) => (
+            <button
+              type="button"
+              role="menuitem"
+              className="session-actions-menu__branch"
+              key={leaf.id}
+              aria-current={leaf.isCurrent ? "location" : undefined}
+              disabled={leaf.isCurrent || Boolean(action) || revision === null}
+              onClick={() => {
+                if (
+                  store.getState().sessionId !== sessionId ||
+                  revision === null
+                )
+                  return;
+                void store
+                  .navigateBranch(
+                    leaf.id,
+                    readOnly ? "watch" : "switch",
+                    {},
+                    revision,
+                  )
+                  .then((ok) => {
+                    if (ok) onClose(true);
+                  });
+              }}
+            >
+              {leaf.isCurrent ? (
+                <Check size={14} aria-hidden />
+              ) : (
+                <GitBranch size={14} aria-hidden />
+              )}
+              <span>{leaf.excerpt || "Untitled branch"}</span>
+              <small>{relativeTime(leaf.updatedAt)}</small>
+            </button>
+          ))}
+          {error && (
+            <p className="session-actions-menu__note" role="alert">
+              {error}
+            </p>
+          )}
         </>
-      ) : null}
+      ) : (
+        <div
+          ref={list}
+          role="presentation"
+          onPointerMove={reorder.onPointerMove}
+          onPointerUp={reorder.onPointerUp}
+          onPointerCancel={reorder.onPointerCancel}
+          onLostPointerCapture={reorder.onPointerCancel}
+          onKeyDownCapture={(event) => {
+            if (reorder.onKeyDown(event)) {
+              event.preventDefault();
+              event.stopPropagation();
+            }
+          }}
+        >
+          {reorder.order.map((id) => {
+            const { icon: Icon, title } = sessionActions[id];
+            const copyId = id === "copy-id";
+            return (
+              <div
+                key={id}
+                role="presentation"
+                className="session-actions-menu__row"
+                data-session-action-id={id}
+                data-dragging={reorder.draggingId === id || undefined}
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  ref={id === "switch-branch" ? switchAction : undefined}
+                  disabled={
+                    id === "rename" ? !rename : id === "clone" && !clone
+                  }
+                  aria-disabled={copyId ? copying : undefined}
+                  onClick={() => {
+                    if (id === "switch-branch") {
+                      setChoosing(true);
+                      return;
+                    }
+                    runSessionAction(id, sessionId, {
+                      copyId: () => {
+                        if (!copying)
+                          void copy(sessionId, store.copyOwnership());
+                      },
+                      rename: onRename,
+                      export: onExport,
+                      closeMenu: onClose,
+                    });
+                  }}
+                >
+                  {Icon ? (
+                    <Icon size={14} aria-hidden />
+                  ) : (
+                    <CopyFeedback copied={copied} copying={copying} size={14} />
+                  )}
+                  <ButtonLabel reserve={copyId && copied ? title : []}>
+                    {copyId && copied ? "ID copied" : title}
+                  </ButtonLabel>
+                </button>
+                <button
+                  type="button"
+                  className="session-actions-menu__grip"
+                  tabIndex={-1}
+                  aria-label={`Reorder ${title}`}
+                  title="Drag to reorder"
+                  onPointerDown={(event) => reorder.startDrag(event, id)}
+                >
+                  <GripVertical size={14} aria-hidden />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
       <span className="sr-only" role="status">
-        {copied ? "Session ID copied" : ""}
+        {copied ? "Session ID copied" : announcement}
       </span>
-    </div>,
-    document.body,
+    </AnchoredPanel>
   );
 }

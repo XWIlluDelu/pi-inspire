@@ -1,18 +1,38 @@
+import {
+  BROWSER_BUILD_HEADER,
+  BROWSER_UPGRADE_REQUIRED,
+  DEVELOPMENT_BROWSER_BUILD,
+} from "../shared/browser-build.mjs";
+
+export function browserBuildId(): string {
+  if (!import.meta.env?.PROD) return DEVELOPMENT_BROWSER_BUILD;
+  return (
+    [...document.scripts]
+      .map((script) => new URL(script.src, document.baseURI).pathname)
+      .find((source) => /\/assets\/index-[^/]+\.js$/u.test(source))
+      ?.split("/")
+      .at(-1) ?? "unknown"
+  );
+}
+
+export class BrowserUpgradeRequired extends Error {
+  constructor() {
+    super("Reload this page to use the current Inspire build.");
+  }
+}
+
 /** Durable browser authority is an origin-stored, non-extractable signing key.
  * Certificates are public. API bearers exist only in this module's memory. */
 interface BrowserIdentity {
   privateKey: CryptoKey;
   certificate: string;
-  taskAlertsVersion?: 1;
 }
 interface Access {
   bearer: string;
   expiresAt: number;
 }
 
-export class BrowserPairingError extends Error {
-  readonly status = 401;
-}
+export class BrowserPairingError extends Error {}
 
 let bootstrap: string | null = null;
 let access: Access | null = null;
@@ -126,7 +146,6 @@ export async function pairBrowser(token?: string): Promise<void> {
   await identityStorage({
     privateKey: keys.privateKey,
     certificate,
-    taskAlertsVersion: 1,
   });
 }
 
@@ -165,13 +184,6 @@ async function exchange(identity: BrowserIdentity): Promise<Access> {
   });
 }
 
-export async function migrateTaskAlertIntent(
-  legacy: import("../shared/contracts").CompletionAttentionPreference,
-) {
-  const identity = await identityStorage();
-  return identity?.taskAlertsVersion === 1 ? ("off" as const) : legacy;
-}
-
 async function renew(): Promise<Access> {
   let identity = await identityStorage();
   if (bootstrap) {
@@ -198,18 +210,17 @@ async function renew(): Promise<Access> {
   return exchange(identity);
 }
 
-async function browserAuthorization(): Promise<Record<string, string>> {
+async function browserBearer(): Promise<string> {
   if (!access || access.expiresAt <= Date.now() + 30_000) {
     renewal ??= renew().finally(() => {
       renewal = null;
     });
     access = await renewal;
   }
-  return { Authorization: `Bearer ${access.bearer}` };
+  return access.bearer;
 }
 
-/** Refresh before dispatch, never replay after a 401 or an uncertain outcome.
- * Explicit headers are reserved for trusted programmatic clients. */
+/** Refresh before dispatch, never replay after a 401 or an uncertain outcome. */
 export async function authenticatedFetch(
   input: RequestInfo | URL,
   init: RequestInit = {},
@@ -229,14 +240,12 @@ export async function authenticatedFetch(
     target.password
   )
     throw new Error("Refusing to send Host credentials outside this origin");
+  if (init.signal?.aborted) throw init.signal.reason;
   const headers = new Headers(
     init.headers ?? (input instanceof Request ? input.headers : undefined),
   );
-  if (!headers.has("Authorization")) {
-    const authorization = await browserAuthorization();
-    for (const [name, value] of Object.entries(authorization))
-      headers.set(name, value);
-  }
+  headers.set(BROWSER_BUILD_HEADER, browserBuildId());
+  headers.set("Authorization", `Bearer ${await browserBearer()}`);
   if (init.signal?.aborted) throw init.signal.reason;
   const response = await transport(input, {
     ...init,
@@ -245,6 +254,13 @@ export async function authenticatedFetch(
     headers,
   });
   if (response.status === 401) access = null;
+  if (
+    response.status === 409 &&
+    response.headers.get(BROWSER_BUILD_HEADER) === BROWSER_UPGRADE_REQUIRED
+  ) {
+    window.dispatchEvent?.(new Event("inspire-browser-upgrade"));
+    throw new BrowserUpgradeRequired();
+  }
   return response;
 }
 

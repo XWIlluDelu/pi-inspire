@@ -1,6 +1,8 @@
-import { memo, useContext, useMemo } from "react";
+import { useContext, useMemo } from "react";
+import { jsonRecord } from "../../shared/json-record";
 import { stripTerminalSequences } from "../ansi";
-import { highlightSource } from "../syntax-highlighting";
+import { CodeView } from "./CodeView";
+import { ContextPaneState } from "./ContextPaneState";
 import {
   DocumentResourceContext,
   MarkdownAttachmentsContext,
@@ -33,12 +35,6 @@ interface NotebookDocument {
   totalCells: number;
 }
 
-function record(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
 function joinedText(value: unknown, separator = ""): string | null {
   if (typeof value === "string") return value;
   if (Array.isArray(value) && value.every((item) => typeof item === "string"))
@@ -49,7 +45,7 @@ function joinedText(value: unknown, separator = ""): string | null {
 function imageFromBundle(
   value: unknown,
 ): Extract<NotebookOutput, { kind: "image" }> | null {
-  const bundle = record(value);
+  const bundle = jsonRecord(value);
   if (!bundle) return null;
   for (const mimeType of [
     "image/png",
@@ -78,7 +74,7 @@ function imageFromBundle(
 
 function cellAttachments(value: unknown): ReadonlyMap<string, string> {
   const attachments = new Map<string, string>();
-  for (const [name, bundle] of Object.entries(record(value) ?? {}).slice(
+  for (const [name, bundle] of Object.entries(jsonRecord(value) ?? {}).slice(
     0,
     64,
   )) {
@@ -90,7 +86,7 @@ function cellAttachments(value: unknown): ReadonlyMap<string, string> {
 }
 
 function outputFromBundle(value: unknown): NotebookOutput {
-  const bundle = record(value);
+  const bundle = jsonRecord(value);
   if (!bundle) return { kind: "unsupported" };
   const image = imageFromBundle(bundle);
   if (image) return image;
@@ -105,7 +101,7 @@ function outputFromBundle(value: unknown): NotebookOutput {
 }
 
 function normalizeOutput(value: unknown): NotebookOutput {
-  const output = record(value);
+  const output = jsonRecord(value);
   if (!output || typeof output.output_type !== "string")
     return { kind: "unsupported" };
   if (output.output_type === "stream") {
@@ -166,11 +162,11 @@ function parseNotebook(text: string): NotebookDocument | null {
   } catch {
     return null;
   }
-  const notebook = record(value);
+  const notebook = jsonRecord(value);
   if (!notebook || !Array.isArray(notebook.cells)) return null;
-  const metadata = record(notebook.metadata);
-  const languageInfo = record(metadata?.language_info);
-  const kernelspec = record(metadata?.kernelspec);
+  const metadata = jsonRecord(notebook.metadata);
+  const languageInfo = jsonRecord(metadata?.language_info);
+  const kernelspec = jsonRecord(metadata?.kernelspec);
   const language =
     (typeof languageInfo?.name === "string" && languageInfo.name) ||
     (typeof kernelspec?.language === "string" && kernelspec.language) ||
@@ -191,7 +187,7 @@ function parseNotebook(text: string): NotebookDocument | null {
   };
   const cells: NotebookCell[] = [];
   for (const rawCell of notebook.cells.slice(0, MAX_NOTEBOOK_CELLS)) {
-    const cell = record(rawCell);
+    const cell = jsonRecord(rawCell);
     const cellType = cell?.cell_type;
     if (
       !cell ||
@@ -250,9 +246,7 @@ function NotebookOutputView({
     : "lazy";
   if (output.kind === "unsupported")
     return (
-      <div className="notebook-preview__unsupported">
-        This output is available in Source.
-      </div>
+      <div className="notebook-preview__unsupported">See output in Source.</div>
     );
   return (
     <div
@@ -272,50 +266,25 @@ function NotebookOutputView({
             alt="Notebook output"
           />
         ) : (
-          <pre>{output.text}</pre>
+          <CodeView text={output.text} />
         )}
       </div>
     </div>
   );
 }
 
-const NotebookSource = memo(function NotebookSource({
-  source,
-  language,
-}: {
-  source: string;
-  language: string;
-}) {
-  const highlighted = useMemo(
-    () => highlightSource(source, language),
-    [source, language],
-  );
-  return (
-    <pre tabIndex={0}>
-      <code
-        className={`hljs language-${language}`}
-        // highlight.js escapes the input and emits span elements only.
-        dangerouslySetInnerHTML={{ __html: highlighted }}
-      />
-    </pre>
-  );
-});
-
 export function NotebookPreview({ text }: { text: string }) {
   const notebook = useMemo(() => parseNotebook(text), [text]);
   if (!notebook)
     return (
-      <div className="notebook-preview notebook-preview--state">
-        <strong>Notebook preview unavailable</strong>
-        <span>Open Source to inspect this file.</span>
-      </div>
+      <ContextPaneState
+        icon={null}
+        title="Notebook preview unavailable"
+        hint="Open Source to inspect this file."
+      />
     );
   if (notebook.cells.length === 0)
-    return (
-      <div className="notebook-preview notebook-preview--state">
-        <strong>Empty notebook</strong>
-      </div>
-    );
+    return <ContextPaneState icon={null} title="Empty notebook" />;
   return (
     <div
       className="notebook-preview"
@@ -343,8 +312,9 @@ export function NotebookPreview({ text }: { text: string }) {
                 <RichText text={cell.source} variant="assistant" />
               </MarkdownAttachmentsContext.Provider>
             ) : (
-              <NotebookSource
-                source={cell.source}
+              <CodeView
+                tabIndex={0}
+                text={cell.source}
                 language={
                   cell.kind === "code" ? notebook.language : "plaintext"
                 }
@@ -362,8 +332,7 @@ export function NotebookPreview({ text }: { text: string }) {
       ))}
       {notebook.clipped ? (
         <div className="notebook-preview__more" role="status">
-          Showing a bounded preview of {notebook.totalCells} cells. Open Source
-          for the complete file.
+          Partial preview of {notebook.totalCells} cells. See Source for all.
         </div>
       ) : null}
     </div>

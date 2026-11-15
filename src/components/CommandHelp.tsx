@@ -1,10 +1,15 @@
-import { AlertTriangle, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { AlertTriangle } from "lucide-react";
+import { Fragment, useEffect, useState } from "react";
 import { isMacKeyboardPlatform } from "../keyboard-input";
 import { store, useAppState } from "../store";
-import { useModalFocus } from "../use-modal-focus";
-import { modelCycleShortcut } from "../workbench-keyboard";
+import { terminalChords } from "../terminal-keyboard";
+import {
+  modelCycleShortcut,
+  workbenchShortcutLabel,
+  workbenchShortcuts,
+} from "../workbench-keyboard";
 import { ContextPaneState } from "./ContextPaneState";
+import { DialogHeader, Modal } from "./Modal";
 import { PiLoader } from "./PiLoader";
 import { ProgressiveRichText } from "./ProgressiveRichText";
 
@@ -18,14 +23,12 @@ function ShortcutKeys({ shortcut }: { shortcut: Shortcut }) {
   return (
     <>
       {steps.map((step, index) => (
-        <span className="command-help__key-step" key={index}>
-          {index > 0 ? <span>·</span> : null}
-          <span className="command-help__key-chords">
-            {(typeof step === "string" ? [step] : step).map((chord) => (
-              <kbd key={chord}>{chord}</kbd>
-            ))}
-          </span>
-        </span>
+        <Fragment key={index}>
+          {index > 0 && <span aria-hidden>·</span>}
+          {(typeof step === "string" ? [step] : step).map((chord) => (
+            <kbd key={chord}>{chord}</kbd>
+          ))}
+        </Fragment>
       ))}
     </>
   );
@@ -38,7 +41,6 @@ export function CommandHelp({
   mode: "hotkeys" | "changelog";
   onClose: () => void;
 }) {
-  const ref = useModalFocus<HTMLDivElement>(true, "command-help", onClose);
   const sendKey = useAppState((state) => state.prefs.desktopSendKey);
   const [release, setRelease] = useState<{
     version: string;
@@ -71,9 +73,12 @@ export function CommandHelp({
     {
       title: "Workbench",
       rows: [
-        ["Ctrl/⌘+K", "Open the command palette"],
-        ["Ctrl/⌘+B", "Toggle session navigation"],
-        ["Ctrl/⌘+.", "Toggle Files / Changes / History / Terminal"],
+        ...(["palette", "nav", "ctx"] as const).map(
+          (action): [Shortcut, string] => [
+            workbenchShortcutLabel(action),
+            workbenchShortcuts[action].title,
+          ],
+        ),
         ["Esc", "Dismiss a menu or dialog; otherwise Stop active work"],
       ],
     },
@@ -88,7 +93,7 @@ export function CommandHelp({
           sendKey === "mod-enter" ? ["Enter", "Shift+Enter"] : "Shift+Enter",
           "Insert a line break (Alt+Enter also works)",
         ],
-        [["↑", "↓"], "Browse prompt history at the first / last visual line"],
+        [["Alt", "↑"], "Open input history"],
         [
           {
             steps: [
@@ -117,7 +122,7 @@ export function CommandHelp({
     {
       title: "Conversation",
       rows: [
-        ["Ctrl/⌘+F", "Find in the focused transcript"],
+        [workbenchShortcutLabel("find"), workbenchShortcuts.find.title],
         [
           ["Enter", "Shift+Enter"],
           "Next / previous match in conversation search",
@@ -142,9 +147,12 @@ export function CommandHelp({
       title: "Project terminal",
       rows: [
         ["Ctrl/⌘+F", "Find terminal output (Workbench shortcut mode)"],
-        [["Ctrl/⌘+PgUp", "Ctrl/⌘+PgDn"], "Previous / next terminal"],
+        [
+          [terminalChords.previous.hint, terminalChords.next.hint],
+          "Previous / next terminal",
+        ],
         ["Alt+1–9", "Select a terminal tab"],
-        ["Ctrl/⌘+Shift+`", "Create a terminal"],
+        [terminalChords.new.hint, "Create a terminal"],
         [["←", "→"], "Move focus among terminal tabs"],
         [
           ["Ctrl/⌘+Shift+←", "Ctrl/⌘+Shift+→"],
@@ -165,68 +173,50 @@ export function CommandHelp({
     },
   ];
   return (
-    <div className="overlay" role="presentation" onClick={onClose}>
-      <div
-        ref={ref}
-        className="dialog dialog--wide command-help"
-        role="dialog"
-        aria-modal="true"
-        aria-label={mode === "hotkeys" ? "Keyboard shortcuts" : "Pi changelog"}
-        tabIndex={-1}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="command-help__header">
-          <h2>
-            {mode === "hotkeys"
+    <Modal
+      aria-label={mode === "hotkeys" ? "Keyboard shortcuts" : "Pi changelog"}
+      onDismiss={onClose}
+    >
+      <div className="dialog dialog--flush command-help">
+        <DialogHeader
+          title={
+            mode === "hotkeys"
               ? "Keyboard shortcuts"
               : release
                 ? `Pi ${release.version} release notes`
-                : "Pi release notes"}
-          </h2>
-          <button
-            type="button"
-            className="icon-button"
-            aria-label="Close command help"
-            onClick={onClose}
-          >
-            <X size={16} aria-hidden />
-          </button>
-        </div>
+                : "Pi release notes"
+          }
+          closeLabel="Close command help"
+          onClose={onClose}
+        />
         <div className="command-help__body" tabIndex={0}>
           {mode === "hotkeys" ? (
             <div className="command-help__grid">
-              {[0, 1].map((column) => (
-                <div className="command-help__column" key={column}>
-                  {sections
-                    .filter((_, index) => index % 2 === column)
-                    .map((section) => (
-                      <section key={section.title}>
-                        <h3>{section.title}</h3>
-                        {section.title === "Project terminal" ? (
-                          <p className="command-help__note">
-                            With terminal focus, in Workbench shortcut mode.
-                          </p>
-                        ) : null}
-                        <dl>
-                          {section.rows.map(([key, value]) => (
-                            <div key={value}>
-                              <dt className="command-help__keys">
-                                <ShortcutKeys shortcut={key} />
-                              </dt>
-                              <dd>{value}</dd>
-                            </div>
-                          ))}
-                        </dl>
-                        {section.title === "Composer" ? (
-                          <p className="command-help__note">
-                            Touch-first input: Return inserts a line break; use
-                            Send. IME composition: Enter confirms, never
-                            submits.
-                          </p>
-                        ) : null}
-                      </section>
+              {sections.map(({ title, rows }) => (
+                <section key={title}>
+                  <h3>{title}</h3>
+                  {title === "Project terminal" && (
+                    <p className="command-help__note">
+                      With terminal focus, in Workbench shortcut mode.
+                    </p>
+                  )}
+                  <dl>
+                    {rows.map(([keys, description]) => (
+                      <div key={description}>
+                        <dt>
+                          <ShortcutKeys shortcut={keys} />
+                        </dt>
+                        <dd>{description}</dd>
+                      </div>
                     ))}
-                </div>
+                  </dl>
+                  {title === "Composer" && (
+                    <p className="command-help__note">
+                      On touch screens, Return adds a line. Tap Send. With an
+                      input method, Enter confirms text while you compose.
+                    </p>
+                  )}
+                </section>
               ))}
             </div>
           ) : error ? (
@@ -235,20 +225,15 @@ export function CommandHelp({
               title="Release notes unavailable"
               hint={error === "Release notes unavailable" ? undefined : error}
               role="alert"
-            >
-              <button
-                type="button"
-                className="button button--quiet res__state-action"
-                onClick={() => setAttempt((value) => value + 1)}
-              >
-                Retry
-              </button>
-            </ContextPaneState>
+              action={{
+                label: "Retry",
+                run: () => setAttempt((value) => value + 1),
+              }}
+            />
           ) : release ? (
             <>
               <p className="palette__hint">
-                From the installed Pi package. Documentation links open current
-                upstream documentation.
+                Notes for your installed Pi. Links open the current docs.
               </p>
               <ProgressiveRichText
                 text={release.markdown}
@@ -263,6 +248,6 @@ export function CommandHelp({
           )}
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

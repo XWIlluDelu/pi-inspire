@@ -1,6 +1,5 @@
 import {
   ArrowDown,
-  ArrowLeft,
   ArrowUp,
   Cpu,
   KeyRound,
@@ -29,32 +28,58 @@ import type {
   ModelDeclaration,
   ModelPreferencesPatch,
   ModelSettingsDestination,
+  ModelSettingsOwner,
   ModelSettingsSnapshot,
-  ModelSettingsWriteResult,
   ProviderDeclaration,
   ProviderLoginOption,
 } from "../../shared/model-settings";
 import { thinkingLevelLabel, thinkingLevelOptions } from "../model-options";
 import { shallowEqual, store, useAppState } from "../store";
+import { useConfigurationDocument } from "../use-configuration-document";
+import {
+  ConfigurationAction,
+  ConfigurationConfirmation,
+  ConfigurationDetail,
+  ConfigurationEditor,
+  ConfigurationForm,
+  ConfigurationInput,
+} from "./ConfigurationForm";
 import { DetailSummary } from "./DetailSummary";
-import { Dropdown } from "./Dropdown";
 import { ModelForm, ProviderForm } from "./ModelDeclarationForms";
-import { ModelList, type ModelListHandle } from "./ModelList";
+import { ModelList } from "./ModelList";
+import { Dropdown } from "./Dropdown";
 import { ProviderAuthentication } from "./ProviderAuthentication";
 import { SettingField } from "./SettingsControls";
-import { SettingsSection } from "./SettingsSection";
+import { SettingsCardMessage, SettingsSection } from "./SettingsSection";
 
-type Owner = { sessionId?: string; cwd?: string };
-type FocusTicket = {
-  origin: HTMLElement | null;
-  allowed: () => boolean;
-  release: () => void;
-};
-type FocusPlan = (ticket: FocusTicket) => void;
-const messageOf = (error: unknown) =>
-  error instanceof Error
-    ? error.message
-    : "The Host could not complete this operation";
+type DeclarationEditor =
+  | { kind: "provider"; value: ProviderDeclaration | null }
+  | { kind: "model"; provider: string; value: ModelDeclaration | null };
+type Removal = Extract<
+  ModelConfigEdit,
+  { kind: "remove-provider" | "remove-model" }
+>;
+type Selection =
+  | DeclarationEditor
+  | Removal
+  | { kind: "common"; pattern: string; value: string };
+
+const declarationKey = (
+  provider: string,
+  model?: { id: string; type?: string | null },
+) =>
+  JSON.stringify(
+    model ? [provider, model.type ?? "chat", model.id] : [provider],
+  );
+function declarationLabel(
+  provider: string,
+  model?: { id: string; type?: string | null } | null,
+) {
+  if (!model) return provider;
+  const type = model.type && model.type !== "chat" ? ` (${model.type})` : "";
+  return `${provider}/${model.id.trimEnd()}${type}`;
+}
+const unavailable = "The Host could not complete this operation";
 export function ModelsSettings({
   destination,
   active = true,
@@ -62,8 +87,6 @@ export function ModelsSettings({
   destination?: ModelSettingsDestination;
   active?: boolean;
 }) {
-  const activeRef = useRef(active);
-  activeRef.current = active;
   const state = useAppState(
     (source) => ({
       sessionId: source.sessionId,
@@ -72,7 +95,7 @@ export function ModelsSettings({
     }),
     shallowEqual,
   );
-  const owner = useMemo<Owner>(
+  const owner = useMemo<ModelSettingsOwner>(
     () =>
       destination?.owner ??
       (state.sessionId
@@ -82,259 +105,92 @@ export function ModelsSettings({
           : {}),
     [destination?.owner, state.sessionId, state.cwd],
   );
-  const [snapshot, setSnapshot] = useState<ModelSettingsSnapshot | null>(null);
+  const settingsOwner = JSON.stringify([
+    owner.sessionId,
+    owner.cwd,
+    state.transport,
+  ]);
+  const configuration = useConfigurationDocument<
+    ModelSettingsSnapshot,
+    Selection
+  >({
+    owner: settingsOwner,
+    active,
+    unavailable,
+    fallbackFocus: '[aria-label="Search available models"]',
+  });
+  const {
+    snapshot,
+    error,
+    readFailed,
+    busy,
+    alive,
+    load: readSettings,
+    write,
+    edit: selection,
+    selected: selectedDeclaration,
+    select: selectDeclaration,
+  } = configuration;
+  const editingCommon = selection?.kind === "common" ? selection : null;
+  const editor =
+    selection?.kind === "model" || selection?.kind === "provider"
+      ? selection
+      : null;
+  const removing =
+    selection?.kind === "remove-provider" || selection?.kind === "remove-model"
+      ? selection
+      : null;
   const [providers, setProviders] = useState<ProviderLoginOption[]>([]);
   const [authError, setAuthError] = useState<string | null>(null);
   const [providersLoading, setProvidersLoading] = useState(true);
   const [providersLoaded, setProvidersLoaded] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [readFailed, setReadFailed] = useState(false);
-  const [errorTarget, setErrorTarget] = useState<"config" | "common" | null>(
-    null,
-  );
-  const [busy, setBusy] = useState(false);
-  const [editingCommon, setEditingCommon] = useState<{
-    index: number;
-    value: string;
-  } | null>(null);
-  const [editor, setEditor] = useState<
-    | { kind: "provider"; value: ProviderDeclaration | null }
-    | { kind: "model"; provider: string; value: ModelDeclaration | null }
-    | null
-  >(null);
-  const [removing, setRemoving] = useState<Extract<
-    ModelConfigEdit,
-    { kind: "remove-provider" | "remove-model" }
-  > | null>(null);
-  const [declarationsOpen, setDeclarationsOpen] = useState(false);
-  const defaultGroupName = useId();
-  const rootRef = useRef<HTMLDivElement>(null);
+  const declarationsRef = useRef<HTMLDetailsElement>(null);
   const savedEntriesRef = useRef<HTMLDetailsElement>(null);
-  const editorOpener = useRef<HTMLElement | null>(null);
-  const editorFromList = useRef(false);
-  const editorTitleId = useId();
-  const browseScroll = useRef(0);
-  const wasEditing = useRef(false);
-  const commonOpener = useRef<HTMLElement | null>(null);
   const addProviderRef = useRef<HTMLButtonElement>(null);
-  const addModelRefs = useRef(new Map<string, HTMLButtonElement>());
-  const removalOpener = useRef<HTMLElement | null>(null);
-  const availableListRef = useRef<ModelListHandle>(null);
-  const availableContainerRef = useRef<HTMLDivElement>(null);
-  const [listWidth, setListWidth] = useState(500);
-  const hasSnapshot = snapshot !== null;
-  useEffect(() => {
-    const el = availableContainerRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        if (entry.contentRect.width > 0) setListWidth(entry.contentRect.width);
-      }
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [hasSnapshot]);
-  const isTouch = window.matchMedia("(pointer: coarse)").matches;
-  const optionSize = listWidth <= 400 ? (isTouch ? 64 : 56) : 48;
-  const focusTicketRef = useRef<FocusTicket | null>(null);
-  const [focusHandoff, setFocusHandoff] = useState<{
-    ticket: FocusTicket;
-    focus: FocusPlan;
-  } | null>(null);
-  const currentOwner = useRef({ owner, transport: state.transport });
-  currentOwner.current = { owner, transport: state.transport };
-  const mounted = useRef(false),
-    generation = useRef(0),
-    choicesGeneration = useRef(0),
-    providerGeneration = useRef(0);
-  const captureFocus = (): FocusTicket => {
-    focusTicketRef.current?.release();
-    const origin =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
-    let moved = !rootRef.current?.contains(origin),
-      released = false;
-    const observe = (event: FocusEvent) => {
-      if (event.target !== origin && event.target !== document.body)
-        moved = true;
-    };
-    document.addEventListener("focusin", observe, true);
-    const ticket: FocusTicket = {
-      origin,
-      allowed: () =>
-        !released &&
-        !moved &&
-        mounted.current &&
-        activeRef.current &&
-        Boolean(rootRef.current?.isConnected) &&
-        currentOwner.current.owner === owner &&
-        currentOwner.current.transport === state.transport,
-      release: () => {
-        released = true;
-        document.removeEventListener("focusin", observe, true);
-      },
-    };
-    focusTicketRef.current = ticket;
-    return ticket;
-  };
-  const focusElement = (ticket: FocusTicket, element: HTMLElement | null) => {
-    const target =
-      element?.isConnected && !element.matches(":disabled")
-        ? element
-        : rootRef.current?.querySelector<HTMLElement>(
-            '[aria-label="Search available models"]',
-          );
-    const allowed = ticket.allowed();
-    ticket.release();
-    if (allowed) target?.focus();
-  };
+  const defaultThinkingRef = useRef<HTMLButtonElement>(null);
+  const addModelRef = useRef<HTMLButtonElement>(null);
+  const defaultGroupName = useId();
+  const providerGeneration = useRef(0);
   useLayoutEffect(() => {
-    const content = rootRef.current?.closest(".settings__content");
-    if (active && editor && !wasEditing.current) {
-      rootRef.current
-        ?.querySelector(".models-form__body")
-        ?.scrollTo({ top: 0, behavior: "instant" });
-    }
-    if (active && content && Boolean(editor) !== wasEditing.current) {
-      content.scrollTo({
-        top: editor ? 0 : browseScroll.current,
-        behavior: "instant",
-      });
-    }
-    wasEditing.current = Boolean(editor);
-  }, [editor, active]);
-  useLayoutEffect(() => {
-    if (busy || !focusHandoff) return;
-    if (focusHandoff.ticket.allowed()) focusHandoff.focus(focusHandoff.ticket);
-    else focusHandoff.ticket.release();
-    setFocusHandoff(null);
-  }, [busy, focusHandoff]);
-  const openEditor = (next: typeof editor, opener: HTMLElement) => {
-    editorOpener.current = opener;
-    editorFromList.current = Boolean(opener.closest(".models-available"));
-    browseScroll.current =
-      rootRef.current?.closest(".settings__content")?.scrollTop ?? 0;
-    setError(null);
-    setEditor(next);
-    setRemoving(null);
-  };
-  const focusEditorOrigin = (
-    ticket: FocusTicket,
-    model?: { provider: string; id: string },
-  ) => {
-    if (
-      editorFromList.current &&
-      editor?.kind === "model" &&
-      editor.value &&
-      availableListRef.current
-    ) {
-      availableListRef.current.focusModel(
-        model ?? { provider: editor.provider, id: editor.value.id },
-        ticket.allowed,
-        ticket.release,
-        { action: "edit", preserveQuery: true },
-      );
-    } else focusElement(ticket, editorOpener.current);
-  };
-  const cancelEditor = () => {
-    const ticket = captureFocus();
-    setError(null);
-    setEditor(null);
-    setFocusHandoff({
-      ticket,
-      focus: (ticket) => focusEditorOrigin(ticket),
-    });
-  };
-  const load = useCallback(async () => {
-    const current = ++generation.current;
-    try {
-      const settings = await store.readModelSettings(owner);
-      if (generation.current !== current) return null;
-      setSnapshot(settings);
-      setReadFailed(false);
-      setError(null);
-      return current;
-    } catch (error) {
-      if (generation.current === current) {
-        setReadFailed(true);
-        setError(messageOf(error));
-      }
-      return null;
-    }
-  }, [owner, state.transport]);
-  const reloadSettings = useCallback(async () => {
-    await load();
-  }, [load]);
+    setProviders([]);
+    setAuthError(null);
+    setProvidersLoaded(false);
+    return () => {
+      providerGeneration.current++;
+    };
+  }, [settingsOwner]);
+  const openEditor = (next: DeclarationEditor, opener: HTMLElement) =>
+    configuration.open(next, opener, true);
+  const load = useCallback(
+    () => readSettings(() => store.readModelSettings(owner, true)),
+    [readSettings, owner],
+  );
   const refreshProviders = useCallback(async () => {
-    const owns = () =>
-      mounted.current &&
-      currentOwner.current.owner === owner &&
-      currentOwner.current.transport === state.transport;
-    if (!owns()) return;
+    if (!alive.current) return;
     const current = ++providerGeneration.current;
+    const owns = () => alive.current && providerGeneration.current === current;
     setProvidersLoading(true);
     try {
       const auth = await store.providerAuth(owner, { operation: "providers" });
-      if (owns() && providerGeneration.current === current) {
+      if (owns()) {
         setProviders(auth as ProviderLoginOption[]);
         setProvidersLoaded(true);
         setAuthError(null);
       }
     } catch (error) {
-      if (owns() && providerGeneration.current === current)
-        setAuthError(messageOf(error));
+      if (owns())
+        setAuthError(error instanceof Error ? error.message : unavailable);
     } finally {
-      if (owns() && providerGeneration.current === current)
-        setProvidersLoading(false);
+      if (owns()) setProvidersLoading(false);
     }
-  }, [owner, state.transport]);
-  const refreshChoices = useCallback(async () => {
-    const request = ++choicesGeneration.current;
-    const settingsGeneration = generation.current;
-    const owns = () =>
-      mounted.current &&
-      choicesGeneration.current === request &&
-      currentOwner.current.owner === owner &&
-      currentOwner.current.transport === state.transport;
-    if (!owns()) return;
-    try {
-      const warning = await store.refreshModels(owner);
-      if (owns() && generation.current === settingsGeneration) {
-        const observed = await load();
-        if (warning && owns() && observed === generation.current)
-          setError(warning);
-      }
-    } catch (error) {
-      if (owns() && generation.current === settingsGeneration)
-        setError(messageOf(error));
-    }
-  }, [owner, state.transport, load]);
+  }, [owner, alive]);
+  const refreshCredentials = async () => {
+    await Promise.all([refreshProviders(), load()]);
+  };
   useEffect(() => {
-    mounted.current = true;
-    setSnapshot(null);
-    setReadFailed(false);
-    setProviders([]);
-    setAuthError(null);
-    setProvidersLoading(true);
-    setProvidersLoaded(false);
-    setError(null);
-    setEditingCommon(null);
-    setEditor(null);
-    setRemoving(null);
-    setBusy(false);
-    setDeclarationsOpen(false);
     void load();
     void refreshProviders();
-    void refreshChoices();
-    return () => {
-      mounted.current = false;
-      focusTicketRef.current?.release();
-      ++generation.current;
-      ++choicesGeneration.current;
-      ++providerGeneration.current;
-    };
-  }, [load, refreshProviders, refreshChoices]);
+  }, [load, refreshProviders]);
   const focusedDestination = useRef<string | undefined>(undefined);
   useEffect(() => {
     const key = `${destination?.focus ?? ""}/${destination?.query ?? ""}`;
@@ -357,154 +213,99 @@ export function ModelsSettings({
     });
     return () => cancelAnimationFrame(frame);
   }, [active, snapshot, destination]);
-  const mutate = async (
-    operation: () => Promise<ModelSettingsWriteResult>,
-    onSaved?: (next: ModelSettingsWriteResult) => FocusPlan,
-    target: "config" | "common" | null = null,
-  ): Promise<boolean> => {
-    if (busy) return false;
-    const owns = () =>
-      mounted.current &&
-      currentOwner.current.owner === owner &&
-      currentOwner.current.transport === state.transport;
-    const ticket = captureFocus();
-    let focus: FocusPlan = (ticket) => focusElement(ticket, ticket.origin);
-    ++generation.current;
-    setBusy(true);
-    setError(null);
-    setErrorTarget(target);
-    try {
-      const next = await operation();
-      if (!owns()) return false;
-      ++generation.current;
-      if (next.snapshot) {
-        setSnapshot(next.snapshot);
-        setReadFailed(false);
-      }
-      setError(next.warning ?? null);
-      setErrorTarget(null);
-      if (onSaved) focus = onSaved(next);
-      return true;
-    } catch (error) {
-      if (owns()) {
-        setError(messageOf(error));
-        if (target)
-          focus = (ticket) =>
-            focusElement(
-              ticket,
-              rootRef.current?.querySelector<HTMLElement>(
-                target === "config"
-                  ? '.models-form [role="alert"]'
-                  : '.models-common__editor [role="alert"]',
-              ) ?? ticket.origin,
-            );
-      }
-      return false;
-    } finally {
-      if (owns()) {
-        setBusy(false);
-        setFocusHandoff({ ticket, focus });
-      } else ticket.release();
-    }
-  };
-  const save = async (patch: ModelPreferencesPatch) => {
-    if (!snapshot) return false;
-    return mutate(
+  const save = (patch: ModelPreferencesPatch, fromEditor = false) => {
+    if (!snapshot || readFailed) return;
+    return write(
       () => store.saveModelPreferences(owner, snapshot.settingsRevision, patch),
-      () => {
-        const target =
-          patch.enabledModels && editingCommon
-            ? commonOpener.current
-            : (focusTicketRef.current?.origin ?? null);
-        if (patch.enabledModels) setEditingCommon(null);
-        return (ticket) =>
-          focusElement(
-            ticket,
-            patch.defaultModel === null
-              ? (rootRef.current?.querySelector<HTMLButtonElement>(
-                  '.models-results [role="combobox"]',
-                ) ?? null)
-              : target,
-          );
+      {
+        close: fromEditor,
+        onSaved: () =>
+          patch.defaultModel === null
+            ? () => defaultThinkingRef.current
+            : undefined,
+        onError: fromEditor
+          ? () =>
+              configuration.root.current?.querySelector<HTMLElement>(
+                '.models-common__editor [role="alert"]',
+              ) ?? null
+          : undefined,
       },
-      editingCommon ? "common" : null,
     );
   };
   const edit = async (edit: ModelConfigEdit) => {
-    if (!snapshot) return false;
-    const saved = await mutate(
+    if (!snapshot || readFailed || snapshot.configError) return;
+    const saved = await write(
       () => store.editModelConfig(owner, snapshot.configRevision, edit),
-      (next) => {
-        setEditor(null);
-        setRemoving(null);
-        if (
-          edit.kind === "provider" &&
-          editor?.kind === "provider" &&
-          !editor.value
-        ) {
-          setDeclarationsOpen(true);
-        }
-        if (
-          edit.kind === "model" &&
-          !edit.originalId &&
-          next.snapshot?.models.some(
-            (model) =>
-              model.provider === edit.provider && model.id === edit.values.id,
-          )
-        ) {
-          return (ticket) => {
-            if (availableListRef.current)
-              availableListRef.current.focusModel(
-                { provider: edit.provider, id: edit.values.id },
-                ticket.allowed,
-                ticket.release,
-              );
-            else focusElement(ticket, editorOpener.current);
-          };
-        }
-        if (edit.kind === "model" && edit.originalId) {
-          return (ticket) =>
-            focusEditorOrigin(ticket, {
-              provider: edit.provider,
-              id: edit.values.id,
-            });
-        }
-        return (ticket) =>
-          focusElement(
-            ticket,
-            (edit.kind === "provider" &&
-              editor?.kind === "provider" &&
-              !editor.value) ||
-              edit.kind === "remove-model"
-              ? (addModelRefs.current.get(
-                  edit.kind === "provider" ? edit.id : edit.provider,
-                ) ?? addProviderRef.current)
-              : edit.kind === "remove-provider"
-                ? addProviderRef.current
-                : editorOpener.current,
-          );
+      {
+        close: true,
+        onSaved: () => {
+          if (
+            edit.kind === "provider" &&
+            editor?.kind === "provider" &&
+            !editor.value
+          ) {
+            if (declarationsRef.current) declarationsRef.current.open = true;
+            selectDeclaration(declarationKey(edit.id));
+            return () => addModelRef.current ?? addProviderRef.current;
+          }
+          if (edit.kind === "model") {
+            selectDeclaration(
+              declarationKey(edit.provider, {
+                id: edit.values.id,
+                type: edit.values.type ?? edit.originalType,
+              }),
+            );
+          }
+          if (edit.kind === "remove-model") {
+            selectDeclaration(declarationKey(edit.provider));
+            return () => addModelRef.current ?? addProviderRef.current;
+          }
+          if (edit.kind === "remove-provider") {
+            selectDeclaration(undefined);
+            return () => addProviderRef.current;
+          }
+        },
+        onError: () =>
+          configuration.root.current?.querySelector<HTMLElement>(
+            '.models-form [role="alert"], .models-browse [role="alert"]',
+          ) ?? null,
       },
-      editor && (edit.kind === "provider" || edit.kind === "model")
-        ? "config"
-        : null,
     );
     if (saved) await refreshProviders();
-    return saved;
   };
-  const knownModels = useMemo(
-    () =>
-      new Map(
-        [
-          ...(snapshot?.providers.flatMap((provider) =>
-            provider.models
-              .filter((model) => !model.type || model.type === "chat")
-              .map((model) => ({ ...model, provider: provider.id })),
-          ) ?? []),
-          ...(snapshot?.models ?? []),
-        ].map((model) => [modelIdentityKey(model), model]),
+  const models = useMemo(() => {
+    const declarations = new Map<string, ModelDeclaration>();
+    for (const { id: provider, models } of snapshot?.providers ?? [])
+      for (const model of models)
+        if (!model.type || model.type === "chat") {
+          const key = modelIdentityKey({ provider, id: model.id });
+          if (!declarations.has(key)) declarations.set(key, model);
+        }
+    return {
+      declarations,
+      available: new Map(
+        snapshot?.models.map((model) => [modelIdentityKey(model), model]),
       ),
-    [snapshot],
+    };
+  }, [snapshot?.models, snapshot?.providers]);
+  const modelName = (model: ModelOption) => {
+    const key = modelIdentityKey(model);
+    const entry = models.available.get(key) ?? models.declarations.get(key);
+    return entry?.name ?? model.id;
+  };
+  const savedModel = snapshot?.saved.defaultModel;
+  const savedKey = savedModel && modelIdentityKey(savedModel);
+  const savedAvailable = Boolean(savedKey && models.available.has(savedKey));
+  const preferencesUnavailable = readFailed || Boolean(snapshot?.settingsError);
+  const configurationUnavailable = readFailed || Boolean(snapshot?.configError);
+  const projectModelOverride = snapshot?.projectOverrides.some(
+    (field) => field === "defaultModel" || field === "defaultProvider",
   );
+  const projectModel = snapshot?.effective.defaultModel;
+  const modelProvider =
+    editor?.kind === "model"
+      ? snapshot?.providers.find((provider) => provider.id === editor.provider)
+      : undefined;
   const commonSources = useMemo(() => {
     const sources = new Map<string, string[]>();
     for (const entry of snapshot?.savedCommonEntries ?? [])
@@ -516,19 +317,7 @@ export function ModelsSettings({
       }
     return sources;
   }, [snapshot]);
-  const savedModel: ModelOption | null = snapshot?.saved.defaultModel
-    ? (knownModels.get(modelIdentityKey(snapshot.saved.defaultModel)) ??
-      snapshot.saved.defaultModel)
-    : null;
-  const preferencesUnavailable = readFailed || Boolean(snapshot?.settingsError);
-  const projectModelOverride = snapshot?.projectOverrides.some(
-    (field) => field === "defaultModel" || field === "defaultProvider",
-  );
-  const projectModel = snapshot?.effective.defaultModel;
-  const modelProvider =
-    editor?.kind === "model"
-      ? snapshot?.providers.find((provider) => provider.id === editor.provider)
-      : undefined;
+
   const hasInheritedApi = Boolean(
     modelProvider &&
       (modelProvider.api ||
@@ -550,25 +339,63 @@ export function ModelsSettings({
           .some((model) => model.api)),
   );
   const visibleError =
-    ((errorTarget === "config" && editor) ||
-    (errorTarget === "common" && editingCommon)
-      ? null
-      : error) ??
+    (!editor && !editingCommon ? error : null) ??
     snapshot?.settingsError ??
     snapshot?.configError ??
     snapshot?.projectSettingsError;
   const editCommon = (pattern: string, opener: HTMLElement) => {
-    if (!snapshot) return;
-    commonOpener.current = opener;
-    setEditingCommon({
-      index: snapshot.saved.enabledModels.indexOf(pattern),
-      value: pattern,
-    });
+    configuration.open({ kind: "common", pattern, value: pattern }, opener);
     if (savedEntriesRef.current) {
       savedEntriesRef.current.open = true;
       savedEntriesRef.current.scrollIntoView({ block: "nearest" });
     }
   };
+  const commonEditorIndex = editingCommon
+    ? (snapshot?.saved.enabledModels.indexOf(editingCommon.pattern) ?? -1)
+    : -1;
+  const commonEditor = editingCommon && (
+    <ConfigurationForm
+      inline
+      busy={busy}
+      saveDisabled={
+        preferencesUnavailable ||
+        commonEditorIndex < 0 ||
+        !editingCommon.value.trim()
+      }
+      error={
+        commonEditorIndex < 0
+          ? "This rule changed on disk. Copy your edit or cancel."
+          : error
+      }
+      onCancel={configuration.dismiss}
+      onSave={() => {
+        const value = editingCommon.value.trim();
+        if (snapshot && value && commonEditorIndex >= 0)
+          void save(
+            {
+              enabledModels: snapshot.saved.enabledModels.map(
+                (pattern, index) =>
+                  index === commonEditorIndex ? value : pattern,
+              ),
+            },
+            true,
+          );
+      }}
+    >
+      <ConfigurationInput
+        label="Model pattern"
+        value={editingCommon.value}
+        disabled={busy}
+        onChange={(event) =>
+          configuration.updateEdit({
+            ...editingCommon,
+            value: event.target.value,
+          })
+        }
+        autoFocus
+      />
+    </ConfigurationForm>
+  );
   const move = (index: number, direction: -1 | 1) => {
     if (!snapshot) return;
     const patterns = [...snapshot.saved.enabledModels];
@@ -578,296 +405,186 @@ export function ModelsSettings({
     ];
     void save({ enabledModels: patterns });
   };
-  const totalModels = useMemo(
-    () =>
-      snapshot?.providers.reduce(
-        (count, provider) => count + provider.models.length,
-        0,
-      ) ?? 0,
-    [snapshot],
+  const providersWithDeclarations = snapshot?.providers ?? [];
+  const modelCount = providersWithDeclarations.reduce(
+    (count, provider) => count + provider.models.length,
+    0,
   );
-  const customConfiguration = snapshot ? (
+  const customConfiguration = (
     <details
       className="models-advanced-providers"
-      open={declarationsOpen}
-      onToggle={(event) => setDeclarationsOpen(event.currentTarget.open)}
+      key={settingsOwner}
+      ref={declarationsRef}
     >
       <DetailSummary
         className="models-advanced-providers__summary"
         aria-label="Custom provider declarations"
       >
-        <span>
-          {snapshot.providers.length}{" "}
-          {snapshot.providers.length === 1 ? "provider" : "providers"} ·{" "}
-          {totalModels} {totalModels === 1 ? "model" : "models"}
-        </span>
+        {providersWithDeclarations.length}{" "}
+        {providersWithDeclarations.length === 1 ? "provider" : "providers"} ·{" "}
+        {modelCount} {modelCount === 1 ? "model" : "models"}
       </DetailSummary>
-      {declarationsOpen ? (
-        <div className="models-declarations">
-          <p className="settings__field-help">
-            Endpoints and model declarations in Pi's models.json.
-          </p>
-          <div className="models-declared-providers">
-            {snapshot.providers.map((provider) => (
-              <section
-                className="models-provider-config"
-                key={provider.id}
-                aria-label={`Custom provider ${provider.id}`}
-              >
-                <div className="models-provider__heading">
-                  <div>
-                    <h4>{provider.id}</h4>
-                    {provider.baseUrl || provider.api ? (
-                      <small>
-                        {[provider.baseUrl, provider.api]
-                          .filter(Boolean)
-                          .join(" · ")}
-                      </small>
-                    ) : null}
-                  </div>
-                  <div className="models-actions">
-                    <button
-                      type="button"
-                      className="models-icon-button"
-                      title="Edit provider"
-                      aria-label={`Edit provider ${provider.id}`}
-                      disabled={busy}
-                      onClick={(event) =>
-                        openEditor(
-                          { kind: "provider", value: provider },
-                          event.currentTarget,
-                        )
-                      }
-                    >
-                      <Pencil size={14} aria-hidden />
-                    </button>
-                    <button
-                      type="button"
-                      className="models-icon-button"
-                      title="Remove provider"
-                      aria-label={`Remove provider configuration ${provider.id}`}
-                      disabled={busy}
-                      onClick={(event) => {
-                        removalOpener.current = event.currentTarget;
-                        setRemoving({
-                          kind: "remove-provider",
-                          id: provider.id,
-                        });
-                      }}
-                    >
-                      <Trash2 size={14} aria-hidden />
-                    </button>
-                  </div>
-                </div>
-                <div className="models-provider-models">
-                  <details className="models-provider-models__disclosure">
-                    <DetailSummary>
-                      Models ({provider.models.length})
-                    </DetailSummary>
-                    <div className="models-declared-models">
-                      {provider.models.map((model) => (
-                        <div
-                          className="models-declared-model"
-                          key={JSON.stringify([model.type ?? "chat", model.id])}
-                        >
-                          <div className="models-declared-model__copy">
-                            <span className="models-declared-model__name">
-                              {model.name || model.id}
-                            </span>
-                            {model.name && model.name !== model.id ? (
-                              <code>{model.id}</code>
-                            ) : null}
-                          </div>
-                          <div className="models-actions">
-                            <button
-                              type="button"
-                              className="models-icon-button"
-                              title="Edit model"
-                              aria-label={`Edit declared model ${provider.id}/${model.id}${model.type && model.type !== "chat" ? ` (${model.type})` : ""}`}
-                              disabled={busy}
-                              onClick={(event) =>
-                                openEditor(
-                                  {
-                                    kind: "model",
-                                    provider: provider.id,
-                                    value: model,
-                                  },
-                                  event.currentTarget,
-                                )
-                              }
-                            >
-                              <Pencil size={14} aria-hidden />
-                            </button>
-                            <button
-                              type="button"
-                              className="models-icon-button"
-                              title="Remove model"
-                              aria-label={`Remove model configuration ${provider.id}/${model.id}${model.type && model.type !== "chat" ? ` (${model.type})` : ""}`}
-                              disabled={busy}
-                              onClick={(event) => {
-                                removalOpener.current = event.currentTarget;
-                                setRemoving({
-                                  kind: "remove-model",
-                                  provider: provider.id,
-                                  id: model.id,
-                                  type: model.type,
-                                });
-                              }}
-                            >
-                              <Trash2 size={14} aria-hidden />
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </details>
-                  <button
-                    type="button"
-                    className="button models-add-model"
-                    aria-label={`Add model to ${provider.id}`}
-                    disabled={busy}
-                    ref={(element) => {
-                      if (element)
-                        addModelRefs.current.set(provider.id, element);
-                      else addModelRefs.current.delete(provider.id);
-                    }}
-                    onClick={(event) =>
-                      openEditor(
-                        { kind: "model", provider: provider.id, value: null },
-                        event.currentTarget,
-                      )
-                    }
-                  >
-                    <Plus size={13} aria-hidden /> Add model
-                  </button>
-                </div>
-              </section>
-            ))}
-          </div>
-          {removing ? (
-            <div className="models-confirm">
-              <p>
-                Remove the{" "}
-                {removing.kind === "remove-provider"
-                  ? `provider ${removing.id}`
-                  : `model ${removing.provider}/${removing.id}`}{" "}
-                declaration?
-              </p>
-              <div className="models-actions">
-                <button
-                  type="button"
-                  className="button button--danger"
-                  disabled={busy}
-                  onClick={async () => {
-                    if (await edit(removing)) {
-                      setRemoving(null);
-                      setEditor(null);
-                    }
-                  }}
-                >
-                  Remove configuration
-                </button>
-                <button
-                  type="button"
-                  className="button button--quiet"
-                  disabled={busy}
-                  onClick={() => {
-                    const ticket = captureFocus();
-                    setRemoving(null);
-                    setFocusHandoff({
-                      ticket,
-                      focus: (ticket) =>
-                        focusElement(ticket, removalOpener.current),
-                    });
-                  }}
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-    </details>
-  ) : null;
-  return (
-    <div className="models-settings-layout" ref={rootRef}>
-      {editor ? (
-        <section
-          className="models-editor models-settings"
-          aria-labelledby={editorTitleId}
-        >
-          <header className="models-editor__header">
-            <button
-              type="button"
-              className="button button--quiet"
-              onClick={cancelEditor}
-              disabled={busy}
-            >
-              <ArrowLeft size={14} aria-hidden /> Back to models
-            </button>
-            <div>
-              <h3 id={editorTitleId}>
-                {editor.value ? "Edit" : "Add"} {editor.kind}
-              </h3>
-              {editor.kind === "model" || editor.value ? (
+      <div className="models-declared-providers">
+        {providersWithDeclarations.map((provider) => (
+          <section
+            className="models-provider-config"
+            key={provider.id}
+            aria-label={`Custom provider ${provider.id}`}
+          >
+            <ConfigurationDetail
+              label={`provider ${provider.id}`}
+              name={provider.id}
+              description={
                 <code>
-                  {editor.kind === "model"
-                    ? [editor.provider, editor.value?.id]
-                        .filter(Boolean)
-                        .join("/") +
-                      (editor.value?.type && editor.value.type !== "chat"
-                        ? ` (${editor.value.type})`
-                        : "")
-                    : editor.value?.id}
+                  {[provider.baseUrl, provider.api].filter(Boolean).join(" · ")}
                 </code>
-              ) : null}
-            </div>
-          </header>
-          {editor?.kind === "provider" ? (
+              }
+              disabled={busy || configurationUnavailable}
+              edit={(event) =>
+                openEditor(
+                  { kind: "provider", value: provider },
+                  event.currentTarget,
+                )
+              }
+              remove={(event) =>
+                configuration.open(
+                  { kind: "remove-provider", id: provider.id },
+                  event.currentTarget,
+                )
+              }
+            >
+              <button
+                type="button"
+                className="button"
+                aria-label={`Add model to ${provider.id}`}
+                ref={
+                  selectedDeclaration === declarationKey(provider.id)
+                    ? addModelRef
+                    : undefined
+                }
+                disabled={busy || configurationUnavailable}
+                onClick={(event) =>
+                  openEditor(
+                    { kind: "model", provider: provider.id, value: null },
+                    event.currentTarget,
+                  )
+                }
+              >
+                <Plus size={13} aria-hidden /> Add model
+              </button>
+            </ConfigurationDetail>
+            {provider.models.length > 0 && (
+              <details className="models-provider-models">
+                <DetailSummary>Models ({provider.models.length})</DetailSummary>
+                <div className="models-declared-models">
+                  {provider.models.map((model) => {
+                    const id = declarationLabel(provider.id, model);
+                    return (
+                      <ConfigurationDetail
+                        key={declarationKey(provider.id, model)}
+                        label={`declared model ${id}`}
+                        name={model.name || model.id}
+                        description={<code>{id}</code>}
+                        disabled={busy || configurationUnavailable}
+                        edit={(event) =>
+                          openEditor(
+                            {
+                              kind: "model",
+                              provider: provider.id,
+                              value: model,
+                            },
+                            event.currentTarget,
+                          )
+                        }
+                        remove={(event) =>
+                          configuration.open(
+                            {
+                              kind: "remove-model",
+                              provider: provider.id,
+                              id: model.id,
+                              type: model.type,
+                            },
+                            event.currentTarget,
+                          )
+                        }
+                      />
+                    );
+                  })}
+                </div>
+              </details>
+            )}
+          </section>
+        ))}
+      </div>
+      {removing && (
+        <ConfigurationConfirmation
+          confirmLabel="Remove configuration"
+          cancelDisabled={busy}
+          confirmDisabled={busy || configurationUnavailable}
+          onConfirm={() => void edit(removing)}
+          onCancel={configuration.dismiss}
+        >
+          Remove the{" "}
+          {removing.kind === "remove-provider"
+            ? `provider ${removing.id}`
+            : `model ${declarationLabel(removing.provider, removing)}`}{" "}
+          declaration?
+        </ConfigurationConfirmation>
+      )}
+    </details>
+  );
+  return (
+    <div className="models-settings-layout" ref={configuration.root}>
+      {editor && (
+        <ConfigurationEditor
+          title={`${editor.value ? "Edit" : "Add"} ${editor.kind}`}
+          identity={
+            editor.kind === "model"
+              ? declarationLabel(editor.provider, editor.value)
+              : editor.value?.id
+          }
+          backLabel="Back to models"
+          busy={busy}
+          onClose={configuration.dismiss}
+          refresh={{
+            label: "Refresh available models",
+            run: () => void load(),
+          }}
+        >
+          {editor.kind === "provider" ? (
             <ProviderForm
-              key={JSON.stringify(["provider", editor.value?.id ?? null])}
               value={editor.value}
-              busy={busy}
+              busy={busy || configurationUnavailable}
               nativeApiProviders={snapshot?.nativeApiProviders ?? []}
-              error={errorTarget === "config" ? error : null}
-              onCancel={cancelEditor}
+              error={error}
+              onCancel={configuration.dismiss}
               onSave={edit}
             />
-          ) : null}
-          {editor?.kind === "model" ? (
+          ) : (
             <ModelForm
-              key={JSON.stringify([
-                editor.provider,
-                editor.value?.type ?? "chat",
-                editor.value?.id ?? null,
-              ])}
               provider={editor.provider}
               value={editor.value}
-              busy={busy}
+              busy={busy || configurationUnavailable}
               hasInheritedApi={hasInheritedApi}
-              error={errorTarget === "config" ? error : null}
-              onCancel={cancelEditor}
+              error={error}
+              onCancel={configuration.dismiss}
               onSave={edit}
             />
-          ) : null}
-        </section>
-      ) : null}
-      <div className="models-browse" hidden={Boolean(editor)}>
+          )}
+        </ConfigurationEditor>
+      )}
+      <div className="models-browse" hidden={!configuration.browsing}>
         <SettingsSection id="models" icon={<Cpu size={14} />} title="Models">
           <div className="models-settings">
-            {visibleError ? (
-              <p className="settings__error" role="alert">
-                {visibleError}
-              </p>
+            {snapshot && visibleError ? (
+              <SettingsCardMessage error>{visibleError}</SettingsCardMessage>
             ) : null}
             {snapshot ? (
               <>
-                <div className="models-available" ref={availableContainerRef}>
+                <div className="models-available">
                   <ModelList
                     key={JSON.stringify([
-                      owner.sessionId,
-                      owner.cwd,
+                      settingsOwner,
                       destination?.focus === "common"
                         ? destination.query
                         : undefined,
@@ -877,23 +594,18 @@ export function ModelsSettings({
                         ? destination.query
                         : undefined
                     }
-                    controllerRef={availableListRef}
                     models={snapshot.models}
                     status={snapshot.modelsWarning}
-                    value={savedModel}
+                    value={savedModel ?? null}
+                    searchLabel="Search available models"
                     placeholder="Search models"
-                    optionSize={optionSize}
                     searchAction={
-                      <button
-                        type="button"
-                        className="models-icon-button"
-                        aria-label="Refresh available models"
-                        title="Refresh available models"
+                      <ConfigurationAction
+                        label="Refresh available models"
+                        icon={RefreshCw}
                         disabled={busy}
-                        onClick={() => void refreshChoices()}
-                      >
-                        <RefreshCw size={14} />
-                      </button>
+                        onClick={() => void load()}
+                      />
                     }
                     emptyAction={
                       <button
@@ -909,19 +621,15 @@ export function ModelsSettings({
                       </button>
                     }
                     renderNameAction={(model, active) => {
-                      const declared = snapshot.providers
-                        .find((provider) => provider.id === model.provider)
-                        ?.models.find(
-                          (entry) =>
-                            entry.id === model.id &&
-                            (!entry.type || entry.type === "chat"),
-                        );
+                      const declared = models.declarations.get(
+                        modelIdentityKey(model),
+                      );
                       return declared ? (
                         <button
                           type="button"
                           className="models-icon-button models-name-action"
                           tabIndex={active ? 0 : -1}
-                          disabled={busy}
+                          disabled={busy || configurationUnavailable}
                           aria-label={`Edit model ${model.provider}/${model.id}`}
                           onClick={(event) =>
                             openEditor(
@@ -1030,72 +738,50 @@ export function ModelsSettings({
                 <div className="models-results">
                   <SettingField
                     label="Default model"
-                    className={
-                      savedModel
-                        ? "models-default-row"
-                        : "models-default-row--empty"
-                    }
+                    layout={savedModel ? "adaptive" : "inline"}
                     description={
                       preferencesUnavailable
                         ? undefined
                         : savedModel
                           ? [
-                              !snapshot.models.some(
-                                (entry) =>
-                                  modelIdentityKey(entry) ===
-                                  modelIdentityKey(savedModel),
-                              )
+                              !savedAvailable
                                 ? "Saved, but not in the current model list."
                                 : null,
                               projectModelOverride && projectModel
-                                ? `This project uses ${knownModels.get(modelIdentityKey(projectModel))?.name ?? projectModel.id}.`
+                                ? `This project uses ${modelName(projectModel)}.`
                                 : null,
                             ]
                               .filter(Boolean)
                               .join(" ") || undefined
-                          : "Choose Default on a model above."
+                          : "Choose a model above to set it as the default."
                     }
                   >
                     {savedModel ? (
                       <div
                         className="models-default-value"
                         title={`${savedModel.provider}/${savedModel.id}${
-                          !snapshot.models.some(
-                            (entry) =>
-                              modelIdentityKey(entry) ===
-                              modelIdentityKey(savedModel),
-                          )
-                            ? " · Not currently available"
-                            : ""
+                          !savedAvailable ? " · Not currently available" : ""
                         }`}
                       >
                         <span className="models-default-value__identity">
                           <span className="models-default-value__name">
-                            {savedModel.name ?? savedModel.id}
+                            {modelName(savedModel)}
                           </span>
                           <span className="models-default-value__id">
                             {savedModel.provider}/{savedModel.id}
                           </span>
                         </span>
-                        {!snapshot.models.some(
-                          (entry) =>
-                            modelIdentityKey(entry) ===
-                            modelIdentityKey(savedModel),
-                        ) ? (
+                        {!savedAvailable ? (
                           <span className="models-default-value__warning">
                             · Not available now
                           </span>
                         ) : null}
-                        <button
-                          type="button"
-                          className="models-icon-button"
-                          aria-label="Clear default model"
-                          title="Clear default model"
-                          disabled={busy}
+                        <ConfigurationAction
+                          label="Clear default model"
+                          icon={X}
+                          disabled={busy || preferencesUnavailable}
                           onClick={() => void save({ defaultModel: null })}
-                        >
-                          <X size={14} aria-hidden />
-                        </button>
+                        />
                       </div>
                     ) : (
                       <span className="models-default-result models-default-result--muted">
@@ -1113,8 +799,9 @@ export function ModelsSettings({
                     }
                   >
                     <Dropdown
+                      ref={defaultThinkingRef}
                       label="Default thinking"
-                      className="dropdown--field"
+                      className="dropdown-trigger--field"
                       value={snapshot.saved.defaultThinkingLevel ?? "unset"}
                       display={
                         preferencesUnavailable ? "Unavailable" : undefined
@@ -1140,7 +827,7 @@ export function ModelsSettings({
                   </SettingField>
                 </div>
 
-                {snapshot.saved.enabledModels.length ? (
+                {snapshot.saved.enabledModels.length || editingCommon ? (
                   <details
                     ref={savedEntriesRef}
                     className="models-saved-entries"
@@ -1167,70 +854,8 @@ export function ModelsSettings({
                     <ol className="models-common">
                       {snapshot.saved.enabledModels.map((value, index) => (
                         <li key={`${index}/${value}`}>
-                          {editingCommon?.index === index ? (
-                            <form
-                              className="models-common__editor"
-                              onSubmit={(event) => {
-                                event.preventDefault();
-                                const next = [...snapshot.saved.enabledModels];
-                                next[index] = editingCommon.value.trim();
-                                if (next[index])
-                                  void save({ enabledModels: next });
-                              }}
-                            >
-                              <label className="models-form__field">
-                                Model pattern
-                                <input
-                                  aria-label="Model pattern"
-                                  value={editingCommon.value}
-                                  disabled={busy}
-                                  onChange={(event) =>
-                                    setEditingCommon({
-                                      index,
-                                      value: event.target.value,
-                                    })
-                                  }
-                                  autoFocus
-                                />
-                              </label>
-                              {errorTarget === "common" && error ? (
-                                <p
-                                  className="settings__error"
-                                  role="alert"
-                                  tabIndex={-1}
-                                >
-                                  {error}
-                                </p>
-                              ) : null}
-                              <div className="models-actions">
-                                <button
-                                  type="submit"
-                                  className="button"
-                                  disabled={busy || !editingCommon.value.trim()}
-                                >
-                                  Save
-                                </button>
-                                <button
-                                  type="button"
-                                  className="button button--quiet"
-                                  disabled={busy}
-                                  onClick={() => {
-                                    const ticket = captureFocus();
-                                    setEditingCommon(null);
-                                    setFocusHandoff({
-                                      ticket,
-                                      focus: (ticket) =>
-                                        focusElement(
-                                          ticket,
-                                          commonOpener.current,
-                                        ),
-                                    });
-                                  }}
-                                >
-                                  Cancel
-                                </button>
-                              </div>
-                            </form>
+                          {commonEditorIndex === index ? (
+                            commonEditor
                           ) : (
                             <>
                               <span className="models-common__copy">
@@ -1241,44 +866,34 @@ export function ModelsSettings({
                                 ) : null}
                               </span>
                               <div className="models-actions">
-                                <button
-                                  type="button"
-                                  className="models-icon-button"
+                                <ConfigurationAction
+                                  label={`Edit common entry ${value}`}
+                                  icon={Pencil}
                                   disabled={busy}
-                                  aria-label={`Edit common entry ${value}`}
                                   onClick={(event) =>
                                     editCommon(value, event.currentTarget)
                                   }
-                                >
-                                  <Pencil size={13} />
-                                </button>
-                                <button
-                                  type="button"
-                                  className="models-icon-button"
+                                />
+                                <ConfigurationAction
+                                  label={`Move ${value} up`}
+                                  icon={ArrowUp}
                                   disabled={busy || index === 0}
-                                  aria-label={`Move ${value} up`}
                                   onClick={() => move(index, -1)}
-                                >
-                                  <ArrowUp size={13} />
-                                </button>
-                                <button
-                                  type="button"
-                                  className="models-icon-button"
+                                />
+                                <ConfigurationAction
+                                  label={`Move ${value} down`}
+                                  icon={ArrowDown}
                                   disabled={
                                     busy ||
                                     index ===
                                       snapshot.saved.enabledModels.length - 1
                                   }
-                                  aria-label={`Move ${value} down`}
                                   onClick={() => move(index, 1)}
-                                >
-                                  <ArrowDown size={13} />
-                                </button>
-                                <button
-                                  type="button"
-                                  className="models-icon-button"
+                                />
+                                <ConfigurationAction
+                                  label={`Remove ${value} from common models`}
+                                  icon={Trash2}
                                   disabled={busy}
-                                  aria-label={`Remove ${value} from common models`}
                                   onClick={() =>
                                     void save({
                                       enabledModels:
@@ -1287,30 +902,29 @@ export function ModelsSettings({
                                         ),
                                     })
                                   }
-                                >
-                                  <Trash2 size={13} />
-                                </button>
+                                />
                               </div>
                             </>
                           )}
                         </li>
                       ))}
                     </ol>
+                    {commonEditorIndex < 0 && commonEditor}
                   </details>
                 ) : null}
               </>
-            ) : readFailed ? (
-              <button
-                type="button"
-                className="button button--quiet"
-                onClick={() => void load()}
-              >
-                Retry loading models
-              </button>
             ) : (
-              <p className="settings__field-help" role="status">
-                Loading models…
-              </p>
+              <SettingsCardMessage
+                loading={!readFailed}
+                error={readFailed}
+                retry={
+                  readFailed
+                    ? { run: () => void load(), label: "Retry loading models" }
+                    : undefined
+                }
+              >
+                {readFailed ? visibleError : "Loading models…"}
+              </SettingsCardMessage>
             )}
           </div>
         </SettingsSection>
@@ -1332,8 +946,7 @@ export function ModelsSettings({
             loadError={authError}
             loading={providersLoading}
             loaded={providersLoaded}
-            onRefresh={refreshProviders}
-            onModelsRefreshed={reloadSettings}
+            onRefresh={refreshCredentials}
           />
         </SettingsSection>
 
@@ -1346,7 +959,7 @@ export function ModelsSettings({
               <button
                 type="button"
                 className="button"
-                disabled={busy}
+                disabled={busy || configurationUnavailable}
                 ref={addProviderRef}
                 onClick={(event) =>
                   openEditor(

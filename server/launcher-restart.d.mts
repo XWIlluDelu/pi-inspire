@@ -1,4 +1,5 @@
 import type { EventEmitter } from "node:events";
+import type { RestartSubmission } from "./restart-submission.mjs";
 
 export const HOST_RESTART_EXIT_CODE: 75;
 
@@ -27,5 +28,5 @@ export function createLauncherRestartClient(
   timeoutMs?: number,
 ): {
   inspect(): Promise<boolean>;
-  request(commit: () => boolean): Promise<{ code: number; issued: boolean }>;
+  request(commit: () => boolean | Promise<boolean>): Promise<RestartSubmission>;
 };

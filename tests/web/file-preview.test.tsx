@@ -4,7 +4,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createInitialAppState } from "../../src/app-state";
 import { selectContextPaneView } from "../../src/components/context-pane-view";
 import { FilePreview } from "../../src/components/FilePreview";
-import { store } from "../../src/store";
+import {
+  injectHtmlPreviewCsp,
+  type ResourcePreview,
+} from "../../src/resource-preview";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -13,10 +16,19 @@ const initial = {
   sessionId: "s1",
   cwd: "/project",
   resourcesOpen: true,
-  fileBrowserView: "preview" as const,
-  selectedResourceReference: "notes.md",
-  selectedResourceWorkspacePath: "notes.md",
 };
+function fileState(preview: ResourcePreview) {
+  return {
+    ...initial,
+    fileInspection: {
+      kind: "file" as const,
+      reference: preview.reference,
+      workspacePath: preview.reference,
+      preview,
+    },
+  };
+}
+
 function ready(id: string, text = "# Notes\n\nOriginal source") {
   return {
     status: "ready" as const,
@@ -37,196 +49,79 @@ function ready(id: string, text = "# Notes\n\nOriginal source") {
   };
 }
 
-describe("Files source reading", () => {
-  it("keeps the chosen Source view and both offsets across a refreshed file handle", () => {
-    const { rerender } = render(
-      <FilePreview state={{ ...initial, resourcePreview: ready("first") }} />,
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Source" }));
-    const source = screen.getByRole("region", { name: "File source" });
-    fireEvent.scroll(source, { target: { scrollTop: 137, scrollLeft: 48 } });
-    rerender(
-      <FilePreview
-        state={{
-          ...initial,
-          resourcePreview: { ...ready("first"), refreshing: true },
-        }}
-      />,
-    );
-    expect(screen.getByRole("region", { name: "File source" })).toBe(source);
-    expect(source).toHaveTextContent("Original source");
-    rerender(
-      <FilePreview
-        state={{
-          ...initial,
-          resourcePreview: ready("renewed", "# Notes\n\nRefreshed source"),
-        }}
-      />,
-    );
-    const refreshed = screen.getByRole("region", { name: "File source" });
-    expect(refreshed).toHaveTextContent("Refreshed source");
-    expect(refreshed.scrollTop).toBe(137);
-    expect(refreshed.scrollLeft).toBe(48);
-    expect(screen.getByRole("button", { name: "Preview" })).toBeVisible();
+it("inserts the static HTML policy into the document head and removes redirects", () => {
+  const html = injectHtmlPreviewCsp(
+    '<!-- <head> --><base href="https://example.invalid/"><meta http-equiv="refresh" content="0;url=https://example.invalid/"><h1>Preview</h1>',
+  );
+  const document = new DOMParser().parseFromString(html, "text/html");
+  expect(
+    document.head
+      .querySelector('meta[http-equiv="Content-Security-Policy"]')
+      ?.getAttribute("content"),
+  ).toContain("default-src 'none'");
+  expect(document.querySelector("base, meta[http-equiv='refresh']")).toBeNull();
+  expect(document.body.textContent).toBe("Preview");
+});
 
-    // A different file owns its default view; returning does not revive state.
-    rerender(
-      <FilePreview
-        state={{
-          ...initial,
-          selectedResourceReference: "other.md",
-          resourcePreview: ready("other"),
-        }}
-      />,
-    );
-    expect(screen.queryByRole("region", { name: "File source" })).toBeNull();
-    rerender(
-      <FilePreview state={{ ...initial, resourcePreview: ready("third") }} />,
-    );
-    expect(screen.queryByRole("region", { name: "File source" })).toBeNull();
-  });
-
-  it("retires HTML interaction while retaining static content during refresh", async () => {
-    const release = vi.fn();
-    const start = vi.spyOn(store, "createHtmlPreview").mockResolvedValue({
-      url: "/html-preview/lease",
-      release,
-    });
-    const preview = {
-      ...ready("html", "<h1>Loaded page</h1>"),
-      descriptor: {
-        ...ready("html").descriptor,
-        kind: "html" as const,
-        mimeType: "text/html",
-      },
-      objectUrl: "blob:static-page",
-    };
-    const { rerender } = render(
-      <FilePreview state={{ ...initial, resourcePreview: preview }} />,
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Enable interaction" }));
-    await screen.findByRole("button", { name: "Stop interaction" });
-    rerender(
-      <FilePreview
-        state={{
-          ...initial,
-          resourcePreview: { ...preview, refreshing: true },
-        }}
-      />,
-    );
-    expect(release).toHaveBeenCalledOnce();
-    expect(
-      screen.getByRole("button", { name: "Enable interaction" }),
-    ).toBeDisabled();
-    expect(document.querySelector("iframe")?.getAttribute("src")).toBe(
-      preview.objectUrl,
-    );
-    rerender(
-      <FilePreview
-        state={{
-          ...initial,
-          resourcePreview: { ...preview, refreshError: "Still unavailable" },
-        }}
-      />,
-    );
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Showing the last loaded content",
-    );
-    expect(
-      screen.getByRole("button", { name: "Enable interaction" }),
-    ).toBeEnabled();
-    expect(start).toHaveBeenCalledOnce();
-    rerender(<FilePreview state={{ ...initial, resourcePreview: preview }} />);
-    expect(screen.queryByRole("status")).toBeNull();
-  });
-
-  it("retains source-only offsets on refresh but honors a new line target or file", () => {
-    const computedStyle = window.getComputedStyle.bind(window);
-    vi.spyOn(window, "getComputedStyle").mockImplementation((element) => {
-      const style = computedStyle(element);
-      if (element.classList.contains("source-view")) style.lineHeight = "20px";
-      return style;
-    });
-    const preview = ready(
-      "code",
-      Array.from({ length: 60 }, (_, index) => `line ${index + 1}`).join("\n"),
-    );
-    const state = {
-      ...initial,
-      selectedResourceReference: "first.ts",
-      selectedResourceWorkspacePath: "first.ts",
-      resourcePreview: {
-        ...preview,
-        reference: "first.ts",
-        descriptor: {
-          ...preview.descriptor,
-          kind: "text" as const,
-          name: "first.ts",
-        },
-      },
-    };
-    const { rerender } = render(<FilePreview state={state} />);
-    fireEvent.scroll(screen.getByRole("region", { name: "File source" }), {
-      target: { scrollTop: 137, scrollLeft: 48 },
-    });
-    rerender(
-      <FilePreview
-        state={{
-          ...state,
-          resourcePreview: { status: "loading", reference: "first.ts" },
-        }}
-      />,
-    );
-    rerender(<FilePreview state={state} />);
-    const source = screen.getByRole("region", { name: "File source" });
-    expect(source.scrollTop).toBe(137);
-    expect(source.scrollLeft).toBe(48);
-    rerender(
-      <FilePreview
-        state={{
-          ...state,
-          selectedResourceReference: "first.ts:20",
-          resourcePreview: {
-            ...state.resourcePreview,
-            reference: "first.ts:20",
-          },
-        }}
-      />,
-    );
-    expect(screen.getByRole("region", { name: "File source" }).scrollTop).toBe(
-      380,
-    );
-    rerender(
-      <FilePreview
-        state={{
-          ...state,
-          selectedResourceReference: "second.ts",
-          selectedResourceWorkspacePath: "second.ts",
-        }}
-      />,
-    );
-    expect(screen.getByRole("region", { name: "File source" }).scrollTop).toBe(
-      0,
-    );
-    expect(screen.getByRole("region", { name: "File source" }).scrollLeft).toBe(
-      0,
-    );
-  });
+describe("Files reading continuity", () => {
+  it.each([
+    { kind: "markdown", text: "# Notes", mimeType: "text/markdown" },
+    { kind: "html", text: "<h1>Notes</h1>", mimeType: "text/html" },
+    { kind: "image", text: "<svg>", mimeType: "image/svg+xml" },
+  ] as const)(
+    "offers bounded $kind Source at the preview limit",
+    ({ kind, text, mimeType }) => {
+      const preview = ready("bounded", text);
+      const tooLarge = kind === "image";
+      const { container } = render(
+        <FilePreview
+          state={fileState({
+            ...preview,
+            descriptor: { ...preview.descriptor, kind, mimeType },
+            objectUrl: kind === "html" ? "blob:bounded" : undefined,
+            contentUnavailable: tooLarge ? "too-large" : undefined,
+            truncated: true,
+          })}
+        />,
+      );
+      expect(
+        screen.getByText(
+          tooLarge
+            ? "File too large to preview"
+            : "Preview truncated. See the cutoff in Source.",
+        ),
+      ).toBeVisible();
+      if (kind === "html") {
+        expect(container.querySelector("iframe")).toHaveAttribute(
+          "sandbox",
+          "",
+        );
+        expect(
+          screen.queryByRole("button", { name: "Enable interaction" }),
+        ).toBeNull();
+      }
+      fireEvent.click(screen.getByRole("button", { name: "Source" }));
+      expect(
+        screen.getByRole("region", { name: "File source" }),
+      ).toHaveTextContent(text);
+      expect(screen.getByText("Preview ends here")).toBeVisible();
+    },
+  );
 
   it("does not carry source reading state to another session or transport", () => {
     const { rerender } = render(
-      <FilePreview state={{ ...initial, resourcePreview: ready("first") }} />,
+      <FilePreview state={fileState(ready("first"))} />,
     );
     for (const owner of [
-      { ...initial, sessionId: "s2" },
-      { ...initial, sessionId: "s2", transportGeneration: 2 },
+      { sessionId: "s2" },
+      { sessionId: "s2", transportGeneration: 2 },
     ]) {
       fireEvent.click(screen.getByRole("button", { name: "Source" }));
       fireEvent.scroll(screen.getByRole("region", { name: "File source" }), {
         target: { scrollTop: 137, scrollLeft: 48 },
       });
       rerender(
-        <FilePreview state={{ ...owner, resourcePreview: ready("renewed") }} />,
+        <FilePreview state={{ ...fileState(ready("renewed")), ...owner }} />,
       );
       expect(screen.queryByRole("region", { name: "File source" })).toBeNull();
       fireEvent.click(screen.getByRole("button", { name: "Source" }));

@@ -1,4 +1,3 @@
-import { requestError } from "./request-error.js";
 import {
   type ExtensionUiRequest,
   parsePendingExtensionUiRequest,
@@ -8,7 +7,8 @@ import {
   PiRpcOutcomeUnknownError,
   type PiRpcProcess,
 } from "./pi-rpc.js";
-import type { RuntimeSlot } from "./runtime-slot.js";
+import { requestError } from "./request-error.js";
+import type { PendingExtensionDialog, RuntimeSlot } from "./runtime-slot.js";
 
 type ExtensionUiClearReason = "aborted" | "replaced" | "stopped" | "closed";
 
@@ -22,7 +22,6 @@ interface RuntimeExtensionUiHost {
   ): Promise<T>;
   reconcileSlot(slot: RuntimeSlot, force?: boolean): Promise<unknown>;
   throwIfConflicted(slot: RuntimeSlot): void;
-  processOwner(process: PiRpcProcess): RuntimeSlot | undefined;
   failUnknown(
     slot: RuntimeSlot,
     error: PiRpcOutcomeUnknownError,
@@ -37,7 +36,10 @@ export class RuntimeExtensionUiController {
   constructor(private readonly host: RuntimeExtensionUiHost) {}
 
   pendingRequests(slot: RuntimeSlot): ExtensionUiRequest[] {
-    return [...slot.pendingExtensionUiRequests.values()];
+    return Array.from(
+      slot.pendingExtensionDialogs.values(),
+      ({ request }) => request,
+    );
   }
 
   add(
@@ -47,24 +49,27 @@ export class RuntimeExtensionUiController {
   ): ExtensionUiRequest | null {
     const request = parsePendingExtensionUiRequest(value);
     if (!request) return null;
-    slot.pendingExtensionUiRequests.set(request.id, request);
-    slot.pendingExtensionUiOwners.set(request.id, process);
-    this.scheduleExpiry(slot, request);
+    clearTimeout(slot.pendingExtensionDialogs.get(request.id)?.timer);
+    const dialog: PendingExtensionDialog = { request, process };
+    slot.pendingExtensionDialogs.set(request.id, dialog);
+    if (request.expiresAt !== undefined) {
+      dialog.timer = setTimeout(
+        () => {
+          if (slot.pendingExtensionDialogs.get(request.id) === dialog)
+            this.remove(slot, request.id, "expired");
+        },
+        Math.max(0, request.expiresAt - Date.now()),
+      );
+      dialog.timer.unref();
+    }
     return request;
   }
 
   clear(slot: RuntimeSlot, reason: ExtensionUiClearReason): void {
-    if (
-      slot.pendingExtensionUiRequests.size === 0 &&
-      slot.pendingExtensionUiOwners.size === 0 &&
-      slot.pendingExtensionUiTimers.size === 0
-    )
-      return;
-    for (const timer of slot.pendingExtensionUiTimers.values())
+    if (slot.pendingExtensionDialogs.size === 0) return;
+    for (const { timer } of slot.pendingExtensionDialogs.values())
       clearTimeout(timer);
-    slot.pendingExtensionUiTimers.clear();
-    slot.pendingExtensionUiRequests.clear();
-    slot.pendingExtensionUiOwners.clear();
+    slot.pendingExtensionDialogs.clear();
     this.host.emitSlotEvent(slot, { type: "extension_ui_clear", reason });
     this.host.scheduleIdleWorkerEviction();
   }
@@ -72,14 +77,13 @@ export class RuntimeExtensionUiController {
   /** Cancel only this snapshot. A response can start another independent
    * question; that new request must remain answerable. */
   async cancel(slot: RuntimeSlot, process: PiRpcProcess): Promise<void> {
-    const requests = [...slot.pendingExtensionUiRequests.values()].filter(
-      (request) => slot.pendingExtensionUiOwners.get(request.id) === process,
-    );
-    for (const request of requests)
-      await this.respondInside(
-        { sessionId: slot.id, id: request.id, cancelled: true },
-        { slot, request, process },
-      );
+    for (const dialog of [...slot.pendingExtensionDialogs.values()]) {
+      if (dialog.process === process)
+        await this.respondInside(
+          { sessionId: slot.id, id: dialog.request.id, cancelled: true },
+          { slot, dialog },
+        );
+    }
   }
 
   respond(response: Record<string, unknown>): Promise<void> {
@@ -89,43 +93,20 @@ export class RuntimeExtensionUiController {
   private remove(
     slot: RuntimeSlot,
     id: string,
-    reason: "answered" | "expired" | "cleared",
+    reason: "answered" | "expired",
   ): boolean {
-    if (!slot.pendingExtensionUiRequests.delete(id)) return false;
-    slot.pendingExtensionUiOwners.delete(id);
-    const timer = slot.pendingExtensionUiTimers.get(id);
-    if (timer) clearTimeout(timer);
-    slot.pendingExtensionUiTimers.delete(id);
+    const dialog = slot.pendingExtensionDialogs.get(id);
+    if (!dialog) return false;
+    slot.pendingExtensionDialogs.delete(id);
+    clearTimeout(dialog.timer);
     this.host.emitSlotEvent(slot, { type: "extension_ui_remove", id, reason });
     this.host.scheduleIdleWorkerEviction();
     return true;
   }
 
-  private scheduleExpiry(slot: RuntimeSlot, request: ExtensionUiRequest): void {
-    const previousTimer = slot.pendingExtensionUiTimers.get(request.id);
-    if (previousTimer) clearTimeout(previousTimer);
-    slot.pendingExtensionUiTimers.delete(request.id);
-    if (request.expiresAt === undefined) return;
-    const delay = Math.max(0, request.expiresAt - Date.now());
-    const timer = setTimeout(() => {
-      if (
-        slot.pendingExtensionUiRequests.get(request.id)?.expiresAt !==
-        request.expiresAt
-      )
-        return;
-      this.remove(slot, request.id, "expired");
-    }, delay);
-    timer.unref();
-    slot.pendingExtensionUiTimers.set(request.id, timer);
-  }
-
   private async respondInside(
     response: Record<string, unknown>,
-    expected?: {
-      slot: RuntimeSlot;
-      request: ExtensionUiRequest;
-      process: PiRpcProcess;
-    },
+    expected?: { slot: RuntimeSlot; dialog: PendingExtensionDialog },
   ): Promise<void> {
     const sessionId =
       typeof response.sessionId === "string" ? response.sessionId : "";
@@ -140,9 +121,8 @@ export class RuntimeExtensionUiController {
     const stillExpected = () =>
       !expected ||
       (slot === expected.slot &&
-        slot.process === expected.process &&
-        slot.pendingExtensionUiRequests.get(requestId) === expected.request &&
-        slot.pendingExtensionUiOwners.get(requestId) === expected.process);
+        slot.process === expected.dialog.process &&
+        slot.pendingExtensionDialogs.get(requestId) === expected.dialog);
     await this.host.extensionResponseSlot(slot, async () => {
       // An explicit answer, expiry or worker retirement may win this FIFO.
       if (!stillExpected()) return;
@@ -163,15 +143,14 @@ export class RuntimeExtensionUiController {
       if (!this.host.ownsSlot(sessionId, slot))
         throw requestError("The extension request owner changed", 409);
       this.host.throwIfConflicted(slot);
-      const request = slot.pendingExtensionUiRequests.get(requestId);
-      const process = slot.pendingExtensionUiOwners.get(requestId);
-      if (!request || !process)
+      const dialog = slot.pendingExtensionDialogs.get(requestId);
+      if (!dialog)
         throw requestError("The extension request is no longer pending", 409);
+      const { request, process: rpc } = dialog;
       if (
         request.sessionId !== sessionId ||
-        slot.process !== process ||
-        !slot.ready ||
-        this.host.processOwner(process) !== slot
+        slot.process !== rpc ||
+        !slot.ready
       ) {
         throw requestError(
           "The extension request no longer belongs to this worker",
@@ -187,10 +166,11 @@ export class RuntimeExtensionUiController {
         );
       }
       try {
-        await process.sendExtensionUiResponse(wireResponse);
-        this.remove(slot, requestId, "answered");
+        await rpc.sendExtensionUiResponse(wireResponse);
+        if (slot.pendingExtensionDialogs.get(requestId) === dialog)
+          this.remove(slot, requestId, "answered");
         // stdin order makes the correlated read a consumption fence.
-        await process.request({ type: "get_state" });
+        await rpc.request({ type: "get_state" });
       } catch (error) {
         const unknown = new PiRpcOutcomeUnknownError(
           "extension_ui_response",

@@ -18,165 +18,126 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
-  useRef,
   useState,
   useSyncExternalStore,
 } from "react";
-import { createPortal } from "react-dom";
 import {
-  ACTIVITY_FOLD_VISIBILITIES,
-  type ActivityFoldVisibilityPreference,
   type CompletionAttentionPreference,
-  type ContentTextSizePreference,
-  type DesktopSendKeyPreference,
-  type LaunchPreference,
-  PALETTE_PREFERENCES,
+  type InspirePreferences,
   type PiMessageDeliveryMode,
-  type ProjectDisplayPreference,
-  type ReadingWidthPreference,
-  type ThemePreference,
-  TOOL_VISIBILITY_PREFERENCES,
-  type ToolVisibilityPreference,
-  VISIBILITY_PREFERENCES,
-  type VisibilityPreference,
 } from "../../shared/contracts";
 import type { ModelSettingsDestination } from "../../shared/model-settings";
-import type { TaskNotificationGrouping } from "../../shared/notifications";
 import { notificationPermissionMessage } from "../browser-notifications";
 import {
   installAvailability,
   requestInstall,
   subscribeInstallAvailability,
 } from "../install-app";
-import { PALETTE_LABELS, preferenceChoiceLabel } from "../preference-labels";
+import { preferenceChoices } from "../preference-labels";
 import { shallowEqual, store, useAppState } from "../store";
-import { useModalFocus } from "../use-modal-focus";
-import { Dropdown } from "./Dropdown";
 import { HerdrSettings } from "./HerdrSettings";
 import { HostRestartSettings } from "./HostRestartSettings";
 import { McpSettings } from "./McpSettings";
+import { ConfirmationDialog } from "./Modal";
 import { ModelsSettings } from "./ModelsSettings";
 import { PresentationAdapterSettings } from "./PresentationAdapterSettings";
 import { SessionActionsSettings } from "./SessionActionsSettings";
 import {
-  type SettingsChoice as Choice,
-  SegmentedControl,
+  SelectField,
   SettingField,
   SettingsFeedback,
-  SettingsSwitch,
+  SettingsLayout,
+  SettingsPage,
+  SwitchField,
 } from "./SettingsControls";
 import { SettingsSection as Section } from "./SettingsSection";
 import { SystemVersionsCard } from "./SystemVersionsCard";
 
-function ResetPreferencesConfirmation({
-  onClose,
-  onConfirm,
+type ChoicePreference = keyof typeof preferenceChoices;
+
+const themeIcons = {
+  light: Sun,
+  dark: Moon,
+  system: Monitor,
+};
+
+function PreferenceChoice({
+  name,
+  prefs,
 }: {
-  onClose: () => void;
-  onConfirm: () => void;
+  name: ChoicePreference;
+  prefs: InspirePreferences;
 }) {
-  const ref = useModalFocus<HTMLDivElement>(true, "reset-preferences", onClose);
-  return createPortal(
-    <div className="overlay" role="presentation" onClick={onClose}>
-      <div
-        ref={ref}
-        className="dialog host-restart-confirm"
-        role="alertdialog"
-        aria-modal="true"
-        aria-labelledby="reset-preferences-title"
-        aria-describedby="reset-preferences-description"
-        tabIndex={-1}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <h2 className="dialog__title" id="reset-preferences-title">
-          Reset preferences?
-        </h2>
-        <p className="dialog__message" id="reset-preferences-description">
-          Restore Display, Conversation, Behavior, and Herdr preferences to
-          their defaults. Pi session settings, models, credentials, MCP servers,
-          and pinned or hidden sessions stay unchanged.
-        </p>
-        <div className="host-restart__actions">
-          <button
-            type="button"
-            className="button button--quiet"
-            onClick={onClose}
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="button button--danger"
-            onClick={onConfirm}
-          >
-            Reset preferences
-          </button>
+  const field = preferenceChoices[name];
+  if (name === "palette")
+    return (
+      <SettingField label={field.label}>
+        <div className="palette-picker" role="group" aria-label={field.label}>
+          {preferenceChoices.palette.options.map(({ value, label }) => (
+            <button
+              key={value}
+              type="button"
+              className="palette-picker__choice"
+              data-palette-choice={value}
+              aria-pressed={prefs.palette === value}
+              onClick={() => store.setPreference("palette", value)}
+            >
+              <span className="palette-picker__swatch" aria-hidden />
+              <span>{label}</span>
+            </button>
+          ))}
         </div>
-      </div>
-    </div>,
-    document.body,
+      </SettingField>
+    );
+  const description = "description" in field ? field.description : undefined;
+  if (
+    name === "theme" ||
+    name === "contentTextSize" ||
+    name === "readingWidth" ||
+    name === "projectDisplay" ||
+    name === "desktopSendKey"
+  )
+    return (
+      <SettingField label={field.label} description={description}>
+        <div className="segmented" role="group" aria-label={field.label}>
+          {preferenceChoices[name].options.map(({ value, label }) => {
+            const Icon =
+              name === "theme"
+                ? themeIcons[value as keyof typeof themeIcons]
+                : undefined;
+            return (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={prefs[name] === value}
+                onClick={() => store.setPreference(name, value)}
+              >
+                {Icon && <Icon size={13} aria-hidden />}
+                <span>{label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </SettingField>
+    );
+  return (
+    <SelectField
+      label={field.label}
+      description={description}
+      value={prefs[name]}
+      options={preferenceChoices[name].options}
+      onChange={(value) => store.setPreference(name, value)}
+    />
   );
 }
 
-const THEMES: Choice<ThemePreference>[] = [
-  { value: "light", label: "Light", icon: <Sun size={13} aria-hidden /> },
-  { value: "dark", label: "Dark", icon: <Moon size={13} aria-hidden /> },
-  { value: "system", label: "System", icon: <Monitor size={13} aria-hidden /> },
-];
-
-const CONTENT_TEXT_SIZES: Choice<ContentTextSizePreference>[] = [
-  { value: "compact", label: "Compact" },
-  { value: "comfortable", label: "Comfortable" },
-  { value: "large", label: "Large" },
-];
-
-const READING_WIDTHS: Choice<ReadingWidthPreference>[] = [
-  { value: "narrow", label: "Narrow" },
-  { value: "comfortable", label: "Comfortable" },
-  { value: "wide", label: "Wide" },
-];
-
-const PROJECT_DISPLAYS: Choice<ProjectDisplayPreference>[] = [
-  { value: "folder", label: "Folder name" },
-  { value: "path", label: "Full path" },
-];
-
-const DESKTOP_SEND_KEYS: Choice<DesktopSendKeyPreference>[] = [
-  { value: "enter", label: "Enter" },
-  { value: "mod-enter", label: "Ctrl/⌘+Enter" },
-];
-
-const MESSAGE_DELIVERY_MODES: Choice<PiMessageDeliveryMode>[] = [
+const MESSAGE_DELIVERY_MODES: {
+  value: PiMessageDeliveryMode;
+  label: string;
+}[] = [
   { value: "one-at-a-time", label: "One at a time" },
   { value: "all", label: "All at once" },
 ];
-
-function isMessageDeliveryMode(value: string): value is PiMessageDeliveryMode {
-  return value === "all" || value === "one-at-a-time";
-}
-
-const REASONING_DETAILS = VISIBILITY_PREFERENCES.map((value) => ({
-  value,
-  label: preferenceChoiceLabel(value),
-}));
-
-const TOOL_ACTIVITY = TOOL_VISIBILITY_PREFERENCES.map((value) => ({
-  value,
-  label: preferenceChoiceLabel(value),
-}));
-
-const ACTIVITY_GROUPS = ACTIVITY_FOLD_VISIBILITIES.map((value) => ({
-  value,
-  label: preferenceChoiceLabel(value),
-  description:
-    value === "dynamic"
-      ? "Adjusts as live activity starts and finishes."
-      : value === "expanded"
-        ? "Loads and shows every activity card."
-        : value === "compact"
-          ? "Shows up to the latest 24 cards."
-          : "Shows only the group entry until opened.",
-}));
 
 const COMPLETION_ALERTS: Array<{
   value: CompletionAttentionPreference;
@@ -185,11 +146,6 @@ const COMPLETION_ALERTS: Array<{
   { value: "off", label: "Off" },
   { value: "title", label: "Mark tab" },
   { value: "desktop", label: "System notification" },
-];
-
-const LAUNCH_OPTIONS: Array<{ value: LaunchPreference; label: string }> = [
-  { value: "welcome", label: "Show welcome page" },
-  { value: "continue", label: "Continue previous session" },
 ];
 
 export type SettingsCategoryId =
@@ -256,16 +212,20 @@ export const SettingsContent = memo(function SettingsContent({
   const state = useAppState(
     (source) => ({
       prefs: source.prefs,
+      desiredPreferences: source.desiredPreferences,
       taskAlerts: source.taskAlerts,
       version: source.version,
       sessionId: source.sessionId,
       runtimeSettings: source.runtimeSettings,
+      pendingRuntimeSettings: source.pendingRuntimeSettings,
     }),
     shallowEqual,
   );
   useEffect(() => {
     void store.refreshTaskAlerts();
   }, []);
+  const prefs = { ...state.prefs, ...state.desiredPreferences };
+  const alerts = state.taskAlerts;
   const install = useSyncExternalStore(
     subscribeInstallAvailability,
     installAvailability,
@@ -276,8 +236,6 @@ export const SettingsContent = memo(function SettingsContent({
   }>({ category: initialCategory });
   const [confirmingReset, setConfirmingReset] = useState(false);
   const activeCategory = navigation.category;
-  const contentRef = useRef<HTMLElement>(null);
-  const sidebarRef = useRef<HTMLElement>(null);
 
   const navigate = useCallback((category: CategoryId, section?: string) => {
     setNavigation({ category, section });
@@ -292,592 +250,334 @@ export const SettingsContent = memo(function SettingsContent({
     );
   }, [initialCategory, modelDestination?.focus, navigate]);
 
-  useLayoutEffect(() => {
-    const content = contentRef.current;
-    if (!content) return;
-    // Wait for the selected page to be visible; scroll only this content area.
-    const section = navigation.section
-      ? content.querySelector<HTMLElement>(`#${navigation.section}`)
-      : null;
-    content.scrollTo({
-      top: section
-        ? content.scrollTop +
-          section.getBoundingClientRect().top -
-          content.getBoundingClientRect().top -
-          Number.parseFloat(getComputedStyle(content).paddingTop)
-        : 0,
-      behavior: "instant",
-    });
-    const sidebar = sidebarRef.current;
-    const selected = sidebar?.querySelector<HTMLElement>(
-      '[aria-current="location"]',
-    );
-    if (!sidebar || !selected) return;
-    const reveal = () =>
-      selected.scrollIntoView({
-        block: "nearest",
-        inline: "nearest",
-        behavior: "instant",
-      });
-    reveal();
-    // A viewport change can turn this sidebar into a clipped horizontal strip.
-    // Re-reveal only on size/navigation changes, not deliberate strip scrolling.
-    const observer = new ResizeObserver(reveal);
-    observer.observe(sidebar);
-    return () => observer.disconnect();
-  }, [navigation]);
-
   return (
-    <div className="settings__layout">
-      <nav
-        className="settings__sidebar"
-        aria-label="Settings categories"
-        ref={sidebarRef}
-      >
-        <div className="settings__nav-list">
-          {CATEGORIES.map((category) => {
-            const active = activeCategory === category.id;
-            return (
+    <>
+      <SettingsLayout
+        label="Settings categories"
+        categories={CATEGORIES}
+        navigation={navigation}
+        onNavigate={navigate}
+        busy={Object.keys(state.desiredPreferences).length > 0}
+        footer={
+          <footer className="settings__footer">
+            <div className="settings__footer-status">
+              <span className="settings__version-dot" aria-hidden />
+              <span>
+                INSΠRE{" "}
+                {state.version ? `v${state.version}` : "version unavailable"}
+              </span>
+              {install === "installed" ? (
+                <span className="settings__installed">App installed</span>
+              ) : null}
+              {install === "available" ? (
+                <button
+                  type="button"
+                  className="button button--quiet"
+                  onClick={() => void requestInstall()}
+                >
+                  <Laptop size={13} aria-hidden />
+                  Install app
+                </button>
+              ) : null}
+            </div>
+            <div className="settings__footer-actions">
               <button
                 type="button"
-                key={category.id}
-                aria-current={active ? "location" : undefined}
-                className={`settings__nav-item ${
-                  active ? "settings__nav-item--active" : ""
-                }`}
-                onClick={() => navigate(category.id)}
+                className="button button--quiet"
+                onClick={() => setConfirmingReset(true)}
+                title="Reset appearance and behavior preferences"
               >
-                <span className="settings__nav-icon">{category.icon}</span>
-                <span className="settings__nav-label">{category.label}</span>
+                Reset preferences
               </button>
-            );
-          })}
-        </div>
-      </nav>
+            </div>
+          </footer>
+        }
+      >
+        <SettingsPage hidden={activeCategory !== "display"}>
+          <Section id="display" icon={<Palette size={14} />} title="Display">
+            <PreferenceChoice name="theme" prefs={prefs} />
 
-      <div className="settings__main">
-        <main className="settings__content" ref={contentRef}>
-          <div
-            className="settings__page"
-            data-category="display"
-            hidden={activeCategory !== "display"}
+            <PreferenceChoice name="palette" prefs={prefs} />
+
+            {(
+              ["contentTextSize", "readingWidth", "projectDisplay"] as const
+            ).map((name) => (
+              <PreferenceChoice key={name} name={name} prefs={prefs} />
+            ))}
+
+            <SwitchField
+              label="Titlebar needles"
+              description="Animated needles in the installed app's title bar."
+              checked={prefs.titlebarNeedles}
+              onChange={(value) =>
+                store.setPreference("titlebarNeedles", value)
+              }
+            />
+          </Section>
+        </SettingsPage>
+
+        <SettingsPage hidden={activeCategory !== "conversation"}>
+          <Section
+            id="conversation"
+            icon={<ScrollText size={14} />}
+            title="Conversation"
           >
-            <Section id="display" icon={<Palette size={14} />} title="Display">
-              <SettingField label="Theme">
-                <SegmentedControl
-                  label="Theme"
-                  value={state.prefs.theme}
-                  options={THEMES}
-                  onChange={store.setTheme}
-                />
-              </SettingField>
+            {(
+              [
+                "thinkingVisibility",
+                "toolVisibility",
+                "activityFoldVisibility",
+                "desktopSendKey",
+              ] as const
+            ).map((name) => (
+              <PreferenceChoice key={name} name={name} prefs={prefs} />
+            ))}
+          </Section>
+        </SettingsPage>
 
-              <SettingField label="Color palette">
-                <div
-                  className="palette-picker"
-                  role="group"
-                  aria-label="Color palette"
-                >
-                  {PALETTE_PREFERENCES.map((palette) => (
-                    <button
-                      type="button"
-                      key={palette}
-                      className="palette-picker__choice"
-                      data-palette-choice={palette}
-                      aria-pressed={state.prefs.palette === palette}
-                      onClick={() => store.setPalette(palette)}
-                    >
-                      <span className="palette-picker__swatch" aria-hidden />
-                      <span>{PALETTE_LABELS[palette]}</span>
-                    </button>
-                  ))}
-                </div>
-              </SettingField>
+        <SettingsPage hidden={activeCategory !== "behavior"}>
+          <Section id="behavior" icon={<Compass size={14} />} title="Behavior">
+            <PreferenceChoice name="launch" prefs={prefs} />
 
-              <SettingField
-                label="Content text size"
-                description="Applies to messages, input, code and previews."
-              >
-                <SegmentedControl
-                  label="Content text size"
-                  value={state.prefs.contentTextSize}
-                  options={CONTENT_TEXT_SIZES}
-                  onChange={store.setContentTextSize}
-                />
-              </SettingField>
-
-              <SettingField
-                label="Reading width"
-                description="Maximum width for messages and input."
-              >
-                <SegmentedControl
-                  label="Reading width"
-                  value={state.prefs.readingWidth}
-                  options={READING_WIDTHS}
-                  onChange={store.setReadingWidth}
-                />
-              </SettingField>
-
-              <SettingField
-                label="Project location"
-                description="Project name or path in the workbench header."
-              >
-                <SegmentedControl
-                  label="Project location"
-                  value={state.prefs.projectDisplay}
-                  options={PROJECT_DISPLAYS}
-                  onChange={store.setProjectDisplay}
-                />
-              </SettingField>
-
-              <SettingField
-                label="Titlebar needles"
-                description="Animated needles in the installed app's title bar."
-              >
-                <SettingsSwitch
-                  label="Titlebar needles"
-                  checked={state.prefs.titlebarNeedles}
-                  onChange={store.setTitlebarNeedles}
-                />
-              </SettingField>
-            </Section>
-          </div>
-
-          <div
-            className="settings__page"
-            data-category="conversation"
-            hidden={activeCategory !== "conversation"}
-          >
-            <Section
-              id="conversation"
-              icon={<ScrollText size={14} />}
-              title="Conversation"
-            >
-              <SettingField
-                label="Reasoning detail"
-                description="How much model thinking to show by default."
-              >
-                <Dropdown
-                  label="Reasoning detail"
-                  className="dropdown--field"
-                  value={state.prefs.thinkingVisibility}
-                  options={REASONING_DETAILS}
-                  onChange={(value) =>
-                    store.setThinkingVisibility(value as VisibilityPreference)
-                  }
-                />
-              </SettingField>
-
-              <SettingField
-                label="Tool activity"
-                description="How much detail to show for each tool call."
-              >
-                <Dropdown
-                  label="Tool activity"
-                  className="dropdown--field"
-                  value={state.prefs.toolVisibility}
-                  options={TOOL_ACTIVITY}
-                  onChange={(value) =>
-                    store.setToolVisibility(value as ToolVisibilityPreference)
-                  }
-                />
-              </SettingField>
-
-              <SettingField
-                label="Activity groups"
-                description="Whether grouped steps start expanded or collapsed."
-              >
-                <Dropdown
-                  label="Activity groups"
-                  className="dropdown--field"
-                  value={state.prefs.activityFoldVisibility}
-                  options={ACTIVITY_GROUPS}
-                  onChange={(value) =>
-                    store.setActivityFoldVisibility(
-                      value as ActivityFoldVisibilityPreference,
-                    )
-                  }
-                />
-              </SettingField>
-
-              <SettingField
-                label="Send key"
-                description="Shortcut to send a message on desktop. Touch keyboards always insert a new line with Return."
-              >
-                <SegmentedControl
-                  label="Send key"
-                  value={state.prefs.desktopSendKey}
-                  options={DESKTOP_SEND_KEYS}
-                  onChange={store.setDesktopSendKey}
-                />
-              </SettingField>
-            </Section>
-          </div>
-
-          <div
-            className="settings__page"
-            data-category="behavior"
-            hidden={activeCategory !== "behavior"}
-          >
-            <Section
-              id="behavior"
-              icon={<Compass size={14} />}
-              title="Behavior"
-            >
-              <SettingField
-                label="On launch"
-                description="What to open when INSΠRE starts."
-              >
-                <Dropdown
-                  label="On launch"
-                  className="dropdown--field"
-                  value={state.prefs.launch}
-                  options={LAUNCH_OPTIONS}
-                  onChange={(value) =>
-                    store.setLaunch(value as LaunchPreference)
-                  }
-                />
-              </SettingField>
-
-              <SettingField
-                label="Task alerts"
-                description="This device · Notify when a background task finishes or stops with an error."
-              >
-                <div
-                  className="settings__notification-control"
-                  aria-busy={state.taskAlerts.busy}
-                >
-                  <Dropdown
-                    label="Task alerts"
-                    className="dropdown--field"
-                    value={state.taskAlerts.mode}
-                    options={COMPLETION_ALERTS}
-                    onChange={(value) =>
-                      void store.setCompletionAttention(
-                        value as CompletionAttentionPreference,
-                      )
-                    }
-                  />
-                  {state.taskAlerts.mode === "desktop" ? (
-                    <div className="settings__field-status settings__notification-status">
-                      <div className="settings__field-status-block">
-                        {!state.taskAlerts.subscribed &&
-                        state.taskAlerts.permission !== "denied" ? (
-                          <button
-                            type="button"
-                            className="button button--small"
-                            disabled={
-                              state.taskAlerts.busy ||
-                              state.taskAlerts.permission === "unavailable"
-                            }
-                            onClick={() =>
-                              void store.setCompletionAttention("desktop")
-                            }
-                          >
-                            Enable notifications
-                          </button>
-                        ) : null}
+            <SelectField
+              label="Task alerts"
+              description="This device · Notify when a background task finishes or stops with an error."
+              feedback={
+                alerts.mode === "desktop" ? (
+                  <SettingsFeedback label="Notification status">
+                    <div className="settings__field-status-block">
+                      {!alerts.subscribed && alerts.permission !== "denied" && (
                         <button
                           type="button"
                           className="button button--small"
                           disabled={
-                            state.taskAlerts.busy ||
-                            state.taskAlerts.permission !== "granted"
+                            alerts.busy || alerts.permission === "unavailable"
                           }
-                          onClick={() => void store.testTaskNotification()}
+                          onClick={() =>
+                            void store.setCompletionAttention("desktop")
+                          }
                         >
-                          Send test notification
+                          Enable notifications
                         </button>
-                      </div>
-                      <SettingsFeedback label="Notification status">
-                        <span role="status">
-                          {notificationPermissionMessage(
-                            state.taskAlerts.permission,
-                          ) ??
-                            (state.taskAlerts.subscribed
-                              ? "Background notifications enabled"
-                              : "While Inspire is open")}
-                          {state.taskAlerts.permission === "unavailable"
-                            ? " On iPhone or iPad, add Inspire to the Home Screen and enable them there."
-                            : null}
-                        </span>
-                        {state.taskAlerts.error ? (
-                          <span className="settings__error" role="alert">
-                            {state.taskAlerts.error}
-                          </span>
-                        ) : null}
-                        {state.taskAlerts.testResult ? (
-                          <span role="status">
-                            {state.taskAlerts.testResult}
-                          </span>
-                        ) : null}
-                      </SettingsFeedback>
-                      {!state.taskAlerts.subscribed ? (
-                        <span>
-                          Background delivery uses your browser's push service.
-                          No additional account is needed.
-                        </span>
-                      ) : null}
-                    </div>
-                  ) : state.taskAlerts.error ? (
-                    <span className="settings__error">
-                      {state.taskAlerts.error}
-                    </span>
-                  ) : undefined}
-                </div>
-              </SettingField>
-              <SettingField
-                label="Notification grouping"
-                description="This device · One notification per session or project. Changing this clears existing task notifications."
-              >
-                <div
-                  className="settings__notification-control"
-                  aria-busy={state.taskAlerts.groupingBusy}
-                >
-                  <Dropdown
-                    label="Notification grouping"
-                    className="dropdown--field"
-                    value={state.taskAlerts.grouping}
-                    options={[
-                      { value: "session", label: "Session" },
-                      { value: "project", label: "Project" },
-                    ]}
-                    disabled={state.taskAlerts.groupingBusy}
-                    onChange={(value) =>
-                      void store.setTaskNotificationGrouping(
-                        value as TaskNotificationGrouping,
-                      )
-                    }
-                  />
-                  {state.taskAlerts.groupingError ? (
-                    <div className="settings__field-status settings__notification-status">
-                      <span className="settings__error" role="alert">
-                        {state.taskAlerts.groupingError}
-                      </span>
+                      )}
                       <button
                         type="button"
                         className="button button--small"
-                        disabled={state.taskAlerts.groupingBusy}
-                        onClick={() =>
-                          void store.setTaskNotificationGrouping(
-                            state.taskAlerts.grouping,
-                          )
+                        disabled={
+                          alerts.busy || alerts.permission !== "granted"
                         }
+                        onClick={() => void store.testTaskNotification()}
                       >
-                        Retry
+                        Send test notification
                       </button>
                     </div>
-                  ) : null}
-                </div>
-              </SettingField>
-            </Section>
-
-            <SessionActionsSettings
-              order={state.prefs.sessionActionOrder}
-              onChange={store.setSessionActionOrder}
-            />
-
-            <Section
-              id="pi-settings"
-              icon={<Terminal size={14} />}
-              title={
-                <>
-                  <span data-authored-case>Pi</span> session settings
-                </>
+                    <span role="status">
+                      {notificationPermissionMessage(alerts.permission) ??
+                        (alerts.subscribed
+                          ? "Background notifications enabled"
+                          : "While Inspire is open")}
+                      {alerts.permission === "unavailable"
+                        ? " On iPhone or iPad, add Inspire to the Home Screen and enable them there."
+                        : null}
+                    </span>
+                    {alerts.testResult && (
+                      <span role="status">{alerts.testResult}</span>
+                    )}
+                    {!alerts.subscribed && (
+                      <span>
+                        Background delivery uses your browser's push service. No
+                        additional account is needed.
+                      </span>
+                    )}
+                    {alerts.error && (
+                      <span className="settings__error" role="alert">
+                        {alerts.error}
+                      </span>
+                    )}
+                  </SettingsFeedback>
+                ) : (
+                  alerts.error && (
+                    <span className="settings__error" role="alert">
+                      {alerts.error}
+                    </span>
+                  )
+                )
               }
-              description="Changes apply to the current session; Pi manages defaults and project overrides."
-            >
-              <SettingField
-                label="Steering delivery"
-                description="How steering messages are delivered while Pi is responding."
-              >
-                <Dropdown
-                  label="Steering delivery"
-                  className="dropdown--field"
-                  value={state.runtimeSettings?.steeringMode ?? ""}
-                  display={
-                    state.runtimeSettings?.steeringMode
-                      ? undefined
-                      : "Unavailable"
-                  }
-                  options={MESSAGE_DELIVERY_MODES}
-                  disabled={
-                    !state.sessionId ||
-                    state.runtimeSettings?.steeringMode === null ||
-                    state.runtimeSettings === null
-                  }
-                  onChange={(mode) => {
-                    if (isMessageDeliveryMode(mode))
-                      void store.setSteeringMode(mode);
-                  }}
-                />
-              </SettingField>
-
-              <SettingField
-                label="Follow-up delivery"
-                description="How queued follow-up messages are delivered after a response."
-              >
-                <Dropdown
-                  label="Follow-up delivery"
-                  className="dropdown--field"
-                  value={state.runtimeSettings?.followUpMode ?? ""}
-                  display={
-                    state.runtimeSettings?.followUpMode
-                      ? undefined
-                      : "Unavailable"
-                  }
-                  options={MESSAGE_DELIVERY_MODES}
-                  disabled={
-                    !state.sessionId ||
-                    state.runtimeSettings?.followUpMode === null ||
-                    state.runtimeSettings === null
-                  }
-                  onChange={(mode) => {
-                    if (isMessageDeliveryMode(mode))
-                      void store.setFollowUpMode(mode);
-                  }}
-                />
-              </SettingField>
-
-              <SettingField
-                label="Automatic context compaction"
-                description="Summarize older messages when approaching the context limit."
-                status={
-                  !state.sessionId ||
-                  state.runtimeSettings?.autoCompactionEnabled == null
-                    ? "Unavailable"
-                    : undefined
-                }
-              >
-                <SettingsSwitch
-                  label="Automatic context compaction"
-                  checked={
-                    state.runtimeSettings?.autoCompactionEnabled === true
-                  }
-                  disabled={
-                    !state.sessionId ||
-                    state.runtimeSettings?.autoCompactionEnabled == null
-                  }
-                  onChange={(checked) => void store.setAutoCompaction(checked)}
-                />
-              </SettingField>
-
-              <SettingField
-                label="Automatic retry"
-                description="Retry automatically when a provider returns a temporary error."
-                status={
-                  !state.sessionId ||
-                  state.runtimeSettings?.autoRetryEnabled == null
-                    ? "Unavailable"
-                    : undefined
-                }
-              >
-                <SettingsSwitch
-                  label="Automatic retry"
-                  checked={state.runtimeSettings?.autoRetryEnabled === true}
-                  disabled={
-                    !state.sessionId ||
-                    state.runtimeSettings?.autoRetryEnabled == null
-                  }
-                  onChange={(checked) => void store.setAutoRetry(checked)}
-                />
-              </SettingField>
-            </Section>
-          </div>
-
-          <div
-            className="settings__page"
-            data-category="models"
-            hidden={activeCategory !== "models"}
-          >
-            <ModelsSettings
-              active={activeCategory === "models"}
-              destination={{
-                ...modelDestination,
-                owner: modelDestination?.owner ?? workspaceOwner,
-              }}
+              aria-busy={alerts.busy}
+              value={alerts.mode}
+              options={COMPLETION_ALERTS}
+              onChange={(value) => void store.setCompletionAttention(value)}
             />
-          </div>
-
-          <div
-            className="settings__page"
-            data-category="mcp"
-            hidden={activeCategory !== "mcp"}
-          >
-            <McpSettings
-              active={activeCategory === "mcp"}
-              owner={workspaceOwner}
+            <SelectField
+              label="Notification grouping"
+              description="This device · One notification per session or project. Changing this clears existing task notifications."
+              feedback={
+                alerts.groupingError && (
+                  <div className="settings__field-status-block">
+                    <button
+                      type="button"
+                      className="button button--small"
+                      disabled={alerts.groupingBusy}
+                      onClick={() =>
+                        void store.setTaskNotificationGrouping(alerts.grouping)
+                      }
+                    >
+                      Retry
+                    </button>
+                    <span className="settings__error" role="alert">
+                      {alerts.groupingError}
+                    </span>
+                  </div>
+                )
+              }
+              value={alerts.grouping}
+              options={[
+                { value: "session", label: "Session" },
+                { value: "project", label: "Project" },
+              ]}
+              disabled={alerts.groupingBusy}
+              aria-busy={alerts.groupingBusy}
+              onChange={(value) =>
+                void store.setTaskNotificationGrouping(value)
+              }
             />
-          </div>
+          </Section>
 
-          <div
-            className="settings__page"
-            data-category="adapters"
-            hidden={activeCategory !== "adapters"}
+          <SessionActionsSettings
+            order={prefs.sessionActionOrder}
+            onChange={(value) =>
+              store.setPreference("sessionActionOrder", value)
+            }
+          />
+
+          <Section
+            id="pi-settings"
+            icon={<Terminal size={14} />}
+            title={
+              <>
+                <span data-authored-case>Pi</span> session settings
+              </>
+            }
+            description="Changes apply to the current session; Pi manages defaults and project overrides."
           >
-            <PresentationAdapterSettings />
-          </div>
+            {(
+              [
+                [
+                  "steeringMode",
+                  "Steering delivery",
+                  "Delivery while Pi is responding.",
+                ],
+                [
+                  "followUpMode",
+                  "Follow-up delivery",
+                  "Delivery after Pi responds.",
+                ],
+              ] as const
+            ).map(([key, label, description]) => {
+              const desired = state.pendingRuntimeSettings[key];
+              const value = desired ?? state.runtimeSettings?.[key];
+              const pending = desired !== undefined;
+              return (
+                <SelectField
+                  key={key}
+                  label={label}
+                  description={description}
+                  aria-busy={pending || undefined}
+                  value={value ?? ""}
+                  display={value == null ? "Unavailable" : undefined}
+                  options={MESSAGE_DELIVERY_MODES}
+                  disabled={pending || !state.sessionId || value == null}
+                  onChange={(mode) =>
+                    void store.setPiRuntimeSetting({ key, value: mode })
+                  }
+                />
+              );
+            })}
 
-          <div
-            className="settings__page"
-            data-category="updates"
-            hidden={activeCategory !== "updates"}
-          >
-            <SystemVersionsCard />
+            {(
+              [
+                [
+                  "autoCompactionEnabled",
+                  "Automatic context compaction",
+                  "Summarize older messages when approaching the context limit.",
+                ],
+                [
+                  "autoRetryEnabled",
+                  "Automatic retry",
+                  "Retry temporary provider errors.",
+                ],
+              ] as const
+            ).map(([key, label, description]) => {
+              const desired = state.pendingRuntimeSettings[key];
+              const value = desired ?? state.runtimeSettings?.[key];
+              const pending = desired !== undefined;
+              const unavailable = !state.sessionId || value == null;
+              return (
+                <SwitchField
+                  key={key}
+                  label={label}
+                  description={description}
+                  status={unavailable ? "Unavailable" : undefined}
+                  checked={value === true}
+                  disabled={pending || unavailable}
+                  onChange={(checked) =>
+                    void store.setPiRuntimeSetting({ key, value: checked })
+                  }
+                />
+              );
+            })}
+          </Section>
+        </SettingsPage>
 
-            <Section id="herdr" icon={<Server size={14} />} title="Host">
-              <HerdrSettings
-                onNavigateRestart={() =>
-                  navigate("updates", "settings-host-restart")
-                }
-              />
-              <HostRestartSettings suspended={suspended} />
-            </Section>
-          </div>
-        </main>
+        <SettingsPage hidden={activeCategory !== "models"}>
+          <ModelsSettings
+            active={activeCategory === "models"}
+            destination={{
+              ...modelDestination,
+              owner: modelDestination?.owner ?? workspaceOwner,
+            }}
+          />
+        </SettingsPage>
 
-        <footer className="settings__footer">
-          <div className="settings__footer-status">
-            <span className="settings__version-dot" aria-hidden />
-            <span>
-              INSΠRE{" "}
-              {state.version ? `v${state.version}` : "version unavailable"}
-            </span>
-            {install === "installed" ? (
-              <span className="settings__installed">App installed</span>
-            ) : null}
-            {install === "available" ? (
-              <button
-                type="button"
-                className="settings__utility settings__install"
-                onClick={() => void requestInstall()}
-              >
-                <Laptop size={13} aria-hidden />
-                Install app
-              </button>
-            ) : null}
-          </div>
-          <div className="settings__footer-actions">
-            <button
-              type="button"
-              className="settings__utility settings__utility--reset"
-              onClick={() => setConfirmingReset(true)}
-              title="Reset appearance and behavior preferences"
-            >
-              Reset preferences
-            </button>
-          </div>
-        </footer>
-      </div>
+        <SettingsPage hidden={activeCategory !== "mcp"}>
+          <McpSettings
+            active={activeCategory === "mcp"}
+            owner={workspaceOwner}
+          />
+        </SettingsPage>
+
+        <SettingsPage hidden={activeCategory !== "adapters"}>
+          <PresentationAdapterSettings />
+        </SettingsPage>
+
+        <SettingsPage hidden={activeCategory !== "updates"}>
+          <SystemVersionsCard />
+
+          <Section id="herdr" icon={<Server size={14} />} title="Host">
+            <HerdrSettings
+              onNavigateRestart={() =>
+                navigate("updates", "settings-host-restart")
+              }
+            />
+            <HostRestartSettings suspended={suspended} />
+          </Section>
+        </SettingsPage>
+      </SettingsLayout>
       {confirmingReset && !suspended ? (
-        <ResetPreferencesConfirmation
+        <ConfirmationDialog
+          id="reset-preferences"
+          title="Reset preferences?"
+          description="Restore Display, Conversation, Behavior, and Herdr preferences to their defaults. Pi session settings, models, credentials, MCP servers, and pinned or hidden sessions stay unchanged."
           onClose={() => setConfirmingReset(false)}
-          onConfirm={() => {
-            store.restoreDefaultSettings();
-            setConfirmingReset(false);
+          confirm={{
+            label: "Reset preferences",
+            run: () => {
+              store.restoreDefaultSettings();
+              setConfirmingReset(false);
+            },
           }}
         />
       ) : null}
-    </div>
+    </>
   );
 });

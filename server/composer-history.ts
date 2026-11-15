@@ -20,6 +20,10 @@ interface ComposerHistoryCandidate {
   filePaths: string[];
 }
 
+export interface ComposerHistoryMessage extends Record<string, unknown> {
+  __inspireHistoryEntryId: string;
+}
+
 export type ComposerHistoryFileNameResolver = (
   path: string,
 ) => string | null | undefined;
@@ -44,13 +48,10 @@ function historyFile(
 }
 
 function userMessageEntry(
-  value: unknown,
-  messageIndex: number,
+  message: ComposerHistoryMessage,
   cwd?: string,
   fileNameForPath?: ComposerHistoryFileNameResolver,
 ): ComposerHistoryCandidate | null {
-  if (!value || typeof value !== "object") return null;
-  const message = value as Record<string, unknown>;
   if (message.role === "bashExecution" && typeof message.command === "string") {
     return {
       entry: {
@@ -85,8 +86,7 @@ function userMessageEntry(
         images.push({
           reference: composerArtifactReference(
             "image",
-            message,
-            messageIndex,
+            message.__inspireHistoryEntryId,
             partIndex,
           ),
           mimeType: item.mimeType,
@@ -102,7 +102,11 @@ function userMessageEntry(
   const files = parsed.references.map((path, referenceIndex) =>
     historyFile(
       path,
-      composerArtifactReference("file", message, messageIndex, referenceIndex),
+      composerArtifactReference(
+        "file",
+        message.__inspireHistoryEntryId,
+        referenceIndex,
+      ),
       cwd,
       fileNameForPath,
     ),
@@ -135,18 +139,13 @@ function samePrompt(
 
 /** Reproduce Pi's newest-first editor history with persisted prompt artifacts. */
 export function composerHistoryEntries(
-  messages: readonly unknown[],
+  messages: readonly ComposerHistoryMessage[],
   cwd?: string,
   fileNameForPath?: ComposerHistoryFileNameResolver,
 ): ComposerHistoryEntry[] {
   const history: ComposerHistoryCandidate[] = [];
   for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const candidate = userMessageEntry(
-      messages[index],
-      index,
-      cwd,
-      fileNameForPath,
-    );
+    const candidate = userMessageEntry(messages[index]!, cwd, fileNameForPath);
     if (!candidate) continue;
     const previous = history.at(-1);
     if (previous && samePrompt(previous, candidate)) {
@@ -185,7 +184,7 @@ type ComposerHistoryOwner = Pick<
 >;
 
 export function projectComposerHistoryPage(
-  messages: readonly unknown[],
+  messages: readonly ComposerHistoryMessage[],
   owner: ComposerHistoryOwner,
   start = 0,
   cwd?: string,

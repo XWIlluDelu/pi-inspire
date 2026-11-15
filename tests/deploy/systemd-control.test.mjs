@@ -1,152 +1,78 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   hostServicePath,
   inspectHostService,
-  terminalServicePath,
+  inspectRestartTarget,
   manageHostService,
-  inspectBrowserRestart,
-  requestBrowserRestart,
+  submitSystemdRestart,
 } from "../../deploy/systemd/control.mjs";
-import { systemdEscape } from "../../deploy/systemd/install.mjs";
+import { runIdleMaintenanceRestart } from "../../deploy/systemd/idle-maintenance-restart.mjs";
+import { RuntimeController } from "../../server/runtime.js";
 
-const root = "/workspace/inspire";
-const environment = {
-  HOME: "/home/tester",
-  XDG_CONFIG_HOME: "/home/tester/.config",
+import {
+  environment,
+  invocationId,
+  managedProperties,
+  managedTerminalProperties,
+  root,
+  show,
+} from "./systemd-fixture.mjs";
+
+const missingPath = async () => {
+  throw Object.assign(new Error("absent"), { code: "ENOENT" });
 };
-
-function show(
-  hostProperties,
-  terminalProperties = managedTerminalProperties(),
-) {
-  return async (arguments_) => {
-    const selected = arguments_.includes("inspire-terminal.service")
-      ? terminalProperties
-      : hostProperties;
-    return {
-      code: 0,
-      stdout: `${Object.entries(selected)
-        .map(([key, value]) => `${key}=${value}`)
-        .join("\n")}\n`,
-      stderr: "",
-    };
-  };
-}
-
-function managedProperties(overrides = {}) {
-  return {
-    LoadState: "loaded",
-    FragmentPath: hostServicePath(environment),
-    WorkingDirectory: root,
-    ExecStart: `{ path=${root}/inspire ; argv[]=${root}/inspire ; }`,
-    ExecStartPost: `{ path=${root}/inspire ; argv[]=${root}/inspire wait-ready ; }`,
-    Wants: "network-online.target inspire-terminal.service",
-    After: "network-online.target inspire-terminal.service",
-    UnitFileState: "enabled",
-    ActiveState: "active",
-    SubState: "running",
-    ...overrides,
-  };
-}
-
-function managedTerminalProperties(overrides = {}) {
-  return {
-    LoadState: "loaded",
-    FragmentPath: terminalServicePath(environment),
-    WorkingDirectory: root,
-    ExecStart: `{ path=${root}/inspire ; argv[]=${root}/inspire terminal-daemon --root ${root} --host 127.0.0.1 --port 4587 ; }`,
-    ...overrides,
-  };
-}
+const unavailableManager = async () => ({
+  code: 1,
+  stdout: "",
+  stderr: "Failed to connect to bus",
+});
 
 describe.runIf(process.platform !== "win32")("host systemd control", () => {
-  it("escapes non-ASCII paths as UTF-8 bytes in unit arguments", () => {
-    expect(systemdEscape("/tmp/测试 path")).toBe(
-      "/tmp/\\xe6\\xb5\\x8b\\xe8\\xaf\\x95\\x20path",
-    );
-  });
-
-  it("recognizes only the matching checkout unit", async () => {
-    await expect(
-      inspectHostService(root, {
-        environment,
-        run: show(managedProperties()),
-      }),
-    ).resolves.toEqual({
-      kind: "managed",
-      activeState: "active",
-      subState: "running",
-      unitFileState: "enabled",
-    });
-
-    await expect(
-      inspectHostService(root, {
-        environment,
-        run: show(managedProperties({ WorkingDirectory: "/workspace/other" })),
-      }),
-    ).resolves.toMatchObject({ kind: "foreign" });
-
-    await expect(
-      inspectHostService(root, {
-        environment,
-        run: show(managedProperties({ Wants: "network-online.target" })),
-      }),
-    ).resolves.toEqual({ kind: "outdated" });
-
-    await expect(
-      inspectHostService(root, {
-        environment,
-        run: show(
-          managedProperties(),
-          managedTerminalProperties({ WorkingDirectory: "/workspace/other" }),
-        ),
-      }),
-    ).resolves.toEqual({ kind: "outdated" });
-  });
-
-  it("keeps ordinary restart terminal-free and submits full restart as one ordered transaction", async () => {
-    for (const action of ["restart", "restart-all"]) {
-      const calls = [];
-      const run = async (args) => {
-        calls.push(args);
-        return show(managedProperties())(args);
-      };
-      expect(
-        (await manageHostService(root, action, { environment, run })).kind,
-      ).toBe("controlled");
-      expect(calls.filter((args) => args[1] !== "show")).toEqual([
-        [
-          "--user",
-          "restart",
-          ...(action === "restart-all" ? ["inspire-terminal.service"] : []),
-          "inspire-host.service",
-        ],
-      ]);
-    }
-  });
-
-  it("starts or enables the Host without stopping an existing transient terminal owner", async () => {
-    for (const action of ["start", "enable"]) {
-      const calls = [];
-      const run = async (args) => {
-        calls.push(args);
-        return show(managedProperties())(args);
-      };
-      expect(
-        (await manageHostService(root, action, { environment, run })).kind,
-      ).toBe("controlled");
-      const controls = calls.filter((args) => args[1] !== "show");
-      expect(controls).toEqual(
-        action === "start"
-          ? [["--user", "start", "inspire-host.service"]]
-          : [
-              ["--user", "enable", "inspire-terminal.service"],
-              ["--user", "enable", "--now", "inspire-host.service"],
-            ],
-      );
-      expect(controls.some((args) => args.includes("stop"))).toBe(false);
-    }
-  });
+  it.each([
+    [
+      "matching",
+      {},
+      {},
+      {
+        kind: "managed",
+        activeState: "active",
+        subState: "running",
+        unitFileState: "enabled",
+        invocationId,
+      },
+    ],
+    [
+      "foreign checkout",
+      { WorkingDirectory: "/workspace/other" },
+      {},
+      { kind: "foreign" },
+    ],
+    [
+      "missing terminal requirement",
+      { Wants: "network-online.target" },
+      {},
+      { kind: "outdated" },
+    ],
+    [
+      "foreign terminal",
+      {},
+      { WorkingDirectory: "/workspace/other" },
+      { kind: "outdated" },
+    ],
+  ])(
+    "recognizes service authority: %s",
+    async (_case, host, terminal, expected) => {
+      await expect(
+        inspectHostService(root, {
+          environment,
+          run: show(
+            managedProperties(host),
+            managedTerminalProperties(terminal),
+          ),
+        }),
+      ).resolves.toMatchObject(expected);
+    },
+  );
 
   it("refuses full restart without verified terminal-before-Host ordering", async () => {
     const calls = [];
@@ -157,74 +83,244 @@ describe.runIf(process.platform !== "win32")("host systemd control", () => {
     expect(
       (await manageHostService(root, "restart-all", { environment, run })).kind,
     ).toBe("outdated");
-    expect(calls.every((args) => args[1] === "show")).toBe(true);
+    expect(calls.some((args) => args.includes("restart"))).toBe(false);
   });
 
-  it("fences browser restart to the current invocation and commits after inspections", async () => {
-    const invocationId = "a".repeat(32);
-    const calls = [];
-    const run = async (args) => {
-      calls.push(args);
-      if (args.includes("--property=InvocationID"))
-        return {
-          code: 0,
-          stdout: `InvocationID=${invocationId}\nActiveState=active`,
-          stderr: "",
-        };
-      return show(managedProperties())(args);
-    };
-    const options = { environment, run, invocationId };
-    expect(
-      await inspectBrowserRestart(root, {
-        ...options,
-        invocationId: "b".repeat(32),
-      }),
-    ).toEqual({ kind: "invocation-changed" });
-    calls.length = 0;
-    const result = await requestBrowserRestart(
-      root,
-      true,
-      () => {
-        expect(calls.at(-1)).toContain("--property=InvocationID");
-        return true;
-      },
-      options,
+  it("fences both phases to the captured invocation and uses one ordered restart", async () => {
+    let active = invocationId;
+    const run = vi.fn(async (args) =>
+      show(managedProperties({ InvocationID: active }))(args),
     );
-    expect(result.code).toBe(0);
-    expect(calls.at(-1)).toEqual([
+    const options = { environment, run };
+    const plan = {
+      invocationId,
+      terminals: true,
+      detached: true,
+      commit: vi.fn(async () => {
+        expect(run.mock.calls.at(-1)?.[0]).toContain(
+          "inspire-terminal.service",
+        );
+        return true;
+      }),
+    };
+    await expect(
+      inspectRestartTarget(root, "b".repeat(32), options),
+    ).resolves.toEqual({
+      kind: "invocation-changed",
+    });
+    await expect(submitSystemdRestart(root, plan, options)).resolves.toEqual({
+      kind: "issued",
+    });
+    expect(run.mock.calls.at(-1)?.[0]).toEqual([
       "--user",
       "--no-block",
       "restart",
       "inspire-terminal.service",
       "inspire-host.service",
     ]);
-    calls.length = 0;
-    expect(
-      await requestBrowserRestart(root, false, () => false, options),
-    ).toMatchObject({ issued: false });
-    expect(calls.every((args) => args[1] === "show")).toBe(true);
+
+    run.mockClear();
+    await expect(
+      submitSystemdRestart(
+        root,
+        {
+          ...plan,
+          beforeRestart: async () => {
+            active = "b".repeat(32);
+          },
+        },
+        options,
+      ),
+    ).resolves.toEqual({ kind: "not-issued", reason: "invocation-changed" });
+    expect(run.mock.calls.some(([args]) => args.includes("restart"))).toBe(
+      false,
+    );
   });
 
-  it("distinguishes an absent unit from an unavailable user manager", async () => {
+  it("honors the manager's unit absence even when a unit file remains on disk", async () => {
     await expect(
       inspectHostService(root, {
         environment,
         run: show({ LoadState: "not-found" }),
+        inspectPath: async (path) =>
+          path === hostServicePath(environment) ? {} : missingPath(),
       }),
     ).resolves.toEqual({ kind: "absent" });
+  });
 
+  it("permits direct mode only when no offline service authority remains", async () => {
+    const run = unavailableManager;
+    await expect(
+      inspectHostService(root, { environment, run, inspectPath: missingPath }),
+    ).resolves.toEqual({ kind: "absent" });
+    for (const present of [
+      "/home/tester/.config/systemd/user/inspire-host.service",
+      "/usr/lib/systemd/user/inspire-host.service",
+      "/run/tester/systemd/transient/inspire-host.service",
+      `/run/user/${process.getuid?.()}/systemd/private`,
+    ]) {
+      await expect(
+        inspectHostService(root, {
+          environment,
+          run,
+          inspectPath: async (path) => (path === present ? {} : missingPath()),
+        }),
+        present,
+      ).resolves.toEqual({
+        kind: "unavailable",
+        detail: "Failed to connect to bus",
+      });
+    }
+    for (const variable of ["SYSTEMD_UNIT_PATH", "DBUS_SESSION_BUS_ADDRESS"]) {
+      await expect(
+        inspectHostService(root, {
+          environment: {
+            ...environment,
+            [variable]:
+              variable === "SYSTEMD_UNIT_PATH"
+                ? "/custom/units"
+                : "unix:path=/custom/bus",
+          },
+          run,
+          inspectPath: missingPath,
+        }),
+        variable,
+      ).resolves.toMatchObject({ kind: "unavailable" });
+    }
     await expect(
       inspectHostService(root, {
         environment,
-        run: async () => ({
-          code: 1,
-          stdout: "",
-          stderr: "Failed to connect to bus",
-        }),
+        run,
+        inspectPath: async () => {
+          throw Object.assign(new Error("denied"), { code: "EACCES" });
+        },
       }),
-    ).resolves.toEqual({
-      kind: "unavailable",
-      detail: "Failed to connect to bus",
-    });
+    ).resolves.toMatchObject({ kind: "unavailable" });
   });
+
+  it.each(["masked", ""])(
+    "does not treat the installed %s load state as absent",
+    async (LoadState) => {
+      await expect(
+        inspectHostService(root, {
+          environment,
+          run: show({ LoadState }),
+          inspectPath: missingPath,
+        }),
+      ).resolves.toMatchObject({ kind: "unavailable" });
+    },
+  );
+
+  it("keeps a loaded foreign unit authoritative even with no remaining file", async () => {
+    await expect(
+      inspectHostService(root, {
+        environment,
+        run: show(
+          managedProperties({
+            FragmentPath: "/usr/lib/systemd/user/inspire-host.service",
+          }),
+        ),
+        inspectPath: missingPath,
+      }),
+    ).resolves.toMatchObject({ kind: "foreign" });
+  });
+});
+
+const owner = { systemdInvocationId: invocationId };
+const inspect = show(managedProperties());
+const denied = { kind: "skipped", reason: "commit-not-authorized" };
+const uncertain = {
+  kind: "recovery-required",
+  reason: "restart-outcome-unknown",
+};
+
+describe.runIf(process.platform !== "win32")("idle maintenance restart", () => {
+  it("does not inspect a unit after the Host refused a lease", async () => {
+    const run = vi.fn();
+    const request = vi.fn(async () => ({ kind: "skipped", reason: "busy" }));
+    await expect(
+      runIdleMaintenanceRestart(owner, root, { environment, run, request }),
+    ).resolves.toEqual({
+      kind: "skipped",
+      reason: "not-prepared",
+    });
+    expect(request).toHaveBeenCalledExactlyOnceWith(owner);
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { boundary: "lost commit response", commit: "lost", result: denied },
+    { boundary: "wrong commit identity", commit: "foreign", result: denied },
+    {
+      boundary: "lost release response",
+      commit: "lost",
+      loseRelease: true,
+      result: { kind: "recovery-required", reason: "release-unconfirmed" },
+    },
+    {
+      boundary: "proven non-issuance",
+      issue: "not-issued",
+      result: { kind: "skipped", reason: "restart-not-issued" },
+    },
+    { boundary: "lost systemctl reply", issue: "lost", result: uncertain },
+    {
+      boundary: "issued restart",
+      issue: "issued",
+      result: { kind: "restarted" },
+    },
+  ])(
+    "keeps the runtime lease and dispatch consistent through $boundary",
+    async ({ commit, loseRelease, issue, result }) => {
+      vi.useFakeTimers();
+      const runtime = new RuntimeController({}, {});
+      try {
+        const run = vi.fn(async (args) => {
+          if (!args.includes("restart")) return inspect(args);
+          expect(args).toEqual(["--user", "restart", "inspire-host.service"]);
+          vi.advanceTimersByTime(60_000);
+          await expect(runtime.newSession(root)).rejects.toMatchObject({
+            status: 503,
+          });
+          if (issue === "lost") throw new Error("Systemd response lost");
+          if (issue === "not-issued") return { code: 1, issued: false };
+          return { code: issue === "issued" ? 0 : 1 };
+        });
+        let leaseId;
+        const request = vi.fn(async (state, action, id) => {
+          expect(state).toBe(owner);
+          if (!action) {
+            const lease = runtime.reserveMaintenanceRestart();
+            leaseId = lease.leaseId;
+            return lease;
+          }
+          expect(id).toBe(leaseId);
+          if (action === "release")
+            return loseRelease ? null : runtime.releaseMaintenanceRestart(id);
+          const response = runtime.commitMaintenanceRestart(id);
+          if (commit === "lost") return null;
+          if (commit === "foreign")
+            return { ...response, leaseId: "b".repeat(43) };
+          return response;
+        });
+        await expect(
+          runIdleMaintenanceRestart(owner, root, { environment, run, request }),
+        ).resolves.toEqual(result);
+        expect(
+          run.mock.calls.filter(([args]) => args.includes("restart")),
+        ).toHaveLength(issue ? 1 : 0);
+        const releases = result.kind === "skipped" || loseRelease;
+        expect(request.mock.calls.map(([, action]) => action)).toEqual([
+          undefined,
+          "commit",
+          ...(releases ? ["release"] : []),
+        ]);
+        expect(runtime.reserveMaintenanceRestart().kind).toBe(
+          result.kind === "skipped" ? "ready" : "busy",
+        );
+      } finally {
+        await runtime.close();
+        vi.useRealTimers();
+      }
+    },
+  );
 });

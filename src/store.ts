@@ -1,45 +1,34 @@
 import { useCallback, useRef, useSyncExternalStore } from "react";
-import { parseCommandInvocation, parseNativeCommand } from "../shared/commands";
+import { nativeCommand, parseNativeCommand } from "../shared/commands";
 import {
   type ActiveSnapshot,
-  type ActivityFoldVisibilityPreference,
   type BranchNavigateRequest,
-  type BranchTreeQuery,
   type CompletionAttentionPreference,
   type ComposerHistoryEntry,
-  type ContentTextSizePreference,
-  type DesktopSendKeyPreference,
   emptyPendingQueues,
-  type GitDiffSide,
   type GitFileChange,
   type GitStatusResponse,
-  type HiddenClearResponse,
   type HostDirListing,
-  type HostNativeCommandResponse,
+  type HostNativeCommandName,
   type HostRootsResponse,
   isBusyRunState,
-  type LaunchPreference,
+  type LiveTranscript,
   type ModelOption,
+  type ModelSelectionResponse,
   type NewSessionOptions,
-  type PalettePreference,
   type PendingRecovery,
-  type PiMessageDeliveryMode,
-  type PiRuntimeSettings,
-  type ProjectDisplayPreference,
   type PromptAcceptedResponse,
   parseExtensionStatuses,
   parsePendingQueues,
   parseRetryInfo,
   projectionConflictSeverity,
-  type ReadingWidthPreference,
-  type SessionActionId,
   type SessionDeleteDisposition,
-  type ThemePreference,
+  type SessionDeletionResponse,
   type ThinkingLevel,
-  type ToolVisibilityPreference,
-  type UserTurnAnchor,
-  type VisibilityPreference,
 } from "../shared/contracts";
+import type { SessionHistoryQuery } from "../shared/history-query";
+import type { RuntimeSetting } from "../shared/host-endpoints";
+import { jsonRecord } from "../shared/json-record";
 import type {
   ModelCatalogResponse,
   ModelConfigEdit,
@@ -48,6 +37,7 @@ import type {
 } from "../shared/model-settings";
 import type { TaskNotificationGrouping } from "../shared/notifications";
 import type { ProviderAuthOperation } from "../shared/provider-auth-bridge";
+import { resourceReferenceLine } from "../shared/resource-references";
 import type { StatusControlDeclaration } from "../shared/tool-presentation-config";
 import {
   type Api,
@@ -58,14 +48,20 @@ import {
   type ProjectFileSearchResult,
 } from "./api";
 import {
-  type ActivityMaterializationMode,
   type AppState,
   contextUsage,
   createInitialAppState,
   isCommandQuery,
   type NativeCommandActivity,
+  selectedRunState,
+  transcriptDiagnostic,
 } from "./app-state";
-import { type PiCommand, resolveCommandInventory } from "./composer-completion";
+import { BrowserUpgradeRequired } from "./browser-auth";
+import {
+  type PiCommand,
+  resolveCommandInput,
+  resolveCommandInventory,
+} from "./composer-completion";
 import type { ComposerHistoryScope } from "./composer-history";
 import {
   type CopySource,
@@ -79,7 +75,10 @@ import {
   ConnectionController,
   type ConnectionRecoveryTrigger,
 } from "./controllers/connection-controller";
-import { GitController } from "./controllers/git-controller";
+import {
+  GitController,
+  showsFileComparison,
+} from "./controllers/git-controller";
 import { PendingRecoveryController } from "./controllers/pending-recovery-controller";
 import { PreferenceController } from "./controllers/preference-controller";
 import { ResourceController } from "./controllers/resource-controller";
@@ -90,46 +89,46 @@ import {
   SessionManagementController,
 } from "./controllers/session-management-controller";
 import { SessionSelectionController } from "./controllers/session-selection-controller";
-import { TranscriptDataController } from "./controllers/transcript-data-controller";
 import { UpdateController } from "./controllers/update-controller";
 import { WorkspaceController } from "./controllers/workspace-controller";
-import { appendNotice, type Notice, parseExtensionDisplays } from "./events";
+import {
+  appendNotice,
+  type EventSlice,
+  type Notice,
+  parseExtensionDisplays,
+} from "./events";
 import { resolveModelMetadata, supportedThinkingLevels } from "./model-options";
-import { controlState } from "./presentation-adapters";
+import { TaskNotificationController } from "./notifications";
+import {
+  configurePresentationAdapters,
+  controlState,
+} from "./presentation-adapters";
 import { isTransientFailure, RecoveryBackoff } from "./recovery-backoff";
 import {
-  isExternalSession,
-  modelControlsSupported,
-  NATIVE_MODEL_GUIDANCE,
-} from "./session-controls";
-import {
-  sessionDraft,
-  sessionDraftRevision,
-  setSessionDraft,
-} from "./session-drafts";
+  type FileSourceJump,
+  inspectedFileTab,
+  type ResourceFileTab,
+} from "./resource-preview";
+import { type SessionDraft, SessionDrafts } from "./session-drafts";
 import {
   deriveSnapshotTransition,
-  type SnapshotMode,
   snapshotLifecyclePatch,
 } from "./snapshot-transition";
-import { configureToolPresentationRegistry } from "./tool-presentations/registry";
-
-export type {
-  ActivityMaterializationMode,
-  TranscriptActivityRangeState,
-} from "./app-state";
+import {
+  forgetFileReading,
+  lastWorkbenchSession,
+  readFileReading,
+  readHistoryReading,
+  readWorkbench,
+  rememberWorkbenchSession,
+  saveWorkbench,
+  workbenchSessionKey,
+} from "./workbench-session";
 
 const MAX_COMMAND_ACTIVITIES = 4;
 const ACCEPTED_NATIVE_COMMAND: PromptAcceptedResponse = {
   accepted: true,
-  historyEntry: null,
 };
-
-function recordOf(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
 
 function finiteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
@@ -144,10 +143,6 @@ function formattedInteger(value: unknown): string | null {
       );
 }
 
-function nativeCommandTitle(command: string): string {
-  return `/${command}`;
-}
-
 function boundedCommandActivities(
   activities: AppState["commandActivities"][string],
 ): AppState["commandActivities"][string] {
@@ -156,22 +151,10 @@ function boundedCommandActivities(
     const settled = bounded.findIndex(
       (activity) => activity.status !== "running",
     );
-    bounded.splice(settled < 0 ? 0 : settled, 1);
+    if (settled < 0) break;
+    bounded.splice(settled, 1);
   }
   return bounded;
-}
-
-function terminalCommandGuidance(command: string): string {
-  switch (command) {
-    case "share":
-      return "Sharing publishes conversation data and requires Pi's interactive confirmation, so it remains in the trusted terminal flow.";
-    case "trust":
-      return "Project trust is managed by Pi. Use /trust in Pi's terminal to change a saved decision, then /reload here to start a fresh worker.";
-    case "import":
-      return "Session import can replace the active Pi runtime. Run it in Pi's terminal flow, where the source path and replacement confirmation stay visible.";
-    default:
-      return "This command currently requires Pi's trusted terminal interface.";
-  }
 }
 
 function downloadExportBlob(blob: Blob, fileName: string): void {
@@ -190,20 +173,13 @@ function downloadFileUrl(url: string, fileName: string): void {
   anchor.click();
 }
 
-import { TaskNotificationController } from "./notifications";
-
 export class AppStore {
   private state: AppState = createInitialAppState();
+  readonly drafts = new SessionDrafts();
+  private workbenchReady = false;
+  private clearingWorkbench = false;
   private listeners = new Set<() => void>();
   private api: Api | null = null;
-  private readonly pendingExports = new Map<
-    string,
-    {
-      api: Api;
-      generation: number;
-      promise: Promise<void>;
-    }
-  >();
   private readonly notifications = new TaskNotificationController({
     state: () => this.state,
     patch: (patch) => this.set(patch),
@@ -215,13 +191,11 @@ export class AppStore {
     clear: () => this.runtimeEvents.clearTitleAttention(),
     openSession: (id) => this.selection.open(id),
   });
-  private readonly hostCommandRuns = new Map<string, number>();
   /** Both Files surfaces consume this one tree/search projection. */
   private readonly workspace = new WorkspaceController({
     state: () => this.state,
     patch: (patch) => this.set(patch),
     api: () => this.api,
-    transportGeneration: () => this.transportGeneration,
     handleAuthFailure: () => this.handleAuthFailure(),
   });
   /** ResourceController owns request lifecycles only. AppStore supplies every
@@ -231,13 +205,10 @@ export class AppStore {
     state: () => this.state,
     patch: (patch) => this.set(patch),
     api: () => this.api,
-    transportGeneration: () => this.transportGeneration,
     handleAuthFailure: () => this.handleAuthFailure(),
-    prepareGitForResourceOpen: (contextMode) =>
-      this.git.prepareResourceOpen(contextMode),
-    selectWorkspacePath: (workspacePath, reveal = true) => {
-      if (reveal) this.workspace.revealPath(workspacePath);
-      this.git.selectWorkspacePath(workspacePath);
+    revealWorkspacePath: (path) => {
+      this.workspace.revealPath(path);
+      if (showsFileComparison(this.state)) void this.git.refreshStatus();
     },
   });
   /** GitController owns polling, selection, and diff request lifecycles.
@@ -250,9 +221,7 @@ export class AppStore {
     }),
     patch: (patch) => this.set(patch),
     api: () => this.api,
-    transportGeneration: () => this.transportGeneration,
-    openResourceFromGit: (workspacePath) =>
-      this.resources.openResource(workspacePath, "changes", workspacePath),
+    openResourceFromGit: (change) => this.openGitFileTab(change),
     handleAuthFailure: () => this.handleAuthFailure(),
   });
   /** BranchController owns branch-tree/action generations. AppStore applies
@@ -263,15 +232,18 @@ export class AppStore {
     patch: (patch) => this.set(patch),
     api: () => this.api,
     selectionGeneration: () => this.selectionGeneration,
-    selectionRequest: () => this.selectionRequest,
-    beginForkSelection: () => ++this.selectionRequest,
-    transportGeneration: () => this.transportGeneration,
+    selectionRequest: () => this.selection.generation,
+    beginForkSelection: () => this.selection.beginForkSelection(),
     handleAuthFailure: () => this.handleAuthFailure(),
-    draftRevision: () => sessionDraftRevision(this.state.sessionId!),
+    draftRevision: () => this.drafts.get(this.state.sessionId).revision,
     applyNavigation: (response, draftRevision) => {
       const sessionId = this.state.sessionId!;
-      const ownsDraft = sessionDraftRevision(sessionId) === draftRevision;
-      this.applySnapshot(response.snapshot);
+      const ownsDraft = this.drafts.get(sessionId).revision === draftRevision;
+      if (
+        response.snapshot.active?.transcriptPage.viewId !==
+        this.state.view.viewId
+      )
+        this.applySnapshot(response.snapshot);
       if (response.editorText === undefined) return;
       if (!ownsDraft) {
         this.notify(
@@ -280,14 +252,7 @@ export class AppStore {
         );
         return;
       }
-      setSessionDraft(sessionId, response.editorText);
-      this.set({
-        editorText: {
-          text: response.editorText,
-          nonce: (this.state.editorText?.nonce ?? 0) + 1,
-          draftRevision: sessionDraftRevision(sessionId),
-        },
-      });
+      this.drafts.setText(sessionId, response.editorText);
     },
     applyFork: (response) => {
       this.applySnapshot(response.snapshot);
@@ -297,13 +262,7 @@ export class AppStore {
         response.editorAttachments ?? [],
         this.hostAuthorityId,
       );
-      setSessionDraft(response.sessionId, response.editorText);
-      this.set({
-        editorText: {
-          text: response.editorText,
-          nonce: (this.state.editorText?.nonce ?? 0) + 1,
-        },
-      });
+      this.drafts.setText(response.sessionId, response.editorText);
     },
     refreshSessionCatalog: () => void this.catalog.refreshLoaded(),
     notify: (kind, text) => this.notify(kind, text),
@@ -312,7 +271,6 @@ export class AppStore {
     state: () => this.state,
     patch: (patch) => this.set(patch),
     api: () => this.api,
-    transportGeneration: () => this.transportGeneration,
     notify: (kind, text) => this.notify(kind, text),
     handleAuthFailure: () => this.handleAuthFailure(),
     curationChanged: (hydrate) => {
@@ -328,43 +286,23 @@ export class AppStore {
     state: () => this.state,
     patch: (patch) => this.set(patch),
     api: () => this.api,
-    confirmedPreferences: () => this.preferences.confirmed(),
     handleAuthFailure: () => this.handleAuthFailure(),
   });
-  /** SessionSelectionController owns only latest-wins open/new/deselect
-   * requests. Snapshot publication, branch invalidation, and visible composer
-   * partition changes stay with AppStore. */
   private readonly selection = new SessionSelectionController({
     state: () => this.state,
     api: () => this.api,
-    transportGeneration: () => this.transportGeneration,
-    beginOpening: (sessionId) => {
-      this.branches.invalidateForSelectionIntent();
-      this.set({ sessionActionError: null });
-      this.selectionIntentGeneration += 1;
-      const ticket = ++this.selectionRequest;
-      this.claimOpening(ticket, sessionId);
-      return ticket;
+    patch: (patch) => this.set(patch),
+    onOpenIntent: () => {
+      this.branches.invalidate();
+      this.nativeSettings.clear();
+      this.set({
+        sessionActionError: null,
+        pendingRuntimeSettings: {},
+        thinkingLevelPending: false,
+      });
     },
-    invalidateOpening: () => {
-      this.selectionRequest += 1;
-      this.releaseOpening();
-    },
-    ownsOpening: (ticket, api, transportGeneration) =>
-      ticket === this.selectionRequest &&
-      this.openingOwner === ticket &&
-      this.api === api &&
-      this.transportGeneration === transportGeneration,
-    releaseOpening: (ticket) => this.releaseOpening(ticket),
     applySnapshot: (snapshot) => this.applySnapshot(snapshot),
     ensureSessionVisible: (sessionId) => this.ensureSessionVisible(sessionId),
-    consumeReadyWhileOpening: (sessionId, ticket) => {
-      if (this.readyWhileOpening.get(sessionId) !== ticket) return false;
-      this.readyWhileOpening.delete(sessionId);
-      return true;
-    },
-    resyncSelected: (sessionId) =>
-      void this.resync(sessionId, this.selectionGeneration),
     setActionError: (sessionActionError) => this.set({ sessionActionError }),
     rememberModel: (model) => this.preferences.rememberModel(model),
     refreshSessionCatalog: () => void this.catalog.refreshLoaded(),
@@ -372,74 +310,42 @@ export class AppStore {
     handleAuthFailure: () => this.handleAuthFailure(),
     confirmUncertainCreation: () =>
       window.confirm(
-        "The previous session creation was not confirmed and may still complete. Inspect the session list before continuing. Create another session anyway?",
+        "Session creation may still complete. Check the session list before creating another. Continue?",
       ),
   });
   private readonly runtimeEvents = new RuntimeEventController({
     state: () => this.state,
     patch: (patch) => this.set(patch),
-    notify: (kind, text) => this.notify(kind, text),
+    setEditorText: (sessionId, text) => this.drafts.setText(sessionId, text),
     applySnapshot: (snapshot) => this.applySnapshot(snapshot),
-    invalidateSelection: () => this.selection.invalidateForReplacement(),
+    applyTranscript: (sessionId, data, sequence, statuses) =>
+      this.applyLiveTranscript(sessionId, data, sequence, statuses),
     ensureSessionVisible: (sessionId) => this.ensureSessionVisible(sessionId),
-    recordRuntimeReady: (sessionId) => {
-      if (this.openingOwner !== null)
-        this.readyWhileOpening.set(sessionId, this.openingOwner);
-    },
-    clearRuntimeReady: (sessionId) => this.readyWhileOpening.delete(sessionId),
     refreshLoadedSessions: () => this.catalog.refreshLoaded(),
     hasVisibleGitSurface: () => this.git.hasVisibleSurface(),
     refreshGitStatus: () => this.git.refreshStatus(),
-    markProjectionStale: () => this.branches.markProjectionStale(),
     selectionGeneration: () => this.selectionGeneration,
     invalidateResync: () => {
       this.resyncRequest += 1;
     },
-    resync: (sessionId, generation, minimumRevision) =>
-      this.resync(sessionId, generation, minimumRevision),
+    resync: (sessionId, generation) => this.resync(sessionId, generation),
   });
-  private readonly transcriptData = new TranscriptDataController({
-    state: () => this.state,
-    patch: (patch) => this.set(patch),
-    api: () => this.api,
-    selectionGeneration: () => this.selectionGeneration,
-    transportGeneration: () => this.transportGeneration,
-    markSettled: (key) => this.runtimeEvents.markSettled(key),
-    resync: (sessionId, generation, minimumRevision, preserveAppendHistory) =>
-      this.resync(
-        sessionId,
-        generation,
-        minimumRevision,
-        preserveAppendHistory,
-      ),
-    handleAuthFailure: () => this.handleAuthFailure(),
-    notify: (kind, message) => this.notify(kind, message),
-  });
-  /** ComposerController owns session-partitioned staged attachments, project
-   * files, and delivery lifetime. AppStore remains the snapshot owner. */
   private readonly composer = new ComposerController({
     state: () => this.state,
+    drafts: this.drafts,
     api: () => this.api,
     authorityId: () => this.hostAuthorityId,
-    transportGeneration: () => this.transportGeneration,
-    patch: (slice) => this.set(slice),
     notify: (kind, text) => this.notify(kind, text),
     notifyVisible: (sessionId, message) => {
       if (this.state.sessionId === sessionId) this.notify("warning", message);
     },
     handleAuthFailure: () => this.handleAuthFailure(),
-    restoreDraftIfEmpty: (sessionId, message) => {
-      if (sessionDraft(sessionId)) return false;
-      setSessionDraft(sessionId, message);
-      if (this.state.sessionId === sessionId) this.replaceComposerText(message);
-      return true;
-    },
   });
   private readonly sessionManagement = new SessionManagementController({
     state: () => this.state,
     patch: (patch) => this.set(patch),
     api: () => this.api,
-    transportGeneration: () => this.transportGeneration,
+    authorityId: () => this.hostAuthorityId,
     notify: (kind, text) => this.notify(kind, text),
     handleAuthFailure: () => this.handleAuthFailure(),
     refreshLoadedSessions: () => this.catalog.refreshLoaded(),
@@ -447,20 +353,17 @@ export class AppStore {
       this.catalog.preserve(query, offset, total),
     forgetSessions: (sessionIds) => this.forgetSessions(sessionIds),
     pauseSessionReads: (ids) => this.pauseSessionReads(ids),
-    flushPreferences: () => this.preferences.flush(),
-    capturePreferenceOwners: () => this.preferences.captureOwners(),
-    reconcilePreferences: (authoritative, owners) =>
-      this.preferences.reconcile(authoritative, owners),
+    publishPreferences: (publication) => this.preferences.publish(publication),
   });
-  private authToken: string | null = null;
   private hostAuthorityId: string | null = null;
-  private snapshotDigest: string | null = null;
-  /** A bootstrap read cannot replace a snapshot committed while it awaited I/O. */
+  private workbenchSelectionResolved = false;
+  private afterInitialSnapshot: (() => void) | null = null;
+  private transcriptSequence = -1;
+  private visibleEventSequence = -1;
   private snapshotGeneration = 0;
   private readonly pendingRecovery = new PendingRecoveryController({
     api: () => this.api,
     authorityId: () => this.hostAuthorityId,
-    transportGeneration: () => this.transportGeneration,
     restore: (sessionId, recovered) =>
       this.restorePendingInput(sessionId, recovered),
     handleAuthFailure: () => this.handleAuthFailure(),
@@ -469,7 +372,6 @@ export class AppStore {
     state: () => this.state,
     patch: (patch) => this.set(patch),
     api: () => this.api,
-    transportGeneration: () => this.transportGeneration,
     notify: (kind, text) => this.notify(kind, text),
   });
   /** ConnectionController owns WebSocket lifetime/backoff only. AppStore
@@ -478,13 +380,14 @@ export class AppStore {
     state: () => ({
       bootstrapped: this.state.bootstrapped,
       authorityId: this.hostAuthorityId,
-      snapshotDigest: this.snapshotDigest,
       sessionId: this.state.sessionId,
     }),
     patch: (patch) => {
       this.set(patch);
       if (patch.connection === "open") {
-        this.branches.reconcile();
+        const complete = this.afterInitialSnapshot;
+        this.afterInitialSnapshot = null;
+        complete?.();
         this.composer.resumeUploads();
         this.pendingRecovery.resume();
         void this.notifications.openTarget();
@@ -503,6 +406,16 @@ export class AppStore {
         );
         return;
       }
+      if (
+        typeof event.runtimeSequence === "number" &&
+        event.sessionId === this.state.sessionId
+      ) {
+        if (event.runtimeSequence <= this.transcriptSequence) return;
+        this.visibleEventSequence = Math.max(
+          this.visibleEventSequence,
+          event.runtimeSequence,
+        );
+      }
       if (event.type === "agent_start" && typeof event.sessionId === "string")
         this.pendingRecovery.startRun(event.sessionId);
       if (
@@ -520,27 +433,32 @@ export class AppStore {
       }
       if (event.type === "snapshot") {
         this.updates.applySnapshot(event.updateStatus);
-        if (event.unchanged !== true) this.runtimeEvents.apply(event);
-        // An authenticated cache acknowledgement reobserves the same state.
-        // It resolves a read warning, but not an existing projection problem.
-        else {
-          this.resyncRecovery.reset();
-          this.branches.reconcile();
-          if (this.state.error && !this.state.projectionError)
-            this.dismissError();
+        if (
+          event.missingDetail !== true &&
+          event.detailSessionId === this.state.sessionId &&
+          typeof event.runtimeSequence === "number" &&
+          event.runtimeSequence <
+            Math.max(this.transcriptSequence, this.visibleEventSequence)
+        )
+          return;
+        this.runtimeEvents.apply(event);
+        if (event.missingDetail === true) {
+          this.autoContinued = true;
+          rememberWorkbenchSession(null);
+          if (!this.state.sessionSelectionPending)
+            this.notify(
+              "info",
+              "The previous session no longer exists. Choose another session or start a new one.",
+            );
         }
       } else if (!this.updates.applyEvent(event)) {
         this.runtimeEvents.apply(event);
       }
     },
-    recordSnapshotDigest: (digest) => {
-      this.snapshotDigest = digest;
-    },
-    invalidateSnapshotDigest: () => {
-      this.snapshotDigest = null;
-    },
     onTransportReplaced: () => {
       this.runtimeEvents.invalidateTransport();
+      this.transcriptSequence = -1;
+      this.visibleEventSequence = -1;
       this.set({ externalSessionActivities: {} });
     },
     onTransportClosed: () => {
@@ -548,38 +466,21 @@ export class AppStore {
       // The reconnect snapshot may remove stale state but must not recreate
       // ownership from historical active status.
       this.runtimeEvents.invalidateTransport();
-      this.branches.markConnectionInterrupted();
+      this.branches.invalidate();
       this.set({
         connection: "reconnecting",
         connectionProblem: { kind: "stream-interrupted" },
         externalSessionActivities: {},
       });
     },
-    reconnect: (token) => void this.init(token),
+    reconnect: () => void this.init(),
   });
   private autoContinued = false;
   private selectionGeneration = 0;
-  /** Explicit open, create, and deselect intent. Unlike selectionRequest, this
-   * does not advance for authoritative transport snapshots. */
-  private selectionIntentGeneration = 0;
-  /** Latest-wins guard for explicit selection and replacement authority.
-   * Addressed detail snapshots only refresh the visible projection; they
-   * must not retire a newer open/new/deselect request. */
-  private selectionRequest = 0;
-  /** The request that owns the visible opening marker. Stale completions may
-   * never clear a newer owner. */
-  private openingOwner: number | null = null;
   private resyncRequest = 0;
   private resyncRecovery = new RecoveryBackoff();
   private pausedSessionReads: ReadonlySet<string> | null = null;
-  private pendingActionRequest = 0;
-  private thinkingLevelRequest = 0;
-  private runtimeSettingRequest = 0;
-  private readonly runtimeSettingOwners: Partial<
-    Record<keyof PiRuntimeSettings, number>
-  > = {};
-  private readyWhileOpening = new Map<string, number>();
-  private transportGeneration = 0;
+  private readonly nativeSettings = new Map<string, symbol>();
   private bootstrapRequest: AbortController | null = null;
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -589,17 +490,27 @@ export class AppStore {
   getState = (): AppState => this.state;
 
   private set(partial: Partial<AppState>): void {
-    const previousSessionId = this.state.sessionId;
-    this.state = { ...this.state, ...partial };
-    if (this.state.sessionId !== previousSessionId)
+    const previous = this.state;
+    this.state = { ...previous, ...partial };
+    if (
+      !this.clearingWorkbench &&
+      previous.sessionId === this.state.sessionId &&
+      previous.cwd === this.state.cwd
+    )
+      saveWorkbench(this.workbenchKey(), this.state, previous);
+    if (this.state.sessionId !== previous.sessionId)
       this.connectionController.updateDetailInterest();
     for (const listener of this.listeners) listener();
   }
 
+  private patchLive(partial: Partial<EventSlice>): void {
+    this.set({ live: { ...this.state.live, ...partial } });
+  }
+
   private notify(kind: Notice["kind"], text: string): void {
-    const id = this.state.nextNoticeId;
-    this.set({
-      notices: appendNotice(this.state.notices, { id, kind, text }),
+    const id = this.state.live.nextNoticeId;
+    this.patchLive({
+      notices: appendNotice(this.state.live.notices, { id, kind, text }),
       nextNoticeId: id + 1,
     });
   }
@@ -613,7 +524,6 @@ export class AppStore {
       this.catalog.remove(sessionId);
       delete sessionStatuses[sessionId];
       delete commandActivities[sessionId];
-      this.hostCommandRuns.delete(sessionId);
       this.composer.discard(sessionId);
     }
     const externalSessionActivities = {
@@ -626,7 +536,7 @@ export class AppStore {
     // Commit only the deleted identity's view. A newer open/new request keeps
     // its selection owner and can still publish its own snapshot afterwards.
     if (this.state.sessionId && sessionIds.has(this.state.sessionId)) {
-      this.applySnapshot({ active: null, runState: "idle", sessionStatuses });
+      this.applySnapshot({ active: null, sessionStatuses });
     }
     return sessionStatuses;
   }
@@ -637,39 +547,23 @@ export class AppStore {
   dismissError = (): void => this.set({ error: null, errorSeverity: "error" });
 
   refreshSession = (): Promise<void> =>
-    this.resync(
-      this.state.sessionId,
-      this.selectionGeneration,
-      undefined,
-      true,
-      true,
-    );
+    this.resync(this.state.sessionId, this.selectionGeneration, true);
 
-  /** Replace the visible composer's text through the same nonce channel used
-   * by branch editing. The welcome flow uses this only after Pi assigns the
-   * new session identity, preserving its first message if upload/send fails. */
   replaceComposerText = (text: string): void => {
-    this.set({
-      editorText: { text, nonce: (this.state.editorText?.nonce ?? 0) + 1 },
-    });
+    if (this.state.sessionId) this.drafts.setText(this.state.sessionId, text);
   };
 
   private invalidateTransportRequests(): void {
     this.resyncRecovery.reset();
     this.resyncRequest += 1;
     this.pausedSessionReads = null;
-    this.transcriptData.invalidate();
-    this.pendingActionRequest += 1;
-    this.hostCommandRuns.clear();
     const commandActivities = Object.fromEntries(
       Object.entries(this.state.commandActivities).map(
         ([sessionId, activities]) => [
           sessionId,
           activities.map((activity) =>
             activity.status === "running" &&
-            (activity.command === "compact" ||
-              activity.command === "export" ||
-              activity.command === "reload")
+            nativeCommand(activity.command)?.execution === "host"
               ? {
                   ...activity,
                   status: "warning" as const,
@@ -683,19 +577,10 @@ export class AppStore {
     );
     this.set({
       commandActivities,
-      loadingOlderMessages: false,
-      transcriptActivityRanges: this.state.transcriptActivityRanges.map(
-        (range) =>
-          range.status === "loading"
-            ? { ...range, status: "idle", error: null }
-            : range,
-      ),
-      promptMapLoadingStarts: [],
-      promptMapNavigatingOrdinal: null,
       deletingSessionId: null,
       clearingHidden: false,
       pendingAction: null,
-      extensionUiRespondingId: null,
+      live: { ...this.state.live, extensionUiRespondingId: null },
     });
   }
 
@@ -707,33 +592,44 @@ export class AppStore {
     this.git.invalidateForTransportReplacement();
     this.workspace.invalidateForTransportReplacement();
     this.selection.invalidateForReplacement();
-    this.branches.invalidateForTransportReplacement();
+    this.branches.invalidate();
     this.sessionManagement.invalidateForTransportReplacement();
   }
 
   /** One transport replacement boundary invalidates every owner before a new
    * API or event stream can publish state. */
-  private replaceTransport(): number {
+  private replaceTransport(): void {
+    this.workbenchReady = false;
+    this.transcriptSequence = -1;
+    this.visibleEventSequence = -1;
     // Stop detaches its owned socket before closing it, so the close handler
     // cannot schedule a retry with the superseded credential or API.
     this.connectionController.stop();
-    const generation = ++this.transportGeneration;
-    this.pendingExports.clear();
-    this.set({ transportGeneration: generation, exportingSessions: {} });
+    this.afterInitialSnapshot = null;
+    this.set({
+      transportGeneration: this.state.transportGeneration + 1,
+      exportingSessions: {},
+    });
     this.bootstrapRequest?.abort();
     this.bootstrapRequest = null;
-    this.invalidateTransportControllers();
+    this.clearingWorkbench = true;
+    try {
+      this.invalidateTransportControllers();
+    } finally {
+      this.clearingWorkbench = false;
+    }
     this.catalog.invalidate();
     this.invalidateTransportRequests();
     this.runtimeEvents.invalidateTransport();
-    return generation;
+    this.nativeSettings.clear();
+    this.set({ pendingRuntimeSettings: {}, thinkingLevelPending: false });
+    this.preferences.invalidateTransport();
   }
 
   private handleAuthFailure(): void {
     this.replaceTransport();
-    this.authToken = null;
     this.hostAuthorityId = null;
-    this.snapshotDigest = null;
+    this.runtimeEvents.resetStatusAcknowledgements();
     this.api = null;
     this.set({
       needsToken: true,
@@ -743,36 +639,12 @@ export class AppStore {
     });
   }
 
-  // --- Bootstrap ---
-
-  private claimOpening(owner: number, sessionId: string | null): void {
-    this.readyWhileOpening.clear();
-    this.openingOwner = owner;
-    this.set({ openingSessionId: sessionId, sessionSelectionPending: true });
-  }
-
-  private releaseOpening(owner?: number): void {
-    if (owner !== undefined && this.openingOwner !== owner) return;
-    this.readyWhileOpening.clear();
-    this.openingOwner = null;
-    if (
-      this.state.openingSessionId !== null ||
-      this.state.sessionSelectionPending
-    ) {
-      this.set({
-        openingSessionId: null,
-        sessionSelectionPending: false,
-      });
-    }
-    this.branches.reconcile();
-  }
-
-  async init(token: string | null = this.authToken): Promise<void> {
+  async init(): Promise<void> {
     // Bootstrap owns a fresh transport generation before authenticating or
     // publishing any replacement state.
-    const generation = this.replaceTransport();
-    const api = createApi(token);
-    let reconnectToken = token;
+    this.replaceTransport();
+    if (!this.state.bootstrapped) this.set({ startupPending: true });
+    const api = createApi();
     const bootstrapRequest = new AbortController();
     this.bootstrapRequest = bootstrapRequest;
     const bootstrapTimeout = setTimeout(
@@ -780,41 +652,19 @@ export class AppStore {
         bootstrapRequest.abort(new DOMException("Deadline", "TimeoutError")),
       HTTP_OBSERVATION_TIMEOUT_MS,
     );
-    this.authToken = token;
     this.api = api;
-    const ownsBootstrap = (): boolean =>
-      generation === this.transportGeneration && this.api === api;
-    const preferenceOwners = this.preferences.captureBootstrapOwners();
-    const snapshotGeneration = this.snapshotGeneration;
-    const autoContinueIntent = this.selectionIntentGeneration;
-    const detailSessionId = this.state.bootstrapped
-      ? this.state.sessionId
-      : undefined;
-    let missingDetail = false;
+    const ownsBootstrap = (): boolean => this.api === api;
+    const autoContinueIntent = this.selection.openIntent;
+    const initial = !this.workbenchSelectionResolved;
+    const rememberedSession = initial ? lastWorkbenchSession() : null;
     try {
-      const boot = await api
-        .bootstrap(bootstrapRequest.signal, detailSessionId)
-        .catch((error: unknown) => {
-          if (
-            !ownsBootstrap() ||
-            !detailSessionId ||
-            !(error instanceof ApiError) ||
-            error.code !== "SESSION_NOT_FOUND"
-          )
-            throw error;
-          // A deleted detail owner is not an offline Host. Reconnect without
-          // detail, never to another browser's globally selected session.
-          missingDetail = true;
-          return api.bootstrap(bootstrapRequest.signal, null);
-        });
+      const boot = await api.bootstrap(bootstrapRequest.signal);
       if (!ownsBootstrap()) return;
       if (
         typeof boot.authorityId !== "string" ||
         !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
           boot.authorityId,
-        ) ||
-        typeof boot.snapshotDigest !== "string" ||
-        !/^[0-9a-f]{64}$/u.test(boot.snapshotDigest)
+        )
       )
         throw new ApiError(
           502,
@@ -822,23 +672,17 @@ export class AppStore {
           undefined,
           "INVALID_BOOTSTRAP_AUTHORITY",
         );
-      // Browser authority now belongs to the origin-key transport. Never retain
-      // an explicit launch credential in the store or a WebSocket URL.
-      api.retireBearer();
-      this.authToken = null;
-      reconnectToken = null;
-      const preferences = this.preferences.reconcile(
-        boot.preferences,
-        preferenceOwners,
-      );
-      configureToolPresentationRegistry(
+      const preferences = this.preferences.bootstrap(boot.authorityId, {
+        preferences: boot.preferences,
+        revision: boot.preferenceRevision,
+      });
+      configurePresentationAdapters(
         boot.toolPresentations,
         boot.presentationAdapters,
       );
       const updateProjection = this.updates.bootstrap(boot.updateStatus);
       this.set({
         prefs: preferences,
-        mock: boot.mock,
         version: boot.version,
         piVersion: boot.piVersion,
         ...updateProjection,
@@ -849,53 +693,62 @@ export class AppStore {
         needsToken: false,
         connectionProblem: null,
       });
+      if (this.hostAuthorityId !== boot.authorityId)
+        this.runtimeEvents.resetStatusAcknowledgements();
       this.hostAuthorityId = boot.authorityId;
+      if (rememberedSession) this.autoContinued = true;
       this.composer.reconcileAuthority(boot.authorityId);
-      if (this.snapshotGeneration === snapshotGeneration) {
-        this.applySnapshot(boot.snapshot);
-        this.snapshotDigest = boot.snapshotDigest;
-        if (missingDetail) {
-          this.autoContinued = true;
-          if (!this.state.sessionSelectionPending)
-            this.notify(
-              "info",
-              "The previous session no longer exists. Choose another session or start a new one.",
-            );
-        }
-      } else {
-        // A selection or resync already committed on this API. Bootstrap still
-        // supplies host metadata, but its digest cannot attest that newer view.
-        this.snapshotDigest = null;
-      }
-      void this.git.resumeAfterTransportReplacement();
+      const detailSessionId =
+        initial &&
+        !this.workbenchSelectionResolved &&
+        this.selection.openIntent === autoContinueIntent
+          ? rememberedSession
+            ? rememberedSession.sessionId
+            : (boot.startupSessionId ?? null)
+          : this.state.sessionId;
       if (boot.preferencesWarning)
         this.notify("warning", boot.preferencesWarning);
       if (boot.toolPresentationsWarning)
         this.notify("warning", boot.toolPresentationsWarning);
-      this.notifications.start(preferences.completionAttention);
-      void this.connectionController.connect(reconnectToken);
-      void this.loadSessions(this.state.sessionQuery).then(() => {
-        if (!ownsBootstrap()) return;
-        // The remembered launch preference applies once per store lifetime so
-        // reconnects never hijack a deliberate navigation.
-        if (this.autoContinued) return;
-        this.autoContinued = true;
-        if (this.selectionIntentGeneration !== autoContinueIntent) return;
+      this.notifications.start();
+      const catalog = this.loadSessions(this.state.sessionQuery);
+      this.afterInitialSnapshot = () => {
+        if (!showsFileComparison(this.state))
+          void this.git.resumeAfterTransportReplacement();
         if (
-          preferences.launch === "continue" &&
-          !this.state.sessionId &&
-          !this.state.sessionSelectionPending
-        ) {
-          const previous = this.state.sessions[0];
-          if (previous) void this.openSession(previous.id);
-        }
-      });
+          this.autoContinued ||
+          preferences.launch !== "continue" ||
+          this.state.sessionId ||
+          this.selection.openIntent !== autoContinueIntent
+        )
+          this.set({ startupPending: false });
+        void catalog.then(async () => {
+          if (!ownsBootstrap()) return;
+          if (!this.autoContinued) {
+            this.autoContinued = true;
+            if (
+              this.selection.openIntent === autoContinueIntent &&
+              preferences.launch === "continue" &&
+              !this.state.sessionId &&
+              !this.state.sessionSelectionPending
+            ) {
+              const previous = this.state.sessions[0];
+              if (previous) await this.openSession(previous.id);
+            }
+          }
+          if (ownsBootstrap()) this.set({ startupPending: false });
+        });
+      };
+      await this.connectionController.connect(detailSessionId);
     } catch (error) {
       if (!ownsBootstrap()) return;
-      if (error instanceof ApiError && error.status === 401) {
+      if (error instanceof BrowserUpgradeRequired) {
+        this.requireBrowserUpgrade();
+      } else if (error instanceof ApiError && error.status === 401) {
         this.handleAuthFailure();
       } else {
         this.set({
+          startupPending: false,
           connection: "offline",
           connectionProblem:
             navigator.onLine === false
@@ -914,7 +767,7 @@ export class AppStore {
           error: null,
           errorSeverity: "error",
         });
-        this.connectionController.scheduleReconnect(reconnectToken);
+        this.connectionController.scheduleReconnect();
       }
     } finally {
       clearTimeout(bootstrapTimeout);
@@ -925,97 +778,51 @@ export class AppStore {
 
   // --- Snapshot & event reconciliation ---
 
-  private applySnapshot(
-    snapshot: ActiveSnapshot &
-      Partial<import("../shared/contracts").SnapshotWitness>,
-    mode: SnapshotMode = "preserve",
-  ): void {
+  private applySnapshot(snapshot: ActiveSnapshot): void {
     const pendingQueues =
       snapshot.pendingQueues === undefined
         ? emptyPendingQueues()
         : parsePendingQueues(snapshot.pendingQueues);
     if (!pendingQueues) throw new Error("Invalid Pending queue snapshot");
+    this.workbenchSelectionResolved = true;
     this.resyncRecovery.reset();
     this.snapshotGeneration += 1;
-    // Only a snapshot supplied with its matching wire digest can be confirmed
-    // without retransmission. HTTP resyncs and local event reduction invalidate
-    // that witness until the next event-stream snapshot.
-    this.snapshotDigest =
-      snapshot.authorityId === this.hostAuthorityId &&
-      typeof snapshot.snapshotDigest === "string" &&
-      /^[0-9a-f]{64}$/u.test(snapshot.snapshotDigest)
-        ? snapshot.snapshotDigest
-        : null;
     const active = snapshot.active;
-    const transition = deriveSnapshotTransition(this.state, snapshot, mode);
-    const {
-      page,
-      nextSessionId,
-      cwd,
-      nextTranscriptRevision,
-      nextViewId,
-      nextDurableLeafId,
-      nextEffectiveLeafId,
-      revisionChanged,
-      projectionLineageCompatible,
-      historyCompatible,
-      messages,
-    } = transition;
-    const sessionChanged = transition.kind === "session-changed";
-    const projectionOwnerChanged =
-      sessionChanged ||
-      transition.kind === "view-changed" ||
-      transition.kind === "projection-replaced";
-    // Session-owned workspace and Composer slices are obtained at the store
-    // boundary, then passed into the pure lifecycle reset matrix.
-    const sessionOwnerPatch = sessionChanged
-      ? {
-          ...this.workspace.changeOwner(cwd),
-          ...this.composer.slice(nextSessionId),
-        }
-      : {};
-    if (projectionOwnerChanged) {
-      this.selectionGeneration += 1;
-      if (sessionChanged) this.pendingActionRequest += 1;
-      this.branches.invalidateForViewChange();
-      // Retire old content authority even when the same session survives.
-      // The lifecycle patch separately retains named-file selection intent
-      // so compaction/rewrite can reauthorize it instead of returning to Browse.
-      this.resources.invalidate();
-      this.transcriptData.invalidate();
-      if (sessionChanged) this.git.cancelAll();
-    } else if (revisionChanged) {
-      // Cancel observations owned by the old transcript generation. Keep the
-      // last known standing visible until Browse produces current observations.
-      this.resources.cancelProbes();
+    const transition = deriveSnapshotTransition(this.state, active);
+    const { sessionId: nextSessionId, cwd, sessionChanged } = transition;
+    if (nextSessionId) this.composer.loadDeliveries(nextSessionId);
+    if (sessionChanged) {
+      this.transcriptSequence = -1;
+      this.visibleEventSequence = -1;
     }
-    this.runtimeEvents.replaceSettledMessages(messages);
-    const projectionHealth = active?.projectionHealth ?? {
-      status: "ok" as const,
-    };
-    const projectionConflict = active?.projectionConflict ?? null;
-    const projectionError =
-      projectionConflict?.message ??
-      (projectionHealth.status !== "ok"
-        ? (projectionHealth.message ??
-          "Session persistence is not yet confirmed")
-        : null);
-    const projectionSeverity =
-      projectionConflictSeverity(projectionConflict) === "attention" ||
-      (!projectionConflict && projectionHealth.status === "pending")
-        ? "warning"
-        : "error";
-    const sessionStatuses = snapshot.sessionStatuses;
+    if (typeof snapshot.runtimeSequence === "number")
+      this.transcriptSequence = Math.max(
+        this.transcriptSequence,
+        snapshot.runtimeSequence,
+      );
+    const lifecyclePatch = this.replaceView(transition);
+    const sessionStatuses = this.runtimeEvents.projectSessionStatuses(
+      snapshot.sessionStatuses,
+      nextSessionId,
+    );
+    const runState = nextSessionId
+      ? (sessionStatuses[nextSessionId]?.runState ?? "idle")
+      : "idle";
     const extensionStatuses =
       parseExtensionStatuses(snapshot.extensionStatuses) ?? {};
-    this.runtimeEvents.reconcileObservedRuns(sessionStatuses);
-    const lifecyclePatch = snapshotLifecyclePatch(
-      this.state,
-      transition,
-      sessionOwnerPatch,
-    );
+    const restoreWorkbench =
+      !this.workbenchReady || sessionChanged || cwd !== this.state.cwd;
+    if (restoreWorkbench) {
+      const saved = readWorkbench(workbenchSessionKey(nextSessionId, cwd));
+      if (saved) {
+        Object.assign(lifecyclePatch, saved, {
+          workspaceSearchLoading: Boolean(saved.workspaceQuery.trim()),
+        });
+      }
+    }
     this.set({
-      sessionId: active?.sessionId ?? null,
+      ...lifecyclePatch,
+      sessionId: nextSessionId,
       sessionName: active?.sessionName ?? "",
       sessionFile: active?.sessionFile ?? null,
       sessionStats: active?.stats ?? null,
@@ -1030,120 +837,130 @@ export class AppStore {
           : this.state.thinkingLevel,
       commonModels:
         active?.commonModels ?? (sessionChanged ? [] : this.state.commonModels),
-      availableModels:
-        active &&
-        Array.isArray(active.availableModels) &&
-        active.availableModels.length > 0
-          ? (active.availableModels as ModelOption[])
-          : this.state.availableModels,
+      availableModels: Array.isArray(active?.availableModels)
+        ? (active.availableModels as ModelOption[])
+        : this.state.availableModels,
       commands: Array.isArray(active?.commands)
         ? (active.commands as PiCommand[])
         : [],
-      contextUsage: contextUsage(active?.stats ?? null),
-      messages,
-      transcriptRevision: nextTranscriptRevision,
-      transcriptAppendFromRevision:
-        page?.appendFromRevision ?? nextTranscriptRevision,
-      transcriptIncarnation: page?.incarnation ?? null,
-      transcriptViewId: nextViewId,
-      transcriptDurableLeafId: nextDurableLeafId,
-      transcriptEffectiveLeafId: nextEffectiveLeafId,
-      composerHistoryVersion: page?.composerHistoryVersion ?? null,
-      hasOlderMessages: historyCompatible
-        ? this.state.hasOlderMessages
-        : Boolean(page?.hasOlder),
-      olderMessagesCursor: historyCompatible
-        ? this.state.olderMessagesCursor
-        : (page?.olderCursor ?? null),
-      loadingOlderMessages: projectionLineageCompatible
-        ? this.state.loadingOlderMessages
-        : false,
-      olderMessagesError: historyCompatible
-        ? this.state.olderMessagesError
-        : null,
-      transcriptActivityRanges: historyCompatible
-        ? this.state.transcriptActivityRanges
-        : (page?.activityRanges ?? []).map((range) => ({
-            ...range,
-            status: "idle" as const,
-            error: null,
-          })),
-      promptMapTurns: projectionLineageCompatible
-        ? this.state.promptMapTurns
-        : [],
-      promptMapTotal: projectionLineageCompatible
-        ? this.state.promptMapTotal
-        : 0,
-      promptMapLoadedStarts: projectionLineageCompatible
-        ? this.state.promptMapLoadedStarts
-        : [],
-      promptMapLoadingStarts: projectionLineageCompatible
-        ? this.state.promptMapLoadingStarts
-        : [],
-      promptMapError: projectionLineageCompatible
-        ? this.state.promptMapError
-        : null,
-      promptMapNavigatingOrdinal: projectionLineageCompatible
-        ? this.state.promptMapNavigatingOrdinal
-        : null,
-      projectionHealth,
-      projectionConflict,
-      projectionError,
-      // A successful authoritative read resolves an old refresh warning;
-      // operation feedback lives beside its action or in Notices instead.
-      error: projectionError,
-      errorSeverity: projectionSeverity,
-      streaming: Boolean(active?.isStreaming),
-      bashRunning: snapshot.bashRunning === true,
-      activeAssistantMessageKey:
-        typeof active?.activeAssistantMessageKey === "string"
-          ? active.activeAssistantMessageKey
-          : null,
-      runState: active?.projectionConflict ? "conflict" : snapshot.runState,
-      // Wholesale replace: the host clears completion attention for the
-      // session that was just viewed, so stale client state must not linger.
+      ...transcriptDiagnostic(transition.view),
       sessionStatuses,
       sessionActionError: null,
-      // Settled activity is rebuilt from the selected worker. Background
-      // extension dialogs are restored in Pi request order when their owning
-      // session is viewed.
-      tools: active?.toolActivity ?? {},
-      retry:
-        snapshot.runState === "retrying"
-          ? parseRetryInfo(snapshot.retry)
+      live: {
+        ...lifecyclePatch.live,
+        ...(sessionChanged ? { windowTitle: null } : {}),
+        streaming: Boolean(active?.isStreaming),
+        bashRunning: snapshot.bashRunning === true,
+        tools: active?.toolActivity ?? {},
+        retry: runState === "retrying" ? parseRetryInfo(snapshot.retry) : null,
+        summarizationRetry: isBusyRunState(runState)
+          ? parseRetryInfo(snapshot.summarizationRetry)
           : null,
-      summarizationRetry: isBusyRunState(snapshot.runState)
-        ? parseRetryInfo(snapshot.summarizationRetry)
-        : null,
-      queue: pendingQueues,
-      extensionUiRequests: Array.isArray(snapshot.pendingExtensionUiRequests)
-        ? snapshot.pendingExtensionUiRequests
-        : [],
-      extensionUiRespondingId:
-        transition.kind === "session-changed" ||
-        transition.kind === "view-changed"
-          ? null
-          : this.state.extensionUiRespondingId,
-      extensionDisplays: parseExtensionDisplays(snapshot.extensionDisplays),
-      statuses: extensionStatuses,
-      ...lifecyclePatch,
+        queue: pendingQueues,
+        extensionUiRequests: Array.isArray(snapshot.pendingExtensionUiRequests)
+          ? snapshot.pendingExtensionUiRequests
+          : [],
+        extensionDisplays: parseExtensionDisplays(snapshot.extensionDisplays),
+        statuses: extensionStatuses,
+      },
     });
-    if (
-      lifecyclePatch.resourcePreview?.status === "loading" &&
-      this.state.selectedResourceReference ===
-        lifecyclePatch.selectedResourceReference
-    )
-      void this.resources.openResource(
-        lifecyclePatch.resourcePreview.reference,
-        "files",
-        lifecyclePatch.selectedResourceWorkspacePath ?? undefined,
-      );
+    this.workbenchReady = true;
+    if (restoreWorkbench) {
+      if (this.hostAuthorityId) rememberWorkbenchSession(this.state.sessionId);
+      this.workspace.resumeSearch();
+    }
+    this.restoreViewFile(lifecyclePatch);
     // Snapshots restore projection only. Attention is armed exclusively by
     // live lifecycle events, never by bootstrap/reconnect status.
     if (nextSessionId) this.runtimeEvents.acknowledgeVisibleSession();
-    if (sessionChanged && nextSessionId && this.git.hasVisibleSurface())
+    if (
+      sessionChanged &&
+      nextSessionId &&
+      this.git.hasVisibleSurface() &&
+      !showsFileComparison(this.state)
+    )
       void this.git.refreshStatus();
-    this.branches.reconcile();
+  }
+
+  private applyLiveTranscript(
+    sessionId: string,
+    live: LiveTranscript,
+    sequence: number,
+    sessionStatuses?: AppState["sessionStatuses"],
+  ): void {
+    if (
+      this.state.sessionId !== sessionId ||
+      sequence <= this.transcriptSequence
+    )
+      return;
+    this.transcriptSequence = sequence;
+    this.snapshotGeneration += 1;
+    this.resyncRecovery.reset();
+    const transition = deriveSnapshotTransition(this.state, {
+      ...live,
+      sessionId,
+      cwd: this.state.cwd,
+    });
+    const lifecycle = this.replaceView(transition);
+    const diagnostic = transcriptDiagnostic(transition.view);
+    this.set({
+      ...lifecycle,
+      ...(sessionStatuses ? { sessionStatuses } : {}),
+      ...(diagnostic.error ||
+      this.state.error === transcriptDiagnostic(this.state.view).error
+        ? diagnostic
+        : {}),
+    });
+    this.restoreViewFile(lifecycle);
+  }
+
+  private replaceView(transition: ReturnType<typeof deriveSnapshotTransition>) {
+    const { sessionChanged, cwd, replaced, revisionChanged } = transition;
+    if (replaced) {
+      this.nativeSettings.clear();
+      this.selectionGeneration += 1;
+      this.resyncRequest += 1;
+      if (sessionChanged) this.branches.retireAction();
+      this.branches.retireReads();
+      this.resources.invalidate();
+      if (sessionChanged) this.git.invalidateForTransportReplacement();
+      else this.git.clearComparison();
+    } else if (revisionChanged) {
+      this.resources.cancelProbes();
+    }
+    return {
+      ...snapshotLifecyclePatch(
+        this.state,
+        transition,
+        sessionChanged ? this.workspace.changeOwner(cwd) : undefined,
+      ),
+      view: transition.view,
+      live: {
+        ...this.state.live,
+        messages: transition.messages,
+        activeAssistantMessageKey: transition.activeAssistantMessageKey,
+        ...(transition.viewChanged ? { pendingRetryError: null } : {}),
+        ...(replaced ? { extensionUiRespondingId: null } : {}),
+      },
+      ...(replaced
+        ? { pendingRuntimeSettings: {}, thinkingLevelPending: false }
+        : {}),
+    };
+  }
+
+  private restoreViewFile({ fileInspection }: Partial<AppState>) {
+    if (
+      fileInspection?.kind === "file" &&
+      this.state.fileInspection === fileInspection &&
+      this.state.resourcesOpen &&
+      this.state.contextMode === "files"
+    )
+      void this.restoreFileTab();
+  }
+
+  private visibleSessionIsExternal(): boolean {
+    const id = this.state.sessionId;
+    return Boolean(id && this.state.sessionStatuses[id]?.external);
   }
 
   /** Deletion temporarily retires the target's projection. Fence older reads,
@@ -1165,84 +982,66 @@ export class AppStore {
   private async resync(
     expectedSessionId = this.state.sessionId,
     expectedGeneration = this.selectionGeneration,
-    minimumRevision?: number,
-    preserveAppendHistory = true,
     explicit = false,
   ): Promise<void> {
     const api = this.api;
-    if (
-      !api ||
-      this.state.sessionId !== expectedSessionId ||
-      this.selectionGeneration !== expectedGeneration ||
-      (expectedSessionId !== null &&
-        this.pausedSessionReads?.has(expectedSessionId))
-    )
-      return;
-    const transportGeneration = this.transportGeneration;
+    const ownsView = () =>
+      this.api === api &&
+      this.state.sessionId === expectedSessionId &&
+      this.selectionGeneration === expectedGeneration &&
+      !(expectedSessionId && this.pausedSessionReads?.has(expectedSessionId));
+    if (!api || !ownsView()) return;
     this.resyncRecovery.cancel();
     const request = ++this.resyncRequest;
-    const ownsTransport = (): boolean =>
-      this.api === api && this.transportGeneration === transportGeneration;
+    const current = () => request === this.resyncRequest && ownsView();
     try {
-      const snapshot = await api.snapshot(expectedSessionId);
+      const snapshot = await api.json("snapshot", {
+        query: { detail: expectedSessionId ?? "" },
+      });
       const snapshotSessionId = snapshot.active?.sessionId ?? null;
       const page = snapshot.active?.transcriptPage;
       if (
-        request !== this.resyncRequest ||
-        !ownsTransport() ||
-        this.state.sessionId !== expectedSessionId ||
-        this.selectionGeneration !== expectedGeneration ||
+        !current() ||
         snapshotSessionId !== expectedSessionId ||
-        (minimumRevision !== undefined &&
-          (page?.revision ?? -1) < minimumRevision) ||
+        (snapshot.runtimeSequence !== undefined &&
+          snapshot.runtimeSequence <
+            Math.max(this.transcriptSequence, this.visibleEventSequence)) ||
         (page?.incarnation &&
-          page.incarnation === this.state.transcriptIncarnation &&
-          page.revision < this.state.transcriptRevision)
+          page.incarnation === this.state.view.incarnation &&
+          page.revision < this.state.view.revision)
       )
         return;
-      this.applySnapshot(
-        snapshot,
-        preserveAppendHistory ? "preserve" : "replace",
-      );
+      this.applySnapshot(snapshot);
     } catch (error) {
-      if (!ownsTransport()) return;
+      if (this.api !== api) return;
       if (error instanceof ApiError && error.status === 401) {
         this.handleAuthFailure();
       } else {
         // Authentication remains transport-wide; other read failures must
         // still own this selection and not predate its deletion boundary.
-        if (
-          request !== this.resyncRequest ||
-          this.state.sessionId !== expectedSessionId ||
-          this.selectionGeneration !== expectedGeneration
-        )
-          return;
+        if (!current()) return;
         if (!explicit && isTransientFailure(error)) {
           if (
             this.resyncRecovery.schedule(() => {
-              if (request === this.resyncRequest && ownsTransport())
-                void this.resync(
-                  expectedSessionId,
-                  expectedGeneration,
-                  minimumRevision,
-                  preserveAppendHistory,
-                );
+              if (current())
+                void this.resync(expectedSessionId, expectedGeneration);
             })
           )
             return;
           if (this.state.connection !== "open") return;
         }
-        const currentProjectionError = this.state.projectionError;
+        const currentProjectionError = transcriptDiagnostic(
+          this.state.view,
+        ).error;
         this.set({
           error:
             currentProjectionError ??
             (explicit && error instanceof Error
               ? `Failed to refresh session: ${error.message}`
-              : "The conversation could not be synchronized. Showing the last confirmed state."),
+              : "Could not refresh this conversation. Showing the last loaded version."),
           errorSeverity:
             currentProjectionError &&
-            projectionConflictSeverity(this.state.projectionConflict) ===
-              "error"
+            projectionConflictSeverity(this.state.view.conflict) === "error"
               ? "error"
               : "warning",
         });
@@ -1250,38 +1049,37 @@ export class AppStore {
     }
   }
 
-  loadOlderMessages = (): Promise<boolean> =>
-    this.transcriptData.loadOlderMessages();
-
-  loadComposerHistory = (
+  readNativeHistory = <Q extends SessionHistoryQuery>(
     sessionId: string,
     viewId: string,
-    incarnation: string | null,
-    historyVersion: string,
-  ): Promise<ComposerHistoryEntry[] | null> =>
-    this.transcriptData.loadComposerHistory(
-      sessionId,
-      viewId,
-      incarnation,
-      historyVersion,
-    );
+    query: Q,
+    signal: AbortSignal,
+  ) => this.branches.history(sessionId, viewId, query, signal);
 
-  loadPromptMapTurns = (start?: number): Promise<UserTurnAnchor[]> =>
-    this.transcriptData.loadPromptMapTurns(start);
-
-  navigatePromptMapTurn = (ordinal: number): Promise<boolean> =>
-    this.transcriptData.navigatePromptMapTurn(ordinal);
-
-  materializeActivityRanges = (
-    cursors: readonly string[],
-    beforeCommit?: () => void,
-    mode: ActivityMaterializationMode = "all",
-  ): Promise<void> =>
-    this.transcriptData.materializeActivityRanges(cursors, beforeCommit, mode);
+  loadComposerHistory = (
+    scope: Omit<
+      import("./composer-history").ComposerHistoryScope,
+      "effectiveLeafId"
+    >,
+    signal: AbortSignal,
+  ) => this.branches.composerHistory(scope, signal);
 
   // --- Connection lifecycle ---
 
-  retryConnection = (): void => this.connectionController.retry(this.authToken);
+  requireBrowserUpgrade = (): void => {
+    this.connectionController.stop();
+    this.set({
+      startupPending: false,
+      connection: "offline",
+      connectionProblem: { kind: "browser-upgrade" },
+    });
+  };
+
+  retryConnection = (): void => {
+    if (this.state.connectionProblem?.kind === "browser-upgrade")
+      window.location.reload();
+    else this.connectionController.retry();
+  };
 
   recoverConnection = (trigger: ConnectionRecoveryTrigger): void =>
     this.connectionController.recover(trigger);
@@ -1330,33 +1128,26 @@ export class AppStore {
   clearHiddenSessions = (
     sessionIds: string[],
     projectCwd?: string,
-  ): Promise<HiddenClearResponse | null> =>
+  ): Promise<SessionDeletionResponse | null> =>
     this.sessionManagement.clearHiddenSessions(sessionIds, projectCwd);
 
   // --- Prompting & native commands ---
 
   private presentCommandActivity(
     sessionId: string,
-    input: string,
     command: string,
-    status: AppState["commandActivities"][string][number]["status"],
+    status: NativeCommandActivity["status"],
     message: string,
-    options: Pick<
-      AppState["commandActivities"][string][number],
-      "details" | "action"
-    > = {},
+    options: Pick<NativeCommandActivity, "details" | "action"> = {},
   ): number {
     const id = this.state.nextNativeCommandId;
     const existing = this.state.commandActivities[sessionId] ?? [];
     const activity: NativeCommandActivity = {
       id,
       sessionId,
-      input,
       command,
       status,
-      title: nativeCommandTitle(command),
       message,
-      createdAt: Date.now(),
       ...options,
     };
     const replaced = isCommandQuery(activity)
@@ -1409,35 +1200,75 @@ export class AppStore {
     this.set({ commandActivities });
   };
 
-  private finishSimpleCommand(
+  private runCommandActivity(
     sessionId: string,
-    id: number,
-    result: CommandChangeResult,
-    confirmation: string,
-  ): void {
-    if (result.status === "success") {
-      this.dismissCommandActivity(sessionId, id);
-      if (this.state.sessionId === sessionId)
-        this.notify("info", result.message ?? confirmation);
-    } else {
-      this.updateCommandActivity(
-        sessionId,
-        id,
-        result.status === "error"
-          ? { status: "error", message: result.message }
-          : {
-              status: "warning",
-              message:
-                "The command outcome is unknown after ownership changed.",
-            },
-      );
-    }
+    command: string,
+    message: string,
+    run: () => Promise<
+      Pick<
+        NativeCommandActivity,
+        "status" | "message" | "details" | "download" | "action"
+      >
+    >,
+    options: {
+      scopedAuth?: () => boolean;
+      persistent?: boolean;
+      fallback?: string;
+      afterReceipt?: () => void;
+    } = {},
+  ): PromptAcceptedResponse {
+    const api = this.api;
+    const id = this.presentCommandActivity(
+      sessionId,
+      command,
+      "running",
+      message,
+    );
+    // Dispatch here so clipboard reads are still in the initiating gesture.
+    void (async () => {
+      try {
+        const result = await run();
+        if (options.afterReceipt && this.api !== api) return;
+        if (result.status === "success" && !options.persistent) {
+          this.dismissCommandActivity(sessionId, id);
+          if (this.state.sessionId === sessionId)
+            this.notify("info", result.message);
+        } else {
+          this.updateCommandActivity(sessionId, id, result);
+        }
+        options.afterReceipt?.();
+      } catch (error) {
+        if (options.afterReceipt && this.api !== api) return;
+        const unauthenticated =
+          error instanceof ApiError && error.status === 401;
+        const unknown =
+          error instanceof ApiTransportError ||
+          (error instanceof ApiError &&
+            error.code === "PI_RPC_OUTCOME_UNKNOWN");
+        this.updateCommandActivity(sessionId, id, {
+          status: unknown && !options.scopedAuth ? "warning" : "error",
+          message:
+            unauthenticated && !options.scopedAuth
+              ? "Host authentication expired before the command completed."
+              : unknown && !options.scopedAuth
+                ? "Could not confirm the command result. Reconnect and check the session before trying again."
+                : error instanceof Error
+                  ? error.message
+                  : (options.fallback ?? `/${command} failed`),
+        });
+        if (unauthenticated && (options.scopedAuth?.() ?? true))
+          this.handleAuthFailure();
+      }
+    })();
+    return ACCEPTED_NATIVE_COMMAND;
   }
 
   private requestNativeCommandUi(
     sessionId: string,
     action: NonNullable<AppState["nativeCommandUiRequest"]>["action"],
     query?: string,
+    modelSettingsFocus?: "credentials" | "common",
+    modelSettingsOwner?: import("../shared/model-settings").ModelSettingsOwner,
   ): void {
     const id = this.state.nextNativeCommandId;
     this.set({
@@ -1447,9 +1278,16 @@ export class AppStore {
         sessionId,
         action,
         ...(query ? { query } : {}),
+        ...(modelSettingsFocus ? { modelSettingsFocus } : {}),
+        ...(modelSettingsOwner ? { modelSettingsOwner } : {}),
       },
     });
   }
+
+  openBranchMenu = (): void => {
+    const { sessionId } = this.state;
+    if (sessionId) this.requestNativeCommandUi(sessionId, "branches");
+  };
 
   consumeNativeCommandUiRequest = (id: number): void => {
     if (this.state.nativeCommandUiRequest?.id === id)
@@ -1485,7 +1323,7 @@ export class AppStore {
   };
 
   installedPiChangelog = () =>
-    this.api?.piChangelog() ??
+    this.api?.json("piChangelog", {}) ??
     Promise.reject(new Error("The Host is unavailable"));
 
   exportSession = (
@@ -1493,21 +1331,21 @@ export class AppStore {
     format: "html" | "jsonl",
   ): Promise<void> => {
     const api = this.api;
-    const generation = this.transportGeneration;
     if (!api) return Promise.reject(new Error("The Host is unavailable"));
-    const existing = this.pendingExports.get(sessionId);
-    if (existing?.api === api && existing.generation === generation)
-      return existing.promise;
+    const existing = this.state.exportingSessions[sessionId];
+    if (existing) return existing.promise;
     const promise: Promise<void> = Promise.resolve().then(async () => {
       try {
-        const exported = await api.exportSession({ sessionId, format });
+        const exported = await api.json("exportSession", {
+          body: { sessionId, format },
+        });
         const blob = await api.exportDownload(sessionId, exported.downloadId);
-        if (this.api !== api || this.transportGeneration !== generation)
+        if (this.api !== api)
           throw new Error("The Host connection changed during export");
         downloadExportBlob(blob, exported.fileName);
         this.notify("info", `Downloaded ${exported.fileName}`);
       } catch (error) {
-        if (this.api === api && this.transportGeneration === generation) {
+        if (this.api === api) {
           if (error instanceof ApiError && error.status === 401)
             this.handleAuthFailure();
           this.notify(
@@ -1517,19 +1355,17 @@ export class AppStore {
         }
         throw error;
       } finally {
-        if (this.pendingExports.get(sessionId)?.promise === promise) {
-          this.pendingExports.delete(sessionId);
+        if (this.state.exportingSessions[sessionId]?.promise === promise) {
           const exportingSessions = { ...this.state.exportingSessions };
           delete exportingSessions[sessionId];
           this.set({ exportingSessions });
         }
       }
     });
-    this.pendingExports.set(sessionId, { api, generation, promise });
     this.set({
       exportingSessions: {
         ...this.state.exportingSessions,
-        [sessionId]: format,
+        [sessionId]: { format, promise },
       },
     });
     return promise;
@@ -1543,14 +1379,13 @@ export class AppStore {
       (activity) => activity.id === id,
     )?.download;
     const api = this.api;
-    const generation = this.transportGeneration;
     if (!download || !api) return;
     try {
       const blob = await api.exportDownload(sessionId, download.id);
-      if (this.api !== api || this.transportGeneration !== generation) return;
+      if (this.api !== api) return;
       downloadExportBlob(blob, download.fileName);
     } catch (error) {
-      if (this.api !== api || this.transportGeneration !== generation) return;
+      if (this.api !== api) return;
       if (error instanceof ApiError && error.status === 401)
         this.handleAuthFailure();
       else
@@ -1563,130 +1398,57 @@ export class AppStore {
 
   private launchHostNativeCommand(
     sessionId: string,
-    input: string,
-    command: "compact" | "export" | "reload",
+    command: HostNativeCommandName,
     argument: string,
   ): PromptAcceptedResponse | false {
     const api = this.api;
     if (!api) return false;
-    if (this.hostCommandRuns.has(sessionId)) {
+    if (
+      this.state.commandActivities[sessionId]?.some(
+        (activity) =>
+          activity.status === "running" &&
+          nativeCommand(activity.command)?.execution === "host",
+      )
+    ) {
       this.notify("warning", "Wait for the active command to finish");
       return false;
     }
-    const id = this.presentCommandActivity(
-      sessionId,
-      input,
-      command,
-      "running",
-      "",
-    );
-    this.hostCommandRuns.set(sessionId, id);
     const selectionGeneration = this.selectionGeneration;
-    const transportGeneration = this.transportGeneration;
-    void api
-      .nativeCommand({
-        sessionId,
-        command,
-        ...(argument ? { argument } : {}),
-      })
-      .then((result: HostNativeCommandResponse) => {
-        if (
-          this.api !== api ||
-          this.transportGeneration !== transportGeneration
-        ) {
-          this.updateCommandActivity(sessionId, id, {
-            status: "warning",
-            message:
-              "The Host connection changed before this command result could be confirmed.",
-          });
-          return;
-        }
-        if (result.outcome !== "cancelled" && command !== "export") {
-          this.finishSimpleCommand(
-            sessionId,
-            id,
-            { status: "success" },
-            result.message,
-          );
-        } else {
-          this.updateCommandActivity(sessionId, id, {
-            status: result.outcome === "cancelled" ? "cancelled" : "success",
-            message: result.message,
-            details: result.details,
-            ...(result.export?.downloadId && result.export.fileName
-              ? {
-                  download: {
-                    id: result.export.downloadId,
-                    fileName: result.export.fileName,
-                  },
-                }
-              : {}),
-            ...(command === "export" && result.details?.[0]?.value
-              ? {
-                  action: {
-                    kind: "copy" as const,
-                    label: "Copy path",
-                    value: result.details[0].value,
-                  },
-                }
-              : {}),
-          });
-        }
-        // Keep the command result in its session, but do not let an old
-        // completion supersede a newer selection/view's pending refresh.
-        void this.resync(sessionId, selectionGeneration);
-      })
-      .catch((error: unknown) => {
-        if (
-          this.api !== api ||
-          this.transportGeneration !== transportGeneration
-        ) {
-          this.updateCommandActivity(sessionId, id, {
-            status: "warning",
-            message:
-              "The Host connection changed before this command result could be confirmed.",
-          });
-          return;
-        }
-        if (error instanceof ApiError && error.status === 401) {
-          this.updateCommandActivity(sessionId, id, {
-            status: "error",
-            message:
-              "Host authentication expired before the command completed.",
-          });
-          this.handleAuthFailure();
-          return;
-        }
-        if (
-          error instanceof ApiTransportError ||
-          (error instanceof ApiError && error.code === "PI_RPC_OUTCOME_UNKNOWN")
-        ) {
-          this.updateCommandActivity(sessionId, id, {
-            status: "warning",
-            message:
-              "INSΠRE could not confirm this command's outcome. Reconnect and inspect the session before running it again.",
-          });
-          return;
-        }
-        this.updateCommandActivity(sessionId, id, {
-          status: "error",
-          message:
-            error instanceof Error ? error.message : `/${command} failed`,
+    return this.runCommandActivity(
+      sessionId,
+      command,
+      "",
+      async () => {
+        const result = await api.json("nativeCommand", {
+          body: { sessionId, command, argument: argument || undefined },
         });
-      })
-      .finally(() => {
-        if (this.hostCommandRuns.get(sessionId) === id)
-          this.hostCommandRuns.delete(sessionId);
-      });
-    return ACCEPTED_NATIVE_COMMAND;
+        const exporting = command === "export";
+        const path = exporting ? result.details?.[0]?.value : undefined;
+        const { downloadId, fileName } = result.export ?? {};
+        return {
+          status: result.outcome === "cancelled" ? "cancelled" : "success",
+          message: result.message,
+          details: result.details,
+          download:
+            downloadId && fileName ? { id: downloadId, fileName } : undefined,
+          action: path
+            ? { kind: "copy", label: "Copy path", value: path }
+            : undefined,
+        };
+      },
+      {
+        persistent: command === "export",
+        afterReceipt: () => void this.resync(sessionId, selectionGeneration),
+      },
+    );
   }
 
   private sessionCommandDetails(): NonNullable<
     NativeCommandActivity["details"]
   > {
-    const stats = recordOf(this.state.sessionStats);
-    const tokens = recordOf(stats?.tokens);
-    const context = recordOf(stats?.contextUsage);
+    const stats = jsonRecord(this.state.sessionStats);
+    const tokens = jsonRecord(stats?.tokens);
+    const context = contextUsage(stats);
     const details: NonNullable<NativeCommandActivity["details"]> = [];
     const totalMessages = formattedInteger(stats?.totalMessages);
     if (totalMessages)
@@ -1705,61 +1467,30 @@ export class AppStore {
           maximumFractionDigits: 4,
         }).format(cost),
       });
-    const used = formattedInteger(context?.tokens);
-    const window = formattedInteger(context?.contextWindow);
-    const percent = finiteNumber(context?.percent);
-    if (used && window)
+    if (context) {
+      const { tokens: used, contextWindow, percent } = context;
       details.push({
         id: "context",
         label: "Context",
-        value: `${used} / ${window}${percent === null ? "" : ` (${Math.round(percent)}%)`}`,
+        value: `${used?.toLocaleString() ?? "—"} / ${contextWindow.toLocaleString()}${
+          percent === null ? "" : ` (${Math.round(percent)}%)`
+        }${used === null ? " · Updates after the next reply" : ""}`,
       });
+    }
     return details;
   }
-
-  isNativeCommand = (input: string): boolean => {
-    const native = parseNativeCommand(input);
-    if (!native) return false;
-    const owner = resolveCommandInventory(this.state.commands).find(
-      (command) => command.name === native.name,
-    );
-    return native.name === "compact" || owner?.source === "builtin";
-  };
 
   /** Palette actions never borrow an unfinished message's artifacts. */
   runPaletteNativeCommand = (input: string): PromptAcceptedResponse | false => {
     const command = parseNativeCommand(input);
-    return command ? this.executeNativeCommand(input, command, false) : false;
+    return command ? this.executeNativeCommand(command, false) : false;
   };
 
-  sendPreparedCommand = async (
+  sendPreparedCommand = (
     input: string,
     behavior?: "steer" | "followUp",
-  ): Promise<PromptAcceptedResponse | false> => {
-    const inventory = resolveCommandInventory(this.state.commands);
-    const invocation = parseCommandInvocation(input, (name) =>
-      inventory.some((command) => command.name === name),
-    );
-    if (!invocation) {
-      this.notify("warning", "Enter a slash command to prepare");
-      return false;
-    }
-    if (parseNativeCommand(input)) return this.runPaletteNativeCommand(input);
-    const command = inventory.find((item) => item.name === invocation.name);
-    if (!command || command.source === "builtin") {
-      this.notify(
-        "warning",
-        "This command is no longer available in the selected session",
-      );
-      return false;
-    }
-    return this.composer.send(
-      `/${invocation.name}${invocation.argument ? ` ${invocation.argument}` : ""}`,
-      command.source === "extension" ? undefined : behavior,
-      undefined,
-      true,
-    );
-  };
+  ): Promise<PromptAcceptedResponse | false> =>
+    this.dispatchComposerInput(input, behavior, undefined, true);
 
   /** Shared confirmation boundary for both live controls and pre-session selections. */
   selectStatusControl = async (
@@ -1767,10 +1498,9 @@ export class AppStore {
     value: string,
     sessionId: string | null,
   ): Promise<boolean> => {
-    const transport = this.transportGeneration;
+    const api = this.api;
     const current = () =>
-      this.state.sessionId === sessionId &&
-      this.transportGeneration === transport;
+      this.state.sessionId === sessionId && this.api === api;
     if (!sessionId || !current()) return false;
     if (
       !control.options.some((option) => option.value === value) ||
@@ -1782,8 +1512,8 @@ export class AppStore {
     )
       throw new Error("This control is not available in this session.");
     const confirmed = () =>
-      controlState(control, this.state.statuses[control.state.key])?.value ===
-      value;
+      controlState(control, this.state.live.statuses[control.state.key])
+        ?.value === value;
     if (confirmed()) return true;
     return new Promise<boolean>((resolve, reject) => {
       let settled = false;
@@ -1841,260 +1571,167 @@ export class AppStore {
   };
 
   private executeNativeCommand(
-    input: string,
-    command: NonNullable<ReturnType<typeof parseNativeCommand>>,
+    {
+      descriptor,
+      argument,
+      raw,
+    }: NonNullable<ReturnType<typeof parseNativeCommand>>,
     includeDraftArtifacts = true,
   ): PromptAcceptedResponse | false {
     const sessionId = this.state.sessionId;
-    if (!sessionId || !command) return false;
-    if (
-      this.state.readOnlyReason &&
-      !command.descriptor.availableWithoutWorkspace
-    )
+    if (!sessionId) return false;
+    const { name } = descriptor;
+    if (this.state.readOnlyReason && !descriptor.availableWithoutWorkspace)
       return false;
+    const report = (
+      status: NativeCommandActivity["status"],
+      message: string,
+      options?: Pick<NativeCommandActivity, "details" | "action">,
+    ) => this.presentCommandActivity(sessionId, name, status, message, options);
+    const confirm = (
+      message: string,
+      action: () => Promise<CommandChangeResult>,
+      confirmation: string,
+    ) =>
+      this.runCommandActivity(sessionId, name, message, async () => {
+        const result = await action();
+        return result.status === "stale"
+          ? {
+              status: "warning",
+              message:
+                "The command outcome is unknown after ownership changed.",
+            }
+          : { status: result.status, message: result.message ?? confirmation };
+      });
+    const draft = this.drafts.get(sessionId);
     if (
       includeDraftArtifacts &&
-      (this.state.attachments.length > 0 || this.state.projectFiles.length > 0)
+      (draft.attachments.length || draft.projectFiles.length)
     ) {
-      this.presentCommandActivity(
-        sessionId,
-        input,
-        command.name,
+      report(
         "error",
         "Commands cannot include attachments or project-file references. Remove them and try again.",
       );
       return false;
     }
-    if (!command.descriptor.argumentHint && command.argument) {
-      this.presentCommandActivity(
-        sessionId,
-        input,
-        command.name,
-        "error",
-        `/${command.name} does not accept arguments.`,
-      );
+    if (!descriptor.argumentHint && argument) {
+      report("error", `/${name} does not accept arguments.`);
       return ACCEPTED_NATIVE_COMMAND;
     }
 
-    if (
-      (command.name === "model" || command.name === "thinking") &&
-      !modelControlsSupported(this.state)
-    ) {
-      this.presentCommandActivity(
-        sessionId,
-        input,
-        command.name,
-        "warning",
-        NATIVE_MODEL_GUIDANCE,
+    const requiresOwnedPi = descriptor.requiresIdleOwnedPi;
+    const external = requiresOwnedPi && this.visibleSessionIsExternal();
+    if (descriptor.execution === "terminal" || external) {
+      report(
+        external ? "info" : "warning",
+        descriptor.terminalGuidance ??
+          `Run /${name} in the original Pi terminal.`,
+        {
+          details: [{ label: "Run in Pi", value: raw }],
+          action: {
+            kind: "open-terminal",
+            label: "Open terminal & copy command",
+            value: raw,
+          },
+        },
       );
       return ACCEPTED_NATIVE_COMMAND;
     }
-    if (
-      (command.name === "compact" || command.name === "reload") &&
-      isExternalSession(this.state)
-    ) {
-      this.presentCommandActivity(
-        sessionId,
-        input,
-        command.name,
+    if (requiresOwnedPi && isBusyRunState(selectedRunState(this.state))) {
+      report(
+        "warning",
+        `Wait for the current Pi operation to finish before running /${name}.`,
+      );
+      return ACCEPTED_NATIVE_COMMAND;
+    }
+    if (descriptor.execution === "host")
+      return this.launchHostNativeCommand(sessionId, descriptor.name, argument);
+    if (descriptor.surface) {
+      this.requestNativeCommandUi(sessionId, descriptor.surface);
+      return ACCEPTED_NATIVE_COMMAND;
+    }
+    if (descriptor.modelSettingsFocus) {
+      this.openModelSettings(argument, descriptor.modelSettingsFocus);
+      return ACCEPTED_NATIVE_COMMAND;
+    }
+    if (name === "fork") {
+      this.notify(
         "info",
-        `Run /${command.name} in the original Pi terminal.`,
-        {
-          details: [{ label: "Run in Pi", value: input }],
-          action: {
-            kind: "open-terminal",
-            label: "Open terminal & copy command",
-            value: input,
-          },
-        },
+        "Choose Fork on the user message where you want to start the new branch.",
       );
       return ACCEPTED_NATIVE_COMMAND;
     }
-
-    if (
-      (command.name === "compact" || command.name === "reload") &&
-      isBusyRunState(this.state.runState)
-    ) {
-      this.presentCommandActivity(
-        sessionId,
-        input,
-        command.name,
-        "warning",
-        `Wait for the current Pi operation to finish before running /${command.name}.`,
-      );
-      return ACCEPTED_NATIVE_COMMAND;
-    }
-
-    if (command.descriptor.execution === "host") {
-      return this.launchHostNativeCommand(
-        sessionId,
-        input,
-        command.name as "compact" | "export" | "reload",
-        command.argument,
-      );
-    }
-
-    if (command.descriptor.execution === "terminal") {
-      this.presentCommandActivity(
-        sessionId,
-        input,
-        command.name,
-        "warning",
-        terminalCommandGuidance(command.name),
-        {
-          details: [{ label: "Run in Pi", value: input }],
-          action: {
-            kind: "open-terminal",
-            label: "Open terminal & copy command",
-            value: input,
-          },
-        },
-      );
-      return ACCEPTED_NATIVE_COMMAND;
-    }
-
-    if (["login", "logout", "scoped-models"].includes(command.name)) {
-      this.openModelSettings(
-        command.argument,
-        command.name === "scoped-models" ? "common" : "credentials",
-      );
-      return ACCEPTED_NATIVE_COMMAND;
-    }
-    if (command.name === "settings") {
-      this.requestNativeCommandUi(sessionId, "settings");
-      return ACCEPTED_NATIVE_COMMAND;
-    }
-    if (command.name === "changelog") {
-      this.requestNativeCommandUi(sessionId, "changelog");
-      return ACCEPTED_NATIVE_COMMAND;
-    }
-    if (command.name === "clone") {
+    if (name === "clone") {
       void this.cloneCurrentBranch();
       return ACCEPTED_NATIVE_COMMAND;
     }
-    if (command.name === "tree" || command.name === "fork") {
-      this.set({ resourcesOpen: true, contextMode: "branches" });
-      void this.loadBranchTree();
-      if (command.name === "fork")
-        this.notify(
-          "info",
-          "Choose a user message in History, then select Fork",
-        );
-      return ACCEPTED_NATIVE_COMMAND;
-    }
-    if (command.name === "new") {
-      this.requestNativeCommandUi(sessionId, "new");
-      return ACCEPTED_NATIVE_COMMAND;
-    }
-    if (command.name === "resume") {
-      this.requestNativeCommandUi(sessionId, "sessions");
-      return ACCEPTED_NATIVE_COMMAND;
-    }
-    if (command.name === "model") {
-      if (!command.argument) {
+    if (name === "model") {
+      if (!argument) {
         this.requestNativeCommandUi(sessionId, "model");
         return ACCEPTED_NATIVE_COMMAND;
       }
       if (this.state.availableModels.length === 0) {
-        this.presentCommandActivity(
-          sessionId,
-          input,
-          command.name,
+        report(
           "warning",
           "Pi did not report any available models for this session.",
         );
         return ACCEPTED_NATIVE_COMMAND;
       }
-      const needle = command.argument.toLocaleLowerCase();
+      const needle = argument.toLocaleLowerCase();
       const matches = this.state.availableModels.filter((model) =>
         [`${model.provider}/${model.id}`, model.id, model.name ?? ""].some(
           (candidate) => candidate.toLocaleLowerCase() === needle,
         ),
       );
       if (matches.length !== 1) {
-        this.requestNativeCommandUi(sessionId, "model", command.argument);
+        this.requestNativeCommandUi(sessionId, "model", argument);
         if (matches.length > 1)
-          this.presentCommandActivity(
-            sessionId,
-            input,
-            command.name,
+          report(
             "warning",
             "That model name is ambiguous. The model picker shows the matches.",
           );
         return ACCEPTED_NATIVE_COMMAND;
       }
       const model = matches[0]!;
-      const id = this.presentCommandActivity(
-        sessionId,
-        input,
-        command.name,
-        "running",
-        `Switching to ${model.provider}/${model.id}…`,
+      const label = `${model.provider}/${model.id}`;
+      return confirm(
+        `Switching to ${label}…`,
+        () => this.changeModel(model.provider, model.id),
+        `Active model is now ${label}.`,
       );
-      void this.changeModel(model.provider, model.id).then((result) =>
-        this.finishSimpleCommand(
-          sessionId,
-          id,
-          result,
-          `Active model is now ${model.provider}/${model.id}.`,
-        ),
-      );
-      return ACCEPTED_NATIVE_COMMAND;
     }
-    if (command.name === "thinking") {
+    if (name === "thinking") {
       const activeModel = resolveModelMetadata(
         this.state.model,
         this.state.availableModels,
       );
       if (activeModel?.reasoning === false) {
-        this.presentCommandActivity(
-          sessionId,
-          input,
-          command.name,
-          "warning",
-          "The active model does not support thinking levels.",
-        );
+        report("warning", "The active model does not support thinking levels.");
         return ACCEPTED_NATIVE_COMMAND;
       }
-      if (!command.argument) {
+      if (!argument) {
         this.requestNativeCommandUi(sessionId, "thinking");
         return ACCEPTED_NATIVE_COMMAND;
       }
-      const level = command.argument.toLocaleLowerCase();
       const levels = supportedThinkingLevels(activeModel);
-      if (!levels.some((candidate) => candidate === level)) {
-        this.presentCommandActivity(
-          sessionId,
-          input,
-          command.name,
+      const requestedLevel = argument.toLocaleLowerCase();
+      const level = levels.find((candidate) => candidate === requestedLevel);
+      if (!level) {
+        report(
           "error",
-          `Unknown thinking level “${command.argument}”. Use ${levels.join(", ")}.`,
+          `Unknown thinking level “${argument}”. Use ${levels.join(", ")}.`,
         );
         return ACCEPTED_NATIVE_COMMAND;
       }
-      const id = this.presentCommandActivity(
-        sessionId,
-        input,
-        command.name,
-        "running",
+      return confirm(
         `Setting thinking level to ${level}…`,
+        () => this.changeThinkingLevel(level),
+        `Thinking level is now ${level}.`,
       );
-      void this.changeThinkingLevel(level).then((result) =>
-        this.finishSimpleCommand(
-          sessionId,
-          id,
-          result,
-          `Thinking level is now ${level}.`,
-        ),
-      );
-      return ACCEPTED_NATIVE_COMMAND;
     }
-    if (command.name === "name") {
-      if (!command.argument) {
-        this.presentCommandActivity(
-          sessionId,
-          input,
-          command.name,
+    if (name === "name") {
+      if (!argument) {
+        report(
           "info",
           this.state.sessionName
             ? `This session is named “${this.state.sessionName}”.`
@@ -2102,199 +1739,194 @@ export class AppStore {
         );
         return ACCEPTED_NATIVE_COMMAND;
       }
-      const id = this.presentCommandActivity(
-        sessionId,
-        input,
-        command.name,
-        "running",
+      return confirm(
         "Renaming session…",
+        () => this.sessionManagement.renameSessionResult(sessionId, argument),
+        `Session renamed to “${argument.slice(0, 160)}”.`,
       );
-      void this.sessionManagement
-        .renameSessionResult(sessionId, command.argument)
-        .then((result) =>
-          this.finishSimpleCommand(
-            sessionId,
-            id,
-            result,
-            `Session renamed to “${command.argument.slice(0, 160)}”.`,
-          ),
-        );
-      return ACCEPTED_NATIVE_COMMAND;
     }
-    if (command.name === "copy") {
+    if (name === "copy") {
       const api = this.api;
-      const viewId = this.state.transcriptViewId;
+      const viewId = this.state.view.viewId;
       const selectionGeneration = this.selectionGeneration;
-      const transportGeneration = this.transportGeneration;
       if (!api || !viewId) {
-        this.presentCommandActivity(
-          sessionId,
-          input,
-          command.name,
+        report(
           "warning",
           "There is no assistant response to copy in this branch.",
         );
         return ACCEPTED_NATIVE_COMMAND;
       }
-      const id = this.presentCommandActivity(
-        sessionId,
-        input,
-        command.name,
-        "running",
-        "Copying the last assistant response…",
-      );
       const current = () =>
         this.api === api &&
-        this.transportGeneration === transportGeneration &&
         this.selectionGeneration === selectionGeneration &&
         this.state.sessionId === sessionId &&
-        this.state.transcriptViewId === viewId;
-      let noResponse = false;
-      void writeCopyContent(
-        copyLoader(async (signal) => {
-          let text: string | null;
-          try {
-            ({ text } = await api.lastAssistantText(sessionId, viewId, signal));
-          } catch (error) {
-            if (
-              this.api === api &&
-              this.transportGeneration === transportGeneration &&
-              error instanceof ApiError &&
-              error.status === 401
-            )
-              this.handleAuthFailure();
-            throw error;
-          }
-          noResponse = text === null;
-          return text;
-        }),
-        current,
-      )
-        .then((written) => {
-          if (!written) {
-            this.updateCommandActivity(sessionId, id, {
-              status: "warning",
-              message: noResponse
-                ? "There is no assistant response to copy in this branch."
-                : current()
-                  ? "Copy cancelled by another clipboard action."
-                  : "Copy cancelled because the session or branch changed.",
-            });
-            return;
-          }
-          this.finishSimpleCommand(
-            sessionId,
-            id,
-            { status: "success" },
-            "Copied the complete last assistant response to the clipboard.",
+        this.state.view.viewId === viewId;
+      return this.runCommandActivity(
+        sessionId,
+        name,
+        "Copying the last assistant response…",
+        async () => {
+          let noResponse = false;
+          const written = await writeCopyContent(
+            copyLoader(async (signal) => {
+              const { text } = await api.json(
+                "lastAssistantText",
+                { query: { sessionId, viewId } },
+                signal,
+              );
+              noResponse = text === null;
+              return text;
+            }),
+            current,
           );
-        })
-        .catch((error: unknown) => {
-          if (
-            this.api === api &&
-            this.transportGeneration === transportGeneration &&
-            error instanceof ApiError &&
-            error.status === 401
-          )
-            this.handleAuthFailure();
-          this.updateCommandActivity(sessionId, id, {
-            status: "error",
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to read the complete response.",
-          });
-        });
-      return ACCEPTED_NATIVE_COMMAND;
+          return written
+            ? {
+                status: "success",
+                message:
+                  "Copied the complete last assistant response to the clipboard.",
+              }
+            : {
+                status: "warning",
+                message: noResponse
+                  ? "There is no assistant response to copy in this branch."
+                  : current()
+                    ? "Copy cancelled by another clipboard action."
+                    : "Copy cancelled because the session or branch changed.",
+              };
+        },
+        {
+          scopedAuth: current,
+          fallback: "Failed to read the complete response.",
+        },
+      );
     }
-    if (command.name === "session") {
-      this.presentCommandActivity(sessionId, input, command.name, "info", "", {
+    if (name === "session") {
+      report("info", "", {
         details: this.sessionCommandDetails(),
       });
       return ACCEPTED_NATIVE_COMMAND;
     }
-    if (command.name === "hotkeys") {
-      this.requestNativeCommandUi(sessionId, "hotkeys");
-      return ACCEPTED_NATIVE_COMMAND;
-    }
-    if (command.name === "quit") {
-      this.presentCommandActivity(
-        sessionId,
-        input,
-        command.name,
+    if (name === "quit") {
+      report(
         "info",
-        "Close this browser tab when you are done. The Host and persistent Pi sessions keep running so you can reconnect later.",
+        "Close this tab when you are done. Your sessions keep running.",
       );
       return ACCEPTED_NATIVE_COMMAND;
     }
 
-    this.presentCommandActivity(
-      sessionId,
-      input,
-      command.name,
-      "error",
-      `/${command.name} is not available in this browser build.`,
-    );
-    return ACCEPTED_NATIVE_COMMAND;
+    return false;
   }
-
-  failedComposerPrompt = () => this.composer.failedPrompt(this.state.sessionId);
 
   restoreFailedComposerPrompt = (): boolean => {
     const sessionId = this.state.sessionId;
     return sessionId ? this.composer.restoreFailedPrompt(sessionId) : false;
   };
 
+  readonly subscribeComposerDeliveries = this.composer.subscribe;
+  readonly composerDeliveryVersion = this.composer.getDeliveryVersion;
+  readonly composerDeliveryState = this.composer.deliveryState;
+
+  retryPreviousComposerDelivery = (): void => {
+    if (this.state.sessionId)
+      void this.composer.retryPrevious(this.state.sessionId);
+  };
+
+  forgetPreviousComposerDelivery = (): void => {
+    if (this.state.sessionId)
+      this.composer.forgetPrevious(this.state.sessionId);
+  };
+
+  forgetUnsupportedComposerDeliveries = (): void => {
+    if (this.state.sessionId)
+      this.composer.forgetUnsupportedDeliveries(this.state.sessionId);
+  };
+
   sendPrompt = async (
     message: string,
     behavior?: "steer" | "followUp",
-    onHandoff?: () => void,
+    editorDraft?: SessionDraft,
   ): Promise<PromptAcceptedResponse | false> => {
-    const native = parseNativeCommand(message);
-    if (native && this.isNativeCommand(message))
-      return this.executeNativeCommand(message, native);
+    const sessionId = this.state.sessionId;
+    if (sessionId) {
+      const draft = this.drafts.get(sessionId);
+      if (editorDraft && editorDraft.revision !== draft.revision) return false;
+    }
+    return this.dispatchComposerInput(message, behavior, editorDraft);
+  };
 
-    if (message.trim().startsWith("!"))
-      return this.composer.send(message.trim(), undefined, onHandoff);
-    const inventory = resolveCommandInventory(this.state.commands);
-    const invocation = parseCommandInvocation(message, (name) =>
-      inventory.some((command) => command.name === name),
-    );
-    if (invocation) {
-      const dynamic = inventory.find(
-        (command) => command.name === invocation.name,
-      );
-      if (!dynamic) {
-        const sessionId = this.state.sessionId;
-        if (sessionId)
-          this.presentCommandActivity(
-            sessionId,
-            message,
-            invocation.name,
-            "error",
-            `Unknown command /${invocation.name}. Type / to see available commands.`,
-          );
+  private async dispatchComposerInput(
+    message: string,
+    behavior?: "steer" | "followUp",
+    editorDraft?: SessionDraft,
+    prepared = false,
+  ): Promise<PromptAcceptedResponse | false> {
+    const sessionId = this.state.sessionId;
+    const input = message.trimStart();
+    const invocation = input.startsWith("/")
+      ? resolveCommandInput(
+          message,
+          resolveCommandInventory(this.state.commands),
+        )
+      : null;
+    if (!invocation) {
+      if (prepared) {
+        this.notify("warning", "Enter a slash command to prepare");
         return false;
       }
-      // Pi's extension dispatcher splits on a literal space. Normalize pasted
-      // tabs/newlines at the command boundary so a command the browser owns
-      // cannot fall through into an ordinary model prompt inside Pi.
-      return this.composer.send(
-        invocation.argument
-          ? `/${invocation.name} ${invocation.argument}`
-          : `/${invocation.name}`,
-        behavior,
-        onHandoff,
-      );
+      return input.startsWith("!")
+        ? this.composer.send(input.trimEnd(), undefined, editorDraft)
+        : this.composer.send(message, behavior, editorDraft);
     }
-    return this.composer.send(message, behavior, onHandoff);
-  };
+    const descriptor = nativeCommand(invocation.name);
+    if (descriptor) {
+      const result = this.executeNativeCommand(
+        { ...invocation, descriptor },
+        !prepared,
+      );
+      if (
+        result &&
+        sessionId &&
+        editorDraft &&
+        editorDraft.revision === this.drafts.get(sessionId).revision
+      )
+        this.drafts.setText(sessionId, "");
+      return result;
+    }
+    if (
+      prepared &&
+      (!invocation.command || invocation.command.source === "builtin")
+    ) {
+      this.notify(
+        "warning",
+        "This command is no longer available in the selected session",
+      );
+      return false;
+    }
+    if (!invocation.command && this.state.modelDiscovery !== "loading") {
+      if (sessionId)
+        this.presentCommandActivity(
+          sessionId,
+          invocation.name,
+          "error",
+          `Unknown command /${invocation.name}. Type / to see available commands.`,
+        );
+      return false;
+    }
+    return this.composer.send(
+      `/${invocation.name} ${invocation.argument}`.trimEnd(),
+      prepared && invocation.command?.source === "extension"
+        ? undefined
+        : behavior,
+      editorDraft,
+      prepared,
+    );
+  }
 
   abort = async (): Promise<void> => {
     const sessionId = this.state.sessionId;
+    const viewId = this.state.view.viewId ?? undefined;
     const selectionGeneration = this.selectionGeneration;
     const api = this.api;
-    const transportGeneration = this.transportGeneration;
     if (!api || !sessionId) return;
     const compacting = this.state.commandActivities[sessionId]?.find(
       (activity) =>
@@ -2306,17 +1938,21 @@ export class AppStore {
       });
     try {
       if (
-        !this.state.projectionConflict &&
-        !(this.state.bashRunning && !isBusyRunState(this.state.runState))
+        !this.state.view.conflict &&
+        !(
+          this.state.live.bashRunning &&
+          !isBusyRunState(selectedRunState(this.state))
+        )
       ) {
         try {
-          await this.pendingRecovery.run(sessionId, "recover");
+          await this.pendingRecovery.run(sessionId, "recover", viewId);
         } catch (error) {
+          if (this.api !== api) return;
           if (
-            this.api !== api ||
-            this.transportGeneration !== transportGeneration
+            error instanceof ApiError &&
+            error.code === "PENDING_VIEW_CHANGED"
           )
-            return;
+            throw error;
           if (error instanceof ApiError && error.status === 401) {
             this.handleAuthFailure();
             return;
@@ -2330,14 +1966,12 @@ export class AppStore {
           // Host will clear again or retire the worker rather than resume input.
         }
       }
-      if (this.api !== api || this.transportGeneration !== transportGeneration)
-        return;
+      if (this.api !== api) return;
       // The editor receives the first dequeue before Stop is sent. Host abort
       // clears again at its own boundary, including input arriving meanwhile.
-      await this.pendingRecovery.run(sessionId, "abort");
+      await this.pendingRecovery.run(sessionId, "abort", viewId);
     } catch (error) {
-      if (this.api !== api || this.transportGeneration !== transportGeneration)
-        return;
+      if (this.api !== api) return;
       if (error instanceof ApiError && error.status === 401)
         this.handleAuthFailure();
       else {
@@ -2370,15 +2004,10 @@ export class AppStore {
         recovered.recoveryId,
       );
     if (text.trim()) {
-      const draft = [text, sessionDraft(sessionId)]
+      const draft = [text, this.drafts.get(sessionId).text]
         .filter((part) => part.trim())
         .join("\n\n");
-      setSessionDraft(sessionId, draft);
-      if (this.state.sessionId === sessionId) this.replaceComposerText(draft);
-    } else if (hasImages && this.state.sessionId === sessionId) {
-      // Exit a temporary history preview even without recovered text, keeping
-      // the saved draft rather than committing the browsed history caption.
-      this.replaceComposerText(sessionDraft(sessionId));
+      this.drafts.setText(sessionId, draft);
     }
     if (this.state.sessionId === sessionId) {
       if (recovered.interruptionScope === "agent")
@@ -2393,37 +2022,47 @@ export class AppStore {
     return !recovered.error;
   }
 
-  recoverPending = async (): Promise<boolean> => {
+  recoverPending = (): Promise<boolean> => this.runPendingAction("recover");
+
+  clearPending = (): Promise<boolean> => this.runPendingAction("clear");
+
+  private async runPendingAction(
+    action: "recover" | "clear",
+  ): Promise<boolean> {
     const sessionId = this.state.sessionId;
     const api = this.api;
-    const transportGeneration = this.transportGeneration;
     if (!api || !sessionId || this.state.pendingAction) return false;
-    const request = ++this.pendingActionRequest;
-    this.set({ pendingAction: "recover" });
+    const viewId = this.state.view.viewId ?? undefined;
+    const pendingAction = { action };
+    const current = () =>
+      this.api === api && this.state.pendingAction === pendingAction;
+    this.set({ pendingAction });
     try {
-      return await this.pendingRecovery.run(sessionId, "recover");
+      if (action === "recover")
+        return await this.pendingRecovery.run(sessionId, action, viewId);
+      await api.json("clearPending", { body: { sessionId } });
+      // Queue events carry the truth after Clear, including newly queued input.
+      return current();
     } catch (error) {
-      if (this.api !== api || this.transportGeneration !== transportGeneration)
-        return false;
+      if (this.api !== api || (action === "clear" && !current())) return false;
       if (error instanceof ApiError && error.status === 401)
         this.handleAuthFailure();
-      else if (this.state.sessionId === sessionId)
+      else if (action === "clear" || this.state.sessionId === sessionId) {
+        const message = error instanceof Error ? error.message : undefined;
         this.notify(
           "warning",
-          error instanceof Error
-            ? error.message
-            : "Failed to recover Pending input",
+          action === "clear"
+            ? message === undefined
+              ? "Failed to clear Pending input"
+              : `Failed to clear Pending input: ${message}`
+            : (message ?? "Failed to recover Pending input"),
         );
+      }
       return false;
     } finally {
-      if (
-        this.api === api &&
-        this.transportGeneration === transportGeneration &&
-        request === this.pendingActionRequest
-      )
-        this.set({ pendingAction: null });
+      if (current()) this.set({ pendingAction: null });
     }
-  };
+  }
 
   reportCopyError = (message: string) => this.notify("warning", message);
 
@@ -2431,17 +2070,15 @@ export class AppStore {
   copyOwnership = (): (() => boolean) => {
     const api = this.api;
     const selection = this.selectionGeneration;
-    const transport = this.transportGeneration;
     const session = this.state.sessionId;
-    const view = this.state.transcriptViewId;
-    const incarnation = this.state.transcriptIncarnation;
+    const view = this.state.view.viewId;
+    const incarnation = this.state.view.incarnation;
     return () =>
       this.api === api &&
       this.selectionGeneration === selection &&
-      this.transportGeneration === transport &&
       this.state.sessionId === session &&
-      this.state.transcriptViewId === view &&
-      this.state.transcriptIncarnation === incarnation;
+      this.state.view.viewId === view &&
+      this.state.view.incarnation === incarnation;
   };
 
   pendingText = async (
@@ -2450,11 +2087,10 @@ export class AppStore {
     signal = new AbortController().signal,
   ): Promise<CopySource | null> => {
     const sessionId = this.state.sessionId;
-    const viewId = this.state.transcriptViewId;
+    const viewId = this.state.view.viewId;
     const generation = this.selectionGeneration;
-    const queueRevision = this.state.queue.revision;
+    const queueRevision = this.state.live.queue.revision;
     const api = this.api;
-    const transportGeneration = this.transportGeneration;
     if (!api || !sessionId || !viewId) {
       this.notify("warning", "Complete pending text is unavailable");
       return null;
@@ -2462,30 +2098,21 @@ export class AppStore {
     const owns = () =>
       !signal.aborted &&
       this.api === api &&
-      this.transportGeneration === transportGeneration &&
       this.state.sessionId === sessionId &&
-      this.state.transcriptViewId === viewId &&
-      this.state.queue.revision === queueRevision &&
+      this.state.view.viewId === viewId &&
+      this.state.live.queue.revision === queueRevision &&
       this.selectionGeneration === generation;
     try {
-      const result = await api.pendingText(
-        {
-          sessionId,
-          viewId,
-          revision,
-          ...(itemId === undefined ? {} : { itemId }),
-        },
+      const result = await api.json(
+        "pendingText",
+        { body: { sessionId, viewId, revision, itemId } },
         signal,
       );
       if (!owns()) return null;
-      if (typeof result.text !== "string")
+      if (typeof result.text !== "string" || !Array.isArray(result.images))
         throw new Error("Complete pending text is unavailable");
       const images: Blob[] = [];
-      const sources =
-        result.images ??
-        result.imageAttachmentIds?.map((attachmentId) => ({ attachmentId })) ??
-        [];
-      for (const source of sources) {
+      for (const source of result.images) {
         images.push(
           "attachmentId" in source
             ? await api.attachmentPreview(source.attachmentId, signal)
@@ -2512,322 +2139,245 @@ export class AppStore {
     }
   };
 
-  clearPending = async (): Promise<boolean> => {
-    const sessionId = this.state.sessionId;
-    const api = this.api;
-    const transportGeneration = this.transportGeneration;
-    const ownsTransport = (): boolean =>
-      this.api === api && this.transportGeneration === transportGeneration;
-    if (!api || !sessionId || this.state.pendingAction) {
-      return false;
-    }
-    const request = ++this.pendingActionRequest;
-    this.set({ pendingAction: "clear" });
-    try {
-      await api.clearPending(sessionId);
-      if (!ownsTransport() || request !== this.pendingActionRequest)
-        return false;
-      // Only queue events/snapshots update the display: new work may already
-      // have arrived after Pi cleared its queue.
-      return true;
-    } catch (error) {
-      if (!ownsTransport() || request !== this.pendingActionRequest)
-        return false;
-      if (error instanceof ApiError && error.status === 401)
-        this.handleAuthFailure();
-      else
-        this.notify(
-          "warning",
-          error instanceof Error
-            ? `Failed to clear Pending input: ${error.message}`
-            : "Failed to clear Pending input",
-        );
-      return false;
-    } finally {
-      if (ownsTransport() && request === this.pendingActionRequest)
-        this.set({ pendingAction: null });
-    }
-  };
-
-  setSessionExecution = async (
-    sessionId: string,
-    target: "terminal" | "inspire",
-    interrupt = false,
-  ): Promise<string> => {
+  /** Attach to the other Pi showing this branch, or continue here. */
+  takeOverSession = async (sessionId: string): Promise<void> => {
     const api = this.api;
     const generation = this.selectionGeneration;
     if (!api) throw new Error("The Host is not connected");
-    const result = await api.setSessionExecution(sessionId, target, interrupt);
+    const snapshot = await api.json("takeOverSession", { body: { sessionId } });
     if (
       this.api === api &&
       this.state.sessionId === sessionId &&
       this.selectionGeneration === generation
     )
-      this.applySnapshot(result.snapshot);
-    return result.command;
+      this.applySnapshot(snapshot);
   };
 
-  setModel = async (provider: string, modelId: string): Promise<boolean> => {
-    const sessionId = this.state.sessionId;
-    const selectionGeneration = this.selectionGeneration;
-    const result = await this.changeModel(provider, modelId);
-    if (
-      result.status === "error" &&
-      this.state.sessionId === sessionId &&
-      this.selectionGeneration === selectionGeneration
-    )
-      this.notify("warning", result.message);
-    return result.status === "success";
-  };
-
-  private changeModel = async (
-    provider: string,
-    modelId: string,
-  ): Promise<CommandChangeResult> => {
-    const sessionId = this.state.sessionId;
-    const selectionGeneration = this.selectionGeneration;
-    const api = this.api;
-    const transportGeneration = this.transportGeneration;
-    const ownsTransport = (): boolean =>
-      this.api === api && this.transportGeneration === transportGeneration;
-    if (!api || !sessionId) return { status: "stale" };
+  /** Copies a command that resumes this session in a terminal Pi. */
+  copyResumeCommand = async (sessionId: string): Promise<boolean> => {
     try {
-      if (!modelControlsSupported(this.state))
-        return { status: "error", message: NATIVE_MODEL_GUIDANCE };
-      const selection = await api.setModel(sessionId, provider, modelId);
-      if (!ownsTransport()) return { status: "stale" };
-      // Recency records only successful runtime changes. Keep unavailable
-      // identities in the source preference; the picker filters its display.
-      if (selection.model) this.preferences.rememberModel(selection.model);
-      await this.resync(sessionId, selectionGeneration);
-      return {
-        status: "success",
-        message: selection.model
-          ? `Active model is now ${selection.model.provider}/${selection.model.id}; thinking ${selection.thinkingLevel}.`
-          : "Pi has no active model.",
-      };
-    } catch (error) {
-      if (!ownsTransport()) return { status: "stale" };
-      if (error instanceof ApiError && error.status === 401)
-        this.handleAuthFailure();
-      return {
-        status: "error",
-        message: error instanceof Error ? error.message : "Failed to set model",
-      };
-    }
-  };
-
-  setThinkingLevel = async (level: string): Promise<boolean> => {
-    const sessionId = this.state.sessionId;
-    const selectionGeneration = this.selectionGeneration;
-    const result = await this.changeThinkingLevel(level);
-    if (
-      result.status === "error" &&
-      this.state.sessionId === sessionId &&
-      this.selectionGeneration === selectionGeneration
-    )
-      this.notify("warning", result.message);
-    return result.status === "success";
-  };
-
-  private changeThinkingLevel = async (
-    level: string,
-  ): Promise<CommandChangeResult> => {
-    const sessionId = this.state.sessionId;
-    const selectionGeneration = this.selectionGeneration;
-    const api = this.api;
-    const transportGeneration = this.transportGeneration;
-    const ownsTransport = (): boolean =>
-      this.api === api && this.transportGeneration === transportGeneration;
-    if (!api || !sessionId) return { status: "stale" };
-    if (!modelControlsSupported(this.state))
-      return { status: "error", message: NATIVE_MODEL_GUIDANCE };
-    const previous = this.state.thinkingLevel;
-    const snapshotGeneration = this.snapshotGeneration;
-    const request = ++this.thinkingLevelRequest;
-    this.set({ thinkingLevel: level });
-    try {
-      const selection = await api.setThinkingLevel(sessionId, level);
-      if (!ownsTransport() || request !== this.thinkingLevelRequest)
-        return { status: "stale" };
-      if (
-        this.state.sessionId === sessionId &&
-        this.selectionGeneration === selectionGeneration
-      ) {
-        // In-flight snapshots may predate this confirmed mutation. Empty
-        // sessions may emit no projection event to retire those reads, so
-        // they must not overwrite the confirmed model/effort pair.
-        this.resyncRecovery.reset();
-        this.resyncRequest += 1;
-        // A model change or native update may have published a newer snapshot
-        // while this receipt was in transit. Read current state instead of
-        // replacing it with the earlier operation's model/effort pair.
-        if (this.snapshotGeneration !== snapshotGeneration)
-          await this.resync(sessionId, selectionGeneration);
-        else
-          this.set({
-            model: selection.model,
-            thinkingLevel: selection.thinkingLevel,
-          });
-      }
-      if (!ownsTransport() || request !== this.thinkingLevelRequest)
-        return { status: "stale" };
-      return {
-        status: "success",
-        message: `Thinking level is now ${selection.thinkingLevel}.`,
-      };
-    } catch (error) {
-      if (!ownsTransport()) return { status: "stale" };
-      if (error instanceof ApiError && error.status === 401)
-        this.handleAuthFailure();
-      if (request !== this.thinkingLevelRequest) return { status: "stale" };
-      // A failed request cannot undo a newer click. Reconcile in case the
-      // immediate predecessor was itself only an optimistic request.
-      if (
-        this.state.sessionId === sessionId &&
-        this.selectionGeneration === selectionGeneration
-      ) {
-        if (this.snapshotGeneration === snapshotGeneration)
-          this.set({ thinkingLevel: previous });
-        void this.resync();
-      }
-      return {
-        status: "error",
-        message:
-          error instanceof Error
-            ? error.message
-            : "Failed to set thinking level",
-      };
-    }
-  };
-
-  setAutoCompaction = async (enabled: boolean): Promise<boolean> =>
-    this.setPiRuntimeSetting(
-      { autoCompactionEnabled: enabled },
-      (api, sessionId) => api.setAutoCompaction(sessionId, enabled),
-    );
-
-  setAutoRetry = async (enabled: boolean): Promise<boolean> =>
-    this.setPiRuntimeSetting({ autoRetryEnabled: enabled }, (api, sessionId) =>
-      api.setAutoRetry(sessionId, enabled),
-    );
-
-  setSteeringMode = async (mode: PiMessageDeliveryMode): Promise<boolean> =>
-    this.setPiRuntimeSetting({ steeringMode: mode }, (api, sessionId) =>
-      api.setSteeringMode(sessionId, mode),
-    );
-
-  setFollowUpMode = async (mode: PiMessageDeliveryMode): Promise<boolean> =>
-    this.setPiRuntimeSetting({ followUpMode: mode }, (api, sessionId) =>
-      api.setFollowUpMode(sessionId, mode),
-    );
-
-  private async setPiRuntimeSetting(
-    patch: Partial<PiRuntimeSettings>,
-    apply: (api: Api, sessionId: string) => Promise<unknown>,
-  ): Promise<boolean> {
-    const sessionId = this.state.sessionId;
-    const api = this.api;
-    const transportGeneration = this.transportGeneration;
-    if (!api || !sessionId) return false;
-    const previous = this.state.runtimeSettings;
-    const selectionGeneration = this.selectionGeneration;
-    const request = ++this.runtimeSettingRequest;
-    const keys = Object.keys(patch) as Array<keyof PiRuntimeSettings>;
-    for (const key of keys) this.runtimeSettingOwners[key] = request;
-    const ownsSelection = () =>
-      this.state.sessionId === sessionId &&
-      this.selectionGeneration === selectionGeneration;
-    this.set({
-      runtimeSettings: {
-        autoCompactionEnabled: null,
-        autoRetryEnabled: null,
-        steeringMode: null,
-        followUpMode: null,
-        ...previous,
-        ...patch,
-      },
-    });
-    try {
-      await apply(api, sessionId);
-      if (this.api !== api || this.transportGeneration !== transportGeneration)
-        return false;
-      if (
-        ownsSelection() &&
-        keys.some((key) => this.runtimeSettingOwners[key] === request)
-      )
-        await this.resync(sessionId, selectionGeneration);
-      return true;
-    } catch (error) {
-      if (this.api !== api || this.transportGeneration !== transportGeneration)
-        return false;
-      if (error instanceof ApiError && error.status === 401) {
-        this.handleAuthFailure();
-        return false;
-      }
-      const ownedKeys = keys.filter(
-        (key) => this.runtimeSettingOwners[key] === request,
+      const api = this.api;
+      if (!api) throw new Error("The Host is not connected");
+      const { command, projectDirectoryMissing } = await api.json(
+        "resumeCommand",
+        { query: { sessionId } },
       );
-      if (ownsSelection() && ownedKeys.length > 0) {
-        if (this.state.runtimeSettings) {
-          const rolledBack = { ...this.state.runtimeSettings };
-          for (const key of ownedKeys)
-            (rolledBack as Record<string, unknown>)[key] =
-              previous?.[key] ?? null;
-          this.set({ runtimeSettings: rolledBack });
-        }
-        // The predecessor may itself have been optimistic. Only the owning
-        // request can roll back; Pi's current state settles the final value.
-        void this.resync(sessionId, selectionGeneration);
-        this.notify(
-          "warning",
-          error instanceof Error
-            ? error.message
-            : "Failed to update Pi runtime settings",
-        );
-      }
+      await navigator.clipboard.writeText(command);
+      this.notify(
+        "info",
+        projectDirectoryMissing
+          ? "Resume command copied. Run it in the new project folder and choose Fork in Pi 1.5.2 or later."
+          : "Resume command copied",
+      );
+      return true;
+    } catch {
+      this.reportCopyError("Could not copy the resume command");
       return false;
+    }
+  };
+
+  setModel = (provider: string, modelId: string): Promise<boolean> =>
+    this.reportSelectionChange(() => this.changeModel(provider, modelId));
+
+  private async reportSelectionChange(
+    change: () => Promise<CommandChangeResult>,
+  ): Promise<boolean> {
+    const { sessionId } = this.state;
+    const generation = this.selectionGeneration;
+    const result = await change();
+    if (
+      result.status === "error" &&
+      this.state.sessionId === sessionId &&
+      this.selectionGeneration === generation
+    )
+      this.notify("warning", result.message);
+    return result.status === "success";
+  }
+
+  private changeModel(provider: string, modelId: string) {
+    return this.changeNativeSetting(
+      "model",
+      "Failed to set model",
+      (api, sessionId) =>
+        api.json("setModel", { body: { sessionId, provider, modelId } }),
+    );
+  }
+
+  setThinkingLevel = (level: ThinkingLevel): Promise<boolean> =>
+    this.reportSelectionChange(() => this.changeThinkingLevel(level));
+
+  private changeThinkingLevel(level: ThinkingLevel) {
+    return this.changeNativeSetting(
+      "thinking",
+      "Failed to set thinking level",
+      (api, sessionId) =>
+        api.json("setThinkingLevel", { body: { sessionId, level } }),
+    );
+  }
+
+  setPiRuntimeSetting = (setting: RuntimeSetting): Promise<boolean> =>
+    this.reportSelectionChange(() =>
+      this.changeNativeSetting(
+        setting,
+        "Failed to update Pi runtime settings",
+        async (api, sessionId) => {
+          await api.json("setRuntimeSetting", { body: { sessionId, setting } });
+        },
+      ),
+    );
+
+  private showNativeSetting(
+    setting: "thinking" | RuntimeSetting,
+    active: boolean,
+  ) {
+    if (setting === "thinking") {
+      this.set({ thinkingLevelPending: active });
+    } else {
+      const pending = { ...this.state.pendingRuntimeSettings };
+      if (active) Object.assign(pending, { [setting.key]: setting.value });
+      else delete pending[setting.key];
+      this.set({ pendingRuntimeSettings: pending });
+    }
+  }
+
+  private async changeNativeSetting(
+    setting: "model" | "thinking" | RuntimeSetting,
+    failure: string,
+    write: (
+      api: Api,
+      sessionId: string,
+    ) => Promise<ModelSelectionResponse | void>,
+  ): Promise<CommandChangeResult> {
+    const key = typeof setting === "string" ? setting : setting.key;
+    const { sessionId } = this.state;
+    const generation = this.selectionGeneration;
+    const selection = this.selection.generation;
+    const snapshot = this.snapshotGeneration;
+    const api = this.api;
+    if (!api || !sessionId) return { status: "stale" };
+    const viewId = this.state.view.viewId;
+    const intent = Symbol(key);
+    this.nativeSettings.set(key, intent);
+    const ownsIntent = () =>
+      this.api === api && this.nativeSettings.get(key) === intent;
+    const ownsView = () =>
+      ownsIntent() &&
+      this.state.sessionId === sessionId &&
+      this.selectionGeneration === generation &&
+      (key === "model" ||
+        key === "thinking" ||
+        (this.selection.generation === selection &&
+          this.state.view.viewId === viewId));
+    if (setting !== "model") this.showNativeSetting(setting, true);
+    try {
+      const result = await write(api, sessionId);
+      if (key === "model" && this.api === api && result && result.model)
+        this.preferences.rememberModel(result.model);
+      if (ownsView()) {
+        if (
+          key === "thinking" &&
+          result &&
+          !this.nativeSettings.has("model") &&
+          snapshot === this.snapshotGeneration
+        ) {
+          // A snapshot requested before this receipt cannot replace its values.
+          this.resyncRecovery.reset();
+          this.resyncRequest += 1;
+          this.set({
+            model: result.model,
+            thinkingLevel: result.thinkingLevel,
+          });
+        } else {
+          await this.resync(sessionId, generation);
+        }
+      }
+      if (this.api !== api || (key === "thinking" && !ownsIntent()))
+        return { status: "stale" };
+      let message: string | undefined;
+      if (result) {
+        message =
+          key === "thinking"
+            ? `Thinking level is now ${result.thinkingLevel}.`
+            : result.model
+              ? `Active model is now ${result.model.provider}/${result.model.id}; thinking ${result.thinkingLevel}.`
+              : "Pi has no active model.";
+      }
+      return { status: "success", message };
+    } catch (error) {
+      if (this.api !== api) return { status: "stale" };
+      if (error instanceof ApiError && error.status === 401)
+        this.handleAuthFailure();
+      if (key !== "model" && !ownsIntent()) return { status: "stale" };
+      if (ownsView() && key !== "model")
+        void this.resync(sessionId, generation);
+      return {
+        status: "error",
+        message: error instanceof Error ? error.message : failure,
+      };
+    } finally {
+      if (ownsView() && setting !== "model")
+        this.showNativeSetting(setting, false);
+      if (this.nativeSettings.get(key) === intent)
+        this.nativeSettings.delete(key);
     }
   }
 
   // --- Composer attachments & project files ---
 
-  previewComposerHistoryEntry = (
+  useComposerHistoryEntry = (
     scope: ComposerHistoryScope,
-    entry: ComposerHistoryEntry | null,
-  ): void => this.composer.previewHistoryEntry(scope, entry);
+    entry: ComposerHistoryEntry,
+    expectedDraftRevision: number,
+  ): boolean => {
+    if (
+      this.state.sessionSelectionPending ||
+      this.state.view.incarnation !== scope.incarnation ||
+      this.state.view.effectiveLeafId !== scope.effectiveLeafId ||
+      this.state.view.composerHistoryVersion !== scope.historyVersion ||
+      this.drafts.get(scope.sessionId).revision !== expectedDraftRevision
+    )
+      return false;
+    return this.composer.useHistoryEntry(scope, entry);
+  };
 
-  commitComposerHistoryPreview = (scope: ComposerHistoryScope): void =>
-    this.composer.commitHistoryPreview(scope);
+  addFiles = (files: File[], sessionId = this.state.sessionId): Promise<void> =>
+    this.composer.addFiles(files, sessionId);
 
-  cancelComposerHistoryPreview = (sessionId: string): void =>
-    this.composer.cancelHistoryPreview(sessionId);
-
-  addFiles = (files: File[]): Promise<void> => this.composer.addFiles(files);
-
-  removeAttachment = (localId: string): void =>
-    this.composer.removeAttachment(localId);
+  removeAttachment = (
+    localId: string,
+    sessionId = this.state.sessionId,
+  ): void => this.composer.removeAttachment(localId, sessionId);
 
   retryAttachment = (localId: string): Promise<void> =>
     this.composer.retryAttachment(localId);
 
-  addProjectFile = (path: string): void => this.composer.addProjectFile(path);
+  addProjectFile = (
+    path: string,
+    sessionId = this.state.sessionId,
+    cwd?: string,
+  ): void => this.composer.addProjectFile(path, sessionId, cwd);
 
-  removeProjectFile = (path: string): void =>
-    this.composer.removeProjectFile(path);
+  removeProjectFile = (path: string, sessionId = this.state.sessionId): void =>
+    this.composer.removeProjectFile(path, sessionId);
+
+  transferStartDraft = (
+    sessionId: string,
+    draft: SessionDraft,
+  ): Promise<void> => this.composer.transferStart(sessionId, draft);
 
   searchProjectFiles = async (
     query: string,
   ): Promise<ProjectFileSearchResult> => {
     const sessionId = this.state.sessionId;
     if (!this.api || !sessionId) return { files: [] };
-    return this.api.searchFiles(
-      sessionId,
-      query,
-      50,
-      undefined,
-      this.state.workspaceShowHidden,
-    );
+    return this.api.json("searchFiles", {
+      query: {
+        sessionId,
+        q: query,
+        limit: 50,
+        showHidden: this.state.workspaceShowHidden ? "1" : undefined,
+      },
+    });
   };
 
   setWorkspaceShowHidden = (value: boolean): void =>
@@ -2836,7 +2386,7 @@ export class AppStore {
   private modelCycleQueue: {
     sessionId: string;
     selection: number;
-    transport: number;
+    transport: Api | null;
     pending: Promise<void>;
   } | null = null;
 
@@ -2846,11 +2396,11 @@ export class AppStore {
     const sessionId = this.state.sessionId;
     if (!sessionId) return Promise.resolve();
     const selection = this.selectionGeneration;
-    const transport = this.transportGeneration;
+    const transport = this.api;
     const owns = () =>
       this.state.sessionId === sessionId &&
       this.selectionGeneration === selection &&
-      this.transportGeneration === transport;
+      this.api === transport;
     if (
       this.modelCycleQueue?.sessionId !== sessionId ||
       this.modelCycleQueue.selection !== selection ||
@@ -2873,18 +2423,13 @@ export class AppStore {
     modelSettingsFocus?: "credentials" | "common",
     modelSettingsOwner?: import("../shared/model-settings").ModelSettingsOwner,
   ): void => {
-    const id = this.state.nextNativeCommandId;
-    this.set({
-      nextNativeCommandId: id + 1,
-      nativeCommandUiRequest: {
-        id,
-        sessionId: this.state.sessionId ?? "",
-        action: "models",
-        ...(query ? { query } : {}),
-        ...(modelSettingsFocus ? { modelSettingsFocus } : {}),
-        ...(modelSettingsOwner ? { modelSettingsOwner } : {}),
-      },
-    });
+    this.requestNativeCommandUi(
+      this.state.sessionId ?? "",
+      "models",
+      query,
+      modelSettingsFocus,
+      modelSettingsOwner,
+    );
   };
 
   cycleModel = (direction: 1 | -1): Promise<void> =>
@@ -2893,7 +2438,7 @@ export class AppStore {
         sessionId = this.state.sessionId;
       const selection = this.selectionGeneration;
       if (!api || !sessionId || this.state.readOnlyReason) return;
-      if (isExternalSession(this.state)) {
+      if (this.visibleSessionIsExternal()) {
         this.notify(
           "info",
           "Cycle models in the original Pi terminal. Choose a model here with /model.",
@@ -2902,7 +2447,7 @@ export class AppStore {
       }
       try {
         // Pi owns scope order, thinking defaults and model_select effects.
-        await api.cycleModel(sessionId, direction);
+        await api.json("cycleModel", { body: { sessionId, direction } });
         if (!owns()) return;
         await this.resync(sessionId, selection);
         if (owns() && this.state.model)
@@ -2932,34 +2477,26 @@ export class AppStore {
       await this.setThinkingLevel(levels[(index + 1) % levels.length]!);
     });
 
-  readMcpConfig = (owner: { sessionId?: string; cwd?: string }) => {
-    if (!this.api) return Promise.reject(new Error("The Host is unavailable"));
-    return this.api.mcpConfig(owner);
-  };
+  readMcpConfig = async (owner: { sessionId?: string; cwd?: string }) =>
+    this.settingsApi().json("mcpConfig", { query: owner });
 
-  readMcpConnection = (
+  readMcpConnection = async (
     owner: { sessionId?: string; cwd?: string },
     input: import("../shared/mcp").McpConnectionRead,
-  ) => {
-    if (!this.api) return Promise.reject(new Error("The Host is unavailable"));
-    return this.api.mcpConnection(owner, input);
-  };
+  ) => this.settingsApi().json("mcpConnection", { query: owner, body: input });
 
-  editMcpConfig = (
+  editMcpConfig = async (
     owner: { sessionId?: string; cwd?: string },
     edit: import("../shared/mcp").McpConfigEdit,
-  ) => {
-    if (!this.api) return Promise.reject(new Error("The Host is unavailable"));
-    return this.api.editMcpConfig(owner, edit);
-  };
+  ) => this.settingsApi().json("editMcpConfig", { query: owner, body: edit });
 
   // Publishing a settings-write snapshot retires earlier catalog reads.
-  private modelSettingsRevision = 0;
+  private modelCatalogRead = 0;
 
-  private modelSettingsApi = (): Api => {
+  private settingsApi(): Api {
     if (!this.api) throw new Error("The Host is unavailable");
     return this.api;
-  };
+  }
 
   private ownsModelSettings = (owner: {
     sessionId?: string;
@@ -2969,23 +2506,38 @@ export class AppStore {
       ? owner.sessionId === this.state.sessionId
       : !this.state.sessionId && (!owner.cwd || owner.cwd === this.state.cwd);
 
-  readModelSettings = async (owner: {
-    sessionId?: string;
-    cwd?: string;
-  }): Promise<ModelSettingsSnapshot> => {
-    const api = this.modelSettingsApi();
-    const transport = this.transportGeneration;
+  private modelSettingsOperation(owner: { sessionId?: string; cwd?: string }) {
+    const api = this.settingsApi();
     const selection = this.selectionGeneration;
-    const revision = this.modelSettingsRevision;
-    const snapshot = await api.modelSettings(owner);
-    if (
+    const current = () =>
       api === this.api &&
-      transport === this.transportGeneration &&
       selection === this.selectionGeneration &&
-      this.ownsModelSettings(owner) &&
-      revision === this.modelSettingsRevision
-    )
-      this.set({ commonModels: snapshot.commonModels });
+      this.ownsModelSettings(owner);
+    return { api, current };
+  }
+
+  private modelSettingsRead(owner: { sessionId?: string; cwd?: string }) {
+    const { api, current } = this.modelSettingsOperation(owner);
+    const read = current() ? ++this.modelCatalogRead : -1;
+    return {
+      api,
+      current: () => current() && read === this.modelCatalogRead,
+    };
+  }
+
+  readModelSettings = async (
+    owner: { sessionId?: string; cwd?: string },
+    refresh = false,
+  ): Promise<ModelSettingsSnapshot> => {
+    const { api, current } = this.modelSettingsRead(owner);
+    const snapshot = await api.json("modelSettings", {
+      query: { ...owner, refresh: refresh ? "1" : undefined },
+    });
+    if (current() && !snapshot.modelDiscoveryFailed)
+      this.set({
+        ...(refresh ? { availableModels: snapshot.models } : {}),
+        commonModels: snapshot.commonModels,
+      });
     return snapshot;
   };
 
@@ -2994,18 +2546,13 @@ export class AppStore {
     revision: string,
     patch: ModelPreferencesPatch,
   ) => {
-    const api = this.modelSettingsApi();
-    const transport = this.transportGeneration;
-    const selection = this.selectionGeneration;
-    const result = await api.saveModelPreferences(owner, revision, patch);
-    if (
-      result.snapshot &&
-      api === this.api &&
-      transport === this.transportGeneration &&
-      selection === this.selectionGeneration &&
-      this.ownsModelSettings(owner)
-    ) {
-      this.modelSettingsRevision++;
+    const { api, current } = this.modelSettingsOperation(owner);
+    const result = await api.json("saveModelPreferences", {
+      query: owner,
+      body: { revision, patch },
+    });
+    if (result.snapshot && current()) {
+      this.modelCatalogRead++;
       this.set({ commonModels: result.snapshot.commonModels });
     }
     return result;
@@ -3016,18 +2563,13 @@ export class AppStore {
     revision: string,
     edit: ModelConfigEdit,
   ) => {
-    const api = this.modelSettingsApi();
-    const transport = this.transportGeneration;
-    const selection = this.selectionGeneration;
-    const result = await api.editModelConfig(owner, revision, edit);
-    if (
-      result.snapshot &&
-      api === this.api &&
-      transport === this.transportGeneration &&
-      selection === this.selectionGeneration &&
-      this.ownsModelSettings(owner)
-    ) {
-      this.modelSettingsRevision++;
+    const { api, current } = this.modelSettingsOperation(owner);
+    const result = await api.json("editModelConfig", {
+      query: owner,
+      body: { revision, edit },
+    });
+    if (result.snapshot && current()) {
+      this.modelCatalogRead++;
       this.set({
         availableModels: result.snapshot.models,
         commonModels: result.snapshot.commonModels,
@@ -3036,32 +2578,24 @@ export class AppStore {
     return result;
   };
 
-  providerAuth = (
+  providerAuth = async (
     owner: { sessionId?: string; cwd?: string },
     operation: ProviderAuthOperation,
-  ) =>
-    this.modelSettingsApi()
-      .providerAuth(owner, operation)
-      .then((response) => response.result);
+  ) => (await this.settingsApi().providerAuth(owner, operation)).result;
 
   refreshModels = async (owner?: {
     sessionId?: string;
     cwd?: string;
   }): Promise<string | undefined> => {
-    const api = this.api;
-    const transport = this.transportGeneration;
-    const selection = this.selectionGeneration;
     const requested = owner ?? { sessionId: this.state.sessionId ?? undefined };
-    if (!api) throw new Error("The Host is unavailable");
-    const revision = this.modelSettingsRevision;
-    const result = await api.refreshModels(requested.sessionId, requested.cwd);
-    if (
-      this.api === api &&
-      this.transportGeneration === transport &&
-      this.selectionGeneration === selection &&
-      this.ownsModelSettings(requested) &&
-      revision === this.modelSettingsRevision
-    )
+    const { api, current } = this.modelSettingsRead(requested);
+    const result = await api.json("refreshModels", {
+      query: {
+        sessionId: requested.sessionId || undefined,
+        cwd: requested.cwd || undefined,
+      },
+    });
+    if (current())
       this.set({
         availableModels: result.models,
         commonModels: result.commonModels ?? [],
@@ -3073,33 +2607,45 @@ export class AppStore {
     sessionId?: string,
     cwd?: string,
     inherit = false,
+    signal?: AbortSignal,
   ): Promise<ModelCatalogResponse> => {
     const api = this.api;
-    const transport = this.transportGeneration;
+    const transport = this.state.transportGeneration;
     if (!api) throw new Error("The Host is unavailable");
-    const result = await api.refreshModels(sessionId, cwd, inherit);
-    if (this.api !== api || this.transportGeneration !== transport)
+    const result = await api
+      .json(
+        "refreshModels",
+        {
+          query: {
+            sessionId: sessionId || undefined,
+            cwd: cwd || undefined,
+            inherit: inherit ? "1" : undefined,
+          },
+        },
+        signal,
+      )
+      .catch((error) => {
+        // New may inherit a session's catalog, but creating a new session does
+        // not require ownership of the source or access to its saved history.
+        if (
+          !signal?.aborted &&
+          this.api === api &&
+          this.state.transportGeneration === transport &&
+          sessionId &&
+          cwd &&
+          error instanceof ApiError &&
+          (error.status === 404 ||
+            error.code === "EXTERNAL_PI_WRITER_ACTIVE" ||
+            error.code === "EXTERNAL_PI_PRESENCE_UNAVAILABLE" ||
+            error.code === "SESSION_OWNER_UNAVAILABLE" ||
+            error.code === "SESSION_WORKSPACE_UNAVAILABLE")
+        )
+          return api.json("refreshModels", { query: { cwd } }, signal);
+        throw error;
+      });
+    if (this.api !== api || this.state.transportGeneration !== transport)
       throw new Error("The Host connection changed");
     return result;
-  };
-
-  resolveNewSessionThinking = async (
-    cwd: string,
-    model: ModelOption,
-    current: ThinkingLevel,
-  ): Promise<ThinkingLevel> => {
-    const api = this.api;
-    const transport = this.transportGeneration;
-    if (!api) throw new Error("The Host is unavailable");
-    const result = await api.newSessionThinking(
-      cwd,
-      model.provider,
-      model.id,
-      current,
-    );
-    if (this.api !== api || this.transportGeneration !== transport)
-      throw new Error("The Host connection changed");
-    return result.level;
   };
 
   searchNewSessionProjectFiles = async (
@@ -3108,12 +2654,14 @@ export class AppStore {
     showHidden = false,
   ): Promise<ProjectFileSearchResult> => {
     if (!this.api) return { files: [] };
-    const result = await this.api.searchNewSessionFiles(
-      cwd,
-      query,
-      50,
-      showHidden,
-    );
+    const result = await this.api.json("searchNewSessionFiles", {
+      query: {
+        cwd,
+        q: query,
+        limit: 50,
+        showHidden: showHidden ? "1" : undefined,
+      },
+    });
     return {
       ...result,
       files: result.files.map((file) => ({
@@ -3143,7 +2691,33 @@ export class AppStore {
 
   openWorkspaceFile = (path: string): Promise<void> => {
     this.workspace.revealPath(path);
-    return this.resources.openResource(path, "files", path);
+    return this.openResource(path, path);
+  };
+
+  showInFileManager = async (
+    reference: string,
+    workspacePath?: string,
+    directory = false,
+  ): Promise<void> => {
+    const api = this.api;
+    const sessionId = this.state.sessionId;
+    if (!api || !sessionId) return;
+    try {
+      await api.json("showInFileManager", {
+        body: { sessionId, reference, workspacePath, directory },
+      });
+    } catch (error) {
+      if (this.api !== api) return;
+      if (error instanceof ApiError && error.status === 401)
+        this.handleAuthFailure();
+      else if (this.state.sessionId === sessionId)
+        this.notify(
+          "warning",
+          error instanceof Error
+            ? error.message
+            : "Could not show in file manager",
+        );
+    }
   };
 
   refreshWorkspaceBrowser = (): Promise<void> => this.workspace.refresh();
@@ -3151,7 +2725,7 @@ export class AppStore {
   /** Filesystem roots for cross-volume navigation in the host picker. */
   browseHostRoots = async (): Promise<HostRootsResponse> => {
     if (!this.api) throw new Error("Not connected to the Inspire host");
-    return this.api.browseHostRoots();
+    return this.api.json("browseHostRoots", {});
   };
 
   /** One level of the host directory picker; the dialog renders failures. */
@@ -3160,7 +2734,12 @@ export class AppStore {
     showHidden = false,
   ): Promise<HostDirListing> => {
     if (!this.api) throw new Error("Not connected to the Inspire host");
-    return this.api.browseHostDirs(path, showHidden);
+    return this.api.json("browseHostDirs", {
+      query: {
+        path: path || undefined,
+        showHidden: showHidden ? "1" : undefined,
+      },
+    });
   };
 
   // --- Extension UI ---
@@ -3170,21 +2749,18 @@ export class AppStore {
     payload: Record<string, unknown>,
   ): Promise<string | null> => {
     const api = this.api;
-    const transportGeneration = this.transportGeneration;
-    const ownsTransport = (): boolean =>
-      this.api === api && this.transportGeneration === transportGeneration;
-    if (!api || this.state.extensionUiRespondingId) return null;
-    const request = this.state.extensionUiRequests[0];
+    const ownsTransport = (): boolean => this.api === api;
+    if (!api || this.state.live.extensionUiRespondingId) return null;
+    const request = this.state.live.extensionUiRequests[0];
     if (!request || payload.id !== request.id) return null;
-    this.set({ extensionUiRespondingId: request.id });
+    this.patchLive({ extensionUiRespondingId: request.id });
     try {
-      await api.respondExtensionUi({
-        ...payload,
-        sessionId: request.sessionId,
+      await api.json("respondExtensionUi", {
+        body: { ...payload, id: request.id, sessionId: request.sessionId },
       });
       if (ownsTransport() && this.state.sessionId === request.sessionId) {
-        this.set({
-          extensionUiRequests: this.state.extensionUiRequests.filter(
+        this.patchLive({
+          extensionUiRequests: this.state.live.extensionUiRequests.filter(
             (candidate) => candidate.id !== request.id,
           ),
         });
@@ -3200,7 +2776,7 @@ export class AppStore {
       // completion must not turn a later dialog into a global error.
       if (
         this.state.sessionId === request.sessionId &&
-        this.state.extensionUiRequests.some(
+        this.state.live.extensionUiRequests.some(
           (candidate) => candidate.id === request.id,
         )
       ) {
@@ -3209,8 +2785,11 @@ export class AppStore {
           : "Failed to answer the extension";
       }
     } finally {
-      if (ownsTransport() && this.state.extensionUiRespondingId === request.id)
-        this.set({ extensionUiRespondingId: null });
+      if (
+        ownsTransport() &&
+        this.state.live.extensionUiRespondingId === request.id
+      )
+        this.patchLive({ extensionUiRespondingId: null });
     }
     return null;
   };
@@ -3222,9 +2801,9 @@ export class AppStore {
   snoozeUpdate = (): void => this.updates.snooze();
 
   dismissNotice = (id: number): void => {
-    if (!this.state.notices.some((notice) => notice.id === id)) return;
-    this.set({
-      notices: this.state.notices.filter((notice) => notice.id !== id),
+    if (!this.state.live.notices.some((notice) => notice.id === id)) return;
+    this.patchLive({
+      notices: this.state.live.notices.filter((notice) => notice.id !== id),
     });
   };
 
@@ -3236,53 +2815,30 @@ export class AppStore {
   ): Promise<void> => {
     const api = this.api;
     if (!api) throw new Error("Connect to the Host before changing adapters.");
-    const result = await api.setPresentationAdapterEnabled(id, enabled);
-    if (api !== this.api) return;
-    this.set({
-      prefs: {
-        ...this.state.prefs,
-        adapterEnabled: result.preferences.adapterEnabled,
-      },
+    const result = await api.json("setPresentationAdapterEnabled", {
+      params: { id },
+      body: { enabled },
     });
-    configureToolPresentationRegistry(result.configuration, result.adapters);
+    if (api !== this.api) return;
+    this.preferences.publish({
+      preferences: result.preferences,
+      revision: result.preferenceRevision,
+    });
+    configurePresentationAdapters(result.configuration, result.adapters);
     if (result.warning) this.notify("warning", result.warning);
   };
 
-  setTheme = (value: ThemePreference): void => this.preferences.setTheme(value);
-  setPalette = (value: PalettePreference): void =>
-    this.preferences.setPalette(value);
-  setTitlebarNeedles = (value: boolean): void =>
-    this.preferences.setTitlebarNeedles(value);
-  setContentTextSize = (value: ContentTextSizePreference): void =>
-    this.preferences.setContentTextSize(value);
-  setReadingWidth = (value: ReadingWidthPreference): void =>
-    this.preferences.setReadingWidth(value);
-  setLaunch = (value: LaunchPreference): void =>
-    this.preferences.setLaunch(value);
-  setHerdrEnabled = (value: boolean): void =>
-    this.preferences.setHerdrEnabled(value);
-  setDesktopSendKey = (value: DesktopSendKeyPreference): void =>
-    this.preferences.setDesktopSendKey(value);
+  setPreference: PreferenceController["set"] = (field, value) =>
+    this.preferences.set(field, value);
   setCompletionAttention = (
     value: CompletionAttentionPreference,
   ): Promise<boolean> => this.notifications.setMode(value);
   setTaskNotificationGrouping = (
     value: TaskNotificationGrouping,
   ): Promise<boolean> => this.notifications.setGrouping(value);
-  refreshTaskAlerts = (): Promise<void> =>
-    this.notifications.initialize(this.state.prefs.completionAttention);
+  refreshTaskAlerts = (): Promise<void> => this.notifications.initialize();
   testTaskNotification = (): Promise<void> => this.notifications.test();
   captureNotificationTarget = (): void => this.notifications.captureTarget();
-  setProjectDisplay = (value: ProjectDisplayPreference): void =>
-    this.preferences.setProjectDisplay(value);
-  setSessionActionOrder = (value: SessionActionId[]): void =>
-    this.preferences.setSessionActionOrder(value);
-  setThinkingVisibility = (value: VisibilityPreference): void =>
-    this.preferences.setThinkingVisibility(value);
-  setToolVisibility = (value: ToolVisibilityPreference): void =>
-    this.preferences.setToolVisibility(value);
-  setActivityFoldVisibility = (value: ActivityFoldVisibilityPreference): void =>
-    this.preferences.setActivityFoldVisibility(value);
   restoreDefaultSettings = (): void => {
     this.preferences.restoreDefaults();
     void this.notifications.setMode("off");
@@ -3300,48 +2856,209 @@ export class AppStore {
 
   // --- Files/resources pane ---
 
-  setResourcesOpen = (resourcesOpen: boolean): void => {
-    if (!resourcesOpen) {
-      this.resources.clearSelection();
-      this.git.clearDiffSelection();
-    }
-    this.set({ resourcesOpen });
-  };
+  private workbenchKey(): string | null {
+    return workbenchSessionKey(this.state.sessionId, this.state.cwd);
+  }
 
-  showFileBrowser = (): void => {
-    this.resources.cancelRequest();
+  fileReadingState = (reference: string) =>
+    readFileReading(this.workbenchKey(), reference);
+
+  private activateFileTab(
+    tab: ResourceFileTab,
+    resourceTabs = this.state.resourceTabs,
+  ): void {
+    const current = this.state.fileInspection;
     this.set({
       resourcesOpen: true,
       contextMode: "files",
-      fileBrowserView: "browse",
+      resourceTabs,
+      fileInspection: {
+        kind: "file",
+        reference: tab.reference,
+        workspacePath: tab.workspacePath,
+        preview:
+          current.kind === "file" &&
+          current.reference === tab.reference &&
+          current.workspacePath === tab.workspacePath
+            ? current.preview
+            : null,
+      },
     });
-  };
+  }
 
-  showChangesBrowser = (): void => {
-    this.resources.clearSelection();
-    this.git.clearDiffSelection();
-    this.set({ resourcesOpen: true, contextMode: "changes" });
-  };
-
-  setContextMode = (
-    contextMode: "files" | "changes" | "branches" | "terminal",
-  ): void => {
-    this.set({ contextMode });
-    if (contextMode === "changes") {
-      const { selectedGitPathId, selectedGitSide, gitDiff } = this.state;
-      if (selectedGitPathId && selectedGitSide && !gitDiff)
-        void this.git.openDiff(selectedGitPathId, selectedGitSide);
-      else void this.git.refreshStatus();
+  private readFileTab(tab: ResourceFileTab): Promise<void> {
+    const inspection = this.state.fileInspection;
+    if (inspection.kind !== "file") return Promise.resolve();
+    const { workspacePath } = inspection;
+    if (
+      tab.reference.startsWith("pi-git://") ||
+      (tab.view === "changes" && tab.git && !workspacePath)
+    ) {
+      this.resources.invalidate();
+      this.set({
+        fileInspection: {
+          kind: "file",
+          reference: tab.reference,
+          preview: {
+            status: "error",
+            reference: tab.reference,
+            message: "This Git path has no readable workspace file.",
+          },
+        },
+      });
+      return Promise.resolve();
     }
-    if (contextMode === "branches") void this.loadBranchTree();
+    return this.resources.openResource(
+      tab.reference,
+      tab.view === "changes" ? "changes" : "files",
+      workspacePath,
+    );
+  }
+
+  private openGitFileTab(change: GitFileChange): Promise<void> {
+    const { id: pathId, workspacePath, utf8Path, display } = change.path;
+    const previous = this.state.resourceTabs.find(
+      (tab) =>
+        (workspacePath !== undefined &&
+          (tab.workspacePath === workspacePath ||
+            tab.reference === workspacePath)) ||
+        tab.git?.pathId === pathId,
+    );
+    const tab: ResourceFileTab = {
+      reference: previous?.reference ?? workspacePath ?? `pi-git://${pathId}`,
+      workspacePath,
+      view: "changes",
+      git: { pathId, displayPath: workspacePath ?? utf8Path ?? display },
+    };
+    this.activateFileTab(
+      tab,
+      previous
+        ? this.state.resourceTabs.map((item) =>
+            item === previous ? tab : item,
+          )
+        : [...this.state.resourceTabs, tab],
+    );
+    return this.readFileTab(tab);
+  }
+
+  private restoreFileTab(): Promise<void> {
+    const tab = inspectedFileTab(this.state);
+    if (!tab) return Promise.resolve();
+    const body = this.readFileTab(tab);
+    return tab.view === "changes" ? this.git.refreshStatus() : body;
+  }
+
+  setFileChangesView = (enabled: boolean): Promise<void> => {
+    const { fileInspection, resourceTabs } = this.state;
+    const tab = inspectedFileTab(this.state);
+    if (!tab || fileInspection.kind !== "file") return Promise.resolve();
+    this.git.clearComparison();
+    this.set({
+      resourceTabs: resourceTabs.map((item) =>
+        item === tab ? { ...tab, view: enabled ? "changes" : undefined } : item,
+      ),
+    });
+    return enabled && fileInspection.preview
+      ? this.git.refreshStatus()
+      : this.restoreFileTab();
   };
 
-  loadBranchTree = (): Promise<void> => this.branches.loadTree();
+  refreshFileTab = (): Promise<void> =>
+    showsFileComparison(this.state)
+      ? this.git.refreshStatus()
+      : this.restoreFileTab();
 
-  readBranchTree = (query: BranchTreeQuery, signal?: AbortSignal) =>
-    this.branches.readTree(query, signal);
-  readBranchEntry = (targetId: string, offset = 0, signal?: AbortSignal) =>
-    this.branches.readEntry(targetId, offset, signal);
+  setResourcesOpen = (resourcesOpen: boolean): void =>
+    this.changeContext(resourcesOpen);
+
+  private changeContext(
+    resourcesOpen: boolean,
+    requestedMode?: AppState["contextMode"],
+  ): void {
+    const { fileInspection } = this.state;
+    if (!resourcesOpen) {
+      this.resources.invalidate();
+      this.git.clearComparison();
+      this.set({
+        resourcesOpen,
+        fileInspection:
+          fileInspection.kind === "file"
+            ? { ...fileInspection, preview: null }
+            : fileInspection,
+      });
+      return;
+    }
+    const contextMode = requestedMode ?? this.state.contextMode;
+    this.set({ resourcesOpen, contextMode });
+    if (
+      contextMode === "files" &&
+      fileInspection.kind === "file" &&
+      (!fileInspection.preview || showsFileComparison(this.state))
+    )
+      void this.restoreFileTab();
+    if (requestedMode === "changes") void this.git.refreshStatus();
+  }
+
+  selectResourceTab = (reference: string): Promise<void> => {
+    const tab = this.state.resourceTabs.find(
+      (tab) => tab.reference === reference,
+    );
+    if (!tab) return Promise.resolve();
+    const { fileInspection, resourcesOpen, contextMode, gitDiff } = this.state;
+    if (
+      resourcesOpen &&
+      contextMode === "files" &&
+      fileInspection.kind === "file" &&
+      fileInspection.reference === reference &&
+      (tab.view === "changes"
+        ? gitDiff !== null
+        : fileInspection.preview !== null)
+    )
+      return Promise.resolve();
+    this.git.clearComparison();
+    this.activateFileTab(tab);
+    return this.restoreFileTab();
+  };
+
+  closeResourceTab = (reference: string): void => {
+    const index = this.state.resourceTabs.findIndex(
+      (tab) => tab.reference === reference,
+    );
+    if (index < 0) return;
+    forgetFileReading(this.workbenchKey(), reference);
+    const resourceTabs = this.state.resourceTabs.filter(
+      (tab) => tab.reference !== reference,
+    );
+    const inspection = this.state.fileInspection;
+    if (inspection.reference === reference) {
+      this.git.clearComparison();
+      const next = resourceTabs[Math.min(index, resourceTabs.length - 1)];
+      if (
+        inspection.kind === "file" &&
+        this.state.contextMode === "files" &&
+        next
+      ) {
+        this.resources.invalidate();
+        this.activateFileTab(next, resourceTabs);
+        void this.restoreFileTab();
+        return;
+      }
+      this.resources.clearSelection();
+    }
+    this.set({ resourceTabs });
+  };
+
+  showFileBrowser = (): void => {
+    this.resources.clearSelection(true);
+    this.git.clearComparison();
+    this.set({ resourcesOpen: true, contextMode: "files" });
+  };
+
+  openContextMode = (contextMode: AppState["contextMode"]): void =>
+    this.changeContext(true, contextMode);
+
+  historyReadingState = () => readHistoryReading(this.workbenchKey());
+
   branchCopyContent = (
     targetId: string,
     signal: AbortSignal,
@@ -3353,12 +3070,14 @@ export class AppStore {
 
   navigateBranch = (
     targetId: string,
-    mode: "switch" | "edit",
+    mode: BranchNavigateRequest["mode"],
     options: Pick<
-      BranchNavigateRequest,
+      Exclude<BranchNavigateRequest, { mode: "watch" }>,
       "summarize" | "customInstructions"
     > = {},
-  ): Promise<boolean> => this.branches.navigate(targetId, mode, options);
+    revision?: number,
+  ): Promise<boolean> =>
+    this.branches.navigate(targetId, mode, options, revision);
 
   forkFromEntry = (targetId: string): Promise<boolean> =>
     this.branches.forkFromEntry(targetId);
@@ -3381,18 +3100,14 @@ export class AppStore {
 
   refreshGitStatus = (): Promise<void> => this.git.refreshStatus();
 
-  refreshGitInspection = (): Promise<void> => this.git.refreshStatus();
-
-  openGitDiff = (pathId: string, requestedSide?: GitDiffSide): Promise<void> =>
-    this.git.openChange(pathId, requestedSide);
+  openGitDiff = (pathId: string): Promise<void> => this.git.openChange(pathId);
 
   cancelResourceProbes = (clearStanding = false): void => {
     this.resources.cancelProbes(clearStanding);
   };
 
-  loadSessionResources = (
-    options: { cursor?: string; limit?: number; signal?: AbortSignal } = {},
-  ) => this.resources.loadSessionResources(options);
+  loadSessionResources = (signal?: AbortSignal) =>
+    this.resources.loadSessionResources(signal);
 
   probeResources = (references: string[]): Promise<void> =>
     this.resources.probeResources(references);
@@ -3413,14 +3128,14 @@ export class AppStore {
     return this.api.attachmentPreview(id, signal);
   };
 
-  loadEmbeddedImage = (
+  loadTranscriptImage = (
     sessionId: string,
     viewId: string,
     projectionKey: string,
     reference: string,
     signal: AbortSignal,
   ): Promise<Blob> =>
-    this.resources.loadEmbeddedImage(
+    this.resources.loadTranscriptImage(
       sessionId,
       viewId,
       projectionKey,
@@ -3428,12 +3143,32 @@ export class AppStore {
       signal,
     );
 
-  openResource = (
-    reference: string,
-    contextMode: "files" | "changes" = "files",
-    workspacePath?: string,
-  ): Promise<void> =>
-    this.resources.openResource(reference, contextMode, workspacePath);
+  consumeFileSourceJump = (jump: FileSourceJump): boolean => {
+    const inspection = this.state.fileInspection;
+    if (inspection.kind !== "file") return false;
+    const { preview } = inspection;
+    if (preview?.status !== "ready" || preview.sourceJump !== jump)
+      return false;
+    this.set({
+      fileInspection: {
+        ...inspection,
+        preview: { ...preview, sourceJump: undefined },
+      },
+    });
+    return true;
+  };
+
+  openResource = (reference: string, workspacePath?: string): Promise<void> => {
+    this.git.clearComparison();
+    return this.resources.openResource(
+      reference,
+      "files",
+      workspacePath ?? this.state.resourceStanding[reference]?.workspacePath,
+      workspacePath !== reference
+        ? (resourceReferenceLine(reference) ?? undefined)
+        : undefined,
+    );
+  };
 }
 
 export function gitChangeForWorkspacePath(

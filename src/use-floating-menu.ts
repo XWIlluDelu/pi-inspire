@@ -1,4 +1,10 @@
-import { useLayoutEffect, useState } from "react";
+import {
+  type RefObject,
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useState,
+} from "react";
 
 interface FloatingMenuBounds {
   left: number;
@@ -7,7 +13,7 @@ interface FloatingMenuBounds {
   bottom: number;
 }
 
-export interface FloatingMenuPlacement {
+interface FloatingMenuPlacement {
   direction: "up" | "down";
   left: number;
   top?: number;
@@ -32,7 +38,7 @@ interface FloatingMenuTarget {
   context: HTMLElement;
   anchor: FloatingMenuBounds;
   preferredWidth?: number;
-  /** Fixed-position containing block when a portal lives in a filtered overlay. */
+  /** Fixed-position containing block for a menu inside a filtered overlay. */
   positioningRoot?: HTMLElement | null;
   observe?: readonly Element[];
 }
@@ -237,4 +243,28 @@ export function useFloatingMenuPlacement(
   }, [constraints, open, resolveTarget]);
 
   return placement;
+}
+
+/** A portaled menu and its anchor share one outside-dismiss boundary. */
+export function useFloatingMenuDismissal(
+  open: boolean,
+  anchor: RefObject<HTMLElement | null>,
+  menu: RefObject<HTMLElement | null>,
+  onDismiss: () => void,
+): void {
+  const dismiss = useEffectEvent(onDismiss);
+  useEffect(() => {
+    if (!open) return;
+    const onOutside = (event: Event) => {
+      const target = event.target as Node;
+      if (!anchor.current?.contains(target) && !menu.current?.contains(target))
+        dismiss();
+    };
+    window.addEventListener("pointerdown", onOutside);
+    window.addEventListener("focusin", onOutside);
+    return () => {
+      window.removeEventListener("pointerdown", onOutside);
+      window.removeEventListener("focusin", onOutside);
+    };
+  }, [open, anchor, menu]);
 }

@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
 import {
   access,
@@ -9,46 +9,39 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { createServer, type Server } from "node:http";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { InstanceHttpControl } from "../../server/instance-control.mjs";
+import { dirname, join } from "node:path";
+import { promisify } from "node:util";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  completeInstanceShutdown,
   consumeStopRequest,
   INSTANCE_STATE_VERSION,
   type InstanceState,
   inspectInstance,
+  instanceShutdownRequested,
   instanceUrl,
   portAvailable,
   processStartIdentity,
   removeInstanceState,
+  requestInstanceShutdown,
   stopManagedInstance,
+  watchInstanceShutdown,
   writeInstanceState,
 } from "../../server/instance-state.mjs";
 
-const temporaryDirectories: string[] = [];
-const servers: Server[] = [];
+let directory: string;
+let closeMonitor: (() => void) | undefined;
 
 afterEach(async () => {
-  await Promise.all(
-    servers
-      .splice(0)
-      .map(
-        (server) =>
-          new Promise<void>((resolve) => server.close(() => resolve())),
-      ),
-  );
-  await Promise.all(
-    temporaryDirectories
-      .splice(0)
-      .map((path) => rm(path, { recursive: true, force: true })),
-  );
+  closeMonitor?.();
+  closeMonitor = undefined;
+  if (directory) await rm(directory, { recursive: true, force: true });
 });
 
 async function temporaryStatePath(): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), "inspire-instance-"));
-  temporaryDirectories.push(directory);
+  directory = await mkdtemp(join(tmpdir(), "inspire-instance-"));
   return join(directory, "instance.json");
 }
 
@@ -62,7 +55,6 @@ function state(port = 4587): InstanceState {
     token: "test-token-with-sufficient-entropy",
     startedAt: new Date().toISOString(),
     processStartTime: "test-process-start",
-    mock: false,
   };
 }
 
@@ -128,106 +120,37 @@ describe("Inspire instance state", () => {
     await expect(consumeStopRequest(requestPath)).resolves.toBe(false);
   });
 
-  it("fails closed on malformed state instead of treating it as absent", async () => {
+  it("fails closed on corrupt, foreign and reused instance publications", async () => {
     const path = await temporaryStatePath();
-    await writeFile(path, "not-json\n", { mode: 0o600 });
-
-    await expect(
-      inspectInstance(path, {
-        root: process.cwd(),
-        host: "127.0.0.1",
-        port: 4587,
-      }),
-    ).rejects.toThrow();
-  });
-
-  it("does not remove a publication owned by another instance", async () => {
-    const path = await temporaryStatePath();
-    const value = state();
-    await writeInstanceState(path, value);
-
-    await expect(
-      stopManagedInstance(path, {
-        root: `${value.root}-different`,
-        host: value.host,
-        port: value.port,
-      }),
-    ).resolves.toEqual({ kind: "stale" });
-    expect(JSON.parse(await readFile(path, "utf8"))).toEqual(value);
-  });
-
-  it("recognizes only a verified process with a healthy authenticated host", async () => {
-    const path = await temporaryStatePath();
-    const control = new InstanceHttpControl();
-    let owner: InstanceState;
-    const server = createServer(async (request, response) => {
-      expect(request.headers.authorization).toBeUndefined();
-      const chunks: Buffer[] = [];
-      for await (const chunk of request) chunks.push(chunk);
-      const grant = control.accept(
-        owner,
-        JSON.parse(Buffer.concat(chunks).toString("utf8")),
-      );
-      if (!grant) {
-        response.writeHead(401).end();
-        return;
-      }
-      response.setHeader("Content-Type", "application/json");
-      response.end(
-        JSON.stringify(
-          control.reply(grant, { appName: "inspire", mock: false }),
-        ),
-      );
+    const owner = {
+      ...state(),
+      processStartTime: await processStartIdentity(process.pid),
+    };
+    const target = { root: owner.root, host: owner.host, port: owner.port };
+    for (const invalid of [
+      "not-json",
+      JSON.stringify({ ...owner, schemaVersion: 1 }),
+    ]) {
+      await writeFile(path, invalid, { mode: 0o600 });
+      await expect(inspectInstance(path, target)).rejects.toThrow();
+      await expect(stopManagedInstance(path, target)).rejects.toThrow();
+    }
+    await expect(stat(path + ".shutdown-request")).rejects.toMatchObject({
+      code: "ENOENT",
     });
-    servers.push(server);
-    await new Promise<void>((resolve) =>
-      server.listen(0, "127.0.0.1", resolve),
-    );
-    const address = server.address();
-    if (!address || typeof address === "string")
-      throw new Error("Expected a TCP test server");
-    const value = state(address.port);
-    value.processStartTime = await processStartIdentity(process.pid);
-    value.httpControlVersion = 1;
-    owner = { ...value };
-    await writeInstanceState(path, value);
-    const processMarker = process.argv[0] as string;
-
+    await writeInstanceState(path, owner);
     await expect(
-      inspectInstance(
-        path,
-        { root: value.root, host: value.host, port: value.port, mock: false },
-        { processMarker },
-      ),
-    ).resolves.toMatchObject({ kind: "healthy", state: value });
-    await expect(
-      inspectInstance(
-        path,
-        { root: value.root, host: value.host, port: value.port, mock: true },
-        { processMarker },
-      ),
-    ).resolves.toMatchObject({ kind: "mode-conflict" });
-
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-    servers.splice(servers.indexOf(server), 1);
-    await expect(
-      inspectInstance(
-        path,
-        { root: value.root, host: value.host, port: value.port },
-        { processMarker, healthTimeoutMs: 50 },
-      ),
-    ).resolves.toMatchObject({ kind: "unavailable" });
-
-    value.processStartTime = `${value.processStartTime}-reused`;
-    await writeInstanceState(path, value);
-    await expect(
-      inspectInstance(
-        path,
-        { root: value.root, host: value.host, port: value.port },
-        { processMarker },
-      ),
+      stopManagedInstance(path, { ...target, root: owner.root + "-other" }),
     ).resolves.toEqual({ kind: "stale" });
-  }, 45_000);
+    expect(JSON.parse(await readFile(path, "utf8"))).toEqual(owner);
+    await writeInstanceState(path, {
+      ...owner,
+      processStartTime: owner.processStartTime + "-reused",
+    });
+    await expect(inspectInstance(path, target)).resolves.toEqual({
+      kind: "stale",
+    });
+  });
 
   it("does not merge distinct case-sensitive roots even under Windows rules", async (context) => {
     const path = await temporaryStatePath();
@@ -286,31 +209,127 @@ describe("Inspire instance state", () => {
     // A live non-Host test process is unavailable, not a mismatched-root stale
     // publication, when the native filesystem confirms that both names alias.
     await expect(
-      inspectInstance(
-        path,
-        {
-          root: upper,
-          host: owner.host,
-          port: owner.port,
-        },
-        { processMarker: process.argv[0] },
-      ),
+      inspectInstance(path, {
+        root: upper,
+        host: owner.host,
+        port: owner.port,
+      }),
     ).resolves.toMatchObject({ kind: "unavailable" });
   }, 30_000);
 
   it("reports port ownership without disturbing the listener", async () => {
     const server = createServer();
-    servers.push(server);
-    await new Promise<void>((resolve) =>
-      server.listen(0, "127.0.0.1", resolve),
-    );
-    const address = server.address();
-    if (!address || typeof address === "string")
-      throw new Error("Expected a TCP test server");
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+    try {
+      await expect(portAvailable("127.0.0.1", port)).resolves.toBe(false);
+      expect(server.listening).toBe(true);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+    await expect(portAvailable("127.0.0.1", port)).resolves.toBe(true);
+  });
+});
 
-    await expect(portAvailable("127.0.0.1", address.port)).resolves.toBe(false);
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-    servers.splice(servers.indexOf(server), 1);
-    await expect(portAvailable("127.0.0.1", address.port)).resolves.toBe(true);
+async function shutdownFixture() {
+  const path = await temporaryStatePath();
+  return {
+    path,
+    state: {
+      ...state(),
+      root: dirname(path),
+      startedAt: "2026-10-19T00:00:00Z",
+    },
+  };
+}
+
+describe("authenticated local Host shutdown", () => {
+  it.runIf(process.platform !== "win32")(
+    "rejects a FIFO without blocking filesystem workers",
+    async () => {
+      const f = await shutdownFixture();
+      await promisify(execFile)("mkfifo", [f.path + ".shutdown-request"]);
+      expect(await instanceShutdownRequested(f.path, f.state)).toBe(false);
+    },
+  );
+  it("authenticates a private shutdown request and completes it once", async () => {
+    const f = await shutdownFixture();
+    const path = f.path + ".shutdown-request";
+    await requestInstanceShutdown(f.path, f.state);
+    const original = await readFile(path, "utf8");
+    expect(Buffer.byteLength(original)).toBeLessThan(2048);
+    expect(original).not.toContain(f.state.token);
+    expect(original).not.toContain(f.state.root);
+    if (process.platform !== "win32")
+      expect((await stat(path)).mode & 0o777).toBe(0o600);
+
+    const request = JSON.parse(original);
+    await writeFile(path, JSON.stringify({ ...request, scope: "host-only" }));
+    expect(await instanceShutdownRequested(f.path, f.state)).toBe(false);
+    await writeFile(path, original);
+    expect(await instanceShutdownRequested(f.path, f.state)).toBe(true);
+
+    const shutdown = vi.fn(async () => {
+      await completeInstanceShutdown(f.path, f.state, true);
+    });
+    closeMonitor = watchInstanceShutdown(f.path, f.state, shutdown);
+    await vi.waitFor(() => expect(shutdown).toHaveBeenCalledOnce());
+    await shutdown.mock.results[0]!.value;
+    expect(await instanceShutdownRequested(f.path, f.state)).toBe(false);
+    expect(await readFile(f.path + ".shutdown-result", "utf8")).not.toContain(
+      f.state.token,
+    );
+  });
+
+  it("binds file shutdown to the credential, process incarnation and configuration", async () => {
+    const f = await shutdownFixture();
+    for (const change of [
+      { token: "different-token" },
+      { pid: process.pid + 1 },
+      { processStartTime: "reused-pid" },
+      { startedAt: "2026-10-19T00:00:01Z" },
+      { root: "different-installation" },
+      { host: "localhost" },
+      { port: 41235 },
+    ]) {
+      await requestInstanceShutdown(f.path, { ...f.state, ...change });
+      expect(
+        await instanceShutdownRequested(f.path, f.state),
+        JSON.stringify(change),
+      ).toBe(false);
+    }
+  });
+
+  it("rejects an expired authentic request and tampered payload/MAC", async () => {
+    const f = await shutdownFixture();
+    await requestInstanceShutdown(f.path, f.state, -1);
+    expect(await instanceShutdownRequested(f.path, f.state)).toBe(false);
+    await requestInstanceShutdown(f.path, f.state);
+    const original = JSON.parse(
+      await readFile(f.path + ".shutdown-request", "utf8"),
+    );
+    await writeFile(
+      f.path + ".shutdown-request",
+      JSON.stringify({ ...original, expiresAt: original.expiresAt + 1 }),
+    );
+    expect(await instanceShutdownRequested(f.path, f.state)).toBe(false);
+    await writeFile(
+      f.path + ".shutdown-request",
+      JSON.stringify({ ...original, signature: "X".repeat(43) }),
+    );
+    expect(await instanceShutdownRequested(f.path, f.state)).toBe(false);
+    await writeFile(f.path + ".shutdown-request", "x".repeat(4096));
+    expect(await instanceShutdownRequested(f.path, f.state)).toBe(false);
+  });
+
+  it("never runs a disposed monitor, including a request already being read", async () => {
+    const f = await shutdownFixture();
+    await requestInstanceShutdown(f.path, f.state);
+    const shutdown = vi.fn(async () => {});
+    const close = watchInstanceShutdown(f.path, f.state, shutdown);
+    close();
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(shutdown).not.toHaveBeenCalled();
   });
 });

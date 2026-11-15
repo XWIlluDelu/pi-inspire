@@ -5,7 +5,7 @@ import {
   useMemo,
   useState,
 } from "react";
-import { useImageHistory } from "../use-image-history";
+import { useInspectionHistory } from "../use-inspection-history";
 import { ImageLightbox, type PreviewImage } from "./ImageLightbox";
 
 interface GalleryImage extends PreviewImage {
@@ -13,10 +13,12 @@ interface GalleryImage extends PreviewImage {
   element: HTMLElement;
 }
 
+type Selection = Pick<GalleryImage, "id" | "src">;
+
 export const ImageGalleryContext = createContext<{
   register: (image: GalleryImage) => void;
   unregister: (id: string) => void;
-  open: (id: string) => void;
+  open: (image: Selection) => void;
 } | null>(null);
 
 /** A message, attachment tray, or document owns a gallery. Registration does
@@ -25,11 +27,7 @@ export function ImageGallery({ children }: { children: ReactNode }) {
   const [entries, setEntries] = useState<ReadonlyMap<string, GalleryImage>>(
     new Map(),
   );
-  const [selection, setSelection] = useState<{
-    id: string;
-    src: string;
-  } | null>(null);
-  const [requested, setRequested] = useState<string | null>(null);
+  const [selection, setSelection] = useState<Selection | null>(null);
   const register = useCallback((image: GalleryImage) => {
     setEntries((previous) => new Map(previous).set(image.id, image));
   }, []);
@@ -41,19 +39,15 @@ export function ImageGallery({ children }: { children: ReactNode }) {
     });
   }, []);
   const context = useMemo(
-    () => ({ register, unregister, open: setRequested }),
+    () => ({ register, unregister, open: setSelection }),
     [register, unregister],
   );
 
-  if (requested !== null) {
-    const image = entries.get(requested);
-    setRequested(null);
-    if (image) setSelection({ id: image.id, src: image.src });
-  }
   const active = selection ? entries.get(selection.id) : undefined;
   const open = Boolean(active && active.src === selection?.src);
   if (selection && !open) setSelection(null);
-  const close = useImageHistory(open, () => setSelection(null));
+  const close = () => setSelection(null);
+  useInspectionHistory(open ? 1 : 0, close, "__inspireImagePreview");
   const images = open
     ? [...entries.values()].sort((a, b) => {
         const order = a.element.compareDocumentPosition(b.element);

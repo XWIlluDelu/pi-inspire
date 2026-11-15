@@ -39,13 +39,6 @@ const releaseTerminalRuntime = join(
 );
 const connectionDispatcher = join(root, "connections", "dispatch.mjs");
 const hostServiceInstaller = join(root, "deploy", "systemd", "install.mjs");
-const hostServiceController = join(root, "deploy", "systemd", "control.mjs");
-const idleMaintenanceRunner = join(
-  root,
-  "deploy",
-  "systemd",
-  "idle-maintenance-restart.mjs",
-);
 const distribution =
   !(await exists(sourceRuntime)) && (await exists(releaseRuntime));
 const supportRoot = distribution
@@ -61,16 +54,18 @@ const { npmInvocation } = await import(
   pathToFileURL(join(supportRoot, "npm-command.mjs")).href
 );
 const {
+  assertInstanceTarget,
   consumeStopRequest,
   inspectInstance,
   instanceLaunchUrl,
+  observeProcessExit,
   portAvailable,
   stopManagedInstance,
 } = await import(pathToFileURL(join(supportRoot, "instance-state.mjs")).href);
-const { inspireRuntimeDirectory, resolveUserPath } = await import(
+const { inspireRuntimeDirectory, installationKey, resolveUserPath } = await import(
   pathToFileURL(join(supportRoot, "platform-paths.mjs")).href
 );
-const { signalProcessTree } = await import(
+const { runChild, signalProcessTree } = await import(
   pathToFileURL(join(supportRoot, "process-tree.mjs")).href
 );
 const { createLauncherRestartSupervisor } = await import(
@@ -97,28 +92,11 @@ function localBin(name) {
 }
 
 function childResult(command, args, options = {}) {
-  return new Promise((resolveResult) => {
-    const child = spawn(command, args, {
-      cwd: options.cwd ?? root,
-      env: options.env ?? process.env,
-      windowsHide: true,
-      stdio: options.capture ? ["ignore", "pipe", "pipe"] : "inherit",
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout?.on("data", (chunk) => (stdout += String(chunk)));
-    child.stderr?.on("data", (chunk) => (stderr += String(chunk)));
-    let settled = false;
-    child.once("error", (error) => {
-      if (settled) return;
-      settled = true;
-      resolveResult({ code: 1, stdout, stderr: `${stderr}${error.message}` });
-    });
-    child.once("exit", (code, signal) => {
-      if (settled) return;
-      settled = true;
-      resolveResult({ code: code ?? (signal ? 1 : 0), stdout, stderr });
-    });
+  return runChild(command, args, {
+    cwd: options.cwd ?? root,
+    env: options.env ?? process.env,
+    windowsHide: true,
+    stdio: options.capture ? ["ignore", "pipe", "pipe"] : "inherit",
   });
 }
 
@@ -252,24 +230,16 @@ function openUrl(url) {
 }
 
 function defaultInstanceStatePath(host, port) {
-  const key = createHash("sha256")
-    .update(root)
-    .update("\0")
-    .update(host)
-    .update("\0")
-    .update(String(port))
-    .digest("hex");
+  const key = installationKey(root, host, port);
   return join(inspireRuntimeDirectory(), `${key}.json`);
 }
 
-async function targetsServiceInstance() {
-  const context = instanceContext();
+async function targetsServiceInstance(context) {
   if (
     context.host !== "127.0.0.1" ||
     context.port !== 4587 ||
     resolve(context.statePath) !==
-      resolve(defaultInstanceStatePath(context.host, context.port)) ||
-    process.env.INSPIRE_MOCK === "1"
+      resolve(defaultInstanceStatePath(context.host, context.port))
   )
     return false;
   // Inherited defaults still address the installed service. A credential override
@@ -291,24 +261,14 @@ function isHostServiceExec() {
   );
 }
 
-async function shouldManageHostService() {
-  return (
-    process.platform === "linux" &&
-    !isHostServiceExec() &&
-    (await targetsServiceInstance())
-  );
-}
-
-async function manageHostService(action, quiet = false) {
-  if (!(await shouldManageHostService())) return { code: 3, output: "" };
-  const result = await childResult(
-    process.execPath,
-    [hostServiceController, "--root", root, action],
-    { capture: true },
-  );
-  const output = `${result.stdout}${result.stderr}`.trim();
-  if (!quiet && output) console.log(output);
-  return { code: result.code, output };
+async function serviceController(context) {
+  if (
+    process.platform !== "linux" ||
+    isHostServiceExec() ||
+    !(await targetsServiceInstance(context))
+  )
+    return null;
+  return import("./deploy/systemd/control.mjs");
 }
 
 function instanceContext() {
@@ -328,37 +288,19 @@ function instanceContext() {
   };
 }
 
-function expected(context, mock) {
-  return {
-    root: context.root,
-    host: context.host,
-    port: context.port,
-    ...(mock === undefined ? {} : { mock }),
-  };
+function expected(context) {
+  return { root: context.root, host: context.host, port: context.port };
 }
 
-async function inspect(context, mock) {
-  return inspectInstance(context.statePath, expected(context, mock), {
-    processMarker: distribution ? "build/server/index.js" : "server/index.ts",
-  });
+async function inspect(context) {
+  return inspectInstance(context.statePath, expected(context));
 }
 
-function reportUnavailableHost(state) {
-  if (state.httpControlVersion !== 1) {
-    console.error("The running Host predates authenticated readiness.");
-    if (state.shutdownControlVersion === 1 || process.platform === "linux") {
-      console.error(
-        "Use 'inspire restart' to upgrade it through safe local controls.",
-      );
-    } else {
-      console.error(
-        "Stop it through its existing service manager or inspected process controls before starting the new Host.",
-      );
-    }
-    return;
-  }
+function reportUnavailableHost() {
   console.error("Cannot authenticate readiness of the managed INSΠRE Host.");
-  console.error("Use 'inspire restart' for an explicit graceful replacement.");
+  console.error(
+    "If it remains unavailable, stop the instance through its launcher or service manager before starting it again.",
+  );
 }
 
 async function showInstanceUrl(result, open = false) {
@@ -373,22 +315,17 @@ async function showInstanceUrl(result, open = false) {
   if (open) openUrl(url);
 }
 
-async function showExisting(context, mock) {
-  const result = await inspect(context, mock);
+async function showExisting(context, waitingForLock = false) {
+  const result = await inspect(context);
   if (result.kind === "healthy") {
     console.log("INSΠRE is already running.");
     await showInstanceUrl(result, process.env.INSPIRE_OPEN !== "0");
     return "shown";
   }
   if (result.kind === "unavailable") {
-    reportUnavailableHost(result.state);
-    return "blocked";
-  }
-  if (result.kind === "mode-conflict") {
-    console.error(
-      "This port is occupied by INSΠRE in a different runtime mode.",
-    );
-    console.error("Use 'inspire stop' before switching modes.");
+    if (waitingForLock)
+      throw new Error("Another managed INSΠRE instance is not available");
+    reportUnavailableHost();
     return "blocked";
   }
   // A stale publication is only evidence about the snapshot we inspected.
@@ -397,28 +334,28 @@ async function showExisting(context, mock) {
   return "absent";
 }
 
-async function acquireInstanceLock(context, mock, detectExisting = true) {
+async function tryInstanceLock(context, waitMs, retryMs) {
+  try {
+    return await acquireFileLock(context.lockPath, {
+      waitMs,
+      retryMs,
+      label: "INSΠRE instance",
+    });
+  } catch (error) {
+    if (error?.code === "ELOCKTIMEOUT") return null;
+    throw error;
+  }
+}
+
+async function acquireInstanceLock(context) {
   const deadline = Date.now() + 15_000;
   while (Date.now() < deadline) {
-    try {
-      return await acquireFileLock(context.lockPath, {
-        waitMs: Math.min(250, Math.max(1, deadline - Date.now())),
-        retryMs: 25,
-        label: "INSΠRE instance",
-      });
-    } catch (error) {
-      if (error?.code !== "ELOCKTIMEOUT") throw error;
-    }
-    if (detectExisting) {
-      const result = await inspect(context, mock);
-      if (result.kind === "healthy") {
-        console.log("INSΠRE is already running.");
-        await showInstanceUrl(result, process.env.INSPIRE_OPEN !== "0");
-        return null;
-      }
-      if (result.kind === "unavailable" || result.kind === "mode-conflict")
-        throw new Error("Another managed INSΠRE instance is not available");
-    }
+    const lease = await tryInstanceLock(
+      context,
+      Math.min(250, Math.max(1, deadline - Date.now())),
+      25,
+    );
+    if (lease || (await showExisting(context, true)) === "shown") return lease;
   }
   throw new Error(
     "Another INSΠRE launcher is still starting or stopping this instance.",
@@ -456,13 +393,13 @@ function runtimeCommand() {
   return [process.execPath, ["--import", "tsx", sourceRuntime]];
 }
 
-async function superviseHost(context, mock, lease) {
+async function superviseHost(context, lease) {
   let child = null;
   let stopping = false;
   let restarting = false;
   // Installed services retain systemd as lifecycle authority. Direct launches
   // use a private parent/child channel, including alternate ports and hosts.
-  const pageRestart = !mock && !isHostServiceExec();
+  const pageRestart = !isHostServiceExec();
   const forward = () => {
     if (stopping) return;
     stopping = true;
@@ -471,9 +408,6 @@ async function superviseHost(context, mock, lease) {
     void (async () => {
       try {
         await stopManagedInstance(context.statePath, expected(context), {
-          processMarker: distribution
-            ? "build/server/index.js"
-            : "server/index.ts",
           timeoutMs: 10_000,
         });
       } catch (error) {
@@ -503,9 +437,7 @@ async function superviseHost(context, mock, lease) {
         INSPIRE_INSTALLATION_ROOT: root,
         INSPIRE_STATE_PATH: context.statePath,
         INSPIRE_STOP_REQUEST_PATH: context.stopRequestPath,
-        ...(mock ? { INSPIRE_MOCK: "1" } : {}),
       };
-      if (!mock) delete environment.INSPIRE_MOCK;
       child = spawn(command, args, {
         cwd: root,
         env: environment,
@@ -543,30 +475,18 @@ async function superviseHost(context, mock, lease) {
   }
 }
 
-async function startHost(mock = false, allowService = true, retained = null) {
-  if (retained && allowService)
-    throw new Error(
-      "A retained local instance lock cannot be delegated to systemd",
-    );
-  if (!mock && allowService) {
-    const service = await manageHostService("start");
-    if (service.code === 0) return 0;
-    if (service.code !== 3) return service.code;
-  }
-
-  const context = retained?.context ?? instanceContext();
-  let lease = retained?.lease ?? null;
+async function startLocalHost(context, lease = null) {
   try {
     await mkdir(dirname(context.statePath), { recursive: true, mode: 0o700 });
     if (!lease) {
-      const existing = await showExisting(context, mock);
+      const existing = await showExisting(context);
       if (existing === "shown") return 0;
       if (existing === "blocked") return 1;
-      lease = await acquireInstanceLock(context, mock);
+      lease = await acquireInstanceLock(context);
       if (!lease) return 0;
     }
 
-    const afterLock = await showExisting(context, mock);
+    const afterLock = await showExisting(context);
     if (afterLock === "shown") return 0;
     if (afterLock === "blocked") return 1;
     await lease.assertOwned();
@@ -581,22 +501,9 @@ async function startHost(mock = false, allowService = true, retained = null) {
 
     const hostLease = lease;
     lease = null;
-    return await superviseHost(context, mock, hostLease);
+    return await superviseHost(context, hostLease);
   } finally {
     await lease?.release();
-  }
-}
-
-async function tryShortLock(context) {
-  try {
-    return await acquireFileLock(context.lockPath, {
-      waitMs: 75,
-      retryMs: 20,
-      label: "INSΠRE instance",
-    });
-  } catch (error) {
-    if (error?.code === "ELOCKTIMEOUT") return null;
-    throw error;
   }
 }
 
@@ -608,156 +515,93 @@ async function placeStopRequest(context) {
   );
 }
 
-async function acquireStopLease(context) {
-  const deadline = Date.now() + 30_000;
-  while (Date.now() < deadline) {
-    // A startup that wins the OS scheduling race must consume this request and
-    // release its lease instead of publishing a replacement Host. Reinstall it
-    // on every pass because consumption is intentionally one-shot.
-    await placeStopRequest(context);
-    const lease = await tryShortLock(context);
-    if (lease) {
-      await rm(context.stopRequestPath, { force: true });
-      return lease;
-    }
-    await new Promise((resolveWait) => setTimeout(resolveWait, 50));
-  }
-  throw new Error(
-    "Timed out waiting for the INSΠRE launcher to finish stopping.",
-  );
-}
+const localStopErrors = {
+  unavailable: "The managed process could not be stopped safely.",
+  timeout: "Timed out waiting for INSΠRE to stop; it was not force-killed.",
+  "cleanup-failed":
+    "The Host could not confirm clean owned-worker shutdown. No replacement was started.",
+};
 
-async function completeLocalStop(
-  context,
-  message,
-  retainLease,
-  acquiredLease = null,
-) {
-  let lease = acquiredLease;
-  try {
-    // Also wait for a standalone stop: the old state file can disappear before
-    // the supervised process exits. Do not clear cancellation while its launcher
-    // could still replace it.
-    if (!lease) lease = await acquireStopLease(context);
-    await rm(context.stopRequestPath, { force: true });
-    if (!retainLease) {
-      await lease?.release();
-      lease = null;
-    }
-    console.log(message);
-    return { code: 0, context, lease };
-  } catch (error) {
-    await lease?.release();
-    await rm(context.stopRequestPath, { force: true }).catch(() => undefined);
-    throw error;
-  }
-}
-
-async function failLocalStop(context, message) {
-  await rm(context.stopRequestPath, { force: true }).catch(() => undefined);
-  console.error(message);
-  return { code: 1, context, lease: null };
-}
-
-async function stopLocalHost(retainLease = false) {
-  const context = instanceContext();
+async function stopLocalHost(context, restart = false, target) {
   await mkdir(dirname(context.statePath), { recursive: true, mode: 0o700 });
-  await placeStopRequest(context);
 
-  const result = await stopManagedInstance(
-    context.statePath,
-    expected(context),
-    {
-      processMarker: distribution ? "build/server/index.js" : "server/index.ts",
-    },
-  );
-  if (result.kind === "stopped") {
-    return completeLocalStop(
-      context,
-      `Stopped INSΠRE process ${result.state.pid}.`,
-      retainLease,
-    );
-  }
-  if (result.kind === "unavailable" || result.kind === "cleanup-failed") {
-    return failLocalStop(
-      context,
-      result.kind === "cleanup-failed"
-        ? "The Host could not confirm clean owned-worker shutdown. No replacement was started."
-        : "The managed process could not be stopped safely.",
-    );
-  }
-  if (result.kind === "timeout") {
-    return failLocalStop(
-      context,
-      "Timed out waiting for INSΠRE to stop; it was not force-killed.",
-    );
-  }
+  let lease = null;
+  let cancellationPublished = false;
+  let waitingForStartup = false;
+  let stoppedMessage = null;
+  let deadline = Infinity;
+  try {
+    while (Date.now() < deadline) {
+      if (target) await assertInstanceTarget(context.statePath, target);
+      // Cancellation is consumed once. Keep publishing it until this command
+      // owns the launcher's lock, even after the Host's state disappears.
+      await placeStopRequest(context);
+      cancellationPublished = true;
+      if (!stoppedMessage) {
+        const result = await stopManagedInstance(
+          context.statePath,
+          expected(context),
+          { target, ...(waitingForStartup ? { timeoutMs: 5_000 } : {}) },
+        );
+        if (result.kind === "stopped") {
+          stoppedMessage = waitingForStartup
+            ? "Stopped the INSΠRE instance that was starting."
+            : `Stopped INSΠRE process ${result.state.pid}.`;
+          deadline = Date.now() + 30_000;
+          continue;
+        }
+        if (localStopErrors[result.kind])
+          throw new Error(
+            waitingForStartup
+              ? "Unable to stop the INSΠRE instance that was starting."
+              : localStopErrors[result.kind],
+          );
+      }
 
-  const lease = await tryShortLock(context);
-  if (lease) {
-    return completeLocalStop(
-      context,
-      "No managed INSΠRE instance is running.",
-      retainLease,
-      lease,
+      lease = await tryInstanceLock(context, 75, 20);
+      if (lease) {
+        await rm(context.stopRequestPath, { force: true });
+        cancellationPublished = false;
+        console.log(
+          stoppedMessage ??
+            (waitingForStartup
+              ? "Cancelled the pending INSΠRE startup."
+              : "No managed INSΠRE instance is running."),
+        );
+        if (!restart) return 0;
+        const retained = lease;
+        lease = null;
+        return await startLocalHost(context, retained);
+      }
+      if (stoppedMessage || waitingForStartup)
+        await new Promise((resolveWait) =>
+          setTimeout(resolveWait, stoppedMessage ? 50 : 100),
+        );
+      else {
+        waitingForStartup = true;
+        deadline = Date.now() + 30_000;
+      }
+    }
+    throw new Error(
+      stoppedMessage
+        ? "Timed out waiting for the INSΠRE launcher to finish stopping."
+        : "Timed out waiting for the pending INSΠRE startup; it was not force-killed.",
     );
+  } finally {
+    if (cancellationPublished)
+      await rm(context.stopRequestPath, { force: true }).catch(() => undefined);
+    await lease?.release();
   }
-
-  const deadline = Date.now() + 30_000;
-  while (Date.now() < deadline) {
-    await placeStopRequest(context);
-    const pending = await stopManagedInstance(
-      context.statePath,
-      expected(context),
-      {
-        processMarker: distribution
-          ? "build/server/index.js"
-          : "server/index.ts",
-        healthTimeoutMs: 250,
-        timeoutMs: 5_000,
-      },
-    );
-    if (pending.kind === "stopped") {
-      return completeLocalStop(
-        context,
-        "Stopped the INSΠRE instance that was starting.",
-        retainLease,
-      );
-    }
-    if (
-      pending.kind === "unavailable" ||
-      pending.kind === "timeout" ||
-      pending.kind === "cleanup-failed"
-    ) {
-      return failLocalStop(
-        context,
-        "Unable to stop the INSΠRE instance that was starting.",
-      );
-    }
-    const acquired = await tryShortLock(context);
-    if (acquired) {
-      return completeLocalStop(
-        context,
-        "Cancelled the pending INSΠRE startup.",
-        retainLease,
-        acquired,
-      );
-    }
-    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
-  }
-  return failLocalStop(
-    context,
-    "Timed out waiting for the pending INSΠRE startup; it was not force-killed.",
-  );
 }
 
-async function stopHost(allowService = true) {
-  if (allowService) {
-    const service = await manageHostService("stop");
-    if (service.code === 0) return 0;
-    if (service.code !== 3) return service.code;
+async function hostLifecycle(action) {
+  const context = instanceContext();
+  const systemd = await serviceController(context);
+  if (systemd) {
+    const result = await systemd.manageHostService(root, action);
+    if (result.kind !== "absent") return systemd.reportHostService(result, action);
   }
-  return (await stopLocalHost()).code;
+  return action === "start" ? startLocalHost(context) : stopLocalHost(context);
 }
 
 async function prepareRestart() {
@@ -776,76 +620,100 @@ async function prepareRestart() {
     );
 }
 
-async function restartHost(all = false) {
-  // Refuse unsupported full restarts before any build or process mutation.
-  const inspected = await manageHostService("status", true);
-  if (all && inspected.code !== 0 && inspected.code !== 5) {
-    console.error(
-      inspected.output ||
-        "Full restart requires this installation's Linux systemd services. No service was restarted.",
+async function restartHost(scope = "host") {
+  const allPi = scope === "all-pi";
+  const terminals = scope !== "host";
+  if (terminals && process.env.INSPIRE_TERMINAL_ID)
+    throw new Error(
+      "Run this restart from an external OS terminal. It can close the terminal running this command before reporting the result.",
     );
-    return 1;
+  const context = instanceContext();
+  const systemd = await serviceController(context);
+  const service = await systemd?.inspectHostService(root);
+  if (service && service.kind !== "managed" && service.kind !== "absent")
+    return systemd.reportHostService(service, "status");
+  if (terminals && service?.kind !== "managed")
+    throw new Error(
+      "Full restart requires this installation's Linux systemd services. No service was restarted.",
+    );
+
+  let stopPi;
+  if (allPi) {
+    const processes = await import(pathToFileURL(join(supportRoot, "pi-processes.mjs")).href);
+    if (!processes.supportsGlobalPiStop())
+      throw new Error("Restart all requires Linux Pi process control.");
+    await processes.assertExternalPiRestartCaller();
+    stopPi = processes.stopAllPiProcesses;
   }
-  if (![0, 3, 5].includes(inspected.code)) {
-    console.error(inspected.output);
-    return inspected.code;
-  }
-  if (all) console.log("Full restart will end all project terminal processes.");
   console.log("Preparing restart…");
   await prepareRestart();
-  const service = await manageHostService(all ? "restart-all" : "restart");
-  if (service.code === 0) return 0;
-  if (service.code !== 3) return service.code;
-  if (all) {
-    console.error(
-      "The managed services changed. No local fallback restart was attempted.",
+  const owner = await inspect(context);
+  if (owner.kind === "unavailable")
+    throw new Error("Cannot verify the running Host for restart.");
+
+  if (service?.kind !== "managed") {
+    const current = await systemd?.inspectHostService(root);
+    if (current && current.kind !== "absent")
+      throw new Error("The installed service changed during preparation. Inspect it before retrying.");
+    console.log("Restarting INSΠRE Host. Terminals remain running.");
+    return stopLocalHost(context, true, owner.kind === "healthy" ? owner.state : undefined);
+  }
+  if (owner.kind === "healthy" && owner.state.systemdInvocationId !== service.invocationId)
+    throw new Error("The running Host does not belong to the inspected service invocation.");
+  if (!allPi) {
+    const action = terminals ? "restart-all" : "restart";
+    return systemd.reportHostService(
+      await systemd.manageHostService(root, action, { target: service }),
+      action,
     );
-    return 1;
   }
 
-  console.log("Restarting INSΠRE Host. Terminals remain running.");
-  const stopped = await stopLocalHost(true);
-  if (stopped.code !== 0) return stopped.code;
-  return startHost(false, false, stopped);
+  let includeHerdr = false;
+  if (owner.kind === "healthy") {
+    const { requestInstanceControl } = await import(
+      pathToFileURL(join(supportRoot, "instance-control.mjs")).href
+    );
+    const mode = await requestInstanceControl(owner.state, "restart-mode");
+    if (!mode || typeof mode.includeHerdr !== "boolean")
+      throw new Error("Cannot read the running Herdr mode. Restart Inspire normally before using --all.");
+    includeHerdr = mode.includeHerdr;
+  } else if (service.activeState === "active") {
+    throw new Error("Cannot read the running Herdr mode. No processes were stopped.");
+  }
+  console.log(includeHerdr
+    ? "Closing Pi sessions, including Herdr sessions."
+    : "Closing Pi sessions outside Herdr.");
+  const stopped = await systemd.manageHostService(root, "stop", { target: service });
+  if (systemd.reportHostService(stopped, "stop") !== 0)
+    throw new Error("The managed services could not be stopped. No global Pi cleanup was attempted.");
+  if (owner.kind === "healthy" && !(await observeProcessExit(owner.state, 15_000)))
+    throw new Error("Host exit was not confirmed. No global Pi cleanup was attempted.");
+  await stopPi({ includeHerdr });
+  const started = await systemd.manageHostService(root, "start", { target: stopped.service });
+  if (systemd.reportHostService(started, "start") !== 0)
+    throw new Error("Pi sessions were closed, but Inspire could not be restarted.");
+  console.log("Closed Pi sessions and restarted Inspire.");
+  return 0;
 }
 
 async function statusHost() {
-  const service = await manageHostService("status", true);
-  if (service.code === 0) {
-    const context = instanceContext();
-    const result = await inspect(context, false);
-    if (result.kind === "healthy") {
-      if (service.output) console.log(service.output);
-      await showInstanceUrl(result);
-      return 0;
-    }
-    if (result.kind === "unavailable") reportUnavailableHost(result.state);
-    else
-      console.error(
-        "INSΠRE system service is active, but its Host is not reachable.",
-      );
-    return 1;
-  }
-  if (service.code !== 3 && service.code !== 5) {
-    if (service.output) console.error(service.output);
-    return service.code;
-  }
-  if (service.code === 5 && service.output) console.log(service.output);
-
   const context = instanceContext();
-  let result = await inspect(context, false);
+  const systemd = await serviceController(context);
+  const service = await systemd?.inspectHostService(root);
+  if (service && service.kind !== "managed" && service.kind !== "absent")
+    return systemd.reportHostService(service, "status");
+  const result = await inspect(context);
+  if (service?.kind === "managed" &&
+      (service.activeState !== "active" || result.kind === "healthy"))
+    systemd.reportHostService(service, "status");
   if (result.kind === "healthy") {
-    console.log("INSΠRE is running.");
+    if (service?.activeState !== "active") console.log("INSΠRE is running.");
     await showInstanceUrl(result);
     return 0;
   }
-  if (result.kind === "mode-conflict") result = await inspect(context, true);
-  if (result.kind === "healthy") {
-    console.log("INSΠRE mock is running.");
-    await showInstanceUrl(result);
-    return 0;
-  }
-  if (result.kind === "unavailable") reportUnavailableHost(result.state);
+  if (result.kind === "unavailable") reportUnavailableHost();
+  else if (service?.activeState === "active")
+    console.error("INSΠRE system service is active, but its Host is not reachable.");
   else console.error("INSΠRE is not running.");
   return 1;
 }
@@ -853,14 +721,8 @@ async function statusHost() {
 async function waitReady() {
   const context = instanceContext();
   while (true) {
-    const result = await inspect(context, false);
+    const result = await inspect(context);
     if (result.kind === "healthy") return 0;
-    if (result.kind === "mode-conflict") {
-      console.error(
-        "The system service started in the wrong INSΠRE runtime mode.",
-      );
-      return 1;
-    }
     const mainPid = Number.parseInt(process.env.MAINPID ?? "", 10);
     if (Number.isInteger(mainPid) && mainPid > 0) {
       try {
@@ -888,7 +750,7 @@ function requireLinuxService() {
 
 function printHelp() {
   console.log(
-    `Usage:\n  inspire                 start the configured service or local Host\n  inspire restart         prepare and restart Host; keep terminals running\n  inspire restart --all   prepare and restart Host + terminals (Linux services)\n  inspire stop            stop the service or local Host\n  inspire status          inspect the service or local Host\n  inspire token           show the verified Host token for manual pairing\n  inspire recover-session <folder>  restore a session recovery bundle\n  inspire terminal <status|stop|restart> [--force]  manage this instance\'s terminals\n  inspire mock            run the UI-only mock Host\n  inspire dev             run Vite and the development Host\n  inspire build           build the source checkout\n  inspire connection <name> [action]\n  inspire --ssh-reverse [action]\n  inspire service [install-host|enable-host|disable-host|status-host]\n\nCore lifecycle commands support Linux, macOS, and Windows. System service\ncommands remain Linux-only.`,
+    `Usage:\n  inspire                 start the configured service or local Host\n  inspire restart             restart Inspire and its Pi workers; keep terminals\n  inspire restart --terminals  also close project terminals (Linux services)\n  inspire restart --all        close Pi sessions and restart; include Herdr in enhanced mode (Linux services)\n  inspire stop            stop the service or local Host\n  inspire status          inspect the service or local Host\n  inspire token           show the verified Host token for manual pairing\n  inspire recover-session <folder>  restore a session recovery bundle\n  inspire pi [--session <session.jsonl>]  open native Pi with remote queue receipts\n  inspire terminal <status|stop|restart> [--force]  manage this instance\'s terminals\n  inspire dev             run Vite and the development Host\n  inspire build           build the source checkout\n  inspire connection <name> [action]\n  inspire --ssh-reverse [action]\n  inspire service [install-host|enable-host|disable-host|status-host]\n\nCore lifecycle commands support Linux, macOS, and Windows. System service\ncommands remain Linux-only.`,
   );
 }
 
@@ -905,17 +767,17 @@ async function main() {
     case "":
     case "start":
     case "host":
-      return startHost(false);
-    case "mock":
-      return startHost(true, false);
+      return hostLifecycle("start");
     case "stop":
-      return stopHost();
+      return hostLifecycle("stop");
     case "restart":
-      if (args.length > 1 || (args.length === 1 && args[0] !== "--all")) {
-        console.error("Use: inspire restart [--all]");
+      if (args.length > 1 || (args.length === 1 && !["--all", "--terminals"].includes(args[0]))) {
+        console.error("Use: inspire restart [--all | --terminals]");
         return 64;
       }
-      return restartHost(args[0] === "--all");
+      return restartHost(args[0] === "--all" ? "all-pi"
+        : args[0] === "--terminals" ? "all"
+        : "host");
     case "recover-session": {
       if (args.length !== 1) {
         console.error("Use: inspire recover-session <bundle-folder>");
@@ -944,7 +806,7 @@ async function main() {
       if (args.length) return 64;
       const result = await inspect(instanceContext());
       if (result.kind !== "healthy") {
-        if (result.kind === "unavailable") reportUnavailableHost(result.state);
+        if (result.kind === "unavailable") reportUnavailableHost();
         else
           console.error(
             "No authenticated matching Host; no token was displayed.",
@@ -956,14 +818,11 @@ async function main() {
     }
     case "wait-ready":
       return waitReady();
-    case "maintenance-restart":
+    case "maintenance-restart": {
       requireLinuxService();
-      return runNodeEntry(idleMaintenanceRunner, [
-        "--state",
-        instanceContext().statePath,
-        "--controller",
-        hostServiceController,
-      ]);
+      const { runScheduledRestart } = await import("./deploy/systemd/idle-maintenance-restart.mjs");
+      return runScheduledRestart(root, instanceContext().statePath);
+    }
     case "dev": {
       if (distribution)
         throw new Error("Development mode requires a source checkout.");
@@ -975,6 +834,18 @@ async function main() {
       await ensureDependencies();
       await build();
       return 0;
+    case "pi": {
+      await ensureDependencies();
+      const entry = join(
+        supportRoot,
+        distribution ? "attached-pi-entry.js" : "attached-pi-entry.ts",
+      );
+      return runInherited(process.execPath, [
+        ...(distribution ? [] : ["--import", "tsx"]),
+        entry,
+        ...args,
+      ]);
+    }
     case "terminal": {
       await ensureDependencies();
       const entry = join(
@@ -1014,7 +885,12 @@ async function main() {
         );
         return 64;
       }
-      return runNodeEntry(hostServiceController, [controls[action]]);
+      const systemd = await import("./deploy/systemd/control.mjs");
+      const command = controls[action];
+      const result = command === "status"
+        ? await systemd.inspectHostService(root)
+        : await systemd.manageHostService(root, command);
+      return systemd.reportHostService(result, command);
     }
     case "-h":
     case "--help":

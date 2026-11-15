@@ -21,6 +21,18 @@ class ResizeObserverStub {
 }
 globalThis.ResizeObserver = ResizeObserverStub;
 
+// Real engines own top-layer layout and inertness. jsdom only needs the
+// open state so component tests can exercise their own keyboard policy.
+Object.assign(HTMLDialogElement.prototype, {
+  showModal(this: HTMLDialogElement) {
+    this.open = true;
+    this.tabIndex = -1;
+  },
+  close(this: HTMLDialogElement) {
+    this.open = false;
+  },
+});
+
 // jsdom has no layout; feedback is in view unless a visibility test overrides it.
 class IntersectionObserverStub {
   constructor(private callback: IntersectionObserverCallback) {}
@@ -70,5 +82,16 @@ globalThis.CSS = {
   escape: (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, "\\$&"),
 } as typeof CSS;
 
-// Each file owns its Fetch/WebSocket stubs; cleanup only mounted React trees.
-afterEach(cleanup);
+// Each case starts with a fresh browser workbench. Reload tests retain storage
+// between mounts inside their own case; unrelated cases must not restore it.
+afterEach(() => {
+  cleanup();
+  for (const key of Object.keys(window.sessionStorage)) {
+    if (
+      key.startsWith("inspire:workbench:v1:") ||
+      key.startsWith("inspire:composer-draft:v1:") ||
+      key.startsWith("inspire:composer-operations:v1:")
+    )
+      window.sessionStorage.removeItem(key);
+  }
+});

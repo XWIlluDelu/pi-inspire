@@ -1,16 +1,15 @@
 import { fireEvent, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import type { ComposerHistoryEntry } from "../../../shared/contracts";
 import { discardComposerHistory } from "../../../src/composer-history";
-import { deleteSessionDraft } from "../../../src/session-drafts";
 import { store } from "../../../src/store";
 import {
+  activeSnapshot,
+  DEFAULT_PREFS,
   FakeWebSocket,
   installFakeWebSocket,
+  inputReceipt,
   installFetch,
   jsonBody,
-  type RouteResponse,
-  TEST_HOST_AUTHORITY,
 } from "../helpers";
 import { baseRoutes } from "../store-fixture";
 
@@ -18,22 +17,20 @@ import { baseRoutes } from "../store-fixture";
 export async function createComposerFixture() {
   const host = {
     promptBodies: [] as Record<string, unknown>[],
-    abortBodies: [] as Record<string, unknown>[],
-    promptFails: false,
-    promptGates: [] as Promise<RouteResponse>[],
-    fileSearchFails: false,
     slowSearchGate: null as Promise<void> | null,
     historyEntries: [] as ComposerHistoryEntry[],
     historyRequests: 0,
     historyGate: null as Promise<void> | null,
   };
   for (const id of ["s1", "s2"]) {
-    deleteSessionDraft(id);
+    store.drafts.setText(id, "");
     discardComposerHistory(id);
   }
   installFakeWebSocket();
+  let preferences = DEFAULT_PREFS;
+  let preferenceRevision = 0;
   installFetch((url, init) => {
-    if (url.startsWith("/api/composer/history")) {
+    if (url.startsWith("/api/history?kind=composer&")) {
       host.historyRequests += 1;
       const requestUrl = new URL(url, "https://inspire.test");
       const sessionId = requestUrl.searchParams.get("sessionId") ?? "s1";
@@ -42,11 +39,11 @@ export async function createComposerFixture() {
       const response = {
         body: {
           sessionId,
-          revision: state.transcriptRevision,
-          viewId: state.transcriptViewId,
-          incarnation: state.transcriptIncarnation,
-          effectiveLeafId: state.transcriptEffectiveLeafId,
-          composerHistoryVersion: state.composerHistoryVersion,
+          revision: state.view.revision,
+          viewId: state.view.viewId,
+          incarnation: state.view.incarnation,
+          effectiveLeafId: state.view.effectiveLeafId,
+          composerHistoryVersion: state.view.composerHistoryVersion,
           historyId: `history-${JSON.stringify(host.historyEntries)}`,
           total: host.historyEntries.length,
           start,
@@ -74,69 +71,36 @@ export async function createComposerFixture() {
       };
     }
     if (url.startsWith("/api/files")) {
-      if (host.fileSearchFails)
-        return { status: 500, body: { error: "index unavailable" } };
       if (url.includes("q=slow") && host.slowSearchGate) {
         return host.slowSearchGate.then(() => ({
           body: { files: [{ path: "old/slow.ts", name: "slow.ts" }] },
         }));
       }
-      if (url.includes("q=keyboard")) {
-        return {
-          body: {
-            files: [
-              { path: "src/keyboard-a.ts", name: "keyboard-a.ts" },
-              { path: "src/keyboard-b.ts", name: "keyboard-b.ts" },
-              { path: "src/keyboard-c.ts", name: "keyboard-c.ts" },
-            ],
-          },
-        };
-      }
       return { body: { files: [{ path: "src/index.ts", name: "index.ts" }] } };
     }
-    if (url.startsWith("/api/pending/recover"))
-      return {
-        body: { steering: ["recovered steer"], followUp: ["recovered follow"] },
-      };
-    if (url.startsWith("/api/control/abort")) {
-      host.abortBodies.push(jsonBody(init));
-      return { body: { steering: [], followUp: [] } };
-    }
-    if (url.startsWith("/api/prompt")) {
+    if (url === "/api/prompt") {
       const body = jsonBody(init);
-      if (host.promptFails)
-        return {
-          status: 500,
-          headers: {
-            "X-Inspire-Authority": TEST_HOST_AUTHORITY,
-            "X-Inspire-Prompt-Operation": String(body.operationId),
-            "X-Inspire-Prompt-Outcome": "rejected",
-          },
-          body: { error: "boom" },
-        };
       host.promptBodies.push(body);
-      return (
-        host.promptGates.shift() ?? { status: 202, body: { accepted: true } }
-      );
+      return {
+        status: 202,
+        body: {
+          ...inputReceipt("prompt", body),
+          state: "completed",
+          result: null,
+        },
+      };
     }
-    if (url.startsWith("/api/preferences")) return { body: jsonBody(init) };
+    if (url === "/api/preferences" && init.method === "PATCH") {
+      preferences = { ...preferences, ...jsonBody(init) };
+      return { body: { preferences, revision: ++preferenceRevision } };
+    }
     return baseRoutes(url, init);
   });
-  await store.init("token");
-  FakeWebSocket.instances.at(-1)?.open();
+  await store.init();
+  FakeWebSocket.instances.at(-1)?.join(activeSnapshot());
 
   clearComposer();
   return host;
-}
-
-export async function attachFile(name = "notes.txt") {
-  const input = document.querySelector(
-    'input[type="file"]',
-  ) as HTMLInputElement;
-  await userEvent.upload(
-    input,
-    new File(["hello"], name, { type: "text/plain" }),
-  );
 }
 
 export function typeDraft(text: string) {
@@ -147,9 +111,9 @@ export function typeDraft(text: string) {
 
 function clearComposer() {
   store.replaceComposerText("");
-  for (const item of store.getState().attachments)
+  for (const item of store.drafts.get(store.getState().sessionId).attachments)
     store.removeAttachment(item.localId);
-  for (const path of store.getState().projectFiles)
+  for (const path of store.drafts.get(store.getState().sessionId).projectFiles)
     store.removeProjectFile(path);
   store.dismissError();
 }

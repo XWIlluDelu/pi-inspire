@@ -11,10 +11,9 @@ describe("Host-native OSC 7 directory URLs", () => {
     ],
     [
       "win32",
-      "file://server/share/Jane%20Doe/repo",
-      "\\\\server\\share\\Jane Doe\\repo",
+      "file://server/share/%E7%9B%AE%E5%BD%95%20repo",
+      "\\\\server\\share\\目录 repo",
     ],
-    ["win32", "file://server/share/目录", "\\\\server\\share\\目录"],
     [
       "darwin",
       "file://workstation.local/Users/Jane%20Doe/repo",

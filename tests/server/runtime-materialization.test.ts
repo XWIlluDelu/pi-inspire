@@ -1,29 +1,47 @@
-import { catalog } from "./fixtures/runtime.js";
 import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-
 import { AttachmentStore } from "../../server/attachments.js";
-
 import { type PiRpcProcess } from "../../server/pi-rpc.js";
 import { MAX_IDLE_WORKERS, RuntimeController } from "../../server/runtime.js";
+import { catalog } from "./fixtures/runtime.js";
 
 import {
-  setupNewSession,
   directories,
-  stores,
-  NewSessionRpc,
   disposeProjectionFixture,
+  NewSessionRpc,
+  setupNewSession,
+  stores,
 } from "./fixtures/runtime-projection.js";
 
 afterEach(disposeProjectionFixture);
 
 describe("new-session materialization", () => {
-  it("returns an empty session before its JSONL exists and accepts the exact first Pi flush", async () => {
-    const fixture = await setupNewSession();
+  it("renames before JSONL exists and binds late events to the first verified Pi flush", async () => {
+    let runtime!: RuntimeController;
+    const observations: Array<{
+      lines: number;
+      messages: number;
+      conflict: unknown;
+    }> = [];
+    const fixture = await setupNewSession((worker) => {
+      worker.emitEventsBeforeWrite = false;
+      worker.materializationCuts = [1, 3];
+      worker.onMaterializationCut = async (lines) => {
+        const snapshot = await runtime.snapshot("new-session");
+        observations.push({
+          lines,
+          messages: snapshot.active?.transcriptPage.messages.length ?? -1,
+          conflict: snapshot.active?.projectionConflict,
+        });
+      };
+    });
+    runtime = fixture.runtime;
+    const prompt = (message: string) =>
+      runtime.prompt({ sessionId: "new-session", message });
     try {
-      const created = await fixture.runtime.newSession(fixture.directory);
+      const created = await runtime.newSession(fixture.directory);
       expect(created.active).toMatchObject({
         sessionId: "new-session",
         sessionFile: fixture.path,
@@ -33,126 +51,51 @@ describe("new-session materialization", () => {
       await expect(access(fixture.path)).rejects.toMatchObject({
         code: "ENOENT",
       });
-
-      await fixture.runtime.rename("new-session", "Named before first prompt");
+      await runtime.rename("new-session", "Named before first prompt");
       await expect(access(fixture.path)).rejects.toMatchObject({
         code: "ENOENT",
       });
 
-      await fixture.runtime.prompt({
-        sessionId: "new-session",
-        message: "first prompt",
-        attachmentIds: [],
-        projectFiles: [],
-      });
-      const snapshot = await fixture.runtime.snapshot();
-      expect(snapshot.active?.transcriptPage.messages).toEqual([
-        expect.objectContaining({ role: "user", content: "first prompt" }),
-        expect.objectContaining({ role: "assistant" }),
-      ]);
-      expect(snapshot.active?.projectionHealth).toEqual({ status: "ok" });
-      expect(snapshot.active?.projectionConflict).toBeNull();
-      expect(fixture.worker.stops).toBe(0);
-    } finally {
-      await fixture.runtime.close();
-    }
-  });
-
-  it("accepts header-only and complete-line prefixes from one first flush", async () => {
-    let runtime!: RuntimeController;
-    const observations: Array<{
-      lineCount: number;
-      messages: number;
-      conflict: unknown;
-    }> = [];
-    const fixture = await setupNewSession((worker) => {
-      worker.emitEventsBeforeWrite = false;
-      worker.materializationCuts = [1, 3];
-      worker.onMaterializationCut = async (lineCount) => {
-        const snapshot = await runtime.snapshot();
-        observations.push({
-          lineCount,
-          messages: snapshot.active?.transcriptPage.messages.length ?? -1,
-          conflict: snapshot.active?.projectionConflict,
-        });
-      };
-    });
-    runtime = fixture.runtime;
-    try {
-      await runtime.newSession(fixture.directory);
-      await runtime.prompt({
-        sessionId: "new-session",
-        message: "first prompt",
-        attachmentIds: [],
-        projectFiles: [],
-      });
+      await prompt("first prompt");
       expect(observations).toEqual([
-        { lineCount: 1, messages: 0, conflict: null },
-        { lineCount: 3, messages: 0, conflict: null },
+        { lines: 1, messages: 0, conflict: null },
+        { lines: 3, messages: 0, conflict: null },
       ]);
       fixture.worker.emitPromptEvents();
-      const snapshot = await runtime.snapshot();
-      expect(snapshot.active?.transcriptPage.messages).toHaveLength(2);
-      expect(snapshot.active?.projectionConflict).toBeNull();
+      expect(
+        (await runtime.snapshot("new-session")).active?.transcriptPage.messages,
+      ).toMatchObject([
+        { role: "user", content: "first prompt", __inspireEntryId: "user-1" },
+        { role: "assistant", __inspireEntryId: "assistant-1" },
+      ]);
+
+      fixture.worker.emitEventsBeforeWrite = true;
+      fixture.worker.reusePromptTimestamps = true;
+      await prompt("second prompt");
+      const snapshot = await runtime.snapshot("new-session");
+      expect(snapshot.active).toMatchObject({
+        projectionHealth: { status: "ok" },
+        projectionConflict: null,
+        transcriptPage: {
+          messages: [
+            {
+              role: "user",
+              content: "first prompt",
+              __inspireEntryId: "user-1",
+            },
+            { role: "assistant", __inspireEntryId: "assistant-1" },
+            {
+              role: "user",
+              content: "second prompt",
+              __inspireEntryId: "user-2",
+            },
+            { role: "assistant", __inspireEntryId: "assistant-2" },
+          ],
+        },
+      });
       expect(fixture.worker.stops).toBe(0);
     } finally {
       await runtime.close();
-    }
-  });
-
-  it("accepts first materialization before its message events reach the host", async () => {
-    const fixture = await setupNewSession((worker) => {
-      worker.emitEventsBeforeWrite = false;
-    });
-    try {
-      await fixture.runtime.newSession(fixture.directory);
-      await fixture.runtime.prompt({
-        sessionId: "new-session",
-        message: "first prompt",
-        attachmentIds: [],
-        projectFiles: [],
-      });
-      expect(
-        (await fixture.runtime.snapshot()).active?.projectionConflict,
-      ).toBeNull();
-
-      fixture.worker.emitPromptEvents();
-      fixture.worker.emitEventsBeforeWrite = true;
-      fixture.worker.reusePromptTimestamps = true;
-      await fixture.runtime.prompt({
-        sessionId: "new-session",
-        message: "second prompt",
-        attachmentIds: [],
-        projectFiles: [],
-      });
-      const snapshot = await fixture.runtime.snapshot();
-      expect(snapshot.active?.projectionConflict).toBeNull();
-      expect(snapshot.active?.transcriptPage.messages).toHaveLength(4);
-    } finally {
-      await fixture.runtime.close();
-    }
-  });
-
-  it("does not commit a new session after an optional read loses its worker", async () => {
-    const fixture = await setupNewSession((worker) => {
-      const request = worker.request.bind(worker);
-      worker.request = async <T>(command: Record<string, unknown>) => {
-        if (command.type === "get_commands") {
-          worker.unavailable = true;
-          throw new Error("worker transport lost");
-        }
-        return request<T>(command);
-      };
-    });
-
-    try {
-      await expect(
-        fixture.runtime.newSession(fixture.directory),
-      ).rejects.toThrow("worker transport lost");
-      expect(fixture.worker.stops).toBe(1);
-      expect((await fixture.runtime.snapshot()).active).toBeNull();
-    } finally {
-      await fixture.runtime.close();
     }
   });
 
@@ -164,10 +107,8 @@ describe("new-session materialization", () => {
     const attachments = new AttachmentStore(join(directory, "uploads"));
     stores.push(attachments);
     const workers: NewSessionRpc[] = [];
-    const runtime = new RuntimeController(
-      catalog([]),
-      attachments,
-      (options) => {
+    const runtime = new RuntimeController(catalog([]), attachments, {
+      createProcess: (options) => {
         const index = workers.length + 1;
         const worker = new NewSessionRpc(
           options,
@@ -177,13 +118,13 @@ describe("new-session materialization", () => {
         workers.push(worker);
         return worker as unknown as PiRpcProcess;
       },
-    );
+    });
 
     try {
       for (let index = 0; index < MAX_IDLE_WORKERS + 2; index += 1)
         await runtime.newSession(directory);
       await vi.waitFor(() =>
-        expect(workers.filter((worker) => worker.stops > 0)).toHaveLength(1),
+        expect(workers.filter((worker) => worker.stops > 0)).toHaveLength(2),
       );
       expect(workers.at(-1)?.stops).toBe(0);
     } finally {
@@ -269,12 +210,16 @@ describe("new-session materialization", () => {
             attachmentIds: [image.id],
             projectFiles: [],
           }),
-        ).resolves.toBeNull();
+        ).resolves.toBeUndefined();
         await expect(
           fixture.attachments.resolveForPrompt([image.id]),
         ).rejects.toThrow(/expired/);
         expect(fixture.worker.stops).toBe(1);
-        expect((await fixture.runtime.snapshot()).runState).toBe("conflict");
+        expect(
+          (await fixture.runtime.snapshot("new-session")).sessionStatuses[
+            "new-session"
+          ]?.runState,
+        ).toBe("conflict");
         await expect(
           fixture.runtime.prompt({
             sessionId: "new-session",

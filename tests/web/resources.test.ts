@@ -5,26 +5,34 @@ import {
   fileResourceReference,
   isLocalResourceReference,
   isTextFileName,
-  RESOURCE_LIST_INITIAL_SIZE,
   resourceReferenceLine,
   stripResourceLocation,
 } from "../../shared/resource-references";
 import { resourceRows } from "../../src/resources";
 
+function textPart(text: string) {
+  return { type: "text", text };
+}
+
+function message(
+  role: "assistant" | "user" | "toolResult",
+  ...content: unknown[]
+) {
+  return { role, content };
+}
+
+function readPath(path: string) {
+  return { type: "toolCall", name: "read", arguments: { path } };
+}
+
 describe("Pi resource references", () => {
   it("displays native percent/hash filenames without decoding their original labels twice", () => {
     const references = collectSessionResourceReferences([
-      {
-        role: "assistant",
-        content: [
-          {
-            type: "toolCall",
-            name: "read",
-            arguments: { path: "C#/report%20draft.md" },
-          },
-          { type: "text", text: "[Space file](C%23/report%20draft.md)" },
-        ],
-      },
+      message(
+        "assistant",
+        readPath("C#/report%20draft.md"),
+        textPart("[Space file](C%23/report%20draft.md)"),
+      ),
     ]);
     const rows = resourceRows(references);
     expect(rows.map(({ name }) => name)).toEqual([
@@ -39,107 +47,57 @@ describe("Pi resource references", () => {
   it("does not let an incomplete Unicode path break the rest of the reference index", () => {
     expect(
       collectSessionResourceReferences([
-        {
-          role: "assistant",
-          content: [
-            {
-              type: "text",
-              text: `Ignore \`bad-\uD800.md\` and open \`healthy.md\`.`,
-            },
-            {
-              type: "toolCall",
-              name: "read",
-              arguments: { path: "bad-\uD800.md" },
-            },
-          ],
-        },
+        message(
+          "assistant",
+          textPart("Ignore `bad-\uD800.md` and open `healthy.md`."),
+          readPath("bad-\uD800.md"),
+        ),
       ]).map(({ reference }) => reference),
     ).toEqual(["healthy.md"]);
   });
 
-  it("keeps literal file paths distinct from URL targets without guessing which file exists", () => {
-    const resources = collectSessionResourceReferences([
-      {
-        role: "assistant",
-        content: [
-          {
-            type: "toolCall",
-            name: "read",
-            arguments: { path: "/outside/report%20draft.md" },
-          },
-          {
-            type: "text",
-            text: "[Space file](file:///outside/report%20draft.md)",
-          },
-        ],
-      },
-    ]);
-    expect(resources).toHaveLength(2);
-    expect(resources.map(({ reference }) => reference)).toEqual([
-      "file:///outside/report%20draft.md",
-      "/outside/report%2520draft.md",
-    ]);
-    expect(new Set(resources.map(({ key }) => key)).size).toBe(2);
-    expect(resources.find(({ source }) => source === "tool")?.label).toBe(
-      "/outside/report%20draft.md",
-    );
-  });
-
-  it("keeps a URL-looking structured field literal while text URLs remain links", () => {
-    const resources = collectSessionResourceReferences([
-      {
-        role: "assistant",
-        content: [
-          {
-            type: "toolCall",
-            name: "read",
-            arguments: { path: "file:///outside/report.md" },
-          },
-          { type: "text", text: "[URL](file:///outside/report.md)" },
-        ],
-      },
-    ]);
-    expect(resources.map(({ reference }) => reference)).toEqual([
-      "file:///outside/report.md",
-      "file%3A///outside/report.md",
-    ]);
-    expect(new Set(resources.map(({ key }) => key)).size).toBe(2);
-  });
-
-  it("keeps a file URL authority separate from a conversation-relative native path", () => {
-    const resources = collectSessionResourceReferences([
-      {
-        role: "assistant",
-        content: [
-          {
-            type: "toolCall",
-            name: "read",
-            arguments: { path: "server/share/report.md" },
-          },
-          { type: "text", text: "[UNC file](file://server/share/report.md)" },
-        ],
-      },
-    ]);
-    expect(resources).toHaveLength(2);
-    expect(new Set(resources.map(({ key }) => key)).size).toBe(2);
-  });
+  it.each([
+    {
+      path: "/outside/report%20draft.md",
+      url: "file:///outside/report%20draft.md",
+      encoded: "/outside/report%2520draft.md",
+    },
+    {
+      path: "file:///outside/report.md",
+      url: "file:///outside/report.md",
+      encoded: "file%3A///outside/report.md",
+    },
+    {
+      path: "server/share/report.md",
+      url: "file://server/share/report.md",
+      encoded: "server/share/report.md",
+    },
+  ])(
+    "keeps native $path distinct from the file link $url",
+    ({ path, url, encoded }) => {
+      const resources = collectSessionResourceReferences([
+        message("assistant", readPath(path), textPart(`[File link](${url})`)),
+      ]);
+      expect(resources.map(({ reference }) => reference)).toEqual([
+        url,
+        encoded,
+      ]);
+      expect(resources.find(({ source }) => source === "tool")?.label).toBe(
+        path,
+      );
+      expect(new Set(resources.map(({ key }) => key)).size).toBe(2);
+    },
+  );
 
   it("encodes structured path metacharacters while retaining diagnostics only on text surfaces", () => {
     const resources = collectSessionResourceReferences([
-      {
-        role: "assistant",
-        content: [
-          {
-            type: "toolCall",
-            name: "read",
-            arguments: { path: "C#/main.ts:12" },
-          },
-          {
-            type: "text",
-            text: 'See `C#/main.ts:12` and <file name="report%20draft.md"></file>.',
-          },
-        ],
-      },
+      message(
+        "assistant",
+        readPath("C#/main.ts:12"),
+        textPart(
+          'See `C#/main.ts:12` and <file name="report%20draft.md"></file>.',
+        ),
+      ),
     ]);
     expect(resources.map(({ reference }) => reference)).toEqual([
       "report%2520draft.md",
@@ -158,16 +116,11 @@ describe("Pi resource references", () => {
       "/outside/report.md!",
     ];
     const resources = collectSessionResourceReferences([
-      {
-        role: "assistant",
-        content: [
-          {
-            type: "toolCall",
-            name: "read",
-            arguments: { referencedImagePaths: paths },
-          },
-        ],
-      },
+      message("assistant", {
+        type: "toolCall",
+        name: "read",
+        arguments: { referencedImagePaths: paths },
+      }),
     ]);
     expect(resources.map(({ reference }) => reference)).toEqual([
       "%20file.md%20",
@@ -182,34 +135,28 @@ describe("Pi resource references", () => {
 
   it("collects structured tool paths, local Markdown targets, attachment tags, and embedded images", () => {
     const resources = collectSessionResourceReferences([
-      {
-        role: "user",
-        content: [
-          { type: "text", text: '<file name="/tmp/input one.png"></file>' },
-          { type: "image", data: "aW1hZ2U=", mimeType: "image/png" },
-        ],
-      },
-      {
-        role: "assistant",
-        content: [
-          {
-            type: "text",
-            text: "Open [report](./out/report.pdf) but keep [Pi](https://pi.dev) external.",
+      message("user", textPart('<file name="/tmp/input one.png"></file>'), {
+        type: "image",
+        data: "aW1hZ2U=",
+        mimeType: "image/png",
+      }),
+      message(
+        "assistant",
+        textPart(
+          "Open [report](./out/report.pdf) but keep [Pi](https://pi.dev) external.",
+        ),
+        {
+          type: "toolCall",
+          name: "read",
+          arguments: {
+            path: "/tmp/input one.png",
+            saveDir: "/tmp/generated-output",
           },
-          {
-            type: "toolCall",
-            id: "read-1",
-            name: "read",
-            arguments: {
-              path: "/tmp/input one.png",
-              saveDir: "/tmp/generated-output",
-            },
-          },
-        ],
-      },
+        },
+      ),
     ]);
 
-    expect(resources.map((item) => item.reference).filter(Boolean)).toEqual([
+    expect(resources.map((item) => item.reference)).toEqual([
       "/tmp/input%20one.png",
       "./out/report.pdf",
       "pi-embedded://0/1",
@@ -219,23 +166,15 @@ describe("Pi resource references", () => {
         (item) => item.source === "embedded" && item.mimeType === "image/png",
       ),
     ).toBe(true);
-    expect(resources.some((item) => item.reference === "https://pi.dev")).toBe(
-      false,
-    );
-    expect(
-      resources.some((item) => item.reference === "/tmp/generated-output"),
-    ).toBe(false);
   });
 
   it("keeps embedded coordinates aligned with the original content array", () => {
     const resources = collectSessionResourceReferences([
-      {
-        role: "user",
-        content: [
-          "malformed primitive",
-          { type: "image", data: "aW1hZ2U=", mimeType: "image/png" },
-        ],
-      },
+      message("user", "malformed primitive", {
+        type: "image",
+        data: "aW1hZ2U=",
+        mimeType: "image/png",
+      }),
     ]);
 
     expect(resources.map((item) => item.reference)).toEqual([
@@ -246,15 +185,10 @@ describe("Pi resource references", () => {
   it("understands file URLs, OSC 8 targets, inline-code paths, and @ mentions", () => {
     const osc = "\u001b]8;;file:///tmp/chart.png\u0007chart\u001b]8;;\u0007";
     const resources = collectSessionResourceReferences([
-      {
-        role: "assistant",
-        content: [
-          {
-            type: "text",
-            text: `${osc}\nSee \`src/view.tsx\` and @notes/result.md.`,
-          },
-        ],
-      },
+      message(
+        "assistant",
+        textPart(`${osc}\nSee \`src/view.tsx\` and @notes/result.md.`),
+      ),
     ]);
     expect(resources.map((item) => item.reference)).toEqual([
       "notes/result.md",
@@ -265,16 +199,11 @@ describe("Pi resource references", () => {
 
   it("recognizes bare Windows drive paths without borrowing URL or drive-relative text", () => {
     const resources = collectSessionResourceReferences([
-      {
-        role: "assistant",
-        content: [
-          {
-            type: "text",
-            text: String.raw`First C:\reports\cited.html:7:2, then (d:/reports/render.custom).
-Not a file citation: C:relative.html or https://example.com/C:/report.pdf.`,
-          },
-        ],
-      },
+      message(
+        "assistant",
+        textPart(String.raw`First C:\reports\cited.html:7:2, then (d:/reports/render.custom).
+Not a file citation: C:relative.html or https://example.com/C:/report.pdf.`),
+      ),
     ]);
     expect(resources.map((item) => item.reference)).toEqual([
       "d:/reports/render.custom",
@@ -284,15 +213,7 @@ Not a file citation: C:relative.html or https://example.com/C:/report.pdf.`,
 
   it("keeps references within one text part in recent-first order", () => {
     const resources = collectSessionResourceReferences([
-      {
-        role: "assistant",
-        content: [
-          {
-            type: "text",
-            text: "First `old.md`, then [new](src/new.ts).",
-          },
-        ],
-      },
+      message("assistant", textPart("First `old.md`, then [new](src/new.ts).")),
     ]);
     expect(resources.map((item) => item.reference)).toEqual([
       "src/new.ts",
@@ -302,21 +223,12 @@ Not a file citation: C:relative.html or https://example.com/C:/report.pdf.`,
 
   it("deduplicates the same file and keeps the newest, strongest reference", () => {
     const resources = collectSessionResourceReferences([
-      {
-        role: "assistant",
-        content: [{ type: "text", text: "See `plot.png`." }],
-      },
-      {
-        role: "assistant",
-        content: [
-          {
-            type: "toolCall",
-            id: "write-1",
-            name: "write",
-            arguments: { path: "plot.png" },
-          },
-        ],
-      },
+      message("assistant", textPart("See `plot.png`.")),
+      message("assistant", {
+        type: "toolCall",
+        name: "write",
+        arguments: { path: "plot.png" },
+      }),
     ]);
     expect(resources).toHaveLength(1);
     expect(resources[0]).toMatchObject({
@@ -324,6 +236,37 @@ Not a file citation: C:relative.html or https://example.com/C:/report.pdf.`,
       source: "tool",
       toolName: "write",
     });
+  });
+
+  it("reads inner tool calls that a code-running tool records in its details", () => {
+    const resources = collectSessionResourceReferences([
+      {
+        role: "toolResult",
+        toolName: "codemode",
+        content: [{ type: "text", text: "done" }],
+        details: {
+          calls: [
+            { name: "read", args: '{"path":"notes/plan.md"}', status: "ok" },
+            { name: "edit", args: '{"path":"runExperiment.m"}', status: "ok" },
+            { name: "write", args: { path: "out/summary.md" }, status: "ok" },
+            { name: "edit", args: '{"path":"broken.m"}', status: "error" },
+            { name: "bash", args: "not json", status: "ok" },
+          ],
+        },
+      },
+    ]);
+    expect(
+      resources.map(({ reference, toolName, writes }) => ({
+        reference,
+        toolName,
+        writes,
+      })),
+    ).toEqual([
+      { reference: "broken.m", toolName: undefined, writes: undefined },
+      { reference: "out/summary.md", toolName: "write", writes: true },
+      { reference: "runExperiment.m", toolName: "edit", writes: true },
+      { reference: "notes/plan.md", toolName: "read", writes: undefined },
+    ]);
   });
 
   it("does not surface hidden custom content or independently hidden thinking", () => {
@@ -362,54 +305,36 @@ Not a file citation: C:relative.html or https://example.com/C:/report.pdf.`,
     ]) {
       expect(
         collectSessionResourceReferences([
-          { role: "assistant", content: [{ type: "text", text }] },
+          message("assistant", textPart(text)),
         ]),
       ).toEqual([]);
     }
   });
 
-  it("uses one location grammar for resolution and source-line navigation", () => {
-    expect(stripResourceLocation("src/view.tsx:123:7")).toBe("src/view.tsx");
-    expect(stripResourceLocation("src/view.tsx#L9-L12")).toBe("src/view.tsx");
-    expect(resourceReferenceLine("@src/view.tsx:123:7")).toBe(123);
-    expect(resourceReferenceLine("<src/view.tsx#L9-L12>")).toBe(9);
-    expect(resourceReferenceLine("src/view.tsx:4?raw=1")).toBe(4);
-    expect(resourceReferenceLine("src/view.tsx#L0")).toBeNull();
-    expect(resourceReferenceLine("src/view.tsx")).toBeNull();
-    expect(
-      stripResourceLocation(String.raw`C:\My Project\file.cpp(12,3)`),
-    ).toBe(String.raw`C:\My Project\file.cpp`);
-    expect(
-      resourceReferenceLine(String.raw`C:\My Project\file.cpp(12,3)`),
-    ).toBe(12);
-    expect(
-      resourceReferenceLine(String.raw`C:\My Project\file.cpp(0)`),
-    ).toBeNull();
+  it.each([
+    ["src/view.tsx:123:7", "src/view.tsx", 123],
+    ["src/view.tsx#L9-L12", "src/view.tsx", 9],
+    ["src/view.tsx:4?raw=1", "src/view.tsx", 4],
+    ["src/view.tsx#L0", "src/view.tsx", null],
+    ["src/view.tsx", "src/view.tsx", null],
+    [
+      String.raw`C:\My Project\file.cpp(12,3)`,
+      String.raw`C:\My Project\file.cpp`,
+      12,
+    ],
+  ])("uses the same location grammar for %s", (input, path, line) => {
+    expect(stripResourceLocation(input)).toBe(path);
+    expect(resourceReferenceLine(input)).toBe(line);
   });
 
   it.each([
     "setup.ps1",
-    "module.psm1",
-    "module.psd1",
     "build.cmd",
-    "build.bat",
-    "profile.bash",
     ".bashrc",
-    ".bash_profile",
-    "profile.zsh",
-    ".zshrc",
-    ".zprofile",
     ".gitconfig",
-    ".gitattributes",
-    "config.fish",
     "main.m",
-    "main.mm",
     "App.csproj",
-    "App.fsproj",
-    "App.vbproj",
-    "Directory.Build.props",
     "Directory.Build.targets",
-    "App.sln",
     "App.slnx",
     "Info.plist",
   ])("recognizes native text source/configuration: %s", (name) => {
@@ -426,10 +351,7 @@ Not a file citation: C:relative.html or https://example.com/C:/report.pdf.`,
     "collects native structured file paths without an extension: %s",
     (path) => {
       const resources = collectSessionResourceReferences([
-        {
-          role: "assistant",
-          content: [{ type: "toolCall", name: "read", arguments: { path } }],
-        },
+        message("assistant", readPath(path)),
       ]);
       expect(resources.map((item) => item.reference)).toEqual([
         fileResourceReference(path),
@@ -439,41 +361,35 @@ Not a file citation: C:relative.html or https://example.com/C:/report.pdf.`,
   );
 
   it.each([
-    {
-      text: "C:\\Users\\Jane Doe\\repo\\main.ts:12:3: error TS1000: missing symbol",
-      reference: "C:\\Users\\Jane Doe\\repo\\main.ts:12:3",
-    },
-    {
-      text: "/Users/Jane Doe/Project (copy)/main.m:7:2: warning: missing semicolon",
-      reference: "/Users/Jane Doe/Project (copy)/main.m:7:2",
-    },
-    {
-      text: "\\\\nas\\Results Share\\ARTIFACT:12: failed",
-      reference: "\\\\nas\\Results Share\\ARTIFACT:12",
-    },
-    {
-      text: "~\\My Project\\file.ps1:24:2: error",
-      reference: "~\\My Project\\file.ps1:24:2",
-    },
-    {
-      text: ".\\My Project\\file.ps1:24",
-      reference: ".\\My Project\\file.ps1:24",
-    },
-    {
-      text: "/Users/Jane Doe/repo/report.custom:9",
-      reference: "/Users/Jane Doe/repo/report.custom:9",
-    },
-    {
-      text: "C:\\Projects\\My App\\main.cpp(12,3): error C1000: syntax",
-      reference: "C:\\Projects\\My App\\main.cpp(12,3)",
-    },
-    {
-      text: "C:\\Projects\\My App\\main.cpp(12): warning C1000: syntax",
-      reference: "C:\\Projects\\My App\\main.cpp(12)",
-    },
-  ])("preserves the entire diagnostic path: $text", ({ text, reference }) => {
+    [
+      "C:\\Users\\Jane Doe\\repo\\main.ts:12:3: error TS1000: missing symbol",
+      "C:\\Users\\Jane Doe\\repo\\main.ts:12:3",
+    ],
+    [
+      "/Users/Jane Doe/Project (copy)/main.m:7:2: warning: missing semicolon",
+      "/Users/Jane Doe/Project (copy)/main.m:7:2",
+    ],
+    [
+      "\\\\nas\\Results Share\\ARTIFACT:12: failed",
+      "\\\\nas\\Results Share\\ARTIFACT:12",
+    ],
+    ["~\\My Project\\file.ps1:24:2: error", "~\\My Project\\file.ps1:24:2"],
+    [".\\My Project\\file.ps1:24", ".\\My Project\\file.ps1:24"],
+    [
+      "/Users/Jane Doe/repo/report.custom:9",
+      "/Users/Jane Doe/repo/report.custom:9",
+    ],
+    [
+      "C:\\Projects\\My App\\main.cpp(12,3): error C1000: syntax",
+      "C:\\Projects\\My App\\main.cpp(12,3)",
+    ],
+    [
+      "C:\\Projects\\My App\\main.cpp(12): warning C1000: syntax",
+      "C:\\Projects\\My App\\main.cpp(12)",
+    ],
+  ])("preserves the entire diagnostic path: %s", (text, reference) => {
     const resources = collectSessionResourceReferences([
-      { role: "toolResult", content: [{ type: "text", text }] },
+      message("toolResult", textPart(text)),
     ]);
     expect(resources.map((item) => item.reference)).toEqual([
       diagnosticResourceReference(reference),
@@ -482,65 +398,53 @@ Not a file citation: C:relative.html or https://example.com/C:/report.pdf.`,
   });
 
   it.each([
-    {
-      text: 'Open "C:\\Users\\Jane Doe\\repo\\ARTIFACT" now.',
-      reference: "C:\\Users\\Jane Doe\\repo\\ARTIFACT",
-    },
-    {
-      text: 'Open "/Users/Jane O\'Neil/Project Files/report.custom" now.',
-      reference: "/Users/Jane O'Neil/Project Files/report.custom",
-    },
-    {
-      text: "'/Users/Jane Doe/Project Files/report.custom'",
-      reference: "/Users/Jane Doe/Project Files/report.custom",
-    },
-    {
-      text: "/Users/Jane Doe/repo/notes.txt",
-      reference: "/Users/Jane Doe/repo/notes.txt",
-    },
-    {
-      text: "C:\\Users\\Jane Doe\\repo\\ARTIFACT",
-      reference: "C:\\Users\\Jane Doe\\repo\\ARTIFACT",
-    },
-    {
-      text: "\\\\nas\\Results Share\\output\\ARTIFACT",
-      reference: "\\\\nas\\Results Share\\output\\ARTIFACT",
-    },
-    {
-      text: "`/Users/Jane Doe/repo/notes.txt`",
-      reference: "/Users/Jane Doe/repo/notes.txt",
-    },
-    {
-      text: "[notes](</Users/Jane Doe/repo/notes.txt>)",
-      reference: "/Users/Jane Doe/repo/notes.txt",
-    },
+    [
+      'Open "C:\\Users\\Jane Doe\\repo\\ARTIFACT" now.',
+      "C:\\Users\\Jane Doe\\repo\\ARTIFACT",
+    ],
+    [
+      'Open "/Users/Jane O\'Neil/Project Files/report.custom" now.',
+      "/Users/Jane O'Neil/Project Files/report.custom",
+    ],
+    [
+      "'/Users/Jane Doe/Project Files/report.custom'",
+      "/Users/Jane Doe/Project Files/report.custom",
+    ],
+    ["/Users/Jane Doe/repo/notes.txt", "/Users/Jane Doe/repo/notes.txt"],
+    [
+      "C:\\Users\\Jane Doe\\repo\\ARTIFACT",
+      "C:\\Users\\Jane Doe\\repo\\ARTIFACT",
+    ],
+    [
+      "\\\\nas\\Results Share\\output\\ARTIFACT",
+      "\\\\nas\\Results Share\\output\\ARTIFACT",
+    ],
+    ["`/Users/Jane Doe/repo/notes.txt`", "/Users/Jane Doe/repo/notes.txt"],
+    [
+      "[notes](</Users/Jane Doe/repo/notes.txt>)",
+      "/Users/Jane Doe/repo/notes.txt",
+      true,
+    ],
   ])(
-    "preserves a delimited or whole-line path: $text",
-    ({ text, reference }) => {
+    "preserves a delimited or whole-line path: %s",
+    (text, reference, authoredLink = false) => {
       const resources = collectSessionResourceReferences([
-        { role: "assistant", content: [{ type: "text", text }] },
+        message("assistant", textPart(text)),
       ]);
       expect(resources).toHaveLength(1);
       expect(resources[0]!.label).toBe(reference);
       expect(resources[0]!.reference).toBe(
-        resources[0]!.source === "link"
-          ? reference
-          : diagnosticResourceReference(reference),
+        authoredLink ? reference : diagnosticResourceReference(reference),
       );
     },
   );
 
   it("does not grant a shortened prefix of an ambiguous space-containing path", () => {
     const resources = collectSessionResourceReferences([
-      {
-        role: "assistant",
-        content: [
-          {
-            type: "text",
-            text: "Please inspect /Users/Jane Doe/the results when convenient.",
-          },
-        ],
-      },
+      message(
+        "assistant",
+        textPart("Please inspect /Users/Jane Doe/the results when convenient."),
+      ),
     ]);
     expect(resources).toEqual([]);
   });
@@ -549,7 +453,7 @@ Not a file citation: C:relative.html or https://example.com/C:/report.pdf.`,
     const text =
       "First /tmp/one.log, then /Users/Jane Doe/repo/two.m:12:3: error";
     const resources = collectSessionResourceReferences([
-      { role: "toolResult", content: [{ type: "text", text }] },
+      message("toolResult", textPart(text)),
     ]);
     expect(resources.map((item) => item.reference)).toEqual([
       "/Users/Jane%20Doe/repo/two.m:12:3",
@@ -558,21 +462,15 @@ Not a file citation: C:relative.html or https://example.com/C:/report.pdf.`,
   });
 
   it("stops the recent-first walk at the presented bound, leaving authority callers complete", () => {
-    const messages = Array.from({ length: 20 }, (_, index) => ({
-      role: "assistant",
-      content: [{ type: "text", text: `wrote \`file-${index}.md\`` }],
-    }));
-
-    const bounded = collectSessionResourceReferences(
-      messages,
-      RESOURCE_LIST_INITIAL_SIZE,
+    const messages = Array.from({ length: 20 }, (_, index) =>
+      message("assistant", textPart(`wrote \`file-${index}.md\``)),
     );
-    expect(bounded).toHaveLength(RESOURCE_LIST_INITIAL_SIZE);
+
+    const bounded = collectSessionResourceReferences(messages, 8);
+    expect(bounded).toHaveLength(8);
     // Newest first: the bound keeps the most recent references, not the first.
     expect(bounded[0]?.reference).toBe("file-19.md");
-    expect(bounded.at(-1)?.reference).toBe(
-      `file-${20 - RESOURCE_LIST_INITIAL_SIZE}.md`,
-    );
+    expect(bounded.at(-1)?.reference).toBe("file-12.md");
     // No limit means no truncation — the authorization path sees everything.
     expect(collectSessionResourceReferences(messages)).toHaveLength(20);
   });

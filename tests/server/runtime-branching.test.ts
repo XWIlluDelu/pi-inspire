@@ -1,43 +1,40 @@
-import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
+import { appendFile, readdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import type { PiRpcOptions, PiRpcProcess } from "../../server/pi-rpc.js";
 import {
-  appendFile,
-  mkdtemp,
-  readFile,
-  realpath,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AttachmentStore } from "../../server/attachments.js";
-import type {
-  PiRpcOptions,
-  PiRpcProcess,
-  PiRpcResponseFence,
-} from "../../server/pi-rpc.js";
-import { requestError } from "../../server/request-error.js";
-import { RuntimeController } from "../../server/runtime.js";
-import type {
-  SessionCatalogLike,
-  SessionRecord,
-} from "../../server/session-catalog.js";
-import type {
-  StagedSessionFork,
-  StageSessionFork,
-} from "../../server/session-fork.js";
+  RuntimeController,
+  type RuntimeControllerOptions,
+} from "../../server/runtime.js";
+import type { RuntimeSlot } from "../../server/runtime-slot.js";
+import { SessionCatalog } from "../../server/session-catalog.js";
+import { stageSessionFork } from "../../server/session-fork.js";
 import { SessionProjection } from "../../server/session-projection.js";
-import { RETRY_STATE_SUFFIX } from "../../shared/branch-bridge-protocol.js";
-import { nativeNavigationLeaf } from "../../shared/branch-node-actions.js";
-import { workerAttachmentStore } from "./fixtures/runtime.js";
+import type { BranchNavigateRequest } from "../../shared/contracts.js";
+import {
+  nativePiWorkspace,
+  stubNativePiEnvironment,
+} from "./fixtures/native-pi.js";
+import {
+  deferredSignal,
+  disposeRuntimeFixture,
+  FakeRpc,
+  fixtureWorkspace,
+  initializeRuntimeFixture,
+  startWorker,
+  trackedAttachmentStore,
+  trackRuntime,
+} from "./fixtures/runtime.js";
+import { jsonl, messageEntry } from "./fixtures/session-jsonl.js";
 
-const SESSION_ID = "11111111-1111-4111-8111-111111111111";
-const FORK_SESSION_ID = "22222222-2222-4222-8222-222222222222";
-const OTHER_SESSION_ID = "33333333-3333-4333-8333-333333333333";
-const directories: string[] = [];
-const stores: AttachmentStore[] = [];
-
+const id = "11111111-1111-4111-8111-111111111111";
+const other = "33333333-3333-4333-8333-333333333333";
+const image = {
+  type: "image",
+  data: "aW1hZ2U=",
+  mimeType: "image/png",
+} as const;
 const entry = (
   id: string,
   parentId: string | null,
@@ -46,1250 +43,599 @@ const entry = (
     | string
     | Array<{ type: string; text?: string; data?: string; mimeType?: string }>,
   timestamp: number,
-) => ({
-  type: "message",
-  id,
-  parentId,
-  timestamp: new Date(timestamp).toISOString(),
-  message: { role, content, timestamp },
+) => messageEntry(id, parentId, { role, content, timestamp });
+const parseLines = (bytes: string): Record<string, unknown>[] =>
+  bytes
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+const faults = [
+  "wrong-nonce",
+  "malformed",
+  "duplicate",
+  "missing",
+  "persist",
+] as const;
+
+/** Real JSONL and Catalog with one controllable Pi navigation reply. */
+class BranchRpc extends FakeRpc {
+  leafId: string | null;
+  fault?: (typeof faults)[number];
+
+  constructor(options: PiRpcOptions) {
+    super(options);
+    const [header, ...entries] = parseLines(
+      readFileSync(this.sessionPath!, "utf8"),
+    );
+    this.sessionId = String(header!.id);
+    this.leafId = (entries.at(-1)?.id as string | undefined) ?? null;
+    this.responseOverrides.set(
+      "get_entries",
+      ({ since }: Record<string, unknown>) => {
+        const index = entries.findIndex(({ id }) => id === since);
+        if (since !== undefined && index < 0)
+          throw new Error(`Entry not found: ${since}`);
+        return { entries: entries.slice(index + 1), leafId: this.leafId };
+      },
+    );
+    const {
+      INSPIRE_BRANCH_COMMAND: command,
+      INSPIRE_BRANCH_STATUS_KEY: statusKey,
+      INSPIRE_BRANCH_WORKER_ID: workerId,
+    } = options.env!;
+    this.responseOverrides.set(
+      "prompt",
+      async ({ message }: Record<string, unknown>) => {
+        if (typeof message !== "string" || !message.startsWith(`/${command} `))
+          return {};
+        const { nonce, targetId } = JSON.parse(
+          Buffer.from(message.split(" ")[1]!, "base64url").toString(),
+        );
+        expect(["a1", "unfinished"]).toContain(targetId);
+        const beforeLeaf = this.leafId;
+        this.leafId = "a1";
+        const result = {
+          v: 1,
+          sessionId: this.sessionId,
+          ok: true,
+          cancelled: false,
+          beforeLeaf,
+          nonce: this.fault === "wrong-nonce" ? "foreign" : nonce,
+          workerId,
+          effectiveLeaf: "a1",
+          navigationLeaf: "a1",
+        };
+        if (this.fault === "persist") {
+          const unexpected = entry(
+            "unexpected",
+            "a1",
+            "assistant",
+            "unexpected write",
+            60,
+          );
+          this.leafId = unexpected.id;
+          entries.push(unexpected);
+          await appendFile(this.sessionPath!, jsonl(unexpected));
+        }
+        if (this.fault !== "missing") {
+          const event = {
+            type: "extension_ui_request",
+            method: "setStatus",
+            statusKey,
+            statusText:
+              this.fault === "malformed"
+                ? "not+base64"
+                : Buffer.from(JSON.stringify(result)).toString("base64url"),
+          };
+          this.emit("event", event);
+          if (this.fault === "duplicate") this.emit("event", event);
+        }
+        return {};
+      },
+    );
+  }
+
+  override get available() {
+    return this.stops === 0;
+  }
+  protected override checkpointLeaf() {
+    return this.leafId;
+  }
+}
+
+let workspace: Awaited<ReturnType<typeof nativePiWorkspace>>;
+beforeEach(async () => {
+  await initializeRuntimeFixture();
+  workspace = await nativePiWorkspace(
+    "pi-",
+    { defaultProjectTrust: "never" },
+    fixtureWorkspace,
+  );
+  stubNativePiEnvironment(workspace.env);
+});
+afterEach(async () => {
+  try {
+    await disposeRuntimeFixture();
+  } finally {
+    vi.unstubAllEnvs();
+  }
 });
 
-class BranchRpc extends EventEmitter {
-  readonly commands: Array<Record<string, unknown>> = [];
-  readonly path: string;
-  readonly bridgeCommand: string;
-  readonly statusKey: string;
-  readonly workerId: string;
-  sessionId: string;
-  leafId: string | null;
-  stops = 0;
-  resultMode:
-    | "ok"
-    | "wrong-nonce"
-    | "wrong-worker"
-    | "malformed"
-    | "duplicate"
-    | "cancel"
-    | "missing"
-    | "persist" = "ok";
-  treeDialog = false;
-  autoRetryGate: Promise<void> | null = null;
-  extensionResponses: Array<Record<string, unknown>> = [];
-  private stopped = false;
-  private readonly dialogResolvers = new Map<string, () => void>();
-
-  get available(): boolean {
-    return !this.stopped;
-  }
-
-  constructor(readonly options: PiRpcOptions) {
-    super();
-    const marker = options.args!.indexOf("--session");
-    this.path = resolve(options.args![marker + 1]!);
-    this.bridgeCommand = options.env!.INSPIRE_BRANCH_COMMAND!;
-    this.statusKey = options.env!.INSPIRE_BRANCH_STATUS_KEY!;
-    this.workerId = options.env!.INSPIRE_BRANCH_WORKER_ID!;
-    const persisted = readFileSync(this.path, "utf8")
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line) as Record<string, unknown>);
-    this.sessionId = String(persisted[0]?.id ?? "");
-    const last = [...persisted]
-      .reverse()
-      .find((candidate) => typeof candidate.id === "string");
-    this.leafId = typeof last?.id === "string" ? last.id : null;
-  }
-
-  async start() {}
-
-  async stop() {
-    this.stops += 1;
-    this.stopped = true;
-  }
-
-  private waitForDialog(
-    id: string,
-    method: "confirm" | "input",
-  ): Promise<void> {
-    this.emit("event", {
-      type: "extension_ui_request",
-      id,
-      method,
-      title: `branch ${method}`,
-    });
-    return new Promise<void>((resolveDialog) =>
-      this.dialogResolvers.set(id, resolveDialog),
-    );
-  }
-
-  private async emitBridge(message: string): Promise<void> {
-    const encoded = message.slice(message.indexOf(" ") + 1);
-    const request = JSON.parse(
-      Buffer.from(encoded, "base64url").toString("utf8"),
-    ) as Record<string, unknown>;
-    const beforeLeaf = this.leafId;
-    if (this.treeDialog) await this.waitForDialog("tree-hook", "confirm");
-    const cancelled = this.resultMode === "cancel";
-    if (!cancelled) {
-      const target = (await readFile(this.path, "utf8"))
-        .trim()
-        .split("\n")
-        .map((line) => JSON.parse(line))
-        .find((candidate) => candidate.id === request.targetId);
-      this.leafId = nativeNavigationLeaf(
-        { ...target, role: target.message?.role },
-        beforeLeaf,
-      );
-    }
-    const result = {
-      v: 1,
-      nonce:
-        this.resultMode === "wrong-nonce"
-          ? "nonce_wrong_1234567890"
-          : request.nonce,
-      workerId:
-        this.resultMode === "wrong-worker"
-          ? "worker_wrong_abcdefghijklmnopqrstuvwxyz"
-          : this.workerId,
-      sessionId: this.sessionId,
-      ok: !cancelled,
-      cancelled,
-      beforeLeaf,
-      effectiveLeaf: this.leafId,
-      ...(!cancelled ? { navigationLeaf: this.leafId } : {}),
-    };
-    if (this.resultMode === "persist") {
-      await appendFile(
-        this.path,
-        `${JSON.stringify(entry("unexpected", this.leafId, "assistant", "unexpected write", 60))}\n`,
-      );
-    }
-    if (this.resultMode === "missing") return;
-    const event = {
-      type: "extension_ui_request",
-      id: "internal",
-      method: "setStatus",
-      statusKey: this.statusKey,
-      statusText:
-        this.resultMode === "malformed"
-          ? "not+base64"
-          : Buffer.from(JSON.stringify(result)).toString("base64url"),
-    };
-    this.emit("event", event);
-    if (this.resultMode === "duplicate")
-      this.emit("event", { ...event, id: "duplicate" });
-  }
-
-  async request<T>(
-    command: Record<string, unknown>,
-    _timeoutMs?: number,
-    _responseFence?: PiRpcResponseFence,
-  ): Promise<T> {
-    if (
-      command.type === "prompt" &&
-      String(command.message).startsWith(
-        `/${this.bridgeCommand}${RETRY_STATE_SUFFIX} `,
-      )
-    ) {
-      const request = JSON.parse(
-        Buffer.from(
-          String(command.message).split(" ")[1]!,
-          "base64url",
-        ).toString("utf8"),
-      ) as object;
-      this.emit("event", {
-        type: "extension_ui_request",
-        method: "setStatus",
-        statusKey: `${this.statusKey}${RETRY_STATE_SUFFIX}`,
-        statusText: Buffer.from(
-          JSON.stringify({ ...request, autoRetryEnabled: true }),
-        ).toString("base64url"),
-      });
-      return { disposition: "handled" } as T;
-    }
-    this.commands.push(command);
-    let value: unknown = {};
-    if (command.type === "get_state") {
-      value = {
-        sessionId: this.sessionId,
-        sessionFile: this.path,
-        model: null,
-        thinkingLevel: "off",
-        isStreaming: false,
-        isCompacting: false,
-      };
-    } else if (command.type === "set_auto_retry") await this.autoRetryGate;
-    else if (command.type === "get_available_models") value = { models: [] };
-    else if (command.type === "get_commands")
-      value = {
-        commands: [
-          { name: this.bridgeCommand, source: "extension" },
-          { name: "visible", source: "extension" },
-        ],
-      };
-    else if (command.type === "get_entries")
-      value = { entries: [], leafId: this.leafId };
-    else if (command.type === "prompt") {
-      const text = String(command.message ?? "");
-      if (text.startsWith(`/${this.bridgeCommand} `))
-        await this.emitBridge(text);
-      else {
-        const persisted = entry("next-user", this.leafId, "user", text, 50);
-        await appendFile(this.path, `${JSON.stringify(persisted)}\n`);
-        this.leafId = persisted.id;
-        this.emit("event", { type: "message_end", message: persisted.message });
-      }
-    }
-    return value as T;
-  }
-
-  sendExtensionUiResponse(response: Record<string, unknown>) {
-    this.extensionResponses.push(response);
-    const id = String(response.id ?? "");
-    this.dialogResolvers.get(id)?.();
-    this.dialogResolvers.delete(id);
-  }
-}
-
-function fakeStageFork(directory: string): StageSessionFork {
-  return async (request): Promise<StagedSessionFork> => {
-    const stagingDir = await mkdtemp(join(directory, ".test-fork-"));
-    const stagedPath = join(stagingDir, `${FORK_SESSION_ID}.jsonl`);
-    const destinationPath = join(directory, `${FORK_SESSION_ID}.jsonl`);
-    const source = (await readFile(request.sourcePath, "utf8"))
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line) as Record<string, unknown>);
-    const targetIndex = source.findIndex(
-      (candidate) => candidate.id === request.targetId,
-    );
-    if (targetIndex < 1) throw new Error("Fork fixture target is unavailable");
-    const destination = [
-      {
-        type: "session",
-        version: 3,
-        id: FORK_SESSION_ID,
-        timestamp: "2026-08-01T00:00:00.000Z",
-        cwd: directory,
-        parentSession: request.sourcePath,
-      },
-      ...source.slice(1, targetIndex + (request.mode === "clone" ? 1 : 0)),
-    ];
-    await writeFile(
-      stagedPath,
-      `${destination.map((line) => JSON.stringify(line)).join("\n")}\n`,
-    );
-    return {
-      stagingDir,
-      stagedPath,
-      destinationPath,
-      destinationId: FORK_SESSION_ID,
-      cwd: directory,
-      parentSessionPath: request.sourcePath,
-      destinationLeafId:
-        typeof destination.at(-1)?.id === "string" && destination.length > 1
-          ? (destination.at(-1)!.id as string)
-          : null,
-    };
-  };
-}
-
-async function setup(
-  branchBridgeTimeoutMs = 15_000,
-  openForkProjection?: ConstructorParameters<typeof RuntimeController>[5],
-  stageFork?: StageSessionFork,
-  userContent?: Parameters<typeof entry>[3],
-  externallyOwned = false,
-) {
-  const directory = await realpath(
-    await mkdtemp(join(tmpdir(), "inspire-branch-runtime-")),
-  );
-  directories.push(directory);
+async function fixture({
+  userContent = "second question",
+  extra = [],
+  external = false,
+  cold = external,
+  ...options
+}: Pick<RuntimeControllerOptions, "openForkProjection" | "stageFork"> & {
+  userContent?: Parameters<typeof entry>[3];
+  extra?: ReturnType<typeof entry>[];
+  external?: boolean;
+  cold?: boolean;
+} = {}) {
+  const { cwd, sessions: directory } = workspace;
   const path = join(directory, "session.jsonl");
-  const lines = [
-    {
-      type: "session",
-      version: 3,
-      id: SESSION_ID,
-      timestamp: "2026-08-01T00:00:00.000Z",
-      cwd: directory,
-    },
+  const timestamp = "2026-08-01T00:00:00.000Z";
+  const header = { type: "session", version: 3, id, timestamp, cwd };
+  const entries = [
     entry("u1", null, "user", "root", 1),
     entry("a1", "u1", "assistant", "first answer", 2),
-    entry("u2", "a1", "user", userContent ?? "second question", 3),
+    entry("u2", "a1", "user", userContent, 3),
     entry("a2", "u2", "assistant", "second answer", 4),
   ];
-  await writeFile(
-    path,
-    `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`,
-  );
-  const record: SessionRecord = {
-    id: SESSION_ID,
-    cwd: directory,
-    path,
-    source: null,
-    created: new Date(),
-    modified: new Date(),
-    messageCount: 4,
-    firstMessage: "root",
-  };
-  const records = new Map([[record.id, record]]);
-  const catalog: SessionCatalogLike = {
-    refresh: async () => [...records.values()],
-    get: async (id) => records.get(id),
-    list: async () => ({ sessions: [], total: 0, offset: 0, limit: 40 }),
-    listByIds: async () => [],
-    listByCwds: async () => [],
-    invalidate() {},
-  };
-  const attachments = workerAttachmentStore(join(directory, "uploads"));
-  stores.push(attachments);
-  let worker!: BranchRpc;
+  const source = jsonl(header, ...entries, ...extra);
+  await Promise.all([
+    writeFile(path, source),
+    writeFile(
+      join(directory, "other.jsonl"),
+      jsonl({ ...header, id: other }, ...entries),
+    ),
+  ]);
+  const catalog = new SessionCatalog(cwd);
+  const attachments = trackedAttachmentStore();
   const workers: BranchRpc[] = [];
-  const runtime = new RuntimeController(
-    catalog,
-    attachments,
-    (options) => {
-      worker = new BranchRpc(options);
+  const runtime = new RuntimeController(catalog, attachments, {
+    ...options,
+    createProcess: (options) => {
+      const worker = new BranchRpc(options);
       workers.push(worker);
       return worker as unknown as PiRpcProcess;
     },
-    undefined,
-    branchBridgeTimeoutMs,
-    openForkProjection,
-    undefined,
-    undefined,
-    undefined,
-    stageFork ?? fakeStageFork(directory),
-  );
-  if (externallyOwned)
-    runtime.setExternalSessionGuard(async (id) => {
-      if (id === SESSION_ID)
-        throw requestError("Source is owned by another Pi", 409, {
-          code: "EXTERNAL_PI_WRITER_ACTIVE",
-        });
-    });
-  await runtime.openSession(SESSION_ID);
-  if (externallyOwned) {
-    await vi.waitFor(async () =>
-      expect((await runtime.snapshot()).active?.readOnlyReason).toBe(
-        "external-active",
-      ),
+  });
+  trackRuntime(runtime);
+  let externalLeaf = "a2";
+  if (external)
+    runtime.setExternalSessionPresence(async (session) =>
+      session === id ? [externalLeaf] : [],
     );
-  } else {
-    await vi.waitFor(() => expect(worker).toBeDefined());
-    await vi.waitFor(async () =>
-      expect((await runtime.snapshot()).active?.commands).toBeDefined(),
-    );
-  }
+  await runtime.openSession(id);
+  if (!cold) await startWorker(runtime, id);
+  const snapshot = () => runtime.snapshot(id);
+  const active = async () => (await snapshot()).active!;
   return {
     runtime,
-    worker,
     workers,
+    worker: workers[0]!,
     path,
     directory,
-    records,
     catalog,
     attachments,
+    source,
+    snapshot,
+    active,
+    reportExternal: (leaf: string) => {
+      externalLeaf = leaf;
+    },
+    address: async (targetId = "u2") => ({
+      sessionId: id,
+      viewId: (await active()).transcriptPage.viewId,
+      targetId,
+    }),
+    navigate: async (
+      targetId: string,
+      mode: BranchNavigateRequest["mode"] = "switch",
+    ) =>
+      runtime.navigateBranch({
+        sessionId: id,
+        revision: (await active()).branchRevision!,
+        targetId,
+        mode,
+      }),
   };
 }
 
-async function openOtherSession(fixture: Awaited<ReturnType<typeof setup>>) {
-  const source = fixture.records.get(SESSION_ID)!;
-  const record = {
-    ...source,
-    id: OTHER_SESSION_ID,
-    path: join(fixture.directory, "other-session.jsonl"),
-  };
-  await writeFile(
-    record.path,
-    (await readFile(source.path, "utf8")).replace(SESSION_ID, OTHER_SESSION_ID),
-  );
-  fixture.records.set(record.id, record);
-  await fixture.runtime.openSession(record.id);
-}
+it.each(["Stop", "exit"] as const)(
+  "cannot renew a worker lease retired by %s during final reconciliation",
+  async (retired) => {
+    const f = await fixture();
+    const entered = deferredSignal();
+    const release = deferredSignal();
+    const internal = f.runtime as unknown as {
+      slots: Map<string, RuntimeSlot>;
+    };
+    const slot = internal.slots.get(id)!;
+    const projection = slot.projection!;
+    const reconcile = projection.reconcile.bind(projection);
+    let held = false;
+    vi.spyOn(projection, "reconcile").mockImplementation(async (force) => {
+      const result = await reconcile(force);
+      if (!held && f.worker.leafId === "a1") {
+        held = true;
+        entered.resolve();
+        await release.promise;
+      }
+      return result;
+    });
+    const navigation = f.navigate("a1").catch((error: unknown) => error);
+    try {
+      await Promise.race([entered.promise, navigation]);
+      expect(f.worker.leafId).toBe("a1");
+      if (retired === "Stop") await f.runtime.abort(id);
+      else f.worker.emit("exit", new Error("Branch worker exited"));
+      expect(slot).toMatchObject({ process: null, pendingBranchBridge: null });
+      release.resolve();
+      expect(await navigation).toMatchObject({
+        status: 409,
+        message:
+          "Branch navigation worker stopped before the result could be applied",
+      });
+      expect(await f.snapshot()).toMatchObject({
+        sessionStatuses: {
+          [id]: { runState: retired === "Stop" ? "aborted" : "failed" },
+        },
+        active: {
+          durableLeafId: "a2",
+          effectiveLeafId: "a2",
+          restoreSavedLeafId: null,
+        },
+      });
+      expect((await f.active()).transcriptPage.messages).toContainEqual(
+        expect.objectContaining({ __inspireEntryId: "a2" }),
+      );
+      expect(slot.workerView).toBeNull();
+      expect(await readFile(f.path, "utf8")).toBe(f.source);
+      expect(f.workers).toHaveLength(1);
+      expect(f.worker.stops).toBe(1);
+    } finally {
+      release.resolve();
+      await navigation;
+    }
+  },
+);
 
-afterEach(async () => {
-  await Promise.all(stores.splice(0).map((store) => store.close()));
-  await Promise.all(
-    directories
-      .splice(0)
-      .map((directory) => rm(directory, { recursive: true, force: true })),
+it.each(faults)(
+  "stops the writer without replaying a %s navigation reply",
+  async (fault) => {
+    const f = await fixture();
+    f.worker.fault = fault;
+    await expect(f.navigate("a1")).rejects.toMatchObject({
+      status: 504,
+      outcomeUnknown: true,
+    });
+    expect(f.worker.stops).toBe(1);
+    expect(
+      f.worker.commands.filter(({ type }) => type === "prompt"),
+    ).toHaveLength(1);
+  },
+);
+
+it("fences a stale or invalid Fork source and retains selection made while waiting for admission", async () => {
+  const stageFork = vi.fn(stageSessionFork);
+  const f = await fixture({
+    stageFork,
+    extra: [
+      entry("unfinished", "a1", "user", "Unanswered side branch", 5),
+      entry("saved", "a2", "assistant", "Saved default", 6),
+    ],
+  });
+  await f.runtime.openSession(other);
+  const old = await f.address();
+  for (const [override, message] of [
+    [{ sessionId: "unknown-session" }, /not open on this host/],
+    [{ viewId: "retired-view" }, /branch changed/],
+    [{ targetId: "a1" }, /requires a retained user message/],
+  ] as const)
+    await expect(f.runtime.forkBranch({ ...old, ...override })).rejects.toThrow(
+      message,
+    );
+  await expect(f.navigate("unfinished", "watch")).rejects.toThrow(
+    /Use Edit from here/,
   );
+  expect(f.worker.leafId).toBe("saved");
+  expect(await f.navigate("unfinished", "edit")).toMatchObject({
+    editorText: "Unanswered side branch",
+    snapshot: { active: { effectiveLeafId: "a1" } },
+  });
+  await expect(f.runtime.forkBranch(old)).rejects.toThrow(/branch changed/);
+  expect(f.runtime.startupSessionHint).toBe(other);
+
+  const gate = deferredSignal();
+  const entered = deferredSignal();
+  const source = await f.address();
+  f.worker.responseOverrides.set("set_auto_retry", () => {
+    entered.resolve();
+    return gate.promise;
+  });
+  const setting = f.runtime.setRuntimeSetting(id, {
+    key: "autoRetryEnabled",
+    value: false,
+  });
+  try {
+    await Promise.race([entered.promise, setting]);
+    const forking = f.runtime.forkBranch(source);
+    await f.runtime.openSession(id);
+    const leaf = (await f.active()).effectiveLeafId;
+    gate.resolve();
+    await setting;
+    await forking;
+    expect(stageFork).toHaveBeenCalledOnce();
+    expect(f.runtime.startupSessionHint).toBe(id);
+    expect((await f.active()).effectiveLeafId).toBe(leaf);
+  } finally {
+    gate.resolve();
+    await setting;
+  }
 });
 
-describe("stock RPC branch bridge", () => {
-  it("keeps History inspection available while the source owns work, queued input and a dialog", async () => {
-    const { runtime, worker, path } = await setup();
-    try {
-      worker.emit("event", { type: "agent_start" });
-      worker.emit("event", {
-        type: "queue_update",
-        steering: ["later"],
-        followUp: [],
-      });
-      worker.emit("event", {
-        type: "extension_ui_request",
-        id: "history-dialog",
-        method: "confirm",
-        title: "Continue?",
-        message: "Waiting for input",
-      });
-      const before = await runtime.snapshot(SESSION_ID);
-      expect(before).toMatchObject({
-        runState: "running",
-        pendingQueues: { totalCount: 1 },
-        pendingExtensionUiRequests: [{ id: "history-dialog" }],
-      });
-      const source = await readFile(path, "utf8");
-      const tree = await runtime.branchTree(SESSION_ID);
-      const retained = await runtime.branchEntry({
-        sessionId: SESSION_ID,
-        viewId: before.active!.transcriptPage.viewId,
-        targetId: "a1",
-      });
-      expect(retained.text).toContain("first answer");
-      await expect(
-        runtime.navigateBranch({
-          sessionId: SESSION_ID,
-          revision: tree.revision,
-          targetId: "a1",
-          mode: "switch",
-        }),
-      ).rejects.toMatchObject({ status: 409 });
-      expect(await runtime.snapshot(SESSION_ID)).toMatchObject({
-        runState: "running",
-        pendingQueues: { totalCount: 1 },
-        pendingExtensionUiRequests: [{ id: "history-dialog" }],
-      });
-      expect(worker.stops).toBe(0);
-      expect(worker.extensionResponses).toEqual([]);
-      expect(await readFile(path, "utf8")).toBe(source);
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("keeps retained text and images readable through append, but rejects a replaced view", async () => {
-    const { runtime, worker, path } = await setup();
-    try {
-      const text = "Retained content. ".repeat(4000);
-      const saved = {
-        ...entry("resources", "a2", "user", text, 40),
-        message: {
-          role: "user",
-          content: [
-            { type: "text", text },
-            { type: "image", mimeType: "image/png", data: "aW1hZ2U=" },
-          ],
-          timestamp: 40,
-        },
-      };
-      await appendFile(path, `${JSON.stringify(saved)}\n`);
-      worker.leafId = saved.id;
-      worker.emit("event", { type: "message_end", message: saved.message });
-      const snapshot = await runtime.snapshot();
-      const request = {
-        sessionId: SESSION_ID,
-        viewId: snapshot.active!.transcriptPage.viewId,
-        targetId: saved.id,
-      };
-      const first = await runtime.branchEntry(request);
-      expect(first.nextOffset).toBe(32_000);
-      await runtime.prompt({ sessionId: SESSION_ID, message: "New input" });
-      worker.emit("event", { type: "agent_settled" });
-      const next = await runtime.branchEntry({
-        ...request,
-        offset: first.nextOffset!,
-      });
-      expect(next.text).toBe(text.slice(32_000, 64_000));
-      expect((await runtime.branchImage(request, 1)).data.toString()).toBe(
-        "image",
-      );
-      const tree = await runtime.branchTree(SESSION_ID);
-      await runtime.navigateBranch({
-        sessionId: SESSION_ID,
-        revision: tree.revision,
-        targetId: "a1",
-        mode: "switch",
-      });
-      await expect(runtime.branchEntry(request)).rejects.toMatchObject({
-        status: 409,
-      });
-      await expect(runtime.branchImage(request, 1)).rejects.toMatchObject({
-        status: 409,
-      });
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("keeps normal discovered extensions enabled in production argv while adding the explicit hidden bridge", async () => {
-    const { runtime, worker } = await setup();
-    try {
-      const before = await runtime.snapshot();
-      expect(worker.options.args).toContain("--extension");
-      expect(worker.options.args).toContain(
-        resolve("server/extensions/inspire-branch-bridge.ts"),
-      );
-      expect(worker.options.args).not.toContain("--no-extensions");
-      expect(worker.options.env).toMatchObject({
-        INSPIRE_BRANCH_COMMAND: worker.bridgeCommand,
-        INSPIRE_BRANCH_STATUS_KEY: worker.statusKey,
-        INSPIRE_BRANCH_WORKER_ID: worker.workerId,
-      });
-      expect(before.active?.commands).toEqual([
-        { name: "visible", source: "extension" },
-      ]);
-      const tree = await runtime.branchTree(SESSION_ID);
-      const response = await runtime.navigateBranch({
-        sessionId: SESSION_ID,
-        revision: tree.revision,
-        targetId: "a1",
-        mode: "switch",
-      });
-      expect(response.snapshot.active?.effectiveLeafId).toBe("a1");
-      expect(response.snapshot.active?.navigationLeased).toBe(true);
-      expect(
-        JSON.stringify(response.snapshot.active?.transcriptPage.messages),
-      ).toContain("first answer");
-      expect(
-        JSON.stringify(response.snapshot.active?.transcriptPage.messages),
-      ).not.toContain("second question");
-      expect(
-        worker.commands.find((command) => command.type === "get_entries"),
-      ).toMatchObject({ since: "a2" });
-      await expect(
-        runtime.navigateBranch({
-          sessionId: SESSION_ID,
-          revision: tree.revision,
-          targetId: "a2",
-          mode: "switch",
-        }),
-      ).rejects.toThrow(/stale/);
-
-      await runtime.prompt({
-        sessionId: SESSION_ID,
-        message: "continued branch",
-      });
-      const committed = await runtime.snapshot();
-      expect(committed.active?.effectiveLeafId).toBe("next-user");
-      expect(committed.active?.navigationLeased).toBe(false);
-      expect(
-        JSON.stringify(committed.active?.transcriptPage.messages),
-      ).toContain("continued branch");
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("answers a session_before_tree dialog on the independent response lane without deadlock", async () => {
-    const { runtime, worker } = await setup();
-    worker.treeDialog = true;
-    try {
-      const tree = await runtime.branchTree(SESSION_ID);
-      const navigating = runtime.navigateBranch({
-        sessionId: SESSION_ID,
-        revision: tree.revision,
-        targetId: "a1",
-        mode: "switch",
-      });
-      await vi.waitFor(async () =>
-        expect(
-          (await runtime.snapshot()).pendingExtensionUiRequests,
-        ).toMatchObject([{ id: "tree-hook", sessionId: SESSION_ID }]),
-      );
-      await runtime.extensionUiResponse({
-        sessionId: SESSION_ID,
-        id: "tree-hook",
-        value: true,
-      });
-      await expect(navigating).resolves.toMatchObject({
-        snapshot: { active: { effectiveLeafId: "a1" } },
-      });
-      expect(
-        worker.extensionResponses.filter(
-          (response) => response.id === "tree-hook",
-        ),
-      ).toHaveLength(1);
-      await expect(
-        runtime.extensionUiResponse({
-          sessionId: SESSION_ID,
-          id: "tree-hook",
-          value: true,
-        }),
-      ).rejects.toMatchObject({ status: 409 });
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("returns original edit text and supports native before-input navigation including the null root", async () => {
-    const { runtime } = await setup();
-    try {
-      const tree = await runtime.branchTree(SESSION_ID);
-      const edited = await runtime.navigateBranch({
-        sessionId: SESSION_ID,
-        revision: tree.revision,
-        targetId: "u2",
-        mode: "edit",
-      });
-      expect(edited.editorText).toBe("second question");
-      expect(edited.snapshot.active?.effectiveLeafId).toBe("a1");
-      const current = await runtime.branchTree(SESSION_ID);
-      const root = await runtime.navigateBranch({
-        sessionId: SESSION_ID,
-        revision: current.revision,
-        targetId: "u1",
-        mode: "edit",
-      });
-      expect(root.editorText).toBe("root");
-      expect(root.snapshot.active?.effectiveLeafId).toBeNull();
-      expect(root.snapshot.active?.transcriptPage.messages).toEqual([]);
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it.each(["wrong-nonce", "wrong-worker", "malformed", "duplicate"] as const)(
-    "fails closed for a %s result and stops the ambiguous worker",
-    async (mode) => {
-      const { runtime, worker } = await setup();
-      worker.resultMode = mode;
-      const tree = await runtime.branchTree(SESSION_ID);
-      await expect(
-        runtime.navigateBranch({
-          sessionId: SESSION_ID,
-          revision: tree.revision,
-          targetId: "a1",
-          mode: "switch",
-        }),
-      ).rejects.toMatchObject({ status: 504 });
-      expect(worker.stops).toBe(1);
-      await runtime.close();
-    },
-  );
-
-  it.each(["fork", "clone"] as const)(
-    "%s reads an externally owned source without acquiring or changing its writer",
-    async (mode) => {
-      const { runtime, workers, path } = await setup(
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        true,
-      );
-      const release = runtime.retainSessionView(SESSION_ID);
-      try {
-        const original = await readFile(path, "utf8");
-        const tree = await runtime.branchTree(SESSION_ID);
-        await expect(
-          runtime.navigateBranch({
-            sessionId: SESSION_ID,
-            revision: tree.revision,
-            targetId: "u2",
-            mode: "edit",
-          }),
-        ).rejects.toMatchObject({ code: "EXTERNAL_PI_WRITER_ACTIVE" });
-        const request = {
-          sessionId: SESSION_ID,
-          viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
-            .viewId,
-          targetId: "u2",
-        };
-        // The target is unchanged when the external Pi appends after the
-        // browser captured its view/endpoint but before copy admission.
-        const appended = `${JSON.stringify(entry("later", "a2", "assistant", "later progress", 50))}\n`;
-        await appendFile(path, appended);
-        const copied = await (mode === "fork"
-          ? runtime.forkBranch(request)
-          : runtime.cloneBranch(request));
-        expect(copied.sessionId).toBe(FORK_SESSION_ID);
-        expect(copied.editorText).toBe(
-          mode === "fork" ? "second question" : "",
-        );
-        expect(await readFile(path, "utf8")).toBe(original + appended);
-        const output = await readFile(
-          copied.snapshot.active!.sessionFile!,
-          "utf8",
-        );
-        expect(output).not.toContain("later progress");
-        expect((await runtime.branchTree(SESSION_ID)).revision).toBeGreaterThan(
-          tree.revision,
-        );
-        expect(
-          (await runtime.snapshot(SESSION_ID)).active?.readOnlyReason,
-        ).toBe("external-active");
-        await vi.waitFor(() => expect(workers).toHaveLength(1));
-        expect(workers[0]!.sessionId).toBe(FORK_SESSION_ID);
-      } finally {
-        release();
-        await runtime.close();
+it("holds a published destination reservation and restages ordered duplicate images for the only new writer", async () => {
+  const opened = deferredSignal();
+  const release = deferredSignal();
+  const extraImage = {
+    ...image,
+    data: Buffer.from("alternate image").toString("base64"),
+    mimeType: "image/webp",
+  };
+  const images = [image, extraImage, image];
+  let destination!: string;
+  const f = await fixture({
+    cold: true,
+    userContent: images,
+    async openForkProjection(record) {
+      if (!record.path.includes(".inspire-fork-")) {
+        destination = record.id;
+        opened.resolve();
+        await release.promise;
       }
-    },
-  );
-
-  it.each(["source", "other", "none"] as const)(
-    "forks an active source without changing its worker, queue, or dialog when the Host selection is %s",
-    async (selection) => {
-      const fixture = await setup();
-      const { runtime, worker, workers, path } = fixture;
-      try {
-        worker.emit("event", { type: "agent_start" });
-        worker.emit("event", {
-          type: "queue_update",
-          steering: ["steer later"],
-          followUp: ["follow later"],
-        });
-        worker.emit("event", {
-          type: "extension_ui_request",
-          id: "source-dialog",
-          method: "confirm",
-          title: "Source dialog",
-        });
-        await vi.waitFor(async () =>
-          expect(await runtime.snapshot()).toMatchObject({
-            runState: "running",
-            pendingExtensionUiRequests: [
-              { id: "source-dialog", sessionId: SESSION_ID },
-            ],
-            pendingQueues: {
-              steering: [
-                expect.objectContaining({ textPreview: "steer later" }),
-              ],
-              followUp: [
-                expect.objectContaining({ textPreview: "follow later" }),
-              ],
-            },
-          }),
-        );
-        const sourceBefore = await readFile(path, "utf8");
-        if (selection === "other") await openOtherSession(fixture);
-        else if (selection === "none") await runtime.deselectSession();
-        const selectedBeforeFork = runtime.activeSessionId;
-        const forked = await runtime.forkBranch({
-          sessionId: SESSION_ID,
-          viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
-            .viewId,
-          targetId: "u2",
-        });
-
-        expect(forked).toMatchObject({
-          sessionId: FORK_SESSION_ID,
-          editorText: "second question",
-          snapshot: {
-            active: {
-              sessionId: FORK_SESSION_ID,
-              durableLeafId: "a1",
-            },
-            sessionStatuses: {
-              [SESSION_ID]: { runState: "running" },
-            },
-          },
-        });
-        const expectedSelection =
-          selection === "source" ? FORK_SESSION_ID : selectedBeforeFork;
-        expect(runtime.activeSessionId).toBe(expectedSelection);
-        await vi.waitFor(async () => {
-          expect(
-            (await runtime.snapshot(FORK_SESSION_ID)).active?.commands,
-          ).toEqual([{ name: "visible", source: "extension" }]);
-        });
-        expect(runtime.activeSessionId).toBe(expectedSelection);
-        expect(worker.commands.some((command) => command.type === "fork")).toBe(
-          false,
-        );
-        expect(worker.stops).toBe(0);
-        expect(await readFile(path, "utf8")).toBe(sourceBefore);
-        const destination = await readFile(
-          join(resolve(path, ".."), `${FORK_SESSION_ID}.jsonl`),
-          "utf8",
-        );
-        expect(destination).toContain('"id":"a1"');
-        expect(destination).not.toContain('"id":"u2"');
-
-        const source = await runtime.snapshot(SESSION_ID);
-        expect(source).toMatchObject({
-          active: { sessionId: SESSION_ID },
-          runState: "running",
-          pendingExtensionUiRequests: [
-            { id: "source-dialog", sessionId: SESSION_ID },
-          ],
-          pendingQueues: {
-            steering: [expect.objectContaining({ textPreview: "steer later" })],
-            followUp: [
-              expect.objectContaining({ textPreview: "follow later" }),
-            ],
-          },
-        });
-        expect(workers[0]).toBe(worker);
-        expect(worker.stops).toBe(0);
-      } finally {
-        await runtime.close();
-      }
-    },
-  );
-
-  it("preserves a newer selection made while an addressed fork waits in the source operation lane", async () => {
-    const fixture = await setup();
-    const { runtime, worker } = fixture;
-    let release!: () => void;
-    worker.autoRetryGate = new Promise<void>((resolveGate) => {
-      release = resolveGate;
-    });
-    const changing = runtime.setAutoRetry(SESSION_ID, false);
-    try {
-      await vi.waitFor(() =>
-        expect(worker.commands).toContainEqual({
-          type: "set_auto_retry",
-          enabled: false,
-        }),
-      );
-      await openOtherSession(fixture);
-      const forking = runtime.forkBranch({
-        sessionId: SESSION_ID,
-        viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
-          .viewId,
-        targetId: "u2",
-      });
-      // This newer selection is made before the queued fork can begin admission.
-      await runtime.openSession(SESSION_ID);
-      release();
-      await changing;
-      const forked = await forking;
-      expect(forked).toMatchObject({
-        sessionId: FORK_SESSION_ID,
-        editorText: "second question",
-      });
-      expect(runtime.activeSessionId).toBe(SESSION_ID);
-      expect((await runtime.snapshot(SESSION_ID)).active?.effectiveLeafId).toBe(
-        "a2",
-      );
-    } finally {
-      release();
-      await changing;
-      await runtime.close();
-    }
-  });
-
-  it("retains source identity, view, target, and conflict validation when another session is selected", async () => {
-    const stageFork = vi.fn<StageSessionFork>();
-    const fixture = await setup(15_000, undefined, stageFork);
-    const { runtime, path, directory } = fixture;
-    stageFork.mockImplementation(fakeStageFork(directory));
-    try {
-      const tree = await runtime.branchTree(SESSION_ID);
-      await openOtherSession(fixture);
-      const request = {
-        sessionId: SESSION_ID,
-        viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
-          .viewId,
-        targetId: "u2",
-      };
-      await expect(
-        runtime.forkBranch({ ...request, sessionId: FORK_SESSION_ID }),
-      ).rejects.toThrow("That session is not open on this host");
-      await expect(
-        runtime.forkBranch({ ...request, viewId: "retired-source-view" }),
-      ).rejects.toThrow(/branch changed/);
-      await expect(
-        runtime.forkBranch({ ...request, targetId: "a1" }),
-      ).rejects.toThrow("Fork requires a retained user message");
-      await runtime.navigateBranch({
-        sessionId: SESSION_ID,
-        revision: tree.revision,
-        targetId: "a1",
-        mode: "switch",
-      });
-      await expect(runtime.forkBranch(request)).rejects.toThrow(
-        /branch changed/,
-      );
-      const viewId = (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
-        .viewId;
-      await expect(
-        runtime.forkBranch({ ...request, viewId }),
-      ).resolves.toMatchObject({
-        sessionId: FORK_SESSION_ID,
-        editorText: "second question",
-      });
-      await runtime.openSession(OTHER_SESSION_ID);
-      await appendFile(
-        path,
-        `${JSON.stringify(entry("external", "a2", "assistant", "external divergence", 60))}\n`,
-      );
-      await expect(
-        runtime.forkBranch({
-          ...request,
-          viewId,
-          targetId: "u1",
-        }),
-      ).rejects.toThrow(/could not verify ownership/);
-      expect(stageFork).toHaveBeenCalledTimes(1);
-      expect(
-        await readFile(join(directory, `${FORK_SESSION_ID}.jsonl`), "utf8"),
-      ).toContain("first answer");
-      expect(runtime.activeSessionId).toBe(OTHER_SESSION_ID);
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("holds the generated destination reservation across publication and a slower final projection open", async () => {
-    let release!: () => void;
-    let opened!: () => void;
-    let recordsRef!: Map<string, SessionRecord>;
-    const gate = new Promise<void>((resolveGate) => {
-      release = resolveGate;
-    });
-    const finalOpen = new Promise<void>((resolveOpen) => {
-      opened = resolveOpen;
-    });
-    const fixture = await setup(15_000, async (record) => {
-      if (record.path.includes(`${join("", ".test-fork-")}`)) {
-        return SessionProjection.open(record);
-      }
-      recordsRef.set(record.id, record);
-      opened();
-      await gate;
       return SessionProjection.open(record);
-    });
-    const { runtime, workers, records } = fixture;
-    recordsRef = records;
-    try {
-      const forking = runtime.forkBranch({
-        sessionId: SESSION_ID,
-        viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
-          .viewId,
-        targetId: "u2",
-      });
-      await finalOpen;
-      const openingDestination = runtime.openSession(FORK_SESSION_ID);
-      await runtime.openSession(SESSION_ID);
-      release();
-      const [forked, openedDestination] = await Promise.all([
-        forking,
-        openingDestination,
-      ]);
-      expect(forked.sessionId).toBe(FORK_SESSION_ID);
-      expect(openedDestination.active?.sessionId).toBe(FORK_SESSION_ID);
-      expect(runtime.activeSessionId).toBe(SESSION_ID);
-      await vi.waitFor(() =>
-        expect(
-          workers.filter(
-            (candidate) => candidate.sessionId === FORK_SESSION_ID,
-          ),
-        ).toHaveLength(1),
-      );
-    } finally {
-      release?.();
-      await runtime.close();
-    }
-  });
-
-  it.each(["image-only", "text-and-images"] as const)(
-    "restages a %s Fork from persisted bytes, preserving image order and duplicates",
-    async (kind) => {
-      const images = [
-        {
-          type: "image",
-          data: Buffer.from("first image").toString("base64"),
-          mimeType: "image/png",
-        },
-        {
-          type: "image",
-          data: Buffer.from("second image").toString("base64"),
-          mimeType: "image/webp",
-        },
-      ];
-      images.push(images[0]!);
-      const text = kind === "image-only" ? "" : "Compare these images";
-      const { runtime, workers, worker, path, attachments } = await setup(
-        15_000,
-        undefined,
-        undefined,
-        [...(text ? [{ type: "text", text }] : []), ...images],
-      );
-      const original = await readFile(path, "utf8");
-      try {
-        const forked = await runtime.forkBranch({
-          sessionId: SESSION_ID,
-          viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
-            .viewId,
-          targetId: "u2",
-        });
-        expect(forked.editorText).toBe(text);
-        const restored = forked.editorAttachments!;
-        expect(restored).toHaveLength(3);
-        expect(new Set(restored.map((item) => item.id)).size).toBe(3);
-        for (const [index, item] of restored.entries()) {
-          expect(item).toMatchObject({
-            kind: "image",
-            mimeType: images[index]!.mimeType,
-          });
-          expect(item).not.toHaveProperty("previewDataUrl");
-          const preview = await attachments.imagePreview(item.id);
-          expect(preview.bytes.toString("base64")).toBe(images[index]!.data);
-        }
-        expect(await readFile(path, "utf8")).toBe(original);
-        expect(
-          await readFile(forked.snapshot.active!.sessionFile!, "utf8"),
-        ).not.toContain('"id":"u2"');
-        expect(worker.stops).toBe(0);
-        await vi.waitFor(() => expect(workers).toHaveLength(2));
-        expect(
-          workers[1]!.commands.some((command) => command.type === "prompt"),
-        ).toBe(false);
-
-        // Removing one copy leaves the original persisted input and its duplicates intact.
-        await attachments.remove(restored[1]!.id);
-        await expect(
-          attachments.imagePreview(restored[1]!.id),
-        ).rejects.toMatchObject({ status: 404 });
-        await runtime.prompt({
-          sessionId: forked.sessionId,
-          message: text,
-          attachmentIds: [restored[0]!.id, restored[2]!.id],
-        });
-        expect(
-          workers[1]!.commands.find((command) => command.type === "prompt"),
-        ).toMatchObject({
-          message: text,
-          images: [images[0], images[0]],
-        });
-        expect(await readFile(path, "utf8")).toBe(original);
-      } finally {
-        await runtime.close();
-      }
     },
-  );
-
-  it("keeps a Clone's images in history rather than staging them in the editor", async () => {
-    const image = { type: "image", data: "aW1hZ2U=", mimeType: "image/png" };
-    const { runtime } = await setup(15_000, undefined, undefined, [image]);
-    try {
-      const cloned = await runtime.cloneBranch({
-        sessionId: SESSION_ID,
-        viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
-          .viewId,
-        targetId: "u2",
-      });
-      expect(cloned.editorText).toBe("");
-      expect(cloned.editorAttachments).toBeUndefined();
-      expect(
-        await readFile(cloned.snapshot.active!.sessionFile!, "utf8"),
-      ).toContain(image.data);
-    } finally {
-      await runtime.close();
-    }
   });
-
-  it("rejects an atomic destination-path collision without changing the source", async () => {
-    const { runtime, worker, directory, path, attachments } = await setup(
-      15_000,
-      undefined,
-      undefined,
-      [{ type: "image", data: "aW1hZ2U=", mimeType: "image/png" }],
+  const forking = f.runtime.forkBranch(await f.address());
+  try {
+    await Promise.race([opened.promise, forking]);
+    await f.catalog.refresh(true);
+    expect((await f.catalog.get(destination))?.id).toBe(destination);
+    const opening = f.runtime.openSession(destination);
+    await f.runtime.openSession(id);
+    release.resolve();
+    const [forked, selected] = await Promise.all([forking, opening]);
+    expect(forked.sessionId).toBe(destination);
+    expect(selected.active?.sessionId).toBe(destination);
+    expect(f.runtime.startupSessionHint).toBe(id);
+    expect(f.workers).toHaveLength(0);
+    expect(forked.editorText).toBe("");
+    const uploads = forked.editorAttachments!;
+    expect(new Set(uploads.map(({ id }) => id)).size).toBe(3);
+    const bytes = await Promise.all(
+      uploads.map(async ({ id, mimeType }) => ({
+        mimeType,
+        data: (await f.attachments.imagePreview(id)).bytes.toString("base64"),
+        type: "image",
+      })),
     );
-    const staging = vi.spyOn(attachments, "stageImages");
-    const destinationPath = join(directory, `${FORK_SESSION_ID}.jsonl`);
-    await writeFile(destinationPath, "existing destination\n");
-    const sourceBefore = await readFile(path, "utf8");
-    try {
-      await expect(
-        runtime.forkBranch({
-          sessionId: SESSION_ID,
-          viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
-            .viewId,
-          targetId: "u2",
-        }),
-      ).rejects.toMatchObject({ status: 409 });
-      const copied = await staging.mock.results[0]!.value;
-      expect(copied).toHaveLength(1);
-      await expect(
-        attachments.imagePreview(copied[0]!.id),
-      ).rejects.toMatchObject({ status: 404 });
-      expect(await readFile(destinationPath, "utf8")).toBe(
-        "existing destination\n",
-      );
-      expect(await readFile(path, "utf8")).toBe(sourceBefore);
-      expect(worker.stops).toBe(0);
-      expect(worker.commands.some((command) => command.type === "fork")).toBe(
-        false,
-      );
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("reports a published destination as committed when final attachment fails", async () => {
-    let opens = 0;
-    const { runtime, worker, directory } = await setup(
-      15_000,
-      async (record) => {
-        opens += 1;
-        if (opens === 1) return SessionProjection.open(record);
-        throw new Error("projection fixture failed");
-      },
-    );
-    try {
-      await expect(
-        runtime.forkBranch({
-          sessionId: SESSION_ID,
-          viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
-            .viewId,
-          targetId: "u2",
-        }),
-      ).rejects.toMatchObject({
-        status: 409,
-        message: expect.stringContaining(
-          `Fork created Session ${FORK_SESSION_ID}`,
-        ),
-      });
-      expect(
-        await readFile(join(directory, `${FORK_SESSION_ID}.jsonl`), "utf8"),
-      ).toContain('"id":"a1"');
-      expect(worker.stops).toBe(0);
-      expect((await runtime.snapshot()).runState).not.toBe("conflict");
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("fails closed when disk changes even if the RPC verification falsely reports no delta", async () => {
-    const { runtime, worker } = await setup();
-    worker.resultMode = "persist";
-    const tree = await runtime.branchTree(SESSION_ID);
-    try {
-      await expect(
-        runtime.navigateBranch({
-          sessionId: SESSION_ID,
-          revision: tree.revision,
-          targetId: "a1",
-          mode: "switch",
-        }),
-      ).rejects.toMatchObject({ status: 504 });
-      expect(worker.stops).toBe(1);
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("treats cancellation as a truthful refusal without moving or stopping the worker", async () => {
-    const { runtime, worker } = await setup();
-    worker.resultMode = "cancel";
-    const tree = await runtime.branchTree(SESSION_ID);
-    try {
-      await expect(
-        runtime.navigateBranch({
-          sessionId: SESSION_ID,
-          revision: tree.revision,
-          targetId: "a1",
-          mode: "switch",
-        }),
-      ).resolves.toMatchObject({
-        cancelled: true,
-        snapshot: { active: { effectiveLeafId: "a2" } },
-      });
-      expect(worker.leafId).toBe("a2");
-      expect(worker.stops).toBe(0);
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("drops a stale unsolicited internal status without projecting it or poisoning the next operation", async () => {
-    const { runtime, worker } = await setup();
-    const forwarded: Array<Record<string, unknown>> = [];
-    runtime.on("event", (event) =>
-      forwarded.push(event as Record<string, unknown>),
-    );
-    worker.emit("event", {
-      type: "extension_ui_request",
-      id: "stale",
-      method: "setStatus",
-      statusKey: worker.statusKey,
-      statusText: "not+base64",
+    expect(bytes).toEqual(images);
+    await f.attachments.remove(uploads[1]!.id);
+    await expect(
+      f.attachments.imagePreview(uploads[1]!.id),
+    ).rejects.toMatchObject({ status: 404 });
+    await f.runtime.prompt({
+      sessionId: destination,
+      message: "",
+      attachmentIds: [uploads[0]!.id, uploads[2]!.id],
     });
-    const tree = await runtime.branchTree(SESSION_ID);
-    try {
-      await runtime.navigateBranch({
-        sessionId: SESSION_ID,
-        revision: tree.revision,
-        targetId: "a1",
-        mode: "switch",
+    expect(f.workers.map(({ sessionId }) => sessionId)).toEqual([destination]);
+    expect(
+      f.workers[0]!.commands.find(({ type }) => type === "prompt"),
+    ).toMatchObject({ message: "", images: [image, image] });
+    expect(await readFile(f.path, "utf8")).toBe(f.source);
+  } finally {
+    release.resolve();
+    await forking;
+  }
+});
+
+it.each([
+  "prefix rewrite",
+  "destination collision",
+  "final projection",
+] as const)("preserves the Fork commit boundary after %s", async (failure) => {
+  let staged!: Awaited<ReturnType<typeof stageSessionFork>>;
+  const occupied = "existing destination\n";
+  const f = await fixture({
+    cold: true,
+    userContent: [image],
+    async stageFork(request) {
+      if (failure === "prefix rewrite")
+        await writeFile(
+          f.path,
+          f.source.replace("first answer", "other answer"),
+        );
+      staged = await stageSessionFork(request);
+      if (failure === "destination collision")
+        await writeFile(staged.destinationPath, occupied);
+      return staged;
+    },
+    async openForkProjection(record) {
+      if (
+        failure === "final projection" &&
+        record.path === staged.destinationPath
+      )
+        throw new Error("projection fixture failed");
+      return SessionProjection.open(record);
+    },
+  });
+  const images = vi.spyOn(f.attachments, "stageImages");
+  const outcome = await f.runtime
+    .forkBranch(await f.address())
+    .catch((error: unknown) => error);
+  expect(outcome).toMatchObject({
+    status: 409,
+    message: expect.stringContaining(
+      failure === "prefix rewrite"
+        ? "changed before its fork boundary"
+        : failure === "destination collision"
+          ? "destination already exists"
+          : `Fork created Session ${staged.destinationId}`,
+    ),
+  });
+  expect(
+    (await readdir(f.directory)).filter((name) =>
+      name.startsWith(".inspire-fork-"),
+    ),
+  ).toEqual([]);
+  expect(f.workers).toHaveLength(0);
+  if (failure === "prefix rewrite") {
+    expect(images).not.toHaveBeenCalled();
+    return;
+  }
+  const [abandoned] = await images.mock.results[0]!.value;
+  await expect(f.attachments.imagePreview(abandoned!.id)).rejects.toMatchObject(
+    { status: 404 },
+  );
+  const bytes = await readFile(staged.destinationPath, "utf8");
+  if (failure === "destination collision") expect(bytes).toBe(occupied);
+  else {
+    expect(parseLines(bytes).at(-1)).toMatchObject({ id: "a1" });
+    expect(
+      (await f.runtime.openSession(staged.destinationId)).active?.sessionId,
+    ).toBe(staged.destinationId);
+  }
+  expect(await readFile(f.path, "utf8")).toBe(f.source);
+});
+
+it("reads and copies the admitted external branch across appends, then retires its History and Pending address on Watch", async () => {
+  const text = "Retained content. ".repeat(4000);
+  const alternate = jsonl(
+    entry("alt", "a1", "user", "alternative", 6),
+    entry("alt-a", "alt", "assistant", "alternative answer", 7),
+  );
+  const partial = alternate.slice(0, 17);
+  let writes = 0;
+  const f = await fixture({
+    external: true,
+    userContent: [{ type: "text", text }, image],
+    async stageFork(request) {
+      if (writes++ === 0) await appendFile(request.sourcePath, partial);
+      return stageSessionFork(request);
+    },
+  });
+  const release = f.runtime.retainSessionView(id);
+  try {
+    const source = await f.address();
+    const read = (offset?: number) =>
+      f.runtime.sessionHistory(id, source.viewId, {
+        kind: "entry",
+        targetId: "u2",
+        offset,
       });
-      expect(forwarded.some((event) => event.id === "stale")).toBe(false);
-      expect(
-        forwarded.some((event) => event.statusKey === worker.statusKey),
-      ).toBe(false);
-      expect(worker.stops).toBe(0);
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("treats a missing result timeout as outcome-unknown and never retries", async () => {
-    const { runtime, worker } = await setup(25);
-    worker.resultMode = "missing";
-    const tree = await runtime.branchTree(SESSION_ID);
-    try {
-      await expect(
-        runtime.navigateBranch({
-          sessionId: SESSION_ID,
-          revision: tree.revision,
-          targetId: "a1",
-          mode: "switch",
-        }),
-      ).rejects.toMatchObject({ status: 504 });
-      expect(worker.stops).toBe(1);
-      expect(
-        worker.commands.filter((command) => command.type === "prompt"),
-      ).toHaveLength(1);
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("rejects direct public invocation of the randomized internal command", async () => {
-    const { runtime, worker } = await setup();
-    try {
-      for (const suffix of [" forged", "\tforged", "\nforged", ""]) {
-        await expect(
-          runtime.prompt({
-            sessionId: SESSION_ID,
-            message: `/${worker.bridgeCommand}${suffix}`,
-          }),
-        ).rejects.toMatchObject({ status: 403 });
-      }
-      expect(
-        worker.commands.filter((command) => command.type === "prompt"),
-      ).toHaveLength(0);
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("conflicts on external divergence while a navigation lease owns the worker", async () => {
-    const { runtime, path } = await setup();
-    try {
-      const tree = await runtime.branchTree(SESSION_ID);
-      await runtime.navigateBranch({
-        sessionId: SESSION_ID,
-        revision: tree.revision,
-        targetId: "a1",
-        mode: "switch",
+    const first = await read();
+    expect(first.nextOffset).toBe(32_000);
+    await expect(f.navigate("u2", "edit")).rejects.toMatchObject({
+      code: "EXTERNAL_PI_WRITER_ACTIVE",
+    });
+    const appended = jsonl(
+      entry("later", "a2", "assistant", "same branch append", 5),
+    );
+    await appendFile(f.path, appended);
+    f.reportExternal("later");
+    expect((await read(first.nextOffset!)).text).toBe(
+      text.slice(32_000, 64_000),
+    );
+    expect((await f.runtime.branchImage(source, 1)).data.toString()).toBe(
+      "image",
+    );
+    const forked = await f.runtime.forkBranch(source);
+    const cloned = await f.runtime.cloneBranch(source);
+    for (const [copy, copiedIds] of [
+      [forked, ["u1", "a1"]],
+      [cloned, ["u1", "a1", "u2"]],
+    ] as const) {
+      const [header, ...entries] = parseLines(
+        await readFile(copy.snapshot.active!.sessionFile!, "utf8"),
+      );
+      expect(header).toMatchObject({
+        id: copy.sessionId,
+        cwd: workspace.cwd,
+        parentSession: f.path,
       });
-      await appendFile(
-        path,
-        `${JSON.stringify(entry("external", "a2", "assistant", "terminal divergence", 60))}\n`,
-      );
-      await expect(runtime.branchTree(SESSION_ID)).rejects.toThrow(
-        /could not verify ownership/,
-      );
-      expect((await runtime.snapshot()).runState).toBe("conflict");
-    } finally {
-      await runtime.close();
+      expect(entries.map(({ id }) => id)).toEqual(copiedIds);
+      expect(copy.snapshot.active?.durableLeafId).toBe(copiedIds.at(-1));
     }
+    expect(forked.editorText === text).toBe(true);
+    expect(forked.editorAttachments).toHaveLength(1);
+    expect(cloned.editorText).toBe("");
+    expect(cloned.editorAttachments).toBeUndefined();
+    expect(await readFile(f.path, "utf8")).toBe(f.source + appended + partial);
+    await appendFile(f.path, alternate.slice(partial.length));
+    expect(await f.active()).toMatchObject({
+      effectiveLeafId: "later",
+      readOnlyReason: "external-active",
+    });
+    const current = await f.address();
+    const branches = await f.runtime.sessionHistory(id, current.viewId, {
+      kind: "branches",
+    });
+    expect(branches.leaves).toMatchObject([
+      { id: "alt-a", isCurrent: false },
+      { id: "later", isCurrent: true },
+    ]);
+    const watched = await f.navigate("alt-a", "watch");
+    expect(watched.snapshot.active?.effectiveLeafId).toBe("alt-a");
+    expect(watched.snapshot.active?.readOnlyReason).toBeUndefined();
+    await expect(
+      f.runtime.sessionHistory(id, current.viewId, {
+        kind: "entry",
+        targetId: "u2",
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+    await expect(f.runtime.branchImage(current, 1)).rejects.toMatchObject({
+      status: 409,
+    });
+    await expect(
+      f.runtime.recoverPending(id, current.viewId),
+    ).rejects.toMatchObject({ code: "PENDING_VIEW_CHANGED" });
+    await expect(f.runtime.abort(id, current.viewId)).rejects.toMatchObject({
+      code: "PENDING_VIEW_CHANGED",
+    });
+    expect((await f.navigate("later", "watch")).snapshot.active).toMatchObject({
+      effectiveLeafId: "later",
+      readOnlyReason: "external-active",
+    });
+    expect(f.workers).toHaveLength(0);
+  } finally {
+    release();
+  }
+}, 15_000);
+
+it("advances saved History without moving the selected worker branch", async () => {
+  const f = await fixture();
+  await f.navigate("a1");
+  await appendFile(
+    f.path,
+    jsonl(entry("foreign", "a2", "assistant", "foreign", 60)),
+  );
+  const active = await f.active();
+  expect(active).toMatchObject({
+    durableLeafId: "foreign",
+    effectiveLeafId: "a1",
+    restoreSavedLeafId: "foreign",
   });
+  expect(active.transcriptPage.messages).not.toContainEqual(
+    expect.objectContaining({ __inspireEntryId: "foreign" }),
+  );
+  const restored = await f.navigate("foreign");
+  expect(restored.snapshot.active).toMatchObject({
+    effectiveLeafId: "foreign",
+    restoreSavedLeafId: null,
+  });
+  expect(f.worker.stops).toBe(1);
 });

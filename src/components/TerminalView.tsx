@@ -6,20 +6,10 @@ import "@xterm/xterm/css/xterm.css";
 import {
   Check,
   ChevronDown,
-  ChevronRight,
   ChevronUp,
-  Circle,
-  ClipboardPaste,
   Copy,
-  Eraser,
-  Eye,
   Keyboard,
   MessageSquareQuote,
-  Monitor,
-  RotateCcw,
-  Search,
-  Square,
-  TextSelect,
   X,
 } from "lucide-react";
 import {
@@ -35,10 +25,10 @@ import { createPortal } from "react-dom";
 import {
   INSPIRE_SHELL_OSC,
   MAX_TERMINAL_COLS,
-  MAX_TERMINAL_COMMAND_CHARS,
   MAX_TERMINAL_ROWS,
   MIN_TERMINAL_COLS,
   MIN_TERMINAL_ROWS,
+  parseTerminalShellMarker,
   type TerminalDescriptor,
   type TerminalServerControlMessage,
   type TerminalServerDataFrame,
@@ -47,7 +37,6 @@ import type { Api } from "../api";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import {
   hasTerminalInsertion,
-  subscribeTerminalActions,
   subscribeTerminalInsertion,
   takeTerminalInsertion,
 } from "../terminal-actions";
@@ -63,10 +52,7 @@ import {
   terminalTextInput,
   terminalTouchInput,
 } from "../terminal-input";
-import {
-  isMacTerminalBrowser,
-  terminalTabShortcutIndex,
-} from "../terminal-keyboard";
+import { isMacTerminalBrowser, terminalShortcut } from "../terminal-keyboard";
 import { terminalFileLinks, terminalFileReference } from "../terminal-links";
 import {
   type TerminalCommandOutput,
@@ -81,17 +67,39 @@ import {
 } from "../terminal-theme";
 import { useCopied } from "../use-copied";
 import { NoticeCard } from "./NoticeCard";
-import { PiLoader } from "./PiLoader";
+import { SearchField } from "./SearchField";
 import { TerminalTextDialog } from "./TerminalTextDialog";
 import { TerminalTouchKeys } from "./TerminalTouchKeys";
 
+type TerminalViewAction =
+  | "focus"
+  | "take-control"
+  | "search"
+  | "paste"
+  | "copy"
+  | "select"
+  | "copy-last"
+  | "clear"
+  | "reset";
+
+export interface TerminalViewActions {
+  owner: string;
+  statusLabel: string;
+  transport: TerminalTransportStatus;
+  exited: boolean;
+  writable: boolean;
+  ready: boolean;
+  searchOpen: boolean;
+  hasLastOutput: boolean;
+  invoke(action: TerminalViewAction, opener?: HTMLButtonElement): void;
+}
+
 interface TerminalViewProps {
+  publishActions(actions: TerminalViewActions): void;
   api: Api;
   terminal: TerminalDescriptor;
   active: boolean;
   settings: TerminalUiSettings;
-  toolbarHost: HTMLElement | null;
-  menuHost: HTMLElement | null;
   onDescriptor(terminal: TerminalDescriptor): void;
   onBackgroundOutput(id: string): void;
   onBell(terminal: TerminalDescriptor): void;
@@ -182,25 +190,6 @@ function safeDimensions(
   };
 }
 
-function shellMarkerCommand(phase: string, payload: string): string {
-  let command = payload;
-  if (phase === "C1") {
-    try {
-      command = decodeURIComponent(payload);
-    } catch {
-      return "";
-    }
-  }
-  if (
-    command.length < 1 ||
-    command.length > MAX_TERMINAL_COMMAND_CHARS ||
-    /[\u0000\u0007\u001b]/u.test(command) ||
-    !/\S/u.test(command)
-  )
-    return "";
-  return command;
-}
-
 function hasUnsafePasteControl(value: string): boolean {
   return /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value);
 }
@@ -220,8 +209,7 @@ export const TerminalView = memo(function TerminalView({
   terminal: descriptor,
   active,
   settings,
-  toolbarHost,
-  menuHost,
+  publishActions,
   onDescriptor,
   onBackgroundOutput,
   onBell,
@@ -315,7 +303,9 @@ export const TerminalView = memo(function TerminalView({
   }, []);
 
   const currentDimensions = useCallback(() => {
-    const proposed = fitRef.current?.proposeDimensions();
+    const proposed = activeRef.current
+      ? fitRef.current?.proposeDimensions()
+      : undefined;
     return safeDimensions(proposed, descriptorRef.current);
   }, []);
 
@@ -475,11 +465,7 @@ export const TerminalView = memo(function TerminalView({
         return;
       event.preventDefault();
       event.stopImmediatePropagation();
-      if (
-        window.confirm(
-          "Paste multiple lines or control characters into this terminal?",
-        )
-      )
+      if (window.confirm("Paste multiple lines or control characters?"))
         xterm.paste(value);
     };
     host.addEventListener("paste", protectNativePaste, true);
@@ -487,17 +473,14 @@ export const TerminalView = memo(function TerminalView({
     const shellMarkerDisposable = xterm.parser.registerOscHandler(
       INSPIRE_SHELL_OSC,
       (value) => {
-        const separator = value.indexOf(";");
-        const phase = separator < 0 ? value : value.slice(0, separator);
-        const payload = separator < 0 ? "" : value.slice(separator + 1);
-        if (phase === "C" || phase === "C1") {
-          if (!shellMarkerCommand(phase, payload)) return true;
+        const shellMarker = parseTerminalShellMarker(value);
+        if (shellMarker?.type === "command") {
           commandStartRef.current?.marker.dispose();
           const marker = xterm.registerMarker(0);
           commandStartRef.current = marker
             ? { marker, column: xterm.buffer.active.cursorX }
             : null;
-        } else if (phase === "D") {
+        } else if (shellMarker?.type === "complete") {
           const start = commandStartRef.current;
           commandStartRef.current = null;
           if (!start || start.marker.isDisposed) return true;
@@ -633,9 +616,7 @@ export const TerminalView = memo(function TerminalView({
         workbenchShortcut &&
         ((command && ["k", "b", "."].includes(event.key.toLowerCase())) ||
           (settingsRef.current.shortcutMode === "workbench" &&
-            ((command && ["PageUp", "PageDown"].includes(event.key)) ||
-              terminalTabShortcutIndex(event) !== null ||
-              (command && event.shiftKey && event.key === "`"))));
+            terminalShortcut(event) !== null));
       // Returning early leaves the DOM event available to the workbench-level
       // shortcut handlers instead of letting xterm stop its propagation.
       if (applicationShortcut) return false;
@@ -692,7 +673,7 @@ export const TerminalView = memo(function TerminalView({
       }
       if (xtermRef.current !== xterm) return;
       updateTheme();
-      fit.fit();
+      if (activeRef.current) fit.fit();
       connection.start();
     };
     void initialize();
@@ -753,31 +734,6 @@ export const TerminalView = memo(function TerminalView({
     return () => cancelAnimationFrame(frame);
   }, [active, fitAndResize]);
 
-  useEffect(
-    () =>
-      subscribeTerminalActions(({ action, projectCwd }) => {
-        if (
-          projectCwd !== descriptor.projectCwd ||
-          action !== "take-control" ||
-          !active ||
-          !ready ||
-          descriptor.status !== "running"
-        )
-          return false;
-        const dimensions = currentDimensions();
-        connectionRef.current?.takeControl(dimensions.cols, dimensions.rows);
-        xtermRef.current?.focus();
-        return true;
-      }),
-    [
-      active,
-      currentDimensions,
-      descriptor.projectCwd,
-      descriptor.status,
-      ready,
-    ],
-  );
-
   useEffect(() => {
     const deliver = () => {
       const xterm = xtermRef.current;
@@ -787,21 +743,17 @@ export const TerminalView = memo(function TerminalView({
         const text = takeTerminalInsertion(descriptor.projectCwd);
         if (!text) break;
         if (hasUnsafePasteControl(text)) {
-          setError("Code containing control characters was not inserted");
+          setError("Control characters blocked code insertion");
           continue;
         }
         if (/[\r\n]/u.test(text)) {
           if (!xterm.modes.bracketedPasteMode) {
-            setError(
-              "Multiline code needs protected paste support from the active program",
-            );
+            setError("Multiline insertion requires protected paste support");
             continue;
           }
           if (
             settingsRef.current.pasteProtection &&
-            !window.confirm(
-              "Insert multiple lines into this terminal? Review them before running.",
-            )
+            !window.confirm("Insert multiple lines? Review before running.")
           )
             continue;
         }
@@ -865,11 +817,14 @@ export const TerminalView = memo(function TerminalView({
     const xterm = xtermRef.current;
     if (xterm) void copy(terminalBufferText(xterm.buffer.active));
   };
-  const selectText = () => {
+  const selectText = (opener?: HTMLButtonElement) => {
     const buffer = xtermRef.current?.buffer.active;
     if (!buffer) return;
     clearModifiers();
-    menuHost?.closest("details")?.querySelector("summary")?.focus();
+    opener
+      ?.closest("details[data-terminal-menu]")
+      ?.querySelector("summary")
+      ?.focus();
     setTextSnapshot({
       text: terminalBufferText(buffer),
       scrollRatio: buffer.baseY > 0 ? buffer.viewportY / buffer.baseY : 0,
@@ -893,9 +848,7 @@ export const TerminalView = memo(function TerminalView({
         value &&
         (!settingsRef.current.pasteProtection ||
           !isRiskyPaste(value) ||
-          window.confirm(
-            "Paste multiple lines or control characters into this terminal?",
-          ))
+          window.confirm("Paste multiple lines or control characters?"))
       ) {
         clearModifiers();
         xterm.paste(value);
@@ -953,132 +906,92 @@ export const TerminalView = memo(function TerminalView({
             ? "View only"
             : "Control available";
 
+  const invokeRef = useRef<TerminalViewActions["invoke"]>(() => {});
+  invokeRef.current = (action, opener) => {
+    switch (action) {
+      case "focus": {
+        const pending = modifiersRef.current;
+        xtermRef.current?.blur();
+        xtermRef.current?.focus();
+        updateModifiers(pending);
+        break;
+      }
+      case "take-control": {
+        if (!ready || descriptor.status !== "running") break;
+        const { cols, rows } = currentDimensions();
+        connectionRef.current?.takeControl(cols, rows);
+        xtermRef.current?.focus();
+        break;
+      }
+      case "search":
+        if (searchStateRef.current.open) closeSearch(false);
+        else setSearch((current) => ({ ...current, open: true }));
+        break;
+      case "paste":
+        void pasteClipboard();
+        break;
+      case "copy":
+        copyAll();
+        break;
+      case "select":
+        selectText(opener);
+        break;
+      case "copy-last":
+        copyLastCommandOutput();
+        break;
+      case "clear":
+        xtermRef.current?.clear();
+        break;
+      case "reset":
+        clearCommandOutput();
+        xtermRef.current?.reset();
+        connectionRef.current?.forceSnapshot();
+    }
+  };
+
+  const owner = `${descriptor.id}:${descriptor.outputEpoch}`;
+  const exited = descriptor.status === "exited";
+  const hasLastOutput = lastOutput !== null;
+  useLayoutEffect(() => {
+    if (!active) return;
+    publishActions({
+      owner,
+      statusLabel,
+      transport,
+      exited,
+      writable,
+      ready,
+      searchOpen: search.open,
+      hasLastOutput,
+      invoke(action, opener) {
+        if (
+          activeRef.current &&
+          xtermRef.current &&
+          `${descriptorRef.current.id}:${descriptorRef.current.outputEpoch}` ===
+            owner
+        )
+          invokeRef.current(action, opener);
+      },
+    });
+  }, [
+    active,
+    owner,
+    statusLabel,
+    transport,
+    exited,
+    writable,
+    ready,
+    search.open,
+    hasLastOutput,
+    publishActions,
+  ]);
+
   return (
     <section
       className={`terminal-view${active ? " terminal-view--active" : ""}${bellFlash ? " terminal-view--bell" : ""}`}
       aria-label={`Terminal ${descriptor.title}`}
       aria-hidden={!active}
     >
-      {active && toolbarHost
-        ? createPortal(
-            <>
-              <span
-                className={`terminal-view__status terminal-view__status--${transport}`}
-                role="status"
-                aria-label={statusLabel}
-                title={`${statusLabel} · ${transport}`}
-              >
-                {descriptor.status === "exited" ? (
-                  <Square size={12} aria-hidden />
-                ) : transport !== "connected" ? (
-                  transport === "offline" ? (
-                    <Circle size={14} aria-hidden />
-                  ) : (
-                    <PiLoader size={14} aria-hidden />
-                  )
-                ) : writable ? (
-                  <button
-                    type="button"
-                    className="icon-button terminal-view__keyboard"
-                    aria-label="Focus terminal input"
-                    title="Focus terminal input"
-                    disabled={!ready}
-                    onPointerDown={(event) => event.preventDefault()}
-                    onClick={() => {
-                      const pending = modifiersRef.current;
-                      xtermRef.current?.blur();
-                      xtermRef.current?.focus();
-                      updateModifiers(pending);
-                    }}
-                  >
-                    <Keyboard size={14} aria-hidden />
-                  </button>
-                ) : (
-                  <Eye size={14} aria-hidden />
-                )}
-                <span className="terminal-view__status-label">
-                  {statusLabel}
-                </span>
-              </span>
-              <button
-                type="button"
-                className="icon-button"
-                onClick={() => {
-                  if (search.open) closeSearch(false);
-                  else setSearch((current) => ({ ...current, open: true }));
-                }}
-                aria-label="Search terminal output"
-                aria-expanded={search.open}
-                title="Search terminal output"
-              >
-                <Search size={14} aria-hidden />
-              </button>
-            </>,
-            toolbarHost,
-          )
-        : null}
-      {active && menuHost
-        ? createPortal(
-            <>
-              <button
-                type="button"
-                onClick={() => void pasteClipboard()}
-                disabled={
-                  !writable || !ready || descriptor.status !== "running"
-                }
-                aria-label="Paste into terminal"
-              >
-                <ClipboardPaste size={14} aria-hidden /> Paste
-              </button>
-              <button type="button" onClick={copyAll}>
-                <Copy size={14} aria-hidden /> Copy all
-              </button>
-              <button type="button" onClick={selectText}>
-                <TextSelect size={14} aria-hidden /> Select text
-              </button>
-              <button
-                type="button"
-                disabled={!lastOutput}
-                title="Copy the last completed command output"
-                onClick={copyLastCommandOutput}
-              >
-                <Copy size={14} aria-hidden /> Copy last output
-              </button>
-              <details
-                className="terminal-menu__group"
-                data-terminal-menu-group
-              >
-                <summary>
-                  <Monitor size={14} aria-hidden /> Display
-                  <ChevronRight
-                    className="terminal-menu__chevron"
-                    size={13}
-                    aria-hidden
-                  />
-                </summary>
-                <div>
-                  <button
-                    type="button"
-                    onClick={() => xtermRef.current?.clear()}
-                  >
-                    <Eraser size={14} aria-hidden /> Clear local scrollback
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      clearCommandOutput();
-                      xtermRef.current?.reset();
-                      connectionRef.current?.forceSnapshot();
-                    }}
-                  >
-                    <RotateCcw size={14} aria-hidden /> Reset terminal display
-                  </button>
-                </div>
-              </details>
-            </>,
-            menuHost,
-          )
-        : null}
       <div className="terminal-view__stage">
         <div ref={hostRef} className="terminal-view__xterm" />
         <div className="terminal-view__overlays">
@@ -1099,12 +1012,13 @@ export const TerminalView = memo(function TerminalView({
                 closeSearch(true);
               }}
             >
-              <Search size={13} aria-hidden />
-              <input
+              <SearchField
+                className="terminal-search__field"
+                iconSize={13}
+                role="textbox"
                 autoFocus
                 value={search.query}
-                onChange={(event) => {
-                  const query = event.target.value;
+                onValueChange={(query) => {
                   setSearch((current) => ({ ...current, query }));
                   if (query)
                     searchRef.current?.findNext(query, {
@@ -1117,59 +1031,47 @@ export const TerminalView = memo(function TerminalView({
                 aria-label="Search terminal output"
                 placeholder="Find"
               />
-              <button
-                type="button"
-                className="terminal-search__option"
-                aria-pressed={search.caseSensitive}
-                aria-label="Match case"
-                title="Match case"
-                onClick={() => toggleSearchOption("caseSensitive")}
-              >
-                Aa
-              </button>
-              <button
-                type="button"
-                className="terminal-search__option"
-                aria-pressed={search.wholeWord}
-                aria-label="Match whole word"
-                title="Match whole word"
-                onClick={() => toggleSearchOption("wholeWord")}
-              >
-                ab
-              </button>
-              <button
-                type="button"
-                className="terminal-search__option"
-                aria-pressed={search.regex}
-                aria-label="Use regular expression"
-                title="Use regular expression"
-                onClick={() => toggleSearchOption("regex")}
-              >
-                .*
-              </button>
+              {(
+                [
+                  ["caseSensitive", "Match case", "Aa"],
+                  ["wholeWord", "Match whole word", "ab"],
+                  ["regex", "Use regular expression", ".*"],
+                ] as const
+              ).map(([option, label, text]) => (
+                <button
+                  key={option}
+                  type="button"
+                  className="icon-button terminal-search__option"
+                  aria-pressed={search[option]}
+                  aria-label={label}
+                  title={label}
+                  onClick={() => toggleSearchOption(option)}
+                >
+                  {text}
+                </button>
+              ))}
               <span className="terminal-search__count" aria-live="polite">
                 {search.resultCount > 0
                   ? `${search.resultIndex + 1}/${search.resultCount}`
                   : "0/0"}
               </span>
-              <button
-                type="button"
-                className="icon-button"
-                onClick={() => find("previous")}
-                aria-label="Previous terminal match"
-                title="Previous match"
-              >
-                <ChevronUp size={14} aria-hidden />
-              </button>
-              <button
-                type="button"
-                className="icon-button"
-                onClick={() => find("next")}
-                aria-label="Next terminal match"
-                title="Next match"
-              >
-                <ChevronDown size={14} aria-hidden />
-              </button>
+              {(
+                [
+                  ["previous", "Previous", ChevronUp],
+                  ["next", "Next", ChevronDown],
+                ] as const
+              ).map(([direction, label, Icon]) => (
+                <button
+                  key={direction}
+                  type="button"
+                  className="icon-button"
+                  aria-label={`${label} terminal match`}
+                  title={`${label} match`}
+                  onClick={() => find(direction)}
+                >
+                  <Icon size={14} aria-hidden />
+                </button>
+              ))}
               <button
                 type="button"
                 className="icon-button terminal-search__close"
@@ -1190,6 +1092,7 @@ export const TerminalView = memo(function TerminalView({
             >
               <button
                 type="button"
+                className="button button--quiet"
                 onClick={copySelection}
                 aria-label="Copy terminal selection"
               >
@@ -1198,13 +1101,13 @@ export const TerminalView = memo(function TerminalView({
               {onSendToComposer ? (
                 <button
                   type="button"
-                  className="terminal-selection__quote"
+                  className="button button--quiet terminal-selection__quote"
                   onClick={() => {
                     const selection = xtermRef.current?.getSelection();
                     if (selection) onSendToComposerRef.current?.(selection);
                   }}
                   aria-label="Send terminal selection to composer"
-                  title="Add selection to the composer without sending"
+                  title="Add selection to draft"
                 >
                   <MessageSquareQuote size={14} aria-hidden /> Add to chat
                 </button>
@@ -1232,15 +1135,8 @@ export const TerminalView = memo(function TerminalView({
             {ready ? (
               <button
                 type="button"
-                className="terminal-view__control"
-                onClick={() => {
-                  const dimensions = currentDimensions();
-                  connectionRef.current?.takeControl(
-                    dimensions.cols,
-                    dimensions.rows,
-                  );
-                  xtermRef.current?.focus();
-                }}
+                className="button terminal-view__control"
+                onClick={() => invokeRef.current("take-control")}
               >
                 <Keyboard size={13} aria-hidden /> Take control
               </button>

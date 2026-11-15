@@ -4,7 +4,8 @@ import { join, resolve } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import {
   modelOption,
-  modelSwitchThinkingLevel,
+  modelSettings,
+  modelThinkingPreferences,
 } from "../../server/model-catalog.js";
 import {
   createAgentSession,
@@ -15,6 +16,7 @@ import {
   SettingsManager,
 } from "../../server/pi-runtime.js";
 import type { ModelOption, ThinkingLevel } from "../../shared/contracts.js";
+import { modelSwitchThinkingLevel } from "../../shared/model-settings.js";
 
 afterEach(() => vi.unstubAllEnvs());
 it("matches native setModel configured precedence and capability clamping without writing settings or sessions", async () => {
@@ -125,15 +127,14 @@ it("matches native setModel configured precedence and capability clamping withou
       });
       try {
         const targetModel = runtime.getModel("fixture", target)!;
-        const requested = modelSwitchThinkingLevel(
-          cwd,
-          "fixture",
-          target,
-          current,
-        );
+        const choice = modelOption(targetModel);
         const predicted = clampThinkingLevel(
-          modelOption(targetModel),
-          requested,
+          choice,
+          modelSwitchThinkingLevel(
+            choice,
+            modelThinkingPreferences(modelSettings(cwd)),
+            current,
+          ),
         );
         await session.setModel(targetModel);
         expect(predicted).toBe(expected);

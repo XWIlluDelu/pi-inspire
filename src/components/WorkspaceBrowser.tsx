@@ -8,19 +8,16 @@ import {
   useRef,
 } from "react";
 import type { GitFileChange } from "../../shared/contracts";
-import { fileIconForPath } from "../file-icons";
-import {
-  gitDecorationForChange,
-  gitDecorationForDirectory,
-  presentGitFacet,
-} from "../git-presentation";
+import { gitDecorationForDirectory } from "../git-presentation";
 import { isComposingKeyboardEvent } from "../keyboard-input";
+import { inspectedFileTab } from "../resource-preview";
 import {
   gitChangeForWorkspacePath,
   shallowEqual,
   store,
   useAppState,
 } from "../store";
+import { FileIndexRow } from "./FileIndexRow";
 import { HiddenFilesToggle } from "./HiddenFilesToggle";
 import { PiLoader } from "./PiLoader";
 import { parentPath, ResourcePathLabel } from "./ResourcePathLabel";
@@ -39,24 +36,21 @@ export function WorkspaceVisibilityToggle() {
 
 type WorkspaceSelectionState = Pick<
   ReturnType<typeof store.getState>,
-  | "selectedResourceReference"
-  | "selectedResourceWorkspacePath"
-  | "resourcePreview"
-  | "resourceWorkspacePaths"
+  "fileInspection" | "resourceTabs" | "resourceStanding"
 >;
 
 export function selectedWorkspacePath(state: WorkspaceSelectionState) {
-  const selected = state.selectedResourceReference;
-  if (!selected) return null;
-  const previewPath =
-    state.resourcePreview?.status === "ready"
-      ? state.resourcePreview.descriptor.workspacePath
-      : undefined;
+  const { fileInspection } = state;
+  const { reference } = fileInspection;
+  if (!reference) return null;
+  const workspacePath =
+    fileInspection.kind === "file"
+      ? fileInspection.workspacePath
+      : inspectedFileTab(state)?.workspacePath;
   return (
-    previewPath ??
-    state.selectedResourceWorkspacePath ??
-    state.resourceWorkspacePaths[selected] ??
-    selected
+    workspacePath ??
+    state.resourceStanding[reference]?.workspacePath ??
+    reference
   );
 }
 
@@ -116,65 +110,42 @@ const WorkspaceFileRow = memo(function WorkspaceFileRow({
   showPath?: boolean;
   query?: string;
 }) {
-  const Icon = fileIconForPath(path);
   const directory = showPath ? parentPath(path) : null;
   const matches = searchMatchRanges(path, query.trim().split(/\s+/));
   const selected = selectedPath === path;
-  const decoration = gitDecorationForChange(change);
-  const facet = presentGitFacet(change);
   return (
-    <button
-      type="button"
-      className={`workspace-tree__row workspace-tree__row--file ${showPath ? "workspace-tree__row--result" : ""} ${selected ? "workspace-tree__row--active" : ""}`}
+    <FileIndexRow
+      file={path}
+      name={
+        <SearchMatchText
+          text={name}
+          ranges={matches}
+          offset={path.length - name.length}
+        />
+      }
+      context={
+        directory && (
+          <ResourcePathLabel path={directory} title={path} matches={matches} />
+        )
+      }
+      stacked={showPath}
+      change={change}
+      className={`workspace-tree__row workspace-tree__row--file ${showPath ? "workspace-tree__row--result" : ""}`}
       style={{ paddingLeft: `${8 + depth * 14}px` }}
-      title={path}
+      title={`${path}\nCtrl+click: Show in file manager`}
       aria-label={showPath ? `${name}, ${path}` : undefined}
       aria-current={selected || undefined}
       data-workspace-path={path}
-      onClick={() => void store.openWorkspaceFile(path)}
-    >
-      <Icon size={13} aria-hidden />
-      <span className="workspace-tree__file-label">
-        <span
-          className={`workspace-tree__name ${decoration ? `git-deco--${decoration}` : ""}`}
-        >
-          <SearchMatchText
-            text={name}
-            ranges={matches}
-            offset={path.length - name.length}
-          />
-        </span>
-        {directory ? (
-          <ResourcePathLabel
-            path={directory}
-            title={path}
-            className="workspace-tree__path"
-            matches={matches}
-          />
-        ) : null}
-      </span>
-      {facet ? (
-        <span
-          className={`git-mark ${decoration ? `git-deco--${decoration}` : ""}`}
-          role="img"
-          aria-label={facet.label}
-          title={facet.label}
-        >
-          {facet.mark}
-        </span>
-      ) : null}
-    </button>
+      onClick={(event) => {
+        if (event.ctrlKey || event.metaKey)
+          void store.showInFileManager(path, path);
+        else void store.openWorkspaceFile(path);
+      }}
+    />
   );
 });
 
-/** The shared lazy tree rendered by both Files surfaces. */
-export function WorkspaceTree({
-  className = "",
-  revealRequests = false,
-}: {
-  className?: string;
-  revealRequests?: boolean;
-}) {
+export function WorkspaceTree() {
   const state = useAppState(
     (source) => ({
       sessionId: source.sessionId,
@@ -185,10 +156,7 @@ export function WorkspaceTree({
       workspaceDirectoryErrors: source.workspaceDirectoryErrors,
       workspaceTruncatedDirs: source.workspaceTruncatedDirs,
       workspaceRevealRequest: source.workspaceRevealRequest,
-      selectedResourceReference: source.selectedResourceReference,
-      selectedResourceWorkspacePath: source.selectedResourceWorkspacePath,
-      resourcePreview: source.resourcePreview,
-      resourceWorkspacePaths: source.resourceWorkspacePaths,
+      selectedPath: selectedWorkspacePath(source),
       gitStatus: source.gitStatus,
     }),
     shallowEqual,
@@ -198,7 +166,7 @@ export function WorkspaceTree({
     () => new Set(state.workspaceExpandedDirs),
     [state.workspaceExpandedDirs],
   );
-  const selectedPath = selectedWorkspacePath(state);
+  const { selectedPath } = state;
 
   useEffect(() => {
     if (!state.sessionId || !state.cwd) return;
@@ -232,14 +200,14 @@ export function WorkspaceTree({
 
   useLayoutEffect(() => {
     const request = state.workspaceRevealRequest;
-    if (!revealRequests || !request) return;
+    if (!request) return;
     const escaped = CSS.escape(request.path);
     const target = rootRef.current?.querySelector<HTMLElement>(
       `[data-workspace-path="${escaped}"]`,
     );
     if (!target || !store.consumeWorkspaceRevealRequest(request.nonce)) return;
     target.scrollIntoView({ block: "nearest" });
-  }, [revealRequests, state.workspaceLevels, state.workspaceRevealRequest]);
+  }, [state.workspaceLevels, state.workspaceRevealRequest]);
 
   const renderLevel = (dir: string, depth: number): React.ReactNode => {
     const entries = state.workspaceLevels[dir];
@@ -280,7 +248,7 @@ export function WorkspaceTree({
         ) : null}
         {state.workspaceTruncatedDirs[dir] ? (
           <div className="workspace-tree__status" role="status" style={indent}>
-            Directory listing incomplete; showing partial contents.
+            Partial directory listing.
           </div>
         ) : null}
         {entries.map((entry) => {
@@ -307,11 +275,15 @@ export function WorkspaceTree({
             <Fragment key={path}>
               <button
                 type="button"
-                className="workspace-tree__row workspace-tree__row--folder"
+                className="file-row workspace-tree__row workspace-tree__row--folder"
                 style={indent}
                 aria-expanded={open}
-                title={path}
-                onClick={() => store.toggleWorkspaceDirectory(path)}
+                title={`${path}\nCtrl+click: Show in file manager`}
+                onClick={(event) => {
+                  if (event.ctrlKey || event.metaKey)
+                    void store.showInFileManager(path, path, true);
+                  else store.toggleWorkspaceDirectory(path);
+                }}
               >
                 <ChevronRight
                   size={11}
@@ -320,7 +292,7 @@ export function WorkspaceTree({
                 />
                 <Folder size={13} aria-hidden />
                 <span
-                  className={`workspace-tree__name ${rollup ? `git-deco--${rollup}` : ""}`}
+                  className={`file-row__name ${rollup ? `git-deco--${rollup}` : ""}`}
                 >
                   {entry.name}
                 </span>
@@ -343,7 +315,7 @@ export function WorkspaceTree({
 
   return (
     <div
-      className={`workspace-tree ${className}`}
+      className="workspace-tree"
       role="region"
       aria-label="Workspace file tree"
       aria-busy={state.workspaceLoadingDirs.length > 0}
@@ -358,11 +330,7 @@ export function WorkspaceTree({
   );
 }
 
-export function WorkspaceSearchResults({
-  className = "",
-}: {
-  className?: string;
-}) {
+export function WorkspaceSearchResults() {
   const state = useAppState(
     (source) => ({
       workspaceQuery: source.workspaceQuery,
@@ -370,26 +338,23 @@ export function WorkspaceSearchResults({
       workspaceSearchLoading: source.workspaceSearchLoading,
       workspaceMatches: source.workspaceMatches,
       workspaceSearchTruncated: source.workspaceSearchTruncated,
-      selectedResourceReference: source.selectedResourceReference,
-      selectedResourceWorkspacePath: source.selectedResourceWorkspacePath,
-      resourcePreview: source.resourcePreview,
-      resourceWorkspacePaths: source.resourceWorkspacePaths,
+      selectedPath: selectedWorkspacePath(source),
       gitStatus: source.gitStatus,
     }),
     shallowEqual,
   );
   const normalized = state.workspaceQuery.trim();
-  const selectedPath = selectedWorkspacePath(state);
+  const { selectedPath } = state;
   return (
     <div
-      className={`workspace-tree workspace-tree--results ${className}`}
+      className="workspace-tree workspace-tree--results"
       role="region"
       aria-label="Workspace search results"
       aria-busy={state.workspaceSearchLoading}
     >
       {state.workspaceSearchTruncated ? (
         <div className="workspace-tree__status" role="status">
-          Partial search results; browse the folder for more files.
+          Partial results. Browse for more files.
         </div>
       ) : null}
       {state.workspaceSearchError ? (

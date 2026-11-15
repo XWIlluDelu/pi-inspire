@@ -7,19 +7,54 @@ import {
   PinOff,
   Trash2,
 } from "lucide-react";
-import { memo } from "react";
+import { memo, useEffect, useId, useState, useSyncExternalStore } from "react";
 import {
-  isBusyRunState,
+  parentSegment,
   projectNameFromCwd,
   type SessionSummary,
 } from "../../shared/contracts";
+import { compactAge } from "../format";
 import { presentSessionActivity } from "../session-activity-presentation";
-import { sessionSearchMatchRanges } from "../session-search-presentation";
+import {
+  sessionSearchMatchRanges,
+  sessionSnippetMatchRanges,
+} from "../session-search-presentation";
 import { shallowEqual, store, useAppState } from "../store";
-import { compactAge, parentSegment, type SessionGroup } from "./nav-model";
+import type { SessionGroup } from "./nav-model";
 import { PiLoader } from "./PiLoader";
 import { PiStatus } from "./PiStatus";
 import { SearchMatchText } from "./SearchMatchText";
+
+const ageListeners = new Set<() => void>();
+let ageTimer: ReturnType<typeof setInterval> | undefined;
+
+function subscribeToAge(listener: () => void): () => void {
+  ageListeners.add(listener);
+  ageTimer ??= setInterval(() => {
+    for (const refresh of ageListeners) refresh();
+  }, 30_000);
+  return () => {
+    ageListeners.delete(listener);
+    if (ageListeners.size) return;
+    clearInterval(ageTimer);
+    ageTimer = undefined;
+  };
+}
+
+function SessionAge({
+  modified,
+  className,
+}: {
+  modified: string;
+  className: string;
+}) {
+  const age = useSyncExternalStore(subscribeToAge, () => compactAge(modified));
+  return (
+    <span className={className} title={new Date(modified).toLocaleString()}>
+      {age}
+    </span>
+  );
+}
 
 function searchParentContext(cwd: string, query: string): string {
   const parent = parentSegment(cwd);
@@ -29,11 +64,69 @@ function searchParentContext(cwd: string, query: string): string {
     : "";
 }
 
-/** One dense session line: the title at the left and one number at the right —
- * the activity age, in a fixed column the curation actions take over on hover
- * or focus. The message count is a tooltip fact, not a second number fighting
- * for the same edge. Cross-project path searches replace age with directory
- * context so the title keeps its space. */
+type Curation = {
+  label: string;
+  noun: string;
+  pinned: boolean;
+  disabled: boolean;
+  togglePin(): void;
+  toggleHidden(): void;
+  remove?: {
+    title: string;
+    label: string;
+    disabled: boolean;
+    run?: () => void;
+  };
+};
+
+function CurationActions({
+  label,
+  noun,
+  pinned,
+  disabled,
+  togglePin,
+  toggleHidden,
+  remove,
+}: Curation) {
+  const pin = pinned ? "Unpin" : "Pin";
+  return (
+    <span className="nav__row-actions">
+      <button
+        type="button"
+        className="icon-button nav__row-action"
+        aria-pressed={remove ? undefined : pinned}
+        aria-label={`${remove ? "Restore" : pin} ${label}`}
+        title={remove ? `Move ${noun} back out of Hidden` : `${pin} ${noun}`}
+        disabled={disabled}
+        onClick={remove ? toggleHidden : togglePin}
+      >
+        {remove ? (
+          <Eye size={12} aria-hidden />
+        ) : pinned ? (
+          <PinOff size={12} aria-hidden />
+        ) : (
+          <Pin size={12} aria-hidden />
+        )}
+      </button>
+      <button
+        type="button"
+        className={`icon-button nav__row-action${remove ? " nav__row-action--danger" : ""}`}
+        aria-label={remove?.label ?? `Hide ${label}`}
+        title={remove?.title ?? `Hide ${noun}`}
+        disabled={remove ? remove.disabled : disabled}
+        onClick={remove ? remove.run : toggleHidden}
+      >
+        {remove ? (
+          <Trash2 size={12} aria-hidden />
+        ) : (
+          <EyeOff size={12} aria-hidden />
+        )}
+      </button>
+    </span>
+  );
+}
+
+/** Cross-project path searches show directory context in place of the age. */
 export const SessionRow = memo(function SessionRow({
   session,
   selectedSessionId,
@@ -60,45 +153,51 @@ export const SessionRow = memo(function SessionRow({
     externalActivity,
     deletingSessionId,
     clearingHidden,
+    curationPending,
   } = useAppState(
     (state) => ({
       openingSessionId: state.openingSessionId,
-      pinned: state.prefs.pinnedSessionIds.includes(session.id),
-      individuallyHidden: state.prefs.hiddenSessionIds.includes(session.id),
-      projectHidden: state.prefs.hiddenProjectCwds.includes(session.cwd),
+      pinned: (
+        state.desiredPreferences.pinnedSessionIds ??
+        state.prefs.pinnedSessionIds
+      ).includes(session.id),
+      individuallyHidden: (
+        state.desiredPreferences.hiddenSessionIds ??
+        state.prefs.hiddenSessionIds
+      ).includes(session.id),
+      projectHidden: (
+        state.desiredPreferences.hiddenProjectCwds ??
+        state.prefs.hiddenProjectCwds
+      ).includes(session.cwd),
       runtimeStatus: state.sessionStatuses[session.id],
       externalActivity: state.externalSessionActivities[session.id],
       deletingSessionId: state.deletingSessionId,
       clearingHidden: state.clearingHidden,
+      curationPending: state.curationPending,
     }),
     shallowEqual,
   );
   const selected = session.id === selectedSessionId;
   const opening = openingSessionId === session.id;
+  const [openingSlow, setOpeningSlow] = useState(false);
+  useEffect(() => {
+    setOpeningSlow(false);
+    if (!opening) return;
+    const timer = window.setTimeout(() => setOpeningSlow(true), 800);
+    return () => window.clearTimeout(timer);
+  }, [opening]);
   const hidden = individuallyHidden || projectHidden;
   const {
-    conflicted,
     indicator,
     externalLabel,
     label: indicatorLabel,
   } = presentSessionActivity(runtimeStatus, externalActivity);
-  const busy =
-    runtimeStatus && !runtimeStatus.external
-      ? isBusyRunState(runtimeStatus.runState)
-      : false;
-  const deleteDisabled =
-    opening ||
-    busy ||
-    conflicted ||
-    deletingSessionId !== null ||
-    clearingHidden;
-  const deleteTitle = conflicted
-    ? "Resolve the session conflict before deleting"
-    : busy
-      ? "Wait for this session to finish working"
-      : opening
-        ? "Wait for this session to finish opening"
-        : "Delete session";
+  const curationDisabled =
+    curationPending || deletingSessionId !== null || clearingHidden;
+  const deleteDisabled = opening || curationDisabled;
+  const deleteTitle = opening
+    ? "Wait for this session to finish opening"
+    : "Delete session";
   // Yellow stays on while a session works or needs external-change recovery,
   // including the visible one; green and red are unseen completion attention
   // and clear once the row is viewed.
@@ -119,8 +218,15 @@ export const SessionRow = memo(function SessionRow({
   const projectLabel = parentContext
     ? `${parentContext}/${projectName}`
     : projectName;
+  // During search only, and only when the title does not already explain the
+  // hit: the matched excerpt temporarily takes the age line's place.
+  const matchSnippet =
+    searchQuery.trim() && titleMatches.length === 0 && !parentContext
+      ? session.matchSnippet
+      : undefined;
   return (
     <div
+      data-session-id={session.id}
       className={`nav__row ${showProject ? "nav__row--cross-project" : ""} ${selected ? "nav__row--active" : ""} ${session.id === highlightedSessionId ? "nav__row--highlighted" : ""}`}
     >
       <button
@@ -133,16 +239,7 @@ export const SessionRow = memo(function SessionRow({
         title={`${title} · ${session.messageCount} messages${externalLabel ? ` · ${externalLabel}` : ""}`}
       >
         <span className="nav__row-title">
-          {opening ? (
-            <span
-              className="nav__row-state"
-              role="img"
-              aria-label="Opening session"
-              title="Opening session"
-            >
-              <PiLoader size={12} aria-hidden />
-            </span>
-          ) : attention ? (
+          {attention ? (
             <span
               className={
                 attention === "attention"
@@ -177,68 +274,43 @@ export const SessionRow = memo(function SessionRow({
               />
             </span>
           ) : null}
-          {!parentContext ? (
-            <span
-              className="nav__row-age"
-              title={new Date(session.modified).toLocaleString()}
-            >
-              {compactAge(session.modified)}
+          {opening && openingSlow ? (
+            <span className="nav__row-age" role="status">
+              Opening…
             </span>
+          ) : matchSnippet ? (
+            <span className="nav__row-snippet" title={matchSnippet}>
+              <SearchMatchText
+                text={matchSnippet}
+                ranges={sessionSnippetMatchRanges(matchSnippet, searchQuery)}
+              />
+            </span>
+          ) : !parentContext ? (
+            <SessionAge
+              className={`nav__row-age${attention ? ` nav__row-age--${attention}` : ""}`}
+              modified={session.modified}
+            />
           ) : null}
         </span>
       </button>
-      <div className="nav__row-actions">
-        {hidden ? (
-          <>
-            <button
-              type="button"
-              className="nav__row-action"
-              aria-label={`Restore "${title}"`}
-              title="Move back out of Hidden"
-              disabled={clearingHidden || deletingSessionId !== null}
-              onClick={() => store.toggleSessionHidden(session.id)}
-            >
-              <Eye size={12} aria-hidden />
-            </button>
-            <button
-              type="button"
-              className="nav__row-action nav__row-action--danger"
-              aria-label={`Delete "${title}"`}
-              title={deleteTitle}
-              disabled={deleteDisabled}
-              onClick={() => onDelete?.(session)}
-            >
-              <Trash2 size={12} aria-hidden />
-            </button>
-          </>
-        ) : (
-          <>
-            <button
-              type="button"
-              className="nav__row-action"
-              aria-pressed={pinned}
-              aria-label={pinned ? `Unpin "${title}"` : `Pin "${title}"`}
-              title={pinned ? "Unpin session" : "Pin session"}
-              onClick={() => store.toggleSessionPin(session.id)}
-            >
-              {pinned ? (
-                <PinOff size={12} aria-hidden />
-              ) : (
-                <Pin size={12} aria-hidden />
-              )}
-            </button>
-            <button
-              type="button"
-              className="nav__row-action"
-              aria-label={`Hide "${title}"`}
-              title="Hide session"
-              onClick={() => store.toggleSessionHidden(session.id)}
-            >
-              <EyeOff size={12} aria-hidden />
-            </button>
-          </>
-        )}
-      </div>
+      <CurationActions
+        label={`"${title}"`}
+        noun="session"
+        pinned={pinned}
+        disabled={curationDisabled}
+        togglePin={() => store.toggleSessionPin(session.id)}
+        toggleHidden={() => store.toggleSessionHidden(session.id)}
+        remove={
+          hidden
+            ? {
+                title: deleteTitle,
+                label: `Delete "${title}"`,
+                disabled: deleteDisabled || !onDelete,
+                run: () => onDelete?.(session),
+              }
+            : undefined
+        }
+      />
     </div>
   );
 });
@@ -247,7 +319,6 @@ export const SessionRow = memo(function SessionRow({
  * the same fixed right column as a session row owns Pin/Hide or Restore/Trash. */
 export function ProjectGroup({
   group,
-  headingId,
   searching,
   searchQuery = "",
   showContext,
@@ -260,7 +331,6 @@ export function ProjectGroup({
   deleteGroupDisabledReason = null,
 }: {
   group: SessionGroup;
-  headingId: string;
   searching: boolean;
   searchQuery?: string;
   showContext: boolean;
@@ -272,15 +342,31 @@ export function ProjectGroup({
   onDeleteGroup?: () => void;
   deleteGroupDisabledReason?: string | null;
 }) {
-  const { collapsed, pinned, clearingHidden, deletingSessionId } = useAppState(
+  const headingId = useId();
+  const {
+    collapsed,
+    pinned,
+    clearingHidden,
+    deletingSessionId,
+    curationPending,
+  } = useAppState(
     (state) => ({
-      collapsed: state.prefs.navCollapsedGroups.includes(group.cwd),
+      collapsed: (
+        state.desiredPreferences.navCollapsedGroups ??
+        state.prefs.navCollapsedGroups
+      ).includes(group.cwd),
       deletingSessionId: state.deletingSessionId,
-      pinned: state.prefs.pinnedProjectCwds.includes(group.cwd),
+      pinned: (
+        state.desiredPreferences.pinnedProjectCwds ??
+        state.prefs.pinnedProjectCwds
+      ).includes(group.cwd),
       clearingHidden: state.clearingHidden,
+      curationPending: state.curationPending,
     }),
     shallowEqual,
   );
+  const curationDisabled =
+    curationPending || deletingSessionId !== null || clearingHidden;
   // Active search must never hide results inside a collapsed folder.
   const expanded = searching || !collapsed;
   // A collapsed folder that hides the active session carries the active
@@ -292,10 +378,7 @@ export function ProjectGroup({
     ? parentSegment(group.cwd)
     : searchParentContext(group.cwd, searchQuery);
   return (
-    <section
-      className={`nav__group ${pinned ? "nav__group--pinned-folder" : ""} ${hidden ? "nav__group--hidden-folder" : ""}`}
-      aria-labelledby={headingId}
-    >
+    <section className="nav__group" aria-labelledby={headingId}>
       <h2
         className={`nav__group-title nav__group-title--folder ${!expanded && activeInside ? "nav__group-title--active" : ""}`}
         title={group.cwd}
@@ -332,65 +415,27 @@ export function ProjectGroup({
             {group.sessions.length}
           </span>
         </button>
-        <span className="nav__group-actions">
-          {hidden ? (
-            <>
-              <button
-                type="button"
-                className="nav__row-action"
-                aria-label={`Restore folder ${group.name}`}
-                title="Move folder back out of Hidden"
-                disabled={clearingHidden || deletingSessionId !== null}
-                onClick={() => store.toggleProjectHidden(group.cwd)}
-              >
-                <Eye size={12} aria-hidden />
-              </button>
-              <button
-                type="button"
-                className="nav__row-action nav__row-action--danger"
-                aria-label={`Delete all sessions in folder ${group.name}`}
-                title={
-                  deleteGroupDisabledReason ??
-                  "Delete this folder's hidden sessions"
+        <CurationActions
+          label={`folder ${group.name}`}
+          noun="folder"
+          pinned={pinned}
+          disabled={curationDisabled}
+          togglePin={() => store.toggleProjectPin(group.cwd)}
+          toggleHidden={() => store.toggleProjectHidden(group.cwd)}
+          remove={
+            hidden
+              ? {
+                  title:
+                    deleteGroupDisabledReason ??
+                    "Delete this folder's hidden sessions",
+                  label: `Delete all sessions in folder ${group.name}`,
+                  disabled:
+                    !onDeleteGroup || deleteGroupDisabledReason !== null,
+                  run: onDeleteGroup,
                 }
-                disabled={!onDeleteGroup || deleteGroupDisabledReason !== null}
-                onClick={onDeleteGroup}
-              >
-                <Trash2 size={12} aria-hidden />
-              </button>
-            </>
-          ) : (
-            <>
-              <button
-                type="button"
-                className="nav__row-action"
-                aria-pressed={pinned}
-                aria-label={
-                  pinned
-                    ? `Unpin folder ${group.name}`
-                    : `Pin folder ${group.name}`
-                }
-                title={pinned ? "Unpin folder" : "Pin folder"}
-                onClick={() => store.toggleProjectPin(group.cwd)}
-              >
-                {pinned ? (
-                  <PinOff size={12} aria-hidden />
-                ) : (
-                  <Pin size={12} aria-hidden />
-                )}
-              </button>
-              <button
-                type="button"
-                className="nav__row-action"
-                aria-label={`Hide folder ${group.name}`}
-                title="Hide folder"
-                onClick={() => store.toggleProjectHidden(group.cwd)}
-              >
-                <EyeOff size={12} aria-hidden />
-              </button>
-            </>
-          )}
-        </span>
+              : undefined
+          }
+        />
       </h2>
       {expanded
         ? group.sessions.map((session) => (

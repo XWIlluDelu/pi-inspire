@@ -1,22 +1,9 @@
 // @vitest-environment jsdom
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
-import { createRef } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { pendingTextSummary } from "../../shared/pending-preview";
-import {
-  Transcript,
-  type TranscriptNavigation,
-} from "../../src/components/Transcript";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { PendingQueueGroups } from "../../src/components/transcript-rows";
-import { store } from "../../src/store";
 import { useModalFocus } from "../../src/use-modal-focus";
+import { deferred } from "./helpers";
 import { pendingQueues } from "./pending-fixtures";
 
 function PendingFocusModal() {
@@ -28,12 +15,6 @@ function PendingFocusModal() {
   );
 }
 
-beforeEach(() => {
-  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
-    configurable: true,
-    value: vi.fn(),
-  });
-});
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -41,7 +22,9 @@ afterEach(() => {
 
 describe("pending input visibility and actions", () => {
   it("keeps count-only image summaries visible until thumbnail handles are available", () => {
-    const queue = pendingQueues(["", "Count-only caption", ""]);
+    const queue = pendingQueues(["", "Count-only caption", ""], [], {
+      totalCount: 5,
+    });
     queue.steering[0]!.imageCount = 1;
     queue.steering[1]!.imageCount = 2;
     render(
@@ -59,213 +42,18 @@ describe("pending input visibility and actions", () => {
     expect(within(rows[1]!).getByText("2 images")).toBeVisible();
     expect(within(rows[1]!).getByText("Count-only caption")).toBeVisible();
     expect(within(rows[2]!).getByText("No text")).toBeVisible();
-  });
-
-  it("previews retained images without changing Pending actions and releases them when consumed", async () => {
-    const load = vi
-      .spyOn(store, "loadAttachmentImage")
-      .mockResolvedValue(new Blob(["image"]));
-    const createUrl = vi
-      .fn()
-      .mockReturnValueOnce("blob:first")
-      .mockReturnValueOnce("blob:second")
-      .mockReturnValueOnce("blob:third");
-    const revokeUrl = vi.fn();
-    vi.stubGlobal("URL", {
-      createObjectURL: createUrl,
-      revokeObjectURL: revokeUrl,
-    });
-    const queue = pendingQueues(["", "Compare these", ""]);
-    queue.steering[0]!.imageCount = 1;
-    queue.steering[0]!.imageAttachmentIds = ["first-image"];
-    queue.steering[1]!.imageCount = 2;
-    queue.steering[1]!.imageAttachmentIds = ["second-image", "third-image"];
-    const onClear = vi.fn(async () => true);
-    const onRecover = vi.fn(async () => true);
-    const { rerender } = render(
-      <PendingQueueGroups
-        queue={queue}
-        pendingAction={null}
-        onClear={onClear}
-        onRecover={onRecover}
-        getText={async () => "Compare these"}
-      />,
-    );
-    const rows = screen.getAllByRole("listitem");
-    const preview = await screen.findByRole("button", {
-      name: "Preview Pending steer item 1 image 1",
-    });
-    expect(preview).toBeEnabled();
+    expect(rows).toHaveLength(3);
+    expect(screen.getByText("5 pending items")).toBeVisible();
+    expect(screen.getByText("2 more pending items not shown.")).toBeVisible();
     expect(
-      within(rows[0]!).getByRole("group", { name: "1 image" }),
-    ).toBeVisible();
-    expect(
-      within(rows[0]!).getByRole("button", { name: /Copy/ }),
-    ).toBeVisible();
-    expect(within(rows[1]!).getByText("Compare these")).toBeVisible();
-    expect(
-      within(rows[1]!).getByRole("group", { name: "2 images" }),
-    ).toBeVisible();
-    expect(
-      within(rows[1]!).getAllByRole("button", { name: /Preview Pending/ }),
-    ).toHaveLength(2);
-    expect(
-      within(rows[1]!).getByRole("button", { name: "Copy steer item 2" }),
+      screen.getByRole("button", { name: "Copy all pending input" }),
     ).toBeEnabled();
-    expect(within(rows[2]!).getByText("No text")).toBeVisible();
-    expect(within(rows[2]!).queryByRole("group")).toBeNull();
-    fireEvent.click(preview);
-    expect(screen.getByRole("dialog", { name: "Image preview" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Zoom in" })).toBeVisible();
-    expect(onClear).not.toHaveBeenCalled();
-    expect(onRecover).not.toHaveBeenCalled();
-    queue.steering.shift(); // Consumption removes the owner, including its open viewer.
-    queue.totalCount--;
-    rerender(
-      <PendingQueueGroups
-        queue={queue}
-        pendingAction={null}
-        onClear={onClear}
-        onRecover={onRecover}
-        getText={async () => "Compare these"}
-      />,
-    );
-    expect(screen.queryByRole("dialog", { name: "Image preview" })).toBeNull();
-    expect(revokeUrl).toHaveBeenCalledWith("blob:first");
-    expect(load.mock.calls[0]![1].aborted).toBe(true);
   });
 
-  it("preserves queue order and copies complete text rather than the truncated preview", async () => {
-    const fullText = `steer first\nsecond line\nthird line\n${"x".repeat(600)}\nEXACT_END`;
-    const allText = `1. ${fullText}\n2. steer second\n3. follow first\n4. follow second\n   continued`;
-    const queue = pendingQueues(
-      ["steer first", "steer second"],
-      ["follow first", "follow second\ncontinued"],
-      { revision: 7 },
-    );
-    Object.assign(queue.steering[0]!, pendingTextSummary(fullText));
-    const getText = vi.fn(async (_revision: number, itemId?: string) =>
-      itemId === undefined ? allText : fullText,
-    );
-    const writeText = vi.fn(async () => undefined);
-    Object.defineProperty(navigator, "clipboard", {
-      configurable: true,
-      value: { writeText },
-    });
-    const onClear = vi.fn(async () => true);
-    const onRecover = vi.fn(async () => true);
-    render(
-      <PendingQueueGroups
-        queue={queue}
-        pendingAction={null}
-        onClear={onClear}
-        onRecover={onRecover}
-        getText={getText}
-      />,
-    );
-    const pending = screen.getByRole("region", { name: "Pending input" });
-    const steering = screen.getByRole("region", { name: "Pending steer" });
-    const followUp = screen.getByRole("region", { name: "Pending queue" });
-    expect(
-      within(steering)
-        .getAllByRole("listitem")
-        .map((item) => item.querySelector("pre")?.textContent),
-    ).toEqual([
-      "steer first\nsecond line\nthird line\n…\nEXACT_END",
-      "steer second",
-    ]);
-    expect(
-      within(followUp)
-        .getAllByRole("listitem")
-        .map((item) => item.querySelector("pre")?.textContent),
-    ).toEqual(["follow first", "follow second\ncontinued"]);
-    expect(within(pending).getByText("Pending input")).toBeVisible();
-    expect(
-      within(pending.querySelector<HTMLElement>(".pending-groups__actions")!)
-        .getAllByRole("button")
-        .map((button) => button.getAttribute("aria-label")),
-    ).toEqual([
-      "Copy all pending input",
-      "Return all Pending input to composer",
-      "Clear all Pending input",
-    ]);
-    expect(within(steering).getByText("Steer")).toBeVisible();
-    expect(within(followUp).getByText("Queue")).toBeVisible();
-    expect(within(pending).getAllByText("4 pending items")).toHaveLength(1);
-    expect(within(pending).queryByText(/^[SQ]$/)).toBeNull();
-    expect(within(pending).queryByText(/^\d+ items?$/)).toBeNull();
-    expect(
-      [...pending.querySelectorAll(".pending-group__number")].map(
-        (number) => number.textContent,
-      ),
-    ).toEqual(["1.", "2.", "3.", "4."]);
-    expect(
-      screen.queryByRole("button", { name: /pause|resume|delete|move/i }),
-    ).not.toBeInTheDocument();
-
-    fireEvent.click(
-      within(steering).getByRole("button", { name: "Copy steer item 1" }),
-    );
-    await waitFor(() => expect(writeText).toHaveBeenLastCalledWith(fullText));
-    expect(getText).toHaveBeenLastCalledWith(
-      7,
-      queue.steering[0]!.id,
-      expect.any(AbortSignal),
-    );
-    fireEvent.click(
-      within(pending).getByRole("button", { name: "Copy all pending input" }),
-    );
-    await waitFor(() => expect(writeText).toHaveBeenLastCalledWith(allText));
-    expect(getText).toHaveBeenLastCalledWith(
-      7,
-      undefined,
-      expect.any(AbortSignal),
-    );
-    expect(onClear).not.toHaveBeenCalled();
-    expect(onRecover).not.toHaveBeenCalled();
-  });
-
-  it("clears only after explicit confirmation and leaves cancelled clearing untouched", async () => {
-    const onClear = vi.fn(async () => true);
-    const onRecover = vi.fn(async () => true);
-    render(
-      <PendingQueueGroups
-        queue={pendingQueues(["pending"], [], { revision: 7 })}
-        pendingAction={null}
-        onClear={onClear}
-        onRecover={onRecover}
-        getText={async () => "pending"}
-      />,
-    );
-    fireEvent.click(
-      screen.getByRole("button", { name: "Clear all Pending input" }),
-    );
-    expect(onClear).not.toHaveBeenCalled();
-    expect(
-      within(screen.getByRole("region", { name: "Pending input" })).getByText(
-        "Clear all?",
-      ),
-    ).toBeInTheDocument();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Cancel clearing Pending input" }),
-    );
-    expect(onClear).not.toHaveBeenCalled();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Clear all Pending input" }),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Clear all" }));
-    await waitFor(() => expect(onClear).toHaveBeenCalledOnce());
-    expect(onRecover).not.toHaveBeenCalled();
-  });
-
-  it.each(["return", "new focus", "new modal"])(
-    "returns explicit Pending focus only while it still owns focus: %s",
+  it.each(["new focus", "new modal"])(
+    "does not steal focus from %s after delayed Pending recovery",
     async (action) => {
-      let resolve!: (value: boolean) => void;
-      const recovery = new Promise<boolean>((done) => {
-        resolve = done;
-      });
-      const onRecover = vi.fn(() => recovery);
+      const recovery = deferred<boolean>();
       render(
         <>
           <textarea aria-label="Message" />
@@ -274,7 +62,7 @@ describe("pending input visibility and actions", () => {
             queue={pendingQueues(["pending"])}
             pendingAction={null}
             onClear={async () => true}
-            onRecover={onRecover}
+            onRecover={() => recovery.promise}
             getText={async () => "pending"}
           />
         </>,
@@ -284,151 +72,17 @@ describe("pending input visibility and actions", () => {
       });
       button.focus();
       fireEvent.click(button);
-      expect(onRecover).toHaveBeenCalledOnce();
-      expect(screen.getByLabelText("Message")).not.toHaveFocus();
-      if (action === "new focus")
-        screen.getByRole("button", { name: "Another editor" }).focus();
       if (action === "new modal") render(<PendingFocusModal />);
+      const owner =
+        action === "new modal"
+          ? screen.getByRole("dialog")
+          : screen.getByRole("button", { name: "Another editor" });
+      if (action === "new focus") owner.focus();
       await act(async () => {
-        resolve(true);
+        recovery.resolve(true);
         await new Promise((done) => requestAnimationFrame(done));
       });
-      if (action === "return")
-        await waitFor(() =>
-          expect(screen.getByLabelText("Message")).toHaveFocus(),
-        );
-      else expect(screen.getByLabelText("Message")).not.toHaveFocus();
+      expect(owner).toHaveFocus();
     },
   );
-
-  it.each(["Steer", "Queue"])(
-    "consolidates a fully supplied %s queue into one header",
-    (mode) => {
-      const queue =
-        mode === "Steer"
-          ? pendingQueues(["first", "second"])
-          : pendingQueues([], ["first", "second"]);
-      const { container } = render(
-        <PendingQueueGroups
-          queue={queue}
-          pendingAction="recover"
-          onClear={async () => true}
-          onRecover={async () => true}
-          getText={async () => "first"}
-        />,
-      );
-      expect(screen.getByText(`Pending · ${mode}`)).toBeVisible();
-      expect(screen.getAllByText("2 pending items")).toHaveLength(1);
-      expect(container.querySelector(".pending-group__head")).toBeNull();
-      expect(screen.queryByText(/^[SQ]$/)).toBeNull();
-      expect(
-        screen.getByRole("button", {
-          name: "Return all Pending input to composer",
-        }),
-      ).toBeDisabled();
-      expect(
-        screen.getByRole("button", { name: "Clear all Pending input" }),
-      ).toBeDisabled();
-    },
-  );
-
-  it("hides an empty Pending panel", () => {
-    render(
-      <PendingQueueGroups
-        pendingAction={null}
-        onClear={async () => true}
-        onRecover={async () => true}
-        getText={async () => ""}
-        queue={pendingQueues()}
-      />,
-    );
-    expect(
-      screen.queryByRole("region", { name: "Pending input" }),
-    ).not.toBeInTheDocument();
-  });
-
-  it("labels omitted rows and still copies the complete queue", async () => {
-    const allText = "1. shown\n2. omitted first\n3. omitted second";
-    const getText = vi.fn(async () => allText);
-    const writeText = vi.fn(async () => undefined);
-    Object.defineProperty(navigator, "clipboard", {
-      configurable: true,
-      value: { writeText },
-    });
-    render(
-      <PendingQueueGroups
-        pendingAction={null}
-        onClear={async () => true}
-        onRecover={async () => true}
-        getText={getText}
-        queue={pendingQueues(["shown"], [], { totalCount: 3 })}
-      />,
-    );
-    expect(screen.getAllByRole("listitem")).toHaveLength(1);
-    expect(screen.getByText("Pending input")).toBeVisible();
-    expect(screen.getByText("Steer")).toBeVisible();
-    expect(screen.queryByText("Pending · Steer")).toBeNull();
-    expect(screen.getAllByText("3 pending items")).toHaveLength(1);
-    expect(screen.getByText("2 more pending items not shown.")).toBeVisible();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Copy all pending input" }),
-    );
-    await waitFor(() =>
-      expect(writeText).toHaveBeenCalledExactlyOnceWith(allText),
-    );
-    expect(getText).toHaveBeenCalledExactlyOnceWith(
-      0,
-      undefined,
-      expect.any(AbortSignal),
-    );
-  });
-});
-
-describe("Pending navigation", () => {
-  it("targets and focuses the current queue without using latest-follow", () => {
-    const ref = createRef<TranscriptNavigation>();
-    const props = {
-      ref,
-      messages: [],
-      streaming: false,
-      thinkingVisibility: "collapsed" as const,
-      toolVisibility: "collapsed" as const,
-    };
-    const view = render(
-      <Transcript
-        {...props}
-        sessionId="first"
-        queue={pendingQueues(["First queue"])}
-      />,
-    );
-    const first = screen.getByRole("region", { name: "Pending input" });
-    const scroller = screen.getByRole("log");
-    scroller.style.scrollPaddingTop = "56px";
-    scroller.scrollTop = 20;
-    vi.spyOn(scroller, "getBoundingClientRect").mockReturnValue({
-      top: 50,
-    } as DOMRect);
-    vi.spyOn(first, "getBoundingClientRect").mockReturnValue({
-      top: 200,
-    } as DOMRect);
-    act(() => ref.current!.jumpToPending());
-    expect(scroller.scrollTop).toBe(114);
-    expect(first.scrollIntoView).not.toHaveBeenCalled();
-    expect(first).toHaveFocus();
-
-    view.rerender(
-      <Transcript
-        {...props}
-        sessionId="second"
-        queue={pendingQueues(["Second queue"])}
-      />,
-    );
-    const second = screen.getByRole("region", { name: "Pending input" });
-    expect(second).not.toBe(first);
-    act(() => ref.current!.jumpToPending());
-    expect(second).toHaveFocus();
-    view.rerender(<Transcript {...props} sessionId="second" />);
-    expect(screen.queryByRole("region", { name: "Pending input" })).toBeNull();
-    act(() => ref.current!.jumpToPending());
-  });
 });

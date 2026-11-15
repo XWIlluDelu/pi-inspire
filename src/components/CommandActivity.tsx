@@ -1,49 +1,39 @@
 import {
-  AlertTriangle,
   CheckCircle2,
   CircleStop,
-  CircleX,
   Download,
-  Info,
   TerminalSquare,
-  X,
 } from "lucide-react";
-import { memo, type RefObject, useCallback, useRef } from "react";
+import {
+  memo,
+  type ReactNode,
+  type RefObject,
+  useCallback,
+  useRef,
+} from "react";
 import {
   type NativeCommandActivity as Activity,
   isCommandQuery,
 } from "../app-state";
 import { shallowEqual, store, useAppState } from "../store";
 import { readingDwellMs, useReadingDwell } from "../use-reading-dwell";
+import { NoticeCard } from "./NoticeCard";
 import { PiLoader } from "./PiLoader";
-import { ScrollRail } from "./ScrollRail";
 
-function ActivityIcon({ status }: { status: Activity["status"] }) {
-  if (status === "running") return <PiLoader size={14} aria-hidden />;
-  if (status === "success") return <CheckCircle2 size={14} aria-hidden />;
-  if (status === "error") return <CircleX size={14} aria-hidden />;
-  if (status === "warning") return <AlertTriangle size={14} aria-hidden />;
-  if (status === "cancelled") return <CircleStop size={14} aria-hidden />;
-  return <Info size={14} aria-hidden />;
-}
+const statusLabel = {
+  running: "Running",
+  success: "Done",
+  cancelled: "Cancelled",
+  error: "Failed",
+  warning: "Needs attention",
+  info: "Info",
+} satisfies Record<Activity["status"], string>;
 
-function SessionFacts({
-  details,
-}: {
-  details: NonNullable<Activity["details"]>;
-}) {
-  if (!details.length) return <p>Usage information is unavailable.</p>;
-  return (
-    <dl className="command-activity__session">
-      {details.map((detail) => (
-        <div key={detail.id} className="command-activity__usage-cell">
-          <dt>{detail.label}</dt>
-          <dd>{detail.value}</dd>
-        </div>
-      ))}
-    </dl>
-  );
-}
+const activityIcons: Partial<Record<Activity["status"], ReactNode>> = {
+  running: <PiLoader size={14} />,
+  success: <CheckCircle2 size={14} />,
+  cancelled: <CircleStop size={14} />,
+};
 
 function CommandActivityItem({
   activity,
@@ -56,100 +46,84 @@ function CommandActivityItem({
     () => store.dismissCommandActivity(activity.sessionId, activity.id),
     [activity.sessionId, activity.id],
   );
-  const { ref, leaving } = useReadingDwell<HTMLElement>(
+  const { ref, leaving } = useReadingDwell<HTMLDivElement>(
     isCommandQuery(activity)
       ? activity.command === "session"
         ? 8_000
-        : readingDwellMs(activity.message ?? "")
+        : readingDwellMs(activity.message)
       : null,
     dismiss,
     dockRef,
   );
   const isSession =
     activity.command === "session" && activity.status === "info";
+  const { details = [], status } = activity;
+  const message = isSession
+    ? details.length
+      ? ""
+      : "Usage information is unavailable."
+    : activity.message;
+  const title = `/${activity.command}`;
   return (
-    <article
+    <NoticeCard
       ref={ref}
-      className={`command-activity__item command-activity__item--${activity.status}${leaving ? " feedback--leaving" : ""}`}
-      role={activity.status === "error" ? "alert" : "status"}
+      kind={status}
+      className={leaving ? "feedback--leaving" : ""}
+      icon={activityIcons[status]}
+      title={
+        <>
+          <code>{title}</code> {statusLabel[status]}
+        </>
+      }
+      onDismiss={status === "running" ? undefined : dismiss}
+      dismissLabel={`Dismiss ${title} result`}
     >
-      <div className="command-activity__icon">
-        <ActivityIcon status={activity.status} />
-      </div>
-      <div className="command-activity__body">
-        <div className="command-activity__heading">
-          <code>{activity.title}</code>
-          <span className="command-activity__state">
-            {activity.status === "running"
-              ? "Running"
-              : activity.status === "success"
-                ? "Done"
-                : activity.status === "cancelled"
-                  ? "Cancelled"
-                  : activity.status === "error"
-                    ? "Failed"
-                    : activity.status === "warning"
-                      ? "Needs attention"
-                      : "Info"}
-          </span>
-        </div>
-        {isSession ? (
-          <SessionFacts details={activity.details ?? []} />
-        ) : (
-          <>
-            {activity.message ? <p>{activity.message}</p> : null}
-            {activity.details?.length ? (
-              <dl className="command-activity__details">
-                {activity.details.map((detail, index) => (
-                  <div key={`${detail.label}:${index}`}>
-                    <dt>{detail.label}</dt>
-                    <dd title={detail.value}>{detail.value}</dd>
-                  </div>
-                ))}
-              </dl>
-            ) : null}
-          </>
-        )}
-        {activity.download ? (
-          <button
-            type="button"
-            className="command-activity__action"
-            onClick={() =>
-              void store.downloadCommandExport(activity.sessionId, activity.id)
-            }
-          >
-            <Download size={13} aria-hidden /> Download
-          </button>
-        ) : null}
-        {activity.action ? (
-          <button
-            type="button"
-            className="command-activity__action"
-            onClick={() =>
-              void store.runCommandActivityAction(
-                activity.sessionId,
-                activity.id,
-              )
-            }
-          >
-            {activity.action.kind === "open-terminal" ? (
-              <TerminalSquare size={13} aria-hidden />
-            ) : null}
-            {activity.action.label}
-          </button>
-        ) : null}
-      </div>
-      {activity.status !== "running" ? (
+      {message && <p>{message}</p>}
+      {details.length > 0 && (
+        <dl
+          className={
+            isSession
+              ? "command-activity__session"
+              : "command-activity__details"
+          }
+        >
+          {details.map((detail, index) => (
+            <div
+              key={detail.id ?? `${detail.label}:${index}`}
+              className={isSession ? "command-activity__usage-cell" : undefined}
+            >
+              <dt>{detail.label}</dt>
+              <dd title={detail.value}>{detail.value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {activity.download ? (
         <button
           type="button"
-          className="command-activity__dismiss"
-          aria-label={`Dismiss ${activity.title} result`}
-          onClick={dismiss}
+          className="button command-activity__action"
+          onClick={() =>
+            void store.downloadCommandExport(activity.sessionId, activity.id)
+          }
         >
-          <X size={13} aria-hidden />
+          <Download size={13} aria-hidden /> Download
         </button>
       ) : null}
-    </article>
+      {activity.action ? (
+        <button
+          type="button"
+          className="button command-activity__action"
+          onClick={() =>
+            void store.runCommandActivityAction(activity.sessionId, activity.id)
+          }
+        >
+          {activity.action.kind === "open-terminal" ? (
+            <TerminalSquare size={13} aria-hidden />
+          ) : null}
+          {activity.action.label}
+        </button>
+      ) : null}
+    </NoticeCard>
   );
 }
 
@@ -179,7 +153,6 @@ export const CommandActivity = memo(function CommandActivity() {
       aria-label="Command activity"
       tabIndex={0}
     >
-      <ScrollRail container={dockRef} variant="dock" />
       {activities.map((activity) => (
         <CommandActivityItem
           key={

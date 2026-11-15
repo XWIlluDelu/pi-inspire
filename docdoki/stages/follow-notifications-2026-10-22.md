@@ -1,12 +1,12 @@
 ---
 scope:
-  - src/attention.ts
-  - src/notification-platform.ts
+  - src/notifications.ts
+  - src/browser-notifications.ts
   - src/visual-preferences.ts
   - src/components/Settings.tsx
-  - server/notifications/**
-  - public/task-notification-worker.js
-  - docs/notifications.md
+  - server/task-notifications.ts
+  - public/service-worker.js
+  - docs/host.md
 ---
 
 # Task-alert device acceptance
@@ -38,8 +38,8 @@ execution or replacing the separate tab-title/favicon signal.
 
 Linux Chrome native display/click-through, installed-PWA refresh continuity and Android system
 display of a manual test are verified. Automated tests cover classification, startup independence,
-permission/enrollment races, session/project grouping, deduplication, restart ordering, click
-ownership and lifecycle event delivery.
+permission/enrollment races, late Test results after a mode change, expired-subscription retirement,
+session/project grouping, deduplication, restart ordering, click ownership and lifecycle event delivery.
 
 A manual Android test covers the receiver path only; background Pi outcomes and same-Pi prompting
 still need physical-device acceptance. iOS/iPadOS push has not been physically verified.
@@ -53,6 +53,5 @@ still need physical-device acceptance. iOS/iPadOS push has not been physically v
 3. Check installed-window tab/title/badge behavior alongside native notifications and confirm
    status/navigation-bar rendering in light and dark themes.
 
-Current Linux coverage does not require additional implementation before these device checks.
-Existing external Pi processes need reporter activation through their own supported lifecycle;
-local integration and publishing source do not reload them.
+For external Pi acceptance, activate the reporter through that Pi's own supported reload/restart;
+[the extension guide](../../docs/extensions.md#share-sessions-with-terminal-pi) covers installation.

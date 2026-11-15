@@ -1,4 +1,5 @@
 import {
+  type ComponentProps,
   createContext,
   type ReactNode,
   useCallback,
@@ -7,8 +8,36 @@ import {
   useRef,
   useState,
 } from "react";
+import { CodeView } from "./CodeView";
+import { CopyAction } from "./CopyAction";
+import { DetailSummary } from "./DetailSummary";
 
-const VisibleActivityItems = createContext<ReadonlySet<string> | null>(null);
+export function ActivityHeader({
+  icon,
+  children,
+  copy,
+  className = "",
+}: {
+  icon?: ReactNode;
+  children: ReactNode;
+  copy?: Omit<ComponentProps<typeof CopyAction>, "className"> & {
+    className?: string;
+  };
+  className?: string;
+}) {
+  return (
+    <div className={`activity-surface__head ${className}`}>
+      {icon}
+      {children}
+      {copy && (
+        <CopyAction
+          {...copy}
+          className={`activity-copy ${copy.className ?? ""}`}
+        />
+      )}
+    </div>
+  );
+}
 
 interface ReaderScrollPosition {
   top: number;
@@ -17,30 +46,26 @@ interface ReaderScrollPosition {
 }
 type ReaderValue = boolean | ReaderScrollPosition;
 
-type ActivityReadingChoice = {
-  disclosure?: "open" | "closed";
-  stripSelection?: string | null;
-  readers?: Map<string, ReaderValue>;
-};
-
 /** Only deliberate choices outlive an omitted card. The projection owns this
  * map; defaults and transient renderer state never become saved preferences. */
-export type ActivityReadingChoices = Map<string, ActivityReadingChoice>;
-const ReadingChoices = createContext<ActivityReadingChoices | null>(null);
-const ActivityItemId = createContext<string | null>(null);
-const ReadingBlock = createContext("");
+export type ActivityReadingChoices = Map<string, Map<string, ReaderValue>>;
+export const ACTIVITY_CARD_READER = "card";
 
-export function ActivityReadingOwner({
-  id,
-  children,
-}: {
-  id: string;
-  children: ReactNode;
-}) {
+export function hasOpenActivityCard(
+  choices: ActivityReadingChoices | null,
+  toolCallId?: string,
+) {
   return (
-    <ActivityItemId.Provider value={id}>{children}</ActivityItemId.Provider>
+    toolCallId !== undefined &&
+    choices?.get(toolCallId)?.get(`/${ACTIVITY_CARD_READER}`) === true
   );
 }
+
+export const ReadingChoices = createContext<ActivityReadingChoices | null>(
+  null,
+);
+const ActivityItemId = createContext<string | null>(null);
+const ReadingBlock = createContext("");
 
 /** Presentation blocks already have stable keys within their activity. */
 export function ActivityReadingBlock({
@@ -64,16 +89,14 @@ function useActivityReaderMemory<T extends ReaderValue>(name: string) {
   const block = useContext(ReadingBlock);
   const key = `${block}/${name}`;
   const read = useCallback(
-    () =>
-      id ? (choices?.get(id)?.readers?.get(key) as T | undefined) : undefined,
+    () => (id ? (choices?.get(id)?.get(key) as T | undefined) : undefined),
     [choices, id, key],
   );
   const write = useCallback(
     (value: T) => {
       if (!choices || !id) return;
-      const choice = choices.get(id) ?? {};
-      choice.readers ??= new Map();
-      choice.readers.set(key, value);
+      const choice = choices.get(id) ?? new Map();
+      choice.set(key, value);
       choices.set(id, choice);
     },
     [choices, id, key],
@@ -82,20 +105,57 @@ function useActivityReaderMemory<T extends ReaderValue>(name: string) {
 }
 
 /** Only an explicit reader action records a choice; mounting does not freeze a default. */
-export function useActivityReaderExpanded(name: string) {
+export function useActivityReaderExpanded(
+  name: string,
+): readonly [boolean, (expanded: boolean) => void];
+export function useActivityReaderExpanded(
+  name: string,
+  empty: null,
+): readonly [boolean | null, (expanded: boolean) => void];
+export function useActivityReaderExpanded(
+  name: string,
+  empty: false | null = false,
+) {
   const [read, write] = useActivityReaderMemory<boolean>(name);
-  const [expanded, setExpanded] = useState(() => read() ?? false);
-  const current = useRef(expanded);
-  current.current = expanded;
-  return [
-    expanded,
-    (next: boolean | ((previous: boolean) => boolean)) => {
-      const value = typeof next === "function" ? next(current.current) : next;
-      current.current = value;
-      write(value);
-      setExpanded(value);
+  const [expanded, setExpanded] = useState(() => read() ?? empty);
+  const choose = useCallback(
+    (next: boolean) => {
+      write(next);
+      setExpanded(next);
     },
-  ] as const;
+    [write],
+  );
+  return [expanded, choose] as const;
+}
+
+/** Mount and prepare the body only while the native disclosure is open. */
+export function ActivityDetails({
+  reader,
+  label,
+  className,
+  summaryClassName,
+  inline = false,
+  children,
+}: {
+  reader: string;
+  label: ReactNode;
+  className?: string;
+  summaryClassName?: string;
+  inline?: boolean;
+  children: () => ReactNode;
+}) {
+  const [open, setOpen] = useActivityReaderExpanded(reader);
+  if (inline) return children();
+  return (
+    <details
+      className={className}
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <DetailSummary className={summaryClassName}>{label}</DetailSummary>
+      {open && children()}
+    </details>
+  );
 }
 
 export function useActivityReaderScroll<T extends HTMLElement>(
@@ -144,132 +204,118 @@ export function useActivityReaderScroll<T extends HTMLElement>(
   };
 }
 
-export function ActivityItemVisibilityProvider({
-  visibleIds,
-  readingChoices,
+export function ActivityCode({
+  reader,
+  label,
+  following,
+  scrollable = true,
+  className = "",
+  ...props
+}: ComponentProps<typeof CodeView> & {
+  reader: string;
+  label: string;
+  following?: boolean;
+  scrollable?: boolean;
+}) {
+  const scroll = useActivityReaderScroll<HTMLPreElement>(
+    reader,
+    props.text ?? props.children,
+    following,
+  );
+  return (
+    <CodeView
+      {...props}
+      {...scroll.props}
+      className={`activity-reader ${className}`}
+      tabIndex={scrollable ? 0 : undefined}
+      role={scrollable ? "group" : undefined}
+      aria-label={scrollable ? label : undefined}
+    />
+  );
+}
+
+export function ActivityReader({
+  reader,
+  label,
+  className = "",
+  ...props
+}: ComponentProps<"div"> & { reader: string; label: string }) {
+  const scroll = useActivityReaderScroll<HTMLDivElement>(
+    reader,
+    props.children,
+  );
+  return (
+    <div
+      {...props}
+      {...scroll.props}
+      className={`activity-reader ${className}`}
+      tabIndex={0}
+      role="group"
+      aria-label={label}
+    />
+  );
+}
+
+export function ActivityText({
+  text,
+  label,
+  error,
+  following = false,
+  live = false,
+  preview,
+  scrollable = true,
+  className = "",
+}: {
+  text: string;
+  label: string;
+  error?: boolean;
+  following?: boolean;
+  live?: boolean;
+  preview?: number;
+  scrollable?: boolean;
+  className?: string;
+}) {
+  const [expanded, setExpanded] = useActivityReaderExpanded(`${label}-all`);
+  const truncated = preview !== undefined && text.length > preview;
+  return (
+    <>
+      <ActivityCode
+        reader={`${label}-scroll`}
+        label={label}
+        scrollable={scrollable}
+        following={live || following}
+        className={live ? `tool-terminal--live ${className}` : className}
+        data-error={error || undefined}
+        text={!expanded && truncated ? `${text.slice(0, preview)}…` : text}
+      />
+      {truncated && (
+        <button
+          type="button"
+          className="card__show-all"
+          onClick={() => setExpanded(!expanded)}
+        >
+          {expanded ? "Show less" : "Show all"}
+        </button>
+      )}
+    </>
+  );
+}
+
+/** Only a real Pi tool call carries its explicit choices across pages and checkpoints. */
+export function ActivityItemOwner({
+  toolCallId,
+  onFocus,
   children,
 }: {
-  visibleIds: ReadonlySet<string> | null;
-  readingChoices?: ActivityReadingChoices;
+  toolCallId?: string;
+  onFocus?: () => void;
   children: ReactNode;
 }) {
   return (
-    <ReadingChoices.Provider value={readingChoices ?? null}>
-      <VisibleActivityItems.Provider value={visibleIds}>
-        {children}
-      </VisibleActivityItems.Provider>
-    </ReadingChoices.Provider>
-  );
-}
-
-export function useVisibleActivityItemIds(): ReadonlySet<string> | null {
-  return useContext(VisibleActivityItems);
-}
-
-export function useActivityInspectionHeld(ids: readonly string[]): boolean {
-  const choices = useContext(ReadingChoices);
-  return ids.some((id) => choices?.get(id)?.disclosure === "open");
-}
-
-export function useActivityDisclosure() {
-  const choices = useContext(ReadingChoices);
-  const id = useContext(ActivityItemId);
-  const [override, setOverride] = useState<"open" | "closed" | null>(
-    () => (id ? choices?.get(id)?.disclosure : null) ?? null,
-  );
-  return [
-    override,
-    (next: "open" | "closed") => {
-      if (id && choices)
-        choices.set(id, { ...choices.get(id), disclosure: next });
-      setOverride(next);
-    },
-  ] as const;
-}
-
-export function useActivityStripSelection(id: string) {
-  const choices = useContext(ReadingChoices);
-  const [selected, setSelected] = useState<string | null>(
-    () => choices?.get(id)?.stripSelection ?? null,
-  );
-  return [
-    selected,
-    (next: string | null) => {
-      choices?.set(id, { ...choices.get(id), stripSelection: next });
-      setSelected(next);
-    },
-  ] as const;
-}
-
-function isVisible(
-  visibleIds: ReadonlySet<string> | null,
-  ids: readonly string[],
-): boolean {
-  return (
-    visibleIds === null ||
-    ids.length === 0 ||
-    ids.some((id) => visibleIds.has(id))
-  );
-}
-
-/** A rolling compact tail can retire a focused card, strip button or detail.
- * Ref cleanup observes focus before its DOM disappears; a later user choice
- * still wins over the deferred recovery. */
-export function recoverOmittedActivityFocus(element: HTMLElement | null) {
-  if (!element) return;
-  return () => {
-    const focused = document.activeElement;
-    if (!element.contains(focused)) return;
-    const fold = element.closest<HTMLElement>("[data-activity-fold]");
-    queueMicrotask(() => {
-      if (
-        focused?.isConnected ||
-        (document.activeElement !== document.body &&
-          document.activeElement !== focused)
-      )
-        return;
-      const control =
-        fold?.querySelector<HTMLElement>(".activity-fold__omission") ??
-        fold?.querySelector<HTMLElement>(
-          '[data-activity-fold-anchor="start"], [data-activity-fold-anchor="center"]',
-        );
-      control?.focus({ preventScroll: true });
-    });
-  };
-}
-
-/** Omitted fragments do not mount their renderers or layout wrappers. */
-export function ActivitySegmentBoundary({
-  ids,
-  children,
-}: {
-  ids: readonly string[];
-  children: ReactNode;
-}) {
-  const visibleIds = useVisibleActivityItemIds();
-  return isVisible(visibleIds, ids) ? (
-    <div ref={recoverOmittedActivityFocus} className="activity-item-boundary">
-      {children}
-    </div>
-  ) : null;
-}
-
-/** A visible card borrows its small reading choice from the projection, so
- * Compact can unmount the hidden prefix without forgetting manual disclosure. */
-export function ActivityItemBoundary({
-  id,
-  children,
-}: {
-  id: string;
-  children: ReactNode;
-}) {
-  const visibleIds = useVisibleActivityItemIds();
-  if (visibleIds !== null && !visibleIds.has(id)) return null;
-  return (
-    <ActivityItemId.Provider value={id}>
-      <div ref={recoverOmittedActivityFocus} className="activity-item-boundary">
+    <ActivityItemId value={toolCallId ?? null}>
+      <div className="activity-item-boundary" onFocus={onFocus}>
         {children}
       </div>
-    </ActivityItemId.Provider>
+    </ActivityItemId>
   );
 }

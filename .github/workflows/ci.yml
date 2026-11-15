@@ -6,19 +6,33 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
-      native_only:
-        description: "Focused platform regressions and daily browser flows; default runs all checks"
-        type: boolean
-        default: false
+      scope:
+        description: "Checks, one platform, Safari, release, or full browser coverage"
+        type: choice
+        default: checks
+        options:
+          - checks
+          - windows-core
+          - macos-core
+          - windows
+          - macos
+          - safari
+          - release
+          - full
+
+# Replace obsolete development/PR runs only within the same verification scope.
+# Main and other refs use unique groups so their running and pending evidence survives.
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.scope || 'full' }}-${{ (github.event_name == 'pull_request' || github.ref == 'refs/heads/auto-dev') && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/auto-dev' }}
 
 permissions:
   contents: read
 
 jobs:
   quality:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope == 'checks' || inputs.scope == 'release' || inputs.scope == 'full' }}
     runs-on: ubuntu-latest
-    # Build, native/core checks and all three browser engines run serially.
-    # Bound their aggregate without cancelling a still-progressing browser tail.
     timeout-minutes: 50
     steps:
       - uses: actions/checkout@v7
@@ -27,10 +41,10 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - if: ${{ !inputs.native_only }}
-        run: npx playwright install --with-deps chromium firefox webkit
+      - if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope != 'checks' }}
+        run: npx playwright install --with-deps chromium firefox
       - name: Quality checks
-        run: ${{ inputs.native_only && 'npm run check' || 'npm run ci' }}
+        run: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'checks' && 'npm run check' || 'npm run ci' }}
       - if: always()
         uses: actions/upload-artifact@v7
         with:
@@ -41,15 +55,14 @@ jobs:
           if-no-files-found: ignore
 
   platform:
-    name: ${{ matrix.os }} core and Chromium
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope != 'checks' }}
+    name: ${{ matrix.os }} ${{ inputs.scope == 'safari' && 'WebKit' || endsWith(inputs.scope, '-core') && 'core' || 'core and Chromium' }}
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: ${{ fromJSON(startsWith(inputs.scope, 'windows') && '["windows-latest"]' || (startsWith(inputs.scope, 'macos') || inputs.scope == 'safari') && '["macos-latest"]' || '["macos-latest", "windows-latest"]') }}
     runs-on: ${{ matrix.os }}
-    # Native/core and the full browser suite run serially. Budget their aggregate
-    # on Windows without changing individual test or runtime deadlines.
-    timeout-minutes: ${{ matrix.os == 'windows-latest' && 60 || 40 }}
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 60 || 50 }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -57,43 +70,38 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      # Format, lint, types and unused-code checks run once in quality.
-      # Keep OS-dependent build and behavior checks here, collecting every
-      # runnable phase even after a test failure without ignoring that failure.
       - name: Build browser app
         id: web
         run: npm run build:web
       - name: Portable filesystem and process checks
-        if: ${{ !cancelled() && steps.web.outcome == 'success' }}
+        if: ${{ !cancelled() && inputs.scope != 'safari' && steps.web.outcome == 'success' }}
         run: npm run test:portable
-      - name: Unit and integration tests
-        if: ${{ !cancelled() && steps.web.outcome == 'success' }}
-        run: ${{ inputs.native_only && 'npm run test:platform' || 'npm test' }}
+      - name: Node and native integration tests
+        if: ${{ !cancelled() && inputs.scope != 'safari' && steps.web.outcome == 'success' }}
+        # These suites start real Pi and Host children beside the Vitest worker.
+        run: npm test -- --project=node --project=integration --exclude 'tests/{web,shared}/**' ${{ matrix.os == 'windows-latest' && '--maxWorkers=1' || '' }}
       - name: Native session Trash and recovery
-        if: ${{ !cancelled() && steps.web.outcome == 'success' }}
+        if: ${{ !cancelled() && inputs.scope != 'safari' && steps.web.outcome == 'success' }}
         env:
           INSPIRE_NATIVE_TRASH_TEST: "1"
         run: npx vitest run tests/server/native-session-trash-smoke.test.ts
       - name: Launcher lifecycle tests
-        if: ${{ !cancelled() && steps.web.outcome == 'success' }}
+        if: ${{ !cancelled() && inputs.scope != 'safari' && steps.web.outcome == 'success' }}
         run: npm run test:launcher
       - name: Install Chromium
         id: chromium
-        if: ${{ !cancelled() && steps.web.outcome == 'success' }}
+        if: ${{ !cancelled() && !endsWith(inputs.scope, '-core') && inputs.scope != 'safari' && steps.web.outcome == 'success' }}
         run: npx playwright install chromium
-      - name: Browser behavior tests
+      - name: Chromium behavior tests
         if: ${{ !cancelled() && steps.chromium.outcome == 'success' }}
-        run: ${{ inputs.native_only && 'npx playwright test --project=chromium --grep "@cross-browser|@platform-ui"' || 'npm run test:browser:chromium' }}
+        run: npm run test:browser:chromium -- --grep ${{ inputs.scope == 'full' && '.' || '@platform-ui' }}
       - name: Install native macOS WebKit
         id: webkit
-        if: ${{ !cancelled() && matrix.os == 'macos-latest' && steps.web.outcome == 'success' }}
+        if: ${{ inputs.scope == 'safari' && steps.web.outcome == 'success' }}
         run: npx playwright install webkit
       - name: Safari-engine daily workflows
-        if: ${{ !cancelled() && steps.webkit.outcome == 'success' }}
-        env:
-          INSPIRE_BROWSER_TEST_OUTPUT_DIR: output/playwright/webkit-host
-          PLAYWRIGHT_HTML_OUTPUT_DIR: output/playwright/webkit-report
-        run: npx playwright test --project=webkit --output=output/playwright/webkit-results
+        if: ${{ steps.webkit.outcome == 'success' }}
+        run: npm run test:browser -- --project=webkit
       - if: always()
         uses: actions/upload-artifact@v7
         with:
@@ -103,34 +111,9 @@ jobs:
             test-results/
           if-no-files-found: ignore
 
-  size-report:
-    # Measurement remains visible when it breaks but must not mask the required
-    # correctness gates above.
-    continue-on-error: true
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      # `size:report` builds before packing, so the inventory describes the
-      # release artifact rather than a clean-checkout source-only tarball.
-      - run: |
-          node -e "require('node:fs').mkdirSync('output', { recursive: true })"
-      - run: npm run size:report > output/size-report.json
-      - if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: size-report
-          path: output/size-report.json
-          if-no-files-found: ignore
-
   release-verify:
-    # Run after main lands and on explicit verification of another ref, without
-    # repeating the full packaged-host smoke for every PR edit.
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
+    # The release dispatch uses the same gates as a push to main.
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && (inputs.scope == 'release' || inputs.scope == 'full'))
     strategy:
       fail-fast: false
       matrix:
@@ -145,3 +128,11 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run release:verify
+        env:
+          INSPIRE_SIZE_REPORT: ${{ runner.os == 'Linux' && 'output/size-report.json' || '' }}
+      - if: ${{ !cancelled() && runner.os == 'Linux' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: size-report
+          path: output/size-report.json
+          if-no-files-found: ignore

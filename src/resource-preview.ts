@@ -3,6 +3,7 @@ import type {
   ResourceProbeResult,
 } from "../shared/contracts";
 import { HTML_PREVIEW_BYTES } from "../shared/html-preview";
+import { resourceRefusal } from "../shared/resource-references";
 import { ApiError } from "./api";
 
 /** Text-like previews are range-capped; a body shorter than the file's
@@ -21,6 +22,49 @@ export const MAX_MEDIA_PREVIEW_BYTES = 32 * 1024 * 1024;
 const HTML_PREVIEW_CSP =
   "default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src data:; media-src data: blob:; base-uri 'none'; form-action 'none'";
 
+/** Open file tabs retain navigation identity only; preview bytes keep their existing lifetime. */
+export interface ResourceFileTab {
+  reference: string;
+  workspacePath?: string;
+  view?: "changes";
+  git?: { pathId: string; displayPath: string };
+}
+
+/** Browse can highlight the last file without holding its preview authority. */
+export type FileInspection =
+  | { kind: "browse"; reference?: string }
+  | {
+      kind: "file";
+      reference: string;
+      /** Exact path supplied or confirmed for this read, not a remembered alias. */
+      workspacePath?: string;
+      preview: ResourcePreview | null;
+    };
+
+export interface FileInspectionState {
+  fileInspection: FileInspection;
+  resourceTabs: ResourceFileTab[];
+}
+
+export function inspectedFileTab({
+  fileInspection,
+  resourceTabs,
+}: FileInspectionState): ResourceFileTab | undefined {
+  return resourceTabs.find(
+    ({ reference }) => reference === fileInspection.reference,
+  );
+}
+
+export function inspectedPreview(
+  inspection: FileInspection,
+): ResourcePreview | null {
+  return inspection.kind === "file" ? inspection.preview : null;
+}
+
+export interface FileSourceJump {
+  line: number;
+}
+
 export type ResourcePreview =
   | { status: "loading"; reference: string }
   | { status: "error"; reference: string; message: string }
@@ -36,6 +80,8 @@ export type ResourcePreview =
       status: "ready";
       reference: string;
       descriptor: ResourceDescriptor;
+      /** One navigation request, separate from the tab's retained reading position. */
+      sourceJump?: FileSourceJump;
       /** Same-authority refresh retains the last loaded content. */
       refreshing?: boolean;
       refreshError?: string;
@@ -74,21 +120,12 @@ export function classifiedResourceFailure(
   error: unknown,
 ): ResourceProbeResult | null {
   if (!(error instanceof ApiError)) return null;
-  if (error.status === 409 && error.matches) {
-    return {
-      reference,
-      availability: "ambiguous",
-      message: error.message,
-      matches: error.matches,
-    };
-  }
-  if (error.status === 404)
-    return { reference, availability: "missing", message: error.message };
-  if (error.status === 403 || error.status === 409)
-    return { reference, availability: "unavailable", message: error.message };
-  if (error.status === 400)
-    return { reference, availability: "invalid", message: error.message };
-  return null;
+  return (
+    resourceRefusal(reference, error) ??
+    (error.status === 409
+      ? { reference, availability: "unavailable", message: error.message }
+      : null)
+  );
 }
 
 export function unknownResourceAvailability(

@@ -1,14 +1,21 @@
+import { expect, type Locator, type Page, test } from "@playwright/test";
+import type {
+  SessionListResponse,
+  SessionRuntimeStatus,
+} from "../../shared/contracts";
+import { navigationGroupsFixture } from "./fixtures/navigation-groups";
+import { routeSnapshots } from "./support/host-events";
 import { hostRequest } from "./support/host-request";
-import AxeBuilder from "@axe-core/playwright";
-import { expect, type Page, test } from "@playwright/test";
 import {
   openCommandPalette,
-  openMockSession,
+  openFixtureSession,
   pairedPage,
 } from "./support/navigation";
 
 async function preserveCuration(page: Page) {
-  const before = await (await hostRequest(page).get("/api/preferences")).json();
+  const { preferences: before } = await (
+    await hostRequest(page).get("/api/preferences")
+  ).json();
   return async () => {
     const restored = await hostRequest(page).patch("/api/preferences", {
       data: {
@@ -20,200 +27,145 @@ async function preserveCuration(page: Page) {
   };
 }
 
-test("session search paginates unloaded results and keyboard selection preserves drafts", async ({
+test("search pages to older sessions and moves focus through keyboard selection", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.emulateMedia({ reducedMotion: "reduce" });
   await pairedPage(page);
-  const restoreCuration = await preserveCuration(page);
-  try {
-    await openMockSession(page, /Review extension event lifecycle/);
-    const input = page.getByRole("textbox", { name: "Message", exact: true });
-    await input.fill("SESSION_SEARCH_ACTIVE_DRAFT");
-    await page.locator('input[type="file"]').setInputFiles({
-      name: "search-draft.txt",
-      mimeType: "text/plain",
-      buffer: Buffer.from("retain draft artifact"),
-    });
-    await expect(page.locator(".attachment--ready")).toBeVisible();
-    await page
-      .getByRole("button", { name: "New session", exact: true })
-      .click();
-    const first = page.getByRole("textbox", { name: "First message" });
-    await first.fill("SESSION_SEARCH_START_DRAFT");
-    const response = await hostRequest(page).get(
-      "/api/sessions?q=&offset=0&limit=40",
-    );
-    const catalog = (await response.json()).sessions as Array<{ id: string }>;
-    const find = (id: string) => catalog.find((session) => session.id === id)!;
-    // UI-only catalog pages: deliberately no title contains the query. Native content
-    // matching is checked with real isolated Pi JSONL in session-catalog.test.ts.
-    await page.route("**/api/sessions?**", async (route) => {
-      const params = new URL(route.request().url()).searchParams;
-      if (params.get("q") !== "bodyneedle") return route.continue();
-      const offset = Number(params.get("offset") ?? 0);
-      await route.fulfill({
-        json: {
-          sessions:
-            offset === 0
-              ? [find("mock-active"), find("mock-history")]
-              : [
-                  {
-                    ...find("mock-active"),
-                    id: "unloaded-catalog-result",
-                    title: "Unloaded catalog result",
-                  },
-                  find("mock-errors"),
-                ],
-          total: 4,
-          offset,
-          limit: 2,
-        },
-      });
-    });
-    const findSession = async () => {
-      const palette = await openCommandPalette(page);
-      await palette.getByLabel("Filter commands").fill("/resume");
-      await palette.getByRole("option", { name: /Find a session/ }).click();
-      const search = page.getByRole("searchbox", { name: "Search sessions" });
-      await expect(search).toBeFocused();
-      return search;
-    };
-    let search = await findSession();
-    await expect(page.locator(".nav__row--highlighted")).toHaveCount(0);
-    await search.press("Enter");
-    await expect(first).toHaveValue("SESSION_SEARCH_START_DRAFT");
-    await expect(page.locator(".nav__row--active")).toHaveCount(0);
-    await search.fill("bodyneedle");
-    await expect(page.locator(".nav__row-name")).toHaveCount(2);
-    await expect(first).toHaveValue("SESSION_SEARCH_START_DRAFT");
-    await search.press("ArrowDown");
-    const highlighted = page.locator(".nav__row--highlighted .nav__row-name");
-    await expect(highlighted).toHaveText("Review extension event lifecycle");
-    await expect(search).toBeFocused();
-    await page
-      .getByRole("button", { name: "Load older sessions", exact: true })
-      .click();
-    await expect(page.locator(".nav__row-name")).toHaveCount(4);
-    await expect(
-      page
-        .locator(".nav__row-name")
-        .filter({ hasText: "Unloaded catalog result" }),
-    ).toBeVisible();
-    await search.focus();
-    await expect(highlighted).toHaveText("Review extension event lifecycle");
-    await expect(
-      page.getByRole("button", { name: "Load older sessions", exact: true }),
-    ).toHaveCount(0);
-    const a11y = await new AxeBuilder({ page }).include(".nav").analyze();
-    expect(a11y.violations).toEqual([]);
-    await search.press("Enter");
-    await expect(input).toHaveValue("SESSION_SEARCH_ACTIVE_DRAFT");
-    await expect(page.locator(".attachment")).toContainText("search-draft.txt");
-    search = await findSession();
-    await search.fill("");
-    await search.fill("bodyneedle");
-    await expect(page.locator(".nav__row-name")).toHaveCount(2);
-    await search.press("ArrowUp");
-    await expect(highlighted).toHaveText(
-      "Formula rendering and spectral analysis",
-    );
-    await search.dispatchEvent("compositionstart");
-    await search.dispatchEvent("keydown", {
-      key: "Enter",
-      isComposing: true,
-      bubbles: true,
-    });
-    await search.dispatchEvent("keydown", {
-      key: "Escape",
-      isComposing: true,
-      bubbles: true,
-    });
-    await expect(search).toHaveValue("bodyneedle");
-    await expect(page.locator(".topbar__title-button")).toHaveText(
-      "Review extension event lifecycle",
-    );
-    await search.dispatchEvent("compositionend");
-    await search.press("Enter");
-    await expect(page.locator(".topbar__title-button")).toHaveText(
-      "Formula rendering and spectral analysis",
-    );
-    await expect(input).toHaveValue("");
-    const curate = async (action: string) => {
-      const button = page.getByRole("button", {
-        name: `${action} "Review extension event lifecycle"`,
-        exact: true,
-      });
-      await page.locator(".nav__row").filter({ has: button }).hover();
-      await button.click();
-    };
-    await curate("Hide");
-    await expect(page.locator(".nav__group--hidden")).toContainText(
-      "Review extension event lifecycle",
-    );
-    await curate("Restore");
-    await expect(page.locator(".nav__group--hidden")).toHaveCount(0);
-    await curate("Pin");
-    await expect(page.locator(".nav__group--pinned")).toContainText(
-      "Review extension event lifecycle",
-    );
-    await curate("Unpin");
-    await search.fill("");
-    await search.focus();
-    await expect(page.locator(".nav__row--highlighted")).toHaveCount(0);
-    await search.press("Enter");
-    await expect(page.locator(".topbar__title-button")).toHaveText(
-      "Formula rendering and spectral analysis",
-    );
-    await page
-      .getByRole("button", { name: "New session", exact: true })
-      .click();
-    await expect(first).toHaveValue("SESSION_SEARCH_START_DRAFT");
-  } finally {
-    await restoreCuration();
-  }
-});
-
-test("session transitions cannot accept input for the previous session", async ({
-  page,
-}) => {
-  await pairedPage(page);
-  await openMockSession(page, /Formula rendering and spectral analysis/);
-
-  let releaseOpen!: () => void;
-  const openGate = new Promise<void>((resolve) => {
-    releaseOpen = resolve;
-  });
-  let confirmOpenStarted!: () => void;
-  const openStarted = new Promise<void>((resolve) => {
-    confirmOpenStarted = resolve;
-  });
-  await page.route(/\/api\/sessions\/open(?:\?|$)/, async (route) => {
-    confirmOpenStarted();
-    await openGate;
-    await route.continue();
-  });
-
+  const source = "Review extension event lifecycle";
+  const destination = "Formula rendering and spectral analysis";
+  await openFixtureSession(page, new RegExp(source), "fixture-history");
   const composer = page.getByRole("form", { name: "Message composer" });
-  const message = page.getByRole("textbox", { name: "Message" });
-  const switchSession = page
-    .locator(".nav__row-main")
-    .filter({ hasText: /Review extension event lifecycle/ })
-    .click();
-  try {
-    await openStarted;
-    await expect(composer).toHaveAttribute("aria-busy", "true");
-    await expect(message).toBeDisabled();
-  } finally {
-    releaseOpen();
-    await switchSession;
-  }
+  const input = composer.getByRole("textbox", { name: "Message", exact: true });
+  await input.fill("SESSION_SEARCH_ACTIVE_DRAFT");
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "search-draft.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("retain draft artifact"),
+  });
+  await expect(page.locator(".attachment--ready")).toBeVisible();
 
-  await expect(page.locator(".topbar__title-button")).toHaveText(
-    /Review extension event lifecycle/,
+  const { sessions } = (await (
+    await hostRequest(page).get("/api/sessions?offset=0&limit=40")
+  ).json()) as SessionListResponse;
+  const releaseEmpty = Promise.withResolvers<void>();
+  await page.route("**/api/sessions?**", async (route) => {
+    const { searchParams } = new URL(route.request().url());
+    const offset = Number(searchParams.get("offset") ?? 0);
+    switch (searchParams.get("q")) {
+      case "empty-fixture-query":
+        await releaseEmpty.promise;
+        return route.fulfill({
+          json: { sessions: [], total: 0, offset: 0, limit: 40 },
+        });
+      case "failed-fixture-query":
+        return route.fulfill({
+          status: 503,
+          json: { error: "Search is unavailable" },
+        });
+      case "bodyneedle": {
+        const id = offset ? "fixture-active" : "fixture-history";
+        const row = sessions.find((session) => session.id === id);
+        return route.fulfill({
+          json: { sessions: [row], total: 2, offset, limit: 1 },
+        });
+      }
+      default:
+        return route.continue();
+    }
+  });
+
+  const palette = await openCommandPalette(page);
+  await palette.getByLabel("Filter commands").fill("/resume");
+  await palette.getByRole("option", { name: /Find a session/ }).click();
+  const search = page.getByRole("searchbox", { name: "Search sessions" });
+  await expect(search).toBeFocused();
+  const empty = page.locator(".nav__list .empty-state");
+  await search.fill("empty-fixture-query");
+  try {
+    await expect(page.locator(".nav__pagination .pi-loading")).toBeVisible();
+    await expect(empty).toBeHidden();
+  } finally {
+    releaseEmpty.resolve();
+  }
+  await expect(empty).toContainText("No sessions");
+  await search.fill("failed-fixture-query");
+  await expect(page.locator(".nav__pagination-status")).toContainText(
+    "Search is unavailable",
   );
-  await expect(message).toBeEnabled();
+  await expect(empty).toBeHidden();
+  await search.fill("bodyneedle");
+  const rows = page.locator(".nav__row-name");
+  await expect(rows).toHaveCount(1);
+  await search.press("ArrowDown");
+  const highlighted = page.locator(".nav__row--highlighted .nav__row-name");
+  await expect(highlighted).toHaveText(source);
+  const older = page.getByRole("button", {
+    name: "Load older sessions",
+    exact: true,
+  });
+  await older.press("Enter");
+  await expect(rows).toHaveCount(2);
+  await expect(older).toHaveCount(0);
+  await search.focus();
+  await expect(highlighted).toHaveText(source);
+  await search.press("ArrowDown");
+  await expect(highlighted).toHaveText(destination);
+  await search.dispatchEvent("compositionstart");
+  await search.dispatchEvent("keydown", {
+    key: "Enter",
+    isComposing: true,
+    bubbles: true,
+  });
+  await search.dispatchEvent("compositionend");
+  await expect(search).toHaveValue("bodyneedle");
+  await expect(input).toHaveValue("SESSION_SEARCH_ACTIVE_DRAFT");
+
+  const open = Promise.withResolvers<void>();
+  await page.route(
+    "**/api/sessions/open",
+    async (route) => {
+      await open.promise;
+      await route.continue();
+    },
+    { times: 1 },
+  );
+  const destinationRow = page.locator(
+    '[data-session-id="fixture-active"] .nav__row-main',
+  );
+  const opening = destinationRow.getByRole("status");
+  try {
+    await search.press("Enter");
+    await expect(composer).toHaveAttribute("aria-busy", "true");
+    await expect(input).toBeDisabled();
+    await expect(opening).toHaveText("Opening…");
+    await expect(
+      destinationRow.getByRole("img", { name: "Working" }),
+    ).toBeHidden();
+  } finally {
+    open.resolve();
+  }
+  const topbar = page.locator(".topbar__title-button");
+  await expect(topbar).toHaveText(destination);
+  await expect(input).toBeEnabled();
+  await expect(input).toHaveValue("");
+  await expect(opening).toBeHidden();
+  await search.press("Escape");
+  await expect(search).toHaveValue("");
+  await expect(search).toBeFocused();
+  await search.press("Escape");
+  await expect(search).not.toBeFocused();
+  await page
+    .getByRole("button", { name: "Collapse navigation", exact: true })
+    .click();
+  await expect(search).toBeHidden();
+  await input.fill("/resume");
+  await composer
+    .getByRole("button", { name: "Send message", exact: true })
+    .click();
+  await expect(search).toBeFocused();
+  await expect(topbar).toHaveText(destination);
 });
 
 test.describe("touch session drawer", () => {
@@ -221,10 +173,15 @@ test.describe("touch session drawer", () => {
   test("direct curation does not select a session; selection dismisses the drawer and restores its draft", async ({
     page,
   }) => {
+    const sessionId = "fixture-history";
     await pairedPage(page);
     const restoreCuration = await preserveCuration(page);
     try {
-      await openMockSession(page, /Review extension event lifecycle/);
+      await openFixtureSession(
+        page,
+        /Review extension event lifecycle/,
+        sessionId,
+      );
       const input = page.getByRole("textbox", { name: "Message", exact: true });
       await input.fill("Keep this touch draft");
       await page
@@ -235,27 +192,267 @@ test.describe("touch session drawer", () => {
         exact: true,
       });
       const title = "Review extension event lifecycle";
+      const row = drawer.locator(`[data-session-id="${sessionId}"]`);
       const action = (name: string) =>
-        drawer.getByRole("button", {
+        row.getByRole("button", {
           name: name + ' "' + title + '"',
           exact: true,
         });
       await action("Pin").tap();
       await expect(drawer.locator(".nav__group--pinned")).toContainText(title);
       await action("Hide").tap();
-      const hidden = drawer.locator(".nav__group--hidden");
-      await hidden.getByRole("button", { name: "Hidden", exact: true }).tap();
-      await expect(hidden).toContainText(title);
+      await drawer.getByRole("button", { name: "Hidden", exact: true }).tap();
+      const hidden = drawer.getByRole("region", {
+        name: "Hidden",
+        exact: true,
+      });
+      const hiddenRow = hidden.locator(`[data-session-id="${sessionId}"]`);
+      await expect(hiddenRow).toBeVisible();
+      await expect(hiddenRow.locator('[aria-current="page"]')).toBeVisible();
       await action("Restore").tap();
-      await expect(drawer.locator(".nav__group--hidden")).toHaveCount(0);
-      // Hiding clears the pin; restoring returns a regular session row.
+      await expect(hiddenRow).toHaveCount(0);
+      await drawer.getByRole("button", { name: "Hidden", exact: true }).tap();
       await expect(action("Pin")).toBeVisible();
       await expect(input).toHaveValue("Keep this touch draft");
-      await drawer.locator(".nav__row-main").filter({ hasText: title }).tap();
+      await row.locator(".nav__row-main").tap();
       await expect(drawer).toHaveCount(0);
       await expect(input).toHaveValue("Keep this touch draft");
     } finally {
       await restoreCuration();
     }
   });
+});
+
+test("catalog search follows curation and reviews the exact Hidden selection", async ({
+  page,
+}) => {
+  await navigationGroupsFixture(page);
+  await pairedPage(page);
+  const nav = page.getByRole("navigation", { name: "Sessions" });
+  const search = nav.getByRole("searchbox", { name: "Search sessions" });
+  const reports = nav.getByRole("button", { name: "reports", exact: true });
+  const row = nav.locator('[data-session-id="fixture-active"]');
+  const action = (label: string) =>
+    row.getByRole("button", { name: `${label} "Reports session"` });
+  const selected = nav.locator(".nav__row--highlighted .nav__row-name");
+  await expect(reports).toHaveAttribute("aria-expanded", "false");
+  await search.fill("reports");
+  await expect(reports).toBeDisabled();
+  await expect(selected).toHaveText("Reports session");
+  await search.press("ArrowDown");
+  await expect(selected).toHaveText("Independent hidden session");
+  await search.press("ArrowUp");
+  await row.hover();
+  await action("Pin").click();
+  await expect(action("Unpin")).toBeVisible();
+  await search.focus();
+  await expect(selected).toHaveText("Reports session");
+  await row.hover();
+  await action("Hide").click();
+  await expect(action("Restore")).toBeVisible();
+  await search.focus();
+  await expect(selected).toHaveText("Reports session");
+  await search.press("ArrowDown");
+  await expect(selected).toHaveText("Independent hidden session");
+  await search.press("ArrowUp");
+  await search.fill("session");
+  await search.press("Enter");
+  await expect(
+    page.getByRole("form", { name: "Start a session" }),
+  ).toBeVisible();
+  await expect(selected).toHaveText("Geometry session");
+
+  const palette = await openCommandPalette(page);
+  for (const query of ["", "session"]) {
+    await palette.getByLabel("Filter commands").fill(query);
+    await expect(
+      palette.getByRole("option", { name: /^Geometry session/ }),
+    ).toBeVisible();
+    await expect(
+      palette.getByRole("option", {
+        name: /^Reports session|^Archived measurement/,
+      }),
+    ).toHaveCount(0);
+  }
+  await page.keyboard.press("Escape");
+  await search.fill("");
+  await expect(
+    nav.getByRole("button", { name: "calibration", exact: true }),
+  ).toHaveAttribute("aria-expanded", "false");
+  await expect(row).toHaveCount(0);
+  const hidden = nav.getByRole("button", { name: "Hidden", exact: true });
+  await hidden.click();
+  await page.reload();
+  await expect(hidden).toHaveAttribute("aria-expanded", "true");
+  await expect(row).toBeVisible();
+
+  const requests: Array<{
+    scope: string;
+    projectCwd?: string;
+    sessionIds: string[];
+  }> = [];
+  await page.route("**/api/sessions/delete", (route) => {
+    requests.push(route.request().postDataJSON());
+    return route.fulfill({
+      status: 503,
+      json: { error: "Deletion unavailable" },
+    });
+  });
+  const all = nav.getByRole("button", { name: "Clear Hidden" });
+  await search.fill("reports");
+  await expect(all).toBeDisabled();
+  await search.fill("");
+  const folder = nav.getByRole("button", {
+    name: "Delete all sessions in folder archived-a",
+  });
+  await nav.getByRole("button", { name: "archived-a", exact: true }).hover();
+  await folder.click();
+  const dialog = page.getByRole("alertdialog", {
+    name: "Clear hidden folder?",
+  });
+  await expect(dialog).toHaveAccessibleDescription(/\/projects\/archived-a/);
+  const deleteOne = dialog.getByRole("button", { name: "Delete 1 session" });
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(dialog).toBeHidden();
+  expect(requests).toEqual([]);
+  await nav.getByRole("button", { name: "archived-a", exact: true }).hover();
+  await folder.click();
+  await deleteOne.click();
+  await expect
+    .poll(() => requests[0])
+    .toMatchObject({
+      scope: "hidden",
+      projectCwd: "/projects/archived-a",
+      sessionIds: ["fixture-compaction"],
+    });
+  await expect(dialog.getByText("Deletion unavailable")).toBeVisible();
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+});
+
+test("live attention filters and counts the relevant sessions through rail, drawer and reload", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const older = "fixture-calibration-history";
+  const newer = "fixture-errors";
+  const hidden = "fixture-active";
+  await page.route("**/api/sessions?**", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as SessionListResponse;
+    for (const row of body.sessions) {
+      if (row.id === older) row.modified = "2026-07-20T10:00:00Z";
+      if (row.id === newer) row.modified = "2026-07-24T10:00:00Z";
+    }
+    await route.fulfill({ response, json: body });
+  });
+  const statuses: Record<string, SessionRuntimeStatus> = {};
+  const transport = await routeSnapshots(page, {
+    bootstrap: (body) =>
+      Object.assign(body.preferences, {
+        pinnedSessionIds: [older],
+        hiddenSessionIds: [hidden],
+        hiddenProjectCwds: [],
+        navCollapsedGroups: [],
+      }),
+    snapshot(snapshot) {
+      const active = snapshot.active?.sessionId;
+      snapshot.sessionStatuses = active
+        ? { ...statuses, [active]: statuses[active] ?? { runState: "idle" } }
+        : { ...statuses };
+    },
+    event(event) {
+      if (event.type === "session_status") return false;
+    },
+  });
+  await pairedPage(page);
+  await openFixtureSession(
+    page,
+    /Review extension event lifecycle/,
+    "fixture-history",
+  );
+  await expect.poll(() => transport.ready("fixture-history")).toBe(true);
+  let attention = 0;
+  const report = (id: string, completed: boolean) => {
+    statuses[id] = completed
+      ? { runState: "idle", indicator: "completed", attentionId: ++attention }
+      : { runState: "idle" };
+    transport.send({
+      type: "session_status",
+      sessionId: id,
+      sessionStatus: statuses[id],
+    });
+  };
+  const bell = page.locator(".nav").getByRole("button", { name: /^Needs you/ });
+  const pinned = page.getByRole("region", { name: "Pinned", exact: true });
+  await expect(bell).toHaveAccessibleName("Needs you");
+  await expect(pinned.locator(".nav__row")).toHaveAttribute(
+    "data-session-id",
+    older,
+  );
+  for (const id of [newer, older, hidden]) report(id, true);
+  await expect(bell).toHaveAccessibleName("Needs you (2)");
+  await bell.click();
+  await expect(bell).toHaveAttribute("aria-pressed", "true");
+  const rows = page
+    .getByRole("region", { name: "Sessions that need you" })
+    .locator(".nav__row");
+  const all = page.locator(".nav").getByRole("button", { name: /^Needs you/ });
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0)).toHaveAttribute("data-session-id", newer);
+  await expect(rows.nth(1)).toHaveAttribute("data-session-id", older);
+  await expect(pinned).toHaveCount(0);
+  for (const id of Object.keys(statuses)) delete statuses[id];
+  await page.reload();
+  await expect(bell).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByText("Nothing needs you")).toBeVisible();
+  await all.click();
+  await expect(bell).toHaveAttribute("aria-pressed", "false");
+  await expect(pinned).toBeVisible();
+
+  await expect.poll(() => transport.ready("fixture-history")).toBe(true);
+  report(newer, true);
+  const collapse = page.getByRole("button", {
+    name: "Collapse navigation",
+    exact: true,
+  });
+  const rail = page.getByRole("button", {
+    name: "Expand navigation",
+    exact: true,
+  });
+  await collapse.click();
+  const check = async (toggle: Locator, count: string) => {
+    const badge = toggle.locator(
+      ".navigation-toggle__attention > [aria-hidden]",
+    );
+    await expect(badge).toHaveText(count);
+    await expect(badge).toBeInViewport({ ratio: 0.9 });
+  };
+  await check(rail, "1");
+  await expect(rail).toHaveAccessibleDescription(
+    "1 other session needs attention",
+  );
+  const more = Array.from({ length: 10 }, (_, index) => `unseen-${index}`);
+  for (const id of more) report(id, true);
+  await check(rail, "9+");
+  await expect(rail).toHaveAccessibleDescription(
+    "11 other sessions need attention",
+  );
+  await page.setViewportSize({ width: 390, height: 780 });
+  const drawer = page.getByRole("button", {
+    name: "Toggle navigation",
+    exact: true,
+  });
+  await check(drawer, "9+");
+  for (const id of more) report(id, false);
+  await check(drawer, "1");
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openFixtureSession(page, /Pi error display fixture/, newer);
+  await expect(
+    page.locator(".nav__row--active").getByRole("img", { name: "Completed" }),
+  ).toBeHidden();
+  await collapse.click();
+  await expect(rail).not.toHaveAccessibleDescription(/need[s]? attention/);
+  await page.unrouteAll({ behavior: "wait" });
 });

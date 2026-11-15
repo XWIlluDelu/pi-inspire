@@ -1,13 +1,15 @@
-import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type {
+  AgentSessionServices,
+  ModelRuntime,
+} from "@earendil-works/pi-coding-agent";
 import {
   type ModelOption,
-  type NewSessionDefaults,
   THINKING_LEVELS,
   type ThinkingLevel,
 } from "../shared/contracts.js";
+import type { ModelThinkingPreferences } from "../shared/model-settings.js";
 import {
-  createAgentSession,
-  DefaultResourceLoader,
+  createAgentSessionFromServices,
   getAgentDir,
   hasTrustRequiringProjectResources,
   ProjectTrustStore,
@@ -77,86 +79,52 @@ export function modelSettings(cwd: string, agentDir = getAgentDir()) {
     projectTrusted: false,
   });
   settings.setProjectTrusted(
-    !hasTrustRequiringProjectResources(cwd) ||
-      (new ProjectTrustStore(agentDir).get(cwd) ??
+    new ProjectTrustStore(agentDir).get(cwd) ??
+      (!hasTrustRequiringProjectResources(cwd) ||
         settings.getDefaultProjectTrust() === "always"),
   );
   return settings;
 }
 
-/** Same precedence as AgentSession.setModel, before capability clamping. It
- * reads public settings only, including for extension-only model identities. */
-export function modelSwitchThinkingLevel(
-  cwd: string,
-  provider: string,
-  id: string,
-  current: ThinkingLevel,
-): ThinkingLevel {
-  const settings = modelSettings(cwd);
-  return (
-    settings.getModelThinkingLevel(provider, id) ??
-    settings.getDefaultThinkingLevel() ??
-    current
-  );
+/** Project only model identities and supported levels from native settings. */
+export function modelThinkingPreferences(
+  settings: ReturnType<typeof modelSettings>,
+): ModelThinkingPreferences {
+  const defaultLevel = settings.getDefaultThinkingLevel();
+  return {
+    defaultLevel:
+      defaultLevel && THINKING_LEVELS.includes(defaultLevel)
+        ? defaultLevel
+        : undefined,
+    byModel: Object.fromEntries(
+      Object.entries(settings.getAllModelThinkingLevels()).filter(
+        ([identity, level]) =>
+          identity.includes("/") && THINKING_LEVELS.includes(level),
+      ),
+    ),
+  };
 }
 
-/** Resolve the model Pi will choose when Inspire omits `--model` for this
- * workspace. Pi's public SDK owns saved-default, auth, provider-default, and
- * first-available fallback behavior; the host only applies Pi CLI's public
- * enabled-model scope before asking the SDK for the final startup state. */
-export async function resolveNewSessionDefaults(
-  runtime: ModelRuntime,
-  cwd: string,
-  settings = modelSettings(cwd),
-): Promise<NewSessionDefaults> {
-  const agentDir = getAgentDir();
-  const patterns = settings.getEnabledModels() ?? [];
-  const scoped =
-    patterns.length > 0
-      ? (await resolveModelScopeWithDiagnostics(patterns, runtime)).scopedModels
-      : [];
-  const savedProvider = settings.getDefaultProvider();
-  const savedModelId = settings.getDefaultModel();
-  const selectedScope =
-    scoped.length > 0
-      ? (scoped.find(
-          ({ model }) =>
-            model.provider === savedProvider && model.id === savedModelId,
-        ) ?? scoped[0])
-      : undefined;
-
-  // Registrations are already bound to this runtime by the metadata bootstrap.
-  // Resolve with no second extension load or persistent session.
-  const resourceLoader = new DefaultResourceLoader({
-    cwd,
-    agentDir,
-    settingsManager: settings,
-    noExtensions: true,
-    noSkills: true,
-    noPromptTemplates: true,
-    noThemes: true,
-    noContextFiles: true,
-  });
-  await resourceLoader.reload();
-  const { session } = await createAgentSession({
-    cwd,
-    agentDir,
-    modelRuntime: runtime,
-    settingsManager: settings,
+/** Build one native preview after the service factory has registered providers.
+ * Use Pi CLI's enabled-model scope for the model/thinking defaults. */
+export async function createModelPreview(services: AgentSessionServices) {
+  const { modelRuntime, settingsManager, cwd } = services;
+  const patterns = settingsManager.getEnabledModels() ?? [];
+  const scoped = patterns.length
+    ? (await resolveModelScopeWithDiagnostics(patterns, modelRuntime))
+        .scopedModels
+    : [];
+  const selected =
+    scoped.find(
+      ({ model }) =>
+        model.provider === settingsManager.getDefaultProvider() &&
+        model.id === settingsManager.getDefaultModel(),
+    ) ?? scoped[0];
+  return createAgentSessionFromServices({
+    services,
     sessionManager: SessionManager.inMemory(cwd),
-    resourceLoader,
     noTools: "all",
-    ...(selectedScope ? { model: selectedScope.model } : {}),
-    ...(selectedScope?.thinkingLevel
-      ? { thinkingLevel: selectedScope.thinkingLevel }
-      : {}),
+    model: selected?.model,
+    thinkingLevel: selected?.thinkingLevel,
   });
-  const model = session.model;
-  const thinkingLevel = session.thinkingLevel;
-  session.dispose();
-  return {
-    cwd,
-    model: defaultModelOption(model),
-    thinkingLevel,
-  };
 }

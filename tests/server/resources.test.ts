@@ -12,21 +12,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import * as gitRunner from "../../server/git-runner.js";
 import * as projectFiles from "../../server/project-files.js";
 import {
-  invalidateProjectFiles,
-  listProjectDirectory,
-} from "../../server/project-files.js";
-import {
-  openCanonicalResourceFile,
+  openAuthorizedResourceFile,
   ResourceStore,
-  referencePath,
 } from "../../server/resources.js";
+import type { ResourceDescriptor } from "../../shared/contracts.js";
 import { diagnosticResourceReference } from "../../shared/resource-references.js";
 
 const temporaryDirectories: string[] = [];
-let resources = new ResourceStore();
+let resources: ResourceStore;
 
 async function workspace() {
   const root = await realpath(
@@ -38,13 +33,45 @@ async function workspace() {
   return { root, project };
 }
 
-function resourceIdentity(viewId = "view-s1", revision = 1) {
-  return { sessionId: "s1", viewId, revision };
+function scope(cwd: string, revision = 1, viewId = "view-s1") {
+  return { sessionId: "s1", cwd, revision, viewId };
 }
 
+function context(
+  cwd: string,
+  messages: unknown[] = [],
+  revision = 1,
+  viewId = "view-s1",
+) {
+  return { ...scope(cwd, revision, viewId), messages };
+}
+
+function citation(text: string, role = "assistant") {
+  return { role, content: [{ type: "text", text }] };
+}
+
+function resourceByDescriptor({ id, sessionId, viewId }: ResourceDescriptor) {
+  const resource = resources.get(id, sessionId, viewId);
+  if (resource.authority === "embedded") throw new Error("Expected a file");
+  return resource;
+}
+
+async function readResource(descriptor: ResourceDescriptor) {
+  const { handle } = await resources.openForServing(
+    resourceByDescriptor(descriptor),
+  );
+  try {
+    return await handle.readFile("utf8");
+  } finally {
+    await handle.close();
+  }
+}
+
+beforeEach(() => {
+  resources = new ResourceStore();
+});
 afterEach(async () => {
   await resources.close();
-  const { rm } = await import("node:fs/promises");
   await Promise.all(
     temporaryDirectories
       .splice(0)
@@ -53,108 +80,47 @@ afterEach(async () => {
 });
 
 describe("ResourceStore", () => {
-  beforeEach(() => {
-    resources = new ResourceStore();
-  });
-
-  it("paginates one revision-bound citation index without retaining message content", async () => {
+  it("keeps the newest ordered citation index when an older transcript finishes late", async () => {
     const { project } = await workspace();
-    let messageLoads = 0;
-    const messages = Array.from({ length: 20 }, (_, index) => ({
-      role: "assistant",
-      content: [{ type: "text", text: `See \`file-${index}.md\`.` }],
-    }));
-    const context = {
-      sessionId: "s1",
-      viewId: "view-s1",
+    const older = Promise.withResolvers<unknown[]>();
+    const loadOlder = vi.fn(() => older.promise);
+    const current = {
+      ...scope(project, 8),
+      loadMessages: vi.fn(async () => [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "toolCall",
+              id: "edit",
+              name: "edit",
+              arguments: { path: "analysis.m" },
+            },
+          ],
+        },
+        ...Array.from({ length: 101 }, (_, index) =>
+          citation(`See \`file-${index}.md\`.`),
+        ),
+      ]),
+    };
+    const pending = resources.list({
+      ...current,
       revision: 7,
-      cwd: project,
-      loadMessages: async () => {
-        messageLoads += 1;
-        return messages;
-      },
-    };
-
-    const first = await resources.list(context);
-    expect(first).toMatchObject({ offset: 0, total: 20 });
-    expect(first.resources).toHaveLength(8);
-    expect(first.resources[0]?.reference).toBe("file-19.md");
-    expect(first.nextCursor).toEqual(expect.any(String));
-
-    const second = await resources.list(context, {
-      cursor: first.nextCursor!,
-      limit: 10,
+      loadMessages: loadOlder,
     });
-    expect(second).toMatchObject({ offset: 8, total: 20 });
-    expect(second.resources).toHaveLength(10);
-    expect(second.resources[0]?.reference).toBe("file-11.md");
-    expect(second.nextCursor).toEqual(expect.any(String));
-
-    await resources.probe(context, ["file-19.md", "file-0.md"]);
-    expect(messageLoads).toBe(1);
-    await expect(
-      resources.list(
-        { ...context, revision: 8 },
-        { cursor: first.nextCursor! },
-      ),
-    ).rejects.toMatchObject({ status: 409 });
-  });
-
-  it("keeps the newest revision cached when an older index completes later", async () => {
-    const { project } = await workspace();
-    let resolveOlder!: (messages: unknown[]) => void;
-    let resolveNewer!: (messages: unknown[]) => void;
-    const olderMessages = new Promise<unknown[]>((resolve) => {
-      resolveOlder = resolve;
+    const listed = await resources.list(current);
+    expect(listed).toHaveLength(101);
+    expect(listed[0]?.reference).toBe("file-100.md");
+    expect(listed.at(-1)).toMatchObject({
+      reference: "analysis.m",
+      writes: true,
     });
-    const newerMessages = new Promise<unknown[]>((resolve) => {
-      resolveNewer = resolve;
-    });
-    let olderLoads = 0;
-    let newerLoads = 0;
-    const olderContext = {
-      sessionId: "s1",
-      viewId: "view-s1",
-      revision: 7,
-      cwd: project,
-      loadMessages: () => {
-        olderLoads += 1;
-        return olderMessages;
-      },
-    };
-    const newerContext = {
-      ...olderContext,
-      revision: 8,
-      loadMessages: () => {
-        newerLoads += 1;
-        return newerMessages;
-      },
-    };
-
-    const olderList = resources.list(olderContext);
-    const newerList = resources.list(newerContext);
-    resolveNewer([
-      {
-        role: "assistant",
-        content: [{ type: "text", text: "See `newer.md`." }],
-      },
-    ]);
-    await expect(newerList).resolves.toMatchObject({ total: 1 });
-    resolveOlder([
-      {
-        role: "assistant",
-        content: [{ type: "text", text: "See `older.md`." }],
-      },
-    ]);
-    await expect(olderList).resolves.toMatchObject({ total: 1 });
-
-    await expect(resources.list(newerContext)).resolves.toMatchObject({
-      total: 1,
-    });
-    expect({ olderLoads, newerLoads }).toEqual({
-      olderLoads: 1,
-      newerLoads: 1,
-    });
+    older.resolve([citation("See \`older.md\`.")]);
+    await expect(pending).resolves.toMatchObject([{ reference: "older.md" }]);
+    await resources.probe(current, ["file-19.md", "file-0.md"]);
+    await expect(resources.list(current)).resolves.toEqual(listed);
+    expect(current.loadMessages).toHaveBeenCalledOnce();
+    expect(loadOlder).toHaveBeenCalledOnce();
   });
 
   it("authorizes document images independently without following arbitrary document citations or recovering a different basename", async () => {
@@ -173,204 +139,85 @@ describe("ResourceStore", () => {
       "ignored image",
     );
     await writeFile(join(root, "outside.png"), "outside image");
-    const context = {
-      ...resourceIdentity(),
-      cwd: project,
-      messages: [
-        {
-          role: "assistant",
-          content: [{ type: "text", text: "[Report](reports/README.md)" }],
-        },
-      ],
-    };
+    const source = context(project, [citation("[Report](reports/README.md)")]);
     await expect(
-      resources.resolve(context, "reports/README.md"),
+      resources.resolve(source, "reports/README.md"),
     ).resolves.toMatchObject({ kind: "markdown" });
     await expect(
-      resources.resolve(context, "./reports/curve.png"),
+      resources.resolve(source, "./reports/curve.png"),
     ).resolves.toMatchObject({
       workspacePath: "reports/curve.png",
       kind: "image",
     });
     await expect(
-      resources.resolve(context, "./reports/../node_modules/hidden.png"),
+      resources.resolve(source, "./reports/../node_modules/hidden.png"),
     ).resolves.toMatchObject({
       workspacePath: "node_modules/hidden.png",
       kind: "image",
     });
     await expect(
-      resources.resolve(context, "./reports/../../outside.png"),
+      resources.resolve(source, "./reports/../../outside.png"),
     ).rejects.toMatchObject({ status: 403 });
     for (const reference of ["./reports/missing.png", "./missing.png"])
-      await expect(resources.resolve(context, reference)).rejects.toMatchObject(
-        { status: 404 },
-      );
+      await expect(resources.resolve(source, reference)).rejects.toMatchObject({
+        status: 404,
+      });
   });
 
-  it("opens project-local files without granting a different session the handle", async () => {
+  it("classifies supported source and document families without treating binary lookalikes as text", async () => {
     const { project } = await workspace();
-    await writeFile(join(project, "report.md"), "# Result\n");
-    const messages = [
-      {
-        role: "assistant",
-        content: [{ type: "text", text: "[report](report.md#L1)" }],
-      },
-    ];
-    const descriptor = await resources.resolve(
-      { ...resourceIdentity(), cwd: project, messages },
-      "report.md#L1",
-    );
-
-    expect(descriptor).toMatchObject({
-      sessionId: "s1",
-      name: "report.md",
-      mimeType: "text/markdown",
-      kind: "markdown",
-    });
-    expect(resources.get(descriptor.id, "s1", descriptor.viewId).path).toBe(
-      join(project, "report.md"),
-    );
-    expect(() => resources.get(descriptor.id, "s2", descriptor.viewId)).toThrow(
-      "no longer available",
-    );
-  });
-
-  it("opens native VS Code file URIs with escaped spaces and line/column suffixes", async () => {
-    const { project } = await workspace();
-    const file = join(project, "my report.md");
-    await writeFile(file, "report");
-    const reference =
-      pathToFileURL(file).href.replace(/^file:\/\//, "vscode://file") + ":5:10";
-    expect(referencePath(reference, project)).toBe(file);
-    expect(referencePath(reference.replace(":5:10", "#L5"), project)).toBe(
-      file,
-    );
-    await expect(
-      resources.resolve(
-        { ...resourceIdentity(), cwd: project, messages: [] },
-        reference,
-      ),
-    ).resolves.toMatchObject({ name: "my report.md" });
-  });
-
-  it("classifies common source and extensionless project files as text", async () => {
-    const { project } = await workspace();
-    const names = [
-      "query.sql",
-      "Main.java",
-      "task.rb",
-      "index.php",
-      "Panel.vue",
-      "Widget.svelte",
-      "Dockerfile",
-      "Makefile",
-      "LICENSE",
-      ".env.local",
-    ];
-    await Promise.all(
-      names.map((name) => writeFile(join(project, name), "plain source\n")),
-    );
-
-    for (const name of names) {
-      const descriptor = await resources.resolve(
-        {
-          ...resourceIdentity(),
-          cwd: project,
-          messages: [
-            {
-              role: "assistant",
-              content: [{ type: "text", text: `[file](${name})` }],
-            },
-          ],
-        },
+    const source = context(project);
+    for (const [name, bytes, kind] of [
+      ["query.sql", "select 1", "text"],
+      ["Dockerfile", "FROM scratch", "text"],
+      [".bash_profile", "export NAME=fixture", "text"],
+      ["setup.ps1", "Write-Output fixture", "text"],
+      ["build.cmd", "echo fixture", "text"],
+      ["main.mm", "int main() {}", "text"],
+      ["App.csproj", "<Project/>", "text"],
+      ["Info.plist", '<?xml version="1.0"?><plist><dict/></plist>', "text"],
+      ["Binary.plist", Buffer.from("bplist00\x00\x01"), "binary"],
+      ["unknown.bin", Buffer.from([0, 255]), "binary"],
+      ["analysis.ipynb", '{"cells":[],"nbformat":4}', "notebook"],
+    ] as const) {
+      await writeFile(join(project, name), bytes);
+      await expect(
+        resources.resolve(source, name),
         name,
-      );
-      expect(descriptor.kind, name).toBe("text");
+      ).resolves.toMatchObject({ name, kind });
     }
   });
 
-  it("classifies Jupyter notebooks as renderable documents", async () => {
+  it("probes exact workspace files without a transcript and shares one lazy load for citations", async () => {
     const { project } = await workspace();
-    await writeFile(
-      join(project, "analysis.ipynb"),
-      JSON.stringify({ cells: [], metadata: {}, nbformat: 4 }),
-    );
-
-    const descriptor = await resources.resolve(
-      { ...resourceIdentity(), cwd: project, messages: [] },
-      "analysis.ipynb",
-    );
-
-    expect(descriptor).toMatchObject({
-      name: "analysis.ipynb",
-      mimeType: "application/x-ipynb+json",
-      kind: "notebook",
-    });
-  });
-
-  it("binds citation handles to one branch view while allowing same-view append revalidation", async () => {
-    const { root, project } = await workspace();
-    await writeFile(join(root, "branch-only.txt"), "branch A\n");
-    const citation = {
-      role: "assistant",
-      content: [{ type: "text", text: "[branch](../branch-only.txt)" }],
-    };
-    const contextA = {
-      ...resourceIdentity("view-a"),
-      cwd: project,
-      messages: [citation],
-    };
-    const descriptor = await resources.resolve(contextA, "../branch-only.txt");
-    const resource = resources.get(descriptor.id, "s1", "view-a");
-
-    await expect(
-      resources.revalidate(resource, {
-        ...contextA,
-        messages: [citation, { role: "assistant", content: "append" }],
-      }),
-    ).resolves.toBeUndefined();
-    expect(() => resources.get(descriptor.id, "s1", "view-b")).toThrow(
-      "no longer available",
-    );
-    await expect(
-      resources.revalidate(resource, {
-        ...resourceIdentity("view-b"),
-        cwd: project,
-        messages: [],
-      }),
-    ).rejects.toMatchObject({ status: 409 });
-  });
-
-  it("preflights availability without retaining preview handles and shares one lazy transcript load", async () => {
-    const { project } = await workspace();
-    await writeFile(join(project, "visible.md"), "visible\n");
     await mkdir(join(project, "node_modules"));
-    await writeFile(join(project, "node_modules", "hidden.md"), "hidden\n");
-    let messageLoads = 0;
-    const context = {
-      ...resourceIdentity(),
-      cwd: project,
-      loadMessages: async () => {
-        messageLoads += 1;
-        return [
-          {
-            role: "assistant",
-            content: [{ type: "text", text: "See `missing.md`." }],
-          },
-        ];
-      },
-    };
+    await writeFile(join(project, "visible.md"), "visible");
+    await writeFile(join(project, "node_modules/hidden.md"), "hidden");
+    const current = scope(project);
+    const unavailable = vi.fn(async () => {
+      throw new Error("Transcript unavailable");
+    });
+    await expect(
+      resources.resolve(
+        { ...current, loadMessages: unavailable },
+        "visible.md",
+      ),
+    ).resolves.toMatchObject({ workspacePath: "visible.md" });
+    expect(unavailable).not.toHaveBeenCalled();
 
-    const results = await resources.probe(context, [
+    const loadMessages = vi.fn(async () => [citation("See \`missing.md\`.")]);
+    const references = [
       "visible.md",
       "missing.md",
       "node_modules/hidden.md",
       "../outside-a.md",
       "../outside-b.md",
       "file://%",
-    ]);
-
-    expect(results).toEqual([
+      "node_modules",
+    ];
+    await expect(
+      resources.probe({ ...current, loadMessages }, references),
+    ).resolves.toEqual([
       {
         reference: "visible.md",
         availability: "available",
@@ -386,7 +233,7 @@ describe("ResourceStore", () => {
         availability: "available",
         workspacePath: "node_modules/hidden.md",
       },
-      ...["../outside-a.md", "../outside-b.md"].map((reference) => ({
+      ...references.slice(3, 5).map((reference) => ({
         reference,
         availability: "unavailable",
         message:
@@ -397,180 +244,13 @@ describe("ResourceStore", () => {
         availability: "invalid",
         message: "The file reference is not valid",
       },
+      {
+        reference: "node_modules",
+        availability: "invalid",
+        message: "The reference is not a file",
+      },
     ]);
-    expect(messageLoads).toBe(1);
-  });
-
-  it("does not load the transcript for an indexed workspace file", async () => {
-    const { project } = await workspace();
-    await writeFile(join(project, "indexed.txt"), "indexed\n");
-    let messageLoads = 0;
-
-    const descriptor = await resources.resolve(
-      {
-        ...resourceIdentity(),
-        cwd: project,
-        loadMessages: async () => {
-          messageLoads += 1;
-          return [];
-        },
-      },
-      "indexed.txt",
-    );
-
-    expect(descriptor.name).toBe("indexed.txt");
-    expect(messageLoads).toBe(0);
-  });
-
-  it("anchors serving to the resolved inode while observing same-file rewrites", async () => {
-    const { root, project } = await workspace();
-    const report = join(project, "report.md");
-    await writeFile(report, "# Result\n");
-    await writeFile(join(root, "secret.txt"), "SECRET\n");
-    const messages = [
-      {
-        role: "assistant",
-        content: [{ type: "text", text: "[report](report.md)" }],
-      },
-    ];
-    const descriptor = await resources.resolve(
-      { ...resourceIdentity(), cwd: project, messages },
-      "report.md",
-    );
-    const resource = resources.get(descriptor.id, "s1", descriptor.viewId);
-    const opened = await resources.openForServing(resource);
-    expect(opened.size).toBe("# Result\n".length);
-    expect(await opened.handle.readFile("utf8")).toBe("# Result\n");
-    await opened.handle.close();
-
-    // A legitimate rewrite retains the authorized filesystem object. Serving
-    // opens a fresh handle, so it reports current bytes rather than stale
-    // resolve-time metadata.
-    await writeFile(report, "# Rewritten in place\n");
-    const rewritten = await resources.openForServing(resource);
-    expect(await rewritten.handle.readFile("utf8")).toBe(
-      "# Rewritten in place\n",
-    );
-    await rewritten.handle.close();
-
-    await rm(report);
-    if (process.platform !== "win32") {
-      // Swapping the file for a symlink to an outside secret is rejected before
-      // following the link.
-      await symlink(join(root, "secret.txt"), report);
-      await expect(resources.openForServing(resource)).rejects.toMatchObject({
-        status: 409,
-      });
-      await rm(report);
-    }
-
-    // Same-path regeneration would otherwise be able to reuse an inode on some
-    // filesystems. The retained anchor keeps the original inode live, so the
-    // stale handle must be re-resolved rather than serving new bytes.
-    await writeFile(report, "# Regenerated\n");
-    await expect(resources.openForServing(resource)).rejects.toMatchObject({
-      status: 409,
-    });
-  });
-
-  it("allows a file only when the owning session explicitly references it", async () => {
-    const { root, project } = await workspace();
-    const artifact = join(root, "artifact.pdf");
-    await writeFile(artifact, "%PDF-test");
-
-    await expect(
-      resources.resolve(
-        { ...resourceIdentity(), cwd: project, messages: [] },
-        artifact,
-      ),
-    ).rejects.toMatchObject({ status: 403 });
-
-    const messages = [
-      {
-        role: "assistant",
-        content: [
-          {
-            type: "toolCall",
-            id: "read-1",
-            name: "read",
-            arguments: { path: artifact },
-          },
-        ],
-      },
-    ];
-    const descriptor = await resources.resolve(
-      { ...resourceIdentity("view-s1", 2), cwd: project, messages },
-      artifact,
-    );
-    expect(descriptor).toMatchObject({
-      name: "artifact.pdf",
-      mimeType: "application/pdf",
-      kind: "pdf",
-    });
-  });
-
-  it.each([
-    "setup.ps1",
-    "module.psm1",
-    "module.psd1",
-    "build.cmd",
-    "build.bat",
-    "profile.bash",
-    ".bashrc",
-    ".bash_profile",
-    "profile.zsh",
-    ".zshrc",
-    ".zprofile",
-    ".gitconfig",
-    ".gitattributes",
-    "config.fish",
-    "main.m",
-    "main.mm",
-    "App.csproj",
-    "App.fsproj",
-    "App.vbproj",
-    "Directory.Build.props",
-    "Directory.Build.targets",
-    "App.sln",
-    "App.slnx",
-    "Info.plist",
-  ])("serves native source/configuration as text: %s", async (name) => {
-    const { project } = await workspace();
-    const content = name.endsWith(".plist")
-      ? '<?xml version="1.0"?><plist><dict/></plist>'
-      : "native source λ\n";
-    await writeFile(join(project, name), content);
-    const descriptor = await resources.resolve(
-      { ...resourceIdentity(), cwd: project, messages: [] },
-      name,
-    );
-    expect(descriptor.kind).toBe("text");
-    const opened = await resources.openForServing(
-      resources.get(descriptor.id, "s1", descriptor.viewId),
-    );
-    try {
-      expect(await opened.handle.readFile("utf8")).toBe(content);
-    } finally {
-      await opened.handle.close();
-    }
-  });
-
-  it("keeps binary property lists and unknown binary files out of the source reader", async () => {
-    const { project } = await workspace();
-    for (const [name, content] of [
-      ["Info.plist", Buffer.from([98, 112, 108, 105, 115, 116, 48, 48, 0, 1])],
-      ["native.bin", Buffer.from([0, 255, 1, 2])],
-    ] as const) {
-      await writeFile(join(project, name), content);
-      const descriptor = await resources.resolve(
-        { ...resourceIdentity(), cwd: project, messages: [] },
-        name,
-      );
-      expect(descriptor).toMatchObject({
-        kind: "binary",
-        mimeType: "application/octet-stream",
-      });
-    }
+    expect(loadMessages).toHaveBeenCalledOnce();
   });
 
   it("authorizes a complete spaced diagnostic path, never its existing sibling prefix", async () => {
@@ -580,156 +260,68 @@ describe("ResourceStore", () => {
     await mkdir(join(root, "Jane Doe"));
     await writeFile(outside, "correct report\n");
     await writeFile(wrongPrefix, "not cited\n");
-    const context = {
-      ...resourceIdentity(),
-      cwd: project,
-      messages: [
-        {
-          role: "toolResult",
-          content: [{ type: "text", text: outside + ":12:3: error: fixture" }],
-        },
-      ],
-    };
-    const listed = await resources.list(context);
-    expect(listed.resources.map((item) => item.reference)).toEqual([
+    const source = context(project, [
+      citation(`${outside}:12:3: error: fixture`, "toolResult"),
+    ]);
+    const listed = await resources.list(source);
+    expect(listed.map((item) => item.reference)).toEqual([
       diagnosticResourceReference(outside + ":12:3"),
     ]);
-    await expect(resources.resolve(context, outside)).resolves.toMatchObject({
+    await expect(resources.resolve(source, outside)).resolves.toMatchObject({
       name: "report.m",
       kind: "text",
     });
-    await expect(resources.resolve(context, wrongPrefix)).rejects.toMatchObject(
-      { status: 403 },
-    );
-  });
-
-  it("recognizes Pi-style file URLs and Markdown local links", async () => {
-    const { root, project } = await workspace();
-    const image = join(root, "chart one.png");
-    await writeFile(image, "png");
-    const href = pathToFileURL(image).href;
-    const messages = [
-      {
-        role: "assistant",
-        content: [{ type: "text", text: `[chart](<${href}>)` }],
-      },
-    ];
-
-    const descriptor = await resources.resolve(
-      { ...resourceIdentity(), cwd: project, messages },
-      href,
-    );
-    expect(descriptor).toMatchObject({ name: "chart one.png", kind: "image" });
-    expect(referencePath(`${href}#L2`, project)).toBe(image);
-  });
-
-  it("serves full embedded Pi image blocks through an opaque handle", async () => {
-    const { project } = await workspace();
-    const messages = [
-      {
-        role: "toolResult",
-        content: [
-          { type: "image", data: "aW1hZ2UtYnl0ZXM=", mimeType: "image/png" },
-        ],
-      },
-    ];
-    const descriptor = await resources.resolve(
-      { ...resourceIdentity(), cwd: project, messages },
-      "pi-embedded://0/0",
-    );
-    const resolved = resources.get(descriptor.id, "s1", descriptor.viewId);
-    expect(descriptor).toMatchObject({
-      kind: "image",
-      mimeType: "image/png",
-      size: 11,
+    await expect(resources.resolve(source, wrongPrefix)).rejects.toMatchObject({
+      status: 403,
     });
-    const content = await resources.embeddedContent(resolved, {
-      ...resourceIdentity(),
-      cwd: project,
-      messages,
-    });
-    expect(content.data.toString()).toBe("image-bytes");
-    expect(content.mimeType).toBe("image/png");
   });
 
-  it("rejects malformed or non-image embedded blocks", async () => {
+  it("reads the current bytes of an embedded reference and rejects invalid or removed blocks", async () => {
     const { project } = await workspace();
-    for (const data of ["not base64!", ""]) {
-      const invalidData = [
-        {
-          role: "toolResult",
-          content: [{ type: "image", data, mimeType: "image/png" }],
-        },
-      ];
-      await expect(
-        resources.resolve(
-          { ...resourceIdentity(), cwd: project, messages: invalidData },
-          "pi-embedded://0/0",
+    const reference = "pi-embedded://3/0";
+    const embedded = (data: string, mimeType: string) => ({
+      role: "toolResult",
+      __inspireMessageIndex: 3,
+      content: [{ type: "image", data, mimeType }],
+    });
+    const image = (text: string) => Buffer.from(text).toString("base64");
+    const descriptor = await resources.resolve(
+      context(project, [embedded(image("old-image"), "image/png")]),
+      reference,
+    );
+    const resource = resources.get(
+      descriptor.id,
+      descriptor.sessionId,
+      descriptor.viewId,
+    );
+    await expect(
+      resources.embeddedContent(
+        resource,
+        context(
+          project,
+          [citation("replacement"), embedded(image("new-image"), "image/jpeg")],
+          2,
         ),
+      ),
+    ).resolves.toEqual({
+      data: Buffer.from("new-image"),
+      mimeType: "image/jpeg",
+    });
+    const invalid = [
+      [],
+      [embedded("not base64!", "image/png")],
+      [embedded("", "image/png")],
+      [embedded(image("html"), "text/html")],
+    ];
+    for (const [offset, messages] of invalid.entries()) {
+      const current = context(project, messages, 3 + offset);
+      await expect(resources.resolve(current, reference)).rejects.toMatchObject(
+        { status: 404 },
+      );
+      await expect(
+        resources.embeddedContent(resource, current),
       ).rejects.toMatchObject({ status: 404 });
     }
-
-    const invalidType = [
-      {
-        role: "toolResult",
-        content: [
-          {
-            type: "image",
-            data: Buffer.from("html").toString("base64"),
-            mimeType: "text/html",
-          },
-        ],
-      },
-    ];
-    await expect(
-      resources.resolve(
-        { ...resourceIdentity(), cwd: project, messages: invalidType },
-        "pi-embedded://0/0",
-      ),
-    ).rejects.toMatchObject({ status: 404 });
-  });
-
-  it("revalidates embedded handles against the current projection before serving", async () => {
-    const { project } = await workspace();
-    const original = [
-      {
-        role: "toolResult",
-        __inspireMessageIndex: 3,
-        content: [
-          { type: "image", data: "b2xkLWltYWdl", mimeType: "image/png" },
-        ],
-      },
-    ];
-    const descriptor = await resources.resolve(
-      { ...resourceIdentity("view-s1", 1), cwd: project, messages: original },
-      "pi-embedded://3/0",
-    );
-    const resolved = resources.get(descriptor.id, "s1", "view-s1");
-    const rewritten = [
-      { role: "assistant", content: [{ type: "text", text: "replacement" }] },
-      {
-        role: "toolResult",
-        __inspireMessageIndex: 3,
-        content: [
-          { type: "image", data: "bmV3LWltYWdl", mimeType: "image/jpeg" },
-        ],
-      },
-    ];
-
-    const rewrittenContent = await resources.embeddedContent(resolved, {
-      ...resourceIdentity("view-s1", 2),
-      cwd: project,
-      messages: rewritten,
-    });
-    expect(rewrittenContent.data.toString()).toBe("new-image");
-    expect(rewrittenContent.mimeType).toBe("image/jpeg");
-    await expect(
-      resources.embeddedContent(resolved, {
-        ...resourceIdentity("view-s1", 3),
-        cwd: project,
-        messages: [],
-      }),
-    ).rejects.toMatchObject({ status: 404 });
   });
 
   it.runIf(process.platform !== "win32")(
@@ -749,235 +341,115 @@ describe("ResourceStore", () => {
       await symlink(outside, nested, "dir");
 
       await expect(
-        openCanonicalResourceFile(authorizedPath),
+        openAuthorizedResourceFile(authorizedPath, authorizedPath),
       ).rejects.toMatchObject({ status: 409 });
     },
   );
 
   it.runIf(process.platform !== "win32")(
-    "binds a cited symlink to the target authorized at resolve time",
+    "admits inside and cited symlinks, then refuses a different target at use",
     async () => {
       const { root, project } = await workspace();
-      await mkdir(join(project, "node_modules"));
-      const first = join(root, "first.txt");
-      const second = join(root, "second.txt");
-      const selected = join(project, "node_modules", "linked.txt");
-      await writeFile(first, "first");
-      await writeFile(second, "second");
-      await symlink(first, selected);
-      const citation = {
-        role: "assistant",
-        content: "[linked](node_modules/linked.txt)",
-      };
-      const context = {
-        ...resourceIdentity(),
-        cwd: project,
-        messages: [citation],
-      };
-      const descriptor = await resources.resolve(
-        context,
-        "node_modules/linked.txt",
+      const inside = join(project, "inside.txt");
+      const outside = join(root, "outside.txt");
+      const link = join(project, "link.txt");
+      await writeFile(inside, "inside");
+      await writeFile(outside, "outside");
+      await symlink(inside, link);
+      const source = context(project);
+      const initial = await resources.resolve(source, "link.txt");
+      expect(initial.workspacePath).toBe("inside.txt");
+      expect(await readResource(initial)).toBe("inside");
+
+      await unlink(link);
+      await symlink(outside, link);
+      await expect(readResource(initial)).rejects.toMatchObject({
+        status: 409,
+      });
+      await expect(resources.resolve(source, "link.txt")).rejects.toMatchObject(
+        { status: 403 },
       );
-      const resource = resources.get(descriptor.id, "s1", descriptor.viewId);
-
-      await unlink(selected);
-      await symlink(second, selected);
-
+      const cited = context(project, [citation("[linked](link.txt)")], 2);
+      const descriptor = await resources.resolve(cited, "link.txt");
+      expect(await readResource(descriptor)).toBe("outside");
+      await unlink(link);
+      await symlink(inside, link);
       await expect(
-        resources.revalidate(resource, context),
-      ).resolves.toBeUndefined();
-      await expect(resources.openForServing(resource)).rejects.toMatchObject({
+        resources.authorize(descriptor.id, cited),
+      ).resolves.toMatchObject({ descriptor });
+      await expect(readResource(descriptor)).rejects.toMatchObject({
+        status: 409,
+      });
+
+      // A formerly regular logical path cannot become a link to the outside either.
+      const regular = await resources.resolve(source, "inside.txt");
+      await unlink(inside);
+      await symlink(outside, inside);
+      await expect(readResource(regular)).rejects.toMatchObject({
         status: 409,
       });
     },
   );
 
-  it.runIf(process.platform !== "win32")(
-    "does not treat a project symlink as authority for an outside file",
-    async () => {
-      const { root, project } = await workspace();
-      const secret = join(root, "outside.txt");
-      await writeFile(secret, "outside");
-      await symlink(secret, join(project, "linked.txt"));
-
-      await expect(
-        resources.resolve(
-          { ...resourceIdentity(), cwd: project, messages: [] },
-          "linked.txt",
-        ),
-      ).rejects.toMatchObject({ status: 403 });
-    },
-  );
-
-  it.runIf(process.platform !== "win32")(
-    "keeps a git-indexed symlink inside the workspace boundary",
-    async () => {
-      const { root, project } = await workspace();
-      const secret = join(root, "outside.txt");
-      await writeFile(secret, "outside");
-      await symlink(secret, join(project, "linked.txt"));
-      // A git cwd indexes the symlink itself (ls-files -co), unlike the
-      // bounded walk — index membership must still not follow it outside.
-      const { execFile } = await import("node:child_process");
-      const { promisify } = await import("node:util");
-      await promisify(execFile)("git", ["-C", project, "init", "-q"]);
-
-      await expect(
-        resources.resolve(
-          { ...resourceIdentity(), cwd: project, messages: [] },
-          "linked.txt",
-        ),
-      ).rejects.toMatchObject({ status: 403 });
-    },
-  );
-
-  it.each(["expiry", "refresh"])(
-    "retains workspace access after %s and Git ignore changes",
-    async (mode) => {
-      const { project } = await workspace();
-      const { execFile } = await import("node:child_process");
-      const { promisify } = await import("node:util");
-      await promisify(execFile)("git", ["-C", project, "init", "-q"]);
-      await writeFile(join(project, "draft.txt"), "draft\n");
-      const context = { ...resourceIdentity(), cwd: project, messages: [] };
-      const git = vi.spyOn(gitRunner, "spawnGit");
-      const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now());
-      try {
-        const descriptor = await resources.resolve(context, "draft.txt");
-        const resource = resources.get(descriptor.id, "s1", descriptor.viewId);
-        await writeFile(join(project, ".gitignore"), "draft.txt\n");
-        await writeFile(join(project, ".git", "index"), "corrupt index");
-        if (mode === "refresh") invalidateProjectFiles(project);
-        else clock.mockReturnValue(Date.now() + 5_001);
-        await expect(
-          resources.revalidate(resource, context),
-        ).resolves.toBeUndefined();
-        const opened = await resources.openForServing(resource);
-        try {
-          expect(await opened.handle.readFile("utf8")).toBe("draft\n");
-        } finally {
-          await opened.handle.close();
-        }
-        expect(git).not.toHaveBeenCalled();
-      } finally {
-        git.mockRestore();
-        clock.mockRestore();
-      }
-    },
-  );
-
-  it("invalidates a cached index when an already-resolved serving file disappears", async () => {
-    const { project } = await workspace();
-    await writeFile(join(project, "gone.txt"), "gone");
-    const context = { ...resourceIdentity(), cwd: project, messages: [] };
-    const descriptor = await resources.resolve(context, "gone.txt");
-    const resource = resources.get(descriptor.id, "s1", descriptor.viewId);
-    await unlink(join(project, "gone.txt"));
-    await resources.revalidate(resource, context);
-    await expect(resources.openForServing(resource)).rejects.toMatchObject({
-      status: 404,
-    });
-    await expect(listProjectDirectory(project)).resolves.toEqual({
-      entries: [],
-      truncated: false,
-    });
-  });
-
-  it("retains workspace access when a cited file is newly Git-ignored", async () => {
-    const { project } = await workspace();
-    const { execFile } = await import("node:child_process");
-    const { promisify } = await import("node:util");
-    await promisify(execFile)("git", ["-C", project, "init", "-q"]);
-    await writeFile(join(project, "draft.txt"), "draft\n");
-    const context = {
-      ...resourceIdentity(),
-      cwd: project,
-      messages: [{ role: "assistant", content: "[draft](draft.txt)" }],
-    };
-    const descriptor = await resources.resolve(context, "draft.txt");
-    const resource = resources.get(descriptor.id, "s1", descriptor.viewId);
-
-    await writeFile(join(project, ".gitignore"), "draft.txt\n");
-    invalidateProjectFiles(project);
-
-    await expect(
-      resources.revalidate(resource, context),
-    ).resolves.toBeUndefined();
-  });
-
-  it("allows a symlink to an ignored regular file inside the workspace", async () => {
-    const { project } = await workspace();
-    await writeFile(join(project, ".gitignore"), "secret.txt\n");
-    await writeFile(join(project, "secret.txt"), "secret\n");
-    await symlink("secret.txt", join(project, "linked.txt"));
-    const { execFile } = await import("node:child_process");
-    const { promisify } = await import("node:util");
-    await promisify(execFile)("git", ["-C", project, "init", "-q"]);
-    await promisify(execFile)("git", [
-      "-C",
-      project,
-      "add",
-      ".gitignore",
-      "linked.txt",
-    ]);
-
-    await expect(
-      resources.resolve(
-        { ...resourceIdentity(), cwd: project, messages: [] },
-        "linked.txt",
-      ),
-    ).resolves.toMatchObject({ workspacePath: "secret.txt" });
-  });
-
-  it("refuses to infer uniqueness from incomplete discovery without blocking an exact path", async () => {
-    const { project } = await workspace();
-    await mkdir(join(project, "docs"));
-    await writeFile(join(project, "docs", "report.txt"), "synthetic report");
-    // The resolver cares about scan completeness, not why the scanner stopped.
-    // Raw non-UTF-8 filenames are covered by the filesystem scanner's own test.
-    const discover = vi
-      .spyOn(projectFiles, "workspaceBasenameMatches")
-      .mockResolvedValue({ matches: ["docs/report.txt"], truncated: true });
-    const context = { ...resourceIdentity(), cwd: project, messages: [] };
-    await expect(
-      resources.resolve(context, "report.txt"),
-    ).rejects.toMatchObject({
-      status: 409,
-      matches: ["docs/report.txt"],
-    });
-    expect(discover).toHaveBeenCalledWith(project, "report.txt");
-    discover.mockClear();
-    await expect(
-      resources.resolve(context, "docs/report.txt"),
-    ).resolves.toMatchObject({
-      workspacePath: "docs/report.txt",
-    });
-    expect(discover).not.toHaveBeenCalled();
-  });
-
-  it("recovers a bare mention when exactly one discovered file carries that name", async () => {
+  it("proves basename uniqueness only with complete discovery and retires deleted entries", async () => {
     const { project } = await workspace();
     await mkdir(join(project, "src"));
-    await writeFile(join(project, "src", "kernel.py"), "print('k')\n");
-    const messages = [
-      {
-        role: "assistant",
-        content: [{ type: "text", text: "the loop lives in `kernel.py`" }],
-      },
-    ];
+    await mkdir(join(project, "other"));
+    const source = context(project, [citation("Use \`kernel.py\`.")]);
+    const selected = "src/kernel.py";
+    const path = join(project, selected);
+    await writeFile(path, "kernel");
+    const discover = vi.spyOn(projectFiles, "workspaceBasenameMatches");
+    discover.mockResolvedValueOnce({ matches: [selected], truncated: true });
+    await expect(resources.resolve(source, "kernel.py")).rejects.toMatchObject({
+      status: 409,
+      matches: [selected],
+    });
+    expect(discover).toHaveBeenCalledWith(project, "kernel.py");
+    discover.mockClear();
+    await expect(resources.resolve(source, selected)).resolves.toMatchObject({
+      workspacePath: selected,
+    });
+    for (const [reference, exact] of [
+      ["docs/kernel.py", undefined],
+      ["kernel.py", "kernel.py"],
+    ])
+      await expect(
+        resources.resolve(source, reference!, exact),
+      ).rejects.toMatchObject({ status: 404 });
+    expect(discover).not.toHaveBeenCalled();
 
-    const descriptor = await resources.resolve(
-      { ...resourceIdentity(), cwd: project, messages },
-      "kernel.py",
-    );
-    // The descriptor reports where it actually resolved, never the shorthand.
+    const descriptor = await resources.resolve(source, "kernel.py");
     expect(descriptor).toMatchObject({
       name: "kernel.py",
-      reference: "src/kernel.py",
+      reference: selected,
+      workspacePath: selected,
     });
-    expect(resources.get(descriptor.id, "s1", descriptor.viewId).path).toBe(
-      join(project, "src", "kernel.py"),
-    );
+    expect(await readResource(descriptor)).toBe("kernel");
+    const duplicate = "other/kernel.py";
+    await writeFile(join(project, duplicate), "duplicate");
+    projectFiles.invalidateProjectFiles(project);
+    await expect(resources.resolve(source, "kernel.py")).rejects.toMatchObject({
+      status: 409,
+      matches: expect.arrayContaining([selected, duplicate]),
+    });
+    await unlink(path);
+    await expect(readResource(descriptor)).rejects.toMatchObject({
+      status: 404,
+    });
+    await expect(
+      projectFiles.workspaceBasenameMatches(project, "kernel.py"),
+    ).resolves.toMatchObject({ matches: [duplicate] });
+
+    const recovered = await resources.resolve(source, "kernel.py");
+    expect(recovered.workspacePath).toBe(duplicate);
+    await unlink(join(project, duplicate));
+    await expect(resources.resolve(source, "kernel.py")).rejects.toMatchObject({
+      status: 404,
+    });
+    await expect(
+      projectFiles.workspaceBasenameMatches(project, "kernel.py"),
+    ).resolves.toMatchObject({ matches: [] });
   });
 
   it("treats a workspace selection as an exact filesystem path", async () => {
@@ -991,154 +463,129 @@ describe("ResourceStore", () => {
     await Promise.all(
       names.map((name) => writeFile(join(project, name), `${name}\n`)),
     );
-    const context = { ...resourceIdentity(), cwd: project, messages: [] };
+    const source = context(project);
 
     for (const name of names) {
-      const descriptor = await resources.resolve(context, name, true, name);
+      const descriptor = await resources.resolve(source, name, name);
       expect(descriptor).toMatchObject({
         reference: name,
         workspacePath: name,
         name,
       });
-      expect(resources.get(descriptor.id, "s1", descriptor.viewId).path).toBe(
-        join(project, name),
-      );
+      expect(resourceByDescriptor(descriptor).path).toBe(join(project, name));
     }
+    const selected = "literal#L9";
+    await writeFile(join(project, "literal"), "different file");
+    const descriptor = await resources.resolve(source, selected, selected);
+    await writeFile(join(project, ".gitignore"), `${selected}\n`);
+    projectFiles.invalidateProjectFiles(project);
+    await resources.authorize(descriptor.id, source);
+    expect(await readResource(descriptor)).toBe(`${selected}\n`);
   });
+});
 
-  it("keeps an exact workspace filename literal after Git ignore changes", async () => {
-    const { project } = await workspace();
-    const { execFile } = await import("node:child_process");
-    const { promisify } = await import("node:util");
-    const git = (...args: string[]) =>
-      promisify(execFile)("git", ["-C", project, ...args]);
-    await git("init", "-q");
-    await writeFile(join(project, "secret"), "other\n");
-    await writeFile(join(project, "secret#L12"), "selected\n");
-    const context = {
-      ...resourceIdentity(),
-      cwd: project,
-      messages: [{ role: "assistant", content: "[different file](secret)" }],
+describe("literal native paths and URL reference identity", () => {
+  function toolPath(path: string) {
+    return {
+      role: "assistant",
+      content: [{ type: "toolCall", name: "read", arguments: { path } }],
     };
-    const descriptor = await resources.resolve(
-      context,
-      "secret#L12",
-      true,
-      "secret#L12",
+  }
+
+  function urlLink(url: string) {
+    return citation(`[URL target](<${url}>)`);
+  }
+
+  it.each(["inside", "outside"] as const)(
+    "preserves a hash directory and a location-shaped native basename %s the workspace",
+    async (scope) => {
+      const { root, project } = await workspace();
+      const directory = join(scope === "inside" ? project : root, "C#");
+      await mkdir(directory);
+      const path = join(directory, "Program(12).cs");
+      await writeFile(path, "NATIVE_HASH_AND_PARENTHESES");
+      const source = context(project, [toolPath(path)]);
+      const list = await resources.list(source);
+      const descriptor = await resources.resolve(source, list[0]!.reference!);
+      expect(descriptor.name).toBe("Program(12).cs");
+      expect(descriptor.workspacePath).toBe(
+        scope === "inside" ? "C#/Program(12).cs" : undefined,
+      );
+      expect(await readResource(descriptor)).toBe(
+        "NATIVE_HASH_AND_PARENTHESES",
+      );
+    },
+  );
+
+  it("keeps native and URL citations distinct through probes, relative resolution and changes of view", async () => {
+    const { root, project } = await workspace();
+    const directory = join(root, "C#");
+    await mkdir(directory);
+    const literal = join(directory, "report%20draft.md");
+    const decoded = join(directory, "report draft.md");
+    const figure = join(directory, "figure%20draft.svg");
+    await writeFile(literal, "LITERAL");
+    await writeFile(decoded, "URL");
+    await writeFile(figure, "<svg/>");
+    const urlTarget = pathToFileURL(decoded).href;
+    const literalCitation = toolPath(literal);
+    const nativeOnly = context(project, [literalCitation, toolPath(urlTarget)]);
+    const listed = await resources.list(nativeOnly);
+    const native = listed.find(({ label }) => label === literal)!.reference!;
+    expect(listed.find(({ label }) => label === urlTarget)?.reference).toMatch(
+      /^file%3A/u,
     );
-    const resource = resources.get(descriptor.id, "s1", descriptor.viewId);
-
-    await writeFile(join(project, ".gitignore"), "secret#L12\n");
-    invalidateProjectFiles(project);
-
     await expect(
-      resources.revalidate(resource, context),
-    ).resolves.toBeUndefined();
-    const opened = await resources.openForServing(resource);
-    try {
-      expect(await opened.handle.readFile("utf8")).toBe("selected\n");
-    } finally {
-      await opened.handle.close();
-    }
-  });
-
-  it("does not recover another basename for a missing exact workspace path", async () => {
-    const { project } = await workspace();
-    await mkdir(join(project, "src"));
-    await writeFile(join(project, "src", "kernel.py"), "print('k')\n");
-
+      resources.probe(nativeOnly, [native, urlTarget]),
+    ).resolves.toMatchObject([
+      { availability: "available" },
+      { availability: "unavailable" },
+    ]);
     await expect(
-      resources.resolve(
-        { ...resourceIdentity(), cwd: project, messages: [] },
-        "kernel.py",
-        true,
-        "kernel.py",
-      ),
+      resources.resolve(nativeOnly, urlTarget),
+    ).rejects.toMatchObject({ status: 403 });
+
+    const citedUrl = urlLink(urlTarget);
+    const before = context(
+      project,
+      [literalCitation, citedUrl, toolPath(figure)],
+      2,
+    );
+    const descriptor = await resources.resolve(before, native);
+    const urlDescriptor = await resources.resolve(before, urlTarget);
+    expect(descriptor.name).toBe("report%20draft.md");
+    expect(urlDescriptor.name).toBe("report draft.md");
+    expect(await readResource(descriptor)).toBe("LITERAL");
+    expect(await readResource(urlDescriptor)).toBe("URL");
+    const relative =
+      descriptor.reference.slice(0, descriptor.reference.lastIndexOf("/") + 1) +
+      "figure%2520draft.svg";
+    expect(relative).toContain("C%23/figure%2520draft.svg");
+    expect(await readResource(await resources.resolve(before, relative))).toBe(
+      "<svg/>",
+    );
+
+    const appended = {
+      ...before,
+      revision: 3,
+      messages: [...before.messages, citation("append")],
+    };
+    await expect(
+      resources.authorize(descriptor.id, appended),
+    ).resolves.toMatchObject({ descriptor });
+    await expect(
+      resources.authorize(descriptor.id, { ...appended, viewId: "view-b" }),
     ).rejects.toMatchObject({ status: 404 });
-  });
 
-  it("refuses to guess between duplicate basenames and offers the candidates", async () => {
-    const { project } = await workspace();
-    await mkdir(join(project, "a"));
-    await mkdir(join(project, "b"));
-    await writeFile(join(project, "a", "notes.md"), "a\n");
-    await writeFile(join(project, "b", "notes.md"), "b\n");
-    const messages = [
-      {
-        role: "assistant",
-        content: [{ type: "text", text: "compare `notes.md`" }],
-      },
-    ];
-
+    const after = context(project, [citedUrl], 4);
     await expect(
-      resources.resolve(
-        { ...resourceIdentity(), cwd: project, messages },
-        "notes.md",
-      ),
-    ).rejects.toMatchObject({
-      status: 409,
-      matches: expect.arrayContaining(["a/notes.md", "b/notes.md"]),
+      resources.authorize(descriptor.id, after),
+    ).rejects.toMatchObject({ status: 403 });
+    await expect(resources.resolve(after, native)).rejects.toMatchObject({
+      status: 403,
     });
-  });
-
-  it("never recovers a reference that makes its own location claim", async () => {
-    const { project } = await workspace();
-    await mkdir(join(project, "src"));
-    await writeFile(join(project, "src", "kernel.py"), "print('k')\n");
-    const messages = [
-      {
-        role: "assistant",
-        content: [
-          { type: "text", text: "see `docs/kernel.py` and `absent.py`" },
-        ],
-      },
-    ];
-    const context = { ...resourceIdentity(), cwd: project, messages };
-
-    // A located path names one file and no other; a bare name with no match
-    // stays unavailable rather than being resolved to something nearby.
     await expect(
-      resources.resolve(context, "docs/kernel.py"),
-    ).rejects.toMatchObject({ status: 404 });
-    await expect(resources.resolve(context, "absent.py")).rejects.toMatchObject(
-      { status: 404 },
-    );
-  });
-
-  it("stops offering a tracked path whose file is gone, rescanning after the failed preview", async () => {
-    const { project } = await workspace();
-    const { execFile } = await import("node:child_process");
-    const { promisify } = await import("node:util");
-    const git = (...args: string[]) =>
-      promisify(execFile)("git", ["-C", project, ...args]);
-    await git("init", "-q");
-    await writeFile(join(project, "kept.txt"), "kept\n");
-    await writeFile(join(project, "gone.txt"), "gone\n");
-    await git("add", "-A");
-    // Warm the index while both files exist.
-    expect(
-      (await listProjectDirectory(project)).entries.map((entry) => entry.name),
-    ).toEqual(["gone.txt", "kept.txt"]);
-
-    const { rm } = await import("node:fs/promises");
-    await rm(join(project, "gone.txt"));
-    const messages = [
-      {
-        role: "assistant",
-        content: [{ type: "text", text: "wrote `gone.txt`" }],
-      },
-    ];
-    await expect(
-      resources.resolve(
-        { ...resourceIdentity(), cwd: project, messages },
-        "gone.txt",
-      ),
-    ).rejects.toMatchObject({ status: 404 });
-
-    // The failed preview invalidated the cached index; the rescan subtracts
-    // the tracked-but-deleted path instead of offering it again.
-    expect(
-      (await listProjectDirectory(project)).entries.map((entry) => entry.name),
-    ).toEqual(["kept.txt"]);
+      resources.authorize(urlDescriptor.id, after),
+    ).resolves.toMatchObject({ descriptor: urlDescriptor });
   });
 });

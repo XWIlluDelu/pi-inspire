@@ -6,13 +6,16 @@ import type {
   HostRestartStatus,
 } from "../../shared/host-restart";
 import { HostRestartClient } from "../../src/controllers/host-restart-controller";
+import { deferred } from "./helpers";
 
+const recoveryKey = "inspire:host-restart:v1";
 beforeEach(() => sessionStorage.clear());
+
 function fixture() {
   const status: HostRestartStatus = {
     hostId: crypto.randomUUID(),
     available: true,
-    allAvailable: true,
+    allPiAvailable: true,
     operation: null,
   };
   const api = {
@@ -25,107 +28,88 @@ function fixture() {
       }),
     ),
   };
-  return { status, api, client: new HostRestartClient(api) };
+  const client = new HostRestartClient(api);
+  const observe = async () => {
+    await client.refresh();
+    return client.snapshot();
+  };
+  return { status, api, client, observe };
 }
 
 describe("browser restart delivery", () => {
-  it("persists before POST, keeps lost delivery across reload, and retries the identical request only explicitly", async () => {
+  it.each(["status", "receipt"] as const)(
+    "keeps newer restart evidence when %s arrives late",
+    async (delayed) => {
+      const { status, api, client, observe } = fixture();
+      const historical: HostRestartOperation = {
+        id: crypto.randomUUID(),
+        scope: "host",
+        phase: "rejected",
+        busyReason: "active-work",
+      };
+      status.operation = historical;
+      await observe();
+      const pendingStatus = deferred<HostRestartStatus>();
+      const pendingReceipt = deferred<HostRestartOperation>();
+      let reading: Promise<unknown> | undefined;
+      if (delayed === "status") {
+        api.hostRestartStatus.mockReturnValueOnce(pendingStatus.promise);
+        reading = observe();
+      } else api.restartHost.mockReturnValueOnce(pendingReceipt.promise);
+
+      const seen: Array<HostRestartOperation | null | undefined> = [];
+      const unsubscribe = client.subscribe(() =>
+        seen.push(client.snapshot().status?.operation),
+      );
+      const sending = client.start("host", status.hostId);
+      const request = api.restartHost.mock.calls[0]![0];
+      expect(client.snapshot().sending).toBe(true);
+      const operation = { id: request.operationId, scope: request.scope };
+      const accepted = { ...operation, phase: "preparing" as const };
+      const newer =
+        delayed === "status"
+          ? accepted
+          : { ...operation, phase: "submitted" as const };
+      status.operation = newer;
+      if (delayed === "status") {
+        await vi.waitFor(() =>
+          expect(client.snapshot().status?.operation).toEqual(accepted),
+        );
+        seen.length = 0;
+        pendingStatus.resolve({ ...status, operation: historical });
+      } else {
+        await observe();
+        seen.length = 0;
+        pendingReceipt.resolve(accepted);
+      }
+      await Promise.all([sending, reading]);
+      expect(seen).not.toContainEqual(
+        delayed === "status" ? historical : accepted,
+      );
+      expect(client.snapshot().status?.operation).toEqual(status.operation);
+      unsubscribe();
+    },
+  );
+
+  it("requires all-Pi authority, observes ordinary restart reconnection and rejects a retired address", async () => {
     const f = fixture();
-    f.api.restartHost.mockImplementation(async () => {
-      expect(sessionStorage.getItem("inspire:host-restart:v1")).not.toBeNull();
-      throw new Error("lost");
+    await f.client.refresh();
+    await f.client.start("all-pi", f.status.hostId);
+    f.status.allPiAvailable = false;
+    await f.client.refresh();
+    await f.client.start("all-pi", f.status.hostId, true);
+    expect(f.api.restartHost).not.toHaveBeenCalled();
+    expect(f.client.snapshot().pending).toBeNull();
+    const oldHostId = f.status.hostId;
+    await f.client.start("host", oldHostId);
+    f.status.hostId = crypto.randomUUID();
+    await f.client.refresh();
+    expect(f.client.snapshot()).toMatchObject({
+      pending: null,
+      notice: "Host reconnected.",
     });
-    await f.client.refresh();
-    await f.client.start("all", f.status.hostId);
-    const request = f.api.restartHost.mock.calls[0]![0];
-    const reloaded = new HostRestartClient(f.api);
-    await reloaded.refresh();
-    await reloaded.refresh();
-    expect(f.api.restartHost).toHaveBeenCalledOnce();
-    expect(reloaded.snapshot().pending).toEqual(request);
-    await reloaded.start("host", f.status.hostId);
-    expect(f.api.restartHost).toHaveBeenCalledOnce();
-    await reloaded.retry();
-    expect(f.api.restartHost.mock.calls[1]![0]).toEqual(request);
-  });
-
-  it("persists the work-interruption grant inside a distinct operation and replays only that grant", async () => {
-    const f = fixture();
-    await f.client.refresh();
-    await f.client.start("host", f.status.hostId, true);
-    const request = f.api.restartHost.mock.calls[0]![0];
-    expect(request).toMatchObject({ scope: "host", interruptWork: true });
-    const reloaded = new HostRestartClient(f.api);
-    await reloaded.refresh();
-    expect(reloaded.snapshot().pending).toEqual(request);
-    await reloaded.retry();
-    expect(f.api.restartHost.mock.calls[1]![0]).toEqual(request);
-    await reloaded.start("host", f.status.hostId);
-    expect(f.api.restartHost).toHaveBeenCalledTimes(2);
-  });
-
-  it("does not treat an HTTP rejection as proof that a previously delivered restart failed", async () => {
-    const f = fixture();
-    await f.client.refresh();
-    await f.client.start("host", f.status.hostId);
-    f.api.restartHost.mockRejectedValue(new Error("401"));
     await f.client.retry();
-    expect(f.client.snapshot().pending).not.toBeNull();
-    f.status.operation = {
-      id: f.client.snapshot().pending!.operationId,
-      scope: "host",
-      phase: "rejected",
-      error: "Build failed",
-    };
-    await f.client.refresh();
-    expect(f.client.snapshot().pending).toBeNull();
-    expect(f.client.snapshot().status?.operation?.error).toBe("Build failed");
-  });
-
-  it("uses the new Host identity as reconnection evidence and never replays an old operation there", async () => {
-    const f = fixture();
-    await f.client.refresh();
-    await f.client.start("all", f.status.hostId);
-    f.status.hostId = crypto.randomUUID();
-    await f.client.refresh();
-    expect(f.client.snapshot().pending).toBeNull();
-    expect(f.client.snapshot().notice).toBe("Host reconnected.");
-    await f.client.retry();
-    expect(f.api.restartHost).toHaveBeenCalledOnce();
-  });
-
-  it("does not dispatch an unavailable scope while ordinary restart is supported", async () => {
-    const f = fixture();
-    f.status.allAvailable = false;
-    await f.client.refresh();
-    await f.client.start("all", f.status.hostId);
-    expect(f.api.restartHost).not.toHaveBeenCalled();
-    expect(f.client.snapshot().pending).toBeNull();
-    await f.client.start("host", f.status.hostId);
-    expect(f.api.restartHost).toHaveBeenCalledOnce();
-  });
-
-  it("abandons stale confirmations without sending", async () => {
-    const f = fixture();
-    await f.client.refresh();
-    const old = f.status.hostId;
-    f.status.hostId = crypto.randomUUID();
-    await f.client.refresh();
-    await f.client.start("host", old);
-    expect(f.api.restartHost).not.toHaveBeenCalled();
-  });
-
-  it("keeps Host observation independent of broken local recovery and unblocks after repair", async () => {
-    const f = fixture();
-    sessionStorage.setItem("inspire:host-restart:v1", "{broken}");
-    await f.client.refresh();
-    expect(f.client.snapshot().status).toEqual(f.status);
-    expect(f.client.snapshot().blocked).toBe(true);
-    expect(f.api.restartHost).not.toHaveBeenCalled();
-    sessionStorage.removeItem("inspire:host-restart:v1");
-    await f.client.refresh();
-    expect(f.client.snapshot().blocked).toBe(false);
-    await f.client.start("host", f.status.hostId);
+    await f.client.start("host", oldHostId);
     expect(f.api.restartHost).toHaveBeenCalledOnce();
   });
 
@@ -133,18 +117,29 @@ describe("browser restart delivery", () => {
     const f = fixture();
     f.status.operation = {
       id: crypto.randomUUID(),
-      scope: "all",
+      scope: "host",
       phase: "submitted",
     };
-    sessionStorage.setItem("inspire:host-restart:v1", "{broken}");
+    sessionStorage.setItem(
+      recoveryKey,
+      JSON.stringify({
+        hostId: f.status.hostId,
+        operationId: f.status.operation.id,
+        scope: f.status.operation.scope,
+        interruptWork: false,
+      }),
+    );
     await f.client.refresh();
+    expect(f.client.snapshot().recoveryInvalid).toBe(true);
+    await f.client.start("host", f.status.hostId);
     await f.client.clearRecovery();
     expect(f.client.snapshot()).toMatchObject({
       blocked: false,
+      recoveryInvalid: false,
       pending: null,
       status: f.status,
     });
-    expect(sessionStorage.getItem("inspire:host-restart:v1")).toBeNull();
+    expect(sessionStorage.getItem(recoveryKey)).toBeNull();
     expect(f.api.restartHost).not.toHaveBeenCalled();
   });
 
@@ -176,7 +171,7 @@ describe("browser restart delivery", () => {
       blocked: true,
       status: { operation: { phase: "rejected", error: "Build failed" } },
     });
-    expect(client.snapshot().error).toMatch(/recovery record/);
+    expect(client.snapshot().error).toMatch(/saved restart status/);
     await client.clearRecovery();
     expect(client.snapshot().pending).not.toBeNull();
     expect(f.api.restartHost).toHaveBeenCalledOnce();
@@ -190,27 +185,26 @@ describe("browser restart delivery", () => {
     expect(f.api.restartHost).toHaveBeenCalledOnce();
   });
 
-  it("blocks writes when recovery storage is malformed or unavailable", async () => {
+  it("observes Host and blocks dispatch until browser storage becomes available", async () => {
+    const { status, api } = fixture();
+    let available = false;
+    const client = new HostRestartClient(api, () => {
+      if (!available) throw new Error("storage unavailable");
+      return sessionStorage;
+    });
+    await client.refresh();
+    expect(client.snapshot()).toMatchObject({ blocked: true, status });
+    await client.start("host", status.hostId);
+    expect(api.restartHost).not.toHaveBeenCalled();
+    available = true;
+    await client.refresh();
+    expect(client.snapshot()).toMatchObject({ blocked: false, error: null });
+    await client.start("host", status.hostId);
+    expect(api.restartHost).toHaveBeenCalledOnce();
+  });
+
+  it("does not dispatch when it cannot persist the request", async () => {
     const f = fixture();
-    sessionStorage.setItem("inspire:host-restart:v1", "{broken}");
-    await f.client.refresh();
-    await f.client.start("host", f.status.hostId);
-    expect(f.client.snapshot().blocked).toBe(true);
-    expect(f.api.restartHost).not.toHaveBeenCalled();
-    sessionStorage.clear();
-    sessionStorage.setItem(
-      "inspire:host-restart:v1",
-      JSON.stringify({
-        hostId: f.status.hostId,
-        operationId: crypto.randomUUID(),
-        scope: "host",
-        interruptWork: false,
-      }),
-    );
-    const invalidGrant = new HostRestartClient(f.api);
-    await invalidGrant.refresh();
-    expect(invalidGrant.snapshot().blocked).toBe(true);
-    sessionStorage.clear();
     const client = new HostRestartClient(
       f.api,
       () =>
@@ -222,8 +216,9 @@ describe("browser restart delivery", () => {
         }) as unknown as Storage,
     );
     await client.refresh();
-    await client.start("all", f.status.hostId);
+    await client.start("host", f.status.hostId);
     expect(client.snapshot().blocked).toBe(true);
+    expect(client.snapshot().recoveryInvalid).toBe(false);
     expect(f.api.restartHost).not.toHaveBeenCalled();
   });
 });

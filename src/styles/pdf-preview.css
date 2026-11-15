@@ -7,58 +7,61 @@
 }
 
 .pdf-preview__toolbar {
-  display: flex;
-  align-items: center;
-  flex: none;
-  padding: 0 4px;
-  border-bottom: 1px solid var(--hairline);
+  padding: var(--space-2) var(--space-3);
   font: 500 var(--text-xs)/var(--leading-ui) var(--font-sans);
 }
 
-.pdf-preview__toolbar .icon-button {
-  width: 44px;
-  height: 44px;
-  flex: none;
+/* Keep PDF controls clear of the floating file actions in a narrow pane. */
+@container file-preview (max-width: 420px) {
+  .pdf-preview__toolbar {
+    padding-top: 48px;
+  }
 }
 
 .pdf-preview__page-number {
   min-width: 3.5em;
   text-align: center;
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
 .pdf-preview__spacer {
-  flex: 1;
+  flex: 0 0 1px;
+  height: 16px;
+  margin-inline: var(--space-1);
+  background: var(--hairline);
 }
 
-.pdf-preview__fit {
-  min-width: 44px;
-  height: 44px;
-  padding: 0 4px;
-  color: var(--ink);
-  border: 0;
-  border-radius: var(--radius-control);
-  background: transparent;
-  cursor: pointer;
+.pdf-preview__fit.button {
+  min-width: 36px;
+  min-height: var(--pane-tool-size);
+  padding: 0 var(--space-2);
   font: inherit;
+  font-variant-numeric: tabular-nums;
 }
 
-.pdf-preview__fit:hover {
-  background: var(--bg-inset);
-}
-
-.pdf-preview__page {
+.pdf-preview__viewport {
   position: relative;
   flex: 1;
   min-height: 0;
 }
 
+.pdf-preview__pages { position: relative; }
+
+.pdf-preview__page {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+}
+
 .pdf-preview__scroll {
   height: 100%;
   overflow: auto;
-  padding: 12px;
+  padding: 0 12px;
   scrollbar-gutter: stable;
+  overflow-anchor: none;
 }
 
 .pdf-preview__state {
@@ -130,4 +133,21 @@
 .pdf-preview__text-layer ::selection {
   background: color-mix(in srgb, Highlight 35%, transparent);
   color: transparent;
+}
+
+.pdf-preview__find-field {
+  --search-height: var(--pane-tool-size);
+  flex: 1;
+  max-width: 260px;
+}
+
+.pdf-preview__toolbar--find .pdf-preview__page-number {
+  min-width: 5.5em;
+}
+
+/* PDF.js text-layer spans carry transparent glyphs over the canvas; the hit
+   tints the span box behind them. */
+.pdf-preview__text-layer .pdf-preview__hit {
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--warning) 38%, transparent);
 }

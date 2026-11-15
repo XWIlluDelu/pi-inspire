@@ -11,6 +11,7 @@ import {
   isolatedProcessOptions,
   signalProcessTree,
 } from "../../server/process-tree.mjs";
+import { freeLoopbackPort } from "../fixtures/packaged-launcher.mjs";
 import { isolatedTestEnvironment } from "./fixtures/isolated-environment.js";
 
 const root = resolve(import.meta.dirname, "../..");
@@ -35,19 +36,13 @@ async function listen(server: Server): Promise<number> {
     throw new Error("Expected TCP listener");
   return address.port;
 }
-async function freePort(): Promise<number> {
-  const server = createServer();
-  const port = await listen(server);
-  await new Promise<void>((done) => server.close(() => done()));
-  return port;
-}
 async function scenario(webPort?: number) {
   const home = await mkdtemp(join(tmpdir(), "inspire-dev-fixture-"));
   directories.push(home);
   const sentinel = join(home, "inherited-instance.json");
   await writeFile(sentinel, "existing instance must remain untouched");
-  const backendPort = await freePort();
-  const frontendPort = webPort ?? (await freePort());
+  const backendPort = await freeLoopbackPort();
+  const frontendPort = webPort ?? (await freeLoopbackPort());
   const environment = isolatedTestEnvironment(home, {
     INSPIRE_HOST: "127.0.0.1",
     INSPIRE_PORT: String(backendPort),
@@ -55,7 +50,6 @@ async function scenario(webPort?: number) {
     INSPIRE_STATE_PATH: sentinel,
     INSPIRE_TOKEN: inheritedToken,
     INSPIRE_PI_COMMAND: process.env.INSPIRE_PI_COMMAND,
-    INSPIRE_MOCK: "1",
     INSPIRE_OPEN: "0",
     INSPIRE_TERMINAL_IN_PROCESS: "1",
     BROWSER: "none",
@@ -200,7 +194,6 @@ it("refuses an occupied UI port without opening it or sending a credential", asy
   const instance = start(fixture.environment, fixture.home);
   expect(await instance.exit).not.toBe(0);
   expect(instance.log()).toContain("already in use");
-  expect(instance.log()).not.toContain("INSΠRE development:");
   expect(instance.log()).not.toContain(inheritedToken);
   expect(requests).toEqual([]);
   expect(await readFile(fixture.sentinel, "utf8")).toBe(

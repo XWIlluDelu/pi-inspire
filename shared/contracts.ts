@@ -1,7 +1,16 @@
+import type { hostEndpoints } from "./host-endpoints.js";
+import type { RequestInput } from "./json-endpoints.js";
 import type {
   PresentationAdapterInfo,
   ToolPresentationConfiguration,
 } from "./tool-presentation-config.js";
+
+type Body<K extends keyof typeof hostEndpoints> =
+  RequestInput<(typeof hostEndpoints)[K]["schemas"]> extends {
+    body: infer Input;
+  }
+    ? Input
+    : never;
 
 export const VISIBILITY_PREFERENCES = [
   "dynamic",
@@ -78,17 +87,10 @@ export const PALETTE_PREFERENCES = [
   "chimonanthus",
   "classic-jade",
   "classic-amber",
+  "mono",
 ] as const;
 export type PalettePreference = (typeof PALETTE_PREFERENCES)[number];
 
-/** Legacy persisted/API identifiers normalize at the Host boundary. */
-export function migratePalettePreference(
-  value: PalettePreference | "amber" | "teal",
-): PalettePreference {
-  if (value === "amber") return "chimonanthus";
-  if (value === "teal") return "hydrangea";
-  return value;
-}
 export type LaunchPreference = "welcome" | "continue";
 export type ProjectDisplayPreference = "folder" | "path";
 export type CompletionAttentionPreference = "off" | "title" | "desktop";
@@ -111,13 +113,7 @@ export interface ModelSelectionResponse {
   thinkingLevel: string;
 }
 
-export interface NewSessionOptions {
-  /** Explicit new-session action only; observational reads never create paths. */
-  createDirectory?: boolean;
-  name?: string;
-  model?: ModelIdentity;
-  thinkingLevel?: ThinkingLevel;
-}
+export type NewSessionOptions = Omit<Body<"newSession">, "cwd">;
 
 /** Pi's resolved startup choice for a new session in one canonical workspace.
  * This is a preflight projection; the creating worker remains authoritative. */
@@ -145,7 +141,7 @@ const RUN_STATES = [
 ] as const;
 export type RunState = (typeof RUN_STATES)[number];
 
-export function isRunState(value: unknown): value is RunState {
+function isRunState(value: unknown): value is RunState {
   return (RUN_STATES as readonly unknown[]).includes(value);
 }
 
@@ -199,12 +195,14 @@ export function projectionConflictSeverity(
 export interface SessionRuntimeStatus {
   runState: RunState;
   indicator?: SessionIndicator;
+  /** Host-local identity of the current completion/failure mark. */
+  attentionId?: number;
   /** Pi is waiting for input in an owned worker or connected native terminal. */
   needsInput?: boolean;
   /** Connected to an independently owned native Pi, not an Inspire worker. */
   external?: boolean;
-  /** The identified external Pi advertises its model/thinking action channel. */
-  nativeModelControls?: boolean;
+  /** The attached Pi can return a per-input native queue receipt. */
+  queueAdmission?: true;
 }
 
 /** Socket-local transcript interest. Changing it establishes a fresh snapshot
@@ -213,8 +211,6 @@ export interface SessionDetailInterest {
   type: "detail_interest";
   sessionId: string | null;
   revision: number;
-  authorityId?: string;
-  snapshotDigest?: string;
 }
 
 export function isSessionRuntimeStatus(
@@ -225,11 +221,12 @@ export function isSessionRuntimeStatus(
   return (
     isRunState(status.runState) &&
     (status.indicator === undefined || isSessionIndicator(status.indicator)) &&
+    (status.attentionId === undefined ||
+      Number.isSafeInteger(status.attentionId)) &&
     (status.needsInput === undefined ||
       typeof status.needsInput === "boolean") &&
     (status.external === undefined || typeof status.external === "boolean") &&
-    (status.nativeModelControls === undefined ||
-      typeof status.nativeModelControls === "boolean")
+    (status.queueAdmission === undefined || status.queueAdmission === true)
   );
 }
 
@@ -237,7 +234,7 @@ export const SESSION_ACTION_IDS = [
   "rename",
   "copy-id",
   "clone",
-  "terminal",
+  "switch-branch",
   "export",
 ] as const;
 export type SessionActionId = (typeof SESSION_ACTION_IDS)[number];
@@ -267,8 +264,6 @@ export interface InspirePreferences {
   projectDisplay: ProjectDisplayPreference;
   /** Session title menu order, including actions revealed by More actions. */
   sessionActionOrder: SessionActionId[];
-  /** Opt-in attention for terminal transitions that were not visible. */
-  completionAttention: CompletionAttentionPreference;
   /** Successful model choices, newest first. This is ordering metadata only. */
   recentModelIds: ModelIdentity[];
   pinnedSessionIds: string[];
@@ -282,8 +277,12 @@ export interface InspirePreferences {
    * only: nothing in Pi's session storage changes. */
   hiddenSessionIds: string[];
   navCollapsedGroups: string[];
-  /** Explicit terminal handoffs; ordinary selection must not reacquire these writers. */
-  terminalSessionIds: string[];
+}
+
+export interface PreferencePublication {
+  preferences: InspirePreferences;
+  /** Monotonic within the Host authority that read or committed this snapshot. */
+  revision: number;
 }
 
 /** The complete user-facing Settings surface. Navigation curation and MRU
@@ -302,7 +301,6 @@ export const defaultInterfaceSettings = {
   activityFoldVisibility: "dynamic",
   projectDisplay: "folder",
   sessionActionOrder: [...SESSION_ACTION_IDS],
-  completionAttention: "off",
 } satisfies Pick<
   InspirePreferences,
   | "herdrEnabled"
@@ -318,7 +316,6 @@ export const defaultInterfaceSettings = {
   | "activityFoldVisibility"
   | "projectDisplay"
   | "sessionActionOrder"
-  | "completionAttention"
 >;
 
 export const defaultPreferences: InspirePreferences = {
@@ -329,7 +326,6 @@ export const defaultPreferences: InspirePreferences = {
   hiddenProjectCwds: [],
   hiddenSessionIds: [],
   navCollapsedGroups: [],
-  terminalSessionIds: [],
 };
 
 export function projectNameFromCwd(cwd: string): string {
@@ -352,6 +348,9 @@ export interface SessionSummary {
   modified: string;
   messageCount: number;
   parentSessionId?: string;
+  /** Search results only: a bounded excerpt around the first contiguous
+   * message-text match, so navigation can show why a session matched. */
+  matchSnippet?: string;
 }
 
 export interface SessionCatalogIssue {
@@ -372,24 +371,17 @@ export interface SessionListResponse {
 
 export type SessionDeleteDisposition = "trashed" | "deleted";
 
-export interface SessionDeleteResponse {
-  sessionId: string;
-  disposition: SessionDeleteDisposition;
-  /** The file deletion remains successful when navigation-metadata cleanup
-   * fails; the browser keeps the warning visible instead of retrying a
-   * destructive operation whose outcome is already known. */
-  preferences?: InspirePreferences;
-  preferenceCleanupFailed?: true;
+export type SessionDeletionRequest = Body<"deleteSessions">;
+
+export interface SessionDeletionOutcome {
+  deleted: Array<{ sessionId: string; disposition: SessionDeleteDisposition }>;
+  failure?: { sessionId: string; message: string };
 }
 
-/** A confirmed deletion of the complete reviewed Hidden selection. A late
- * filesystem failure can follow earlier successful Trash operations; those
- * irreversible results are returned explicitly instead of retried. */
-export interface HiddenClearResponse {
-  deleted: Array<Pick<SessionDeleteResponse, "sessionId" | "disposition">>;
-  failure?: { sessionId: string; message: string };
-  preferences?: InspirePreferences;
-  preferenceCleanupFailed?: true;
+export interface SessionDeletionResponse extends SessionDeletionOutcome {
+  navigation:
+    | (PreferencePublication & { kind: "confirmed"; authorityId: string })
+    | { kind: "unavailable"; reason: string };
 }
 
 export type ResourceKind =
@@ -417,7 +409,6 @@ export type GitDeltaKind =
   | "copied"
   | "type-changed"
   | "unmerged";
-export type GitDiffSide = "staged" | "unstaged";
 
 /** Opaque Git identity. `id` is unpadded base64url of the exact raw
  * repository-relative pathname bytes; display strings never authorize a
@@ -442,18 +433,13 @@ export interface GitSubmoduleState {
 
 export interface GitFileChange {
   path: GitPathIdentity;
+  /** Current working tree relative to HEAD (or the empty tree before the first commit). */
+  worktree?: GitDeltaFacet;
   staged?: GitDeltaFacet;
   unstaged?: GitDeltaFacet;
   conflict?: { code: string };
   untracked: boolean;
   submodule?: GitSubmoduleState;
-}
-
-interface GitChangeGroups {
-  conflicted: string[];
-  staged: string[];
-  unstaged: string[];
-  untracked: string[];
 }
 
 export type GitHead =
@@ -467,7 +453,6 @@ export type GitStatusResponse =
       kind: "repository";
       head: GitHead;
       files: GitFileChange[];
-      groups: GitChangeGroups;
       /** Total changed identities parsed before bounded projection. */
       total: number;
       /** True when `files` is only the first bounded projection. */
@@ -483,7 +468,6 @@ export interface GitDiffLine {
 
 interface GitDiffBase {
   path: GitPathIdentity;
-  side: GitDiffSide;
 }
 
 export type GitDiffResponse =
@@ -584,7 +568,7 @@ const EXTENSION_DIALOG_METHODS = new Set([
   "input",
   "editor",
 ] as const);
-export const EXTENSION_ONE_WAY_METHODS = new Set([
+const EXTENSION_ONE_WAY_METHODS = new Set([
   "notify",
   "setStatus",
   "setWidget",
@@ -708,16 +692,6 @@ export interface PendingInput {
   followUp: string[];
 }
 
-export interface PendingOperationIdentity {
-  operationId: string;
-  authorityId: string;
-}
-
-export interface PendingOperationRequest extends PendingOperationIdentity {
-  sessionId: string;
-  action: "recover" | "abort";
-}
-
 export interface PendingRecovery extends PendingInput {
   /** Native extension interruption does not include terminal user Bash. */
   interruptionScope?: "agent";
@@ -734,18 +708,10 @@ export interface PendingRecovery extends PendingInput {
 
 export interface PendingCopyContent {
   text: string;
-  /** Original upload handles, retained for upload-only copies. */
-  imageAttachmentIds?: string[];
-  /** Ordered sources when the input also contains recalled images. */
-  images?: Array<{ attachmentId: string } | { data: string; mimeType: string }>;
+  images: Array<{ attachmentId: string } | { data: string; mimeType: string }>;
 }
 
-export interface PendingReadRequest {
-  sessionId: string;
-  viewId: string;
-  revision: number;
-  itemId?: string;
-}
+export type PendingReadRequest = Body<"pendingText">;
 
 export interface PendingQueues {
   /** Host observation sequence, not a Pi revision or mutation precondition. */
@@ -758,7 +724,7 @@ export interface PendingQueues {
   followUp: PendingMessageSummary[];
 }
 
-export function parsePendingMessageSummary(
+function parsePendingMessageSummary(
   value: unknown,
 ): PendingMessageSummary | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -892,39 +858,44 @@ function extensionUiExpiry(
   };
 }
 
-interface ParsedExtensionUiEvent {
-  event: Record<string, unknown>;
-  sessionId: string;
-  id: string;
-  method: string;
-}
-
-function parseExtensionUiEvent(value: unknown): ParsedExtensionUiEvent | null {
+/** Unknown methods can own a reply unless Pi identifies them as one-way. */
+export function parsePendingExtensionUiRequest(
+  value: unknown,
+): ExtensionUiRequest | null {
   if (!value || typeof value !== "object") return null;
   const event = value as Record<string, unknown>;
-  const sessionId = typeof event.sessionId === "string" ? event.sessionId : "";
-  const id = typeof event.id === "string" ? event.id : "";
-  const method = typeof event.method === "string" ? event.method : "";
-  return sessionId && id && method ? { event, sessionId, id, method } : null;
-}
-
-function supportedExtensionUiRequest(
-  parsed: ParsedExtensionUiEvent,
-): SupportedExtensionUiRequest | null {
-  const { event, sessionId, id, method } = parsed;
+  const { sessionId, id, method } = event;
+  if (
+    typeof sessionId !== "string" ||
+    !sessionId ||
+    typeof id !== "string" ||
+    !id ||
+    typeof method !== "string" ||
+    !method
+  )
+    return null;
+  const addressed = {
+    sessionId,
+    id,
+    title: typeof event.title === "string" ? event.title : undefined,
+    message: typeof event.message === "string" ? event.message : undefined,
+    ...extensionUiExpiry(event),
+  };
   if (
     !EXTENSION_DIALOG_METHODS.has(
       method as SupportedExtensionUiRequest["method"],
     )
-  )
-    return null;
+  ) {
+    if (
+      EXTENSION_ONE_WAY_METHODS.has(method) ||
+      event.responseRequired === false
+    )
+      return null;
+    return { ...addressed, method, unsupported: true, payload: event };
+  }
   return {
-    sessionId,
-    id,
+    ...addressed,
     method: method as SupportedExtensionUiRequest["method"],
-    title: typeof event.title === "string" ? event.title : undefined,
-    message: typeof event.message === "string" ? event.message : undefined,
-    ...extensionUiExpiry(event),
     options: Array.isArray(event.options)
       ? event.options.map(String)
       : undefined,
@@ -934,56 +905,9 @@ function supportedExtensionUiRequest(
   };
 }
 
-export function parseExtensionUiRequest(
-  value: unknown,
-): SupportedExtensionUiRequest | null {
-  const parsed = parseExtensionUiEvent(value);
-  return parsed ? supportedExtensionUiRequest(parsed) : null;
-}
-
-/** Unknown extension UI methods are conservatively response-bearing unless Pi
- * explicitly identifies them as one-way display output. This prevents a
- * future dialog promise from hanging while still giving future display
- * methods a generic, inspectable projection. */
-export function parsePendingExtensionUiRequest(
-  value: unknown,
-): ExtensionUiRequest | null {
-  const parsed = parseExtensionUiEvent(value);
-  if (!parsed) return null;
-  const supported = supportedExtensionUiRequest(parsed);
-  if (supported) return supported;
-  const { event, sessionId, id, method } = parsed;
-  if (EXTENSION_ONE_WAY_METHODS.has(method) || event.responseRequired === false)
-    return null;
-  return {
-    sessionId,
-    id,
-    method,
-    unsupported: true,
-    title: typeof event.title === "string" ? event.title : undefined,
-    message: typeof event.message === "string" ? event.message : undefined,
-    ...extensionUiExpiry(event),
-    payload: event,
-  };
-}
-
 export interface ProjectionHealth {
   status: "ok" | "pending" | "error";
   message?: string;
-}
-
-export type TranscriptActivityKind = "thinking" | "tool";
-
-/** Opaque, revision-bound history omitted from an earlier transcript page.
- * `afterMessageId` anchors the range after its nearest older visible message;
- * null means the range starts the selected branch. */
-export interface TranscriptActivityRange {
-  cursor: string;
-  afterMessageId: string | null;
-  messageCount: number;
-  /** Chronological hints, at most two per kind, preserve single/multiple cues
-   * even when one kind is hidden. Paired results do not add a cue. */
-  kinds: TranscriptActivityKind[];
 }
 
 export interface TranscriptPage {
@@ -1000,51 +924,99 @@ export interface TranscriptPage {
   /** Prompt-history invalidation token, stable across assistant/tool-only appends. */
   composerHistoryVersion: string;
   messages: unknown[];
-  /** Activity-only persisted messages skipped by response-oriented paging. */
-  activityRanges?: TranscriptActivityRange[];
   hasOlder: boolean;
-  olderCursor: string | null;
 }
 
-export interface TranscriptActivityPage {
+export const SESSION_HISTORY_PATH = "/api/history";
+
+export interface NativeTurnPage {
   sessionId: string;
-  revision: number;
   viewId: string;
-  incarnation?: string;
-  effectiveLeafId?: string | null;
+  incarnation: string;
+  revision: number;
+  leafId: string | null;
   messages: unknown[];
-  hasMore: boolean;
-  cursor: string | null;
+  earlier: string | null;
+  later: string | null;
 }
+
+export const HISTORY_PROMPT_PAGE_SIZE = 100;
 
 export interface UserTurnAnchor {
   id: string;
   ordinal: number;
   snippet: string;
-  timestamp?: string;
   attachmentCount: number;
 }
 
-/** A bounded slice of the complete user-turn outline for the current branch. */
-export interface UserTurnIndexPage {
-  sessionId: string;
-  revision: number;
-  viewId: string;
-  incarnation?: string;
-  appendFromRevision?: number;
-  effectiveLeafId?: string | null;
-  total: number;
-  start: number;
-  turns: UserTurnAnchor[];
+export type BranchNodeRole =
+  | "user"
+  | "assistant"
+  | "tool"
+  | "shell"
+  | "system"
+  | "metadata";
+
+export interface BranchTreeNode {
+  id: string;
+  parentId: string | null;
+  depth: number;
+  type: string;
+  role: BranchNodeRole;
+  label: string;
+  snippet: string;
+  timestamp: string;
+  active: boolean;
+  leaf: boolean;
+  canEdit: boolean;
+  canFork: boolean;
+  /** Complete native child count, independent of this page. */
+  childCount?: number;
+  /** Latest retained descendant for read-only route inspection. */
+  routeLeafId?: string;
 }
 
-/** Response-oriented transcript material beginning at one selected user turn. */
-export interface UserTurnTranscriptPage extends TranscriptPage {
-  targetMessageId: string;
-  rangeStart: number;
-  rangeEnd: number;
-  hasMoreInTurn: boolean;
-  continuationCursor: string | null;
+export interface BranchTreeQuery {
+  before?: string;
+  query?: string;
+  /** Read another ancestor path without moving Pi's active leaf. */
+  leafId?: string;
+  /** List routes at this actual branch point; empty string means roots. */
+  parentId?: string;
+}
+
+export interface BranchTreeResponse {
+  sessionId: string;
+  revision: number;
+  incarnation: string;
+  durableLeafId: string | null;
+  effectiveLeafId: string | null;
+  activePath: string[];
+  nodes: BranchTreeNode[];
+  /** The containing input when this route page begins inside a long turn. */
+  leadingPrompt?: BranchTreeNode;
+  truncated: boolean;
+  nextBefore?: string | null;
+  routeLeafId?: string | null;
+  rootCount?: number;
+  skipSummaryPrompt?: boolean;
+}
+
+export interface SessionHistoryPages {
+  outline: BranchTreeResponse;
+  turns: { total: number; start: number; turns: UserTurnAnchor[] };
+  page: NativeTurnPage;
+  branches: {
+    total: number;
+    leaves: {
+      id: string;
+      excerpt: string;
+      updatedAt: string;
+      isCurrent: boolean;
+    }[];
+  };
+  composer: ComposerHistoryPage;
+  entry: BranchEntryResponse;
 }
 
 export interface ComposerHistoryImage {
@@ -1084,88 +1056,31 @@ export interface ComposerHistoryPage {
   nextStart: number | null;
 }
 
-export type BranchNodeRole =
-  | "user"
-  | "assistant"
-  | "tool"
-  | "shell"
-  | "system"
-  | "metadata";
-
-export interface BranchTreeNode {
-  id: string;
-  parentId: string | null;
-  depth: number;
-  type: string;
-  role: BranchNodeRole;
-  label: string;
-  snippet: string;
-  timestamp: string;
-  active: boolean;
-  leaf: boolean;
-  canSwitch: boolean;
-  canEdit: boolean;
-  canFork: boolean;
-  /** Complete native child count, independent of this page. */
-  childCount?: number;
-  /** Latest retained descendant for read-only route inspection. */
-  routeLeafId?: string;
-}
-
-export interface BranchTreeQuery {
-  before?: string;
-  query?: string;
-  /** Read another ancestor path without moving Pi's active leaf. */
-  leafId?: string;
-  /** List routes at this actual branch point; empty string means roots. */
-  parentId?: string;
-}
-
-export interface BranchEntryRequest {
+export interface BranchImageRequest {
   sessionId: string;
   viewId: string;
   targetId: string;
-  offset?: number;
-  /** Original copyable message fields as paged JSON, not History display text. */
-  format?: "message";
+}
+
+export interface SavedShellDetails {
+  command: string;
+  exitCode?: number;
+  cancelled?: boolean;
+  truncated?: boolean;
+  fullOutputPath?: string;
+  excludeFromContext?: boolean;
 }
 
 export interface BranchEntryResponse {
-  sessionId: string;
-  revision: number;
-  node: BranchTreeNode;
+  node?: BranchTreeNode;
+  totalChars?: number;
+  shell?: SavedShellDetails;
   text: string;
   nextOffset: number | null;
-  totalChars: number;
   images?: Array<{ index: number; mimeType: string }>;
 }
 
-export interface BranchTreeResponse {
-  sessionId: string;
-  revision: number;
-  incarnation: string;
-  durableLeafId: string | null;
-  effectiveLeafId: string | null;
-  activePath: string[];
-  nodes: BranchTreeNode[];
-  /** The containing input when this route page begins inside a long turn. */
-  leadingPrompt?: BranchTreeNode;
-  truncated: boolean;
-  nextBefore?: string | null;
-  routeLeafId?: string | null;
-  rootCount?: number;
-  skipSummaryPrompt?: boolean;
-  health: ProjectionHealth;
-}
-
-export interface BranchNavigateRequest {
-  sessionId: string;
-  revision: number;
-  targetId: string;
-  mode: "switch" | "edit";
-  summarize?: boolean;
-  customInstructions?: string;
-}
+export type BranchNavigateRequest = Body<"navigateBranch">;
 
 export interface BranchNavigateResponse {
   snapshot: ActiveSnapshot;
@@ -1174,18 +1089,9 @@ export interface BranchNavigateResponse {
   cancelled?: boolean;
 }
 
-export interface BranchForkRequest {
-  sessionId: string;
-  viewId: string;
-  targetId: string;
-}
+export type BranchForkRequest = Body<"forkBranch">;
 
-export interface BranchCloneRequest {
-  sessionId: string;
-  viewId: string;
-  /** The endpoint selected at invocation; null explicitly copies an empty path. */
-  targetId: string | null;
-}
+export type BranchCloneRequest = Body<"cloneBranch">;
 
 export interface BranchForkResponse {
   sessionId: string;
@@ -1241,13 +1147,11 @@ export function parseRetryInfo(value: unknown): RetryInfo | null {
   };
 }
 
-export type SessionReadOnlyReason =
-  | "workspace-unavailable"
-  | "external-unavailable"
-  | "external-active"
-  | "terminal";
+export type SessionReadOnlyReason = "workspace-unavailable" | "external-active";
 
 export interface ActiveSnapshot {
+  /** Host event cut for addressed snapshot reads. */
+  runtimeSequence?: number;
   active: null | {
     sessionId: string;
     sessionFile?: string;
@@ -1266,7 +1170,6 @@ export interface ActiveSnapshot {
     activeAssistantMessageKey?: string | null;
     /** Current native tool receipts, including bounded child activity, for reconnect. */
     toolActivity?: Record<string, import("./tool-activity.js").ActivityTool>;
-    isCompacting: boolean;
     transcriptPage: TranscriptPage;
     projectionHealth: ProjectionHealth;
     projectionConflict?: ProjectionConflict | null;
@@ -1274,15 +1177,16 @@ export interface ActiveSnapshot {
      * worker is viewing an uncommitted earlier branch. */
     durableLeafId?: string | null;
     effectiveLeafId?: string | null;
-    navigationLeased?: boolean;
+    restoreSavedLeafId?: string | null;
+    branchRevision?: number;
     stats?: unknown;
     /** Settings that affect the live Pi session rather than INSΠRE chrome. */
     runtimeSettings?: PiRuntimeSettings;
-    availableModels: unknown[];
+    /** Omitted until the current Pi catalog is known. An empty array is a known empty catalog. */
+    availableModels?: unknown[];
     commonModels?: import("./model-settings.js").CommonModelOption[];
     commands: unknown[];
   };
-  runState: RunState;
   /** Direct Bash runs independently of the model/compaction lifecycle. */
   bashRunning?: boolean;
   sessionStatuses: Record<string, SessionRuntimeStatus>;
@@ -1296,12 +1200,18 @@ export interface ActiveSnapshot {
   extensionStatuses?: Record<string, string>;
 }
 
-export interface SnapshotWitness {
-  authorityId: string;
-  snapshotDigest: string;
-}
-
-export type SessionOpenResponse = ActiveSnapshot & SnapshotWitness;
+/** Native rows and the branch/save facts captured with them in one runtime turn. */
+export type LiveTranscript = Pick<
+  NonNullable<ActiveSnapshot["active"]>,
+  | "transcriptPage"
+  | "projectionHealth"
+  | "projectionConflict"
+  | "durableLeafId"
+  | "effectiveLeafId"
+  | "restoreSavedLeafId"
+  | "branchRevision"
+  | "activeAssistantMessageKey"
+>;
 
 export interface BootstrapResponse {
   /** Stable wire identifier; visual branding lives in the client. */
@@ -1309,16 +1219,15 @@ export interface BootstrapResponse {
   /** Ephemeral identity of this Host process. Mutations bind to it so a retry
    * can never cross an unnoticed Host restart. */
   authorityId: string;
-  /** Digest of the included snapshot. A joining event stream may confirm this
-   * exact projection instead of transferring it a second time. */
-  snapshotDigest: string;
+  /** Host default for a browser with no workbench selection of its own. */
+  startupSessionId: string | null;
   version: string;
   piVersion: string;
-  mock: boolean;
   /** Host-owned update observations and notice acknowledgement shared by every
    * authenticated view of this deployment. */
   updateStatus: HostUpdateStatus;
   preferences: InspirePreferences;
+  preferenceRevision: number;
   /** Present when an invalid saved preference projection is usable for this
    * bootstrap but the original file was left unchanged and writes are blocked. */
   preferencesWarning?: string;
@@ -1328,8 +1237,6 @@ export interface BootstrapResponse {
   toolPresentationsWarning?: string;
   /** Already-known choices; addressed model queries discover missing inventory. */
   availableModels: ModelOption[];
-  /** Failed discovery does not prevent opening retained transcripts. */
-  snapshot: ActiveSnapshot;
 }
 
 export const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1_000;
@@ -1365,8 +1272,8 @@ export type PiExtensionUpdateStatus =
 export interface PiUpdateCheckResponse {
   /** Pi version loaded when this Host started, not every session's runtime. */
   currentVersion: string;
-  /** Fresh installation identity. Null means unreadable; absent on older Hosts. */
-  installedVersion?: string | null;
+  /** Fresh installation identity. Null means unreadable. */
+  installedVersion: string | null;
   pi: PiVersionUpdateStatus;
   extensions: PiExtensionUpdateStatus;
 }
@@ -1385,24 +1292,12 @@ export interface HostUpdateStatus {
   updateSnoozedUntil: number | null;
 }
 
-/** Source-specific fields remain top-level so an already-loaded client from
- * the preceding release can still read a check while newer clients reconcile
- * the accompanying Host-wide projection. */
-export type InspireUpdateCheckResult = UpdateCheckResponse & {
-  updateStatus: HostUpdateStatus;
-};
-
-export type PiUpdateCheckResult = PiUpdateCheckResponse & {
-  updateStatus: HostUpdateStatus;
-};
-
 export interface UploadedAttachment {
   id: string;
   fileName: string;
   mimeType: string;
   size: number;
   kind: "image" | "file";
-  previewDataUrl?: string;
 }
 
 export interface ComposerHistoryArtifactsRequest {
@@ -1417,6 +1312,8 @@ export interface PromptRequest {
   /** Target session: writes never fall back to the host's current selection,
    * so a concurrent navigation cannot redirect a prompt. */
   sessionId: string;
+  /** Branch view observed by the sending browser. */
+  expectedViewId?: string;
   message: string;
   attachmentIds?: string[];
   historyArtifacts?: ComposerHistoryArtifactsRequest;
@@ -1424,24 +1321,14 @@ export interface PromptRequest {
   behavior?: "steer" | "followUp";
 }
 
-export interface SessionExportRequest {
-  sessionId: string;
-  format: "html" | "jsonl";
-}
-
 export interface SessionExportResponse {
   downloadId: string;
   fileName: string;
 }
 
-export type HostNativeCommandName = "compact" | "export" | "reload";
+export type HostNativeCommandName = HostNativeCommandRequest["command"];
 
-export interface HostNativeCommandRequest {
-  /** Native commands are session-owned just like prompts. */
-  sessionId: string;
-  command: HostNativeCommandName;
-  argument?: string;
-}
+export type HostNativeCommandRequest = Body<"nativeCommand">;
 
 export interface HostNativeCommandDetail {
   label: string;
@@ -1462,27 +1349,11 @@ export interface HostNativeCommandResponse {
   };
 }
 
-export interface PromptDeliveryRequest extends PromptRequest {
-  /** One browser-owned delivery identity. Repeating the same operation against
-   * the same Host process returns its first acceptance instead of writing
-   * another prompt. */
-  operationId: string;
-  /** Host process observed before delivery began. A restarted Host rejects the
-   * old operation rather than guessing whether its predecessor accepted it. */
-  authorityId: string;
-}
+/** A process-lifetime operation ID and its immutable prompt input. */
+export type PromptDeliveryRequest = import("zod").infer<
+  typeof import("./host-operations.js").promptSchema
+>;
 
 export interface PromptAcceptedResponse {
   accepted: true;
-  historyEntry: ComposerHistoryEntry | null;
 }
-
-/** Receipt observation only: Pi still owns the in-flight operation. */
-export type PromptDeliveryResponse =
-  | PromptAcceptedResponse
-  | {
-      accepted: false;
-      pending: true;
-      operationId: string;
-      authorityId: string;
-    };

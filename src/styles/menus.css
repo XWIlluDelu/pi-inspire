@@ -1,9 +1,8 @@
-/* Compact transient menus share Dropdown's visual grammar.
-   Positioning, selection and action semantics stay with their owning component. */
-.dropdown__menu,
-.session-actions-menu,
-.session-action-order__popover,
-.terminal-menu__popover {
+/* Shared surface and action styles for compact menus. */
+.choice-panel__body,
+.dropdown-popup:not(.thinking-selector__menu),
+.terminal-menu__popover,
+.completion {
   padding: var(--space-1);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-md);
@@ -13,37 +12,155 @@
   animation: float-in var(--dur-standard) var(--ease-standard);
 }
 
-.dropdown__option,
-.session-action-order__popover-item,
-.session-actions-menu__row,
-.session-actions-menu__overflow,
+.choice-panel { display: inline-flex; }
+.choice-panel__body {
+  position: fixed;
+  z-index: 40;
+  overflow: auto;
+}
+.choice-panel__body[hidden] { display: none; }
+
+.choice-panel__body--search,
+.choice-panel__body.model-picker__menu {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+
+.choice-panel__body--search { z-index: 42; }
+
+.choice-panel__body--reader {
+  z-index: 45;
+  padding: var(--space-3);
+}
+
+.choice-panel__body--reader .code-view {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: var(--text-xs);
+}
+
+.choice-panel__body[role="menu"] {
+  display: flex;
+  flex-direction: column;
+  z-index: 45;
+}
+
+.choice-panel__body [role="menuitem"] > :is(svg, .copy-feedback) {
+  flex: none;
+  color: var(--muted);
+}
+
+.choice-panel__body [role="menuitem"] .button-label { min-width: 0; }
+.choice-panel__body [role="menuitem"] .button-label > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 600px), (pointer: coarse) {
+  .choice-panel__body [role="menuitem"] { --menu-row-height: 44px; }
+}
+
+@keyframes float-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+.option-list {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.choice-panel__body > .file-search-controls,
+.model-picker__search {
+  --search-surface: transparent;
+  --search-radius: 0;
+  --search-border: transparent;
+  --search-hover-border: transparent;
+  --search-focus-border: transparent;
+  flex: none;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.choice-panel__body > .file-search-controls:focus-within,
+.model-picker__search:focus-within {
+  border-bottom-color: var(--accent-focus);
+}
+
+.choice-panel__body[data-placement="up"] > .file-search-controls {
+  order: 1;
+  border-top: 1px solid var(--hairline);
+  border-bottom: 0;
+}
+
+.choice-panel__body[data-placement="up"] > .file-search-controls:focus-within {
+  border-top-color: var(--accent-focus);
+}
+
+.picker__row,
+.choice-panel__body [role="menuitem"],
 .terminal-menu__popover button,
-.terminal-menu__group > summary {
+.terminal-menu__projects > summary,
+.dirpicker__row {
+  display: flex;
+  min-width: 0;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-2);
+  border: 0;
   border-radius: var(--radius-control);
+  background: transparent;
+  padding: var(--space-1) var(--space-2);
+  color: var(--ink);
+  font-size: var(--text-sm);
+  text-align: left;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.choice-panel__body [role="menuitem"],
+.terminal-menu__popover button,
+.terminal-menu__projects > summary { min-height: var(--menu-row-height, 32px); }
+
+.picker__row { padding: var(--space-2); }
+.picker__row[data-highlighted="true"] { background: var(--accent-tint); }
+
+.choice-panel__body [role="menuitem"]:disabled,
+:is(.terminal-menu__popover, .dirpicker__list) button:disabled {
+  color: var(--faint);
+}
+
+.choice-panel__body button { border-radius: var(--radius-control); }
+
+.choice-panel__body button,
+.palette__row,
+.terminal-menu__popover button,
+.terminal-menu__projects > summary {
   transition:
     background var(--dur-micro) var(--ease-standard),
     color var(--dur-micro) var(--ease-standard);
 }
 
 @media (hover: hover) {
-  .session-actions-menu__row:hover:where(:not([data-dragging])):not(:has([data-session-action]:disabled)),
-  .session-actions-menu__overflow:hover,
-  .session-action-order__popover-item:hover:not(:disabled),
+  [data-keyboard-active="false"] .picker__row:hover:where(:not(:disabled)),
+  .choice-panel__body [role="menuitem"]:hover:not(:disabled),
   .terminal-menu__popover button:hover:not(:disabled),
-  .terminal-menu__group > summary:hover {
+  .terminal-menu__projects > summary:hover {
     background: var(--accent-tint);
   }
 }
 
-.session-actions-menu__overflow:active,
-.session-action-order__popover-item:active:not(:disabled),
+.choice-panel__body [role="menuitem"]:active:not(:disabled),
 .terminal-menu__popover button:active:not(:disabled),
-.terminal-menu__group > summary:active {
+.terminal-menu__projects > summary:active {
   background: var(--accent-tint);
 }
 
-.session-action-order__popover-item:focus-visible,
-.session-actions-menu button:focus-visible,
+.choice-panel__body [role="menuitem"]:focus-visible,
 .terminal-menu__popover button:focus-visible,
 .terminal-menu summary:focus-visible {
   outline: 2px solid var(--accent-focus);

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { submitRestart } from "./restart-submission.mjs";
 
 const REQUEST = "inspire:launcher-restart:v1";
 const RESPONSE = "inspire:launcher-restart-result:v1";
@@ -113,12 +114,10 @@ export function createLauncherRestartClient(channel = process, timeoutMs = 2_000
   };
   return {
     inspect,
-    async request(commit) {
+    request: (commit) => submitRestart(async () => {
       // Preparation may have taken time. Check the live owner before draining.
-      if (!(await inspect()) || !commit()) return { code: 1, issued: false };
-      // A lost result after commit is uncertain, not proof of non-issuance.
-      const issued = await exchange("restart");
-      return { code: issued ? 0 : 1, issued };
-    },
+      if (!(await inspect()) || !(await commit()) || !channel.connected)
+        return "commit-not-authorized";
+    }, () => exchange("restart")),
   };
 }

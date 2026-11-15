@@ -1,5 +1,61 @@
 # Changelog
 
+## 0.7.0
+
+Changes since [v0.6.5](https://github.com/XWIlluDelu/pi-inspire/tree/v0.6.5).
+
+### Sessions shared with terminal Pi
+
+- Terminal Pi and Inspire can open the same session. **Copy resume command** copies the
+  `pi --session …` command without handing off the session.
+- The [attach-control](extensions/attach-control.ts) extension replaces the session bridge while
+  keeping existing install paths working. It reports live Pi sessions, branches and activity and
+  supports browser control in ordinary terminals and Herdr.
+- A branch that a live terminal Pi is running opens read-only with live progress. **Take over**
+  connects to that Pi while the terminal keeps working. If it exits or switches sessions,
+  Inspire continues the view with its own Pi.
+- Inspire accepts appends from other Pi processes and keeps each view on its branch. Use
+  **Switch branch…** in the title menu or select a branch in History for read-only sessions.
+
+### Workbench
+
+- Conversation search stays in the desktop reading rail and shares a tool row with Prompt Map
+  on narrow layouts. The All, User and Model scopes fit when the side panes narrow the reader.
+- The navigation toggle surfaces unread outcomes from other sessions in collapsed and narrow
+  layouts. Folder rows use consistent spacing, session ages follow runtime colours, and Settings
+  moves into the narrow navigation drawer.
+- Files, Git changes and project terminals share one tab strip. Conversation links reuse an
+  existing file tab and open the requested line. Refresh preserves the reading position and
+  keeps confirmed previews available. The Changes count sits beside its icon.
+- PDF previews scroll continuously through pages. Narrow readers give opening Markdown text room
+  to clear the reading controls, and the composer offers **Expand** when the editor can grow.
+- History in the right pane searches saved branches and lets you preview entries before continuing,
+  editing, forking or cloning. Prompt Map navigates the current conversation.
+- Activity groups expand in place. Compact groups show the latest steps and reveal earlier
+  activity on request. Folded tool runs can be inspected from their tool icons.
+- Inspire checks message delivery receipts in the background. If delivery is still unconfirmed,
+  a dismissible notice leaves the composer ready for the next message.
+- Shorter confirmation and settings text puts deletion, restart and recovery consequences next
+  to the action.
+- The Carbon & Silicon palette adds a monochrome option in light and dark. Structural labels use
+  IBM Plex Sans SC in sentence case.
+
+### Host and native Pi
+
+- **Restart** reloads Inspire and its Pi workers while keeping project terminals open. **Restart
+  all** also closes current-user Pi sessions and project terminals. It includes Herdr Pi when
+  enhancement is active. Use `inspire restart --terminals` for the terminal-service-only scope.
+- Inspire finds Pi installed through supported version and package managers and preserves native
+  OAuth model defaults and MCP project trust. The provider chooser keeps its initial focus and
+  position in the settings panel.
+- Native Pi integration tests now use Pi 1.5.2. The `inspire mock` command and
+  `npm run start:mock` are removed. Use `npm run dev` to run a development checkout with native Pi.
+- Declared status controls keep their machine-readable state out of the header automatically.
+  `INSPIRE_HERDR_ENV_EXCLUDE` can keep selected extension environment prefixes out of the shared
+  Herdr server.
+- See the [package installation guide](docs/host.md#build-and-install-a-package) and the
+  [update instructions](docs/host.md#updating-inspire).
+
 ## 0.6.5 — 2026-10-26
 
 Changes since [v0.6.0](https://github.com/XWIlluDelu/pi-inspire/tree/v0.6.0).
@@ -64,7 +120,7 @@ Changes since [v0.6.0](https://github.com/XWIlluDelu/pi-inspire/tree/v0.6.0).
   compatibility baseline remains Pi **1.3.0**.
 - Restart the Host to load updated server code. A Host-only restart preserves terminals and
   does not upgrade their daemon; apply terminal-service changes separately after its work ends.
-- Install the updated [Inspire session bridge](docs/extensions.md#control-the-same-herdr-pi-terminal)
+- Install the updated [Inspire session bridge](docs/extensions.md#share-sessions-with-terminal-pi)
   and reload it in each original idle Pi terminal. Host restart does not reload external Pi.
 - Enable background notifications separately on each browser or installed app. Android
   background-task/click and iOS/iPadOS delivery still have outstanding physical-device acceptance.

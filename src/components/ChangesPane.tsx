@@ -1,288 +1,141 @@
 import {
   AlertTriangle,
-  ArrowLeft,
   ChevronDown,
-  ChevronLeft,
-  ChevronRight,
   ChevronUp,
   FileText,
   GitBranch,
   History,
-  RotateCw,
 } from "lucide-react";
 import {
   type CSSProperties,
+  type MutableRefObject,
   memo,
   type ReactNode,
-  type RefObject,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
-import type {
-  GitDiffResponse,
-  GitDiffSide,
-  GitFileChange,
-  GitStatusResponse,
-} from "../../shared/contracts";
-import { fileIconForPath } from "../file-icons";
-import {
-  gitDecorationForChange,
-  gitHeadLabel,
-  presentGitFacet,
-} from "../git-presentation";
-import { type SourceDiffProjection, sourceDiffRows } from "../source-diff";
+import type { GitDiffResponse, GitFileChange } from "../../shared/contracts";
+import { inspectedGitChange } from "../controllers/git-controller";
+import { gitHeadLabel, presentGitFacet } from "../git-presentation";
+import { sourceDiffRows } from "../source-diff";
 import { store } from "../store";
+import type { FileReadingState } from "../workbench-session";
+import { CodeRows, SourceReader } from "./CodeView";
 import { ContextPaneState } from "./ContextPaneState";
-import { ContextSplitBody } from "./ContextSplitBody";
 import type { ContextPaneView } from "./context-pane-view";
-import { PathCopyButton, ResourcePreviewContent } from "./FilePreview";
+import { FileIndexRow } from "./FileIndexRow";
 import { PiLoader } from "./PiLoader";
 import { ResourcePathLabel } from "./ResourcePathLabel";
-
-function selectedChange(
-  status: GitStatusResponse | null,
-  pathId: string | null,
-): GitFileChange | null {
-  if (!status || status.kind !== "repository" || !pathId) return null;
-  return status.files.find((file) => file.path.id === pathId) ?? null;
-}
 
 function pathName(change: GitFileChange): string {
   return change.path.utf8Path ?? change.path.display;
 }
 
-export type ChangesReadingPositions = Map<
-  string,
-  { top: number; left: number; activeChange: number | null }
->;
-
-function SourceDiffView({
-  diff,
-  projection,
-  activeChange,
-  containerRef,
-  onScroll,
-}: {
-  diff: Extract<GitDiffResponse, { kind: "text" }>;
-  projection: SourceDiffProjection;
-  activeChange: number | null;
-  containerRef: RefObject<HTMLDivElement | null>;
-  onScroll: (node: HTMLDivElement) => void;
-}) {
-  const lineDigits = useMemo(
-    () =>
-      projection.rows.reduce(
-        (digits, { line }) =>
-          Math.max(
-            digits,
-            String(line.oldLine ?? "").length,
-            String(line.newLine ?? "").length,
-          ),
-        1,
-      ),
-    [projection],
-  );
-  return (
-    <div
-      className="source-diff source-reader"
-      role="region"
-      aria-label={`Source changes for ${diff.path.display}`}
-      tabIndex={0}
-      ref={containerRef}
-      onScroll={(event) => onScroll(event.currentTarget)}
-      data-pane-scroll-active="true"
-    >
-      <div
-        className="source-diff__lines"
-        style={{ "--diff-line-digits": lineDigits } as CSSProperties}
-      >
-        {projection.rows.map(
-          ({ line, html, changeIndex, startsChange }, index) => (
-            <div
-              key={`${line.kind}-${line.oldLine ?? ""}-${line.newLine ?? ""}-${index}`}
-              className={`source-diff__line source-diff__line--${line.kind} ${changeIndex !== null && changeIndex === activeChange ? "source-diff__line--active" : ""}`}
-              {...(startsChange ? { "data-change-index": changeIndex } : {})}
-            >
-              <span className="source-diff__gutter" aria-hidden>
-                <span className="source-diff__number">
-                  {line.oldLine ?? ""}
-                </span>
-                <span className="source-diff__number">
-                  {line.newLine ?? ""}
-                </span>
-                <span className="source-diff__mark">
-                  {line.kind === "add"
-                    ? "+"
-                    : line.kind === "delete"
-                      ? "−"
-                      : ""}
-                </span>
-              </span>
-              <code
-                // Highlighting escapes source and emits only balanced token spans.
-                dangerouslySetInnerHTML={{ __html: html }}
-              />
-            </div>
-          ),
-        )}
-      </div>
-      {diff.truncated ? (
-        <div className="source-diff__boundary" role="status">
-          Source truncated
-        </div>
-      ) : null}
-      {diff.contextLimited && !diff.truncated ? (
-        <div className="source-diff__boundary" role="status">
-          Showing changed regions; source context limited
-        </div>
-      ) : null}
-      {diff.encodingLossy ? (
-        <div className="source-diff__boundary" role="status">
-          Invalid UTF-8 replaced
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function GitResultState({
-  state,
-  result,
-}: {
-  state: ContextPaneView;
-  result: GitDiffResponse;
-}) {
-  if (result.kind === "empty")
-    return (
-      <ContextPaneState
-        icon={<History size={17} aria-hidden />}
-        title="No diff available"
-        hint="Git no longer reports this comparison. Refresh Changes to check its current state."
-      />
-    );
-  if (result.kind === "binary")
-    return (
-      <ContextPaneState
-        icon={<FileText size={17} aria-hidden />}
-        title="Binary change"
-        hint="This file has no line-based source view."
-      />
-    );
-  if (result.kind === "submodule")
-    return (
-      <ContextPaneState
-        icon={<GitBranch size={17} aria-hidden />}
-        title="Submodule change"
-        hint={
+function describeGitResult(result: GitDiffResponse) {
+  switch (result.kind) {
+    case "empty":
+      return {
+        icon: History,
+        title: "No diff available",
+        hint: "Git no longer reports this comparison. Refresh Changes to check its current state.",
+      };
+    case "binary":
+      return {
+        icon: FileText,
+        title: "Binary change",
+        hint: "This file has no line-based source view.",
+      };
+    case "submodule":
+      return {
+        icon: GitBranch,
+        title: "Submodule change",
+        hint:
           [
             result.state.commitChanged && "commit changed",
             result.state.trackedModified && "tracked content modified",
             result.state.untracked && "untracked content",
           ]
             .filter(Boolean)
-            .join(" · ") || "Submodule state changed."
-        }
-      />
-    );
-  if (result.kind === "conflict")
-    return (
-      <ContextPaneState
-        icon={<AlertTriangle size={17} aria-hidden />}
-        title="Unresolved conflict"
-        hint={`Conflict state ${result.code}`}
-      />
-    );
-  if (result.kind === "unsupported" && result.reason === "path-encoding")
-    return (
-      <ContextPaneState
-        icon={<AlertTriangle size={17} aria-hidden />}
-        title="Source unavailable"
-        hint="This Git path cannot be represented as UTF-8."
-      />
-    );
-  return <ResourcePreviewContent state={state} viewMode="source" />;
+            .join(" · ") || "Submodule state changed.",
+      };
+    case "conflict":
+      return {
+        icon: AlertTriangle,
+        title: "Unresolved conflict",
+        hint: `Conflict state ${result.code}`,
+      };
+    case "unsupported":
+      if (result.reason === "path-encoding")
+        return {
+          icon: AlertTriangle,
+          title: "Source unavailable",
+          hint: "This Git path cannot be represented as UTF-8.",
+        };
+  }
+  return {
+    icon: FileText,
+    title: "Changes unavailable",
+    hint: "Git cannot provide a line-based comparison for this file.",
+  };
 }
 
 const ChangeRow = memo(function ChangeRow({
   change,
-  side,
   selectedPathId,
-  selectedSide,
 }: {
   change: GitFileChange;
-  side: GitDiffSide;
   selectedPathId: string | null;
-  selectedSide: GitDiffSide | null;
 }) {
-  const Icon = fileIconForPath(pathName(change));
   const facet = presentGitFacet(change);
-  const decoration = gitDecorationForChange(change);
-  const sideChange = side === "staged" ? change.staged : change.unstaged;
-  const originalPath = sideChange?.originalPath;
-  const sideLabel = change.conflict
-    ? `conflict ${change.conflict.code}`
-    : change.untracked
-      ? "Untracked — not yet added to Git"
-      : sideChange
-        ? `${side} ${sideChange.kind}`
-        : facet?.label;
+  const originalPath = change.worktree?.originalPath;
   const sourceLabel = originalPath
-    ? `${sideChange?.kind === "copied" ? "copied" : "renamed"} from ${originalPath.display}`
+    ? `${change.worktree?.kind === "copied" ? "copied" : "renamed"} from ${originalPath.display}`
     : null;
-  const selected = selectedPathId === change.path.id && selectedSide === side;
+  const selected = selectedPathId === change.path.id;
   return (
-    <button
-      type="button"
-      className={`res__row ${selected ? "res__row--active" : ""}`}
+    <FileIndexRow
+      file={pathName(change)}
+      name={<ResourcePathLabel path={pathName(change)} />}
+      context={
+        originalPath && (
+          <span className="changes__source" title={originalPath.display}>
+            from <ResourcePathLabel path={originalPath.display} />
+          </span>
+        )
+      }
+      stacked={Boolean(originalPath)}
+      change={change}
+      className={originalPath ? "file-row--renamed" : undefined}
       aria-current={selected || undefined}
       data-git-path={change.path.id}
-      data-git-side={side}
-      aria-label={[pathName(change), sideLabel, sourceLabel]
+      aria-label={[pathName(change), facet?.label, sourceLabel]
         .filter(Boolean)
         .join(", ")}
-      title={pathName(change)}
-      onClick={() => void store.openGitDiff(change.path.id, side)}
-    >
-      <Icon size={13} aria-hidden />
-      <span
-        className={`res__row-name ${decoration ? `git-deco--${decoration}` : ""}`}
-      >
-        <ResourcePathLabel path={pathName(change)} />
-      </span>
-      {originalPath ? (
-        <span className="changes__source" title={originalPath.display}>
-          <span>from</span>
-          <ResourcePathLabel path={originalPath.display} />
-        </span>
-      ) : null}
-      {facet ? (
-        <span
-          className={`git-mark ${decoration ? `git-deco--${decoration}` : ""}`}
-          role="img"
-          aria-label={facet.label}
-          title={facet.label}
-        >
-          {facet.mark}
-        </span>
-      ) : null}
-    </button>
+      title={
+        change.path.workspacePath
+          ? `${pathName(change)}\nCtrl+click: Show in file manager`
+          : pathName(change)
+      }
+      onClick={(event) => {
+        const workspacePath = change.path.workspacePath;
+        if ((event.ctrlKey || event.metaKey) && workspacePath)
+          void store.showInFileManager(workspacePath, workspacePath);
+        else void store.openGitDiff(change.path.id);
+      }}
+    />
   );
 });
 
 function ChangeGroup({
   title,
   changes,
-  side,
   selectedPathId,
-  selectedSide,
 }: {
   title: string;
   changes: GitFileChange[];
-  side: GitDiffSide;
   selectedPathId: string | null;
-  selectedSide: GitDiffSide | null;
 }) {
   if (changes.length === 0) return null;
   return (
@@ -294,9 +147,7 @@ function ChangeGroup({
         <ChangeRow
           key={`${title}-${change.path.id}`}
           change={change}
-          side={side}
           selectedPathId={selectedPathId}
-          selectedSide={selectedSide}
         />
       ))}
     </section>
@@ -305,40 +156,46 @@ function ChangeGroup({
 
 function ChangesIndex({ state }: { state: ContextPaneView }) {
   const status = state.gitStatus;
-  if (!status && state.gitStatusLoading)
+  if (!status) {
+    const error = state.gitStatusPending ? null : state.gitStatusError;
     return (
       <ContextPaneState
-        icon={<PiLoader size={17} aria-hidden />}
-        title="Reading Git status"
+        icon={
+          error ? (
+            <AlertTriangle size={17} aria-hidden />
+          ) : (
+            <PiLoader size={17} aria-hidden />
+          )
+        }
+        title={error ? "Git status unavailable" : "Reading Git status"}
+        hint={error ?? undefined}
       />
     );
-  if (state.gitStatusError && !status)
+  }
+  if (status.kind === "not-repository" || status.files.length === 0) {
+    const incomplete = status.kind === "repository" && status.truncated;
     return (
       <ContextPaneState
-        icon={<AlertTriangle size={17} aria-hidden />}
-        title="Git status unavailable"
-        hint={state.gitStatusError}
+        icon={
+          incomplete ? (
+            <AlertTriangle size={17} aria-hidden />
+          ) : (
+            <History size={17} aria-hidden />
+          )
+        }
+        title={
+          status.kind === "not-repository"
+            ? "No Git repository"
+            : incomplete
+              ? "Git status incomplete"
+              : "Working tree clean"
+        }
       />
     );
-  if (!status || status.kind === "not-repository")
-    return (
-      <ContextPaneState
-        icon={<History size={17} aria-hidden />}
-        title="No Git repository"
-      />
-    );
-  if (status.files.length === 0)
-    return (
-      <ContextPaneState
-        icon={<History size={17} aria-hidden />}
-        title="Working tree clean"
-      />
-    );
+  }
   const conflicts = status.files.filter((file) => file.conflict);
-  const unstaged = status.files.filter(
-    (file) => !file.conflict && (file.unstaged || file.untracked),
-  );
-  const staged = status.files.filter((file) => !file.conflict && file.staged);
+  const changes = status.files.filter((file) => !file.conflict);
+  const selectedPathId = inspectedGitChange(state, status)?.path.id ?? null;
   return (
     <>
       {status.truncated ? (
@@ -349,23 +206,12 @@ function ChangesIndex({ state }: { state: ContextPaneView }) {
       <ChangeGroup
         title="Conflicts"
         changes={conflicts}
-        side="unstaged"
-        selectedPathId={state.selectedGitPathId}
-        selectedSide={state.selectedGitSide}
+        selectedPathId={selectedPathId}
       />
       <ChangeGroup
-        title="Unstaged"
-        changes={unstaged}
-        side="unstaged"
-        selectedPathId={state.selectedGitPathId}
-        selectedSide={state.selectedGitSide}
-      />
-      <ChangeGroup
-        title="Staged"
-        changes={staged}
-        side="staged"
-        selectedPathId={state.selectedGitPathId}
-        selectedSide={state.selectedGitSide}
+        title="Changes"
+        changes={changes}
+        selectedPathId={selectedPathId}
       />
     </>
   );
@@ -373,177 +219,197 @@ function ChangesIndex({ state }: { state: ContextPaneView }) {
 
 function ChangesIndexHeader({ state }: { state: ContextPaneView }) {
   const status = state.gitStatus;
-  if (!status || status.kind !== "repository")
-    return (
-      <div className="res__index-header">
-        <GitBranch size={13} aria-hidden />
-        <span className="res__index-title">Workspace</span>
-      </div>
-    );
-  const summary = [
-    status.groups.staged.length > 0 && `${status.groups.staged.length} staged`,
-    status.groups.unstaged.length + status.groups.untracked.length > 0 &&
-      `${status.groups.unstaged.length + status.groups.untracked.length} working`,
-    status.groups.conflicted.length > 0 &&
-      `${status.groups.conflicted.length} conflict`,
-  ].filter(Boolean);
-  const isClean = summary.length === 0;
-  const hasConflict = status.groups.conflicted.length > 0;
-  const summaryTone = hasConflict
-    ? "res__index-summary--conflict"
-    : isClean
-      ? "res__index-summary--clean"
-      : "res__index-summary--dirty";
+  const repo = status?.kind === "repository" ? status : null;
+  const isClean = repo?.total === 0 && !repo.truncated;
+  const hasConflict = repo?.files.some((file) => file.conflict);
   const headLabel = gitHeadLabel(status);
-  const summaryLabel = summary.length > 0 ? summary.join(" · ") : "Clean";
   return (
-    <div className="res__index-header">
-      <GitBranch size={13} className="res__index-branch-icon" aria-hidden />
+    <div className="pane-toolbar res__index-header">
+      <GitBranch size={13} aria-hidden />
       <span className="res__index-title" title={headLabel ?? undefined}>
-        {headLabel}
+        {headLabel ?? "Workspace"}
       </span>
-      <span
-        className={`res__index-summary ${summaryTone}`}
-        title={summaryLabel}
-      >
-        {summaryLabel}
-      </span>
+      {repo ? (
+        <span
+          className={`chip chip--${hasConflict ? "error" : isClean ? "success" : "warning"}`}
+        >
+          {isClean
+            ? "Clean"
+            : `${repo.total} ${repo.total === 1 ? "change" : "changes"}`}
+        </span>
+      ) : null}
     </div>
   );
 }
 
-function ChangesDetail({
+export function useFileChanges({
   state,
-  readingPositions,
-  navigation,
-  hidden,
+  readingState,
+  enabled,
 }: {
   state: ContextPaneView;
-  readingPositions: ChangesReadingPositions;
-  navigation: ReactNode;
-  hidden: boolean;
+  readingState?: FileReadingState;
+  enabled: boolean;
 }) {
   const sourceRef = useRef<HTMLDivElement>(null);
-  const [activeChange, setActiveChange] = useState<number | null>(null);
-  const change = selectedChange(state.gitStatus, state.selectedGitPathId);
-  const diffView = state.gitDiff;
+  const localReading = useRef<FileReadingState>({
+    source: { current: null },
+    rendered: { current: null },
+  });
+  const reading = readingState ?? localReading.current;
+  const change = enabled
+    ? inspectedGitChange(state, state.gitStatus)
+    : undefined;
+  const pathId = change?.path.id ?? null;
+  const hasComparison = change !== undefined;
+  const pending = state.gitDiff;
+  // A retained response is usable only for the currently selected comparison.
+  const diffView =
+    hasComparison &&
+    pending &&
+    (pending.status === "ready"
+      ? pending.result.path.id === pathId
+      : pending.pathId === pathId)
+      ? pending
+      : null;
   const result = diffView?.status === "ready" ? diffView.result : null;
   const textResult = result?.kind === "text" ? result : null;
-  const oldPath = (
-    result?.side === "staged" ? change?.staged : change?.unstaged
-  )?.originalPath;
+  const oldPath = change?.worktree?.originalPath;
   const oldName = oldPath?.utf8Path ?? oldPath?.display;
   const projection = useMemo(
     () => (textResult ? sourceDiffRows(textResult, oldName) : null),
     [textResult, oldName],
   );
-  const preview = state.resourcePreview;
-  const noComparison = !change
-    ? state.gitStatusError || !state.gitStatus
-      ? "Git status unavailable"
-      : state.gitStatus.kind !== "repository"
-        ? "Not in a Git repository"
-        : state.gitStatus.truncated
-          ? "Git status incomplete"
-          : "No Git comparison"
-    : null;
-  const path =
-    result?.path.workspacePath ??
-    result?.path.utf8Path ??
-    result?.path.display ??
-    change?.path.workspacePath ??
-    change?.path.utf8Path ??
-    change?.path.display ??
-    (preview?.status === "ready"
-      ? (preview.descriptor.workspacePath ?? preview.descriptor.reference)
-      : state.selectedResourceReference);
+  // The file tab stays identified while its Git path is being resolved again.
+  const scope = JSON.stringify([
+    state.sessionId,
+    state.cwd,
+    state.fileInspection.reference,
+    state.transportGeneration,
+  ]);
+  const confirmedStatusScope = useRef<string | null>(null);
+  const statusPending = state.gitStatusPending;
+  const waitingForStatus =
+    statusPending && confirmedStatusScope.current !== scope;
+  useLayoutEffect(() => {
+    if (!enabled || !state.gitStatus || confirmedStatusScope.current !== scope)
+      confirmedStatusScope.current = null;
+    if (enabled && state.gitStatus && !statusPending && !state.gitStatusError)
+      confirmedStatusScope.current = scope;
+  }, [enabled, state.gitStatus, state.gitStatusError, statusPending, scope]);
+  const readingKey = pathId ? JSON.stringify([scope, pathId]) : null;
+  const readingOwner = useRef({ reading, scope });
+  const sameReadingScope =
+    readingOwner.current.reading !== reading ||
+    readingOwner.current.scope === scope;
+  const saved = sameReadingScope ? reading.changes : undefined;
+  const count = projection?.changes ?? 0;
+  const [active, setActive] = useState<{
+    key: string | null;
+    index: number | null;
+  }>({ key: null, index: null });
+  const activeChange =
+    count === 0
+      ? null
+      : active.key === readingKey && active.index !== null
+        ? Math.min(active.index, count - 1)
+        : saved?.activeChange != null && saved.activeChange < count
+          ? saved.activeChange
+          : 0;
+  const currentView = useRef({ readingKey, projection });
+  currentView.current = { readingKey, projection };
 
-  const readingKey = textResult
-    ? JSON.stringify([
-        state.transportGeneration,
-        state.sessionId,
-        state.cwd,
-        textResult.path.id,
-        textResult.side,
-      ])
-    : null;
   useLayoutEffect(() => {
     const root = sourceRef.current;
-    if (!root || !projection || readingKey === null) return;
-    const saved = readingPositions.get(readingKey);
-    const active =
-      saved?.activeChange != null && saved.activeChange < projection.changes
-        ? saved.activeChange
-        : null;
-    setActiveChange(active);
-    if (saved) {
-      root.scrollTop = saved.top;
-      root.scrollLeft = saved.left;
+    if (!root || !projection || !readingKey) return;
+    const scopeMatches =
+      readingOwner.current.reading !== reading ||
+      readingOwner.current.scope === scope;
+    const position = scopeMatches ? reading.changes : undefined;
+    readingOwner.current = { reading, scope };
+    const index =
+      projection.changes === 0
+        ? null
+        : position?.activeChange != null &&
+            position.activeChange < projection.changes
+          ? position.activeChange
+          : 0;
+    setActive({ key: readingKey, index });
+    if (position) {
+      root.scrollTop = position.top;
+      root.scrollLeft = position.left;
     } else {
       root.scrollTop = 0;
       root.scrollLeft = 0;
       const first = root.querySelector<HTMLElement>('[data-change-index="0"]');
-      if (first) {
+      if (first)
         root.scrollTop +=
           first.getBoundingClientRect().top -
           root.getBoundingClientRect().top -
           (root.clientHeight - first.getBoundingClientRect().height) / 2;
-      }
     }
-    readingPositions.set(readingKey, {
+    reading.changes = {
       top: root.scrollTop,
       left: root.scrollLeft,
-      activeChange: active,
-    });
-  }, [readingPositions, readingKey, projection]);
+      activeChange: index,
+    };
+    reading.save?.();
+  }, [reading, readingKey, scope, projection]);
 
   const rememberPosition = (node: HTMLDivElement) => {
-    if (readingKey === null) return;
-    const reading = readingPositions.get(readingKey);
-    if (reading) {
-      reading.top = node.scrollTop;
-      reading.left = node.scrollLeft;
-    }
+    if (!readingKey || !projection) return;
+    reading.changes = {
+      top: node.scrollTop,
+      left: node.scrollLeft,
+      activeChange,
+    };
+    reading.save?.();
   };
-
   const moveChange = (direction: -1 | 1) => {
-    if (!projection || projection.changes === 0) return;
-    const next =
-      activeChange === null
-        ? direction > 0
-          ? 0
-          : projection.changes - 1
-        : Math.min(
-            projection.changes - 1,
-            Math.max(0, activeChange + direction),
-          );
-    setActiveChange(next);
-    const reading =
-      readingKey === null ? null : readingPositions.get(readingKey);
-    if (reading) reading.activeChange = next;
+    if (!projection || count === 0 || !readingKey) return;
+    const next = Math.min(
+      count - 1,
+      Math.max(0, (activeChange ?? 0) + direction),
+    );
+    setActive({ key: readingKey, index: next });
+    const position = reading.changes;
+    if (position) position.activeChange = next;
+    reading.save?.();
     requestAnimationFrame(() => {
+      if (
+        currentView.current.readingKey !== readingKey ||
+        currentView.current.projection !== projection
+      )
+        return;
       sourceRef.current
         ?.querySelector<HTMLElement>(`[data-change-index="${next}"]`)
         ?.scrollIntoView({ block: "center" });
     });
   };
+  if (!enabled) return null;
 
-  const previousDisabled =
-    !projection || projection.changes === 0 || activeChange === 0;
-  const nextDisabled =
-    !projection ||
-    projection.changes === 0 ||
-    activeChange === projection.changes - 1;
+  const readingStatus =
+    waitingForStatus || (!state.gitStatus && !state.gitStatusError);
+  const noComparison = hasComparison
+    ? null
+    : readingStatus
+      ? "Reading Git status"
+      : state.gitStatusError
+        ? "Git status unavailable"
+        : state.gitStatus?.kind !== "repository"
+          ? "Not in a Git repository"
+          : state.gitStatus.truncated
+            ? "Git status incomplete"
+            : "No Git comparison";
 
   let content: ReactNode;
-  if (!change) {
-    content = preview ? (
-      <ResourcePreviewContent state={state} viewMode="source" />
-    ) : (
+  if (noComparison) {
+    const Icon = readingStatus ? PiLoader : History;
+    content = (
       <ContextPaneState
-        icon={<History size={17} aria-hidden />}
-        title="Select a change"
-        hint="Choose a changed file to inspect its source."
+        icon={<Icon size={17} aria-hidden />}
+        title={noComparison}
+        hint={readingStatus ? undefined : (state.gitStatusError ?? undefined)}
       />
     );
   } else if (!diffView || diffView.status === "loading") {
@@ -551,7 +417,7 @@ function ChangesDetail({
       <ContextPaneState
         icon={<PiLoader size={17} aria-hidden />}
         title="Loading source"
-        hint={path ?? "Reading Git changes…"}
+        hint={change?.path.display ?? "Reading Git changes…"}
       />
     );
   } else if (diffView.status === "error") {
@@ -560,80 +426,108 @@ function ChangesDetail({
         icon={<AlertTriangle size={17} aria-hidden />}
         title="Source unavailable"
         hint={diffView.message}
-      >
-        <button
-          type="button"
-          className="res__more button--quiet res__state-action"
-          onClick={() => void store.openGitDiff(diffView.pathId, diffView.side)}
-        >
-          <RotateCw size={12} aria-hidden /> Retry
-        </button>
-      </ContextPaneState>
+        action={{ run: () => void store.openGitDiff(diffView.pathId) }}
+      />
     );
   } else if (textResult && projection?.rows.length) {
     content = (
-      <SourceDiffView
-        diff={textResult}
-        projection={projection}
-        activeChange={activeChange}
-        containerRef={sourceRef}
-        onScroll={rememberPosition}
-      />
+      <SourceReader
+        className="source-diff"
+        label={`Source changes for ${textResult.path.display}`}
+        ref={sourceRef}
+        onScroll={(event) => rememberPosition(event.currentTarget)}
+      >
+        <CodeRows
+          rows={projection.rows}
+          gutter="diff"
+          activeChange={activeChange}
+        />
+        {[
+          textResult.truncated
+            ? "Source truncated"
+            : textResult.contextLimited
+              ? "Showing changed regions; source context limited"
+              : null,
+          textResult.encodingLossy ? "Invalid UTF-8 replaced" : null,
+        ].map(
+          (notice) =>
+            notice && (
+              <div key={notice} className="source-boundary" role="status">
+                {notice}
+              </div>
+            ),
+        )}
+      </SourceReader>
     );
   } else if (result) {
-    content = <GitResultState state={state} result={result} />;
-  } else {
-    content = null;
-  }
+    const { icon: Icon, title, hint } = describeGitResult(result);
+    content = (
+      <ContextPaneState
+        icon={<Icon size={17} aria-hidden />}
+        title={title}
+        hint={hint}
+      />
+    );
+  } else content = null;
 
-  return (
-    <div className="changes__detail" hidden={hidden}>
-      {navigation}
-      <div className="file-detail-header">
-        <div className="file-detail-header__path">
-          {path ? <PathCopyButton path={path} /> : <span>Source</span>}
-        </div>
-        <div
-          className="changes__stats"
-          role="group"
-          title={noComparison ?? "Line changes"}
-          aria-label={noComparison ?? "Line changes"}
-        >
-          <span className={textResult ? "changes__additions" : undefined}>
-            {textResult ? `+${textResult.additions}` : "—"}
-          </span>
-          <span className={textResult ? "changes__deletions" : undefined}>
-            {textResult ? `−${textResult.deletions}` : "—"}
-          </span>
-        </div>
-        <div
-          className="changes__jump"
-          role="group"
-          aria-label="Change navigation"
-        >
-          <button
-            type="button"
-            className="icon-button"
-            aria-label="Previous change"
-            title="Previous change"
-            disabled={previousDisabled}
-            onClick={() => moveChange(-1)}
-          >
-            <ChevronUp size={14} aria-hidden />
-          </button>
-          <button
-            type="button"
-            className="icon-button"
-            aria-label="Next change"
-            title="Next change"
-            disabled={nextDisabled}
-            onClick={() => moveChange(1)}
-          >
-            <ChevronDown size={14} aria-hidden />
-          </button>
-        </div>
+  const controls = (
+    <>
+      <div
+        className="changes__stats"
+        role="group"
+        title={noComparison ?? "Line changes"}
+        aria-label={noComparison ?? "Line changes"}
+      >
+        <span className={textResult ? "changes__additions" : undefined}>
+          {textResult ? `+${textResult.additions}` : "—"}
+        </span>
+        <span className={textResult ? "changes__deletions" : undefined}>
+          {textResult ? `−${textResult.deletions}` : "—"}
+        </span>
       </div>
-      <div className="changes__content" tabIndex={-1}>
+      <div
+        className="changes__jump"
+        role="group"
+        aria-label="Change navigation"
+      >
+        {(
+          [
+            [-1, "Previous change", ChevronUp, 0],
+            [1, "Next change", ChevronDown, count - 1],
+          ] as const
+        ).map(([direction, label, Icon, edge]) => (
+          <button
+            key={direction}
+            type="button"
+            className="icon-button"
+            aria-label={label}
+            title={label}
+            disabled={count === 0 || activeChange === edge}
+            onClick={() => moveChange(direction)}
+          >
+            <Icon size={16} aria-hidden />
+          </button>
+        ))}
+        <span
+          className="changes__position"
+          role="status"
+          aria-label="Change position"
+          aria-live="polite"
+          style={
+            {
+              "--change-position-width": `${String(count).length * 2 + 1}ch`,
+            } as CSSProperties
+          }
+        >
+          {count ? `${(activeChange ?? 0) + 1}/${count}` : "—"}
+        </span>
+      </div>
+    </>
+  );
+  return {
+    controls,
+    content: (
+      <>
         {diffView?.status === "ready" && diffView.refreshError ? (
           <p className="changes__projection-note" role="status">
             Source refresh failed; showing the last known source.{" "}
@@ -641,195 +535,38 @@ function ChangesDetail({
           </p>
         ) : null}
         {content}
-      </div>
-    </div>
-  );
+      </>
+    ),
+  };
 }
 
 export function ChangesPane({
   state,
-  readingPositions,
-  narrow = false,
+  browseScrollTop,
 }: {
   state: ContextPaneView;
-  readingPositions?: ChangesReadingPositions;
-  narrow?: boolean;
+  browseScrollTop?: MutableRefObject<number>;
 }) {
-  const localReadings = useRef<ChangesReadingPositions>(new Map());
-  const backRef = useRef<HTMLButtonElement>(null);
-  const selected = Boolean(
-    state.selectedGitPathId || state.selectedResourceReference,
-  );
-  const previousView = useRef({
-    narrow,
-    selected: false,
-    pathId: state.selectedGitPathId,
-    side: state.selectedGitSide,
-    sessionId: state.sessionId,
-    cwd: state.cwd,
-    transportGeneration: state.transportGeneration,
-  });
+  const listRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
-    const previous = previousView.current;
-    const root = backRef.current?.closest(".res__body");
-    const activeDialog = document.activeElement?.closest(
-      '[role="dialog"][aria-modal="true"]',
-    );
-    const canMoveFocus = !activeDialog || (root && activeDialog.contains(root));
-    const sameScope =
-      previous.sessionId === state.sessionId &&
-      previous.cwd === state.cwd &&
-      previous.transportGeneration === state.transportGeneration;
-    if (
-      canMoveFocus &&
-      narrow &&
-      selected &&
-      (!previous.selected || !previous.narrow)
-    ) {
-      backRef.current?.focus({ preventScroll: true });
-    } else if (
-      canMoveFocus &&
-      narrow &&
-      !selected &&
-      previous.selected &&
-      sameScope
-    ) {
-      const rows = root?.querySelectorAll<HTMLButtonElement>("[data-git-path]");
-      const row = Array.from(rows ?? []).find(
-        (item) =>
-          item.dataset.gitPath === previous.pathId &&
-          item.dataset.gitSide === previous.side,
-      );
-      (
-        row ??
-        root
-          ?.closest(".ctx")
-          ?.querySelector<HTMLElement>('[aria-label="Changes"]')
-      )?.focus({
-        preventScroll: true,
-      });
-    } else if (
-      !narrow &&
-      previous.narrow &&
-      root
-        ?.querySelector(".changes__navigation")
-        ?.contains(document.activeElement)
-    ) {
-      root.querySelector<HTMLElement>(".changes__content")?.focus({
-        preventScroll: true,
-      });
-    }
-    previousView.current = {
-      narrow,
-      selected,
-      pathId: state.selectedGitPathId,
-      side: state.selectedGitSide,
-      sessionId: state.sessionId,
-      cwd: state.cwd,
-      transportGeneration: state.transportGeneration,
+    const list = listRef.current;
+    if (!list || !browseScrollTop) return;
+    list.scrollTop = browseScrollTop.current;
+    return () => {
+      browseScrollTop.current = list.scrollTop;
     };
-  }, [
-    narrow,
-    selected,
-    state.selectedGitPathId,
-    state.selectedGitSide,
-    state.sessionId,
-    state.cwd,
-    state.transportGeneration,
-  ]);
-  const status = state.gitStatus;
-  const comparisons = useMemo(() => {
-    if (status?.kind !== "repository") return [];
-    // Match the index's group order; both sides of one path remain reachable.
-    return [
-      ...status.files
-        .filter((file) => file.conflict)
-        .map((file) => ({ file, side: "unstaged" as const })),
-      ...status.files
-        .filter((file) => !file.conflict && (file.unstaged || file.untracked))
-        .map((file) => ({ file, side: "unstaged" as const })),
-      ...status.files
-        .filter((file) => !file.conflict && file.staged)
-        .map((file) => ({ file, side: "staged" as const })),
-    ];
-  }, [status]);
-  const selectedIndex = comparisons.findIndex(
-    ({ file, side }) =>
-      file.path.id === state.selectedGitPathId &&
-      side === state.selectedGitSide,
-  );
-  const moveFile = (direction: -1 | 1) => {
-    const next = comparisons[selectedIndex + direction];
-    if (selectedIndex >= 0 && next)
-      void store.openGitDiff(next.file.path.id, next.side);
-  };
-  const navigation = (
-    <div
-      className="changes__navigation"
-      role="group"
-      aria-label="Changed file navigation"
-      hidden={!narrow}
-    >
-      <button
-        ref={backRef}
-        type="button"
-        className="changes__back"
-        onClick={() => store.showChangesBrowser()}
-      >
-        <ArrowLeft size={14} aria-hidden />
-        All changes{status?.kind === "repository" ? ` (${status.total})` : ""}
-      </button>
-      <span className="changes__comparison" aria-live="polite">
-        {selectedIndex >= 0
-          ? `${state.selectedGitSide === "staged" ? "Staged" : "Working"} ${selectedIndex + 1}/${comparisons.length}`
-          : "Source"}
-      </span>
-      <button
-        type="button"
-        className="icon-button"
-        aria-label="Previous file change"
-        title="Previous file change"
-        disabled={selectedIndex <= 0}
-        onClick={() => moveFile(-1)}
-      >
-        <ChevronLeft size={16} aria-hidden />
-      </button>
-      <button
-        type="button"
-        className="icon-button"
-        aria-label="Next file change"
-        title="Next file change"
-        disabled={selectedIndex < 0 || selectedIndex >= comparisons.length - 1}
-        onClick={() => moveFile(1)}
-      >
-        <ChevronRight size={16} aria-hidden />
-      </button>
-    </div>
-  );
+  }, [browseScrollTop]);
   return (
-    <ContextSplitBody
-      mode="changes"
-      className={selected ? "res__body--detail" : ""}
-      indexHidden={narrow && selected}
-      header={<ChangesIndexHeader state={state} />}
-      index={
-        <>
-          {state.gitStatus && state.gitStatusError ? (
-            <p className="changes__projection-note" role="status">
-              Refresh failed; showing the last known status.
-            </p>
-          ) : null}
-          <ChangesIndex state={state} />
-        </>
-      }
-      detail={
-        <ChangesDetail
-          state={state}
-          readingPositions={readingPositions ?? localReadings.current}
-          navigation={navigation}
-          hidden={narrow && !selected}
-        />
-      }
-    />
+    <div className="res__body res__body--changes">
+      <ChangesIndexHeader state={state} />
+      <div className="res__list" ref={listRef} data-pane-scroll-active="true">
+        {state.gitStatus && state.gitStatusError ? (
+          <p className="changes__projection-note" role="status">
+            Refresh failed; showing the last known status.
+          </p>
+        ) : null}
+        <ChangesIndex state={state} />
+      </div>
+    </div>
   );
 }

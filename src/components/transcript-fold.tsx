@@ -1,397 +1,353 @@
+import { ChevronRight } from "lucide-react";
 import {
-  AlertCircle,
-  ChevronDown,
-  ChevronRight,
-  ChevronUp,
-} from "lucide-react";
-import {
-  useCallback,
+  type ReactNode,
+  useContext,
   useEffect,
   useId,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
 import type { ActivityFoldVisibilityPreference } from "../../shared/contracts";
-import type {
-  ActivityMaterializationMode,
-  TranscriptActivityRangeState,
-} from "../store";
-import { ActivityMatrix, summarizeActivityMatrix } from "./ActivityMatrix";
-import { PiLoader } from "./PiLoader";
 import {
-  DYNAMIC_FOLD_CLOSE_DELAY_MS,
-  DYNAMIC_FOLD_EXPANDED_MIN_MS,
-  useDynamicCardOpen,
-} from "./transcript-activity";
-import {
-  ActivityItemVisibilityProvider,
+  ActivityItemOwner,
+  hasOpenActivityCard,
   type ActivityReadingChoices,
+  ReadingChoices,
 } from "./transcript-activity-visibility";
 
-const COMPACT_ACTIVITY_CARD_LIMIT = 24;
+import { toolIcon } from "./transcript-cards";
+import { useActivityCloseDelay } from "./use-activity-close-delay";
 
-export type ActivityTelemetryItem = {
-  id: string;
-  kind: "thinking" | "tool";
-  label?: string;
+const ACTIVITY_PAGE_SIZE = 24;
+
+export interface ActivityItem {
+  key: string;
+  node: ReactNode;
+  kind?: "thinking" | "tool";
+  name?: string;
+  failed?: boolean;
+  toolCallId?: string;
   live?: boolean;
-  /** Deferred ranges describe omitted activity but do not correspond to a
-   * mounted card until a bounded tail page has materialized. */
-  deferred?: boolean;
-};
+  expandedNode?: ReactNode;
+}
 
-export type ActivityFoldPresentation = "expanded" | "compact" | "collapsed";
-
-function ActivityFoldOmission({
-  contentId,
-  active,
-  matrix,
-  status,
-  label,
-  title,
-  onClick,
+function ActivityMatrix({
+  items,
+  description,
+  live,
 }: {
-  contentId: string;
-  active: boolean;
-  matrix: ReturnType<typeof summarizeActivityMatrix>;
-  status: "idle" | "loading" | "error";
-  label: string;
-  title: string;
-  onClick: () => void;
+  items: readonly ActivityItem[];
+  description: string;
+  live: boolean;
 }) {
-  const controlRef = useRef<HTMLButtonElement>(null);
-  useLayoutEffect(() => {
-    const control = controlRef.current;
-    const fold = control?.closest<HTMLElement>("[data-activity-fold]");
-    return () => {
-      if (!control?.contains(document.activeElement) || !fold) return;
-      queueMicrotask(() =>
-        fold
-          .querySelector<HTMLButtonElement>(
-            '[data-activity-fold-anchor="start"]',
-          )
-          ?.focus({ preventScroll: true }),
-      );
-    };
-  }, []);
-
+  const full = items.length === 9;
+  const previousFull = useRef(full);
+  const [lighting, setLighting] = useState(false);
+  useEffect(() => {
+    const wasFull = previousFull.current;
+    previousFull.current = full;
+    if (!full) setLighting(false);
+    if (!full || wasFull) return;
+    setLighting(true);
+    const timer = window.setTimeout(() => setLighting(false), 800);
+    return () => window.clearTimeout(timer);
+  }, [full]);
   return (
-    <button
-      ref={controlRef}
-      type="button"
-      className={`activity-fold__omission activity-fold__omission--${status}`}
-      aria-controls={contentId}
-      aria-expanded="false"
-      aria-label={label}
-      aria-description={matrix.description}
-      aria-busy={status === "loading"}
-      title={title}
-      data-activity-fold-anchor="start"
-      data-activity-range={status}
-      onClick={onClick}
+    <span
+      className={`activity-fold__matrix${full ? " activity-fold__matrix--full" : ""}${full && lighting ? " activity-fold__matrix--lighting" : ""}`}
+      title={description}
+      aria-hidden
     >
-      {status === "loading" ? (
-        <PiLoader size={14} aria-hidden />
-      ) : status === "error" ? (
-        <AlertCircle size={14} aria-hidden />
-      ) : (
-        <ChevronRight size={14} aria-hidden />
-      )}
-      <span>
-        {status === "loading"
-          ? "Loading earlier activity…"
-          : status === "error"
-            ? "Retry earlier activity"
-            : "Earlier activity"}
-      </span>
-      <ActivityMatrix {...matrix} active={active} />
-    </button>
+      {Array.from({ length: 9 }, (_, index) => {
+        const item = items[index];
+        return (
+          <span
+            key={item?.key ?? `empty:${index}`}
+            className={
+              item
+                ? `activity-fold__kind activity-fold__kind--${item.kind}${live && item.live ? " activity-fold__kind--live" : ""}`
+                : "activity-fold__cell-empty"
+            }
+          />
+        );
+      })}
+    </span>
   );
+}
+
+function summarizeActivity(items: readonly ActivityItem[]) {
+  const tools = new Map<string, number>();
+  let steps = 0;
+  let thinking = 0;
+  let failed = 0;
+  for (const item of items) {
+    if (item.kind) steps += 1;
+    if (item.failed) failed += 1;
+    if (item.kind === "thinking") thinking += 1;
+    if (item.name) tools.set(item.name, (tools.get(item.name) ?? 0) + 1);
+  }
+  const names = [...tools].map(([name, count]) =>
+    count > 1 ? `${name} ×${count}` : name,
+  );
+  if (thinking > 0 && names.length < 3)
+    names.unshift(thinking > 1 ? `thinking ×${thinking}` : "thinking");
+  const rest = names.length - 3;
+  return {
+    text: steps
+      ? [steps === 1 ? "1 step" : `${steps} steps`, ...names.slice(0, 3)].join(
+          " · ",
+        ) + (rest > 0 ? ` +${rest}` : "")
+      : "",
+    failed,
+  };
+}
+
+function ToolStrip({ items }: { items: readonly ActivityItem[] }) {
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const panel = useId();
+  const selected = items.find((item) => item.key === selectedKey);
+  return (
+    <div className="activity-strip">
+      <div
+        className="activity-strip__items"
+        role="group"
+        aria-label="Tool calls"
+      >
+        {items.map((item) => (
+          <button
+            key={item.key}
+            type="button"
+            className="activity-strip__item"
+            aria-label={`${item.name} tool details${item.failed ? ", failed" : ""}`}
+            title={item.name}
+            aria-expanded={selectedKey === item.key}
+            aria-controls={selectedKey === item.key ? panel : undefined}
+            data-failed={item.failed || undefined}
+            onClick={() =>
+              setSelectedKey(selectedKey === item.key ? null : item.key)
+            }
+          >
+            {toolIcon(item.name ?? "")}
+          </button>
+        ))}
+      </div>
+      {selected && (
+        <div id={panel} className="activity-strip__detail" key={selected.key}>
+          <ActivityItemOwner toolCallId={selected.toolCallId}>
+            {selected.expandedNode}
+          </ActivityItemOwner>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ActivityItems({
+  items,
+  collapseTools,
+}: {
+  items: readonly ActivityItem[];
+  collapseTools: boolean;
+}) {
+  const choices = useContext(ReadingChoices);
+  const canGroup = (item: ActivityItem | undefined) =>
+    item?.expandedNode &&
+    !item.live &&
+    !hasOpenActivityCard(choices, item.toolCallId);
+  const children: ReactNode[] = [];
+  for (let start = 0; start < items.length; ) {
+    const item = items[start]!;
+    let end = start + 1;
+    if (collapseTools && canGroup(item)) while (canGroup(items[end])) end++;
+    children.push(
+      end - start > 1 ? (
+        <ToolStrip key={item.key} items={items.slice(start, end)} />
+      ) : (
+        <ActivityItemOwner key={item.key} toolCallId={item.toolCallId}>
+          {item.node}
+        </ActivityItemOwner>
+      ),
+    );
+    start = end;
+  }
+  return children;
 }
 
 export function ResponseActivityFold({
   visibility,
-  lifecycleActive,
-  closeRequested,
-  initialManualPresentation = null,
-  onManualPresentationChange,
-  readingChoices,
-  deferredRanges = [],
-  telemetry = [],
-  onMaterializeRanges,
-  onPreserveAnchor,
-  children,
+  live,
+  choices,
+  items,
+  collapseTools,
 }: {
   visibility: ActivityFoldVisibilityPreference;
-  lifecycleActive: boolean;
-  closeRequested: boolean;
-  initialManualPresentation?: ActivityFoldPresentation | null;
-  onManualPresentationChange?: (presentation: ActivityFoldPresentation) => void;
-  readingChoices?: ActivityReadingChoices;
-  deferredRanges?: readonly TranscriptActivityRangeState[];
-  telemetry?: readonly ActivityTelemetryItem[];
-  onMaterializeRanges?: (
-    cursors: readonly string[],
-    beforeCommit: () => void,
-    mode?: ActivityMaterializationMode,
-  ) => Promise<void>;
-  onPreserveAnchor?: (
-    element: HTMLElement,
-    alignment: "start" | "center" | "end",
-  ) => void;
-  children: React.ReactNode;
+  live: boolean;
+  choices: ActivityReadingChoices;
+  collapseTools: boolean;
+  items: readonly ActivityItem[];
 }) {
-  const contentId = useId();
-  const foldRef = useRef<HTMLElement>(null);
-  const topControlRef = useRef<HTMLButtonElement>(null);
-  const lowerControlRef = useRef<HTMLButtonElement>(null);
-  const focusAfterToggle = useRef<"upper" | "lower" | null>(null);
-  const materializationAnchor = useRef<"start" | "center" | "end">("start");
-  const [manualPresentation, setManualPresentation] =
-    useState<ActivityFoldPresentation | null>(initialManualPresentation);
-  const [inspectionHeld, setInspectionHeld] = useState(false);
-  const dynamicVisible = useDynamicCardOpen(
-    visibility === "dynamic",
-    lifecycleActive,
-    closeRequested,
-    DYNAMIC_FOLD_EXPANDED_MIN_MS,
-    undefined,
-    DYNAMIC_FOLD_CLOSE_DELAY_MS,
+  const id = useId();
+  const [choice, setChoice] = useState<
+    "collapsed" | "compact" | "expanded" | null
+  >(null);
+  const [inspecting, setInspecting] = useState(false);
+  const header = useRef<HTMLButtonElement>(null);
+  const group = useRef<HTMLElement>(null);
+  const footer = useRef<HTMLButtonElement>(null);
+  const anchor = useRef<{ edge: "top" | "bottom"; position: number }>(null);
+  const dynamicOpen = useActivityCloseDelay(
+    visibility === "dynamic" && live,
+    2400,
+    800,
   );
-  const defaultPresentation: ActivityFoldPresentation =
-    visibility === "expanded"
-      ? "expanded"
-      : visibility === "compact" || (visibility === "dynamic" && dynamicVisible)
+  const density =
+    choice ??
+    (visibility === "dynamic"
+      ? dynamicOpen || inspecting
         ? "compact"
-        : "collapsed";
-  const presentation: ActivityFoldPresentation =
-    manualPresentation ??
-    (visibility === "dynamic" && inspectionHeld
-      ? "compact"
-      : defaultPresentation);
-  const open = presentation !== "collapsed";
-  const localReadingChoices = useRef<ActivityReadingChoices>(new Map());
-
-  const cardTelemetry = useMemo(
-    () => telemetry.filter((item) => !item.deferred),
-    [telemetry],
-  );
-  const compactVisibleIds = useMemo(() => {
-    if (presentation !== "compact") return null;
-    return new Set(
-      cardTelemetry.slice(-COMPACT_ACTIVITY_CARD_LIMIT).map((item) => item.id),
-    );
-  }, [cardTelemetry, presentation]);
-  const hasDeferredPrefix = deferredRanges.length > 0;
-  const hasLoadedPrefix = cardTelemetry.length > COMPACT_ACTIVITY_CARD_LIMIT;
-  const compactEquivalentToExpanded = !hasDeferredPrefix && !hasLoadedPrefix;
-  const showOmission =
-    (presentation === "compact" && (hasDeferredPrefix || hasLoadedPrefix)) ||
-    (presentation === "expanded" && hasDeferredPrefix);
-  const deferredError = deferredRanges.find(
-    (range) => range.status === "error",
-  );
-  const deferredLoading = deferredRanges.some(
-    (range) => range.status === "loading",
-  );
-
-  const latestMatrix = summarizeActivityMatrix(telemetry, lifecycleActive);
-  const matrixDescription = latestMatrix.description;
-  const kindIndicators = (
-    <ActivityMatrix {...latestMatrix} active={lifecycleActive} />
-  );
-  // The omission owns only the hidden prefix, never the already visible tail.
-  const earlierMatrix = summarizeActivityMatrix(
-    telemetry.filter(
-      (item) =>
-        item.deferred || (compactVisibleIds && !compactVisibleIds.has(item.id)),
-    ),
-    lifecycleActive,
-    "Earlier",
-  );
-
-  const requestMaterialization = useCallback(
-    (mode: ActivityMaterializationMode, automatic: boolean) => {
-      if (!onMaterializeRanges) return;
-      if (
-        mode === "tail" &&
-        cardTelemetry.length >= COMPACT_ACTIVITY_CARD_LIMIT
-      )
-        return;
-      const candidates =
-        mode === "all"
-          ? deferredRanges
-          : deferredRanges.length > 0
-            ? [deferredRanges[deferredRanges.length - 1]!]
-            : [];
-      const cursors = candidates
-        .filter(
-          (range) =>
-            range.status !== "loading" &&
-            (!automatic || range.status === "idle"),
+        : "collapsed"
+      : visibility);
+  const open = density !== "collapsed";
+  const start =
+    density === "compact" ? Math.max(0, items.length - ACTIVITY_PAGE_SIZE) : 0;
+  const matrixItems = items.filter((item) => item.kind).slice(-9);
+  const matrixDescription = matrixItems.length
+    ? `Recent activity, oldest to newest: ${matrixItems
+        .map(
+          (item) =>
+            `${item.kind === "thinking" ? "Thinking" : "Tool"}${live && item.live ? " (active)" : ""}`,
         )
-        .map((range) => range.cursor);
-      if (cursors.length === 0) return;
-      void onMaterializeRanges(
-        cursors,
-        () => {
-          if (foldRef.current)
-            onPreserveAnchor?.(foldRef.current, materializationAnchor.current);
-        },
-        mode,
-      );
-    },
-    [
-      cardTelemetry.length,
-      deferredRanges,
-      onMaterializeRanges,
-      onPreserveAnchor,
-    ],
-  );
+        .join(", ")}.`
+    : "Waiting for activity.";
+  const { text, failed } = open
+    ? summarizeActivity(items)
+    : { text: "", failed: 0 };
 
-  useEffect(() => {
-    if (presentation === "collapsed") return;
-    requestMaterialization(presentation === "expanded" ? "all" : "tail", true);
-  }, [presentation, requestMaterialization]);
+  useLayoutEffect(() => {
+    const previous = anchor.current;
+    anchor.current = null;
+    const section = group.current;
+    const scroll = section?.closest<HTMLElement>(".transcript");
+    if (!previous || !section || !scroll) return;
+    scroll.scrollTop +=
+      section.getBoundingClientRect()[previous.edge] - previous.position;
+    (previous.edge === "bottom" && open ? footer : header).current?.focus({
+      preventScroll: true,
+    });
+  }, [density, open]);
 
-  useEffect(() => {
-    const target = focusAfterToggle.current;
-    if (!target) return;
-    focusAfterToggle.current = null;
-    const control =
-      target === "upper" || !open
-        ? topControlRef.current
-        : lowerControlRef.current;
-    control?.focus({ preventScroll: true });
-  }, [open, presentation]);
+  function choose(
+    next: "collapsed" | "compact" | "expanded",
+    edge: "top" | "bottom" = "top",
+  ) {
+    if (group.current)
+      anchor.current = {
+        edge,
+        position: group.current.getBoundingClientRect()[edge],
+      };
+    setChoice(next);
+  }
 
-  const choosePresentation = (
-    next: ActivityFoldPresentation,
-    focusTarget: "upper" | "lower",
-    anchor: "start" | "center" | "end" = focusTarget === "upper"
-      ? "start"
-      : "end",
-  ) => {
-    focusAfterToggle.current = focusTarget;
-    materializationAnchor.current = anchor;
-    setManualPresentation(next);
-    onManualPresentationChange?.(next);
-  };
-
-  const expandToCompact = (
-    focusTarget: "upper" | "lower",
-    anchor: "start" | "center" | "end",
-  ) => {
-    choosePresentation("compact", focusTarget, anchor);
-    if (deferredRanges.at(-1)?.status === "error")
-      requestMaterialization("tail", false);
-  };
-
-  const collapseTarget: ActivityFoldPresentation =
-    presentation === "expanded" && !compactEquivalentToExpanded
+  const collapseTo =
+    density === "expanded" && items.length > ACTIVITY_PAGE_SIZE
       ? "compact"
       : "collapsed";
-
-  const boundary = (edge: "upper" | "lower") => {
-    const action = collapseTarget === "compact" ? "Compact" : "Collapse";
-    return (
-      <button
-        ref={edge === "upper" ? topControlRef : lowerControlRef}
-        type="button"
-        className={`activity-fold__boundary activity-fold__boundary--${edge}`}
-        aria-controls={contentId}
-        aria-expanded="true"
-        aria-label={`${action} assistant activity from the ${edge} boundary`}
-        aria-description={edge === "upper" ? matrixDescription : undefined}
-        title={`${action} activity`}
-        data-activity-fold-anchor={edge === "upper" ? "start" : "end"}
-        onClick={() => choosePresentation(collapseTarget, edge)}
-      >
-        {edge === "upper" ? (
-          <ChevronDown size={14} aria-hidden />
-        ) : (
-          <ChevronUp size={14} aria-hidden />
-        )}
-        <span>{edge === "upper" ? "Activity" : `${action} activity`}</span>
-        {edge === "upper" ? kindIndicators : null}
-      </button>
-    );
-  };
-
-  const omissionStatus = deferredError
-    ? "error"
-    : deferredLoading
-      ? "loading"
-      : "idle";
-  const omissionLabel = deferredError
-    ? "Retry loading all earlier assistant activity"
-    : deferredLoading
-      ? "Loading earlier assistant activity"
-      : "Show all earlier assistant activity";
+  const collapseLabel =
+    collapseTo === "compact" ? "Compact activity" : "Collapse activity";
 
   return (
     <section
-      ref={foldRef}
-      className={`activity-fold activity-fold--${presentation}`}
+      ref={group}
+      className="activity-fold"
+      data-dynamic={visibility === "dynamic" || undefined}
       aria-label="Assistant activity"
-      data-activity-fold={open ? "open" : "closed"}
-      data-activity-fold-presentation={presentation}
-      onFocusCapture={() => {
-        if (open) setInspectionHeld(true);
+      onFocus={() => {
+        if (open) setInspecting(true);
       }}
-      onBlurCapture={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null))
-          setInspectionHeld(false);
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget))
+          setInspecting(false);
       }}
     >
-      {open ? (
-        boundary("upper")
-      ) : (
-        <button
-          ref={topControlRef}
-          type="button"
-          className={`activity-fold__disclosure ${deferredError ? "activity-fold__disclosure--error" : ""}`}
-          aria-controls={contentId}
-          aria-expanded="false"
-          aria-label="Expand assistant activity"
-          aria-description={matrixDescription}
-          title={deferredError?.error ?? "Show recent assistant activity"}
-          data-activity-fold-anchor="center"
-          onClick={() => expandToCompact("upper", "center")}
-        >
-          <ChevronRight size={14} aria-hidden />
-          <span>Activity</span>
-          {kindIndicators}
-        </button>
-      )}
-      <div id={contentId} className="activity-fold__content" hidden={!open}>
-        {showOmission ? (
-          <ActivityFoldOmission
-            contentId={contentId}
-            active={lifecycleActive}
-            matrix={earlierMatrix}
-            status={omissionStatus}
-            label={omissionLabel}
-            title={deferredError?.error ?? omissionLabel}
-            onClick={() => {
-              materializationAnchor.current = "start";
-              if (presentation === "compact")
-                choosePresentation("expanded", "upper", "start");
-              if (deferredError || presentation === "expanded")
-                requestMaterialization("all", false);
-            }}
-          />
-        ) : null}
-        <ActivityItemVisibilityProvider
-          visibleIds={compactVisibleIds}
-          readingChoices={readingChoices ?? localReadingChoices.current}
-        >
-          {open ? children : null}
-        </ActivityItemVisibilityProvider>
+      <button
+        type="button"
+        ref={header}
+        className="disclosure-row activity-fold__disclosure"
+        aria-controls={id}
+        aria-expanded={open}
+        aria-description={matrixDescription}
+        aria-label={
+          open
+            ? collapseTo === "compact"
+              ? "Compact assistant activity"
+              : "Collapse assistant activity"
+            : "Expand assistant activity"
+        }
+        onClick={() => choose(open ? collapseTo : "compact")}
+      >
+        <ChevronRight
+          size={14}
+          className={open ? "chev chev--open" : "chev"}
+          aria-hidden
+        />
+        <span>Activity</span>
+        <ActivityMatrix
+          items={matrixItems}
+          description={matrixDescription}
+          live={live}
+        />
+        {text && (
+          <span className="activity-fold__summary">
+            {text}
+            {failed > 0 && (
+              <>
+                {" "}
+                ·{" "}
+                <span className="activity-fold__summary-failed">
+                  {failed} failed
+                </span>
+              </>
+            )}
+          </span>
+        )}
+      </button>
+      <div id={id} className="activity-fold__content" hidden={!open}>
+        {open && (
+          <>
+            {start > 0 && (
+              <button
+                type="button"
+                className="button button--quiet disclosure-row"
+                onClick={() => choose("expanded")}
+              >
+                <ChevronRight size={14} aria-hidden /> Earlier activity
+              </button>
+            )}
+            <ReadingChoices value={choices}>
+              <ActivityItems
+                items={items.slice(start)}
+                collapseTools={collapseTools}
+              />
+            </ReadingChoices>
+            {items.length > 1 && (
+              <button
+                type="button"
+                className="button button--quiet disclosure-row"
+                ref={footer}
+                onClick={() => choose(collapseTo, "bottom")}
+              >
+                <ChevronRight
+                  size={14}
+                  className="chev chev--open"
+                  aria-hidden
+                />{" "}
+                {collapseLabel}
+              </button>
+            )}
+          </>
+        )}
       </div>
-      {open ? boundary("lower") : null}
     </section>
   );
 }

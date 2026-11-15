@@ -8,6 +8,12 @@ export const richTextLiteralCases = [
   ["braced variables", "Read ${HOME}/${APP}/config.json."],
   ["command substitution", "Save to $HOME/$(date)/report.txt."],
   ["search paths", "Set PATH=$HOME/bin:$PATH."],
+  ["quoted variables", 'Read "$HOME" and "$PATH" before starting.'],
+  ["quoted substitution", 'Compare "$(date)" and "$(pwd)".'],
+  [
+    "quoted array expansion across output lines",
+    'apt-get -s install "${system_pkgs[@]}"\nNOTE: This is only a simulation!\napt-get install "${system_pkgs[@]}"',
+  ],
   ["quoted regex", String.raw`Use '^\d+$' rather than '^(0|[1-9]\d*)$'.`],
   [
     "double quoted regex",

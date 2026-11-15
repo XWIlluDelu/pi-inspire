@@ -1,16 +1,14 @@
 import type {
   TerminalCatalogResponse,
-  TerminalClientControlMessage,
-  TerminalCreateRequest,
-  TerminalDescriptor,
-  TerminalMutationMethod,
-  TerminalOperationIdentity,
-  TerminalRemoveResponse,
-  TerminalRenameRequest,
   TerminalServerControlMessage,
   TerminalServiceSettings,
-  TerminalServiceSettingsPatch,
 } from "../shared/terminal-contracts.js";
+import type {
+  TerminalAttachOptions,
+  TerminalIntent,
+  TerminalOperation,
+  TerminalOperationResults,
+} from "../shared/terminal-operations.js";
 
 export interface TerminalAttachmentSink {
   sendControl(message: TerminalServerControlMessage): void;
@@ -18,50 +16,23 @@ export interface TerminalAttachmentSink {
   close(code: number, reason: string): void;
 }
 
-export interface TerminalAttachOptions {
-  terminalId: string;
-  clientId: string;
-  cols: number;
-  rows: number;
-  outputEpoch?: string;
-  nextOutputOffset?: number;
-  resizeRevision?: number;
-  ownerToken?: string;
-}
+export type TerminalClientFrame = { data: Uint8Array } | { control: unknown };
 
 export interface TerminalAttachment {
-  readonly id: string;
-  readonly terminalId: string;
-  writeInput(sequence: number, data: Uint8Array): void;
-  control(
-    message: Exclude<TerminalClientControlMessage, { type: "attach" }>,
-  ): void;
+  send(frame: TerminalClientFrame): void;
   detach(): void;
 }
 
 export interface TerminalService {
   operationEpoch(): Promise<string>;
-  operate<Result>(
-    method: TerminalMutationMethod,
-    params: unknown,
-    operation: TerminalOperationIdentity,
-  ): Promise<Result>;
+  operate<I extends TerminalIntent>(
+    operation: TerminalOperation & { intent: I },
+    observeOnly?: boolean,
+  ): Promise<TerminalOperationResults[I["command"]]>;
   list(
     cwd?: string,
   ): TerminalCatalogResponse | Promise<TerminalCatalogResponse>;
-  create(request: TerminalCreateRequest): Promise<TerminalDescriptor>;
-  rename(
-    id: string,
-    request: TerminalRenameRequest,
-  ): Promise<TerminalDescriptor>;
-  reorder(cwd: string, terminalIds: string[]): Promise<TerminalCatalogResponse>;
-  restart(id: string): Promise<TerminalDescriptor>;
-  remove(id: string, force: boolean): Promise<TerminalRemoveResponse>;
   getSettings(): TerminalServiceSettings | Promise<TerminalServiceSettings>;
-  updateSettings(
-    patch: TerminalServiceSettingsPatch,
-  ): Promise<TerminalServiceSettings>;
-  clearHistory(): Promise<void>;
   attach(
     options: TerminalAttachOptions,
     sink: TerminalAttachmentSink,
@@ -70,78 +41,15 @@ export interface TerminalService {
 }
 
 /** Initialize only on demand. Connection failures may be retried; dispatched work never is. */
-export class LazyTerminalService implements TerminalService {
+export class TerminalConnection {
   private pending: Promise<TerminalService> | null = null;
-  private service: TerminalService | null = null;
   private closed = false;
   private closing: Promise<void> | null = null;
 
-  constructor(private readonly connect: () => Promise<TerminalService>) {}
-
-  operationEpoch(): Promise<string> {
-    return this.run((service) => service.operationEpoch());
-  }
-
-  operate<Result>(
-    method: TerminalMutationMethod,
-    params: unknown,
-    operation: TerminalOperationIdentity,
-  ): Promise<Result> {
-    return this.run((service) =>
-      service.operate<Result>(method, params, operation),
-    );
-  }
-
-  list(cwd?: string): Promise<TerminalCatalogResponse> {
-    return this.run((service) => service.list(cwd));
-  }
-
-  create(request: TerminalCreateRequest): Promise<TerminalDescriptor> {
-    return this.run((service) => service.create(request));
-  }
-
-  rename(
-    id: string,
-    request: TerminalRenameRequest,
-  ): Promise<TerminalDescriptor> {
-    return this.run((service) => service.rename(id, request));
-  }
-
-  reorder(
-    cwd: string,
-    terminalIds: string[],
-  ): Promise<TerminalCatalogResponse> {
-    return this.run((service) => service.reorder(cwd, terminalIds));
-  }
-
-  restart(id: string): Promise<TerminalDescriptor> {
-    return this.run((service) => service.restart(id));
-  }
-
-  remove(id: string, force: boolean): Promise<TerminalRemoveResponse> {
-    return this.run((service) => service.remove(id, force));
-  }
-
-  getSettings(): Promise<TerminalServiceSettings> {
-    return this.run((service) => service.getSettings());
-  }
-
-  updateSettings(
-    patch: TerminalServiceSettingsPatch,
-  ): Promise<TerminalServiceSettings> {
-    return this.run((service) => service.updateSettings(patch));
-  }
-
-  clearHistory(): Promise<void> {
-    return this.run((service) => service.clearHistory());
-  }
-
-  attach(
-    options: TerminalAttachOptions,
-    sink: TerminalAttachmentSink,
-  ): Promise<TerminalAttachment> {
-    return this.run((service) => service.attach(options, sink));
-  }
+  constructor(
+    private readonly connect: () => Promise<TerminalService>,
+    private service: TerminalService | null = null,
+  ) {}
 
   close(): Promise<void> {
     if (this.closing) return this.closing;
@@ -163,7 +71,15 @@ export class LazyTerminalService implements TerminalService {
     );
   }
 
-  private async connected(): Promise<TerminalService> {
+  async run<Result>(
+    operation: (service: TerminalService) => Result | Promise<Result>,
+  ): Promise<Result> {
+    const service = await this.connectOnce();
+    if (this.closed) throw this.closedError();
+    return operation(service);
+  }
+
+  private async connectOnce(): Promise<TerminalService> {
     if (this.closed) throw this.closedError();
     if (this.service) return this.service;
     if (this.pending) return this.pending;
@@ -185,24 +101,6 @@ export class LazyTerminalService implements TerminalService {
       });
     this.pending = pending;
     return pending;
-  }
-
-  private async run<Result>(
-    action: (service: TerminalService) => Result | Promise<Result>,
-  ): Promise<Result> {
-    const service = await this.connected();
-    if (this.closed) throw this.closedError();
-    return action(service);
-  }
-}
-
-export class UnavailableTerminalService extends LazyTerminalService {
-  constructor(reason: string) {
-    super(() =>
-      Promise.reject(
-        new TerminalServiceError("terminal_service_unavailable", 503, reason),
-      ),
-    );
   }
 }
 

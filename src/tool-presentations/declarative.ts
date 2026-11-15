@@ -1,3 +1,4 @@
+import { jsonRecord } from "../../shared/json-record";
 import type {
   ThinkingPresentationRuleDeclaration,
   ToolPresentationBlockDeclaration,
@@ -7,7 +8,6 @@ import type {
 } from "../../shared/tool-presentation-config";
 import { stripTerminalSequences } from "../ansi";
 import { toolResultText } from "../events";
-import { isToolImageMimeType, mergeSearchContext } from "./model";
 import type {
   ToolListItem,
   ToolPresentation,
@@ -16,6 +16,11 @@ import type {
   ToolPresentationRule,
   ToolPresentationSummary,
   ToolSearchGroup,
+} from "./model";
+import {
+  isToolImageMimeType,
+  joinResourcePath,
+  mergeSearchContext,
 } from "./model";
 
 type ToolPresentationSummaryPart = ToolPresentationSummary["parts"][number];
@@ -38,15 +43,9 @@ type CompiledBlock =
   | { state: "ok"; blocks: ToolPresentationBlock[] }
   | { state: "incompatible" };
 
-function objectValue(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
 function property(source: unknown, key: string): unknown {
   if (Array.isArray(source) && /^\d+$/.test(key)) return source[Number(key)];
-  const object = objectValue(source);
+  const object = jsonRecord(source);
   return object && Object.hasOwn(object, key) ? object[key] : undefined;
 }
 
@@ -133,7 +132,7 @@ function formatValue(
   if (format === "count") {
     if (Array.isArray(value) || typeof value === "string")
       return String(value.length);
-    const object = objectValue(value);
+    const object = jsonRecord(value);
     return object ? String(Object.keys(object).length) : null;
   }
   const text = textValue(value, format === "basename" ? undefined : maxChars);
@@ -305,12 +304,6 @@ function annotatedLine(line: string): { label: string; detail?: string } {
   return match
     ? { label: match[1].trim(), detail: match[2].trim() }
     : { label: line.trim() };
-}
-
-function joinResourcePath(root: string | undefined, child: string): string {
-  if (/^(?:\/|[A-Za-z]:[\\/])/.test(child)) return child;
-  if (!root || root === ".") return child;
-  return `${root.replace(/[\\/]$/, "")}/${child.replace(/^[\\/]/, "")}`;
 }
 
 function listBlocks(

@@ -8,9 +8,12 @@ import {
   useRef,
   useState,
 } from "react";
-import type { UserTurnAnchor } from "../../shared/contracts";
+import {
+  HISTORY_PROMPT_PAGE_SIZE as PAGE_SIZE,
+  type UserTurnAnchor,
+} from "../../shared/contracts";
+import { isComposingKeyboardEvent } from "../keyboard-input";
 
-const PAGE_SIZE = 100;
 const ROW_HEIGHT = 40;
 const MAX_TICKS = 12;
 
@@ -220,11 +223,12 @@ export function PromptMap({
     if (!firstOpen && listUserOwnedRef.current) return;
     if (!firstOpen && followedOrdinalRef.current === target) return;
     followedOrdinalRef.current = target;
-    const frame = requestAnimationFrame(() =>
-      virtualizer.scrollToIndex(target, {
-        align: firstOpen ? "center" : "auto",
-      }),
-    );
+    const frame = requestAnimationFrame(() => {
+      if (!listUserOwnedRef.current)
+        virtualizer.scrollToIndex(target, {
+          align: firstOpen ? "center" : "auto",
+        });
+    });
     return () => cancelAnimationFrame(frame);
   }, [activeOrdinal, open, total, virtualizer.scrollToIndex]);
 
@@ -257,7 +261,7 @@ export function PromptMap({
   }, [open]);
 
   useEffect(() => {
-    if (!open || virtualItems.length === 0) return;
+    if (!open || error || virtualItems.length === 0) return;
     const starts = new Set<number>();
     for (const item of virtualItems) {
       if (!turnByOrdinal.has(item.index))
@@ -267,7 +271,15 @@ export function PromptMap({
       if (!loadedStarts.includes(start) && !loadingStarts.includes(start))
         void onLoad(start);
     }
-  }, [loadedStarts, loadingStarts, onLoad, open, turnByOrdinal, virtualItems]);
+  }, [
+    error,
+    loadedStarts,
+    loadingStarts,
+    onLoad,
+    open,
+    turnByOrdinal,
+    virtualItems,
+  ]);
 
   const navigate = async (ordinal: number) => {
     if (navigatingRef.current) return;
@@ -372,6 +384,7 @@ export function PromptMap({
         });
       }}
       onKeyDown={(event) => {
+        if (isComposingKeyboardEvent(event.nativeEvent)) return;
         pointerFocusRef.current = false;
         if (event.key !== "Escape") return;
         if (open) {
@@ -418,18 +431,18 @@ export function PromptMap({
                 listUserOwnedRef.current = true;
               }}
               onKeyDown={(event) => {
-                if (
-                  [
-                    "ArrowDown",
-                    "ArrowUp",
-                    "End",
-                    "Home",
-                    "PageDown",
-                    "PageUp",
-                    " ",
-                  ].includes(event.key)
-                )
+                if (event.key === "Home" || event.key === "End") {
+                  event.preventDefault();
                   listUserOwnedRef.current = true;
+                  event.currentTarget.scrollTop =
+                    event.key === "Home" ? 0 : event.currentTarget.scrollHeight;
+                } else if (
+                  ["ArrowDown", "ArrowUp", "PageDown", "PageUp", " "].includes(
+                    event.key,
+                  )
+                ) {
+                  listUserOwnedRef.current = true;
+                }
               }}
             >
               {total === 0 ? (

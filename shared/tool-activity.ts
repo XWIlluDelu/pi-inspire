@@ -1,3 +1,4 @@
+import { jsonRecord } from "./json-record.js";
 /** Host/browser activity mirrors native receipts, never child result payloads. */
 export interface ChildCall {
   key: string;
@@ -24,18 +25,12 @@ export interface ActivityTool {
   calls?: ChildCallList;
 }
 
-export const MAX_CHILD_CALLS = 256;
+const MAX_CHILD_CALLS = 256;
 const MAX_ARGUMENT_BYTES = 8_192;
 const MAX_ARGUMENT_TOTAL_BYTES = 32_768;
 const encoder = new TextEncoder();
 const argumentBytes = (value: unknown) =>
   encoder.encode(JSON.stringify(value)).byteLength;
-
-function record(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
 
 function callMetadata(value: Record<string, unknown>) {
   return {
@@ -53,7 +48,7 @@ function callMetadata(value: Record<string, unknown>) {
 /** Codemode snapshots append records in call order; temporary ids repeat and later change.
  * Array position is its stable visual identity, independent of generic execution ids. */
 export function codemodeCalls(details: unknown): ChildCallList | undefined {
-  const values = record(details)?.calls;
+  const values = jsonRecord(details)?.calls;
   if (!Array.isArray(values)) return undefined;
   const calls: ChildCall[] = [];
   let complete = values.length <= MAX_CHILD_CALLS;
@@ -62,7 +57,7 @@ export function codemodeCalls(details: unknown): ChildCallList | undefined {
     index < Math.min(values.length, MAX_CHILD_CALLS);
     index++
   ) {
-    const value = record(values[index]);
+    const value = jsonRecord(values[index]);
     if (
       !value ||
       typeof value.name !== "string" ||
@@ -85,14 +80,14 @@ export function codemodeCalls(details: unknown): ChildCallList | undefined {
 
 /** The persisted native summary is top-level toolResult.nestedCalls, not details. */
 function nestedCalls(summary: unknown): ChildCallList | undefined {
-  const source = record(summary);
+  const source = jsonRecord(summary);
   if (!source || !Array.isArray(source.calls)) return undefined;
   const calls: ChildCall[] = [];
   let complete =
     source.complete === true && source.calls.length <= MAX_CHILD_CALLS;
   let bytes = 0;
   for (const item of source.calls.slice(0, MAX_CHILD_CALLS)) {
-    const value = record(item);
+    const value = jsonRecord(item);
     if (
       !value ||
       typeof value.id !== "string" ||
@@ -134,7 +129,7 @@ function boundedChildArguments(
 }
 
 export function resultChildCalls(message: unknown): ChildCallList | undefined {
-  const value = record(message);
+  const value = jsonRecord(message);
   if (!value) return undefined;
   return value.toolName === "codemode"
     ? codemodeCalls(value.details)
@@ -143,14 +138,14 @@ export function resultChildCalls(message: unknown): ChildCallList | undefined {
 
 export function childCallFromEvent(event: Record<string, unknown>): ChildCall {
   const error =
-    event.isError === true ? record(event.result)?.content : undefined;
+    event.isError === true ? jsonRecord(event.result)?.content : undefined;
   const errorText =
     typeof error === "string"
       ? error
       : Array.isArray(error)
         ? error
-            .filter((part) => record(part)?.type === "text")
-            .map((part) => String(record(part)?.text ?? ""))
+            .filter((part) => jsonRecord(part)?.type === "text")
+            .map((part) => String(jsonRecord(part)?.text ?? ""))
             .join("\n")
         : "";
   return {
@@ -173,11 +168,9 @@ export function childCallFromEvent(event: Record<string, unknown>): ChildCall {
 /** Flatten native generic descendants into their model-issued parent's one list. */
 export function updateChildActivity(
   tools: Record<string, ActivityTool>,
-  event: Record<string, unknown>,
-): Record<string, ActivityTool> {
-  const parent =
-    typeof event.parentToolCallId === "string" ? event.parentToolCallId : "";
-  if (!parent) return tools;
+  parent: string,
+  incoming: ChildCall,
+): ActivityTool | undefined {
   const root = tools[parent]
     ? parent
     : Object.keys(tools).find(
@@ -185,7 +178,7 @@ export function updateChildActivity(
           tools[id]!.calls?.source === "nested" &&
           tools[id]!.calls!.calls.some((call) => call.key === parent),
       );
-  if (!root) return tools;
+  if (!root) return;
   const tool = tools[root]!;
   if (
     tool.phase === "done" ||
@@ -193,9 +186,7 @@ export function updateChildActivity(
     tool.calls?.source === "codemode" ||
     tool.name === "codemode"
   )
-    return tools;
-  const incoming =
-    (event.childCall as ChildCall | undefined) ?? childCallFromEvent(event);
+    return;
   const previous = tool.calls ?? {
     source: "nested" as const,
     calls: [],
@@ -205,16 +196,13 @@ export function updateChildActivity(
   if (
     index >= 0 &&
     previous.calls[index]!.status !== "running" &&
-    event.type !== "tool_execution_end"
+    incoming.status === "running"
   )
-    return tools;
+    return;
   if (index < 0 && previous.calls.length >= MAX_CHILD_CALLS)
     return previous.complete
-      ? {
-          ...tools,
-          [root]: { ...tool, calls: { ...previous, complete: false } },
-        }
-      : tools;
+      ? { ...tool, calls: { ...previous, complete: false } }
+      : undefined;
   const calls = [...previous.calls];
   if (index < 0) calls.push(incoming);
   else calls[index] = { ...calls[index], ...incoming };
@@ -232,10 +220,7 @@ export function updateChildActivity(
       calls[index] = { ...metadata, ...args };
     }
   }
-  return {
-    ...tools,
-    [root]: { ...tool, calls: { source: "nested", calls, complete } },
-  };
+  return { ...tool, calls: { source: "nested", calls, complete } };
 }
 
 const TOOL_OUTPUT_PREVIEW_CHARS = 16_000;

@@ -1,17 +1,17 @@
 import { createHmac, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { basename, dirname } from "node:path";
 import webPush from "web-push";
-import { z } from "zod";
 import type { CompletionAttentionPreference } from "../shared/contracts.js";
-import type {
-  NotificationSubscription,
-  TaskAlertEvent,
-  TaskAlertSettings,
-  TaskNotification,
-  TaskNotificationGrouping,
-  TaskOutcome,
+import {
+  type NotificationSubscription,
+  pushSubscriptionSchema,
+  type TaskAlertEvent,
+  type TaskAlertSettings,
+  type TaskNotification,
+  type TaskNotificationGrouping,
 } from "../shared/notifications.js";
+import { replacePrivateStateFile } from "./private-state-file.js";
 import { requestError } from "./request-error.js";
 
 export interface NotificationPrincipal {
@@ -20,37 +20,6 @@ export interface NotificationPrincipal {
 }
 const LIFETIME = 15 * 60_000;
 const ACK_WAIT = 2_000;
-
-/** A subscription is an outbound capability, not an arbitrary URL to fetch. */
-export const pushSubscriptionSchema = z
-  .object({
-    endpoint: z
-      .string()
-      .max(4096)
-      .url()
-      .refine((value) => {
-        const url = new URL(value);
-        return (
-          url.protocol === "https:" &&
-          !url.username &&
-          !url.password &&
-          !url.port &&
-          !url.hash &&
-          (url.hostname === "fcm.googleapis.com" ||
-            url.hostname === "updates.push.services.mozilla.com" ||
-            url.hostname === "web.push.apple.com" ||
-            url.hostname.endsWith(".push.apple.com") ||
-            url.hostname.endsWith(".notify.windows.com"))
-        );
-      }, "This browser's push service is not supported"),
-    keys: z
-      .object({
-        p256dh: z.string().regex(/^[A-Za-z0-9_-]{87}={0,1}$/),
-        auth: z.string().regex(/^[A-Za-z0-9_-]{22}={0,2}$/),
-      })
-      .strict(),
-  })
-  .strict();
 
 interface Device {
   origin: string;
@@ -73,7 +42,6 @@ interface Saved {
   devices: Record<string, Device>;
   pending: Pending[];
 }
-type Wire = Record<string, unknown>;
 
 function notificationSessionName(
   value: string | undefined,
@@ -98,119 +66,12 @@ function coalescePending(items: Pending[]): Pending[] {
   );
 }
 
-/** Correlates live work once in the Host, never from browser snapshot ownership. */
-export class TaskOutcomeTracker {
-  private runs = new Map<
-    string,
-    { id: string; kind: "agent" | "compaction" }
-  >();
-  private nativeSeen = new Map<string, string>();
-  private lastCreatedAt = 0;
-  observe(event: Wire): TaskNotification | null {
-    if (typeof event.sessionId !== "string") return null;
-    const sessionId = event.sessionId;
-    if (event.type === "native_task_outcome") {
-      if (
-        typeof event.outcomeId !== "string" ||
-        this.nativeSeen.get(sessionId) === event.outcomeId
-      )
-        return null;
-      this.nativeSeen.set(sessionId, event.outcomeId);
-      this.runs.delete(sessionId);
-      if (event.outcome === "aborted") return null;
-      return this.result(
-        sessionId,
-        event.outcomeId,
-        event.outcome === "failed"
-          ? "failed"
-          : event.outcome === "completed"
-            ? "completed"
-            : "ended",
-        event,
-      );
-    }
-    if (event.type === "agent_start" || event.type === "auto_retry_start") {
-      if (!this.runs.has(sessionId))
-        this.runs.set(sessionId, { id: randomUUID(), kind: "agent" });
-      return null;
-    }
-    if (
-      event.type === "compaction_start" &&
-      event.reason === "manual" &&
-      !this.runs.has(sessionId)
-    ) {
-      this.runs.set(sessionId, { id: randomUUID(), kind: "compaction" });
-      return null;
-    }
-    const run = this.runs.get(sessionId);
-    if (!run) return null;
-    if (
-      event.type !== "runtime_error" &&
-      !(event.type === "agent_settled" && run.kind === "agent") &&
-      !(event.type === "compaction_end" && run.kind === "compaction")
-    )
-      return null;
-    this.runs.delete(sessionId);
-    // A richer native settlement is published separately, even for short runs.
-    if (event.taskOutcomeReported === true) return null;
-    const status = (event.sessionStatus ?? {}) as Wire;
-    if (
-      event.aborted === true ||
-      (event.outcomeUnknown !== true && status.runState === "aborted")
-    )
-      return null;
-    const failed =
-      event.type === "runtime_error" ||
-      (event.outcomeUnknown !== true &&
-        (status.runState === "failed" || status.runState === "conflict")) ||
-      (event.type === "compaction_end" && Boolean(event.errorMessage));
-    return this.result(
-      sessionId,
-      run.id,
-      failed
-        ? "failed"
-        : event.outcomeUnknown === true
-          ? "ended"
-          : event.type === "compaction_end" && event.result == null
-            ? "failed"
-            : "completed",
-      event,
-    );
-  }
-  private result(
-    sessionId: string,
-    id: string,
-    outcome: TaskOutcome,
-    event: Wire,
-  ): TaskNotification {
-    return {
-      id,
-      sessionId,
-      outcome,
-      // Distinguish settlements within one clock tick so delayed delivery can
-      // never choose an older result just because their timestamps tied.
-      createdAt: (this.lastCreatedAt = Math.max(
-        Date.now(),
-        this.lastCreatedAt + 1,
-      )),
-      ...(typeof event.taskSessionName === "string"
-        ? {
-            sessionName: notificationSessionName(event.taskSessionName),
-          }
-        : {}),
-      ...(typeof event.taskProject === "string"
-        ? { project: event.taskProject.slice(0, 160) }
-        : {}),
-    };
-  }
-}
-
 /** Per-browser delivery. Pending items expire; this is not a notification inbox. */
 export class TaskNotifications {
   private saved!: Saved;
   private readonly ready: Promise<void>;
   private writes: Promise<void> = Promise.resolve();
-  private readonly tracker = new TaskOutcomeTracker();
+  private lastOutcomeAt = 0;
   private readonly clients = new Map<
     string,
     Set<(event: TaskAlertEvent) => boolean>
@@ -271,9 +132,7 @@ export class TaskNotifications {
       .catch(() => {})
       .then(async () => {
         await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
-        const temporary = this.path + ".tmp";
-        await writeFile(temporary, data, { mode: 0o600 });
-        await rename(temporary, this.path);
+        await replacePrivateStateFile(this.path, data);
       });
     this.writes = operation.then(
       () => {
@@ -294,8 +153,7 @@ export class TaskNotifications {
   private currentSettings(id: string): TaskAlertSettings {
     const device = this.saved.devices[id];
     return {
-      installationId: id,
-      mode: device?.mode ?? null,
+      mode: device?.mode ?? "off",
       grouping: device?.grouping ?? "session",
       groupingUpdatedAt: device?.groupingUpdatedAt ?? 0,
       publicKey: this.saved.vapid.publicKey,
@@ -361,10 +219,10 @@ export class TaskNotifications {
     return settings;
   }
   /** Listener stays installed independently of every browser connection. */
-  observe = (value: unknown): void => {
-    if (this.closed || !value || typeof value !== "object") return;
-    const event = this.tracker.observe(value as Wire);
-    if (event) void this.enqueue(event).catch(() => {});
+  observe = (event: TaskNotification): void => {
+    if (this.closed || event.createdAt <= this.lastOutcomeAt) return;
+    this.lastOutcomeAt = event.createdAt;
+    void this.enqueue(event).catch(() => {});
   };
   private async enqueue(
     event: TaskNotification,
@@ -502,7 +360,7 @@ export class TaskNotifications {
         await this.push(device, event);
         delete device.error;
       } catch (error) {
-        this.pushFailure(device, error);
+        this.pushFailure(principal.id, device, error);
         throw requestError(device.error!, 502);
       } finally {
         await this.save();
@@ -566,7 +424,7 @@ export class TaskNotifications {
           );
           delete device.error;
         } catch (error) {
-          this.pushFailure(device, error);
+          this.pushFailure(item.deviceId, device, error);
           item.attempts++;
           item.nextAttempt =
             Date.now() + Math.min(60_000, 10_000 * item.attempts);
@@ -578,7 +436,7 @@ export class TaskNotifications {
       }),
     );
   }
-  private pushFailure(device: Device, error: unknown): void {
+  private pushFailure(deviceId: string, device: Device, error: unknown): void {
     const status = (error as { statusCode?: number }).statusCode;
     device.error =
       status === 404 || status === 410
@@ -588,6 +446,10 @@ export class TaskNotifications {
       device.expiredEndpoint =
         device.subscription?.endpoint ?? device.expiredEndpoint;
       delete device.subscription;
+      if (this.saved.devices[deviceId] === device)
+        this.saved.pending = this.saved.pending.filter(
+          (item) => item.deviceId !== deviceId,
+        );
     }
   }
   async close(): Promise<void> {

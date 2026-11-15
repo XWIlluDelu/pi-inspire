@@ -1,8 +1,7 @@
-import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { store, useAppState } from "../store";
-import { useModalFocus } from "../use-modal-focus";
 import { ButtonLabel } from "./ButtonLabel";
+import { DialogHeader, Modal } from "./Modal";
 
 export function ExportDialog({
   sessionId,
@@ -17,7 +16,7 @@ export function ExportDialog({
 }) {
   const [format, setFormat] = useState<"html" | "jsonl">("html");
   const pendingFormat = useAppState(
-    (state) => state.exportingSessions[sessionId],
+    (state) => state.exportingSessions[sessionId]?.format,
   );
   const selectedFormat = pendingFormat ?? (readOnly ? "jsonl" : format);
   const busy = pendingFormat !== undefined;
@@ -29,7 +28,6 @@ export function ExportDialog({
       mounted.current = false;
     };
   }, []);
-  const ref = useModalFocus<HTMLFormElement>(active, sessionId, onClose);
   const download = async () => {
     if (busy) return;
     const generation = store.getState().transportGeneration;
@@ -46,39 +44,26 @@ export function ExportDialog({
     else onClose();
   };
   return (
-    <div
-      className="overlay"
-      role="presentation"
-      style={active ? undefined : { display: "none" }}
-      aria-hidden={!active || undefined}
-      onClick={onClose}
+    <Modal
+      aria-labelledby="export-title"
+      active={active}
+      owner={sessionId}
+      onDismiss={onClose}
     >
       <form
-        ref={ref}
         className="dialog export-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="export-title"
-        tabIndex={-1}
-        onClick={(event) => event.stopPropagation()}
         onSubmit={(event) => {
           event.preventDefault();
           void download();
         }}
       >
-        <header className="export-dialog__header">
-          <h2 className="dialog__title" id="export-title">
-            Export session
-          </h2>
-          <button
-            type="button"
-            className="icon-button"
-            aria-label="Close export"
-            onClick={onClose}
-          >
-            <X size={15} aria-hidden />
-          </button>
-        </header>
+        <DialogHeader
+          title="Export session"
+          id="export-title"
+          bar={false}
+          closeLabel="Close export"
+          onClose={onClose}
+        />
         <fieldset
           className="export-dialog__formats"
           aria-label="Export format"
@@ -117,18 +102,16 @@ export function ExportDialog({
         </fieldset>
         {readOnly ? (
           <p className="export-dialog__hint">
-            Exports saved history. Unsaved Pi output is not included; HTML needs
-            a writable session.
+            Read-only sessions can export saved history as JSONL.
           </p>
         ) : null}
         {busy ? (
           <p className="export-dialog__hint" role="status">
-            You can close this dialog. The download will start when the export
-            is ready.
+            Download starts when ready, even if you close this dialog.
           </p>
         ) : null}
         {error !== null ? (
-          <p className="export-dialog__error" role="alert">
+          <p className="dialog__error" role="alert">
             {error}
           </p>
         ) : null}
@@ -152,6 +135,6 @@ export function ExportDialog({
           </button>
         </footer>
       </form>
-    </div>
+    </Modal>
   );
 }

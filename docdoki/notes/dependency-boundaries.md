@@ -8,6 +8,13 @@ The user's installed `pi` supplies both the SDK and RPC worker from the same pac
 `server/pi-installation.ts` resolves that installation; startup checks the public APIs Inspire needs.
 The development dependency is not a production fallback.
 
+The official managed installer's stable launcher is resolved from its physical location through
+`install/current-version` to the selected release package. SDK and RPC entries both come from that
+package's manifest. A fresh inspection follows a changed version pointer; the running Host retains
+its already-loaded SDK until restart. A broken managed selection is reported rather than skipped
+in favor of an older Pi later on PATH. The installation-authority tests cover launcher aliases,
+version-pointer changes, and refusal to fall back from a broken managed installation.
+
 `package.json` and the lockfile own development compatibility versions. The separate browser
 `@earendil-works/pi-tui` dependency supplies pure fuzzy search; it is not an agent runtime.
 External Pi installations retain their own dependency trees.

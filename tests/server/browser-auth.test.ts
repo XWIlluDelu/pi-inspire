@@ -1,5 +1,18 @@
 import { generateKeyPairSync, sign } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { resolveAccessToken } from "../../server/access-token.js";
 import {
   AUTH_CHALLENGE_TTL_MS,
   BROWSER_ACCESS_TTL_MS,
@@ -47,16 +60,18 @@ describe("origin-key browser authentication", () => {
     expect(() =>
       auth.register(origin, { token: certificate, publicKey: key.publicKey }),
     ).toThrow();
-    expect(auth.accepts(certificate, origin)).toBe(false);
-    expect(auth.accepts(master, origin)).toBe(false);
+    expect(auth.verifyAccess(certificate, origin)).toBeNull();
+    expect(auth.verifyAccess(master, origin)).toBeNull();
     const { challenge } = auth.challenge(origin, certificate);
     const access = auth.exchange(
       origin,
       challenge,
       signed(key.privateKey, challenge),
     );
-    expect(auth.accepts(access.bearer, origin)).toBe(true);
-    expect(auth.accepts(access.bearer, other)).toBe(false);
+    expect(auth.verifyAccess(access.bearer, origin)).toMatchObject({
+      browserId: expect.any(String),
+    });
+    expect(auth.verifyAccess(access.bearer, other)).toBeNull();
     expect(() => auth.challenge(origin, access.bearer)).toThrow();
     expect(() =>
       auth.register(origin, { token: access.bearer, publicKey: key.publicKey }),
@@ -113,16 +128,18 @@ describe("origin-key browser authentication", () => {
       signed(key.privateKey, challenge),
     );
     const restarted = new BrowserAuth(master, () => now);
-    expect(restarted.accepts(access.bearer, origin)).toBe(true);
+    expect(restarted.verifyAccess(access.bearer, origin)).toEqual(
+      auth.verifyAccess(access.bearer, origin),
+    );
     expect(restarted.challenge(origin, certificate).challenge).toBeTruthy();
     expect(() =>
       restarted.exchange(origin, challenge, signed(key.privateKey, challenge)),
     ).toThrow();
     const rotated = new BrowserAuth("rotated", () => now);
-    expect(rotated.accepts(access.bearer, origin)).toBe(false);
+    expect(rotated.verifyAccess(access.bearer, origin)).toBeNull();
     expect(() => rotated.challenge(origin, certificate)).toThrow();
     now += BROWSER_ACCESS_TTL_MS;
-    expect(auth.accepts(access.bearer, origin)).toBe(false);
+    expect(auth.verifyAccess(access.bearer, origin)).toBeNull();
   });
 
   it("bounds pending challenges and recovers capacity after expiry", () => {
@@ -157,16 +174,19 @@ describe("origin-key browser authentication", () => {
       }).certificate,
     ).toBeTruthy();
     const ticket = auth.ticket(origin, "events").ticket;
-    expect(auth.consumeTicket(ticket, origin, "terminal")).toBe(false);
-    expect(auth.consumeTicket(ticket, origin, "events")).toBe(false);
-    const valid = auth.ticket(origin, "events").ticket;
-    expect(auth.consumeTicket(valid, origin, "events")).toBe(true);
-    expect(auth.consumeTicket(valid, origin, "events")).toBe(false);
+    expect(auth.consumeTicketGrant(ticket, origin, "terminal")).toBeNull();
+    expect(auth.consumeTicketGrant(ticket, origin, "events")).toBeNull();
+    const valid = auth.ticket(origin, "events", "paired-installation").ticket;
+    expect(auth.consumeTicketGrant(valid, origin, "events")).toMatchObject({
+      origin,
+      browserId: "paired-installation",
+    });
+    expect(auth.consumeTicketGrant(valid, origin, "events")).toBeNull();
     const foreign = auth.ticket(origin, "terminal").ticket;
-    expect(auth.consumeTicket(foreign, other, "terminal")).toBe(false);
+    expect(auth.consumeTicketGrant(foreign, other, "terminal")).toBeNull();
     const stale = auth.ticket(origin, "events").ticket;
     now += BROWSER_TICKET_TTL_MS;
-    expect(auth.consumeTicket(stale, origin, "events")).toBe(false);
+    expect(auth.consumeTicketGrant(stale, origin, "events")).toBeNull();
     const expiredBootstrap = auth.bootstrap(origin);
     now += AUTH_CHALLENGE_TTL_MS;
     expect(() =>
@@ -217,4 +237,101 @@ describe("origin-key browser authentication", () => {
     ])
       expect(() => canonicalOrigin(value, false)).toThrow();
   });
+});
+
+describe("persistent host access token", () => {
+  const temporaryDirectories: string[] = [];
+
+  async function temporaryPath(): Promise<string> {
+    const directory = await mkdtemp(join(tmpdir(), "inspire-access-token-"));
+    temporaryDirectories.push(directory);
+    return join(directory, "private", "access.token");
+  }
+
+  afterEach(async () => {
+    await Promise.all(
+      temporaryDirectories
+        .splice(0)
+        .map((path) => rm(path, { recursive: true, force: true })),
+    );
+  });
+
+  it("creates one private token and reuses it across host starts", async () => {
+    const path = await temporaryPath();
+    const first = await resolveAccessToken(undefined, path);
+    const second = await resolveAccessToken(undefined, path);
+
+    expect(first).toMatch(/^[A-Za-z0-9_-]{86}$/);
+    expect(second).toBe(first);
+    expect((await readFile(path, "utf8")).trim()).toBe(first);
+    if (process.platform !== "win32") {
+      expect((await lstat(path)).mode & 0o777).toBe(0o600);
+      expect((await lstat(dirname(path))).mode & 0o777).toBe(0o700);
+    }
+  });
+
+  it.runIf(process.platform !== "win32")(
+    "rejects a shared parent without changing its permissions or creating a token",
+    async () => {
+      const path = await temporaryPath();
+      await mkdir(dirname(path), { recursive: true });
+      await chmod(dirname(path), 0o1777);
+      await expect(resolveAccessToken(undefined, path)).rejects.toThrow(
+        "use a private directory",
+      );
+      expect((await lstat(dirname(path))).mode & 0o7777).toBe(0o1777);
+      await expect(lstat(path)).rejects.toMatchObject({ code: "ENOENT" });
+    },
+  );
+
+  it("rejects an unsupported stored token without rewriting it", async () => {
+    const path = await temporaryPath();
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+    const token = "a".repeat(64) + "\n";
+    await writeFile(path, token, { mode: 0o600 });
+    await expect(resolveAccessToken(undefined, path)).rejects.toThrow(
+      /invalid/,
+    );
+    expect(await readFile(path, "utf8")).toBe(token);
+  });
+
+  it("keeps an explicit environment token outside persistent storage", async () => {
+    const path = await temporaryPath();
+    await expect(resolveAccessToken("explicit-test-token", path)).resolves.toBe(
+      "explicit-test-token",
+    );
+    await expect(resolveAccessToken("", path)).rejects.toThrow(
+      "between 1 and 256 characters",
+    );
+    await expect(readFile(path, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it.runIf(process.platform !== "win32")(
+    "refuses a token path that redirects through a symbolic link",
+    async () => {
+      const path = await temporaryPath();
+      await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+      const target = join(dirname(path), "target.token");
+      await writeFile(target, `${"a".repeat(64)}\n`, { mode: 0o600 });
+      await symlink(target, path);
+
+      await expect(resolveAccessToken(undefined, path)).rejects.toThrow(
+        "not a regular file",
+      );
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "refuses a token file exposed to other local users",
+    async () => {
+      const path = await temporaryPath();
+      await resolveAccessToken(undefined, path);
+      await chmod(path, 0o644);
+      await expect(resolveAccessToken(undefined, path)).rejects.toThrow(
+        "must not be accessible by other users",
+      );
+    },
+  );
 });

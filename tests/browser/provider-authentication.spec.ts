@@ -1,382 +1,249 @@
-import AxeBuilder from "@axe-core/playwright";
-import { expect, test } from "@playwright/test";
-import { modelSettingsScenario } from "./fixtures/model-settings";
+import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { expect, type Request, type Route, test } from "@playwright/test";
+import type { ProviderAuthOperation } from "../../shared/provider-auth-bridge";
+import { browserFixtureHome } from "./fixtures/workspace.mjs";
 import { openCommandPalette, pairAndOpen } from "./support/navigation";
-import { firstTextBaseline } from "./support/text-baseline";
 
-test.use({ serviceWorkers: "block" });
-for (const [name, width, height, theme] of [
-  ["desktop-light", 1280, 900, "light"],
-  ["phone320-dark", 320, 740, "dark"],
-] as const) {
-  test.describe(name, () => {
-    test.use({ viewport: { width, height }, hasTouch: width < 600 });
-    test("updates saved credentials by another method, exposes native remote help, and removes secondarily", async ({
-      page,
-    }) => {
-      const scenario = await modelSettingsScenario(page, theme);
-      await pairAndOpen(page);
-      const draft = page.getByRole("textbox", { name: "Message", exact: true });
-      await draft.fill("Keep my auth-task draft");
-      const model = page.getByRole("button", { name: "Model", exact: true });
-      const selected = await model.textContent();
-      await page.getByRole("button", { name: "Settings", exact: true }).click();
-      await page.getByRole("button", { name: "Models", exact: true }).click();
-      const initialSettings = page.getByRole("dialog", {
-        name: "Settings",
-        exact: true,
-      });
-      await expect(
-        initialSettings.getByRole("button", {
-          name: "Manage Anthropic",
-          exact: true,
-        }),
-      ).toBeVisible();
-      await expect(initialSettings.getByLabel("Search providers")).toHaveCount(
-        0,
-      );
-      await expect(
-        initialSettings.getByRole("region", { name: "Available providers" }),
-      ).toHaveCount(0);
-
-      await initialSettings
-        .getByRole("button", { name: "Connect provider", exact: true })
-        .click();
-      await expect(
-        initialSettings.getByLabel("Search providers"),
-      ).toBeVisible();
-      expect(
-        (await initialSettings
-          .locator(".models-auth__providers")
-          .boundingBox())!.height,
-      ).toBeLessThanOrEqual(180);
-
-      await initialSettings.getByLabel("Search providers").fill("copilot");
-      await initialSettings
-        .getByRole("button", { name: "Set up GitHub Copilot" })
-        .click();
-      await expect(initialSettings.getByLabel("Search providers")).toHaveCount(
-        0,
-      );
-      await expect(
-        initialSettings.locator(".models-auth__providers"),
-      ).toHaveCount(0);
-      const instruction = initialSettings.getByText(
-        "Open the sign-in link on this device and enter the displayed code.",
-        { exact: true },
-      );
-      await expect(instruction).toHaveCount(0);
-      const remoteHelp = initialSettings.getByRole("button", {
-        name: "About remote login",
-      });
-      if (width < 600) await remoteHelp.tap();
-      else {
-        await remoteHelp.focus();
-        await remoteHelp.press("Enter");
-      }
-      await expect(instruction).toBeVisible();
-
-      await initialSettings
-        .getByRole("button", { name: "Back to providers" })
-        .click();
-      await expect(initialSettings.getByLabel("Search providers")).toHaveValue(
-        "copilot",
-      );
-      await expect(
-        initialSettings.getByLabel("Search providers"),
-      ).toBeFocused();
-      await initialSettings
-        .getByRole("button", {
-          name: "Back to connected providers",
-          exact: true,
-        })
-        .click();
-      await initialSettings
-        .getByRole("button", { name: "Close settings" })
-        .click();
-      const palette = await openCommandPalette(page);
-      await palette.getByLabel("Filter commands").fill("/login");
-      await palette.getByRole("option", { name: /^\/login/ }).click();
-      const settings = page.getByRole("dialog", {
-        name: "Settings",
-        exact: true,
-      });
-      await expect(
-        settings.getByRole("heading", { name: "Login & API keys" }),
-      ).toBeVisible();
-      await expect(
-        settings.getByRole("button", { name: "Models", exact: true }),
-      ).toHaveAttribute("aria-current", "location");
-      await expect(
-        settings.getByRole("button", {
-          name: "Claude authorization",
-          exact: true,
-        }),
-      ).toHaveCount(0);
-      await expect(
-        settings.getByText("Remove credential", { exact: true }),
-      ).toHaveCount(0);
-      await expect(settings.getByLabel("Search providers")).toBeVisible();
-      const directory = settings.locator(".models-auth__providers");
-      expect((await directory.boundingBox())!.height).toBeLessThanOrEqual(180);
-      await settings
-        .getByRole("button", { name: "Back to connected providers" })
-        .click();
-      await settings
-        .getByRole("button", { name: "Manage Anthropic", exact: true })
-        .click();
-      await settings
-        .getByRole("button", { name: "Anthropic API key", exact: true })
-        .click();
-      const secret = settings.getByLabel("API key", { exact: true });
-      await expect(
-        settings.getByRole("region", { name: "Connected providers" }),
-      ).toHaveCount(0);
-      await expect(
-        settings.getByRole("button", { name: "Connect provider" }),
-      ).toHaveCount(0);
-      await secret.fill("SYNTHETIC_API_KEY");
-      await expect(secret).toHaveAttribute("type", "password");
-      await settings
-        .getByRole("button", { name: "Show credential", exact: true })
-        .click();
-      await expect(secret).toHaveAttribute("type", "text");
-      await settings
-        .getByRole("button", { name: "Hide credential", exact: true })
-        .click();
-
-      expect(
-        await settings
-          .locator(".settings__main")
-          .evaluate((element) => element.scrollWidth > element.clientWidth + 1),
-      ).toBe(false);
-      if (width < 600)
-        expect((await secret.boundingBox())!.height).toBeGreaterThanOrEqual(44);
-      await settings
-        .getByRole("button", { name: "Cancel login", exact: true })
-        .click();
-      await settings
-        .getByRole("button", { name: "Dismiss", exact: true })
-        .click();
-      await settings
-        .getByRole("button", { name: "Claude authorization", exact: true })
-        .click();
-      await settings
-        .getByRole("button", { name: "About remote login" })
-        .click();
-      await expect(
-        settings.getByText(
-          "Open the sign-in link on this device, then paste the authorization code here.",
-          { exact: true },
-        ),
-      ).toBeVisible();
-
-      await settings
-        .getByRole("button", { name: "Copy authorization code", exact: true })
-        .click();
-      await expect(
-        settings.getByRole("link", { name: "Open sign-in link", exact: true }),
-      ).toHaveAttribute("href", "https://example.invalid/authorize");
-      await settings
-        .getByLabel("Paste the authorization code")
-        .fill("SYNTHETIC_AUTH_CODE");
-      await settings
-        .getByRole("button", { name: "Continue", exact: true })
-        .click();
-      await expect(
-        settings.getByText("Login complete.", { exact: true }),
-      ).toBeVisible();
-      await expect
-        .poll(
-          () =>
-            scenario.providers().find((provider) => provider.id === "anthropic")
-              ?.stored,
-        )
-        .toBe("oauth");
-      expect(
-        scenario.authOperations.some(
-          (operation) => operation.operation === "logout",
-        ),
-      ).toBe(false);
-      await settings
-        .getByRole("button", { name: "Dismiss", exact: true })
-        .click();
-      await settings
-        .getByRole("button", { name: "Manage Anthropic", exact: true })
-        .click();
-      await settings
-        .getByRole("button", {
-          name: "Remove saved credentials for Anthropic",
-          exact: true,
-        })
-        .click();
-      await settings
-        .getByRole("button", { name: "Remove saved credentials", exact: true })
-        .click();
-      await expect
-        .poll(
-          () =>
-            scenario.providers().find((provider) => provider.id === "anthropic")
-              ?.stored,
-        )
-        .toBeNull();
-      await expect(
-        settings.getByRole("region", { name: "Connected providers" }),
-      ).toHaveCount(0);
-      await expect(
-        settings.getByRole("button", { name: "Connect provider", exact: true }),
-      ).toBeVisible();
-      await expect(settings.getByLabel("Search providers")).toHaveCount(0);
-      await settings
-        .getByRole("region", { name: "Login & API keys", exact: true })
-        .evaluate((element) =>
-          element.scrollIntoView({ block: "start", behavior: "instant" }),
-        );
-
-      await settings
-        .getByRole("button", { name: "Connect provider", exact: true })
-        .click();
-      await settings.getByLabel("Search providers").fill("no-such-provider");
-      await expect(
-        settings.getByText(
-          'No available providers matching "no-such-provider"',
-          {
-            exact: true,
-          },
-        ),
-      ).toBeVisible();
-      const accessibility = await new AxeBuilder({ page })
-        .include(".settings")
-        .analyze();
-      expect(
-        accessibility.violations.filter(
-          (violation) =>
-            violation.impact === "critical" || violation.impact === "serious",
-        ),
-      ).toEqual([]);
-      await settings.getByRole("button", { name: "Close settings" }).click();
-      await expect(draft).toHaveValue("Keep my auth-task draft");
-      await expect(model).toHaveText(selected!);
-      expect(scenario.modelChanges).toEqual([]);
-      expect(scenario.errors).toEqual([]);
-    });
-  });
+function loginRequest(request: Request): ProviderAuthOperation | undefined {
+  if (new URL(request.url()).pathname === "/api/provider-auth")
+    return request.postDataJSON();
 }
 
-for (const kind of ["normal", "long", "CJK"] as const) {
-  test(`login captions keep their baselines and bounds with a ${kind} provider name`, async ({
-    page,
-  }) => {
-    const scenario = await modelSettingsScenario(page);
-    const provider = scenario
-      .providers()
-      .find((value) => value.id === "anthropic")!;
-    if (kind === "long")
-      provider.name = "RegionalCalibrationReferenceDeviceAuthorizationProvider";
-    if (kind === "CJK") provider.name = "区域标定参考模型服务（共享工作区）";
+test.use({
+  serviceWorkers: "block",
+  viewport: { width: 320, height: 740 },
+  hasTouch: true,
+});
+
+test("updates and removes real provider credentials through /login while preserving the draft", async ({
+  page,
+}) => {
+  const auth = join(browserFixtureHome, "agent", "auth.json");
+  const original = await readFile(auth);
+  const stored = async () => JSON.parse(await readFile(auth, "utf8")).anthropic;
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const unavailable = (route: Route) =>
+    route.fulfill({
+      status: 503,
+      json: { error: "Provider service unavailable" },
+    });
+  let directoryFault = false;
+  let discardCancelReply = false;
+  let holdStartReply = false;
+  const directoryReply = Promise.withResolvers<void>();
+  const start = () =>
+    Promise.withResolvers<{ owner: string | null; id: string }>();
+  let created = start();
+  let activeStart: PromiseWithResolvers<void> | undefined;
+  const startReplies = [
+    Promise.withResolvers<void>(),
+    Promise.withResolvers<void>(),
+  ];
+  await page.route("**/api/provider-auth**", async (route) => {
+    const request = loginRequest(route.request());
+    if (request?.operation === "providers" && directoryFault) {
+      await directoryReply.promise;
+      return unavailable(route);
+    }
+    if (request?.operation === "cancel" && discardCancelReply) {
+      const cancelled = await route.fetch();
+      expect(cancelled.ok()).toBe(true);
+      return unavailable(route);
+    }
+    if (request?.operation === "start" && holdStartReply) {
+      holdStartReply = false;
+      const response = await route.fetch();
+      const { result } = await response.json();
+      const reply = startReplies.shift()!;
+      activeStart = reply;
+      created.resolve({
+        owner: new URL(route.request().url()).searchParams.get("sessionId"),
+        id: result.id,
+      });
+      await reply.promise;
+      return route.fulfill({ response });
+    }
+    await route.fallback();
+  });
+  try {
+    await writeFile(
+      auth,
+      JSON.stringify({
+        anthropic: { type: "api_key", key: "synthetic" },
+      }),
+    );
     await pairAndOpen(page);
-    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    const draft = page.getByRole("textbox", { name: "Message", exact: true });
+    const model = page.getByRole("button", { name: "Model", exact: true });
+    const current = /^(Offline model|offline) — workbench$/;
+    await expect(model).toHaveAttribute("title", current);
+    await draft.fill("/login copilot");
+    await page
+      .getByRole("button", { name: "Send message", exact: true })
+      .click();
     const settings = page.getByRole("dialog", {
       name: "Settings",
       exact: true,
     });
-    await settings
-      .getByRole("navigation", { name: "Settings categories" })
-      .getByRole("button", { name: "Models", exact: true })
-      .click();
-    await settings
-      .getByRole("button", { name: `Manage ${provider.name}`, exact: true })
-      .click();
-    await settings
-      .getByRole("button", { name: "Claude authorization", exact: true })
-      .click();
-    const login = settings.getByRole("group", {
-      name: "Login to anthropic",
+    const method = settings.getByRole("button", {
+      name: "Anthropic API key",
       exact: true,
     });
-    const header = login.locator(":scope > .models-subheading");
-    const checkLayout = async (hasPrompt: boolean) => {
-      for (const width of [1280, 820, 390, 320]) {
-        await page.setViewportSize({ width, height: 900 });
-        await login.scrollIntoViewIfNeeded();
-        await page.evaluate(() => document.fonts.ready);
-        const geometry = await header.evaluate((root) => {
-          const frame = root.getBoundingClientRect();
-          const name = root.querySelector("h4")!,
-            status = root.querySelector(".models-status")!;
-          const n = name.getBoundingClientRect(),
-            s = status.getBoundingClientRect();
-          return {
-            sameRow: s.left >= n.right - 0.5,
-            stacked: s.top >= n.bottom - 0.5,
-            textFits: [name, status].every((element) => {
-              const range = document.createRange();
-              range.selectNodeContents(element);
-              return [...range.getClientRects()].every(
-                (rect) =>
-                  rect.left >= frame.left - 0.5 &&
-                  rect.right <= frame.right + 0.5,
-              );
-            }),
-            client: root.clientWidth,
-            scroll: root.scrollWidth,
-          };
-        });
-        expect(geometry.textFits).toBe(true);
-        expect(geometry.scroll).toBeLessThanOrEqual(geometry.client);
-        if (geometry.sameRow) {
-          const nameBaseline = await header
-            .locator("h4")
-            .evaluate(firstTextBaseline, ".models-subheading");
-          const statusBaseline = await header
-            .locator(".models-status")
-            .evaluate(firstTextBaseline, ".models-subheading");
-          expect(Math.abs(nameBaseline! - statusBaseline!)).toBeLessThanOrEqual(
-            0.5,
-          );
-        } else expect(geometry.stacked).toBe(true);
-        if (hasPrompt) {
-          const spacing = await login
-            .locator(".models-login__methods")
-            .evaluate((root) => {
-              const prompt = root
-                .querySelector(":scope > p")!
-                .getBoundingClientRect();
-              const firstMethod = root
-                .querySelector(".models-login__method")!
-                .getBoundingClientRect();
-              return {
-                actual: firstMethod.top - prompt.bottom,
-                gap: Number.parseFloat(getComputedStyle(root).rowGap),
-              };
-            });
-          expect(Math.abs(spacing.actual - spacing.gap)).toBeLessThanOrEqual(
-            0.5,
-          );
-        }
-      }
-    };
-    await checkLayout(true);
-    if (kind === "long") {
-      const failure =
-        "AuthorizationRejectedBecauseThisCalibrationServiceRequiresAdditionalOrganizationApproval";
-      scenario.failLogin(failure);
-      await expect(header.getByRole("status")).toHaveText(failure);
-    } else {
-      await login
-        .getByRole("button", { name: "Copy authorization code", exact: true })
-        .click();
-      await login
-        .getByLabel("Paste the authorization code")
-        .fill("SYNTHETIC_AUTH_CODE");
-      await login
-        .getByRole("button", { name: "Continue", exact: true })
-        .click();
-      await expect(header.getByRole("status")).toHaveText("Login complete.");
-    }
-    await checkLayout(false);
-    await login.getByRole("button", { name: "Dismiss", exact: true }).click();
-    await expect(login).toHaveCount(0);
-    expect(scenario.errors).toEqual([]);
-  });
-}
+    await settings.getByText("Remote login", { exact: true }).tap();
+    await expect(settings.getByText(/enter the displayed code/)).toBeVisible();
+    const search = settings.getByLabel("Search providers");
+    await expect(search).toHaveValue("copilot");
+    const provider = settings.getByRole("button", {
+      name: "Set up GitHub Copilot",
+    });
+    await provider.click();
+    await expect(provider).toHaveAttribute("aria-expanded", "false");
+    await expect(search).toBeVisible();
+    await settings.getByRole("button", { name: "Close settings" }).click();
+
+    await draft.fill("Keep my auth-task draft");
+    const palette = await openCommandPalette(page);
+    await palette.getByLabel("Filter commands").fill("/login");
+    directoryFault = true;
+    await palette.getByRole("option", { name: /^\/login/ }).click();
+    await expect(search).toBeFocused();
+    await settings
+      .getByRole("button", { name: "Back to connected providers" })
+      .click();
+    const credentials = settings.getByRole("region", {
+      name: "Login & API keys",
+    });
+    const retry = credentials.getByRole("button", { name: "Retry" });
+    const connect = credentials.getByRole("button", {
+      name: "Connect provider",
+    });
+    await expect(credentials.getByText("Loading providers…")).toBeVisible();
+    await expect(connect).toBeDisabled();
+    directoryReply.resolve();
+    await expect(credentials.getByRole("alert")).toContainText(
+      "Failed to load providers",
+    );
+    await expect(connect).toBeDisabled();
+    directoryFault = false;
+    await retry.click();
+    const manage = settings.getByRole("button", {
+      name: "Manage Anthropic",
+      exact: true,
+    });
+    await manage.click();
+    await method.click();
+    const secret = settings.getByLabel("Enter Anthropic API key", {
+      exact: true,
+    });
+    await secret.fill("SYNTHETIC_API_KEY");
+    await settings.getByRole("button", { name: "Show credential" }).click();
+    await expect(secret).toHaveAttribute("type", "text");
+    await settings.getByRole("button", { name: "Hide credential" }).click();
+    await expect(secret).toHaveAttribute("type", "password");
+    discardCancelReply = true;
+    await settings
+      .getByRole("button", { name: "Cancel login", exact: true })
+      .click();
+    await expect(credentials.getByText("Login cancelled.")).toBeVisible();
+    await expect(credentials.getByRole("alert")).toHaveCount(0);
+    discardCancelReply = false;
+    const dismiss = settings.getByRole("button", {
+      name: "Dismiss",
+      exact: true,
+    });
+    await dismiss.click();
+    expect(await stored()).toEqual({ type: "api_key", key: "synthetic" });
+
+    const categories = settings.getByRole("navigation", {
+      name: "Settings categories",
+    });
+    const models = categories.getByRole("button", {
+      name: "Models",
+      exact: true,
+    });
+    const display = categories.getByRole("button", {
+      name: "Display",
+      exact: true,
+    });
+    const modelSearch = settings.getByRole("combobox", {
+      name: "Search available models",
+    });
+    await modelSearch.fill("offline");
+    holdStartReply = true;
+    await method.click();
+    await created.promise;
+    await display.click();
+    const arrived = page.waitForResponse(
+      (response) => loginRequest(response.request())?.operation === "start",
+    );
+    activeStart?.resolve();
+    await arrived;
+    await expect(display).toBeFocused();
+    await expect(secret).toHaveCount(0);
+    await models.click();
+    await expect(modelSearch).toHaveValue("offline");
+    await secret.fill("SYNTHETIC_API_KEY");
+    await expect(secret).toHaveValue("SYNTHETIC_API_KEY");
+    directoryFault = true;
+    await settings
+      .getByRole("button", { name: "Continue", exact: true })
+      .click();
+    await expect(
+      settings.getByText("API key saved.", { exact: true }),
+    ).toBeVisible();
+    await expect
+      .poll(stored)
+      .toEqual({ type: "api_key", key: "SYNTHETIC_API_KEY" });
+    await dismiss.click();
+    await expect(credentials.getByRole("alert")).toContainText(
+      "Provider refresh failed",
+    );
+    await expect(manage).toBeEnabled();
+    directoryFault = false;
+    await retry.click();
+    await expect(credentials.getByRole("alert")).toHaveCount(0);
+    await manage.click();
+    await settings
+      .getByRole("button", {
+        name: "Remove saved credentials for Anthropic",
+      })
+      .click();
+    expect((await stored()).key).toBe("SYNTHETIC_API_KEY");
+    await settings
+      .getByRole("button", { name: "Remove saved credentials", exact: true })
+      .click();
+    await expect.poll(stored).toBeUndefined();
+    await expect(
+      credentials.getByText("No connected providers."),
+    ).toBeVisible();
+
+    await settings
+      .getByRole("button", { name: "Connect provider", exact: true })
+      .click();
+    await search.fill("anthropic");
+    await settings.getByRole("button", { name: "Set up Anthropic" }).click();
+    created = start();
+    holdStartReply = true;
+    await method.click();
+    const old = await created.promise;
+    await settings.getByRole("button", { name: "Close settings" }).click();
+    const cancelled = page.waitForResponse((response) => {
+      const request = loginRequest(response.request());
+      return request?.operation === "cancel" && request.id === old.id;
+    });
+    activeStart?.resolve();
+    const receipt = await cancelled;
+    expect(new URL(receipt.url()).searchParams.get("sessionId")).toBe(
+      old.owner,
+    );
+    expect((await receipt.json()).result.status).toBe("cancelled");
+    await expect(draft).toHaveValue("Keep my auth-task draft");
+    await expect(model).toHaveAttribute("title", current);
+  } finally {
+    directoryReply.resolve();
+    activeStart?.resolve();
+    for (const reply of startReplies) reply.resolve();
+    await writeFile(auth, original);
+  }
+});

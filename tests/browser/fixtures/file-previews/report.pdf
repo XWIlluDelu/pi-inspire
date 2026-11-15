@@ -1,7 +1,7 @@
 %PDF-1.4
 % Inspire test fixture
 1 0 obj
-<< /Type /Catalog /Pages 2 0 R >>
+<< /Type /Catalog /Pages 2 0 R /Outlines 8 0 R >>
 endobj
 2 0 obj
 << /Type /Pages /Count 2 /Kids [4 0 R 6 0 R] >>
@@ -37,18 +37,30 @@ BT /F1 14 Tf 42 380 Td (Report page 2 - selectable text) Tj ET
 0.2 0.4 0.6 rg 42 280 110 12 re f 42 256 190 12 re f 42 232 260 12 re f
 endstream
 endobj
+8 0 obj
+<< /Type /Outlines /First 9 0 R /Last 10 0 R /Count 2 >>
+endobj
+9 0 obj
+<< /Title (Experiment summary) /Parent 8 0 R /Next 10 0 R /Dest [4 0 R /Fit] >>
+endobj
+10 0 obj
+<< /Title (Measurement details) /Parent 8 0 R /Prev 9 0 R /Dest [6 0 R /Fit] >>
+endobj
 xref
-0 8
+0 11
 0000000000 65535 f 
 0000000032 00000 n 
-0000000081 00000 n 
-0000000144 00000 n 
-0000000214 00000 n 
-0000000340 00000 n 
-0000000755 00000 n 
-0000000881 00000 n 
+0000000097 00000 n 
+0000000160 00000 n 
+0000000230 00000 n 
+0000000356 00000 n 
+0000000771 00000 n 
+0000000897 00000 n 
+0000001302 00000 n 
+0000001374 00000 n 
+0000001469 00000 n 
 trailer
-<< /Size 8 /Root 1 0 R >>
+<< /Size 11 /Root 1 0 R >>
 startxref
-1286
+1565
 %%EOF

@@ -23,12 +23,10 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 const execFile = promisify(execFileCallback);
 
 describe("listHostRoots", () => {
-  it("returns the single POSIX root without probing drive letters", async () => {
-    const inspect = vi.fn();
-    await expect(listHostRoots("linux", inspect)).resolves.toEqual({
+  it("returns the single POSIX root", async () => {
+    await expect(listHostRoots("linux")).resolves.toEqual({
       roots: [{ name: "/", path: "/" }],
     });
-    expect(inspect).not.toHaveBeenCalled();
   });
 
   it("sorts assigned Windows drive names without probing disconnected drives", async () => {
@@ -131,19 +129,16 @@ describe("listHostDirectories", () => {
     ).toEqual([".nested", "visible"]);
   });
 
-  it("filters native hidden names independently of dot names and bypasses inspection when showing all", async () => {
-    const inspect = vi
-      .spyOn(hiddenAttributes, "listNativeHiddenNames")
-      .mockResolvedValue(new Set(["alpha"]));
+  it("filters native hidden names independently of dot names", async () => {
+    vi.spyOn(hiddenAttributes, "listNativeHiddenNames").mockResolvedValue(
+      new Set(["alpha"]),
+    );
     expect(
       (await listHostDirectories(root)).dirs.map((entry) => entry.name),
     ).toEqual(["beta"]);
-    expect(inspect).toHaveBeenCalledWith(await realpath(root));
-    inspect.mockClear();
     expect(
       (await listHostDirectories(root, true)).dirs.map((entry) => entry.name),
     ).toEqual([".hidden", "alpha", "beta"]);
-    expect(inspect).not.toHaveBeenCalled();
   });
 
   it("filters native-hidden links before resolving their potentially offline targets", async () => {
@@ -261,4 +256,82 @@ describe("listHostDirectories", () => {
       listHostDirectories(join(root, "missing")),
     ).rejects.toMatchObject({ code: "ENOENT" });
   });
+});
+
+describe("native hidden-folder attributes", () => {
+  it("reads Windows Hidden names as a UTF-8 JSON array using a literal environment path", async () => {
+    const path = "C:\\Users\\demo\\work [1]'; $(throw 'not code') & 中文";
+    const run = vi.fn<
+      NonNullable<Parameters<typeof hiddenAttributes.listNativeHiddenNames>[2]>
+    >(async () => ({
+      stdout: '\uFEFF["AppData","隐藏目录","line\\nbreak"]\r\n',
+    }));
+    await expect(
+      hiddenAttributes.listNativeHiddenNames(path, "win32", run),
+    ).resolves.toEqual(new Set(["AppData", "隐藏目录", "line\nbreak"]));
+    const [command, args, options] = run.mock.calls[0]!;
+    expect(command).toMatch(/\\pwsh\.exe$/u);
+    expect(args.at(-1)).toContain(
+      "-LiteralPath $env:INSPIRE_DIRECTORY_PATH -Force -Hidden",
+    );
+    expect(args.at(-1)).toContain("[Console]::OutputEncoding");
+    expect(args.at(-1)).toContain("ConvertTo-Json -Compress -InputObject @(");
+    expect(args.at(-1)).not.toContain(path);
+    expect(options).toMatchObject({
+      env: { INSPIRE_DIRECTORY_PATH: path },
+      encoding: "utf8",
+    });
+  });
+
+  it.each(['"AppData"', "[42]", "truncated"])(
+    "rejects malformed Windows attribute output: %s",
+    async (stdout) => {
+      const run = vi.fn(async () => ({ stdout }));
+      await expect(
+        hiddenAttributes.listNativeHiddenNames("C:\\", "win32", run),
+      ).rejects.toThrow("Cannot read hidden-folder attributes");
+    },
+  );
+
+  it("reads macOS UF_HIDDEN with a bounded NUL-delimited, nonrecursive scan", async () => {
+    const path = "/Users/demo/work [1] & 中文";
+    const run = vi.fn(async () => ({
+      stdout: `${path}/Library\0${path}/line\nbreak\0`,
+    }));
+    await expect(
+      hiddenAttributes.listNativeHiddenNames(path, "darwin", run),
+    ).resolves.toEqual(new Set(["Library", "line\nbreak"]));
+    expect(run).toHaveBeenCalledWith(
+      "/usr/bin/find",
+      [
+        path,
+        "-mindepth",
+        "1",
+        "-maxdepth",
+        "1",
+        "-flags",
+        "+hidden",
+        "-print0",
+      ],
+      expect.objectContaining({ encoding: "utf8" }),
+    );
+  });
+
+  it.each(["win32", "darwin"] as const)(
+    "does not silently fail open if %s attribute inspection fails",
+    async (platform) => {
+      const cause = Object.assign(new Error("command unavailable"), {
+        code: "ENOENT",
+      });
+      const run = vi.fn(async () => {
+        throw cause;
+      });
+      await expect(
+        hiddenAttributes.listNativeHiddenNames("/directory", platform, run),
+      ).rejects.toMatchObject({
+        message: "Cannot read hidden-folder attributes on the host",
+        cause,
+      });
+    },
+  );
 });

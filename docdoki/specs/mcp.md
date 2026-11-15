@@ -3,13 +3,15 @@ purpose: Present supported Pi MCP file configuration in compact Settings, preser
 progress: in-progress
 covers:
   - server/mcp*.ts
-  - server/configuration-edit-locks.ts
+  - server/configuration-file.ts
   - shared/*mcp*.ts
   - src/components/*Mcp*.tsx
+  - src/components/ConfigurationForm.tsx
+  - src/use-configuration-document.ts
   - src/styles/mcp-settings.css
   - tests/server/*mcp*.ts
-  - tests/server/configuration-edit-locks.test.ts
-  - tests/web/*mcp*.tsx
+  - tests/server/configuration-file.test.ts
+  - tests/web/configuration-document.test.tsx
   - tests/browser/*mcp*.ts
 ---
 
@@ -38,36 +40,37 @@ remains decided but deferred until public runtime interfaces can support it.
 
 ### Editing and inheritance
 
-Settings → MCP groups file entries under **User** and **Project**, with quiet source-path captions.
-Rows show name, transport, file-disabled state and an understated same-name project override, not
-connection health. Add sits beside the section title; entry rows share Models' quiet Edit/Remove
-icon actions with explicit accessible names and tooltips. Advanced fields use the shared Settings
-disclosure chevron. Focused Edit and confirmed Remove keep their existing behavior, with Save/Cancel
-reachable while the form body scrolls. Policy-only Edit enters the first policy
-control (Tool exposure) without opening its menu; ordinary edits still enter the URL or program.
-Project trust is explained briefly in the project editor, not repeated as a policy/status block in each group.
+Settings → MCP shows **User** and **Project** source paths and file errors. Choose a server from the
+scope-labelled selector to see its name, transport, file-disabled state, any same-name project
+override and its edit actions. Add sits beside the section title. Advanced fields use the shared
+disclosure. The model/MCP form
+keeps Save/Cancel reachable while the body scrolls and reveals the focused field's label. New-server
+forms focus Server name. Ordinary edits focus URL or Program. Policy edits focus Tool exposure
+with its menu closed. The project editor explains trust.
 
 A user server with no same-name project entry offers **Customize for this project** when the selected
 project file is editable. This opens the existing policy form with a fixed name/project target and
 inherited defaults, not a copied server definition. Save becomes available after choosing a policy
 override; only explicitly overridden `enabled`, `exposure` and `toolExposure` fields are stored.
-Undoing draft tool-rule changes restores the original policy rather than storing an empty map.
-An explicit edit that clears existing rules still stores an empty map under Pi's replacement semantics.
-The Host validates a new policy entry against the same-name user configuration, just as for edits,
-without copying its URL, program, environment or credentials. Existing project entries retain their
-ordinary Edit/Remove actions. Removing a policy override restores user inheritance; saving or removing
-still affects files only, with the existing new-session/explicit Reload boundary.
+Undoing draft tool-rule changes restores the original policy instead of storing an empty map; an
+explicit edit that clears existing rules still stores an empty map under Pi's replacement
+semantics. The Host validates a new policy entry against the same-name user configuration, just as for edits,
+without copying its URL, program, environment or credentials. Existing project entries keep their
+ordinary Edit/Remove actions. Removing a policy override restores user inheritance. Saving or
+removing affects files only, with the existing new-session/explicit Reload boundary.
 
 ### File scope and trust
 
 The Host derives the user file from public `getAgentDir()/mcp.json`. The project file is
-`<cwd>/.pi/mcp.json`; an addressed session's Host-resolved directory wins over a supplied directory.
-The start surface uses its selected directory. Clients cannot supply arbitrary configuration paths.
-User-file reads and edits do not require a session or an available project directory. With no project
-selected, Settings shows only user configuration and a short project-selection hint. An unavailable
-project reports its own file error without blocking the user file. An addressed session still has to
-exist; its directory cannot silently fall back to another client-supplied directory. Project writes
-require an existing verified project directory and never create a missing project.
+`<cwd>/.pi/mcp.json`. An addressed session must exist, and its Host-resolved directory wins over a
+supplied directory, never falling back to a client-supplied one. The start surface uses its
+selected directory. Clients cannot supply arbitrary configuration paths. Project writes require an
+existing verified project directory and never create a missing project.
+
+User-file reads and edits require neither a session nor an available project directory. With no
+project selected, Settings shows only user configuration and a short project-selection hint. An
+unavailable project reports its own file error without blocking the user file.
+
 Full project definitions replace same-name user definitions. Policy-only project entries
 inherit the user connection and override `enabled`, `exposure`, and `toolExposure`; their editor
 preserves that shape. Absent enabled/exposure fields display **Inherit from user**, and choosing it
@@ -79,15 +82,18 @@ trusted. Reading or saving a project file grants no trust and loads no project c
 The form supports stdio command, argument rows, working directory and environment; streamable HTTP
 URL, headers and OAuth client fields; description, request timeout in seconds, file-enabled state,
 server exposure and ordered exact/pattern tool exposure. OAuth discovery remains Pi's default.
-The OAuth editor displays the saved registration method: client ID/dynamic registration (default),
-or Pi's client metadata document (CIMD). CIMD disallows `clientId` and `clientName`; switching methods
+The OAuth editor displays the saved registration method: Automatic (Pi default), explicit
+client ID/dynamic registration, or Pi's client metadata document (CIMD). An absent method means Auto;
+unrelated edits preserve that absence. Auto delegates registration selection to Pi and allows supplied
+client IDs, names and custom callbacks. CIMD disallows `clientId` and `clientName`; switching methods
 never silently removes those fields. The form detects conflicting stored-field presence and edited
-values, while the Host validates the complete merged OAuth object under Pi's current rules. Custom
-CIMD callbacks use HTTP on `localhost` or `127.0.0.1` with `/callback`; port consistency and the native
-metadata-URL rules also apply. An invalid merged object is rejected before publication.
+values; the Host validates the complete merged OAuth object under Pi's current rules and rejects
+an invalid one before publication. Custom CIMD callbacks use HTTP on `localhost` or `127.0.0.1`
+with `/callback`; port consistency and the native metadata-URL rules also apply.
+
 Unknown fields, top-level settings, other entries and unedited nested values remain intact.
 Transport and identity of an existing entry stay fixed; remove/add replaces them deliberately.
-While adding a server, switching transport retains its visible header/environment draft; submission
+While adding a server, switching transport keeps its visible header/environment draft; submission
 uses the selected transport's displayed edits, never an invisible discarded value.
 
 List snapshots expose presence/keys/counts instead of stored URLs, argument contents,
@@ -95,10 +101,15 @@ environment/header values or OAuth values other than the registration method. In
 editor, **Show saved URL** or **Show saved arguments** explicitly reads only that entry's literal
 connection values at the displayed file revision. The authenticated response is non-cacheable,
 does not resolve hooks and includes no unrelated credentials. Changed files require Refresh before
-revealing values; late reads cannot populate a different Settings owner or revision.
+revealing values; late reads cannot populate a different Settings owner or revision. Refreshing
+replaces a previous reveal with the new file revision and keeps values explicitly edited in the
+draft.
+The supported field definitions supply the patch schemas and form controls. Public fields use a
+safe projection, and the same descriptors distinguish the explicitly revealable connection fields
+from write-only secrets. Keep, replace and remove have separate edit intents.
 
 Revealing values alone does not make a write. The user can edit the loaded URL or individual
-arguments without re-entering the remaining list. Hidden URL and credential inputs retain stored
+arguments without re-entering the remaining list. Hidden URL and credential inputs keep stored
 values when blank; removal is explicit. Argument edits replace that list while preserving other
 fields. Exposure rule editing replaces its ordered map in displayed order, including
 removed/re-added patterns; other edits leave it untouched. Configuration removal does not delete
@@ -106,23 +117,23 @@ Pi's separate OAuth credential store.
 
 ### Saving and applying
 
-Writes validate the edited native fields, use revision-checked locks and atomic restrictive-mode
-replacement, and preserve legitimate user-file symlinks. Regular files lock their native resolved
-target once, including case/normalization aliases. Final symlinks retain both lexical and target
-authorities; publishing rechecks the target and revision. Project symlinks cannot escape their project.
+Writes validate the edited native fields through the same document transaction as model settings.
+The revision binds the resolved target and exact source text. Publication uses native-compatible
+locks and atomic restrictive-mode replacement. Final symlinks retain both lexical and target
+authorities; publishing rechecks the target and revision. Project symlinks stay within their project.
 Added names are checked across user/project files for Pi's hyphen/underscore namespace collisions;
 exact same-name overrides remain legal. Concurrent user/project additions cannot both publish
-conflicting names. Invalid files and conflicting edits are reported rather than overwritten.
-A conflict keeps the form draft; Refresh reads the new revision without clearing edits, and another
-explicit Save merges only the edited subset. Drafts survive category changes but are withdrawn on session/directory/Host
-ownership changes; stale asynchronous results cannot populate the new owner.
+conflicting names. Invalid files and conflicting edits are reported, not overwritten. A conflict
+keeps the form draft; Refresh reads the new revision without clearing edits, and another explicit
+Save merges only the edited subset. Drafts survive category changes but are withdrawn on
+session/directory/Host ownership changes; stale asynchronous results cannot populate the new owner.
 
 A successful write reports saved-to-file, not applied. For an Inspire-owned session, the optional,
 confirmed **Reload selected session** uses the existing idle-worker Reload path. Busy, unready or
 read-only targets are unavailable with an explanation; a declined dispatch is not reported as sent.
-A connected native Pi instead receives guidance to run `/reload` in its original terminal, without
-starting a second writer. Other workers are unchanged; new workers read the saved configuration.
-Save failure retains the draft. A successful save followed by a read failure still reports the
+For a taken-over terminal Pi, the panel directs the user to run `/reload` in its terminal.
+New workers read the saved configuration.
+Save failure keeps the draft. A successful save followed by a read failure still reports the
 successful commit and asks for Refresh.
 
 User guide: [MCP configuration](../../docs/mcp.md).
@@ -151,14 +162,9 @@ Configured MCP tools and Codemode composition continue through Pi.
 
 ## Checks
 
-Use isolated native configuration and local fixtures to verify:
-
-- source-preserving edits, policy inheritance, namespace collisions, merged OAuth validation and
-  revision/file/symlink authority;
-- secret-safe snapshots and explicit revision-bound value reads without executing hooks;
-- draft retention across category changes/conflicts, withdrawal on owner changes, and scoped edits
-  in desktop and narrow layouts;
-- native loading after save, with a distinct explicit Reload boundary for existing workers.
+File tests cover native parsing, scoped policy and protected values. The shared configuration-file
+suite covers revision authority and publication. Browser tests cover draft ownership, Reload
+admission, responsive stored-value editing, and saving and removing project definitions and overrides.
 
 ## Related interfaces
 

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInspireServer } from "../../../server/app";
 import { AttachmentStore } from "../../../server/attachments";
-import { MockCatalog, MockRuntime } from "../../../server/mock";
+import { hostServices } from "../../fixtures/host-services";
 import { PreferencesStore } from "../../../server/preferences";
 import { ResourceStore } from "../../../server/resources";
 
@@ -15,11 +15,11 @@ export async function restartableAuthHost(master: string) {
   let registrations = 0;
   const create = (token: string) => {
     const attachments = new AttachmentStore(join(directory, "uploads"));
-    const runtime = new MockRuntime({ attachments });
+    const { runtime, catalog } = hostServices(directory, { attachments });
     const application = createInspireServer({
       token,
       runtime,
-      catalog: new MockCatalog(),
+      catalog,
       attachments,
       preferences: new PreferencesStore(join(directory, "preferences.json")),
       resources: new ResourceStore(),
@@ -29,7 +29,6 @@ export async function restartableAuthHost(master: string) {
           throw new Error("Unused fixture");
         },
       },
-      mock: true,
       version: "0.0.0-fixture",
       piVersion: "fixture",
       distDir: resolve(process.env.INSPIRE_BROWSER_TEST_ROOT ?? ".", "dist"),

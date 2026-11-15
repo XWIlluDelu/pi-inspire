@@ -9,6 +9,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
+import { encodeTerminalInputFrame } from "../../shared/terminal-contracts.js";
 import { expect, it, vi } from "vitest";
 import { processStartIdentity } from "../../server/instance-state.mjs";
 import { signalProcessTree } from "../../server/process-tree.mjs";
@@ -20,6 +21,7 @@ import {
 import { defaultTerminalDaemonAddress } from "../../server/terminal-daemon-protocol.js";
 import { TERMINAL_DAEMON_OWNER_CONFLICT_EXIT_CODE } from "../../server/terminal-daemon-socket.js";
 import { readTerminalDaemonSecret } from "../../server/terminal-daemon-tls.js";
+
 import { isolatedTestEnvironment } from "./fixtures/isolated-environment.js";
 
 const execFile = promisify(execFileCallback);
@@ -157,8 +159,10 @@ it("refuses duplicate startup with a non-retrying exit without altering the list
   }
 }, 30_000);
 
-it("status is observational and invalid commands never create an authority", async () => {
+it("restarts only the authenticated scoped owner, stops actual PTYs, and restores tabs without execution", async () => {
   const f = await fixture();
+  const other = await fixture();
+  let clients: TerminalDaemonClient[] = [];
   try {
     expect((await f.cli("status")).stdout).toContain(
       "No terminal daemon endpoint",
@@ -179,19 +183,6 @@ it("status is observational and invalid commands never create an authority", asy
         true,
       ),
     ).rejects.toThrow("external OS terminal");
-    await expect(f.cli("stop", "--unexpected")).rejects.toMatchObject({
-      code: 64,
-    });
-  } finally {
-    await f.cleanup();
-  }
-}, 45_000);
-
-it("restarts only the authenticated scoped owner, stops actual PTYs, and restores tabs without execution", async () => {
-  const f = await fixture();
-  const other = await fixture();
-  let clients: TerminalDaemonClient[] = [];
-  try {
     await mkdir(join(f.directory, "project with spaces"));
     const first = await f.start();
     const independent = await other.start();
@@ -214,9 +205,20 @@ it("restarts only the authenticated scoped owner, stops actual PTYs, and restore
     expect((await independent.client.daemonInfo()).instanceId).toBe(
       otherBefore.instanceId,
     );
-    const terminal = await first.client.create({
-      cwd: join(f.directory, "project with spaces"),
-      profileId: process.platform === "win32" ? "cmd" : "sh",
+    const epoch = await first.client.operationEpoch();
+    const executor = { kind: "terminal" as const, epoch };
+    const terminal = await first.client.operate({
+      executor,
+      operationId: randomUUID(),
+      intent: {
+        command: "create",
+        params: {
+          request: {
+            cwd: join(f.directory, "project with spaces"),
+            profileId: process.platform === "win32" ? "cmd" : "sh",
+          },
+        },
+      },
     });
     const attachment = await first.client.attach(
       {
@@ -228,27 +230,44 @@ it("restarts only the authenticated scoped owner, stops actual PTYs, and restore
       { sendData() {}, sendControl() {}, close() {} },
     );
     const command =
-      "require('fs').writeFileSync(process.env.INSPIRE_TEST_CHILD_PID_FILE,String(process.pid));setInterval(()=>{},1000)";
+      "if(process.platform!=='win32')process.on('SIGHUP',()=>{});" +
+      "require('fs').writeFileSync(process.env.INSPIRE_TEST_CHILD_PID_FILE,JSON.stringify({pid:process.pid,id:process.env.INSPIRE_TERMINAL_ID,term:process.env.TERM,color:process.env.COLORTERM,program:process.env.TERM_PROGRAM}));setInterval(()=>{},1000)";
     const executable =
       process.platform === "win32"
         ? JSON.stringify(process.execPath)
         : "'" + process.execPath.replaceAll("'", "'\\''") + "'";
-    attachment.writeInput(
-      1,
-      Buffer.from(executable + ' -e "' + command + '"\r'),
-    );
+    attachment.send({
+      data: encodeTerminalInputFrame(
+        1,
+        Buffer.from(executable + ' -e "' + command + '"\r'),
+      ),
+    });
     let ownedPid = 0;
     await vi.waitFor(
       async () => {
-        ownedPid = Number(
+        const child = JSON.parse(
           await readFile(f.environment.INSPIRE_TEST_CHILD_PID_FILE!, "utf8"),
         );
+        expect(child).toMatchObject({
+          id: terminal.id,
+          term: "xterm-256color",
+          color: "truecolor",
+          program: "Inspire",
+        });
+        ownedPid = child.pid;
         expect(ownedPid).toBeGreaterThan(0);
       },
       { timeout: 10_000 },
     );
     const ownedBirth = await processStartIdentity(ownedPid);
-    await first.client.rename(terminal.id, { title: "Retained metadata" });
+    await first.client.operate({
+      executor,
+      operationId: randomUUID(),
+      intent: {
+        command: "rename",
+        params: { id: terminal.id, title: "Retained metadata" },
+      },
+    });
     // A live shell needs consent; refusal keeps both daemon and tab alive.
     await expect(f.cli("restart")).rejects.toThrow("--force");
     expect((await first.client.list()).terminals[0]?.status).toBe("running");

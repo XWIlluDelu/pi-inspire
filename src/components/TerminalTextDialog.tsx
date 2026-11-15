@@ -1,9 +1,9 @@
-import { MessageSquareQuote, TextSelect, X } from "lucide-react";
+import { MessageSquareQuote, TextSelect } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
 import { useCopied } from "../use-copied";
-import { useModalFocus } from "../use-modal-focus";
 import { ButtonLabel } from "./ButtonLabel";
 import { CopyFeedback } from "./CopyFeedback";
+import { DialogHeader, Modal } from "./Modal";
 
 export function TerminalTextDialog({
   text,
@@ -16,11 +16,6 @@ export function TerminalTextDialog({
   onClose: () => void;
   onSendToComposer?: (value: string) => void;
 }) {
-  const dialogRef = useModalFocus<HTMLDivElement>(
-    true,
-    "terminal-text",
-    onClose,
-  );
   const textRef = useRef<HTMLTextAreaElement>(null);
   const [hasSelection, setHasSelection] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -45,37 +40,22 @@ export function TerminalTextDialog({
   };
 
   return (
-    <div
-      className="overlay terminal-text-overlay"
-      role="presentation"
-      onClick={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
+    <Modal
+      overlayClassName="terminal-text-overlay"
+      aria-label="Select terminal text"
+      onDismiss={onClose}
     >
-      <div
-        ref={dialogRef}
-        className="dialog terminal-text-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Select terminal text"
-        tabIndex={-1}
-      >
-        <header className="terminal-text-dialog__header">
-          <h2>Select text</h2>
-          <button
-            type="button"
-            className="icon-button"
-            aria-label="Close text selection"
-            title="Close text selection"
-            onClick={onClose}
-          >
-            <X size={16} aria-hidden="true" />
-          </button>
-        </header>
+      <div className="dialog dialog--flush terminal-text-dialog">
+        <DialogHeader
+          title="Select text"
+          closeLabel="Close text selection"
+          onClose={onClose}
+        />
         <textarea
           ref={textRef}
           className="terminal-text-dialog__text"
           aria-label="Terminal output"
+          data-modal-autofocus
           value={text}
           readOnly
           inputMode="none"
@@ -86,11 +66,11 @@ export function TerminalTextDialog({
           <p className="terminal-text-dialog__error" role="alert">
             {error}
             <br />
-            Use your browser’s Copy action on the selected text.
+            Use your browser’s Copy action.
           </p>
         )}
         <footer
-          className="terminal-text-dialog__actions"
+          className="dialog__actions terminal-text-dialog__actions"
           onPointerDown={(event) => event.preventDefault()}
         >
           <button
@@ -109,7 +89,7 @@ export function TerminalTextDialog({
                 type="button"
                 className="icon-button"
                 aria-label="Send terminal selection to composer"
-                title="Add selection to the composer without sending"
+                title="Add selection to draft"
                 disabled={!hasSelection}
                 onClick={() => {
                   const selection = selectedText();
@@ -141,6 +121,6 @@ export function TerminalTextDialog({
           </div>
         </footer>
       </div>
-    </div>
+    </Modal>
   );
 }

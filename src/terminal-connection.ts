@@ -1,3 +1,4 @@
+import { BROWSER_UPGRADE_CLOSE } from "../shared/browser-build.mjs";
 import type {
   TerminalAttachRequest,
   TerminalDescriptor,
@@ -10,7 +11,7 @@ import {
   MAX_TERMINAL_INPUT_BYTES,
 } from "../shared/terminal-contracts";
 import { type Api, terminalUrl } from "./api";
-import { socketTicket } from "./browser-auth";
+import { BrowserUpgradeRequired, socketTicket } from "./browser-auth";
 
 export type TerminalTransportStatus =
   | "connecting"
@@ -175,8 +176,9 @@ export class TerminalConnection {
       const request = new AbortController();
       this.ticketRequest = request;
       this.armDeadline(CONNECT_TIMEOUT_MS, "Terminal ticket request timed out");
-      const { ticket } = await this.api.terminalAttachTicket(
-        this.terminalId,
+      const { ticket } = await this.api.json(
+        "terminalAttachTicket",
+        { params: { id: this.terminalId } },
         request.signal,
       );
       if (this.stopped || generation !== this.generation) return;
@@ -204,26 +206,26 @@ export class TerminalConnection {
         };
         socket.send(JSON.stringify(request));
       });
-      socket.addEventListener("message", (event) => {
-        if (this.stopped || generation !== this.generation) return;
+      socket.addEventListener("message", async (event) => {
+        const current = () => !this.stopped && generation === this.generation;
+        if (!current()) return;
         this.lastReceivedAt = Date.now();
         try {
-          if (event.data instanceof ArrayBuffer) {
-            this.receiveData(decodeTerminalServerDataFrame(event.data));
-            return;
+          const data =
+            event.data instanceof Blob
+              ? await event.data.arrayBuffer()
+              : event.data;
+          if (!current()) return;
+          if (data instanceof ArrayBuffer) {
+            this.receiveData(decodeTerminalServerDataFrame(data));
+          } else {
+            const control: unknown = JSON.parse(String(data));
+            if (!isServerControlMessage(control))
+              throw new Error("Terminal control frame is invalid");
+            this.receiveControl(control);
           }
-          if (event.data instanceof Blob) {
-            void event.data.arrayBuffer().then((buffer) => {
-              if (!this.stopped && generation === this.generation)
-                this.receiveData(decodeTerminalServerDataFrame(buffer));
-            });
-            return;
-          }
-          const message = JSON.parse(String(event.data)) as unknown;
-          if (!isServerControlMessage(message))
-            throw new Error("Terminal control frame is invalid");
-          this.receiveControl(message);
         } catch (error) {
+          if (!current()) return;
           this.callbacks.error(
             error instanceof Error ? error.message : "Terminal data is invalid",
           );
@@ -231,15 +233,22 @@ export class TerminalConnection {
           this.reconnect();
         }
       });
-      socket.addEventListener("close", () => {
+      socket.addEventListener("close", (event) => {
         if (this.stopped || generation !== this.generation) return;
-        this.reconnect();
+        if (event.code === BROWSER_UPGRADE_CLOSE) {
+          this.stop();
+          window.dispatchEvent(new Event("inspire-browser-upgrade"));
+        } else this.reconnect();
       });
       socket.addEventListener("error", () => {
         // The close event owns retry and user-visible status.
       });
     } catch (error) {
       if (this.stopped || generation !== this.generation) return;
+      if (error instanceof BrowserUpgradeRequired) {
+        this.stop();
+        return;
+      }
       this.callbacks.error(
         error instanceof Error ? error.message : "Terminal connection failed",
       );
@@ -259,28 +268,20 @@ export class TerminalConnection {
       this.callbacks.data(frame);
       return;
     }
-    if (frame.kind === "snapshot-continuation") {
-      if (
-        this.resume.nextOutputOffset === undefined ||
-        frame.offset !== this.resume.nextOutputOffset ||
-        frame.resizeRevision !== this.resume.resizeRevision
-      ) {
-        this.resume = {};
-        throw new Error("Terminal snapshot continuity was lost");
-      }
-      this.callbacks.data(frame);
-      return;
-    }
     if (
       this.resume.nextOutputOffset === undefined ||
       frame.offset !== this.resume.nextOutputOffset ||
       frame.resizeRevision !== this.resume.resizeRevision
     ) {
-      this.resume = {};
-      throw new Error("Terminal output continuity was lost");
+      throw new Error(
+        frame.kind === "snapshot-continuation"
+          ? "Terminal snapshot continuity was lost"
+          : "Terminal output continuity was lost",
+      );
     }
     this.callbacks.data(frame);
-    this.resume.nextOutputOffset += frame.data.byteLength;
+    if (frame.kind !== "snapshot-continuation")
+      this.resume.nextOutputOffset += frame.data.byteLength;
   }
 
   private receiveControl(message: TerminalServerControlMessage): void {
@@ -363,11 +364,7 @@ export class TerminalConnection {
     this.inputOwnerToken = token;
     if (token) setSessionValue(this.ownerStorageKey, token);
     if (nextSequence === undefined) return;
-    for (const [sequence, data] of this.pendingInput) {
-      if (sequence >= nextSequence) continue;
-      this.pendingInput.delete(sequence);
-      this.pendingInputBytes -= data.byteLength;
-    }
+    this.acknowledgeInput(nextSequence - 1);
     if (
       this.pendingInput.size > 0 &&
       Math.min(...this.pendingInput.keys()) !== nextSequence

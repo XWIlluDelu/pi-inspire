@@ -1,19 +1,5 @@
-import {
-  ArrowLeft,
-  Pencil,
-  Plus,
-  RefreshCw,
-  Server,
-  Trash2,
-} from "lucide-react";
-import {
-  Fragment,
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
+import { Plus, RefreshCw, Server } from "lucide-react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { isBusyRunState } from "../../shared/contracts";
 import type {
   McpConfigEdit,
@@ -22,30 +8,47 @@ import type {
   McpConfigSnapshot,
   McpConfigValues,
 } from "../../shared/mcp";
+import type { ModelSettingsOwner } from "../../shared/model-settings";
+import { selectedRunState } from "../app-state";
 import { shallowEqual, store, useAppState } from "../store";
+import { useConfigurationDocument } from "../use-configuration-document";
+import {
+  ConfigurationAction,
+  ConfigurationConfirmation,
+  ConfigurationDetail,
+  ConfigurationEditor,
+} from "./ConfigurationForm";
 import { McpServerForm } from "./McpServerForm";
-import { SettingsSection } from "./SettingsSection";
+import { SettingsCardMessage, SettingsSection } from "./SettingsSection";
 
-type Owner = { sessionId?: string; cwd?: string };
-type Editor = {
-  scope: McpConfigScope;
-  entry: McpConfigEntry | null;
-  policyName?: string;
-};
-const messageOf = (error: unknown) =>
-  error instanceof Error ? error.message : "MCP configuration is unavailable";
+const transportLabel = (entry: McpConfigEntry) =>
+  entry.policyOnly
+    ? "Policy override"
+    : entry.transport === "http"
+      ? "HTTP"
+      : entry.transport === "stdio"
+        ? "Stdio"
+        : "Unsupported entry";
+type Selection =
+  | {
+      kind: "edit";
+      scope: McpConfigScope;
+      entry: McpConfigEntry | null;
+      policyName?: string;
+    }
+  | { kind: "remove"; scope: McpConfigScope; entry: McpConfigEntry };
 export function McpSettings({
   active,
   owner,
 }: {
   active: boolean;
-  owner: Owner;
+  owner: ModelSettingsOwner;
 }) {
   const state = useAppState(
     (source) => ({
       readOnlyReason: source.readOnlyReason,
       sessionId: source.sessionId,
-      runState: source.runState,
+      runState: selectedRunState(source),
       external: Boolean(
         source.sessionId && source.sessionStatuses[source.sessionId]?.external,
       ),
@@ -55,7 +58,7 @@ export function McpSettings({
   );
   return (
     <McpConfiguration
-      key={JSON.stringify([owner, state.transport])}
+      key={JSON.stringify([owner.sessionId, owner.cwd, state.transport])}
       owner={owner}
       active={active}
       canReload={Boolean(
@@ -76,81 +79,61 @@ function McpConfiguration({
   nativeReload,
   reloadBlocked,
 }: {
-  owner: Owner;
+  owner: ModelSettingsOwner;
   active: boolean;
   canReload: boolean;
   nativeReload: boolean;
   reloadBlocked: boolean;
 }) {
-  const [snapshot, setSnapshot] = useState<McpConfigSnapshot | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [editor, setEditor] = useState<Editor | null>(null);
-  const [removing, setRemoving] = useState<Editor | null>(null);
+  const configuration = useConfigurationDocument<McpConfigSnapshot, Selection>({
+    owner: JSON.stringify([owner.sessionId, owner.cwd]),
+    active,
+    unavailable: "MCP configuration is unavailable",
+    blockDuringRead: true,
+    fallbackFocus: "[data-config-add]",
+  });
+  const {
+    snapshot,
+    error,
+    setError,
+    busy,
+    readFailed,
+    load,
+    write,
+    edit: selection,
+  } = configuration;
+  const editor = selection?.kind === "edit" ? selection : null;
+  const removing = selection?.kind === "remove" ? selection : null;
   const [saved, setSaved] = useState<string | null>(null);
   const [confirmReload, setConfirmReload] = useState(false);
-  const alive = useRef(false);
-  const attempted = useRef(false);
-  const opener = useRef<HTMLElement | null>(null);
-  const addButton = useRef<HTMLButtonElement>(null);
-  const focusBack = useRef(false);
+  const { cwd, sessionId } = owner;
+  const read = useCallback(
+    () => load(() => store.readMcpConfig(sessionId ? { sessionId } : { cwd })),
+    [load, sessionId, cwd],
+  );
   useEffect(() => {
-    alive.current = true;
-    return () => {
-      alive.current = false;
-    };
-  }, []);
-  const read = useCallback(async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      const value = await store.readMcpConfig(owner);
-      if (alive.current) setSnapshot(value);
-    } catch (error) {
-      if (alive.current) setError(messageOf(error));
-    } finally {
-      if (alive.current) setBusy(false);
-    }
-  }, [owner]);
-  useEffect(() => {
-    if (!active || attempted.current) return;
-    attempted.current = true;
-    void read();
-  }, [active, read]);
-  useLayoutEffect(() => {
-    if (active && !editor && !removing && focusBack.current) {
-      focusBack.current = false;
-      (opener.current?.isConnected
-        ? opener.current
-        : addButton.current
-      )?.focus();
-    }
-  }, [active, editor, removing]);
-  function closeEditor() {
-    focusBack.current = true;
-    setEditor(null);
-    setRemoving(null);
-    setError(null);
-  }
-  async function save(edit: McpConfigEdit) {
-    setBusy(true);
-    setError(null);
-    try {
-      const result = await store.editMcpConfig(owner, edit);
-      if (!alive.current) return;
-      setSnapshot(result.snapshot ?? null);
-      setSaved(
-        result.warning ??
-          "Saved to file. Running sessions have not been reloaded.",
-      );
-      closeEditor();
-    } catch (error) {
-      if (alive.current) setError(messageOf(error));
-    } finally {
-      if (alive.current) setBusy(false);
-    }
-  }
+    if (active && !snapshot && !readFailed) void read();
+  }, [active, read, readFailed, snapshot]);
+  const open = (next: Selection, opener: HTMLElement) => {
+    configuration.open(next, opener, next.kind === "edit");
+    setConfirmReload(false);
+  };
   const projectFile = snapshot?.files.find((file) => file.scope === "project");
+  function save(edit: McpConfigEdit) {
+    void write(() => store.editMcpConfig(owner, edit), {
+      close: true,
+      onSaved: (result) => {
+        setSaved(
+          result.warning ??
+            "Saved to file. Running sessions have not been reloaded.",
+        );
+      },
+      onError: () =>
+        configuration.root.current?.querySelector<HTMLElement>(
+          '.models-form [role="alert"], .mcp-config > [role="alert"]',
+        ) ?? null,
+    });
+  }
   function submit(
     scope: McpConfigScope,
     name: string,
@@ -166,90 +149,86 @@ function McpConfiguration({
         operation: editor?.entry ? "update" : "add",
       });
   }
+  function reload() {
+    setError(null);
+    const current = store.getState();
+    if (
+      current.sessionId !== owner.sessionId ||
+      current.readOnlyReason ||
+      (current.sessionId &&
+        current.sessionStatuses[current.sessionId]?.external) ||
+      isBusyRunState(selectedRunState(current))
+    ) {
+      setError("Reload requires an available, idle session.");
+      return;
+    }
+    if (!store.runPaletteNativeCommand("/reload")) {
+      setError(
+        "Reload could not be started. Check the selected session and try again.",
+      );
+      return;
+    }
+    setConfirmReload(false);
+    setSaved("Reload requested. Check its result in the conversation.");
+  }
   return (
-    <div className="models-settings-layout mcp-settings">
-      {editor && snapshot ? (
-        <section
-          className="models-editor models-settings"
-          aria-label={
+    <div
+      className="models-settings-layout mcp-settings"
+      ref={configuration.root}
+    >
+      {editor && snapshot && (
+        <ConfigurationEditor
+          title={
             editor.policyName
-              ? "Customize MCP server for project"
+              ? `Customize ${editor.policyName}`
               : editor.entry
-                ? "Edit MCP server"
+                ? `Edit ${editor.entry.name}`
                 : "Add MCP server"
           }
+          backLabel="Back to MCP"
+          busy={busy}
+          onClose={configuration.dismiss}
+          refresh={{ label: "Refresh MCP files", run: () => void read() }}
         >
-          <header className="models-editor__header">
-            <button
-              type="button"
-              className="button button--quiet"
-              onClick={closeEditor}
-              disabled={busy}
-            >
-              <ArrowLeft size={14} aria-hidden />
-              Back to MCP
-            </button>
-            <div className="models-subheading">
-              <h3>
-                {editor.policyName
-                  ? `Customize ${editor.policyName}`
-                  : editor.entry
-                    ? `Edit ${editor.entry.name}`
-                    : "Add MCP server"}
-              </h3>
-              <button
-                type="button"
-                className="models-icon-button"
-                aria-label="Refresh MCP files"
-                title="Refresh files; keep this draft"
-                disabled={busy}
-                onClick={() => void read()}
-              >
-                <RefreshCw size={14} aria-hidden />
-              </button>
-            </div>
-          </header>
           <McpServerForm
             entry={editor.entry}
             policyName={editor.policyName}
             initialScope={editor.scope}
             snapshot={snapshot}
             busy={busy}
+            readFailed={readFailed}
             error={error}
             onSave={submit}
             onReadConnection={(input) => store.readMcpConnection(owner, input)}
-            onCancel={closeEditor}
+            onCancel={configuration.dismiss}
           />
-        </section>
-      ) : null}
-      <div className="models-browse" hidden={Boolean(editor)}>
+        </ConfigurationEditor>
+      )}
+      <div className="models-browse" hidden={!configuration.browsing}>
         <SettingsSection
           id="mcp"
           icon={<Server size={14} />}
           title="MCP"
-          description="Edit Pi's saved MCP configuration. Changes take effect in new or reloaded sessions."
+          description="Saved MCP settings apply in new or reloaded sessions."
           headerAction={
             <div className="models-actions">
-              <button
-                type="button"
-                className="models-icon-button"
-                aria-label="Refresh MCP files"
+              <ConfigurationAction
+                label="Refresh MCP files"
+                icon={RefreshCw}
                 disabled={busy}
                 onClick={() => void read()}
-              >
-                <RefreshCw size={14} aria-hidden />
-              </button>
+              />
               <button
                 type="button"
                 className="button"
-                ref={addButton}
-                disabled={busy || !snapshot}
-                onClick={(event) => {
-                  opener.current = event.currentTarget;
-                  setError(null);
-                  setConfirmReload(false);
-                  setEditor({ scope: "user", entry: null });
-                }}
+                data-config-add
+                disabled={busy || !snapshot || readFailed}
+                onClick={(event) =>
+                  open(
+                    { kind: "edit", scope: "user", entry: null },
+                    event.currentTarget,
+                  )
+                }
               >
                 <Plus size={14} aria-hidden />
                 Add server
@@ -259,14 +238,12 @@ function McpConfiguration({
         >
           <div className="models-settings mcp-config">
             {error ? (
-              <p className="settings__error" role="alert">
-                {error}
-              </p>
+              <SettingsCardMessage error>{error}</SettingsCardMessage>
             ) : null}
             {busy && !snapshot ? (
-              <p className="models-status" role="status">
+              <SettingsCardMessage loading>
                 Loading servers…
-              </p>
+              </SettingsCardMessage>
             ) : null}
             {saved ? (
               <div className="mcp-save-result" role="status">
@@ -283,88 +260,45 @@ function McpConfiguration({
                 ) : (
                   <p className="models-status">
                     {nativeReload
-                      ? "Run /reload in the original Pi terminal to apply the saved configuration."
+                      ? "Run /reload in the original Pi terminal."
                       : "New sessions use the saved configuration."}
                   </p>
                 )}
                 {canReload && reloadBlocked ? (
                   <p className="models-status">
-                    Wait for the current Pi operation to finish before
-                    reloading.
+                    Wait for Pi to finish before reloading.
                   </p>
                 ) : null}
               </div>
             ) : null}
             {confirmReload ? (
-              <div className="models-confirm">
-                <p>
-                  Reload restarts only the selected idle Pi worker. Other
-                  running sessions are unchanged. Unsaved extension state may be
-                  lost.
-                </p>
-                <div className="models-actions">
-                  <button
-                    type="button"
-                    className="button button--primary"
-                    disabled={!canReload || reloadBlocked || busy}
-                    onClick={() => {
-                      setError(null);
-                      const current = store.getState();
-                      if (
-                        current.sessionId !== owner.sessionId ||
-                        current.readOnlyReason ||
-                        isBusyRunState(current.runState)
-                      ) {
-                        setError(
-                          "The selected session must be available and idle before reloading.",
-                        );
-                        return;
-                      }
-                      if (!store.runPaletteNativeCommand("/reload")) {
-                        setError(
-                          "Reload could not be started. Check the selected session and try again.",
-                        );
-                        return;
-                      }
-                      setConfirmReload(false);
-                      setSaved(
-                        "Reload requested. Check its result in the conversation.",
-                      );
-                    }}
-                  >
-                    Reload Pi resources
-                  </button>
-                  <button
-                    type="button"
-                    className="button button--quiet"
-                    onClick={() => setConfirmReload(false)}
-                  >
-                    Cancel reload
-                  </button>
-                </div>
-              </div>
+              <ConfigurationConfirmation
+                primary
+                confirmLabel="Reload Pi resources"
+                cancelLabel="Cancel reload"
+                confirmDisabled={!canReload || reloadBlocked || busy}
+                onConfirm={reload}
+                onCancel={() => setConfirmReload(false)}
+              >
+                Reload Pi in the selected session. Unsaved extension state may
+                be lost.
+              </ConfigurationConfirmation>
             ) : null}
             {snapshot && snapshot.cwd === null ? (
               <p className="models-status">
-                Select a project to edit project configuration.
+                Select a project to edit its MCP settings.
               </p>
             ) : null}
             {snapshot?.files.map((file) => (
               <section
                 className="mcp-file"
                 key={file.scope}
-                aria-label={
-                  file.scope === "user"
-                    ? "User MCP configuration"
-                    : "Project MCP configuration"
-                }
+                aria-label={`${file.scope === "user" ? "User" : "Project"} MCP configuration`}
               >
                 <div className="mcp-file__header">
                   <div className="mcp-file__scope">
                     <h4>
-                      {file.scope === "user"
-                        ? "User configuration"
-                        : "Project configuration"}
+                      {file.scope === "user" ? "User" : "Project"} configuration
                     </h4>
                     <span className="mcp-file__hint">
                       {file.scope === "user"
@@ -378,143 +312,101 @@ function McpConfiguration({
                   <p className="settings__error" role="alert">
                     {file.error}
                   </p>
-                ) : !file.entries.length ? (
+                ) : file.entries.length === 0 ? (
                   <p className="models-status">No servers in this file.</p>
                 ) : (
-                  file.entries.map((entry) => (
-                    <Fragment key={entry.name}>
-                      <div className="models-declared-model">
-                        <div className="models-declared-model__copy">
-                          <span>{entry.name}</span>
-                          <span className="models-status">
-                            {entry.policyOnly
-                              ? "Policy override"
-                              : entry.transport === "http"
-                                ? "HTTP"
-                                : entry.transport === "stdio"
-                                  ? "Stdio"
-                                  : "Unsupported entry"}
-                            {entry.enabled === false
-                              ? " · disabled in file"
-                              : ""}
-                            {file.scope === "user" &&
-                            snapshot.files
-                              .find((item) => item.scope === "project")
-                              ?.entries.some((item) => item.name === entry.name)
-                              ? " · project override exists"
-                              : ""}
-                          </span>
-                          {file.scope === "user" &&
-                          entry.transport &&
-                          projectFile &&
-                          !projectFile.error &&
-                          !projectFile.entries.some(
-                            (project) => project.name === entry.name,
-                          ) ? (
+                  file.entries.map((entry) => {
+                    const scope = file.scope;
+                    const hasOverride = projectFile?.entries.some(
+                      ({ name }) => name === entry.name,
+                    );
+                    const customize =
+                      scope === "user" &&
+                      entry.transport &&
+                      projectFile &&
+                      !projectFile.error &&
+                      !hasOverride;
+                    return (
+                      <Fragment key={entry.name}>
+                        <ConfigurationDetail
+                          label={`${scope} server ${entry.name}`}
+                          name={entry.name}
+                          description={
+                            <p className="models-status">
+                              {transportLabel(entry)}
+                              {entry.enabled === false && " · disabled in file"}
+                              {scope === "user" &&
+                                hasOverride &&
+                                " · project override exists"}
+                            </p>
+                          }
+                          disabled={busy || readFailed}
+                          edit={
+                            entry.transport || entry.policyOnly
+                              ? (event) =>
+                                  open(
+                                    { kind: "edit", scope, entry },
+                                    event.currentTarget,
+                                  )
+                              : undefined
+                          }
+                          remove={(event) =>
+                            open(
+                              { kind: "remove", scope, entry },
+                              event.currentTarget,
+                            )
+                          }
+                        >
+                          {customize && (
                             <button
                               type="button"
                               className="models-text-button"
                               aria-label={`Customize for this project: ${entry.name}`}
-                              disabled={busy}
-                              onClick={(event) => {
-                                opener.current = event.currentTarget;
-                                setError(null);
-                                setConfirmReload(false);
-                                setEditor({
-                                  scope: "project",
-                                  entry: null,
-                                  policyName: entry.name,
-                                });
-                              }}
+                              disabled={busy || readFailed}
+                              onClick={(event) =>
+                                open(
+                                  {
+                                    kind: "edit",
+                                    scope: "project",
+                                    entry: null,
+                                    policyName: entry.name,
+                                  },
+                                  event.currentTarget,
+                                )
+                              }
                             >
                               Customize for this project
                             </button>
-                          ) : null}
-                        </div>
-                        <div className="models-actions">
-                          <button
-                            type="button"
-                            className="models-icon-button"
-                            title="Edit server"
-                            aria-label={`Edit ${file.scope} server ${entry.name}`}
-                            disabled={
-                              busy || (!entry.transport && !entry.policyOnly)
-                            }
-                            onClick={(event) => {
-                              opener.current = event.currentTarget;
-                              setError(null);
-                              setConfirmReload(false);
-                              setEditor({ scope: file.scope, entry });
-                            }}
-                          >
-                            <Pencil size={14} aria-hidden />
-                          </button>
-                          <button
-                            type="button"
-                            className="models-icon-button"
-                            title="Remove server"
-                            aria-label={`Remove ${file.scope} server ${entry.name}`}
-                            disabled={busy}
-                            onClick={(event) => {
-                              opener.current = event.currentTarget;
-                              setError(null);
-                              setConfirmReload(false);
-                              setRemoving({ scope: file.scope, entry });
-                            }}
-                          >
-                            <Trash2 size={14} aria-hidden />
-                          </button>
-                        </div>
-                      </div>
-                      {removing?.scope === file.scope &&
-                      removing.entry?.name === entry.name ? (
-                        <div
-                          className="models-confirm"
-                          role="group"
-                          aria-label="Remove MCP configuration"
-                        >
-                          <p>
-                            Remove {removing.entry.name} from the{" "}
-                            {removing.scope} file?{" "}
-                            {removing.entry.policyOnly
-                              ? "This project will inherit the user configuration again. "
-                              : ""}
-                            Stored OAuth credentials and running connections are
-                            unchanged.
-                          </p>
-                          <div className="models-actions">
-                            <button
-                              type="button"
-                              className="button button--danger"
-                              disabled={busy}
-                              onClick={() => {
-                                const file = snapshot?.files.find(
-                                  (file) => file.scope === removing.scope,
-                                );
-                                if (file)
-                                  void save({
-                                    scope: file.scope,
-                                    name: removing.entry!.name,
-                                    operation: "remove",
-                                    revision: file.revision,
-                                  });
-                              }}
+                          )}
+                        </ConfigurationDetail>
+                        {removing &&
+                          scope === removing.scope &&
+                          entry.name === removing.entry.name && (
+                            <ConfigurationConfirmation
+                              confirmLabel="Remove configuration"
+                              cancelDisabled={busy}
+                              confirmDisabled={busy || readFailed}
+                              onConfirm={() =>
+                                save({
+                                  scope: removing.scope,
+                                  name: removing.entry.name,
+                                  operation: "remove",
+                                  revision: file.revision,
+                                })
+                              }
+                              onCancel={configuration.dismiss}
                             >
-                              Remove configuration
-                            </button>
-                            <button
-                              type="button"
-                              className="button button--quiet"
-                              disabled={busy}
-                              onClick={closeEditor}
-                            >
-                              Keep server
-                            </button>
-                          </div>
-                        </div>
-                      ) : null}
-                    </Fragment>
-                  ))
+                              Remove {removing.entry.name} from the{" "}
+                              {removing.scope} file?
+                              {removing.entry.policyOnly &&
+                                " This project will inherit the user configuration again."}{" "}
+                              Stored OAuth credentials and running connections
+                              are unchanged.
+                            </ConfigurationConfirmation>
+                          )}
+                      </Fragment>
+                    );
+                  })
                 )}
               </section>
             ))}

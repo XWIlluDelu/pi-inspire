@@ -1,10 +1,12 @@
-import { rm, writeFile } from "node:fs/promises";
-import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
-import { join } from "node:path";
+import { rm } from "node:fs/promises";
 import { expect, it, vi } from "vitest";
 import { refreshWorkerCatalog } from "../../server/model-catalog-refresh.js";
-import { nativePiWorkspace, nativeBridgeWorker } from "./fixtures/native-pi.js";
+import { nativeBridgeWorker, nativePiWorkspace } from "./fixtures/native-pi.js";
+import {
+  startOfflineModel,
+  writeOfflineModels,
+} from "./fixtures/offline-model.js";
+import { deferredSignal } from "./fixtures/runtime.js";
 
 it("refreshes usable models in the same active Pi worker and retains extension providers/dialogs/session selection", async () => {
   const workspace = await nativePiWorkspace("inspire-catalog-", {
@@ -15,47 +17,22 @@ it("refreshes usable models in the same active Pi worker and retains extension p
     compaction: { enabled: false },
   });
   const { root, agent: config } = workspace;
-  let release!: () => void;
-  const gate = new Promise<void>((resolveGate) => {
-    release = resolveGate;
+  const gate = deferredSignal();
+  const model = await startOfflineModel({
+    reply: "Done",
+    beforeReply: () => gate.promise,
   });
-  let requested = false;
-  const server = createServer(async (request, response) => {
-    for await (const _chunk of request) {
-      /* drain synthetic request */
-    }
-    requested = true;
-    await gate;
-    if (response.destroyed) return;
-    response.writeHead(200, { "content-type": "text/event-stream" });
-    response.end(
-      `data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", created: 1, model: "original", choices: [{ index: 0, delta: { role: "assistant", content: "Done" }, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`,
-    );
-  });
-  await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
-  const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const writeModels = (ids: string[]) =>
-    writeFile(
-      join(config, "models.json"),
-      JSON.stringify({
-        providers: {
-          fixture: {
-            api: "openai-completions",
-            apiKey: "synthetic",
-            baseUrl,
-            models: ids.map((id) => ({
-              id,
-              name: id,
-              reasoning: true,
-              input: ["text"],
-              contextWindow: 4096,
-              maxTokens: 128,
-            })),
-          },
-        },
-      }),
+    writeOfflineModels(
+      config,
+      model.baseUrl,
+      "fixture",
+      ids.map((id) => ({
+        id,
+        reasoning: true,
+        contextWindow: 4096,
+      })),
     );
-  await writeModels(["original"]);
   const { bridge, rpc } = nativeBridgeWorker(
     workspace,
     "tests/fixtures/pi-model-catalog-extension.ts",
@@ -63,6 +40,7 @@ it("refreshes usable models in the same active Pi worker and retains extension p
   const events: Array<Record<string, unknown>> = [];
   rpc.on("event", (event) => events.push(event));
   try {
+    await writeModels(["original"]);
     await rpc.start();
     const before = await rpc.request<Record<string, unknown>>({
       type: "get_state",
@@ -74,7 +52,7 @@ it("refreshes usable models in the same active Pi worker and retains extension p
     );
     const dialog = events.find((event) => event.method === "confirm")!;
     await rpc.request({ type: "prompt", message: "Synthetic active request" });
-    await vi.waitFor(() => expect(requested).toBe(true));
+    await vi.waitFor(() => expect(model.requests).toHaveLength(1));
     expect(
       (await rpc.request<Record<string, unknown>>({ type: "get_state" }))
         .isStreaming,
@@ -146,7 +124,7 @@ it("refreshes usable models in the same active Pi worker and retains extension p
           event.statusText === "retained",
       ),
     ).toBe(true);
-    release();
+    gate.resolve();
     await vi.waitFor(async () =>
       expect(
         (await rpc.request<Record<string, unknown>>({ type: "get_state" }))
@@ -154,10 +132,9 @@ it("refreshes usable models in the same active Pi worker and retains extension p
       ).toBe(false),
     );
   } finally {
-    release();
+    gate.resolve();
     await rpc.stop();
-    server.closeAllConnections();
-    await new Promise<void>((done) => server.close(() => done()));
+    await model.close();
     await rm(root, { recursive: true, force: true });
   }
 }, 30_000);

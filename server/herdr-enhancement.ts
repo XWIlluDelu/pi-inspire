@@ -1,12 +1,9 @@
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import type { HerdrEnhancementStatus } from "../shared/herdr.js";
 import { type DiagnosticLogger, nullDiagnosticLogger } from "./diagnostics.js";
-import type { ExternalSessionConnection } from "./external-session.js";
 import { HerdrClient } from "./herdr-client.js";
-import { HerdrNativeSession } from "./herdr-native-session.js";
 import {
   assertHerdrWorkerScopesAvailable,
-  captureHerdrProcessIdentity,
   herdrProcessIsLive,
   stopHerdrProcessGroup,
 } from "./herdr-process-group.js";
@@ -16,16 +13,13 @@ import {
   type HerdrWorkerProjection,
 } from "./herdr-worker-observer.js";
 import { HerdrWorkerRegistry } from "./herdr-worker-registry.js";
-import { installationKey } from "./installation-key.js";
 import { type PiRpcOptions, PiRpcProcess } from "./pi-rpc.js";
-import type { PiSessionOccupancy } from "./pi-session-occupancy.js";
-import { inspireStateDirectory } from "./platform-paths.mjs";
+import { inspireStateDirectory, installationKey } from "./platform-paths.mjs";
 import { requestError } from "./request-error.js";
 import type { RuntimeWorkerStatus } from "./runtime.js";
 
 interface HerdrEnhancementOptions {
   enabled: boolean;
-  mock?: boolean;
   registry: HerdrWorkerRegistry;
   client?: HerdrClient;
   diagnostics?: DiagnosticLogger;
@@ -111,7 +105,7 @@ export class HerdrEnhancement {
 
   private async recover(): Promise<void> {
     try {
-      if (this.options.mock || process.platform !== "linux") return;
+      if (process.platform !== "linux") return;
       const leases = await this.options.registry.list();
       // Starting a second Host on an occupied address must not kill the first
       // Host's workers before listen() has a chance to reject that address.
@@ -144,10 +138,7 @@ export class HerdrEnhancement {
       }
     } catch (error) {
       this.recoveryIssue =
-        (error as NodeJS.ErrnoException | null)?.code ===
-        "HERDR_LEGACY_WORKER_LEASE"
-          ? "Previous-version Herdr workers have no retained tool scope, so detached tool exit cannot be verified. Shut down the old environment, then reboot this machine to clear the old boot's ownership fence"
-          : "Previous enhanced sessions could not be verified as stopped. Check the Host diagnostics before starting new work";
+        "Previous enhanced sessions could not be verified as stopped. Check the Host diagnostics before starting new work";
       this.recordError("herdr_recovery_failed", error);
     } finally {
       this.initialized = true;
@@ -165,62 +156,26 @@ export class HerdrEnhancement {
     return attempt;
   }
 
-  async connectExternalSession(
-    sessionId: string,
-    sessionFile: string,
-    occupancy?: PiSessionOccupancy,
-  ): Promise<ExternalSessionConnection | null> {
-    if (
-      !this.options.enabled ||
-      this.options.mock ||
-      process.platform !== "linux"
-    )
-      return null;
-    if (this.closed) throw requestError("The Host is shutting down", 503);
-    const writer = await this.observer.findNativeWriter(sessionId, sessionFile);
-    if (!writer) return null;
-    const processIdentity = await captureHerdrProcessIdentity(writer.pid);
-    if (!processIdentity) return null;
-    return new HerdrNativeSession(
-      this.client,
-      { ...writer, processIdentity },
-      sessionId,
-      sessionFile,
-      await occupancy?.observeBinding(writer.pid, sessionId, sessionFile),
-    );
-  }
-
   async createProcess(options: PiRpcOptions): Promise<PiRpcProcess> {
     await this.initialize();
     if (this.closed) throw requestError("The Host is shutting down", 503);
     if (this.recoveryIssue) throw requestError(this.recoveryIssue, 503);
-    if (!this.options.enabled || this.options.mock)
-      return new PiRpcProcess(options);
+    if (!this.options.enabled) return new PiRpcProcess(options);
     if (process.platform !== "linux")
       throw requestError("Herdr enhancement currently requires Linux", 503);
 
-    const sessionIndex = options.args?.indexOf("--session") ?? -1;
-    const sessionFile =
-      sessionIndex >= 0 ? options.args?.[sessionIndex + 1] : undefined;
     let transport: HerdrRpcTransport | null = null;
     const rpc = new PiRpcProcess({
       ...options,
-      createTransport: (launch) =>
-        (transport = new HerdrRpcTransport(launch, {
+      createTransport: (launch) => {
+        transport = new HerdrRpcTransport(launch, {
           client: this.client,
           registry: this.options.registry,
           label: "Inspire Pi",
           assertScopesAvailable: () => this.checkWorkerScopes(),
-          ...(sessionFile
-            ? {
-                assertWritable: () =>
-                  this.observer.assertWritable(
-                    options.sessionId,
-                    resolve(options.cwd, sessionFile),
-                  ),
-              }
-            : {}),
-        })),
+        });
+        return transport;
+      },
     });
     const projection = this.observer.observe(
       () => transport?.workerPane ?? null,
@@ -237,25 +192,17 @@ export class HerdrEnhancement {
     return rpc;
   }
 
+  get enhancedWorkersEnabled(): boolean {
+    return this.options.enabled;
+  }
+
   updateWorkerStatus(rpc: PiRpcProcess, status: RuntimeWorkerStatus): void {
     this.projections.get(rpc)?.update(status);
   }
 
   async status(): Promise<HerdrEnhancementStatus> {
-    const enabled = this.options.enabled && !this.options.mock;
-    const supported = process.platform === "linux" && !this.options.mock;
-    if (this.options.mock) {
-      return {
-        enabled,
-        ready: false,
-        supported,
-        installed: false,
-        running: false,
-        compatible: null,
-        version: null,
-        issue: "Herdr enhancement is unavailable in mock mode",
-      };
-    }
+    const enabled = this.options.enabled;
+    const supported = process.platform === "linux";
     const probe = await this.client.probe();
     let scopeIssue: string | undefined;
     let scopesAvailable = false;

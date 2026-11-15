@@ -1,4 +1,3 @@
-import { assistantOutcome } from "../shared/assistant-outcome";
 import {
   applyAssistantMessageDelta,
   assistantStreamTextLength,
@@ -6,34 +5,24 @@ import {
   MAX_ASSISTANT_STREAM_BATCH_EVENTS,
 } from "../shared/assistant-stream";
 import { fileReferenceName } from "../shared/attachment-context";
-import { userMessageContent } from "../shared/user-message";
 import {
-  EXTENSION_ONE_WAY_METHODS,
   type ExtensionDisplay,
   type ExtensionUiRequest,
   emptyPendingQueues,
   isBusyRunState,
-  isSessionRuntimeStatus,
   MAX_EXTENSION_DISPLAYS,
   MAX_EXTENSION_KEY_CHARS,
   MAX_EXTENSION_WIDGET_LINES,
   type PendingQueues,
   parseExtensionStatuses,
-  parseExtensionUiRequest,
-  parsePendingExtensionUiRequest,
   parsePendingQueues,
-  parseRetryInfo,
   type RetryInfo,
-  type RunState,
+  type SessionRuntimeStatus,
 } from "../shared/contracts";
 import { structuralMessageIdentity } from "../shared/message-identity";
-import {
-  type ActivityTool,
-  type ChildCallList,
-  codemodeCalls,
-  updateChildActivity,
-} from "../shared/tool-activity";
+import type { ActivityTool, ChildCallList } from "../shared/tool-activity";
 import type { ToolCallPreview } from "../shared/tool-argument-updates";
+import { userMessageContent } from "../shared/user-message";
 
 export type { ActivityTool } from "../shared/tool-activity";
 
@@ -67,14 +56,15 @@ export interface ChatMessage {
    * owning Pi entry. */
   __inspireMessageId?: string;
   __inspireLiveId?: string;
+  __inspireTurnId?: string;
   /** Monotonic within one live assistant projection; reconnect overlap may
    * never replace a newer partial with an older cumulative message. */
   __inspireStreamRevision?: number;
   __inspireSettled?: boolean;
   __inspireEntryId?: string;
-  /** Opaque lazy-range alias retained while deferred history materializes so
-   * the surrounding activity disclosure keeps its mounted identity. */
-  __inspireActivityRangeCursor?: string;
+  __inspireSavedHistory?: true;
+  /** Host-owned readable names, independent of physical upload cache basenames. */
+  __inspireFileNames?: Record<string, string>;
   /** Position in Pi's authoritative active-path message projection. Embedded
    * image content is addressed by this index plus its content-part index. */
   __inspireMessageIndex?: number;
@@ -115,6 +105,7 @@ export interface ChatMessage {
   __inspireBashRunning?: boolean;
   __inspireBashPreviewTruncated?: boolean;
   __inspireBashError?: string;
+  __inspireUnconfirmed?: boolean;
   __inspireBashInterrupted?: boolean;
 }
 
@@ -145,9 +136,16 @@ export function userMessageDisplayContent(message: ChatMessage) {
   return userMessageContent(message.content);
 }
 
+export function userMessageFileName(
+  message: ChatMessage,
+  path: string,
+): string {
+  return message.__inspireFileNames?.[path] ?? fileReferenceName(path);
+}
+
 export function userMessageSearchText(message: ChatMessage): string {
   const { text, references } = userMessageDisplayContent(message);
-  return [...references.map(fileReferenceName), text]
+  return [...references.map((path) => userMessageFileName(message, path)), text]
     .filter(Boolean)
     .join("\n");
 }
@@ -171,6 +169,11 @@ export interface WireEvent {
   type: string;
   message?: unknown;
   data?: unknown;
+  sessionStatus?: SessionRuntimeStatus;
+  toolActivity?: Record<string, ActivityTool>;
+  request?: ExtensionUiRequest;
+  retry?: RetryInfo | null;
+  summarizationRetry?: RetryInfo | null;
   [key: string]: unknown;
 }
 
@@ -199,7 +202,6 @@ export interface EventSlice {
    * survives that message's end event through tool execution and is replaced
    * only when the next LLM call starts. */
   activeAssistantMessageKey: string | null;
-  runState: RunState;
   tools: Record<string, ActivityTool>;
   retry: RetryInfo | null;
   pendingRetryError: string | null;
@@ -210,7 +212,6 @@ export interface EventSlice {
   extensionDisplays: ExtensionDisplay[];
   notices: Notice[];
   statuses: Record<string, string>;
-  editorText: { text: string; nonce: number; draftRevision?: number } | null;
   windowTitle: string | null;
   nextNoticeId: number;
 }
@@ -221,7 +222,6 @@ export function emptyEventSlice(): EventSlice {
     streaming: false,
     bashRunning: false,
     activeAssistantMessageKey: null,
-    runState: "idle",
     tools: {},
     retry: null,
     pendingRetryError: null,
@@ -232,7 +232,6 @@ export function emptyEventSlice(): EventSlice {
     extensionDisplays: [],
     notices: [],
     statuses: {},
-    editorText: null,
     windowTitle: null,
     nextNoticeId: 1,
   };
@@ -240,8 +239,6 @@ export function emptyEventSlice(): EventSlice {
 
 interface ReduceResult {
   slice: EventSlice;
-  /** Message keys that became settled with this event and must survive resync dedupe. */
-  settle: string[];
   /** Set when this event should trigger an authoritative snapshot resync. */
   resync: boolean;
   /** False for unknown or no-op events: slice is the same reference, callers must not publish it. */
@@ -263,35 +260,11 @@ function streamRevision(value: unknown): number | null {
     : null;
 }
 
-/** Replace the message identified by key. Only keyless defensive events may
- * fall back to the trailing unsettled assistant; a new keyed turn must never
- * overwrite an older turn merely because its end event was absent. */
-function upsert(
-  messages: ChatMessage[],
-  incoming: ChatMessage,
-  settledKeys: ReadonlySet<string>,
-): ChatMessage[] {
-  const next = [...messages];
+function upsert(messages: ChatMessage[], incoming: ChatMessage): ChatMessage[] {
   const key = messageKey(incoming);
-  let index = key ? indexOfKey(next, key) : -1;
-  if (index === -1 && incoming.__inspireLiveId)
-    index = next.findIndex(
-      (message) => message.__inspireLiveId === incoming.__inspireLiveId,
-    );
-  if (index === -1 && !key && incoming.role === "assistant") {
-    for (let i = next.length - 1; i >= 0; i -= 1) {
-      const candidate = next[i]!;
-      const candidateKey = messageKey(candidate);
-      if (
-        candidate.role === "assistant" &&
-        (!candidateKey || !settledKeys.has(candidateKey))
-      ) {
-        index = i;
-        break;
-      }
-    }
-  }
-  if (index === -1) next.push(incoming);
+  const index = key === null ? -1 : indexOfKey(messages, key);
+  const next = [...messages];
+  if (index < 0) next.push(incoming);
   else next[index] = incoming;
   return next;
 }
@@ -384,18 +357,12 @@ function extensionDisplaysFromEvent(
   return parseExtensionDisplays(event.extensionDisplays);
 }
 
-/**
- * Pure reconciliation of one Pi wire event into the transient presentation
- * slice. Settled-message dedupe keys are reported (not mutated) so the store
- * stays the single owner of the settled set.
- */
+/** Apply one ordered Host update to the current Live presentation. */
 export function reduceEvent(
   current: EventSlice,
-  settledKeys: ReadonlySet<string>,
   event: WireEvent,
 ): ReduceResult {
   const slice: EventSlice = { ...current };
-  const settle: string[] = [];
   let resync = false;
   let changed = false;
   if (
@@ -415,17 +382,29 @@ export function reduceEvent(
     slice.statuses = statuses;
     changed = true;
   }
+  if (event.toolActivity) {
+    slice.tools = { ...current.tools, ...event.toolActivity };
+    changed = true;
+  }
+  if (event.retry !== undefined || event.summarizationRetry !== undefined) {
+    slice.retry = event.retry ?? null;
+    slice.summarizationRetry = event.summarizationRetry ?? null;
+    changed = true;
+  }
   switch (event.type) {
     case "message_start": {
       const message = asMessage(event.message);
       const key = messageKey(message);
-      if (key && settledKeys.has(key)) break; // duplicate of a settled message
-      slice.messages = upsert(current.messages, message, settledKeys);
+      if (
+        key &&
+        current.messages[indexOfKey(current.messages, key)]?.__inspireSettled
+      )
+        break;
+      slice.messages = upsert(current.messages, message);
       changed = true;
       if (message.role === "assistant") {
         slice.streaming = true;
         slice.activeAssistantMessageKey = key;
-        slice.runState = "running";
       }
       break;
     }
@@ -436,209 +415,106 @@ export function reduceEvent(
       changed = true;
       resync = true;
       break;
-    case "message_update":
-    case "message_update_batch": {
-      const supplied =
-        event.message &&
-        typeof event.message === "object" &&
-        !Array.isArray(event.message)
-          ? asMessage(event.message)
-          : null;
-      if (supplied && typeof supplied.role === "string") {
-        // Joining sockets and cumulative Pi RPC frames supply complete partial messages.
-        // Host revisions make an update that overlaps a newer snapshot a true
-        // no-op rather than allowing a cumulative replacement to move backward.
-        const suppliedKey = messageKey(supplied);
-        const wireKey =
-          typeof event.streamMessageKey === "string"
-            ? event.streamMessageKey
-            : null;
-        const suppliedRevision = streamRevision(supplied);
-        const wireRevision =
-          Number.isSafeInteger(event.streamRevision) &&
-          Number(event.streamRevision) >= 0
-            ? Number(event.streamRevision)
-            : null;
-        if (
-          (event.streamRevision !== undefined && wireRevision === null) ||
-          (wireRevision !== null && suppliedRevision !== wireRevision) ||
-          (wireKey !== null && suppliedKey !== wireKey)
-        ) {
-          resync = true;
-          break;
-        }
-        const index = suppliedKey
-          ? indexOfKey(current.messages, suppliedKey)
-          : -1;
-        const currentRevision =
-          index >= 0 ? streamRevision(current.messages[index]) : null;
-        if (
-          suppliedRevision !== null &&
-          currentRevision !== null &&
-          suppliedRevision <= currentRevision
-        )
-          break;
-        slice.messages = upsert(current.messages, supplied, settledKeys);
-        changed = true;
-        break;
-      }
-
-      // Reduce Host-coalesced AssistantMessageEvent deltas into one immutable
-      // browser publication.
-      const activeKey = current.activeAssistantMessageKey;
-      const wireKey =
-        typeof event.streamMessageKey === "string"
-          ? event.streamMessageKey
-          : null;
-      const index = activeKey ? indexOfKey(current.messages, activeKey) : -1;
-      const events =
-        event.type === "message_update_batch"
-          ? event.assistantMessageEvents
-          : [event.assistantMessageEvent];
-      if (
-        index < 0 ||
-        (wireKey !== null && wireKey !== activeKey) ||
-        !Array.isArray(events) ||
-        events.length === 0 ||
-        events.length > MAX_ASSISTANT_STREAM_BATCH_EVENTS ||
-        (event.sourceEventCount !== undefined &&
-          (!Number.isSafeInteger(event.sourceEventCount) ||
-            Number(event.sourceEventCount) < events.length ||
-            Number(event.sourceEventCount) >
-              MAX_ASSISTANT_STREAM_BATCH_EVENTS)) ||
-        (event.streamTextLength !== undefined &&
-          (!Number.isSafeInteger(event.streamTextLength) ||
-            Number(event.streamTextLength) < 0)) ||
-        (event.streamRevision !== undefined &&
-          (!Number.isSafeInteger(event.streamRevision) ||
-            Number(event.streamRevision) < 0))
-      ) {
-        // Never guess against settled history. A missing or mismatched active
-        // identity means this browser missed lifecycle state.
+    case "message_update": {
+      const supplied = asMessage(event.message);
+      if (typeof supplied.role !== "string") {
         resync = true;
         break;
       }
-      let reconstructed: unknown = current.messages[index];
-      for (const delta of events) {
+      // Complete projections from the joining backlog may overlap a newer
+      // snapshot. An older cumulative update cannot move the message backward.
+      const key = messageKey(supplied);
+      const revision = streamRevision(supplied);
+      if (
+        (event.streamRevision !== undefined &&
+          (revision === null || event.streamRevision !== revision)) ||
+        (event.streamMessageKey !== undefined && event.streamMessageKey !== key)
+      ) {
+        resync = true;
+        break;
+      }
+      const index = key ? indexOfKey(current.messages, key) : -1;
+      const currentRevision = streamRevision(current.messages[index]);
+      if (
+        revision !== null &&
+        currentRevision !== null &&
+        revision <= currentRevision
+      )
+        break;
+      slice.messages = upsert(current.messages, supplied);
+      changed = true;
+      break;
+    }
+    case "message_update_batch": {
+      const key = current.activeAssistantMessageKey;
+      const index = key ? indexOfKey(current.messages, key) : -1;
+      const base = current.messages[index];
+      const revision = streamRevision(base);
+      const { assistantMessageEvents: deltas, sourceEventCount } = event;
+      if (
+        !base ||
+        key !== event.streamMessageKey ||
+        !Array.isArray(deltas) ||
+        deltas.length === 0 ||
+        typeof sourceEventCount !== "number" ||
+        !Number.isSafeInteger(sourceEventCount) ||
+        sourceEventCount < deltas.length ||
+        sourceEventCount > MAX_ASSISTANT_STREAM_BATCH_EVENTS ||
+        revision === null ||
+        event.streamRevision !== revision + sourceEventCount
+      ) {
+        resync = true;
+        break;
+      }
+      let reconstructed: unknown = base;
+      for (const delta of deltas) {
         reconstructed = applyAssistantMessageDelta(reconstructed, delta);
         if (!reconstructed) break;
       }
-      if (!reconstructed) {
-        // Raw Pi frames can carry projection no-ops such as an identity-less
-        // legacy start, an unprojected argument fragment, or matching text end.
-        // Host-owned incremental batches never contain those; a failed batch
-        // application therefore means this browser lost its stream base.
-        if (event.type === "message_update_batch" || wireKey !== null)
-          resync = true;
-        break;
-      }
       if (
-        event.streamTextLength !== undefined &&
+        !reconstructed ||
         assistantStreamTextLength(reconstructed) !== event.streamTextLength
       ) {
         resync = true;
         break;
       }
-      if (event.streamRevision !== undefined) {
-        const currentRevision = streamRevision(current.messages[index]);
-        if (
-          currentRevision === null ||
-          Number(event.streamRevision) !==
-            currentRevision + Number(event.sourceEventCount ?? events.length)
-        ) {
-          resync = true;
-          break;
-        }
-        reconstructed = {
-          ...(reconstructed as Record<string, unknown>),
-          __inspireStreamRevision: Number(event.streamRevision),
-        };
-      }
       slice.messages = [...current.messages];
-      slice.messages[index] = reconstructed as ChatMessage;
+      slice.messages[index] = {
+        ...asMessage(reconstructed),
+        __inspireStreamRevision: event.streamRevision,
+      };
       changed = true;
       break;
     }
     case "message_end": {
-      const message = asMessage(interruptAssistantToolCalls(event.message));
-      slice.messages = upsert(current.messages, message, settledKeys);
+      const message = {
+        ...asMessage(interruptAssistantToolCalls(event.message)),
+        __inspireSettled: true,
+      };
+      slice.messages = upsert(current.messages, message);
       changed = true;
-      const key = messageKey(message);
-      if (key) settle.push(key);
-      if (message.role === "assistant") {
-        slice.streaming = false;
-        const outcome = assistantOutcome(message);
-        if (outcome)
-          slice.runState = outcome === "stopped" ? "aborted" : "failed";
-        // A completed call observed in this turn is queued until execution
-        // starts. History and reconnect snapshots do not establish that state.
-        if (
-          key &&
-          key === current.activeAssistantMessageKey &&
-          isBusyRunState(current.runState) &&
-          message.stopReason !== "error" &&
-          message.stopReason !== "aborted"
-        ) {
-          const pending = contentItems(message).filter(
-            (item): item is ToolCallContent =>
-              item.type === "toolCall" &&
-              typeof item.id === "string" &&
-              typeof item.name === "string" &&
-              !item.__inspireToolCall &&
-              !current.tools[item.id],
-          );
-          if (pending.length > 0) {
-            slice.tools = { ...current.tools };
-            for (const call of pending)
-              slice.tools[call.id] = {
-                id: call.id,
-                name: call.name,
-                phase: "queued",
-              };
-          }
-        }
-      }
+      if (message.role === "assistant") slice.streaming = false;
       break;
     }
     case "agent_start": {
       slice.pendingRetryError = null;
-      slice.summarizationRetry = null;
       slice.streaming = true;
       slice.activeAssistantMessageKey = null;
-      slice.runState = "running";
-      slice.retry = null;
       changed = true;
       break;
     }
     case "agent_settled": {
-      slice.summarizationRetry = null;
       slice.streaming = false;
       slice.activeAssistantMessageKey = null;
-      if (event.aborted === true && slice.runState !== "conflict")
-        slice.runState = "aborted";
-      else if (
-        slice.runState !== "failed" &&
-        slice.runState !== "aborted" &&
-        slice.runState !== "conflict"
-      )
-        slice.runState = "idle";
       if (event.aborted !== true && slice.pendingRetryError)
         pushNotice(slice, "error", `Retry failed: ${slice.pendingRetryError}`);
       slice.pendingRetryError = null;
       slice.tools = {};
-      slice.retry = null;
       changed = true;
       resync = true;
       break;
     }
-    case "compaction_start": {
-      slice.summarizationRetry = null;
-      slice.runState = "compacting";
-      changed = true;
-      break;
-    }
     case "compaction_end": {
-      slice.summarizationRetry = null;
       // Manual is a Pi trigger, not proof that this browser owns an HTTP
       // receipt. Late joiners and other clients need the same failure detail.
       const label =
@@ -663,115 +539,12 @@ export function reduceEvent(
       resync = true;
       break;
     }
-    case "summarization_retry_scheduled": {
-      slice.summarizationRetry = parseRetryInfo({
-        attempt: event.attempt,
-        maxAttempts: event.maxAttempts,
-        message: event.errorMessage,
-      });
-      changed = true;
-      break;
-    }
-    case "summarization_retry_attempt_start":
-    case "summarization_retry_finished": {
-      slice.summarizationRetry = null;
-      changed = true;
-      break;
-    }
-    case "tool_execution_start":
-    case "tool_execution_update": {
-      if (typeof event.parentToolCallId === "string") {
-        slice.tools = updateChildActivity(current.tools, event);
-        changed = slice.tools !== current.tools;
-        break;
-      }
-      const id = typeof event.toolCallId === "string" ? event.toolCallId : "";
-      if (!id) break;
-      const existing = current.tools[id];
-      // A delayed update must not resurrect a completed execution.
-      if (existing?.phase === "done" || existing?.phase === "error") break;
-      slice.tools = {
-        ...current.tools,
-        [id]: {
-          id,
-          name:
-            typeof event.toolName === "string" && event.toolName
-              ? event.toolName
-              : (existing?.name ?? "tool"),
-          phase: "running",
-          ...(event.type === "tool_execution_update"
-            ? {
-                outputPreview:
-                  event.outputPreview as ActivityTool["outputPreview"],
-              }
-            : {}),
-          calls:
-            typeof event.toolName === "string" && event.toolName === "codemode"
-              ? ((event.childCalls as ChildCallList | undefined) ??
-                codemodeCalls(
-                  (event.partialResult as { details?: unknown } | undefined)
-                    ?.details,
-                ) ??
-                existing?.calls)
-              : existing?.calls,
-        },
-      };
-      changed = true;
-      break;
-    }
-    case "tool_execution_end": {
-      if (typeof event.parentToolCallId === "string") {
-        slice.tools = updateChildActivity(current.tools, event);
-        changed = slice.tools !== current.tools;
-        break;
-      }
-      const id = typeof event.toolCallId === "string" ? event.toolCallId : "";
-      if (!id) break;
-      const existing = current.tools[id];
-      slice.tools = {
-        ...current.tools,
-        [id]: {
-          id,
-          name:
-            typeof event.toolName === "string" && event.toolName
-              ? event.toolName
-              : (existing?.name ?? "tool"),
-          phase: event.isError ? "error" : "done",
-          calls:
-            typeof event.toolName === "string" && event.toolName === "codemode"
-              ? ((event.childCalls as ChildCallList | undefined) ??
-                codemodeCalls(
-                  (event.result as { details?: unknown } | undefined)?.details,
-                ) ??
-                existing?.calls)
-              : existing?.calls,
-        },
-      };
-      changed = true;
-      break;
-    }
-    case "auto_retry_start": {
-      slice.runState = "retrying";
-      changed = true;
-      slice.retry = parseRetryInfo({
-        attempt: event.attempt,
-        maxAttempts: event.maxAttempts,
-        message: event.errorMessage,
-      });
-      break;
-    }
     case "auto_retry_end": {
-      slice.retry = null;
-      slice.pendingRetryError = null;
+      slice.pendingRetryError =
+        !event.success && typeof event.finalError === "string"
+          ? event.finalError
+          : null;
       changed = true;
-      if (event.success) {
-        slice.runState = "running";
-      } else {
-        slice.runState = "failed";
-        if (typeof event.finalError === "string" && event.finalError) {
-          slice.pendingRetryError = event.finalError;
-        }
-      }
       break;
     }
     case "queue_update": {
@@ -794,9 +567,38 @@ export function reduceEvent(
       changed = true;
       break;
     }
+    case "external_attachment_ended": {
+      // The attached Pi's task outcome is unknown here; claim none.
+      slice.streaming = false;
+      slice.activeAssistantMessageKey = null;
+      slice.tools = {};
+      slice.retry = null;
+      const reason = String(event.reason);
+      const what =
+        reason === "exited"
+          ? "The attached Pi exited"
+          : reason === "left-session"
+            ? "The attached Pi opened another session"
+            : reason === "left-branch"
+              ? "The attached Pi moved to another branch"
+              : "The attached Pi stopped responding";
+      pushNotice(
+        slice,
+        "info",
+        `${what}; this session continues in Inspire.${
+          event.duringWork === true
+            ? reason === "exited"
+              ? " The outcome of its last task is unknown."
+              : " Its work may continue there."
+            : ""
+        }`,
+      );
+      changed = true;
+      resync = true;
+      break;
+    }
     case "runtime_error": {
       slice.pendingRetryError = null;
-      slice.runState = "failed";
       // A dead worker cannot produce the missing agent_settled event. Clear
       // browser-only liveness without fabricating a message or tool outcome;
       // the runtime notice and next authoritative snapshot retain the cause.
@@ -822,50 +624,30 @@ export function reduceEvent(
       resync = true;
       break;
     }
-    case "extension_ui_request": {
-      const id = typeof event.id === "string" ? event.id : "";
-      const method = typeof event.method === "string" ? event.method : "";
-      if (!id) break;
-      const dialog = parseExtensionUiRequest(event);
-      if (dialog) {
-        changed = true;
+    case "extension_ui_pending": {
+      const request = event.request;
+      if (request?.id && request.sessionId === event.sessionId) {
         slice.extensionUiRequests = upsertExtensionUiRequest(
           current.extensionUiRequests,
-          dialog,
+          request,
         );
-      } else if (method === "notify") {
+        changed = true;
+      }
+      break;
+    }
+    case "extension_ui_request": {
+      if (!event.id) break;
+      if (event.method === "notify") {
         const kind =
           event.notifyType === "warning" || event.notifyType === "error"
             ? event.notifyType
             : "info";
         pushNotice(slice, kind, String(event.message ?? ""));
         changed = true;
-      } else if (method === "setTitle") {
+      } else if (event.method === "setTitle") {
         slice.windowTitle =
           typeof event.title === "string" && event.title ? event.title : null;
         changed = true;
-      } else if (method === "set_editor_text") {
-        if (typeof event.text === "string") {
-          slice.editorText = {
-            text: event.text,
-            nonce: (current.editorText?.nonce ?? 0) + 1,
-          };
-          changed = true;
-        }
-      } else {
-        if (
-          !EXTENSION_ONE_WAY_METHODS.has(method) &&
-          event.responseRequired !== false
-        ) {
-          const unsupported = parsePendingExtensionUiRequest(event);
-          if (unsupported) {
-            slice.extensionUiRequests = upsertExtensionUiRequest(
-              current.extensionUiRequests,
-              unsupported,
-            );
-            changed = true;
-          }
-        }
       }
       break;
     }
@@ -892,19 +674,10 @@ export function reduceEvent(
       break;
   }
 
-  // Event kinds carry message/phase detail; the Host's explicit current state
-  // outranks inferred transitions. In particular a failed message/settlement
-  // must not look running/idle until a later snapshot happens to correct it.
+  const runState = event.sessionStatus?.runState;
   if (
-    isSessionRuntimeStatus(event.sessionStatus) &&
-    slice.runState !== event.sessionStatus.runState
-  ) {
-    slice.runState = event.sessionStatus.runState;
-    changed = true;
-  }
-  if (
-    isSessionRuntimeStatus(event.sessionStatus) &&
-    !isBusyRunState(event.sessionStatus.runState) &&
+    runState &&
+    !isBusyRunState(runState) &&
     Object.values(slice.tools).some(
       (tool) => tool.phase === "running" || tool.phase === "queued",
     )
@@ -918,15 +691,19 @@ export function reduceEvent(
     );
     changed = true;
   }
-  if (!isBusyRunState(slice.runState) && slice.summarizationRetry !== null) {
+  if (
+    runState &&
+    !isBusyRunState(runState) &&
+    slice.summarizationRetry !== null
+  ) {
     slice.summarizationRetry = null;
     changed = true;
   }
-  if (slice.runState !== "retrying" && slice.retry !== null) {
+  if (runState && runState !== "retrying" && slice.retry !== null) {
     slice.retry = null;
     changed = true;
   }
   return changed || resync
-    ? { slice, settle, resync, changed: true }
-    : { slice: current, settle, resync, changed: false };
+    ? { slice, resync, changed: true }
+    : { slice: current, resync, changed: false };
 }

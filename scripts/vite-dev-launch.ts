@@ -28,7 +28,6 @@ export function developmentLaunch(environment = process.env): Plugin {
               root: resolve(server.config.root),
               host: environment.INSPIRE_HOST ?? "127.0.0.1",
               port: Number(environment.INSPIRE_PORT ?? "4587"),
-              mock: environment.INSPIRE_MOCK === "1",
             },
             { healthTimeoutMs: 1000 },
           );

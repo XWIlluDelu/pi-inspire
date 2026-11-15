@@ -1,4 +1,6 @@
 import {
+  CheckCheck,
+  Bell,
   ChevronUp,
   EyeOff,
   Inbox,
@@ -6,46 +8,61 @@ import {
   Pin,
   Plus,
   SearchX,
+  Settings as SettingsIcon,
   Trash2,
   X,
 } from "lucide-react";
 import {
+  Fragment,
   memo,
   type Ref,
   useEffect,
   useId,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
 import { type SessionSummary } from "../../shared/contracts";
 import { isComposingKeyboardEvent } from "../keyboard-input";
+import { type NeedsYouReason, needsYouRows } from "../needs-you";
 import { shallowEqual, store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
+import {
+  readHiddenSessionsOpen,
+  readSessionCatalogView,
+  type SessionCatalogView,
+  saveHiddenSessionsOpen,
+  saveSessionCatalogView,
+} from "../workbench-session";
 import { HiddenClearDialog } from "./HiddenClearDialog";
+import { NavigationToggle } from "./NavigationToggle";
 import { ProjectGroup, SessionRow } from "./NavSessions";
-import { hiddenDeletionBlockReason, splitNavSections } from "./nav-model";
+import {
+  buildSessionCatalog,
+  catalogSections,
+  hiddenDeletionBlockReason,
+  sectionSessions,
+} from "./nav-model";
 import { PiLoader } from "./PiLoader";
-import { ScrollRail } from "./ScrollRail";
 import { SearchField } from "./SearchField";
 import { SessionDeleteDialog } from "./SessionDeleteDialog";
 import { BrandLogo, Wordmark } from "./Wordmark";
 
 export const Nav = memo(function Nav({
   collapsed,
-  selectedSessionId,
   isModal = false,
   onClose,
+  onOpenSettings,
   onToggleNavigation,
   onNewSession,
   onSelectSession,
   searchInputRef,
 }: {
   collapsed: boolean;
-  selectedSessionId?: string | null;
   isModal?: boolean;
   onClose?: () => void;
+  /** Narrow drawers own Settings so the header can favor session identity. */
+  onOpenSettings?: () => void;
   onToggleNavigation: () => void;
   onNewSession: () => void;
   onSelectSession: (id: string) => void;
@@ -58,9 +75,10 @@ export const Nav = memo(function Nav({
     curatedHiddenSessionIds,
     hiddenProjectCwds,
     collapsedGroupCwds,
-    activeSessionId,
+    selectedSessionId,
     openingSessionId,
     sessionStatuses,
+    externalSessionActivities,
     sessionQuery,
     sessionListNextOffset,
     sessionListTotal,
@@ -71,19 +89,31 @@ export const Nav = memo(function Nav({
     sessionListError,
     sessionListIssues,
     sessionActionError,
+    curationPending,
     clearingHidden,
     deletingSessionId,
   } = useAppState(
     (state) => ({
       sessions: state.sessions,
-      pinnedSessionIds: state.prefs.pinnedSessionIds,
-      pinnedProjectCwds: state.prefs.pinnedProjectCwds,
-      curatedHiddenSessionIds: state.prefs.hiddenSessionIds,
-      hiddenProjectCwds: state.prefs.hiddenProjectCwds,
-      collapsedGroupCwds: state.prefs.navCollapsedGroups,
-      activeSessionId: state.sessionId,
+      pinnedSessionIds:
+        state.desiredPreferences.pinnedSessionIds ??
+        state.prefs.pinnedSessionIds,
+      pinnedProjectCwds:
+        state.desiredPreferences.pinnedProjectCwds ??
+        state.prefs.pinnedProjectCwds,
+      curatedHiddenSessionIds:
+        state.desiredPreferences.hiddenSessionIds ??
+        state.prefs.hiddenSessionIds,
+      hiddenProjectCwds:
+        state.desiredPreferences.hiddenProjectCwds ??
+        state.prefs.hiddenProjectCwds,
+      collapsedGroupCwds:
+        state.desiredPreferences.navCollapsedGroups ??
+        state.prefs.navCollapsedGroups,
+      selectedSessionId: state.sessionId,
       openingSessionId: state.openingSessionId,
       sessionStatuses: state.sessionStatuses,
+      externalSessionActivities: state.externalSessionActivities,
       sessionQuery: state.sessionQuery,
       sessionListNextOffset: state.sessionListNextOffset,
       sessionListTotal: state.sessionListTotal,
@@ -94,23 +124,37 @@ export const Nav = memo(function Nav({
       sessionListError: state.sessionListError,
       sessionListIssues: state.sessionListIssues,
       sessionActionError: state.sessionActionError,
+      curationPending: state.curationPending,
       clearingHidden: state.clearingHidden,
       deletingSessionId: state.deletingSessionId,
     }),
     shallowEqual,
   );
 
-  const visibleSessionId =
-    selectedSessionId === undefined ? activeSessionId : selectedSessionId;
   const internalNavRef = useRef<HTMLElement>(null);
   const modalNavRef = useModalFocus<HTMLDivElement>(
     isModal,
     undefined,
     onClose,
-    "drawer",
   );
   const navRef = isModal ? modalNavRef : internalNavRef;
-  const [hiddenOpen, setHiddenOpen] = useState(false);
+  const [view, setView] = useState<Exclude<SessionCatalogView, "hidden">>(() =>
+    readSessionCatalogView() === "needs-you" ? "needs-you" : "all",
+  );
+  const [hiddenOpen, setHiddenOpen] = useState(
+    () => readSessionCatalogView() === "hidden" || readHiddenSessionsOpen(),
+  );
+  const hiddenContentId = useId();
+  const listRef = useRef<HTMLDivElement>(null);
+  const chooseView = (next: Exclude<SessionCatalogView, "hidden">) => {
+    setView(next);
+    saveSessionCatalogView(next);
+    if (listRef.current) listRef.current.scrollTop = 0;
+  };
+  const [retainedNeed, setRetainedNeed] = useState<{
+    id: string;
+    reason: NeedsYouReason;
+  } | null>(null);
   const [searchFocused, setSearchFocused] = useState(false);
   const [searchSelection, setSearchSelection] = useState<{
     query: string;
@@ -118,10 +162,9 @@ export const Nav = memo(function Nav({
   }>({ query: sessionQuery, id: null });
   const composing = useRef(false);
   const selectionStatusId = useId();
-  const hiddenContentId = useId();
-  const sections = useMemo(
+  const catalog = useMemo(
     () =>
-      splitNavSections(sessions, {
+      buildSessionCatalog(sessions, {
         pinnedSessionIds,
         pinnedProjectCwds,
         hiddenSessionIds: curatedHiddenSessionIds,
@@ -136,36 +179,54 @@ export const Nav = memo(function Nav({
     ],
   );
   const searching = sessionQuery.trim() !== "";
-  const hiddenExpanded = searching || hiddenOpen;
-  useLayoutEffect(() => {
-    if (!hiddenOpen || searching || collapsed) return;
-    const nav = navRef.current;
-    const body = nav?.querySelector(".nav__hidden-content");
-    if (!nav || !body) return;
-    // Reveal the actual scrollport after flex layout and subsequent resizes settle.
-    const observer = new ResizeObserver(() => {
-      body.scrollIntoView({ block: "nearest" });
-    });
-    observer.observe(body);
-    observer.observe(nav);
-    return () => observer.disconnect();
-  }, [hiddenOpen, searching, collapsed, navRef]);
-  const searchResults = useMemo(() => {
-    const folderRows = (groups: typeof sections.groups) =>
-      groups.flatMap((group) =>
-        searching || !collapsedGroupCwds.includes(group.cwd)
-          ? group.sessions
-          : [],
-      );
-    return [
-      ...sections.pinned,
-      ...folderRows(sections.pinnedGroups),
-      ...folderRows(sections.groups),
-      ...(hiddenExpanded
-        ? [...folderRows(sections.hiddenGroups), ...sections.hidden]
-        : []),
-    ];
-  }, [sections, searching, hiddenExpanded, collapsedGroupCwds]);
+
+  const needsYou = useMemo(
+    () =>
+      needsYouRows(
+        catalog.visible,
+        sessionStatuses,
+        externalSessionActivities,
+        selectedSessionId,
+        retainedNeed,
+      ),
+    [
+      catalog.visible,
+      sessionStatuses,
+      externalSessionActivities,
+      selectedSessionId,
+      retainedNeed,
+    ],
+  );
+  const needsYouCount = needsYou.filter((row) => row.reason).length;
+  const needsYouUrgent = needsYou.some(
+    (row) => row.reason === "attention" || row.reason === "failed",
+  );
+  const selectSession = (id: string) => {
+    const row =
+      view === "needs-you"
+        ? needsYou.find((candidate) => candidate.session.id === id)
+        : undefined;
+    setRetainedNeed(row?.reason ? { id, reason: row.reason } : null);
+    onSelectSession(id);
+  };
+  const displayed = catalogSections(
+    catalog,
+    view,
+    false,
+    needsYou.map(({ session }) => session),
+  );
+  const showHidden = view === "all" && (hiddenOpen || searching);
+  const hiddenSections = view === "all" ? catalog.hidden : [];
+  const searchResults = [
+    ...displayed,
+    ...(showHidden ? hiddenSections : []),
+  ].flatMap((section) =>
+    section.kind === "folder" &&
+    !searching &&
+    collapsedGroupCwds.includes(section.group.cwd)
+      ? []
+      : sectionSessions(section),
+  );
   const defaultHighlight = searching ? searchResults[0] : undefined;
   const highlighted = searchFocused
     ? searchSelection.query === sessionQuery
@@ -174,21 +235,6 @@ export const Nav = memo(function Nav({
       : defaultHighlight
     : undefined;
   const highlightedSessionId = highlighted?.id ?? null;
-  useEffect(() => {
-    setSearchSelection((previous) => {
-      if (
-        previous.query === sessionQuery &&
-        ((!searching && previous.id === null) ||
-          searchResults.length === 0 ||
-          searchResults.some((session) => session.id === previous.id))
-      )
-        return previous;
-      return {
-        query: sessionQuery,
-        id: searching ? (searchResults[0]?.id ?? null) : null,
-      };
-    });
-  }, [sessionQuery, searchResults, searching]);
   useEffect(() => {
     if (!highlightedSessionId) return;
     navRef.current
@@ -207,8 +253,7 @@ export const Nav = memo(function Nav({
     return (
       <nav className="nav nav--rail" aria-label="Sessions">
         <div className="nav__header nav__header--rail">
-          <button
-            type="button"
+          <NavigationToggle
             className="nav__brand-rail nav__toggle"
             onClick={onToggleNavigation}
             title="Expand navigation (Ctrl+B)"
@@ -221,7 +266,7 @@ export const Nav = memo(function Nav({
               className="nav__rail-toggle-icon"
               aria-hidden
             />
-          </button>
+          </NavigationToggle>
         </div>
         <button
           type="button"
@@ -236,19 +281,18 @@ export const Nav = memo(function Nav({
     );
   }
 
-  const { pinned, pinnedGroups, groups, hiddenGroups, hidden } = sections;
-  const folders = [...pinnedGroups, ...groups];
-  const allFolders = [...folders, ...hiddenGroups];
   const nameCounts = new Map<string, number>();
-  for (const group of allFolders)
-    nameCounts.set(group.name, (nameCounts.get(group.name) ?? 0) + 1);
+  for (const section of [...displayed, ...hiddenSections])
+    if (section.kind === "folder") {
+      const { name } = section.group;
+      nameCounts.set(name, (nameCounts.get(name) ?? 0) + 1);
+    }
   const shownBaseRows = Math.min(sessionListNextOffset, sessionListTotal);
   const hasOlderSessions = sessionListNextOffset < sessionListTotal;
   const sessionListBusy =
     sessionListLoading || sessionListLoadingOlder || sessionListHydrating;
   const foregroundSessionListBusy =
-    sessionListBusy &&
-    sessionListOperation !== "curation" &&
+    (sessionListLoading || sessionListLoadingOlder) &&
     (sessionListOperation !== "refresh" || sessions.length === 0);
   const showSessionListActivity =
     hasOlderSessions || sessionListError !== null || foregroundSessionListBusy;
@@ -264,24 +308,16 @@ export const Nav = memo(function Nav({
       : sessionListOperation === "older"
         ? "Loading older sessions…"
         : "Loading sessions…";
-  // Hidden is a curation drawer, not a browsing group: it opens on demand and
-  // starts closed again next time. Search reveals matches inside it without
-  // reclassifying them out of Hidden.
-  const hiddenSessions = [
-    ...hiddenGroups.flatMap((group) => group.sessions),
-    ...hidden,
-  ];
-  const hiddenSessionIds = hiddenSessions.map((session) => session.id);
-  const hiddenCount = hiddenSessions.length;
+  const hiddenSessions = catalog.hidden.flatMap(sectionSessions);
   const deletionState = {
     openingSessionId,
-    sessionStatuses,
     sessionQuery,
     sessionListLoading,
     sessionListLoadingOlder,
     sessionListHydrating,
     sessionListError,
     sessionListIssues,
+    curationPending,
     clearingHidden,
     deletingSessionId,
   };
@@ -289,8 +325,70 @@ export const Nav = memo(function Nav({
     hiddenSessions,
     deletionState,
   );
-  const hiddenClearDisabled = hiddenClearReason !== null;
-  const hiddenClearTitle = hiddenClearReason ?? "Clear Hidden";
+
+  const renderSection = (section: (typeof displayed)[number]) => {
+    if (section.kind === "folder") {
+      const { group, hidden } = section;
+      return (
+        <ProjectGroup
+          key={group.cwd}
+          group={group}
+          searching={searching}
+          searchQuery={sessionQuery}
+          showContext={(nameCounts.get(group.name) ?? 0) > 1}
+          selectedSessionId={selectedSessionId}
+          highlightedSessionId={highlightedSessionId}
+          hidden={hidden}
+          onSelectSession={selectSession}
+          onDeleteSession={hidden ? setDeleteCandidate : undefined}
+          onDeleteGroup={
+            hidden
+              ? () =>
+                  setHiddenClearCandidate({
+                    sessionIds: group.sessions.map(({ id }) => id),
+                    projectCwd: group.cwd,
+                  })
+              : undefined
+          }
+          deleteGroupDisabledReason={
+            hidden
+              ? hiddenDeletionBlockReason(group.sessions, deletionState)
+              : null
+          }
+        />
+      );
+    }
+    const rows = section.sessions.map((session) => (
+      <SessionRow
+        key={session.id}
+        session={session}
+        searchQuery={sessionQuery}
+        selectedSessionId={selectedSessionId}
+        highlightedSessionId={highlightedSessionId}
+        showProject
+        onSelect={selectSession}
+        onDelete={section.kind === "hidden" ? setDeleteCandidate : undefined}
+      />
+    ));
+    return section.kind === "pinned" ? (
+      <section
+        key={section.kind}
+        className="nav__group nav__group--pinned"
+        aria-label="Pinned"
+      >
+        <h2 className="nav__group-title">
+          <Pin size={16} aria-hidden />
+          <span className="nav__group-name">Pinned</span>
+          <span className="nav__group-count" aria-hidden>
+            {section.sessions.length}
+          </span>
+        </h2>
+        {rows}
+      </section>
+    ) : (
+      <Fragment key={section.kind}>{rows}</Fragment>
+    );
+  };
 
   const contents = (
     <>
@@ -300,28 +398,69 @@ export const Nav = memo(function Nav({
             <BrandLogo size={24} className="nav__brand-icon" />
             <Wordmark />
           </div>
-          {isModal && onClose ? (
+          <div className="nav__header-actions">
             <button
               type="button"
-              className="icon-button nav__close"
-              aria-label="Close navigation"
-              title="Close navigation"
-              onClick={onClose}
+              className="icon-button nav__needs-you"
+              aria-pressed={view === "needs-you"}
+              aria-label={
+                needsYouCount > 0 ? `Needs you (${needsYouCount})` : "Needs you"
+              }
+              title={
+                view === "needs-you"
+                  ? "Showing sessions that need you. Click to show all sessions"
+                  : "Show only sessions waiting for input, failed, or finished and not yet seen"
+              }
+              onClick={() =>
+                chooseView(view === "needs-you" ? "all" : "needs-you")
+              }
             >
-              <X size={15} aria-hidden />
+              <Bell size={15} aria-hidden />
+              {needsYouCount > 0 ? (
+                <span
+                  className={`navigation-toggle__attention${needsYouUrgent ? " navigation-toggle__attention--urgent" : ""}`}
+                  aria-hidden
+                >
+                  {needsYouCount > 9 ? "9+" : needsYouCount}
+                </span>
+              ) : null}
             </button>
-          ) : !isModal ? (
-            <button
-              type="button"
-              className="icon-button nav__close nav__toggle"
-              aria-label="Collapse navigation"
-              aria-expanded={true}
-              title="Collapse navigation (Ctrl+B)"
-              onClick={onToggleNavigation}
-            >
-              <PanelLeft size={16} aria-hidden />
-            </button>
-          ) : null}
+            {isModal && onClose ? (
+              <>
+                {onOpenSettings ? (
+                  <button
+                    type="button"
+                    className="icon-button nav__settings"
+                    aria-label="Settings"
+                    title="Settings"
+                    onClick={onOpenSettings}
+                  >
+                    <SettingsIcon size={15} aria-hidden />
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="icon-button nav__close"
+                  aria-label="Close navigation"
+                  title="Close navigation"
+                  onClick={onClose}
+                >
+                  <X size={15} aria-hidden />
+                </button>
+              </>
+            ) : !isModal ? (
+              <button
+                type="button"
+                className="icon-button nav__close nav__toggle"
+                aria-label="Collapse navigation"
+                aria-expanded={true}
+                title="Collapse navigation (Ctrl+B)"
+                onClick={onToggleNavigation}
+              >
+                <PanelLeft size={15} aria-hidden />
+              </button>
+            ) : null}
+          </div>
         </div>
         <div className="nav__controls">
           <button
@@ -383,7 +522,7 @@ export const Nav = memo(function Nav({
                 else event.currentTarget.blur();
               } else if (event.key === "Enter") {
                 if (highlighted && highlighted.id !== openingSessionId)
-                  onSelectSession(highlighted.id);
+                  selectSession(highlighted.id);
               } else if (searchResults.length > 0) {
                 const index = searchResults.findIndex(
                   (session) => session.id === highlightedSessionId,
@@ -414,52 +553,21 @@ export const Nav = memo(function Nav({
           {sessionActionError}
         </p>
       ) : null}
-      <div className="nav__list">
-        {pinned.length > 0 ? (
-          <section
-            className="nav__group nav__group--pinned"
-            aria-labelledby="nav-pinned-title"
-          >
-            <h2 className="nav__group-title" id="nav-pinned-title">
-              <Pin size={16} aria-hidden />
-              <span className="nav__group-name">Pinned</span>
-              <span className="nav__group-count" aria-hidden>
-                {pinned.length}
-              </span>
-            </h2>
-            {pinned.map((session) => (
-              <SessionRow
-                key={session.id}
-                session={session}
-                searchQuery={sessionQuery}
-                selectedSessionId={visibleSessionId}
-                highlightedSessionId={highlightedSessionId}
-                showProject
-                onSelect={onSelectSession}
-              />
-            ))}
-          </section>
-        ) : null}
-        {folders.map((group, groupIndex) => {
-          return (
-            <ProjectGroup
-              key={group.cwd}
-              group={group}
-              headingId={`nav-group-title-${groupIndex}`}
-              searching={searching}
-              searchQuery={sessionQuery}
-              showContext={(nameCounts.get(group.name) ?? 0) > 1}
-              selectedSessionId={visibleSessionId}
-              highlightedSessionId={highlightedSessionId}
-              onSelectSession={onSelectSession}
-            />
-          );
-        })}
+      <div
+        ref={listRef}
+        className={`nav__list nav__list--${view}`}
+        role="region"
+        aria-label={
+          view === "needs-you" ? "Sessions that need you" : "All sessions"
+        }
+        aria-busy={curationPending || undefined}
+      >
+        {displayed.map(renderSection)}
         {sessionListIssues.length ? (
           <div className="nav__pagination">
             <details className="nav__source-issues">
-              <summary>Some session sources are unavailable</summary>
-              <p>Showing available history. Counts may be incomplete.</p>
+              <summary>Some sessions may be missing</summary>
+              <p>Counts may be incomplete.</p>
               <ul>
                 {sessionListIssues.map((issue) => (
                   <li key={issue.path}>
@@ -472,11 +580,11 @@ export const Nav = memo(function Nav({
             </details>
             <button
               type="button"
-              className="nav__pagination-button"
+              className="button button--quiet"
               disabled={sessionListBusy}
               onClick={() => void store.refreshSessions()}
             >
-              Retry unavailable sources
+              Retry loading sessions
             </button>
           </div>
         ) : null}
@@ -493,7 +601,7 @@ export const Nav = memo(function Nav({
             {sessionListError ? (
               <button
                 type="button"
-                className="nav__pagination-button"
+                className="button button--quiet"
                 onClick={() => void store.retrySessionList()}
               >
                 {retrySessionLabel}
@@ -501,7 +609,7 @@ export const Nav = memo(function Nav({
             ) : foregroundSessionListBusy ? (
               <button
                 type="button"
-                className="nav__pagination-button"
+                className="button button--quiet"
                 disabled
                 aria-busy="true"
               >
@@ -511,7 +619,7 @@ export const Nav = memo(function Nav({
             ) : hasOlderSessions ? (
               <button
                 type="button"
-                className="nav__pagination-button"
+                className="button button--quiet"
                 disabled={sessionListBusy}
                 onClick={() => void store.loadOlderSessions()}
               >
@@ -520,53 +628,54 @@ export const Nav = memo(function Nav({
             ) : null}
           </div>
         ) : null}
-        {sessions.length === 0 &&
-        !sessionListBusy &&
-        !sessionListError &&
-        !sessionListIssues.length ? (
-          <div className="empty-state">
-            {searching ? (
-              <SearchX size={26} strokeWidth={1.5} aria-hidden />
-            ) : (
-              <Inbox size={26} strokeWidth={1.5} aria-hidden />
-            )}
-            <span className="empty-state__title">
-              {searching ? "No sessions found" : "No sessions yet"}
-            </span>
-            <span className="empty-state__hint">
-              {searching
-                ? "Try a different keyword"
-                : "Start a session to begin"}
-            </span>
-          </div>
-        ) : null}
+        {displayed.length === 0 &&
+          (!showHidden || hiddenSessions.length === 0) &&
+          !sessionListBusy &&
+          !sessionListError &&
+          !sessionListIssues.length && (
+            <div className="empty-state">
+              {searching ? (
+                <SearchX size={26} strokeWidth={1.5} aria-hidden />
+              ) : view === "needs-you" ? (
+                <CheckCheck size={26} strokeWidth={1.5} aria-hidden />
+              ) : (
+                <Inbox size={26} strokeWidth={1.5} aria-hidden />
+              )}
+              <span className="empty-state__title">
+                {view === "needs-you"
+                  ? searching
+                    ? "No matching sessions need you"
+                    : "Nothing needs you"
+                  : searching
+                    ? "No sessions found"
+                    : "No sessions yet"}
+              </span>
+            </div>
+          )}
       </div>
-      {hiddenCount > 0 ? (
-        <section
-          className="nav__group nav__group--hidden"
-          aria-labelledby="nav-hidden-title"
-        >
-          <h2
-            className="nav__hidden-heading nav__dock-heading"
-            id="nav-hidden-title"
-            aria-label="Hidden"
-          >
+      {hiddenSections.length > 0 && (
+        <section className="nav__group nav__group--hidden" aria-label="Hidden">
+          <h2 className="nav__hidden-heading nav__dock-heading">
             <button
               type="button"
               className="nav__hidden-toggle nav__dock-toggle"
-              aria-expanded={hiddenExpanded}
-              aria-controls={hiddenContentId}
+              aria-expanded={showHidden}
               disabled={searching}
-              onClick={() => setHiddenOpen((value) => !value)}
+              aria-controls={hiddenContentId}
+              onClick={() => {
+                const next = !hiddenOpen;
+                setHiddenOpen(next);
+                saveHiddenSessionsOpen(next);
+              }}
             >
               <EyeOff size={16} aria-hidden />
               <span className="nav__group-name nav__dock-title">Hidden</span>
               <span className="nav__hidden-count" aria-hidden>
-                {hiddenCount}
+                {hiddenSessions.length}
               </span>
               <ChevronUp
                 size={12}
-                className={`chev-flip ${hiddenExpanded ? "chev-flip--open" : ""}`}
+                className={`chev-flip ${showHidden ? "chev-flip--open" : ""}`}
                 aria-hidden
               />
             </button>
@@ -574,10 +683,12 @@ export const Nav = memo(function Nav({
               type="button"
               className="nav__row-action nav__row-action--danger nav__hidden-clear"
               aria-label="Clear Hidden"
-              title={hiddenClearTitle}
-              disabled={hiddenClearDisabled}
+              title={hiddenClearReason ?? "Clear Hidden"}
+              disabled={hiddenClearReason !== null}
               onClick={() =>
-                setHiddenClearCandidate({ sessionIds: hiddenSessionIds })
+                setHiddenClearCandidate({
+                  sessionIds: hiddenSessions.map(({ id }) => id),
+                })
               }
             >
               {clearingHidden ? (
@@ -587,56 +698,13 @@ export const Nav = memo(function Nav({
               )}
             </button>
           </h2>
-          {hiddenExpanded ? (
+          {showHidden && (
             <div className="nav__hidden-content" id={hiddenContentId}>
-              {hiddenGroups.map((group, groupIndex) => (
-                <ProjectGroup
-                  key={group.cwd}
-                  group={group}
-                  headingId={`nav-hidden-group-title-${groupIndex}`}
-                  searching={searching}
-                  searchQuery={sessionQuery}
-                  showContext={(nameCounts.get(group.name) ?? 0) > 1}
-                  selectedSessionId={visibleSessionId}
-                  highlightedSessionId={highlightedSessionId}
-                  hidden
-                  onSelectSession={onSelectSession}
-                  onDeleteSession={setDeleteCandidate}
-                  onDeleteGroup={() =>
-                    setHiddenClearCandidate({
-                      sessionIds: group.sessions.map((session) => session.id),
-                      projectCwd: group.cwd,
-                    })
-                  }
-                  deleteGroupDisabledReason={hiddenDeletionBlockReason(
-                    group.sessions,
-                    deletionState,
-                  )}
-                />
-              ))}
-              {hidden.map((session) => (
-                <SessionRow
-                  key={session.id}
-                  session={session}
-                  searchQuery={sessionQuery}
-                  selectedSessionId={visibleSessionId}
-                  highlightedSessionId={highlightedSessionId}
-                  showProject
-                  onSelect={onSelectSession}
-                  onDelete={setDeleteCandidate}
-                />
-              ))}
+              {hiddenSections.map(renderSection)}
             </div>
-          ) : null}
+          )}
         </section>
-      ) : null}
-      <ScrollRail container={navRef} variant="nav" />
-      <ScrollRail container={navRef} scroller=".nav__list" variant="nav" />
-      <ScrollRail
-        container={navRef}
-        scroller=".nav__hidden-content"
-        variant="nav"
-      />
+      )}
       {deleteCandidate ? (
         <SessionDeleteDialog
           session={deleteCandidate}

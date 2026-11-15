@@ -1,157 +1,26 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { UploadedAttachment } from "../../shared/contracts";
-import {
-  deleteSessionDraft,
-  sessionDraft,
-  setSessionDraft,
-} from "../../src/session-drafts";
-import { AppStore } from "../../src/store";
-import { sessionPage } from "./fixtures/session-catalog";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
   activeSnapshot,
-  bootstrapPayload,
-  branchTree,
   deferred,
-  FakeWebSocket,
   installFakeWebSocket,
-  installFetch,
-  jsonBody,
+  type RouteHandler,
   type RouteResponse,
 } from "./helpers";
+import { initStore, installStoreRoutes } from "./store-fixture";
 
-async function setup(
-  route: (
-    url: string,
-    init: RequestInit,
-  ) => Promise<RouteResponse | undefined> | RouteResponse | undefined,
-) {
-  installFetch(async (url, init) => {
-    if (url.startsWith("/api/bootstrap"))
-      return { body: bootstrapPayload({ snapshot: activeSnapshot() }) };
-    if (url.startsWith("/api/sessions?")) return { body: sessionPage([], 0) };
-    return route(url, init);
-  });
-  const store = new AppStore();
-  await store.init("token");
-  (store as unknown as { set(value: unknown): void }).set({
-    branchTree: branchTree(),
-  });
-  return store;
-}
-
-function moveView(store: AppStore, viewId = "view-2"): void {
-  const snapshot = activeSnapshot({
-    transcriptPage: {
-      revision: 2,
-      viewId,
-      appendFromRevision: 2,
-      effectiveLeafId: "u1",
-      messages: [],
-    },
-    effectiveLeafId: "u1",
-  });
-  (
-    store as unknown as { applySnapshot(snapshot: unknown): void }
-  ).applySnapshot(snapshot);
+function setup(route: RouteHandler) {
+  installStoreRoutes(route);
+  return initStore();
 }
 
 describe("branch request view ownership", () => {
-  it("discards a complete-content copy when its source view changes during image loading", async () => {
-    const image = deferred<RouteResponse>();
-    const store = await setup((url) => {
-      if (url.startsWith("/api/branches/entry"))
-        return {
-          body: {
-            sessionId: "s1",
-            revision: 1,
-            node: branchTree().nodes[0],
-            text: "saved input",
-            nextOffset: null,
-            totalChars: 11,
-            images: [{ index: 0, mimeType: "image/png" }],
-          },
-        };
-      if (url.startsWith("/api/branches/image")) return image.promise;
-    });
-    const copy = store.branchCopyContent("u1", new AbortController().signal);
-    await vi.waitFor(() =>
-      expect(fetch).toHaveBeenCalledWith(
-        expect.stringContaining("/api/branches/image"),
-        expect.anything(),
-      ),
-    );
-    moveView(store);
-    image.resolve({ body: "saved pixels" });
-    expect(await copy).toBeNull();
-  });
+  beforeEach(installFakeWebSocket);
 
-  beforeEach(() => {
-    installFakeWebSocket();
-    for (const id of ["s1", "s2", "forked"]) deleteSessionDraft(id);
-  });
-
-  it.each(["", "Compare the charts"])(
-    "restores a Fork's saved images beside its text (%j), without transferring the source draft",
-    async (text) => {
-      const image: UploadedAttachment = {
-        id: "fork-image",
-        fileName: "Recovered image 1.png",
-        mimeType: "image/png",
-        size: 7,
-        kind: "image",
-      };
-      let sent: Record<string, unknown> | null = null;
-      const store = await setup((url, init) => {
-        if (url === "/api/branches/fork")
-          return {
-            body: {
-              sessionId: "forked",
-              snapshot: activeSnapshot({ sessionId: "forked" }),
-              editorText: text,
-              editorAttachments: [image],
-            },
-          };
-        if (url.endsWith("/image")) return { body: "saved pixels" };
-        if (url === "/api/sessions/open")
-          return {
-            body: activeSnapshot({ sessionId: String(jsonBody(init).id) }),
-          };
-        if (url === "/api/prompt") {
-          sent = jsonBody(init);
-          return { status: 202, body: { accepted: true } };
-        }
-        return undefined;
-      });
-      setSessionDraft("s1", "Unsent source draft");
-      await expect(store.forkBranch("u1")).resolves.toBe(true);
-      expect(sessionDraft("s1")).toBe("Unsent source draft");
-      expect(sessionDraft("forked")).toBe(text);
-      expect(sent).toBeNull();
-      await vi.waitFor(() =>
-        expect(store.getState().attachments[0]?.previewUrl).toMatch(/^blob:/),
-      );
-      expect(store.getState().attachments[0]).toMatchObject({
-        status: "ready",
-        uploadedId: image.id,
-      });
-      await store.openSession("s1");
-      expect(store.getState().attachments).toEqual([]);
-      await store.openSession("forked");
-      expect(store.getState().attachments[0]?.uploadedId).toBe(image.id);
-      await expect(store.sendPrompt(text)).resolves.toBeTruthy();
-      expect(sent).toMatchObject({
-        sessionId: "forked",
-        message: text,
-        attachmentIds: [image.id],
-      });
-    },
-  );
-
-  it("withdraws images from an obsolete Fork response instead of adding them to a newer session", async () => {
+  it("withdraws late Fork attachments after disconnect", async () => {
     const fork = deferred<RouteResponse>();
     const deletes: string[] = [];
-    const store = await setup((url, init) => {
+    const { store, socket } = await setup((url, init) => {
       if (url === "/api/branches/fork") return fork.promise;
       if (url === "/api/sessions/open")
         return { body: activeSnapshot({ sessionId: "s2" }) };
@@ -159,10 +28,10 @@ describe("branch request view ownership", () => {
         deletes.push(url);
         return { body: { ok: true } };
       }
-      return undefined;
     });
     const forking = store.forkBranch("u1");
-    await store.openSession("s2");
+    expect(store.getState().branchActionId).toBe("fork:u1");
+    socket.onclose?.();
     fork.resolve({
       body: {
         sessionId: "forked",
@@ -174,333 +43,35 @@ describe("branch request view ownership", () => {
     await expect(forking).resolves.toBe(false);
     expect(deletes).toEqual(["/api/attachments/old-image"]);
     expect(store.getState()).toMatchObject({
-      sessionId: "s2",
-      attachments: [],
+      sessionId: "s1",
+      branchActionId: null,
+      branchTreeError: null,
     });
+    expect(store.drafts.get("s1").attachments).toEqual([]);
   });
 
-  it("ignores a delayed tree success after a same-session view transition", async () => {
-    const pending = deferred<RouteResponse | undefined>();
-    const store = await setup((url) =>
-      url.startsWith("/api/branches/tree") ? pending.promise : undefined,
-    );
-    const loading = store.loadBranchTree();
-    moveView(store);
-    pending.resolve({ body: { ...branchTree(), revision: 99 } });
-    await loading;
-    expect(store.getState().branchTree?.revision).toBe(1);
-    expect(store.getState().branchTreeError).toBeNull();
-    expect(store.getState().branchTreeStale).toBe(true);
-    expect(store.getState().branchTreeLoading).toBe(false);
-  });
-
-  it.each(["success", "failure"] as const)(
-    "releases a tree read made stale by an ordinary append (%s)",
-    async (outcome) => {
-      const pending = deferred<RouteResponse | undefined>();
-      let treeReads = 0;
-      const store = await setup((url) => {
-        if (!url.startsWith("/api/branches/tree")) return undefined;
-        treeReads += 1;
-        return treeReads === 1
-          ? pending.promise
-          : { body: { ...branchTree(), effectiveLeafId: "a2", revision: 2 } };
-      });
-      const loading = store.loadBranchTree();
-      // Append continuation keeps the session, incarnation, and view, but
-      // advances the leaf that owns the History read.
-      (
-        store as unknown as { applySnapshot(snapshot: unknown): void }
-      ).applySnapshot(
-        activeSnapshot({
-          effectiveLeafId: "a2",
-          transcriptPage: {
-            revision: 2,
-            effectiveLeafId: "a2",
-          },
-        }),
-      );
-      pending.resolve(
-        outcome === "success"
-          ? { body: branchTree() }
-          : { status: 503, body: { error: "Old tree failed" } },
-      );
-      await loading;
-      expect(store.getState().branchTreeLoading).toBe(false);
-      expect(store.getState().branchTree?.revision).toBe(1);
-      expect(store.getState().branchTreeError).toBeNull();
-      expect(store.getState().branchTreeStale).toBe(true);
-
-      await store.loadBranchTree();
-      expect(treeReads).toBe(2);
-      expect(store.getState().branchTree?.revision).toBe(2);
-      expect(store.getState().branchTreeError).toBeNull();
-    },
-  );
-
-  it.each(["navigate", "fork"] as const)(
-    "releases a failed %s action after an ordinary append",
-    async (kind) => {
-      const pending = deferred<RouteResponse | undefined>();
-      const store = await setup((url) =>
-        url.startsWith(`/api/branches/${kind}`) ? pending.promise : undefined,
-      );
-      const acting =
-        kind === "navigate"
-          ? store.navigateBranch("a1", "switch")
-          : store.forkBranch("u1");
-      (
-        store as unknown as { applySnapshot(snapshot: unknown): void }
-      ).applySnapshot(
-        activeSnapshot({
-          effectiveLeafId: "a2",
-          transcriptPage: {
-            revision: 2,
-            effectiveLeafId: "a2",
-          },
-        }),
-      );
-      pending.resolve({ status: 409, body: { error: "Source changed" } });
-      await expect(acting).resolves.toBe(false);
-      expect(store.getState().branchActionId).toBeNull();
-      // Navigation owns the original leaf; independent copying survives an
-      // append, so its failure retains the server diagnostic.
-      if (kind === "navigate") {
-        expect(store.getState().branchTreeError).toBeNull();
-        expect(store.getState().branchTreeStale).toBe(true);
-      } else expect(store.getState().branchTreeError).toBe("Source changed");
-      expect(store.getState().sessionId).toBe("s1");
-      expect(store.getState().transcriptEffectiveLeafId).toBe("a2");
-      expect(store.getState().branchTree?.revision).toBe(1);
-    },
-  );
-
-  it("ignores a delayed navigation error after a same-session view transition", async () => {
-    const pending = deferred<RouteResponse | undefined>();
-    const store = await setup((url) =>
-      url.startsWith("/api/branches/navigate") ? pending.promise : undefined,
-    );
+  it("keeps a failed selection's error when an older branch action also fails", async () => {
+    const branch = deferred<RouteResponse>();
+    const { store } = await setup((url) => {
+      if (url === "/api/branches/navigate") return branch.promise;
+      if (url === "/api/sessions/open")
+        return { status: 500, body: { error: "selection failed" } };
+    });
     const navigating = store.navigateBranch("a1", "switch");
-    moveView(store);
-    pending.resolve({ status: 500, body: { error: "old view failed" } });
+    const selection = store.openSession("s2");
+    expect(store.getState()).toMatchObject({
+      branchActionId: null,
+    });
+    await selection;
+    branch.resolve({ status: 500, body: { error: "obsolete branch failure" } });
     await expect(navigating).resolves.toBe(false);
-    expect(store.getState().error).not.toBe("old view failed");
-    expect(store.getState().branchTreeError).toBeNull();
-    expect(store.getState().branchTreeStale).toBe(true);
-    expect(store.getState().branchActionId).toBeNull();
-  });
 
-  it("forks a transcript input without requiring a History refresh", async () => {
-    let treeReads = 0;
-    let forks = 0;
-    const store = await setup((url) => {
-      if (url.startsWith("/api/branches/tree")) {
-        treeReads += 1;
-        return { body: branchTree() };
-      }
-      if (url.startsWith("/api/branches/fork")) {
-        forks += 1;
-        return {
-          body: {
-            sessionId: "forked",
-            snapshot: activeSnapshot({ sessionId: "forked" }),
-            editorText: "user",
-          },
-        };
-      }
-      return undefined;
+    expect(store.getState()).toMatchObject({
+      sessionId: "s1",
+      branchActionId: null,
+      branchTreeError: null,
+      error: null,
+      sessionActionError: "selection failed",
     });
-
-    await expect(store.forkFromEntry("u1")).resolves.toBe(true);
-    expect(treeReads).toBe(0);
-    expect(forks).toBe(1);
-    expect(store.getState().sessionId).toBe("forked");
   });
-
-  it.each(["fork", "clone"] as const)(
-    "keeps a %s target when the source appends without replacing its view",
-    async (mode) => {
-      const response = deferred<RouteResponse>();
-      let request: Record<string, unknown> | undefined;
-      const store = await setup((url, init) => {
-        if (url === `/api/branches/${mode}`) {
-          request = jsonBody(init);
-          return response.promise;
-        }
-      });
-      const internal = store as unknown as {
-        applySnapshot(snapshot: unknown): void;
-      };
-      internal.applySnapshot(
-        activeSnapshot({
-          effectiveLeafId: "a1",
-          transcriptPage: { effectiveLeafId: "a1" },
-        }),
-      );
-      const copying =
-        mode === "fork"
-          ? store.forkFromEntry("u1")
-          : store.cloneCurrentBranch();
-      internal.applySnapshot(
-        activeSnapshot({
-          effectiveLeafId: "a2",
-          transcriptPage: { revision: 2, effectiveLeafId: "a2" },
-        }),
-      );
-      response.resolve({
-        body: {
-          sessionId: "forked",
-          snapshot: activeSnapshot({ sessionId: "forked" }),
-          editorText: "",
-        },
-      });
-      await expect(copying).resolves.toBe(true);
-      expect(request).toEqual({
-        sessionId: "s1",
-        viewId: "view-s1",
-        targetId: mode === "fork" ? "u1" : "a1",
-      });
-      expect(store.getState().sessionId).toBe("forked");
-    },
-  );
-
-  it("ignores delayed fork success after reconnect invalidates ownership", async () => {
-    const fork = deferred<RouteResponse | undefined>();
-    const store = await setup((url) => {
-      if (url.startsWith("/api/branches/fork")) return fork.promise;
-      return undefined;
-    });
-    const forking = store.forkBranch("u1");
-    FakeWebSocket.instances.at(-1)!.onclose?.();
-    fork.resolve({
-      body: {
-        sessionId: "forked",
-        snapshot: activeSnapshot({ sessionId: "forked" }),
-        editorText: "old",
-      },
-    });
-    await expect(forking).resolves.toBe(false);
-    expect(store.getState().sessionId).toBe("s1");
-    expect(store.getState().branchActionId).toBeNull();
-  });
-
-  it.each(["tree", "navigate", "fork"] as const)(
-    "suppresses a delayed branch %s 401 only after the auth transport is genuinely replaced",
-    async (kind) => {
-      const pending = deferred<RouteResponse | undefined>();
-      const store = await setup((url) =>
-        url.startsWith(`/api/branches/${kind}`) ? pending.promise : undefined,
-      );
-      const request =
-        kind === "tree"
-          ? store.loadBranchTree()
-          : kind === "navigate"
-            ? store.navigateBranch("a1", "switch")
-            : store.forkBranch("u1");
-      await store.init("replacement-token");
-      pending.resolve({
-        status: 401,
-        body: { error: "expired old transport" },
-      });
-      await request;
-      expect(store.getState().needsToken).toBe(false);
-    },
-  );
-
-  it.each(["tree", "navigate", "fork"] as const)(
-    "honors a delayed branch %s 401 after a view transition on the current transport",
-    async (kind) => {
-      const pending = deferred<RouteResponse | undefined>();
-      const store = await setup((url) =>
-        url.startsWith(`/api/branches/${kind}`) ? pending.promise : undefined,
-      );
-      const request =
-        kind === "tree"
-          ? store.loadBranchTree()
-          : kind === "navigate"
-            ? store.navigateBranch("a1", "switch")
-            : store.forkBranch("u1");
-      moveView(store);
-      pending.resolve({
-        status: 401,
-        body: { error: "current transport unauthorized" },
-      });
-      await request;
-      expect(store.getState()).toMatchObject({
-        needsToken: true,
-        connection: "offline",
-        error: null,
-      });
-    },
-  );
-
-  it.each(["tree", "navigate", "fork"] as const)(
-    "settles delayed branch %s ownership across failed and successful selection intents",
-    async (kind) => {
-      for (const selectionOutcome of ["failed", "successful"] as const) {
-        const branch = deferred<RouteResponse | undefined>();
-        const opening = deferred<RouteResponse | undefined>();
-        const store = await setup((url) => {
-          if (url.startsWith(`/api/branches/${kind}`)) return branch.promise;
-          if (url.startsWith("/api/sessions/open")) return opening.promise;
-          return undefined;
-        });
-        const branchRequest =
-          kind === "tree"
-            ? store.loadBranchTree()
-            : kind === "navigate"
-              ? store.navigateBranch("a1", "switch")
-              : store.forkBranch("u1");
-        const selection = store.openSession("s2");
-        expect(store.getState()).toMatchObject({
-          branchTreeLoading: false,
-          branchActionId: null,
-        });
-        expect(store.getState().branchTreeError).toBeNull();
-        expect(store.getState().branchTreeStale).toBe(true);
-
-        if (selectionOutcome === "failed")
-          opening.resolve({ status: 500, body: { error: "selection failed" } });
-        else opening.resolve({ body: activeSnapshot({ sessionId: "s2" }) });
-        await selection;
-        branch.resolve(
-          selectionOutcome === "failed"
-            ? { status: 500, body: { error: "obsolete branch failure" } }
-            : kind === "tree"
-              ? { body: { ...branchTree(), revision: 99 } }
-              : kind === "navigate"
-                ? {
-                    body: {
-                      snapshot: activeSnapshot(),
-                      editorText: "obsolete",
-                    },
-                  }
-                : {
-                    body: {
-                      sessionId: "forked",
-                      snapshot: activeSnapshot({ sessionId: "forked" }),
-                      editorText: "obsolete",
-                    },
-                  },
-        );
-        await branchRequest;
-
-        if (selectionOutcome === "failed") {
-          expect(store.getState().sessionId).toBe("s1");
-          expect(store.getState().branchTreeError).toBeNull();
-          expect(store.getState().branchTreeStale).toBe(true);
-          expect(store.getState().error).toBeNull();
-          expect(store.getState().sessionActionError).toBe("selection failed");
-        } else {
-          expect(store.getState().sessionId).toBe("s2");
-          expect(store.getState().branchTree).toBeNull();
-          expect(store.getState().error).not.toBe("obsolete branch failure");
-        }
-        expect(store.getState()).toMatchObject({
-          branchTreeLoading: false,
-          branchActionId: null,
-        });
-      }
-    },
-  );
 });

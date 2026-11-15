@@ -1,23 +1,22 @@
-import { requestError } from "./request-error.js";
-import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
 import {
   type HostUpdateStatus,
   type PiExtensionUpdate,
   type PiUpdateCheckResponse,
+  UPDATE_CHECK_INTERVAL_MS,
   UPDATE_SNOOZE_MS,
   type UpdateCheckResponse,
 } from "../shared/contracts.js";
 import type { DiagnosticLogger } from "./diagnostics.js";
-import type { PiUpdateCheckerLike } from "./pi-update-checker.js";
-import { inspireStateDirectory } from "./platform-paths.mjs";
-import type { UpdateCheckerLike } from "./update-checker.js";
+import { inspireStateDirectory, installationKey } from "./platform-paths.mjs";
+import { replacePrivateStateFile } from "./private-state-file.js";
+import { requestError } from "./request-error.js";
 
+const FAILED_CHECK_CACHE_MS = 60 * 60 * 1_000;
 const AUTOMATIC_UPDATE_CHECK_HOUR = 8;
 const PRIVATE_DIRECTORY_MODE = 0o700;
-const PRIVATE_FILE_MODE = 0o600;
 
 const updateIdentityEntriesSchema = z.array(
   z.union([
@@ -53,33 +52,24 @@ type PersistedUpdateState = z.infer<typeof persistedUpdateStateSchema>;
 
 type UpdateStatusListener = (status: HostUpdateStatus) => void;
 
-export interface UpdateCoordinatorLike {
-  status(): Promise<HostUpdateStatus>;
-  checkInspire(force?: boolean): Promise<HostUpdateStatus>;
-  checkPi(force?: boolean): Promise<HostUpdateStatus>;
-  dismiss(identity: string): Promise<HostUpdateStatus>;
-  promptAccepted(): Promise<void>;
-  subscribe(listener: UpdateStatusListener): () => void;
-  close(): Promise<void>;
-}
-
 interface UpdateCoordinatorOptions {
   currentPiVersion: string;
-  inspireChecker?: UpdateCheckerLike;
-  piChecker?: PiUpdateCheckerLike;
+  probeInspire?: () => Promise<UpdateCheckResponse>;
+  probePi?: () => Promise<PiUpdateCheckResponse>;
   statePath?: string;
   now?: () => number;
   diagnostics?: DiagnosticLogger;
 }
 
-function deploymentKey(root: string, host: string, port: number): string {
-  return createHash("sha256")
-    .update(resolve(root))
-    .update("\0")
-    .update(host)
-    .update("\0")
-    .update(String(port))
-    .digest("hex");
+interface UpdateObservation<T> {
+  result: T | null;
+  expiresAt: number;
+  flight: Promise<HostUpdateStatus> | null;
+  probing: boolean;
+}
+
+function observation<T>(): UpdateObservation<T> {
+  return { result: null, expiresAt: 0, flight: null, probing: false };
 }
 
 /** Operational update state follows one stable Host deployment, not a browser
@@ -92,7 +82,7 @@ export function defaultUpdateStatePath(
   return join(
     inspireStateDirectory(),
     "updates",
-    `${deploymentKey(root, host, port)}.json`,
+    `${installationKey(resolve(root), host, port)}.json`,
   );
 }
 
@@ -159,18 +149,14 @@ function httpConflict(message: string): Error {
  * Owns update observations, daily prompt-triggering, and acknowledgement for
  * every authenticated view of one Host deployment.
  */
-export class UpdateCoordinator implements UpdateCoordinatorLike {
+export class UpdateCoordinator {
   private readonly now: () => number;
   private readonly listeners = new Set<UpdateStatusListener>();
   private readonly ready: Promise<void>;
   private persisted = initialPersistedState();
   private revision = 0;
-  private inspireUpdateCheck: UpdateCheckResponse | null = null;
-  private piUpdateCheck: PiUpdateCheckResponse | null = null;
-  private inspireUpdateChecking = false;
-  private piUpdateChecking = false;
-  private inspireInFlight: Promise<HostUpdateStatus> | null = null;
-  private piInFlight: Promise<HostUpdateStatus> | null = null;
+  private readonly inspire = observation<UpdateCheckResponse>();
+  private readonly pi = observation<PiUpdateCheckResponse>();
   private mutationQueue = Promise.resolve();
   private snoozeTimer: ReturnType<typeof setTimeout> | null = null;
   private closed = false;
@@ -191,11 +177,25 @@ export class UpdateCoordinator implements UpdateCoordinatorLike {
   }
 
   checkInspire(force = false): Promise<HostUpdateStatus> {
-    return this.check("inspire", force);
+    return this.check(
+      this.inspire,
+      force,
+      this.options.probeInspire,
+      () => ({ kind: "unavailable" }),
+      (result) => result.kind === "unavailable",
+    );
   }
 
   checkPi(force = false): Promise<HostUpdateStatus> {
-    return this.check("pi", force);
+    return this.check(
+      this.pi,
+      force,
+      this.options.probePi,
+      () => this.unavailablePiCheck(),
+      (result) =>
+        result.pi.kind === "unavailable" ||
+        result.extensions.kind === "unavailable",
+    );
   }
 
   async dismiss(identity: string): Promise<HostUpdateStatus> {
@@ -221,7 +221,7 @@ export class UpdateCoordinator implements UpdateCoordinatorLike {
   }
 
   private async performDismiss(identity: string): Promise<HostUpdateStatus> {
-    if (this.inspireUpdateChecking || this.piUpdateChecking)
+    if (Boolean(this.inspire.flight) || Boolean(this.pi.flight))
       throw httpConflict("Update observations changed while dismissing");
     const currentIdentity = this.currentIdentity();
     if (!currentIdentity || currentIdentity !== identity)
@@ -249,60 +249,51 @@ export class UpdateCoordinator implements UpdateCoordinatorLike {
     return this.publish();
   }
 
-  private async check(
-    kind: "inspire" | "pi",
+  private async check<T>(
+    observation: UpdateObservation<T>,
     force: boolean,
+    probe: (() => Promise<T>) | undefined,
+    unavailable: () => T,
+    failed: (result: T) => boolean,
   ): Promise<HostUpdateStatus> {
     await this.ready;
-    const inFlight =
-      kind === "inspire" ? this.inspireInFlight : this.piInFlight;
-    if (inFlight) return inFlight;
-    if (this.closed) return this.snapshot();
+    if (observation.flight) return observation.flight;
+    if (this.closed || (!force && this.now() < observation.expiresAt))
+      return this.snapshot();
 
-    const task = this.performCheck(kind, force);
-    if (kind === "inspire") this.inspireInFlight = task;
-    else this.piInFlight = task;
-    const clear = () => {
-      if (kind === "inspire" && this.inspireInFlight === task)
-        this.inspireInFlight = null;
-      if (kind === "pi" && this.piInFlight === task) this.piInFlight = null;
-    };
-    void task.then(clear, clear);
-    return task;
-  }
-
-  private async performCheck(
-    kind: "inspire" | "pi",
-    force: boolean,
-  ): Promise<HostUpdateStatus> {
-    if (kind === "inspire") this.inspireUpdateChecking = true;
-    else this.piUpdateChecking = true;
-    this.publish();
-    try {
-      if (kind === "inspire") {
-        this.inspireUpdateCheck = this.options.inspireChecker
-          ? await this.options.inspireChecker.check(force)
-          : { kind: "unavailable" };
-      } else {
-        this.piUpdateCheck = this.options.piChecker
-          ? await this.options.piChecker.check(force)
-          : this.unavailablePiCheck();
+    observation.probing = true;
+    const task = Promise.resolve().then(async () => {
+      let result: T;
+      try {
+        result = probe ? await probe() : unavailable();
+      } catch {
+        result = unavailable();
       }
-    } catch {
-      if (kind === "inspire") this.inspireUpdateCheck = { kind: "unavailable" };
-      else this.piUpdateCheck = this.unavailablePiCheck();
-    } finally {
-      if (kind === "inspire") this.inspireUpdateChecking = false;
-      else this.piUpdateChecking = false;
-    }
-    if (this.closed) return this.snapshot();
-    await this.reconcileSnooze();
-    return this.publish();
+      observation.probing = false;
+      if (this.closed) {
+        observation.flight = null;
+        return this.snapshot();
+      }
+      observation.result = result;
+      observation.expiresAt =
+        this.now() +
+        (failed(result) ? FAILED_CHECK_CACHE_MS : UPDATE_CHECK_INTERVAL_MS);
+      try {
+        await this.reconcileSnooze();
+      } finally {
+        observation.flight = null;
+      }
+      return this.publish();
+    });
+    observation.flight = task;
+    this.publish();
+    return task;
   }
 
   private unavailablePiCheck(): PiUpdateCheckResponse {
     return {
       currentVersion: this.options.currentPiVersion,
+      installedVersion: null,
       pi: { kind: "unavailable" },
       extensions: { kind: "unavailable" },
     };
@@ -330,11 +321,11 @@ export class UpdateCoordinator implements UpdateCoordinatorLike {
   }
 
   private observationsPresent(): boolean {
-    return this.inspireUpdateCheck !== null || this.piUpdateCheck !== null;
+    return this.inspire.result !== null || this.pi.result !== null;
   }
 
   private currentIdentity(): string | null {
-    return availableUpdateIdentity(this.inspireUpdateCheck, this.piUpdateCheck);
+    return availableUpdateIdentity(this.inspire.result, this.pi.result);
   }
 
   private snoozeMatchesObserved(identity: string): boolean {
@@ -345,26 +336,18 @@ export class UpdateCoordinator implements UpdateCoordinatorLike {
       return false;
     }
     const observed = availableUpdateEntries(
-      this.inspireUpdateCheck,
-      this.piUpdateCheck,
+      this.inspire.result,
+      this.pi.result,
     );
-    const sameEntries = (source: "inspire" | "pi") => {
-      const categories =
-        source === "inspire"
-          ? new Set(["inspire"])
-          : new Set(["pi", "extension"]);
-      return (
-        JSON.stringify(
-          observed.filter(([category]) => categories.has(category)),
-        ) ===
-        JSON.stringify(
-          expected.filter(([category]) => categories.has(category)),
-        )
-      );
-    };
+    const sameEntries = (kind: UpdateIdentityEntry[0], status?: string) =>
+      !status ||
+      status === "unavailable" ||
+      JSON.stringify(observed.filter(([category]) => category === kind)) ===
+        JSON.stringify(expected.filter(([category]) => category === kind));
     return (
-      (this.inspireUpdateCheck === null || sameEntries("inspire")) &&
-      (this.piUpdateCheck === null || sameEntries("pi"))
+      sameEntries("inspire", this.inspire.result?.kind) &&
+      sameEntries("pi", this.pi.result?.pi.kind) &&
+      sameEntries("extension", this.pi.result?.extensions.kind)
     );
   }
 
@@ -380,19 +363,15 @@ export class UpdateCoordinator implements UpdateCoordinatorLike {
   private reconcileSnooze(): Promise<void> {
     return this.enqueueMutation(async () => {
       if (
-        this.inspireUpdateChecking ||
-        this.piUpdateChecking ||
+        this.closed ||
+        this.inspire.probing ||
+        this.pi.probing ||
         !this.observationsPresent()
       )
         return;
       const snooze = this.persisted.snooze;
       if (!snooze) return;
-      const now = this.now();
-      const valid =
-        snooze.dismissedAt <= now &&
-        now < snooze.dismissedAt + UPDATE_SNOOZE_MS &&
-        this.snoozeMatchesObserved(snooze.identity);
-      if (valid) {
+      if (this.activeSnoozeUntil() !== null) {
         this.scheduleSnoozeExpiry(snooze);
         return;
       }
@@ -411,14 +390,12 @@ export class UpdateCoordinator implements UpdateCoordinatorLike {
   private snapshot(): HostUpdateStatus {
     return {
       revision: this.revision,
-      inspireUpdateCheck: this.inspireUpdateCheck
-        ? structuredClone(this.inspireUpdateCheck)
+      inspireUpdateCheck: this.inspire.result
+        ? structuredClone(this.inspire.result)
         : null,
-      piUpdateCheck: this.piUpdateCheck
-        ? structuredClone(this.piUpdateCheck)
-        : null,
-      inspireUpdateChecking: this.inspireUpdateChecking,
-      piUpdateChecking: this.piUpdateChecking,
+      piUpdateCheck: this.pi.result ? structuredClone(this.pi.result) : null,
+      inspireUpdateChecking: Boolean(this.inspire.flight),
+      piUpdateChecking: Boolean(this.pi.flight),
       availableUpdateIdentity: this.currentIdentity(),
       updateSnoozedUntil: this.activeSnoozeUntil(),
     };
@@ -502,20 +479,7 @@ export class UpdateCoordinator implements UpdateCoordinatorLike {
       recursive: true,
       mode: PRIVATE_DIRECTORY_MODE,
     });
-    const temporary = join(
-      dirname(path),
-      `.${String(process.pid)}-${randomUUID()}.tmp`,
-    );
-    try {
-      await writeFile(temporary, `${JSON.stringify(this.persisted)}\n`, {
-        encoding: "utf8",
-        mode: PRIVATE_FILE_MODE,
-        flag: "wx",
-      });
-      await rename(temporary, path);
-    } finally {
-      await rm(temporary, { force: true }).catch(() => undefined);
-    }
+    await replacePrivateStateFile(path, `${JSON.stringify(this.persisted)}\n`);
   }
 
   private enqueueMutation<T>(operation: () => Promise<T>): Promise<T> {

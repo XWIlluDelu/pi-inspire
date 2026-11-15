@@ -1,5 +1,5 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -29,6 +29,42 @@ async function fixture() {
 }
 
 describe.runIf(zsh)("native zsh startup continuity", () => {
+  it("round-trips percent signs and marker delimiters through native shell markers", async () => {
+    const command = "printf '%s\\n' '100% done %25 %0A\r\n\u001b\u0007'";
+    const f = await fixture();
+    const directory = join(f.root, "100% project %25");
+    await mkdir(directory);
+    const cwd = await realpath(directory);
+    await ensureTerminalShellIntegration(f.integration, f.env);
+    const { stdout } = await execFile(
+      zsh!.shell,
+      [
+        "-dfc",
+        'source "$1"; __inspire_terminal_preexec "$2"; false; __inspire_terminal_precmd',
+        "inspire-marker-test",
+        join(f.integration, "zsh-integration.zsh"),
+        command,
+      ],
+      { cwd, env: f.env, timeout: 10_000 },
+    );
+    const markerPattern = /\u001b\]6973;([^\u0007]*)\u0007/gu;
+    const markers = Array.from(stdout.matchAll(markerPattern), (match) =>
+      match[1]!.split(/;(.*)/su, 2),
+    );
+    expect(stdout.replace(markerPattern, "")).toBe("");
+    expect(
+      markers.map(([phase, payload]) => [
+        phase,
+        phase!.endsWith("1") ? decodeURIComponent(payload!) : payload,
+      ]),
+    ).toEqual([
+      ["C1", command],
+      ["P1", cwd],
+      ["D", "1"],
+      ["A", undefined],
+    ]);
+  });
+
   it.each([false, true])(
     "follows ZDOTDIR changes at each login stage (exported initially: %s)",
     async (initiallySet) => {

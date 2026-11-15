@@ -2,6 +2,7 @@ import type { InstanceState } from "./instance-state.mjs";
 
 export type InstanceControlAction =
   | "readiness"
+  | "restart-mode"
   | "launch-url"
   | "maintenance-prepare"
   | "maintenance-commit"
@@ -28,6 +29,7 @@ export interface InstanceControlResponse {
   proof: string;
 }
 
+export const INSTANCE_STATE_VERSION: 2;
 export function instanceIdentity(state: InstanceState): string;
 export function createInstanceControlRequest(
   state: InstanceState,

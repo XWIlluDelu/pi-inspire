@@ -4,85 +4,79 @@ purpose: Platform-specific launch, file/reference identity, process ownership an
 
 # Platform compatibility
 
-## Runtime baseline
+## Platform-specific input
 
-Target current supported systems and reasonably recent dependencies. Windows native helpers use
-PowerShell 7; named PATH entries precede its standard Program Files installation, without an old
-engine fallback. Internal scripts qualify their built-in modules rather than depending on broad
-command auto-discovery in a cold user environment. macOS/POSIX shell regressions use the installed
-shells, not forced additional historical binaries. Requirements and restricted-shell npm shim
-commands are in [Host operations](../../docs/host.md).
+[[northstar]] defines platform priorities and [[host-lifecycle]] defines runtime prerequisites.
+PowerShell helpers qualify their built-in modules so they work in a cold shell environment.
+
+On iPhone, focusing small-font inputs can zoom the viewport independently of window width.
+The sidebar has a local editing exception. Composer retains all saved content-size choices.
+`tests/browser/responsive-inputs.spec.ts` exercises path, search and picker controls in
+Chromium and Firefox. Synthetic composition checks exercise the shared IME guards; hardware
+keyboard and OS input-method behavior require device checks.
 
 ## Verified native baseline
 
-Recorded cross-platform release evidence includes [CI run 39574685523](https://github.com/XWIlluDelu/pi-inspire/actions/runs/39574685523)
-at `f67d6ee` (v0.6.0): all seven jobs pass, including Linux/macOS/Windows and three installed-package
-checks. [[follow-release-0-6-0-2026-10-21]] owns that release record;
-[[follow-project-quality-2026-10-21]] records subsequent integration checks.
-[[follow-runtime-quality-2026-10-25]] records local Linux production-install verification for 0.6.5.
+[CI run 39574685523](https://github.com/XWIlluDelu/pi-inspire/actions/runs/39574685523) passed all
+seven jobs for [v0.6.0](https://github.com/XWIlluDelu/pi-inspire/tree/v0.6.0)
+(`f67d6eef659ca4500bf39167c8460813d5d2a85d`), including installed-package checks on Linux, macOS
+and Windows. The [v0.6.5 release run](https://github.com/XWIlluDelu/pi-inspire/actions/runs/40339358680)
+failed at its tag. A later `auto-dev` revision (`2fe2dc73`) passed all seven jobs in
+[run 40481436169](https://github.com/XWIlluDelu/pi-inspire/actions/runs/40481436169).
+[[follow-runtime-quality-2026-10-25]] records the separate v0.6.5 Linux production-install check.
 
-Package checks exercise a real default daemon, PTY I/O, terminal maintenance, Host restart preserving
-terminals, authenticated readiness/pairing and native session recovery. Native filesystem/shell checks
-and simulated Win32 contracts provide separate evidence. Browser-generated IME events establish event
-handling, while physical keyboard/IME behavior still requires device testing.
+Package checks exercise default-daemon PTY I/O, terminal maintenance, Host restart preserving
+terminals, authenticated readiness/pairing and session recovery. Native shell/filesystem checks
+and simulated Win32 contracts provide separate evidence.
 
-The earlier [full matrix at `681f694`](https://github.com/XWIlluDelu/pi-inspire/actions/runs/39275088788)
-includes failures and retries. The [focused fixture correction](https://github.com/XWIlluDelu/pi-inspire/actions/runs/39282788430)
-passes 26 branch and three Chromium cases on Windows/macOS, plus two macOS WebKit shortcut cases,
-without retries. Its reusable lessons are to preserve Host-normalized document separators while
-asserting raw paths separately, and to block Service Workers in mock-routing suites. It does not
-change the original full run's result.
+## CI verification scope
 
-## Windows full-suite completion
+[CI](../../.github/workflows/ci.yml) runs all unit and integration tests on Ubuntu. Pull
+requests and main pushes run Chromium and Firefox on Ubuntu and a focused Chromium set on
+macOS and Windows. macOS and Windows keep the native checks and skip browser component and
+platform-independent shared suites. Main pushes also verify the installed package on all three
+operating systems. The Linux size report uses the manifest of the package already being verified.
+Formatting remains available through `npm run format:check`. Pushes to `auto-dev` use manual dispatch.
 
-The [integrated run](https://github.com/XWIlluDelu/pi-inspire/actions/runs/39293720205) passes Linux,
-macOS and package checks but leaves two Windows integration failures and an interrupted browser phase.
-On `6500af1` with fixture corrections, the [Windows completion](https://github.com/XWIlluDelu/pi-inspire/actions/runs/39359339465)
-passes Chromium (340 cases, one skip, zero retries), portable, native Trash/recovery and launcher
-checks. After isolating a native-attribute fixture, [full unit completion](https://github.com/XWIlluDelu/pi-inspire/actions/runs/39362531329)
-passes 3,385 cases with 152 conditional skips; the completed browser suite is not repeated.
+| Dispatch scope | Checks |
+| --- | --- |
+| `checks` (default) | Ubuntu `npm run check`. |
+| `windows-core`, `macos-core` | Build, portable, Node and native integration, native Trash/recovery and launcher on the named OS. |
+| `windows`, `macos` | Named OS core and targeted Chromium. |
+| `safari` | The cross-browser suite in native macOS WebKit. |
+| `release` | Same checks as a main push, including all three installed-package checks. |
+| `full` | Release checks with the complete Chromium suite on macOS and Windows. |
 
-These corrections retain real files, corrupt-index and native-attribute coverage. Native Pi fixtures
-start only their own worker and use its existing integration deadline; branch fixtures wait for
-confirmation rather than a one-second poll. Focus-visible geometry uses real Tab navigation.
-The sequential Windows CI job has a 60-minute aggregate budget so all phases can complete.
+```sh
+gh workflow run ci.yml --ref auto-dev -f scope=windows-core
+```
 
-## Git, resource and input semantics
+Dispatch on `auto-dev` and PR runs supersede older runs within the same workflow, ref and scope.
+Main and other refs keep each run.
 
-Read-only Git inspection keeps approved system/global data in a private short-lived global file,
-preserving native repository, worktree and submodule-local precedence. Copying the root's effective
-settings indiscriminately into `-c` would override child-local EOL settings and falsely report dirty
-submodules. The native delta runs 25 real-Git configuration cases on both Windows and macOS, covering
-EOL, attributes/ignores, protected trust resets, converter execution gates, missing-promisor objects,
-machine patch grammar and private-file cleanup. Scope and unsupported contexts are in
-[[resource-preview#Git Changes]].
+Opt portable browser flows into all engines with `@cross-browser`. Mark OS-sensitive UI cases
+with `@platform-ui` for targeted native Chromium runs. Block Service Workers where interception
+must reach a test route. Keep real PTY, upload, download and clipboard checks on their native
+transports. Clipboard observers record only successful browser writes. Use Tab for focus-visible
+geometry and wait for lifecycle signals or explicit actions instead of request ordinals or polling
+deadlines.
 
-Native scripts and project/property text share classification between indexing and resolution;
-binary plist detection reads only the authorized descriptor. Reference parsing preserves UNC,
-backslash-home and complete delimited/diagnostic paths. Shared IME guards respect both composition
-state and the final key code 229; modal focus ownership also leaves IME Escape/Tab native. Component
-and synthetic browser-event checks establish this event contract, not physical OS IME behavior.
+## Git and native file representation
 
-Native filesystem fields use `fileResourceReference` before indexing, DOM controls or transport;
-prose/code diagnostics use their separate adapter, and actual URLs keep link syntax. Resolution
-parses locations before decoding once. Keys retain representation and URL authority; native labels
-and exact workspace paths are never URL-decoded. This separates literal `%20` and space filenames,
-hash directories and diagnostic-looking literal names without guessing from file existence.
-`tests/server/resource-reference-identity.test.ts` and HTTP authority tests verify independent
-external citations, bytes/downloads and compatible-revision reauthorization. Win32 contracts and
-native runs cover drive, UNC and home paths; Host-normalized metadata supports document URL joins.
+Read-only Git inspection preserves repository, worktree and submodule configuration precedence.
+Passing the root's effective settings to `-c` would override child-local EOL settings and falsely
+report dirty submodules. Native Git tests cover this precedence, protected trust resets and
+converter execution. See [[resource-preview#Git Changes]] for scope.
 
-Authorized text previews decode UTF-8/UTF-16LE/UTF-16BE BOMs and otherwise use UTF-8, without guessing
-legacy code pages. A bounded preview uses streaming decoding so a cut code point does not invent a
-replacement character. Reconstructed HTML declares UTF-8; downloads retain the original file bytes.
-Decoder/controller cases cover PowerShell, Markdown, notebooks, HTML and SVG, and browser cases read
-real Unicode files and compare raw downloads.
+Filesystem fields use `fileResourceReference`; prose and diagnostic locations use their own
+adapter. The resolver parses locations before decoding URLs once, preserving literal `%20` and
+hash filenames alongside encoded URLs. `tests/server/resources.test.ts` checks
+their distinct identities. Portable fixtures normalize Host document separators while checking
+native paths separately.
 
-Terminal tab shortcuts yield to third-level characters, ordinary editors and composition. Consumed
-chords do not also reach the PTY. Mac Option is native by default, with an explicit browser-local
-Meta option. Global model/thinking cycling uses Control+Command+M/P/R on Mac and produced-letter
-Alt+Shift+M/P/R elsewhere. Matching and hints share one policy; native Option characters do not
-become model actions.
+Preview tests cover UTF-8 and both UTF-16 byte orders with BOMs, bounded decoding at code-point
+boundaries, and real Unicode files. Download checks compare original bytes, independently of
+preview encoding.
 
 ## Development launch and terminal input
 
@@ -104,27 +98,14 @@ without PTY leakage. [[terminal]] owns the keyboard and modal contracts.
 
 ## Shell environment capture
 
-Direct launches normally inherit the caller's environment; installed POSIX services capture the
-selected shell's login/interactive exports once at startup. Selection, precedence and user controls
-are in [[host-lifecycle]]; operational guidance is in
-[Host operations](../../docs/host.md#shell-environment).
+`server/user-environment.mjs` reads the marked export from stdout because shell startup can close
+auxiliary descriptors. The parent discards output before the marker and enforces the deadline
+independently of shell traps. See [[host-lifecycle#User execution environment]] for the capture
+contract and [Host operations](../../docs/host.md#shell-environment) for configuration.
 
-`server/user-environment.mjs` reads a uniquely marked JSON export from the shell's stdout pipe.
-Shell startup can close auxiliary descriptors, so capture does not depend on inherited high FDs.
-Startup output before the marker is discarded without counting toward the export limit. Success
-requires a zero exit status and a valid bounded environment object. The Node parent enforces the
-deadline by killing the isolated process group, independently of shell traps.
-Errors describe the failure without exposing shell output or exported values.
-
-The terminal daemon receives the captured environment explicitly. A later Host restart does not
-change an existing PTY's environment. Linux service handoff is installation-scoped and private;
-it does not mutate the systemd manager's global environment.
-
-## Source-checkout handoff
-
-A running source Host may load extension entrypoints when it starts a later worker. Preserve those
-paths until the Host restarts, or prepare the new source in a separate directory. Preflight checks
-the files it sees; it does not freeze a mutable checkout or protect a running Host from renamed files.
+A running source Host can load extension files when it starts a later worker. Keep those paths
+available until restart, or prepare the replacement in a separate checkout. Preflight sees only
+the files present when it runs.
 
 ## File and process identity
 
@@ -146,6 +127,8 @@ live directory identity only for plausible spelling/Unicode aliases. Similarity 
 candidate; the same directory object must prove authority. Files, preview capabilities, project
 references/configuration and installed package entries share this boundary while retaining their
 file-handle and version rechecks. These live dev/inode comparisons are not cross-restart volume IDs.
+Case-insensitivity is a native filesystem property, not a blanket Windows rule. Redirected Windows
+platform-directory exports keep case-insensitive lookup after copying into a plain object.
 
 Windows terminal logs use a read/write descriptor positioned at EOF. Append-only handles can refuse
 truncate-to-tail even when ordinary appends succeed. Restored headless terminals use the same
@@ -153,7 +136,7 @@ options as live ones; otherwise old logs can accumulate during restoration.
 
 Configuration edit locks distinguish a regular file's native target from a final symlink's separate
 lexical and target authorities. Locking differently cased aliases of the same regular file twice can
-self-conflict on a case-insensitive volume. `server/configuration-edit-locks.ts` takes only its target
+self-conflict on a case-insensitive volume. `server/configuration-file.ts` takes only its target
 lock while preserving both for symlinks and creation; it neither merges hardlinks by inode nor
 lowercases paths. Both editors still recheck target/revision before publishing. Native case-alias
 saves run only when the actual test volume supports them. See [[mcp]] and [[model-settings]].
@@ -162,129 +145,40 @@ Herdr scope cleanup opens the verified cgroup directory before killing or pollin
 removed after it is opened may return `ENODEV` rather than `ENOENT`; both mean that opened cgroup
 is gone. Re-resolving a reused pathname would inspect the wrong owner. See [[herdr-enhancement]].
 
-## Local HTTP peer authentication
+## Host and terminal lifecycle evidence
 
-A Host-shaped health reply cannot identify the listener occupying a recorded port. Sending its
-private bearer first leaks that authority to a replacement service. Merely checking PID first also
-does not bind the socket to that process, and authenticating one connection does not secure a later
-bearer request after port reuse.
+A Host-shaped health response or numeric PID cannot identify the HTTP peer. Even a successful
+proof on one connection cannot authorize sending a reusable bearer on the next connection after
+port reuse. [[host-lifecycle#Instances and local control]] owns signed control. The installed
+package and `tests/server/instance-control.test.ts` exercise the impostor-listener boundary.
 
-`server/instance-control.mjs` instead authenticates action/payload-bound, expiring requests and
-nonce/instance-bound replies. The Host signs its own current publication, and the token never crosses
-these HTTP paths. [[host-lifecycle]] owns the protocol bounds and pairing/token-output rules.
-Evidence lives in `tests/server/instance-control.test.ts`, the portable lifecycle test and the
-installed-package impostor regression.
+Node's `closeAllConnections()` excludes upgraded sockets. Shutdown sweeps public
+`WebSocketServer.clients` because business subscription sets may already have forgotten
+pre-attach or closing peers. `tests/server/host-shutdown.integration.test.ts` injects closure,
+drain failure and stalled exit through public Node hooks in an owned test Host. See
+[[host-lifecycle#Shutdown]] for exit and acknowledgement rules.
 
-Case-insensitivity is a native filesystem property, not a blanket Windows rule. Root spelling
-aliases require the same live directory identity when canonical strings differ; this does not
-persist dev/inode numbers as cross-restart volume identity. Redirected Windows platform-directory
-exports also retain case-insensitive lookup after copying into a plain object.
+Page restart needs tests against the direct launcher as well as systemd. For source installs,
+Node's `--import tsx` loader keeps the tracked IPC child itself the Host. An extra wrapper can
+hide that ownership. Native source checks preserve an independent terminal across restart, and
+installed-package checks exercise page restart with an idle Pi worker and real daemon I/O.
+[[host-lifecycle#Explicit restart controls]] defines the scopes. Pairing guidance offers installed
+and source commands because the browser's OS does not identify the Host's OS.
 
-## Local Host shutdown authority
+On Linux, read parent and birth from one `/proc` stat. A vanished process can report `ESRCH`
+as well as `ENOENT`. macOS checks descendants at its native `ps` birth precision. On Windows,
+unproven numeric identity leaves [native ConPTY closure](https://learn.microsoft.com/en-us/windows/console/creating-a-pseudoconsole-session#ending-the-pseudoconsole-session)
+available. Exit and timeout cancel PTY-owned metadata subprocesses independently of Host identity
+lookups. Tests include live HUP-resistant and detached children. [[terminal#Process ownership]]
+defines retirement; [terminal maintenance](../../docs/host.md#terminal-service-maintenance) applies
+daemon changes.
 
-`server/instance-state.mjs` provides authenticated atomic request/result mailboxes independently
-of HTTP. This lets a managed Host cleanly stop after its listener closes. [[host-lifecycle]] owns
-identity, expiry, confirmed-exit and legacy-upgrade requirements.
-
-WebSocket close notification is not a drain acknowledgement. Node's `closeAllConnections()`
-excludes upgraded sockets, and a peer can leave `ws` waiting its default 30 seconds. The app sends
-normal close frames and runs runtime teardown first, gives the existing event-loop opportunity, then
-terminates the endpoints' remaining public `WebSocketServer.clients`. Business subscription sets
-cannot authorize this sweep because they may already have forgotten closing/pre-attach peers.
-Wait for the endpoints' actual close callbacks before closing service clients, so terminal detach
-finishes first on every OS. Worker/PTY retirement remains a separate confirmed-exit requirement.
-
-Linux can return `ESRCH` as well as `ENOENT` when a process disappears during a `/proc/<pid>/stat`
-read. Herdr treats either as a missing leader, not numeric PID/group signal authority. Its retained
-kernel-scope identity still authorizes scope cleanup and requires confirmed emptiness; permission
-errors remain failures. See `server/herdr-process-group.ts` and the scope-retirement regressions.
-
-`tests/server/host-shutdown.integration.test.ts` injects HTTP closure, drain failure and a stalled
-process exit into owned source Hosts through a test-only preload using public Node Server hooks.
-It does not add production debug routes or depend on inspector/private runtime APIs. The control
-tests separately cover forgery, expiry, configuration/incarnation mismatch and private bounded I/O.
-
-## Page restart ownership
-
-Portable lifecycle coverage must exercise the page restart route as well as CLI start/status/stop:
-service-only page fixtures can miss a native-launcher capability gap.
-
-Ordinary page restart follows launch ownership. A direct launcher provides
-private Node child IPC; systemd remains authoritative for installed services. The direct launcher
-keeps one instance lock across replacement. It accepts a restart identity only while it still owns
-the lock, and replaces only after the accepted child reports a dedicated clean restart exit.
-Normal stop, failed cleanup, and lost/late acceptance cannot accidentally consume an old intent.
-
-The source Host runs through Node's supported `--import tsx` hook so the tracked IPC child is the
-actual Host, not an extra CLI wrapper. Packaged Hosts use the same protocol without a loader.
-Native-source lifecycle regression checks repeat page restart with a live independent terminal;
-the installed-package verifier restarts a real Host with an idle owned Pi worker. Both belong to the
-existing Linux/macOS/Windows CI paths. Protocol tests also cover missing owners, lock loss, uncertain
-delivery, failed cleanup, and stop after early instance-state removal.
-
-Pairing names the launcher without assuming `./inspire`; local recovery offers both installed-package
-and source-checkout commands that work on all supported platforms. Browser OS is not a reliable proxy
-for the Host OS, so guidance does not choose commands from the browser's platform.
-
-Capabilities must stay scope-specific: ordinary restart does not imply terminal-service replacement.
-Portable terminal-daemon maintenance is separate: `inspire terminal` authenticates and replaces only
-that daemon, without restarting the Host or widening Restart all. Herdr enhancement, managed reverse
-SSH, and scheduled systemd maintenance intentionally remain Linux-only.
-
-## Native PTY cleanup ownership
-
-`server/terminal-pty.ts` observes native exit before callers can request cleanup and captures the
-startup process birth. `server/terminal-process-tree.ts` requires that authority before walking or
-signalling the root tree/group. A root exit or identity change cannot authorize another traversal
-of its old PID/PGID. Retained descendants need matching live identities; Linux parent/birth come
-from the same `/proc` stat, and macOS descendants are checked in batches at the existing `ps` birth
-precision. Incomplete discovery and unconfirmed retirement retain cleanup state instead of declaring
-success after issuing SIGKILL. These are live OS observations, not atomic kernel process handles.
-
-Windows delayed/pending PID identity permits only native ConPTY closure. A completed startup lookup
-cannot regain numeric authority after native close begins; live verification and taskkill share the
-existing control window. Exit/timeout aborts the PTY’s own metadata subprocess, without cancelling
-shared Host self-identity work. Native session closure is meaningful ownership: Windows terminates
-its [attached console clients](https://learn.microsoft.com/en-us/windows/console/creating-a-pseudoconsole-session#ending-the-pseudoconsole-session),
-not an arbitrary process that later reuses a numeric PID.
-
-Root output drain and descendant retirement share the hard-stop allowance. Failed cleanup keeps even
-an exited tab available for explicit retry, and failed daemon shutdown does not release its lifetime
-lease or admit replacement. Tests retain real HUP-resistant and detached-child retirement alongside
-replacement/late-exit contracts. Updating this code requires replacing the terminal runtime; ordinary
-Host restart intentionally preserves it. See [[terminal]] and
-[terminal maintenance](../../docs/host.md#terminal-service-maintenance).
-
-## Private terminal transport
-
-Local pipes are not peer authentication. A Windows pipe name can be occupied before the intended
-daemon starts; Unix paths also need current-user directory ownership. Terminal IPC uses Node's
-certificate-free TLS 1.2 PSK/AES-GCM support, not a custom challenge protocol. No RPC or attachment
-data leaves the client before the peer proves the shared secret. Plaintext replies cannot satisfy
-that handshake. The `.tls-v3` authority is newly generated instead of reusing any plaintext-era key.
-The protocol contract is in [[terminal]]; fake-listener, wrong-key, old-protocol and shutdown cases
-are in `tests/server/terminal-daemon-auth.test.ts`.
-
-Windows pipe identity includes the account and state location. Unix defaults remain stable when
-short enough, and use a short current-user-private location when the selected runtime/tmp root
-exceeds the native address bound. Byte length matters for Unicode roots. Test the actual default
-address, not just a short override. Existing non-private token/socket parents are rejected without
-chmodding them; an override must not change permissions on `/tmp` or another shared/system directory.
-
-A delayed terminal cleanup must not remove its successor's address. Keep lifecycle controls reachable
-while PTYs drain, fence data requests, and close the listener only after cleanup succeeds. Node owns
-the pathname unlink; do not add another after drain. Failed cleanup keeps its failed sessions and
-allows an explicit retry instead of silently discarding them.
-
-The lifecycle-v1 envelope is versioned separately from terminal-data IPC so maintenance can survive
-a data-protocol upgrade. [[terminal]] owns authenticated identity, lifetime leases, confirmed exit
-and service authority.
-
-Detached fallback strips the parent's service notification/socket-activation variables. Otherwise a
-daemon launched from a Host service can inherit the Host's notify socket or mistake that service for
-its own supervisor. systemd launch is bounded and detached spawn errors are observed.
-Installed-package checks exercise real default-daemon I/O, preserve its PTY across ordinary page
-restart, and independently exercise portable status/restart/stop.
+Local IPC address ownership alone cannot authenticate a peer. Terminal IPC uses Node's
+certificate-free TLS 1.2 PSK/AES-GCM support. A pathname socket's final unlink belongs to the
+listener close; a second unlink can remove its successor. Test the default socket address as well
+as overrides, since native limits count bytes. Detached daemon tests exercise inherited systemd
+notification/socket-activation variables. The current protocol and ownership are in
+[[terminal#Process ownership]].
 
 ## Trash volumes and recovery
 
@@ -309,9 +203,9 @@ explains explicit delivered-file removal and mixed-version stores.
 
 WebKit accepts short async reads but rejects a clipboard request first issued six seconds after the
 click. Start one promise-backed ClipboardItem from the gesture, then resolve its declared formats
-after every source and conversion validates. Visible source metadata includes omitted Pending rows;
-older snapshots without it retain the read-first compatibility path. Explicit background-write
-permission allows the existing reverse multi-image history writes. A newer clipboard action retires
+after every source and conversion validates. Pending includes omitted rows in its image total and
+reads full content first if an unavailable deferred upload makes that total unknown. Explicit
+background-write permission allows reverse multi-image history writes. A newer clipboard action retires
 pending reads globally; unmount/session/view/transport retirement retains its own cancellation.
 `tests/browser/clipboard-gesture.spec.ts` exercises real text/PNG writes, delayed last-response Copy,
 and retirement in Chromium, Firefox and WebKit.
@@ -326,35 +220,18 @@ terminal shortcuts use physical key identity rather than assuming Shift preserve
 
 ## Native downloads and filesystem names
 
-WebKit native attachment downloads can omit both Origin and Fetch Metadata. An anchor with
-`rel=noreferrer` then removes the final usable same-origin signal. Resource downloads instead set
-`referrerPolicy=origin`; only when the other proofs are absent may an exact-origin Referer authorize
-the already authenticated, one-use resource/session ticket. Explicit conflicting headers still reject.
-The server keeps its global no-referrer policy, and the download never sends page paths, queries or
-the API bearer. Chromium, Firefox and WebKit regressions verify complete native large-file bytes and
-ticket replay rejection. See [[resource-preview]] and [[host-lifecycle]].
+WebKit can omit both Origin and Fetch Metadata for attachment downloads. An anchor with
+`rel=noreferrer` would also remove the final same-origin signal, so the authenticated native
+download uses an origin-only referrer. Chromium, Firefox and WebKit verify large-file bytes
+and one-use ticket replay rejection. See [[host-lifecycle#Pairing and authenticated ingress]].
 
-Windows drive discovery enumerates assigned drive names without testing every root. A disconnected
-mapping can hang `stat`; root discovery must neither touch it nor gate the current directory listing.
-Actual availability is checked on navigation. Native-hidden entries are filtered before resolving
-symlinks/junctions; otherwise an invisible redirected/offline target can still block Home browsing.
-Explicit show-hidden retains link traversal. Browser paths are opaque Host values, not re-parsed
-using the browser machine's separators.
+Enumerate Windows drive names without statting each root. A disconnected mapping can hang and
+should be touched only on navigation. Filter native-hidden entries before following symlinks and
+junctions, so an invisible redirected target does not block browsing. Show-hidden retains link
+traversal.
 
-Browsers send ordinary multipart filenames as UTF-8; Multer's default legacy charset can corrupt
-non-ASCII names before storage. Uploads explicitly select UTF-8, then keep readable names independent
-of bounded physical cache components. Component budgets cover UTF-8 bytes and HFS+ decomposition,
-retain code-point boundaries and ordinary extensions, and avoid Windows-trimmed trailing characters.
-Versioned ownership validates new names; existing unversioned ownership retains its original exact
-paths rather than renaming historical references. See [[composer]].
-
-Portable daily workflows stay in their semantic browser suites and opt into all engines with
-`@cross-browser`. OS-sensitive font, clipboard, scrolling and window-control fixtures use
-`@platform-ui` for the focused native Chromium matrix. Mock-routing suites block Service Workers so interception is deterministic;
-real PTY, upload and native download suites still exercise their actual transports. Native clipboard
-write observation waits for the original browser call to succeed rather than replacing it with a
-fake implementation. Browser engine coverage is separate from native Windows/macOS filesystem and
-shell verification.
+Multer's default filename charset can corrupt non-ASCII multipart filenames. [[composer]] owns
+UTF-8 upload names, byte budgets for physical cache names and preservation of existing paths.
 
 ## PTY backends and command markers
 
@@ -364,39 +241,20 @@ uses bundled ConPTY (`useConptyDll: true`); the sampled win32-x64 payload is Mic
 `1.25.260303002-preview`. These are prerelease dependencies. The OS backend can deliver OSC markers
 before enclosed text, breaking last-output copy; backend selection therefore affects correctness.
 
-PowerShell integration uses a process-only execution policy so a fresh Windows client's Restricted
-policy does not block the app-owned script. It never changes user/machine policy, and enforced Group
-Policy still wins. Zsh wrappers follow ZDOTDIR changes at every startup stage rather than capturing
-one directory before .zshenv runs; they restore its native declaration for user files and the final
-shell and leave RCS/readonly controls authoritative.
-
-PowerShell emits its execution marker after `PSConsoleHostReadLine` returns the accepted command.
-Wrapping the reader preserves PSReadLine bindings and multiline input. Rebinding Enter would mark
-unfinished input as execution.
-
-Bash ignores rcfile/init-file injection for a genuine login shell, even with noprofile. Replaying
-profiles from a non-login shell cannot restore login_shell or native .bash_logout. Login integration
-therefore uses an inherited first-prompt bootstrap without changing HOME/ENV or feeding stdin.
-User startup can replace/lock PROMPT_COMMAND; marker loss then means ordinary PTY operation, not
-permission to override user initialization. Non-login shells keep native bashrc semantics.
-
-Command labels use the accepted history entry: fc-based relative lookup can select the previous
-line during command substitution. Bash 4.4+ provides `PS0`. Older Bash uses a top-level DEBUG event composed with existing traps;
-standalone subshell-only lists may provide no such event and therefore no copyable output range.
-Bash 5.1+ supports array-valued `PROMPT_COMMAND`; earlier versions need newline-separated shell
-commands while retaining the original exit status.
-
-Close and restart wait for confirmed PTY exit. Windows kill calls take no POSIX signal argument.
-Interactive Bash exposes process-exit behavior that a non-interactive command may miss, so native
-terminal checks need a real interactive shell as well as mocked transport coverage.
+[[terminal#Process ownership]] defines native shell initialization and marker behavior. PowerShell
+uses the accepted command from `PSConsoleHostReadLine`; rebinding Enter can mark unfinished
+multiline input. Zsh must follow ZDOTDIR changes during startup. Bash ignores rcfile injection
+for genuine login shells; a non-login shell replay cannot restore `login_shell` or native logout.
+History-relative `fc` can choose the previous command during substitution. Older Bash DEBUG
+hooks may miss a standalone subshell list, so no command-output range is reported for that case.
+Native retirement tests use interactive shells, where exit behavior can differ from a single
+non-interactive command.
 
 Native test fixtures use `tests/server/fixtures/isolated-environment.ts` to replace Windows
 variables case-insensitively while preserving inherited key spelling. Adding `PATH` beside an erased
 `Path` can hide the intended override because Node deduplicates keys before dropping undefined values.
 
-Wait for lifecycle signals rather than treating a one-second poll as the protocol deadline.
-Loading-state fixtures hold the explicit action, not an assumed ordinal initial request. Native
-clipboard comparisons retain all text/lines while accounting for Windows CRLF.
+Native clipboard comparisons normalize Windows CRLF and preserve the remaining text.
 
 Mixed native font stacks expose box-centering errors that may be invisible with another platform's
 fonts. Prompt navigation aligns text by its shared baseline and centers the neighboring SVG separately;

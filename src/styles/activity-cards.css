@@ -1,28 +1,57 @@
-/* Activity items are disclosure rows, not stacked outer cards. Type/status
-   colors stay on icons; expanded data keeps its local reading surfaces. */
-
-.card {
-  min-width: 0;
-  background: transparent;
-  border: 0;
-  border-radius: var(--radius-control);
-  animation: card-in var(--dur-standard) var(--ease-standard);
+.disclosure-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--disclosure-height, 28px);
+  line-height: var(--leading-ui);
 }
+
+:is(button, summary).disclosure-row {
+  cursor: pointer;
+  border-radius: var(--radius-control);
+  -webkit-tap-highlight-color: transparent;
+}
+
+summary.disclosure-row { list-style: none; }
+summary.disclosure-row::-webkit-details-marker { display: none; }
+
+:is(button, summary).disclosure-row:focus-visible { outline-offset: -2px; }
+
+.activity-surface__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--activity-copy-size, 24px);
+  font-size: var(--text-sm);
+}
+
+.activity-surface__head > svg { flex: none; }
+
+.activity-surface {
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-surface);
+  background: var(--bg-surface);
+}
+
+.activity-copy.icon-button {
+  flex: none;
+  width: var(--activity-copy-size, 24px);
+  height: var(--activity-copy-size, 24px);
+}
+
+@media (pointer: coarse) {
+  :root {
+    --activity-copy-size: 32px;
+    --disclosure-height: 32px;
+  }
+}
+
+.card { min-width: 0; }
 
 .card--thinking .card__icon {
   color: var(--activity-think);
-}
-
-.card--thinking .card__body {
-  border: 0;
-  border-left: 2px solid color-mix(in srgb, var(--activity-think) 45%, transparent);
-  padding-inline: calc(var(--space-5) - 2px) var(--space-5);
-  border-radius: 0 var(--radius-control) var(--radius-control) 0;
-  background: var(--think-tint);
-  box-shadow: none;
-  color: var(--body);
-  font-size: var(--text-reading-small);
-  line-height: var(--leading-reading);
 }
 
 .card--tool .card__icon {
@@ -30,26 +59,18 @@
 }
 
 /* User-issued native shell commands remain readable independently of tools. */
-.shell-execution.card {
-  /* Each section owns its inset; do not add the generic turn's inter-item gap. */
-  gap: 0;
-  background: var(--bg-surface);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-surface);
-  box-shadow: none;
-  overflow: hidden;
+.shell-execution {
+  display: grid;
+  gap: var(--space-2);
 }
-.shell-execution.card--failed .shell-execution__status {
+.shell-execution__output { --reader-max-height: 24rem; }
+.shell-execution__output:not([tabindex]) { --reader-max-height: none; }
+.shell-execution__status[data-error] {
   color: var(--error-ink);
 }
 .shell-execution__header {
-  display: flex;
-  align-items: center;
   flex-wrap: wrap;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
   color: var(--muted);
-  font-size: var(--text-sm);
 }
 
 .shell-execution__status {
@@ -58,126 +79,31 @@
 .shell-execution__context {
   margin-left: auto;
 }
-.shell-execution__copy.icon-button {
-  flex-shrink: 0;
-  width: 24px;
-  height: 24px;
-}
-@media (pointer: coarse) {
-  .shell-execution__copy.icon-button {
-    width: 32px;
-    height: 32px;
-    margin-block: calc(-1 * var(--space-1));
-  }
-}
-
-.shell-execution__command,
-.shell-execution__output {
-  margin: 0;
-  padding: var(--space-2) var(--space-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-reading-small);
-  line-height: var(--leading-mono);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.shell-execution__command {
-  border-top: 1px solid var(--hairline);
-}
-.shell-execution__output {
-  max-height: 24rem;
-  overflow: auto;
-  background: var(--bg-inset);
-}
-
-.shell-execution__note,
-.shell-execution__error {
-  margin: 0;
-  padding: var(--space-2) var(--space-3);
-  font-size: var(--text-sm);
-  overflow-wrap: anywhere;
-}
-.shell-execution__note {
-  color: var(--muted);
-}
-.shell-execution__note .tool-notice__action {
-  min-height: 24px;
-}
-@media (pointer: coarse) {
-  .shell-execution__note .tool-notice__action {
-    min-height: 44px;
-  }
-}
-.shell-execution__error {
-  color: var(--error-ink);
-}
-
-@keyframes card-in {
-  from {
-    opacity: 0;
-    transform: translateY(3px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
 .card__header {
-  --activity-copy-size: 24px;
   /* The full header is clickable without becoming a filled card. */
   -webkit-tap-highlight-color: transparent;
   position: relative;
-  display: flex;
-  align-items: center;
   gap: var(--space-1);
-  width: 100%;
-  min-height: var(--activity-row-h);
-  padding: 2px 4px 2px 0;
-  border-radius: var(--radius-control);
-  font-size: var(--text-sm);
+  /* Apply the same optical outdent within the group's title column. */
+  width: calc(100% + var(--disclosure-outdent));
+  margin-inline-start: calc(-1 * var(--disclosure-outdent));
+  min-height: var(--disclosure-height, 28px);
+  padding: 0 4px 0 0;
   text-align: left;
   color: var(--muted);
   cursor: pointer;
-  transition:
-    color var(--dur-micro) var(--ease-standard),
-    background var(--dur-micro) var(--ease-standard);
-}
-
-@media (hover: hover) {
-  .card__header:has(.card__disclosure:hover) .card__chevron {
-    color: var(--ink);
-  }
-  .card__header:has(.card__disclosure:hover) .card__summary {
-    color: var(--body);
-  }
-}
-
-.card__disclosure:active .card__chevron {
-  color: var(--ink);
 }
 
 .card__disclosure {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   min-width: 0;
-  max-width: min(100%, 32ch);
-  min-height: 24px;
-  display: inline-flex;
-  align-items: center;
+  max-width: 32ch;
   gap: 6px;
   border: 0;
-  border-radius: var(--radius-sm);
   background: transparent;
   padding: 1px 0 1px 4px;
-  line-height: var(--leading-ui);
   color: inherit;
   text-align: left;
-  transition: background var(--dur-micro) var(--ease-standard);
-}
-
-.card__header:has(> .card__copy) .card__disclosure {
-  max-width: min(calc(100% - var(--activity-copy-size) - 12px), 32ch);
 }
 
 .card__disclosure::after {
@@ -187,59 +113,17 @@
   border-radius: var(--radius-control);
 }
 
-.card__disclosure:focus-visible {
-  outline: none;
-  color: var(--ink);
-}
+.card__disclosure:is(:hover, :active, :focus-visible) { color: var(--ink); }
+.card__disclosure:focus-visible { outline: none; }
 
 .card__disclosure:focus-visible::after {
   outline: 2px solid var(--accent-focus);
   outline-offset: -2px;
 }
 
-.card__header :is(a, button, input, select, textarea, [role="button"], [role="link"]):not(.card__disclosure) {
+.card__header :is(a, button):not(.card__disclosure) {
   position: relative;
   z-index: 1;
-}
-
-.card__copy.icon-button {
-  width: var(--activity-copy-size);
-  height: var(--activity-copy-size);
-  flex: 0 0 auto;
-  color: var(--faint);
-  opacity: 0;
-  border-radius: var(--radius-sm);
-  transition:
-    opacity var(--dur-micro) var(--ease-standard),
-    color var(--dur-micro) var(--ease-standard),
-    background var(--dur-micro) var(--ease-standard);
-}
-
-.card__header:hover .card__copy,
-.card__header:has(:focus-visible) .card__copy {
-  opacity: 1;
-}
-
-@media (hover: hover) {
-  .card__copy.icon-button:hover:where(:not(:disabled)) {
-    color: var(--ink);
-    background: var(--bg-inset);
-  }
-}
-
-@media (pointer: coarse) {
-  .card__header {
-    --activity-copy-size: 32px;
-  }
-  .card__disclosure {
-    min-height: 32px;
-  }
-}
-
-@media (hover: none) {
-  .card__copy.icon-button {
-    opacity: 0.75;
-  }
 }
 
 .card__icon {
@@ -254,7 +138,7 @@
   overflow: hidden;
   color: var(--ink);
   font-size: var(--text-sm);
-  font-weight: 600;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -269,14 +153,8 @@
   white-space: nowrap;
 }
 
-.activity-fold .card__label,
-.activity-fold .card__tool-name {
-  color: var(--ink);
-  font-weight: 500;
-}
-
 /* Separate identity/status from its summary without moving adjacent Copy. */
-.card__disclosure + :is(.card__summary, .card__generic-kind) {
+.card__disclosure + .card__summary {
   margin-inline-start: 6px;
 }
 
@@ -290,6 +168,7 @@
   color: var(--muted);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
 }
 
 .card--generic .card__icon {
@@ -303,169 +182,13 @@
   line-height: var(--leading-ui);
 }
 
-.card__generic-kind {
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: min(45%, 48ch);
-  overflow: hidden;
-  color: var(--faint);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  font-weight: 400;
-  line-height: var(--leading-ui);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.card__summary--file {
-  display: block;
-  width: fit-content;
-  border: 0;
-  background: transparent;
-  padding: 0;
-  cursor: pointer;
-  color: var(--accent-deep);
-  text-align: left;
-  text-decoration: underline;
-  text-decoration-style: dotted;
-  text-underline-offset: 2px;
-}
-
-/* Collapsed activity retains chronological position while changing only local
-   flow from vertical cards to a wrapping strip of quiet, inspectable tiles. */
-.activity-strip {
-  --activity-detail-origin: 28px;
-  display: flex;
-  flex-direction: column;
-}
-
-.activity-strip__items {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-}
-
-.activity-strip__item {
-  -webkit-tap-highlight-color: transparent;
-  min-width: 56px;
-  height: var(--activity-row-h);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding-inline: 8px 10px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-control);
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  transition:
-    background var(--dur-micro) var(--ease-standard),
-    border-color var(--dur-micro) var(--ease-standard),
-    box-shadow var(--dur-micro) var(--ease-standard);
-}
-
-@media (hover: hover) {
-  .activity-strip__item:hover {
-    background: var(--bg-inset);
-    color: var(--ink);
-  }
-}
-
-.activity-strip__item:active,
-.activity-strip__item:focus-visible {
-  background: var(--bg-inset);
-  color: var(--ink);
-}
-
-.activity-strip__item--active {
-  background: var(--bg-inset);
-  border-color: var(--line);
-}
-
-/* Identity and outcome remain separate in compact mode too. */
-.activity-strip__item > svg:first-child {
-  color: var(--activity-tool);
-}
-
-.activity-strip__reveal {
-  display: grid;
-  grid-template-rows: 0fr;
-  opacity: 0;
-  transform: translateY(-4px);
-  pointer-events: none;
-  transition:
-    grid-template-rows var(--dur-standard) var(--ease-standard),
-    opacity var(--dur-standard) var(--ease-standard),
-    transform var(--dur-standard) var(--ease-standard);
-}
-
-.activity-strip__reveal--open {
-  grid-template-rows: 1fr;
-  opacity: 1;
-  transform: none;
-  pointer-events: auto;
-}
-
-.activity-strip__reveal-inner {
-  min-height: 0;
-  overflow: hidden;
-}
-
-.activity-strip__detail {
-  margin-top: var(--space-1);
-  transform-origin: var(--activity-detail-origin) top;
-  animation: activity-detail-in var(--dur-standard) var(--ease-standard);
-}
-
-@keyframes activity-detail-in {
-  from {
-    opacity: 0;
-    transform: translateY(-3px);
-    clip-path: inset(0 0 100% 0 round var(--radius-md));
-  }
-  to {
-    opacity: 1;
-    transform: none;
-    clip-path: inset(0 round var(--radius-md));
-  }
-}
-
-/* Dynamic density is a local fade/scale change: Compact cards never fly
-   across the transcript to become Collapsed tiles. */
-.dynamic-activity-batch {
-  display: contents;
-}
-
-.dynamic-activity-batch--collapsing .card--tool {
-  opacity: 0;
-  transform: translateY(-2px);
-  transition:
-    opacity var(--dur-micro) var(--ease-standard),
-    transform var(--dur-micro) var(--ease-standard);
-}
-
-.dynamic-activity-batch--collapsed .activity-strip {
-  animation: dynamic-strip-in var(--dur-standard) var(--ease-standard);
-}
-
-@keyframes dynamic-strip-in {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
 /* Thinking summaries are prose, not machine data. Inline Markdown keeps its
    emphasis and math inside the one-line ellipsis contract. */
 .card__summary--prose {
+  max-width: none;
+  color: var(--body);
   font-family: var(--font-sans);
+  font-size: var(--text-sm);
 }
 
 .card__summary--prose .rich-text {
@@ -480,12 +203,7 @@
   font-size: 1em;
 }
 
-.activity-fold .card__summary--prose {
-  max-width: none;
-  color: var(--body);
-  font-size: var(--text-sm);
-}
-.activity-fold .card__summary--prose :is(strong, b) {
+.card__summary--prose :is(strong, b) {
   font-weight: 400;
 }
 
@@ -499,66 +217,32 @@
   color: var(--faint);
 }
 
-.card__reveal {
-  display: grid;
-  grid-template-rows: 0fr;
-  opacity: 0;
-  transition:
-    grid-template-rows var(--dur-standard) var(--ease-standard),
-    opacity var(--dur-standard) var(--ease-standard);
-}
-
-.card__reveal--open {
-  grid-template-rows: 1fr;
-  opacity: 1;
-}
-
-.card__reveal-inner {
-  min-height: 0;
-  overflow: hidden;
-}
-
 .card__body {
   min-width: 0;
-  margin: var(--space-1) 0 var(--space-2) 24px;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-surface);
-  background: color-mix(in srgb, var(--bg-surface) 75%, var(--bg-activity));
-  box-shadow: none;
-  /* The content starts under the header title: 24px margin + 20px inner inset. */
-  padding: var(--space-2) calc(var(--space-5) - 1px);
+  margin: 0;
+  /* Match the label after the leading chevron and identity icon. */
+  padding: var(--space-1) var(--space-3) var(--space-1) calc(44px - var(--disclosure-outdent));
+  color: var(--body);
   font-size: var(--text-reading-small);
   animation: body-in var(--dur-standard) var(--ease-standard);
 }
-
-/* Only output owns a local surface in the active flow. The shared framed
-   defaults remain available to the preserved legacy presentation. */
-.activity-fold .card__body {
-  margin: 0;
-  /* Match the label after the leading chevron and identity icon. */
-  padding: var(--space-1) var(--space-3) var(--space-1) 44px;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  color: var(--body);
-  box-shadow: none;
-}
-.activity-fold .card--thinking .card__body {
+.card--thinking .card__body {
   padding-top: 0;
+  line-height: var(--leading-reading);
 }
-.activity-fold .card__body .rich-text--thinking {
+.card__body .rich-text--thinking {
   color: inherit;
 }
-.activity-fold .rich-text--thinking > p {
+.card__body .rich-text--thinking > p {
   margin-block: var(--space-1);
 }
-.activity-fold .rich-text--thinking > p:first-child {
+.card__body .rich-text--thinking > p:first-child {
   margin-top: 0;
 }
-.activity-fold .rich-text--thinking > p:last-child {
+.card__body .rich-text--thinking > p:last-child {
   margin-bottom: 0;
 }
-.activity-fold .card__body .rich-text :is(strong, b) {
+.card__body .rich-text :is(strong, b) {
   font-weight: 500;
 }
 
@@ -578,16 +262,10 @@
   transition: transform var(--dur-standard) var(--ease-standard);
 }
 
-.chev--open {
+.chev--open,
+.detail-summary[aria-expanded="true"] > .chev,
+details[open] > .detail-summary > .chev {
   transform: rotate(90deg);
-}
-
-.chev-flip {
-  transition: transform var(--dur-standard) var(--ease-standard);
-}
-
-.chev-flip--open {
-  transform: rotate(180deg);
 }
 
 .card__section-label {
@@ -601,51 +279,6 @@
   margin-top: 0;
 }
 
-.card__mono {
-  margin: 0;
-  font-size: var(--text-reading-small);
-  line-height: var(--leading-mono);
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.card__mono--error {
-  color: var(--error-ink);
-}
-
-/* Unified diffs in tool results: line-level tints derived from the status
-   hues, hunk headers as quiet mono landmarks. */
-.diff {
-  border-radius: var(--radius-xs);
-  overflow: hidden;
-}
-
-.diff__lines {
-  display: block;
-}
-
-.diff__line {
-  display: block;
-  padding: 0 var(--space-2);
-}
-
-.diff__line--add {
-  background: color-mix(in srgb, var(--success) 12%, transparent);
-}
-
-.diff__line--del {
-  background: color-mix(in srgb, var(--error) 11%, transparent);
-}
-
-.diff__line--hunk {
-  color: var(--muted);
-  background: var(--bg-inset);
-}
-
-.diff__line--meta {
-  color: var(--faint);
-}
-
 .card__pending {
   color: var(--muted);
   font-size: var(--text-sm);
@@ -654,8 +287,7 @@
 }
 
 /* Structured and phase layouts already separate status from adjacent details. */
-.tool-presentation > .card__pending,
-.tool-call-result > .card__pending:only-child {
+.tool-presentation > .card__pending {
   padding-block: 0;
 }
 
@@ -665,37 +297,6 @@
   color: var(--accent-deep);
   font-size: var(--text-xs);
   padding: var(--space-1) 0;
-}
-
-.card__file-arg {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-  width: 100%;
-  min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
-  border: 0;
-  background: transparent;
-  padding: var(--space-1) 0;
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  color: var(--accent-deep);
-  text-align: left;
-  cursor: pointer;
-}
-
-.card__file-arg .resource-path {
-  flex: 1 1 auto;
-}
-
-.card__file-arg-key {
-  flex: 0 0 auto;
-  color: var(--muted);
-}
-
-.card__file-arg:hover {
-  text-decoration: underline;
 }
 
 /* Tool presenters keep the shared disclosure shell and replace only its raw
@@ -725,14 +326,15 @@
 /* Preserve short grammar/metadata while long resource paths absorb most of
    the shrink. Every part clips its own contents so no child can paint across
    the next summary segment. */
-.tool-summary__part--resource {
+.tool-summary__part[data-resource] {
   flex: 0 100 auto;
   max-width: none;
 }
 
-.tool-summary__part--subdued {
+.tool-summary__part[data-subdued] {
   flex: 0 0 auto;
   max-width: none;
+  color: var(--faint);
 }
 
 .tool-summary__part > :not(.tool-summary__separator) {
@@ -743,44 +345,37 @@
 }
 
 .tool-summary__separator {
-  flex: 0 0 auto;
+  color: var(--faint);
+  flex: none;
   white-space: pre;
 }
 
-.tool-summary__separator,
-.tool-summary__subdued {
-  color: var(--faint);
-}
-
-.tool-summary__resource,
-.tool-block__path,
-.tool-properties__resource,
-.tool-list__resource {
+.tool-resource {
   min-width: 0;
+  max-width: 100%;
   border: 0;
   background: transparent;
   padding: 0;
   color: var(--accent-deep);
-  font: inherit;
   text-align: left;
-  cursor: pointer;
-}
-
-.tool-summary__resource {
   display: inline-flex;
-  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.activity-fold .tool-summary__resource {
+span.tool-resource { color: var(--muted); }
+
+.activity-fold .card__summary--tool button.tool-resource {
   color: var(--activity-tool);
 }
+
 @media (hover: hover) {
-  .activity-fold .tool-summary__resource:hover {
+  .activity-fold .card__summary--tool button.tool-resource:hover {
     color: var(--ink);
   }
+
+  button.tool-resource:hover { text-decoration: underline; }
 }
 
 .resource-path {
@@ -825,13 +420,6 @@
   max-width: calc(100% - 1ch);
 }
 
-.tool-summary__resource:hover,
-.tool-block__path:hover,
-.tool-properties__resource:hover,
-.tool-list__resource:hover {
-  text-decoration: underline;
-}
-
 .tool-presentation {
   display: flex;
   flex-direction: column;
@@ -860,11 +448,7 @@
   display: inline-flex;
   flex: 1 1 0;
   max-width: 100%;
-  overflow: hidden;
-  color: var(--accent-deep);
   font-family: var(--font-mono);
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .tool-properties dl {
@@ -905,74 +489,47 @@
   font-size: inherit;
 }
 
-.tool-code,
-.tool-terminal,
-.tool-text,
-.codemode-result {
+.activity-reader {
   max-width: 100%;
-  margin: 0;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-xs);
-  background: var(--bg-inset);
-  font-family: var(--font-mono);
-  font-size: var(--text-reading-code);
-  line-height: var(--leading-mono);
-}
-
-.tool-code {
-  --tool-line-number-width: 4.5ch;
-  overflow: auto;
-  white-space: pre;
-}
-
-/* Long tool content stays inspectable without taking over the transcript.
-   The complete rendered content remains locally scrollable. */
-.tool-code,
-.tool-terminal,
-.tool-markdown,
-.tool-presentation .diff,
-.card--tool .card__mono,
-.card--generic .card__mono {
-  max-height: min(32rem, 65vh);
+  max-height: var(--reader-max-height, min(32rem, 65vh));
   overflow: auto;
   overscroll-behavior: contain;
-}
-
-.tool-terminal--live {
-  max-height: min(24rem, 45vh);
-}
-
-/* Local disclosures share the same chevron, baseline and hit-row grammar. */
-.detail-summary {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  min-height: 28px;
-  list-style: none;
-  line-height: var(--leading-ui);
-}
-.detail-summary::-webkit-details-marker {
-  display: none;
-}
-.detail-summary__chevron {
-  flex: 0 0 auto;
-  transition: transform var(--dur-standard) var(--ease-standard);
-}
-details[open] > .detail-summary .detail-summary__chevron {
-  transform: rotate(90deg);
-}
-
-.tool-result-details > summary,
-.tool-call-script > details > summary {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--hairline);
   border-radius: var(--radius-control);
-  -webkit-tap-highlight-color: transparent;
+  background: var(--bg-inset);
+  color: var(--body);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
-.tool-result-details > summary {
-  padding: 4px 0;
+.activity-reader[data-error] {
+  border-color: color-mix(in srgb, var(--error) 28%, var(--hairline));
+  color: var(--error-ink);
+}
+
+.activity-reader:is(.tool-code, .diff) {
+  padding: 0;
+  border-radius: var(--radius-xs);
+  white-space: pre;
+  overflow-wrap: normal;
+}
+
+.tool-terminal--live { --reader-max-height: min(24rem, 45vh); }
+
+.detail-summary {
+  width: fit-content;
   color: var(--muted);
   font-size: var(--text-xs);
-  cursor: pointer;
+}
+
+.detail-summary > .chev {
+  flex: none;
+}
+
+@media (hover: hover) {
+  .detail-summary:hover { color: var(--ink); }
 }
 
 .tool-call-layout {
@@ -980,27 +537,6 @@ details[open] > .detail-summary .detail-summary__chevron {
   flex-direction: column;
   gap: var(--space-2);
   min-width: 0;
-}
-
-.tool-call-result:empty {
-  display: none;
-}
-
-.tool-call-list__heading {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  padding: 4px 0;
-  color: var(--muted);
-  font-size: var(--text-xs);
-}
-
-.tool-call-list__count {
-  font-variant-numeric: tabular-nums;
-}
-
-.tool-call-list__error-count {
-  color: var(--error-ink);
 }
 
 .child-calls {
@@ -1011,59 +547,34 @@ details[open] > .detail-summary .detail-summary__chevron {
 }
 
 .child-call__row {
-  display: flex;
-  align-items: center;
+  width: 100%;
   gap: var(--space-2);
-  min-height: 28px;
   padding: 3px var(--space-1);
-  list-style: none;
   font-size: var(--text-xs);
 }
 
-summary.child-call__row {
-  cursor: pointer;
-  border-radius: var(--radius-sm);
-  -webkit-tap-highlight-color: transparent;
-}
-
 @media (hover: hover) {
-  summary.child-call__row:hover .child-call__name,
-  summary.child-call__row:hover .child-call__chevron {
-    color: var(--ink);
-  }
+  summary.child-call__row:hover { background: var(--bg-inset); }
 }
 
-summary.child-call__row:active .child-call__name,
-summary.child-call__row:active .child-call__chevron {
-  color: var(--ink);
-}
-
-.child-call__row::-webkit-details-marker {
-  display: none;
-}
-
-.child-call__status,
-.child-call__chevron {
-  flex: 0 0 auto;
-  color: var(--muted);
+.child-call__row > .detail-summary__label {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: inherit;
 }
 
 .child-call__status {
   display: inline-flex;
+  flex: none;
+  color: var(--muted);
 }
 
 .activity-fold .child-calls {
   margin-top: 0;
   border-left: 1px solid var(--hairline);
   padding-inline-start: var(--space-2);
-}
-
-.child-call__status--ok {
-  color: var(--success);
-}
-
-.child-call__status--error {
-  color: var(--error);
 }
 
 .child-call__name {
@@ -1085,13 +596,9 @@ summary.child-call__row:active .child-call__chevron {
   color: var(--muted);
 }
 
-.child-call > div.child-call__row {
+.child-call.child-call__row {
   /* Rows without retained detail keep the same name axis. Status follows it. */
   padding-inline-start: 24px;
-}
-
-.child-call[open] .child-call__chevron {
-  transform: rotate(90deg);
 }
 
 .child-call__detail {
@@ -1103,59 +610,7 @@ summary.child-call__row:active .child-call__chevron {
   font-size: var(--text-xs);
 }
 
-@media (pointer: coarse) {
-  .child-call__row,
-  .tool-call-script > details > summary {
-    min-height: 32px;
-  }
-}
-
-.tool-result-details .card__mono,
-.child-call__detail .card__mono {
-  margin-top: var(--space-1);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-control);
-  background: var(--bg-inset);
-}
-
-span.tool-summary__resource,
-span.tool-block__path,
-span.tool-properties__resource,
-span.card__summary--file,
-span.card__file-arg {
-  color: var(--muted);
-  cursor: default;
-}
-
-.tool-code__lines {
-  display: block;
-  width: max-content;
-  min-width: 100%;
-}
-
-.tool-code__line {
-  display: grid;
-  grid-template-columns: var(--tool-line-number-width) minmax(max-content, 1fr);
-  min-height: 20px;
-}
-
-.tool-code__number {
-  position: sticky;
-  left: 0;
-  border-right: 1px solid var(--hairline);
-  background: var(--bg-inset);
-  padding: 0 var(--space-1);
-  color: var(--faint);
-  text-align: right;
-  user-select: none;
-}
-
-.tool-code__line code {
-  padding: 0 var(--space-2);
-  color: var(--body);
-  font: inherit;
-}
+details > .activity-reader { margin-top: var(--space-1); }
 
 .tool-image-block {
   margin: 0;
@@ -1179,82 +634,22 @@ span.card__file-arg {
   object-fit: contain;
 }
 
-.tool-terminal,
-.tool-text {
-  overflow: auto;
-  padding: var(--space-2);
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.codemode-duration {
-  flex-shrink: 0;
-  font-variant-numeric: tabular-nums;
-}
-
-.tool-call-layout--codemode .child-calls {
+.child-calls[data-unbounded] {
   max-height: none;
   overflow: visible;
   overscroll-behavior: auto;
 }
 
 .codemode-result {
-  padding: var(--space-2) var(--space-3);
-  max-height: min(24rem, 40vh);
-  overflow: auto;
-  overscroll-behavior: contain;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-control);
-  background: var(--bg-inset);
+  --reader-max-height: min(24rem, 40vh);
 }
 
-.codemode-result__text {
-  margin: 0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  font: inherit;
-}
-
-.codemode-result > * + * {
-  margin-top: var(--space-3);
-}
-
-.tool-terminal--error,
-.tool-text--error {
-  border-color: color-mix(in srgb, var(--error) 28%, var(--hairline));
-  color: var(--error-ink);
-}
+.codemode-result > .code-view { white-space: inherit; }
+.codemode-result > * + * { margin-top: var(--space-3); }
 
 .tool-markdown {
-  max-width: 100%;
-  overflow: auto;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-xs);
-  background: var(--bg-inset);
+  white-space: normal;
   font-size: var(--text-reading-small);
-}
-
-.tool-markdown--error {
-  border-color: color-mix(in srgb, var(--error) 28%, var(--hairline));
-  color: var(--error-ink);
-}
-
-.tool-presentation .diff {
-  max-width: 100%;
-  border: 1px solid var(--hairline);
-  background: var(--bg-inset);
-  overflow: auto;
-  white-space: pre;
-  word-break: normal;
-}
-
-/* The pre owns scrolling; this inner content plane grows to the longest line
-   while remaining at least viewport-wide, so every row tint spans the same
-   complete horizontal range. */
-.tool-presentation .diff__lines {
-  width: max-content;
-  min-width: 100%;
 }
 
 .tool-list {
@@ -1282,17 +677,10 @@ span.card__file-arg {
 .tool-list li > code,
 .tool-list__resource {
   overflow: hidden;
-  color: var(--body);
   font-family: var(--font-mono);
   font-size: var(--text-reading-code);
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.tool-properties__resource,
-.tool-list__resource {
-  display: inline-flex;
-  max-width: 100%;
 }
 
 .tool-list__detail {
@@ -1357,54 +745,31 @@ span.card__file-arg {
 }
 
 /* Match tints share the longest result row's complete scrollable width. */
-.tool-search-group__line-plane {
-  width: max-content;
-  min-width: 100%;
-}
-
-.tool-search-line {
-  display: grid;
-  grid-template-columns: 4.5ch minmax(max-content, 1fr);
-  min-height: 20px;
+.tool-search-group__lines .code-row {
   color: var(--muted);
-  font-family: var(--font-mono);
-  font-size: var(--text-reading-code);
-  line-height: var(--leading-mono);
 }
 
-.tool-search-line--match {
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
+.tool-search-group__lines .code-row[data-kind="match"] {
+  --code-line-fill: color-mix(in srgb, var(--accent) 8%, var(--bg-inset));
   color: var(--body);
 }
 
-.tool-search-line__number {
-  position: sticky;
-  left: 0;
-  border-right: 1px solid var(--hairline);
-  background: color-mix(in srgb, var(--bg-inset) 96%, transparent);
-  padding: 0 var(--space-1);
-  color: var(--faint);
-  text-align: right;
-  user-select: none;
-}
-
-.tool-search-line code {
-  padding: 0 var(--space-2);
-  font: inherit;
-}
-
 .tool-notice {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0 var(--space-2);
   border-left: 2px solid var(--line-strong);
-  padding: var(--space-1) var(--space-2);
+  padding: 2px var(--space-2);
   color: var(--muted);
   font-size: var(--text-reading-small);
+  overflow-wrap: anywhere;
 }
 
 .tool-notice__action {
   display: inline-flex;
   align-items: center;
-  min-height: 44px;
-  margin-left: var(--space-2);
+  min-height: 24px;
   padding: 0 var(--space-1);
   border: 0;
   background: transparent;
@@ -1413,6 +778,12 @@ span.card__file-arg {
   text-decoration: underline;
   text-underline-offset: 3px;
   cursor: pointer;
+}
+
+@media (pointer: coarse) {
+  .tool-notice__action {
+    min-height: 32px;
+  }
 }
 
 .tool-notice--warning {
@@ -1474,10 +845,28 @@ span.card__file-arg {
   font-weight: 600;
   line-height: 1.3;
   margin: var(--space-6) 0 var(--space-2);
+  /* No heading ends on one stranded word. */
+  text-wrap: balance;
 }
 
 .rich-text p {
   margin: var(--space-2) 0;
+}
+
+/* Prose avoids a lone last word; the browser only rebalances the tail. */
+.rich-text :is(p, li, blockquote) {
+  text-wrap: pretty;
+}
+
+/* Long-form answers and documents separate top-level blocks by about half a
+   line, so consecutive paragraphs read as distinct units. Headings keep their
+   larger lead; bubbles, Thinking and extension text keep the compact rhythm. */
+.rich-text--assistant > :is(p, ul, ol) {
+  margin-block: 0.75em;
+}
+
+.rich-text--assistant > :is(h1, h2, h3, h4, h5, h6) + :is(p, ul, ol) {
+  margin-top: var(--space-2);
 }
 
 .rich-text a {
@@ -1493,7 +882,7 @@ span.card__file-arg {
 .rich-text table {
   border-collapse: collapse;
   margin: var(--space-3) 0;
-  font-size: var(--text-reading-small);
+  font-size: var(--text-reading-table);
   /* Numeric columns compare down the row rule; proportional figures wobble. */
   font-variant-numeric: tabular-nums;
   /* Preserve word-sized column minima; the table owns wide-content scrolling. */
@@ -1521,7 +910,9 @@ span.card__file-arg {
   margin: var(--space-3) 0;
   padding-left: var(--space-3);
   border-left: 2px solid var(--hairline-strong);
-  color: var(--muted);
+  /* A quoted passage is often the evidence; the rule marks it, the ink stays
+     readable. */
+  color: var(--body);
 }
 
 .rich-text hr {
@@ -1544,6 +935,11 @@ span.card__file-arg {
 }
 
 /* Normal flow preserves paragraph margins and nested-list hierarchy. */
+.rich-text .contains-task-list input[type="checkbox"]:checked {
+  border-color: var(--hairline-strong);
+  background: var(--bg-inset);
+}
+
 .rich-text__task-content {
   margin-left: var(--task-indent);
 }
@@ -1558,6 +954,8 @@ span.card__file-arg {
 /* Task markers share the choice skin, but remain normal-weight document
    content rather than faded unavailable form actions. */
 .rich-text .contains-task-list input[type="checkbox"] {
+  /* A task mark in prose is content, not a control: neutral ink, no accent. */
+  color: var(--body);
   width: 13px;
   height: 13px;
   margin: 0 var(--space-2) 0 calc(-13px - var(--space-2));
@@ -1601,94 +999,50 @@ span.card__file-arg {
   background: var(--bg-surface);
 }
 
-:root[data-theme="dark"] .code-block {
-  background: var(--bg-surface);
-}
-
 .code-block__bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 var(--space-3);
-  min-height: 28px;
-  border-bottom: 1px solid var(--line);
+  gap: 2px;
+  padding: var(--space-1) var(--space-2) 0 var(--space-3);
 }
 
 .code-block__lang {
+  margin-inline-end: auto;
   font-family: var(--font-mono);
   font-size: var(--text-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   color: var(--muted);
 }
 
-.code-block__actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.code-block__copy,
-.code-block__terminal {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: 0;
-  background: transparent;
+.code-block__bar > .icon-button {
   color: var(--faint);
-  border-radius: var(--radius-sm);
-  transition:
-    color var(--dur-micro) var(--ease-standard),
-    background var(--dur-micro) var(--ease-standard);
 }
 
-/* The compact bar has no room for an outward focus ring. */
-.code-block__actions > button:focus-visible {
+.code-block__bar > .icon-button:focus-visible {
   outline-offset: -2px;
-}
-
-.code-block__actions > button > svg {
-  flex: 0 0 auto;
-}
-
-@media (hover: hover) {
-  .code-block__copy:hover,
-  .code-block__terminal:hover {
-    color: var(--ink);
-    background: var(--bg-inset);
-  }
-}
-
-.code-block__copy:active,
-.code-block__terminal:active {
-  color: var(--ink);
-  background: var(--bg-inset);
 }
 
 @media (pointer: coarse) {
   .code-block__bar {
-    min-height: 40px;
-    padding-right: var(--space-2);
-  }
-
-  .code-block__actions {
+    --activity-copy-size: 36px;
     gap: var(--space-2);
-  }
-
-  .code-block__copy,
-  .code-block__terminal {
-    width: 36px;
-    height: 36px;
   }
 }
 
 .code-block__pre {
-  margin: 0;
-  padding: var(--space-3);
+  padding: var(--space-1) var(--space-3) var(--space-3);
   overflow-x: auto;
-  font-size: var(--text-reading-code);
-  line-height: var(--leading-mono);
+}
+
+/* Mono changes interface accents only. Keep the existing default syntax colors
+   inside code leaves; their toolbar, gutter and controls retain Mono's UI roles. */
+:root[data-palette="mono"] :is(.hljs, .source-diff .code-row code) {
+  --accent-deep: #8A4605;
+  --muted: #635E56;
+}
+
+:root[data-theme="dark"][data-palette="mono"] :is(.hljs, .source-diff .code-row code) {
+  --accent-deep: #F2B25C;
+  --muted: #968E83;
 }
 
 /* Retain the palette's syntax roles using text-strength semantic colors. */
@@ -1737,30 +1091,46 @@ span.card__file-arg {
   color: var(--activity-success);
 }
 
-/* KaTeX renders with its own fonts; the system only owns spacing. The inner
-   padding keeps tall ascenders clear of the scroll container's clip edge. */
+/* Inline KaTeX keeps its natural baseline and visible script/fraction extent.
+   Its internal zero-width helpers can overhang the intrinsic width, so making
+   every inline expression a scroll container creates false overflow. */
 .rich-text .katex {
   font-size: 1.05em;
 }
 
-/* Inline flex preserves the child's text baseline even when overflow is
-   scrollable; ordinary formulas stay inline, wide ones own their scroll area. */
-.rich-text .inline-math {
-  display: inline-flex;
-  max-width: 100%;
-  overflow-x: auto;
-  overflow-y: hidden;
-  vertical-align: baseline;
-  padding: 2px 0;
-}
-
-.rich-text .inline-math > * {
-  flex: 0 0 auto;
-}
-
+/* Display math owns scrolling only when its complete expression is too wide. */
 .rich-text .katex-display {
   margin: var(--space-3) 0;
   padding: var(--space-1) 2px;
   overflow-x: auto;
   overflow-y: hidden;
+}
+
+.activity-strip__items {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.activity-strip__item {
+  min-width: 56px;
+  min-height: var(--activity-row-h);
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--activity-tool);
+  cursor: pointer;
+}
+
+.activity-strip__item:is(:hover, :focus-visible, [aria-expanded="true"]) {
+  background: var(--bg-inset);
+}
+.activity-strip__item[aria-expanded="true"] { border-color: var(--line); }
+.activity-strip__item[data-failed] { color: var(--danger); }
+.activity-strip__detail { animation: activity-reveal var(--dur-standard) var(--ease-standard); }
+@media (prefers-reduced-motion: reduce) {
+  .activity-strip__detail { animation: none; }
 }

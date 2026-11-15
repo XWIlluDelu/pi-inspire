@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync, writeFileSync } from "node:fs";
 import {
   mkdir,
   mkdtemp,
@@ -10,26 +10,34 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
-import { expect, vi } from "vitest";
+import { vi } from "vitest";
 import { AttachmentStore } from "../../../server/attachments.js";
 import type {
   PiRpcOptions,
   PiRpcProcess,
   PiRpcResponseFence,
 } from "../../../server/pi-rpc.js";
-import { RuntimeController } from "../../../server/runtime.js";
+import {
+  RuntimeController,
+  type RuntimeControllerOptions,
+} from "../../../server/runtime.js";
 import type {
   SessionCatalogLike,
   SessionRecord,
 } from "../../../server/session-catalog.js";
-import type { ActiveSessionSnapshot } from "../../../server/session-preview.js";
+import { SessionProjection } from "../../../server/session-projection.js";
 import {
   decodeBranchBridgeJson,
   encodeBranchBridgeJson,
   PENDING_IMAGE_SUFFIX,
   RETRY_STATE_SUFFIX,
 } from "../../../shared/branch-bridge-protocol.js";
-import { PreviewProjection } from "./preview-projection.js";
+import {
+  CHECKPOINT_CHUNK_CHARS,
+  CHECKPOINT_SUFFIX,
+} from "../../../shared/worker-checkpoint.js";
+import { nativePiWorkspace, stubNativePiEnvironment } from "./native-pi.js";
+import { jsonl, messageEntry } from "./session-jsonl.js";
 
 export class FakeRpc extends EventEmitter {
   readonly commands: Array<Record<string, unknown>> = [];
@@ -39,12 +47,74 @@ export class FakeRpc extends EventEmitter {
   retryReads = 0;
   retryState = true;
   confirmRetryState = true;
-  failPrompts = false;
   readonly responseOverrides = new Map<string, unknown>();
   startupEvent: Record<string, unknown> | null = null;
   startGate: Promise<void> | null = null;
   sessionPath: string | null;
   sessionId: string;
+
+  private checkpointTail: string | null = null;
+  private checkpointSeeded = false;
+
+  isCheckpoint(command: Record<string, unknown>): boolean {
+    return (
+      command.type === "prompt" &&
+      command.message ===
+        `/${this.options.env?.INSPIRE_BRANCH_COMMAND}${CHECKPOINT_SUFFIX}`
+    );
+  }
+
+  publishCheckpoint(
+    entries: readonly Record<string, unknown>[] = [],
+    options: {
+      leaf?: string | null;
+      sealed?: "turn" | "settled" | "idle" | null;
+    } = {},
+  ): void {
+    const statusKey = `${this.options.env?.INSPIRE_BRANCH_STATUS_KEY}${CHECKPOINT_SUFFIX}`;
+    const frame = (statusText: string) =>
+      this.emit("event", {
+        type: "extension_ui_request",
+        method: "setStatus",
+        statusKey,
+        statusText,
+      });
+    const from = this.checkpointTail;
+    const tail =
+      typeof entries.at(-1)?.id === "string"
+        ? (entries.at(-1)!.id as string)
+        : from;
+    frame(
+      JSON.stringify({
+        workerId: this.options.env?.INSPIRE_BRANCH_WORKER_ID,
+        sessionId: this.sessionId,
+        sessionFile: this.sessionPath,
+        contextGeneration: 1,
+        from,
+        tail,
+        leaf: options.leaf === undefined ? tail : options.leaf,
+        run: 0,
+        sealed: options.sealed === undefined ? "idle" : options.sealed,
+        entries: entries.length,
+      }),
+    );
+    for (const entry of entries) {
+      const value = JSON.stringify(entry);
+      for (let i = 0; i < value.length; i += CHECKPOINT_CHUNK_CHARS)
+        frame(
+          (i + CHECKPOINT_CHUNK_CHARS >= value.length ? "!" : "+") +
+            value.slice(i, i + CHECKPOINT_CHUNK_CHARS),
+        );
+    }
+    this.checkpointTail = tail;
+  }
+
+  protected checkpointEntries(): readonly Record<string, unknown>[] {
+    return [];
+  }
+  protected checkpointLeaf(): string | null | undefined {
+    return undefined;
+  }
 
   get available(): boolean {
     return true;
@@ -81,6 +151,23 @@ export class FakeRpc extends EventEmitter {
     _timeout?: number | null,
     fence?: PiRpcResponseFence,
   ): Promise<T> {
+    if (this.isCheckpoint(command)) {
+      const entries = this.checkpointEntries();
+      const after =
+        this.checkpointTail === null
+          ? -1
+          : entries.findIndex((item) => item.id === this.checkpointTail);
+      this.publishCheckpoint(entries.slice(after + 1), {
+        leaf: this.checkpointLeaf(),
+        sealed: null,
+      });
+      return { disposition: "handled" } as T;
+    }
+    if (command.type === "get_entries" && !this.checkpointSeeded) {
+      this.checkpointSeeded = true;
+      this.checkpointTail =
+        typeof command.since === "string" ? command.since : null;
+    }
     if (
       command.type === "prompt" &&
       String(command.message).startsWith(
@@ -124,8 +211,6 @@ export class FakeRpc extends EventEmitter {
       return { disposition: "handled" } as T;
     }
     this.commands.push(command);
-    if (command.type === "prompt" && this.failPrompts)
-      throw new Error("prompt rejected");
     if (
       typeof command.type === "string" &&
       this.responseOverrides.has(command.type)
@@ -198,17 +283,38 @@ export function fixtureCwd(cwd: string): string {
     : cwd;
 }
 
+function previewPath(id: string) {
+  return join(fixtureWorkspace, "previews", `${id}.jsonl`);
+}
+
 export function record(id: string, cwd: string): SessionRecord {
   return {
     id,
     cwd: cwd === "/tmp" ? TEST_CWD : resolve(fixtureCwd(cwd)),
-    path: resolve("/sessions", `${id}.jsonl`),
+    path: previewPath(id),
     source: null,
     created: new Date("2026-07-22T00:00:00Z"),
     modified: new Date("2026-07-22T00:00:00Z"),
     messageCount: 1,
     firstMessage: id,
   };
+}
+
+function fixtureSessionJsonl(
+  session: SessionRecord,
+  entries: readonly object[],
+) {
+  const timestamp = session.created.toISOString();
+  return jsonl(
+    {
+      type: "session",
+      version: 3,
+      id: session.id,
+      cwd: session.cwd,
+      timestamp,
+    },
+    ...entries.map((entry) => ({ timestamp, ...entry })),
+  );
 }
 
 export async function persistedRecord(
@@ -219,24 +325,14 @@ export async function persistedRecord(
   session.path = join(fixtureWorkspace, `${id}.jsonl`);
   await writeFile(
     session.path,
-    `${[
-      {
-        type: "session",
-        version: 3,
-        id,
-        cwd: session.cwd,
-        timestamp: session.created.toISOString(),
-      },
+    fixtureSessionJsonl(session, [
       {
         type: "message",
         id: "u1",
         parentId: null,
-        timestamp: session.created.toISOString(),
         message: { role: "user", content: `persisted:${id}`, timestamp: 1 },
       },
-    ]
-      .map((entry) => JSON.stringify(entry))
-      .join("\n")}\n`,
+    ]),
   );
   const details = await stat(session.path, { bigint: true });
   session.source = {
@@ -249,51 +345,39 @@ export async function persistedRecord(
   return session;
 }
 
-export async function waitForReady(
-  runtime: RuntimeController,
-  sessionId = "a",
-) {
-  const slots = (
-    runtime as unknown as {
-      slots: Map<string, { ready: boolean }>;
-    }
-  ).slots;
-  await vi.waitFor(() => expect(slots.get(sessionId)?.ready).toBe(true));
-}
+/** Request a real worker via a native setting, without adding a conversation turn. */
+export const startWorker = (runtime: RuntimeController, id = "a") =>
+  runtime.setRuntimeSetting(id, {
+    key: "steeringMode",
+    value: "one-at-a-time",
+  });
 
 export async function preview(
   session: SessionRecord,
-): Promise<PreviewProjection> {
-  return new PreviewProjection(session.id, await previewSnapshot(session));
-}
-
-export async function previewSnapshot(
-  session: SessionRecord,
-): Promise<ActiveSessionSnapshot> {
-  return {
-    sessionId: session.id,
-    sessionFile: session.path,
-    sessionName: session.name,
-    cwd: session.cwd,
-    model: { provider: "test", id: "model" },
-    thinkingLevel: "medium",
-    isStreaming: false,
-    isCompacting: false,
-    transcriptPage: {
-      sessionId: session.id,
-      revision: 1,
-      viewId: `view-${session.id}`,
-      composerHistoryVersion: "history-1",
-      messages: [
-        { role: "user", content: `preview:${session.id}`, timestamp: 1 },
-      ],
-      hasOlder: false,
-      olderCursor: null,
+  entries: readonly object[] = [
+    {
+      type: "model_change",
+      id: "m1",
+      parentId: null,
+      provider: "test",
+      modelId: "model",
     },
-    projectionHealth: { status: "ok" },
-    availableModels: [],
-    commands: [],
-  };
+    {
+      type: "thinking_level_change",
+      id: "t1",
+      parentId: "m1",
+      thinkingLevel: "medium",
+    },
+    messageEntry("u1", "t1", {
+      role: "user",
+      content: `preview:${session.id}`,
+      timestamp: 1,
+    }),
+  ],
+): Promise<SessionProjection> {
+  if (session.path === previewPath(session.id) && !existsSync(session.path))
+    writeFileSync(session.path, fixtureSessionJsonl(session, entries));
+  return SessionProjection.open(session);
 }
 
 export function catalog(records: SessionRecord[]): SessionCatalogLike {
@@ -316,6 +400,7 @@ export function catalog(records: SessionRecord[]): SessionCatalogLike {
   };
 }
 
+const runtimes: RuntimeController[] = [];
 const attachments: AttachmentStore[] = [];
 
 export const workspaceDirectories: string[] = [];
@@ -333,28 +418,32 @@ export function trackedAttachmentStore(): AttachmentStore {
   return store;
 }
 
-/** Scheduling tests use an in-memory preview; persistence tests use real JSONL. */
-export function schedulingRuntime({
+export function trackRuntime(runtime: RuntimeController): void {
+  runtimes.push(runtime);
+}
+
+export function fakeRuntime({
   sessions = [record("a", "/tmp")],
+  source = catalog(sessions),
   attachments = trackedAttachmentStore(),
   configure,
+  ...options
 }: {
   sessions?: SessionRecord[];
+  source?: SessionCatalogLike;
   attachments?: AttachmentStore;
   configure?: (worker: FakeRpc) => void;
-} = {}) {
+} & Omit<RuntimeControllerOptions, "createProcess"> = {}) {
   const workers: FakeRpc[] = [];
-  const runtime = new RuntimeController(
-    catalog(sessions),
-    attachments,
-    (options) => {
+  const runtime = new RuntimeController(source, attachments, {
+    ...options,
+    createProcess: (options) => {
       const worker = new FakeRpc(options);
       configure?.(worker);
       workers.push(worker);
       return worker as unknown as PiRpcProcess;
     },
-    preview,
-  );
+  });
   return {
     runtime,
     workers,
@@ -362,6 +451,11 @@ export function schedulingRuntime({
       return workers[0]!;
     },
   };
+}
+
+/** Scheduling tests seed a minimal native session the first time it is opened. */
+export function schedulingRuntime(options?: Parameters<typeof fakeRuntime>[0]) {
+  return fakeRuntime({ openSessionProjection: preview, ...options });
 }
 
 export function deferredSignal(): {
@@ -392,6 +486,7 @@ export async function initializeRuntimeFixture() {
   workspaceDirectories.push(fixtureWorkspace);
   await Promise.all(
     [
+      "previews",
       "project/one",
       "project/two",
       "folder",
@@ -406,11 +501,37 @@ export async function initializeRuntimeFixture() {
   HIDDEN_FOLDER_CWD = fixtureCwd("/folder");
 }
 
-export async function disposeRuntimeFixture() {
-  await Promise.all(attachments.splice(0).map((store) => store.close()));
-  await Promise.all(
-    workspaceDirectories
-      .splice(0)
-      .map((directory) => rm(directory, { recursive: true, force: true })),
+export async function initializeIsolatedRuntimeFixture() {
+  await initializeRuntimeFixture();
+  const pi = await nativePiWorkspace(
+    "pi-",
+    { defaultProjectTrust: "never" },
+    fixtureWorkspace,
   );
+  stubNativePiEnvironment(pi.env);
+}
+
+export async function disposeIsolatedRuntimeFixture() {
+  try {
+    await disposeRuntimeFixture();
+  } finally {
+    vi.unstubAllEnvs();
+  }
+}
+
+export async function disposeRuntimeFixture() {
+  try {
+    const closed = await Promise.allSettled(
+      runtimes.splice(0).map(async (runtime) => runtime.close()),
+    );
+    for (const result of closed)
+      if (result.status === "rejected") throw result.reason;
+  } finally {
+    await Promise.all(attachments.splice(0).map((store) => store.close()));
+    await Promise.all(
+      workspaceDirectories
+        .splice(0)
+        .map((directory) => rm(directory, { recursive: true, force: true })),
+    );
+  }
 }

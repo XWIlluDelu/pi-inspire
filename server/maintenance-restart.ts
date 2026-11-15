@@ -1,18 +1,21 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { lstat, readFile, stat } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { resolvePiInstallationIdentity } from "./pi-installation.js";
 import type { DiagnosticLogger } from "./diagnostics.js";
-import type { MaintenanceRestartTransition, RuntimeLike } from "./runtime.js";
-export type { MaintenanceRestartTransition } from "./runtime.js";
+import { resolvePiInstallationIdentity } from "./pi-installation.js";
+import type {
+  MaintenanceRestartTransition,
+  RuntimeController,
+} from "./runtime.js";
 
 const execFile = promisify(execFileCallback);
 const IDENTITY_COMMAND_TIMEOUT_MS = 5_000;
 
 export type InspireSourceIdentity =
   | { kind: "source"; revision: string | null }
-  | { kind: "package"; version: string | null };
+  | { kind: "package"; version: string | null }
+  | { kind: "unknown" };
 
 interface MaintenanceRestartReady {
   kind: "ready";
@@ -21,12 +24,17 @@ interface MaintenanceRestartReady {
   updates: Array<"inspire" | "pi">;
 }
 
-export type MaintenanceRestartOutcome =
+type MaintenanceRestartOutcome =
   | MaintenanceRestartReady
   | { kind: "skipped"; reason: string };
 
 interface MaintenanceRestartControllerOptions {
-  runtime: RuntimeLike;
+  runtime: Pick<
+    RuntimeController,
+    | "reserveMaintenanceRestart"
+    | "commitMaintenanceRestart"
+    | "releaseMaintenanceRestart"
+  >;
   root: string;
   piVersion: string;
   runningSource: InspireSourceIdentity;
@@ -35,15 +43,24 @@ interface MaintenanceRestartControllerOptions {
   inspectSource?: (root: string) => Promise<InspireSourceIdentity>;
 }
 
-/** A package release does not have a mutable checked-out revision. A source
- * checkout with an unclean worktree remains distinct from one with no git
- * authority, so a Pi update can never deploy local edits by accident. */
+async function hasPath(path: string): Promise<boolean> {
+  try {
+    await lstat(path);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
 async function installedPackageVersion(root: string): Promise<string | null> {
   try {
-    const { version } = JSON.parse(
+    const { name, version } = JSON.parse(
       await readFile(`${root}/package.json`, "utf8"),
-    ) as { version?: unknown };
-    return typeof version === "string" && version ? version : null;
+    ) as { name?: unknown; version?: unknown };
+    return name === "inspire-pi-gui" && typeof version === "string" && version
+      ? version
+      : null;
   } catch {
     return null;
   }
@@ -54,41 +71,52 @@ export async function inspectInspireSource(
 ): Promise<InspireSourceIdentity> {
   const directory = resolve(root);
   try {
-    const [{ stdout: inside }, { stdout: revision }, { stdout: status }] =
-      await Promise.all([
-        execFile(
-          "git",
-          ["-C", directory, "rev-parse", "--is-inside-work-tree"],
-          {
-            encoding: "utf8",
-            timeout: IDENTITY_COMMAND_TIMEOUT_MS,
-          },
-        ),
-        execFile("git", ["-C", directory, "rev-parse", "--verify", "HEAD"], {
-          encoding: "utf8",
-          timeout: IDENTITY_COMMAND_TIMEOUT_MS,
-        }),
-        execFile(
-          "git",
-          ["-C", directory, "status", "--porcelain", "--untracked-files=all"],
-          { encoding: "utf8", timeout: IDENTITY_COMMAND_TIMEOUT_MS },
-        ),
-      ]);
-    if (inside.trim() !== "true")
-      return {
-        kind: "package",
-        version: await installedPackageVersion(directory),
-      };
-    const value = revision.trim();
+    // Match the launcher's compiled-package layout before consulting Git: an
+    // npm installation may live inside an unrelated checkout. A local .git
+    // directory or gitfile still requires source inspection, even without ts.
+    if (
+      !(await hasPath(join(directory, "server", "index.ts"))) &&
+      !(await hasPath(join(directory, ".git")))
+    ) {
+      if (
+        !(await stat(join(directory, "build", "server", "index.js"))).isFile()
+      )
+        return { kind: "unknown" };
+      const version = await installedPackageVersion(directory);
+      return version ? { kind: "package", version } : { kind: "unknown" };
+    }
+    // Await every started command before completing a failed inspection.
+    const [inside, revision, status] = await Promise.allSettled([
+      execFile("git", ["-C", directory, "rev-parse", "--is-inside-work-tree"], {
+        encoding: "utf8",
+        timeout: IDENTITY_COMMAND_TIMEOUT_MS,
+      }),
+      execFile("git", ["-C", directory, "rev-parse", "--verify", "HEAD"], {
+        encoding: "utf8",
+        timeout: IDENTITY_COMMAND_TIMEOUT_MS,
+      }),
+      execFile(
+        "git",
+        ["-C", directory, "status", "--porcelain", "--untracked-files=all"],
+        { encoding: "utf8", timeout: IDENTITY_COMMAND_TIMEOUT_MS },
+      ),
+    ]);
+    if (
+      inside.status === "rejected" ||
+      revision.status === "rejected" ||
+      status.status === "rejected" ||
+      inside.value.stdout.trim() !== "true"
+    )
+      return { kind: "unknown" };
+    const value = revision.value.stdout.trim();
     return {
       kind: "source",
-      revision: status.trim() === "" && value ? value : null,
+      revision: status.value.stdout.trim() === "" && value ? value : null,
     };
   } catch {
-    return {
-      kind: "package",
-      version: await installedPackageVersion(directory),
-    };
+    // Missing Git, unsafe repositories, unreadable/corrupt metadata and command
+    // failures cannot establish package identity or authorize a Pi-only restart.
+    return { kind: "unknown" };
   }
 }
 
@@ -113,14 +141,9 @@ export class MaintenanceRestartController {
   }
 
   async reserve(): Promise<MaintenanceRestartOutcome> {
-    if (
-      !this.options.runtime.reserveMaintenanceRestart ||
-      !this.options.runtime.commitMaintenanceRestart ||
-      !this.options.runtime.releaseMaintenanceRestart
-    )
-      return this.skip("runtime-unsupported");
-
     const source = this.options.runningSource;
+    if (source.kind === "unknown")
+      return this.skip("inspire-identity-unavailable");
     if (source.kind === "source" && source.revision === null)
       return this.skip("inspire-source-not-clean");
 
@@ -139,6 +162,8 @@ export class MaintenanceRestartController {
     } catch {
       return this.skip("inspire-identity-unavailable");
     }
+    if (current.kind === "unknown")
+      return this.skip("inspire-identity-unavailable");
     if (source.kind === "source") {
       if (current.kind !== "source" || current.revision === null)
         return this.skip("inspire-source-not-clean");
@@ -160,21 +185,11 @@ export class MaintenanceRestartController {
   }
 
   commit(leaseId: string): MaintenanceRestartTransition {
-    return (
-      this.options.runtime.commitMaintenanceRestart?.(leaseId) ?? {
-        kind: "skipped",
-        reason: "runtime-unsupported",
-      }
-    );
+    return this.options.runtime.commitMaintenanceRestart(leaseId);
   }
 
   release(leaseId: string): MaintenanceRestartTransition {
-    return (
-      this.options.runtime.releaseMaintenanceRestart?.(leaseId) ?? {
-        kind: "skipped",
-        reason: "runtime-unsupported",
-      }
-    );
+    return this.options.runtime.releaseMaintenanceRestart(leaseId);
   }
 
   private skip(reason: string): MaintenanceRestartOutcome {

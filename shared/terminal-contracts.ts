@@ -1,9 +1,11 @@
+import type { TerminalIntent } from "./terminal-operations.js";
+
 export const MAX_TERMINALS_PER_PROJECT = 32;
 export const MAX_TERMINALS_TOTAL = 128;
 export const MIN_TERMINAL_HISTORY_DAYS = 1;
 export const MAX_TERMINAL_HISTORY_DAYS = 365;
 export const MAX_TERMINAL_TITLE_CHARS = 120;
-export const MAX_TERMINAL_COMMAND_CHARS = 16_384;
+const MAX_TERMINAL_COMMAND_CHARS = 16_384;
 export const MAX_TERMINAL_CWD_CHARS = 4_096;
 export const MAX_TERMINAL_PROFILE_ID_CHARS = 80;
 export const MAX_TERMINAL_INPUT_BYTES = 256 * 1024;
@@ -13,6 +15,38 @@ export const MAX_TERMINAL_COLS = 500;
 export const MIN_TERMINAL_ROWS = 2;
 export const MAX_TERMINAL_ROWS = 300;
 export const INSPIRE_SHELL_OSC = 6973;
+
+export function parseTerminalShellMarker(
+  value: string,
+):
+  | { type: "cwd"; cwd: string }
+  | { type: "command"; command: string }
+  | { type: "complete"; exitCode: number | null }
+  | null {
+  const separator = value.indexOf(";");
+  const phase = separator < 0 ? value : value.slice(0, separator);
+  let payload = separator < 0 ? "" : value.slice(separator + 1);
+  if (phase === "D") {
+    const code = Number(payload);
+    return { type: "complete", exitCode: Number.isInteger(code) ? code : null };
+  }
+  if (phase === "C1" || phase === "P1") {
+    try {
+      payload = decodeURIComponent(payload);
+    } catch {
+      return null;
+    }
+  }
+  if (phase === "P" || phase === "P1") return { type: "cwd", cwd: payload };
+  if (
+    (phase === "C" || phase === "C1") &&
+    payload.length <= MAX_TERMINAL_COMMAND_CHARS &&
+    !/[\u0000\u0007\u001b]/u.test(payload) &&
+    /\S/u.test(payload)
+  )
+    return { type: "command", command: payload };
+  return null;
+}
 
 const TERMINAL_INPUT_FRAME = 1;
 const TERMINAL_OUTPUT_FRAME = 2;
@@ -51,7 +85,6 @@ export interface TerminalDescriptor {
   rows: number;
   resizeRevision: number;
   outputEpoch: string;
-  firstOutputOffset: number;
   nextOutputOffset: number;
   viewerCount: number;
   hasOwner: boolean;
@@ -71,45 +104,18 @@ export interface TerminalServiceSettings {
   historyRetentionDays: number;
 }
 
-export interface TerminalServiceSettingsPatch {
-  persistOutput?: boolean;
-  historyRetentionDays?: number;
-}
-
-/** Identifies one immutable control intent, fenced by the daemon's receipt epoch. */
-export interface TerminalOperationIdentity {
-  id: string;
-  epoch: string;
-}
-
-export type TerminalMutationMethod =
-  | "create"
-  | "rename"
-  | "reorder"
-  | "restart"
-  | "remove"
-  | "updateSettings"
-  | "clearHistory";
-
-export interface TerminalCreateRequest {
-  cwd: string;
-  profileId?: string;
-  cols?: number;
-  rows?: number;
-}
-
-export interface TerminalRenameRequest {
-  title: string | null;
-}
+type TerminalParams<Command extends TerminalIntent["command"]> = Extract<
+  TerminalIntent,
+  { command: Command }
+>["params"];
+export type TerminalServiceSettingsPatch =
+  TerminalParams<"updateSettings">["patch"];
+export type TerminalCreateRequest = TerminalParams<"create">["request"];
+export type TerminalRenameRequest = Pick<TerminalParams<"rename">, "title">;
 
 export interface TerminalRemoveResponse {
   catalogEpoch: string;
   revision: number;
-}
-
-export interface TerminalReorderRequest {
-  cwd: string;
-  terminalIds: string[];
 }
 
 export interface TerminalAttachTicketResponse {
@@ -129,13 +135,6 @@ export interface TerminalAttachRequest {
   ownerToken?: string;
 }
 
-export type TerminalClientControlMessage =
-  | TerminalAttachRequest
-  | { type: "resize"; cols: number; rows: number }
-  | { type: "take_control"; cols: number; rows: number }
-  | { type: "release_control" }
-  | { type: "ping" };
-
 export type TerminalServerControlMessage =
   | {
       type: "attached";
@@ -154,7 +153,7 @@ export type TerminalServerControlMessage =
       hasOwner: boolean;
       ownerToken?: string;
       nextInputSequence?: number;
-      reason: "available" | "claimed" | "released" | "taken" | "reconnected";
+      reason: "available" | "claimed" | "taken" | "reconnected";
     }
   | {
       type: "resized";

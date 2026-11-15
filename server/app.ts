@@ -10,32 +10,29 @@ import express, {
 import multer from "multer";
 import { ZodError, z } from "zod";
 import {
-  COMPOSER_HISTORY_FILE_REFERENCE,
-  COMPOSER_HISTORY_IMAGE_REFERENCE,
-} from "../shared/composer-artifact-references.js";
+  BROWSER_BUILD_HEADER,
+  BROWSER_UPGRADE_REQUIRED,
+} from "../shared/browser-build.mjs";
 import {
   type BootstrapResponse,
-  type GitDiffSide,
   MAX_ATTACHMENT_FILE_BYTES,
   MAX_ATTACHMENTS,
-  MAX_COMPOSER_HISTORY_ENTRIES,
-  MAX_CURATED_SESSION_RESULTS,
-  MAX_PROJECT_FILES,
-  MAX_SESSION_CWD_HYDRATION_CWDS,
-  MAX_SESSION_ID_CHARS,
-  MAX_SESSION_ID_HYDRATION_IDS,
-  MAX_SESSION_LIST_PAGE_SIZE,
-  THINKING_LEVELS,
-  type UploadedAttachment,
+  type SessionDeletionResponse,
 } from "../shared/contracts.js";
 import type { HerdrEnhancementStatus } from "../shared/herdr.js";
-import { HTML_PREVIEW_BYTES } from "../shared/html-preview.js";
+import { historyAddress } from "../shared/history-query.js";
+import { hostEndpoints, sessionIdField } from "../shared/host-endpoints.js";
 import {
-  MAX_RESOURCE_LIST_PAGE_SIZE,
-  MAX_RESOURCE_PROBE_REFERENCES,
-  MAX_RESOURCE_REFERENCE_LENGTH,
-  RESOURCE_LIST_INITIAL_SIZE,
-} from "../shared/resource-references.js";
+  type HostOperationCommand,
+  type HostOperationIdentity,
+  type HostOperationReceipt,
+  type HostOperationResults,
+  hostReceipt,
+  inputOperationEndpoints as inputRoutes,
+  type PendingOperationRequest,
+  promptFingerprintInput,
+} from "../shared/host-operations.js";
+import { restartObservation } from "../shared/host-restart.js";
 import { emptyToolPresentationConfiguration } from "../shared/tool-presentation-config.js";
 import type { AttachmentStore } from "./attachments.js";
 import {
@@ -48,393 +45,69 @@ import {
   socketTicketSchema,
   secretMatches as tokenMatches,
 } from "./browser-auth.js";
+import { currentWebBuild } from "./current-web-build.mjs";
+import { showInFileManager } from "./file-manager.js";
 import { GeneratedExportStore } from "./generated-exports.js";
-import type { GitInspectionLike } from "./git-inspection.js";
+import type { GitInspectionService } from "./git-inspection.js";
 import { listHostDirectories, listHostRoots } from "./host-dirs.js";
-import { HtmlPreviewStore } from "./html-preview.js";
+import { serveHtmlPreview } from "./html-preview.js";
 import { InstanceHttpControl } from "./instance-control.mjs";
 import { type InstanceState, instanceUrl } from "./instance-state.mjs";
-import type {
-  MaintenanceRestartOutcome,
-  MaintenanceRestartTransition,
-} from "./maintenance-restart.js";
-import { modelSwitchThinkingLevel } from "./model-catalog.js";
+import { jsonRoute } from "./json-route.js";
+import type { MaintenanceRestartController } from "./maintenance-restart.js";
+import type { McpConfigService } from "./mcp-config.js";
+import { registerMcpConfigRoutes } from "./mcp-config-routes.js";
+import type { NativeModelCatalog } from "./model-metadata.js";
+import type { ModelSettingsService } from "./model-settings.js";
+import { commonModelOptions } from "./model-settings.js";
+import { registerModelSettingsRoutes } from "./model-settings-routes.js";
+import {
+  HostOperationReceipts,
+  settleOperation,
+} from "./operation-receipts.js";
 import { resolveProjectDirectory } from "./paths.js";
-import { PendingOperationReceipts } from "./pending-operation-receipts.js";
 import { installedPiChangelog } from "./pi-changelog.js";
-import type { PiUpdateCheckerLike } from "./pi-update-checker.js";
 import type { PreferencesStore } from "./preferences.js";
 import {
   invalidateProjectFiles,
   listProjectDirectory,
   searchProjectFiles,
 } from "./project-files.js";
+import type { ProviderAuthService } from "./provider-auth.js";
 import { requestError } from "./request-error.js";
-import { resourceByteRange, sendResourceFile } from "./resource-http.js";
+import { sendResourceBytes, sendResourceFile } from "./resource-http.js";
 import type { ResourceStore } from "./resources.js";
-import type { RuntimeLike } from "./runtime.js";
+import type { RuntimeController } from "./runtime.js";
 import { createRuntimeEventSockets } from "./runtime-event-sockets.js";
 import type { SessionCatalogLike } from "./session-catalog.js";
+import { staticWebAssets } from "./static-web-assets.js";
 import {
   type NotificationPrincipal,
-  pushSubscriptionSchema,
   TaskNotifications,
 } from "./task-notifications.js";
 import { createTerminalGateway } from "./terminal-gateway.js";
-import type { TerminalService } from "./terminal-service.js";
 import type {
-  ToolPresentationConfigLike,
+  TerminalConnection,
+  TerminalService,
+} from "./terminal-service.js";
+import type {
+  ToolPresentationConfigStore,
   ToolPresentationConfigurationState,
 } from "./tool-presentation-config.js";
-import type { UpdateCheckerLike } from "./update-checker.js";
-import {
-  UpdateCoordinator,
-  type UpdateCoordinatorLike,
-} from "./update-coordinator.js";
+import { UpdateCoordinator } from "./update-coordinator.js";
 
-const updateSnoozeSchema = z
-  .object({
-    identity: z
-      .string()
-      .min(1)
-      .max(64 * 1024),
-  })
-  .strict();
-const openSchema = z.object({
-  id: z.string().min(1).max(MAX_SESSION_ID_CHARS),
-});
-const deleteSessionParamsSchema = z.object({
-  sessionId: z.string().min(1).max(MAX_SESSION_ID_CHARS),
-});
-const clearHiddenSchema = z
-  .object({
-    sessionIds: z
-      .array(z.string().min(1).max(MAX_SESSION_ID_CHARS))
-      .min(1)
-      .max(MAX_CURATED_SESSION_RESULTS),
-    projectCwd: z.string().min(1).max(4_096).optional(),
-  })
-  .strict();
-const newSchema = z
-  .object({
-    cwd: z.string().min(1).max(4_096),
-    createDirectory: z.boolean().optional(),
-    name: z.string().max(160).optional(),
-    model: z
-      .object({
-        provider: z.string().min(1).max(120),
-        id: z.string().min(1).max(240),
-      })
-      .strict()
-      .optional(),
-    thinkingLevel: z.enum(THINKING_LEVELS).optional(),
-  })
-  .strict();
-const sessionIdField = z.string().min(1).max(MAX_SESSION_ID_CHARS);
-const promptSchema = z
-  .object({
-    operationId: z.string().uuid(),
-    authorityId: z.string().uuid(),
-    sessionId: sessionIdField,
-    message: z.string().max(500_000),
-    attachmentIds: z.array(z.string().uuid()).max(MAX_ATTACHMENTS).optional(),
-    historyArtifacts: z
-      .object({
-        viewId: z.string().min(1).max(240),
-        incarnation: z.string().min(1).max(240).nullable(),
-        effectiveLeafId: z.string().min(1).max(240).nullable(),
-        imageReferences: z
-          .array(z.string().max(800).regex(COMPOSER_HISTORY_IMAGE_REFERENCE))
-          .max(MAX_ATTACHMENTS),
-        fileReferences: z
-          .array(z.string().max(800).regex(COMPOSER_HISTORY_FILE_REFERENCE))
-          .max(MAX_ATTACHMENTS + MAX_PROJECT_FILES),
-      })
-      .strict()
-      .refine(
-        ({ imageReferences, fileReferences }) =>
-          imageReferences.length + fileReferences.length > 0,
-      )
-      .optional(),
-    projectFiles: z
-      .array(z.string().max(4_096))
-      .max(MAX_PROJECT_FILES)
-      .optional(),
-    behavior: z.enum(["steer", "followUp"]).optional(),
-  })
-  .strict();
-const pendingOperationSchema = z
-  .object({
-    sessionId: sessionIdField,
-    operationId: z.string().uuid(),
-    authorityId: z.string().uuid(),
-  })
-  .strict();
-const nativeCommandSchema = z
-  .object({
-    sessionId: sessionIdField,
-    command: z.enum(["compact", "export", "reload"]),
-    argument: z
-      .string()
-      .max(64 * 1024)
-      .optional(),
-  })
-  .strict();
-const runtimeBooleanSchema = z
-  .object({
-    sessionId: sessionIdField,
-    enabled: z.boolean(),
-  })
-  .strict();
-const runtimeDeliveryModeSchema = z
-  .object({
-    sessionId: sessionIdField,
-    mode: z.enum(["all", "one-at-a-time"]),
-  })
-  .strict();
-const clearPendingSchema = z.object({ sessionId: sessionIdField }).strict();
-const pendingReadSchema = z
-  .object({
-    sessionId: sessionIdField,
-    viewId: z.string().min(1).max(256),
-    revision: z.number().int().nonnegative(),
-    itemId: z.string().min(1).max(128).optional(),
-  })
-  .strict();
-const renameSchema = z.object({
-  sessionId: sessionIdField,
-  name: z.string().max(160),
-});
-const modelSchema = z.object({
-  sessionId: sessionIdField,
-  provider: z.string().min(1).max(120),
-  modelId: z.string().min(1).max(240),
-});
-const thinkingSchema = z.object({
-  sessionId: sessionIdField,
-  level: z.enum(THINKING_LEVELS),
-});
-const extensionSchema = z
-  .object({
-    sessionId: sessionIdField,
-    id: z.string().min(1).max(200),
-  })
-  .passthrough();
-const sessionQuerySchema = z.object({
-  q: z.string().max(200).default(""),
-  offset: z.coerce
-    .number()
-    .int()
-    .min(0)
-    .max(Number.MAX_SAFE_INTEGER)
-    .default(0),
-  limit: z.coerce
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_SESSION_LIST_PAGE_SIZE)
-    .default(40),
-});
-const showHiddenField = z
-  .enum(["0", "1"])
-  .default("0")
-  .transform((value) => value === "1");
-const fileQuerySchema = z.object({
-  showHidden: showHiddenField,
-  sessionId: sessionIdField,
-  q: z.string().max(200).default(""),
-  limit: z.coerce.number().int().min(1).max(100).default(50),
-});
-const newSessionFileQuerySchema = z.object({
-  showHidden: showHiddenField,
-  cwd: z.string().min(1).max(4_096),
-  q: z.string().max(200).default(""),
-  limit: z.coerce.number().int().min(1).max(100).default(50),
-});
-const fileListSchema = z.object({
-  showHidden: showHiddenField,
-  sessionId: sessionIdField,
-  dir: z
-    .string()
-    .max(4_096)
-    .default("")
-    .refine(
-      (value) => !value.split("/").includes(".."),
-      "dir must stay inside the project",
-    ),
-  refresh: z.literal("1").optional(),
-});
-const hostDirsSchema = z.object({
-  showHidden: z
-    .enum(["0", "1"])
-    .default("0")
-    .transform((value) => value === "1"),
-  path: z
-    .string()
-    .min(1)
-    .max(4_096)
-    .refine(isAbsolute, "path must be absolute")
-    .optional(),
-});
-// Hydration unions can also contain selected/live identities, so the browser
-// chunks the deduplicated union to this explicit per-request contract.
-const sessionIdsSchema = z.object({
-  ids: z
-    .array(z.string().min(1).max(MAX_SESSION_ID_CHARS))
-    .max(MAX_SESSION_ID_HYDRATION_IDS),
-});
-const sessionCwdsSchema = z.object({
-  cwds: z
-    .array(z.string().min(1).max(4_096))
-    .max(MAX_SESSION_CWD_HYDRATION_CWDS),
-});
 const attachmentIdSchema = z.string().uuid();
-const resourceListSchema = z
-  .object({
-    sessionId: sessionIdField,
-    cursor: z.string().min(1).max(2_048).optional(),
-    limit: z
-      .number()
-      .int()
-      .min(1)
-      .max(MAX_RESOURCE_LIST_PAGE_SIZE)
-      .default(RESOURCE_LIST_INITIAL_SIZE),
-  })
-  .strict();
-const resourceResolveSchema = z
-  .object({
-    sessionId: sessionIdField,
-    reference: z.string().min(1).max(MAX_RESOURCE_REFERENCE_LENGTH),
-    workspacePath: z.string().min(1).max(8_192).optional(),
-  })
-  .strict();
-const resourceProbeSchema = z.object({
-  sessionId: sessionIdField,
-  references: z
-    .array(z.string().min(1).max(MAX_RESOURCE_REFERENCE_LENGTH))
-    .max(MAX_RESOURCE_PROBE_REFERENCES),
-});
 const resourceContentSchema = z.object({
   sessionId: sessionIdField,
   download: z.literal("1").optional(),
 });
-const transcriptPageSchema = z.object({
-  sessionId: sessionIdField,
-  cursor: z.string().min(1).max(2_048),
+const branchImageSchema = z.strictObject({
+  ...historyAddress,
+  targetId: z.string().min(1).max(200),
+  index: z.coerce.number().int().min(0),
 });
-const assistantTextSchema = z
-  .object({
-    sessionId: sessionIdField,
-    viewId: z.string().min(1).max(512),
-  })
-  .strict();
-const transcriptOlderPageSchema = transcriptPageSchema.extend({
-  deferActivity: z.literal("1").optional(),
-});
-const transcriptUserTurnsSchema = z
-  .object({
-    sessionId: sessionIdField,
-    start: z.coerce
-      .number()
-      .int()
-      .min(0)
-      .max(Number.MAX_SAFE_INTEGER)
-      .optional(),
-  })
-  .strict();
-const transcriptUserTurnSchema = z
-  .object({
-    sessionId: sessionIdField,
-    id: z.string().min(1).max(512),
-    cursor: z.string().min(1).max(2_048).optional(),
-  })
-  .strict();
-const composerHistorySchema = z
-  .object({
-    sessionId: sessionIdField,
-    start: z.coerce
-      .number()
-      .int()
-      .min(0)
-      .max(MAX_COMPOSER_HISTORY_ENTRIES)
-      .optional(),
-  })
-  .strict();
-const branchTreeSchema = z
-  .object({
-    sessionId: sessionIdField,
-    before: z.string().min(1).max(200).optional(),
-    query: z.string().max(2000).optional(),
-    leafId: z.string().min(1).max(200).optional(),
-    parentId: z.string().max(200).optional(),
-  })
-  .strict();
-const branchEntrySchema = z
-  .object({
-    sessionId: sessionIdField,
-    viewId: z.string().min(1).max(200),
-    targetId: z.string().min(1).max(200),
-    offset: z.coerce.number().int().min(0).optional(),
-    format: z.literal("message").optional(),
-  })
-  .strict();
-const branchNavigateSchema = z
-  .object({
-    sessionId: sessionIdField,
-    revision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
-    targetId: z.string().min(1).max(200),
-    mode: z.enum(["switch", "edit"]),
-    summarize: z.boolean().optional(),
-    customInstructions: z.string().max(2000).optional(),
-  })
-  .strict();
-const branchForkSchema = z
-  .object({
-    sessionId: sessionIdField,
-    viewId: z.string().min(1).max(200),
-    targetId: z.string().min(1).max(200),
-  })
-  .strict();
-const branchCloneSchema = branchForkSchema.extend({
-  targetId: z.string().min(1).max(200).nullable(),
-});
-const gitStatusSchema = z.object({ sessionId: sessionIdField });
-const gitDiffSchema = z.object({
-  sessionId: sessionIdField,
-  pathId: z
-    .string()
-    .min(1)
-    .max(16_384)
-    .regex(/^[A-Za-z0-9_-]+$/),
-  side: z.enum(["staged", "unstaged"] satisfies GitDiffSide[]),
-});
-const MAX_PROMPT_OPERATION_RECEIPTS = 65_536;
-const MAX_PROMPT_OPERATION_RESULTS = 2_048;
-const MAX_PROMPT_OPERATION_RESULT_BYTES = 32 * 1024 * 1024;
-const PROMPT_OPERATION_RESULT_TTL_MS = 15 * 60 * 1_000;
 const PROMPT_OBSERVATION_WINDOW_MS = 20_000;
 const WEBSOCKET_HEARTBEAT_INTERVAL_MS = 20_000;
-const ACCESS_COOKIE = "inspire_access";
-/** Legacy names are retained only to expire this Host\'s cookie-era credentials. */
-export function accessCookieName(host: string | undefined): string {
-  const suffix = createHash("sha256")
-    .update(host?.trim().toLowerCase() || "missing-host")
-    .digest("base64url")
-    .slice(0, 12);
-  return `${ACCESS_COOKIE}_${suffix}`;
-}
-
-interface MaintenanceRestartLike {
-  reserve(): Promise<MaintenanceRestartOutcome>;
-  commit(leaseId: string): MaintenanceRestartTransition;
-  release(leaseId: string): MaintenanceRestartTransition;
-}
-
-import type { McpConfigService } from "./mcp-config.js";
-import { registerMcpConfigRoutes } from "./mcp-config-routes.js";
-import type { ModelSettingsService } from "./model-settings.js";
-import { registerModelSettingsRoutes } from "./model-settings-routes.js";
-import type { ProviderAuthService } from "./provider-auth.js";
 
 interface AppDependencies {
   /** An HTTP observation window, never a Pi operation deadline. */
@@ -442,28 +115,27 @@ interface AppDependencies {
   token: string;
   /** Ready, currently owned publication; never a caller-supplied process identity. */
   instanceState?: () => InstanceState | null;
-  runtime: RuntimeLike;
+  runtime: RuntimeController;
   catalog: SessionCatalogLike;
   attachments: AttachmentStore;
   preferences: PreferencesStore;
-  toolPresentations?: ToolPresentationConfigLike;
+  toolPresentations?: Pick<ToolPresentationConfigStore, "inspect">;
   resources: ResourceStore;
-  git: GitInspectionLike;
-  mock: boolean;
+  git: Pick<GitInspectionService, "status" | "diff">;
   version: string;
   piVersion: string;
   /** Authenticated timer coordination; it detects installed updates and asks
    * the runtime for its short idle fence, never restarts systemd itself. */
-  maintenanceRestart?: MaintenanceRestartLike;
+  maintenanceRestart?: Pick<
+    MaintenanceRestartController,
+    "reserve" | "commit" | "release"
+  >;
   hostRestart?: import("./host-restart.js").HostRestartController;
+  activeHerdrMode?: boolean;
   /** Effective-at-startup Herdr state; omitted when this Host has no enhancement integration. */
   getHerdrStatus?: () => Promise<HerdrEnhancementStatus>;
   /** Already-known picker metadata; bootstrap never starts model discovery. */
   bootstrapModels?: () => BootstrapResponse["availableModels"];
-  availableModels?: (
-    refresh?: boolean,
-    cwd?: string,
-  ) => Promise<BootstrapResponse["availableModels"]>;
   modelMetadata?: (
     cwd: string,
     refresh?: boolean,
@@ -472,43 +144,25 @@ interface AppDependencies {
   mcpConfig?: McpConfigService;
   invalidateModels?: () => void;
   providerAuth?: ProviderAuthService;
-  /** Cached public-release observation; failures never block local work. */
-  updateChecker?: UpdateCheckerLike;
-  /** Read-only Pi and configured-package update observation. */
-  piUpdateChecker?: PiUpdateCheckerLike;
   /** Shared update-state owner. Production supplies the persistent deployment
-   * instance; internal hosts may use the in-memory checker fallback. */
-  updateCoordinator?: UpdateCoordinatorLike;
+   * instance; test hosts default to one without checkers. */
+  updateCoordinator?: UpdateCoordinator;
   distDir?: string;
   /** Complete prior asset generations retained for already-open clients. */
-  staticAssetCacheDirs?: readonly string[];
+  developmentBrowserBuild?: string;
+  requireBrowserBuild?: boolean;
   /** The persistent PTY authority. Production connects to the terminal
    * daemon; tests may supply an in-process implementation. */
-  terminal?: TerminalService;
-  /** Authenticated local launcher shutdown. System service policy remains
-   * outside the HTTP server; this callback only closes this exact Host. */
-  shutdown?: () => void | Promise<void>;
+  terminal?: TerminalService | Pick<TerminalConnection, "run" | "close">;
   /** Internal cadence override used by the transport liveness test. */
   websocketHeartbeatIntervalMs?: number;
 }
 
+type AuthenticatedResponse = Response<unknown, { browserId?: string }>;
+
 function bearerToken(request: Request): string | undefined {
   const value = request.get("authorization");
   return value?.startsWith("Bearer ") ? value.slice(7) : undefined;
-}
-
-function expireLegacyCookies(request: Request, response: Response): void {
-  const names = new Set([ACCESS_COOKIE, accessCookieName(request.get("host"))]);
-  for (const segment of (request.get("cookie") ?? "").split(";")) {
-    const name = segment.slice(0, segment.indexOf("=")).trim();
-    if (!names.has(name)) continue;
-    response.clearCookie(name, {
-      httpOnly: true,
-      sameSite: "strict",
-      secure: request.secure,
-      path: "/",
-    });
-  }
 }
 
 function requestOrigin(request: Request): string {
@@ -601,25 +255,9 @@ function apiError(
   // declined to choose between. Neither field contains runtime stderr.
   const matches = (error as { matches?: unknown })?.matches;
   const code = (error as { code?: unknown })?.code;
-  const pendingReceipt = (
-    error as { pendingReceipt?: { operationId: string; outcome: string } }
-  )?.pendingReceipt;
-  if (pendingReceipt)
-    response.set({
-      "X-Inspire-Pending-Operation": pendingReceipt.operationId,
-      "X-Inspire-Pending-Outcome": pendingReceipt.outcome,
-    });
   response.status(status).json({
     error: message,
     ...(typeof code === "string" ? { code } : {}),
-    ...(code === "PROMPT_RECOVERED"
-      ? {
-          recoveryId: (error as { recoveryId?: string }).recoveryId,
-          recoveredAttachments: (
-            error as { recoveredAttachments?: UploadedAttachment[] }
-          ).recoveredAttachments,
-        }
-      : {}),
     ...(Array.isArray(matches) ? { matches } : {}),
     ...((error as { outcomeUnknown?: unknown })?.outcomeUnknown === true
       ? { outcomeUnknown: true }
@@ -636,6 +274,16 @@ export function createInspireServer(deps: AppDependencies): {
   close: () => Promise<void>;
 } {
   const app = express();
+  const distDir = resolve(deps.distDir ?? "dist");
+  const currentBuild = currentWebBuild(distDir);
+  const currentBrowserBuild = async () =>
+    deps.developmentBrowserBuild ?? (await currentBuild())?.buildId;
+  const browserBuildAllowed = async (claimed: string | undefined) => {
+    const expected = await currentBrowserBuild();
+    return expected === undefined
+      ? !deps.requireBrowserBuild
+      : claimed === expected;
+  };
   const generatedExports = new GeneratedExportStore();
   // HTTP production behavior belongs to this application, not NODE_ENV:
   // changing the process environment also changes Pi and every tool it spawns.
@@ -645,104 +293,67 @@ export function createInspireServer(deps: AppDependencies): {
     deps.websocketHeartbeatIntervalMs ?? WEBSOCKET_HEARTBEAT_INTERVAL_MS;
   const updateCoordinator =
     deps.updateCoordinator ??
-    new UpdateCoordinator({
-      currentPiVersion: deps.piVersion,
-      inspireChecker: deps.updateChecker,
-      piChecker: deps.piUpdateChecker,
-    });
-  type PromptOperationResponse = {
-    accepted: true;
-    historyEntry: Awaited<ReturnType<RuntimeLike["prompt"]>>;
-  };
-  interface PromptOperationReceipt {
-    fingerprint: string;
-    promise: Promise<PromptOperationResponse> | null;
-    settledAt: number | null;
-    resultBytes: number;
-  }
-  // A process authority must never forget an operation and later accept the
-  // same ID again. Settled response bodies retire to small fingerprint
-  // tombstones; the bounded process-lifetime map fails closed at its generous
-  // limit instead of silently evicting identities.
-  const pendingOperations = new PendingOperationReceipts();
-  const promptOperations = new Map<string, PromptOperationReceipt>();
-  const retainedPromptOperationResults: PromptOperationReceipt[] = [];
-  let retainedPromptOperationResultBytes = 0;
-  const retirePromptOperationResults = (now = Date.now()): void => {
-    while (retainedPromptOperationResults.length > 0) {
-      const operation = retainedPromptOperationResults[0]!;
-      if (
-        retainedPromptOperationResults.length <= MAX_PROMPT_OPERATION_RESULTS &&
-        retainedPromptOperationResultBytes <=
-          MAX_PROMPT_OPERATION_RESULT_BYTES &&
-        operation.settledAt !== null &&
-        now - operation.settledAt <= PROMPT_OPERATION_RESULT_TTL_MS
-      )
-        break;
-      retainedPromptOperationResults.shift();
-      operation.promise = null;
-      retainedPromptOperationResultBytes -= operation.resultBytes;
-      operation.resultBytes = 0;
-    }
-  };
+    new UpdateCoordinator({ currentPiVersion: deps.piVersion });
+  const inputOperations = new HostOperationReceipts();
 
-  const observePrompt = async (
-    operationId: string,
-    operation: PromptOperationReceipt,
+  async function observeOperation<Command extends HostOperationCommand>(
+    command: Command,
+    identity: HostOperationIdentity,
+    fingerprint: string | undefined,
     response: Response,
-  ) => {
-    const completion = operation.promise;
-    if (!completion)
-      throw requestError(
-        "This Host resolved that prompt operation, but its receipt retired; inspect the conversation before resending",
-        409,
-        { code: "PROMPT_OPERATION_RESULT_RETIRED", outcomeUnknown: true },
-      );
-    const pending = {
-      accepted: false,
-      pending: true,
-      operationId,
-      authorityId,
-    } as const;
+    execute?: () => Promise<HostOperationResults[Command]>,
+  ): Promise<HostOperationReceipt<Command>> {
+    const receipt = hostReceipt(command, identity);
+    const completion = inputOperations.read(
+      command,
+      identity.operationId,
+      fingerprint,
+      execute,
+    );
+    const completed = settleOperation(
+      receipt,
+      () => completion,
+      (error) => error.outcomeUnknown === true,
+    );
     let timer: ReturnType<typeof setTimeout> | undefined;
     let disconnected: (() => void) | undefined;
     try {
-      return await Promise.race([
-        completion,
-        new Promise<typeof pending>((resolve) => {
-          timer = setTimeout(
-            () => resolve(pending),
-            deps.promptObservationWindowMs ?? PROMPT_OBSERVATION_WINDOW_MS,
-          );
-          disconnected = () => resolve(pending);
-          response.once("close", disconnected);
-        }),
-      ]);
-    } catch (error) {
-      // This is the retained operation's own result. Middleware failures and
-      // missing/retired receipt lookups must never acquire this rejection proof.
-      const unknown = Boolean(
-        error &&
-          typeof error === "object" &&
-          "outcomeUnknown" in error &&
-          error.outcomeUnknown === true,
+      const outcome =
+        command !== "prompt"
+          ? await completed
+          : await Promise.race([
+              completed,
+              new Promise<HostOperationReceipt<Command>>((resolve) => {
+                disconnected = () => resolve({ ...receipt, state: "pending" });
+                timer = setTimeout(
+                  disconnected,
+                  deps.promptObservationWindowMs ??
+                    PROMPT_OBSERVATION_WINDOW_MS,
+                );
+                response.once("close", disconnected);
+              }),
+            ]);
+      response.status(
+        outcome.state === "unknown" || outcome.state === "rejected"
+          ? outcome.error.status
+          : command === "prompt"
+            ? 202
+            : 200,
       );
-      response.set({
-        "X-Inspire-Prompt-Operation": operationId,
-        "X-Inspire-Prompt-Outcome": unknown ? "unknown" : "rejected",
-      });
-      throw error;
+      return outcome;
     } finally {
       clearTimeout(timer);
       if (disconnected) response.off("close", disconnected);
     }
-  };
+  }
 
   // The host itself remains loopback-only. A local reverse proxy may report
   // the original HTTPS protocol, but arbitrary network hops never gain trust.
   app.set("trust proxy", "loopback");
   app.disable("x-powered-by");
-  app.use((request, response, next) => {
+  const routes = hostEndpoints;
+
+  app.use((_request, response, next) => {
     response.set({
       "X-Content-Type-Options": "nosniff",
       "Referrer-Policy": "no-referrer",
@@ -764,32 +375,31 @@ export function createInspireServer(deps: AppDependencies): {
         "form-action 'self'",
       ].join("; "),
     });
-    if (request.path.startsWith("/api/"))
-      response.set("Cache-Control", "no-store");
     next();
   });
-  app.use((request, response, next) => {
-    expireLegacyCookies(request, response);
+  app.use("/api", (_request, response, next) => {
+    response.set("Cache-Control", "no-store");
     next();
   });
+  // JSON escapes can take six bytes per character of a valid prompt.
+  app.post(inputRoutes.prompt.path, express.json({ limit: "4mb" }));
   app.use(express.json({ limit: "2mb" }));
   const browserAuth = new BrowserAuth(deps.token);
   const taskNotifications = new TaskNotifications(
     `${deps.preferences.path}.notifications-${browserAuth.notificationNamespace()}.json`,
     undefined,
-    async (id) => {
-      const session = await deps.catalog.get(id, { refresh: !deps.mock });
-      return session && (deps.mock ? { cwd: session.cwd } : session);
-    },
+    (id) => deps.catalog.get(id, { refresh: true }),
   );
-  deps.runtime.on("event", taskNotifications.observe);
+  deps.runtime.on("task_outcome", taskNotifications.observe);
   const launchUrl = (origin: string): string =>
     `${origin}/#inspire-bootstrap=${browserAuth.bootstrap(origin)}`;
-  const htmlPreviews = new HtmlPreviewStore(deps.resources, (sessionId) =>
-    deps.runtime.resourceContext(sessionId),
-  );
   app.get("/html-preview/:id/*path", (request, response) =>
-    htmlPreviews.serve(request, response),
+    serveHtmlPreview(
+      deps.resources,
+      (sessionId) => deps.runtime.resourceContext(sessionId),
+      request,
+      response,
+    ),
   );
 
   app.use("/api", (request, response, next) => {
@@ -835,9 +445,8 @@ export function createInspireServer(deps: AppDependencies): {
   // Neither readiness nor maintenance sends the reusable Host bearer to a
   // possibly replaced listener. Ordinary explicit-bearer APIs remain separate.
   app.post("/api/host/local-control", async (request, response) => {
-    response.set("Cache-Control", "no-store");
     const state = deps.instanceState?.();
-    if (!state || state.token !== deps.token || state.mock !== deps.mock)
+    if (!state || state.token !== deps.token)
       return response
         .status(503)
         .json({ error: "Local control is unavailable" });
@@ -849,7 +458,10 @@ export function createInspireServer(deps: AppDependencies): {
     let result: unknown;
     switch (grant.request.action) {
       case "readiness":
-        result = { appName: "inspire", mock: deps.mock };
+        result = { appName: "inspire" };
+        break;
+      case "restart-mode":
+        result = { includeHerdr: deps.activeHerdrMode === true };
         break;
       case "launch-url": {
         let origin = new URL(instanceUrl(state)).origin;
@@ -920,26 +532,46 @@ export function createInspireServer(deps: AppDependencies): {
 
   app.use("/api", (request, response, next) => {
     const bearer = bearerToken(request);
-    if (
-      !tokenMatches(bearer, deps.token) &&
-      !browserAuth.accepts(bearer, requestOrigin(request))
-    )
+    if (tokenMatches(bearer, deps.token)) return next();
+    const access = browserAuth.verifyAccess(bearer, requestOrigin(request));
+    if (!access)
       return response.status(401).json({ error: "Authentication required" });
+    response.locals.browserId = access.browserId;
     next();
   });
-  app.post("/api/auth/socket-ticket", (request, response) => {
-    const { audience } = socketTicketSchema.parse(request.body);
-    const origin = requestOrigin(request);
-    response.json(
-      browserAuth.ticket(
-        origin,
-        audience,
-        browserAuth.installation(bearerToken(request), origin)?.id,
-      ),
-    );
+  app.use("/api", async (request, response, next) => {
+    // Explicit non-browser bearer clients use their own request contract.
+    if (
+      !response.locals.browserId ||
+      (await browserBuildAllowed(request.get(BROWSER_BUILD_HEADER)))
+    )
+      return next();
+    response
+      .set(BROWSER_BUILD_HEADER, BROWSER_UPGRADE_REQUIRED)
+      .status(409)
+      .json({
+        code: BROWSER_UPGRADE_REQUIRED,
+        error: "Reload this page to use the current Inspire build.",
+      });
   });
+  app.post(
+    "/api/auth/socket-ticket",
+    (request, response: AuthenticatedResponse) => {
+      const { audience } = socketTicketSchema.parse(request.body);
+      response.json(
+        browserAuth.ticket(
+          requestOrigin(request),
+          audience,
+          response.locals.browserId,
+        ),
+      );
+    },
+  );
 
-  const notificationPrincipal = (request: Request): NotificationPrincipal => {
+  const notificationPrincipal = (
+    request: Request,
+    response: AuthenticatedResponse,
+  ): NotificationPrincipal => {
     const origin = requestOrigin(request);
     if (
       !downloadOriginAllowed(origin, {
@@ -949,191 +581,92 @@ export function createInspireServer(deps: AppDependencies): {
       })
     )
       throw requestError("An exact browser origin is required", 403);
-    const principal = browserAuth.installation(bearerToken(request), origin);
-    if (!principal)
+    const id = response.locals.browserId;
+    if (!id)
       throw requestError(
         "Refresh browser authentication to configure notifications",
         401,
       );
-    return principal;
+    return { id, origin };
   };
-  app.get("/api/notifications", async (request, response) =>
-    response.json(
-      await taskNotifications.settings(notificationPrincipal(request)),
+  jsonRoute(app, routes.taskAlertSettings, (_input, request, response) =>
+    taskNotifications.settings(notificationPrincipal(request, response)),
+  );
+  jsonRoute(app, routes.configureTaskAlerts, ({ body }, request, response) =>
+    taskNotifications.configure(
+      notificationPrincipal(request, response),
+      body.mode,
+      body.subscription,
+      body.grouping,
     ),
   );
-  app.put("/api/notifications", async (request, response) => {
-    const principal = notificationPrincipal(request);
-    const body = z
-      .object({
-        mode: z.enum(["off", "title", "desktop"]).optional(),
-        grouping: z.enum(["session", "project"]).optional(),
-        subscription: pushSubscriptionSchema.nullable().optional(),
-      })
-      .strict()
-      .refine(
-        (body) =>
-          body.mode !== undefined ||
-          body.subscription !== undefined ||
-          body.grouping !== undefined,
-        "Provide a mode, subscription or grouping update",
-      )
-      .parse(request.body);
-    response.json(
-      await taskNotifications.configure(
-        principal,
-        body.mode,
-        body.subscription,
-        body.grouping,
-      ),
-    );
-  });
-  app.post("/api/notifications/ack", async (request, response) => {
-    const principal = notificationPrincipal(request);
-    const { id } = z
-      .object({ id: z.string().min(1).max(256) })
-      .strict()
-      .parse(request.body);
-    await taskNotifications.acknowledge(principal, id);
-    response.json({ ok: true });
-  });
-  app.post("/api/notifications/test", async (request, response) =>
-    response.json(await taskNotifications.test(notificationPrincipal(request))),
+  jsonRoute(
+    app,
+    routes.acknowledgeTaskAlert,
+    async ({ body }, request, response) => {
+      await taskNotifications.acknowledge(
+        notificationPrincipal(request, response),
+        body.id,
+      );
+      return { ok: true };
+    },
+  );
+  jsonRoute(app, routes.testTaskAlert, (_input, request, response) =>
+    taskNotifications.test(notificationPrincipal(request, response)),
   );
 
   app.get("/api/health", (_request, response) => {
-    response.json({ appName: "inspire", mock: deps.mock });
+    response.json({ appName: "inspire" });
   });
 
-  app.get("/api/host/herdr", async (_request, response) => {
-    response.set("Cache-Control", "no-store");
+  jsonRoute(app, routes.herdrStatus, async () => {
     if (!deps.getHerdrStatus)
       throw requestError(
         "Herdr enhancement status is unavailable for this Host.",
         503,
       );
-    response.json(await deps.getHerdrStatus());
+    return deps.getHerdrStatus();
   });
 
-  app.get("/api/host/restart", async (_request, response) => {
-    response.set("Cache-Control", "no-store");
-    response.json(
-      deps.hostRestart
-        ? await deps.hostRestart.status()
-        : {
-            hostId: authorityId,
-            available: false,
-            allAvailable: false,
-            allReason:
-              "Restart all requires this Host's installed Linux systemd services.",
-            reason: "Page restart is unavailable for this Host.",
-            operation: null,
-          },
-    );
-  });
-  const hostRestartSchema = z
-    .object({
-      hostId: z.string().uuid(),
-      operationId: z.string().uuid(),
-      scope: z.enum(["host", "all"]),
-      interruptWork: z.literal(true).optional(),
-    })
-    .strict();
-  app.post("/api/host/restart", (request, response) => {
-    const intent = hostRestartSchema.parse(request.body);
+  jsonRoute(app, routes.hostRestartStatus, async () =>
+    deps.hostRestart
+      ? deps.hostRestart.status()
+      : {
+          hostId: authorityId,
+          available: false,
+          allPiAvailable: false,
+          allPiReason: "Restart all is unavailable for this Host.",
+          reason: "Page restart is unavailable for this Host.",
+          operation: null,
+        },
+  );
+  jsonRoute(app, routes.restartHost, ({ body: intent }, _request, response) => {
     if (!deps.hostRestart)
       throw requestError("Page restart is unavailable for this Host.", 503);
-    response.status(202).json(deps.hostRestart.start(intent));
-  });
-
-  app.post("/api/host/shutdown", (_request, response) => {
-    if (!deps.shutdown)
-      return response
-        .status(503)
-        .json({ error: "Host shutdown is unavailable" });
-    response.status(202).end();
-    setImmediate(() => {
-      Promise.resolve(deps.shutdown?.()).catch((error) => {
-        console.error("Authenticated host shutdown failed", error);
-      });
-    });
+    response.status(202);
+    return restartObservation(intent, deps.hostRestart.start(intent));
   });
 
   const terminalGateway = createTerminalGateway(
     app,
     deps.terminal,
     heartbeatIntervalMs,
+    currentBrowserBuild,
   );
 
-  app.get("/api/update", async (request, response) => {
-    const updateStatus = await updateCoordinator.checkInspire(
-      request.query.refresh === "1",
-    );
-    response.json({
-      ...(updateStatus.inspireUpdateCheck ?? { kind: "unavailable" }),
-      updateStatus,
-    });
-  });
+  jsonRoute(app, routes.checkUpdates, ({ query: { kind, refresh } }) =>
+    kind === "inspire"
+      ? updateCoordinator.checkInspire(refresh === "1")
+      : updateCoordinator.checkPi(refresh === "1"),
+  );
+  jsonRoute(app, routes.snoozeUpdate, ({ body }) =>
+    updateCoordinator.dismiss(body.identity),
+  );
 
-  app.get("/api/pi-update", async (request, response) => {
-    const updateStatus = await updateCoordinator.checkPi(
-      request.query.refresh === "1",
-    );
-    response.json({
-      ...(updateStatus.piUpdateCheck ?? {
-        currentVersion: deps.piVersion,
-        pi: { kind: "unavailable" },
-        extensions: { kind: "unavailable" },
-      }),
-      updateStatus,
-    });
-  });
-
-  app.post("/api/update/snooze", async (request, response) => {
-    const { identity } = updateSnoozeSchema.parse(request.body);
-    response.json(await updateCoordinator.dismiss(identity));
-  });
-
-  /** Prepare alone never authorizes restart. The unique owner must commit after
-   * service inspection, and release only when restart definitely was not issued. */
-  app.post("/api/maintenance/restart", async (_request, response) => {
-    response.json(
-      deps.maintenanceRestart
-        ? await deps.maintenanceRestart.reserve()
-        : { kind: "skipped", reason: "runtime-unsupported" },
-    );
-  });
-
-  app.post("/api/maintenance/restart/commit", (request, response) => {
-    const { leaseId } = maintenanceLeaseSchema.parse(request.body);
-    response.json(
-      deps.maintenanceRestart?.commit(leaseId) ?? {
-        kind: "skipped",
-        reason: "runtime-unsupported",
-      },
-    );
-  });
-  app.post("/api/maintenance/restart/release", (request, response) => {
-    const { leaseId } = maintenanceLeaseSchema.parse(request.body);
-    response.json(
-      deps.maintenanceRestart?.release(leaseId) ?? {
-        kind: "skipped",
-        reason: "runtime-unsupported",
-      },
-    );
-  });
-
-  const requestedDetail = (value: unknown): string | null | undefined =>
-    value === undefined
-      ? undefined
-      : value === ""
-        ? null
-        : sessionIdField.parse(value);
-
-  app.get("/api/bootstrap", async (request, response) => {
+  jsonRoute(app, routes.bootstrap, async (_input, _request, response) => {
     const startedAt = performance.now();
     const preferenceRead = deps.preferences.inspect();
-    const [preferenceState, toolPresentationState, updateStatus, snapshot] =
+    const [preferenceState, toolPresentationState, updateStatus] =
       await Promise.all([
         preferenceRead,
         preferenceRead.then(({ preferences }) =>
@@ -1144,20 +677,16 @@ export function createInspireServer(deps: AppDependencies): {
               }),
         ),
         updateCoordinator.status(),
-        deps.runtime.snapshot(requestedDetail(request.query.detail)),
       ]);
-    const encodedSnapshot = JSON.stringify(snapshot);
     const body: BootstrapResponse = {
       appName: "inspire",
       authorityId,
-      snapshotDigest: createHash("sha256")
-        .update(encodedSnapshot)
-        .digest("hex"),
+      startupSessionId: deps.runtime.startupSessionHint,
       version: deps.version,
       piVersion: deps.piVersion,
-      mock: deps.mock,
       updateStatus,
       preferences: preferenceState.preferences,
+      preferenceRevision: preferenceState.revision,
       ...(preferenceState.warning
         ? { preferencesWarning: preferenceState.warning }
         : {}),
@@ -1169,212 +698,140 @@ export function createInspireServer(deps: AppDependencies): {
         ? { toolPresentationsWarning: toolPresentationState.warning }
         : {}),
       availableModels: deps.bootstrapModels?.() ?? [],
-      snapshot,
     };
     response.set(
       "Server-Timing",
       `inspire-bootstrap;dur=${(performance.now() - startedAt).toFixed(1)}`,
     );
-    response.json(body);
+    return body;
   });
 
-  app.get("/api/sessions", async (request, response) => {
-    const { q, offset, limit } = sessionQuerySchema.parse(request.query);
-    const observer = new AbortController();
-    const cancel = () => observer.abort();
-    response.once("close", cancel);
-    try {
-      const page = await deps.catalog.list({
-        query: q,
-        offset,
-        limit,
-        signal: observer.signal,
-      });
-      if (!observer.signal.aborted) response.json(page);
-    } catch (error) {
-      if (!observer.signal.aborted) throw error;
-    } finally {
-      response.off("close", cancel);
-    }
-  });
-  app.post("/api/sessions/refresh", async (_request, response) => {
+  jsonRoute(
+    app,
+    routes.sessions,
+    ({ query: { q, offset, limit } }, request, response) =>
+      withRequestSignal(request, response, (signal) =>
+        deps.catalog.list({ query: q, offset, limit, signal }),
+      ),
+  );
+  jsonRoute(app, routes.refreshSessions, async () => {
     await deps.catalog.refresh(true);
-    response.json({ ok: true });
+    return { ok: true };
   });
-  app.post("/api/sessions/by-id", async (request, response) => {
-    const { ids } = sessionIdsSchema.parse(request.body);
-    response.json({ sessions: await deps.catalog.listByIds(ids) });
-  });
-  app.post("/api/sessions/by-cwd", async (request, response) => {
-    const { cwds } = sessionCwdsSchema.parse(request.body);
-    response.json({ sessions: await deps.catalog.listByCwds(cwds) });
-  });
-  app.post("/api/sessions/open", async (request, response) => {
-    const { id } = openSchema.parse(request.body);
-    const snapshot = await deps.runtime.openSession(id);
-    response.json({
-      ...snapshot,
-      authorityId,
-      snapshotDigest: createHash("sha256")
-        .update(JSON.stringify(snapshot))
-        .digest("hex"),
-    });
-  });
-  app.post("/api/sessions/deselect", async (_request, response) => {
-    response.json(await deps.runtime.deselectSession());
-  });
-  app.post("/api/sessions/new", async (request, response) => {
-    const { cwd, ...options } = newSchema.parse(request.body);
-    response.json(await deps.runtime.newSession(cwd, options));
-  });
+  jsonRoute(app, routes.sessionsByIds, async ({ body }) => ({
+    sessions: await deps.catalog.listByIds(body.ids),
+  }));
+  jsonRoute(app, routes.sessionsByCwds, async ({ body }) => ({
+    sessions: await deps.catalog.listByCwds(body.cwds),
+  }));
+  jsonRoute(app, routes.openSession, ({ body }) =>
+    deps.runtime.openSession(body.id),
+  );
+  jsonRoute(app, routes.deselectSession, () => deps.runtime.deselectSession());
+  jsonRoute(app, routes.newSession, ({ body: { cwd, ...options } }) =>
+    deps.runtime.newSession(cwd, options),
+  );
   registerModelSettingsRoutes(app, deps);
   registerMcpConfigRoutes(app, deps);
-  app.get("/api/models", async (request, response) => {
-    response.setHeader("Cache-Control", "no-store");
-    const {
-      sessionId,
-      cwd: requestedCwd,
-      inherit,
-    } = z
-      .object({
-        sessionId: sessionIdField.optional(),
-        cwd: z.string().min(1).max(4_096).optional(),
-        inherit: z.literal("1").optional(),
-      })
-      .parse(request.query);
-    const cwd = sessionId
-      ? deps.runtime.sessionCwd(sessionId)
-      : requestedCwd
+  jsonRoute(
+    app,
+    routes.refreshModels,
+    async ({ query: { sessionId, cwd: requestedCwd, inherit } }) => {
+      const cwd = requestedCwd
         ? await resolveProjectDirectory(requestedCwd)
         : process.cwd();
-    const result = sessionId
-      ? await deps.runtime.refreshModels(sessionId, inherit === "1")
-      : deps.modelMetadata
-        ? await deps.modelMetadata(cwd!, true)
-        : { models: (await deps.availableModels?.(true, cwd!)) ?? [] };
-    const catalogCwd = sessionId ? deps.runtime.sessionCwd(sessionId) : cwd;
-    const commonModels =
-      deps.modelSettings && catalogCwd
-        ? (await deps.modelSettings.read(catalogCwd, result.models))
-            .commonModels
-        : [];
-    response.json({
-      models: result.models,
-      ...("commands" in result ? { commands: result.commands } : {}),
-      ...("defaults" in result ? { defaults: result.defaults } : {}),
-      ...("selection" in result ? { selection: result.selection } : {}),
-      ...("warning" in result && result.warning
-        ? { warning: result.warning }
-        : {}),
-      commonModels,
-    });
+      const result: NativeModelCatalog = sessionId
+        ? await deps.runtime.refreshModels(sessionId, inherit === "1")
+        : ((await deps.modelMetadata?.(cwd, true)) ?? { models: [] });
+      const { models, commands, defaults, selection, warning } = result;
+      const catalogCwd = sessionId ? deps.runtime.sessionCwd(sessionId) : cwd;
+      const preferences =
+        result.enabledModelPatterns === undefined && catalogCwd && models.length
+          ? await deps.modelSettings?.readCatalogPreferences(catalogCwd)
+          : undefined;
+      return {
+        models,
+        commands,
+        defaults,
+        selection,
+        warning,
+        thinkingPreferences:
+          result.thinkingPreferences ?? preferences?.thinkingPreferences,
+        commonModels: await commonModelOptions(
+          result.enabledModelPatterns ??
+            preferences?.enabledModelPatterns ??
+            [],
+          models,
+        ),
+      };
+    },
+  );
+  jsonRoute(
+    app,
+    routes.searchNewSessionFiles,
+    async ({ query: { cwd, q, limit, showHidden } }) => {
+      const root = await resolveProjectDirectory(cwd);
+      return {
+        cwd: root,
+        ...(await searchProjectFiles(root, q, limit, showHidden)),
+      };
+    },
+  );
+  jsonRoute(app, routes.renameSession, async ({ body }) => {
+    await deps.runtime.rename(body.sessionId, body.name);
+    return { ok: true };
   });
-  app.get("/api/new-session/thinking", async (request, response) => {
-    response.setHeader("Cache-Control", "no-store");
-    const query = z
-      .object({
-        cwd: z.string().min(1).max(4_096),
-        provider: z.string().min(1).max(256),
-        modelId: z.string().min(1).max(512),
-        current: z.enum(THINKING_LEVELS),
-      })
-      .parse(request.query);
-    const cwd = await resolveProjectDirectory(query.cwd);
-    response.json({
-      level: modelSwitchThinkingLevel(
-        cwd,
-        query.provider,
-        query.modelId,
-        query.current,
-      ),
-    });
-  });
-  app.get("/api/new-session/files", async (request, response) => {
-    const { cwd, q, limit, showHidden } = newSessionFileQuerySchema.parse(
-      request.query,
-    );
-    const root = await resolveProjectDirectory(cwd);
-    response.json({
-      cwd: root,
-      ...(await searchProjectFiles(root, q, limit, showHidden)),
-    });
-  });
-  app.post("/api/sessions/rename", async (request, response) => {
-    const { sessionId, name } = renameSchema.parse(request.body);
-    await deps.runtime.rename(sessionId, name);
-    response.json({ ok: true });
-  });
-  app.delete("/api/sessions/:sessionId", async (request, response) => {
-    const { sessionId } = deleteSessionParamsSchema.parse(request.params);
-    const result = await deps.runtime.deleteSession(sessionId);
-    deps.resources.forgetSession(sessionId);
-    try {
-      const preferences = await deps.preferences.removeSession(sessionId);
-      response.json({ ...result, preferences });
-    } catch (error) {
-      // The destructive result is already known. Never turn a metadata-write
-      // failure into a retryable DELETE whose second execution is ambiguous.
-      console.error(
-        `[session ${sessionId}] navigation metadata cleanup failed`,
-        error,
-      );
-      response.json({ ...result, preferenceCleanupFailed: true });
-    }
-  });
-  app.post("/api/sessions/clear-hidden", async (request, response) => {
-    const { sessionIds, projectCwd } = clearHiddenSchema.parse(request.body);
-    const current = await deps.preferences.inspect();
-    if (
-      projectCwd !== undefined &&
-      !current.preferences.hiddenProjectCwds.includes(projectCwd)
-    ) {
-      return response.status(409).json({
-        error: "The folder is no longer hidden; review it before deleting",
-        code: "HIDDEN_SELECTION_CHANGED",
-      });
-    }
-    // The optional scope is an existing Hidden folder, never an arbitrary cwd
-    // or a client-supplied subset of the catalog. Runtime validates every id.
-    const reviewedHiddenSessionIds =
-      projectCwd === undefined ? current.preferences.hiddenSessionIds : [];
-    const reviewedHiddenProjectCwds =
-      projectCwd === undefined
-        ? current.preferences.hiddenProjectCwds
-        : [projectCwd];
-    if (
-      reviewedHiddenSessionIds.length === 0 &&
-      reviewedHiddenProjectCwds.length === 0
-    ) {
-      return response.status(409).json({
-        error: "Hidden must remain non-empty before it can be cleared",
-      });
-    }
-    const result = await deps.runtime.clearHiddenSessions(
-      sessionIds,
-      reviewedHiddenSessionIds,
-      reviewedHiddenProjectCwds,
-    );
-    for (const session of result.deleted)
-      deps.resources.forgetSession(session.sessionId);
-    if (result.deleted.length === 0) return response.json(result);
-    try {
-      const preferences = await deps.preferences.removeClearedHidden(
-        result.deleted.map((session) => session.sessionId),
-        reviewedHiddenSessionIds,
-        reviewedHiddenProjectCwds,
-        !result.failure,
-      );
-      response.json({ ...result, preferences });
-    } catch (error) {
-      // Earlier files are already in Trash (or permanently removed). Return
-      // that committed subset and never turn it into a retryable batch.
-      console.error(
-        `[Hidden] navigation metadata cleanup failed after deleting ${result.deleted.length} sessions`,
-        error,
-      );
-      response.json({ ...result, preferenceCleanupFailed: true });
-    }
-  });
+  jsonRoute(
+    app,
+    routes.deleteSessions,
+    async ({ body }): Promise<SessionDeletionResponse> => {
+      const { preferences, revision } = await deps.preferences.inspect();
+      const projectCwd = body.scope === "hidden" ? body.projectCwd : undefined;
+      if (
+        projectCwd !== undefined &&
+        !preferences.hiddenProjectCwds.includes(projectCwd)
+      )
+        throw requestError(
+          "The folder is no longer hidden; review it before deleting",
+          409,
+          {
+            code: "HIDDEN_SELECTION_CHANGED",
+          },
+        );
+      const curation =
+        projectCwd === undefined
+          ? preferences
+          : { hiddenSessionIds: [], hiddenProjectCwds: [projectCwd] };
+      const result = await deps.runtime.deleteSessions(body, curation);
+      const deletedIds = result.deleted.map(({ sessionId }) => sessionId);
+      for (const id of deletedIds) deps.resources.forgetSession(id);
+      try {
+        const publication = deletedIds.length
+          ? await deps.preferences.removeDeletedSessions(
+              deletedIds,
+              body.scope === "hidden" && !result.failure ? curation : undefined,
+            )
+          : { preferences, revision };
+        return {
+          ...result,
+          navigation: { kind: "confirmed", authorityId, ...publication },
+        };
+      } catch (error) {
+        console.error(
+          "[session deletion] navigation metadata cleanup failed",
+          error,
+        );
+        return {
+          ...result,
+          navigation: {
+            kind: "unavailable",
+            reason:
+              "Deletion completed, but its navigation metadata could not be saved",
+          },
+        };
+      }
+    },
+  );
 
   const upload = multer({
     defParamCharset: "utf8",
@@ -1399,20 +856,14 @@ export function createInspireServer(deps: AppDependencies): {
     const image = await deps.attachments.imagePreview(
       attachmentIdSchema.parse(request.params.id),
     );
-    response.setHeader("Cache-Control", "no-store");
-    response.setHeader("X-Content-Type-Options", "nosniff");
     response.type(image.mimeType).send(image.bytes);
   });
-  app.delete("/api/attachments/:id", async (request, response) => {
-    await deps.attachments.remove(attachmentIdSchema.parse(request.params.id));
-    response.json({ ok: true });
+  jsonRoute(app, routes.deleteAttachment, async ({ params: { id } }) => {
+    await deps.attachments.remove(id);
+    return { ok: true };
   });
 
-  app.post("/api/prompt", async (request, response) => {
-    // Lets the browser distinguish a definitive Host refusal from an
-    // intermediary 5xx whose delivery outcome remains unknown.
-    response.set("X-Inspire-Authority", authorityId);
-    const prompt = promptSchema.parse(request.body);
+  jsonRoute(app, inputRoutes.prompt, ({ body: prompt }, _request, response) => {
     if (prompt.authorityId !== authorityId)
       throw requestError(
         "The Host restarted before this prompt delivery could be confirmed",
@@ -1420,134 +871,86 @@ export function createInspireServer(deps: AppDependencies): {
         { code: "HOST_AUTHORITY_CHANGED" },
       );
 
-    retirePromptOperationResults();
     const fingerprint = createHash("sha256")
-      .update(JSON.stringify(prompt))
+      .update(promptFingerprintInput(prompt))
       .digest("hex");
-    let operation = promptOperations.get(prompt.operationId);
-    if (operation && operation.fingerprint !== fingerprint)
-      throw requestError(
-        "That prompt operation ID was reused with different content",
-        409,
-        { code: "PROMPT_OPERATION_MISMATCH" },
-      );
-    if (operation && !operation.promise)
-      throw requestError(
-        "This Host already resolved that prompt operation, but its response receipt has retired; inspect the conversation before resending",
-        409,
-        { code: "PROMPT_OPERATION_RESULT_RETIRED", outcomeUnknown: true },
-      );
-    if (!operation) {
-      if (promptOperations.size >= MAX_PROMPT_OPERATION_RECEIPTS)
-        throw requestError(
-          "This Host has reached its process-lifetime prompt receipt limit",
-          503,
-          { code: "PROMPT_OPERATION_CAPACITY" },
-        );
-      const receipt: PromptOperationReceipt = {
-        fingerprint,
-        promise: null,
-        settledAt: null,
-        resultBytes: 0,
-      };
-      const {
-        operationId: _operationId,
-        authorityId: _authorityId,
-        ...request
-      } = prompt;
-      const promise = deps.runtime.prompt(request).then((historyEntry) => {
-        // This runs only for the first successful acceptance of an operation;
-        // response retries reuse the same receipt without retriggering checks.
+    return observeOperation(
+      "prompt",
+      prompt,
+      fingerprint,
+      response,
+      async () => {
+        const {
+          operationId: _operationId,
+          authorityId: _authorityId,
+          ...input
+        } = prompt;
+        await deps.runtime.prompt(input);
         void updateCoordinator.promptAccepted();
-        return { accepted: true as const, historyEntry };
-      });
-      receipt.promise = promise;
-      void promise.then(
-        (result) => {
-          receipt.settledAt = Date.now();
-          receipt.resultBytes = Buffer.byteLength(JSON.stringify(result));
-          retainedPromptOperationResultBytes += receipt.resultBytes;
-          retainedPromptOperationResults.push(receipt);
-          retirePromptOperationResults(receipt.settledAt);
-        },
-        () => {
-          receipt.settledAt = Date.now();
-          retainedPromptOperationResults.push(receipt);
-          retirePromptOperationResults(receipt.settledAt);
-        },
-      );
-      promptOperations.set(prompt.operationId, receipt);
-      operation = receipt;
-    }
-    response
-      .status(202)
-      .json(await observePrompt(prompt.operationId, operation, response));
-  });
-  app.get("/api/prompt/:operationId", async (request, response) => {
-    response.set("X-Inspire-Authority", authorityId);
-    const operationId = z.string().uuid().parse(request.params.operationId);
-    if (request.query.authorityId !== authorityId)
-      throw requestError("The prompt receipt belongs to another Host", 409, {
-        code: "HOST_AUTHORITY_CHANGED",
-        outcomeUnknown: true,
-      });
-    retirePromptOperationResults();
-    const operation = promptOperations.get(operationId);
-    if (!operation)
-      throw requestError("This Host cannot identify that prompt receipt", 409, {
-        code: "PROMPT_OPERATION_NOT_FOUND",
-        outcomeUnknown: true,
-      });
-    response
-      .status(202)
-      .json(await observePrompt(operationId, operation, response));
-  });
-  app.get("/api/pi/changelog", async (_request, response) => {
-    response.setHeader("Cache-Control", "no-store");
-    response.json(await installedPiChangelog());
-  });
-  app.post("/api/sessions/execution", async (request, response) => {
-    const { sessionId, target, interrupt } = z
-      .object({
-        sessionId: sessionIdField,
-        target: z.enum(["terminal", "inspire"]),
-        interrupt: z.boolean().optional(),
-      })
-      .parse(request.body);
-    const snapshot = await deps.runtime.setSessionExecution(
-      sessionId,
-      target,
-      interrupt,
+        return null;
+      },
     );
+  });
+  jsonRoute(
+    app,
+    inputRoutes.observePrompt,
+    (
+      {
+        params: { operationId },
+        query: { authorityId: expected, fingerprint },
+      },
+      _request,
+      response,
+    ) => {
+      if (expected !== authorityId)
+        throw requestError("The prompt receipt belongs to another Host", 409, {
+          code: "HOST_AUTHORITY_CHANGED",
+          outcomeUnknown: true,
+        });
+      return observeOperation(
+        "prompt",
+        { operationId, authorityId },
+        fingerprint,
+        response,
+      );
+    },
+  );
+  jsonRoute(app, routes.piChangelog, installedPiChangelog);
+  jsonRoute(app, routes.takeOverSession, ({ body }) =>
+    deps.runtime.takeOverSession(body.sessionId),
+  );
+  /** A command that resumes this session in a terminal Pi. Copying it changes
+   * nothing: Inspire and terminal Pi instances can share a session. */
+  jsonRoute(app, routes.resumeCommand, async ({ query: { sessionId } }) => {
+    const session = await deps.catalog.get(sessionId);
+    if (!session) throw requestError("Session not found", 404);
     const quote = (value: string) =>
       "'" +
       value.replaceAll("'", process.platform === "win32" ? "''" : "'\\''") +
       "'";
-    const active = snapshot.active;
-    const command = active?.sessionFile
-      ? `${process.platform === "win32" ? "Set-Location -LiteralPath" : "cd --"} ${quote(active.cwd)} && pi --session ${quote(active.sessionFile)}`
-      : "";
-    response.setHeader("Cache-Control", "no-store");
-    response.json({ snapshot, command });
-  });
-  app.post("/api/sessions/export", async (request, response) => {
-    const { sessionId, format } = z
-      .object({
-        sessionId: sessionIdField,
-        format: z.enum(["html", "jsonl"]),
-      })
-      .parse(request.body);
-    response.setHeader("Cache-Control", "no-store");
-    response.json(
-      await generatedExports.create(sessionId, format, (path) =>
-        deps.runtime.nativeCommand({
-          sessionId,
-          command: "export",
-          argument: `"${path}"`,
-        }),
-      ),
+    const command = `pi --session ${quote(session.path)}`;
+    const projectDirectoryMissing = await resolveProjectDirectory(
+      session.cwd,
+    ).then(
+      () => false,
+      (error: NodeJS.ErrnoException) =>
+        error?.code === "PROJECT_DIRECTORY_MISSING",
     );
+    const changeDirectory =
+      process.platform === "win32" ? "Set-Location -LiteralPath" : "cd --";
+    return projectDirectoryMissing
+      ? { command, projectDirectoryMissing }
+      : { command: `${changeDirectory} ${quote(session.cwd)} && ${command}` };
   });
+  jsonRoute(app, routes.exportSession, ({ body: { sessionId, format } }) =>
+    generatedExports.create(sessionId, format, (path) =>
+      deps.runtime.nativeCommand({
+        sessionId,
+        command: "export",
+        argument: `"${path}"`,
+      }),
+    ),
+  );
   app.get(
     "/api/sessions/:sessionId/exports/:exportId",
     async (request, response, next) => {
@@ -1560,7 +963,6 @@ export function createInspireServer(deps: AppDependencies): {
         file.fileName,
         {
           headers: {
-            "Cache-Control": "no-store",
             "Content-Type": "application/octet-stream",
             "X-Content-Type-Options": "nosniff",
             "Content-Security-Policy": "sandbox",
@@ -1572,9 +974,7 @@ export function createInspireServer(deps: AppDependencies): {
       );
     },
   );
-  app.post("/api/control/native-command", async (request, response) => {
-    response.setHeader("Cache-Control", "no-store");
-    const command = nativeCommandSchema.parse(request.body);
+  jsonRoute(app, routes.nativeCommand, async ({ body: command }) => {
     const result = await deps.runtime.nativeCommand(command);
     if (result.export) {
       try {
@@ -1599,125 +999,94 @@ export function createInspireServer(deps: AppDependencies): {
         ];
       }
     }
-    response.json(result);
+    return result;
   });
-  const assertPendingAuthority = (expected: string): void => {
-    if (expected !== authorityId)
+  const pendingFingerprint = (operation: PendingOperationRequest) => {
+    if (operation.authorityId !== authorityId)
       throw requestError("The Pending operation belongs to another Host", 409, {
         code: "HOST_AUTHORITY_CHANGED",
         outcomeUnknown: true,
       });
+    return JSON.stringify([
+      operation.sessionId,
+      operation.action,
+      operation.expectedViewId,
+    ]);
   };
-  app.get("/api/pending/operations/:operationId", async (request, response) => {
-    response.set({
-      "Cache-Control": "no-store",
-      "X-Inspire-Authority": authorityId,
-    });
-    const operation = pendingOperationSchema
-      .extend({ action: z.enum(["recover", "abort"]) })
-      .parse({
-        ...request.query,
-        operationId: request.params.operationId,
-      });
-    assertPendingAuthority(operation.authorityId);
-    const recovered = await pendingOperations.observe(operation);
-    response.json({
-      ...recovered,
-      ...(recovered.attachments?.length ? { authorityId } : {}),
-    });
-  });
-  app.post("/api/control/abort", async (request, response) => {
-    response.set("X-Inspire-Authority", authorityId);
-    const operation = pendingOperationSchema.parse(request.body);
-    assertPendingAuthority(operation.authorityId);
-    response.setHeader("Cache-Control", "no-store");
-    const recovered = await pendingOperations.run(
-      { ...operation, action: "abort" },
-      () => deps.runtime.abort(operation.sessionId),
-    );
-    response.json({
-      ...recovered,
-      ...(recovered.attachments?.length ? { authorityId } : {}),
-    });
-  });
-  app.post("/api/pending/text", async (request, response) => {
-    response.setHeader("Cache-Control", "no-store");
-    response.json(
-      await deps.runtime.pendingText(pendingReadSchema.parse(request.body)),
-    );
-  });
-  app.post("/api/pending/recover", async (request, response) => {
-    response.setHeader("Cache-Control", "no-store");
-    response.set("X-Inspire-Authority", authorityId);
-    const operation = pendingOperationSchema.parse(request.body);
-    assertPendingAuthority(operation.authorityId);
-    const recovered = await pendingOperations.run(
-      { ...operation, action: "recover" },
-      () => deps.runtime.recoverPending(operation.sessionId),
-    );
-    response.json({
-      ...recovered,
-      ...(recovered.attachments?.length ? { authorityId } : {}),
-    });
-  });
-  app.post("/api/pending/clear", async (request, response) => {
-    const { sessionId } = clearPendingSchema.parse(request.body);
-    await deps.runtime.clearPending(sessionId);
-    response.json({ ok: true });
-  });
-  app.post("/api/control/model-cycle", async (request, response) => {
-    const { sessionId, direction } = z
-      .object({
-        sessionId: z.string().min(1),
-        direction: z.union([z.literal(1), z.literal(-1)]),
-      })
-      .strict()
-      .parse(request.body);
-    if (direction !== 1)
-      throw requestError(
-        "This Pi version exposes only forward model cycling over RPC. Select a model in the picker instead.",
-        409,
-        { code: "PI_CAPABILITY_UNAVAILABLE" },
+  jsonRoute(
+    app,
+    inputRoutes.observePending,
+    ({ params, query }, _request, response) => {
+      const operation = { ...query, ...params };
+      return observeOperation(
+        operation.action,
+        operation,
+        pendingFingerprint(operation),
+        response,
       );
-    response.json((await deps.runtime.cycleModel(sessionId)) ?? null);
-  });
-  app.post("/api/control/model", async (request, response) => {
-    const value = modelSchema.parse(request.body);
-    response.json(
-      await deps.runtime.setModel(
-        value.sessionId,
-        value.provider,
-        value.modelId,
-      ),
+    },
+  );
+  for (const action of ["abort", "recover"] as const) {
+    jsonRoute(
+      app,
+      inputRoutes[action],
+      ({ body: operation }, _request, response) => {
+        const { sessionId, expectedViewId } = operation;
+        return observeOperation(
+          action,
+          operation,
+          pendingFingerprint({ ...operation, action }),
+          response,
+          async () => {
+            const recovered =
+              action === "abort"
+                ? await deps.runtime.abort(sessionId, expectedViewId)
+                : await deps.runtime.recoverPending(sessionId, expectedViewId);
+            return recovered.attachments?.length
+              ? { ...recovered, authorityId }
+              : recovered;
+          },
+        );
+      },
     );
+  }
+  jsonRoute(app, routes.pendingText, ({ body }) =>
+    deps.runtime.pendingText(body),
+  );
+  jsonRoute(app, routes.clearPending, async ({ body }) => {
+    await deps.runtime.clearPending(body.sessionId);
+    return { ok: true };
   });
-  app.post("/api/control/thinking", async (request, response) => {
-    const { sessionId, level } = thinkingSchema.parse(request.body);
-    response.json(await deps.runtime.setThinkingLevel(sessionId, level));
-  });
-  app.post("/api/control/auto-compaction", async (request, response) => {
-    const { sessionId, enabled } = runtimeBooleanSchema.parse(request.body);
-    await deps.runtime.setAutoCompaction(sessionId, enabled);
-    response.json({ ok: true });
-  });
-  app.post("/api/control/auto-retry", async (request, response) => {
-    const { sessionId, enabled } = runtimeBooleanSchema.parse(request.body);
-    await deps.runtime.setAutoRetry(sessionId, enabled);
-    response.json({ ok: true });
-  });
-  app.post("/api/control/steering-mode", async (request, response) => {
-    const { sessionId, mode } = runtimeDeliveryModeSchema.parse(request.body);
-    await deps.runtime.setSteeringMode(sessionId, mode);
-    response.json({ ok: true });
-  });
-  app.post("/api/control/follow-up-mode", async (request, response) => {
-    const { sessionId, mode } = runtimeDeliveryModeSchema.parse(request.body);
-    await deps.runtime.setFollowUpMode(sessionId, mode);
-    response.json({ ok: true });
-  });
-  app.post("/api/extension-ui", async (request, response) => {
-    await deps.runtime.extensionUiResponse(extensionSchema.parse(request.body));
-    response.json({ ok: true });
+  jsonRoute(
+    app,
+    routes.cycleModel,
+    async ({ body: { sessionId, direction } }) => {
+      if (direction !== 1)
+        throw requestError(
+          "This Pi version exposes only forward model cycling over RPC. Select a model in the picker instead.",
+          409,
+          { code: "PI_CAPABILITY_UNAVAILABLE" },
+        );
+      return (await deps.runtime.cycleModel(sessionId)) ?? null;
+    },
+  );
+  jsonRoute(app, routes.setModel, ({ body }) =>
+    deps.runtime.setModel(body.sessionId, body.provider, body.modelId),
+  );
+  jsonRoute(app, routes.setThinkingLevel, ({ body }) =>
+    deps.runtime.setThinkingLevel(body.sessionId, body.level),
+  );
+  jsonRoute(
+    app,
+    routes.setRuntimeSetting,
+    async ({ body: { sessionId, setting } }) => {
+      await deps.runtime.setRuntimeSetting(sessionId, setting);
+      return { ok: true };
+    },
+  );
+  jsonRoute(app, routes.respondExtensionUi, async ({ body }) => {
+    await deps.runtime.extensionUiResponse(body);
+    return { ok: true };
   });
 
   const openSessionCwd = (sessionId: string): string => {
@@ -1726,131 +1095,128 @@ export function createInspireServer(deps: AppDependencies): {
     return cwd;
   };
 
-  app.get("/api/files", async (request, response) => {
-    const { sessionId, q, limit, showHidden } = fileQuerySchema.parse(
-      request.query,
-    );
-    const cwd = openSessionCwd(sessionId);
-    response.json(await searchProjectFiles(cwd, q, limit, showHidden));
-  });
-  app.get("/api/files/list", async (request, response) => {
-    const { sessionId, dir, refresh, showHidden } = fileListSchema.parse(
-      request.query,
-    );
-    const cwd = openSessionCwd(sessionId);
-    if (refresh) invalidateProjectFiles(cwd);
-    response.json(await listProjectDirectory(cwd, dir, showHidden));
-  });
-  app.get("/api/git/status", async (request, response) => {
-    const { sessionId } = gitStatusSchema.parse(request.query);
-    const cwd = openSessionCwd(sessionId);
-    response.json(
-      await withRequestSignal(request, response, (signal) =>
-        deps.git.status(cwd, signal),
-      ),
-    );
-  });
-  app.post("/api/git/diff", async (request, response) => {
-    const { sessionId, pathId, side } = gitDiffSchema.parse(request.body);
-    const cwd = openSessionCwd(sessionId);
-    response.json(
-      await withRequestSignal(request, response, (signal) =>
-        deps.git.diff(cwd, pathId, side, signal),
-      ),
-    );
-  });
+  jsonRoute(
+    app,
+    routes.searchFiles,
+    ({ query: { sessionId, q, limit, showHidden } }) =>
+      searchProjectFiles(openSessionCwd(sessionId), q, limit, showHidden),
+  );
+  jsonRoute(
+    app,
+    routes.listFiles,
+    ({ query: { sessionId, dir, refresh, showHidden } }) => {
+      const cwd = openSessionCwd(sessionId);
+      if (refresh) invalidateProjectFiles(cwd);
+      return listProjectDirectory(cwd, dir, showHidden);
+    },
+  );
+  jsonRoute(app, routes.gitStatus, ({ query }, request, response) =>
+    withRequestSignal(request, response, (signal) =>
+      deps.git.status(openSessionCwd(query.sessionId), signal),
+    ),
+  );
+  jsonRoute(app, routes.gitDiff, ({ body }, request, response) =>
+    withRequestSignal(request, response, (signal) =>
+      deps.git.diff(openSessionCwd(body.sessionId), body.pathId, signal),
+    ),
+  );
 
-  // Session-independent: the picker browses the host filesystem before any
-  // session exists. The bearer token is the guard, as everywhere else.
-  app.get("/api/host/roots", async (_request, response) => {
-    response.json(await listHostRoots());
-  });
+  jsonRoute(app, routes.browseHostRoots, () => listHostRoots());
+  jsonRoute(
+    app,
+    routes.browseHostDirs,
+    async ({ query: { path, showHidden } }) => {
+      if (path && !isAbsolute(path))
+        throw requestError("path must be absolute", 400);
+      try {
+        return await listHostDirectories(path, showHidden);
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException)?.code;
+        if (code === "ENOENT" || code === "ENOTDIR")
+          throw requestError("No such directory on the host", 404);
+        if (code === "EACCES" || code === "EPERM")
+          throw requestError("The host cannot read that directory", 403);
+        throw error;
+      }
+    },
+  );
 
-  app.get("/api/host/dirs", async (request, response) => {
-    const { path, showHidden } = hostDirsSchema.parse(request.query);
-    try {
-      response.json(await listHostDirectories(path, showHidden));
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException)?.code;
-      if (code === "ENOENT" || code === "ENOTDIR")
-        throw requestError("No such directory on the host", 404);
-      if (code === "EACCES" || code === "EPERM")
-        throw requestError("The host cannot read that directory", 403);
-      throw error;
-    }
-  });
-
-  app.post("/api/resources/list", async (request, response) => {
-    const { sessionId, cursor, limit } = resourceListSchema.parse(request.body);
+  jsonRoute(app, routes.listResources, async ({ body: { sessionId } }) => {
     const context = await deps.runtime.resourceContext(sessionId);
-    const page = await deps.resources.list(context, { cursor, limit });
-    response.json({
+    return {
       sessionId,
       viewId: context.viewId,
       revision: context.revision,
-      ...page,
-    });
+      resources: await deps.resources.list(context),
+    };
   });
-  app.post("/api/resources/probe", async (request, response) => {
-    const { sessionId, references } = resourceProbeSchema.parse(request.body);
-    const context = await deps.runtime.resourceContext(sessionId);
-    response.json({
-      sessionId,
-      viewId: context.viewId,
-      revision: context.revision,
-      results: await deps.resources.probe(context, references),
-    });
-  });
-  app.post("/api/resources/resolve", async (request, response) => {
-    const { sessionId, reference, workspacePath } = resourceResolveSchema.parse(
-      request.body,
-    );
-    const context = await deps.runtime.resourceContext(sessionId);
-    response.json(
-      await deps.resources.resolve(context, reference, true, workspacePath),
-    );
-  });
-  app.post("/api/resources/:id/interactive", async (request, response) => {
-    const { sessionId, html } = z
-      .object({
-        sessionId: z.string().min(1),
-        html: z.string().max(HTML_PREVIEW_BYTES),
-      })
-      .strict()
-      .parse(request.body);
-    const context = await deps.runtime.resourceContext(sessionId);
-    const preview = await htmlPreviews.create(request.params.id, context, html);
-    if (response.destroyed) htmlPreviews.remove(preview.id, sessionId);
-    else response.json(preview);
-  });
-  app.delete("/api/html-previews/:id", (request, response) => {
-    const { sessionId } = z
-      .object({ sessionId: z.string().min(1) })
-      .strict()
-      .parse(request.query);
-    htmlPreviews.remove(request.params.id, sessionId);
-    response.status(204).end();
-  });
-  app.post("/api/resources/:id/download-ticket", async (request, response) => {
-    const { sessionId } = z
-      .object({ sessionId: sessionIdField })
-      .strict()
-      .parse(request.body);
-    const context = await deps.runtime.resourceContext(sessionId);
-    const resource = deps.resources.get(
-      request.params.id,
-      sessionId,
-      context.viewId,
-    );
-    await deps.resources.revalidate(resource, context);
-    response.json(
-      browserAuth.downloadTicket(
-        requestOrigin(request),
-        request.params.id,
+  jsonRoute(
+    app,
+    routes.probeResources,
+    async ({ body: { sessionId, references } }) => {
+      const context = await deps.runtime.resourceContext(sessionId);
+      return {
         sessionId,
-      ),
-    );
-  });
+        viewId: context.viewId,
+        revision: context.revision,
+        results: await deps.resources.probe(context, references),
+      };
+    },
+  );
+  jsonRoute(
+    app,
+    routes.resolveResource,
+    async ({ body: { sessionId, reference, workspacePath } }) => {
+      const context = await deps.runtime.resourceContext(sessionId);
+      return deps.resources.resolve(context, reference, workspacePath);
+    },
+  );
+  jsonRoute(
+    app,
+    routes.showInFileManager,
+    async ({ body: { sessionId, reference, workspacePath, directory } }) => {
+      const context = await deps.runtime.resourceContext(sessionId);
+      const path = await deps.resources.fileManagerPath(
+        context,
+        reference,
+        workspacePath,
+        directory,
+      );
+      await showInFileManager(path, directory);
+      return { ok: true };
+    },
+  );
+  jsonRoute(
+    app,
+    routes.createHtmlPreview,
+    async (
+      { params: { id }, body: { sessionId, html } },
+      _request,
+      response,
+    ) => {
+      const context = await deps.runtime.resourceContext(sessionId);
+      const preview = await deps.resources.createHtmlPreview(id, context, html);
+      if (response.destroyed)
+        deps.resources.removeHtmlPreview(preview.id, sessionId);
+      return preview;
+    },
+  );
+  jsonRoute(
+    app,
+    routes.deleteHtmlPreview,
+    ({ params: { id }, query: { sessionId } }) => {
+      deps.resources.removeHtmlPreview(id, sessionId);
+    },
+  );
+  jsonRoute(
+    app,
+    routes.resourceDownloadTicket,
+    async ({ params: { id }, body: { sessionId } }, request) => {
+      const context = await deps.runtime.resourceContext(sessionId);
+      await deps.resources.authorize(id, context);
+      return browserAuth.downloadTicket(requestOrigin(request), id, sessionId);
+    },
+  );
   app.get("/api/resources/:id/content", async (request, response) => {
     const { sessionId, download } = resourceContentSchema.parse(request.query);
     await sendResourceContent(
@@ -1868,16 +1234,11 @@ export function createInspireServer(deps: AppDependencies): {
     sessionId: string,
     download: boolean,
   ): Promise<void> {
-    let closed = response.destroyed;
-    response.once("close", () => {
-      closed = true;
-    });
     // Handles are bound to the opaque branch view that authorized them. The
     // current authority is rechecked before any headers or bytes are sent.
     const context = await deps.runtime.resourceContext(sessionId);
-    const resource = deps.resources.get(resourceId, sessionId, context.viewId);
-    await deps.resources.revalidate(resource, context);
-    if (closed || response.destroyed) return;
+    const resource = await deps.resources.authorize(resourceId, context);
+    if (response.destroyed) return;
     const setResourceHeaders = (
       mimeType = resource.descriptor.mimeType,
     ): void => {
@@ -1891,118 +1252,57 @@ export function createInspireServer(deps: AppDependencies): {
         resource,
         context,
       );
-      if (closed || response.destroyed) return;
-      const range = resourceByteRange(request, data.length);
-      setResourceHeaders(mimeType);
-      response.set("Accept-Ranges", "bytes");
-      if (range) {
-        response.status(206).set({
-          "Content-Range": `bytes ${range.start}-${range.end}/${data.length}`,
-          "Content-Length": String(range.end - range.start + 1),
-        });
-        response.send(data.subarray(range.start, range.end + 1));
-      } else {
-        response.set("Content-Length", String(data.length));
-        response.send(data);
-      }
-    } else if (resource.path) {
-      const { handle, size } = await deps.resources.openForServing(resource);
-      if (closed || response.destroyed) {
-        await handle.close();
-        return;
-      }
-      setResourceHeaders();
-      await sendResourceFile(request, response, handle, size);
+      sendResourceBytes(request, response, data, () =>
+        setResourceHeaders(mimeType),
+      );
     } else {
-      response
-        .status(404)
-        .json({ error: "The resource preview is no longer available" });
+      const opened = await deps.resources.openForServing(resource);
+      await sendResourceFile(request, response, opened, setResourceHeaders);
     }
   }
 
-  app.patch("/api/presentation-adapters/:id", async (request, response) => {
-    const { enabled } = z
-      .object({ enabled: z.boolean() })
-      .strict()
-      .parse(request.body);
-    const current = await deps.toolPresentations?.inspect();
-    if (!current?.adapters?.some((adapter) => adapter.id === request.params.id))
-      throw requestError("The adapter is not configured", 404);
-    const preferences = await deps.preferences.patch({
-      adapterEnabled: { [request.params.id]: enabled },
-    });
-    const state = await deps.toolPresentations!.inspect(
-      preferences.adapterEnabled,
-    );
-    response.json({ ...state, preferences });
-  });
+  jsonRoute(
+    app,
+    routes.setPresentationAdapterEnabled,
+    async ({ params: { id }, body: { enabled } }) => {
+      const current = await deps.toolPresentations?.inspect();
+      if (!current?.adapters?.some((adapter) => adapter.id === id))
+        throw requestError("The adapter is not configured", 404);
+      const { preferences, revision } = await deps.preferences.patch({
+        adapterEnabled: { [id]: enabled },
+      });
+      const state = await deps.toolPresentations!.inspect(
+        preferences.adapterEnabled,
+      );
+      return { ...state, preferences, preferenceRevision: revision };
+    },
+  );
 
-  app.get("/api/preferences", async (_request, response) =>
-    response.json(await deps.preferences.read()),
-  );
-  app.patch("/api/preferences", async (request, response) => {
-    const preferences = await deps.preferences.patch(request.body);
-    if (
-      Object.hasOwn(request.body, "pinnedProjectCwds") ||
-      Object.hasOwn(request.body, "hiddenProjectCwds")
-    ) {
+  jsonRoute(app, routes.preferences, async () => {
+    const { preferences, revision } = await deps.preferences.inspect();
+    return { preferences, revision };
+  });
+  jsonRoute(app, routes.savePreferences, async ({ body }) => {
+    const publication = await deps.preferences.patch(body);
+    if (body.pinnedProjectCwds || body.hiddenProjectCwds)
       deps.catalog.invalidate();
-    }
-    response.json(preferences);
+    return publication;
   });
-  app.get("/api/snapshot", async (request, response) =>
-    response.json(
-      await deps.runtime.snapshot(requestedDetail(request.query.detail)),
-    ),
+  jsonRoute(app, routes.snapshot, ({ query: { detail } }) =>
+    deps.runtime.snapshot(detail === "" ? null : detail),
   );
-  app.get("/api/transcript/older", async (request, response) => {
-    const { sessionId, cursor, deferActivity } =
-      transcriptOlderPageSchema.parse(request.query);
-    response.json(
-      await deps.runtime.transcriptPage(
-        sessionId,
-        cursor,
-        deferActivity === "1",
-      ),
-    );
-  });
-  app.get("/api/transcript/activity", async (request, response) => {
-    const { sessionId, cursor } = transcriptPageSchema.parse(request.query);
-    response.json(await deps.runtime.transcriptActivityPage(sessionId, cursor));
-  });
-  app.get("/api/transcript/user-turns", async (request, response) => {
-    const { sessionId, start } = transcriptUserTurnsSchema.parse(request.query);
-    response.json(await deps.runtime.transcriptUserTurns(sessionId, start));
-  });
-  app.get("/api/transcript/user-turn", async (request, response) => {
-    const { sessionId, id, cursor } = transcriptUserTurnSchema.parse(
-      request.query,
-    );
-    response.json(await deps.runtime.transcriptUserTurn(sessionId, id, cursor));
-  });
-  app.get("/api/transcript/assistant-text", async (request, response) => {
-    const { sessionId, viewId } = assistantTextSchema.parse(request.query);
-    response.json(await deps.runtime.lastAssistantText(sessionId, viewId));
-  });
-  app.get("/api/composer/history", async (request, response) => {
-    const { sessionId, start } = composerHistorySchema.parse(request.query);
-    response.json(await deps.runtime.composerHistory(sessionId, start));
-  });
-  app.get("/api/branches/tree", async (request, response) => {
-    const { sessionId, ...query } = branchTreeSchema.parse(request.query);
-    response.json(await deps.runtime.branchTree(sessionId, query));
-  });
-  app.get("/api/branches/entry", async (request, response) => {
-    response.json(
-      await deps.runtime.branchEntry(branchEntrySchema.parse(request.query)),
-    );
-  });
+  jsonRoute(
+    app,
+    routes.sessionHistory,
+    ({ query: { sessionId, viewId, ...query } }) =>
+      deps.runtime.sessionHistory(sessionId, viewId, query),
+  );
+  jsonRoute(app, routes.lastAssistantText, ({ query }) =>
+    deps.runtime.lastAssistantText(query.sessionId, query.viewId),
+  );
   app.get("/api/branches/image", async (request, response) => {
-    const { index, ...query } = request.query;
-    const image = await deps.runtime.branchImage(
-      branchEntrySchema.parse(query),
-      z.coerce.number().int().min(0).parse(index),
-    );
+    const { index, ...address } = branchImageSchema.parse(request.query);
+    const image = await deps.runtime.branchImage(address, index);
     response.setHeader("Cache-Control", "private, no-store");
     response.type(
       ["image/png", "image/jpeg", "image/gif", "image/webp"].includes(
@@ -2013,23 +1313,15 @@ export function createInspireServer(deps: AppDependencies): {
     );
     response.send(image.data);
   });
-  app.post("/api/branches/clone", async (request, response) => {
-    response.json(
-      await deps.runtime.cloneBranch(branchCloneSchema.parse(request.body)),
-    );
-  });
-  app.post("/api/branches/navigate", async (request, response) => {
-    response.json(
-      await deps.runtime.navigateBranch(
-        branchNavigateSchema.parse(request.body),
-      ),
-    );
-  });
-  app.post("/api/branches/fork", async (request, response) => {
-    response.json(
-      await deps.runtime.forkBranch(branchForkSchema.parse(request.body)),
-    );
-  });
+  jsonRoute(app, routes.cloneBranch, ({ body }) =>
+    deps.runtime.cloneBranch(body),
+  );
+  jsonRoute(app, routes.navigateBranch, ({ body }) =>
+    deps.runtime.navigateBranch(body),
+  );
+  jsonRoute(app, routes.forkBranch, ({ body }) =>
+    deps.runtime.forkBranch(body),
+  );
 
   // Unknown API paths are protocol errors, never client-side routes. Keep
   // them out of the SPA fallback so a typo cannot return index.html as 200.
@@ -2037,54 +1329,8 @@ export function createInspireServer(deps: AppDependencies): {
     response.status(404).json({ error: "API route not found" });
   });
 
-  const distDir = resolve(deps.distDir ?? "dist");
   if (existsSync(distDir)) {
-    // Replace the direct launch master token with a one-use, origin-bound
-    // transfer in the fragment. Fragments never reach HTTP/referrers; the bundle
-    // removes it from history before registering its origin-stored browser key.
-    // HTTPS proxy launches strip query credentials without pairing.
-    app.get("/", (request, response, next) => {
-      const candidate =
-        typeof request.query.token === "string"
-          ? request.query.token
-          : undefined;
-      if (candidate === undefined) return next();
-      const bootstrap =
-        !trustedForwardedHttps(request) &&
-        !request.secure &&
-        isLoopbackAddress(request.socket.remoteAddress) &&
-        tokenMatches(candidate, deps.token)
-          ? browserAuth.bootstrap(requestOrigin(request))
-          : null;
-      const clean = new URL(
-        request.originalUrl,
-        `http://${request.get("host") ?? "127.0.0.1"}`,
-      );
-      clean.searchParams.delete("token");
-      clean.hash = bootstrap ? `inspire-bootstrap=${bootstrap}` : "";
-      response.set("Cache-Control", "no-store");
-      response.redirect(
-        303,
-        `${clean.pathname}${clean.search}${clean.hash}` || "/",
-      );
-    });
-    // Content-hashed bundles under /assets are safe to cache forever. Serve
-    // the active build first, then bounded prior generations so a connected
-    // old page can still perform its first lazy import after a Host rebuild.
-    const immutableAssets = {
-      immutable: true,
-      maxAge: "1y",
-      fallthrough: true,
-    } as const;
-    app.use(
-      "/assets",
-      express.static(join(distDir, "assets"), immutableAssets),
-    );
-    for (const cacheDirectory of deps.staticAssetCacheDirs ?? [])
-      app.use(
-        "/assets",
-        express.static(resolve(cacheDirectory), immutableAssets),
-      );
+    app.use("/assets", staticWebAssets(join(distDir, "assets"), currentBuild));
     // A missing module is an asset error, never a client-side route. Returning
     // index.html here both hides the cause and lets a Service Worker cache HTML
     // under a JavaScript URL.
@@ -2113,10 +1359,18 @@ export function createInspireServer(deps: AppDependencies): {
     updateCoordinator,
     authorityId,
     heartbeatIntervalMs,
+    currentBrowserBuild,
     taskNotifications,
   });
 
   server.on("upgrade", (request, socket, head) => {
+    void upgrade(request, socket, head).catch(() => socket.destroy());
+  });
+  async function upgrade(
+    request: IncomingMessage,
+    socket: import("node:stream").Duplex,
+    head: Buffer,
+  ) {
     let url: URL;
     try {
       url = new URL(
@@ -2155,8 +1409,17 @@ export function createInspireServer(deps: AppDependencies): {
           : undefined,
         deps.token,
       );
+    const browserBuild = url.searchParams.get("build") ?? undefined;
+    if (browserAuthenticated && !(await browserBuildAllowed(browserBuild))) {
+      if (url.pathname === "/events")
+        runtimeEvents.rejectUpgrade(request, socket, head);
+      else if (url.pathname === "/terminal" && deps.terminal)
+        terminalGateway.rejectUpgrade(request, socket, head);
+      else socket.destroy();
+      return;
+    }
     if (url.pathname === "/terminal" && deps.terminal && browserAuthenticated) {
-      terminalGateway.upgrade(request, socket, head);
+      terminalGateway.upgrade(request, socket, head, browserBuild);
       return;
     }
     if (
@@ -2171,12 +1434,13 @@ export function createInspireServer(deps: AppDependencies): {
         browserAuthenticated && browserAuthenticated.browserId
           ? { id: browserAuthenticated.browserId, origin }
           : undefined,
+        browserAuthenticated ? browserBuild : undefined,
       );
       return;
     }
     socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
     socket.destroy();
-  });
+  }
 
   return {
     app,
@@ -2185,7 +1449,6 @@ export function createInspireServer(deps: AppDependencies): {
     launchUrl,
     close: async () => {
       deps.providerAuth?.close();
-      htmlPreviews.close();
       // Stop accepting HTTP/upgrades first, but do not await the drain before
       // runtime teardown: an active request may itself be waiting on runtime.
       const drained = server.listening
@@ -2194,7 +1457,7 @@ export function createInspireServer(deps: AppDependencies): {
           })
         : Promise.resolve();
       runtimeEvents.close();
-      deps.runtime.off("event", taskNotifications.observe);
+      deps.runtime.off("task_outcome", taskNotifications.observe);
       await taskNotifications.close();
       terminalGateway.close();
       const runtimeResult = await deps.runtime.close().then(
@@ -2222,10 +1485,7 @@ export function createInspireServer(deps: AppDependencies): {
         () => ({ status: "fulfilled" as const }),
         (reason: unknown) => ({ status: "rejected" as const, reason }),
       );
-      const resourceResult = await deps.resources.close().then(
-        () => ({ status: "fulfilled" as const }),
-        (reason: unknown) => ({ status: "rejected" as const, reason }),
-      );
+      deps.resources.close();
       const exportResult = await generatedExports.close().then(
         () => ({ status: "fulfilled" as const }),
         (reason: unknown) => ({ status: "rejected" as const, reason }),
@@ -2242,7 +1502,6 @@ export function createInspireServer(deps: AppDependencies): {
         runtimeResult,
         drainedResult,
         terminalResult,
-        resourceResult,
         exportResult,
         attachmentResult,
         updateResult,

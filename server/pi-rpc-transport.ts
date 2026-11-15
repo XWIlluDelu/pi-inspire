@@ -1,4 +1,4 @@
-import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import type { Readable, Writable } from "node:stream";
 import { stopPiRpcChild } from "./pi-rpc-stop.js";
@@ -33,17 +33,24 @@ export interface PiRpcTransport extends EventEmitter {
 export type PiRpcTransportFactory = (launch: PiRpcLaunch) => PiRpcTransport;
 
 class DirectPiRpcTransport extends EventEmitter implements PiRpcTransport {
-  private readonly child: ChildProcessWithoutNullStreams;
+  private readonly child: ChildProcess & {
+    stdin: Writable;
+    stdout: Readable;
+    stderr: Readable;
+  };
   readonly ready = Promise.resolve();
 
   constructor(launch: PiRpcLaunch) {
     super();
     this.child = spawn(launch.executable, launch.args, {
       cwd: launch.cwd,
-      env: launch.env,
+      env: {
+        ...launch.env,
+        PI_ATTACH_CONTROL_TAG_PARENT_PID: String(process.pid),
+      },
       ...isolatedProcessOptions(),
       stdio: ["pipe", "pipe", "pipe"],
-    });
+    }) as DirectPiRpcTransport["child"];
     this.child.on("error", (error) => this.emit("error", error));
     this.child.once("exit", (code, signal) => this.emit("exit", code, signal));
   }

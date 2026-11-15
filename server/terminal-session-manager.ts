@@ -5,10 +5,10 @@ import { basename, isAbsolute, resolve } from "node:path";
 import type { SerializeAddon } from "@xterm/addon-serialize";
 import type { Terminal as HeadlessTerminal } from "@xterm/headless";
 import {
+  decodeTerminalInputFrame,
   encodeTerminalServerDataFrame,
   INSPIRE_SHELL_OSC,
   MAX_TERMINAL_COLS,
-  MAX_TERMINAL_COMMAND_CHARS,
   MAX_TERMINAL_CWD_CHARS,
   MAX_TERMINAL_HISTORY_DAYS,
   MAX_TERMINAL_PROFILE_ID_CHARS,
@@ -20,18 +20,24 @@ import {
   MIN_TERMINAL_COLS,
   MIN_TERMINAL_HISTORY_DAYS,
   MIN_TERMINAL_ROWS,
+  parseTerminalShellMarker,
   type TerminalCatalogResponse,
   type TerminalCreateRequest,
   type TerminalDescriptor,
-  type TerminalMutationMethod,
-  type TerminalOperationIdentity,
   type TerminalRemoveResponse,
   type TerminalRenameRequest,
   type TerminalServerControlMessage,
   type TerminalServiceSettings,
   type TerminalServiceSettingsPatch,
 } from "../shared/terminal-contracts.js";
-import { dispatchTerminalMutation } from "./terminal-operation-dispatch.js";
+import {
+  terminalControlSchema,
+  type TerminalAttachOptions,
+  type TerminalControl,
+  type TerminalIntent,
+  type TerminalOperation,
+  type TerminalOperationResults,
+} from "../shared/terminal-operations.js";
 import { TerminalOperationReceipts } from "./terminal-operation-receipts.js";
 import { terminalDirectoryFromUrl } from "./terminal-paths.js";
 import {
@@ -44,7 +50,6 @@ import { TerminalRingBuffer } from "./terminal-ring-buffer.js";
 import {
   type TerminalAttachment,
   type TerminalAttachmentSink,
-  type TerminalAttachOptions,
   type TerminalService,
   TerminalServiceError,
 } from "./terminal-service.js";
@@ -60,7 +65,7 @@ const nodePty =
 
 const DEFAULT_COLS = 100;
 const DEFAULT_ROWS = 30;
-const DEFAULT_RING_BYTES = 8 * 1024 * 1024;
+const RING_BYTES = 8 * 1024 * 1024;
 const DEFAULT_SCROLLBACK_ROWS = 20_000;
 const DEFAULT_OWNER_RECONNECT_GRACE_MS = 30_000;
 const TERMINATE_GRACE_MS = 2_000;
@@ -99,7 +104,7 @@ export interface TerminalPtySpawnOptions {
   env: Record<string, string>;
 }
 
-export type TerminalPtyFactory = (
+type TerminalPtyFactory = (
   shell: string,
   args: string[],
   options: TerminalPtySpawnOptions,
@@ -194,7 +199,6 @@ interface TerminalSessionManagerOptions {
   profiles?: ResolvedTerminalProfile[];
   ptyFactory?: TerminalPtyFactory;
   env?: NodeJS.ProcessEnv;
-  ringBytes?: number;
   scrollbackRows?: number;
   ownerReconnectGraceMs?: number;
   catalogEpoch?: string;
@@ -246,26 +250,6 @@ function cleanTerminalText(value: string, maxChars: number): string {
     .slice(0, maxChars);
 }
 
-function cleanTerminalCommand(value: string): string {
-  if (
-    value.length < 1 ||
-    value.length > MAX_TERMINAL_COMMAND_CHARS ||
-    /[\u0000\u0007\u001b]/u.test(value) ||
-    !/\S/u.test(value)
-  )
-    return "";
-  return value;
-}
-
-function decodedShellMarkerPayload(phase: string, payload: string): string {
-  if (!phase.endsWith("1")) return payload;
-  try {
-    return decodeURIComponent(payload);
-  } catch {
-    return "";
-  }
-}
-
 function cleanTerminalPath(value: string): string {
   if (
     value.length < 1 ||
@@ -308,26 +292,6 @@ function normalizeCwd(value: string): string {
   return resolve(value);
 }
 
-class SessionAttachment implements TerminalAttachment {
-  constructor(
-    private readonly manager: TerminalSessionManager,
-    readonly terminalId: string,
-    readonly id: string,
-  ) {}
-
-  writeInput(sequence: number, data: Uint8Array): void {
-    this.manager.writeInput(this.terminalId, this.id, sequence, data);
-  }
-
-  control(message: Parameters<TerminalAttachment["control"]>[0]): void {
-    this.manager.controlAttachment(this.terminalId, this.id, message);
-  }
-
-  detach(): void {
-    this.manager.detachAttachment(this.terminalId, this.id);
-  }
-}
-
 export class TerminalSessionManager implements TerminalService {
   private readonly operations = new TerminalOperationReceipts();
   private readonly sessions = new Map<string, ManagedTerminal>();
@@ -336,7 +300,6 @@ export class TerminalSessionManager implements TerminalService {
   private readonly profiles: ResolvedTerminalProfile[];
   private readonly ptyFactory: TerminalPtyFactory;
   private readonly env: NodeJS.ProcessEnv;
-  private readonly ringBytes: number;
   private readonly scrollbackRows: number;
   private readonly ownerReconnectGraceMs: number;
   private readonly catalogEpoch: string;
@@ -356,7 +319,6 @@ export class TerminalSessionManager implements TerminalService {
       ...(options.profiles ?? discoverTerminalProfiles(this.env)),
     ];
     this.ptyFactory = options.ptyFactory ?? defaultPtyFactory;
-    this.ringBytes = options.ringBytes ?? DEFAULT_RING_BYTES;
     this.scrollbackRows = options.scrollbackRows ?? DEFAULT_SCROLLBACK_ROWS;
     this.ownerReconnectGraceMs =
       options.ownerReconnectGraceMs ?? DEFAULT_OWNER_RECONNECT_GRACE_MS;
@@ -376,16 +338,39 @@ export class TerminalSessionManager implements TerminalService {
     return this.operations.getEpoch();
   }
 
-  operate<Result>(
-    method: TerminalMutationMethod,
-    params: unknown,
-    operation: TerminalOperationIdentity,
-  ): Promise<Result> {
-    // In-process Hosts own the PTYs and their receipts for the same lifetime.
-    // The daemon uses its own receipt owner around these ordinary methods.
-    return this.operations.run(operation, method, params, () =>
-      dispatchTerminalMutation(this, method, params),
-    ) as Promise<Result>;
+  operate<I extends TerminalIntent>(
+    operation: TerminalOperation & { intent: I },
+    observeOnly = false,
+  ): Promise<TerminalOperationResults[I["command"]]> {
+    const { intent } = operation;
+    return this.operations.run(
+      operation,
+      observeOnly
+        ? undefined
+        : () => {
+            switch (intent.command) {
+              case "create":
+                return this.create(intent.params.request);
+              case "rename":
+                return this.rename(intent.params.id, {
+                  title: intent.params.title,
+                });
+              case "reorder":
+                return this.reorder(
+                  intent.params.projectCwd,
+                  intent.params.ids,
+                );
+              case "restart":
+                return this.restart(intent.params.id);
+              case "remove":
+                return this.remove(intent.params.id, intent.params.force);
+              case "updateSettings":
+                return this.updateSettings(intent.params.patch);
+              case "clearHistory":
+                return this.clearHistory().then(() => null);
+            }
+          },
+    ) as Promise<TerminalOperationResults[I["command"]]>;
   }
 
   list(cwd?: string): TerminalCatalogResponse {
@@ -688,11 +673,13 @@ export class TerminalSessionManager implements TerminalService {
   }
 
   async restart(id: string): Promise<TerminalDescriptor> {
-    const previous = this.beginLifecycleMutation(id);
-    try {
+    return this.mutateTerminal(id, async (previous) => {
       const profile = this.resolveProfile(previous.profile.id);
-      const metadata = {
-        id: previous.id,
+      await this.stopPty(previous, false);
+      await this.history?.remove(id);
+      this.requireOpen();
+      const session = this.spawnSession({
+        id,
         projectCwd: previous.projectCwd,
         profile,
         cols: previous.cols,
@@ -700,39 +687,43 @@ export class TerminalSessionManager implements TerminalService {
         createdAt: previous.createdAt,
         titleSource: previous.titleSource,
         customTitle: previous.customTitle,
-      } as const;
-      await this.stopPty(previous, false);
-      await this.history?.remove(id);
-      this.requireOpen();
-      const session = this.spawnSession(metadata);
+      });
       this.sessions.set(id, session);
-      this.closeAttachments(previous, 1012, "Terminal restarted");
-      this.disposeRuntime(previous);
+      this.retireSession(previous, 1012, "Terminal restarted");
       this.touch(session);
       return this.describe(session);
-    } finally {
-      this.lifecycleMutations.delete(id);
-    }
+    });
   }
 
   async remove(id: string, force: boolean): Promise<TerminalRemoveResponse> {
-    const session = this.beginLifecycleMutation(id);
-    try {
+    return this.mutateTerminal(id, async (session) => {
       await this.stopPty(session, force);
-      if (this.closing)
-        return { catalogEpoch: this.catalogEpoch, revision: this.revision };
-      this.sessions.delete(id);
-      const order = (this.orderByProject.get(session.projectCwd) ?? []).filter(
-        (terminalId) => terminalId !== id,
-      );
-      if (order.length === 0) this.orderByProject.delete(session.projectCwd);
-      else this.orderByProject.set(session.projectCwd, order);
-      this.closeAttachments(session, 1000, "Terminal closed");
-      this.disposeRuntime(session);
-      await this.history?.remove(id);
-      this.revision += 1;
-      this.onChange();
+      if (!this.closing) {
+        this.sessions.delete(id);
+        const { projectCwd } = session;
+        const order = this.orderByProject
+          .get(projectCwd)
+          ?.filter((tab) => tab !== id);
+        if (order?.length) this.orderByProject.set(projectCwd, order);
+        else this.orderByProject.delete(projectCwd);
+        this.retireSession(session, 1000, "Terminal closed");
+        await this.history?.remove(id);
+        this.revision += 1;
+        this.onChange();
+      }
       return { catalogEpoch: this.catalogEpoch, revision: this.revision };
+    });
+  }
+
+  private async mutateTerminal<Result>(
+    id: string,
+    apply: (session: ManagedTerminal) => Promise<Result>,
+  ): Promise<Result> {
+    this.requireOpen();
+    const session = this.requireStableSession(id);
+    this.lifecycleMutations.add(id);
+    try {
+      return await apply(session);
     } finally {
       this.lifecycleMutations.delete(id);
     }
@@ -779,9 +770,10 @@ export class TerminalSessionManager implements TerminalService {
         attachmentId: attachment.id,
         writable: attachment.writable,
         ownerToken: attachment.writable ? session.owner?.token : undefined,
-        nextInputSequence: attachment.writable
-          ? (session.owner?.lastInputSequence ?? 0) + 1
-          : 1,
+        nextInputSequence:
+          attachment.writable && session.owner
+            ? session.owner.lastInputSequence + 1
+            : 1,
         replay,
       });
 
@@ -806,25 +798,30 @@ export class TerminalSessionManager implements TerminalService {
         nextOutputOffset: session.ring.nextOffset,
       });
       if (ownershipReason)
-        this.sendControl(attachment, {
-          type: "ownership",
-          writable: attachment.writable,
-          hasOwner: session.owner !== null,
-          ownerToken: attachment.writable ? session.owner?.token : undefined,
-          nextInputSequence: attachment.writable
-            ? (session.owner?.lastInputSequence ?? 0) + 1
-            : undefined,
-          reason: ownershipReason,
-        });
+        this.publishOwner(session, attachment, ownershipReason);
       this.broadcastDescriptor(session, attachment.id);
-      return new SessionAttachment(this, session.id, attachment.id);
+      return {
+        send: (frame) => {
+          if ("data" in frame) {
+            const { sequence, data } = decodeTerminalInputFrame(frame.data);
+            this.writeInput(session.id, attachment.id, sequence, data);
+          } else {
+            this.controlAttachment(
+              session.id,
+              attachment.id,
+              terminalControlSchema.parse(frame.control),
+            );
+          }
+        },
+        detach: () => this.detachAttachment(session.id, attachment.id),
+      };
     } catch (error) {
       this.detachAttachment(session.id, attachment.id);
       throw error;
     }
   }
 
-  writeInput(
+  private writeInput(
     terminalId: string,
     attachmentId: string,
     sequence: number,
@@ -877,10 +874,10 @@ export class TerminalSessionManager implements TerminalService {
     this.sendControl(attachment, { type: "input_ack", sequence });
   }
 
-  controlAttachment(
+  private controlAttachment(
     terminalId: string,
     attachmentId: string,
-    message: Parameters<TerminalAttachment["control"]>[0],
+    message: TerminalControl,
   ): void {
     const { session, attachment } = this.requireAttachment(
       terminalId,
@@ -891,22 +888,16 @@ export class TerminalSessionManager implements TerminalService {
       return;
     }
     if (message.type === "take_control") {
-      validateDimensions(message.cols, message.rows);
       this.takeControl(session, attachment, message.cols, message.rows);
       return;
     }
-    if (message.type === "release_control") {
-      this.releaseControl(session, attachment);
-      return;
-    }
     if (message.type === "resize") {
-      validateDimensions(message.cols, message.rows);
       if (attachment.writable && session.owner?.attachmentId === attachment.id)
         this.resizeSession(session, message.cols, message.rows);
     }
   }
 
-  detachAttachment(terminalId: string, attachmentId: string): void {
+  private detachAttachment(terminalId: string, attachmentId: string): void {
     const session = this.sessions.get(terminalId);
     const attachment = session?.attachments.get(attachmentId);
     if (!session || !attachment) return;
@@ -918,10 +909,10 @@ export class TerminalSessionManager implements TerminalService {
         if (session.owner?.attachmentId !== null) return;
         session.owner = null;
         this.touch(session);
-        this.broadcastOwnership(session, "available");
+        this.broadcastOwnership(session);
         this.broadcastDescriptor(session);
       }, this.ownerReconnectGraceMs);
-      session.owner.releaseTimer.unref?.();
+      session.owner.releaseTimer.unref();
     }
     this.touch(session);
     this.broadcastDescriptor(session);
@@ -953,8 +944,7 @@ export class TerminalSessionManager implements TerminalService {
           // Service-level consent ends all work, but still lets shells flush
           // their normal exit state before bounded hard escalation.
           await this.stopPty(session, false);
-          this.closeAttachments(session, 1012, "Terminal service stopped");
-          this.disposeRuntime(session);
+          this.retireSession(session, 1012, "Terminal service stopped");
           this.sessions.delete(session.id);
         }),
       );
@@ -1029,7 +1019,7 @@ export class TerminalSessionManager implements TerminalService {
       signal: null,
       resizeRevision: 0,
       outputEpoch: this.uuid(),
-      ring: new TerminalRingBuffer(this.ringBytes),
+      ring: new TerminalRingBuffer(RING_BYTES),
       emulator,
       serializer,
       emulatorTail: Promise.resolve(),
@@ -1176,23 +1166,18 @@ export class TerminalSessionManager implements TerminalService {
   }
 
   private handleShellMarker(session: ManagedTerminal, value: string): void {
-    const separator = value.indexOf(";");
-    const phase = separator < 0 ? value : value.slice(0, separator);
-    const payload = decodedShellMarkerPayload(
-      phase,
-      separator < 0 ? "" : value.slice(separator + 1),
-    );
-    if (phase === "P" || phase === "P1") {
-      const cwd = cleanTerminalPath(payload);
+    const marker = parseTerminalShellMarker(value);
+    if (!marker) return;
+    if (marker.type === "cwd") {
+      const cwd = cleanTerminalPath(marker.cwd);
       if (!cwd || !isAbsolute(cwd) || cwd === session.currentCwd) return;
       session.currentCwd = cwd;
       this.touch(session);
       this.broadcastDescriptor(session);
       return;
     }
-    if (phase === "C" || phase === "C1") {
-      const command = cleanTerminalCommand(payload);
-      if (!command) return;
+    if (marker.type === "command") {
+      const { command } = marker;
       const commandTitle = cleanTerminalText(command, MAX_TERMINAL_TITLE_CHARS);
       session.activeCommand = command;
       session.commandStartedAt = this.now().getTime();
@@ -1202,9 +1187,7 @@ export class TerminalSessionManager implements TerminalService {
       this.broadcastDescriptor(session);
       return;
     }
-    if (phase !== "D" || !session.activeCommand) return;
-    const parsedExitCode = Number(payload);
-    const exitCode = Number.isInteger(parsedExitCode) ? parsedExitCode : null;
+    if (!session.activeCommand) return;
     const completedAt = this.now().getTime();
     const durationMs =
       session.commandStartedAt === null
@@ -1220,7 +1203,7 @@ export class TerminalSessionManager implements TerminalService {
       type: "command_complete",
       command,
       currentCwd: session.currentCwd,
-      exitCode,
+      exitCode: marker.exitCode,
       durationMs,
     });
     this.broadcastDescriptor(session);
@@ -1398,47 +1381,48 @@ export class TerminalSessionManager implements TerminalService {
     { ownerToken, cols, rows }: TerminalAttachOptions,
   ): "claimed" | "reconnected" | null {
     if (session.status !== "running") return null;
+    const owner = session.owner;
     if (
-      session.owner &&
-      ownerToken &&
-      ownerToken === session.owner.token &&
-      attachment.clientId === session.owner.clientId
-    ) {
-      this.resizeSession(session, cols, rows, attachment.id);
-      if (attachment.detached) return null;
-      const previous = session.owner.attachmentId
-        ? session.attachments.get(session.owner.attachmentId)
+      owner &&
+      (ownerToken !== owner.token || attachment.clientId !== owner.clientId)
+    )
+      return null;
+    this.resizeSession(session, cols, rows, attachment.id);
+    if (attachment.detached) return null;
+    this.assignOwner(session, attachment, owner ? "reconnected" : "claimed");
+    if (!owner) this.touch(session);
+    return owner ? "reconnected" : "claimed";
+  }
+
+  private assignOwner(
+    session: ManagedTerminal,
+    attachment: ManagedAttachment,
+    reason: "claimed" | "reconnected" | "taken",
+  ): void {
+    const owner = session.owner;
+    const previous =
+      owner?.attachmentId && owner.attachmentId !== attachment.id
+        ? session.attachments.get(owner.attachmentId)
         : undefined;
-      if (session.owner.releaseTimer) clearTimeout(session.owner.releaseTimer);
-      session.owner.attachmentId = attachment.id;
-      session.owner.releaseTimer = null;
-      attachment.writable = true;
-      if (previous) {
-        previous.writable = false;
-        this.sendControl(previous, {
-          type: "ownership",
-          writable: false,
-          hasOwner: true,
-          reason: "reconnected",
-        });
-      }
-      return "reconnected";
+    if (owner?.releaseTimer) clearTimeout(owner.releaseTimer);
+    session.owner = {
+      token: reason === "reconnected" ? owner!.token : this.uuid(),
+      clientId: attachment.clientId,
+      attachmentId: attachment.id,
+      lastInputSequence:
+        reason === "reconnected" ? owner!.lastInputSequence : 0,
+      releaseTimer: null,
+    };
+    attachment.writable = true;
+    if (previous) {
+      previous.writable = false;
+      this.sendControl(previous, {
+        type: "ownership",
+        writable: false,
+        hasOwner: true,
+        reason,
+      });
     }
-    if (!session.owner) {
-      this.resizeSession(session, cols, rows, attachment.id);
-      if (attachment.detached) return null;
-      session.owner = {
-        token: this.uuid(),
-        clientId: attachment.clientId,
-        attachmentId: attachment.id,
-        lastInputSequence: 0,
-        releaseTimer: null,
-      };
-      attachment.writable = true;
-      this.touch(session);
-      return "claimed";
-    }
-    return null;
   }
 
   private takeControl(
@@ -1459,54 +1443,29 @@ export class TerminalSessionManager implements TerminalService {
     // Do not revoke a working lease until the requested grid is accepted.
     this.resizeSession(session, cols, rows);
     if (attachment.detached) return;
-    const previousId = session.owner?.attachmentId;
-    const previous =
-      previousId && previousId !== attachment.id
-        ? session.attachments.get(previousId)
-        : undefined;
-    if (session.owner?.releaseTimer) clearTimeout(session.owner.releaseTimer);
-    session.owner = {
-      token: this.uuid(),
-      clientId: attachment.clientId,
-      attachmentId: attachment.id,
-      lastInputSequence: 0,
-      releaseTimer: null,
-    };
-    attachment.writable = true;
-    // Publishing may synchronously detach either sink. Commit the new lease
-    // first so that cleanup always retires its actual attachment.
-    if (previous) {
-      previous.writable = false;
-      this.sendControl(previous, {
-        type: "ownership",
-        writable: false,
-        hasOwner: true,
-        reason: "taken",
-      });
-    }
-    this.sendControl(attachment, {
-      type: "ownership",
-      writable: true,
-      hasOwner: true,
-      ownerToken: session.owner.token,
-      nextInputSequence: 1,
-      reason: "taken",
-    });
+    // Publish only after the lease is committed; either sink may detach synchronously.
+    this.assignOwner(session, attachment, "taken");
+    this.publishOwner(session, attachment, "taken");
     this.touch(session);
     this.broadcastDescriptor(session);
   }
 
-  private releaseControl(
+  private publishOwner(
     session: ManagedTerminal,
     attachment: ManagedAttachment,
+    reason: "claimed" | "reconnected" | "taken",
   ): void {
-    if (session.owner?.attachmentId !== attachment.id) return;
-    if (session.owner.releaseTimer) clearTimeout(session.owner.releaseTimer);
-    session.owner = null;
-    attachment.writable = false;
-    this.touch(session);
-    this.broadcastOwnership(session, "released");
-    this.broadcastDescriptor(session);
+    const owner = attachment.writable ? session.owner : null;
+    this.sendControl(attachment, {
+      type: "ownership",
+      writable: attachment.writable,
+      hasOwner: session.owner !== null,
+      ownerToken: owner?.token,
+      nextInputSequence: attachment.writable
+        ? (owner?.lastInputSequence ?? 0) + 1
+        : undefined,
+      reason,
+    });
   }
 
   private resizeSession(
@@ -1643,7 +1602,6 @@ export class TerminalSessionManager implements TerminalService {
       rows: session.rows,
       resizeRevision: session.resizeRevision,
       outputEpoch: session.outputEpoch,
-      firstOutputOffset: session.ring.firstOffset,
       nextOutputOffset: session.ring.nextOffset,
       viewerCount: session.attachments.size,
       hasOwner: session.owner !== null,
@@ -1669,16 +1627,13 @@ export class TerminalSessionManager implements TerminalService {
     );
   }
 
-  private broadcastOwnership(
-    session: ManagedTerminal,
-    reason: "available" | "released",
-  ): void {
+  private broadcastOwnership(session: ManagedTerminal): void {
     for (const attachment of session.attachments.values()) {
       this.sendControl(attachment, {
         type: "ownership",
         writable: attachment.writable,
         hasOwner: session.owner !== null,
-        reason,
+        reason: "available",
       });
     }
   }
@@ -1715,7 +1670,7 @@ export class TerminalSessionManager implements TerminalService {
     }
   }
 
-  private closeAttachments(
+  private retireSession(
     session: ManagedTerminal,
     code: number,
     reason: string,
@@ -1729,6 +1684,7 @@ export class TerminalSessionManager implements TerminalService {
       }
     }
     session.attachments.clear();
+    this.disposeRuntime(session);
   }
 
   private requireOpen(): void {
@@ -1757,13 +1713,6 @@ export class TerminalSessionManager implements TerminalService {
         409,
         "Another terminal lifecycle operation is still running",
       );
-    return session;
-  }
-
-  private beginLifecycleMutation(id: string): ManagedTerminal {
-    this.requireOpen();
-    const session = this.requireStableSession(id);
-    this.lifecycleMutations.add(id);
     return session;
   }
 

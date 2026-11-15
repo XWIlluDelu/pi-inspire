@@ -20,14 +20,14 @@ interface UpdateControllerState {
   updateSnoozedUntil: number | null;
 }
 
-type UpdateApi = Pick<Api, "update" | "piUpdate" | "snoozeUpdate">;
-type UpdateKind = "inspire" | "pi";
+type UpdateApi = Pick<Api, "json">;
+const UPDATE_KINDS = ["inspire", "pi"] as const;
+type UpdateKind = (typeof UPDATE_KINDS)[number];
 
 interface UpdateControllerHost {
   state(): UpdateControllerState;
   patch(patch: Partial<UpdateControllerState>): void;
   api(): UpdateApi | null;
-  transportGeneration(): number;
   notify(kind: "warning", text: string): void;
 }
 
@@ -69,30 +69,16 @@ function projection(status: HostUpdateStatus): Partial<UpdateControllerState> {
 
 /** Projects Host-owned checks and owns browser request feedback and recovery. */
 export class UpdateController {
-  private requestGeneration = 0;
-  private readonly checkRequests: Record<UpdateKind, number> = {
-    inspire: 0,
-    pi: 0,
-  };
-  private readonly checkRecoveries = {
-    inspire: new RecoveryBackoff(),
-    pi: new RecoveryBackoff(),
-  };
-  private snoozeRequest = 0;
+  private readonly checks = new Map<UpdateKind, RecoveryBackoff>();
   private statusRevision = -1;
-  private snoozing = false;
+  private snoozeIntent: { identity: string } | null = null;
 
   constructor(private readonly host: UpdateControllerHost) {}
 
   invalidateForTransportReplacement(): void {
-    this.requestGeneration += 1;
-    this.checkRequests.inspire += 1;
-    this.checkRequests.pi += 1;
-    this.checkRecoveries.inspire.reset();
-    this.checkRecoveries.pi.reset();
-    this.snoozeRequest += 1;
+    for (const kind of UPDATE_KINDS) this.retireCheck(kind);
     this.statusRevision = -1;
-    this.snoozing = false;
+    this.snoozeIntent = null;
     // Losing this request's transport cannot declare the Host's work finished.
     this.host.patch({
       inspireUpdateRequestPending: false,
@@ -128,98 +114,70 @@ export class UpdateController {
   }
 
   refreshInspire(): void {
-    this.check("inspire", (api) => api.update(true));
+    this.check("inspire");
   }
 
   refreshPi(): void {
-    this.check("pi", (api) => api.piUpdate(true));
+    this.check("pi");
   }
 
   snooze(): void {
     const api = this.host.api();
     const identity = this.host.state().availableUpdateIdentity;
-    if (!api || !identity || this.snoozing) return;
-    this.snoozing = true;
-    const request = ++this.snoozeRequest;
-    const requestGeneration = this.requestGeneration;
-    const transportGeneration = this.host.transportGeneration();
-    void api.snoozeUpdate(identity).then(
-      (status) => {
-        if (
-          request !== this.snoozeRequest ||
-          !this.owns(api, requestGeneration, transportGeneration)
-        )
-          return;
-        this.snoozing = false;
+    if (!api || !identity || this.snoozeIntent) return;
+    const intent = { identity };
+    this.snoozeIntent = intent;
+    const owns = () => this.snoozeIntent === intent && api === this.host.api();
+    void api
+      .json("snoozeUpdate", { body: { identity } })
+      .then((status) => {
+        if (!owns()) return;
         this.applyStatus(checkedStatus(status));
-      },
-      () => {
-        if (
-          request !== this.snoozeRequest ||
-          !this.owns(api, requestGeneration, transportGeneration)
-        )
-          return;
-        this.snoozing = false;
-        this.host.notify("warning", "Unable to close the update notice.");
-      },
-    );
+      })
+      .catch(() => {
+        if (owns())
+          this.host.notify("warning", "Unable to close the update notice.");
+      })
+      .finally(() => {
+        if (this.snoozeIntent === intent) this.snoozeIntent = null;
+      });
   }
 
-  private owns(
-    api: UpdateApi,
-    requestGeneration: number,
-    transportGeneration: number,
-  ): boolean {
-    return (
-      requestGeneration === this.requestGeneration &&
-      transportGeneration === this.host.transportGeneration() &&
-      api === this.host.api()
-    );
+  private retireCheck(kind: UpdateKind): void {
+    this.checks.get(kind)?.cancel();
+    this.checks.delete(kind);
   }
 
-  private check(
-    kind: UpdateKind,
-    perform: (api: UpdateApi) => Promise<{ updateStatus: HostUpdateStatus }>,
-  ): void {
+  private check(kind: UpdateKind): void {
     const api = this.host.api();
     const state = this.host.state();
-    const checking =
-      kind === "inspire"
-        ? state.inspireUpdateChecking || state.inspireUpdateRequestPending
-        : state.piUpdateChecking || state.piUpdateRequestPending;
-    if (!api || checking) return;
-    const request = ++this.checkRequests[kind];
-    const requestGeneration = this.requestGeneration;
-    const transportGeneration = this.host.transportGeneration();
-    const recovery = this.checkRecoveries[kind];
+    const pendingField = `${kind}UpdateRequestPending` as const;
+    const errorField = `${kind}UpdateRequestError` as const;
+    if (!api || state[`${kind}UpdateChecking`] || state[pendingField]) return;
+    const recovery = new RecoveryBackoff();
+    this.checks.set(kind, recovery);
     const owns = () =>
-      request === this.checkRequests[kind] &&
-      this.owns(api, requestGeneration, transportGeneration);
-    const pending = () => this.host.state()[`${kind}UpdateRequestPending`];
+      this.checks.get(kind) === recovery && api === this.host.api();
     const patchRequest = (value: boolean, error: string | null = null) =>
-      this.host.patch(
-        kind === "inspire"
-          ? {
-              inspireUpdateRequestPending: value,
-              inspireUpdateRequestError: error,
-            }
-          : { piUpdateRequestPending: value, piUpdateRequestError: error },
-      );
+      this.host.patch({ [pendingField]: value, [errorField]: error });
     const run = async () => {
-      if (!owns() || !pending()) return;
+      if (!owns()) return;
       try {
-        const result = await perform(api);
+        const result = await api.json("checkUpdates", {
+          query: { kind, refresh: "1" },
+        });
         if (!owns()) return;
-        const status = checkedStatus(result.updateStatus);
-        recovery.reset();
+        const status = checkedStatus(result);
+        this.retireCheck(kind);
         patchRequest(false);
         this.applyStatus(status);
       } catch (error) {
         // A Host observation can acknowledge this check before HTTP settles.
         // Its work remains authoritative even if the response is lost later.
-        if (!owns() || !pending()) return;
+        if (!owns()) return;
         if (isTransientFailure(error) && recovery.schedule(() => void run()))
           return;
+        this.retireCheck(kind);
         patchRequest(
           false,
           kind === "inspire"
@@ -228,7 +186,6 @@ export class UpdateController {
         );
       }
     };
-    recovery.reset();
     patchRequest(true);
     void run();
   }
@@ -237,9 +194,9 @@ export class UpdateController {
     if (status.revision < this.statusRevision) return;
     this.statusRevision = status.revision;
     const patch = projection(status);
-    for (const kind of ["inspire", "pi"] as const) {
+    for (const kind of UPDATE_KINDS) {
       if (!status[`${kind}UpdateChecking`]) continue;
-      this.checkRecoveries[kind].reset();
+      this.retireCheck(kind);
       patch[`${kind}UpdateRequestPending`] = false;
       patch[`${kind}UpdateRequestError`] = null;
     }

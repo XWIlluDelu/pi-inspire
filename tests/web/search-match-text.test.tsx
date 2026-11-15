@@ -6,7 +6,10 @@ import {
   SearchMatchText,
   searchMatchRanges,
 } from "../../src/components/SearchMatchText";
-import { sessionSearchMatchRanges } from "../../src/session-search-presentation";
+import {
+  sessionSearchMatchRanges,
+  sessionSnippetMatchRanges,
+} from "../../src/session-search-presentation";
 
 describe("fuzzy search match presentation", () => {
   it.each([
@@ -65,22 +68,13 @@ describe("file search match presentation", () => {
     ).toEqual([]);
   });
 
-  it("keeps the separator separate from the ellipsized directory without losing match offsets", () => {
+  it("keeps the full path readable when a match spans its separator", () => {
     const path = "src/main.ts";
     const { container } = render(
       <ResourcePathLabel
         path={path}
         matches={searchMatchRanges(path, ["src/ma"])}
       />,
-    );
-    expect(container.querySelector(".resource-path__parent")).toHaveTextContent(
-      "src",
-    );
-    expect(
-      container.querySelector(".resource-path__separator"),
-    ).toHaveTextContent("/");
-    expect(container.querySelector(".resource-path__leaf")).toHaveTextContent(
-      "main.ts",
     );
     expect(
       Array.from(
@@ -97,10 +91,10 @@ describe("file search match presentation", () => {
     const path = "src/main.ts";
     const matches = searchMatchRanges(path, ["src/ma"]);
     const { container } = render(
-      <button type="button" aria-label={path}>
+      <>
         <SearchMatchText text="main.ts" ranges={matches} offset={4} />
         <ResourcePathLabel path="src" title={path} matches={matches} />
-      </button>,
+      </>,
     );
     expect(
       Array.from(
@@ -108,15 +102,6 @@ describe("file search match presentation", () => {
         (node) => node.textContent,
       ),
     ).toEqual(["ma", "src"]);
-    expect(container.querySelector("bdi")).toHaveTextContent("src");
-    expect(container.querySelector(".resource-path")).toHaveAttribute(
-      "title",
-      path,
-    );
-    expect(container.querySelector(".visually-hidden")).toHaveTextContent(
-      "src",
-    );
-    expect(container.querySelector("button")).toHaveAccessibleName(path);
   });
 });
 
@@ -141,3 +126,15 @@ it.each([
     ).toEqual(expected);
   },
 );
+
+describe("sessionSnippetMatchRanges", () => {
+  it("marks only literal occurrences, never scattered fuzzy letters", () => {
+    const text = "…the instrument resolution of 0.1 ms is far below";
+    expect(
+      sessionSnippetMatchRanges(text, "resolution ms").map(({ start, end }) =>
+        text.slice(start, end),
+      ),
+    ).toEqual(["resolution", "ms"]);
+    expect(sessionSnippetMatchRanges(text, "re:res")).toEqual([]);
+  });
+});

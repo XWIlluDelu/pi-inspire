@@ -1,15 +1,16 @@
 ---
 purpose: Thinking and tool activity keep stable disclosure identity, bounded lazy bodies, independent density preferences, and Pi-owned lifecycle states.
 covers:
-  - src/components/transcript-{activity,activity-visibility,fold,row-projection,rows,cards}.ts*
+  - src/components/transcript-{activity-visibility,fold,row-projection,rows,cards}.ts*
   - src/ansi.ts
   - src/events.ts
   - src/components/Transcript.tsx
-  - src/components/ActivityMatrix.tsx
+  - src/components/{BashExecution,ChildCalls,CodeModeResult,CustomMessage,ImagePreview}.tsx
+  - src/shell-record.ts
   - tests/browser/activity-presentation.spec.ts
   - src/styles/{transcript,activity-cards}.css
   - server/session-projection.ts
-  - tests/web/transcript-{fold,paging}.test.tsx
+  - tests/web/transcript-{fold,viewport}.test.tsx
   - tests/web/activity-visibility.test.tsx
   - tests/web/events.test.ts
   - tests/server/runtime-transcript.test.ts
@@ -26,99 +27,69 @@ remain directly readable. [[conversation]] owns those content boundaries;
 ## Activity groups
 
 Every maximal run of visible non-response activity forms one group, including runs crossing
-assistant-message boundaries. Thinking, tool and generic content retain
-their identities inside it. Displayed custom messages break the group and remain independently readable.
+assistant-message boundaries. Thinking, tool and generic content keep their identities inside it.
+Displayed custom messages break the group and remain independently readable.
 
 | Density | Presentation |
 | --- | --- |
-| Expanded | Every item in source order; individual Thinking/Tool preferences still control its content. |
-| Compact | Latest 24 items; an Earlier activity control reveals an omitted prefix. Equivalent to Expanded for shorter runs. |
-| Collapsed | One left-aligned Activity disclosure. Manual item disclosure and strip selection are retained. |
-| Adaptive (`dynamic`) | Historical groups start Collapsed; live groups start Compact and close at the lifecycle boundary below. |
+| Expanded | All activity in source order. |
+| Compact | Latest 24 items. Earlier activity reveals the omitted prefix in the same group. |
+| Collapsed | Shows the Activity disclosure and matrix. Opening reveals Compact. |
+| Adaptive (`dynamic`) | Starts Compact while running and closes when settled unless the reader has opened or is inspecting it. |
 
-Preferences choose the initial state. Collapsed opens Compact, the Compact prefix opens Expanded,
-and the upper/lower boundary controls step downward. When Expanded and Compact are equivalent,
-closing skips that intermediate state.
-
-The disclosure has one accessible name and Tab stop, with a shared rounded hover/focus surface.
-Enter, Space or pointer activation opens Compact with the group's center reading anchor. Open
-groups retain separate upper/lower controls and their reading anchors. On lower collapse, focus
-returns to the unified disclosure with `preventScroll`.
+The header and footer can collapse an open group. Earlier activity expands the omitted prefix
+in place. The group stays open during inspection and no page controls interrupt reading.
 
 Adjacent activity items share one spacing rhythm across assistant-message boundaries; prose and
-expanded details retain their own internal spacing.
-A single neutral vertical guide connects the open group's activity. Assistant-turn attribution
-rows and divider ticks are absent both inside and outside groups. The group heading uses the
-base UI size in the Rajdhani structural-label face with secondary ink; individual identities use
-the smaller compact size and medium weight. Lower collapse and Earlier activity controls share the
-structural face and base UI size with secondary ink, not a tiny caption.
+expanded details keep their internal spacing. On fine-pointer desktops, activity headers are at
+least 28px high and adjacent Activity groups and context checkpoints are 8px apart.
+
+A single neutral vertical guide connects the open group's activity. Assistant-turn attribution rows
+and divider ticks are absent inside and outside groups. The group heading uses Flux Mono at 13px,
+secondary ink. Individual identities use the smaller compact size and medium weight. Labels retain intrinsic
+layout width; positive 8px gaps separate label and summary without horizontal scaling or
+label-length-specific negative margins.
+
+The group header includes a one-line summary in the label's mono face at metadata size (`11.5px`) on the label baseline with quieter ink, separated
+by `" · "` like peer tool metadata and built from the same bounded telemetry: the step count, up to
+three distinct tool names with repeat counts (Thinking named when room remains), and a failed-call
+count in error ink. Deferred ranges add presence to the count without naming tools.
+The summary fetches nothing and truncates before the row wraps.
+
 Type icons use the theme identity colors directly, separate from failure and live-state indicators.
 Titles and expanded text use the normal ink/body roles without additional neutral mixing.
+
 Disclosure chevrons lead group labels, item identities and nested call rows. Top-level Activity
 and context events share a disclosure axis; the group guide continues under its arrow, and nested
-rows begin under the group label. Expanded text follows its own title/name axis. Rows without
-retained call detail reserve the disclosure column without adding an inert arrow. Hit areas stay unchanged.
+rows begin under the group label. The axis is the visible stroke/letter axis, not equal button
+edges: top-level hit rows hang 7px into the reading gutter to balance their 4px inner inset, the
+chevron's intrinsic blank side and the letters' side bearings. Open guides and nested headers follow
+this corrected axis; expanded text stays under its own title/name. Row heights and the padded
+focus/hit surfaces are unchanged. Rows without retained call detail reserve the disclosure column
+without an inert arrow.
 
-Thinking and tool details open as indented reading content, without an outer frame, tint, or
-shadow. Expanded text aligns with its header title. Code, Diff and output keep their local reading
-surfaces; a nested tool list has its own shallow guide. Summaries are prose, identities have quiet
-medium weight, and metadata remains subdued. A summary is separated from its identity/status group
-more clearly than an adjacent expanded-state Copy; shortening Copy spacing must not crowd the summary. Completion/failure marks retain their semantic green/red
-in both parent tools and nested calls; live work keeps its running cue. Tool-strip controls likewise avoid permanent boxes; their
-selected item remains visibly distinct.
+Thinking and tool details open as indented reading content with no outer frame, tint, or shadow.
+Expanded text aligns with its header title. Code, Diff and output keep their local reading surfaces;
+a nested tool list has its own shallow guide. Summaries are prose and metadata is subdued. A summary is
+separated from its identity/status group more clearly than an adjacent expanded-state Copy is;
+tightening Copy spacing must not crowd the summary. Completion/failure marks
+keep their semantic green/red in parent tools and nested calls; live work keeps its running cue.
 
-Activity uses a square 3×3 matrix alongside its structural label. Cells represent up to nine
-recent individual visible activities, oldest to newest in row-major reading order; a new record
-evicts the oldest when full. Tool and Thinking retain their identity colors. Unused cells remain
-neutral. Stream deltas and paired tool results do not add entries. Only live individual records
-pulse. A partially filled matrix reaching nine records briefly brightens once, retaining a subtle
-identity-colored glow while full. Rolling updates do not restart this response; initially full
-history does not flash on mount. Reduced motion keeps the static filled appearance. This is chronological data, not the
-random seven-pattern Π used for generic loading, and does not claim totals or aggregate success.
 
-Opaque deferred ranges contain bounded presence hints, not individual records. The matrix uses
-only the contiguous materialized tail after the last such range, rather than inventing order or
-counts from those hints. Its tooltip/accessibility description identifies unavailable history;
-expansion populates the matrix from the existing bounded materialization path. No extra history
-fetch occurs merely to decorate a collapsed header.
+Open activity bodies share one outer rhythm; no trailing card margin is added to the fold gap.
+The activity heading shows the nine most recent Thinking or tool steps in a 3×3 matrix. Active
+steps pulse, and the matrix briefly brightens as the ninth step arrives. The step count and tool
+names appear only while the group is open.
+Thinking paragraphs keep reading line-height with a compact paragraph gap. Empty status slots
+consume no header space and do not push Copy away.
 
-Open activity bodies share one outer rhythm; no redundant trailing card margin is added to the
-fold gap. Thinking paragraphs retain reading line-height with a compact paragraph gap and align
-with their header text. Empty status slots do not consume header space or push Copy away.
+The PWA titlebar needles keep the paired-track motif independently of the transcript folds, using
+the active theme's Tool/Thinking identity roles. [[design-system]] owns their presentation.
 
-The PWA titlebar needles retain the paired-track motif independently of the transcript folds,
-using the active theme's Tool/Thinking identity roles; [[design-system]] owns their presentation.
-The unused legacy fold and its isolated stylesheet are not product components to preserve.
-
-Fold-local choice overrides the default and survives pagination, virtualization, pairing changes,
-and deferred materialization within the branch view. Manual disclosure stops automatic collapse.
-
-### Deferred history
-
-Older activity-only messages travel as opaque view-bound ranges:
-
-- Expanded loads every bounded page; Compact loads newest-first until it has 24 cards or exhausts
-  the range; Collapsed leaves it unloaded.
-- The same prefix control represents omitted content, loading, and retry with a matching text label. Selecting it requests
-  complete Expanded materialization.
-- A projection change invalidates the request. Inserted pages preserve the scroll anchor.
-- Compact mounts only its latest 24 activity items; an omitted prefix does not keep tool or
-  Thinking renderers alive. Collapsed unmounts the group's items. Manual card disclosure and
-  selected tool-strip identity belong to the current projection and survive these omissions.
-  Reader choices such as Show all, Arguments/Script and nested-call disclosures, child-call
-  inspection, and tool-output scroll offsets are retained by activity and presentation-block key;
-  rendered trees and clipboard feedback are not retained. Untouched cards continue to follow their preferences. These choices are released with the
-  projection or when their activity disappears.
-- If a live append moves the focused item into the omitted prefix, focus moves to Earlier activity
-  without scrolling the reading viewport. Expanded restores the retained choices; focus remains
-  on the control the reader used.
-
-The Earlier activity control shares the group boundaries’ Rajdhani uppercase structural-label
-role and leading disclosure axis. Its square matrix summarizes the last nine known individual
-records of the hidden prefix, not the visible latest 24. Opaque ranges remain unknown; the control
-does not fetch extra pages merely for decoration. Loading temporarily replaces its chevron with Π;
-errors use an explicit alert and retry label. Historical cells stay static unless their own record
-is live; current work elsewhere in the group does not animate the omitted prefix.
+Manual fold choices survive updates to the same Live turn. Checkpoints keep the turn's identity
+while adopting native entry IDs for its rows. A matching Pi tool-call ID keeps deliberate
+card and reader choices across pages and checkpoints. Other row-local choices can reset
+when the owning native row changes. Older activity loads in the conversation scrollport.
 
 ## Independent card preferences
 
@@ -126,61 +97,49 @@ Thinking supports Adaptive, Expanded, Collapsed, and Hidden. Tool activity addit
 Compact. These preferences are independent of the surrounding band's density.
 
 Thinking remains separate from answer text. Terminal control formatting is removed for display;
-Pi history remains unchanged. Tool Compact keeps each card header visible with its body closed.
-Tool Collapsed groups adjacent runs of two or more calls into a wrapping strip of tool/status glyphs;
-isolated calls remain Compact. Selecting a glyph reveals its full card below the strip without
-reordering other content.
+Pi history is unchanged. Tool Compact keeps each card header visible with its body closed.
+Tool Compact uses individual tool disclosure rows. Collapsed presents consecutive settled calls
+as a strip of tool icons. Choosing an icon opens its card below the strip.
 
-Empty native Thinking bodies stay closed under Expanded or Adaptive preferences, including
-whitespace and display-stripped terminal formatting. Their headers remain available for manual
-disclosure; a manual open or close still overrides the default as content arrives. Adaptive residency
-starts when displayable content arrives. Configured Thinking presentations can supply content of their
-own and retain their normal disclosure behavior.
+Empty native Thinking bodies, including whitespace-only and display-stripped terminal formatting,
+stay closed under Expanded or Adaptive preferences. Their headers remain available, and a manual
+open or close still overrides the default as content arrives. Configured Thinking presentations can supply their own content and
+keep normal disclosure behavior.
 
 One native disclosure owns the complete header hit area, including plain summary text and remaining
-space. Copy and file-reference controls remain separate siblings above that hit area.
-Copy is available only while the individual content is expanded; closed headers reserve no Copy
-space or tab stop. In the expanded header it follows the complete header text, including retained
-summary metadata, rather than stretching to the row's far edge. Long identities truncate within
-the available header; summaries yield space before identity/actions.
-Thinking and ordinary tool summaries disappear when expanded to avoid repeating their content;
-CodeMode retains its useful duration/call summary. Header hover strengthens ink without
-a full-row fill or shadow. Touch press gives local, temporary disclosure feedback, never the
-browser's default full-row tap overlay or a sticky hover/selected state. Keyboard focus keeps a
-visible rounded outline around the complete disclosure row. Copy and file-reference controls act
-independently; only the visible reference opens the resource. Closing content immediately makes its
-controls inert, before the exit animation, so Tab cannot re-enter and accidentally reopen it. Child-call disclosures and collapsed tool strips follow the same
-pointer/keyboard distinction; a strip's persistent active state still identifies its open item.
+space. Copy and file-reference controls are separate siblings above that hit area and act
+independently; only the visible reference opens the resource.
+
+- Copy exists only while the individual content is expanded; closed headers reserve no Copy space
+  or tab stop. In the expanded header Copy follows the complete header text, including retained
+  summary metadata, instead of stretching to the row's far edge.
+- Long identities truncate within the available header; summaries yield space before
+  identity/actions.
+- Thinking and ordinary tool summaries disappear when expanded, since they repeat the content;
+  CodeMode keeps its duration/call summary.
+- Header hover strengthens ink without a full-row fill or shadow. Touch press gives local,
+  temporary disclosure feedback, never the browser's full-row tap overlay or a sticky
+  hover/selected state. Keyboard focus shows a visible rounded outline around the complete row.
+- Closing a card unmounts its details. Its header stays available to reopen them.
 
 Phase and presentation layouts own the gap between output/status and local details; status text
-must not add a second block of vertical padding. Script, argument, raw-result and extension-message
-details retain native disclosure behavior and use the same thin chevron and compact hit-row treatment.
+adds no second block of vertical padding. Script, argument, raw-result and extension-message details
+keep native disclosure behavior with the same thin chevron and compact hit-row treatment.
 
-## Adaptive timing
+## Adaptive activity
 
-Pi events establish completion; dwell times make fast transitions perceptible. The browser keeps the
-current assistant-message identity through its tool batch, replaces it at the next LLM call, clears
-it on settlement, and restores it from an active reconnect snapshot.
-
-| Surface | Collapse boundary | Minimum residency and delay |
-| --- | --- | --- |
-| Activity band | Next response or authoritative state showing activity has ended | 2.4 s open and 800 ms after the boundary |
-| Thinking | Next assistant message or agent settlement | 1.8 s open and 600 ms after the boundary |
-| Individual tool body | Its own `tool_execution_end`, on success or failure | 1.5 s open and 500 ms after completion |
-| Tool batch | Next assistant message or agent settlement, after all bodies close | 180 ms body close, then at least 800 ms Compact before collapse |
-
-Settled history starts at its final density without replaying live transitions. Retry remains live;
-transport loss alone does not end activity. Terminal worker failure clears browser-only liveness.
-
-Manually opening a completed tool holds its batch open until the reader closes it. Batch collapse
-fades cards in place and introduces the strip with a 4px upward fade. Reduced motion skips dwell and
-motion transitions; lifecycle eligibility still comes from Pi.
+Pi events establish completion. Active Thinking and tools start open. An individual tool closes
+when it reports a result. A group returns to its settled density at the next visible response or
+when the run settles. A manual disclosure keeps its choice across settlement. Focused activity
+stays open while the reader is inspecting it. Retry remains live and transport loss keeps the last
+confirmed lifecycle state.
 
 ## Tool states and streaming
 
 Call IDs correlate argument generation, execution updates, final results, and failure. Pi's
-identity-bearing `toolcall_start` creates the card immediately; legacy starts without identity wait
-for the complete call rather than guessing a name.
+`toolcall_start` creates the card immediately. The Host publishes the affected tool's bounded
+activity record for Live and includes the same record in a reconnect snapshot. Native execution
+events do not carry partial results to the browser. The final result arrives as a transcript row.
 
 | State | Display |
 | --- | --- |
@@ -196,7 +155,7 @@ card or enable final-result copy, and late updates cannot revive a finished tool
 and output panes follow their tail while the reader stays at the bottom and preserve manual scrolling.
 
 Native write/edit previews use typed content as arguments arrive. Missing edit fields or newly
-started array items retain earlier replacements; an absent side differs from an explicit empty
+started array items keep earlier replacements; an absent side differs from an explicit empty
 string. Incompatible tools use their named generic card with partial arguments.
 
 Partial paths are not actionable, and preview copies are labelled partial. Streaming/interrupted
@@ -207,6 +166,6 @@ messages use the same interruption projection.
 
 ## Checks
 
-Activity/fold tests cover the single collapsed disclosure and focus return, independent group/item preferences, kind indicators, legacy behavior, density, timing,
-identity, pagination, and scroll anchoring. Event tests cover generation, waiting, execution,
-settlement, and late updates.
+Component tests exercise fold choice, bounded pages and native checkpoint continuity. Browser
+tests exercise keyboard disclosure and reading while activity settles. Event tests exercise tool
+phases and late updates.

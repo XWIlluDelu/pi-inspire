@@ -45,7 +45,6 @@ export class PiRpcOutcomeUnknownError extends Error {
 }
 
 export class PiRpcCancelledError extends Error {
-  readonly code = "PI_RPC_CANCELLED";
   stopped: Promise<void> | null = null;
 
   constructor(readonly command: string) {

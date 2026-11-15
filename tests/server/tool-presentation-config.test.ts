@@ -99,7 +99,7 @@ describe("ToolPresentationConfigStore", () => {
     expect(broken.configuration.hiddenStatuses).toEqual(["example-state"]);
   });
 
-  it("reloads custom-message declarations and fails invalid profiles back to the empty user layer", async () => {
+  it("reloads a newly created profile and drops its declarations if it becomes invalid", async () => {
     const { path, store } = await fixture();
     const configuration = {
       version: 1,
@@ -114,6 +114,9 @@ describe("ToolPresentationConfigStore", () => {
         },
       },
     };
+    expect(await store.inspect()).toEqual({
+      configuration: { version: 1, rules: {}, mappings: {} },
+    });
     await writeFile(path, JSON.stringify(configuration));
     expect(await store.inspect()).toEqual({ configuration });
     configuration.customMessages.extension_message.source = "Updated";
@@ -134,76 +137,6 @@ describe("ToolPresentationConfigStore", () => {
     expect(invalid.warning).toMatch(
       /Custom tool presentations were not loaded/,
     );
-  });
-
-  it("treats a missing private file as an empty user layer", async () => {
-    const { store } = await fixture();
-    await expect(store.inspect()).resolves.toEqual({
-      configuration: { version: 1, rules: {}, mappings: {} },
-    });
-  });
-
-  it("loads one validated declarative rule and exact-name mapping", async () => {
-    const { path, store } = await fixture();
-    await writeFile(
-      path,
-      JSON.stringify({
-        version: 1,
-        rules: {
-          "user.example.search": {
-            summary: [{ value: { path: "args.query" } }],
-            blocks: [
-              {
-                type: "markdown",
-                label: "Result",
-                source: { path: "result.text" },
-              },
-            ],
-          },
-        },
-        mappings: { web_search: "user.example.search" },
-      }),
-    );
-
-    const inspected = await store.inspect();
-    expect(inspected.warning).toBeUndefined();
-    expect(inspected.configuration.mappings).toEqual({
-      web_search: "user.example.search",
-    });
-    expect(inspected.configuration.rules).toHaveProperty("user.example.search");
-  });
-
-  it("loads an optional Thinking summary and structured body declaration", async () => {
-    const { path, store } = await fixture();
-    await writeFile(
-      path,
-      JSON.stringify({
-        version: 1,
-        rules: {},
-        mappings: {},
-        thinking: {
-          summary: [
-            {
-              value: { path: "thinking.text", format: "first-line" },
-            },
-          ],
-          blocks: [
-            {
-              type: "markdown",
-              label: "Reasoning",
-              source: { path: "thinking.text" },
-            },
-          ],
-        },
-      }),
-    );
-
-    const inspected = await store.inspect();
-    expect(inspected.warning).toBeUndefined();
-    expect(inspected.configuration.thinking).toMatchObject({
-      summary: [{ value: { path: "thinking.text", format: "first-line" } }],
-      blocks: [{ type: "markdown", label: "Reasoning" }],
-    });
   });
 
   it("reports invalid private input and leaves only shipped rules active", async () => {

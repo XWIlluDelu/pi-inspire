@@ -1,20 +1,24 @@
-import { ChevronDown, CircleAlert, Square } from "lucide-react";
+import { ChevronRight, CircleAlert, Square } from "lucide-react";
 import { useContext, useId, useLayoutEffect, useState } from "react";
-import { CopyAction } from "./CopyAction";
+import { CodeView } from "./CodeView";
+import { ActivityHeader } from "./transcript-activity-visibility";
 import { TranscriptSearchReveal } from "./transcript-search";
 
 /** Cancellation keeps the outcome header, without diagnostics or actions. */
 export function AssistantStopped() {
   return (
     <div
-      className="assistant-error assistant-error--stopped"
+      className="activity-surface assistant-error assistant-error--stopped"
       role="group"
       aria-label="Stopped"
     >
-      <div className="assistant-error__head">
-        <Square size={14} className="assistant-error__icon" aria-hidden />
+      <ActivityHeader
+        icon={
+          <Square size={14} className="assistant-error__icon" aria-hidden />
+        }
+      >
         <span className="assistant-error__label">Stopped</span>
-      </div>
+      </ActivityHeader>
     </div>
   );
 }
@@ -43,16 +47,23 @@ export function AssistantError({ text }: { text: string }) {
     .join("");
   const hasDetails = preview.length < text.length;
   return (
-    <div className="assistant-error" role="group" aria-label="Pi error">
-      <div className="assistant-error__head">
-        <CircleAlert size={14} className="assistant-error__icon" aria-hidden />
+    <div
+      className="activity-surface assistant-error"
+      role="group"
+      aria-label="Pi error"
+    >
+      <ActivityHeader
+        icon={
+          <CircleAlert
+            size={14}
+            className="assistant-error__icon"
+            aria-hidden
+          />
+        }
+        copy={{ text, label: "Error message" }}
+      >
         <span className="assistant-error__label">Pi error</span>
-        <CopyAction
-          text={text}
-          label="Error message"
-          className="assistant-error__copy"
-        />
-      </div>
+      </ActivityHeader>
       <section
         id={detailsId}
         aria-label={expanded ? "Error details" : undefined}
@@ -67,20 +78,20 @@ export function AssistantError({ text }: { text: string }) {
         {expanded && diagnostics ? (
           <>
             {paragraphBreak![0]}
-            <pre className="assistant-error__diagnostics">{diagnostics}</pre>
+            <CodeView className="activity-reader" text={diagnostics} />
           </>
         ) : null}
       </section>
       {hasDetails ? (
         <button
           type="button"
-          className="assistant-error__disclosure"
+          className="disclosure-row detail-summary assistant-error__disclosure"
           aria-expanded={expanded}
           aria-controls={detailsId}
           onClick={() => setExpanded(!expanded)}
         >
-          <ChevronDown size={12} aria-hidden />
-          {expanded ? "Hide details" : "Show details"}
+          <ChevronRight size={12} aria-hidden className="chev" />
+          <span>{expanded ? "Hide details" : "Show details"}</span>
         </button>
       ) : null}
     </div>

@@ -1,101 +1,4 @@
-/* --- Boundary scroll rails --- */
-
-/* Navigation and Transcript retain their established boundary rails. Files
-   and Changes deliberately use native scrollbars so their dense code/list
-   surfaces remain dependable beside the pane resize boundary. */
-.nav,
-.nav__list,
-.nav__hidden-content,
-.transcript {
-  scrollbar-width: none;
-}
-
-.nav::-webkit-scrollbar,
-.nav__list::-webkit-scrollbar,
-.nav__hidden-content::-webkit-scrollbar,
-.transcript::-webkit-scrollbar {
-  display: none;
-}
-
-.srail {
-  position: fixed;
-  z-index: 30;
-  width: 16px;
-  transform: translateX(-50%);
-  /* The band itself must not intercept clicks or wheel — only the thumb. */
-  pointer-events: none;
-}
-
-.srail__thumb {
-  position: absolute;
-  left: 0;
-  width: 100%;
-  pointer-events: auto;
-  cursor: grab;
-  /* Resting state stays faintly visible so the grab point is discoverable
-     without scrolling first; activity brings it to full strength. */
-  opacity: 0.4;
-  transition: opacity var(--dur-panel) var(--ease-standard);
-}
-
-.srail__thumb::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 50%;
-  width: 6px;
-  transform: translateX(-50%);
-  border-radius: var(--radius-pill);
-  background: var(--thumb);
-  transition: background var(--dur-micro) var(--ease-standard);
-}
-
-.srail--show .srail__thumb,
-.srail:hover .srail__thumb {
-  opacity: 1;
-}
-
-.srail:hover .srail__thumb::after {
-  background: color-mix(in srgb, var(--ink) 32%, transparent);
-}
-
-.srail--drag .srail__thumb {
-  cursor: grabbing;
-}
-
-.srail--drag .srail__thumb::after {
-  background: color-mix(in srgb, var(--ink) 45%, transparent);
-}
-
-body.srail-dragging {
-  cursor: grabbing;
-  user-select: none;
-}
-
 /* --- Responsive --- */
-
-@media (max-width: 1280px) {
-  :root {
-    --content-max: min(var(--reading-width-max), 800px);
-    --composer-max: min(var(--reading-width-max), 800px);
-  }
-}
-
-@media (max-width: 1100px) {
-  :root {
-    --content-max: min(var(--reading-width-max), 740px);
-    --composer-max: min(var(--reading-width-max), 740px);
-  }
-
-  .topbar__project {
-    max-width: 240px;
-  }
-
-  .topbar__git {
-    max-width: 140px;
-  }
-}
 
 @media (max-width: 900px) {
   .app {
@@ -152,36 +55,7 @@ body.srail-dragging {
     animation: resources-drawer-in var(--dur-panel) var(--ease-standard);
   }
 
-  .app--narrow .ctx__header {
-    gap: var(--space-1);
-    height: auto;
-    /* Reserve the 40px tab frame, vertical inset and border even while loading. */
-    min-height: calc(var(--topbar-h) + 1px);
-    padding: 2px var(--space-2);
-  }
-
-  .app--narrow .ctx__modes {
-    width: auto;
-    flex: 1 1 auto;
-  }
-
-  .app--narrow .ctx__modes button {
-    min-height: 34px;
-    padding: 4px 0;
-  }
-
-  .app--narrow .ctx__close {
-    display: inline-flex;
-  }
-
-  .app--narrow .ctx__header-actions .icon-button {
-    width: 32px;
-    height: 32px;
-    min-height: 32px;
-  }
-
-  .app--narrow .file-preview__content:not(:has(> .source-reader)),
-  .app--narrow .changes__content:not(:has(> .source-reader)) {
+  .app--narrow .file-preview__content:not(:has(> .source-reader, > .pdf-preview)) {
     padding: var(--space-2);
   }
 
@@ -197,125 +71,256 @@ body.srail-dragging {
     }
   }
 
-  .overlay.settings-overlay {
-    background: transparent;
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-    animation: none;
-  }
-
-  .settings-overlay::before {
-    content: "";
-    position: fixed;
-    inset: 0;
-    z-index: -1;
-    pointer-events: none;
-    background: var(--bg-overlay);
-    backdrop-filter: blur(2px);
-    -webkit-backdrop-filter: blur(2px);
-    animation: overlay-in var(--dur-standard) var(--ease-standard);
-  }
-
-  .dialog.settings {
-    animation-name: settings-sheet-in;
-  }
-
-  @keyframes settings-sheet-in {
-    from {
-      transform: translateY(8px);
-    }
-  }
-
-  .pane-resize--ctx,
-  .pane-resize--nav {
+  .pane-resize {
     display: none;
   }
 
-  .transcript-mobile-toolbar {
-    position: absolute;
-    z-index: 4;
-    top: var(--space-2);
-    right: max(var(--space-3), var(--safe-right));
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    pointer-events: none;
-  }
-
-  .transcript-mobile-toolbar__launchers {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-2);
-    pointer-events: auto;
-  }
-
-  .transcript-mobile-toolbar__button {
-    display: inline-flex;
-    width: 44px;
-    height: 44px;
-    align-items: center;
-    justify-content: center;
-    border: 1px solid var(--line);
-    border-radius: var(--radius-control);
-    background: var(--bg-surface);
-    box-shadow: var(--shadow-1);
-    color: var(--muted);
-    cursor: pointer;
-    transition:
-      border-color var(--dur-micro) var(--ease-standard),
-      color var(--dur-micro) var(--ease-standard),
-      background var(--dur-micro) var(--ease-standard);
-  }
-
-  .transcript-mobile-toolbar__button:hover,
-  .transcript-mobile-toolbar__button:focus-visible {
-    border-color: var(--line-strong);
-    background: var(--bg-raised);
-    color: var(--ink);
-  }
-
   .transcript {
-    --transcript-padding-top: calc(var(--space-2) + 44px + var(--space-3));
     --transcript-padding-bottom: var(--space-6);
     padding-inline: max(var(--space-4), var(--safe-left)) max(var(--space-4), var(--safe-right));
   }
 
-  .transcript-search {
+  .user-bubble {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .composer-dock {
+    padding-right: max(var(--space-6), var(--safe-right));
+    padding-bottom: max(var(--space-2), var(--safe-bottom));
+    padding-left: max(var(--space-6), var(--safe-left));
+  }
+
+  .notices {
+    right: max(var(--space-3), var(--safe-right));
+    width: min(
+      360px,
+      calc(
+        100vw - max(var(--space-3), var(--safe-left)) -
+          max(var(--space-3), var(--safe-right))
+      )
+    );
+  }
+}
+
+@media (max-width: 600px) {
+  .token-gate {
+    min-height: var(--app-height);
+    padding: max(var(--space-4), var(--safe-top))
+      max(var(--space-4), var(--safe-right))
+      max(var(--space-4), var(--safe-bottom))
+      max(var(--space-4), var(--safe-left));
+    overflow-y: auto;
+  }
+
+  .token-gate__card {
+    width: 100%;
+    padding: var(--space-5);
+  }
+
+  .token-gate form .button {
+    min-height: 44px;
+  }
+
+  .token-gate__actions {
+    flex-wrap: wrap;
+  }
+
+  .topbar__status .chip {
+    padding-inline: var(--space-1);
+  }
+
+  .topbar__status .chip__label--responsive {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .transcript {
+    padding-inline: max(var(--space-3), var(--safe-left))
+      max(var(--space-3), var(--safe-right));
+  }
+
+  .composer-dock {
+    padding: var(--space-2);
+    padding-inline: max(var(--space-2), var(--safe-left))
+      max(var(--space-2), var(--safe-right));
+    padding-bottom: max(var(--space-2), var(--safe-bottom));
+  }
+
+  .extension-dock {
+    max-height: min(22dvh, 180px);
+  }
+
+  .extension-dock--below {
+    max-height: min(18dvh, 136px);
+  }
+
+  .composer {
+    --composer-content-inset: 7px;
+    padding: 10px 12px;
+  }
+
+  .composer__input {
+    line-height: 1.45;
+  }
+
+  .composer__meta .thinking-select {
+    min-height: 36px;
+  }
+
+  .composer__meta .icon-button,
+  .composer__send {
+    flex-shrink: 0;
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+    min-height: 36px;
+  }
+
+  .welcome {
+    justify-content: flex-start;
+    padding: var(--space-6) max(var(--space-3), var(--safe-right))
+      var(--space-6) max(var(--space-3), var(--safe-left));
+  }
+
+  .welcome__row {
+    min-height: 44px;
+    padding: 10px 19px;
+  }
+
+  .nav__search input[type="search"] {
+    height: 34px;
+    font-size: var(--text-base);
+  }
+
+  .nav__new-session {
+    font-size: var(--text-base);
+  }
+
+  @supports (-webkit-touch-callout: none) {
+    /* iOS keeps edit text at 16px to avoid focus zoom; the resting prompt
+       still shares the compact creation row's label size. */
+    .nav__search input[type="search"] {
+      font-size: 16px;
+    }
+
+    .nav__search input::placeholder {
+      font-size: var(--text-base);
+    }
+  }
+
+  .overlay {
+    --overlay-space-top: var(--space-2);
+    --overlay-space-inline: var(--space-2);
+    --overlay-space-bottom: var(--space-2);
+  }
+
+  .dialog.settings,
+  .dialog.terminal-settings {
+    width: 100%;
+    height: 100%;
+    border-radius: var(--radius-md);
+  }
+
+  :is(.settings, .terminal-settings) .dialog__header--bar {
+    --dialog-header-padding: var(--space-2) var(--space-3);
+  }
+
+  .settings__layout {
+    flex-direction: column;
+  }
+
+  .settings__sidebar {
+    width: 100%;
+    flex: 0 0 auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--hairline);
+    padding: var(--space-2) var(--space-4);
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .settings__nav-list {
+    min-width: max-content;
+    flex-direction: row;
+    gap: 2px;
+    flex: 1 1 auto;
+    flex-wrap: nowrap;
+  }
+
+  .settings__nav-item {
+    width: auto;
+    flex: 0 0 auto;
+    gap: 4px;
+    padding: var(--space-1) var(--space-2);
+    font-size: var(--text-xs);
+    white-space: nowrap;
+  }
+
+  .settings__nav-item:focus-visible {
+    outline-offset: -2px;
+  }
+
+  .settings__content {
+    padding: var(--space-3) var(--space-3) var(--space-5);
+  }
+
+  .settings__footer {
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+  }
+
+  .settings__footer-status {
+    min-height: 20px;
+  }
+
+  .palette.dialog {
+    width: 100%;
+    max-height: calc(
+      var(--app-height) - max(var(--space-2), var(--safe-top)) -
+        max(var(--space-2), var(--safe-bottom))
+    );
+  }
+
+  .palette__row {
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 420px) {
+  .settings__nav-icon {
     display: none;
   }
 
-  .transcript-search--mobile-open {
-    max-width: none;
-    z-index: 5;
-    top: var(--space-2);
-    right: max(var(--space-3), var(--safe-right));
-    left: max(var(--space-3), var(--safe-left));
-    display: flex;
-    width: auto;
-    height: auto;
-    min-height: 44px;
-    padding: 5px var(--space-2);
-    justify-content: flex-start;
-    border-radius: var(--radius-control);
-    background: var(--bg-surface);
-    box-shadow: var(--shadow-1);
-    cursor: default;
-    overflow: visible;
+  .welcome__row-project {
+    display: none;
   }
+}
 
-  .transcript-search input {
-    width: 100%;
-    min-width: 40px;
+/* Scroll containers keep their momentum to themselves. */
+.transcript,
+.nav__list,
+.ctx {
+  overscroll-behavior: contain;
+}
+
+/* --- Reduced motion --- */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition-duration: 0.01ms !important;
   }
+}
 
-  .transcript-search output {
-    min-width: 4em;
-  }
-
-  .transcript-search > .transcript-search__close {
-    display: inline-flex;
-  }
-
+@media (max-width: 900px) {
   .prompt-map:not(.prompt-map--mobile-active) {
     display: none;
   }
@@ -431,577 +436,4 @@ body.srail-dragging {
     transform: none;
     animation: prompt-map-mobile-open 0.18s cubic-bezier(0.16, 1, 0.3, 1);
   }
-
-  .user-bubble {
-    width: 100%;
-    max-width: 100%;
-  }
-
-  .composer-dock {
-    padding-right: max(var(--space-6), var(--safe-right));
-    padding-bottom: max(var(--space-2), var(--safe-bottom));
-    padding-left: max(var(--space-6), var(--safe-left));
-  }
-
-  .notices {
-    right: max(var(--space-3), var(--safe-right));
-    width: min(
-      360px,
-      calc(
-        100vw - max(var(--space-3), var(--safe-left)) -
-          max(var(--space-3), var(--safe-right))
-      )
-    );
-  }
-}
-
-/* The desktop Prompt Map owns a real gutter beside the reading column. The
-   gutter is derived from the center pane itself, so a wide reading preference,
-   either side pane, and live window resizing cannot push the rail onto content.
-   Above the minimum, the computed margin is the ordinary centered measure. */
-@media (min-width: 901px) {
-  .transcript__column {
-    margin-left: max(
-      var(--space-4),
-      calc((100% - var(--content-max)) / 2)
-    );
-  }
-}
-
-@media (pointer: coarse) {
-  .prompt-map .prompt-map__step,
-  .prompt-map__toggle {
-    width: 44px;
-    min-height: 44px;
-  }
-}
-
-@media (max-width: 600px) {
-  .prompt-map:not(.prompt-map--open) {
-    min-width: 44px;
-  }
-
-  .prompt-map .prompt-map__step,
-  .prompt-map__toggle {
-    width: 44px;
-    height: 44px;
-    min-height: 44px;
-  }
-
-  .topbar {
-    padding-inline: max(var(--space-2), var(--safe-left))
-      max(var(--space-2), var(--safe-right));
-  }
-
-  .topbar .icon-button {
-    flex: 0 0 44px;
-    width: 44px;
-    height: 44px;
-  }
-
-  .token-gate {
-    min-height: var(--app-height);
-    height: var(--app-height);
-    padding: max(var(--space-4), var(--safe-top))
-      max(var(--space-4), var(--safe-right))
-      max(var(--space-4), var(--safe-bottom))
-      max(var(--space-4), var(--safe-left));
-    overflow-y: auto;
-  }
-
-  .token-gate__card {
-    width: 100%;
-    padding: var(--space-5);
-  }
-
-  .token-gate input {
-    font-size: 16px;
-  }
-
-  .token-gate form .button {
-    flex: 0 0 auto;
-    min-height: 44px;
-  }
-
-  .token-gate__actions {
-    flex-wrap: wrap;
-  }
-
-  .topbar__title-button {
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .topbar__project {
-    display: none;
-  }
-
-  /* Preserve workspace-change awareness without competing with the session
-     title and fixed topbar actions on a phone-sized bar. */
-  .topbar__git {
-    flex: 0 0 auto;
-    max-width: none;
-    padding: 2px 6px;
-    white-space: nowrap;
-    border-radius: var(--radius-xs);
-    background: transparent;
-  }
-
-  .topbar__git-branch {
-    display: none;
-  }
-
-  .topbar__git-count::before {
-    display: none;
-  }
-
-  .topbar__status .chip {
-    padding-inline: var(--space-1);
-  }
-
-  .topbar__status .chip__label--responsive {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    margin: -1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
-
-  .topbar__actions {
-    gap: 0;
-  }
-
-  .transcript {
-    padding-inline: max(var(--space-3), var(--safe-left))
-      max(var(--space-3), var(--safe-right));
-  }
-
-  .transcript-search > button {
-    flex: 0 0 36px;
-    width: 36px;
-    height: 36px;
-  }
-
-  .composer-dock {
-    padding: var(--space-2);
-    padding-inline: max(var(--space-2), var(--safe-left))
-      max(var(--space-2), var(--safe-right));
-    padding-bottom: max(var(--space-2), var(--safe-bottom));
-  }
-
-  .extension-dock {
-    max-height: min(22dvh, 180px);
-  }
-
-  .extension-dock--below {
-    max-height: min(18dvh, 136px);
-  }
-
-  .extension-display__detail {
-    display: none;
-  }
-
-  .composer {
-    --composer-content-inset: 7px;
-    padding: 10px 12px;
-  }
-
-  .composer__input {
-    font-size: max(16px, var(--text-reading));
-    line-height: 1.45;
-  }
-
-  .picker__input,
-  .model-picker__search input,
-  .palette__input,
-  .transcript-search input,
-  .dialog__input,
-  .dialog__editor,
-  .topbar__rename input {
-    font-size: 16px;
-  }
-
-  .composer__spacer {
-    flex: 1 1 0;
-    min-width: 0;
-  }
-
-  .composer__meta {
-    gap: var(--space-1);
-    min-width: 0;
-  }
-
-  .composer__meta .dropdown:not(.model-picker) {
-    flex-shrink: 0;
-  }
-
-  .composer__meta .model-picker {
-    flex: 0 1 auto;
-    min-width: 0;
-    max-width: min(220px, 45vw);
-  }
-
-  .composer__meta .dropdown__trigger {
-    min-height: 36px;
-    padding: 2px 6px;
-  }
-
-  /* The model trigger can be the only elastic control in a narrow composer.
-     Keep its label inside that control rather than letting a long model id
-     paint over adjacent picker and action hit targets. */
-  .composer__meta .model-picker__trigger {
-    overflow: hidden;
-  }
-
-  .composer__meta .model-picker__trigger-copy {
-    flex: 1 1 auto;
-    overflow: hidden;
-  }
-
-  .composer__meta .model-picker__trigger-copy > .dropdown__value {
-    width: 100%;
-    min-width: 0;
-    max-width: none;
-  }
-
-  .completion__option {
-    grid-template-columns: minmax(120px, 150px) minmax(0, 1fr);
-    gap: var(--space-2);
-  }
-
-  .composer__meta .icon-button,
-  .composer__send {
-    flex-shrink: 0;
-    width: 36px;
-    height: 36px;
-    min-width: 36px;
-    min-height: 36px;
-  }
-
-  .composer__meta .meter {
-    flex-shrink: 0;
-  }
-
-  .welcome {
-    justify-content: flex-start;
-    padding: var(--space-6) max(var(--space-3), var(--safe-right))
-      var(--space-6) max(var(--space-3), var(--safe-left));
-  }
-
-  .welcome__dir {
-    font-size: 16px;
-  }
-
-  .welcome__row {
-    min-height: 44px;
-    padding: 10px 14px;
-    border-radius: var(--radius-md);
-    box-shadow: var(--shadow-1);
-  }
-
-  .welcome__row:active {
-    background: var(--bg-inset);
-    transform: scale(0.99);
-  }
-
-  .nav__search input {
-    height: 34px;
-    font-size: var(--text-base);
-  }
-
-  .nav__new-session {
-    font-size: var(--text-base);
-  }
-
-  @supports (-webkit-touch-callout: none) {
-    /* iOS keeps edit text at 16px to avoid focus zoom; the resting prompt
-       still shares the compact creation row's label size. */
-    .nav__search input {
-      font-size: 16px;
-    }
-
-    .nav__search input::placeholder {
-      font-size: var(--text-base);
-    }
-  }
-
-  .overlay {
-    padding: max(var(--space-2), var(--safe-top))
-      max(var(--space-2), var(--safe-right))
-      max(var(--space-2), var(--safe-bottom))
-      max(var(--space-2), var(--safe-left));
-  }
-
-  .dialog.settings,
-  .dialog.terminal-settings {
-    width: 100%;
-    height: calc(
-      var(--app-height) - var(--safe-top) - var(--safe-bottom) - 2 * var(--space-2)
-    );
-    max-height: calc(
-      var(--app-height) - var(--safe-top) - var(--safe-bottom) - 2 * var(--space-2)
-    );
-    border-radius: var(--radius-md);
-  }
-
-  .settings__header {
-    padding: var(--space-2) var(--space-3);
-  }
-
-  .settings__layout {
-    flex-direction: column;
-  }
-
-  .settings__sidebar {
-    width: 100%;
-    flex: 0 0 auto;
-    border-right: 0;
-    border-bottom: 1px solid var(--hairline);
-    padding: var(--space-2) 12px;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-    scroll-snap-type: x proximity;
-    scroll-padding-inline: 16px;
-    mask-image: linear-gradient(to right, transparent, black 16px, black calc(100% - 16px), transparent);
-    -webkit-mask-image: linear-gradient(to right, transparent, black 16px, black calc(100% - 16px), transparent);
-  }
-
-  .settings__sidebar::-webkit-scrollbar {
-    display: none;
-  }
-
-  .settings__nav-list {
-    min-width: max-content;
-    flex-direction: row;
-    gap: 2px;
-    flex: 1 1 auto;
-    flex-wrap: nowrap;
-  }
-
-  .settings__nav-item {
-    width: auto;
-    flex: 0 0 auto;
-    gap: 4px;
-    padding: var(--space-1) var(--space-2);
-    font-size: var(--text-xs);
-    white-space: nowrap;
-    scroll-snap-align: nearest;
-  }
-
-  .settings__nav-item--active,
-  .settings__nav-item--active:hover {
-    border-color: transparent;
-    background: transparent;
-    box-shadow: none;
-  }
-
-  .settings__nav-item--active::before {
-    top: auto;
-    bottom: 0;
-    left: 4px;
-    right: 4px;
-    width: auto;
-    height: 2px;
-    border-radius: var(--radius-pill);
-  }
-
-  .settings__content,
-  .terminal-settings__body {
-    padding: var(--space-3) var(--space-3) var(--space-5);
-  }
-
-  .settings__content {
-    gap: var(--space-5);
-  }
-
-  .terminal-settings__footer {
-    padding: var(--space-2) var(--space-3);
-  }
-
-  .settings__field-help {
-    max-width: none;
-  }
-
-  .settings__footer {
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-2);
-    padding: var(--space-2) var(--space-3);
-  }
-
-  .settings__footer-status {
-    min-height: 20px;
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-2);
-  }
-
-  .settings__install {
-    margin-left: auto;
-  }
-
-  .settings__footer-actions {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-2);
-  }
-
-  .palette {
-    width: 100%;
-    max-height: calc(
-      var(--app-height) - max(var(--space-2), var(--safe-top)) -
-        max(var(--space-2), var(--safe-bottom))
-    );
-  }
-
-  .palette__input {
-    font-size: 16px;
-  }
-
-  .palette__row {
-    min-height: 44px;
-  }
-
-  .app--narrow .ctx__modes button {
-    /* Match the condensed structural labels without a tall, narrow selected tile. */
-    min-height: 34px;
-  }
-}
-
-@media (max-width: 420px) {
-  .app--narrow .ctx__header,
-  .app--narrow .ctx__header-actions {
-    gap: 2px;
-  }
-
-  .transcript-search {
-    gap: 2px;
-  }
-
-  .transcript-search output {
-    flex-shrink: 0;
-    width: min-content;
-    white-space: normal;
-  }
-
-  .settings__nav-icon {
-    display: none;
-  }
-
-  .welcome__row-project {
-    display: none;
-  }
-
-  .composer__meta {
-    flex-wrap: wrap;
-  }
-
-  .composer__selectors {
-    display: flex;
-    flex: 1 0 100%;
-    align-items: center;
-    gap: var(--space-2);
-    min-width: 0;
-  }
-
-  .composer__meta .model-picker {
-    flex: 0 1 auto;
-    max-width: none;
-  }
-}
-
-/* Desktop side panes can make the editor narrower than the phone layout.
-   Reuse its selector row without splitting the task actions across lines. */
-@media (min-width: 901px) {
-  @container reading-stage (max-width: 440px) {
-    .composer__meta {
-      flex-wrap: wrap;
-    }
-
-    .composer__selectors {
-      display: flex;
-      flex: 1 0 100%;
-      align-items: center;
-      gap: var(--space-2);
-      min-width: 0;
-    }
-
-    .composer__meta .model-picker {
-      flex: 0 1 auto;
-      max-width: none;
-    }
-  }
-}
-
-/* Scroll containers keep their momentum to themselves. */
-.transcript,
-.nav__list,
-.nav__hidden-content,
-.palette__list,
-.picker__list,
-.ctx {
-  overscroll-behavior: contain;
-}
-
-/* --- Reduced motion --- */
-
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation: none !important;
-    transition-duration: 0.01ms !important;
-  }
-}
-
-.changes__navigation { display: none; }
-
-@media (max-width: 900px) {
-  .res__body--files.res__body--split > .res__index { display: none; }
-  .res__body--files.res__body--split { grid-template-rows: minmax(0, 1fr); }
-  .file-preview > .file-detail-header { height: auto; min-height: 44px; flex-basis: auto; }
-  .file-preview__back { display: inline-flex; flex: 0 0 auto; align-items: center; gap: var(--space-1); min-height: 44px; border: 0; padding: 0 var(--space-1); background: transparent; color: var(--body); cursor: pointer; }
-  .file-preview__back:focus-visible,
-  .changes__back:focus-visible,
-  .changes__navigation > .icon-button:focus-visible { outline-offset: -2px; }
-  .res__body--changes.res__body--split { grid-template-rows: minmax(0, 1fr); }
-  .res__body--changes.res__body--detail > .res__index,
-  .res__body--changes:not(.res__body--detail) > .changes__detail { display: none; }
-  .changes__navigation {
-    display: flex;
-    flex: 0 0 auto;
-    align-items: center;
-    gap: var(--space-1);
-    min-height: 44px;
-    padding: var(--space-1) var(--space-2);
-    border-bottom: 1px solid var(--hairline);
-    background: var(--bg-surface);
-  }
-  .changes__back {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-1);
-    min-height: 44px;
-    border: 0;
-    padding: 0 var(--space-1);
-    background: transparent;
-    color: var(--body);
-    font: var(--text-xs)/var(--leading-ui) var(--font-sans);
-    white-space: nowrap;
-    cursor: pointer;
-  }
-  .changes__comparison {
-    margin-left: auto;
-    color: var(--muted);
-    font: var(--text-xs)/var(--leading-ui) var(--font-sans);
-    white-space: nowrap;
-  }
-  .changes__navigation > .icon-button { width: 44px; height: 44px; flex: 0 0 44px; }
 }

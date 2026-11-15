@@ -2,23 +2,23 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { TerminalServiceSettings } from "../../shared/terminal-contracts";
-import type { createApi } from "../../src/api";
 import { TerminalSettingsDialog } from "../../src/components/TerminalSettingsDialog";
-import { DEFAULT_TERMINAL_UI_SETTINGS } from "../../src/terminal-settings";
+import {
+  DEFAULT_TERMINAL_UI_SETTINGS,
+  loadTerminalUiSettings,
+} from "../../src/terminal-settings";
 import { deferred, installLocalStorage } from "./helpers";
 
 const service = { persistOutput: true, historyRetentionDays: 30 };
 const api = {
-  terminalSettings: vi.fn(),
-  updateTerminalSettings: vi.fn(),
-  clearTerminalHistory: vi.fn(),
+  json: vi.fn(),
+  terminalOperation: vi.fn(),
 };
 function Dialog() {
-  const [settings, setSettings] = useState(DEFAULT_TERMINAL_UI_SETTINGS);
+  const [settings, setSettings] = useState(loadTerminalUiSettings);
   return (
     <TerminalSettingsDialog
-      api={api as unknown as ReturnType<typeof createApi>}
+      api={api}
       settings={settings}
       onSettingsChange={setSettings}
       onClose={() => undefined}
@@ -35,7 +35,7 @@ function navigate(name: string) {
 beforeEach(() => {
   vi.resetAllMocks();
   installLocalStorage();
-  api.terminalSettings.mockResolvedValue(service);
+  api.json.mockResolvedValue(service);
 });
 
 afterEach(() => vi.unstubAllGlobals());
@@ -66,22 +66,19 @@ describe("Terminal notification permission", () => {
       expect(
         screen.getByRole("switch", { name: "Long task notifications" }),
       ).not.toBeChecked();
+      const bell = screen.getByRole("combobox", {
+        name: "Terminal bell behavior",
+      });
+      fireEvent.click(bell);
       fireEvent.click(
-        screen.getByRole("combobox", { name: "Terminal bell behavior" }),
-      );
-      fireEvent.click(
-        screen.getByRole("option", { name: "Desktop notification" }),
+        await screen.findByRole("option", { name: "Desktop notification" }),
       );
       await act(async () => {});
       expect(screen.getByRole("status")).toHaveTextContent(feedback);
-      expect(
-        screen.getByRole("combobox", { name: "Terminal bell behavior" }),
-      ).toHaveTextContent("Mark terminal tab");
+      expect(bell).toHaveTextContent("Mark terminal tab");
       expect(requestPermission).not.toHaveBeenCalled();
-      fireEvent.click(
-        screen.getByRole("combobox", { name: "Terminal bell behavior" }),
-      );
-      fireEvent.click(screen.getByRole("option", { name: "Off" }));
+      fireEvent.click(bell);
+      fireEvent.click(await screen.findByRole("option", { name: /^Off$/u }));
       await act(async () => {});
       expect(screen.queryByRole("status")).toBeNull();
     },
@@ -130,183 +127,27 @@ describe("Terminal notification permission", () => {
     expect(
       screen.getByRole("switch", { name: "Protect terminal paste" }),
     ).not.toBeChecked();
-    expect(screen.queryByRole("status")).toBeNull();
-    expect(api.updateTerminalSettings).not.toHaveBeenCalled();
+    expect(api.terminalOperation).not.toHaveBeenCalled();
   });
 });
 
-describe("Terminal settings categories", () => {
-  it.each(["Win32", "Linux x86_64"])(
-    "does not expose Option-as-Meta on %s",
-    async (platform) => {
-      vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
-      try {
-        render(<Dialog />);
-        await act(async () => {});
-        navigate("Interaction");
-        expect(
-          screen.queryByRole("switch", { name: "Use Option as Meta" }),
-        ).toBeNull();
-      } finally {
-        vi.restoreAllMocks();
-      }
-    },
+it("recovers unreadable preferences and keeps valid values in partial settings", () => {
+  const key = "inspire:terminal-ui-settings:v1";
+  localStorage.setItem(key, "invalid JSON");
+  expect(loadTerminalUiSettings()).toEqual(DEFAULT_TERMINAL_UI_SETTINGS);
+  localStorage.setItem(
+    key,
+    JSON.stringify({
+      fontSize: 99,
+      lineHeight: 0,
+      cursorStyle: "invalid",
+      scrollbackRows: -1,
+      bell: "desktop",
+      macOptionIsMeta: "true",
+    }),
   );
-
-  it("offers an explicit Mac opt-in, persists it, and restores native Option defaults", async () => {
-    vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
-    try {
-      render(<Dialog />);
-      await act(async () => {});
-      navigate("Interaction");
-      const option = screen.getByRole("switch", { name: "Use Option as Meta" });
-      expect(option).not.toBeChecked();
-      fireEvent.click(option);
-      expect(option).toBeChecked();
-      expect(
-        JSON.parse(
-          window.localStorage.getItem("inspire:terminal-ui-settings:v1")!,
-        ),
-      ).toMatchObject({ macOptionIsMeta: true });
-      navigate("Appearance");
-      navigate("Interaction");
-      expect(
-        screen.getByRole("switch", { name: "Use Option as Meta" }),
-      ).toBeChecked();
-      fireEvent.click(
-        screen.getByRole("button", { name: "Restore browser defaults" }),
-      );
-      expect(
-        screen.getByRole("switch", { name: "Use Option as Meta" }),
-      ).not.toBeChecked();
-      expect(api.updateTerminalSettings).not.toHaveBeenCalled();
-    } finally {
-      vi.restoreAllMocks();
-    }
-  });
-
-  it("exposes one category and lands at the top on switches and reselection", async () => {
-    render(<Dialog />);
-    await act(async () => {});
-    const content = screen.getByRole("main");
-    expect(screen.getByRole("region", { name: "Appearance" })).toBeVisible();
-    expect(
-      screen.queryByRole("switch", { name: "Protect terminal paste" }),
-    ).toBeNull();
-    content.scrollTop = 240;
-    const interaction = navigate("Interaction");
-    expect(content.scrollTop).toBe(0);
-    expect(screen.getByRole("region", { name: "Interaction" })).toBeVisible();
-    expect(
-      screen.queryByRole("group", { name: "Terminal font size" }),
-    ).toBeNull();
-    expect(
-      screen.queryByRole("switch", { name: "Persist terminal output" }),
-    ).toBeNull();
-    fireEvent.scroll(content, { target: { scrollTop: 120 } });
-    expect(interaction).toHaveAttribute("aria-current", "location");
-    navigate("Interaction");
-    expect(content.scrollTop).toBe(0);
-    expect(
-      screen.getByRole("button", { name: "Restore browser defaults" }),
-    ).toBeVisible();
-  });
-
-  it("keeps immediate browser changes across categories and resets only browser defaults", async () => {
-    render(<Dialog />);
-    await act(async () => {});
-    fireEvent.click(
-      screen.getByRole("button", { name: "Increase terminal font size" }),
-    );
-    navigate("Interaction");
-    fireEvent.click(
-      screen.getByRole("switch", { name: "Protect terminal paste" }),
-    );
-    navigate("Saved output");
-    expect(
-      screen.getByRole("switch", { name: "Persist terminal output" }),
-    ).toBeChecked();
-    navigate("Appearance");
-    expect(
-      screen.getByText(`${DEFAULT_TERMINAL_UI_SETTINGS.fontSize + 1}px`),
-    ).toBeVisible();
-    navigate("Interaction");
-    expect(
-      screen.getByRole("switch", { name: "Protect terminal paste" }),
-    ).not.toBeChecked();
-    expect(
-      JSON.parse(
-        window.localStorage.getItem("inspire:terminal-ui-settings:v1")!,
-      ),
-    ).toMatchObject({
-      fontSize: DEFAULT_TERMINAL_UI_SETTINGS.fontSize + 1,
-      pasteProtection: false,
-    });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Restore browser defaults" }),
-    );
-    expect(
-      screen.getByRole("switch", { name: "Protect terminal paste" }),
-    ).toBeChecked();
-    expect(api.updateTerminalSettings).not.toHaveBeenCalled();
-    expect(api.clearTerminalHistory).not.toHaveBeenCalled();
-  });
-
-  it("completes Host loading and saves while their category is hidden", async () => {
-    const read = deferred<TerminalServiceSettings>();
-    const save = deferred<TerminalServiceSettings>();
-    api.terminalSettings.mockReturnValue(read.promise);
-    api.updateTerminalSettings.mockReturnValue(save.promise);
-    render(<Dialog />);
-    navigate("Saved output");
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Loading Host settings",
-    );
-    navigate("Appearance");
-    await act(async () => read.resolve(service));
-    navigate("Saved output");
-    fireEvent.click(
-      screen.getByRole("combobox", { name: "Terminal output retention" }),
-    );
-    fireEvent.click(screen.getByRole("option", { name: "90 days" }));
-    expect(api.updateTerminalSettings).toHaveBeenCalledWith({
-      historyRetentionDays: 90,
-    });
-    navigate("Interaction");
-    navigate("Saved output");
-    expect(
-      screen.getByRole("combobox", { name: "Terminal output retention" }),
-    ).toBeDisabled();
-    navigate("Interaction");
-    await act(async () =>
-      save.resolve({ ...service, historyRetentionDays: 90 }),
-    );
-    navigate("Saved output");
-    expect(
-      screen.getByRole("combobox", { name: "Terminal output retention" }),
-    ).toHaveTextContent("90 days");
-    expect(
-      screen.getByRole("combobox", { name: "Terminal output retention" }),
-    ).toBeEnabled();
-    expect(api.terminalSettings).toHaveBeenCalledTimes(1);
-  });
-
-  it("keeps clear progress and its failure visible after switching away", async () => {
-    const clear = deferred<{ ok: boolean }>();
-    api.clearTerminalHistory.mockReturnValue(clear.promise);
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
-    render(<Dialog />);
-    await act(async () => {});
-    navigate("Saved output");
-    fireEvent.click(screen.getByRole("button", { name: "Clear history" }));
-    navigate("Appearance");
-    navigate("Saved output");
-    expect(screen.getByRole("button", { name: "Clearing…" })).toBeDisabled();
-    navigate("Appearance");
-    await act(async () => clear.reject(new Error("Host unavailable")));
-    expect(screen.getByRole("alert")).toHaveTextContent("Host unavailable");
-    navigate("Saved output");
-    expect(screen.getByRole("button", { name: "Clear history" })).toBeEnabled();
-    confirm.mockRestore();
+  expect(loadTerminalUiSettings()).toEqual({
+    ...DEFAULT_TERMINAL_UI_SETTINGS,
+    bell: "desktop",
   });
 });

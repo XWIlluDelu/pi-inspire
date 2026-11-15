@@ -2,29 +2,103 @@ import { FolderSearch, X } from "lucide-react";
 import {
   type KeyboardEvent,
   type RefObject,
-  useCallback,
   useEffect,
-  useId,
   useMemo,
   useRef,
   useState,
 } from "react";
-import { createPortal } from "react-dom";
 import type { ProjectFileResult, ProjectFileSearchResult } from "../api";
 import { rankProjectFiles } from "../composer-completion";
 import { fileIconForPath } from "../file-icons";
-import { isComposingKeyboardEvent } from "../keyboard-input";
-import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
+import { recoverableRead } from "../recovery-backoff";
 import { store, useAppState } from "../store";
-import {
-  type FloatingMenuConstraints,
-  useFloatingMenuPlacement,
-} from "../use-floating-menu";
-import { useModalPortal } from "../use-modal-focus";
-import { useSearchFocus } from "../use-search-focus";
+import type { FloatingMenuConstraints } from "../use-floating-menu";
+import { AnchoredPanel } from "./ChoicePanel";
 import { HiddenFilesToggle } from "./HiddenFilesToggle";
+import { type ListOption, OptionList, useOptionList } from "./OptionList";
 import { parentPath, ResourcePathLabel } from "./ResourcePathLabel";
+import { SearchField } from "./SearchField";
 import { SearchMatchText, searchMatchRanges } from "./SearchMatchText";
+
+export function ProjectFileLabel({
+  path,
+  name,
+  query,
+}: Pick<ProjectFileResult, "path" | "name"> & {
+  query: string;
+}) {
+  const Icon = fileIconForPath(path);
+  const directory = parentPath(path);
+  const matches = searchMatchRanges(path, query.trim().split(/\s+/));
+  return (
+    <>
+      <span className="picker__file-name">
+        <Icon size={13} aria-hidden />
+        <span>
+          <SearchMatchText
+            text={name}
+            ranges={matches}
+            offset={path.length - name.length}
+          />
+        </span>
+      </span>
+      {directory && (
+        <ResourcePathLabel
+          path={directory}
+          title={path}
+          className="picker__path"
+          matches={matches}
+        />
+      )}
+    </>
+  );
+}
+
+export function projectFileOption(file: ProjectFileResult) {
+  return {
+    key: file.path,
+    value: file,
+    title: file.path,
+    label: `${file.name}, ${file.path}`,
+  };
+}
+
+export function ProjectFileFeedback({
+  empty,
+  status,
+  truncated,
+  partialText = "Partial search results",
+  emptyText = "No matching files",
+  loadingText = "Searching…",
+}: {
+  empty: boolean;
+  status: "loading" | "ready" | "error";
+  truncated: boolean;
+  partialText?: string;
+  emptyText?: string;
+  loadingText?: string;
+}) {
+  const message = truncated
+    ? partialText
+    : !empty
+      ? null
+      : status === "loading"
+        ? loadingText
+        : status === "error"
+          ? "Project file search failed"
+          : emptyText;
+  return (
+    message && (
+      <div
+        className="picker__empty"
+        data-error={status === "error"}
+        role="status"
+      >
+        {message}
+      </div>
+    )
+  );
+}
 
 export function ProjectFileChips({
   paths,
@@ -66,7 +140,115 @@ const PICKER_CONSTRAINTS: FloatingMenuConstraints = {
   maxHeight: 320,
 };
 
-export function ProjectFilePicker({
+interface ProjectFilePickerProps {
+  scope: string;
+  showHidden: boolean;
+  onShowHiddenChange: (value: boolean) => void;
+  selected: readonly string[];
+  disabled?: boolean;
+  search: (query: string) => Promise<ProjectFileSearchResult>;
+  onAdd: (file: ProjectFileResult) => void;
+}
+
+export function useProjectFileSearch(
+  search: ProjectFilePickerProps["search"] | undefined,
+  query: string | undefined,
+  scope: string | null | undefined,
+  showHidden: boolean,
+  delay: number,
+) {
+  const transport = useAppState((state) => state.transportGeneration);
+  const owner = useMemo(
+    () => ({ query, search, scope, showHidden, transport }),
+    [query, search, scope, showHidden, transport],
+  );
+  const [response, setResponse] = useState<{
+    owner: typeof owner;
+    result: ProjectFileSearchResult | null;
+  }>();
+  useEffect(() => {
+    const { query, search, transport } = owner;
+    if (query === undefined || !search) return;
+    const request = recoverableRead(
+      () => store.getState().transportGeneration === transport,
+    );
+    const publish = (result: ProjectFileSearchResult | null) => {
+      if (request.current()) setResponse({ owner, result });
+    };
+    const timer = setTimeout(() => {
+      void request
+        .read(() => search(query))
+        .then(
+          (result) =>
+            publish({
+              ...result,
+              files: rankProjectFiles(result.files, query),
+            }),
+          () => publish(null),
+        );
+    }, delay);
+    return () => {
+      request.abort();
+      clearTimeout(timer);
+    };
+  }, [owner, delay]);
+
+  const current = response?.owner === owner ? response.result : undefined;
+  const status: "loading" | "ready" | "error" =
+    current === null
+      ? "error"
+      : current || query === undefined
+        ? "ready"
+        : "loading";
+  return {
+    files: current?.files ?? EMPTY_FILES,
+    truncated: Boolean(current?.truncated),
+    status,
+  };
+}
+
+const EMPTY_FILES: readonly ProjectFileResult[] = [];
+
+export function ProjectFileControl({
+  scope,
+  disabled = false,
+  buttonDisabled = disabled,
+  ...picker
+}: Omit<ProjectFilePickerProps, "scope"> & {
+  scope: string | null;
+  buttonDisabled?: boolean;
+}) {
+  const anchorRef = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        ref={anchorRef}
+        type="button"
+        className={`icon-button ${open ? "icon-button--active" : ""}`}
+        disabled={buttonDisabled}
+        onClick={() => setOpen(!open)}
+        aria-label="Add project files"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        title="Reference project files"
+      >
+        <FolderSearch size={14} aria-hidden />
+      </button>
+      {open && scope ? (
+        <ProjectFilePicker
+          {...picker}
+          anchorRef={anchorRef}
+          scope={scope}
+          disabled={disabled}
+          onClose={() => setOpen(false)}
+        />
+      ) : null}
+    </>
+  );
+}
+
+function ProjectFilePicker({
   anchorRef,
   scope,
   showHidden,
@@ -76,296 +258,91 @@ export function ProjectFilePicker({
   search,
   onAdd,
   onClose,
-}: {
+}: ProjectFilePickerProps & {
   anchorRef: RefObject<HTMLButtonElement | null>;
-  scope: string;
-  showHidden: boolean;
-  onShowHiddenChange: (value: boolean) => void;
-  selected: readonly string[];
-  disabled?: boolean;
-  search: (query: string) => Promise<ProjectFileSearchResult>;
-  onAdd: (file: ProjectFileResult) => void;
   onClose: () => void;
 }) {
-  const transportGeneration = useAppState((state) => state.transportGeneration);
   const [query, setQuery] = useState("");
-  const [truncated, setTruncated] = useState(false);
-  const [results, setResults] = useState<ProjectFileResult[]>([]);
-  const [status, setStatus] = useState<"loading" | "ready" | "error">(
-    "loading",
-  );
-  const [activeIndex, setActiveIndex] = useState(0);
-  const [keyboardActive, setKeyboardActive] = useState(true);
-  const listId = useId();
-  const listRef = useRef<HTMLDivElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const resolveTarget = useCallback(() => {
-    const anchor = anchorRef.current;
-    return anchor
-      ? {
-          context: anchor,
-          anchor: anchor.getBoundingClientRect(),
-          observe: [anchor, ...(anchor.form ? [anchor.form] : [])],
-        }
-      : null;
-  }, [anchorRef]);
-  const placement = useFloatingMenuPlacement(
-    true,
-    resolveTarget,
-    PICKER_CONSTRAINTS,
-  );
-  useModalPortal(Boolean(placement), anchorRef, menuRef);
-  useSearchFocus(Boolean(placement), inputRef, menuRef);
-
-  useEffect(() => {
-    if (!placement) return;
-    const dismiss = (event: Event) => {
-      const target = event.target as Node;
-      if (
-        !menuRef.current?.contains(target) &&
-        !anchorRef.current?.contains(target)
-      )
-        onClose();
-    };
-    window.addEventListener("pointerdown", dismiss);
-    window.addEventListener("focusin", dismiss);
-    return () => {
-      window.removeEventListener("pointerdown", dismiss);
-      window.removeEventListener("focusin", dismiss);
-    };
-  }, [anchorRef, onClose, placement]);
-  const availableIndexes = useMemo(
+  const {
+    files: results,
+    truncated,
+    status,
+  } = useProjectFileSearch(search, query, scope, showHidden, 200);
+  const list = useOptionList<ProjectFileResult>();
+  const { reset } = list;
+  const options = useMemo(
     () =>
-      results.flatMap((file, index) =>
-        !disabled && !selected.includes(file.path) ? [index] : [],
-      ),
-    [disabled, results, selected],
+      results.map((file): ListOption<ProjectFileResult> => {
+        const added = selected.includes(file.path);
+        return {
+          ...projectFileOption(file),
+          disabled: disabled || added,
+          selected: added,
+        };
+      }),
+    [results, disabled, selected],
   );
-  const activeOption = availableIndexes.includes(activeIndex)
-    ? results[activeIndex]
-    : undefined;
+  const navigate = (event: KeyboardEvent) =>
+    list.navigate(event, options, onAdd, {
+      wrap: true,
+      tab: true,
+      consumeEmptyEnter: true,
+    });
 
-  const moveActive = (direction: -1 | 1) => {
-    if (availableIndexes.length === 0) return;
-    const position = availableIndexes.indexOf(activeIndex);
-    const next =
-      position < 0
-        ? direction === 1
-          ? 0
-          : availableIndexes.length - 1
-        : (position + direction + availableIndexes.length) %
-          availableIndexes.length;
-    setActiveIndex(availableIndexes[next]!);
-  };
+  useEffect(() => reset(), [results, reset]);
 
-  useEffect(() => {
-    const request = new AbortController();
-    const recovery = new RecoveryBackoff();
-    const owns = () =>
-      !request.signal.aborted &&
-      store.getState().transportGeneration === transportGeneration;
-    setResults([]);
-    setTruncated(false);
-    setActiveIndex(0);
-    setStatus("loading");
-    const read = async () => {
-      try {
-        while (owns()) {
-          try {
-            const result = await search(query);
-            if (!owns()) return;
-            setResults(rankProjectFiles(result.files, query));
-            setTruncated(Boolean(result.truncated));
-            setActiveIndex(0);
-            setStatus("ready");
-            return;
-          } catch (cause) {
-            if (!owns()) return;
-            if (
-              !isTransientFailure(cause) ||
-              !(await recovery.wait(request.signal))
-            )
-              throw cause;
-          }
-        }
-      } catch {
-        if (owns()) setStatus("error");
-      } finally {
-        recovery.reset();
-      }
-    };
-    const timer = setTimeout(() => void read(), 200);
-    return () => {
-      request.abort();
-      recovery.reset();
-      clearTimeout(timer);
-    };
-  }, [query, scope, search, showHidden, transportGeneration]);
-
-  useEffect(() => {
-    if (
-      availableIndexes.length > 0 &&
-      !availableIndexes.includes(activeIndex)
-    ) {
-      setActiveIndex(availableIndexes[0]!);
-    }
-  }, [activeIndex, availableIndexes]);
-
-  useEffect(() => {
-    if (!keyboardActive) return;
-    const option = document.getElementById(`${listId}-option-${activeIndex}`);
-    if (option && listRef.current?.contains(option))
-      option.scrollIntoView({ block: "nearest" });
-  }, [activeIndex, keyboardActive, listId, results]);
-
-  const navigate = (event: KeyboardEvent) => {
-    if (event.defaultPrevented || isComposingKeyboardEvent(event.nativeEvent))
-      return;
-    if (event.key === "Enter" || (event.key === "Tab" && activeOption)) {
-      event.preventDefault();
-      if (activeOption) onAdd(activeOption);
-      return;
-    }
-    if (availableIndexes.length === 0) return;
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-      event.preventDefault();
-      setKeyboardActive(true);
-      moveActive(event.key === "ArrowDown" ? 1 : -1);
-    }
-  };
-
-  if (!placement) return null;
-  return createPortal(
-    <div
-      ref={menuRef}
-      className="picker picker--files"
-      role="dialog"
-      aria-label="Add project files"
-      tabIndex={-1}
-      data-placement={placement.direction}
-      data-keyboard-active={keyboardActive}
-      style={{
-        left: placement.left,
-        top: placement.top,
-        bottom: placement.bottom,
-        width: placement.width,
-        maxHeight: placement.maxHeight,
-      }}
+  return (
+    <AnchoredPanel
+      open
+      label="Add project files"
+      anchorRef={anchorRef}
+      constraints={PICKER_CONSTRAINTS}
+      searchable
+      onClose={onClose}
       onKeyDown={(event) => {
-        if (isComposingKeyboardEvent(event.nativeEvent)) return;
-        if (event.key === "Escape") {
-          event.preventDefault();
-          event.stopPropagation();
-          onClose();
-          anchorRef.current?.focus({ preventScroll: true });
-        } else if (
-          event.target === event.currentTarget &&
-          event.key !== "Tab"
-        ) {
+        if (event.target === event.currentTarget && event.key !== "Tab")
           navigate(event);
-        }
       }}
     >
       <div className="file-search-controls">
-        <input
-          ref={inputRef}
-          className="picker__input"
-          type="search"
+        <SearchField
+          iconSize={13}
           role="combobox"
           value={query}
-          onChange={(event) => setQuery(event.target.value)}
+          onValueChange={setQuery}
           onKeyDown={navigate}
           placeholder="Search project files…"
           aria-label="Search project files"
           aria-autocomplete="list"
-          aria-controls={listId}
+          aria-controls={list.id}
           aria-expanded="true"
-          aria-activedescendant={
-            keyboardActive && activeOption
-              ? `${listId}-option-${activeIndex}`
-              : undefined
-          }
+          aria-activedescendant={list.descendant(options)}
         />
         <HiddenFilesToggle
           showHidden={showHidden}
           onChange={onShowHiddenChange}
         />
       </div>
-      {truncated ? (
-        <div className="picker__empty" role="status">
-          Partial search results; browse the folder for more files.
-        </div>
-      ) : null}
-      <div
-        ref={listRef}
-        id={listId}
+      <OptionList
+        list={list}
+        options={options}
+        label="Project files"
         className="picker__list"
-        role="listbox"
-        aria-label="Project files"
-        aria-busy={status === "loading"}
-        onPointerMove={(event) => {
-          if (event.pointerType !== "touch") setKeyboardActive(false);
-        }}
+        loading={status === "loading"}
+        onPick={onAdd}
+        optionButtons
+        plain
+        renderOption={({ value: file }) => (
+          <ProjectFileLabel path={file.path} name={file.name} query={query} />
+        )}
       >
-        {results.map((file, index) => {
-          const Icon = fileIconForPath(file.path);
-          const directory = parentPath(file.path);
-          const matches = searchMatchRanges(
-            file.path,
-            query.trim().split(/\s+/),
-          );
-          const added = selected.includes(file.path);
-          const unavailable = disabled || added;
-          return (
-            <button
-              type="button"
-              id={`${listId}-option-${index}`}
-              role="option"
-              aria-label={`${file.name}, ${file.path}`}
-              title={file.path}
-              aria-selected={added}
-              disabled={unavailable}
-              tabIndex={-1}
-              key={file.path}
-              className={`picker__row ${added ? "picker__row--added" : ""} ${keyboardActive && index === activeIndex && !unavailable ? "picker__row--active" : ""}`}
-              onPointerMove={(event) => {
-                if (event.pointerType !== "touch" && !unavailable)
-                  setActiveIndex(index);
-              }}
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => onAdd(file)}
-            >
-              <Icon size={13} aria-hidden />
-              <span className="picker__name">
-                <SearchMatchText
-                  text={file.name}
-                  ranges={matches}
-                  offset={file.path.length - file.name.length}
-                />
-              </span>
-              {directory ? (
-                <ResourcePathLabel
-                  path={directory}
-                  title={file.path}
-                  className="picker__path"
-                  matches={matches}
-                />
-              ) : null}
-            </button>
-          );
-        })}
-        {results.length === 0 ? (
-          <div className="picker__empty" role="status">
-            {status === "loading"
-              ? "Searching…"
-              : status === "error"
-                ? "Project file search failed"
-                : "No matching files"}
-          </div>
-        ) : null}
-      </div>
-    </div>,
-    anchorRef.current?.closest(".overlay") ?? document.body,
+        <ProjectFileFeedback
+          status={status}
+          empty={!options.length}
+          truncated={truncated}
+          partialText="Partial results. Browse for more files."
+        />
+      </OptionList>
+    </AnchoredPanel>
   );
 }

@@ -33,11 +33,12 @@ it("reads an append cursor and image identities without transporting a large nat
     data: Buffer.alloc(14 * 1024 * 1024, 7).toString("base64"),
     mimeType: "image/png",
   };
-  const messages = [1, 1].map((timestamp) => ({
+  const message = {
     role: "user",
     content: [{ type: "text", text: "same caption" }, image],
-    timestamp,
-  }));
+    timestamp: 1,
+  };
+  const messages = [message, message];
   expect(Buffer.byteLength(JSON.stringify(messages))).toBeGreaterThan(
     MAX_RPC_LINE_BYTES,
   );
@@ -103,14 +104,11 @@ it("reads an append cursor and image identities without transporting a large nat
       sessionId,
       null,
     );
+    const evidence = userMessageEvidence(message);
     expect(observed).toEqual({
       cursor: baseline.cursor,
-      messages: messages.map(userMessageEvidence),
+      messages: [evidence, evidence],
     });
-    expect(observed.messages[0]!.fingerprint).toBe(
-      observed.messages[1]!.fingerprint,
-    );
-    expect(observed.messages[0]!.identity).toBe(observed.messages[1]!.identity);
     expect(Buffer.byteLength(JSON.stringify(evidenceEvents))).toBeLessThan(
       4096,
     );

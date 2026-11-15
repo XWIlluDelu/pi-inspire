@@ -108,7 +108,11 @@ export function StatusChoice({
   const confirmedIndex = control.options.findIndex(
     (option) => option.value === value,
   );
-  const index = preview ?? Math.max(0, confirmedIndex);
+  const pendingIndex = control.options.findIndex(
+    (option) => option.value === pending,
+  );
+  const index =
+    preview ?? (pendingIndex >= 0 ? pendingIndex : Math.max(0, confirmedIndex));
   const selected = control.options[index]!;
   const unavailable = disabled || (!draft && !snapshot) || pending !== null;
   const owned = () =>
@@ -179,17 +183,6 @@ export function StatusChoice({
     element?.addEventListener("change", commit);
     return () => element?.removeEventListener("change", commit);
   }, [control]);
-  const hint =
-    error ||
-    (draft
-      ? value
-        ? (selected.description ?? "")
-        : "Default"
-      : !snapshot
-        ? "Selection status is not available yet."
-        : snapshot.supported?.[snapshot.value] === false
-          ? "Requested; inactive for this model."
-          : (selected.description ?? ""));
   const confirmOption = control.options.find(
     (option) => option.value === confirmation,
   );
@@ -210,7 +203,10 @@ export function StatusChoice({
           {control.options.map((option, i) => (
             <span
               key={option.value}
-              data-selected={confirmedIndex >= 0 && i === index}
+              data-selected={
+                confirmedIndex >= 0 && i === (pending ? confirmedIndex : index)
+              }
+              data-pending={i === pendingIndex || undefined}
               data-focus-target={i === index}
             />
           ))}
@@ -223,11 +219,13 @@ export function StatusChoice({
           step="1"
           aria-label={control.label}
           aria-valuetext={
-            confirmedIndex >= 0
-              ? (selected.title ?? selected.label)
-              : draft
-                ? "Default"
-                : "Unknown"
+            pending
+              ? `Applying ${selected.title ?? selected.label}`
+              : confirmedIndex >= 0
+                ? (selected.title ?? selected.label)
+                : draft
+                  ? "Default"
+                  : "Unknown"
           }
           disabled={unavailable}
           value={index}
@@ -253,7 +251,9 @@ export function StatusChoice({
           <span
             key={option.value}
             title={option.title ?? option.label}
-            data-selected={confirmedIndex >= 0 && i === index}
+            data-selected={
+              confirmedIndex >= 0 && i === (pending ? confirmedIndex : index)
+            }
             onClick={() => {
               range.current?.focus();
               void request(option.value);
@@ -263,9 +263,9 @@ export function StatusChoice({
           </span>
         ))}
       </div>
-      {hint ? (
+      {error ? (
         <p className="status-choice__hint" role="status">
-          {hint}
+          {error}
         </p>
       ) : null}
       {confirmOption ? (

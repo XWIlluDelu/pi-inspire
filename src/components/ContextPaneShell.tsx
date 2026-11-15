@@ -1,9 +1,7 @@
-import { AlertTriangle, X } from "lucide-react";
+import { X } from "lucide-react";
 import type { ReactNode } from "react";
 import { dismissTerminalMenu } from "../terminal-menus";
 import { recoverModalFocus, useModalFocus } from "../use-modal-focus";
-import { ContextPaneState } from "./ContextPaneState";
-import { PiLoader } from "./PiLoader";
 
 /** Keep the pane and its focus owner mounted across deferred body states. */
 export function ContextPaneShell({
@@ -33,84 +31,49 @@ export function ContextPaneShell({
       if (
         event.target instanceof Element &&
         ref.current?.contains(event.target) &&
-        event.target.closest(".terminal-search")
+        event.target.closest(
+          ".terminal-search, .dock-tabs .choice-panel, .history-detail",
+        )
       )
         return false;
       if (!dismissTerminalMenu(ref.current, event.target)) onClose();
     },
-    "drawer",
   );
-  // The same host element also preserves readers and terminals across layouts.
-  return isModal ? (
-    <div
-      className="ctx res"
-      id="context-pane"
-      ref={ref}
-      role="dialog"
-      aria-modal="true"
-      aria-label="Context panel"
-      tabIndex={-1}
-    >
-      {children}
-    </div>
-  ) : (
-    <div
-      className="ctx res"
-      id="context-pane"
-      ref={ref}
-      role="complementary"
-      aria-label="Context panel"
-    >
+  const semantics = isModal
+    ? {
+        role: "dialog",
+        "aria-label": "Context panel",
+        "aria-modal": true,
+        tabIndex: -1,
+      }
+    : { role: "complementary", "aria-label": "Context panel" };
+  return (
+    <div className="ctx res" id="context-pane" ref={ref} {...semantics}>
       {children}
     </div>
   );
 }
 
-export function ContextPaneLoading({
-  onClose,
-  onRetry,
-}: {
-  onClose: () => void;
-  onRetry?: () => void;
-}) {
+export function ContextPaneLoadingHeader({ onClose }: { onClose: () => void }) {
   return (
-    <>
-      <div className="ctx__header" ref={recoverModalFocus}>
-        <span className="ctx__title">Context</span>
-        <div className="ctx__header-actions">
-          <button
-            type="button"
-            className="icon-button ctx__close"
-            title="Close"
-            aria-label="Close context pane"
-            onClick={onClose}
-          >
-            <X size={15} aria-hidden />
-          </button>
-        </div>
+    <div className="pane-toolbar ctx__header" ref={recoverModalFocus}>
+      <div className="ctx__tools">
+        <ContextPaneClose onClose={onClose} />
       </div>
-      <ContextPaneState
-        className={onRetry ? undefined : "deferred-loading"}
-        icon={
-          onRetry ? (
-            <AlertTriangle size={17} aria-hidden />
-          ) : (
-            <PiLoader size={17} aria-hidden />
-          )
-        }
-        title={onRetry ? "Context could not be opened." : "Loading context"}
-        role={onRetry ? "alert" : "status"}
-      >
-        {onRetry ? (
-          <button
-            type="button"
-            className="button button--quiet res__state-action"
-            onClick={onRetry}
-          >
-            Reload
-          </button>
-        ) : null}
-      </ContextPaneState>
-    </>
+    </div>
+  );
+}
+
+export function ContextPaneClose({ onClose }: { onClose: () => void }) {
+  return (
+    <button
+      type="button"
+      className="icon-button ctx__close"
+      title="Close"
+      aria-label="Close context pane"
+      onClick={onClose}
+    >
+      <X size={15} aria-hidden />
+    </button>
   );
 }

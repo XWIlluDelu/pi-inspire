@@ -40,16 +40,8 @@ afterEach(() => {
 
 describe("feedback reading dwell", () => {
   it.each([
-    ["Copied to clipboard", 3_000],
     ["This session does not have a name yet.", 3_000],
-    [
-      "Close this browser tab when you are done. The Host and persistent Pi sessions keep running so you can reconnect later.",
-      5_000,
-    ],
-    [
-      "The workspace has finished loading. Some background services are still reconnecting, so their status may take a moment to update. You can keep editing your draft and choose another session without waiting for these services.",
-      8_000,
-    ],
+    ["Close this tab when you are done. Your sessions keep running.", 5_000],
     [
       "当前工作目录暂时不可用，请检查网络连接并确认磁盘已经挂载。你可以继续编辑草稿，也可以切换到其他会话。连接恢复后再刷新文件列表，现有内容不会被替换。",
       8_000,
@@ -112,7 +104,6 @@ describe("feedback reading dwell", () => {
     expect(node).toHaveAttribute("data-leaving", "true");
     expect(dismiss).not.toHaveBeenCalled();
     view.rerender(<Feedback revision={2} dismiss={dismiss} />);
-    expect(screen.getByTestId("feedback")).toBe(node);
     expect(node).toHaveAttribute("data-leaving", "false");
     advance(8_149);
     expect(dismiss).not.toHaveBeenCalled();
@@ -124,7 +115,7 @@ describe("feedback reading dwell", () => {
     expect(dismiss).toHaveBeenCalledTimes(1);
   });
 
-  it.each(["hover", "focus", "press", "hidden"] as const)(
+  it.each(["focus", "press", "hidden"] as const)(
     "pauses while %s and gives three seconds to finish after a near-expiry pause",
     (mode) => {
       const dismiss = vi.fn();
@@ -132,7 +123,6 @@ describe("feedback reading dwell", () => {
       const node = screen.getByTestId("feedback");
       const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(false);
       advance(7_900);
-      if (mode === "hover") pointer(node, "pointerenter");
       if (mode === "press") pointer(node, "pointerdown", "touch");
       if (mode === "focus") {
         act(() => screen.getByRole("button", { name: "Copy" }).focus());
@@ -145,7 +135,6 @@ describe("feedback reading dwell", () => {
       advance(20_000);
       expect(dismiss).not.toHaveBeenCalled();
       expect(node).toHaveAttribute("data-leaving", "false");
-      if (mode === "hover") pointer(node, "pointerleave");
       if (mode === "press") pointer(document.body, "pointerup", "touch");
       if (mode === "focus")
         act(() => (document.activeElement as HTMLElement).blur());

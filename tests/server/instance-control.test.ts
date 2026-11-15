@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { nullDiagnosticLogger } from "../../server/diagnostics.js";
 import {
   createInstanceControlRequest,
   InstanceHttpControl,
@@ -12,13 +13,18 @@ import {
   verifyInstanceControlResponse,
 } from "../../server/instance-control.mjs";
 import {
+  INSTANCE_STATE_VERSION,
   type InstanceState,
   inspectInstance,
   instanceLaunchUrl,
   processStartIdentity,
-  stopManagedInstance,
   writeInstanceState,
 } from "../../server/instance-state.mjs";
+import {
+  type InspireSourceIdentity,
+  MaintenanceRestartController,
+} from "../../server/maintenance-restart.js";
+import { workbenchFixture } from "../fixtures/workbench.js";
 import {
   closeHostApiFixture,
   hostApiFixture,
@@ -48,16 +54,14 @@ afterEach(async () => {
 
 function state(): InstanceState {
   return {
-    schemaVersion: 1,
+    schemaVersion: INSTANCE_STATE_VERSION,
     root: process.cwd(),
     host: "127.0.0.1",
     port: 1234,
     pid: process.pid,
     processStartTime: "fixture-birth",
     startedAt: "2026-10-19T00:00:00.000Z",
-    mock: true,
     token: randomBytes(64).toString("base64url"),
-    httpControlVersion: 1,
   };
 }
 
@@ -69,7 +73,7 @@ describe("local HTTP peer proofs", () => {
     expect(JSON.stringify(message)).not.toContain(owner.token);
     const grant = control.accept(owner, message)!;
     expect(grant).not.toBeNull();
-    const response = control.reply(grant, { appName: "inspire", mock: true });
+    const response = control.reply(grant, { appName: "inspire" });
     expect(JSON.stringify(response)).not.toContain(owner.token);
     expect(verifyInstanceControlResponse(owner, message, response)).toBe(true);
     expect(control.accept(owner, message)).toBeNull();
@@ -101,7 +105,6 @@ describe("local HTTP peer proofs", () => {
     "root",
     "host",
     "port",
-    "mock",
     "token",
   ] as const)("binds client and server proofs to the owner's %s", (field) => {
     const owner = state();
@@ -113,12 +116,7 @@ describe("local HTTP peer proofs", () => {
     const value = owner[field];
     const changed = {
       ...owner,
-      [field]:
-        typeof value === "number"
-          ? value + 1
-          : typeof value === "boolean"
-            ? !value
-            : value + "-changed",
+      [field]: typeof value === "number" ? value + 1 : value + "-changed",
     };
     expect(new InstanceHttpControl().accept(changed, message)).toBeNull();
     expect(verifyInstanceControlResponse(changed, message, response)).toBe(
@@ -164,44 +162,65 @@ describe("local HTTP peer proofs", () => {
     ).not.toBeNull();
   });
 
-  it("rejects a genuinely signed late commit even before an overdue timer callback runs", async () => {
-    vi.useFakeTimers();
-    const owner = state();
-    const control = new InstanceHttpControl();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (_url, options) => {
+  it.each(["late signed", "incomplete"] as const)(
+    "rejects a %s commit response after its deadline",
+    async (kind) => {
+      vi.useFakeTimers();
+      const owner = state();
+      const control = new InstanceHttpControl();
+      const leaseId = "a".repeat(43);
+      const { promise: started, resolve: receiveBody } =
+        Promise.withResolvers<void>();
+      const fetch = vi.fn(async (_url, options) => {
         const message = JSON.parse(options.body);
         const reply = control.reply(control.accept(owner, message)!, {
           kind: "committed",
-          leaseId: "a".repeat(43),
+          leaseId,
         });
-        // Move the wall clock without executing the abort timer. A delayed
-        // event loop must not turn an expired reply into restart authority.
-        vi.setSystemTime(Date.now() + 6_001);
-        return {
-          ok: true,
-          body: new ReadableStream({
+        // A delayed event loop can move past the deadline before the abort
+        // timer runs. A signed reply must still expire.
+        if (kind === "late signed") vi.setSystemTime(Date.now() + 6_001);
+        return new Response(
+          new ReadableStream({
             start(controller) {
-              controller.enqueue(
-                new TextEncoder().encode(JSON.stringify(reply)),
-              );
-              controller.close();
+              if (kind === "incomplete") {
+                controller.enqueue(new TextEncoder().encode('{"version":1,'));
+                options.signal.addEventListener("abort", () =>
+                  controller.error(new Error("timed out")),
+                );
+              } else {
+                controller.enqueue(
+                  new TextEncoder().encode(JSON.stringify(reply)),
+                );
+                controller.close();
+              }
+              receiveBody();
             },
           }),
-        };
-      }),
-    );
-    await expect(
-      requestInstanceControl(
+        );
+      });
+      vi.stubGlobal("fetch", fetch);
+
+      const result = requestInstanceControl(
         owner,
         "maintenance-commit",
-        { leaseId: "a".repeat(43) },
+        { leaseId },
         6_000,
-      ),
-    ).resolves.toBeNull();
-    expect(vi.getTimerCount()).toBe(0);
-  });
+      );
+      await started;
+      if (kind === "incomplete") await vi.advanceTimersByTimeAsync(6_001);
+      await expect(result).resolves.toBeNull();
+      expect(vi.getTimerCount()).toBe(0);
+      expect(fetch).toHaveBeenCalledOnce();
+      const [, options] = fetch.mock.calls[0]!;
+      expect(options.headers.Authorization).toBeUndefined();
+      expect(options.body).not.toContain(owner.token);
+      expect(JSON.parse(options.body)).toMatchObject({
+        action: "maintenance-commit",
+        payload: { leaseId },
+      });
+    },
+  );
 
   it("bounds authenticated request bodies before sending or accepting them", async () => {
     const owner = state();
@@ -216,17 +235,6 @@ describe("local HTTP peer proofs", () => {
     vi.stubGlobal("fetch", fetch);
     await expect(
       requestInstanceControl(owner, "readiness", payload),
-    ).resolves.toBeNull();
-    expect(fetch).not.toHaveBeenCalled();
-  });
-
-  it("refuses legacy HTTP without sending even an initial probe", async () => {
-    const fetch = vi.fn();
-    vi.stubGlobal("fetch", fetch);
-    const owner = state();
-    delete owner.httpControlVersion;
-    await expect(
-      requestInstanceControl(owner, "readiness"),
     ).resolves.toBeNull();
     expect(fetch).not.toHaveBeenCalled();
   });
@@ -252,7 +260,7 @@ describe("readiness at an untrusted port", () => {
         body: Buffer.concat(chunks).toString("utf8"),
       });
       res.setHeader("content-type", "application/json");
-      res.end(JSON.stringify({ appName: "inspire", mock: true }));
+      res.end(JSON.stringify({ appName: "inspire" }));
     });
     const directory = await mkdtemp(join(tmpdir(), "inspire-untrusted-port-"));
     directories.push(directory);
@@ -264,19 +272,13 @@ describe("readiness at an untrusted port", () => {
     };
     const expected = { root: owner.root, host: owner.host, port };
     await writeInstanceState(path, owner);
-    await expect(
-      inspectInstance(path, expected, { processMarker: process.argv[0] }),
-    ).resolves.toMatchObject({ kind: "unavailable" });
+    await expect(inspectInstance(path, expected)).resolves.toMatchObject({
+      kind: "unavailable",
+    });
     expect(received).toHaveLength(1);
     expect(received[0]!.authorization).toBeUndefined();
     expect(received[0]!.body).not.toContain(owner.token);
     expect(JSON.parse(received[0]!.body).action).toBe("readiness");
-    await expect(
-      stopManagedInstance(path, expected, {
-        processMarker: "never-signal-the-fixture-parent",
-      }),
-    ).resolves.toMatchObject({ kind: "unavailable" });
-    expect(received).toHaveLength(1);
     // The largest signed PID is not allocated on any supported test platform.
     await writeInstanceState(path, { ...owner, pid: 2_147_483_647 });
     await expect(inspectInstance(path, expected)).resolves.toEqual({
@@ -356,70 +358,67 @@ describe("readiness at an untrusted port", () => {
 describe("Host local-control ingress", () => {
   it("uses only current owned identity, authenticates actions once, and preserves API/origin gates", async () => {
     let owner: InstanceState | null = null;
-    const leaseId = "a".repeat(43);
-    const maintenance = {
-      reserve: vi.fn(async () => ({
-        kind: "ready" as const,
-        leaseId,
-        expiresAt: Date.now() + 30_000,
-        updates: ["inspire" as const],
-      })),
-      commit: vi.fn((leaseId: string) => ({
-        kind: "committed" as const,
-        leaseId,
-      })),
-      release: vi.fn((_leaseId: string) => ({ kind: "released" as const })),
-    };
+    const root = await mkdtemp(join(tmpdir(), "inspire-local-control-"));
+    directories.push(root);
+    const services = await workbenchFixture(root, { seed: false });
+    const clean = { kind: "source", revision: "old" } as const;
+    const dirty = { kind: "source", revision: null } as const;
+    const unknown = { kind: "unknown" } as const;
+    let current: InspireSourceIdentity = clean;
+    let piVersion = "1.5.0";
+    const maintenance = (runningSource: InspireSourceIdentity) =>
+      new MaintenanceRestartController({
+        runtime: services.runtime,
+        root,
+        runningSource,
+        piVersion: "1.5.0",
+        diagnostics: nullDiagnosticLogger(),
+        inspectPiVersion: async () => piVersion,
+        inspectSource: async () => current,
+      });
+    let controller = maintenance(clean);
     const f = await hostApiFixture({
+      services,
       instanceState: () => owner,
-      maintenanceRestart: maintenance,
+      maintenanceRestart: {
+        reserve: () => controller.reserve(),
+        commit: (id) => controller.commit(id),
+        release: (id) => controller.release(id),
+      },
+      activeHerdrMode: true,
     });
+    const api = request(f.application.server);
+    const localControl = (message: object) =>
+      api.post("/api/host/local-control").send(message);
     try {
-      await request(f.application.server)
-        .post("/api/host/local-control")
-        .send({})
-        .expect(503);
+      await localControl({}).expect(503);
       owner = {
         ...state(),
         token,
         port: Number(new URL(f.baseUrl).port),
       };
-      await request(f.application.server)
-        .post("/api/host/local-control")
-        .send({})
-        .expect(401);
-      await request(f.application.server).get("/api/health").expect(401);
+      await localControl({}).expect(401);
+      await api.get("/api/health").expect(401);
       const ready = createInstanceControlRequest(owner, "readiness");
-      await request(f.application.server)
-        .post("/api/host/local-control")
+      await localControl(ready)
         .set("Origin", "https://foreign.invalid")
-        .send(ready)
         .expect(403);
-      const response = await request(f.application.server)
-        .post("/api/host/local-control")
-        .send(ready)
-        .expect(200);
-      expect(response.body.result).toEqual({ appName: "inspire", mock: true });
+      const response = await localControl(ready).expect(200);
+      expect(response.body.result).toEqual({ appName: "inspire" });
       expect(response.headers["cache-control"]).toBe("no-store");
       expect(verifyInstanceControlResponse(owner, ready, response.body)).toBe(
         true,
       );
-      expect(Object.keys(response.body).sort()).toEqual([
-        "nonce",
-        "proof",
-        "result",
-        "version",
-      ]);
-      await request(f.application.server)
-        .post("/api/host/local-control")
-        .send(ready)
-        .expect(401);
+      await localControl(ready).expect(401);
+      const mode = createInstanceControlRequest(owner, "restart-mode");
+      const modeResponse = await localControl(mode).expect(200);
+      expect(modeResponse.body.result).toEqual({ includeHerdr: true });
+      expect(
+        verifyInstanceControlResponse(owner, mode, modeResponse.body),
+      ).toBe(true);
       const link = await instanceLaunchUrl(owner);
       expect(link).not.toBeNull();
-      expect(link).not.toContain(owner.token);
       const pairing = new URL(link!);
-      expect(pairing.origin).toBe(f.baseUrl);
-      expect(pairing.search).toBe("");
       const bootstrap = new URLSearchParams(pairing.hash.slice(1)).get(
         "inspire-bootstrap",
       );
@@ -427,81 +426,73 @@ describe("Host local-control ingress", () => {
         namedCurve: "prime256v1",
       }).publicKey.export({ format: "jwk" });
       const registration = () =>
-        request(f.application.server)
+        api
           .post("/api/auth/pair")
           .set("Origin", f.baseUrl)
           .send({ bootstrap, publicKey });
       await registration().expect(200);
       await registration().expect(401);
-      // A private signed caller may pair an owned loopback development proxy.
-      // The grant belongs to that exact browser origin, not the backend port.
-      const devOrigin = "http://127.0.0.1:5173";
-      const devLink = await instanceLaunchUrl(owner, devOrigin);
-      expect(devLink).not.toBeNull();
-      expect(new URL(devLink!).origin).toBe(devOrigin);
-      expect(devLink).not.toContain(token);
-      const devBootstrap = new URLSearchParams(
-        new URL(devLink!).hash.slice(1),
-      ).get("inspire-bootstrap");
-      const pairDev = () =>
-        request(f.application.server)
-          .post("/api/auth/pair")
-          .set("Host", new URL(devOrigin).host)
-          .set("Origin", devOrigin)
-          .send({ bootstrap: devBootstrap, publicKey });
-      await pairDev().expect(200);
-      await pairDev().expect(401);
-      expect(
-        await instanceLaunchUrl(owner, "https://foreign.invalid"),
-      ).toBeNull();
-      const prepare = createInstanceControlRequest(
-        owner,
-        "maintenance-prepare",
-      );
-      const prepared = await request(f.application.server)
-        .post("/api/host/local-control")
-        .send(prepare)
-        .expect(200);
-      expect(verifyInstanceControlResponse(owner, prepare, prepared.body)).toBe(
-        true,
-      );
-      expect(prepared.body.result.leaseId).toBe(leaseId);
-      const commit = createInstanceControlRequest(owner, "maintenance-commit", {
-        leaseId,
+      await expect(
+        instanceLaunchUrl(owner, "https://foreign.invalid"),
+      ).resolves.toBeNull();
+      const liveOwner = owner;
+      const prepare = () =>
+        requestInstanceControl(liveOwner, "maintenance-prepare");
+      await expect(prepare()).resolves.toEqual({
+        kind: "skipped",
+        reason: "no-update",
       });
-      const committed = await request(f.application.server)
-        .post("/api/host/local-control")
-        .send(commit)
-        .expect(200);
-      expect(verifyInstanceControlResponse(owner, commit, committed.body)).toBe(
-        true,
-      );
-      expect(committed.body.result).toEqual({ kind: "committed", leaseId });
-      await request(f.application.server)
-        .post("/api/host/local-control")
-        .send(commit)
-        .expect(401);
-      expect(maintenance.reserve).toHaveBeenCalledOnce();
-      expect(maintenance.commit).toHaveBeenCalledExactlyOnceWith(leaseId);
-      const release = createInstanceControlRequest(
-        owner,
-        "maintenance-release",
-        { leaseId },
-      );
-      expect(
-        (
-          await request(f.application.server)
-            .post("/api/host/local-control")
-            .send(release)
-            .expect(200)
-        ).body.result.kind,
-      ).toBe("released");
-      expect(maintenance.release).toHaveBeenCalledExactlyOnceWith(leaseId);
+      piVersion = "1.5.1";
+      for (const [running, installed, reason] of [
+        [unknown, clean, "inspire-identity-unavailable"],
+        [clean, unknown, "inspire-identity-unavailable"],
+        [dirty, clean, "inspire-source-not-clean"],
+        [clean, dirty, "inspire-source-not-clean"],
+      ] as const) {
+        controller = maintenance(running);
+        current = installed;
+        await expect(prepare()).resolves.toEqual({ kind: "skipped", reason });
+      }
+      const assertLease = async (updates: string[]) => {
+        const lease = await prepare();
+        expect(lease).toMatchObject({
+          kind: "ready",
+          updates,
+          expiresAt: expect.any(Number),
+        });
+        if (
+          typeof lease !== "object" ||
+          !lease ||
+          !("leaseId" in lease) ||
+          typeof lease.leaseId !== "string"
+        )
+          throw new Error("Expected a maintenance lease");
+        const { leaseId } = lease;
+        await expect(prepare()).resolves.toEqual({
+          kind: "skipped",
+          reason: "restart-pending",
+        });
+        await expect(
+          requestInstanceControl(liveOwner, "maintenance-commit", { leaseId }),
+        ).resolves.toEqual({ kind: "committed", leaseId });
+        await expect(
+          requestInstanceControl(liveOwner, "maintenance-release", { leaseId }),
+        ).resolves.toEqual({ kind: "released" });
+      };
+      controller = maintenance(clean);
+      current = { kind: "source", revision: "new" };
+      await assertLease(["pi", "inspire"]);
+      piVersion = "1.5.0";
+      controller = maintenance({ kind: "package", version: "0.1.0" });
+      current = { kind: "package", version: "0.2.0" };
+      await assertLease(["inspire"]);
+      const previousMode = createInstanceControlRequest(owner, "restart-mode");
+      const previousOwner = owner;
       owner = null;
-      await request(f.application.server)
-        .post("/api/host/local-control")
-        .send(release)
-        .expect(503);
+      await localControl(previousMode).expect(503);
+      await expect(
+        requestInstanceControl(previousOwner, "readiness"),
+      ).resolves.toBeNull();
     } finally {
       await closeHostApiFixture(f);
     }

@@ -1,12 +1,12 @@
 import { RefreshCw } from "lucide-react";
-import { type ReactNode, useCallback, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import type { HerdrEnhancementStatus } from "../../shared/herdr";
 import { createApi } from "../api";
 import { store, useAppState } from "../store";
 import { PiLoader } from "./PiLoader";
-import { SettingField, SettingsSwitch } from "./SettingsControls";
+import { SwitchField } from "./SettingsControls";
 
-const readStatus = () => createApi().herdrStatus();
+const readStatus = () => createApi().json("herdrStatus", {});
 
 /** The saved choice is independent of the backend's effective-at-startup state.
  * Status is read-only; restarting always goes through the existing Host control. */
@@ -15,27 +15,20 @@ export function HerdrSettings({
   onNavigateRestart,
 }: {
   getStatus?: () => Promise<HerdrEnhancementStatus>;
-  onNavigateRestart?: () => void;
+  onNavigateRestart: () => void;
 }) {
   const saved = useAppState((state) => state.prefs.herdrEnabled);
+  const desired = useAppState(
+    (state) => state.desiredPreferences?.herdrEnabled,
+  );
   const [status, setStatus] = useState<HerdrEnhancementStatus | null>(null);
   const [error, setError] = useState(false);
   const [loading, setLoading] = useState(true);
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    try {
-      setStatus(await getStatus());
-      setError(false);
-    } catch {
-      setStatus(null);
-      setError(true);
-    } finally {
-      setLoading(false);
-    }
-  }, [getStatus]);
+  const [retryRevision, setRetryRevision] = useState(0);
   useEffect(() => {
-    // A dialog can close before the status request settles.
+    // Initial reads and rechecks share the same mounted request lifetime.
     let active = true;
+    setLoading(true);
     void getStatus().then(
       (result) => {
         if (active) {
@@ -55,7 +48,7 @@ export function HerdrSettings({
     return () => {
       active = false;
     };
-  }, [getStatus]);
+  }, [getStatus, retryRevision]);
 
   const canEnable = status?.ready === true;
   const pending = status !== null && saved !== status.enabled;
@@ -70,14 +63,13 @@ export function HerdrSettings({
           : null);
 
   let statusNode: ReactNode = null;
-  if (error || issue || pending) {
+  if (error || issue || pending || desired !== undefined) {
     statusNode = (
       <div role="status">
+        {desired !== undefined ? <span>Saving…</span> : null}
         {error || issue ? (
           <div className="settings__field-status-block">
-            <span>
-              {error ? "Herdr status is unavailable on this Host." : issue}
-            </span>
+            <span>{error ? "Herdr status is unavailable." : issue}</span>
             {error || (status && !status.ready) ? (
               <button
                 type="button"
@@ -85,7 +77,7 @@ export function HerdrSettings({
                 aria-label="Recheck availability"
                 disabled={loading}
                 aria-busy={loading}
-                onClick={() => void refresh()}
+                onClick={() => setRetryRevision((revision) => revision + 1)}
               >
                 {loading ? (
                   <PiLoader size={12} aria-hidden />
@@ -101,24 +93,16 @@ export function HerdrSettings({
           <div className="settings__field-status-block">
             <span>
               {saved
-                ? "Saved. Restart Host to turn on Herdr enhancement. "
-                : "Saved. Restart Host to turn off Herdr enhancement. "}
+                ? "Herdr will turn on after restart."
+                : "Herdr will turn off after restart."}
             </span>
             <button
               type="button"
-              className="settings__utility"
+              className="button button--quiet"
               aria-label="Review Host restart"
-              onClick={() => {
-                if (onNavigateRestart) {
-                  onNavigateRestart();
-                } else {
-                  document
-                    .getElementById("settings-host-restart")
-                    ?.scrollIntoView({ block: "start" });
-                }
-              }}
+              onClick={onNavigateRestart}
             >
-              Restart Host…
+              Restart…
             </button>
           </div>
         ) : null}
@@ -127,18 +111,14 @@ export function HerdrSettings({
   }
 
   return (
-    <SettingField
+    <SwitchField
       label="Herdr enhancement"
-      description="Use Herdr workspaces and tools in Pi sessions. Takes effect after restarting the Host."
+      description="Run Inspire's Pi sessions in Herdr. Requires a Host restart."
       status={statusNode}
-    >
-      <SettingsSwitch
-        label="Herdr enhancement"
-        checked={saved}
-        disabled={!saved && !canEnable}
-        busy={loading}
-        onChange={(checked) => store.setHerdrEnabled(checked)}
-      />
-    </SettingField>
+      checked={desired ?? saved}
+      disabled={!saved && !canEnable}
+      busy={loading}
+      onChange={(checked) => store.setPreference("herdrEnabled", checked)}
+    />
   );
 }

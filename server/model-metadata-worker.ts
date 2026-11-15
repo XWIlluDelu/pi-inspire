@@ -1,12 +1,16 @@
 import { join } from "node:path";
 import {
   availableModelOptions,
+  createModelPreview,
+  defaultModelOption,
   modelOption,
   modelSettings,
-  resolveNewSessionDefaults,
+  modelThinkingPreferences,
 } from "./model-catalog.js";
+import { modelQuerySchema } from "./model-metadata.js";
 import {
   createAgentSession,
+  createAgentSessionServices,
   DefaultResourceLoader,
   getAgentDir,
   ModelRuntime,
@@ -20,49 +24,69 @@ async function discover(cwd: string, validationPath?: string) {
   const settings = modelSettings(cwd, agentDir);
   const runtime = await ModelRuntime.create({
     modelsPath: validationPath ?? join(agentDir, "models.json"),
+    ...(validationPath
+      ? { modelsStorePath: join(agentDir, "models-store.json") }
+      : {}),
     authPath: join(agentDir, "auth.json"),
     refreshOnCreate: false,
   });
-  const loader = new DefaultResourceLoader({
+  const resources = {
     cwd,
     agentDir,
     settingsManager: settings,
     noThemes: true,
     noContextFiles: true,
-  });
-  await loader.reload();
-  const extensionErrors = loader.getExtensions().errors.length > 0;
-  // SDK initial resolution precedes constructor registration binding. This
-  // disposable session binds Pi's queued providers/virtual models, then the
-  // public resolver below sees the augmented runtime.
-  const { session } = await createAgentSession({
-    cwd,
-    agentDir,
-    modelRuntime: runtime,
-    settingsManager: settings,
-    resourceLoader: loader,
-    sessionManager: SessionManager.inMemory(cwd),
-    noTools: "all",
-  });
-  try {
-    if (validationPath) {
+  };
+  if (validationPath) {
+    // The service factory waits for credential availability, which is not
+    // part of a configuration edit. Register through Pi's in-memory session
+    // without binding or waiting for an authentication probe.
+    const loader = new DefaultResourceLoader(resources);
+    await loader.reload();
+    const { session } = await createAgentSession({
+      ...resources,
+      modelRuntime: runtime,
+      resourceLoader: loader,
+      sessionManager: SessionManager.inMemory(cwd),
+      noTools: "all",
+    });
+    try {
       if (runtime.getError())
         throw new Error("Pi model configuration could not load");
       return null;
+    } finally {
+      session.dispose();
     }
-    const refresh = await runtime.refresh({
-      signal: AbortSignal.timeout(12_000),
-    });
-    if (runtime.getError())
-      throw new Error("Pi model configuration could not load");
+  }
+  const services = await createAgentSessionServices({
+    ...resources,
+    modelRuntime: runtime,
+    resourceLoaderOptions: { noThemes: true, noContextFiles: true },
+  });
+
+  const refresh = await runtime.refresh({
+    signal: AbortSignal.timeout(12_000),
+  });
+  if (runtime.getError())
+    throw new Error("Pi model configuration could not load");
+  const { session } = await createModelPreview(services);
+  try {
+    const loader = services.resourceLoader;
     const models = await availableModelOptions(runtime);
-    const defaults = await resolveNewSessionDefaults(runtime, cwd, settings);
+    const defaults = {
+      cwd,
+      model: defaultModelOption(session.model),
+      thinkingLevel: session.thinkingLevel,
+    };
     const warnings: string[] = [];
     if (!settings.isProjectTrusted())
       warnings.push(
         "Project resources are not trusted; showing global models.",
       );
-    if (extensionErrors)
+    if (
+      loader.getExtensions().errors.length ||
+      services.diagnostics.some((diagnostic) => diagnostic.type === "error")
+    )
       warnings.push(
         "Some Pi extensions could not load; their models may be unavailable.",
       );
@@ -70,6 +94,8 @@ async function discover(cwd: string, validationPath?: string) {
       warnings.push("Model refresh incomplete; showing Pi's available models.");
     return {
       models,
+      enabledModelPatterns: settings.getEnabledModels() ?? [],
+      thinkingPreferences: modelThinkingPreferences(settings),
       // Use the same public registries as native get_commands, including Pi's
       // resolved invocation names for colliding extension commands.
       commands: [
@@ -101,11 +127,39 @@ async function discover(cwd: string, validationPath?: string) {
   }
 }
 
+function readSettings(cwd: string) {
+  const settings = modelSettings(cwd);
+  const project = settings.getProjectSettings();
+  const errors = settings.drainErrors();
+  const thinkingPreferences = modelThinkingPreferences(settings);
+  const effective = {
+    defaultProvider: settings.getDefaultProvider(),
+    defaultModel: settings.getDefaultModel(),
+    defaultThinkingLevel: thinkingPreferences.defaultLevel,
+    enabledModels: settings.getEnabledModels(),
+  };
+  return {
+    effective,
+    thinkingPreferences,
+    projectOverrides: Object.keys(effective).filter((key) =>
+      Object.hasOwn(project, key),
+    ),
+    globalError: errors.some(({ scope }) => scope === "global"),
+    projectError: errors.some(({ scope }) => scope === "project"),
+  };
+}
+
 // Keep the group leader alive until the parent retires the whole tree, including
 // any factory-created descendants. IPC disconnect also retires an orphan query.
 process.on("disconnect", () => process.exit(0));
 try {
-  const result = await discover(process.argv[2]!, process.argv[3]);
+  const [, , cwd, raw] = process.argv;
+  if (!cwd || !raw) throw new Error("Model worker query is required");
+  const query = modelQuerySchema.parse(JSON.parse(raw));
+  const result =
+    query.kind === "settings"
+      ? readSettings(cwd)
+      : await discover(cwd, query.kind === "validate" ? query.path : undefined);
   process.send?.({ ok: true, result });
 } catch {
   // Factory errors may contain credentials. Keep the wire result diagnostic-only.

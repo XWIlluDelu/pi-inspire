@@ -1,14 +1,32 @@
+import { appendFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, expect, it } from "vitest";
 import { addAttachmentContext } from "../../server/attachments.js";
 import {
   composerHistoryEntries,
   projectComposerHistoryPage,
 } from "../../server/composer-history.js";
+import { ResourceStore } from "../../server/resources.js";
+import { resolveComposerHistoryArtifacts } from "../../server/runtime-composer-artifacts.js";
+import type { RuntimeSlot } from "../../server/runtime-slot.js";
+import { SessionProjection } from "../../server/session-projection.js";
+import {
+  composerArtifactReference,
+  parseComposerArtifactReference,
+} from "../../shared/composer-artifact-references.js";
 import {
   MAX_COMPOSER_HISTORY_ENTRIES,
   MAX_COMPOSER_HISTORY_PAGE_BYTES,
 } from "../../shared/contracts.js";
+import {
+  disposeRuntimeFixture,
+  fixtureWorkspace,
+  initializeRuntimeFixture,
+  record as sessionRecord,
+} from "./fixtures/runtime.js";
+import { jsonl, messageEntry, writeSession } from "./fixtures/session-jsonl.js";
+
+afterEach(disposeRuntimeFixture);
 
 const owner = {
   sessionId: "session-a",
@@ -18,273 +36,395 @@ const owner = {
   effectiveLeafId: "leaf-a",
   composerHistoryVersion: "history-a",
 };
+const user = (id: string, content: unknown) => ({
+  __inspireHistoryEntryId: id,
+  role: "user",
+  content,
+});
+const image = (mimeType: string) => ({
+  type: "image",
+  mimeType,
+  data: "cGl4ZWxz",
+});
 
-describe("composer history projection", () => {
-  it("reproduces Pi's trimmed, newest-first, consecutive-deduplicated history", () => {
-    expect(
-      composerHistoryEntries([
-        { role: "user", content: "  one  " },
-        { role: "assistant", content: [{ type: "text", text: "ignored" }] },
-        {
-          role: "user",
-          content: [
-            { type: "text", text: "two" },
-            { type: "image", data: "ignored" },
-            { type: "text", text: " parts" },
-          ],
-        },
-        { role: "user", content: "two parts" },
-        { role: "user", content: "   " },
-        { role: "user", content: "one" },
+it("retains newest-first user prompts and drops only consecutive duplicate entries", () => {
+  expect(
+    composerHistoryEntries([
+      user("one-first", "  one  "),
+      {
+        __inspireHistoryEntryId: "answer",
+        role: "assistant",
+        content: "not a prompt",
+      },
+      user("two-first", [
+        { type: "text", text: "two" },
+        { type: "text", text: " parts" },
       ]),
-    ).toEqual([
-      { text: "one", images: [], files: [] },
-      { text: "two parts", images: [], files: [] },
-      { text: "one", images: [], files: [] },
-    ]);
+      user("two-repeat", "two parts"),
+      user("blank", "   "),
+      user("one-again", "one"),
+    ]),
+  ).toEqual(
+    ["one", "two parts", "one"].map((text) => ({
+      text,
+      images: [],
+      files: [],
+    })),
+  );
+});
 
-    const bounded = composerHistoryEntries(
-      Array.from({ length: 105 }, (_, index) => ({
-        role: "user",
-        content: `prompt-${index}`,
-      })),
-    );
-    expect(bounded).toHaveLength(MAX_COMPOSER_HISTORY_ENTRIES);
-    expect(bounded[0]?.text).toBe("prompt-104");
-    expect(bounded.at(-1)?.text).toBe("prompt-5");
+it("skips projection of artifacts outside the retained prompt limit", () => {
+  const obsolete = {
+    ...user("obsolete", ""),
+    get content(): string {
+      throw new Error("Obsolete artifacts should not be projected");
+    },
+  };
+  const recent = Array.from(
+    { length: MAX_COMPOSER_HISTORY_ENTRIES + 1 },
+    (_, index) => user(String(index), `recent-${index}`),
+  );
+  const history = composerHistoryEntries([obsolete, ...recent]);
+  expect(history).toHaveLength(MAX_COMPOSER_HISTORY_ENTRIES);
+  expect(history[0]?.text).toBe(`recent-${MAX_COMPOSER_HISTORY_ENTRIES}`);
+  expect(history.at(-1)?.text).toBe("recent-1");
+});
+
+it("recalls mixed and image-only prompts with original artifact coordinates and editable text", () => {
+  const file = resolve("report.md");
+  const note =
+    "[Image: original 2560x133, displayed at 2000x104. Multiply coordinates by 1.28 to map to original image.]";
+  const source = addAttachmentContext("Inspect", [], [file]) + "\n\n" + note;
+  const mixed = user("u/mixed", [
+    { type: "text", text: source },
+    image("image/png"),
+  ]);
+  const history = composerHistoryEntries([
+    mixed,
+    user("image-first", [image("image/webp")]),
+    user("image-repeat", [image("image/webp")]),
+  ]);
+  expect(history).toHaveLength(2);
+  expect(history[0]).toMatchObject({
+    text: "",
+    images: [{ mimeType: "image/webp", size: 6 }],
+    files: [],
   });
-
-  it("stops projecting old artifacts after the retained prompt limit", () => {
-    const obsolete = {
-      role: "user",
-      get content(): string {
-        throw new Error("Obsolete artifacts should not be projected");
-      },
-    };
-    const recent = Array.from(
-      { length: MAX_COMPOSER_HISTORY_ENTRIES + 1 },
-      (_, index) => ({
-        role: "user",
-        content: `recent-${index}`,
-      }),
-    );
-    const history = composerHistoryEntries([obsolete, ...recent]);
-    expect(history).toHaveLength(MAX_COMPOSER_HISTORY_ENTRIES);
-    expect(history.at(-1)?.text).toBe("recent-1");
-  });
-
-  it("projects text and image-only prompts as branch-scoped references", () => {
-    const data = Buffer.from("pixels").toString("base64");
-    expect(
-      composerHistoryEntries([
-        {
-          role: "user",
-          content: [
-            { type: "text", text: "look" },
-            { type: "image", data, mimeType: "image/png" },
-          ],
-        },
-        {
-          role: "user",
-          content: [{ type: "image", data, mimeType: "image/webp" }],
-        },
-        {
-          role: "user",
-          content: [{ type: "image", data, mimeType: "image/webp" }],
-        },
-      ]),
-    ).toEqual([
+  expect(history[1]).toEqual({
+    text: "Inspect",
+    images: [
       {
-        text: "",
-        images: [
-          {
-            reference: "pi-embedded://1/0",
-            mimeType: "image/webp",
-            size: 6,
-          },
-        ],
-        files: [],
+        reference: "pi-history-image://u%2Fmixed/1",
+        mimeType: "image/png",
+        size: 6,
       },
+    ],
+    files: [
       {
-        text: "look",
-        images: [
-          {
-            reference: "pi-embedded://0/1",
-            mimeType: "image/png",
-            size: 6,
-          },
-        ],
-        files: [],
-      },
-    ]);
-  });
-
-  it("recalls image prompts without Pi dimension hints while preserving source and artifact coordinates", () => {
-    const sourceText =
-      "inspect\n\n[Image: original 2560x133, displayed at 2000x104. Multiply coordinates by 1.28 to map to original image.]";
-    const message = {
-      role: "user",
-      content: [
-        { type: "text", text: sourceText },
-        { type: "image", data: "cGl4ZWxz", mimeType: "image/png" },
-      ],
-    };
-    expect(composerHistoryEntries([message])).toEqual([
-      {
-        text: "inspect",
-        images: [
-          {
-            reference: "pi-embedded://0/1",
-            mimeType: "image/png",
-            size: 6,
-          },
-        ],
-        files: [],
-      },
-    ]);
-    expect(message.content[0]?.text).toBe(sourceText);
-  });
-
-  it("recalls files and images together when Pi appended a dimension note", () => {
-    const path = resolve("report.md");
-    const content =
-      addAttachmentContext("Inspect", [], [path]) +
-      "\n\n[Image: original 2560x133, displayed at 2000x104. Multiply coordinates by 1.28 to map to original image.]";
-    const message = {
-      role: "user",
-      content: [
-        { type: "text", text: content },
-        { type: "image", data: "cGl4ZWxz", mimeType: "image/png" },
-      ],
-    };
-    const history = composerHistoryEntries([message]);
-    expect(history[0]?.text).toBe("Inspect");
-    expect(history[0]?.files).toHaveLength(1);
-    expect(history[0]?.files[0]?.reference).toBe("pi-file://0/0");
-    expect(history[0]?.images[0]?.reference).toBe("pi-embedded://0/1");
-    expect(message.content[0]?.text).toBe(content);
-  });
-
-  it("projects ordinary and project files, including file-only prompts", () => {
-    const projectFile = "/workspace/src/source.ts";
-    const attachment = "/cache/uploads/report.pdf";
-    const messages = [
-      {
-        role: "user",
-        content: addAttachmentContext(
-          "",
-          [{ kind: "file", path: attachment }],
-          [projectFile],
-        ),
-      },
-      {
-        role: "user",
-        content: addAttachmentContext(
-          "same text",
-          [{ kind: "file", path: "/cache/uploads/first.txt" }],
-          [],
-        ),
-      },
-      {
-        role: "user",
-        content: addAttachmentContext(
-          "same text",
-          [{ kind: "file", path: "/cache/uploads/second.txt" }],
-          [],
-        ),
-      },
-    ];
-
-    expect(composerHistoryEntries(messages, "/workspace")).toEqual([
-      {
-        text: "same text",
-        images: [],
-        files: [
-          {
-            reference: "pi-file://2/0",
-            fileName: "second.txt",
-            kind: "attachment",
-          },
-        ],
-      },
-      {
-        text: "same text",
-        images: [],
-        files: [
-          {
-            reference: "pi-file://1/0",
-            fileName: "first.txt",
-            kind: "attachment",
-          },
-        ],
-      },
-      {
-        text: "",
-        images: [],
-        files: [
-          {
-            reference: "pi-file://0/0",
-            fileName: "source.ts",
-            kind: "project",
-          },
-          {
-            reference: "pi-file://0/1",
-            fileName: "report.pdf",
-            kind: "attachment",
-          },
-        ],
-      },
-    ]);
-  });
-
-  it("uses Host-owned display names without changing project-file names", () => {
-    const workspace = resolve("/workspace");
-    const stored = resolve("/cache/uploads/00000000-0000-4000-8000-report.pdf");
-    const message = {
-      role: "user",
-      content: addAttachmentContext(
-        "review",
-        [{ kind: "file", path: stored }],
-        [join(workspace, "src", "source.ts")],
-      ),
-    };
-
-    expect(
-      composerHistoryEntries([message], workspace, (path) =>
-        path === stored ? "report.pdf" : null,
-      )[0]?.files,
-    ).toEqual([
-      {
-        reference: "pi-file://0/0",
-        fileName: "source.ts",
-        kind: "project",
-      },
-      {
-        reference: "pi-file://0/1",
-        fileName: "report.pdf",
+        reference: "pi-history-file://u%2Fmixed/0",
+        fileName: "report.md",
         kind: "attachment",
       },
-    ]);
+    ],
   });
+  expect(mixed.content).toEqual([
+    { type: "text", text: source },
+    image("image/png"),
+  ]);
+});
 
-  it("pages exact entries under the serialized response bound", () => {
-    const messages = Array.from({ length: 100 }, (_, index) => ({
-      role: "user",
-      content: `${index}:${"\0".repeat(10_000)}`,
-    }));
-    const first = projectComposerHistoryPage(messages, owner);
-    expect(first.nextStart).not.toBeNull();
-    expect(Buffer.byteLength(JSON.stringify(first))).toBeLessThanOrEqual(
+it("recalls file-only prompts by readable Host names and keeps equal text with different files", () => {
+  const workspace = resolve("/workspace");
+  const stored = resolve("/cache/uploads/00000000-0000-4000-8000-report.pdf");
+  const upload = (path: string) => ({ kind: "file" as const, path });
+  const entries = composerHistoryEntries(
+    [
+      user(
+        "file-only",
+        addAttachmentContext(
+          "",
+          [upload(stored)],
+          [join(workspace, "src", "source.ts")],
+        ),
+      ),
+      user(
+        "first",
+        addAttachmentContext(
+          "same text",
+          [upload(resolve("/cache/uploads/first.txt"))],
+          [],
+        ),
+      ),
+      user(
+        "second",
+        addAttachmentContext(
+          "same text",
+          [upload(resolve("/cache/uploads/second.txt"))],
+          [],
+        ),
+      ),
+    ],
+    workspace,
+    (path) => (path === stored ? "report.pdf" : null),
+  );
+
+  expect(entries.map(({ text, files }) => ({ text, files }))).toEqual([
+    {
+      text: "same text",
+      files: [
+        {
+          reference: "pi-history-file://second/0",
+          fileName: "second.txt",
+          kind: "attachment",
+        },
+      ],
+    },
+    {
+      text: "same text",
+      files: [
+        {
+          reference: "pi-history-file://first/0",
+          fileName: "first.txt",
+          kind: "attachment",
+        },
+      ],
+    },
+    {
+      text: "",
+      files: [
+        {
+          reference: "pi-history-file://file-only/0",
+          fileName: "source.ts",
+          kind: "project",
+        },
+        {
+          reference: "pi-history-file://file-only/1",
+          fileName: "report.pdf",
+          kind: "attachment",
+        },
+      ],
+    },
+  ]);
+});
+
+it("pages exact entries under one history identity and the serialized byte bound", () => {
+  const texts = Array.from(
+    { length: 100 },
+    (_, index) => `${index}:${"\0".repeat(10_000)}`,
+  );
+  const messages = texts.map((text, index) => user(String(index), text));
+  let page = projectComposerHistoryPage(messages, owner);
+  const historyId = page.historyId;
+  expect(page.nextStart).not.toBeNull();
+  const entries: string[] = [];
+  for (;;) {
+    expect(page.historyId).toBe(historyId);
+    expect(page.start).toBe(entries.length);
+    expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThanOrEqual(
       MAX_COMPOSER_HISTORY_PAGE_BYTES,
     );
+    entries.push(...page.entries.map(({ text }) => text));
+    if (page.nextStart === null) break;
+    expect(page.nextStart).toBeGreaterThan(page.start);
+    expect(page.nextStart).toBeLessThan(texts.length);
+    page = projectComposerHistoryPage(messages, owner, page.nextStart);
+  }
+  expect(entries).toEqual(texts.reverse());
+});
 
-    const second = projectComposerHistoryPage(
-      messages,
-      owner,
-      first.nextStart ?? 0,
-    );
-    expect(second.historyId).toBe(first.historyId);
-    expect([...first.entries, ...second.entries]).toHaveLength(100);
-    expect(second.nextStart).toBeNull();
+it("accepts canonical history coordinates and rejects a different resource namespace", () => {
+  const reference = composerArtifactReference("image", "u/中文", 3);
+  expect(parseComposerArtifactReference("image", reference)).toEqual([
+    "u/中文",
+    3,
+  ]);
+  for (const invalid of [
+    composerArtifactReference("file", "u/中文", 3),
+    "pi-embedded://2/3",
+    "pi-history-image://%zz/0",
+    "pi-history-image://%75ser/0",
+    "pi-history-image://user/-1",
+    "pi-history-image://user/9007199254740992",
+  ]) {
+    expect(parseComposerArtifactReference("image", invalid)).toBeNull();
+  }
+});
+
+it("recalls retained branch prompts and exact artifacts through live compaction, cold reopen, and navigation", async () => {
+  await initializeRuntimeFixture();
+  const cwd = join(fixtureWorkspace, "project");
+  const projectFile = join(cwd, "source.ts");
+  const ownedFile = join(fixtureWorkspace, "upload.pdf");
+  await writeFile(projectFile, "project");
+  await writeFile(ownedFile, "upload");
+  const path = join(fixtureWorkspace, "session.jsonl");
+  const id = "history-test";
+  const userEntry = (
+    id: string,
+    parentId: string | null,
+    text: string,
+    pixels: string,
+  ) =>
+    messageEntry(id, parentId, {
+      role: "user",
+      timestamp: 1,
+      content: [
+        { type: "text", text },
+        {
+          type: "image",
+          mimeType: "image/png",
+          data: Buffer.from(pixels).toString("base64"),
+        },
+      ],
+    });
+  const u1 = userEntry(
+    "u/1",
+    null,
+    addAttachmentContext(
+      "original",
+      [{ kind: "file", path: ownedFile }],
+      [projectFile],
+    ),
+    "original image",
+  );
+  const answer = messageEntry("a1", u1.id, {
+    role: "assistant",
+    timestamp: 2,
+    content: [{ type: "text", text: "answer" }],
   });
+  await writeSession(path, cwd, id, [u1, answer]);
+  const record = { ...sessionRecord(id, cwd), path };
+  let projection = await SessionProjection.open(record);
+  const resources = new ResourceStore();
+  const slot = {
+    id,
+    cwd,
+    viewId: "view-original",
+    workerView: null,
+    projection,
+  } as unknown as RuntimeSlot;
+  const page = () =>
+    projection.historyPage(
+      { kind: "composer", start: 0 },
+      slot.viewLeafId ?? projection.leafId,
+      slot.viewId,
+      cwd,
+    );
+  const request = (entry: ReturnType<typeof page>["entries"][number]) => ({
+    sessionId: id,
+    message: "recall",
+    historyArtifacts: {
+      viewId: slot.viewId,
+      incarnation: projection.incarnation,
+      effectiveLeafId: slot.viewLeafId ?? projection.leafId,
+      imageReferences: entry.images.map((image) => image.reference),
+      fileReferences: entry.files.map((file) => file.reference),
+    },
+  });
+  const restage = (
+    input: ReturnType<typeof request>,
+    ownsPromptFile: (path: string) => boolean = (file) => file === ownedFile,
+  ) =>
+    resolveComposerHistoryArtifacts(slot, input, {
+      ready: async () => {},
+      ownsPromptFile,
+    });
+  const append = async (entry: unknown) => {
+    await appendFile(path, jsonl(entry));
+    await projection.reconcile(true);
+  };
+  try {
+    const original = page();
+    expect(original.entries[0]?.images[0]?.reference).toBe(
+      "pi-history-image://u%2F1/1",
+    );
+    await append({
+      type: "compaction",
+      id: "c1",
+      parentId: "a1",
+      firstKeptEntryId: "c1",
+      summary: "summary",
+      tokensBefore: 1000,
+      timestamp: new Date(3).toISOString(),
+    });
+    expect(page().entries).toEqual(original.entries);
+    expect(page().historyId).toBe(original.historyId);
+    expect(page().composerHistoryVersion).toBe(original.composerHistoryVersion);
+    expect(
+      projection
+        .viewMessages()
+        .some((value) => (value as { role: string }).role === "user"),
+    ).toBe(false);
+    await projection.close();
+    projection = await SessionProjection.open(record);
+    slot.projection = projection;
+    expect(page().entries).toEqual(original.entries);
+
+    await append(userEntry("u2", "c1", "later", "different image"));
+    expect(page().entries.map((entry) => entry.text)).toEqual([
+      "later",
+      "original",
+    ]);
+    const recalled = page().entries[1]!;
+    await expect(restage(request(recalled))).resolves.toMatchObject({
+      images: [
+        {
+          data: Buffer.from("original image").toString("base64"),
+          mimeType: "image/png",
+        },
+      ],
+      files: [{ kind: "file", path: ownedFile }],
+      projectFiles: [projectFile],
+    });
+    await expect(restage(request(recalled), () => false)).rejects.toMatchObject(
+      {
+        status: 409,
+      },
+    );
+    const context = {
+      sessionId: id,
+      viewId: slot.viewId,
+      revision: projection.revision,
+      cwd,
+      messages: [
+        ...projection.viewMessages(),
+        ...projection.composerHistoryMessages(),
+      ],
+    };
+    for (const [reference, expected] of [
+      [recalled.images[0]!.reference, "original image"],
+      ["pi-embedded://1/1", "different image"],
+    ] as const) {
+      const descriptor = await resources.resolve(context, reference);
+      const { data } = await resources.embeddedContent(
+        resources.get(descriptor.id, id, slot.viewId),
+        context,
+      );
+      expect(data.toString()).toBe(expected);
+    }
+    const oldAuthority = request(page().entries[0]!);
+    await append(userEntry("alternate", "a1", "other branch", "branch image"));
+    slot.viewId = "view-other";
+    expect(page().entries.map((entry) => entry.text)).toEqual([
+      "other branch",
+      "original",
+    ]);
+    await expect(restage(oldAuthority)).rejects.toMatchObject({ status: 409 });
+    const forged = request(page().entries[0]!);
+    forged.historyArtifacts.imageReferences = ["pi-history-image://u2/1"];
+    forged.historyArtifacts.fileReferences = [];
+    await expect(restage(forged)).rejects.toMatchObject({ status: 409 });
+    slot.viewLeafId = "u2";
+    slot.viewId = "view-earlier";
+    expect(page().entries.map((entry) => entry.text)).toEqual([
+      "later",
+      "original",
+    ]);
+    await expect(restage(request(page().entries[1]!))).resolves.toMatchObject({
+      projectFiles: [projectFile],
+    });
+  } finally {
+    await projection.close();
+    await resources.close();
+  }
 });

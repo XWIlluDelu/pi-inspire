@@ -2,7 +2,6 @@ import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { lstat, readFile, rm } from "node:fs/promises";
 import { connect } from "node:net";
 import {
-  HERDR_BRIDGE_VERSION,
   herdrLaunchGrantSchema,
   herdrLaunchTicketSchema,
   readHerdrBridgeRecord,
@@ -44,13 +43,17 @@ async function run(): Promise<void> {
   const stop = () => {
     if (stopping) return;
     stopping = true;
+    child?.stdout.unpipe(rpc);
+    child?.stderr.unpipe(stderr);
+    child?.stdout.resume();
+    child?.stderr.resume();
     rpc.destroy();
     stderr.destroy();
     // The same kernel-owned tree is available here after Host loss and to the
     // Host after bridge loss. Pi's detached Bash tools remain in this scope.
-    const graceful =
-      !!child?.pid && child.exitCode === null && child.signalCode === null;
-    terminate(graceful);
+    terminate(
+      !!child?.pid && child.exitCode === null && child.signalCode === null,
+    );
   };
   process.on("SIGTERM", stop);
   process.on("SIGINT", stop);
@@ -61,18 +64,13 @@ async function run(): Promise<void> {
   }
 
   try {
-    writeHerdrBridgeRecord(rpc, {
-      version: HERDR_BRIDGE_VERSION,
+    const hello = {
+      version: ticket.version,
       token: ticket.token,
-      channel: "rpc",
       pid: process.pid,
-    });
-    writeHerdrBridgeRecord(stderr, {
-      version: HERDR_BRIDGE_VERSION,
-      token: ticket.token,
-      channel: "stderr",
-      pid: process.pid,
-    });
+    };
+    writeHerdrBridgeRecord(rpc, { ...hello, channel: "rpc" });
+    writeHerdrBridgeRecord(stderr, { ...hello, channel: "stderr" });
     const grant = herdrLaunchGrantSchema.parse(
       await readHerdrBridgeRecord(rpc, AbortSignal.timeout(60_000)),
     );
@@ -85,6 +83,8 @@ async function run(): Promise<void> {
       if (key.startsWith("HERDR_") && key !== "HERDR_BIN")
         environment[key] = value;
 
+    if (environment.PI_ATTACH_CONTROL_TAG)
+      environment.PI_ATTACH_CONTROL_TAG_PARENT_PID = String(process.pid);
     child = spawn(grant.executable, grant.args, {
       cwd: grant.cwd,
       env: environment,
@@ -105,7 +105,7 @@ async function run(): Promise<void> {
     writeHerdrBridgeRecord(rpc, { pid: child.pid });
     child.stderr.pipe(stderr);
     child.stdout.pipe(rpc);
-    rpc.pipe(child.stdin);
+    rpc.pipe(child.stdin, { end: false });
     process.stdout.write("INSΠRE Pi worker\n");
   } catch {
     process.stderr.write("Inspire worker bridge could not start Pi\n");

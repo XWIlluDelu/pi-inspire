@@ -76,11 +76,6 @@ The Pi 0.85.1 authenticated WebSocket argument fixture projected a 157,814-byte 
 against 4,487,639 bytes for repeated cumulative projection of those updates. Final authoritative
 events are separate; scheduling changes batch counts, so regressions bound bytes instead.
 
-For reconnect, a controller fixture containing one 128 KiB retained-text message returned 131,453
-uncompressed JSON bytes after an external-activity observation invalidated its digest. Preserving
-the digest returned the 240-byte unchanged confirmation instead. This is the size of that fixture's
-envelope, not a fixed protocol size. See `tests/web/connection-controller.test.ts`.
-
 These counters measure serialization and payload volume; use the browser benchmark for rendering
 time and a paired deployment for network latency.
 

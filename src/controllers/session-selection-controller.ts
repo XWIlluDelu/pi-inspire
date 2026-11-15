@@ -8,27 +8,26 @@ import { type Api, ApiError, ApiRequestCancelledError } from "../api";
 
 export type SessionOpenResult = "opened" | "missing" | "retry" | "superseded";
 
-export interface SessionSelectionState {
+interface SessionSelectionState {
   sessionId: string | null;
   cwd: string | null;
   openingSessionId: string | null;
   sessionSelectionPending: boolean;
+  bootstrapped: boolean;
   readOnlyReason?: SessionReadOnlyReason | null;
 }
 
 interface SessionSelectionControllerHost {
   state(): SessionSelectionState;
   api(): Api | null;
-  transportGeneration(): number;
-  /** Starts a new explicit selection intent and returns its unique owner. */
-  beginOpening(sessionId: string | null): number;
-  invalidateOpening(): void;
-  ownsOpening(ticket: number, api: Api, transportGeneration: number): boolean;
-  releaseOpening(ticket: number): void;
+  patch(state: {
+    openingSessionId: string | null;
+    sessionSelectionPending: boolean;
+    startupPending?: false;
+  }): void;
+  onOpenIntent(): void;
   applySnapshot(snapshot: ActiveSnapshot): void;
   ensureSessionVisible(sessionId: string): void;
-  consumeReadyWhileOpening(sessionId: string, ticket: number): boolean;
-  resyncSelected(sessionId: string): void;
   setActionError(message: string | null): void;
   rememberModel(model: ModelIdentity): void;
   refreshSessionCatalog(): void;
@@ -40,21 +39,46 @@ interface SessionSelectionControllerHost {
 /**
  * Owns open/new/deselect request ownership. AppStore remains the only session
  * snapshot and cross-domain commit facade; this controller only accepts a
- * response while its explicit selection owner, API client, and transport
- * generation still match.
+ * response while its explicit selection owner and API client still match.
  */
 export class SessionSelectionController {
   private observation: AbortController | null = null;
   private creation: "pending" | "uncertain" | null = null;
+  private request = 0;
+  private intent = 0;
 
   constructor(private readonly host: SessionSelectionControllerHost) {}
 
-  /** A replacement bootstrap or unaddressed selection push supersedes every
-   * in-flight selection, including one that may never answer on an old client. */
+  get generation(): number {
+    return this.request;
+  }
+
+  /** Startup continuation yields only to an explicit open, new, or deselect. */
+  get openIntent(): number {
+    return this.intent;
+  }
+
+  beginForkSelection(): number {
+    return ++this.request;
+  }
+
+  /** A replacement transport retires every in-flight selection. */
   invalidateForReplacement(): void {
-    this.host.invalidateOpening();
-    this.observation?.abort();
+    this.request++;
+    this.releaseOpening();
+  }
+
+  private releaseOpening(owner?: AbortController): void {
+    if (owner && owner !== this.observation) return;
+    if (!owner) this.observation?.abort();
     this.observation = null;
+    const state = this.host.state();
+    if (state.sessionSelectionPending)
+      this.host.patch({
+        openingSessionId: null,
+        sessionSelectionPending: false,
+        ...(owner && state.bootstrapped ? { startupPending: false } : {}),
+      });
   }
 
   async open(id: string): Promise<SessionOpenResult> {
@@ -73,14 +97,11 @@ export class SessionSelectionController {
     return this.runSelection<SessionOpenResult>(
       id,
       api,
-      (signal) => api.openSession(id, signal),
+      (signal) => api.json("openSession", { body: { id } }, signal),
       "Failed to open session",
       "superseded",
-      (_snapshot, ticket) => {
+      () => {
         this.host.ensureSessionVisible(id);
-        if (this.host.consumeReadyWhileOpening(id, ticket)) {
-          this.host.resyncSelected(id);
-        }
         return "opened";
       },
       (error) =>
@@ -96,7 +117,7 @@ export class SessionSelectionController {
     return this.runSelection(
       null,
       api,
-      (signal) => api.deselectSession(signal),
+      (signal) => api.json("deselectSession", {}, signal),
       "Failed to open New session",
       false,
       (snapshot) => snapshot.active === null,
@@ -130,7 +151,11 @@ export class SessionSelectionController {
         api,
         async (signal) => {
           try {
-            return await api.newSession(target, options, signal);
+            return await api.json(
+              "newSession",
+              { body: { cwd: target, ...options } },
+              signal,
+            );
           } catch (error) {
             // A gateway/server timeout is not proof that no session exists.
             if (
@@ -167,23 +192,28 @@ export class SessionSelectionController {
     request: (signal: AbortSignal) => Promise<ActiveSnapshot>,
     fallbackMessage: string,
     staleResult: T,
-    afterApply: (snapshot: ActiveSnapshot, ticket: number) => T,
+    afterApply: (snapshot: ActiveSnapshot) => T,
     onFailure?: (error: unknown) => T,
   ): Promise<T> {
-    const transportGeneration = this.host.transportGeneration();
-    const ticket = this.host.beginOpening(openingSessionId);
+    this.host.onOpenIntent();
+    this.intent++;
+    const ticket = ++this.request;
     this.observation?.abort();
     const observation = new AbortController();
     this.observation = observation;
+    this.host.patch({ openingSessionId, sessionSelectionPending: true });
+    const owns = () =>
+      ticket === this.request &&
+      this.observation === observation &&
+      api === this.host.api();
     try {
       const snapshot = await request(observation.signal);
-      if (!this.host.ownsOpening(ticket, api, transportGeneration))
-        return staleResult;
+      if (!owns()) return staleResult;
       this.host.applySnapshot(snapshot);
       this.host.setActionError(null);
-      return afterApply(snapshot, ticket);
+      return afterApply(snapshot);
     } catch (error) {
-      if (this.host.ownsOpening(ticket, api, transportGeneration)) {
+      if (owns()) {
         if (error instanceof ApiError && error.status === 401)
           this.host.handleAuthFailure();
         else {
@@ -197,8 +227,7 @@ export class SessionSelectionController {
       }
       return staleResult;
     } finally {
-      if (this.observation === observation) this.observation = null;
-      this.host.releaseOpening(ticket);
+      this.releaseOpening(observation);
     }
   }
 }

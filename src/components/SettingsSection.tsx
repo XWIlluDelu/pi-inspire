@@ -4,16 +4,31 @@ import { type ReactNode, useId } from "react";
 export function SettingsCardMessage({
   children,
   error = false,
+  loading = false,
+  retry,
 }: {
   children: ReactNode;
   error?: boolean;
+  loading?: boolean;
+  retry?: { run: () => void; label?: string; disabled?: boolean };
 }) {
   return (
-    <div
-      className={`settings__card-message${error ? " settings__error" : ""}`}
-      role={error ? "alert" : undefined}
-    >
-      {children}
+    <div className={`settings__card-message${error ? " settings__error" : ""}`}>
+      {children && (
+        <span role={error ? "alert" : loading ? "status" : undefined}>
+          {children}
+        </span>
+      )}
+      {retry && (
+        <button
+          type="button"
+          className="button button--quiet"
+          onClick={retry.run}
+          disabled={retry.disabled}
+        >
+          {retry.label ?? "Retry"}
+        </button>
+      )}
     </div>
   );
 }
@@ -42,17 +57,15 @@ export function SettingsSection({
     >
       <div className="settings__section-header">
         <div className="settings__section-title-wrap">
-          <div className="settings__section-heading">
-            <span className="settings__section-icon" aria-hidden>
-              {icon}
-            </span>
-            <h3 id={headingId} className="settings__section-title">
-              {title}
-            </h3>
-          </div>
-          {headerAction ? (
+          <span className="settings__section-icon" aria-hidden>
+            {icon}
+          </span>
+          <h3 id={headingId} className="settings__section-title">
+            {title}
+          </h3>
+          {headerAction && (
             <div className="settings__section-action">{headerAction}</div>
-          ) : null}
+          )}
         </div>
         {description ? (
           <p className="settings__section-desc">{description}</p>

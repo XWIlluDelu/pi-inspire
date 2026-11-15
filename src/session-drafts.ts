@@ -1,65 +1,113 @@
-/** Text-only, origin/Host-scoped drafts survive reload within this browser tab.
- * sessionStorage avoids cross-tab overwrites; attachments remain controller-owned
- * memory. Storage refusal falls back to the same in-memory switching behavior. */
-const memory = new Map<string, string>();
-const revisions = new Map<string, number>();
-const PREFIX = "inspire:composer-draft:v1:";
-const START_KEY = `${PREFIX}start`;
+import { useCallback, useSyncExternalStore } from "react";
+import type { PendingAttachment } from "./controllers/composer-controller";
 
-function readDraft(key: string): string {
-  const cached = memory.get(key);
-  if (cached !== undefined) return cached;
-  let text = "";
-  try {
-    text = window.sessionStorage.getItem(key) ?? "";
-  } catch {
-    // Storage refusal leaves this tab's in-memory draft available.
+export interface SessionDraft {
+  revision: number;
+  text: string;
+  attachments: PendingAttachment[];
+  projectFiles: string[];
+  workspaceCwd?: string;
+  intentId?: string;
+}
+
+export function hasDraftInput(draft: SessionDraft): boolean {
+  return Boolean(
+    draft.text || draft.attachments.length || draft.projectFiles.length,
+  );
+}
+
+const EMPTY_DRAFT: SessionDraft = {
+  revision: 0,
+  text: "",
+  attachments: [],
+  projectFiles: [],
+};
+
+type DraftKey = string | null;
+
+function storageKey(sessionId: DraftKey): string {
+  return `inspire:composer-draft:v1:${
+    sessionId === null ? "start" : `session:${encodeURIComponent(sessionId)}`
+  }`;
+}
+
+/** Each tab has one editable draft per native session and one for New.
+ * Only text persists here. The upload and operation owners keep their own records. */
+export class SessionDrafts {
+  private readonly drafts = new Map<DraftKey, SessionDraft>();
+  private readonly listeners = new Set<() => void>();
+  private revision = 0;
+
+  subscribe = (publish: () => void): (() => void) => {
+    this.listeners.add(publish);
+    return () => this.listeners.delete(publish);
+  };
+
+  get(sessionId: DraftKey): SessionDraft {
+    const current = this.drafts.get(sessionId);
+    if (current) return current;
+    let text = "";
+    try {
+      text = window.sessionStorage.getItem(storageKey(sessionId)) ?? "";
+    } catch {
+      // Unavailable storage leaves the same tab-local editing behavior.
+    }
+    const draft = { ...EMPTY_DRAFT, text };
+    this.drafts.set(sessionId, draft);
+    return draft;
   }
-  memory.set(key, text);
-  return text;
-}
 
-function writeDraft(key: string, text: string): void {
-  memory.set(key, text);
-  try {
-    if (text) window.sessionStorage.setItem(key, text);
-    else window.sessionStorage.removeItem(key);
-  } catch {
-    // Private-mode/quota restrictions must not interrupt typing or delivery.
+  update(
+    sessionId: DraftKey,
+    patch: Partial<Omit<SessionDraft, "revision">>,
+    material = true,
+  ): SessionDraft {
+    const current = this.get(sessionId);
+    const draft = {
+      ...current,
+      ...patch,
+      revision: material ? ++this.revision : current.revision,
+    };
+    if (draft.text !== current.text) {
+      try {
+        const key = storageKey(sessionId);
+        if (draft.text) window.sessionStorage.setItem(key, draft.text);
+        else window.sessionStorage.removeItem(key);
+      } catch {
+        // A quota or policy restriction must not interrupt editing.
+      }
+    }
+    this.drafts.set(sessionId, draft);
+    for (const publish of this.listeners) publish();
+    return draft;
+  }
+
+  setText(sessionId: DraftKey, text: string): void {
+    if (this.get(sessionId).text !== text) this.update(sessionId, { text });
+  }
+
+  clear(sessionId: DraftKey): void {
+    this.update(sessionId, {
+      text: "",
+      attachments: [],
+      projectFiles: [],
+      workspaceCwd: undefined,
+      intentId: undefined,
+    });
+  }
+
+  entries() {
+    return this.drafts.entries();
   }
 }
 
-function sessionKey(sessionId: string): string {
-  return `${PREFIX}session:${encodeURIComponent(sessionId)}`;
-}
-
-export function sessionDraft(sessionId: string): string {
-  return readDraft(sessionKey(sessionId));
-}
-
-/** Text and material edits share one draft revision. Async editor deliveries
- * may replace only the revision that their originating action confirmed. */
-export function sessionDraftRevision(sessionId: string): number {
-  return revisions.get(sessionId) ?? 0;
-}
-
-export function touchSessionDraft(sessionId: string): void {
-  revisions.set(sessionId, sessionDraftRevision(sessionId) + 1);
-}
-
-export function setSessionDraft(sessionId: string, text: string): void {
-  if (sessionDraft(sessionId) !== text) touchSessionDraft(sessionId);
-  writeDraft(sessionKey(sessionId), text);
-}
-
-export function deleteSessionDraft(sessionId: string): void {
-  setSessionDraft(sessionId, "");
-}
-
-export function startDraft(): string {
-  return readDraft(START_KEY);
-}
-
-export function setStartDraft(text: string): void {
-  writeDraft(START_KEY, text);
+export function useSessionDraft(
+  drafts: SessionDrafts,
+  sessionId: DraftKey | undefined,
+): SessionDraft {
+  const read = useCallback(
+    () => (sessionId === undefined ? EMPTY_DRAFT : drafts.get(sessionId)),
+    [drafts, sessionId],
+  );
+  return useSyncExternalStore(drafts.subscribe, read, () => EMPTY_DRAFT);
 }

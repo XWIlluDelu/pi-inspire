@@ -2,7 +2,7 @@
   "extends": "./tsconfig.web.json",
   "compilerOptions": {
     "target": "ES2023",
-    "lib": ["ES2023", "DOM", "DOM.Iterable"]
+    "lib": ["ES2023", "ES2024.Promise", "DOM", "DOM.Iterable"]
   },
   "include": [
     "server/**/*.ts",
@@ -12,6 +12,7 @@
     "extensions/**/*.ts",
     "docs/examples/*.ts",
     "tests/integration/**/*.ts",
+    "tests/fixtures/workbench*.ts", "tests/fixtures/host-services.ts", "tests/fixtures/history-session.ts", "tests/fixtures/pi-workbench-provider.ts",
     "tests/server/fixtures/**/*.ts",
     "tests/web/helpers.ts",
     "tests/web/store-fixture.ts",

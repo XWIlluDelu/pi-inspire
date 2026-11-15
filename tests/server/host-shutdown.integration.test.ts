@@ -4,7 +4,6 @@ import {
   spawn,
 } from "node:child_process";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
-import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -15,6 +14,7 @@ import {
   type InstanceState,
   stopManagedInstance,
 } from "../../server/instance-state.mjs";
+import { freeLoopbackPort } from "../fixtures/packaged-launcher.mjs";
 import { isolatedTestEnvironment } from "./fixtures/isolated-environment.js";
 
 const execFile = promisify(execFileCallback);
@@ -34,29 +34,16 @@ afterEach(async () => {
   );
 });
 
-async function freePort() {
-  const probe = createServer();
-  await new Promise<void>((resolveListen) =>
-    probe.listen(0, "127.0.0.1", resolveListen),
-  );
-  const address = probe.address();
-  if (!address || typeof address === "string")
-    throw new Error("Expected TCP address");
-  await new Promise<void>((resolveClose) => probe.close(() => resolveClose()));
-  return address.port;
-}
-
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "inspire-host-shutdown-"));
   roots.push(root);
-  const port = await freePort();
+  const port = await freeLoopbackPort();
   const path = join(root, "host.json");
   const env = isolatedTestEnvironment(root, {
     INSPIRE_PI_COMMAND: testPiCommand,
     INSPIRE_HOST: "127.0.0.1",
     INSPIRE_PORT: String(port),
     INSPIRE_STATE_PATH: path,
-    INSPIRE_MOCK: "1",
     INSPIRE_TERMINAL_IN_PROCESS: "1",
     INSPIRE_OPEN: "0",
     INSPIRE_QUIET: "1",
@@ -94,7 +81,6 @@ async function fixture() {
         );
       }
       expect(state.pid).toBe(child.pid);
-      expect(state.shutdownControlVersion).toBe(1);
     },
     { timeout: 30_000, interval: 100 },
   );

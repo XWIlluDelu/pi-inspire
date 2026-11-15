@@ -1,14 +1,14 @@
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { installationKey } from "./installation-key.js";
+import { installationKey } from "./platform-paths.mjs";
 import { TerminalDaemonClient } from "./terminal-daemon-client.js";
 import {
   resolveTerminalDaemonConfiguration,
   type TerminalDaemonLaunchOptions,
 } from "./terminal-daemon-configuration.js";
-import { legacyTerminalDaemonAddress } from "./terminal-daemon-protocol.js";
 import {
   addressAcceptsConnections,
   TERMINAL_DAEMON_OWNER_CONFLICT_EXIT_CODE,
@@ -26,10 +26,15 @@ import {
 const require = createRequire(import.meta.url);
 const START_TIMEOUT_MS = 8_000;
 
-function delay(milliseconds: number): Promise<void> {
-  return new Promise((resolvePromise) =>
-    setTimeout(resolvePromise, milliseconds),
-  );
+export async function waitForTerminalDaemon<T>(
+  probe: () => Promise<T | undefined>,
+): Promise<T | undefined> {
+  const deadline = Date.now() + START_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const ready = await probe();
+    if (ready !== undefined) return ready;
+    await delay(75);
+  }
 }
 
 async function runSystemdUnit(
@@ -70,46 +75,13 @@ async function runSystemdUnit(
   });
 }
 
-function daemonCommand(): { command: string; prefix: string[]; entry: string } {
-  const sourceMode = fileURLToPath(import.meta.url).endsWith(".ts");
-  const directory = dirname(fileURLToPath(import.meta.url));
-  if (sourceMode)
-    return {
-      command: process.execPath,
-      prefix: [require.resolve("tsx/cli")],
-      entry: join(directory, "terminal-daemon-entry.ts"),
-    };
-  return {
-    command: process.execPath,
-    prefix: [],
-    entry: join(directory, "terminal-daemon-entry.js"),
-  };
-}
-
-async function terminalEndpointListening(
-  options: TerminalDaemonLaunchOptions,
-): Promise<boolean> {
-  const { root, address } = resolveTerminalDaemonConfiguration(options);
-  const environment = options.environment ?? process.env;
-  const legacyAddress = environment.INSPIRE_TERMINAL_DAEMON_ADDRESS
-    ? address
-    : legacyTerminalDaemonAddress(root, options.host, options.port, {
-        environment,
-      });
-  return (
-    (await addressAcceptsConnections(address)) ||
-    (legacyAddress !== address &&
-      (await addressAcceptsConnections(legacyAddress)))
-  );
-}
+const sourceMode = fileURLToPath(import.meta.url).endsWith(".ts");
 
 function terminalConnectionFailure(
   error: unknown,
   listening: boolean,
 ): TerminalServiceError {
-  const prefix = fileURLToPath(import.meta.url).endsWith(".ts")
-    ? "npm run inspire --"
-    : "inspire";
+  const prefix = sourceMode ? "npm run inspire --" : "inspire";
   const detail =
     error instanceof Error ? error.message : "No authenticated reply.";
   return new TerminalServiceError(
@@ -122,7 +94,7 @@ function terminalConnectionFailure(
       : "The terminal service is unavailable; no endpoint accepted the connection. ") +
       "Existing terminal processes were left running. " +
       `Run ${prefix} terminal status and inspect the owning service before deciding whether replacement is needed. ` +
-      "Replacing that daemon ends its live terminals; a Host-only restart does not replace it.\n" +
+      "Replacing that daemon ends its live terminals; an ordinary Inspire restart keeps it running.\n" +
       `Connection check: ${detail}`,
   );
 }
@@ -144,7 +116,7 @@ export async function connectExistingTerminalDaemon(
     await client?.close();
     throw terminalConnectionFailure(
       error,
-      await terminalEndpointListening(options),
+      await addressAcceptsConnections(address),
     );
   }
 }
@@ -168,15 +140,17 @@ export async function launchTerminalDaemon(
   // A failed probe does not grant authority to stop an independently owned
   // daemon and its PTYs. In particular, an old protocol's replace handshake
   // can terminate active shells. Leave a listening owner untouched.
-  if (await terminalEndpointListening(options)) {
+  if (await addressAcceptsConnections(address)) {
     await client.close();
     throw terminalConnectionFailure(probeError, true);
   }
 
-  const executable = daemonCommand();
   const daemonArgs = [
-    ...executable.prefix,
-    executable.entry,
+    ...(sourceMode ? [require.resolve("tsx/cli")] : []),
+    join(
+      dirname(fileURLToPath(import.meta.url)),
+      `terminal-daemon-entry.${sourceMode ? "ts" : "js"}`,
+    ),
     "--root",
     root,
     "--host",
@@ -196,13 +170,13 @@ export async function launchTerminalDaemon(
     options.port,
   ).slice(0, 12)}`;
   const startedBySystemd = await runSystemdUnit(
-    executable.command,
+    process.execPath,
     daemonArgs,
     unit,
     environment,
   );
   if (!startedBySystemd) {
-    const child = spawn(executable.command, daemonArgs, {
+    const child = spawn(process.execPath, daemonArgs, {
       cwd: root,
       detached: true,
       windowsHide: true,
@@ -221,17 +195,16 @@ export async function launchTerminalDaemon(
     child.unref();
   }
 
-  const deadline = Date.now() + START_TIMEOUT_MS;
   let lastError: unknown;
-  while (Date.now() < deadline) {
+  const ready = await waitForTerminalDaemon(async () => {
     try {
       await client.probe();
       return client;
     } catch (error) {
       lastError = error;
-      await delay(75);
     }
-  }
+  });
+  if (ready) return ready;
   throw new Error(
     `Unable to start the Inspire terminal service: ${
       lastError instanceof Error ? lastError.message : String(lastError)

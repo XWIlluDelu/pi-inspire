@@ -1,61 +1,42 @@
-import { createHash, randomUUID } from "node:crypto";
-import {
-  mkdir,
-  readFile,
-  readlink,
-  realpath,
-  rename,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { join } from "node:path";
 import type { ModelRuntime as NativeModelRuntime } from "@earendil-works/pi-coding-agent";
-import lockfile from "proper-lockfile";
-import stripJsonComments from "strip-json-comments";
 import { type ModelOption, THINKING_LEVELS } from "../shared/contracts.js";
-import type {
-  ModelConfigEdit,
-  ModelPreferencesPatch,
-  ModelSettingsSnapshot,
-  PiModelPreferences,
-  ProviderDeclaration,
+import { isJsonRecord } from "../shared/json-record.js";
+import {
+  type ModelConfigEdit,
+  type ModelPreferencesPatch,
+  type ModelSettingsSnapshot,
+  modelDeclarationSchema,
+  type PiModelPreferences,
+  type ProviderDeclaration,
+  providerDeclarationSchema,
 } from "../shared/model-settings.js";
-import { configurationEditLockPaths } from "./configuration-edit-locks.js";
-import { modelSettings } from "./model-catalog.js";
-import { validateModelConfig } from "./model-metadata.js";
+import {
+  applyConfigurationPatch,
+  editConfigurationDocument,
+  readConfigurationDocument,
+} from "./configuration-file.js";
+import {
+  readNativeModelSettings,
+  validateModelConfig,
+} from "./model-metadata.js";
 import {
   getAgentDir,
   ModelRuntime,
   resolveModelScopeWithDiagnostics,
-  SettingsManager,
 } from "./pi-runtime.js";
 import { requestError } from "./request-error.js";
 
 type JsonObject = Record<string, unknown>;
-const revision = (text: string | undefined) =>
-  createHash("sha256")
-    .update(text === undefined ? "missing" : `file:${text}`)
-    .digest("hex");
-async function textAt(path: string): Promise<string | undefined> {
-  try {
-    return await readFile(path, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw requestError("Pi configuration could not be read", 409);
-  }
-}
-function object(text: string | undefined, comments = false): JsonObject {
-  const source = text?.replace(/^\uFEFF/u, "");
-  const value =
-    source === undefined
-      ? {}
-      : JSON.parse(comments ? stripJsonComments(source) : source);
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    throw new Error("Expected a JSON object");
-  return value;
-}
-const string = (value: unknown) =>
-  typeof value === "string" ? value : undefined;
+const settingsDocument = {
+  invalid: "settings.json is invalid. Repair the file before saving.",
+};
+const modelsDocument = {
+  invalid: "models.json is invalid. Repair the file before saving.",
+  comments: true,
+};
+const invalidDeclaration =
+  "Pi rejected this declaration. Check its endpoint, API, model fields and extensions.";
 function preferences(value: JsonObject): PiModelPreferences {
   return {
     defaultModel:
@@ -75,72 +56,20 @@ function preferences(value: JsonObject): PiModelPreferences {
       : [],
   };
 }
-const MODEL_FIELDS = [
-  "id",
-  "name",
-  "api",
-  "baseUrl",
-  "reasoning",
-  "input",
-  "contextWindow",
-  "maxTokens",
-  "type",
-];
 function declarationProjection(config: JsonObject): ProviderDeclaration[] {
-  const providers = config.providers;
-  if (!providers || typeof providers !== "object" || Array.isArray(providers))
-    return [];
-  return Object.entries(providers).flatMap(([id, value]) => {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return [];
-    const provider = value as JsonObject;
+  return Object.entries(
+    isJsonRecord(config.providers) ? config.providers : {},
+  ).flatMap(([id, provider]) => {
+    if (!isJsonRecord(provider)) return [];
     return [
       {
         id,
-        baseUrl: string(provider.baseUrl),
-        api: string(provider.api),
+        ...providerDeclarationSchema.parse(provider),
         apiKeyConfigured: provider.apiKey !== undefined,
-        advancedFields: Object.keys(provider).filter(
-          (key) => !["baseUrl", "api", "apiKey", "models"].includes(key),
-        ),
         models: Array.isArray(provider.models)
           ? provider.models.flatMap((value) => {
-              if (
-                !value ||
-                typeof value !== "object" ||
-                Array.isArray(value) ||
-                typeof value.id !== "string"
-              )
-                return [];
-              const model = value as JsonObject;
-              return [
-                {
-                  id: model.id as string,
-                  name: string(model.name),
-                  api: string(model.api),
-                  baseUrl: string(model.baseUrl),
-                  type: string(model.type),
-                  reasoning:
-                    typeof model.reasoning === "boolean"
-                      ? model.reasoning
-                      : undefined,
-                  input: Array.isArray(model.input)
-                    ? model.input.filter(
-                        (item): item is string => typeof item === "string",
-                      )
-                    : undefined,
-                  contextWindow:
-                    typeof model.contextWindow === "number"
-                      ? model.contextWindow
-                      : undefined,
-                  maxTokens:
-                    typeof model.maxTokens === "number"
-                      ? model.maxTokens
-                      : undefined,
-                  advancedFields: Object.keys(model).filter(
-                    (key) => !MODEL_FIELDS.includes(key),
-                  ),
-                },
-              ];
+              const model = modelDeclarationSchema.safeParse(value);
+              return model.success ? [model.data] : [];
             })
           : [],
       },
@@ -148,101 +77,22 @@ function declarationProjection(config: JsonObject): ProviderDeclaration[] {
   });
 }
 
-async function fileTarget(path: string): Promise<string> {
-  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  try {
-    return await realpath(path);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-  }
-  let link: string;
-  try {
-    link = await readlink(path);
-  } catch (error) {
-    if (
-      !["ENOENT", "EINVAL"].includes(
-        (error as NodeJS.ErrnoException).code ?? "",
-      )
-    )
-      throw error;
-    return join(await realpath(dirname(path)), basename(path));
-  }
-  return fileTarget(resolve(dirname(path), link));
-}
-
-/** Lock Pi's lexical path and the actual authority when config is symlinked.
- * Replace the target atomically, never the user's configuration symlink. */
-async function editFile(
-  path: string,
-  expected: string,
-  transform: (current: JsonObject) => Promise<JsonObject>,
-  comments = false,
-): Promise<void> {
-  const target = await fileTarget(path);
-  const lexical = join(await realpath(dirname(path)), basename(path));
-  const releases: Array<() => Promise<void>> = [];
-  let compromised = false;
-  const temporary = join(
-    dirname(target),
-    `.inspire-models-${randomUUID()}.json`,
-  );
-  try {
-    for (const authority of await configurationEditLockPaths(lexical, target)) {
-      try {
-        releases.push(
-          await lockfile.lock(authority, {
-            realpath: false,
-            retries: { retries: 40, factor: 1, minTimeout: 50, maxTimeout: 50 },
-            onCompromised: () => {
-              compromised = true;
-            },
-          }),
-        );
-      } catch {
-        throw requestError(
-          "Pi configuration is being edited elsewhere. Reload and try again.",
-          409,
-        );
-      }
-    }
-    const current = await textAt(path);
-    if (revision(current) !== expected)
-      throw requestError(
-        "Pi configuration changed elsewhere. Reload before saving.",
-        409,
-      );
-    let parsed: JsonObject;
-    try {
-      parsed = object(current, comments);
-    } catch {
-      throw requestError("Repair the invalid Pi JSON file before saving", 409);
-    }
-    const next = await transform(parsed);
-    await writeFile(temporary, `${JSON.stringify(next, null, 2)}\n`, {
-      mode: 0o600,
-    });
-    if (
-      compromised ||
-      (await fileTarget(path)) !== target ||
-      revision(await textAt(path)) !== expected
-    )
-      throw requestError(
-        "Pi configuration changed elsewhere. Reload before saving.",
-        409,
-      );
-    await rename(temporary, target);
-  } finally {
-    await rm(temporary, { force: true });
-    await Promise.all(
-      releases.reverse().map(async (release) => {
-        try {
-          await release();
-        } catch (error) {
-          if (!compromised) throw error;
-        }
-      }),
-    );
-  }
+function applyModelEdit(
+  current: JsonObject,
+  edit: ModelConfigEdit,
+): JsonObject {
+  const { providers = {} } = current;
+  if (!isJsonRecord(providers))
+    throw requestError("models.json providers must be an object", 409);
+  const id = "provider" in edit ? edit.provider : edit.id;
+  const updated =
+    edit.kind === "remove-provider"
+      ? null
+      : editProvider(Object.hasOwn(providers, id) ? providers[id] : {}, edit);
+  return {
+    ...current,
+    providers: applyConfigurationPatch(providers, { [id]: updated }),
+  };
 }
 
 export async function commonModelOptions(
@@ -264,7 +114,24 @@ export async function commonModelOptions(
 
 export class ModelSettingsService {
   private nativeApiProviders: Promise<string[]> | undefined;
-  constructor(private readonly agentDir = getAgentDir()) {}
+  private readonly settingsFile: { path: string };
+  private readonly modelsFile: { path: string };
+
+  constructor(private readonly agentDir = getAgentDir()) {
+    this.settingsFile = { path: join(agentDir, "settings.json") };
+    this.modelsFile = { path: join(agentDir, "models.json") };
+  }
+
+  async readCatalogPreferences(cwd: string) {
+    const { effective, thinkingPreferences } = await readNativeModelSettings(
+      cwd,
+      this.agentDir,
+    );
+    return {
+      enabledModelPatterns: preferences(effective).enabledModels,
+      thinkingPreferences,
+    };
+  }
   private readNativeApiProviders(): Promise<string[]> {
     return (this.nativeApiProviders ??= ModelRuntime.create({
       modelsPath: null,
@@ -286,54 +153,28 @@ export class ModelSettingsService {
     cwd: string,
     models: ModelOption[],
   ): Promise<ModelSettingsSnapshot> {
-    const settingsText = await textAt(join(this.agentDir, "settings.json"));
-    const configText = await textAt(join(this.agentDir, "models.json"));
-    let global: JsonObject = {},
-      config: JsonObject = {};
-    let settingsError: string | undefined, configError: string | undefined;
-    try {
-      global = object(settingsText);
-    } catch {
-      settingsError =
-        "settings.json is invalid. Repair the file before saving.";
-    }
-    try {
-      config = object(configText, true);
-    } catch {
-      configError = "models.json is invalid. Repair the file before saving.";
-    }
-    const settings = modelSettings(cwd, this.agentDir);
-    const project = settings.getProjectSettings();
-    const effective = preferences({
-      defaultProvider: settings.getDefaultProvider(),
-      defaultModel: settings.getDefaultModel(),
-      defaultThinkingLevel: settings.getDefaultThinkingLevel(),
-      enabledModels: settings.getEnabledModels(),
-    });
-    const settingsErrors = settings.drainErrors();
-    if (settingsErrors.some((error) => error.scope === "global"))
-      settingsError ??=
-        "Global Pi settings could not be loaded. Repair settings.json before saving.";
-    const projectSettingsError = settingsErrors.some(
-      (error) => error.scope === "project",
-    )
+    const [settings, modelsFile, native] = await Promise.all([
+      readConfigurationDocument(this.settingsFile, settingsDocument),
+      readConfigurationDocument(this.modelsFile, modelsDocument),
+      readNativeModelSettings(cwd, this.agentDir),
+    ]);
+    const effective = preferences(native.effective);
+    const settingsError =
+      settings.error ??
+      (native.globalError
+        ? "Global Pi settings could not be loaded. Repair settings.json before saving."
+        : undefined);
+    const projectSettingsError = native.projectError
       ? "Project settings could not be loaded. Showing global defaults; global settings remain editable. Repair this project's .pi/settings.json to restore its overrides."
       : undefined;
-    const saved = preferences(
-      settingsError ? global : (settings.getGlobalSettings() as JsonObject),
-    );
+    const saved = preferences(settings.value);
     return {
-      settingsRevision: revision(settingsText),
-      configRevision: revision(configText),
+      settingsRevision: settings.revision,
+      configRevision: modelsFile.revision,
       saved,
       effective,
-      projectOverrides: [
-        "defaultProvider",
-        "defaultModel",
-        "defaultThinkingLevel",
-        "enabledModels",
-      ].filter((key) => Object.hasOwn(project, key)),
-      providers: declarationProjection(config),
+      projectOverrides: native.projectOverrides,
+      providers: declarationProjection(modelsFile.value),
       nativeApiProviders: await this.readNativeApiProviders(),
       models,
       commonModels: await commonModelOptions(effective.enabledModels, models),
@@ -345,158 +186,99 @@ export class ModelSettingsService {
       ),
       ...(settingsError ? { settingsError } : {}),
       ...(projectSettingsError ? { projectSettingsError } : {}),
-      ...(configError ? { configError } : {}),
+      ...(modelsFile.error ? { configError: modelsFile.error } : {}),
     };
   }
   async savePreferences(
-    expected: string,
+    expectedRevision: string,
     patch: ModelPreferencesPatch,
   ): Promise<void> {
-    await editFile(
-      join(this.agentDir, "settings.json"),
-      expected,
-      async (current) => {
-        let serialized = JSON.stringify(current);
-        const settings = SettingsManager.fromStorage({
-          withLock: (scope, fn) => {
-            const next = fn(scope === "global" ? serialized : undefined);
-            if (scope === "global" && next !== undefined) serialized = next;
-          },
-        });
-        if (patch.defaultModel)
-          settings.setDefaultModelAndProvider(
-            patch.defaultModel.provider,
-            patch.defaultModel.id,
-          );
-        if (patch.defaultThinkingLevel)
-          settings.setDefaultThinkingLevel(patch.defaultThinkingLevel);
-        if (patch.enabledModels !== undefined)
-          settings.setEnabledModels(
-            patch.enabledModels.length ? patch.enabledModels : undefined,
-          );
-        await settings.flush();
-        if (settings.drainErrors().length)
-          throw requestError("Pi could not save model settings", 409);
-        const next = object(serialized);
-        if (patch.defaultModel === null) {
-          delete next.defaultProvider;
-          delete next.defaultModel;
-        }
-        if (patch.defaultThinkingLevel === null)
-          delete next.defaultThinkingLevel;
-        return next;
-      },
+    return editConfigurationDocument(
+      { ...this.settingsFile, expectedRevision },
+      settingsDocument,
+      (current) =>
+        applyConfigurationPatch(current, {
+          defaultProvider:
+            patch.defaultModel === null ? null : patch.defaultModel?.provider,
+          defaultModel:
+            patch.defaultModel === null ? null : patch.defaultModel?.id,
+          defaultThinkingLevel: patch.defaultThinkingLevel,
+          enabledModels:
+            patch.enabledModels?.length === 0 ? null : patch.enabledModels,
+        }),
     );
   }
-  async saveConfig(
+  saveConfig(
     cwd: string,
-    expected: string,
+    expectedRevision: string,
     edit: ModelConfigEdit,
   ): Promise<void> {
-    await editFile(
-      join(this.agentDir, "models.json"),
-      expected,
-      async (current) => {
-        if (
-          current.providers !== undefined &&
-          (!current.providers ||
-            typeof current.providers !== "object" ||
-            Array.isArray(current.providers))
-        )
-          throw requestError("models.json providers must be an object", 409);
-        const providers = (current.providers ??= {}) as JsonObject;
-        const providerId = "provider" in edit ? edit.provider : edit.id;
-        if (edit.kind === "remove-provider") delete providers[providerId];
-        else {
-          const value = Object.hasOwn(providers, providerId)
-            ? providers[providerId]
-            : {};
-          if (!value || typeof value !== "object" || Array.isArray(value))
-            throw requestError(
-              "Repair this provider declaration before saving",
-              409,
-            );
-          const provider = value as JsonObject;
-          if (edit.kind === "provider") {
-            for (const [key, value] of Object.entries(edit.values)) {
-              if (value === null) delete provider[key];
-              else provider[key] = value;
-            }
-          } else {
-            if (
-              provider.models !== undefined &&
-              !Array.isArray(provider.models)
-            )
-              throw requestError(
-                "Repair this provider's models list before saving",
-                409,
-              );
-            const models = (provider.models ??= []) as JsonObject[];
-            const id = edit.kind === "model" ? edit.originalId : edit.id;
-            const type =
-              edit.kind === "model"
-                ? (edit.originalType ?? edit.values.type ?? "chat")
-                : (edit.type ?? "chat");
-            const index = models.findIndex(
-              (model) => model.id === id && (model.type ?? "chat") === type,
-            );
-            if (edit.kind === "remove-model") {
-              if (index < 0)
-                throw requestError("That declaration no longer exists", 409);
-              models.splice(index, 1);
-            } else {
-              if (
-                models.some(
-                  (model, i) =>
-                    i !== index &&
-                    model.id === edit.values.id &&
-                    (model.type ?? "chat") === (edit.values.type ?? type),
-                )
-              )
-                throw requestError("A model with that ID already exists", 400);
-              const model = index >= 0 ? { ...models[index] } : {};
-              for (const key of MODEL_FIELDS) {
-                if (Object.hasOwn(edit.values, key)) {
-                  const value = (edit.values as unknown as JsonObject)[key];
-                  if (value === null) delete model[key];
-                  else model[key] = value;
-                }
-              }
-              if (index < 0) models.push(model);
-              else models[index] = model;
-            }
-          }
-          Object.defineProperty(providers, providerId, {
-            value: provider,
-            enumerable: true,
-            configurable: true,
-            writable: true,
-          });
-        }
-        // Bind the same trusted provider registrations as Pi before validating.
-        // The disposable metadata worker never starts a turn or persistent session.
-        const validationPath = join(
-          this.agentDir,
-          `.inspire-validate-${randomUUID()}.json`,
-        );
-        try {
-          await writeFile(validationPath, JSON.stringify(current), {
-            mode: 0o600,
-          });
-          try {
-            await validateModelConfig(cwd, this.agentDir, validationPath);
-          } catch {
-            throw requestError(
-              "Pi rejected this declaration. Check its endpoint, API, model fields and extensions.",
-              400,
-            );
-          }
-        } finally {
-          await rm(validationPath, { force: true });
-        }
-        return current;
+    return editConfigurationDocument(
+      {
+        ...this.modelsFile,
+        expectedRevision,
+        validate: (path) =>
+          validateModelConfig(cwd, this.agentDir, path).catch(() => {
+            throw requestError(invalidDeclaration, 400);
+          }),
       },
-      true,
+      modelsDocument,
+      (current) => applyModelEdit(current, edit),
     );
   }
+}
+
+function editProvider(
+  raw: unknown,
+  edit: Exclude<ModelConfigEdit, { kind: "remove-provider" }>,
+): JsonObject {
+  if (!isJsonRecord(raw))
+    throw requestError("Repair this provider declaration before saving", 409);
+  if (edit.kind === "provider")
+    return applyConfigurationPatch(raw, edit.values);
+  const models = raw.models === undefined ? [] : raw.models;
+  if (!Array.isArray(models))
+    throw requestError("Repair this provider's models list before saving", 409);
+
+  const removing = edit.kind === "remove-model";
+  const original = removing ? edit.id : edit.originalId;
+  const type =
+    (removing ? edit.type : (edit.originalType ?? edit.values.type)) ?? "chat";
+  const index = models.findIndex((model) =>
+    isModelDeclaration(model, original, type),
+  );
+  if (original !== undefined && index < 0)
+    throw requestError("That declaration no longer exists", 409);
+  if (removing) {
+    models.splice(index, 1);
+  } else {
+    const previous = models[index];
+    const model = applyConfigurationPatch(
+      isJsonRecord(previous) ? previous : {},
+      edit.values,
+    );
+    if (
+      models.some(
+        (candidate, i) =>
+          i !== index &&
+          isModelDeclaration(candidate, edit.values.id, model.type ?? "chat"),
+      )
+    )
+      throw requestError("A model with that ID already exists", 400);
+    models[index < 0 ? models.length : index] = model;
+  }
+  return { ...raw, models };
+}
+
+function isModelDeclaration(
+  model: unknown,
+  id: string | undefined,
+  type: unknown,
+) {
+  return (
+    id !== undefined &&
+    isJsonRecord(model) &&
+    model.id === id &&
+    (model.type ?? "chat") === type
+  );
 }

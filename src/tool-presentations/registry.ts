@@ -1,17 +1,5 @@
-import type {
-  PresentationAdapterInfo,
-  ThinkingPresentationRuleDeclaration,
-  ToolPresentationConfiguration,
-} from "../../shared/tool-presentation-config";
-import { createCustomMessagePresentationRegistry } from "../custom-message-presentations";
-import {
-  configurePresentationAdapters,
-  subscribePresentationAdapters,
-} from "../presentation-adapters";
-import {
-  compileThinkingPresentationRule,
-  compileToolPresentationRules,
-} from "./declarative";
+import type { ThinkingPresentationRuleDeclaration } from "../../shared/tool-presentation-config";
+import { compileThinkingPresentationRule } from "./declarative";
 import type {
   ResolvedToolPresentation,
   ToolPresentation,
@@ -25,8 +13,6 @@ import {
 } from "./pi-native";
 
 interface ToolPresentationRegistryOptions {
-  builtInRules?: readonly ToolPresentationRule[];
-  builtInMappings?: ToolPresentationMappings;
   userRules?: readonly ToolPresentationRule[];
   userMappings?: ToolPresentationMappings;
 }
@@ -44,20 +30,19 @@ interface ThinkingPresentationRegistry {
  * a missing, failing, or incompatible rule falls directly through to generic
  * raw presentation rather than trying a second semantic interpretation. */
 export function createToolPresentationRegistry({
-  builtInRules = PI_NATIVE_TOOL_PRESENTATION_RULES,
-  builtInMappings = PI_NATIVE_TOOL_PRESENTATION_MAPPINGS,
   userRules = [],
   userMappings = {},
 }: ToolPresentationRegistryOptions = {}): ToolPresentationRegistry {
   const rules = new Map<string, ToolPresentationRule>();
-  for (const rule of builtInRules) rules.set(rule.id, rule);
+  for (const rule of PI_NATIVE_TOOL_PRESENTATION_RULES)
+    rules.set(rule.id, rule);
   // A user rule can replace a name binding, never the shipped rule definition
   // behind an INSΠRE-owned id.
   for (const rule of userRules) {
     if (!rules.has(rule.id)) rules.set(rule.id, rule);
   }
   const mappings = new Map<string, string>([
-    ...Object.entries(builtInMappings),
+    ...Object.entries(PI_NATIVE_TOOL_PRESENTATION_MAPPINGS),
     ...Object.entries(userMappings),
   ]);
 
@@ -93,43 +78,4 @@ export function createThinkingPresentationRegistry(
       }
     },
   };
-}
-
-export let toolPresentationRegistry = createToolPresentationRegistry();
-export let thinkingPresentationRegistry = createThinkingPresentationRegistry();
-export let customMessagePresentationRegistry: ReturnType<
-  typeof createCustomMessagePresentationRegistry
-> = createCustomMessagePresentationRegistry();
-
-export function getCustomMessagePresentationRegistry(): typeof customMessagePresentationRegistry {
-  return customMessagePresentationRegistry;
-}
-
-export function subscribeCustomMessagePresentations(listener: () => void) {
-  return subscribePresentationAdapters(listener);
-}
-
-/** Replace the user-owned generation after an authoritative host bootstrap.
- * Existing shells and shipped definitions stay immutable; user declarations
- * replace only the projected summary and expanded body. */
-export function configureToolPresentationRegistry(
-  configuration?: ToolPresentationConfiguration,
-  adapters?: PresentationAdapterInfo[],
-): void {
-  const resolved: ToolPresentationConfiguration = configuration ?? {
-    version: 1,
-    rules: {},
-    mappings: {},
-  };
-  toolPresentationRegistry = createToolPresentationRegistry({
-    userRules: compileToolPresentationRules(resolved),
-    userMappings: resolved.mappings,
-  });
-  thinkingPresentationRegistry = createThinkingPresentationRegistry(
-    resolved.thinking,
-  );
-  customMessagePresentationRegistry = createCustomMessagePresentationRegistry(
-    resolved.customMessages,
-  );
-  configurePresentationAdapters(resolved, adapters);
 }

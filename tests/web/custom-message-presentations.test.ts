@@ -2,38 +2,36 @@ import { afterEach, describe, expect, it } from "vitest";
 import { toolPresentationConfigurationSchema } from "../../shared/tool-presentation-config";
 import { createCustomMessagePresentationRegistry } from "../../src/custom-message-presentations";
 import {
-  configureToolPresentationRegistry,
-  customMessagePresentationRegistry,
-  thinkingPresentationRegistry,
-  toolPresentationRegistry,
-} from "../../src/tool-presentations/registry";
+  configurePresentationAdapters,
+  presentationGeneration,
+} from "../../src/presentation-adapters";
 import {
   customMessageConfiguration,
-  incomingIntercom,
+  incomingRelay,
 } from "./fixtures/custom-message-presentation";
 
 const resolve = createCustomMessagePresentationRegistry(
   customMessageConfiguration.customMessages,
 ).resolve;
 
-afterEach(() => configureToolPresentationRegistry());
+afterEach(() => configurePresentationAdapters());
 
 describe("custom-message reading projections", () => {
   it("uses exact structured text without editing, summarizing, or truncating the body", () => {
     const body =
       "**Exact**\n\n" + "message\n".repeat(20_000) + "\nFinal paragraph";
-    const message = incomingIntercom(body);
+    const message = incomingRelay(body);
     const original = JSON.stringify(message);
     expect(resolve(message)).toEqual({
       title: "Inspire: composer editing",
-      source: "Intercom",
+      source: "Relay",
       body,
     });
     expect(JSON.stringify(message)).toBe(original);
   });
 
   it("tries the sender id when the optional name is blank or absent", () => {
-    const message = incomingIntercom();
+    const message = incomingRelay();
     const details = message.details as { from: { name?: string; id: string } };
     for (const name of [undefined, "", "   "]) {
       details.from.name = name;
@@ -44,7 +42,7 @@ describe("custom-message reading projections", () => {
   });
 
   it("rejects incompatible shapes and mixed content without a second interpretation", () => {
-    const message = incomingIntercom();
+    const message = incomingRelay();
     expect(resolve({ ...message, customType: "other_message" })).toBeNull();
     expect(resolve({ ...message, details: undefined })).toBeNull();
     expect(
@@ -62,7 +60,7 @@ describe("custom-message reading projections", () => {
   });
 
   it("requires actual field absence so external or malformed provenance cannot become local attribution", () => {
-    const message = incomingIntercom();
+    const message = incomingRelay();
     const details = message.details as Record<string, unknown>;
     for (const crossMachine of [
       { origin: { name: "remote", machine: "host" }, trust: "unverified" },
@@ -83,21 +81,18 @@ describe("custom-message reading projections", () => {
   });
 
   it("loads and clears custom-message rules with the existing tool and Thinking bootstrap generation", () => {
-    configureToolPresentationRegistry({
+    configurePresentationAdapters({
       ...customMessageConfiguration,
       thinking: {
         summary: [{ value: { path: "thinking.text", format: "first-line" } }],
         blocks: [{ type: "markdown", source: { path: "thinking.text" } }],
       },
     });
+    const generation = presentationGeneration();
+    expect(generation.customMessages.resolve(incomingRelay())).not.toBeNull();
+    expect(generation.thinking.resolve("Reasoning\n\nBody")).not.toBeNull();
     expect(
-      customMessagePresentationRegistry.resolve(incomingIntercom()),
-    ).not.toBeNull();
-    expect(
-      thinkingPresentationRegistry.resolve("Reasoning\n\nBody"),
-    ).not.toBeNull();
-    expect(
-      toolPresentationRegistry.resolve({
+      generation.tools.resolve({
         call: {
           type: "toolCall",
           id: "read",
@@ -106,11 +101,13 @@ describe("custom-message reading projections", () => {
         },
       }),
     ).not.toBeNull();
-    configureToolPresentationRegistry();
+    configurePresentationAdapters();
+    expect(presentationGeneration()).not.toBe(generation);
+    expect(generation.customMessages.resolve(incomingRelay())).not.toBeNull();
     expect(
-      customMessagePresentationRegistry.resolve(incomingIntercom()),
+      presentationGeneration().customMessages.resolve(incomingRelay()),
     ).toBeNull();
-    expect(thinkingPresentationRegistry.resolve("Reasoning")).toBeNull();
+    expect(presentationGeneration().thinking.resolve("Reasoning")).toBeNull();
   });
 });
 
@@ -122,17 +119,17 @@ describe("custom-message configuration schema", () => {
       rules: {},
       mappings: {},
       customMessages: {
-        [type]: customMessageConfiguration.customMessages!.intercom_message,
+        [type]: customMessageConfiguration.customMessages!.relay_message,
       },
     });
     const registry = createCustomMessagePresentationRegistry(
       configuration.customMessages,
     );
     expect(
-      registry.resolve({ ...incomingIntercom(), customType: type })?.title,
+      registry.resolve({ ...incomingRelay(), customType: type })?.title,
     ).toBe("Inspire: composer editing");
     expect(
-      registry.resolve({ ...incomingIntercom(), customType: `${type} ` }),
+      registry.resolve({ ...incomingRelay(), customType: `${type} ` }),
     ).toBeNull();
     for (const invalid of ["", "x".repeat(129)]) {
       expect(
@@ -144,38 +141,22 @@ describe("custom-message configuration schema", () => {
     }
   });
 
-  it("keeps existing version-1 tool and Thinking profiles valid", () => {
-    expect(
-      toolPresentationConfigurationSchema.safeParse(customMessageConfiguration)
-        .success,
-    ).toBe(true);
-    expect(
-      toolPresentationConfigurationSchema.safeParse({
-        version: 1,
-        rules: {},
-        mappings: {},
-      }).success,
-    ).toBe(true);
-  });
-
   it.each([
     { title: [] },
     { title: ["details.__proto__.name"] },
     { title: ["details.constructor.name"] },
     { body: "args.message" },
-    { body: "thinking.text" },
     { body: "details." },
     { source: " " },
     { requireAbsent: ["result.details.origin"] },
-    { timestamp: "details.message.timestamp" },
     { format: "first-line" },
   ])("rejects unsafe selectors and unsupported fields: %j", (invalid) => {
     expect(
       toolPresentationConfigurationSchema.safeParse({
         ...customMessageConfiguration,
         customMessages: {
-          intercom_message: {
-            ...customMessageConfiguration.customMessages!.intercom_message,
+          relay_message: {
+            ...customMessageConfiguration.customMessages!.relay_message,
             ...invalid,
           },
         },

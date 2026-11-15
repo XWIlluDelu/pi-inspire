@@ -5,14 +5,14 @@ covers:
   - src/use-inspection-history.ts
   - src/store.ts
   - src/controllers/{git,workspace}-controller.ts
-  - src/components/{AppTopbar,SessionActionsMenu,Composer,ExtensionDisplays,ContextPane,ContextPaneShell,ContextSplitBody,FilesPane,ChangesPane,WorkspaceBrowser,BranchTree,PaneResizeHandle}.tsx
+  - src/components/{AppTopbar,Nav,NavigationToggle,SessionActionsMenu,Composer,ExtensionDisplays,ContextPane,ContextPaneShell,FilesPane,ChangesPane,FileIndexRow,WorkspaceBrowser,PaneResizeHandle}.tsx
   - src/{git-presentation,source-diff,use-modal-focus,use-session-action-reorder}.ts
   - server/git-inspection.ts
   - shared/contracts.ts
   - tests/integration/git-long-prefix.test.ts
-  - tests/web/source-diff.test.ts
+  - tests/web/source-presentation.test.ts
   - src/styles/*.css
-  - tests/web/{app,workspace-controller,pane-resize,branch-tree,modal-focus}.test.ts*
+  - tests/web/{workspace-controller,pane-resize,branch-tree,modal-focus}.test.ts*
   - tests/browser/{composer,session-actions}.spec.ts
 ---
 
@@ -26,213 +26,232 @@ independent project shells in [[terminal]].
 
 ## Responsive reading and pane geometry
 
-- The primary desktop layout provides stable regions for project/session navigation, conversation,
-  and contextual work. A Prompt Map may occupy the conversation's own left reading margin and
-  navigates only the current branch's user turns, so it neither joins project/session navigation nor
-  duplicates contextual History. The desktop reading column always reserves the resting rail's
-  minimum gutter from the center pane's actual width; window and side-pane resizing update both
-  gutter and rail position before paint, so the rail never covers conversation content or retains an
-  earlier-width position.
-
-  Search and navigation controls occupy the reading measure without reserving a toolbar row on
-  desktop or narrow screens. [[conversation]] owns the inline desktop search, narrow launchers and
-  floating `Jump to latest` behavior.
-  The transcript scroll thumb is separate from Prompt Map: its complete grab band fits the
-  trailing reading gutter without covering content, and its travel stays inside the scrollport
-  even in short windows. Native reading width, wheel and keyboard scrolling remain unchanged.
-
-  On a narrow workbench, the floating rail is removed entirely: a top-right control floats over
-  Transcript without reserving layout height, has no shared backdrop while its mutually exclusive
-  Search and Prompt Map launchers are idle, and gives Search or the rotated Prompt Map a surface
-  background when active in that same zone while retaining its complete temporary directory.
-  [[conversation]] owns interaction details.
+- The desktop layout has stable regions for project/session navigation, conversation, and contextual
+  work. Conversation search and the prompt outline launcher occupy the reading surface without
+  reserving a toolbar row. The prompt outline opens as the same bounded dialog on desktop and
+  narrow screens. The transcript scrollbar fits the trailing reading gutter.
+  [[conversation]] owns search, prompt outline, and floating `Jump to latest` behavior.
 
 - The navigation and contextual regions can collapse so the conversation can use the available
-  width. Desktop navigation owns its toggle: the expanded header's right-hand control collapses
-  it, and the rail logo expands it. The desktop conversation header has no duplicate toggle or
-  reserved slot. Below 900px, desktop rail preference is preserved but navigation itself becomes an
-  independent drawer opened from the topbar. Its internal close button, Escape, and scrim dismiss
-  it without horizontal overflow. Each open narrow drawer is exposed
-  as a modal dialog, owns trapped and restorable focus through the central modal stack, and makes
-  the center workbench inert; navigation and contextual drawers are mutually exclusive even when a
-  file opens from inside navigation. The desktop surfaces retain their navigation and complementary
-  landmarks. Opening a session also closes the drawer. The context pane keeps one shell and focus
-  owner across deferred loading, content and failure; loading the module does not restart its entry
-  animation. Its narrow header and Close control keep the same geometry across loading,
-  ready and failure states. The full-width context drawer needs no scrim. Shared motion and overlay roles are in
-  [[design-system]].
+  width. Desktop navigation owns its toggle: the expanded header's right-hand control collapses it,
+  and the rail logo expands it. The desktop conversation header has no duplicate toggle or reserved
+  slot.
+
+  Below 900px, navigation becomes an independent drawer opened from the topbar; the desktop rail
+  preference is preserved. Its internal close button, Escape, and scrim dismiss it without
+  horizontal overflow. Each open narrow drawer is a modal dialog: it owns trapped, restorable focus
+  through the central modal stack and makes the center workbench inert. Navigation and contextual
+  drawers are mutually exclusive, even when a file opens from inside navigation. Opening a session
+  also closes the navigation drawer. The full-width context drawer needs no scrim. Desktop surfaces keep their
+  navigation and complementary landmarks. Shared motion and overlay roles are in [[design-system]].
+
+  The context pane keeps one shell and focus owner across deferred loading, content and failure;
+  loading the module does not restart its entry animation. Its narrow header and Close control keep
+  the same geometry across loading, ready and failure states.
 
   Returning to desktop closes transient drawer state without overwriting the desktop collapsed
   preference. Switching the contextual pane between desktop and drawer layouts keeps its reader or
   terminal mounted, preserving local interaction state. A dialog opened above either pane keeps
-  focus and Escape ownership when a viewport change turns the underlying pane into a drawer;
-  the lower drawer cannot trap or make that dialog inert.
+  focus and Escape ownership when a viewport change turns the underlying pane into a drawer; the
+  lower drawer cannot trap focus or make that dialog inert.
 
-- Automatic desktop widths use 220–272px for navigation (48px collapsed) and 340–760px for context.
-  Both side regions' widths are adjustable by dragging their boundary with the conversation
-  using focusable handles with pointer and keyboard control, persist across reloads, and reset to
-  the default on double-click; each boundary's scroll thumb keeps grab priority where the two
-  overlap. A saved width is clamped live as the window narrows without overwriting the user's
-  preference, then restored when space returns. The two desktop side panes share a width budget
-  that reserves 400px for the conversation, or all remaining width after their 220px/320px
-  minimums immediately above the drawer breakpoint. Resizing either side (pointer or keyboard)
-  holds the other side at its current rendered width and clamps only the active side. Window
-  resizing and pane visibility changes reflow the saved preferences together; they do not write
-  temporary widths back to storage. Double-click resets only the chosen side.
-  Desktop panes are separated by 4px gutters
-  with 8px resize hit bands. Hover, keyboard focus and active dragging reveal a straight 2px
-  divider with round caps and inset ends, not an outline wrapping the adjacent pane's corners.
+- Automatic desktop widths are 220–240px for navigation (48px collapsed) and 340–760px for context. Navigation keeps its 460px manual maximum. Context can be manually widened up to the
+  remaining shared conversation-width budget, with no separate fixed pixel ceiling; this does not
+  change the automatic defaults.
+
+  Each side region's width is adjusted by dragging its boundary with the conversation through a
+  focusable handle with pointer and keyboard control. Widths persist across reloads, and
+  double-click resets only the chosen side to its default. Each boundary's scroll thumb keeps grab
+  priority where the two overlap. The two desktop side panes share a width budget that reserves
+  400px for the conversation, or all remaining width after their 220px/320px minimums immediately
+  above the drawer breakpoint. Resizing either side (pointer or keyboard) holds the other side at
+  its current rendered width and clamps only the active side. A saved width is clamped live as the
+  window narrows, without overwriting the user's preference, and restored when space returns.
+  Window resizing and pane visibility changes reflow the saved preferences together without writing
+  temporary widths back to storage.
+
+  Desktop navigation and the right pane use 4px of frame-colored gutter whitespace, with no
+  permanent divider. Desktop conversation and the complete context panel each have a subtle
+  theme-aware 1px perimeter and 6px outer corners; navigation stays integrated with the shell, and
+  narrow/mobile views have no added perimeter or radius. Both side boundaries keep 8px resize hit
+  bands and hidden resting indicators. Hover, keyboard focus and active dragging reveal a straight
+  2px divider with round caps and inset ends, not an outline around the adjacent pane's corners.
   The session header shares the reading surface without a separate bottom seam.
 
   Composer's model and thinking selectors follow the reading pane's actual width, not only the
   browser viewport. When side panes narrow the desktop conversation, selectors use the existing
   compact upper row; file/attachment actions, usage, and separate Stop/Send controls stay below in
-  their existing order. Normal-width desktop panes retain the single-row toolbar and narrow-screen
+  their existing order. Normal-width desktop panes keep the single-row toolbar, and narrow-screen
   startup composition keeps its existing responsive arrangement.
 
 ## Short-window input and extension content
 
-Transcript and the complete Composer dock share the reading stage's height budget. Preserve a reading
-area while the draft and Pi's aboveEditor/belowEditor widgets yield through their own scrolling.
-Input text keeps its normal size; toolbars and Send/Stop retain their full targets. The minimum
-editor line and focusable widget scrollports bound compression, including touch and short landscape
-windows. Normal-height windows retain their spacing and natural widget heights.
+File and terminal tabs share one strip with a searchable More tabs list for overflow.
+The selected tab is brought into view. Arrow keys, Home and End navigate the strip. On compact
+panes the tab strip gets its own row, keeping the selected tab and tools reachable. Opening,
+closing, renaming and resizing preserve the underlying readers and terminal processes.
+The strip renders file and terminal descriptors directly and uses the same descriptors for search.
+Focused terminal windows use the same tab strip and keyboard navigation. Focused layout changes
+which documents the strip lists and preserves the mounted terminal view.
 
-In short windows, widget cards spend their height on text rather than repeat the generic Extension
-heading; their accessible labels and Copy actions remain. Transcript's vertical breathing space
-belongs inside its scroll content, so it cannot force the scrollport across the dock boundary.
-The editor's existing Expand/Collapse, selection, draft and completion behavior remain intact.
+Files, Changes and History use the same selection tint as open file and terminal tabs. The Terminal shortcut
+creates a terminal. A pane at most 400px wide gives open tabs a second row when present.
+File and terminal actions float over their content. PDF keeps its compact control row and reserves
+clearance below the file actions in a narrow pane. Terminal search
+and selection overlays stay within the output area.
+Desktop HTML previews use the context perimeter instead of a second complete inner frame.
+
+The Files search field starts 8px below contextual chrome with 12px horizontal insets. It uses the
+shared search control and keeps its adjacent hidden-files control.
+
+Files uses one 4px search-to-heading gap and 24px section headings, keeping the 12px break between
+Recent and workspace and the existing item heights. Changes section headings use the same 24px tier
+and 12px text origin. The Changes branch-summary row uses the search row's 8px top inset and 34px
+desktop / 40px narrow height, aligning Changes with Recent without an empty placeholder row. List
+surfaces use a 4px outer inset plus their own content padding; both lists reserve the same stable
+native-scrollbar gutter. In a compact Changes pane, renamed and copied paths put the destination
+above the quieter origin and allow both to wrap so their directories stay distinguishable.
+Recent, workspace search and Changes share the row layout, file icon and Git status marker. Each
+row keeps the path context and action of its owning list.
+Transcript and the complete Composer dock share the reading stage's height budget. A reading area
+is preserved while the draft and Pi's aboveEditor/belowEditor widgets yield through their own
+scrolling. Input text keeps its normal size; toolbars and Send/Stop keep their full targets. The
+minimum editor line and focusable widget scrollports bound compression, including on touch and in
+short landscape windows. Normal-height windows keep their spacing and natural widget heights.
+
+Widgets keep an accessible label and place the visible Copy action alongside their text. In short
+windows, each dock reserves room for the complete touch target and card padding. Transcript's
+vertical breathing space belongs inside its scroll content, so it cannot push
+the scrollport across the dock boundary. The editor's Expand/Collapse, selection, draft and
+completion behavior are unchanged.
 
 ## Session identity and Git observation
 
-- The topbar owns session identity — an explicit Pi name is the rename value, while an unnamed
-  conversation presents its normalized first prompt (or `New session` before any prompt) without
-  promoting that fallback into session metadata or OS-visible titles. The heading truncates
-  responsively at its available width. Beside it, the project location appears as folder name or
-  full path per a global preference, without a redundant folder glyph; clicking copies the absolute
-  path without shifting layout.
-  A quiet clickable Git summary follows: it shows the current branch or detached/unborn identity,
+- The topbar owns session identity. An explicit Pi name is the rename value. An unnamed
+  conversation shows its normalized first prompt (or `New session` before any prompt); that
+  fallback is never promoted into session metadata or OS-visible titles. The heading truncates at
+  its available width. Beside it, the project location appears as folder name or full path per a
+  global preference. When the header is compact, a folder glyph carries the same action. Clicking
+  copies the absolute path, and Ctrl/⌘+click shows the project folder in the Host's file manager.
+
+  A quiet clickable Git summary follows. It shows the current branch or detached/unborn identity,
   adds a total only when the worktree has changes, and opens the detailed Changes pane on
-  activation.
+  activation. While the Changes pane is visible, the summary keeps the branch but omits its total,
+  which Changes states beside the list. The summary is a first-class Git observation surface: it
+  stays current while the contextual pane is closed. [[resource-preview]] defines when the workbench
+  refreshes the summary, list and selected comparison.
 
-  It is a first-class Git observation surface, so this small summary stays current even while the
-  contextual pane is closed; detailed paths and diffs remain there. Its automatic scheduler uses a
-  low 20-second cadence when this compact summary is the only observer, retains a four-second
-  cadence while a detailed Git surface is open, and pauses while the page is hidden; returning to a
-  visible page, tool completion, and explicit refresh trigger an immediate coalesced observation, so
-  a slow repository cannot create a continuous child-process loop. Only projection-conflict/recovery
-  and extension status capsules remain in the leading cluster immediately after identity; ordinary
-  running, retrying, compacting, and failed feedback belongs to the composer’s semantic border/halo,
-  with explicit state-owned retry/compaction text in the adjacent activity surface rather than
-  command-owned progress copy.
+  Only projection-conflict/recovery and extension status capsules occupy the leading cluster
+  immediately after identity. The selected session's ordinary running, retrying and compacting
+  state belongs to the composer (its semantic border/halo, Steer/Queue and Stop), with explicit
+  state-owned retry/compaction text in the adjacent activity surface rather than command-owned
+  progress copy.
+  The narrow-layout navigation toggle and collapsed desktop rail's expand button share a count of
+  other sessions with an unseen completion, failure or attention state. Completions use success tone;
+  any failure or attention state takes error tone. The visible count caps at `9+`, while its accessible
+  description retains the full count. The badge sits in the upper-right clearance of the navigation
+  entrance, clear of the icon at either count width. The currently viewed session and running-only
+  sessions are excluded. Consuming the last unseen state removes the badge. Expanded desktop navigation keeps
+  its session-row indicators without a duplicate header badge. Both layouts preserve background
+  outcome visibility when navigation hides the list, using text rather than color alone.
 
-  Session title, project, Git and extension status form one left-aligned cluster with consistent
-  spacing and a shared text baseline across the sans title and mono metadata/status; icons
-  and global action buttons remain centered independently. The project and Git identifiers form
-  a tighter workspace subgroup beside the title,
-  and global controls remain on the right. Workspace identifiers have no resting background or frame;
-  hover strengthens their text and keyboard focus retains its outline. The text-only title opens
-  the session menu on both desktop and phones, with no chevron or separate More control.
-  Its hover feedback and keyboard focus outline retain the interactive affordance.
-  Rename opens the inline editor and is first in the default order. Extension text uses the available
-  space at every width, with full statuses
-  available by click, tap or keyboard when truncated. No status takes no space. Secondary project and
-  Git details yield before the title and primary navigation. Narrow layouts retain Settings in the
-  header; detailed Git status remains in Changes. The session menu sits below the title button with a
-  compact 216px width, limited by available space rather than title length. The inline rename
-  input shares the title's leading edge, not the menu's width: it starts at 240px, grows with the
-  displayed title up to 560px, and fits the available header space. On narrow bars it fills the
-  remaining width while auxiliary header controls yield.
-  Enter, the save control, or moving focus outside the editor saves the name; Escape cancels.
-  Blank and unchanged edits exit without a write. Saving after focus leaves does not take focus back.
-  Rename editing is owned by the session whose heading opened it; a switch cancels that editor, the
-  submit carries the explicit session id rather than reading a newer visible selection, and a
-  rejected rename leaves the current identity intact while emitting a non-blocking warning notice.
+  Session title, project, Git and extension status form one leading cluster. Secondary labels
+  truncate as space shrinks. The project and Git controls retain glyphs when their labels are hidden
+  in a compact header. Git shows up to `99+` changes, with the exact total and branch in the
+  accessible name. Truncated extension statuses remain available by click, tap or keyboard.
+  Trailing actions keep their own space.
 
-  The title menu defaults to Rename, Copy session ID, Clone, Use in terminal, and Export, with order
-  configurable in Settings under Behavior. It initially shows the first three actions; More actions
-  reveals the rest in the same menu, and Fewer actions collapses them. Reopening starts compact.
-  Expansion focuses the first enabled newly revealed action; the full menu remains bounded and
-  scrollable within the viewport. The menu opens with its first enabled action focused; arrows,
-  Home/End, Enter and Escape operate it, and keyboard dismissal returns focus to the title.
-  Each action has a right-side drag handle, including actions unavailable for execution. A mouse
-  or touch drag previews the order and automatically reveals overflow; dropping inside the menu
-  saves the same preference used by Settings. Escape, pointer cancellation or a drop outside the
-  menu discards the preview. Grabbing or moving a handle never runs its session action.
-  Handles remain keyboard-reachable; Alt+Up/Down moves the focused action and retains its focus.
+  Global controls stay on the right. Header actions are the command palette, Settings (desktop
+  only) and the contextual pane toggle. Conversation search stays with its reading surface under
+  [[conversation]], rather than adding a global header launcher. Narrow
+  layouts reach Settings from the navigation drawer header and the palette, giving that width to
+  session identity. Detailed Git status remains in Changes.
+
+  The text-only title opens the session menu on desktop and phones, with no chevron or separate
+  More control; hover feedback and a keyboard focus outline keep the interactive affordance. The
+  menu sits below the title button with a compact 216px width, limited by available space rather
+  than title length. Rename replaces the title with a focused input. Enter, Save or leaving the
+  field commits the name, and Escape cancels. A session switch closes the editor.
+  A delayed result keeps newer text in the field. A rejected rename leaves the current identity
+  intact and reports the failure.
+
+  **Switch branch…** opens the saved branch list inside the title menu. Choosing a branch applies [[session-persistence]]
+  admission. The title menu shows all actions in the order saved under Behavior settings. Its
+  grips support dragging, and Alt+Up/Down moves a focused action. The default order is Rename,
+  Copy session ID, Clone, Switch branch and Export. The menu focuses the first enabled action and stays scrollable within the viewport. Arrows, Home/End, Enter and Escape
+  operate it, and keyboard dismissal returns focus to the title.
 
   Copy session ID writes the complete selected Pi session ID, including for read-only history.
-  Successful clipboard completion shows ID copied in place; failure uses the existing copy-error
-  notice and allows retry. Copy does not execute a session operation or dismiss the menu.
-  Export opens the shared format-and-download dialog without reading or changing the message draft.
-  Clone shares History's readiness checks. Refusal or failure leaves the menu open; successful
-  navigation closes it without stealing focus from a newer choice.
-  `/clone`, the command palette and the earlier-branch notice's `Clone from here` reach the same
-  endpoint-inclusive action. It creates an independent copy of the recorded active branch without
-  sending a model prompt or changing the source's work, pending input or draft. [[session-branches]]
-  defines native navigation, Fork/Clone boundaries and optional branch summaries.
-
-- Git status and diff observations share a bounded scheduler and the workbench's snapshot authority.
-  Selecting a Git path and opening its session-bound resource preview form one cross-domain transition;
-  Git does not maintain a parallel browser store. While Changes is visible, status observations also
-  refresh its selected file and side. Polling, Pi tool completion, terminal command completion and explicit
-  Refresh share that inspection path. One active read and one queued refresh coalesce repeated hints;
-  slow reads do not overlap polling. Keep the previous source readable until its replacement is ready,
-  preserve the selected path/side and reader offsets, and reuse unchanged results. A failed refresh
-  retains the source with a visible stale-result notice; a successful read clears it.
-
-  Keep complete selected-file source when it fits the bounded projection. If unchanged context exhausts
-  that budget, reread bounded changed regions instead of hiding the edits behind a long prefix. Mark omitted context separately from a
-  truncated diff. Syntax highlighting has its own bounded complete-revision context; validate it
-  against displayed rows and use literal escaped text when unavailable or changed between reads.
+  Success shows ID copied in place; failure uses the existing copy-error notice and allows retry.
+  Copy neither executes a session operation nor dismisses the menu. Export opens the shared
+  format-and-download dialog without reading or changing the message draft. Clone shares History's
+  readiness checks; refusal or failure leaves the menu open, and successful navigation closes it
+  without stealing focus from a newer choice. `/clone` and the command palette reach the same
+  endpoint-inclusive action. It creates an independent
+  copy of the recorded active branch without sending a model prompt or changing the source's work,
+  pending input or draft. [[session-branches]] defines native navigation, Fork/Clone boundaries and
+  optional branch summaries.
 
 ## Contextual modes
 
 - Workspace file browsing lives in the contextual Files pane; the session navigation column does
-  not duplicate its tree.
+  not duplicate its tree. The right tool header uses the rail background with a fine boundary to the
+  reader. Tabs and selected tool modes use one accent tint. Search fields, toolbars, authored documents
+  and the terminal keep their own content-surface roles.
 
-- The contextual region primarily hosts Files, Changes, History, and Terminal through equal-width
-  mode controls that preserve every label at the pane's minimum width. Files uses the complete
-  search/Recent/Workspace browser until a file is selected, then keeps a fixed bounded Workspace
-  index above the file detail on desktop so related files remain one step away. Narrow Files uses
-  full-height detail with Back to Files, the filename and existing necessary actions; returning to
-  Browse preserves its query, expansions and scroll. Changes uses that same desktop upper
-  height, divider, and lower-header geometry without an internal resize control: repository identity
-  and grouped changed paths stay above complete selected-file Source with inline Git changes and
-  navigation. Narrow Changes uses a full-height list until a path is selected, then gives the
-  selected Source the available height with All changes and adjacent-comparison controls. Those
-  controls follow the index's conflict, working and staged order, including both sides of the same
-  path. Returning to the list preserves its scroll and restores the selected row's focus; reopening
-  a comparison restores its source reading position. Desktop retains the shared index/detail split.
+- Open files and project terminals have tabs on the leading side of the contextual header. Files,
+  and Changes are fixed icon tabs on its trailing side, with hover titles and accessible
+  names; the Terminal icon creates and activates a default terminal instead of selecting a nested
+  terminal page. File, terminal and tool tabs share one content region. Files shows its complete
+  search/Recent/Workspace browser; selecting a file opens or selects its sibling tab, with no
+  nested Files layer or index/detail split. Returning to Files preserves its query, expansions and
+  scroll. File tabs keep independent reader modes and Source/rendered scroll offsets;
+  [[resource-preview]] defines the boundary for embedded readers and execution.
 
-  Narrow Context, navigation and Settings participate in transient browser history. Files and Changes
-  detail add one nested level: Back returns to the list, then closes the panel, then leaves the application.
-  Same-level tabs reuse their entry and explicit close consumes the owned levels without an empty
-  Back stop. Image inspection uses the same small history owner, independently of panel depth;
-  this is not a URL router or a second navigation model.
+  The strip keeps the selected tab visible and lists the remaining overflow in More tabs. A
+  choice restores focus to the newly visible tab. Terminal tabs can be reordered by dragging or
+  with their keyboard shortcut. File and terminal controls float above the content. Interacting
+  with the reading surface reduces the controls to their toggle. Keyboard Escape also collapses
+  the controls and returns focus to that toggle.
 
-  History is a conversation outline for inspecting and deliberately continuing Pi history, not a
-  graph editor, duplicate Transcript, or raw audit log. User prompts lead its compact default view;
-  reply/event detail and alternate routes are disclosed where relevant. Other starts also exposes
-  branch points in a hidden metadata-only prefix, keeping first-input alternatives reachable.
-  Merely selecting a point
-  previews its complete content inside History without changing Pi's active context or the Composer.
-  Returning to the outline preserves search, loaded history, scroll and focus. Opening an alternate
-  route reveals its chosen/latest point, not its shared oldest ancestor; returning to Current
-  conversation only restores the active conversation's outline. Exact node actions explicitly distinguish
-  editing/continuing in this session from creating an independent Fork or Clone, without an action
-  toolbar on every outline row. Search reaches complete retained history across branches, and older
-  points remain reachable through progressive loading; bounded responses never define the limit of
-  accessible history. The center Transcript remains the active conversation surface.
+  F5 restores the browser tab's navigation, pane widths and visibility, contextual tool, file-tab
+  order and selection, and Files query and expansions. Saved session navigation is scoped to Host,
+  session and workspace. Terminal reconnects to the existing selection. [[resource-preview]]
+  defines how restored files regain read authority. The workbench shell shows loading until saved
+  or continued session selection settles. An empty selection then shows the create-session screen.
 
-  On a narrow screen, a successful context-changing action closes the modal contextual drawer to
-  reveal the resulting conversation/draft; read-only preview and Back keep it open.
+  Changes always gives its grouped list the available height, with no Source split or selection
+  hint. Selecting a comparison opens or reuses the ordinary file tab in Git Changes mode; Files
+  opens that same tab in its body view. A compact toolbar above the preview
+  holds, in order: Source/Preview, Git view, within-file previous/next navigation with its compact
+  count, Copy path and trailing Download. Git view also offers Source to open the current file's
+  source directly, keeping the tab and body reading state. Known unavailable/binary source stays
+  disabled. An unread source can be requested. File tabs carry identity and Copy path exposes the
+  full path. On narrow screens the toolbar can wrap to keep its touch targets available. File
+  identity, view and independent reading offsets survive tab switches and F5 within the current
+  session/workspace storage schema.
+  [[resource-preview]] defines comparison authority and unavailable-content behavior.
 
-  Terminal presents the current project's ordered shell tabs without splits; hiding the pane
-  detaches its views without ending PTYs, and focus mode or an independent same-origin window can
-  temporarily give the selected terminal the viewport. The region remains in the three-column layout
-  while that layout can preserve a usable conversation; below that floor it becomes a modal drawer
-  with its own close control.
+  Narrow Context, navigation and Settings participate in transient browser history. File and tool
+  tabs reuse one level, so Back closes the contextual drawer once. Explicit close consumes the
+  owned level without leaving an empty Back stop. Image inspection uses the same small history
+  owner, independently of panel depth; this is not a URL router or a second navigation model.
+  Responsive panel history stays below a foreground image inspection when resizing adds or removes
+  drawer levels. Back or Close ends the image first, then reconciles the panel levels without
+  dismissing its content or leaving empty Back stops. Retired foreground markers cannot block a new
+  drawer.
 
-  The contextual header owns Refresh for the current mode, including History. Files, Changes, and
-  History disable it without a selected session; History also disables it during a branch action.
+  Reading a branch does not change the Composer or occupy the contextual pane.
+
+  Terminal presents the current project's ordered shell tabs without splits. After first access it
+  stays mounted across file/tool tab switches, keeping its output and unfinished input; hidden
+  terminal views neither steal focus nor resize the PTY. Closing the pane does not end PTYs. Focus
+  mode or an independent same-origin window can temporarily give the selected terminal the
+  viewport. The region stays in the three-column layout while that layout can preserve a usable
+  conversation; below that floor it becomes a modal drawer with its own close control.
+
+  The contextual header owns Refresh for the current mode. Files and Changes disable it without
+  a selected session.
+  Only a user-initiated refresh drives its busy icon and disabled state. Background observations
+  update content quietly; their loading, stale-result and error states stay with the content.
+  Manual feedback belongs to its session/transport/view and cannot overwrite a newer action.

@@ -1,7 +1,5 @@
 import {
-  type BranchTreeResponse,
   defaultPreferences,
-  type GitDiffSide,
   type GitStatusResponse,
   type InspirePreferences,
   type ModelOption,
@@ -9,14 +7,14 @@ import {
   type PiUpdateCheckResponse,
   type ProjectionConflict,
   type ProjectionHealth,
+  projectionConflictSeverity,
   type ResourceProbeResult,
+  type RunState,
   type SessionCatalogIssue,
   type SessionReadOnlyReason,
   type SessionRuntimeStatus,
   type SessionSummary,
-  type TranscriptActivityRange,
   type UpdateCheckResponse,
-  type UserTurnAnchor,
 } from "../shared/contracts";
 import type { ModelSettingsOwner } from "../shared/model-settings";
 import {
@@ -25,7 +23,6 @@ import {
 } from "../shared/notifications";
 import type { ExternalSessionActivities } from "../shared/session-activity";
 import type { PiCommand } from "./composer-completion";
-import type { PendingAttachment } from "./controllers/composer-controller";
 import type {
   ManagedConnectionProblem,
   ManagedConnectionState,
@@ -36,12 +33,12 @@ import {
   type WorkspaceBrowserState,
 } from "./controllers/workspace-controller";
 import { type EventSlice, emptyEventSlice } from "./events";
-import type { ResourcePreview } from "./resource-preview";
+import type { FileInspectionState } from "./resource-preview";
 
 /** Context-window occupancy from Pi's session stats. `tokens`/`percent` are
  * null right after a compaction until the next assistant response reports
  * fresh usage; the whole value is null when Pi provides no usable stats. */
-export interface ContextUsage {
+interface ContextUsage {
   tokens: number | null;
   contextWindow: number;
   percent: number | null;
@@ -58,12 +55,9 @@ export type NativeCommandActivityStatus =
 export interface NativeCommandActivity {
   id: number;
   sessionId: string;
-  input: string;
   command: string;
   status: NativeCommandActivityStatus;
-  title: string;
   message: string;
-  createdAt?: number;
   details?: Array<{ id?: string; label: string; value: string }>;
   download?: { id: string; fileName: string };
   action?:
@@ -92,30 +86,11 @@ export interface NativeCommandUiRequest {
     | "sessions"
     | "new"
     | "hotkeys"
-    | "changelog";
+    | "changelog"
+    | "branches";
   query?: string;
   modelSettingsFocus?: "credentials" | "common";
   modelSettingsOwner?: ModelSettingsOwner;
-}
-
-export interface TranscriptActivityRangeState extends TranscriptActivityRange {
-  status: "idle" | "loading" | "error";
-  error: string | null;
-}
-
-export type ActivityMaterializationMode = "all" | "tail";
-
-/** Whether a projection revision still contains the unchanged prefix ending at
- * an earlier revision. */
-export function transcriptRevisionContains(
-  revision: number,
-  appendFromRevision: number,
-  ancestorRevision: number,
-): boolean {
-  return (
-    revision === ancestorRevision ||
-    (revision > ancestorRevision && appendFromRevision <= ancestorRevision)
-  );
 }
 
 export function contextUsage(stats: unknown): ContextUsage | null {
@@ -143,14 +118,58 @@ export function contextUsage(stats: unknown): ContextUsage | null {
   return { tokens, contextWindow, percent };
 }
 
-export interface AppState extends EventSlice, WorkspaceBrowserState {
+export interface TranscriptView {
+  viewId: string | null;
+  incarnation: string | null;
+  revision: number;
+  effectiveLeafId: string | null;
+  restoreSavedLeafId: string | null;
+  composerHistoryVersion: string | null;
+  hasOlder: boolean;
+  branchRevision: number | null;
+  health: ProjectionHealth;
+  conflict: ProjectionConflict | null;
+}
+
+export const emptyTranscriptView: TranscriptView = {
+  viewId: null,
+  incarnation: null,
+  revision: 0,
+  effectiveLeafId: null,
+  restoreSavedLeafId: null,
+  composerHistoryVersion: null,
+  hasOlder: false,
+  branchRevision: null,
+  health: { status: "ok" },
+  conflict: null,
+};
+
+export function transcriptDiagnostic({ health, conflict }: TranscriptView) {
+  const error =
+    conflict?.message ??
+    (health.status === "ok"
+      ? null
+      : (health.message ?? "Session persistence is not yet confirmed"));
+  const warning =
+    projectionConflictSeverity(conflict) === "attention" ||
+    (!conflict && health.status === "pending");
+  return {
+    error,
+    errorSeverity: warning ? ("warning" as const) : ("error" as const),
+  };
+}
+
+export interface AppState extends WorkspaceBrowserState, FileInspectionState {
+  view: TranscriptView;
+  live: EventSlice;
   needsToken: boolean;
   connection: ManagedConnectionState;
   connectionProblem: ManagedConnectionProblem;
   bootstrapped: boolean;
+  /** Initial bootstrap and saved launch selection have not settled yet. */
+  startupPending: boolean;
   /** Monotonic identity of the current HTTP/WebSocket authority. */
   transportGeneration: number;
-  mock: boolean;
   /** Host-reported runtime versions, shown on the settings page. */
   version: string;
   piVersion: string;
@@ -166,49 +185,27 @@ export interface AppState extends EventSlice, WorkspaceBrowserState {
   availableUpdateIdentity: string | null;
   updateSnoozedUntil: number | null;
   prefs: InspirePreferences;
+  desiredPreferences: Partial<InspirePreferences>;
+  curationPending: boolean;
   sessionId: string | null;
   sessionName: string;
   sessionFile: string | null;
   sessionStats: unknown;
   runtimeSettings: PiRuntimeSettings | null;
+  pendingRuntimeSettings: Partial<PiRuntimeSettings>;
   readOnlyReason: SessionReadOnlyReason | null;
   cwd: string | null;
   model: ModelOption | null;
   modelDiscovery: "loading" | "unavailable" | null;
   thinkingLevel: string;
+  thinkingLevelPending: boolean;
   availableModels: ModelOption[];
   commonModels: import("../shared/model-settings").CommonModelOption[];
   commands: PiCommand[];
-  contextUsage: ContextUsage | null;
   /** Ephemeral command lifecycle receipts are partitioned by session. */
   commandActivities: Record<string, NativeCommandActivity[]>;
   nativeCommandUiRequest: NativeCommandUiRequest | null;
   nextNativeCommandId: number;
-  transcriptRevision: number;
-  /** Earliest revision still sharing this projection's unchanged prefix. */
-  transcriptAppendFromRevision: number;
-  transcriptIncarnation: string | null;
-  transcriptViewId: string | null;
-  /** Durable Pi projection leaf. It differs from effective only while the
-   * visible session is inspecting an earlier branch. */
-  transcriptDurableLeafId: string | null;
-  transcriptEffectiveLeafId: string | null;
-  composerHistoryVersion: string | null;
-  hasOlderMessages: boolean;
-  olderMessagesCursor: string | null;
-  loadingOlderMessages: boolean;
-  olderMessagesError: string | null;
-  transcriptActivityRanges: TranscriptActivityRangeState[];
-  /** Sparse, branch-bound user-turn outline pages backing Prompt Map. */
-  promptMapTurns: UserTurnAnchor[];
-  promptMapTotal: number;
-  promptMapLoadedStarts: number[];
-  promptMapLoadingStarts: number[];
-  promptMapError: string | null;
-  promptMapNavigatingOrdinal: number | null;
-  projectionHealth: ProjectionHealth;
-  projectionConflict: ProjectionConflict | null;
-  projectionError: string | null;
   /** Current session synchronization/projection error. Operation feedback
    * stays local or uses Notices. Attention conflicts are warnings. */
   errorSeverity: "error" | "warning";
@@ -222,14 +219,17 @@ export interface AppState extends EventSlice, WorkspaceBrowserState {
   sessionListLoadingOlder: boolean;
   sessionListHydrating: boolean;
   /** Current operation, retained after failure so retry copy stays truthful. */
-  sessionListOperation: "reset" | "older" | "refresh" | "curation" | null;
+  sessionListOperation: "reset" | "older" | "refresh" | null;
   sessionListError: string | null;
   sessionListIssues: SessionCatalogIssue[];
   /** Selection failures stay with the session navigation/start surface rather
    * than competing with transcript integrity errors in the topbar. */
   sessionActionError: string | null;
   /** Downloads outlive their dialog; reopening observes the same pending export. */
-  exportingSessions: Record<string, "html" | "jsonl">;
+  exportingSessions: Record<
+    string,
+    { format: "html" | "jsonl"; promise: Promise<void> }
+  >;
   /** Destructive-action failures stay inside the confirmation dialog. */
   sessionDeleteError: string | null;
   sessionDeleteReviewRequired: boolean;
@@ -241,8 +241,6 @@ export interface AppState extends EventSlice, WorkspaceBrowserState {
   /** Unseen terminal transitions currently contributing a title marker. */
   attentionSessionIds: string[];
   taskAlerts: TaskAlertState;
-  /** Ephemeral cue for observed successful runs finishing in the selected session. */
-  completedRunSequence: number;
   /** Session currently owned by the newest open operation, if any. */
   openingSessionId: string | null;
   /** Whether an open, deselect, or create request still owns selection. */
@@ -251,82 +249,55 @@ export interface AppState extends EventSlice, WorkspaceBrowserState {
   deletingSessionId: string | null;
   /** Whether the complete Hidden selection is awaiting its host result. */
   clearingHidden: boolean;
-  /** The visible session's composer slice. Authoritative copies live in
-   * per-session partitions inside the store; a session switch swaps the
-   * slice, so staged work never leaks across sessions. */
-  attachments: PendingAttachment[];
-  projectFiles: string[];
-  /** Outgoing operations own their handed-off artifacts independently of the
-   * editable next draft. */
-  sending: boolean;
-  /** Failed inputs retained for explicit restoration without replacing a draft. */
-  failedDeliveryCount: number;
   /** Pending queue mutation currently awaiting the Host. */
-  pendingAction: "clear" | "recover" | null;
+  pendingAction: { action: "clear" | "recover" } | null;
   /** Files/resources pane visibility (Ctrl+.). */
   resourcesOpen: boolean;
-  contextMode: "files" | "changes" | "branches" | "terminal";
-  /** Full browsing or the shared workspace/detail split. */
-  fileBrowserView: "browse" | "preview";
-  /** The compact nav disclosure is store-owned so drawer remounts and
-   * responsive transitions retain it. */
-  branchTree: BranchTreeResponse | null;
-  branchTreeLoading: boolean;
-  branchTreeStale: boolean;
+  contextMode: "files" | "changes" | "terminal" | "history";
   branchTreeError: string | null;
   branchActionId: string | null;
-  /** Reference currently selected in the resources pane. */
-  selectedResourceReference: string | null;
-  /** Exact project-index path when the selection came from Files or Changes.
-   * Textual transcript references remain null so their path syntax can retain
-   * citation and line-location semantics. */
-  selectedResourceWorkspacePath: string | null;
-  resourcePreview: ResourcePreview | null;
   gitStatus: GitStatusResponse | null;
   gitStatusError: string | null;
-  gitStatusLoading: boolean;
-  gitStatusRefreshing: boolean;
-  selectedGitPathId: string | null;
-  selectedGitSide: GitDiffSide | null;
+  gitStatusPending: boolean;
   gitDiff: GitDiffView | null;
   /** Preflight standing for the bounded Files-pane references. A textual
    * mention stays unverified until the host classifies it for this branch
    * view; only a successful resolve grants a separate content handle. */
-  resourceAvailability: Record<string, ResourceProbeResult>;
-  /** Canonical workspace identity for successfully resolved references. */
-  resourceWorkspacePaths: Record<string, string>;
+  resourceStanding: Record<string, ResourceProbeResult>;
   error: string | null;
+}
+
+export function selectedRunState({
+  sessionId,
+  sessionStatuses,
+  view,
+}: Pick<AppState, "sessionId" | "sessionStatuses" | "view">): RunState {
+  if (view.conflict) return "conflict";
+  return (sessionId && sessionStatuses[sessionId]?.runState) || "idle";
 }
 
 export function emptyResourceInspectionState(): Pick<
   AppState,
-  | "fileBrowserView"
-  | "selectedResourceReference"
-  | "selectedResourceWorkspacePath"
-  | "resourcePreview"
-  | "resourceAvailability"
-  | "resourceWorkspacePaths"
+  "fileInspection" | "resourceTabs" | "resourceStanding"
 > {
   return {
-    fileBrowserView: "browse",
-    selectedResourceReference: null,
-    selectedResourceWorkspacePath: null,
-    resourcePreview: null,
-    resourceAvailability: {},
-    resourceWorkspacePaths: {},
+    fileInspection: { kind: "browse" },
+    resourceTabs: [],
+    resourceStanding: {},
   };
 }
 
 export function createInitialAppState(): AppState {
   return {
-    ...emptyEventSlice(),
+    view: emptyTranscriptView,
+    live: emptyEventSlice(),
     ...emptyWorkspaceBrowserState(),
     needsToken: false,
     connection: "connecting",
     connectionProblem: null,
     bootstrapped: false,
+    startupPending: true,
     transportGeneration: 0,
-    mock: false,
     version: "",
     piVersion: "",
     inspireUpdateCheck: null,
@@ -340,44 +311,26 @@ export function createInitialAppState(): AppState {
     availableUpdateIdentity: null,
     updateSnoozedUntil: null,
     prefs: defaultPreferences,
+    desiredPreferences: {},
+    curationPending: false,
     sessionId: null,
     sessionName: "",
     sessionFile: null,
     sessionStats: null,
     runtimeSettings: null,
+    pendingRuntimeSettings: {},
     readOnlyReason: null,
     cwd: null,
     model: null,
     modelDiscovery: null,
     thinkingLevel: "medium",
+    thinkingLevelPending: false,
     availableModels: [],
     commonModels: [],
     commands: [],
-    contextUsage: null,
     commandActivities: {},
     nativeCommandUiRequest: null,
     nextNativeCommandId: 1,
-    transcriptRevision: 0,
-    transcriptAppendFromRevision: 0,
-    transcriptIncarnation: null,
-    transcriptViewId: null,
-    transcriptDurableLeafId: null,
-    transcriptEffectiveLeafId: null,
-    composerHistoryVersion: null,
-    hasOlderMessages: false,
-    olderMessagesCursor: null,
-    loadingOlderMessages: false,
-    olderMessagesError: null,
-    transcriptActivityRanges: [],
-    promptMapTurns: [],
-    promptMapTotal: 0,
-    promptMapLoadedStarts: [],
-    promptMapLoadingStarts: [],
-    promptMapError: null,
-    promptMapNavigatingOrdinal: null,
-    projectionHealth: { status: "ok" },
-    projectionConflict: null,
-    projectionError: null,
     errorSeverity: "error",
     sessions: [],
     sessionQuery: "",
@@ -397,30 +350,19 @@ export function createInitialAppState(): AppState {
     externalSessionActivities: {},
     attentionSessionIds: [],
     taskAlerts: { ...initialTaskAlerts },
-    completedRunSequence: 0,
     openingSessionId: null,
     sessionSelectionPending: false,
     deletingSessionId: null,
     clearingHidden: false,
-    attachments: [],
-    projectFiles: [],
-    sending: false,
-    failedDeliveryCount: 0,
     pendingAction: null,
     resourcesOpen: false,
     contextMode: "files",
     ...emptyResourceInspectionState(),
-    branchTree: null,
-    branchTreeLoading: false,
-    branchTreeStale: false,
     branchTreeError: null,
     branchActionId: null,
     gitStatus: null,
     gitStatusError: null,
-    gitStatusLoading: false,
-    gitStatusRefreshing: false,
-    selectedGitPathId: null,
-    selectedGitSide: null,
+    gitStatusPending: false,
     gitDiff: null,
     error: null,
   };

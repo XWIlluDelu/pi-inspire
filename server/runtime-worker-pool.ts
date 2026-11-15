@@ -1,9 +1,13 @@
 import { isBusyRunState } from "../shared/contracts.js";
-import type { RuntimeSlot } from "./runtime-slot.js";
+import { type RuntimeSlot, workerOnSeparateBranch } from "./runtime-slot.js";
 
-/** Keep a small warm cache, but never stop selected, busy, in-use, or
+/** Keep a small warm cache, but never stop observed, busy, in-use, or
  * extension-blocked workers. Busy sessions may temporarily exceed the cap. */
 export const MAX_IDLE_WORKERS = 3;
+// An HTTP open can finish just before its browser subscribes, and addressed
+// HTTP actions also use the slot between observations. Keep a bounded warm
+// projection cache independently of the last-opened hint.
+const MAX_IDLE_PROJECTIONS = MAX_IDLE_WORKERS + 1;
 
 /**
  * RuntimeController owns the slot registry and every persistence mutation.
@@ -12,13 +16,10 @@ export const MAX_IDLE_WORKERS = 3;
  */
 interface RuntimeWorkerPoolHost {
   isClosing(): boolean;
-  selectedSessionId(): string | null;
   isObserved(sessionId: string): boolean;
+  isExternal(slot: RuntimeSlot): boolean;
   slots(): Iterable<RuntimeSlot>;
-  isOpening(sessionId: string): boolean;
-  isLoading(sessionId: string): boolean;
-  hasSelectionReservation(sessionId: string): boolean;
-  hasForkReservation(sessionId: string, sessionPath: string | null): boolean;
+  isReserved(slot: RuntimeSlot): boolean;
   stopWorker(slot: RuntimeSlot): Promise<void>;
   removeSlot(slot: RuntimeSlot): void;
   logRuntimeError(sessionId: string, error: unknown, event?: string): void;
@@ -72,59 +73,75 @@ export class RuntimeWorkerPool {
       // Persisted sessions are reloadable. An unselected idle session whose
       // first file never materialized has no catalog identity to reopen, so
       // reclaiming it explicitly abandons that empty transient session.
-      const projection = slot.projection;
-      slot.projection = null;
-      slot.preview = null;
       slot.availableModels = null;
       slot.commands = null;
       stopping.push(
-        Promise.all([
-          stop,
-          projection
-            ?.close()
-            .catch((error) => this.host.logRuntimeError(slot.id, error)),
-        ]).then(() => undefined),
+        Promise.all([stop, this.closeProjection(slot)]).then(() => undefined),
       );
     }
     // Retirement owns each stop barrier and logs unconfirmed stops. A failed
     // worker stays fenced while independent workers can still be reclaimed.
     await Promise.allSettled(stopping);
-    await this.pruneDormantSlots();
+    await this.reclaimDormantProjections();
+    for (const slot of this.host.slots()) {
+      if (!slot.projection && this.canPruneDormant(slot))
+        this.host.removeSlot(slot);
+    }
+  }
+
+  private closeProjection(slot: RuntimeSlot): Promise<void> | undefined {
+    const projection = slot.projection;
+    slot.projection = null;
+    slot.preview = null;
+    return projection
+      ?.close()
+      .catch((error) => this.host.logRuntimeError(slot.id, error));
+  }
+
+  private unclaimed(slot: RuntimeSlot): boolean {
+    return (
+      !this.host.isObserved(slot.id) &&
+      slot.activeOperations === 0 &&
+      slot.projection?.health.status !== "pending" &&
+      !this.host.isReserved(slot)
+    );
   }
 
   private isRetirableDormantSlot(slot: RuntimeSlot): boolean {
     return (
-      slot.id !== this.host.selectedSessionId() &&
-      !this.host.isObserved(slot.id) &&
       !slot.process &&
       !slot.stopping &&
-      slot.activeOperations === 0 &&
-      slot.persistenceExpectations.length === 0 &&
-      !slot.pendingPartialPersistence &&
-      !this.host.isOpening(slot.id) &&
-      !this.host.isLoading(slot.id) &&
-      !this.host.hasSelectionReservation(slot.id) &&
-      !this.host.hasForkReservation(slot.id, slot.sessionPath)
+      // Attached instances are working connections outside the worker cache.
+      !this.host.isExternal(slot) &&
+      this.unclaimed(slot)
     );
   }
 
-  private canReclaimProjection(slot: RuntimeSlot): boolean {
-    return Boolean(slot.projection) && this.isRetirableDormantSlot(slot);
-  }
-
   private async reclaimDormantProjections(): Promise<void> {
-    const closing: Promise<void>[] = [];
-    for (const slot of this.host.slots()) {
-      if (!this.canReclaimProjection(slot)) continue;
-      const projection = slot.projection;
-      slot.projection = null;
-      slot.preview = null;
-      closing.push(
-        projection
-          ?.close()
-          .catch((error) => this.host.logRuntimeError(slot.id, error)) ??
-          Promise.resolve(),
-      );
+    const closing: Array<Promise<void> | undefined> = [];
+    const slots = [...this.host.slots()];
+    const mostRecentlyUsed = slots.reduce<RuntimeSlot | undefined>(
+      (latest, slot) =>
+        !latest || slot.lastUsed > latest.lastUsed ? slot : latest,
+      undefined,
+    );
+    const warm = slots
+      .filter((slot) => slot.projection && this.isRetirableDormantSlot(slot))
+      .sort((left, right) => right.lastUsed - left.lastUsed);
+    let retained = 0;
+    for (const slot of warm) {
+      if (!slot.projection || !this.isRetirableDormantSlot(slot)) continue;
+      const settledFailure = slot.conflict || slot.runState === "failed";
+      if (
+        slot.opened &&
+        (settledFailure
+          ? slot === mostRecentlyUsed
+          : retained < MAX_IDLE_PROJECTIONS)
+      ) {
+        retained += 1;
+        continue;
+      }
+      closing.push(this.closeProjection(slot));
     }
     await Promise.all(closing);
   }
@@ -133,44 +150,29 @@ export class RuntimeWorkerPool {
     return (
       this.isRetirableDormantSlot(slot) &&
       !slot.attention &&
-      !isBusyRunState(slot.runState) &&
       slot.runState !== "failed" &&
       slot.runState !== "conflict" &&
-      slot.pendingExtensionUiRequests.size === 0 &&
-      slot.pendingQueues.totalCount === 0 &&
-      !slot.conflict &&
-      !slot.navigationLease &&
-      !slot.pendingBranchBridge
+      this.hasNoWorkerWork(slot)
     );
   }
 
-  private async pruneDormantSlots(): Promise<void> {
-    // Reclamation closes and clears a projection before its slot can prune.
-    await this.reclaimDormantProjections();
-    for (const slot of this.host.slots()) {
-      if (this.canPruneDormant(slot)) this.host.removeSlot(slot);
-    }
+  private hasNoWorkerWork(slot: RuntimeSlot): boolean {
+    return (
+      !isBusyRunState(slot.runState) &&
+      slot.pendingExtensionDialogs.size === 0 &&
+      slot.pendingQueues.totalCount === 0 &&
+      !slot.conflict &&
+      !workerOnSeparateBranch(slot) &&
+      !slot.pendingBranchBridge
+    );
   }
 
   private canEvict(slot: RuntimeSlot): boolean {
     return Boolean(
       slot.process &&
         slot.ready &&
-        slot.id !== this.host.selectedSessionId() &&
-        !this.host.isObserved(slot.id) &&
-        !isBusyRunState(slot.runState) &&
-        slot.pendingExtensionUiRequests.size === 0 &&
-        slot.pendingQueues.totalCount === 0 &&
-        !slot.conflict &&
-        !slot.navigationLease &&
-        !slot.pendingBranchBridge &&
-        !slot.pendingPartialPersistence &&
-        slot.activeOperations === 0 &&
-        slot.persistenceExpectations.length === 0 &&
-        !this.host.isOpening(slot.id) &&
-        !this.host.isLoading(slot.id) &&
-        !this.host.hasSelectionReservation(slot.id) &&
-        !this.host.hasForkReservation(slot.id, slot.sessionPath),
+        this.hasNoWorkerWork(slot) &&
+        this.unclaimed(slot),
     );
   }
 }

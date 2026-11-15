@@ -22,14 +22,15 @@ describe("terminal binary contracts", () => {
     "round-trips %s with an absolute output offset",
     (kind) => {
       const data = Uint8Array.from([27, 91, 50, 74]);
+      const offset = 2 ** 40 + 23;
       const decoded = decodeTerminalServerDataFrame(
-        encodeTerminalServerDataFrame(kind, 7, 9_007_199, data),
+        encodeTerminalServerDataFrame(kind, 7, offset, data),
       );
 
       expect(decoded).toMatchObject({
         kind,
         resizeRevision: 7,
-        offset: 9_007_199,
+        offset,
       });
       expect([...decoded.data]).toEqual([...data]);
     },

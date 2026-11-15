@@ -6,10 +6,10 @@ import {
   useImperativeHandle,
   useState,
 } from "react";
-import type { ExtensionUiRequest } from "../../shared/contracts";
-import { ExtensionDialogContent } from "./ExtensionDialogContent";
+import { selectedRunState } from "../app-state";
 import { shallowEqual, store, useAppState } from "../store";
-import { useModalFocus } from "../use-modal-focus";
+import { ExtensionDialogContent } from "./ExtensionDialogContent";
+import { Modal } from "./Modal";
 
 type Respond = (payload: Record<string, unknown>) => void;
 
@@ -27,35 +27,6 @@ function RequestTime({ expiresAt }: { expiresAt: number }) {
   return <p className="dialog__remaining">{time} remaining</p>;
 }
 
-function DialogBody({
-  request,
-  responding,
-  error,
-  onRespond,
-}: {
-  request: ExtensionUiRequest;
-  responding: boolean;
-  error: string | null;
-  onRespond: Respond;
-}) {
-  const [value, setValue] = useState(
-    request.method === "editor" && "prefill" in request
-      ? (request.prefill ?? "")
-      : "",
-  );
-  return (
-    <ExtensionDialogContent
-      request={request}
-      value={value}
-      pending={responding}
-      error={error}
-      onValueChange={setValue}
-      onRespond={onRespond}
-      onCancel={() => onRespond({ id: request.id, cancelled: true })}
-    />
-  );
-}
-
 export interface ExtensionUiDialogHandle {
   cancel(): void;
 }
@@ -68,9 +39,9 @@ export const ExtensionUiDialog = memo(function ExtensionUiDialog({
 }) {
   const { requests, respondingId, runState } = useAppState(
     (state) => ({
-      requests: state.extensionUiRequests,
-      respondingId: state.extensionUiRespondingId,
-      runState: state.runState,
+      requests: state.live.extensionUiRequests,
+      respondingId: state.live.extensionUiRespondingId,
+      runState: selectedRunState(state),
     }),
     shallowEqual,
   );
@@ -95,33 +66,26 @@ export const ExtensionUiDialog = memo(function ExtensionUiDialog({
     if (request && !responding) onRespond({ id: request.id, cancelled: true });
   };
   useImperativeHandle(ref, () => ({ cancel }));
-  const dialogRef = useModalFocus<HTMLDivElement>(
-    Boolean(request),
-    owner,
-    request ? cancel : undefined,
-  );
   if (!request) return null;
   return (
-    <div className="overlay" role="presentation">
-      <div
-        ref={dialogRef}
-        className="dialog extension-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label={request.title || "Pi extension request"}
-        aria-busy={responding}
-        tabIndex={-1}
-      >
+    <Modal
+      aria-label={request.title || "Pi extension request"}
+      aria-busy={responding}
+      owner={owner}
+      onEscape={cancel}
+    >
+      <div className="dialog extension-dialog">
         <div className="extension-dialog__identity">
           <Puzzle size={14} aria-hidden /> Extension request
         </div>
         {/* key remounts the form state per request */}
-        <DialogBody
+        <ExtensionDialogContent
           key={`${request.sessionId}:${request.id}`}
           request={request}
-          responding={responding}
+          pending={responding}
           error={responseError?.owner === owner ? responseError.message : null}
           onRespond={onRespond}
+          onCancel={() => onRespond({ id: request.id, cancelled: true })}
         />
         {request.expiresAt !== undefined ? (
           <RequestTime
@@ -130,6 +94,6 @@ export const ExtensionUiDialog = memo(function ExtensionUiDialog({
           />
         ) : null}
       </div>
-    </div>
+    </Modal>
   );
 });

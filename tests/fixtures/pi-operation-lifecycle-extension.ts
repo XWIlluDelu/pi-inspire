@@ -1,13 +1,10 @@
 import { setTimeout as delay } from "node:timers/promises";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-/** Synthetic only: loaded explicitly by pi-operation-lifecycle.integration.test.ts. */
+/** Synthetic hooks for native operation lifecycle tests. */
 export default function (pi: ExtensionAPI) {
   let compactionCount = 0;
   let suspendAfterCompaction = false;
-  pi.on("session_start", (_event, ctx) => {
-    ctx.ui.setStatus("pi-operation-node", process.version);
-  });
 
   pi.on("user_bash", async (event, ctx) => {
     if (event.command === "fixture-await-bash") {
@@ -146,6 +143,22 @@ export default function (pi: ExtensionAPI) {
         confirmed ? "pi-operation-confirmed" : "pi-operation-declined",
         "info",
       );
+    },
+  });
+
+  pi.registerCommand("background-question", {
+    handler: async (_args, ctx) => {
+      ctx.ui.setTitle("Native extension title");
+      ctx.ui.setEditorText("Native extension draft");
+      void (async () => {
+        const answer = await ctx.ui.confirm(
+          "Stop question",
+          "Cancel this question",
+        );
+        ctx.ui.setStatus("fixture.stop", String(answer));
+        await ctx.ui.input("Independent next question");
+        ctx.ui.setStatus("fixture.stop", "finished");
+      })();
     },
   });
 }

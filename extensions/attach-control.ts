@@ -1,0 +1,1067 @@
+/**
+ * attach-control: lets a local client attach to this live Pi and control it.
+ *
+ * Each session context publishes a small presence record (session, current
+ * branch leaf, activity, model) and serves a private local socket. A client
+ * that can read the record (same OS user) can send input, Stop, rename, change
+ * model or thinking, all through Pi's public extension API. It adds no tools
+ * or model context.
+ *
+ * Install: pi install /absolute/path/to/attach-control.ts
+ * Disable for one process: PI_ATTACH_CONTROL=0
+ */
+import { AsyncLocalStorage } from "node:async_hooks";
+import { execFile as execFileCallback } from "node:child_process";
+import {
+  createHash,
+  randomBytes,
+  randomUUID,
+  timingSafeEqual,
+} from "node:crypto";
+import { statSync } from "node:fs";
+import {
+  lstat,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { connect, createServer, type Server, type Socket } from "node:net";
+import { homedir } from "node:os";
+import { isAbsolute, join, resolve, win32 } from "node:path";
+import { promisify } from "node:util";
+import type {
+  AgentSession,
+  ExtensionAPI,
+  ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
+
+export const ATTACH_CONTROL_HEARTBEAT_MS = 2_000;
+export const ATTACH_CONTROL_STALE_MS = 8_000;
+export const ATTACH_CONTROL_MODEL_READ_TIMEOUT_MS = 15_000;
+// A 500,000-character prompt can exceed 3 MB after JSON escaping and metadata.
+const MAX_REQUEST_BYTES = 4 * 1024 * 1024;
+const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
+const PROMPT_OBSERVATION_MS = 5_000;
+const execFile = promisify(execFileCallback);
+
+export type ThinkingLevel = ReturnType<ExtensionAPI["getThinkingLevel"]>;
+
+/** Process birth identity; a PID alone can be recycled. */
+export async function processIdentity(pid: number): Promise<string> {
+  if (!Number.isSafeInteger(pid) || pid < 1)
+    throw new Error("Invalid process ID");
+  if (process.platform === "linux") {
+    const [stat, boot] = await Promise.all([
+      readFile(`/proc/${pid}/stat`, "utf8"),
+      readFile("/proc/sys/kernel/random/boot_id", "utf8"),
+    ]);
+    const fields = stat
+      .slice(stat.lastIndexOf(")") + 2)
+      .trim()
+      .split(/\s+/u);
+    if (!fields[19] || fields[0] === "Z" || fields[0] === "X")
+      throw Object.assign(new Error("Process has exited"), { code: "ESRCH" });
+    return `linux:${boot.trim()}:${fields[19]}`;
+  }
+  if (process.platform === "darwin") {
+    const { stdout } = await execFile(
+      "/bin/ps",
+      ["-p", String(pid), "-o", "lstart="],
+      {
+        encoding: "utf8",
+        timeout: 1_500,
+        maxBuffer: 4_096,
+        env: { ...process.env, LANG: "C", LC_ALL: "C" },
+      },
+    );
+    if (!stdout.trim()) throw new Error("Process birth is unavailable");
+    return `darwin:${stdout.trim()}`;
+  }
+  if (process.platform === "win32") {
+    const env = (name: string) => {
+      const key = Object.keys(process.env)
+        .filter((key) => key.toLowerCase() === name)
+        .sort()[0];
+      return key ? process.env[key] : undefined;
+    };
+    let command = win32.join(
+      env("programfiles") || "C:\\Program Files",
+      "PowerShell",
+      "7",
+      "pwsh.exe",
+    );
+    for (const directory of (env("path") || "").match(/(?:[^;"]|"[^"]*")+/gu) ||
+      []) {
+      const candidate = win32.join(
+        directory.replace(/^"|"$/gu, ""),
+        "pwsh.exe",
+      );
+      try {
+        if (statSync(candidate).isFile()) {
+          command = candidate;
+          break;
+        }
+      } catch {
+        /* next PATH directory */
+      }
+    }
+    const { stdout } = await execFile(
+      command,
+      [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        `[System.Diagnostics.Process]::GetProcessById(${pid}).StartTime.ToUniversalTime().Ticks`,
+      ],
+      {
+        encoding: "utf8",
+        timeout: 10_000,
+        maxBuffer: 4_096,
+        windowsHide: true,
+      },
+    );
+    if (!/^\d+$/u.test(stdout.trim()))
+      throw new Error("Process birth is unavailable");
+    return `win32:${stdout.trim()}`;
+  }
+  throw new Error("Process birth is unavailable on this platform");
+}
+
+/** Shared by every Pi process of this OS user, independent of any client. */
+export function attachControlDirectory(): string {
+  const home = homedir();
+  if (process.platform === "win32") {
+    const local = process.env.LOCALAPPDATA || process.env.APPDATA;
+    return join(
+      local && isAbsolute(local) ? local : join(home, "AppData", "Local"),
+      "pi-attach-control",
+    );
+  }
+  if (process.platform === "darwin")
+    return join(home, "Library", "Caches", "pi-attach-control");
+  const runtime = process.env.XDG_RUNTIME_DIR;
+  if (runtime && isAbsolute(runtime)) return join(runtime, "pi-attach-control");
+  const cache = process.env.XDG_CACHE_HOME;
+  return join(
+    cache && isAbsolute(cache) ? cache : join(home, ".cache"),
+    "pi-attach-control",
+  );
+}
+
+export function attachControlEndpoint(directory: string, id: string): string {
+  return process.platform === "win32"
+    ? `\\\\.\\pipe\\pi-attach-control-${id}`
+    : join(directory, `${id}.sock`);
+}
+
+export interface TaskResult {
+  id: string;
+  outcome: "completed" | "failed" | "aborted";
+  settledAt: number;
+}
+export interface TaskRuns {
+  instanceId: string;
+  settled: TaskResult[];
+}
+
+/** Picker metadata only: no provider endpoints, headers or credentials. */
+export interface ModelOption {
+  provider: string;
+  id: string;
+  name?: string;
+  reasoning?: boolean;
+  virtual?: boolean;
+  thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>>;
+}
+export interface ModelSelection {
+  model: ModelOption | null;
+  thinkingLevel: ThinkingLevel;
+}
+export interface ModelCatalog extends ModelSelection {
+  models: ModelOption[];
+}
+
+export type AttachControlActivity = "working" | "blocked" | "idle";
+
+export interface AttachControlRecord {
+  version: 1;
+  /** Random per session context; changes on reload and session replacement. */
+  instanceId: string;
+  pid: number;
+  processIdentity: string;
+  mode: string;
+  cwd: string;
+  sessionId: string;
+  sessionFile: string;
+  sessionName?: string;
+  leafId: string | null;
+  activity: AttachControlActivity;
+  updatedAt: number;
+  /** Optional client label from `PI_ATTACH_CONTROL_TAG`, e.g. a launcher's
+   * own worker identity. */
+  tag?: string;
+  endpoint: string;
+  token: string;
+  taskRuns: TaskRuns;
+  modelSelection: ModelSelection;
+}
+
+export interface ImageReference {
+  path: string;
+  mimeType: string;
+}
+
+export type AttachControlOperation =
+  | { op: "state" }
+  | {
+      op: "prompt";
+      message: string;
+      behavior?: "steer" | "followUp";
+      images?: ImageReference[];
+    }
+  | { op: "abort" }
+  | { op: "shutdown" }
+  | { op: "rename"; name: string }
+  | { op: "models" }
+  | { op: "set_model"; provider: string; modelId: string }
+  | { op: "set_thinking"; level: ThinkingLevel };
+
+export type AttachControlRequest = AttachControlOperation & {
+  token: string;
+  /** Rejects the operation if the session context changed since discovery. */
+  sessionFile?: string;
+  /** The displayed entry must still be an ancestor, or an empty leaf must stay empty. */
+  expectedLeafId?: string | null;
+};
+
+export interface AttachControlState {
+  sessionId: string;
+  sessionFile: string;
+  leafId: string | null;
+  activity: AttachControlActivity;
+  queueAdmission?: true;
+  taskRuns: TaskRuns;
+  modelSelection: ModelSelection;
+}
+
+export type AttachControlResponse =
+  | {
+      ok: true;
+      state: AttachControlState;
+      models?: ModelOption[];
+      /** Pi admitted the prompt, or Stop had no unresolved handoff. */
+      witnessed?: true;
+      disposition?: "started" | "queued" | "handled";
+    }
+  | { ok: false; code: string; error: string };
+
+const THINKING_LEVELS: readonly string[] = [
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+];
+const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+
+export class AttachControlError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly outcomeUnknown = false,
+  ) {
+    super(message);
+  }
+}
+
+function modelOption(
+  model: NonNullable<ExtensionContext["model"]>,
+): ModelOption {
+  return {
+    provider: model.provider,
+    id: model.id,
+    name: model.name,
+    reasoning: model.reasoning,
+    ...(model.api === "pi-virtual" ? { virtual: true } : {}),
+    ...(model.thinkingLevelMap
+      ? { thinkingLevelMap: model.thinkingLevelMap }
+      : {}),
+  };
+}
+
+/** Send one request and read its single-line response. */
+export function requestAttachControl<Response = AttachControlResponse>(
+  endpoint: string,
+  request: AttachControlRequest,
+  timeoutMs = 20_000,
+): Promise<Response> {
+  return new Promise((resolvePromise, reject) => {
+    const payload = JSON.stringify(request);
+    if (Buffer.byteLength(payload) > MAX_REQUEST_BYTES) {
+      reject(new AttachControlError("TOO_LARGE", "Request exceeds the limit."));
+      return;
+    }
+    const socket = connect(endpoint);
+    let buffer = "";
+    let bytes = 0;
+    let settled = false;
+    let written = false;
+    const finish = (error: Error | null, value?: Response) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      if (error) reject(error);
+      else resolvePromise(value!);
+    };
+    const fail = (code: string, message: string) =>
+      finish(new AttachControlError(code, message, written));
+    const timer = setTimeout(
+      () => fail("TIMEOUT", "The Pi did not answer in time."),
+      timeoutMs,
+    );
+    socket.setEncoding("utf8");
+    socket.on("connect", () => {
+      if (settled) return;
+      // Once handed to the socket, a request can take effect even if its reply is lost.
+      written = true;
+      socket.write(`${payload}\n`);
+    });
+    socket.on("data", (chunk: string) => {
+      const end = chunk.indexOf("\n");
+      const part = end < 0 ? chunk : chunk.slice(0, end);
+      bytes += Buffer.byteLength(part);
+      if (bytes > MAX_RESPONSE_BYTES)
+        return fail("INVALID_RESPONSE", "Response exceeds the limit.");
+      buffer += part;
+      if (end < 0) return;
+      try {
+        finish(null, JSON.parse(buffer));
+      } catch {
+        fail("INVALID_RESPONSE", "Invalid response.");
+      }
+    });
+    socket.on("error", (error) => fail("CONNECTION", error.message));
+    socket.on("close", () => fail("CLOSED", "The Pi closed the connection."));
+  });
+}
+
+interface NativePromptState {
+  outstanding: number;
+  stopEpoch: number;
+}
+
+interface PromptObservation {
+  session: NativePromptState;
+  digest: string;
+  stopEpoch: number;
+  pending: boolean;
+  starting: boolean;
+  observed?: () => void;
+}
+
+type PromptImage = { type: "image"; mimeType: string; data: string };
+
+/** A user install and a launcher's explicit copy publish one record per Pi. */
+const shared = ((globalThis as Record<symbol, unknown>)[
+  Symbol.for("pi.attachControl")
+] ??= {
+  owners: new WeakMap<object, ExtensionAPI>(),
+}) as {
+  owners: WeakMap<object, ExtensionAPI>;
+  nativePrompts?: WeakMap<object, NativePromptState>;
+  promptOrigin?: AsyncLocalStorage<PromptObservation>;
+  receiverStops?: WeakMap<ExtensionAPI, () => Promise<void>>;
+};
+const nativePrompts = (shared.nativePrompts ??= new WeakMap());
+const promptOrigin = (shared.promptOrigin ??= new AsyncLocalStorage());
+const receiverStops = (shared.receiverStops ??= new WeakMap());
+
+function promptDigest(
+  text: string,
+  images: readonly PromptImage[] = [],
+): string {
+  const hash = createHash("sha256")
+    .update(`${text.length}:`)
+    .update(text, "utf16le");
+  for (const { mimeType, data } of images)
+    hash.update(`${mimeType}:${data.length}:`).update(data, "utf16le");
+  return hash.digest("hex");
+}
+
+function nativePromptState(ctx: ExtensionContext): NativePromptState {
+  const key = ctx.sessionManager;
+  let state = nativePrompts.get(key);
+  if (!state) {
+    state = { outstanding: 0, stopEpoch: 0 };
+    nativePrompts.set(key, state);
+  }
+  return state;
+}
+
+function observePrompt(
+  ctx: ExtensionContext,
+  digest: string,
+  dispatch: () => void,
+): Promise<boolean> {
+  return new Promise((resolvePromise, reject) => {
+    const session = nativePromptState(ctx);
+    const observation: PromptObservation = {
+      session,
+      digest,
+      stopEpoch: session.stopEpoch,
+      pending: true,
+      starting: false,
+      observed: () => {
+        clearTimeout(deadline);
+        resolvePromise(true);
+      },
+    };
+    const deadline = setTimeout(() => {
+      observation.observed = undefined;
+      resolvePromise(false);
+    }, PROMPT_OBSERVATION_MS);
+    deadline.unref();
+    session.outstanding += 1;
+    try {
+      promptOrigin.run(observation, dispatch);
+    } catch (error) {
+      if (observation.pending) session.outstanding -= 1;
+      observation.pending = false;
+      observation.observed = undefined;
+      clearTimeout(deadline);
+      reject(error);
+    }
+  });
+}
+
+/** A Pi SDK host already owns the AgentSession and can supply its native
+ * admission result. Stock CLI extensions do not get that object. */
+export function attachControlForSession(currentSession: () => AgentSession) {
+  return (pi: ExtensionAPI) => attachControl(pi, currentSession);
+}
+
+export default function attachControl(
+  pi: ExtensionAPI,
+  currentSession?: () => AgentSession,
+) {
+  if (process.env.PI_ATTACH_CONTROL === "0") return;
+
+  let context: ExtensionContext | undefined;
+  let record: AttachControlRecord | undefined;
+  let recordPath: string | undefined;
+  let server: Server | undefined;
+  const sockets = new Set<Socket>();
+  let timer: ReturnType<typeof setInterval> | undefined;
+  let identity: string | undefined;
+  let lifecycle = 0;
+  let running = false;
+  let waiting = false;
+  let writes = Promise.resolve();
+  let activeRunId: string | null = null;
+  let taskOutcome: TaskResult["outcome"] = "completed";
+  let settledTasks: TaskResult[] = [];
+  let catalogEpoch = 0;
+  let promptEpoch = 0;
+  let queueAdmission: Promise<"queued" | "handled"> | undefined;
+  const catalogReads = new Set<AbortController>();
+  // Shells started by a worker can launch a separate Pi with its environment.
+  const ownerParent = process.env.PI_ATTACH_CONTROL_TAG_PARENT_PID;
+  const ownerTag =
+    !ownerParent || ownerParent === String(process.ppid)
+      ? process.env.PI_ATTACH_CONTROL_TAG
+      : undefined;
+  const selection = (ctx: ExtensionContext): ModelSelection => ({
+    model: ctx.model ? modelOption(ctx.model) : null,
+    thinkingLevel: pi.getThinkingLevel(),
+  });
+
+  const activity = (ctx: ExtensionContext): AttachControlActivity =>
+    waiting ? "blocked" : running || !ctx.isIdle() ? "working" : "idle";
+
+  const currentState = (ctx: ExtensionContext): AttachControlState => ({
+    sessionId: ctx.sessionManager.getSessionId(),
+    sessionFile: resolve(ctx.cwd, ctx.sessionManager.getSessionFile() ?? ""),
+    leafId: ctx.sessionManager.getLeafId(),
+    activity: activity(ctx),
+    ...(currentSession ? { queueAdmission: true } : {}),
+    taskRuns: {
+      instanceId: record?.instanceId ?? "",
+      settled: settledTasks,
+    },
+    modelSelection: selection(ctx),
+  });
+
+  const publish = (): Promise<void> => {
+    const ctx = context;
+    const base = record;
+    const path = recordPath;
+    if (!ctx || !base || !path) return writes;
+    try {
+      if (!ctx.sessionManager.getSessionFile()) return writes;
+      const state = currentState(ctx);
+      record = {
+        ...base,
+        sessionId: state.sessionId,
+        sessionFile: state.sessionFile,
+        sessionName: ctx.sessionManager.getSessionName(),
+        leafId: state.leafId,
+        activity: state.activity,
+        taskRuns: state.taskRuns,
+        modelSelection: state.modelSelection,
+        updatedAt: Date.now(),
+      };
+    } catch {
+      // A stale context after replacement is not a reason to fail a turn.
+      return writes;
+    }
+    const snapshot = JSON.stringify(record);
+    const temporary = `${path}.tmp`;
+    writes = writes
+      .then(async () => {
+        await writeFile(temporary, snapshot, { mode: 0o600 });
+        await rename(temporary, path);
+      })
+      .catch(async () => {
+        await rm(temporary, { force: true }).catch(() => {});
+      });
+    return writes;
+  };
+
+  const stop = async (): Promise<void> => {
+    lifecycle += 1;
+    for (const read of catalogReads)
+      read.abort(new Error("Pi changed session"));
+    catalogReads.clear();
+    if (timer) clearInterval(timer);
+    timer = undefined;
+    const closing = server;
+    server = undefined;
+    context = undefined;
+    running = false;
+    waiting = false;
+    activeRunId = null;
+    settledTasks = [];
+    await writes;
+    const path = recordPath;
+    const endpoint = record?.endpoint;
+    record = undefined;
+    recordPath = undefined;
+    for (const socket of sockets) socket.destroy();
+    await new Promise<void>((done) =>
+      closing ? closing.close(() => done()) : done(),
+    );
+    if (path) await rm(path, { force: true }).catch(() => {});
+    if (endpoint && process.platform !== "win32")
+      await rm(endpoint, { force: true }).catch(() => {});
+  };
+
+  const readModels = async (ctx: ExtensionContext): Promise<ModelOption[]> => {
+    const epoch = catalogEpoch;
+    const controller = new AbortController();
+    const { signal } = controller;
+    catalogReads.add(controller);
+    const deadline = setTimeout(
+      () => controller.abort(new Error("Model discovery timed out")),
+      ATTACH_CONTROL_MODEL_READ_TIMEOUT_MS,
+    );
+    try {
+      await ctx.modelRegistry.refresh({ signal });
+      signal.throwIfAborted();
+      if (epoch !== catalogEpoch) throw new Error("Model discovery cancelled");
+      return (await ctx.modelRegistry.getAvailable()).map(modelOption);
+    } finally {
+      clearTimeout(deadline);
+      catalogReads.delete(controller);
+    }
+  };
+
+  const perform = async (
+    request: AttachControlRequest,
+    ctx: ExtensionContext,
+  ): Promise<AttachControlResponse> => {
+    const generation = lifecycle;
+    // Pi hands each event a fresh context object; the session lifecycle,
+    // not object identity, says whether this is still the same session.
+    const unchanged = () => generation === lifecycle && context !== undefined;
+    const assertBranch = () => {
+      const expected = request.expectedLeafId;
+      if (
+        expected !== undefined &&
+        ctx.sessionManager.getLeafId() !== expected &&
+        (expected === null ||
+          !ctx.sessionManager
+            .getBranch()
+            .some((entry) => entry.id === expected))
+      )
+        throw new AttachControlError(
+          "BRANCH_CHANGED",
+          "The attached Pi's conversation changed. Review it before retrying.",
+        );
+    };
+    assertBranch();
+    let models: ModelOption[] | undefined;
+    let disposition: "started" | "queued" | "handled" | undefined;
+    switch (request.op) {
+      case "state":
+        break;
+      case "prompt": {
+        const epoch = promptEpoch;
+        const assertReady = () => {
+          if (!unchanged())
+            throw new AttachControlError("CHANGED", "Pi changed session.");
+          assertBranch();
+          if (epoch !== promptEpoch)
+            throw new AttachControlError("STOPPED", "Stopped before sending.");
+          if (waiting)
+            throw new AttachControlError(
+              "BLOCKED",
+              "Pi is waiting for an answer in its terminal.",
+            );
+        };
+        if (
+          typeof request.message !== "string" ||
+          (request.behavior !== undefined &&
+            request.behavior !== "steer" &&
+            request.behavior !== "followUp")
+        )
+          throw new AttachControlError("INVALID", "Invalid prompt.");
+        const input = request.message.trimStart();
+        const command = /^\/(\S+)/u.exec(input)?.[1];
+        if (
+          input.startsWith("!") ||
+          (command &&
+            (/^[A-Za-z][A-Za-z0-9:_-]*$/u.test(command) ||
+              pi.getCommands().some(({ name }) => name === command)))
+        )
+          throw new AttachControlError(
+            "NATIVE_INPUT_UNSUPPORTED",
+            "Run this command directly in the attached Pi.",
+          );
+        const images = request.images ?? [];
+        if (!Array.isArray(images) || images.length > 8)
+          throw new AttachControlError("INVALID", "Invalid image references.");
+        assertReady();
+        if (ctx.isIdle()) {
+          const model = ctx.model;
+          if (!model)
+            throw new AttachControlError(
+              "NO_MODEL",
+              "No model is selected in Pi.",
+            );
+          if (!ctx.modelRegistry.hasConfiguredAuth(model)) {
+            const auth = await ctx.modelRegistry
+              .getProviderAuth(model.provider)
+              .catch(() => {
+                assertReady();
+                throw new AttachControlError(
+                  "AUTH_UNAVAILABLE",
+                  "Could not check authentication for the selected model's provider.",
+                );
+              });
+            assertReady();
+            if (!auth)
+              throw new AttachControlError(
+                "NO_AUTH",
+                "Authentication is not configured for the selected model's provider.",
+              );
+          }
+        }
+        const loadedImages: PromptImage[] = [];
+        let total = 0;
+        for (const image of images) {
+          if (
+            !image ||
+            typeof image.path !== "string" ||
+            !isAbsolute(image.path) ||
+            !IMAGE_TYPES.includes(image.mimeType)
+          )
+            throw new AttachControlError("INVALID", "Invalid image reference.");
+          const unavailable = () => {
+            assertReady();
+            throw new AttachControlError(
+              "INVALID_IMAGE",
+              "An attached image is unavailable.",
+            );
+          };
+          const info = await lstat(image.path).catch(unavailable);
+          total += info.size;
+          if (
+            !info.isFile() ||
+            info.size > 16 * 2 ** 20 ||
+            total > 20 * 2 ** 20
+          )
+            throw new AttachControlError(
+              "TOO_LARGE",
+              "Images exceed the budget.",
+            );
+          loadedImages.push({
+            type: "image",
+            mimeType: image.mimeType,
+            data: (await readFile(image.path).catch(unavailable)).toString(
+              "base64",
+            ),
+          });
+        }
+        assertReady();
+        if (!ctx.isIdle()) {
+          const native = currentSession?.();
+          if (
+            !native?.isStreaming ||
+            native.sessionManager.getSessionId() !==
+              ctx.sessionManager.getSessionId() ||
+            native.sessionManager.getSessionFile() !==
+              ctx.sessionManager.getSessionFile()
+          )
+            throw new AttachControlError(
+              "QUEUE_ACK_UNAVAILABLE",
+              "Queue input in the original Pi terminal. This connection cannot confirm Steer or Follow up.",
+            );
+          if (queueAdmission)
+            throw new AttachControlError(
+              "BLOCKED",
+              "Pi is still checking a previous queued input.",
+            );
+          const images = loadedImages.length ? loadedImages : undefined;
+          const admission =
+            request.behavior === "followUp"
+              ? native.followUp(request.message, images, {
+                  source: "extension",
+                })
+              : native.steer(request.message, images, { source: "extension" });
+          queueAdmission = admission;
+          try {
+            disposition = await admission;
+            if (disposition !== "queued" && disposition !== "handled")
+              throw new AttachControlError(
+                "OUTCOME_UNKNOWN",
+                "Pi did not return an input admission result.",
+              );
+          } finally {
+            if (queueAdmission === admission) queueAdmission = undefined;
+          }
+          break;
+        }
+        // No deliverAs: if Pi becomes busy while an input hook is running,
+        // this idle submission cannot silently become unobservable queued input.
+        const witnessed = await observePrompt(
+          ctx,
+          promptDigest(request.message, loadedImages),
+          () => {
+            pi.sendUserMessage(
+              loadedImages.length
+                ? [{ type: "text", text: request.message }, ...loadedImages]
+                : request.message,
+              {
+                expandPromptTemplates: false,
+              },
+            );
+          },
+        );
+        if (!witnessed || !unchanged())
+          throw new AttachControlError(
+            "OUTCOME_UNKNOWN",
+            "The attached Pi received the input, but its admission could not be confirmed. Check the conversation before sending again.",
+          );
+        disposition = "started";
+        break;
+      }
+      case "shutdown": {
+        promptEpoch += 1;
+        const state = currentState(ctx);
+        setImmediate(() => {
+          ctx.shutdown();
+          // Wake native signal shutdown too: an idle RPC loop otherwise only
+          // observes the extension shutdown flag on its next stdin command.
+          process.emit("SIGTERM", "SIGTERM");
+        });
+        return { ok: true, state };
+      }
+      case "abort": {
+        promptEpoch += 1;
+        catalogEpoch += 1;
+        for (const read of catalogReads) read.abort(new Error("Stopped"));
+        const native = nativePromptState(ctx);
+        native.stopEpoch += 1;
+        ctx.abort();
+        if (native.outstanding || queueAdmission)
+          throw new AttachControlError(
+            "OUTCOME_UNKNOWN",
+            "Stop was requested, but an earlier input may still be waiting in the attached Pi.",
+          );
+        break;
+      }
+      case "rename":
+        if (typeof request.name !== "string")
+          throw new AttachControlError("INVALID", "Invalid name.");
+        pi.setSessionName(request.name);
+        break;
+      case "models":
+        models = await readModels(ctx);
+        break;
+      case "set_model": {
+        const model = ctx.modelRegistry.find(request.provider, request.modelId);
+        if (!model)
+          throw new AttachControlError(
+            "UNKNOWN_MODEL",
+            "That model is not registered in this Pi.",
+          );
+        if (!(await pi.setModel(model)))
+          throw new AttachControlError(
+            "NO_AUTH",
+            "Authentication is not configured for that model's provider.",
+          );
+        break;
+      }
+      case "set_thinking":
+        if (!THINKING_LEVELS.includes(request.level))
+          throw new AttachControlError("INVALID", "Invalid thinking level.");
+        pi.setThinkingLevel(request.level);
+        break;
+      default:
+        throw new AttachControlError("UNSUPPORTED", "Unsupported operation.");
+    }
+    if (!unchanged() || !context)
+      throw new AttachControlError("CHANGED", "Pi changed session.");
+    void publish();
+    return {
+      ok: true,
+      state: currentState(context),
+      ...(models ? { models } : {}),
+      ...(disposition ? { disposition } : {}),
+      ...(request.op === "prompt" || request.op === "abort"
+        ? { witnessed: true as const }
+        : {}),
+    };
+  };
+
+  const serve = (socket: Socket) => {
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
+    let buffer = "";
+    let bytes = 0;
+    let handled = false;
+    socket.setEncoding("utf8");
+    const reply = (response: AttachControlResponse) => {
+      if (!socket.destroyed) socket.end(`${JSON.stringify(response)}\n`);
+    };
+    socket.on("error", () => {});
+    socket.on("data", (chunk: string) => {
+      if (handled) return;
+      const end = chunk.indexOf("\n");
+      const part = end < 0 ? chunk : chunk.slice(0, end);
+      bytes += Buffer.byteLength(part);
+      if (bytes > MAX_REQUEST_BYTES) {
+        handled = true;
+        reply({
+          ok: false,
+          code: "TOO_LARGE",
+          error: "Request exceeds the limit.",
+        });
+        return;
+      }
+      buffer += part;
+      if (end < 0) return;
+      handled = true;
+      let request: AttachControlRequest;
+      try {
+        request = JSON.parse(buffer);
+      } catch {
+        reply({ ok: false, code: "INVALID", error: "Invalid request." });
+        return;
+      }
+      const ctx = context;
+      const expected = record?.token;
+      const given = Buffer.from(String(request?.token ?? ""));
+      if (
+        !ctx ||
+        !expected ||
+        given.length !== Buffer.byteLength(expected) ||
+        !timingSafeEqual(given, Buffer.from(expected))
+      ) {
+        reply({ ok: false, code: "UNAUTHORIZED", error: "Not authorized." });
+        return;
+      }
+      if (
+        request.sessionFile !== undefined &&
+        request.sessionFile !== record?.sessionFile
+      ) {
+        reply({ ok: false, code: "CHANGED", error: "Pi changed session." });
+        return;
+      }
+      perform(request, ctx).then(reply, (error: unknown) =>
+        reply({
+          ok: false,
+          code: error instanceof AttachControlError ? error.code : "FAILED",
+          error: error instanceof Error ? error.message : "Request failed.",
+        }),
+      );
+    });
+  };
+
+  pi.on("session_start", async (_event, ctx) => {
+    const owner = shared.owners.get(ctx.sessionManager);
+    if (owner && owner !== pi) {
+      const retire = receiverStops.get(owner);
+      if (!currentSession || !retire) return;
+      await retire();
+    }
+    shared.owners.set(ctx.sessionManager, pi);
+    receiverStops.set(pi, stop);
+    await stop();
+    const generation = lifecycle;
+    identity ??= await processIdentity(process.pid).catch(() => undefined);
+    if (generation !== lifecycle || !identity) return;
+    const directory = attachControlDirectory();
+    const instanceId = randomUUID();
+    const endpoint = attachControlEndpoint(directory, instanceId);
+    try {
+      await mkdir(directory, { recursive: true, mode: 0o700 });
+      const listening = createServer(serve);
+      await new Promise<void>((done, fail) => {
+        listening.once("error", fail);
+        listening.listen(endpoint, () => done());
+      });
+      listening.unref();
+      if (generation !== lifecycle) {
+        listening.close();
+        return;
+      }
+      server = listening;
+    } catch {
+      // Presence without control is still useful to clients.
+    }
+    context = ctx;
+    running = !ctx.isIdle();
+    if (running) activeRunId = randomUUID();
+    recordPath = join(directory, `${process.pid}-${instanceId}.json`);
+    record = {
+      version: 1,
+      instanceId,
+      pid: process.pid,
+      processIdentity: identity,
+      mode: ctx.mode,
+      cwd: ctx.cwd,
+      sessionId: "",
+      sessionFile: "",
+      leafId: null,
+      activity: "idle",
+      updatedAt: 0,
+      ...(ownerTag ? { tag: ownerTag.slice(0, 200) } : {}),
+      endpoint: server ? endpoint : "",
+      token: randomBytes(24).toString("base64url"),
+      taskRuns: { instanceId, settled: [] },
+      modelSelection: selection(ctx),
+    };
+    await publish();
+    if (generation !== lifecycle) return;
+    timer = setInterval(() => void publish(), ATTACH_CONTROL_HEARTBEAT_MS);
+    timer.unref();
+  });
+
+  const track = (ctx: ExtensionContext) => {
+    if (!context) return false;
+    context = ctx;
+    return true;
+  };
+  pi.on("agent_start", (_event, ctx) => {
+    if (!track(ctx)) return;
+    running = true;
+    activeRunId ??= randomUUID();
+    taskOutcome = "completed";
+    void publish();
+  });
+  const promptObservation = (ctx: ExtensionContext) => {
+    const observation = promptOrigin.getStore();
+    return observation?.pending &&
+      observation.session === nativePrompts.get(ctx.sessionManager)
+      ? observation
+      : undefined;
+  };
+  pi.on("before_agent_start", (event, ctx) => {
+    const observation = promptObservation(ctx);
+    if (
+      !observation ||
+      event.messageType !== "user" ||
+      promptDigest(event.prompt, event.images) !== observation.digest
+    )
+      return;
+    observation.starting = true;
+    if (observation.stopEpoch !== observation.session.stopEpoch) {
+      // Pi may start this run after Stop returned an unknown outcome. Now
+      // that the matching run is starting, Stop can reach it before a request.
+      ctx.abort();
+    }
+  });
+  pi.on("message_start", (event, ctx) => {
+    const observation = promptObservation(ctx);
+    if (!observation?.starting || event.message.role !== "user") return;
+    observation.pending = false;
+    observation.session.outstanding -= 1;
+    observation.observed?.();
+    observation.observed = undefined;
+  });
+  pi.on("message_end", (event, ctx) => {
+    if (!track(ctx)) return;
+    if (event.message.role === "assistant") {
+      const reason = event.message.stopReason;
+      taskOutcome =
+        reason === "aborted"
+          ? "aborted"
+          : reason === "error" || reason === "length"
+            ? "failed"
+            : "completed";
+    }
+    void publish();
+  });
+  pi.on("agent_before_settle", (event) => {
+    if (event.outcome === "error") taskOutcome = "failed";
+    else if (event.outcome === "aborted") taskOutcome = "aborted";
+  });
+  pi.on("agent_settled", (event, ctx) => {
+    if (!track(ctx)) return;
+    running = false;
+    if (activeRunId)
+      settledTasks = [
+        ...settledTasks.filter(
+          (task) => task.settledAt > Date.now() - 15 * 60_000,
+        ),
+        {
+          id: activeRunId,
+          outcome: event.aborted ? ("aborted" as const) : taskOutcome,
+          settledAt: Date.now(),
+        },
+      ].slice(-16);
+    activeRunId = null;
+    void publish();
+  });
+  pi.on("session_tree", (_event, ctx) => {
+    if (track(ctx)) void publish();
+  });
+  pi.on("model_select", (_event, ctx) => {
+    if (track(ctx)) void publish();
+  });
+  pi.on("thinking_level_select", (_event, ctx) => {
+    if (track(ctx)) void publish();
+  });
+  pi.on("ui_prompt_start", (_event, ctx) => {
+    if (!track(ctx)) return;
+    waiting = true;
+    void publish();
+  });
+  pi.on("ui_prompt_end", (_event, ctx) => {
+    if (!track(ctx)) return;
+    waiting = false;
+    void publish();
+  });
+  pi.on("session_shutdown", (_event, ctx) => {
+    if (shared.owners.get(ctx.sessionManager) === pi)
+      shared.owners.delete(ctx.sessionManager);
+    return stop();
+  });
+}

@@ -1,9 +1,8 @@
-import { ArrowLeft, CircleHelp, Eye, EyeOff, Plus } from "lucide-react";
+import { ArrowLeft, Plus } from "lucide-react";
 import {
   useCallback,
   useEffect,
-  useId,
-  useMemo,
+  useEffectEvent,
   useRef,
   useState,
 } from "react";
@@ -11,8 +10,13 @@ import type {
   ProviderLoginAttempt,
   ProviderLoginOption,
 } from "../../shared/model-settings";
+import type { ProviderAuthOperation } from "../../shared/provider-auth-bridge";
 import { store } from "../store";
+import { ConfigurationConfirmation } from "./ConfigurationForm";
+import { PromptChoices, PromptInput } from "./PromptFields";
+import { SearchField } from "./SearchField";
 import { SearchMatchText, searchMatchRanges } from "./SearchMatchText";
+import { SettingsCardMessage } from "./SettingsSection";
 
 type Owner = { sessionId?: string; cwd?: string };
 type ProviderView = { kind: "saved" | "connect"; provider?: string };
@@ -21,28 +25,19 @@ const messageOf = (error: unknown) =>
     ? error.message
     : "The Host could not complete this operation";
 
+function matchesProvider(
+  provider: ProviderLoginOption,
+  query: string,
+): boolean {
+  return `${provider.id} ${provider.name}`.toLowerCase().includes(query);
+}
+
 function RemoteLoginHelp({ instruction }: { instruction: string }) {
-  const id = useId();
-  const [open, setOpen] = useState(false);
   return (
-    <span className="models-remote">
-      <span>Remote login</span>
-      <button
-        type="button"
-        className="models-icon-button models-remote__toggle"
-        aria-label="About remote login"
-        aria-expanded={open}
-        aria-controls={id}
-        onClick={() => setOpen((value) => !value)}
-      >
-        <CircleHelp size={14} aria-hidden />
-      </button>
-      {open ? (
-        <span id={id} className="models-remote__help">
-          {instruction}
-        </span>
-      ) : null}
-    </span>
+    <details className="models-remote">
+      <summary>Remote login</summary>
+      <p>{instruction}</p>
+    </details>
   );
 }
 
@@ -50,7 +45,6 @@ type AuthenticationProps = {
   owner: Owner;
   providers: ProviderLoginOption[];
   onRefresh: () => Promise<void>;
-  onModelsRefreshed?: () => Promise<void>;
   initialQuery?: string;
   discover?: boolean;
   loadError?: string | null;
@@ -70,46 +64,29 @@ export function ProviderAuthentication(props: AuthenticationProps) {
 }
 
 function AuthenticationPanel({
-  owner: requestedOwner,
+  owner: initialOwner,
   providers,
   onRefresh,
-  onModelsRefreshed,
   initialQuery = "",
   discover = false,
   loadError,
   loading = false,
   loaded = true,
 }: AuthenticationProps) {
-  const owner = useMemo(
-    () => ({
-      ...(requestedOwner.sessionId
-        ? { sessionId: requestedOwner.sessionId }
-        : {}),
-      ...(requestedOwner.cwd ? { cwd: requestedOwner.cwd } : {}),
-    }),
-    [requestedOwner.sessionId, requestedOwner.cwd],
-  );
+  const [owner] = useState(initialOwner);
   const [query, setQuery] = useState(initialQuery);
   const [view, setView] = useState<ProviderView>({
     kind: discover || initialQuery ? "connect" : "saved",
   });
   const discovering = view.kind === "connect";
-  const selected = discovering ? view.provider : undefined;
   const [attempt, setAttempt] = useState<ProviderLoginAttempt | null>(null);
-  const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
-  const [showInput, setShowInput] = useState(false);
-  const inputId = useId();
-  const directoryId = useId();
   const searchRef = useRef<HTMLInputElement>(null);
-  const backRef = useRef<HTMLButtonElement>(null);
   const targetQuery = initialQuery.trim().toLowerCase();
   const targetMatches = targetQuery
-    ? providers.filter((provider) =>
-        `${provider.id} ${provider.name}`.toLowerCase().includes(targetQuery),
-      )
+    ? providers.filter((provider) => matchesProvider(provider, targetQuery))
     : [];
   const targetProvider =
     targetMatches.find(
@@ -128,9 +105,9 @@ function AuthenticationPanel({
     );
   }, [initialQuery, discover, targetId, targetSaved]);
   const mounted = useRef(false);
+  const writing = useRef(false);
   const mutationRevision = useRef(0);
   const attemptRef = useRef<ProviderLoginAttempt | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
   const ownsPendingAttempt = useCallback(
     (id: string) =>
       mounted.current &&
@@ -145,8 +122,6 @@ function AuthenticationPanel({
   }, []);
   const attemptId = attempt?.id;
   const attemptStatus = attempt?.status;
-  const promptId = attempt?.prompt?.id;
-  const promptType = attempt?.prompt?.type;
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -158,11 +133,6 @@ function AuthenticationPanel({
           .catch(() => {});
     };
   }, [owner]);
-  useEffect(() => {
-    setInput("");
-    setShowInput(false);
-    if (promptId && promptType !== "select") inputRef.current?.focus();
-  }, [promptId, promptType]);
   useEffect(() => {
     if (!attemptId || attemptStatus !== "pending") return;
     let observing = true;
@@ -179,26 +149,23 @@ function AuthenticationPanel({
         // A pending read started before a prompt mutation must not restore its
         // old prompt. Terminal receipts are authoritative and always settle it.
         if (
-          next.status === "pending" &&
-          mutationRevision.current !== revision
+          next.status !== "pending" ||
+          mutationRevision.current === revision
         ) {
-          timer = setTimeout(() => void poll(), 750);
-          return;
+          if (pollError) {
+            const recovered = pollError;
+            setError((error) => (error === recovered ? null : error));
+            pollError = null;
+          }
+          update(next);
         }
-        if (pollError) {
-          const recovered = pollError;
-          setError((error) => (error === recovered ? null : error));
-          pollError = null;
-        }
-        update(next);
-        if (next.status === "pending")
-          timer = setTimeout(() => void poll(), 750);
       } catch (error) {
         if (!observing || !ownsPendingAttempt(attemptId)) return;
         pollError = messageOf(error);
         setError(pollError);
-        timer = setTimeout(() => void poll(), 750);
       }
+      if (observing && ownsPendingAttempt(attemptId))
+        timer = setTimeout(() => void poll(), 750);
     };
     timer = setTimeout(() => void poll(), 250);
     return () => {
@@ -206,242 +173,197 @@ function AuthenticationPanel({
       clearTimeout(timer);
     };
   }, [attemptId, attemptStatus, owner, update, ownsPendingAttempt]);
+  const refreshAfterLogin = useEffectEvent(() => {
+    void onRefresh().catch((error) => {
+      if (mounted.current) setError(messageOf(error));
+    });
+  });
   useEffect(() => {
-    if (attemptStatus !== "completed" && attemptStatus !== "failed") return;
-    void onRefresh()
-      .then(() => {
-        if (mounted.current) return store.refreshModels(owner);
-      })
-      .then(() => {
-        if (mounted.current) return onModelsRefreshed?.();
-      })
-      .catch((error) => {
-        if (mounted.current) setError(messageOf(error));
-      });
-  }, [attemptId, attemptStatus, owner, onRefresh, onModelsRefreshed]);
-  const start = async (provider: string, type: "api_key" | "oauth") => {
-    if (busy || attemptRef.current?.status === "pending") return;
+    if (attemptStatus === "completed" || attemptStatus === "failed")
+      refreshAfterLogin();
+  }, [attemptId, attemptStatus]);
+  const mutate = async (
+    request: Exclude<
+      ProviderAuthOperation,
+      { operation: "providers" | "status" }
+    >,
+  ) => {
+    if (writing.current) return;
+    writing.current = true;
+    ++mutationRevision.current;
+    const owns = () =>
+      mounted.current &&
+      (!("id" in request) || ownsPendingAttempt(request.id)) &&
+      (request.operation !== "answer" ||
+        !attemptRef.current?.prompt ||
+        attemptRef.current.prompt.id === request.promptId);
     setBusy(true);
     setError(null);
-    setRemoving(null);
     try {
-      const next = (await store.providerAuth(owner, {
-        operation: "start",
-        provider,
-        type,
-      })) as ProviderLoginAttempt;
-      if (!mounted.current) {
-        if (next.status === "pending")
+      const result = await store.providerAuth(owner, request);
+      if (request.operation === "logout") {
+        if (owns()) {
+          setRemoving(null);
+          setView({ kind: "saved" });
+          await onRefresh();
+        }
+      } else {
+        const next = result as ProviderLoginAttempt | null;
+        if (owns()) update(next);
+        else if (request.operation === "start" && next?.status === "pending")
           void store
             .providerAuth(owner, { operation: "cancel", id: next.id })
             .catch(() => {});
-        return;
       }
-      update(next);
     } catch (error) {
-      if (mounted.current) setError(messageOf(error));
+      if (owns()) setError(messageOf(error));
     } finally {
+      ++mutationRevision.current;
+      writing.current = false;
       if (mounted.current) setBusy(false);
     }
   };
-  const answer = async (value: string) => {
-    if (!attempt?.prompt || busy) return;
-    ++mutationRevision.current;
-    const promptId = attempt.prompt.id;
-    const ownsPrompt = () => {
-      const livePrompt = attemptRef.current?.prompt;
-      return (
-        ownsPendingAttempt(attempt.id) &&
-        (!livePrompt || livePrompt.id === promptId)
-      );
-    };
-    setBusy(true);
-    setError(null);
-    try {
-      const next = (await store.providerAuth(owner, {
+  const answer = (value: string) => {
+    if (attempt?.prompt)
+      void mutate({
         operation: "answer",
         id: attempt.id,
-        promptId,
+        promptId: attempt.prompt.id,
         value,
-      })) as ProviderLoginAttempt;
-      if (ownsPrompt()) {
-        update(next);
-        setInput("");
-      }
-    } catch (error) {
-      if (ownsPrompt()) setError(messageOf(error));
-    } finally {
-      ++mutationRevision.current;
-      if (mounted.current) setBusy(false);
-    }
+      });
   };
-  const cancel = async () => {
-    if (!attempt || busy) return;
-    ++mutationRevision.current;
-    setBusy(true);
-    setError(null);
-    try {
-      const next = (await store.providerAuth(owner, {
-        operation: "cancel",
-        id: attempt.id,
-      })) as ProviderLoginAttempt | null;
-      if (ownsPendingAttempt(attempt.id)) update(next);
-    } catch (error) {
-      if (ownsPendingAttempt(attempt.id)) setError(messageOf(error));
-    } finally {
-      ++mutationRevision.current;
-      if (mounted.current) setBusy(false);
-    }
-  };
-  const logout = async (provider: string) => {
-    if (busy) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await store.providerAuth(owner, { operation: "logout", provider });
-      if (!mounted.current) return;
-      setRemoving(null);
-      setView({ kind: "saved" });
-      if (attempt?.provider === provider) update(null);
-      await onRefresh();
-      if (mounted.current) await store.refreshModels(owner);
-      if (mounted.current) await onModelsRefreshed?.();
-    } catch (error) {
-      if (mounted.current) setError(messageOf(error));
-    } finally {
-      if (mounted.current) setBusy(false);
-    }
-  };
-  const filtered = providers.filter((provider) =>
-    `${provider.id} ${provider.name}`
-      .toLowerCase()
-      .includes(query.trim().toLowerCase()),
+  const listed = providers.filter(
+    (provider) =>
+      Boolean(provider.stored) !== discovering &&
+      (!discovering || matchesProvider(provider, query.trim().toLowerCase())),
   );
-  const saved = providers.filter((provider) => provider.stored);
-  const available = filtered.filter((provider) => !provider.stored);
+  const detail = providers.find((provider) => provider.id === view.provider);
+  const shownDetail =
+    detail && Boolean(detail.stored) !== discovering ? detail : undefined;
   useEffect(() => {
     if (!discovering || attempt) return;
-    if (selected) backRef.current?.focus();
-    else searchRef.current?.focus();
-  }, [discovering, selected, attempt]);
-  const providerRow = (
-    provider: ProviderLoginOption,
-    forceOpen = false,
-    searchQuery = "",
-  ) => {
-    const nameMatches = searchMatchRanges(provider.name, [searchQuery]);
-    const idMatches = searchMatchRanges(provider.id, [searchQuery]);
-    const showMatchedId = !nameMatches.length && Boolean(idMatches.length);
-    const open = forceOpen || view.provider === provider.id;
-    const disclosureId = `${inputId}-provider-${provider.id}`;
-    return (
-      <div className="models-provider-login" key={provider.id}>
-        <div className="models-provider-login__heading">
-          <div className="models-provider-login__copy">
-            <strong>
-              <SearchMatchText text={provider.name} ranges={nameMatches} />
-            </strong>
-            {showMatchedId ? (
-              <code className="models-provider-login__matched-id">
-                <SearchMatchText text={provider.id} ranges={idMatches} />
-              </code>
-            ) : null}
-            {provider.stored ? (
-              <span className="settings__field-help">
-                {provider.stored === "api_key"
-                  ? "API key configured"
-                  : "Signed in"}
-              </span>
-            ) : null}
-          </div>
-          {!forceOpen ? (
-            <button
-              type="button"
-              className="button models-provider-disclosure"
-              aria-label={`${provider.stored ? "Manage" : "Set up"} ${provider.name}`}
-              aria-expanded={provider.stored ? open : undefined}
-              aria-controls={provider.stored ? disclosureId : undefined}
-              disabled={busy}
-              onClick={() => {
-                setView({
-                  kind: provider.stored ? "saved" : "connect",
-                  provider: open ? undefined : provider.id,
-                });
-                setRemoving(null);
-              }}
-            >
-              {provider.stored ? "Manage" : "Set up"}
-            </button>
-          ) : null}
+    const search = searchRef.current;
+    const section = search?.closest(".settings__section");
+    search?.focus({ preventScroll: Boolean(section) });
+    if (section && document.activeElement === search)
+      section.scrollIntoView({ block: "start", behavior: "instant" });
+  }, [discovering, attempt]);
+  const providerDetail = shownDetail && (
+    <div className="models-provider-login__details">
+      {shownDetail.methods.map((method) => (
+        <div className="models-login__method" key={method.type}>
+          <button
+            type="button"
+            className="button"
+            disabled={busy}
+            onClick={() =>
+              void mutate({
+                operation: "start",
+                provider: shownDetail.id,
+                type: method.type,
+              })
+            }
+          >
+            {method.label}
+          </button>
+          {method.remoteHelp && (
+            <RemoteLoginHelp instruction={method.remoteHelp} />
+          )}
         </div>
-        {open ? (
-          <div id={disclosureId} className="models-provider-login__details">
-            <div className="models-provider-login__actions">
-              <div className="models-provider-login__methods-row">
-                {provider.methods.map((method) => (
-                  <div className="models-login__method" key={method.type}>
-                    <button
-                      type="button"
-                      className="button"
-                      disabled={busy || attempt?.status === "pending"}
-                      onClick={() => void start(provider.id, method.type)}
-                    >
-                      {method.label}
-                    </button>
-                    {method.remoteHelp ? (
-                      <RemoteLoginHelp instruction={method.remoteHelp} />
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-              {provider.stored ? (
+      ))}
+      {shownDetail.stored &&
+        (removing === shownDetail.id ? (
+          <ConfigurationConfirmation
+            label="Remove saved credential"
+            confirmLabel="Remove saved credentials"
+            confirmDisabled={busy}
+            onConfirm={() =>
+              void mutate({ operation: "logout", provider: shownDetail.id })
+            }
+            onCancel={() => setRemoving(null)}
+          >
+            Remove the saved{" "}
+            {shownDetail.stored === "api_key" ? "API key" : "login"} for{" "}
+            {shownDetail.name}?
+          </ConfigurationConfirmation>
+        ) : (
+          <button
+            type="button"
+            className="button button--danger-outline"
+            disabled={busy}
+            aria-label={`Remove saved credentials for ${shownDetail.name}`}
+            onClick={() => setRemoving(shownDetail.id)}
+          >
+            Remove
+          </button>
+        ))}
+    </div>
+  );
+  const providerList =
+    listed.length > 0 ? (
+      <section
+        className="models-auth__providers"
+        aria-label={discovering ? "Available providers" : "Connected providers"}
+      >
+        {listed.map((provider) => {
+          const nameMatches = searchMatchRanges(provider.name, [query.trim()]);
+          const idMatches =
+            discovering && !nameMatches.length
+              ? searchMatchRanges(provider.id, [query.trim()])
+              : [];
+          return (
+            <div key={provider.id} className="models-provider-login">
+              <div className="models-provider-login__heading">
+                <div className="models-provider-login__copy">
+                  <SearchMatchText
+                    text={provider.name}
+                    ranges={discovering ? nameMatches : []}
+                  />
+                  {idMatches.length > 0 && (
+                    <code>
+                      <SearchMatchText text={provider.id} ranges={idMatches} />
+                    </code>
+                  )}
+                  {provider.stored && (
+                    <small>
+                      {provider.stored === "api_key"
+                        ? "API key configured"
+                        : "Signed in"}
+                    </small>
+                  )}
+                </div>
                 <button
                   type="button"
-                  className="models-remove-credential"
-                  disabled={busy || attempt?.status === "pending"}
-                  aria-label={`Remove saved credentials for ${provider.name}`}
-                  onClick={() => setRemoving(provider.id)}
+                  className="button models-provider-disclosure"
+                  aria-label={`${discovering ? "Set up" : "Manage"} ${provider.name}`}
+                  aria-expanded={view.provider === provider.id}
+                  disabled={busy}
+                  onClick={() => {
+                    setRemoving(null);
+                    setView({
+                      kind: view.kind,
+                      provider:
+                        view.provider === provider.id ? undefined : provider.id,
+                    });
+                  }}
                 >
-                  Remove
+                  {discovering ? "Set up" : "Manage"}
                 </button>
-              ) : null}
-            </div>
-            {removing === provider.id ? (
-              <div
-                className="models-confirm"
-                role="group"
-                aria-label="Remove saved credential"
-              >
-                <p>
-                  Remove the saved{" "}
-                  {provider.stored === "api_key" ? "API key" : "login"} for{" "}
-                  {provider.name}?
-                </p>
-                <div className="models-actions">
-                  <button
-                    className="button button--danger"
-                    type="button"
-                    disabled={busy}
-                    onClick={() => void logout(provider.id)}
-                  >
-                    Remove saved credentials
-                  </button>
-                  <button
-                    className="button button--quiet"
-                    type="button"
-                    disabled={busy}
-                    onClick={() => setRemoving(null)}
-                  >
-                    Cancel
-                  </button>
-                </div>
               </div>
-            ) : null}
-          </div>
-        ) : null}
-      </div>
-    );
-  };
+              {shownDetail?.id === provider.id && providerDetail}
+            </div>
+          );
+        })}
+      </section>
+    ) : loaded && !loading && (!loadError || providers.length > 0) ? (
+      <p className="models-auth__empty">
+        {!discovering
+          ? "No connected providers."
+          : query.trim()
+            ? `No available providers matching "${query.trim()}"`
+            : "No providers available"}
+      </p>
+    ) : null;
   const latestEvent = attempt?.events.at(-1);
   const loginStatus =
     attempt?.status === "pending"
@@ -450,33 +372,22 @@ function AuthenticationPanel({
       : attempt?.message;
   return (
     <div className="models-auth" id="model-provider-credentials">
-      {error ? (
-        <p className="models-status" role="alert">
-          {error}
-        </p>
-      ) : null}
+      {error ? <SettingsCardMessage error>{error}</SettingsCardMessage> : null}
       {loadError ? (
-        <p className="models-status" role="alert">
+        <SettingsCardMessage
+          error
+          retry={{
+            disabled: loading,
+            run: () =>
+              void onRefresh().catch((error) => setError(messageOf(error))),
+          }}
+        >
           {loaded ? "Provider refresh failed" : "Failed to load providers"}:{" "}
           {loadError}
-        </p>
+        </SettingsCardMessage>
       ) : null}
       {loading && !loaded ? (
-        <p className="models-status" role="status">
-          Loading providers…
-        </p>
-      ) : null}
-      {loadError ? (
-        <button
-          type="button"
-          className="button button--quiet"
-          disabled={loading}
-          onClick={() =>
-            void onRefresh().catch((error) => setError(messageOf(error)))
-          }
-        >
-          Retry
-        </button>
+        <SettingsCardMessage loading>Loading providers…</SettingsCardMessage>
       ) : null}
       {attempt ? (
         <div
@@ -524,96 +435,56 @@ function AuthenticationPanel({
                 ))}
               </div>
             ))}
-          {attempt.prompt ? (
-            attempt.prompt.type === "select" ? (
-              <div
-                className="models-login__methods"
-                role="group"
-                aria-label={attempt.prompt.message}
-              >
-                <p>{attempt.prompt.message}</p>
-                {attempt.prompt.options?.map((option) => (
-                  <div className="models-login__method" key={option.id}>
-                    <button
-                      type="button"
-                      className="button"
-                      disabled={busy}
-                      onClick={() => void answer(option.id)}
-                    >
-                      {option.label}
-                    </button>
-                    {option.remoteHelp ? (
+          {attempt.prompt?.type === "select" ? (
+            <PromptChoices
+              key={attempt.prompt.id}
+              label={attempt.prompt.message}
+              pending={busy}
+              onChoose={(value) => void answer(value)}
+              options={(attempt.prompt.options ?? []).map((option) => ({
+                value: option.id,
+                label: option.label,
+                details: (
+                  <>
+                    {option.remoteHelp && (
                       <RemoteLoginHelp instruction={option.remoteHelp} />
-                    ) : null}
-                    {option.description ? (
+                    )}
+                    {option.description && (
                       <p className="settings__field-help">
                         {option.description}
                       </p>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <form
-                className="models-login__input"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void answer(input);
-                }}
-              >
-                <label htmlFor={inputId}>{attempt.prompt.message}</label>
-                <div className="models-secret-input">
-                  <input
-                    id={inputId}
-                    ref={inputRef}
-                    type={
-                      !showInput &&
-                      (attempt.prompt.type === "secret" ||
-                        attempt.prompt.type === "manual_code")
-                        ? "password"
-                        : "text"
-                    }
-                    value={input}
-                    autoComplete="off"
-                    placeholder={attempt.prompt.placeholder}
-                    disabled={busy}
-                    onChange={(event) => setInput(event.target.value)}
-                  />
-                  {attempt.prompt.type === "secret" ||
-                  attempt.prompt.type === "manual_code" ? (
-                    <button
-                      type="button"
-                      className="models-icon-button"
-                      aria-label={
-                        showInput ? "Hide credential" : "Show credential"
-                      }
-                      aria-pressed={showInput}
-                      onClick={() => setShowInput((value) => !value)}
-                    >
-                      {showInput ? (
-                        <EyeOff size={16} aria-hidden />
-                      ) : (
-                        <Eye size={16} aria-hidden />
-                      )}
-                    </button>
-                  ) : null}
-                </div>
-                <button
-                  className="button button--primary"
-                  type="submit"
-                  disabled={busy || !input}
-                >
-                  Continue
-                </button>
-              </form>
-            )
+                    )}
+                  </>
+                ),
+              }))}
+            >
+              <p>{attempt.prompt.message}</p>
+            </PromptChoices>
+          ) : attempt.prompt ? (
+            <PromptInput
+              key={attempt.prompt.id}
+              title={attempt.prompt.message}
+              kind={
+                attempt.prompt.type === "secret" ||
+                attempt.prompt.type === "manual_code"
+                  ? "secret"
+                  : "text"
+              }
+              placeholder={attempt.prompt.placeholder}
+              pending={busy}
+              required
+              inlineLabel
+              submitLabel="Continue"
+              onSubmit={(value) => void answer(value)}
+            />
           ) : null}
           <button
             type="button"
             className={`button${attempt.status === "pending" ? "" : " button--quiet"}`}
             disabled={busy}
             onClick={() => {
-              if (attempt.status === "pending") void cancel();
+              if (attempt.status === "pending")
+                void mutate({ operation: "cancel", id: attempt.id });
               else {
                 if (attempt.status === "completed") setView({ kind: "saved" });
                 update(null);
@@ -624,99 +495,47 @@ function AuthenticationPanel({
           </button>
         </div>
       ) : null}
-      {!attempt && !discovering ? (
-        <>
-          {saved.length ? (
-            <section
-              className="models-auth__saved"
-              aria-label="Connected providers"
+      {!attempt &&
+        (discovering ? (
+          <>
+            <button
+              type="button"
+              className="models-text-button models-auth__back"
+              onClick={() => setView({ kind: "saved" })}
             >
-              {saved.map((provider) => providerRow(provider))}
-            </section>
-          ) : loaded && !loading && !loadError ? (
-            <p className="models-auth__empty">No connected providers.</p>
-          ) : null}
-          <button
-            type="button"
-            className="models-text-button models-auth__connect"
-            disabled={
-              busy ||
-              !loaded ||
-              loading ||
-              Boolean(loadError && !providers.length)
-            }
-            onClick={() => {
-              setRemoving(null);
-              setView({ kind: "connect" });
-            }}
-          >
-            <Plus size={14} aria-hidden /> Connect provider
-          </button>
-        </>
-      ) : null}
-      {!attempt && discovering ? (
-        <section
-          id={directoryId}
-          className="models-auth__directory"
-          aria-label="Available providers"
-        >
-          {selected ? (
-            <div className="models-auth__drilldown">
-              <button
-                ref={backRef}
-                type="button"
-                className="models-text-button models-auth__back"
-                onClick={() => setView({ kind: "connect" })}
-              >
-                <ArrowLeft size={14} aria-hidden /> Back to providers
-              </button>
-              {(() => {
-                const target = providers.find((item) => item.id === selected);
-                return target ? providerRow(target, true) : null;
-              })()}
-            </div>
-          ) : (
-            <>
-              <button
-                type="button"
-                className="models-text-button models-auth__back"
-                onClick={() => setView({ kind: "saved" })}
-              >
-                <ArrowLeft size={14} aria-hidden /> Back to connected providers
-              </button>
-              <label className="models-search">
-                <input
-                  ref={searchRef}
-                  aria-label="Search providers"
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search providers…"
-                />
-              </label>
-              {loaded ? (
-                <>
-                  {available.length ? (
-                    <div className="models-auth__providers">
-                      {available.map((provider) =>
-                        providerRow(provider, false, query.trim()),
-                      )}
-                    </div>
-                  ) : null}
-                  {!available.length &&
-                  !loading &&
-                  (!loadError || providers.length > 0) ? (
-                    <p className="settings__field-help">
-                      {query.trim()
-                        ? `No available providers matching "${query.trim()}"`
-                        : "No providers available"}
-                    </p>
-                  ) : null}
-                </>
-              ) : null}
-            </>
-          )}
-        </section>
-      ) : null}
+              <ArrowLeft size={14} aria-hidden />
+              Back to connected providers
+            </button>
+            <SearchField
+              inputRef={searchRef}
+              aria-label="Search providers"
+              value={query}
+              onValueChange={setQuery}
+              placeholder="Search providers…"
+            />
+            {providerList}
+          </>
+        ) : (
+          <>
+            {providerList}
+            <button
+              type="button"
+              className="models-text-button models-auth__connect"
+              disabled={
+                busy ||
+                !loaded ||
+                loading ||
+                Boolean(loadError && !providers.length)
+              }
+              onClick={() => {
+                setRemoving(null);
+                setView({ kind: "connect" });
+              }}
+            >
+              <Plus size={14} aria-hidden /> Connect provider
+            </button>
+          </>
+        ))}
     </div>
   );
 }

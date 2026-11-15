@@ -28,7 +28,7 @@ import {
   addAttachmentContext,
   resolveProjectFiles,
 } from "../../server/attachments.js";
-import { HtmlPreviewStore } from "../../server/html-preview.js";
+import { serveHtmlPreview } from "../../server/html-preview.js";
 import { McpConfigService } from "../../server/mcp-config.js";
 import { listProjectDirectory } from "../../server/project-files.js";
 import { ResourceStore } from "../../server/resources.js";
@@ -84,7 +84,6 @@ describe("workspace boundaries under a Windows case-sensitive directory contract
       resources.resolve(
         context,
         "../project/private.txt",
-        true,
         "../project/private.txt",
       ),
     ).rejects.toMatchObject({ status: 400 });
@@ -120,7 +119,7 @@ describe("workspace boundaries under a Windows case-sensitive directory contract
           {
             role: "user",
             content: addAttachmentContext("Use", [], [outside]),
-            __inspireMessageIndex: 0,
+            __inspireHistoryEntryId: "entry-0",
           },
         ],
       },
@@ -136,7 +135,7 @@ describe("workspace boundaries under a Windows case-sensitive directory contract
             incarnation: "incarnation",
             effectiveLeafId: null,
             imageReferences: [],
-            fileReferences: ["pi-file://0/0"],
+            fileReferences: ["pi-history-file://entry-0/0"],
           },
         },
         { ready: async () => {}, ownsPromptFile: () => false },
@@ -172,17 +171,23 @@ describe("workspace boundaries under a Windows case-sensitive directory contract
 });
 
 async function preview() {
-  const retained = {
-    get: () => ({
-      descriptor: { kind: "html" },
-      path: join(root, "index.html"),
-      workspaceRoot: root,
-    }),
-    revalidate: async () => {},
-    openForServing: async () => ({ handle: { close: async () => {} } }),
-  } as unknown as ResourceStore;
-  const store = new HtmlPreviewStore(retained, async () => context);
-  const grant = await store.create(
+  vi.spyOn(resources, "get").mockReturnValue({
+    descriptor: {
+      id: "fixture-html",
+      sessionId: "s1",
+      viewId: "v1",
+      kind: "html",
+      mimeType: "text/html",
+      name: "index.html",
+      size: 25,
+      reference: "index.html",
+    },
+    authority: "workspace",
+    selectedPath: join(root, "index.html"),
+    path: join(root, "index.html"),
+    workspaceRoot: root,
+  });
+  const grant = await resources.createHtmlPreview(
     "fixture-html",
     context,
     "<h1>Loaded snapshot</h1>",
@@ -190,7 +195,7 @@ async function preview() {
   const app = express();
   app.get("/html-preview/:id/*path", async (req, res, next) => {
     try {
-      await store.serve(req, res);
+      await serveHtmlPreview(resources, async () => context, req, res);
     } catch (error) {
       next(error);
     }

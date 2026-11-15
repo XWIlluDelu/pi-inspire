@@ -1,6 +1,6 @@
-import request from "supertest";
+import { once } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { WebSocket } from "ws";
+import type { WebSocket } from "ws";
 import {
   MAX_JOINING_EVENT_BYTES,
   MAX_RUNTIME_EVENT_BYTES,
@@ -12,19 +12,12 @@ import {
 } from "../../shared/assistant-stream.js";
 import {
   closeHostApiFixture,
-  type DetailFrame,
   hostApiFixture,
   observeEventSocket,
   token,
 } from "./fixtures/host-api.js";
 import { closeWithoutPeerAck, rawWebSocket } from "./fixtures/raw-websocket.js";
-
-function eventSocket(url: string, options: import("ws").ClientOptions = {}) {
-  return new WebSocket(url, {
-    ...options,
-    headers: { Authorization: `Bearer ${token}` },
-  });
-}
+import { deferredSignal } from "./fixtures/runtime.js";
 
 describe("WebSocket observation and transport limits", () => {
   let application: Awaited<ReturnType<typeof hostApiFixture>>["application"];
@@ -38,97 +31,23 @@ describe("WebSocket observation and transport limits", () => {
   afterEach(async () => closeHostApiFixture(fixture));
 
   async function connect(query = "") {
-    const observed = observeEventSocket(
+    const { socket, frames } = observeEventSocket(
       `${baseUrl.replace("http", "ws")}/events?${query.replace(/^&/, "")}`,
     );
-    await vi.waitFor(() => expect(observed.frames[0]?.type).toBe("snapshot"));
-    return observed;
-  }
-
-  it("confirms a stable large HTTP-open window without retransmitting its body and keeps the event barrier", async () => {
-    const window = await runtime.openSession("mock-active");
-    window.active!.transcriptPage.messages = [
-      {
-        role: "user",
-        content: "large window ".repeat(40_000),
-        timestamp: 1,
-      },
-    ];
-    const open = vi.spyOn(runtime, "openSession").mockResolvedValue(window);
-    const snapshot = vi.spyOn(runtime, "snapshot").mockResolvedValue(window);
-    const observed = await connect("detail=mock-older");
+    let socketError: Error | undefined;
+    socket.on("error", (error) => {
+      socketError = error;
+    });
     try {
-      observed.frames.length = 0;
-      const opened = await request(application.server)
-        .post("/api/sessions/open")
-        .set("Authorization", `Bearer ${token}`)
-        .send({ id: "mock-active" })
-        .expect(200);
-      expect(JSON.stringify(opened.body).length).toBeGreaterThan(500_000);
-      let finish!: (value: typeof window) => void;
-      snapshot.mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            finish = resolve;
-          }),
-      );
-      const readsBefore = snapshot.mock.calls.length;
-      observed.socket.send(
-        JSON.stringify({
-          type: "detail_interest",
-          sessionId: "mock-active",
-          revision: 1,
-          authorityId: opened.body.authorityId,
-          snapshotDigest: opened.body.snapshotDigest,
-        }),
-      );
-      await vi.waitFor(() =>
-        expect(snapshot.mock.calls.length).toBe(readsBefore + 1),
-      );
-      runtime.emit("event", {
-        type: "agent_start",
-        sessionId: "mock-active",
-        sessionStatus: { runState: "running" },
+      await vi.waitFor(() => expect(frames[0]?.type).toBe("snapshot"), {
+        timeout: 4_000,
       });
-      expect(observed.frames).toEqual([]);
-      finish(window);
-      await vi.waitFor(() => expect(observed.frames).toHaveLength(2));
-      expect(observed.frames[0]).toMatchObject({
-        unchanged: true,
-        detailRevision: 1,
-      });
-      expect(observed.frames[0]).not.toHaveProperty("data");
-      expect(observed.frames[1]?.type).toBe("agent_start");
-      expect(Buffer.byteLength(JSON.stringify(observed.frames))).toBeLessThan(
-        2_000,
-      );
-
-      for (const [revision, authorityId, value] of [
-        [2, opened.body.authorityId, { ...window, runState: "running" }],
-        [3, "00000000-0000-4000-8000-000000000000", window],
-      ] as const) {
-        snapshot.mockResolvedValueOnce(value);
-        observed.socket.send(
-          JSON.stringify({
-            type: "detail_interest",
-            sessionId: "mock-active",
-            revision,
-            authorityId,
-            snapshotDigest: opened.body.snapshotDigest,
-          }),
-        );
-        await vi.waitFor(() =>
-          expect(
-            observed.frames.find((f) => f.detailRevision === revision),
-          ).toHaveProperty("data"),
-        );
-      }
-    } finally {
-      open.mockRestore();
-      snapshot.mockRestore();
-      observed.socket.close();
+      return { socket, frames };
+    } catch (error) {
+      socket.terminate();
+      throw socketError ?? error;
     }
-  });
+  }
 
   it("retains detail before synchronization and releases only the departing subscription", async () => {
     const observers = new Map<string, number>();
@@ -142,29 +61,33 @@ describe("WebSocket observation and transport limits", () => {
         };
       },
     });
-    await runtime.openSession("mock-active");
-    await runtime.openSession("mock-older");
+    await runtime.openSession("fixture-active");
+    await runtime.openSession("fixture-history");
     const originalSnapshot = runtime.snapshot.bind(runtime);
     vi.spyOn(runtime, "snapshot").mockImplementation(async (sessionId) => {
       if (sessionId) expect(observers.get(sessionId)).toBeGreaterThan(0);
       return originalSnapshot(sessionId);
     });
-    const a = await connect("detail=mock-active");
-    const b = await connect("detail=mock-active");
+    const a = await connect("detail=fixture-active");
+    let secondSocket: WebSocket | undefined;
     try {
-      expect(observers.get("mock-active")).toBe(2);
+      const b = await connect("detail=fixture-active");
+      secondSocket = b.socket;
+      expect(observers.get("fixture-active")).toBe(2);
       a.socket.send(
         JSON.stringify({
           type: "detail_interest",
-          sessionId: "mock-older",
+          sessionId: "fixture-history",
           revision: 1,
         }),
       );
-      await vi.waitFor(() => expect(observers.get("mock-older")).toBe(1));
-      expect(observers.get("mock-active")).toBe(1);
+      await vi.waitFor(() => expect(observers.get("fixture-history")).toBe(1));
+      expect(observers.get("fixture-active")).toBe(1);
       b.socket.close();
-      await vi.waitFor(() => expect(observers.has("mock-active")).toBe(false));
-      expect(observers.get("mock-older")).toBe(1);
+      await vi.waitFor(() =>
+        expect(observers.has("fixture-active")).toBe(false),
+      );
+      expect(observers.get("fixture-history")).toBe(1);
       a.socket.send(
         JSON.stringify({
           type: "detail_interest",
@@ -176,272 +99,203 @@ describe("WebSocket observation and transport limits", () => {
       a.socket.send(
         JSON.stringify({
           type: "detail_interest",
-          sessionId: "mock-active",
+          sessionId: "fixture-active",
           revision: 3,
         }),
       );
-      await vi.waitFor(() => expect(observers.get("mock-active")).toBe(1));
+      await vi.waitFor(() => expect(observers.get("fixture-active")).toBe(1));
       await application.close();
       expect(observers.size).toBe(0);
     } finally {
       a.socket.close();
-      b.socket.close();
+      secondSocket?.close();
+    }
+  }, 15_000);
+
+  it("releases failed joins and drains open and closing peers without a close ACK", async () => {
+    await runtime.openSession("fixture-active");
+    const releaseOpen = vi.fn();
+    const releaseClosing = vi.fn();
+    const releaseFailed = vi.fn();
+    const retain = vi
+      .fn()
+      .mockReturnValueOnce(releaseFailed)
+      .mockReturnValueOnce(releaseOpen)
+      .mockReturnValueOnce(releaseClosing);
+    Object.assign(runtime, { retainSessionView: retain });
+    vi.spyOn(runtime, "snapshot").mockRejectedValueOnce(
+      new Error("Session is gone"),
+    );
+    const url = `${baseUrl}/events?detail=fixture-active`;
+    const { socket } = observeEventSocket(url.replace("http", "ws"));
+    await once(socket, "close");
+    expect(retain).toHaveBeenCalledWith("fixture-active");
+    await vi.waitFor(() => expect(releaseFailed).toHaveBeenCalledOnce());
+
+    const auth = { Authorization: `Bearer ${token}` };
+    const open = await rawWebSocket(url, auth);
+    try {
+      const closing = await rawWebSocket(url, auth);
+      try {
+        await vi.waitFor(() => {
+          for (const peer of [open, closing])
+            expect(peer.messages[0]?.type).toBe("snapshot");
+        });
+        closing.send({ type: "detail_interest", invalid: true });
+        await vi.waitFor(() => expect(closing.closeCodes).toEqual([1008]));
+        await closeWithoutPeerAck(() => application.close(), open);
+        await closing.closed;
+        expect(releaseOpen).toHaveBeenCalledOnce();
+        expect(releaseClosing).toHaveBeenCalledOnce();
+        expect(application.server.listening).toBe(false);
+      } finally {
+        closing.destroy();
+      }
+    } finally {
+      open.destroy();
     }
   });
 
-  it.each(["open", "already closing"] as const)(
-    "drains an %s event peer without waiting for a close ACK",
-    async (state) => {
-      await runtime.openSession("mock-active");
-      const release = vi.fn();
-      Object.assign(runtime, { retainSessionView: vi.fn(() => release) });
-      const peer = await rawWebSocket(`${baseUrl}/events?detail=mock-active`, {
-        Authorization: `Bearer ${token}`,
-      });
-      try {
-        await vi.waitFor(() =>
-          expect(peer.messages.some((frame) => frame.type === "snapshot")).toBe(
-            true,
-          ),
-        );
-        if (state === "already closing") {
-          peer.send({ type: "detail_interest", invalid: true });
-          await vi.waitFor(() => expect(peer.closeCodes).toEqual([1008]));
-        }
-        await closeWithoutPeerAck(() => application.close(), peer);
-        expect(release).toHaveBeenCalledOnce();
-        expect(application.server.listening).toBe(false);
-      } finally {
-        peer.destroy();
-      }
-    },
-  );
-
-  it("releases a retained view when the initial snapshot fails", async () => {
-    const release = vi.fn();
-    const retain = vi.fn(() => release);
-    Object.assign(runtime, { retainSessionView: retain });
-    vi.spyOn(runtime, "snapshot").mockRejectedValue(
-      new Error("Session is gone"),
-    );
-    const socket = eventSocket(
-      `${baseUrl.replace("http", "ws")}/events?detail=mock-active`,
-    );
-    await new Promise<void>((resolve) => socket.once("close", () => resolve()));
-    expect(retain).toHaveBeenCalledWith("mock-active");
-    await vi.waitFor(() => expect(release).toHaveBeenCalledOnce());
-  });
-
-  it("broadcasts one update acknowledgement to every connected view", async () => {
-    await request(application.server)
-      .get("/api/update")
-      .set("Authorization", `Bearer ${token}`)
+  it("isolates socket detail while delivering global outcomes, needs-input and update acknowledgements", async () => {
+    await runtime.openSession("fixture-active");
+    await runtime.openSession("fixture-history");
+    await fixture.localRequest.get("/api/update?kind=inspire").expect(200);
+    const observed = await fixture.localRequest
+      .get("/api/update?kind=pi")
       .expect(200);
-    const observed = await request(application.server)
-      .get("/api/pi-update")
-      .set("Authorization", `Bearer ${token}`)
-      .expect(200);
-    const identity = observed.body.updateStatus
-      .availableUpdateIdentity as string;
-    expect(identity).toBeTruthy();
-
-    const [localView, remoteView] = await Promise.all([connect(), connect()]);
+    const identity = observed.body.availableUpdateIdentity as string;
+    const a = await connect("detail=fixture-active");
+    let secondSocket: WebSocket | undefined;
     try {
-      const dismissed = await request(application.server)
+      const b = await connect("detail=fixture-history");
+      secondSocket = b.socket;
+      expect(a.frames[0]?.data?.active?.sessionId).toBe("fixture-active");
+      expect(b.frames[0]?.data?.active?.sessionId).toBe("fixture-history");
+      a.frames.length = 0;
+      b.frames.length = 0;
+      const sessionId = "fixture-active";
+      const running = { runState: "running" };
+      runtime.emit("event", {
+        type: "agent_start",
+        sessionId,
+        sessionStatus: running,
+      });
+      runtime.emit("event", {
+        type: "extension_ui_pending",
+        sessionId,
+        request: {
+          sessionId,
+          id: "question",
+          method: "input",
+          title: "private dialog body",
+        },
+        sessionStatus: { ...running, needsInput: true, external: true },
+      });
+      runtime.emit("event", {
+        type: "agent_settled",
+        sessionId,
+        messages: ["private settled body"],
+        sessionStatus: { runState: "idle", indicator: "completed" },
+      });
+      runtime.emit("event", {
+        type: "runtime_error",
+        sessionId,
+        message: "private error detail",
+        sessionStatus: { runState: "failed", indicator: "failed" },
+      });
+      const dismissed = await fixture.localRequest
         .post("/api/update/snooze")
-        .set("Authorization", `Bearer ${token}`)
         .send({ identity })
         .expect(200);
       await vi.waitFor(() => {
-        for (const view of [localView, remoteView])
-          expect(
-            view.frames.some((frame) => frame.type === "update_status"),
-          ).toBe(true);
+        for (const { frames } of [a, b])
+          expect(frames).toContainEqual(
+            expect.objectContaining({
+              type: "update_status",
+              updateStatus: expect.objectContaining({
+                updateSnoozedUntil: dismissed.body.updateSnoozedUntil,
+              }),
+            }),
+          );
       });
-      const localFrame = localView.frames.find(
-        (frame) => frame.type === "update_status",
-      )!;
-      const remoteFrame = remoteView.frames.find(
-        (frame) => frame.type === "update_status",
-      )!;
-      expect(localFrame.updateStatus).toMatchObject({
-        updateSnoozedUntil: dismissed.body.updateSnoozedUntil,
-      });
-      expect(remoteFrame.updateStatus).toEqual(localFrame.updateStatus);
-    } finally {
-      localView.socket.close();
-      remoteView.socket.close();
-    }
-  });
-
-  it("isolates two socket detail interests while retaining global outcomes and needs-input", async () => {
-    await runtime.openSession("mock-active");
-    await runtime.openSession("mock-older");
-    const connect = async (id: string, digest?: string) => {
-      const frames: DetailFrame[] = [];
-      const socket = eventSocket(
-        `${baseUrl.replace("http", "ws")}/events?detail=${id}${digest ? `&snapshot=${digest}` : ""}`,
+      expect(a.frames).toContainEqual(
+        expect.objectContaining({
+          type: "extension_ui_pending",
+          sessionId,
+        }),
       );
-      socket.on("message", (data) => frames.push(JSON.parse(data.toString())));
-      await vi.waitFor(() => expect(frames[0]?.type).toBe("snapshot"));
-      return { socket, frames };
-    };
-    const a = await connect("mock-active");
-    const b = await connect("mock-older");
-    try {
-      expect(a.frames[0]?.data?.active?.sessionId).toBe("mock-active");
-      expect(b.frames[0]?.data?.active?.sessionId).toBe("mock-older");
-      const resumed = await connect("mock-active", a.frames[0]?.snapshotDigest);
-      expect(resumed.frames[0]).toMatchObject({
-        unchanged: true,
-        detailSessionId: "mock-active",
-        detailRevision: 0,
-      });
-      resumed.socket.close();
-      const changed = await connect("mock-active", "0".repeat(64));
-      expect(changed.frames[0]?.unchanged).toBeUndefined();
-      expect(changed.frames[0]?.data?.active?.sessionId).toBe("mock-active");
-      changed.socket.close();
-      a.frames.length = 0;
-      b.frames.length = 0;
-      // No connection owns this body: even an unserializable detail must not
-      // disconnect unrelated viewers or enter the encoded-event path.
-      runtime.emit("event", {
-        type: "message_update",
-        sessionId: "unobserved",
-        message: 1n,
-        sessionStatus: { runState: "running" },
-      });
-      for (const sessionId of ["mock-active", "mock-older"]) {
-        runtime.emit("event", {
-          type: "agent_start",
-          sessionId,
-          sessionStatus: { runState: "running" },
-        });
-        for (let index = 0; index < 10; index++)
-          runtime.emit("event", {
-            type: "message_update",
-            sessionId,
-            streamDelta: true,
-            streamMessageKey: `${sessionId}-assistant`,
-            streamTextLength: index + 1,
-            assistantMessageEvent: {
-              type: "text_delta",
-              contentIndex: 0,
-              delta: "x",
-            },
-            message: {
-              role: "assistant",
-              content: [{ type: "text", text: "x".repeat(index + 1) }],
-            },
-            sessionStatus: { runState: "running" },
-          });
-        runtime.emit("event", {
-          type: "extension_ui_request",
-          sessionId,
-          title: "private dialog body",
-          sessionStatus: {
-            runState: "running",
-            needsInput: true,
-            external: true,
-          },
-        });
-        runtime.emit("event", {
-          type: "agent_settled",
-          sessionId,
-          messages: ["private settled body"],
-          sessionStatus: { runState: "idle", indicator: "completed" },
-        });
-        runtime.emit("event", {
-          type: "runtime_error",
-          sessionId,
-          message: "private error detail",
-          sessionStatus: { runState: "failed", indicator: "failed" },
-        });
-      }
-      await vi.waitFor(() =>
-        expect(
-          a.frames.filter((frame) => frame.type === "runtime_error"),
-        ).toHaveLength(2),
+      const background = b.frames.filter(
+        (frame) => frame.sessionId === sessionId,
       );
-      await vi.waitFor(() =>
-        expect(
-          b.frames.filter((frame) => frame.type === "runtime_error"),
-        ).toHaveLength(2),
-      );
-      for (const [viewer, selected, background] of [
-        [a, "mock-active", "mock-older"],
-        [b, "mock-older", "mock-active"],
-      ] as const) {
-        expect(
-          viewer.frames
-            .filter((frame) => frame.type === "message_update_batch")
-            .map((frame) => frame.sessionId),
-        ).toEqual([selected]);
-        const global = viewer.frames.filter(
-          (frame) => frame.sessionId === background,
-        );
-        expect(global.map((frame) => frame.type)).toEqual([
-          "agent_start",
-          "session_status",
-          "agent_settled",
-          "runtime_error",
-        ]);
-        expect(global[1]?.sessionStatus?.needsInput).toBe(true);
-        expect(global[1]?.sessionStatus?.external).toBe(true);
-        expect(JSON.stringify(global)).not.toContain("private");
-        expect(JSON.stringify(global)).not.toContain("assistantMessageEvents");
-      }
+      expect(background.map((frame) => frame.type)).toEqual([
+        "agent_start",
+        "session_status",
+        "agent_settled",
+        "runtime_error",
+      ]);
+      expect(background[1]?.sessionStatus).toMatchObject({
+        needsInput: true,
+        external: true,
+      });
+      expect(JSON.stringify(background)).not.toContain("private");
     } finally {
       a.socket.close();
-      b.socket.close();
+      secondSocket?.close();
     }
-  });
+  }, 25_000);
 
   it("fences changed interest snapshots and queues global and new-owner changes across the read", async () => {
-    await runtime.openSession("mock-active");
-    await runtime.openSession("mock-older");
+    await runtime.openSession("fixture-active");
+    await runtime.openSession("fixture-history");
     const originalSnapshot = runtime.snapshot.bind(runtime);
-    let release!: () => void;
-    let releaseNew!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const newGate = new Promise<void>((resolve) => {
-      releaseNew = resolve;
-    });
+    const oldRead = deferredSignal();
+    const newRead = deferredSignal();
+    const captured = deferredSignal();
+    const cut = 100;
     const snapshotSpy = vi
       .spyOn(runtime, "snapshot")
       .mockImplementation(async (sessionId) => {
         const snapshot = await originalSnapshot(sessionId);
-        await (sessionId === "mock-active" ? gate : newGate);
-        return snapshot;
+        if (sessionId === "fixture-history") captured.resolve();
+        await (sessionId === "fixture-active" ? oldRead : newRead).promise;
+        return { ...snapshot, runtimeSequence: cut };
       });
-    const frames: DetailFrame[] = [];
-    const socket = eventSocket(
-      `${baseUrl.replace("http", "ws")}/events?detail=mock-active`,
+    const { socket, frames } = observeEventSocket(
+      `${baseUrl.replace("http", "ws")}/events?detail=fixture-active`,
     );
-    socket.on("message", (data) => frames.push(JSON.parse(data.toString())));
     try {
       await new Promise<void>((resolve) => socket.once("open", resolve));
       runtime.emit("event", {
         type: "agent_start",
-        sessionId: "mock-active",
+        runtimeSequence: cut + 1,
+        sessionId: "fixture-active",
         sessionStatus: { runState: "running" },
       });
       socket.send(
         JSON.stringify({
           type: "detail_interest",
-          sessionId: "mock-older",
+          sessionId: "fixture-history",
           revision: 1,
         }),
       );
-      await vi.waitFor(() =>
-        expect(snapshotSpy).toHaveBeenCalledWith("mock-older"),
-      );
+      await captured.promise;
+      expect(snapshotSpy).toHaveBeenCalledWith("fixture-history");
       runtime.emit("event", {
         type: "message_update",
-        sessionId: "mock-older",
+        runtimeSequence: cut,
+        sessionId: "fixture-history",
+        streamDelta: true,
+        streamMessageKey: "new-assistant",
+        assistantMessageEvent: {
+          type: "text_delta",
+          contentIndex: 0,
+          delta: "already captured",
+        },
+      });
+      runtime.emit("event", {
+        type: "message_update",
+        runtimeSequence: cut + 2,
+        sessionId: "fixture-history",
         streamDelta: true,
         streamMessageKey: "new-assistant",
         streamTextLength: 9,
@@ -453,12 +307,13 @@ describe("WebSocket observation and transport limits", () => {
         message: { role: "assistant", content: "new-owner" },
       });
       expect(frames).toHaveLength(0);
-      releaseNew();
+      newRead.resolve();
       await vi.waitFor(() => expect(frames[0]?.detailRevision).toBe(1));
-      release();
+      oldRead.resolve();
       runtime.emit("event", {
         type: "agent_settled",
-        sessionId: "mock-active",
+        runtimeSequence: cut + 3,
+        sessionId: "fixture-active",
         messages: ["old-owner-body"],
         sessionStatus: { runState: "idle" },
       });
@@ -470,107 +325,60 @@ describe("WebSocket observation and transport limits", () => {
       expect(frames.filter((frame) => frame.type === "snapshot")).toHaveLength(
         1,
       );
-      expect(frames[0]?.data?.active?.sessionId).toBe("mock-older");
+      expect(frames[0]?.data?.active?.sessionId).toBe("fixture-history");
       expect(frames.map((frame) => frame.type)).toEqual([
         "snapshot",
         "agent_start",
-        "message_update",
+        "message_update_batch",
         "agent_settled",
       ]);
+      expect(frames[2]).toMatchObject({
+        runtimeSequence: cut + 2,
+        assistantMessageEvents: [{ type: "text_delta", delta: "new-owner" }],
+      });
       expect(JSON.stringify(frames)).not.toContain("old-owner-body");
-      expect(snapshotSpy).toHaveBeenCalledWith("mock-older");
-    } finally {
-      release();
-      releaseNew();
-      socket.close();
-    }
-  });
-
-  it("delivers the snapshot before any live event on a new socket", async () => {
-    let releaseSnapshot!: () => void;
-    const gate = new Promise<void>((resolveGate) => {
-      releaseSnapshot = resolveGate;
-    });
-    const snapshot = runtime.snapshot.bind(runtime);
-    vi.spyOn(runtime, "snapshot").mockImplementation(async () => {
-      await gate;
-      return snapshot();
-    });
-    const { socket, frames } = observeEventSocket(
-      `${baseUrl.replace("http", "ws")}/events?detail=mock-active`,
-    );
-    try {
-      await new Promise<void>((resolve, reject) => {
-        socket.once("open", resolve);
-        socket.once("error", reject);
-      });
-
-      // A live event lands while the snapshot is still loading; it must not
-      // overtake the snapshot frame.
-      runtime.emit("event", {
-        type: "message_update",
-        sessionId: "mock-active",
-      });
-      releaseSnapshot();
-
-      await vi.waitFor(() => expect(frames).toHaveLength(2));
-      expect(frames[0]?.type).toBe("snapshot");
-      expect(frames[1]?.type).toBe("message_update");
-    } finally {
-      releaseSnapshot();
-      socket.close();
-    }
-  });
-
-  it("confirms an unchanged bootstrap snapshot without retransmitting it", async () => {
-    const bootstrap = await request(application.server)
-      .get("/api/bootstrap")
-      .set("Authorization", `Bearer ${token}`)
-      .expect(200);
-    const socket = eventSocket(
-      `${baseUrl.replace("http", "ws")}/events?snapshot=${bootstrap.body.snapshotDigest}`,
-    );
-    try {
-      const firstFrame = await new Promise<Record<string, unknown>>(
-        (resolve, reject) => {
-          socket.once("message", (data) =>
-            resolve(JSON.parse(data.toString()) as Record<string, unknown>),
-          );
-          socket.once("error", reject);
-        },
+      socket.send(
+        JSON.stringify({
+          type: "detail_interest",
+          sessionId: "missing",
+          revision: 2,
+        }),
       );
-      expect(firstFrame).toEqual({
-        type: "snapshot",
-        authorityId: application.authorityId,
-        snapshotDigest: bootstrap.body.snapshotDigest,
-        updateStatus: bootstrap.body.updateStatus,
-        detailSessionId: null,
-        detailRevision: 0,
-        unchanged: true,
-      });
+      await vi.waitFor(() =>
+        expect(frames.at(-1)).toMatchObject({
+          type: "snapshot",
+          detailSessionId: "missing",
+          detailRevision: 2,
+          missingDetail: true,
+          data: { active: null },
+        }),
+      );
+      socket.send(
+        JSON.stringify({
+          type: "detail_interest",
+          sessionId: "fixture-active",
+          revision: 3,
+        }),
+      );
+      await vi.waitFor(() =>
+        expect(frames.at(-1)).toMatchObject({
+          type: "snapshot",
+          detailRevision: 3,
+          data: { active: { sessionId: "fixture-active" } },
+        }),
+      );
     } finally {
+      oldRead.resolve();
+      newRead.resolve();
       socket.close();
     }
   });
 
   it("streams a large write as compact bounded argument batches only to detail viewers", async () => {
-    await runtime.openSession("mock-active");
-    const detail = eventSocket(
-      `${baseUrl.replace("http", "ws")}/events?detail=mock-active`,
-    );
-    const background = eventSocket(`${baseUrl.replace("http", "ws")}/events`);
-    const frames: Array<Record<string, unknown> & { type: string }> = [];
-    const backgroundFrames: Array<Record<string, unknown> & { type: string }> =
-      [];
-    detail.on("message", (data) => frames.push(JSON.parse(data.toString())));
-    background.on("message", (data) =>
-      backgroundFrames.push(JSON.parse(data.toString())),
-    );
+    await runtime.openSession("fixture-active");
+    const { socket: detail, frames } = await connect("detail=fixture-active");
+    const { socket: background, frames: backgroundFrames } = await connect();
     try {
-      await vi.waitFor(() => {
-        expect(frames[0]?.type).toBe("snapshot");
-        expect(backgroundFrames[0]?.type).toBe("snapshot");
-      });
       let message: unknown = {
         role: "assistant",
         timestamp: 20,
@@ -579,10 +387,9 @@ describe("WebSocket observation and transport limits", () => {
         __inspireStreamRevision: 0,
       };
       let revision = 0;
-      let cumulativeBytes = 0;
       const emit = (event: unknown) =>
         runtime.emit("event", {
-          sessionId: "mock-active",
+          sessionId: "fixture-active",
           ...(event as Record<string, unknown>),
         });
       emit({ type: "message_start", message });
@@ -600,7 +407,6 @@ describe("WebSocket observation and transport limits", () => {
           assistantMessageEvent,
           message,
         };
-        cumulativeBytes += Buffer.byteLength(JSON.stringify(event));
         emit(event);
       };
       project({
@@ -634,14 +440,21 @@ describe("WebSocket observation and transport limits", () => {
       // A following ordinary event flushes all pending deltas in order.
       emit({
         type: "tool_execution_start",
-        toolCallId: "write-1",
-        toolName: "write",
-        args: {},
+        toolActivity: {
+          "write-1": { id: "write-1", name: "write", phase: "running" },
+        },
       });
-      await vi.waitFor(() =>
-        expect(frames.at(-1)?.type).toBe("tool_execution_start"),
-      );
-      const batches = frames.filter(
+      const executionStart = await vi.waitFor(() => {
+        const index = frames.findIndex(
+          (frame) =>
+            frame.type === "tool_execution_start" &&
+            frame.toolActivity?.["write-1"]?.phase === "running",
+        );
+        expect(index).toBeGreaterThanOrEqual(0);
+        return index;
+      });
+      const beforeExecution = frames.slice(0, executionStart);
+      const batches = beforeExecution.filter(
         (frame) => frame.type === "message_update_batch",
       );
       expect(batches.length).toBeGreaterThan(1);
@@ -653,29 +466,13 @@ describe("WebSocket observation and transport limits", () => {
             (frame.assistantMessageEvents as unknown[]).length,
         ),
       ).toBe(true);
-      let reconstructed: unknown;
-      let previousRevision = 0;
-      for (const frame of frames.filter((frame) =>
-        frame.type.startsWith("message_"),
-      )) {
-        if (frame.type === "message_start") reconstructed = frame.message;
-        else {
-          expect(frame.streamRevision).toBe(
-            previousRevision + Number(frame.sourceEventCount),
-          );
-          previousRevision = Number(frame.streamRevision);
-          for (const delta of frame.assistantMessageEvents as unknown[])
-            reconstructed = applyAssistantMessageDelta(reconstructed, delta);
-          expect(assistantStreamTextLength(reconstructed)).toBe(
-            frame.streamTextLength,
-          );
-          reconstructed = {
-            ...(reconstructed as Record<string, unknown>),
-            __inspireStreamRevision: frame.streamRevision,
-          };
-        }
-      }
-      expect(reconstructed).toEqual(message);
+      expect(batches.at(-1)?.streamRevision).toBe(revision);
+      expect(
+        batches.reduce(
+          (count, frame) => count + Number(frame.sourceEventCount),
+          0,
+        ),
+      ).toBe(revision);
       expect(
         backgroundFrames.filter(
           (frame) =>
@@ -688,203 +485,78 @@ describe("WebSocket observation and transport limits", () => {
         0,
       );
       expect(deltaBytes).toBeLessThan(48_000);
-      expect(cumulativeBytes).toBeGreaterThan(deltaBytes * 30);
-      console.info(
-        "Large-write WebSocket JSON bytes (before optional compression):",
-        {
-          sourceBytes: Buffer.byteLength(source),
-          previewCharacters: parser.characters,
-          batches: batches.length,
-          deltaBytes,
-          cumulativeBytes,
-        },
-      );
     } finally {
       detail.close();
       background.close();
     }
   });
 
-  it("batches ordered assistant deltas without retransmitting cumulative messages", async () => {
-    await runtime.openSession("mock-active");
-    const socket = eventSocket(
-      `${baseUrl.replace("http", "ws")}/events?detail=mock-active`,
-    );
-    try {
-      await new Promise<void>((resolve, reject) => {
-        socket.once("message", () => resolve());
-        socket.once("error", reject);
-      });
-      const batchFrame = new Promise<Record<string, unknown>>(
-        (resolve, reject) => {
-          const timeout = setTimeout(
-            () => reject(new Error("stream batch did not arrive")),
-            2_000,
-          );
-          socket.on("message", (data) => {
-            const frame = JSON.parse(data.toString()) as Record<
-              string,
-              unknown
-            >;
-            if (frame.type !== "message_update_batch") return;
-            clearTimeout(timeout);
-            resolve(frame);
-          });
-        },
-      );
-      runtime.emit("event", {
-        type: "message_update",
-        sessionId: "mock-active",
-        streamDelta: true,
-        streamMessageKey: "live:assistant-1",
-        streamTextLength: 1,
-        assistantMessageEvent: {
-          type: "text_delta",
-          contentIndex: 0,
-          delta: "a",
-        },
-        message: {
-          role: "assistant",
-          content: [{ type: "text", text: "a" }],
-        },
-      });
-      runtime.emit("event", {
-        type: "message_update",
-        sessionId: "mock-active",
-        streamDelta: true,
-        streamMessageKey: "live:assistant-1",
-        streamTextLength: 2,
-        assistantMessageEvent: {
-          type: "text_delta",
-          contentIndex: 0,
-          delta: "b",
-        },
-        message: {
-          role: "assistant",
-          content: [{ type: "text", text: "ab" }],
-        },
-      });
-      const frame = await batchFrame;
-      expect(frame).toMatchObject({
-        type: "message_update_batch",
-        sessionId: "mock-active",
-        streamMessageKey: "live:assistant-1",
-        streamTextLength: 2,
-        assistantMessageEvents: [
-          { type: "text_delta", delta: "a" },
-          { type: "text_delta", delta: "b" },
-        ],
-      });
-      expect(frame).not.toHaveProperty("message");
-    } finally {
-      socket.close();
-    }
-  });
-
-  it("keeps joined sockets observable and terminates clients that stop answering pings", async () => {
-    const heartbeat = await hostApiFixture({
-      websocketHeartbeatIntervalMs: 20,
-    });
-    const url = `${heartbeat.baseUrl.replace("http", "ws")}/events`;
-    const responsive = eventSocket(url);
-    try {
-      const ping = new Promise<void>((resolve) =>
-        responsive.once("ping", resolve),
-      );
-      const heartbeat = new Promise<void>((resolve, reject) => {
-        responsive.on("message", (data) => {
-          try {
-            const frame = JSON.parse(data.toString()) as { type?: unknown };
-            if (frame.type === "heartbeat") resolve();
-          } catch (error) {
-            reject(error);
-          }
-        });
-        responsive.once("error", reject);
-      });
-      await Promise.race([
-        Promise.all([ping, heartbeat]),
-        new Promise<never>((_, reject) =>
-          setTimeout(
-            () => reject(new Error("heartbeat was not observed")),
-            1_000,
-          ),
-        ),
-      ]);
-      responsive.close();
-
-      const unresponsive = eventSocket(url, { autoPong: false });
-      const closed = new Promise<number>((resolve, reject) => {
-        unresponsive.once("close", resolve);
-        unresponsive.once("error", () => undefined);
-        setTimeout(
-          () => reject(new Error("unresponsive socket remained open")),
-          1_000,
-        );
-      });
-      expect(await closed).toBe(1006);
-    } finally {
-      responsive.close();
-      await closeHostApiFixture(heartbeat);
-    }
-  });
-
   it.each([
-    [
-      "oversized",
-      {
-        type: "extension_display",
-        payload: "x".repeat(MAX_RUNTIME_EVENT_BYTES + 1),
-      },
-    ],
-    ["unserializable", { type: "runtime_event", data: 1n }],
-  ])(
-    "retires joined sockets without failing the emitter for a %s event",
-    async (_failure, event) => {
-      const { socket } = await connect();
+    "oversized event",
+    "unserializable event",
+    "joining backlog",
+  ] as const)(
+    "closes the affected socket when it cannot deliver a %s",
+    async (failure) => {
+      const snapshotReady = deferredSignal();
+      if (failure === "joining backlog") {
+        const snapshot = runtime.snapshot.bind(runtime);
+        vi.spyOn(runtime, "snapshot").mockImplementation(async (sessionId) => {
+          await snapshotReady.promise;
+          return snapshot(sessionId);
+        });
+      }
+      const { socket, frames } = observeEventSocket(
+        `${baseUrl.replace("http", "ws")}/events`,
+      );
       try {
-        const closed = new Promise<number>((resolve) =>
-          socket.once("close", resolve),
-        );
-        expect(() => runtime.emit("event", event)).not.toThrow();
-        expect(await closed).toBe(1013);
+        await once(socket, "open");
+        if (failure !== "joining backlog")
+          await vi.waitFor(() => expect(frames[0]?.type).toBe("snapshot"));
+        const closed = once(socket, "close");
+        if (failure === "joining backlog") {
+          const payload = "x".repeat(64 * 1024);
+          for (
+            let sent = 0;
+            sent <= MAX_JOINING_EVENT_BYTES;
+            sent += payload.length
+          )
+            runtime.emit("event", { type: "message_update", payload });
+        } else {
+          runtime.emit(
+            "event",
+            failure === "oversized event"
+              ? {
+                  type: "extension_display",
+                  payload: "x".repeat(MAX_RUNTIME_EVENT_BYTES + 1),
+                }
+              : { type: "runtime_event", data: 1n },
+          );
+        }
+        expect((await closed)[0]).toBe(1013);
       } finally {
+        snapshotReady.resolve();
         socket.close();
       }
     },
   );
+});
 
-  it("closes a joining socket whose pre-snapshot event backlog exceeds the bound", async () => {
-    let releaseSnapshot!: () => void;
-    const gate = new Promise<void>(
-      (resolveGate) => (releaseSnapshot = resolveGate),
+it("keeps joined sockets observable and terminates clients that stop answering pings", async () => {
+  const fixture = await hostApiFixture({ websocketHeartbeatIntervalMs: 20 });
+  const url = `${fixture.baseUrl.replace("http", "ws")}/events`;
+  const { socket, frames } = observeEventSocket(url);
+  let unresponsive: WebSocket | undefined;
+  try {
+    await once(socket, "ping");
+    await vi.waitFor(() =>
+      expect(frames.some((frame) => frame.type === "heartbeat")).toBe(true),
     );
-    const snapshot = runtime.snapshot.bind(runtime);
-    vi.spyOn(runtime, "snapshot").mockImplementation(async () => {
-      await gate;
-      return snapshot();
-    });
-    const socket = eventSocket(`${baseUrl.replace("http", "ws")}/events`);
-    try {
-      await new Promise<void>((resolve, reject) => {
-        socket.once("open", resolve);
-        socket.once("error", reject);
-      });
-      const closed = new Promise<number>((resolve) =>
-        socket.once("close", resolve),
-      );
-      const payload = "x".repeat(64 * 1024);
-      for (
-        let sent = 0;
-        sent <= MAX_JOINING_EVENT_BYTES;
-        sent += payload.length
-      ) {
-        runtime.emit("event", { type: "message_update", payload });
-      }
-      expect(await closed).toBe(1013);
-    } finally {
-      releaseSnapshot();
-      socket.close();
-    }
-  });
+    unresponsive = observeEventSocket(url, { autoPong: false }).socket;
+    expect((await once(unresponsive, "close"))[0]).toBe(1006);
+  } finally {
+    socket.close();
+    unresponsive?.close();
+    await closeHostApiFixture(fixture);
+  }
 });

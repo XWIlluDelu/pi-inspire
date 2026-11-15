@@ -1,48 +1,49 @@
 import { SearchX } from "lucide-react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { nativeCommand } from "../../shared/commands";
+import { isBusyRunState, SESSION_ACTION_IDS } from "../../shared/contracts";
+import { selectedRunState } from "../app-state";
 import {
-  memo,
-  useCallback,
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-import { nativeCommand, parseCommandInvocation } from "../../shared/commands";
-import {
-  ACTIVITY_FOLD_VISIBILITIES,
-  isAbortableRunState,
-  isBusyRunState,
-  type PalettePreference,
-  type ThemePreference,
-  TOOL_VISIBILITY_PREFERENCES,
-  VISIBILITY_PREFERENCES,
-} from "../../shared/contracts";
-import {
-  type PiCommand,
+  resolveCommandInput,
   resolveCommandInventory,
 } from "../composer-completion";
 import { shouldSubmitComposerEnter } from "../composer-keyboard";
-import { branchCopiesBlocked } from "../controllers/branch-controller";
+import { relativeTime } from "../format";
 import { isTouchFirstDevice } from "../input-device";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import { paletteTextMatchRanges, rankPaletteItems } from "../palette-search";
-import { PALETTE_LABELS, preferenceChoiceLabel } from "../preference-labels";
-import { modelControlsSupported } from "../session-controls";
+import { preferenceChoices } from "../preference-labels";
+import {
+  canStop,
+  runSessionAction,
+  runStop,
+  sessionActionAvailable,
+  sessionActions,
+  sessionPresentationName,
+  type WorkbenchDestinations,
+} from "../session-actions";
 import { shallowEqual, store, useAppState } from "../store";
 import {
   queueTerminalAction,
   type TerminalUiAction,
+  terminalActions,
 } from "../terminal-actions";
-import { useModalFocus } from "../use-modal-focus";
+import { terminalShortcutLabel } from "../terminal-keyboard";
 import { useSearchFocus } from "../use-search-focus";
-import { modelCycleShortcut } from "../workbench-keyboard";
-import { sessionHeading } from "./AppTopbar";
+import {
+  modelCycleShortcut,
+  modelCycles,
+  runModelCycle,
+  workbenchShortcutLabel,
+  workbenchShortcuts,
+} from "../workbench-keyboard";
 import { ButtonLabel } from "./ButtonLabel";
 import { ComposerInput } from "./ComposerInput";
+import { Modal } from "./Modal";
 import { visibleSessions } from "./nav-model";
+import { OptionList, useOptionList } from "./OptionList";
+import { RenameSessionForm } from "./RenameSessionForm";
 import { SearchMatchText } from "./SearchMatchText";
-import { relativeTime } from "./transcript-rows";
 
 interface PaletteItem {
   id: string;
@@ -50,118 +51,93 @@ interface PaletteItem {
   title: string;
   hint?: string;
   keepOpen?: boolean;
-  aliases?: string[];
+  aliases?: readonly string[];
   default?: boolean;
   run: () => void;
 }
 
-const THEME_LABELS: Record<ThemePreference, string> = {
-  light: "Light",
-  dark: "Dark",
-  system: "System",
-};
+const workspaceActions = [
+  {
+    mode: "history",
+    title: "Open History",
+    aliases: ["branches", "inspect history"],
+  },
+  { mode: "files", title: "Open Files", aliases: [] },
+  { mode: "changes", title: "Open Changes", aliases: [] },
+  {
+    mode: "terminal",
+    title: "Open Terminal",
+    aliases: ["shell", "project shell"],
+  },
+] as const;
 
 function runTerminalAction(action: TerminalUiAction): void {
   const projectCwd = store.getState().cwd;
   if (!projectCwd) return;
   queueTerminalAction(action, projectCwd);
-  store.setResourcesOpen(true);
-  store.setContextMode("terminal");
+  store.openContextMode("terminal");
 }
 
 export const CommandPalette = memo(function CommandPalette({
   onClose,
   active = true,
+  rename,
+  onRenameBack,
   onExportSession,
+  onRenameSession,
   onToggleNav,
   onToggleCtx,
-  onNewSession,
   onOpenSession,
-  onFindSession = () => {
-    store.runPaletteNativeCommand("/resume");
-  },
-  onOpenSettings = () => {
-    store.runPaletteNativeCommand("/settings");
-  },
-  onOpenHelp = (mode) => {
-    store.runPaletteNativeCommand(`/${mode}`);
-  },
+  destinations,
 }: {
   onClose: () => void;
   active?: boolean;
+  rename?: { sessionId: string; name: string };
+  onRenameBack: () => void;
   onExportSession: () => void;
+  onRenameSession: (sessionId: string, name: string) => void;
   onToggleNav: () => void;
   onToggleCtx: () => void;
-  onNewSession: () => void;
   onOpenSession: (id: string) => void;
-  onFindSession?: () => void;
-  onOpenSettings?: () => void;
-  onOpenHelp?: (mode: "hotkeys" | "changelog") => void;
+  destinations: WorkbenchDestinations;
 }) {
-  const state = useAppState((appState) => {
-    const catalogTitle = appState.sessions.find(
-      (session) => session.id === appState.sessionId,
-    )?.title;
-    return {
-      sessionId: appState.sessionId,
-      readOnlyReason: appState.readOnlyReason,
-      modelControls: modelControlsSupported(appState),
-      copiesBlocked: branchCopiesBlocked(appState),
+  const state = useAppState(
+    (source) => ({
+      sessionId: source.sessionId,
+      readOnlyReason: source.readOnlyReason,
+      clone: sessionActionAvailable("clone", source),
       external: Boolean(
-        appState.sessionId &&
-          appState.sessionStatuses[appState.sessionId]?.external,
+        source.sessionId && source.sessionStatuses[source.sessionId]?.external,
       ),
-      heading: sessionHeading(
-        appState.sessionName,
-        catalogTitle,
-        appState.messages,
-        !appState.hasOlderMessages,
-      ),
-      runState: appState.runState,
-      bashRunning: appState.bashRunning,
-      transcriptDurableLeafId: appState.transcriptDurableLeafId,
-      transcriptEffectiveLeafId: appState.transcriptEffectiveLeafId,
-      prefs: appState.prefs,
-      sessions: appState.sessions,
-      commands: appState.commands,
-      models: appState.availableModels,
-      model: appState.model,
-    };
-  }, shallowEqual);
-  const listId = useId();
+      runState: selectedRunState(source),
+      abortable: canStop(source),
+      earlierContinuation: source.view.restoreSavedLeafId !== null,
+      prefs: source.prefs,
+      sessions: source.sessions,
+      commands: source.commands,
+      models: source.availableModels,
+      model: source.model,
+    }),
+    shallowEqual,
+  );
+  const list = useOptionList<PaletteItem>();
   const [searchQuery, setSearchQuery] = useState("");
   const [preparation, setPreparation] = useState<{
     owner: string;
-    command: PiCommand;
+    name: string;
     text: string;
   } | null>(null);
-  const overlayRef = useRef<HTMLDivElement>(null);
   const commandInventory = useMemo(
     () => resolveCommandInventory(state.commands),
     [state.commands],
   );
-  const preparedInvocation = preparation
-    ? parseCommandInvocation(preparation.text, (name) =>
-        commandInventory.some((command) => command.name === name),
-      )
-    : null;
-  const preparedCommand = preparedInvocation
-    ? commandInventory.find(
-        (command) => command.name === preparedInvocation.name,
-      )
-    : undefined;
+  const preparedCommand =
+    preparation &&
+    resolveCommandInput(preparation.text, commandInventory)?.command;
   const [sendingLabel, setSendingLabel] = useState<string | null>(null);
   const preparationSending = sendingLabel !== null;
   const [delivery, setDelivery] = useState<"steer" | "followUp">("steer");
-  const [index, setIndex] = useState(0);
-  const [keyboardActive, setKeyboardActive] = useState(true);
-  const [renaming, setRenaming] = useState(false);
-  const [renameSessionId, setRenameSessionId] = useState<string | null>(null);
-  const [renameValue, setRenameValue] = useState("");
-  const [renameInitialValue, setRenameInitialValue] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
-  const listRef = useRef<HTMLDivElement>(null);
-  const renameIncarnationRef = useRef(0);
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
@@ -169,342 +145,172 @@ export const CommandPalette = memo(function CommandPalette({
       mountedRef.current = false;
     };
   }, []);
-  const exitRename = useCallback(() => {
-    renameIncarnationRef.current += 1;
-    setRenaming(false);
-    setRenameSessionId(null);
-    setRenameValue("");
-    setRenameInitialValue("");
-  }, []);
-  const dialogRef = useModalFocus<HTMLDivElement>(
-    active,
-    "command-palette",
-    (event) => {
-      if (isComposingKeyboardEvent(event)) return false;
-      if (preparation && !preparationSending) setPreparation(null);
-      else if (renaming) exitRename();
-      else onClose();
-    },
-  );
-  const abortable = isAbortableRunState(state.runState) || state.bashRunning;
-  const hasEarlierBranch = Boolean(
-    state.transcriptDurableLeafId &&
-      state.transcriptEffectiveLeafId &&
-      state.transcriptDurableLeafId !== state.transcriptEffectiveLeafId,
-  );
-
-  useSearchFocus(active && !preparation && !renaming, inputRef, dialogRef);
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  useSearchFocus(active && !preparation && !rename, inputRef, dialogRef);
+  const wasRenaming = useRef(false);
   useEffect(() => {
-    if (active && renaming) inputRef.current?.focus({ preventScroll: true });
-  }, [active, renaming]);
+    if (active && !rename && wasRenaming.current)
+      inputRef.current?.focus({ preventScroll: true });
+    wasRenaming.current = Boolean(rename);
+  }, [active, rename]);
 
   useEffect(() => {
     if (preparation && preparation.owner !== state.sessionId)
       setPreparation(null);
   }, [preparation, state.sessionId]);
 
-  useEffect(() => {
-    if (renaming && renameSessionId !== state.sessionId) exitRename();
-  }, [exitRename, renameSessionId, renaming, state.sessionId]);
-
   const items = useMemo<PaletteItem[]>(() => {
+    const sessionId = state.sessionId;
     const actions: PaletteItem[] = [
-      {
-        id: "new",
+      ...(
+        [
+          ["new", "new", "New session", []],
+          ["sessions", "resume", "Find a session", ["sessions"]],
+          ["settings", "settings", "Settings", ["preferences"]],
+          ["hotkeys", "hotkeys", "Keyboard shortcuts", ["shortcuts", "help"]],
+          ["changelog", "changelog", "Pi changelog", ["release notes"]],
+        ] as const
+      ).map(([destination, id, title, aliases]) => ({
+        id,
+        title,
+        aliases: [`/${id}`, ...aliases],
         group: "Actions",
-        title: "New session",
-        aliases: ["/new"],
-        default: true,
-        run: onNewSession,
-      },
-      {
-        id: "resume",
-        group: "Actions",
-        title: "Find a session",
-        aliases: ["/resume", "sessions"],
-        default: true,
-        run: onFindSession,
-      },
-      {
-        id: "settings",
-        group: "Actions",
-        title: "Settings",
-        aliases: ["/settings", "preferences"],
-        default: true,
-        run: onOpenSettings,
-      },
-      {
-        id: "hotkeys",
-        group: "Actions",
-        title: "Keyboard shortcuts",
-        aliases: ["/hotkeys", "shortcuts", "help"],
-        default: true,
-        run: () => onOpenHelp("hotkeys"),
-      },
-      {
-        id: "changelog",
-        group: "Actions",
-        title: "Pi changelog",
-        aliases: ["/changelog", "release notes"],
-        run: () => onOpenHelp("changelog"),
-      },
+        default: id !== "changelog",
+        run: () => destinations[destination](),
+      })),
       {
         id: "refresh",
         group: "Actions",
         title: "Refresh session list",
         run: () => void store.refreshSessions(),
       },
-      {
-        id: "nav",
+      ...(["nav", "ctx"] as const).map((id) => ({
+        id,
         group: "Actions",
-        title: "Toggle navigation panel",
-        hint: "Ctrl+B",
-        run: onToggleNav,
-      },
-      {
-        id: "ctx",
-        group: "Actions",
-        title: "Toggle resources panel",
-        hint: "Ctrl+.",
-        run: onToggleCtx,
-      },
+        title: workbenchShortcuts[id].title,
+        hint: workbenchShortcutLabel(id),
+        run: id === "nav" ? onToggleNav : onToggleCtx,
+      })),
     ];
-    if (state.sessionId) {
+    const runInSession = (run: () => void) => () => {
+      if (store.getState().sessionId === sessionId) run();
+    };
+    if (sessionId) {
       actions.push(
         {
-          id: "files",
-          group: "Workspace",
-          title: "Open Files",
-          default: true,
-          run: () => {
-            store.setResourcesOpen(true);
-            store.setContextMode("files");
-          },
+          id: "copy-resume-command",
+          group: "Actions",
+          title: "Copy resume command",
+          run: runInSession(() => void store.copyResumeCommand(sessionId)),
         },
-        {
-          id: "changes",
-          group: "Workspace",
-          title: "Open Changes",
-          default: true,
-          run: () => {
-            store.setResourcesOpen(true);
-            store.setContextMode("changes");
-          },
-        },
-        {
-          id: "history",
-          group: "Workspace",
-          title: "Open History",
-          aliases: ["/tree", "history", "branches", "branch navigation"],
-          default: true,
-          run: () => {
-            store.setResourcesOpen(true);
-            store.setContextMode("branches");
-          },
-        },
-        {
-          id: "terminal",
-          group: "Workspace",
-          title: "Open Terminal",
-          aliases: ["shell", "project shell"],
-          default: true,
-          run: () => {
-            store.setResourcesOpen(true);
-            store.setContextMode("terminal");
-          },
-        },
-        {
-          id: "terminal-new",
-          group: "Terminal",
-          title: "New terminal",
-          hint: "Ctrl+Shift+`",
-          run: () => runTerminalAction("new"),
-        },
-        {
-          id: "terminal-next",
-          group: "Terminal",
-          title: "Next terminal",
-          hint: "Ctrl+PageDown",
-          run: () => runTerminalAction("next"),
-        },
-        {
-          id: "terminal-previous",
-          group: "Terminal",
-          title: "Previous terminal",
-          hint: "Ctrl+PageUp",
-          run: () => runTerminalAction("previous"),
-        },
-        {
-          id: "terminal-control",
-          group: "Terminal",
-          title: "Take control of terminal",
-          run: () => runTerminalAction("take-control"),
-        },
-        {
-          id: "terminal-restart",
-          group: "Terminal",
-          title: "Restart terminal",
-          run: () => runTerminalAction("restart"),
-        },
-        {
-          id: "terminal-close",
-          group: "Terminal",
-          title: "Close terminal",
-          run: () => runTerminalAction("close"),
-        },
-        {
-          id: "terminal-focus",
-          group: "Terminal",
-          title: "Toggle terminal focus",
-          run: () => runTerminalAction("focus"),
-        },
-        {
-          id: "terminal-settings",
-          group: "Terminal",
-          title: "Terminal settings",
-          run: () => runTerminalAction("settings"),
-        },
+        ...SESSION_ACTION_IDS.flatMap((id): PaletteItem[] => {
+          if (
+            id === "copy-id" ||
+            (id === "clone" && !state.clone) ||
+            (id === "rename" && state.readOnlyReason)
+          )
+            return [];
+          const action = sessionActions[id];
+          const branchSwitch = id === "switch-branch";
+          return [
+            {
+              id,
+              title: id === "rename" ? `${action.title}…` : action.title,
+              aliases: [
+                `/${action.command}`,
+                ...(branchSwitch
+                  ? ["branches", "branch navigation"]
+                  : id === "rename"
+                    ? ["rename"]
+                    : []),
+              ],
+              group: branchSwitch || id === "clone" ? "Workspace" : "Actions",
+              default: branchSwitch || id === "export",
+              keepOpen: id === "rename",
+              run: () =>
+                runSessionAction(id, sessionId, {
+                  rename: onRenameSession,
+                  renameName: sessionPresentationName,
+                  export: onExportSession,
+                }),
+            },
+          ];
+        }),
+        ...workspaceActions.map(
+          ({ mode, title, aliases }): PaletteItem => ({
+            id: mode,
+            group: "Workspace",
+            title,
+            aliases,
+            default: true,
+            run: runInSession(() => store.openContextMode(mode)),
+          }),
+        ),
+        ...(Object.keys(terminalActions) as TerminalUiAction[]).map(
+          (action): PaletteItem => ({
+            id: `terminal-${action}`,
+            group: "Terminal",
+            title: terminalActions[action].title,
+            hint: terminalShortcutLabel(action),
+            run: runInSession(() => runTerminalAction(action)),
+          }),
+        ),
       );
-      if (!state.readOnlyReason) {
-        if (!state.external)
-          actions.push(
-            {
-              id: "model-next",
-              group: "Models",
-              title: "Next model",
-              hint: modelCycleShortcut("next-model"),
-              run: () => void store.cycleModel(1),
-            },
-            {
-              id: "model-previous",
-              group: "Models",
-              title: "Previous model",
-              hint: modelCycleShortcut("previous-model"),
-              run: () => void store.cycleModel(-1),
-            },
-          );
-        if (state.modelControls)
+      if (!state.readOnlyReason)
+        for (const action of Object.keys(
+          modelCycles,
+        ) as (keyof typeof modelCycles)[]) {
+          if (state.external && action !== "thinking") continue;
           actions.push({
-            id: "thinking-cycle",
+            id: action,
             group: "Models",
-            title: "Cycle thinking level",
-            hint: modelCycleShortcut("thinking"),
-            run: () => void store.cycleThinking(),
+            title: modelCycles[action].title,
+            hint: modelCycleShortcut(action),
+            run: runInSession(() => void runModelCycle(action)),
           });
-      }
+        }
       actions.push({
         id: "manage-models",
         group: "Models",
         title: "Manage models",
         aliases: ["/scoped-models", "common models", "provider settings"],
-        run: () => store.openModelSettings(),
+        run: runInSession(() => destinations.models()),
       });
-      if (hasEarlierBranch) {
+      if (state.earlierContinuation) {
         actions.push({
           id: "latest-branch",
           group: "Workspace",
-          title: "Back to latest branch",
+          title: "Restore latest saved position",
+          aliases: ["Back to latest branch"],
           default: true,
-          run: () => void store.returnToLatestBranch(),
+          run: runInSession(() => void store.returnToLatestBranch()),
         });
       }
     }
-    if (state.sessionId && !state.copiesBlocked) {
-      actions.push({
-        id: "clone",
-        group: "Workspace",
-        title: "Clone current branch",
-        aliases: ["/clone"],
-        run: () => void store.cloneCurrentBranch(),
-      });
-    }
-    if (state.sessionId && !state.readOnlyReason) {
-      actions.push({
-        id: "rename",
-        group: "Actions",
-        title: "Rename session…",
-        aliases: ["/name", "rename"],
-        keepOpen: true,
-        run: () => {
-          renameIncarnationRef.current += 1;
-          setRenameSessionId(state.sessionId);
-          setRenameValue(state.heading);
-          setRenameInitialValue(state.heading);
-          setRenaming(true);
-        },
-      });
-    }
-    if (abortable) {
+    if (state.abortable) {
       actions.push({
         id: "abort",
         group: "Actions",
         title: "Abort running task",
         default: true,
         hint: "Esc",
-        run: () => void store.abort(),
+        run: () => runStop(sessionId),
       });
     }
-    for (const theme of Object.keys(THEME_LABELS) as ThemePreference[]) {
-      actions.push({
-        id: `theme-${theme}`,
-        group: "Preferences",
-        title: `Theme: ${THEME_LABELS[theme]}`,
-        hint: state.prefs.theme === theme ? "current" : undefined,
-        run: () => store.setTheme(theme),
-      });
-    }
-    for (const palette of Object.keys(PALETTE_LABELS) as PalettePreference[]) {
-      actions.push({
-        id: `palette-${palette}`,
-        group: "Preferences",
-        title: `Palette: ${PALETTE_LABELS[palette]}`,
-        hint: state.prefs.palette === palette ? "current" : undefined,
-        run: () => store.setPalette(palette),
-      });
-    }
-    actions.push(
-      {
-        id: "launch-welcome",
-        group: "Preferences",
-        title: "On launch: show welcome",
-        hint: state.prefs.launch === "welcome" ? "current" : undefined,
-        run: () => store.setLaunch("welcome"),
-      },
-      {
-        id: "launch-continue",
-        group: "Preferences",
-        title: "On launch: continue previous session",
-        hint: state.prefs.launch === "continue" ? "current" : undefined,
-        run: () => store.setLaunch("continue"),
-      },
-    );
-    for (const value of VISIBILITY_PREFERENCES) {
-      actions.push({
-        id: `thinking-${value}`,
-        group: "Preferences",
-        title: `Reasoning details: ${preferenceChoiceLabel(value)}`,
-        hint: state.prefs.thinkingVisibility === value ? "current" : undefined,
-        run: () => store.setThinkingVisibility(value),
-      });
-    }
-    for (const value of TOOL_VISIBILITY_PREFERENCES) {
-      actions.push({
-        id: `tools-${value}`,
-        group: "Preferences",
-        title: `Tool activity: ${preferenceChoiceLabel(value)}`,
-        hint: state.prefs.toolVisibility === value ? "current" : undefined,
-        run: () => store.setToolVisibility(value),
-      });
-    }
-    for (const value of ACTIVITY_FOLD_VISIBILITIES) {
-      actions.push({
-        id: `activity-folds-${value}`,
-        group: "Preferences",
-        title: `Activity groups: ${preferenceChoiceLabel(value)}`,
-        hint:
-          state.prefs.activityFoldVisibility === value ? "current" : undefined,
-        run: () => store.setActivityFoldVisibility(value),
-      });
+    for (const key of Object.keys(
+      preferenceChoices,
+    ) as (keyof typeof preferenceChoices)[]) {
+      const field = preferenceChoices[key];
+      if ("settingsOnly" in field) continue;
+      const title = "paletteLabel" in field ? field.paletteLabel : field.label;
+      for (const option of field.options)
+        actions.push({
+          id: `${key}-${option.value}`,
+          group: "Preferences",
+          title: `${title}: ${"actionLabel" in option ? option.actionLabel : option.label}`,
+          hint: state.prefs[key] === option.value ? "current" : undefined,
+          run: () => store.setPreference(key, option.value),
+        });
     }
 
     const visible = visibleSessions(state.sessions, state.prefs);
@@ -528,59 +334,40 @@ export const CommandPalette = memo(function CommandPalette({
       run: () => onOpenSession(session.id),
     }));
 
-    const commands: PaletteItem[] = state.sessionId
-      ? resolveCommandInventory(state.commands)
-          .filter(
-            (command) =>
-              (!state.readOnlyReason ||
-                (command.source === "builtin" &&
-                  (command.name === "export" ||
-                    nativeCommand(command.name)?.availableWithoutWorkspace))) &&
-              !(
-                command.source === "builtin" &&
-                ["model", "thinking"].includes(command.name) &&
-                !state.modelControls
-              ) &&
-              !actions.some((action) =>
-                action.aliases?.includes(`/${command.name}`),
-              ),
+    const handled = new Set(actions.flatMap(({ aliases }) => aliases ?? []));
+    const commands: PaletteItem[] = sessionId
+      ? commandInventory.flatMap((command): PaletteItem[] => {
+          const descriptor =
+            command.source === "builtin"
+              ? nativeCommand(command.name)
+              : undefined;
+          if (
+            handled.has(`/${command.name}`) ||
+            (state.readOnlyReason && !descriptor?.availableWithoutWorkspace)
           )
-          .map((command) => {
-            const prepare =
-              command.source !== "builtin" ||
-              (command.name === "compact" && !state.external);
-            const titles: Record<string, string> = {
-              model: "Choose model",
-              thinking: "Choose thinking level",
-              export: "Export session…",
-              compact: state.external
-                ? "Compact in native Pi…"
-                : "Compact context…",
-              copy: "Copy last response",
-              fork: "Fork from History",
-              session: "Session & usage",
-              reload: state.external
-                ? "Reload in native Pi…"
-                : "Reload Pi resources",
-              quit: "Leave Inspire",
-            };
-            const sessionAliases =
-              command.name === "session" ? ["cost", "tokens"] : [];
-            const humanTitle =
-              command.source === "builtin" ? titles[command.name] : undefined;
-            return {
+            return [];
+          const prepare =
+            command.source !== "builtin" ||
+            (descriptor?.palette === "prepare" && !state.external);
+          const humanTitle =
+            descriptor &&
+            (state.external && descriptor.requiresIdleOwnedPi
+              ? `${descriptor.name === "compact" ? "Compact" : "Reload"} in native Pi…`
+              : descriptor.paletteTitle);
+          return [
+            {
               id: `cmd-${command.name}`,
               group: command.source === "builtin" ? "Actions" : "Pi resources",
               title: humanTitle ?? `/${command.name}`,
               aliases: [
                 command.name,
                 `/${command.name}`,
-                ...sessionAliases,
+                ...(command.name === "session" ? ["cost", "tokens"] : []),
                 ...(humanTitle && command.description
                   ? [command.description]
                   : []),
               ],
-              default: ["model", "export"].includes(command.name),
+              default: command.name === "model",
               hint:
                 command.execution === "terminal"
                   ? `Terminal only — ${command.description}`
@@ -590,41 +377,38 @@ export const CommandPalette = memo(function CommandPalette({
                       ? (command.description ?? command.source ?? "Command")
                       : command.description,
               keepOpen: prepare,
-              run: () => {
-                if (command.source === "builtin" && command.name === "export") {
-                  onExportSession();
-                } else if (prepare) {
+              run: runInSession(() => {
+                if (prepare) {
                   setDelivery("steer");
                   setPreparation({
-                    owner: state.sessionId!,
-                    command,
+                    owner: sessionId,
+                    name: command.name,
                     text: `/${command.name} `,
                   });
                 } else {
                   // The palette must release modal focus before its native picker opens.
-                  requestAnimationFrame(() => {
-                    if (store.getState().sessionId === state.sessionId)
-                      store.runPaletteNativeCommand(`/${command.name}`);
-                  });
+                  requestAnimationFrame(
+                    runInSession(() =>
+                      store.runPaletteNativeCommand(`/${command.name}`),
+                    ),
+                  );
                 }
-              },
-            };
-          })
+              }),
+            },
+          ];
+        })
       : [];
 
     return [...actions, ...commands, ...sessions];
   }, [
     state,
-    abortable,
-    hasEarlierBranch,
+    commandInventory,
     onToggleNav,
     onToggleCtx,
-    onNewSession,
     onOpenSession,
-    onFindSession,
-    onOpenSettings,
-    onOpenHelp,
+    destinations,
     onExportSession,
+    onRenameSession,
   ]);
 
   const defaultItems = useMemo(() => {
@@ -638,31 +422,15 @@ export const CommandPalette = memo(function CommandPalette({
     return [...byGroup.values()].flat();
   }, [items]);
 
-  const filtered = searchQuery.trim()
-    ? rankPaletteItems(items, searchQuery)
-    : defaultItems;
-  const clamped = Math.min(index, Math.max(0, filtered.length - 1));
-
-  // Rows render under one header per group — the same grammar the model
-  // selector and the composer completion use — rather than repeating the
-  // group label on every row. Keyboard navigation still indexes the flat
-  // filtered list, so headers are never selectable.
-  const sections = new Map<
-    string,
-    Array<{ item: PaletteItem; index: number }>
-  >();
-  filtered.forEach((item, itemIndex) => {
-    const group = searchQuery.trim() ? "Results" : item.group;
-    const rows = sections.get(group);
-    if (rows) rows.push({ item, index: itemIndex });
-    else sections.set(group, [{ item, index: itemIndex }]);
-  });
-
-  useEffect(() => {
-    if (!keyboardActive) return;
-    const active = listRef.current?.querySelector('[aria-selected="true"]');
-    active?.scrollIntoView({ block: "nearest" });
-  }, [clamped, searchQuery, filtered.length, keyboardActive]);
+  const searching = Boolean(searchQuery.trim());
+  const options = (
+    searching ? rankPaletteItems(items, searchQuery) : defaultItems
+  ).map((item) => ({
+    key: item.id,
+    value: item,
+    group: searching ? "Results" : item.group,
+    title: item.title,
+  }));
 
   const runItem = (item: PaletteItem | undefined) => {
     if (!item) return;
@@ -697,73 +465,44 @@ export const CommandPalette = memo(function CommandPalette({
     if (sent && store.getState().sessionId === preparation.owner) onClose();
   };
 
-  const submitRename = async () => {
-    const name = renameValue.trim();
-    const owner = renameSessionId;
-    if (!name || !owner || store.getState().sessionId !== owner) return;
-    // A prefilled presentation title may be a fallback rather than Pi-owned
-    // metadata. Enter without an edit must not promote it into a new name.
-    if (name === renameInitialValue.trim()) {
-      onClose();
-      return;
-    }
-    const incarnation = renameIncarnationRef.current;
-    if (
-      (await store.renameSession(owner, name)) &&
-      renameIncarnationRef.current === incarnation &&
-      renameSessionId === owner &&
-      store.getState().sessionId === owner
-    )
-      onClose();
-  };
-
   return (
-    <div
-      ref={overlayRef}
-      className="overlay palette-overlay"
-      role="presentation"
-      style={active ? undefined : { display: "none" }}
-      aria-hidden={!active || undefined}
-      onClick={onClose}
+    <Modal
+      ref={dialogRef}
+      active={active}
+      aria-label="Command palette"
+      onDismiss={onClose}
+      focusSurface={isTouchFirstDevice() && !preparation && !rename}
+      onEscape={() => {
+        if (rename) onRenameBack();
+        else if (preparation && !preparationSending) setPreparation(null);
+        else onClose();
+      }}
+      onKeyDown={(event) => {
+        if (
+          preparation ||
+          rename ||
+          event.defaultPrevented ||
+          isComposingKeyboardEvent(event.nativeEvent) ||
+          (event.target !== event.currentTarget &&
+            event.target !== inputRef.current)
+        )
+          return;
+        list.navigate(event, options, runItem, { consumeEmptyEnter: true });
+      }}
     >
-      <div
-        ref={dialogRef}
-        className="palette"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Command palette"
-        tabIndex={-1}
-        data-modal-autofocus={
-          isTouchFirstDevice() && !preparation && !renaming ? true : undefined
-        }
-        onKeyDown={(event) => {
-          if (
-            preparation ||
-            renaming ||
-            event.defaultPrevented ||
-            isComposingKeyboardEvent(event.nativeEvent) ||
-            (event.target !== event.currentTarget &&
-              event.target !== inputRef.current)
-          )
-            return;
-          if (event.key === "ArrowDown") {
-            event.preventDefault();
-            setKeyboardActive(true);
-            setIndex(Math.min(clamped + 1, filtered.length - 1));
-          } else if (event.key === "ArrowUp") {
-            event.preventDefault();
-            setKeyboardActive(true);
-            setIndex(Math.max(clamped - 1, 0));
-          } else if (event.key === "Enter") {
-            event.preventDefault();
-            runItem(filtered[clamped]);
-          }
-        }}
-        onClick={(event) => event.stopPropagation()}
-      >
-        {preparation ? (
+      <div className="dialog dialog--flush palette">
+        {rename ? (
+          <RenameSessionForm
+            key={rename.sessionId}
+            sessionId={rename.sessionId}
+            initialName={rename.name}
+            active={active && !state.readOnlyReason}
+            onClose={onRenameBack}
+            onSaved={onClose}
+          />
+        ) : preparation ? (
           <div className="palette__prepare">
-            <h2 className="palette__prepare-title">
+            <h2 className="dialog__title">
               {preparedCommand
                 ? `Prepare /${preparedCommand.name}`
                 : "Prepare command"}
@@ -776,7 +515,7 @@ export const CommandPalette = memo(function CommandPalette({
               <p className="palette__hint">{preparedCommand.description}</p>
             ) : null}
             <ComposerInput
-              key={`${preparation.owner}:${preparation.command.name}`}
+              key={`${preparation.owner}:${preparation.name}`}
               value={preparation.text}
               onChange={(text) => setPreparation({ ...preparation, text })}
               commands={state.commands}
@@ -788,13 +527,12 @@ export const CommandPalette = memo(function CommandPalette({
               models={state.models}
               activeModel={state.model}
               completionScope={preparation.owner}
-              completionPortal={overlayRef}
               disabled={preparationSending || !active}
               completionDisabled={preparationSending || !active}
               label="Prepared command"
               placeholder="Command and arguments…"
               initialCaretAtEnd
-              autoFocus
+              autoFocus={active && !preparationSending}
               onKeyDown={(event) => {
                 if (shouldSubmitComposerEnter(event.nativeEvent, "mod-enter")) {
                   event.preventDefault();
@@ -825,7 +563,7 @@ export const CommandPalette = memo(function CommandPalette({
                 </button>
               </div>
             ) : null}
-            <div className="palette__prepare-actions">
+            <footer className="dialog__actions palette__prepare-actions">
               <button
                 type="button"
                 className="button button--quiet"
@@ -846,153 +584,75 @@ export const CommandPalette = memo(function CommandPalette({
                   {preparationSending ? "Sending…" : preparationLabel}
                 </ButtonLabel>
               </button>
-            </div>
+            </footer>
           </div>
         ) : (
           <>
-            {renaming ? (
-              <input
-                ref={inputRef}
-                className="palette__input"
-                value={renameValue}
-                placeholder="New session name…"
-                aria-label="New session name"
-                onChange={(event) => setRenameValue(event.target.value)}
-                onKeyDown={(event) => {
-                  if (isComposingKeyboardEvent(event.nativeEvent)) return;
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    void submitRename();
-                  }
-                }}
-              />
-            ) : (
-              <input
-                ref={inputRef}
-                className="palette__input"
-                value={searchQuery}
-                placeholder="Search actions and sessions…"
-                aria-label="Filter commands"
-                role="combobox"
-                aria-autocomplete="list"
-                aria-expanded={true}
-                aria-controls={listId}
-                aria-activedescendant={
-                  keyboardActive && filtered[clamped]
-                    ? `${listId}-${clamped}`
-                    : undefined
-                }
-                onChange={(event) => {
-                  setSearchQuery(event.target.value);
-                  setIndex(0);
-                  setKeyboardActive(true);
-                }}
-              />
-            )}
-            {renaming ? (
-              <div className="palette__prepare-actions">
-                <button
-                  type="button"
-                  className="button button--quiet"
-                  onClick={exitRename}
-                >
-                  Back
-                </button>
-                <button
-                  type="button"
-                  className="button button--primary"
-                  disabled={!renameValue.trim()}
-                  onClick={() => void submitRename()}
-                >
-                  Rename
-                </button>
-              </div>
-            ) : (
-              <div
-                className="palette__list"
-                data-keyboard-active={keyboardActive}
-                ref={listRef}
-                id={listId}
-                role="listbox"
-                aria-label="Commands"
-              >
-                {[...sections].map(([group, rows]) => (
-                  <div
-                    className="palette__section"
-                    key={group}
-                    role="group"
-                    aria-label={group}
-                  >
-                    <div className="palette__group" aria-hidden="true">
-                      {group.startsWith("Pi") ? (
-                        <>
-                          <span data-authored-case>Pi</span>
-                          {group.slice(2)}
-                        </>
-                      ) : (
-                        group
-                      )}
-                    </div>
-                    {rows.map(({ item, index: itemIndex }) => (
-                      <button
-                        type="button"
-                        role="option"
-                        id={`${listId}-${itemIndex}`}
-                        aria-selected={keyboardActive && itemIndex === clamped}
-                        key={item.id}
-                        title={item.title}
-                        className={`palette__row ${keyboardActive && itemIndex === clamped ? "palette__row--active" : ""}`}
-                        onPointerMove={(event) => {
-                          if (event.pointerType === "touch") return;
-                          setKeyboardActive(false);
-                          setIndex(itemIndex);
-                        }}
-                        onFocus={() => {
-                          setKeyboardActive(true);
-                          setIndex(itemIndex);
-                        }}
-                        onClick={() => runItem(item)}
-                      >
-                        <span className="palette__title">
-                          <SearchMatchText
-                            text={item.title}
-                            ranges={paletteTextMatchRanges(
-                              item.title,
-                              searchQuery,
-                            )}
-                          />
-                        </span>
-                        {item.hint ? (
-                          <span className="palette__hint-inline">
-                            <SearchMatchText
-                              text={item.hint}
-                              ranges={paletteTextMatchRanges(
-                                item.hint,
-                                searchQuery,
-                              )}
-                            />
-                          </span>
-                        ) : null}
-                      </button>
-                    ))}
-                  </div>
-                ))}
-                {filtered.length === 0 ? (
-                  <div className="empty-state">
-                    <SearchX size={26} strokeWidth={1.5} aria-hidden />
-                    <span className="empty-state__title">
-                      No matching commands
+            <input
+              ref={inputRef}
+              className="palette__input"
+              value={searchQuery}
+              placeholder="Search actions and sessions…"
+              aria-label="Filter commands"
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded={true}
+              aria-controls={list.id}
+              aria-activedescendant={list.descendant(options)}
+              onChange={(event) => {
+                setSearchQuery(event.target.value);
+                list.reset(true);
+              }}
+            />
+            <OptionList
+              list={list}
+              options={options}
+              label="Commands"
+              className="palette__list"
+              optionClass="palette__row"
+              optionButtons
+              highlightAsSelection
+              plain
+              onPick={runItem}
+              heading={({ group }) => (
+                <div className="palette__group" aria-hidden="true">
+                  {group}
+                </div>
+              )}
+              renderOption={({ value: item }) => (
+                <>
+                  <span className="palette__title">
+                    <SearchMatchText
+                      text={item.title}
+                      ranges={paletteTextMatchRanges(item.title, searchQuery)}
+                    />
+                  </span>
+                  {item.hint ? (
+                    <span className="palette__hint-inline">
+                      <SearchMatchText
+                        text={item.hint}
+                        ranges={paletteTextMatchRanges(item.hint, searchQuery)}
+                      />
                     </span>
-                    <span className="empty-state__hint">
-                      Shorter words match more
-                    </span>
-                  </div>
-                ) : null}
-              </div>
-            )}
+                  ) : null}
+                </>
+              )}
+            >
+              {!options.length ? (
+                <div className="empty-state">
+                  <SearchX size={26} strokeWidth={1.5} aria-hidden />
+                  <span className="empty-state__title">
+                    No matching commands
+                  </span>
+                  <span className="empty-state__hint">
+                    Shorter words match more
+                  </span>
+                </div>
+              ) : null}
+            </OptionList>
           </>
         )}
       </div>
-    </div>
+    </Modal>
   );
 });

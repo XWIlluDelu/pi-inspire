@@ -1,31 +1,33 @@
 import {
   type InspirePreferences,
-  isBusyRunState,
   projectNameFromCwd,
   type SessionSummary,
 } from "../../shared/contracts";
 import type { AppState } from "../app-state";
+import type { SessionCatalogView } from "../workbench-session";
 
 type HiddenDeletionState = Pick<
   AppState,
   | "openingSessionId"
-  | "sessionStatuses"
   | "sessionQuery"
   | "sessionListLoading"
   | "sessionListLoadingOlder"
   | "sessionListHydrating"
   | "sessionListError"
+  | "sessionListIssues"
+  | "curationPending"
   | "clearingHidden"
   | "deletingSessionId"
-> &
-  Partial<Pick<AppState, "sessionListIssues">>;
+>;
 
-/** The drawer and each complete folder apply the same rules to their own set.
- * Activity in a different folder must not block an otherwise idle selection. */
+/** Hidden and each folder require a complete, settled selection.
+ * Confirmed deletion ends active Pi instances; work does not disable it. */
 export function hiddenDeletionBlockReason(
   sessions: readonly SessionSummary[],
   state: HiddenDeletionState,
 ): string | null {
+  if (state.curationPending)
+    return "Wait for the current navigation change to finish";
   if (state.clearingHidden)
     return "Wait for the current Hidden deletion to finish";
   if (state.deletingSessionId !== null)
@@ -40,21 +42,10 @@ export function hiddenDeletionBlockReason(
   ) {
     return "Wait for Hidden sessions to finish loading";
   }
-  if (state.sessionListIssues?.length)
+  if (state.sessionListIssues.length)
     return "Restore unavailable session sources and refresh before clearing Hidden";
   if (sessions.some((session) => session.id === state.openingSessionId))
     return "Wait for these sessions to finish opening";
-  if (
-    sessions.some((session) => {
-      const status = state.sessionStatuses[session.id];
-      return (
-        status &&
-        ((!status.external && isBusyRunState(status.runState)) ||
-          status.runState === "conflict")
-      );
-    })
-  )
-    return "Wait for these sessions to finish working or resolve conflicts";
   return null;
 }
 
@@ -65,9 +56,13 @@ export interface SessionGroup {
   sessions: SessionSummary[];
 }
 
+function byRecency(left: SessionSummary, right: SessionSummary): number {
+  return Date.parse(right.modified) - Date.parse(left.modified);
+}
+
 /** Group sessions by exact cwd identity. Groups sort by their newest session
  * descending; sessions within a group sort by modified descending. */
-export function groupSessionsByCwd(sessions: SessionSummary[]): SessionGroup[] {
+function groupSessionsByCwd(sessions: SessionSummary[]): SessionGroup[] {
   const byCwd = new Map<string, SessionSummary[]>();
   for (const session of sessions) {
     const list = byCwd.get(session.cwd);
@@ -79,14 +74,11 @@ export function groupSessionsByCwd(sessions: SessionSummary[]): SessionGroup[] {
     groups.push({
       cwd,
       name: projectNameFromCwd(cwd),
-      sessions: [...list].sort(
-        (a, b) => Date.parse(b.modified) - Date.parse(a.modified),
-      ),
+      sessions: list.sort(byRecency),
     });
   }
-  groups.sort(
-    (a, b) =>
-      Date.parse(b.sessions[0]!.modified) - Date.parse(a.sessions[0]!.modified),
+  groups.sort((left, right) =>
+    byRecency(left.sessions[0]!, right.sessions[0]!),
   );
   return groups;
 }
@@ -100,17 +92,23 @@ export type NavCuration = Pick<
   | "hiddenSessionIds"
 >;
 
-interface NavSections {
-  /** Individually pinned sessions across projects, newest activity first. */
-  pinned: SessionSummary[];
-  /** Groups whose folder is pinned, ordered like ordinary groups. */
-  pinnedGroups: SessionGroup[];
-  /** The remaining folders. */
-  groups: SessionGroup[];
-  /** Folders moved into Hidden as complete groups. */
-  hiddenGroups: SessionGroup[];
-  /** Individually hidden sessions outside hidden folders, newest first. */
-  hidden: SessionSummary[];
+type FolderSection = {
+  kind: "folder";
+  group: SessionGroup;
+  hidden: boolean;
+};
+type CatalogSection =
+  | FolderSection
+  | { kind: "pinned" | "needs-you" | "hidden"; sessions: SessionSummary[] };
+
+export function sectionSessions(section: CatalogSection): SessionSummary[] {
+  return section.kind === "folder" ? section.group.sessions : section.sessions;
+}
+
+interface Catalog {
+  visible: SessionSummary[];
+  all: CatalogSection[];
+  hidden: CatalogSection[];
 }
 
 /** Hiding applies to every session-entry surface, not just the sidebar. */
@@ -125,56 +123,65 @@ export function visibleSessions(
   );
 }
 
-/** Partition the list into navigation sections with one display owner per
- * session. A hidden folder outranks both session-level states; individual
- * hiding then outranks pinning, and an individual pin outranks a folder pin. */
-export function splitNavSections(
+/** Hidden folder, hidden session, pinned session, then pinned folder. */
+export function buildSessionCatalog(
   sessions: SessionSummary[],
   curation: NavCuration,
-): NavSections {
+): Catalog {
   const pinnedIds = new Set(curation.pinnedSessionIds);
   const hiddenIds = new Set(curation.hiddenSessionIds);
   const pinnedCwds = new Set(curation.pinnedProjectCwds);
   const hiddenCwds = new Set(curation.hiddenProjectCwds);
-  const byRecency = (a: SessionSummary, b: SessionSummary) =>
-    Date.parse(b.modified) - Date.parse(a.modified);
   const visible = visibleSessions(sessions, curation);
-  const groups = groupSessionsByCwd(
+  const groupSection = (
+    group: SessionGroup,
+    hidden = false,
+  ): FolderSection => ({ kind: "folder", group, hidden });
+  const folderSections = groupSessionsByCwd(
     visible.filter((session) => !pinnedIds.has(session.id)),
-  );
+  ).map((group) => groupSection(group));
   return {
-    pinned: visible
-      .filter((session) => pinnedIds.has(session.id))
-      .sort(byRecency),
-    pinnedGroups: groups.filter((group) => pinnedCwds.has(group.cwd)),
-    groups: groups.filter((group) => !pinnedCwds.has(group.cwd)),
-    hiddenGroups: groupSessionsByCwd(
-      sessions.filter((session) => hiddenCwds.has(session.cwd)),
-    ),
-    hidden: sessions
-      .filter(
-        (session) => !hiddenCwds.has(session.cwd) && hiddenIds.has(session.id),
-      )
-      .sort(byRecency),
+    visible,
+    all: [
+      {
+        kind: "pinned",
+        sessions: visible
+          .filter((session) => pinnedIds.has(session.id))
+          .sort(byRecency),
+      },
+      ...folderSections.filter(({ group }) => pinnedCwds.has(group.cwd)),
+      ...folderSections.filter(({ group }) => !pinnedCwds.has(group.cwd)),
+    ],
+    hidden: [
+      {
+        kind: "hidden",
+        sessions: sessions
+          .filter(
+            (session) =>
+              !hiddenCwds.has(session.cwd) && hiddenIds.has(session.id),
+          )
+          .sort(byRecency),
+      },
+      ...groupSessionsByCwd(
+        sessions.filter((session) => hiddenCwds.has(session.cwd)),
+      ).map((group) => groupSection(group, true)),
+    ],
   };
 }
 
-export { parentSegment } from "../../shared/contracts";
-
-/** Activity age compressed for the dense row's right column; the exact
- * timestamp stays available as that column's tooltip. */
-export function compactAge(timestamp: string, now = Date.now()): string {
-  const time = Date.parse(timestamp);
-  if (!Number.isFinite(time)) return "";
-  const minutes = Math.max(0, Math.floor((now - time) / 60_000));
-  if (minutes < 1) return "now";
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}d`;
-  return new Date(time).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-  });
+export function catalogSections(
+  catalog: Catalog,
+  view: SessionCatalogView,
+  searching: boolean,
+  needsYou: SessionSummary[],
+): CatalogSection[] {
+  const sections =
+    view === "needs-you"
+      ? [{ kind: "needs-you" as const, sessions: needsYou }]
+      : view === "hidden"
+        ? catalog.hidden
+        : searching
+          ? [...catalog.all, ...catalog.hidden]
+          : catalog.all;
+  return sections.filter((section) => sectionSessions(section).length);
 }

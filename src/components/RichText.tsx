@@ -28,13 +28,16 @@ import {
   richTextParser,
 } from "../rich-text-parser-client";
 import { store } from "../store";
-import { highlightSource } from "../syntax-highlighting";
 import { queueTerminalInsertion } from "../terminal-actions";
-import { useCopied } from "../use-copied";
-import { CopyFeedback } from "./CopyFeedback";
+import { CodeView } from "./CodeView";
 import { DocumentImage, DocumentResourceContext } from "./DocumentPreview";
-import { ImageLinkContext } from "./ImagePreview";
+import {
+  ImageLinkContext,
+  TranscriptImage,
+  TranscriptImageOwnerContext,
+} from "./ImagePreview";
 import { RichTextMath } from "./RichTextMath";
+import { ActivityHeader } from "./transcript-activity-visibility";
 
 export type RichTextVariant = "assistant" | "user" | "thinking" | "extension";
 const ASYNC_MARKDOWN_MIN_CHARS = 8_000;
@@ -46,50 +49,32 @@ const CodeBlock = memo(function CodeBlock({
   language: string;
   code: string;
 }) {
-  const { copied, copying, copy } = useCopied({
-    scope: code,
-    onError: store.reportCopyError,
-  });
-  const highlighted = useMemo(
-    () => highlightSource(code, language),
-    [code, language],
-  );
   return (
     <div className="code-block">
-      <div className="code-block__bar">
+      <ActivityHeader
+        className="code-block__bar"
+        copy={{ text: code, label: "Code", copiedLabel: "Copied" }}
+      >
         <span className="code-block__lang">{language}</span>
-        <div className="code-block__actions">
-          <button
-            type="button"
-            className="code-block__terminal"
-            onClick={() => {
-              queueTerminalInsertion(code, store.getState().cwd);
-              store.setContextMode("terminal");
-              store.setResourcesOpen(true);
-            }}
-            aria-label="Insert code in terminal"
-            title="Insert in terminal for review"
-          >
-            <SquareTerminal size={13} aria-hidden />
-          </button>
-          <button
-            type="button"
-            className="code-block__copy"
-            onClick={() => void copy(code)}
-            aria-label={copied ? "Copied" : "Copy code"}
-            title={copied ? "Copied" : "Copy code"}
-          >
-            <CopyFeedback copied={copied} copying={copying} />
-          </button>
-        </div>
-      </div>
-      <pre className="code-block__pre" tabIndex={0}>
-        {/* highlight.js escapes its input; generated markup contains only span tags. */}
-        <code
-          className={language ? `hljs language-${language}` : "hljs"}
-          dangerouslySetInnerHTML={{ __html: highlighted }}
-        />
-      </pre>
+        <button
+          type="button"
+          className="icon-button activity-copy"
+          onClick={() => {
+            queueTerminalInsertion(code, store.getState().cwd);
+            store.openContextMode("terminal");
+          }}
+          aria-label="Insert code in terminal"
+          title="Insert in terminal for review"
+        >
+          <SquareTerminal size={13} aria-hidden />
+        </button>
+      </ActivityHeader>
+      <CodeView
+        className="code-block__pre"
+        tabIndex={0}
+        text={code}
+        language={language}
+      />
     </div>
   );
 });
@@ -100,6 +85,7 @@ function TaskCheckbox({ checked }: { checked?: boolean }) {
       type="checkbox"
       className="choice-input"
       checked={checked}
+      aria-label="Task"
       disabled
     />
   );
@@ -167,7 +153,8 @@ const components: Components = {
     // mdast-to-hast adds one terminator; source blank lines before it remain.
     return <CodeBlock language={language} code={value.replace(/\n$/, "")} />;
   },
-  code: ({ className, children }) => {
+  code: function ResourceCode({ className, children }) {
+    const linked = useContext(ImageLinkContext);
     const text = String(children ?? "");
     const classes = className?.split(/\s+/) ?? [];
     if (
@@ -178,7 +165,7 @@ const components: Components = {
       return (
         <RichTextMath value={text} display={classes.includes("math-display")} />
       );
-    if (isLocalResourceReference(text))
+    if (!linked && isLocalResourceReference(text))
       return (
         <button
           type="button"
@@ -232,6 +219,8 @@ const components: Components = {
     title?: string;
   }) {
     const document = useContext(DocumentResourceContext);
+    const linked = useContext(ImageLinkContext);
+    const owner = useContext(TranscriptImageOwnerContext);
     if (
       src &&
       ((document && isDocumentFileReference(src)) ||
@@ -245,8 +234,20 @@ const components: Components = {
           title={title}
         />
       );
-    if (src && !/^[\\/]{2}/.test(src) && isLocalResourceReference(src))
+    // An authored link owns navigation; its image label is only content.
+    if (
+      linked &&
+      src &&
+      (isLocalResourceReference(src) || /^(?:https?:|\/\/)/i.test(src))
+    )
       return (
+        <span title={title}>
+          <span aria-hidden>▧ </span>
+          {alt || src}
+        </span>
+      );
+    if (src && !/^[\\/]{2}/.test(src) && isLocalResourceReference(src)) {
+      const referenceButton = (
         <button
           type="button"
           className="file-ref file-ref--image"
@@ -257,6 +258,18 @@ const components: Components = {
           <span>{alt || src}</span>
         </button>
       );
+      return owner?.sessionId && owner.viewId ? (
+        <TranscriptImage
+          {...owner}
+          reference={src}
+          alt={alt || src}
+          title={title}
+          unavailable={referenceButton}
+        />
+      ) : (
+        referenceButton
+      );
+    }
     if (src && /^(?:https?:|\/\/)/i.test(src))
       return (
         <a href={src} target="_blank" rel="noreferrer noopener" title={src}>

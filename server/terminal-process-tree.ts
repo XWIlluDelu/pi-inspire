@@ -28,9 +28,15 @@ function live(info: ProcessInfo): boolean {
   return !["Z", "X"].includes(info.state[0]!);
 }
 
-async function linuxProcess(pid: number): Promise<ProcessInfo | null> {
+async function linuxProcess(
+  pid: number,
+  signal?: AbortSignal,
+): Promise<ProcessInfo | null> {
   try {
-    const source = await readFile(`/proc/${pid}/stat`, "utf8");
+    const source = await readFile(`/proc/${pid}/stat`, {
+      encoding: "utf8",
+      signal,
+    });
     const closing = source.lastIndexOf(")");
     const fields = source
       .slice(closing + 2)
@@ -64,7 +70,7 @@ async function linuxProcesses(pids: number[]): Promise<ProcessInfo[]> {
     if (Date.now() >= deadline)
       throw new Error("Terminal process inspection timed out");
     const chunk = await Promise.all(
-      pids.slice(offset, offset + 64).map(linuxProcess),
+      pids.slice(offset, offset + 64).map((pid) => linuxProcess(pid)),
     );
     for (const info of chunk) if (info) result.push(info);
   }
@@ -121,13 +127,12 @@ function descendants(root: number, records: ProcessInfo[]): ProcessInfo[] {
 
 export const terminalTreeInspector: TerminalTreeInspector = {
   async identity(pid, signal) {
+    if (process.platform === "linux") {
+      const info = await linuxProcess(pid, signal);
+      return info && live(info) ? info.birth : null;
+    }
     try {
-      const birth = await processStartIdentity(pid, signal);
-      if (process.platform === "linux") {
-        const info = await linuxProcess(pid);
-        return info && live(info) && info.birth === birth ? birth : null;
-      }
-      return birth;
+      return await processStartIdentity(pid, signal);
     } catch (error) {
       if (missing(error)) return null;
       if (process.platform === "darwin") {

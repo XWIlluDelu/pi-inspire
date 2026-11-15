@@ -83,8 +83,9 @@ export function isToolImageMimeType(
 }
 
 type ToolImageSource =
-  | { data: string; reference?: never }
-  | { reference: string; data?: never };
+  | { data: string; reference?: never; entry?: never }
+  | { reference: string; data?: never; entry?: never }
+  | { entry: { id: string; index: number }; reference?: never; data?: never };
 
 /** Keep the original content index: filtering image parts would retarget
  * persisted references when text or other blocks precede the image. */
@@ -99,6 +100,11 @@ export function toolResultImage(
   if (image.type !== "image" || !isToolImageMimeType(image.mimeType))
     return null;
   const metadata = { type: "image" as const, mimeType: image.mimeType, alt };
+  if (result.__inspireSavedHistory && result.__inspireEntryId)
+    return {
+      ...metadata,
+      entry: { id: result.__inspireEntryId, index: partIndex },
+    };
   if (Number.isSafeInteger(result.__inspireMessageIndex))
     return {
       ...metadata,
@@ -218,4 +224,14 @@ export function toolPresentationSummaryText(
       index === 0 ? "" : part.separator === "space" ? " " : " · ";
     return `${text}${separator}${part.text}`;
   }, "");
+}
+
+/** Join a list entry to its root; absolute POSIX/Windows children win. */
+export function joinResourcePath(
+  root: string | undefined,
+  child: string,
+): string {
+  if (/^(?:\/|[A-Za-z]:[\\/])/.test(child)) return child;
+  if (!root || root === ".") return child;
+  return `${root.replace(/[\\/]$/, "")}/${child.replace(/^[\\/]/, "")}`;
 }

@@ -1,13 +1,10 @@
 import { expect, test } from "@playwright/test";
-import { openMockSession, pairedPage } from "./support/navigation";
+import { openPreviewFixture, openResourceFixture } from "./support/navigation";
 
-test("PDF paints selectable pages, preserves zoom across resize and never runs document actions", async ({
+test("PDF scrolls continuously through selectable pages, preserves its reading point and never runs actions", async ({
   page,
 }) => {
-  await pairedPage(page);
-  await openMockSession(page, /Resource virtualization and sandbox fixture/);
-  await page.getByRole("button", { name: "Toggle resources panel" }).click();
-  const resources = page.getByRole("complementary", { name: "Context panel" });
+  const resources = await openResourceFixture(page);
   const localOrigin = new URL(page.url()).origin;
   const externalRequests: string[] = [];
   await page.route("**/*", async (route) => {
@@ -31,21 +28,39 @@ test("PDF paints selectable pages, preserves zoom across resize and never runs d
     activePdfContent.push(popup.url());
     await popup.close();
   });
-  await resources
-    .getByRole("searchbox", { name: "Search workspace files" })
-    .fill("file-previews/report.pdf");
-  await resources
-    .locator(
-      '[data-workspace-path="tests/browser/fixtures/file-previews/report.pdf"]',
-    )
-    .click();
+  await openPreviewFixture(resources, "report.pdf");
   const pdf = page.getByRole("document", { name: "Preview report.pdf" });
-  const pdfPage = pdf.locator(".pdf-preview__page");
-  const textLayer = pdf.locator(".pdf-preview__text-layer");
-  await expect(textLayer).toContainText("Experiment summary");
-  await expect(pdfPage).toHaveAttribute("aria-busy", "false");
+  const first = pdf.getByRole("region", { name: "PDF page 1", exact: true });
+  const pdfPage = pdf.getByRole("region", { name: "PDF page 2", exact: true });
+  const textLayer = pdfPage.locator(".pdf-preview__text-layer");
+  const scroll = pdf.getByRole("region", { name: "PDF pages", exact: true });
+  await expect(first).toContainText("Experiment summary");
+  await expect(first).toHaveAttribute("aria-busy", "false");
+  const contentsButton = pdf.getByRole("button", { name: /Show contents/ });
+  const contents = pdf.getByRole("dialog", { name: "PDF contents" });
+  await contentsButton.click();
+  await expect(
+    contents.getByRole("button", { name: /Experiment summary/ }),
+  ).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(contents).toBeHidden();
+  await expect(contentsButton).toBeFocused();
+  await contentsButton.press("Enter");
+  await contents.getByRole("button", { name: /Measurement details/ }).click();
+  await expect(contents).toBeHidden();
+  await expect(contentsButton).toHaveText("2 / 2");
+  await pdf.getByRole("button", { name: "Previous PDF page" }).click();
+  await expect(contentsButton).toHaveText("1 / 2");
+  const showActions = resources.getByRole("button", {
+    name: "Show file actions",
+  });
+  if (await showActions.isVisible()) await showActions.click();
+  await expect(
+    resources.getByRole("button", { name: "Download report.pdf" }),
+  ).toBeEnabled();
   const ink = await pdf
     .locator("canvas")
+    .first()
     .evaluate((canvas: HTMLCanvasElement) => {
       const pixels = canvas
         .getContext("2d")!
@@ -60,8 +75,31 @@ test("PDF paints selectable pages, preserves zoom across resize and never runs d
       return count;
     });
   expect(ink).toBeGreaterThan(150);
-  await pdf.getByRole("button", { name: "Next PDF page" }).click();
+  // Crossing a page boundary uses the same vertical reader, without a toolbar click.
+  await scroll.hover();
+  await page.mouse.wheel(0, 700);
+  await expect(pdf.locator(".pdf-preview__page-number")).toHaveText("2 / 2");
   await expect(textLayer).toContainText("Measurement details");
+  await pdf.getByRole("button", { name: "Previous PDF page" }).click();
+  await expect(pdf.locator(".pdf-preview__page-number")).toHaveText("1 / 2");
+  await expect
+    .poll(() => scroll.evaluate((element) => element.scrollTop))
+    .toBeLessThanOrEqual(13);
+  await pdf.getByRole("button", { name: "Next PDF page" }).click();
+  await expect(pdf.locator(".pdf-preview__page-number")).toHaveText("2 / 2");
+  await expect
+    .poll(() =>
+      pdfPage.evaluate((element) => {
+        const viewport = element
+          .closest(".pdf-preview__scroll")!
+          .getBoundingClientRect();
+        const page = element.getBoundingClientRect();
+        return page.height > viewport.height
+          ? Math.abs(page.top - viewport.top) < 1
+          : page.top >= viewport.top - 1 && page.bottom <= viewport.bottom + 1;
+      }),
+    )
+    .toBe(true);
   await expect(pdfPage).toHaveAttribute("aria-busy", "false");
   await expect(
     pdf.getByRole("button", { name: "Next PDF page" }),
@@ -78,12 +116,13 @@ test("PDF paints selectable pages, preserves zoom across resize and never runs d
   await page.evaluate(() => window.getSelection()?.removeAllRanges());
 
   const viewport = page.viewportSize()!;
-  await page.setViewportSize({ width: 390, height: 620 });
-  const scroll = pdf.getByRole("region", { name: "PDF page 2" });
+  await page.setViewportSize({ width: 390, height: 480 });
   await expect
     .poll(() =>
       pdf.evaluate((root) => {
-        const sheet = root.querySelector<HTMLElement>(".pdf-preview__sheet");
+        const sheet = root.querySelector<HTMLElement>(
+          '[aria-label="PDF page 2"] .pdf-preview__sheet',
+        );
         const scroll = root.querySelector<HTMLElement>(".pdf-preview__scroll");
         return (
           sheet &&
@@ -96,28 +135,31 @@ test("PDF paints selectable pages, preserves zoom across resize and never runs d
       }),
     )
     .toBe(true);
-  const position = await scroll.evaluate((element) => {
-    element.scrollTop = 80;
-    return element.scrollTop;
+  const readingPoint = () =>
+    pdfPage.evaluate((element) => {
+      const scroll = element.closest(".pdf-preview__scroll")!;
+      const page = element.getBoundingClientRect();
+      return (scroll.getBoundingClientRect().top - page.top) / page.height;
+    });
+  await scroll.evaluate((element) => {
+    element.scrollTop += 50;
   });
-  expect(position).toBeGreaterThan(50);
-  await pdf.getByRole("button", { name: "Zoom in PDF" }).click();
+  await expect.poll(readingPoint).toBeGreaterThan(0.05);
+  const position = await readingPoint();
+  const zoom = pdf.getByRole("button", { name: "Zoom in PDF" });
+  const top = (await zoom.boundingBox())!.y;
+  await zoom.click();
+  await expect(
+    pdf.getByRole("button", { name: "Fit PDF to width" }),
+  ).toHaveText("125%");
+  expect((await zoom.boundingBox())!.y).toBeCloseTo(top, 1);
   await expect
-    .poll(async () =>
-      Math.abs(
-        (await scroll.evaluate((element) => element.scrollTop)) -
-          position * 1.25,
-      ),
-    )
-    .toBeLessThanOrEqual(1);
+    .poll(async () => Math.abs((await readingPoint()) - position))
+    .toBeLessThanOrEqual(0.005);
   await pdf.getByRole("button", { name: "Fit PDF to width" }).click();
   await expect
-    .poll(async () =>
-      Math.abs(
-        (await scroll.evaluate((element) => element.scrollTop)) - position,
-      ),
-    )
-    .toBeLessThanOrEqual(1);
+    .poll(async () => Math.abs((await readingPoint()) - position))
+    .toBeLessThanOrEqual(0.005);
   expect(
     await scroll.evaluate(
       (element) => element.scrollWidth - element.clientWidth,
@@ -125,9 +167,22 @@ test("PDF paints selectable pages, preserves zoom across resize and never runs d
   ).toBeLessThanOrEqual(1);
   await page.setViewportSize(viewport);
 
-  await resources
-    .getByRole("button", { name: "unsafe.pdf", exact: true })
-    .click();
+  await pdf.getByRole("button", { name: "Find in PDF" }).click();
+  const find = pdf.getByRole("search", { name: "Find in PDF" });
+  const query = find.getByRole("searchbox", { name: "Find in PDF" });
+  await query.fill(" sAmPlE ");
+  await expect(find.getByText("1 / 4", { exact: true })).toBeVisible();
+  await expect(first.locator(".pdf-preview__hit")).toContainText("Sample A");
+  await query.press("Shift+Enter");
+  await expect(find.getByText("4 / 4", { exact: true })).toBeVisible();
+  await expect(pdfPage.locator(".pdf-preview__hit")).toContainText(
+    "per sample",
+  );
+  await query.press("Escape");
+  await expect(find).toHaveCount(0);
+  await expect(pdf.locator(".pdf-preview__hit")).toHaveCount(0);
+
+  await openPreviewFixture(resources, "unsafe.pdf");
   const staticPdf = page.getByRole("document", { name: "Preview unsafe.pdf" });
   await expect(staticPdf.locator(".pdf-preview__page")).toHaveAttribute(
     "aria-busy",
@@ -139,6 +194,6 @@ test("PDF paints selectable pages, preserves zoom across resize and never runs d
   );
   expect(activePdfContent).toEqual([]);
   expect(externalRequests).toEqual([]);
-  await resources.getByRole("button", { name: "Back to file browser" }).click();
+  await resources.getByRole("tab", { name: "Files", exact: true }).click();
   await expect.poll(() => page.workers().length).toBe(0);
 });

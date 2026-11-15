@@ -1,19 +1,14 @@
-import { chmod, lstat, mkdir, rm } from "node:fs/promises";
+import { chmod, lstat, rm } from "node:fs/promises";
 import type { Socket } from "node:net";
 import { dirname } from "node:path";
 import { createServer, type Server } from "node:tls";
-import {
-  decodeTerminalInputFrame,
-  type TerminalClientControlMessage,
-} from "../shared/terminal-contracts.js";
-import type { TerminalDaemonInfo } from "./terminal-daemon-configuration.js";
+import { terminalAttachmentSchema } from "../shared/terminal-operations.js";
+import { ensurePrivateDirectory } from "./private-directory.js";
 import {
   TERMINAL_DAEMON_PROTOCOL_VERSION,
   TERMINAL_DAEMON_READY_TYPE,
-  type TerminalDaemonAttachRequest,
-  type TerminalDaemonLifecycleRequest,
-  type TerminalDaemonRpcMethod,
-  type TerminalDaemonRpcRequest,
+  dispatchTerminalDaemonRpc,
+  type TerminalDaemonLifecycle,
   type TerminalDaemonRpcResponse,
 } from "./terminal-daemon-protocol.js";
 import {
@@ -31,13 +26,8 @@ import {
   TerminalIpcDecoder,
   type TerminalIpcFrame,
 } from "./terminal-ipc.js";
-import { dispatchTerminalMutation } from "./terminal-operation-dispatch.js";
-import { TerminalOperationReceipts } from "./terminal-operation-receipts.js";
-import type {
-  TerminalAttachment,
-  TerminalAttachOptions,
-} from "./terminal-service.js";
 import {
+  type TerminalAttachment,
   type TerminalService,
   TerminalServiceError,
 } from "./terminal-service.js";
@@ -53,29 +43,8 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function stringParam(record: Record<string, unknown>, key: string): string {
-  const value = record[key];
-  if (typeof value !== "string") throw new Error(`${key} must be a string`);
-  return value;
-}
-
 async function prepareUnixSocket(address: string): Promise<void> {
-  const directory = dirname(address);
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  const directoryInfo = await lstat(directory);
-  if (!directoryInfo.isDirectory() || directoryInfo.isSymbolicLink())
-    throw new Error(`The terminal IPC directory is invalid: ${directory}`);
-  if (
-    typeof process.getuid === "function" &&
-    directoryInfo.uid !== process.getuid()
-  )
-    throw new Error(
-      `The terminal IPC directory is owned by another user: ${directory}`,
-    );
-  if ((directoryInfo.mode & 0o077) !== 0)
-    throw new Error(
-      `The terminal IPC directory must not be accessible by other users; use a private directory: ${directory}`,
-    );
+  await ensurePrivateDirectory(dirname(address), "terminal IPC directory");
   try {
     const info = await lstat(address);
     if (!info.isSocket() || info.isSymbolicLink())
@@ -107,9 +76,7 @@ function errorPayload(error: unknown): {
 }
 
 export class TerminalDaemonServer {
-  private readonly operations = new TerminalOperationReceipts();
   private server: Server | null = null;
-  private readonly sockets = new Set<Socket>();
   private readonly connections = new Set<Socket>();
   private stopping = false;
   private stopPromise: Promise<void> | null = null;
@@ -118,10 +85,7 @@ export class TerminalDaemonServer {
     private readonly address: string,
     private readonly token: string,
     private readonly terminals: TerminalService,
-    private readonly lifecycle?: {
-      info(): TerminalDaemonInfo;
-      shutdown(instanceId: string, force: boolean): void;
-    },
+    private readonly lifecycle?: TerminalDaemonLifecycle,
   ) {}
 
   async start(): Promise<void> {
@@ -182,8 +146,6 @@ export class TerminalDaemonServer {
       this.server = null;
       for (const socket of this.connections) socket.destroy();
       this.connections.clear();
-      for (const socket of this.sockets) socket.destroy();
-      this.sockets.clear();
       if (server)
         await new Promise<void>((resolvePromise) =>
           server.close(() => resolvePromise()),
@@ -197,11 +159,6 @@ export class TerminalDaemonServer {
   }
 
   private accept(socket: Socket): void {
-    if (this.sockets.size >= CONNECTION_LIMIT) {
-      socket.destroy();
-      return;
-    }
-    this.sockets.add(socket);
     socket.setNoDelay(true);
     const decoder = new TerminalIpcDecoder();
     let authenticated = false;
@@ -213,10 +170,15 @@ export class TerminalDaemonServer {
       () => socket.destroy(),
       HANDSHAKE_TIMEOUT_MS,
     );
-    handshakeTimeout.unref?.();
+    handshakeTimeout.unref();
 
     const sendJson = (value: unknown): void => {
       this.write(socket, encodeTerminalIpcJson(value));
+    };
+    const endAttachment = (code: number, reason: string) => {
+      if (socket.destroyed) return;
+      sendJson({ type: "terminal_daemon_close", code, reason });
+      socket.end();
     };
     const dispatchAttachmentFrame = (frame: TerminalIpcFrame): void => {
       if (!attachment) {
@@ -228,29 +190,45 @@ export class TerminalDaemonServer {
         }
         return;
       }
-      if (frame.kind === TERMINAL_IPC_INPUT_FRAME) {
-        const input = decodeTerminalInputFrame(frame.payload);
-        attachment.writeInput(input.sequence, input.data);
-      } else if (frame.kind === TERMINAL_IPC_JSON_FRAME) {
-        const message = decodeTerminalIpcJson(frame.payload);
-        if (asRecord(message).type === "terminal_daemon_detach") {
-          attachment.detach();
-          socket.end();
-        } else
-          attachment.control(
-            message as Exclude<
-              TerminalClientControlMessage,
-              { type: "attach" }
-            >,
-          );
-      } else throw new Error("Terminal daemon received an unknown IPC frame");
+      try {
+        if (frame.kind === TERMINAL_IPC_INPUT_FRAME) {
+          attachment.send({ data: frame.payload });
+          return;
+        }
+        if (frame.kind !== TERMINAL_IPC_JSON_FRAME)
+          throw new Error("Terminal daemon received an unknown IPC frame");
+        const control = decodeTerminalIpcJson(frame.payload);
+        if (
+          (control as { type?: unknown } | null)?.type !==
+          "terminal_daemon_detach"
+        ) {
+          attachment.send({ control });
+          return;
+        }
+        attachment.detach();
+        attachment = null;
+        socket.end();
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Terminal message is invalid";
+        const handle = attachment;
+        attachment = null;
+        handle?.detach();
+        sendJson({
+          type: "error",
+          code: "invalid_terminal_message",
+          message,
+          fatal: true,
+        });
+        endAttachment(1008, "Invalid terminal message");
+      }
     };
 
     socket.on("data", (chunk) => {
       try {
-        for (const frame of decoder.push(
-          typeof chunk === "string" ? Buffer.from(chunk) : chunk,
-        )) {
+        for (const frame of decoder.push(chunk)) {
           if (authenticated) {
             dispatchAttachmentFrame(frame);
             continue;
@@ -258,29 +236,35 @@ export class TerminalDaemonServer {
           if (frame.kind !== TERMINAL_IPC_JSON_FRAME)
             throw new Error("Terminal daemon handshake must be JSON");
           const message = asRecord(decodeTerminalIpcJson(frame.payload));
-          if (this.stopping && message.mode !== "lifecycle")
-            throw new Error("Terminal service is stopping");
-          if (
-            message.mode === "lifecycle"
-              ? message.lifecycleVersion !== 1
-              : message.protocolVersion !== TERMINAL_DAEMON_PROTOCOL_VERSION
-          )
+          if (message.protocolVersion !== TERMINAL_DAEMON_PROTOCOL_VERSION)
             throw new Error("Terminal daemon protocol is not compatible");
+          if (
+            this.stopping &&
+            !(
+              message.mode === "rpc" &&
+              (message.method === "getDaemonInfo" ||
+                message.method === "shutdownDaemon")
+            )
+          )
+            throw new Error("Terminal service is stopping");
           authenticated = true;
           clearTimeout(handshakeTimeout);
-          if (message.mode === "rpc" || message.mode === "lifecycle") {
+          if (message.mode === "rpc") {
+            if (typeof message.requestId !== "string")
+              throw new Error("Terminal daemon RPC requires a request ID");
             void this.handleRpc(
               socket,
-              message as unknown as
-                | TerminalDaemonRpcRequest
-                | TerminalDaemonLifecycleRequest,
+              message.requestId,
+              message.method,
+              message.params,
             );
           } else if (message.mode === "attach") {
             attaching = true;
             void this.handleAttach(
               socket,
-              message as unknown as TerminalDaemonAttachRequest,
+              message.options,
               sendJson,
+              endAttachment,
             )
               .then((handle) => {
                 if (socket.destroyed) {
@@ -292,7 +276,7 @@ export class TerminalDaemonServer {
                 const queued = pendingFrames.splice(0);
                 pendingFrameBytes = 0;
                 for (const pending of queued) dispatchAttachmentFrame(pending);
-                sendJson({ type: TERMINAL_DAEMON_READY_TYPE });
+                if (attachment) sendJson({ type: TERMINAL_DAEMON_READY_TYPE });
               })
               .catch((error) => {
                 if (socket.destroyed) return;
@@ -317,60 +301,24 @@ export class TerminalDaemonServer {
     socket.once("error", () => {});
     socket.once("close", () => {
       clearTimeout(handshakeTimeout);
-      this.sockets.delete(socket);
       attachment?.detach();
     });
   }
 
   private async handleRpc(
     socket: Socket,
-    request: TerminalDaemonRpcRequest | TerminalDaemonLifecycleRequest,
+    requestId: string,
+    method: unknown,
+    params: unknown,
   ): Promise<void> {
-    const response: TerminalDaemonRpcResponse = {
-      requestId: request.requestId,
-      ok: false,
-    };
+    const response: TerminalDaemonRpcResponse = { requestId, ok: false };
     try {
-      if (request.mode === "lifecycle") {
-        if (!this.lifecycle)
-          throw new TerminalServiceError(
-            "terminal_lifecycle_unavailable",
-            503,
-            "This daemon has no lifecycle owner.",
-          );
-        const values = asRecord(request.params);
-        switch (request.method) {
-          case "getDaemonInfo":
-            response.result = this.lifecycle.info();
-            break;
-          case "shutdownDaemon":
-            if (typeof values.force !== "boolean")
-              throw new Error("force must be a boolean");
-            this.lifecycle.shutdown(
-              stringParam(values, "instanceId"),
-              values.force,
-            );
-            response.result = null;
-            break;
-          default:
-            throw new Error("Unknown terminal lifecycle method");
-        }
-      } else {
-        const execute = () => this.dispatchRpc(request.method, request.params);
-        response.result = await ([
-          "ping",
-          "getCatalog",
-          "getGlobalCatalog",
-          "getSettings",
-        ].includes(request.method)
-          ? execute()
-          : this.operations.run(
-              request.operation,
-              request.method,
-              request.params,
-              execute,
-            ));
-      }
+      response.result = await dispatchTerminalDaemonRpc(
+        this.terminals,
+        this.lifecycle,
+        method,
+        params,
+      );
       response.ok = true;
     } catch (error) {
       response.error = errorPayload(error);
@@ -378,44 +326,13 @@ export class TerminalDaemonServer {
     if (!socket.destroyed) socket.end(encodeTerminalIpcJson(response));
   }
 
-  private dispatchRpc(
-    method: TerminalDaemonRpcMethod,
-    params: unknown,
-  ): Promise<unknown> {
-    const values = asRecord(params);
-    switch (method) {
-      case "ping":
-        return Promise.resolve({
-          protocolVersion: TERMINAL_DAEMON_PROTOCOL_VERSION,
-          operationEpoch: this.operations.getEpoch(),
-        });
-      case "getCatalog":
-        return Promise.resolve(
-          this.terminals.list(stringParam(values, "projectCwd")),
-        );
-      case "getGlobalCatalog":
-        return Promise.resolve(this.terminals.list());
-      case "getSettings":
-        return Promise.resolve(this.terminals.getSettings());
-      case "getDaemonInfo":
-      case "shutdownDaemon":
-        throw new Error(
-          "Daemon lifecycle requires its independent control protocol",
-        );
-      default:
-        return dispatchTerminalMutation(this.terminals, method, values);
-    }
-  }
-
-  private handleAttach(
+  private async handleAttach(
     socket: Socket,
-    request: TerminalDaemonAttachRequest,
+    input: unknown,
     sendJson: (value: unknown) => void,
+    close: (code: number, reason: string) => void,
   ): Promise<TerminalAttachment> {
-    const options = asRecord(
-      request.options,
-    ) as unknown as TerminalAttachOptions;
-    return this.terminals.attach(options, {
+    return this.terminals.attach(terminalAttachmentSchema.parse(input), {
       sendControl: sendJson,
       sendData: (frame) => {
         this.write(
@@ -423,11 +340,7 @@ export class TerminalDaemonServer {
           encodeTerminalIpcFrame(TERMINAL_IPC_DATA_FRAME, frame),
         );
       },
-      close: (code, reason) => {
-        if (socket.destroyed) return;
-        sendJson({ type: "terminal_daemon_close", code, reason });
-        socket.end();
-      },
+      close,
     });
   }
 

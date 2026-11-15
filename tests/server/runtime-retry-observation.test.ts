@@ -1,103 +1,105 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  waitForReady,
-  schedulingRuntime,
-  initializeRuntimeFixture,
   disposeRuntimeFixture,
+  initializeRuntimeFixture,
+  schedulingRuntime,
+  startWorker,
+  trackRuntime,
 } from "./fixtures/runtime.js";
 
-beforeEach(initializeRuntimeFixture);
-afterEach(disposeRuntimeFixture);
-
 describe("worker-confirmed retry observation", () => {
+  beforeEach(initializeRuntimeFixture);
+  afterEach(disposeRuntimeFixture);
+
   it("does not substitute submitted retry intent when native confirmation is unavailable", async () => {
     const f = schedulingRuntime();
     const { runtime } = f;
-    try {
-      await runtime.openSession("a");
-      await waitForReady(runtime);
-      expect(
-        (await runtime.snapshot("a")).active?.runtimeSettings?.autoRetryEnabled,
-      ).toBe(true);
-      const reads = f.worker.retryReads;
-      f.worker.emit("event", { type: "agent_start" });
-      f.worker.emit("event", { type: "message_update" });
-      expect(f.worker.retryReads).toBe(reads);
-      f.worker.confirmRetryState = false;
-      await expect(runtime.setAutoRetry("a", false)).rejects.toThrow(
-        "Pi did not confirm effective retry state",
-      );
-      expect(
-        (await runtime.snapshot("a")).active?.runtimeSettings?.autoRetryEnabled,
-      ).toBeNull();
-      expect((await runtime.snapshot("a")).extensionStatuses).toEqual({});
-    } finally {
-      await runtime.close();
-    }
+    trackRuntime(runtime);
+    await runtime.openSession("a");
+    await startWorker(runtime);
+    await runtime.setRuntimeSetting("a", {
+      key: "autoRetryEnabled",
+      value: false,
+    });
+    expect(
+      (await runtime.snapshot("a")).active?.runtimeSettings?.autoRetryEnabled,
+    ).toBe(false);
+    f.worker.confirmRetryState = false;
+    await expect(
+      runtime.setRuntimeSetting("a", { key: "autoRetryEnabled", value: true }),
+    ).rejects.toThrow("Pi did not confirm effective retry state");
+    expect(
+      (await runtime.snapshot("a")).active?.runtimeSettings?.autoRetryEnabled,
+    ).toBeNull();
+    expect((await runtime.snapshot("a")).extensionStatuses).toEqual({});
   });
 
-  it("snapshots bounded retry detail for late observers and retires it with the phase", async () => {
+  it("bounds retry detail for late observers and clears it at the owning phase boundary", async () => {
     const f = schedulingRuntime();
     const { runtime } = f;
-    const events: Array<Record<string, unknown>> = [];
-    runtime.on("event", (event) => events.push(event));
-    try {
-      await runtime.openSession("a");
-      // Ensure the worker exists without requiring the observer to send a prompt.
-      await runtime.setAutoRetry("a", true);
-      f.worker.emit("event", {
-        type: "auto_retry_start",
-        attempt: 2,
-        maxAttempts: 3,
-        errorMessage: "x".repeat(5000),
-      });
-      await vi.waitFor(() =>
-        expect(events.some((event) => event.type === "auto_retry_start")).toBe(
-          true,
-        ),
-      );
-      expect(
-        events.find((event) => event.type === "auto_retry_start")?.errorMessage,
-      ).toHaveLength(4000);
-      const joined = await runtime.snapshot("a");
-      expect(joined.runState).toBe("retrying");
-      expect(joined.retry).toEqual({
-        attempt: 2,
-        maxAttempts: 3,
-        message: "x".repeat(4000),
-      });
-      expect((await runtime.snapshot("a")).retry).toEqual(joined.retry);
+    const events = new Map<string, Record<string, unknown>>();
+    runtime.on("event", (event) => events.set(event.type, event));
+    const emit = async (type: string, fields: Record<string, unknown> = {}) => {
+      events.delete(type);
+      f.worker.emit("event", { type, ...fields });
+      await vi.waitFor(() => expect(events.has(type), type).toBe(true));
+      return events.get(type)!;
+    };
+    const snapshot = () => runtime.snapshot("a");
+    const detail = { attempt: 2, maxAttempts: 3, message: "x".repeat(4000) };
+    const retry = {
+      attempt: 2,
+      maxAttempts: 3,
+      errorMessage: "x".repeat(5000),
+    };
+    trackRuntime(runtime);
+    await runtime.openSession("a");
+    await startWorker(runtime);
+    expect(await emit("auto_retry_start", retry)).toMatchObject({
+      retry: detail,
+    });
+    expect(await snapshot()).toMatchObject({
+      sessionStatuses: { a: { runState: "retrying" } },
+      retry: detail,
+    });
+    expect(await emit("auto_retry_end", { success: true })).toMatchObject({
+      retry: null,
+    });
+    expect((await snapshot()).retry).toBeNull();
+    await emit("auto_retry_start", { ...retry, attempt: 99 });
+    expect(await snapshot()).toMatchObject({
+      sessionStatuses: { a: { runState: "retrying" } },
+      retry: null,
+    });
+    await emit("agent_settled");
+    expect(await snapshot()).toMatchObject({
+      sessionStatuses: { a: { runState: "idle" } },
+      retry: null,
+    });
 
-      f.worker.emit("event", { type: "auto_retry_end", success: true });
-      await vi.waitFor(() =>
-        expect(events.some((event) => event.type === "auto_retry_end")).toBe(
-          true,
-        ),
-      );
-      expect((await runtime.snapshot("a")).retry).toBeNull();
-      f.worker.emit("event", {
-        type: "auto_retry_start",
-        attempt: 99,
-        maxAttempts: 3,
-        errorMessage: "invalid attempt",
+    await emit("compaction_start", { reason: "manual" });
+    expect(await emit("summarization_retry_scheduled", retry)).toMatchObject({
+      summarizationRetry: detail,
+    });
+    expect(await snapshot()).toMatchObject({
+      sessionStatuses: { a: { runState: "compacting" } },
+      retry: null,
+      summarizationRetry: detail,
+    });
+    for (const type of [
+      "summarization_retry_attempt_start",
+      "summarization_retry_finished",
+    ]) {
+      expect(await emit(type)).toMatchObject({
+        sessionStatus: { runState: "compacting" },
+        summarizationRetry: null,
       });
-      await new Promise<void>((resolveTick) => setImmediate(resolveTick));
-      expect(await runtime.snapshot("a")).toMatchObject({
-        runState: "retrying",
-        retry: null,
-      });
-      f.worker.emit("event", { type: "agent_settled" });
-      await vi.waitFor(() =>
-        expect(events.some((event) => event.type === "agent_settled")).toBe(
-          true,
-        ),
-      );
-      expect(await runtime.snapshot("a")).toMatchObject({
-        runState: "idle",
-        retry: null,
-      });
-    } finally {
-      await runtime.close();
+      await emit("summarization_retry_scheduled", retry);
     }
+    await emit("compaction_end", { reason: "manual", aborted: true });
+    expect(await snapshot()).toMatchObject({
+      sessionStatuses: { a: { runState: "aborted" } },
+      summarizationRetry: null,
+    });
   });
 });

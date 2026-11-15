@@ -1,64 +1,13 @@
 // @vitest-environment jsdom
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useRef, useState } from "react";
-import { describe, expect, it, vi } from "vitest";
-import {
-  SESSION_ACTION_IDS,
-  type SessionActionId,
-} from "../../shared/contracts";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ATTACHMENT_CONTEXT_HEADING } from "../../shared/attachment-context";
-import { sessionHeading } from "../../src/components/AppTopbar";
-import { SessionActionsMenu } from "../../src/components/SessionActionsMenu";
-import { SessionActionsSettings } from "../../src/components/SessionActionsSettings";
-
-function Harness({
-  onCopyError = vi.fn(),
-  onExport = vi.fn(),
-  readOnly = false,
-}: {
-  onCopyError?: (message: string) => void;
-  onExport?: () => void;
-  readOnly?: boolean;
-}) {
-  const anchorRef = useRef<HTMLButtonElement>(null);
-  const [open, setOpen] = useState(false);
-  const [order, setOrder] = useState<SessionActionId[]>([
-    ...SESSION_ACTION_IDS,
-  ]);
-  return (
-    <>
-      <SessionActionsSettings order={order} onChange={setOrder} />
-      <button ref={anchorRef} type="button" onClick={() => setOpen(true)}>
-        Session title
-      </button>
-      {open ? (
-        <SessionActionsMenu
-          anchorRef={anchorRef}
-          sessionId="01a163f4-8e43-71df-9bd6-71efa60bd123"
-          actionOrder={order}
-          onOrderChange={setOrder}
-          onCopyError={onCopyError}
-          renameDisabled={readOnly}
-          cloneDisabled={readOnly}
-          terminalDisabled={readOnly}
-          onRename={vi.fn()}
-          onClone={vi.fn()}
-          onTerminal={vi.fn()}
-          onExport={onExport}
-          onClose={() => setOpen(false)}
-        />
-      ) : null}
-    </>
-  );
-}
+import { createInitialAppState } from "../../src/app-state";
+import { AppTopbar } from "../../src/components/AppTopbar";
+import { sessionHeading } from "../../src/session-actions";
+import { store } from "../../src/store";
+import { deferred } from "./helpers";
 
 describe("Session headings", () => {
   it.each(["Review this report", ""])(
@@ -85,7 +34,92 @@ describe("Session headings", () => {
   );
 });
 
+const sessionId = "01a163f4-8e43-71df-9bd6-71efa60bd123";
+function renderTopbar(readOnly = false) {
+  vi.spyOn(store, "getState").mockReturnValue({
+    ...createInitialAppState(),
+    sessionId,
+    sessionName: "Original title",
+    cwd: "/workspace/report",
+    gitStatus: { kind: "not-repository" },
+    readOnlyReason: readOnly ? "workspace-unavailable" : null,
+  });
+  const noop = () => {};
+  render(
+    <AppTopbar
+      narrowViewport={false}
+      mobileNavOpen={false}
+      settingsOpen={false}
+      onToggleNavigation={noop}
+      onOpenCommandPalette={noop}
+      onExportSession={noop}
+      onToggleSettings={noop}
+      onToggleResources={noop}
+    />,
+  );
+}
+
+it.each(["resolve", "reject"] as const)(
+  "retires project path copy %s when the session owner changes",
+  async (outcome) => {
+    renderTopbar();
+    const write = deferred<void>();
+    userEvent.setup();
+    const writeText = vi
+      .spyOn(navigator.clipboard, "writeText")
+      .mockReturnValue(write.promise);
+    let owned = true;
+    vi.spyOn(store, "copyOwnership").mockReturnValue(() => owned);
+    const report = vi
+      .spyOn(store, "reportCopyError")
+      .mockImplementation(() => {});
+    const path = screen.getByRole("button", { name: "Copy project path" });
+    fireEvent.click(path);
+    expect(writeText).toHaveBeenCalledWith("/workspace/report");
+    owned = false;
+    await act(async () => {
+      if (outcome === "resolve") write.resolve();
+      else write.reject(new Error("Retired clipboard result"));
+    });
+    expect(path).not.toHaveAttribute("title", "Copied");
+    expect(report).not.toHaveBeenCalled();
+  },
+);
+
 describe("Session actions", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("renames from the title menu in place and preserves Escape for cancel", async () => {
+    renderTopbar();
+    const rename = vi.spyOn(store, "renameSession").mockResolvedValue(true);
+    const title = () =>
+      screen.getByRole("button", { name: "Session actions: Original title" });
+    fireEvent.click(title());
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Rename session" }),
+    );
+    const input = screen.getByRole("textbox", { name: "Session name" });
+    expect(input).toHaveFocus();
+    fireEvent.change(input, { target: { value: "Cancelled" } });
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(rename).not.toHaveBeenCalled();
+    expect(title()).toHaveFocus();
+
+    fireEvent.click(title());
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Rename session" }),
+    );
+    fireEvent.change(screen.getByRole("textbox", { name: "Session name" }), {
+      target: { value: "New title" },
+    });
+    await act(async () =>
+      fireEvent.click(
+        screen.getByRole("button", { name: "Save session name" }),
+      ),
+    );
+    expect(rename).toHaveBeenCalledExactlyOnceWith(sessionId, "New title");
+  });
+
   it("copies the complete ID in read-only sessions and reports clipboard failure before retry", async () => {
     const user = userEvent.setup();
     let completeCopy!: () => void;
@@ -98,9 +132,10 @@ describe("Session actions", () => {
             completeCopy = resolve;
           }),
       );
-    const onCopyError = vi.fn();
-    render(<Harness readOnly onCopyError={onCopyError} />);
-    await user.click(screen.getByRole("button", { name: "Session title" }));
+    const onCopyError = vi.spyOn(store, "reportCopyError");
+    vi.spyOn(store, "copyOwnership").mockReturnValue(() => true);
+    renderTopbar(true);
+    await user.click(screen.getByRole("button", { name: /^Session actions:/ }));
     const copy = screen.getByRole("menuitem", { name: "Copy session ID" });
     expect(copy).toHaveFocus();
     expect(
@@ -124,125 +159,5 @@ describe("Session actions", () => {
       await screen.findByRole("menuitem", { name: "ID copied" }),
     ).toHaveFocus();
     expect(screen.getByRole("menu", { name: "Session actions" })).toBeVisible();
-  });
-
-  it("reveals overflow for keyboard use and resets it on reopening", async () => {
-    const user = userEvent.setup();
-    const onExport = vi.fn();
-    render(<Harness onExport={onExport} />);
-    const title = screen.getByRole("button", { name: "Session title" });
-    await user.click(title);
-    expect(
-      screen.queryByRole("menuitem", { name: "Export session…" }),
-    ).toBeNull();
-    await user.keyboard("{End}{Enter}");
-    const more = screen.getByRole("menuitem", { name: "Fewer actions" });
-    expect(more).toHaveAttribute("aria-expanded", "true");
-    expect(
-      screen.getByRole("menuitem", { name: "Use in terminal…" }),
-    ).toHaveFocus();
-    await user.keyboard("{ArrowDown}{ArrowDown}{Enter}");
-    expect(onExport).toHaveBeenCalledOnce();
-    await user.keyboard("{Escape}");
-    expect(title).toHaveFocus();
-    expect(screen.queryByRole("menu")).toBeNull();
-    await user.click(title);
-    expect(
-      screen.queryByRole("menuitem", { name: "Export session…" }),
-    ).toBeNull();
-  });
-
-  it("offers keyboard reordering from the menu handle using the same settings order", async () => {
-    const user = userEvent.setup();
-    render(<Harness />);
-    await user.click(screen.getByRole("button", { name: "Session title" }));
-    const handle = screen.getByRole("menuitem", {
-      name: "Reorder Clone current branch",
-    });
-    handle.focus();
-    await user.keyboard("{Alt>}{ArrowDown}{/Alt}");
-    expect(handle).toHaveFocus();
-    expect(
-      within(screen.getByRole("list", { name: "Session action order" }))
-        .getAllByRole("listitem")
-        .at(3),
-    ).toHaveTextContent("Clone current branch");
-    expect(
-      screen.getByRole("menuitem", { name: "Export session…" }),
-    ).toBeVisible();
-  });
-
-  it("moves actions across the disclosure boundary without losing other actions", async () => {
-    const user = userEvent.setup();
-    render(<Harness />);
-    const list = screen.getByRole("list", { name: "Session action order" });
-    const actionLabels = () =>
-      Array.from(
-        list.querySelectorAll(".session-action-order__label"),
-        (label) => label.textContent,
-      );
-    const exportHandle = screen.getByRole("button", {
-      name: "Reorder Export session…",
-    });
-    exportHandle.focus();
-    await user.keyboard("{Enter}");
-    const moveUp = screen.getByRole("menuitem", {
-      name: "Move Export session… up",
-    });
-    expect(moveUp).toHaveFocus();
-    expect(
-      within(
-        screen.getByRole("menu", { name: "Move options for Export session…" }),
-      )
-        .getAllByRole("menuitem")
-        .map((item) => item.getAttribute("aria-label")),
-    ).toEqual(["Move Export session… up", "Move Export session… down"]);
-    expect(
-      screen.getByRole("menuitem", { name: "Move Export session… down" }),
-    ).toBeDisabled();
-    await user.keyboard("{Enter}");
-    expect(exportHandle).toHaveFocus();
-    expect(actionLabels()).toEqual([
-      "Rename session",
-      "Copy session ID",
-      "Clone current branch",
-      "Export session…",
-      "Use in terminal…",
-    ]);
-    fireEvent.click(exportHandle);
-    await user.click(
-      screen.getByRole("menuitem", { name: "Move Export session… up" }),
-    );
-    await user.click(screen.getByRole("button", { name: "Session title" }));
-    expect(
-      screen.getByRole("menuitem", { name: "Export session…" }),
-    ).toBeVisible();
-    expect(
-      screen.queryByRole("menuitem", { name: "Use in terminal…" }),
-    ).toBeNull();
-    await user.click(screen.getByRole("menuitem", { name: "More actions" }));
-    const terminal = screen.getByRole("menuitem", { name: "Use in terminal…" });
-    expect(terminal).toBeEnabled();
-    fireEvent.keyDown(terminal, { key: "Escape" });
-    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
-    const copyHandle = screen.getByRole("button", {
-      name: "Reorder Copy session ID",
-    });
-    fireEvent.click(copyHandle);
-    const copyUp = screen.getByRole("menuitem", {
-      name: "Move Copy session ID up",
-    });
-    expect(copyUp).toHaveFocus();
-    await user.keyboard("{Enter}");
-    expect(actionLabels()[0]).toBe("Copy session ID");
-    fireEvent.click(copyHandle);
-    expect(
-      screen.getByRole("menuitem", { name: "Move Copy session ID up" }),
-    ).toBeDisabled();
-    await user.click(
-      screen.getByRole("menuitem", { name: "Move Copy session ID down" }),
-    );
-    expect(actionLabels()[1]).toBe("Copy session ID");
-    expect(copyHandle).toHaveFocus();
   });
 });

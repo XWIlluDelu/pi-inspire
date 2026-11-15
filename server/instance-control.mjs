@@ -6,11 +6,13 @@ import {
 } from "node:crypto";
 
 const DOMAIN = "inspire:local-http-control:v1";
+export const INSTANCE_STATE_VERSION = 2;
 const TTL_MS = 15_000;
 const MAX_BYTES = 2_048;
 const MAX_PENDING = 1_024;
 const actions = new Set([
   "readiness",
+  "restart-mode",
   "launch-url",
   "maintenance-prepare",
   "maintenance-commit",
@@ -31,7 +33,7 @@ export function instanceIdentity(state) {
         state.root,
         state.host,
         state.port,
-        state.mock,
+        state.systemdInvocationId ?? null,
       ]),
     )
     .digest("base64url");
@@ -73,7 +75,7 @@ export function createInstanceControlRequest(
   payload = {},
   timeoutMs = TTL_MS,
 ) {
-  if (state.httpControlVersion !== 1 || !actions.has(action))
+  if (state?.schemaVersion !== INSTANCE_STATE_VERSION || !actions.has(action))
     throw new Error("This Host does not support authenticated local HTTP control");
   const message = {
     version: 1,
@@ -101,7 +103,7 @@ export class InstanceHttpControl {
   accept(state, value) {
     const now = this.#now();
     if (
-      state?.httpControlVersion !== 1 ||
+      state?.schemaVersion !== INSTANCE_STATE_VERSION ||
       !value ||
       value.version !== 1 ||
       typeof value.nonce !== "string" ||
@@ -161,7 +163,6 @@ export async function requestInstanceControl(
   payload = {},
   timeoutMs = 1_500,
 ) {
-  if (state.httpControlVersion !== 1) return null;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   timeout.unref();

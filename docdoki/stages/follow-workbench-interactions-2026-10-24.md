@@ -5,48 +5,39 @@ scope:
   - docdoki/specs/design-system.md
   - docdoki/specs/interface-preferences.md
   - docdoki/specs/resource-preview.md
+  - docdoki/specs/workspace-layout.md
+  - docdoki/specs/composer.md
 ---
 
 # Workbench interactions
 
 ## Objective
 
-Keep conversation reading, resource inspection and settings controls consistent across desktop
-and narrow layouts. [[design-system]], [[interface-preferences]], [[session-persistence]] and
-[[resource-preview]] own the implemented contracts.
+Keep reading, composing, and inspection consistent across desktop and narrow layouts. The
+[design map](../spec_abstract.md#design-map) links the implemented contracts.
 
-## Implemented decisions
+## Evidence and open acceptance
 
-- Desktop conversation search stays visible at the upper right. Ctrl/Cmd+F focuses it;
-  Escape blurs without clearing the query. Narrow layouts retain the mobile search launcher.
-- Changes uses an inline diff on narrow screens. Its filename filters and session search share
-  compact search controls with a named clear action that restores input focus.
-- Refreshing Files or Changes preserves the current rows and reader. Success, validation and
-  loading feedback stay with the initiating control; retained warnings remain in the notice stack.
-- Rounded containers, buttons and fields use the selected smaller radii. Files/Changes use
-  understated underlined labels without changing selection or pane height.
-- Existing structural type sizes remain unchanged. Additional pane borders were declined.
-  Keep the previous uncluttered layout rather than reopening those alternatives.
-- Shared error text uses semantic, palette-specific ink with readable dark-mode contrast.
-  Installed titlebar dimming follows application overlays, without forcing Android system-bar
-  colors or changing scrim scope.
-
-## Verification boundary
-
-Automated checks cover shared search controls, narrow inline diffs, transient feedback, titlebar
-blending, palette contrast and desktop/touch search. Device-owned Android window chrome still
-requires physical-device acceptance; [[follow-runtime-quality-2026-10-25]] tracks it.
+- Browser checks cover contextual search and focus return, resize with both side panes, drawer
+  dismissal, short-window reachability, independent file offsets, and refresh without lost content.
+  Restoring a selected session during bootstrap keeps the Welcome composer from flashing. Files
+  fixtures exercise authored links, long paths, PDF, and Source/rendered position retention.
+- Prior matched Chromium views covered desktop, 320–390px phone widths and landscape in light and
+  Mono dark. Narrow-input checks also ran in Firefox. Physical-device font and installed-window
+  appearance remain open under [[follow-runtime-quality-2026-10-25]].
+- Linux file-manager acceptance used the authenticated endpoint and acknowledged FileManager1
+  calls. Native Finder and Windows invocation still need acceptance.
 
 ## Undecided interaction proposals
 
-The following remain proposals, not implemented requirements:
+These remain proposals, not implemented requirements:
 
 - A command-palette entry that discovers existing actions without duplicating their policy.
 - Discoverable keyboard access to thinking and slash-command choices, with IME-safe handling.
 - Clearer attachment-upload progress that preserves durable retry and draft ownership.
-- An accessible grip for pane resizing and visual differentiation of project groups.
+- Visual differentiation of project groups.
 - A quieter idle composer and less decorative chrome around short messages or reasoning blocks.
 
-Review each against its actual workflow before implementation. Preserve action availability,
-reading behavior and the user's accepted layout; wider terminal, MCP and settings work has no
-additional acceptance requirement from these proposals.
+Assess each against its workflow before implementation. Preserve action availability, reading
+behavior and the accepted layout. The separate holistic Files layout remains in [[file-browsing]];
+it does not authorize a new left tree or split reader.

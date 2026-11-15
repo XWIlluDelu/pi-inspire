@@ -1,74 +1,114 @@
 // @vitest-environment jsdom
-import { expect, it, vi } from "vitest";
-import type { BootstrapResponse } from "../../shared/contracts";
-import { AppStore } from "../../src/store";
-import {
-  disposeOperationFixture,
-  fixture,
-} from "../server/fixtures/native-operation";
-import { deferred, FakeWebSocket, installFakeWebSocket } from "../web/helpers";
 
-it("stops a second native Pi run after both HTTP observations of the first Stop were lost", async () => {
-  const browserWindow = window;
+import { expect, it, vi } from "vitest";
+import { selectedRunState } from "../../src/app-state";
+import { AppStore } from "../../src/store";
+import { deferred, FakeWebSocket, installFakeWebSocket } from "../web/helpers";
+import { disposeOperationFixture, fixture } from "./native/operation-fixture";
+
+it("shares concurrent Stop requests and reclaims both lost handoffs while stopping a later native run", async () => {
   const gate = deferred<void>();
   let f: Awaited<ReturnType<typeof fixture>> | undefined;
   let store: AppStore | undefined;
   let listener: ((event: Record<string, unknown>) => void) | undefined;
+  let releaseView: (() => void) | undefined;
   try {
     f = await fixture(false, 35_000, gate.promise);
-    vi.stubGlobal("window", browserWindow);
     installFakeWebSocket();
     const bridge = fetch;
-    let bootstrap!: BootstrapResponse;
-    let losePost = true,
-      loseGet = true;
-    const ids: string[] = [];
+    let receiptsUnavailable = true;
+    const recoverPath = "/api/pending/recover";
+    const stopPath = "/api/control/abort";
+    const lostPosts = new Set([recoverPath, stopPath]);
+    const posts: Array<{ path: string; operationId: string }> = [];
+    const before = "Queued before Return";
+    const between = "Queued between Return and Stop";
     vi.stubGlobal("fetch", (async (input, init) => {
-      const headers = new Headers(init?.headers);
-      headers.set("Authorization", "Bearer pi-operation-synthetic-local-token");
-      const response = await bridge(input, { ...init, headers });
       const url = String(input);
-      if (url.startsWith("/api/bootstrap"))
-        bootstrap = await response.clone().json();
-      if (url === "/api/control/abort") {
-        ids.push(JSON.parse(String(init?.body)).operationId);
-        if (losePost) {
-          losePost = false;
-          throw new TypeError("lost Stop response");
-        }
+      if (url === stopPath && lostPosts.has(url)) {
+        await f!.api.prompt({ ...f!.delivery(between), behavior: "followUp" });
       }
-      if (url.startsWith("/api/pending/operations/") && loseGet) {
-        loseGet = false;
-        throw new TypeError("lost Stop receipt");
+      const response = await bridge(input, init);
+      if (url === stopPath || url === recoverPath) {
+        const { operationId, sessionId, authorityId } = JSON.parse(
+          String(init?.body),
+        );
+        expect(sessionId).toBe(f!.sessionId);
+        expect(authorityId).toBe(f!.application.authorityId);
+        posts.push({ path: url, operationId });
+        if (lostPosts.delete(url))
+          throw new TypeError("lost Pending mutation response");
       }
+      if (url.startsWith("/api/pending/operations/") && receiptsUnavailable)
+        throw new TypeError("Pending receipt unavailable");
       return response;
     }) satisfies typeof fetch);
     store = new AppStore();
-    await store.init("pi-operation-synthetic-local-token");
+    await store.init();
     const socket = FakeWebSocket.instances.at(-1)!;
-    socket.readyState = 1;
-    socket.onopen?.({});
-    socket.emit({
-      type: "snapshot",
-      authorityId: bootstrap.authorityId,
-      snapshotDigest: bootstrap.snapshotDigest,
-      data: bootstrap.snapshot,
+    releaseView = f.runtime.retainSessionView(f.sessionId);
+    socket.join(await f.runtime.snapshot(f.sessionId), {
+      authorityId: f.application.authorityId,
     });
     listener = (event) => socket.emit(event);
     f.runtime.on("event", listener);
     await f.api.prompt(f.delivery("First isolated run"));
     await vi.waitFor(() => expect(f!.modelRequests).toHaveLength(1));
-    await store.abort();
-    await vi.waitFor(() => expect(store!.getState().runState).toBe("aborted"));
+    const bytes = Buffer.from(
+      "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
+      "base64",
+    );
+    const image = await f.attachments.add({
+      originalname: "queued.gif",
+      mimetype: "image/gif",
+      size: bytes.length,
+      buffer: bytes,
+    } as Express.Multer.File);
+    await f.api.prompt({
+      ...f.delivery(before),
+      behavior: "steer",
+      attachmentIds: [image.id],
+    });
+    store.drafts.setText(f.sessionId, "newer draft");
+    await Promise.all([store.abort(), store.abort()]);
+    await vi.waitFor(() =>
+      expect(selectedRunState(store!.getState())).toBe("aborted"),
+    );
+    expect(store.drafts.get(f.sessionId).text).toBe("newer draft");
+    expect(store.getState().live.notices).toContainEqual(
+      expect.objectContaining({
+        text: expect.stringContaining("Pending recovery failed"),
+      }),
+    );
+    expect(posts.map(({ path }) => path)).toEqual([recoverPath, stopPath]);
+    receiptsUnavailable = false;
     await f.api.prompt(f.delivery("Second isolated run"));
     await vi.waitFor(() => expect(f!.modelRequests).toHaveLength(2));
-    expect(store.getState().runState).toBe("running");
+    expect(selectedRunState(store.getState())).toBe("running");
     await store.abort();
     await vi.waitFor(async () =>
-      expect((await f!.runtime.snapshot()).runState).toBe("aborted"),
+      expect(
+        (await f!.runtime.snapshot(f!.sessionId)).sessionStatuses[f!.sessionId]
+          ?.runState,
+      ).toBe("aborted"),
     );
-    expect(ids).toHaveLength(2);
-    expect(ids[1]).not.toBe(ids[0]);
+    await vi.waitFor(() => {
+      const draft = store!.drafts.get(f!.sessionId).text.split("\n\n");
+      expect(draft.pop()).toBe("newer draft");
+      expect(draft.sort()).toEqual([before, between].sort());
+      expect(
+        store!.drafts
+          .get(store!.getState().sessionId)
+          .attachments.map(({ uploadedId }) => uploadedId),
+      ).toEqual([image.id]);
+    });
+    expect(posts.map(({ path }) => path)).toEqual([
+      recoverPath,
+      stopPath,
+      recoverPath,
+      stopPath,
+    ]);
+    expect(new Set(posts.map(({ operationId }) => operationId)).size).toBe(4);
     expect(store.getState().connection).toBe("open");
     expect(
       f.piEvents.filter(
@@ -76,6 +116,7 @@ it("stops a second native Pi run after both HTTP observations of the first Stop 
       ),
     ).toHaveLength(2);
   } finally {
+    releaseView?.();
     if (f && listener) f.runtime.off("event", listener);
     (
       store as unknown as { connectionController: { stop(): void } } | undefined

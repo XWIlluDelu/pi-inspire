@@ -2,8 +2,8 @@ import {
   assistantStreamTextLength,
   MAX_ASSISTANT_STREAM_BATCH_EVENTS,
 } from "../../shared/assistant-stream";
+import { BROWSER_UPGRADE_CLOSE } from "../../shared/browser-build.mjs";
 import {
-  isRunState,
   isSessionRuntimeStatus,
   type SessionDetailInterest,
 } from "../../shared/contracts";
@@ -11,7 +11,7 @@ import { structuralMessageIdentity } from "../../shared/message-identity";
 import { eventsUrl, HTTP_OBSERVATION_TIMEOUT_MS } from "../api";
 import { socketTicket } from "../browser-auth";
 import type { WireEvent } from "../events";
-import { recordTransportMeasure, transportNow } from "../transport-performance";
+import { recordTransportMeasure } from "../transport-performance";
 
 export const SOCKET_CONNECT_TIMEOUT_MS = 10_000;
 // Snapshot projection can wait on Pi's 30-second reads. Connection setup and
@@ -33,7 +33,12 @@ function streamMessageUpdate(
     typeof event.streamTextLength === "number" &&
     Number.isSafeInteger(event.streamTextLength) &&
     event.streamTextLength >= 0 &&
-    Array.isArray(event.assistantMessageEvents)
+    Array.isArray(event.assistantMessageEvents) &&
+    event.assistantMessageEvents.length > 0 &&
+    typeof event.sourceEventCount === "number" &&
+    Number.isSafeInteger(event.sourceEventCount) &&
+    event.sourceEventCount >= event.assistantMessageEvents.length &&
+    event.sourceEventCount <= MAX_ASSISTANT_STREAM_BATCH_EVENTS
   ) {
     return {
       event,
@@ -71,6 +76,7 @@ export type ManagedConnectionState =
   | "reconnecting"
   | "offline";
 export type ManagedConnectionProblem =
+  | { kind: "browser-upgrade" }
   | { kind: "device-offline" }
   | { kind: "address-unreachable" }
   | { kind: "relay-unavailable" }
@@ -83,7 +89,6 @@ interface ConnectionControllerHost {
   state(): {
     bootstrapped: boolean;
     authorityId: string | null;
-    snapshotDigest: string | null;
     sessionId: string | null;
   };
   patch(patch: {
@@ -91,13 +96,11 @@ interface ConnectionControllerHost {
     connectionProblem?: ManagedConnectionProblem;
   }): void;
   applyEvent(event: WireEvent): void;
-  recordSnapshotDigest(digest: string): void;
-  invalidateSnapshotDigest(): void;
   /** A deliberate replacement invalidates ownership tied to the old stream. */
   onTransportReplaced(): void;
   /** An unexpected close invalidates stream-owned state before retrying. */
   onTransportClosed(): void;
-  reconnect(token: string | null): void;
+  reconnect(): void;
 }
 
 function parseWireEvent(data: unknown): WireEvent | null {
@@ -110,44 +113,55 @@ function parseWireEvent(data: unknown): WireEvent | null {
       typeof (event as { type?: unknown }).type !== "string"
     )
       return null;
-    return event as WireEvent;
+    const wire = event as WireEvent;
+    if (
+      wire.sessionStatus !== undefined &&
+      !isSessionRuntimeStatus(wire.sessionStatus)
+    )
+      return null;
+    return wire;
   } catch {
     return null;
   }
 }
 
-function authoritativeSnapshot(
+function isAuthoritativeSnapshot(
   event: WireEvent,
-  expectedAuthority: string | null,
-  expectedDigest: string | null,
-): { kind: "full" | "unchanged"; digest: string } | null {
+  authorityId: string | null,
+): boolean {
   if (
     event.type !== "snapshot" ||
-    !expectedAuthority ||
-    typeof event.authorityId !== "string" ||
-    event.authorityId !== expectedAuthority ||
-    typeof event.snapshotDigest !== "string" ||
-    !/^[0-9a-f]{64}$/u.test(event.snapshotDigest)
-  ) {
-    return null;
-  }
-  const digest = event.snapshotDigest;
-  if (event.unchanged === true) {
-    return digest === expectedDigest ? { kind: "unchanged", digest } : null;
-  }
-  const data = event.data;
-  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
-  const snapshot = data as Record<string, unknown>;
-  if (!isRunState(snapshot.runState)) return null;
-  const statuses = snapshot.sessionStatuses;
-  if (
-    !statuses ||
-    typeof statuses !== "object" ||
-    Array.isArray(statuses) ||
-    !Object.values(statuses).every(isSessionRuntimeStatus)
+    !authorityId ||
+    event.authorityId !== authorityId ||
+    typeof event.detailRevision !== "number" ||
+    !Number.isSafeInteger(event.detailRevision) ||
+    event.detailRevision < 0 ||
+    (event.detailSessionId !== null &&
+      typeof event.detailSessionId !== "string")
   )
-    return null;
-  return { kind: "full", digest };
+    return false;
+  const data = event.data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) return false;
+  const { sessionStatuses, active } = data as Record<string, unknown>;
+  const activeId =
+    active && typeof active === "object"
+      ? (active as { sessionId?: unknown }).sessionId
+      : null;
+  return (
+    (active === null ||
+      (typeof active === "object" &&
+        active !== null &&
+        !Array.isArray(active))) &&
+    (event.missingDetail === true
+      ? active === null && typeof event.detailSessionId === "string"
+      : activeId === event.detailSessionId) &&
+    sessionStatuses !== null &&
+    typeof sessionStatuses === "object" &&
+    !Array.isArray(sessionStatuses) &&
+    (typeof activeId !== "string" ||
+      Object.hasOwn(sessionStatuses, activeId)) &&
+    Object.values(sessionStatuses).every(isSessionRuntimeStatus)
+  );
 }
 
 /**
@@ -160,12 +174,11 @@ export class ConnectionController {
   private socketPhase: "bootstrap" | "resume" | null = null;
   private detailSessionId: string | null = null;
   private detailRevision = 0;
-  private detailWitness: Required<SessionDetailInterest> | null = null;
+  private wantedDetailSessionId: string | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private snapshotTimer: ReturnType<typeof setTimeout> | null = null;
   private watchdogTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectDelay = 1_000;
-  private token: string | null = null;
   private started = false;
   private reconnectPending = false;
   private synchronized = false;
@@ -184,19 +197,24 @@ export class ConnectionController {
 
   constructor(private readonly host: ConnectionControllerHost) {}
 
-  connect(token: string | null): Promise<void> {
+  connect(sessionId = this.host.state().sessionId): Promise<void> {
     this.started = true;
-    this.token = token;
     this.reconnectPending = false;
     this.scheduledReconnectKind = null;
-    return this.openSocket(token, "bootstrap");
+    this.wantedDetailSessionId = sessionId;
+    return this.openSocket("bootstrap");
   }
 
   /** Selection commits keep the global stream alive, but fence its detail
    * projection behind a new addressed snapshot. */
-  updateDetailInterest(): void {
+  updateDetailInterest(sessionId = this.host.state().sessionId): void {
+    this.wantedDetailSessionId = sessionId;
+    this.sendDetailInterest();
+  }
+
+  private sendDetailInterest(): void {
     const socket = this.socket;
-    const sessionId = this.host.state().sessionId;
+    const sessionId = this.wantedDetailSessionId;
     if (
       !socket ||
       socket.readyState !== WebSocket.OPEN ||
@@ -212,17 +230,7 @@ export class ConnectionController {
       type: "detail_interest",
       sessionId,
       revision: this.detailRevision,
-      ...(this.host.state().snapshotDigest && this.host.state().authorityId
-        ? {
-            authorityId: this.host.state().authorityId!,
-            snapshotDigest: this.host.state().snapshotDigest!,
-          }
-        : {}),
     };
-    this.detailWitness =
-      interest.authorityId && interest.snapshotDigest
-        ? (interest as Required<SessionDetailInterest>)
-        : null;
     try {
       socket.send(JSON.stringify(interest));
     } catch {
@@ -236,44 +244,18 @@ export class ConnectionController {
     );
   }
 
-  private expectedDigest(event: WireEvent): string | null {
-    const state = this.host.state();
-    const witness = this.detailWitness;
-    return witness &&
-      witness.authorityId === state.authorityId &&
-      witness.sessionId === state.sessionId &&
-      witness.sessionId === event.detailSessionId &&
-      witness.revision === event.detailRevision
-      ? witness.snapshotDigest
-      : state.snapshotDigest;
-  }
-
-  private async openSocket(
-    token: string | null,
-    phase: "bootstrap" | "resume",
-  ): Promise<void> {
+  private async openSocket(phase: "bootstrap" | "resume"): Promise<void> {
     const request = ++this.socketRequest;
-    const handshakeStartedAt = transportNow();
+    const handshakeStartedAt = performance.now();
     this.reconnectPending = false;
     this.clearReconnectTimer();
-    this.clearStreamTimers();
-    this.synchronized = false;
-    this.lastFrameAt = 0;
-
-    const previous = this.socket;
-    if (previous) {
-      // Detach before close so this deliberate replacement cannot be observed
-      // as an unexpected disconnect.
-      this.socket = null;
-      this.host.onTransportReplaced();
-      previous.close();
-    }
+    this.retireSocket("replaced");
     let ticket: string;
     try {
       ticket = await socketTicket("events");
     } catch {
       if (this.started && request === this.socketRequest)
-        this.scheduleReconnectAfterDelay(token, "bootstrap");
+        this.scheduleReconnectAfterDelay("bootstrap");
       return;
     }
     if (!this.started || request !== this.socketRequest) return;
@@ -281,11 +263,9 @@ export class ConnectionController {
     this.host.patch({
       connection: state.bootstrapped ? "reconnecting" : "connecting",
     });
-    this.detailSessionId = state.sessionId;
+    this.detailSessionId = this.wantedDetailSessionId;
     this.detailRevision = 0;
-    const socket = new WebSocket(
-      eventsUrl(ticket, state.snapshotDigest ?? null, state.sessionId),
-    );
+    const socket = new WebSocket(eventsUrl(ticket, this.detailSessionId));
     this.socket = socket;
     this.socketPhase = phase;
     socket.onopen = () => {
@@ -295,7 +275,7 @@ export class ConnectionController {
         () => this.failSocket(socket),
         FIRST_SNAPSHOT_TIMEOUT_MS,
       );
-      this.updateDetailInterest();
+      this.sendDetailInterest();
     };
     // TCP/WebSocket negotiation must also be bounded when no open/error/close
     // event arrives. An open socket gets its own snapshot observation budget.
@@ -313,88 +293,52 @@ export class ConnectionController {
         return;
       }
 
-      // An older snapshot may already be in flight when selection changes.
-      // Its queue belongs to the old interest and cannot replace this owner.
-      if (
-        event.type === "snapshot" &&
-        event.detailRevision !== undefined &&
-        (event.detailRevision !== this.detailRevision ||
-          event.detailSessionId !== this.host.state().sessionId)
-      )
-        return;
-      const hostState = this.host.state();
-      if (!this.synchronized) {
-        const snapshot = authoritativeSnapshot(
-          event,
-          hostState.authorityId,
-          hostState.snapshotDigest,
-        );
-        if (!snapshot) {
+      if (event.type === "snapshot") {
+        if (!isAuthoritativeSnapshot(event, this.host.state().authorityId)) {
           this.failSocket(socket, "bootstrap");
           return;
         }
-        try {
-          this.host.applyEvent(event);
-          this.host.recordSnapshotDigest(snapshot.digest);
-          this.detailWitness = null;
-        } catch {
-          this.failSocket(socket, "bootstrap");
+        // A snapshot already in flight for an old interest cannot replace a
+        // selection the browser committed while that read was pending.
+        if (
+          event.detailRevision !== this.detailRevision ||
+          event.detailSessionId !== this.detailSessionId ||
+          this.detailSessionId !== this.wantedDetailSessionId
+        )
           return;
+        const first = !this.synchronized;
+        if (!this.flushStreamUpdate(socket)) return;
+        if (event.missingDetail === true) {
+          this.detailSessionId = null;
+          this.wantedDetailSessionId = null;
         }
-        if (this.socket !== socket) return;
+        if (!this.applySocketEvent(socket, event) || this.socket !== socket)
+          return;
         this.synchronized = true;
         this.lastFrameAt = Date.now();
-        this.reconnectDelay = 1_000;
-        this.scheduledReconnectKind = null;
         this.clearSnapshotTimer();
         this.armWatchdog(socket);
-        this.host.patch({ connection: "open", connectionProblem: null });
-        recordTransportMeasure("websocket-handshake", handshakeStartedAt, {
-          phase,
-          snapshot: snapshot.kind,
-          compression: socket.extensions.includes("permessage-deflate"),
-          characters: String(frame.data).length,
-        });
-        this.beginStreamMetrics();
+        if (first) {
+          this.reconnectDelay = 1_000;
+          this.scheduledReconnectKind = null;
+          this.host.patch({ connection: "open", connectionProblem: null });
+          recordTransportMeasure("websocket-handshake", handshakeStartedAt, {
+            phase,
+            compression: socket.extensions.includes("permessage-deflate"),
+            characters: String(frame.data).length,
+          });
+          this.beginStreamMetrics();
+        }
         return;
       }
-
+      if (!this.synchronized) {
+        this.failSocket(socket, "bootstrap");
+        return;
+      }
       this.lastFrameAt = Date.now();
       this.armWatchdog(socket);
       this.recordStreamFrame(event, String(frame.data).length);
       if (event.type === "heartbeat") return;
-      if (event.type === "snapshot") {
-        if (!this.flushStreamUpdate(socket)) return;
-        const snapshot = authoritativeSnapshot(
-          event,
-          hostState.authorityId,
-          this.expectedDigest(event),
-        );
-        if (!snapshot) {
-          this.failSocket(socket, "bootstrap");
-          return;
-        }
-        if (!this.applySocketEvent(socket, event)) return;
-        this.host.recordSnapshotDigest(snapshot.digest);
-        this.detailWitness = null;
-        this.clearSnapshotTimer();
-        return;
-      }
-      // Host-wide update status and external activity observations travel on
-      // this stream but are not part of the runtime snapshot digest.
-      if (
-        event.type !== "update_status" &&
-        event.type !== "external_session_activity" &&
-        event.type !== "task_notification" &&
-        event.type !== "task_alert_settings"
-      ) {
-        if (
-          typeof event.sessionId !== "string" ||
-          event.sessionId === this.detailSessionId
-        )
-          this.detailWitness = null;
-        this.host.invalidateSnapshotDigest();
-      }
       const streamUpdate = streamMessageUpdate(event);
       if (streamUpdate) {
         this.queueStreamUpdate(socket, streamUpdate);
@@ -403,21 +347,19 @@ export class ConnectionController {
       if (!this.flushStreamUpdate(socket)) return;
       this.applySocketEvent(socket, event);
     };
-    socket.onclose = () => {
+    socket.onclose = (event) => {
       if (this.socket !== socket) return;
-      const canResume =
-        this.synchronized ||
-        (phase === "bootstrap" && Boolean(this.host.state().snapshotDigest));
-      this.socket = null;
-      this.socketPhase = null;
-      this.synchronized = false;
-      this.lastFrameAt = 0;
-      this.clearStreamTimers();
-      this.host.onTransportClosed();
-      this.scheduleReconnectAfterDelay(
-        token,
-        canResume ? "resume" : "bootstrap",
-      );
+      if (event?.code === BROWSER_UPGRADE_CLOSE) {
+        this.stop();
+        this.host.patch({
+          connection: "offline",
+          connectionProblem: { kind: "browser-upgrade" },
+        });
+        return;
+      }
+      const resume = this.canResume();
+      this.retireSocket("remote");
+      this.scheduleReconnectAfterDelay(resume ? "resume" : "bootstrap");
     };
     socket.onerror = () => this.failSocket(socket);
   }
@@ -425,45 +367,27 @@ export class ConnectionController {
   stop(): void {
     this.socketRequest += 1;
     this.started = false;
-    this.token = null;
     this.reconnectPending = false;
     this.scheduledReconnectKind = null;
     this.reconnectDelay = 1_000;
     this.clearReconnectTimer();
-    this.clearStreamTimers();
-    this.synchronized = false;
-    this.lastFrameAt = 0;
-    const socket = this.socket;
-    this.socket = null;
-    this.socketPhase = null;
-    socket?.close();
+    this.retireSocket("stop");
   }
 
-  retry(token: string | null): void {
+  retry(): void {
     this.started = true;
-    this.token = token;
     this.reconnectPending = false;
     this.scheduledReconnectKind = null;
     this.reconnectDelay = 1_000;
     this.clearReconnectTimer();
-    this.clearStreamTimers();
-    const socket = this.socket;
-    if (socket) {
-      this.socket = null;
-      this.socketPhase = null;
-      this.synchronized = false;
-      this.lastFrameAt = 0;
-      this.host.onTransportReplaced();
-      socket.close();
-    }
+    this.retireSocket("replaced");
     this.requestReconnect("bootstrap");
   }
 
-  scheduleReconnect(token: string | null): void {
+  scheduleReconnect(): void {
     this.started = true;
-    this.token = token;
     this.reconnectPending = false;
-    this.scheduleReconnectAfterDelay(token, "bootstrap");
+    this.scheduleReconnectAfterDelay("bootstrap");
   }
 
   /** Recover promptly from browser/network lifecycle boundaries. A normal
@@ -483,34 +407,41 @@ export class ConnectionController {
 
   private recoverNow(): void {
     if (this.reconnectPending) return;
-    const canResume =
-      (this.socket !== null && this.synchronized) ||
-      this.scheduledReconnectKind === "resume" ||
-      (this.socketPhase === "bootstrap" &&
-        Boolean(this.host.state().snapshotDigest));
+    const resume = this.canResume() || this.scheduledReconnectKind === "resume";
     this.clearReconnectTimer();
-    this.clearStreamTimers();
+    this.retireSocket("interrupted");
+    this.requestReconnect(resume ? "resume" : "bootstrap");
+  }
+
+  private canResume(): boolean {
+    return this.synchronized || this.socketPhase === "bootstrap";
+  }
+
+  private retireSocket(
+    reason: "stop" | "replaced" | "remote" | "interrupted",
+  ): void {
     const socket = this.socket;
-    if (socket) {
-      this.socket = null;
-      this.socketPhase = null;
-      this.synchronized = false;
-      this.lastFrameAt = 0;
+    this.socket = null;
+    this.socketPhase = null;
+    this.synchronized = false;
+    this.lastFrameAt = 0;
+    this.clearStreamTimers();
+    if (!socket) return;
+    if (reason === "replaced") this.host.onTransportReplaced();
+    if (reason === "remote" || reason === "interrupted")
       this.host.onTransportClosed();
-      socket.close();
-    }
-    this.requestReconnect(canResume ? "resume" : "bootstrap");
+    if (reason !== "remote") socket.close();
   }
 
   private requestReconnect(kind: "resume" | "bootstrap"): void {
     if (!this.started || this.reconnectPending) return;
     this.scheduledReconnectKind = null;
     if (kind === "resume") {
-      void this.openSocket(this.token, "resume");
+      void this.openSocket("resume");
       return;
     }
     this.reconnectPending = true;
-    this.host.reconnect(this.token);
+    this.host.reconnect();
   }
 
   private applySocketEvent(socket: WebSocket, event: WireEvent): boolean {
@@ -555,10 +486,8 @@ export class ConnectionController {
         .assistantMessageEvents as unknown[];
       const nextEvents = update.event.assistantMessageEvents as unknown[];
       const sourceEventCount =
-        Number(
-          this.pendingStreamUpdate.event.sourceEventCount ??
-            previousEvents.length,
-        ) + Number(update.event.sourceEventCount ?? nextEvents.length);
+        Number(this.pendingStreamUpdate.event.sourceEventCount) +
+        Number(update.event.sourceEventCount);
       if (sourceEventCount > MAX_ASSISTANT_STREAM_BATCH_EVENTS) {
         if (!this.flushStreamUpdate(socket)) return;
         this.pendingStreamUpdate = {
@@ -606,30 +535,12 @@ export class ConnectionController {
     recovery?: "resume" | "bootstrap",
   ): void {
     if (this.socket !== socket) return;
-    const canResume =
-      recovery === "resume" ||
-      (recovery !== "bootstrap" &&
-        (this.synchronized ||
-          (this.socketPhase === "bootstrap" &&
-            Boolean(this.host.state().snapshotDigest))));
-    this.socket = null;
-    this.socketPhase = null;
-    this.synchronized = false;
-    this.lastFrameAt = 0;
-    this.clearStreamTimers();
-    this.host.onTransportClosed();
-    socket.close();
-    this.scheduleReconnectAfterDelay(
-      this.token,
-      canResume ? "resume" : "bootstrap",
-    );
+    const kind = recovery ?? (this.canResume() ? "resume" : "bootstrap");
+    this.retireSocket("interrupted");
+    this.scheduleReconnectAfterDelay(kind);
   }
 
-  private scheduleReconnectAfterDelay(
-    token: string | null,
-    kind: "resume" | "bootstrap",
-  ): void {
-    this.token = token;
+  private scheduleReconnectAfterDelay(kind: "resume" | "bootstrap"): void {
     this.clearReconnectTimer();
     this.scheduledReconnectKind = kind;
     const delay = this.reconnectDelay;
@@ -676,7 +587,7 @@ export class ConnectionController {
   }
 
   private beginStreamMetrics(): void {
-    this.streamMetricStartedAt = transportNow();
+    this.streamMetricStartedAt = performance.now();
     this.streamMetricFrames = 0;
     this.streamMetricCharacters = 0;
     this.streamMetricAssistantEvents = 0;
@@ -693,7 +604,7 @@ export class ConnectionController {
         : event.type === "message_update"
           ? 1
           : 0;
-    if (transportNow() - this.streamMetricStartedAt >= 10_000)
+    if (performance.now() - this.streamMetricStartedAt >= 10_000)
       this.flushStreamMetrics();
   }
 
@@ -716,7 +627,6 @@ export class ConnectionController {
   }
 
   private clearStreamTimers(): void {
-    this.detailWitness = null;
     this.flushStreamMetrics();
     this.clearSnapshotTimer();
     if (this.watchdogTimer) clearTimeout(this.watchdogTimer);

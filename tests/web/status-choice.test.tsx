@@ -65,9 +65,9 @@ it("retires a confirmation warning when the requested selection arrives late", a
   const input = screen.getByRole("slider", { name: "Choice" });
   fireEvent.change(input, { target: { value: "1" } });
   expect(input).toBeDisabled();
-  expect(input).toHaveAttribute("aria-valuetext", "Low");
+  expect(input).toHaveValue("1");
+  expect(input).toHaveAttribute("aria-valuetext", "Applying High");
   expect(input.closest(".status-choice")).toHaveAttribute("aria-busy", "true");
-  expect(input.closest(".status-choice")?.querySelector("p")).toBeNull();
   await act(async () => {
     await vi.advanceTimersByTimeAsync(10_000);
   });
@@ -82,7 +82,7 @@ it("retires a confirmation warning when the requested selection arrives late", a
   expect(store.selectStatusControl).toHaveBeenCalledTimes(1);
 });
 
-it("retains meaningful option guidance while a different selection is pending", async () => {
+it("reports a refused status choice", async () => {
   const state = store.getState();
   vi.spyOn(store, "getState").mockReturnValue({ ...state, sessionId: "s1" });
   const pending = deferred<boolean>();
@@ -91,22 +91,27 @@ it("retains meaningful option guidance while a different selection is pending", 
     <StatusChoice
       control={{
         ...control,
+        state: { ...control.state, supported: "supported" },
         options: [
           { ...control.options[0]!, description: "Uses standard limits." },
           control.options[1]!,
         ],
       }}
-      status='{"value":"low"}'
+      status='{"value":"low","supported":{"low":false,"high":true}}'
       disabled={false}
       owner="s1"
       generation={state.transportGeneration}
     />,
   );
+  expect(screen.getByRole("slider", { name: "Choice" })).toHaveAttribute(
+    "aria-valuetext",
+    "Low",
+  );
   fireEvent.change(screen.getByRole("slider", { name: "Choice" }), {
     target: { value: "1" },
   });
-  expect(screen.getByText("Uses standard limits.")).toBeVisible();
   await act(async () => pending.resolve(false));
+  expect(screen.getByText("The change was not accepted.")).toBeVisible();
 });
 
 it("keeps confirmed Pi state when its command observation fails later", async () => {
@@ -149,14 +154,11 @@ it("can choose the first draft value by keyboard without claiming a current nati
   const slider = screen.getByRole("slider", { name: "Choice" });
   expect(slider).toBeEnabled();
   expect(slider).toHaveAttribute("aria-valuetext", "Default");
-  expect(
-    document.querySelector('.status-choice__dots [data-focus-target="true"]'),
-  ).not.toHaveAttribute("data-selected", "true");
   fireEvent.keyDown(slider, { key: "Home" });
   expect(onSelect).toHaveBeenCalledWith("low");
 });
 
-it("keeps missing status neutral instead of prescribing an extension reload", () => {
+it("reports missing status as unknown", () => {
   render(
     <StatusChoice
       control={control}
@@ -166,8 +168,8 @@ it("keeps missing status neutral instead of prescribing an extension reload", ()
     />,
   );
   expect(screen.getByRole("slider", { name: "Choice" })).toBeDisabled();
-  expect(
-    screen.getByText("Selection status is not available yet."),
-  ).toBeVisible();
-  expect(screen.queryByText(/reload/i)).toBeNull();
+  expect(screen.getByRole("slider", { name: "Choice" })).toHaveAttribute(
+    "aria-valuetext",
+    "Unknown",
+  );
 });

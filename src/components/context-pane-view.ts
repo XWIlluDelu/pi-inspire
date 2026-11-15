@@ -7,57 +7,39 @@ export type ContextPaneView = Pick<
   AppState,
   | "transportGeneration"
   | "sessionId"
-  | "transcriptViewId"
-  | "transcriptRevision"
   | "resourcesOpen"
   | "contextMode"
-  | "fileBrowserView"
-  | "selectedResourceReference"
-  | "selectedResourceWorkspacePath"
-  | "resourcePreview"
-  | "resourceAvailability"
-  | "resourceWorkspacePaths"
+  | "fileInspection"
+  | "resourceTabs"
+  | "resourceStanding"
   | "workspaceQuery"
   | "workspaceLoadingDirs"
   | "workspaceSearchLoading"
   | "cwd"
   | "gitStatus"
   | "gitStatusError"
-  | "gitStatusLoading"
-  | "gitStatusRefreshing"
-  | "selectedGitPathId"
-  | "selectedGitSide"
+  | "gitStatusPending"
   | "gitDiff"
-  | "branchTreeLoading"
-  | "branchActionId"
->;
+> & { transcriptViewId: string | null; transcriptRevision: number };
 
 export function selectContextPaneView(state: AppState): ContextPaneView {
   return {
     transportGeneration: state.transportGeneration,
     sessionId: state.sessionId,
-    transcriptViewId: state.transcriptViewId,
-    transcriptRevision: state.transcriptRevision,
+    transcriptViewId: state.view.viewId,
+    transcriptRevision: state.view.revision,
     resourcesOpen: state.resourcesOpen,
     contextMode: state.contextMode,
-    fileBrowserView: state.fileBrowserView,
-    selectedResourceReference: state.selectedResourceReference,
-    selectedResourceWorkspacePath: state.selectedResourceWorkspacePath,
-    resourcePreview: state.resourcePreview,
-    resourceAvailability: state.resourceAvailability,
-    resourceWorkspacePaths: state.resourceWorkspacePaths,
+    fileInspection: state.fileInspection,
+    resourceTabs: state.resourceTabs,
+    resourceStanding: state.resourceStanding,
     workspaceQuery: state.workspaceQuery,
     workspaceLoadingDirs: state.workspaceLoadingDirs,
     workspaceSearchLoading: state.workspaceSearchLoading,
     cwd: state.cwd,
     gitStatus: state.gitStatus,
     gitStatusError: state.gitStatusError,
-    gitStatusLoading: state.gitStatusLoading,
-    gitStatusRefreshing: state.gitStatusRefreshing,
-    selectedGitPathId: state.selectedGitPathId,
-    selectedGitSide: state.selectedGitSide,
+    gitStatusPending: state.gitStatusPending,
     gitDiff: state.gitDiff,
-    branchTreeLoading: state.branchTreeLoading,
-    branchActionId: state.branchActionId,
   };
 }

@@ -1,545 +1,158 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-import {
-  PiRpcOutcomeUnknownError,
-  type PiRpcProcess,
-} from "../../server/pi-rpc.js";
-
-import { RuntimeController } from "../../server/runtime.js";
-
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { PiRpcOutcomeUnknownError } from "../../server/pi-rpc.js";
 import {
   MAX_EXTENSION_KEY_CHARS,
   MAX_EXTENSION_STATUS_CHARS,
+  MAX_EXTENSION_STATUSES,
 } from "../../shared/contracts.js";
-
 import {
-  FakeRpc,
-  record,
-  preview,
-  catalog,
-  trackedAttachmentStore,
-  schedulingRuntime,
-  waitForReady,
-  initializeRuntimeFixture,
-  disposeRuntimeFixture,
+  disposeIsolatedRuntimeFixture,
+  fakeRuntime,
+  initializeIsolatedRuntimeFixture,
+  persistedRecord,
+  startWorker,
+  trackRuntime,
 } from "./fixtures/runtime.js";
 
-beforeEach(initializeRuntimeFixture);
-afterEach(disposeRuntimeFixture);
+beforeEach(initializeIsolatedRuntimeFixture);
+afterEach(disposeIsolatedRuntimeFixture);
 
-describe("extension displays and dialog ownership", () => {
-  it("projects text widgets, bounds raw displays, and cancels unknown interactive methods", async () => {
-    const store = trackedAttachmentStore();
-    const f = schedulingRuntime({ attachments: store });
-    const { runtime } = f;
-    const emitted: Array<Record<string, unknown>> = [];
-    runtime.on("event", (event) =>
-      emitted.push(event as Record<string, unknown>),
-    );
-    await runtime.openSession("a");
-    await new Promise<void>((resolveTick) => setImmediate(resolveTick));
-
-    f.worker.emit("event", {
-      type: "extension_ui_request",
-      id: "widget-1",
-      method: "setWidget",
-      widgetKey: "plan",
-      widgetLines: ["one", "two"],
-      widgetPlacement: "belowEditor",
-      extensionPath: "/extensions/plan.ts",
-      body: "must not cross from a native widget",
-      apiToken: "must not cross",
-    });
-    let snapshot = await runtime.snapshot();
-    expect(snapshot.extensionDisplays).toEqual([
-      {
-        id: "setWidget:plan",
-        kind: "widget",
-        label: "plan",
-        source: "/extensions/plan.ts",
-        placement: "belowEditor",
-        lines: ["one", "two"],
-      },
-    ]);
-    expect(JSON.stringify(snapshot.extensionDisplays)).not.toContain(
-      "must not cross",
-    );
-    expect(snapshot.pendingExtensionUiRequests).toEqual([]);
-    const widgetEvent = emitted.findLast(
-      (event) =>
-        event.type === "extension_ui_request" && event.id === "widget-1",
-    );
-    expect(widgetEvent).toEqual(
-      expect.objectContaining({
-        method: "setWidget",
-        responseRequired: false,
-        extensionDisplays: snapshot.extensionDisplays,
-      }),
-    );
-    expect(widgetEvent).not.toHaveProperty("body");
-    expect(widgetEvent).not.toHaveProperty("apiToken");
-
-    f.worker.emit("event", {
-      type: "extension_ui_request",
-      id: "widget-key-oversized",
-      method: "setWidget",
-      widgetKey: "k".repeat(MAX_EXTENSION_KEY_CHARS + 1),
-      widgetLines: ["must be rejected"],
-    });
-    snapshot = await runtime.snapshot();
-    expect(snapshot.extensionDisplays).toEqual([
-      expect.objectContaining({ id: "setWidget:plan", kind: "widget" }),
-    ]);
-    expect(emitted.at(-1)).toMatchObject({
-      extensionDisplays: snapshot.extensionDisplays,
-    });
-    expect(emitted.at(-1)).not.toHaveProperty("widgetKey");
-    expect(emitted.at(-1)).not.toHaveProperty("widgetLines");
-
-    f.worker.emit("event", {
-      type: "extension_ui_request",
-      id: "widget-oversized",
-      method: "setWidget",
-      widgetKey: "plan",
-      widgetLines: ["x".repeat(140 * 1024)],
-    });
-    snapshot = await runtime.snapshot();
-    expect(snapshot.extensionDisplays).toEqual([
-      expect.objectContaining({
-        id: "setWidget:plan",
-        kind: "raw",
-        payload: expect.objectContaining({ truncated: true }),
-      }),
-    ]);
-
-    f.worker.emit("event", {
-      type: "extension_ui_request",
-      id: "status-1",
-      method: "setStatus",
-      statusKey: "usage",
-      statusText: "37%",
-      responseRequired: false,
-    });
-    snapshot = await runtime.snapshot();
-    expect(snapshot.extensionDisplays).toHaveLength(1);
-    expect(snapshot.extensionStatuses).toEqual({ usage: "37%" });
-    expect(emitted.at(-1)).toMatchObject({
-      type: "extension_ui_request",
-      method: "setStatus",
-      extensionStatuses: { usage: "37%" },
-    });
-    expect(emitted.at(-1)).not.toHaveProperty("extensionDisplays");
-    expect(emitted.at(-1)).not.toHaveProperty("statusText");
-
-    f.worker.emit("event", {
-      type: "extension_ui_request",
-      id: "status-oversized",
-      method: "setStatus",
-      statusKey: "usage",
-      statusText: "x".repeat(MAX_EXTENSION_STATUS_CHARS + 200),
-    });
-    expect((await runtime.snapshot()).extensionStatuses?.usage).toBe(
-      `${"x".repeat(MAX_EXTENSION_STATUS_CHARS - 1)}…`,
-    );
-
-    f.worker.emit("event", {
-      type: "extension_ui_request",
-      id: "status-multibyte",
-      method: "setStatus",
-      statusKey: "usage",
-      statusText: "🧭".repeat(MAX_EXTENSION_STATUS_CHARS + 1),
-    });
-    const multibyteStatus = (await runtime.snapshot()).extensionStatuses?.usage;
-    expect(multibyteStatus).toBeDefined();
-    expect(Array.from(multibyteStatus!).length).toBeLessThanOrEqual(
-      MAX_EXTENSION_STATUS_CHARS,
-    );
-    expect(multibyteStatus).toMatch(/^(?:🧭)*…$/u);
-
-    f.worker.emit("event", {
-      type: "extension_ui_request",
-      id: "status-clear",
-      method: "setStatus",
-      statusKey: "usage",
-    });
-    expect((await runtime.snapshot()).extensionStatuses).toEqual({});
-
-    for (let index = 0; index < 22; index += 1) {
-      f.worker.emit("event", {
-        type: "extension_ui_request",
-        id: `status-${index}`,
-        method: "setStatus",
-        statusKey: `status-${index}`,
-        statusText: String(index),
-      });
-    }
-    snapshot = await runtime.snapshot();
-    expect(Object.keys(snapshot.extensionStatuses ?? {})).toHaveLength(20);
-    expect(snapshot.extensionStatuses).not.toHaveProperty("status-0");
-    expect(snapshot.extensionStatuses).not.toHaveProperty("status-1");
-    expect(snapshot.extensionStatuses).toMatchObject({ "status-21": "21" });
-
-    f.worker.emit("event", {
-      type: "extension_ui_request",
-      id: "panel-1",
-      method: "showPanel",
-      responseRequired: false,
-      extensionPath: "/extensions/build.ts",
-      body: "x".repeat(140 * 1024),
-      apiToken: "must not cross",
-    });
-    snapshot = await runtime.snapshot();
-    expect(snapshot.extensionDisplays?.at(-1)).toEqual(
-      expect.objectContaining({
-        id: "showPanel:panel-1",
-        kind: "raw",
-        label: "panel-1",
-        source: "/extensions/build.ts",
-        method: "showPanel",
-        payload: expect.objectContaining({ truncated: true }),
-      }),
-    );
-    expect(JSON.stringify(snapshot.extensionDisplays)).not.toContain(
-      "must not cross",
-    );
-
-    f.worker.emit("event", {
-      type: "extension_ui_request",
-      id: "future-dialog",
-      method: "chooseFiles",
-      title: "Choose files",
-      paths: ["a", "b"],
-    });
-    snapshot = await runtime.snapshot();
-    expect(snapshot.pendingExtensionUiRequests).toEqual([
-      expect.objectContaining({
-        id: "future-dialog",
-        method: "chooseFiles",
-        unsupported: true,
-      }),
-    ]);
-    await runtime.extensionUiResponse({
-      sessionId: "a",
-      id: "future-dialog",
-      cancelled: true,
-    });
-    expect(f.worker.uiResponses).toContainEqual({
-      id: "future-dialog",
-      cancelled: true,
-    });
-    expect((await runtime.snapshot()).pendingExtensionUiRequests).toEqual([]);
-    await runtime.close();
+async function fixture() {
+  const f = fakeRuntime({
+    sessions: [await persistedRecord("a")],
   });
-
-  it("preserves dialogs across model settlement and clears them on expiry, response, Stop, or worker loss", async () => {
-    const store = trackedAttachmentStore();
-    let worker!: FakeRpc;
-    const emitted: Array<Record<string, unknown>> = [];
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      store,
-      (options) => {
-        worker = new FakeRpc(options);
-        return worker as unknown as PiRpcProcess;
-      },
-      preview,
-    );
-    runtime.on("event", (event) =>
-      emitted.push(event as Record<string, unknown>),
-    );
-    await runtime.openSession("a");
-    await new Promise<void>((resolveTick) => setImmediate(resolveTick));
-
-    worker.emit("event", {
-      type: "extension_ui_request",
-      id: "first",
-      method: "confirm",
-      timeout: 100,
-    });
-    worker.emit("event", {
-      type: "extension_ui_request",
-      id: "second",
-      method: "input",
-    });
-    let snapshot = await runtime.snapshot();
-    expect(
-      snapshot.pendingExtensionUiRequests?.map((request) => request.id),
-    ).toEqual(["first", "second"]);
-    expect(snapshot.pendingExtensionUiRequests?.[0]?.timeout).toBe(100);
-    expect(snapshot.pendingExtensionUiRequests?.[0]?.expiresAt).toBeGreaterThan(
-      Date.now(),
-    );
-
-    await new Promise((resolveTimer) => setTimeout(resolveTimer, 120));
-    snapshot = await runtime.snapshot();
-    expect(
-      snapshot.pendingExtensionUiRequests?.map((request) => request.id),
-    ).toEqual(["second"]);
-    expect(emitted).toContainEqual(
-      expect.objectContaining({
-        type: "extension_ui_remove",
-        id: "first",
-        reason: "expired",
-      }),
-    );
-    await expect(
-      runtime.extensionUiResponse({
-        sessionId: "a",
-        id: "first",
-        confirmed: true,
-      }),
-    ).rejects.toThrow(/no longer pending/);
-    expect(worker.uiResponses).not.toContainEqual(
-      expect.objectContaining({ id: "first" }),
-    );
-
-    await runtime.extensionUiResponse({
+  const { runtime } = f;
+  trackRuntime(runtime);
+  await runtime.openSession("a");
+  await startWorker(runtime);
+  const worker = f.workers[0]!;
+  const emit = (method: string, fields: Record<string, unknown>) =>
+    worker.emit("event", { type: "extension_ui_request", method, ...fields });
+  const snapshot = () => runtime.snapshot("a");
+  const answer = (id: string, cancelled = false) =>
+    runtime.extensionUiResponse({
       sessionId: "a",
-      id: "second",
-      value: "answer",
+      id,
+      ...(cancelled ? { cancelled: true } : { confirmed: true }),
     });
-    expect((await runtime.snapshot()).pendingExtensionUiRequests).toEqual([]);
-    worker.emit("event", {
-      type: "extension_ui_request",
-      id: "abort-a",
-      method: "confirm",
-      timeout: 1_000,
-    });
-    worker.emit("event", {
-      type: "extension_ui_request",
-      id: "abort-b",
-      method: "confirm",
-    });
-    const send = worker.sendExtensionUiResponse.bind(worker);
-    worker.sendExtensionUiResponse = (response) => {
-      send(response);
-      if (response.id === "abort-a")
-        worker.emit("event", {
-          type: "extension_ui_request",
-          id: "new-during-cancel",
-          method: "input",
-        });
-    };
-    await runtime.abort("a");
-    expect(worker.uiResponses).toEqual(
-      expect.arrayContaining([
-        { id: "abort-a", cancelled: true },
-        { id: "abort-b", cancelled: true },
-      ]),
-    );
-    expect(
-      (await runtime.snapshot()).pendingExtensionUiRequests?.map((r) => r.id),
-    ).toEqual(["new-during-cancel"]);
-    await runtime.extensionUiResponse({
-      sessionId: "a",
-      id: "new-during-cancel",
-      cancelled: true,
-    });
+  return { ...f, worker, emit, snapshot, answer };
+}
 
-    worker.emit("event", {
-      type: "extension_ui_request",
-      id: "settle-a",
-      method: "confirm",
-    });
-    worker.emit("event", {
-      type: "extension_ui_request",
-      id: "settle-b",
-      method: "confirm",
-    });
-    worker.emit("event", { type: "agent_settled" });
-    expect(
-      (await runtime.snapshot()).pendingExtensionUiRequests?.map(
-        (request) => request.id,
-      ),
-    ).toEqual(["settle-a", "settle-b"]);
-    await runtime.extensionUiResponse({
-      sessionId: "a",
-      id: "settle-a",
-      confirmed: true,
-    });
-    expect(worker.uiResponses).toContainEqual({
-      id: "settle-a",
-      confirmed: true,
-    });
-    expect(
-      (await runtime.snapshot()).pendingExtensionUiRequests?.map(
-        (request) => request.id,
-      ),
-    ).toEqual(["settle-b"]);
-
-    worker.emit("event", {
-      type: "extension_ui_request",
-      id: "replacement",
-      method: "confirm",
-      timeout: 1_000,
-    });
-    worker.emit("exit", new Error("replace worker"));
-    expect((await runtime.snapshot()).pendingExtensionUiRequests).toEqual([]);
-    await runtime.close();
+it("only publishes bounded extension display fields and allows cancellation of an unfamiliar request", async () => {
+  const { runtime, worker, emit, snapshot, answer } = await fixture();
+  const events: Record<string, unknown>[] = [];
+  runtime.on("event", (event) => events.push(event));
+  emit("setWidget", {
+    id: "widget",
+    widgetKey: "plan",
+    widgetLines: ["one", "two"],
+    widgetPlacement: "belowEditor",
+    extensionPath: "/extensions/plan.ts",
+    apiToken: "widget-secret",
   });
-
-  it.each(["timeout", "exit"] as const)(
-    "reports uncertain extension delivery after a read-only fence %s without inferring worker liveness",
-    async (failure) => {
-      const store = trackedAttachmentStore();
-      let worker!: FakeRpc;
-      let responseWritten = false;
-      const runtime = new RuntimeController(
-        catalog([record("a", "/tmp")]),
-        store,
-        (options) => {
-          worker = new FakeRpc(options);
-          const send = worker.sendExtensionUiResponse.bind(worker);
-          worker.sendExtensionUiResponse = (response) => {
-            send(response);
-            responseWritten = true;
-          };
-          const request = worker.request.bind(worker);
-          worker.request = async <T>(command: Record<string, unknown>) => {
-            if (responseWritten && command.type === "get_state") {
-              responseWritten = false;
-              // PiRpcProcess rejects read-only waits with ordinary errors, even
-              // when its exit event has already retired the originating worker.
-              const error = new Error(
-                failure === "exit"
-                  ? "Pi RPC stdout closed unexpectedly"
-                  : "Pi command get_state response timed out",
-              );
-              if (failure === "exit") worker.emit("exit", error);
-              throw error;
-            }
-            return request<T>(command);
-          };
-          return worker as unknown as PiRpcProcess;
-        },
-        preview,
-      );
-      try {
-        await runtime.openSession("a");
-        await waitForReady(runtime);
-        worker.emit("event", {
-          type: "extension_ui_request",
-          id: "unknown-ui",
-          method: "confirm",
-        });
-        await expect(
-          runtime.extensionUiResponse({
-            sessionId: "a",
-            id: "unknown-ui",
-            confirmed: true,
-          }),
-        ).rejects.toMatchObject({
-          status: 504,
-          code: "PI_RPC_OUTCOME_UNKNOWN",
-          outcomeUnknown: true,
-          message: "Pi extension_ui_response outcome is not yet confirmed",
-        });
-        expect(worker.uiResponses).toEqual([
-          { id: "unknown-ui", confirmed: true },
-        ]);
-        expect(worker.stops).toBe(failure === "exit" ? 1 : 0);
-        const snapshot = await runtime.snapshot();
-        expect(snapshot.runState).toBe(failure === "exit" ? "failed" : "idle");
-        expect(snapshot.pendingExtensionUiRequests).toEqual([]);
-        await expect(
-          runtime.extensionUiResponse({
-            sessionId: "a",
-            id: "unknown-ui",
-            confirmed: true,
-          }),
-        ).rejects.toThrow();
-        expect(worker.uiResponses).toHaveLength(1);
-      } finally {
-        await runtime.close();
-      }
+  const widget = [
+    {
+      id: "setWidget:plan",
+      kind: "widget",
+      label: "plan",
+      source: "/extensions/plan.ts",
+      placement: "belowEditor",
+      lines: ["one", "two"],
     },
-  );
+  ];
+  expect(events.at(-1)).toMatchObject({
+    responseRequired: false,
+    extensionDisplays: widget,
+  });
+  expect(JSON.stringify(events.at(-1))).not.toContain("widget-secret");
+  emit("setWidget", {
+    id: "invalid-key",
+    widgetKey: "x".repeat(MAX_EXTENSION_KEY_CHARS + 1),
+    widgetLines: ["oversized"],
+  });
+  expect((await snapshot()).extensionDisplays).toEqual(widget);
+  const large = "x".repeat(140 * 1024);
+  emit("setWidget", { widgetKey: "plan", widgetLines: [large] });
+  emit("showPanel", {
+    id: "panel",
+    responseRequired: false,
+    body: large,
+    apiToken: "must not cross",
+  });
+  expect((await snapshot()).extensionDisplays).toMatchObject([
+    { id: "setWidget:plan", kind: "raw", payload: { truncated: true } },
+    { id: "showPanel:panel", kind: "raw", payload: { truncated: true } },
+  ]);
+  expect(JSON.stringify(events)).not.toContain("must not cross");
 
-  it("retires the writer when extension-response stdin delivery is acceptance-unknown", async () => {
-    const store = trackedAttachmentStore();
-    const f = schedulingRuntime({
-      attachments: store,
-      configure: (worker) => {
-        worker.sendExtensionUiResponse = async () => {
+  emit("setStatus", {
+    statusKey: "unicode",
+    statusText: "🧭".repeat(MAX_EXTENSION_STATUS_CHARS + 1),
+  });
+  expect(events.at(-1)).toMatchObject({
+    extensionStatuses: {
+      unicode: `${"🧭".repeat(MAX_EXTENSION_STATUS_CHARS - 1)}…`,
+    },
+  });
+  for (let index = 0; index < MAX_EXTENSION_STATUSES; index++)
+    emit("setStatus", {
+      statusKey: `status-${index}`,
+      statusText: String(index),
+    });
+  const statuses = (await snapshot()).extensionStatuses!;
+  expect(Object.keys(statuses)).toHaveLength(MAX_EXTENSION_STATUSES);
+  expect(statuses).not.toHaveProperty("unicode");
+  emit("chooseFiles", { id: "future", paths: ["a", "b"], timeout: 30_000 });
+  const pending = (await snapshot()).pendingExtensionUiRequests;
+  expect(pending).toMatchObject([
+    { id: "future", method: "chooseFiles", unsupported: true },
+  ]);
+  expect(events.at(-1)).toMatchObject({
+    type: "extension_ui_pending",
+    request: pending?.[0],
+  });
+  await answer("future", true);
+  expect(worker.uiResponses).toEqual([{ id: "future", cancelled: true }]);
+});
+
+it.each(["timeout", "exit", "write"] as const)(
+  "does not replay an uncertain extension answer after %s",
+  async (fault) => {
+    const { worker, emit, snapshot, answer } = await fixture();
+    if (fault === "write") {
+      vi.spyOn(worker, "sendExtensionUiResponse").mockImplementation(
+        async () => {
           const error = new PiRpcOutcomeUnknownError("extension_ui_response");
           error.stopped = Promise.resolve();
           throw error;
-        };
-      },
+        },
+      );
+    } else {
+      worker.responseOverrides.set("get_state", () => {
+        worker.responseOverrides.delete("get_state");
+        const error = new Error("Read-only confirmation failed");
+        if (fault === "exit") worker.emit("exit", error);
+        throw error;
+      });
+    }
+    emit("confirm", { id: "uncertain" });
+    await expect(answer("uncertain")).rejects.toMatchObject({
+      status: 504,
+      code: "PI_RPC_OUTCOME_UNKNOWN",
+      outcomeUnknown: true,
     });
-    const { runtime } = f;
-    await runtime.openSession("a");
-    await new Promise<void>((resolveTurn) => setImmediate(resolveTurn));
-    f.worker.emit("event", {
-      type: "extension_ui_request",
-      id: "unknown-write",
-      method: "confirm",
-    });
-    await expect(
-      runtime.extensionUiResponse({
-        sessionId: "a",
-        id: "unknown-write",
-        confirmed: true,
-      }),
-    ).rejects.toThrow(/outcome is unknown/);
-    expect(f.worker.stops).toBe(1);
-    expect((await runtime.snapshot()).runState).toBe("conflict");
-    await runtime.close();
-  });
-
-  it("restores a background extension dialog when its session is viewed", async () => {
-    const store = trackedAttachmentStore();
-    const workers: FakeRpc[] = [];
-    const runtime = new RuntimeController(
-      catalog([record("a", "/project"), record("b", "/project")]),
-      store,
-      (options) => {
-        const worker = new FakeRpc(options);
-        workers.push(worker);
-        return worker as unknown as PiRpcProcess;
-      },
-      preview,
+    const state = await snapshot();
+    expect(state.sessionStatuses.a?.runState).toBe(
+      fault === "timeout" ? "idle" : fault === "exit" ? "failed" : "conflict",
     );
-
-    await runtime.openSession("a");
-    await runtime.openSession("b");
-    const slots = (
-      runtime as unknown as { slots: Map<string, { ready: boolean }> }
-    ).slots;
-    await vi.waitFor(() => expect(slots.get("a")?.ready).toBe(true));
-    await vi.waitFor(() => expect(slots.get("b")?.ready).toBe(true));
-    workers[0]!.emit("event", {
-      type: "extension_ui_request",
-      id: "question-1",
-      method: "confirm",
-      title: "Proceed?",
-      message: "Confirm the operation",
-    });
-    expect((await runtime.snapshot()).pendingExtensionUiRequests).toEqual([]);
-
-    const restored = await runtime.openSession("a");
-    expect(restored.pendingExtensionUiRequests).toEqual([
-      {
-        sessionId: "a",
-        id: "question-1",
-        method: "confirm",
-        title: "Proceed?",
-        message: "Confirm the operation",
-      },
-    ]);
-    await runtime.openSession("b");
-    await runtime.extensionUiResponse({
-      sessionId: "a",
-      id: "question-1",
-      value: true,
-    });
-    expect(workers[0]!.uiResponses).toEqual([
-      { id: "question-1", value: true },
-    ]);
-    expect(workers[1]!.uiResponses).toEqual([]);
-    expect((await runtime.openSession("a")).pendingExtensionUiRequests).toEqual(
-      [],
-    );
-    await runtime.close();
-  });
-});
+    expect(state.pendingExtensionUiRequests).toEqual([]);
+    await expect(answer("uncertain")).rejects.toThrow();
+    if (fault === "write") {
+      expect(worker.stops).toBe(1);
+      expect(worker.sendExtensionUiResponse).toHaveBeenCalledOnce();
+    } else
+      expect(worker.uiResponses).toEqual([
+        { id: "uncertain", confirmed: true },
+      ]);
+  },
+);

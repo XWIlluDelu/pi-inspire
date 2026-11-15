@@ -1,72 +1,83 @@
 import { AlertTriangle, Info, X, XCircle } from "lucide-react";
-import type { Ref } from "react";
-import type { Notice } from "../events";
+import type { ReactNode, Ref } from "react";
 import { CopyAction } from "./CopyAction";
-
-function noticeTitle(kind: Notice["kind"]): string {
-  switch (kind) {
-    case "warning":
-      return "Warning";
-    case "error":
-      return "Error";
-    default:
-      return "Notice";
-  }
-}
 
 /** Shared notification presentation; callers retain placement and lifetime. */
 export function NoticeCard({
   kind,
-  text,
+  text = "",
+  title,
+  icon,
+  children,
+  copyText = text,
+  copyLabel,
   onDismiss,
   dismissLabel = "Dismiss notification",
+  dismissTitle = "Dismiss",
   className = "",
   compact = false,
   ref,
 }: {
-  kind: Notice["kind"];
-  text: string;
-  onDismiss: () => void;
+  kind: "info" | "warning" | "error" | "running" | "success" | "cancelled";
+  text?: string;
+  title?: ReactNode;
+  icon?: ReactNode;
+  children?: ReactNode;
+  copyText?: string;
+  copyLabel?: string;
+  onDismiss?: () => void;
   dismissLabel?: string;
+  dismissTitle?: string;
   className?: string;
   compact?: boolean;
   ref?: Ref<HTMLDivElement>;
 }) {
-  const match = /^\(([^)]+)\):\s*(.+)$/s.exec(text);
-  const label = noticeTitle(kind);
-  const title = match ? `${label} · ${match[1]}` : label;
+  const label =
+    kind === "warning" ? "Warning" : kind === "error" ? "Error" : "Notice";
+  const match = !compact && !title ? /^\(([^)]+)\):\s*(.+)$/s.exec(text) : null;
   const Icon =
     kind === "warning" ? AlertTriangle : kind === "error" ? XCircle : Info;
   return (
     <div
       ref={ref}
       className={`notice notice--${kind}${compact ? " notice--compact" : ""}${className ? ` ${className}` : ""}`}
-      {...{
-        role: kind === "error" ? "alert" : "status",
-        "aria-label": compact ? label : undefined,
-      }}
+      role={kind === "error" ? "alert" : "status"}
     >
-      <div className="notice__head">
+      <span className="notice__icon" aria-hidden>
+        {icon ?? <Icon size={14} />}
+      </span>
+      {!compact && (
         <span className="notice__title">
-          <Icon size={14} aria-hidden />
-          <span>{title}</span>
+          {title ?? (match ? `${label} · ${match[1]}` : label)}
         </span>
-        <div className="notice__actions">
-          <CopyAction text={text} label={label} className="notice__copy" />
-          <button
-            type="button"
-            className="notice__dismiss"
-            onClick={onDismiss}
-            aria-label={dismissLabel}
-            title="Dismiss"
-          >
-            <X size={13} aria-hidden />
-          </button>
+      )}
+      {(text || children) && (
+        <div className="notice__text">
+          {compact && <span className="sr-only">{label}. </span>}
+          {match?.[2] ?? text}
+          {children}
         </div>
-      </div>
-      <div className="notice__text">
-        {compact ? text : match ? match[2] : text}
-      </div>
+      )}
+      {(copyText || onDismiss) && (
+        <div className="notice__actions">
+          <CopyAction
+            text={copyText}
+            label={copyLabel ?? label}
+            className="notice__copy"
+          />
+          {onDismiss && (
+            <button
+              type="button"
+              className="icon-button"
+              onClick={onDismiss}
+              aria-label={dismissLabel}
+              title={dismissTitle}
+            >
+              <X size={13} aria-hidden />
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

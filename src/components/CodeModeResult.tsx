@@ -1,26 +1,29 @@
-import { Fragment, useMemo } from "react";
+import { Fragment, type ReactElement, type ReactNode, useMemo } from "react";
 import { stripTerminalSequences } from "../ansi";
 import type { ChatMessage } from "../events";
 import {
   type ToolPresentationBlock,
   toolResultImage,
 } from "../tool-presentations/model";
-import { useActivityReaderScroll } from "./transcript-activity-visibility";
+import { CodeView } from "./CodeView";
+import { ActivityReader } from "./transcript-activity-visibility";
+
+function partText(part: unknown) {
+  if (!part || typeof part !== "object") return undefined;
+  const item = part as Record<string, unknown>;
+  if (item.type === "text" && typeof item.text === "string") return item.text;
+}
 
 /** Only a standalone first-part runner banner is metadata, not user output. */
 export function codeModeDuration(result?: ChatMessage): string | undefined {
-  const first = Array.isArray(result?.content)
-    ? result.content[0]
-    : { type: "text", text: result?.content };
-  if (!first || typeof first !== "object") return undefined;
-  const part = first as Record<string, unknown>;
-  const banner =
-    part.type === "text" && typeof part.text === "string"
-      ? /^Script (?:completed|failed)\nWall time (\d+(?:\.\d+)?) seconds\nOutput:\n$/.exec(
-          part.text,
-        )
-      : null;
-  return banner ? `${banner[1]}s` : undefined;
+  const { content } = result ?? {};
+  const text = Array.isArray(content) ? partText(content[0]) : content;
+  const seconds =
+    typeof text === "string" &&
+    /^Script (?:completed|failed)\nWall time (\d+(?:\.\d+)?) seconds\nOutput:\n$/.exec(
+      text,
+    )?.[1];
+  return seconds ? `${seconds}s` : undefined;
 }
 
 /** Reading layout, not JSON source: show string newlines without changing keys
@@ -74,75 +77,45 @@ function readableText(raw: string): string {
 }
 
 type ImageBlock = Extract<ToolPresentationBlock, { type: "image" }>;
-type ResultPart =
-  | { kind: "text"; index: number; text: string }
-  | { kind: "image"; index: number; image: ImageBlock | null };
-
-function resultParts(result: ChatMessage): ResultPart[] {
-  const banner = codeModeDuration(result);
-  const content =
-    typeof result.content === "string"
-      ? [{ type: "text", text: result.content }]
-      : Array.isArray(result.content)
-        ? result.content
-        : [];
-  return content.flatMap((part, index): ResultPart[] => {
-    if (!part || typeof part !== "object") return [];
-    const item = part as Record<string, unknown>;
-    if (
-      item.type === "text" &&
-      typeof item.text === "string" &&
-      item.text.length
-    )
-      return index === 0 && banner
-        ? []
-        : [{ kind: "text", index, text: readableText(item.text) }];
-    if (item.type === "image")
-      return [
-        {
-          kind: "image",
-          index,
-          image: toolResultImage(result, index, "Script result image"),
-        },
-      ];
-    return [];
-  });
-}
 
 export function CodeModeResult({
   result,
   renderImage,
 }: {
   result: ChatMessage;
-  renderImage: (block: ImageBlock) => React.ReactNode;
+  renderImage: (block: ImageBlock | null) => ReactNode;
 }) {
-  const parts = useMemo(() => resultParts(result), [result]);
-  const scroll = useActivityReaderScroll<HTMLDivElement>(
-    "codemode-result-scroll",
-    result,
-  );
+  const parts = useMemo(() => {
+    const { content } = result;
+    const banner = codeModeDuration(result);
+    if (typeof content === "string")
+      return content && !banner ? (
+        <CodeView text={readableText(content)} />
+      ) : null;
+    if (!Array.isArray(content)) return null;
+    const blocks = content.flatMap<ReactElement>((part, index) => {
+      const text = partText(part);
+      if (text && (index !== 0 || !banner))
+        return [<CodeView key={index} text={readableText(text)} />];
+      return part?.type === "image"
+        ? [
+            <Fragment key={index}>
+              {renderImage(
+                toolResultImage(result, index, "Script result image"),
+              )}
+            </Fragment>,
+          ]
+        : [];
+    });
+    return blocks.length ? blocks : null;
+  }, [result, renderImage]);
   return (
-    <div
+    <ActivityReader
       className="codemode-result"
-      {...scroll.props}
-      tabIndex={0}
-      role="group"
-      aria-label="Result output"
+      reader="codemode-result-scroll"
+      label="Result output"
     >
-      {parts.map((part) => (
-        <Fragment key={part.index}>
-          {part.kind === "text" ? (
-            <pre className="codemode-result__text">{part.text}</pre>
-          ) : part.image ? (
-            renderImage(part.image)
-          ) : (
-            <div className="tool-notice tool-notice--warning">
-              Image unavailable (unsupported or invalid image data)
-            </div>
-          )}
-        </Fragment>
-      ))}
-      {!parts.length ? <div className="tool-empty">No output</div> : null}
-    </div>
+      {parts ?? <div className="tool-empty">No output</div>}
+    </ActivityReader>
   );
 }

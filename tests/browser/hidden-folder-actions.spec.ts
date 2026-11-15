@@ -1,41 +1,45 @@
-import { expect, test } from "@playwright/test";
-import { browserWorkspace } from "./fixtures/workspace.mjs";
+import { expect, type Locator, type Page, test } from "@playwright/test";
+import { navigationGroupsFixture } from "./fixtures/navigation-groups";
 import { hostRequest } from "./support/host-request";
-import { routeMockSnapshots } from "./support/mock-host";
-import { openMockSession, pairedPage } from "./support/navigation";
+import { openFixtureSession, pairedPage } from "./support/navigation";
 
-test.use({ reducedMotion: "reduce", serviceWorkers: "block" });
+test.use({
+  contextOptions: { reducedMotion: "reduce" },
+  serviceWorkers: "block",
+});
 
-test("deletes the visible idle session through one confirmation and returns to New session", async ({
-  page,
-}) => {
-  await pairedPage(page);
-  await openMockSession(page, /Calibration history fixture/);
-  // Destructive tests own their persisted session; the shared History fixture
-  // must remain available to subsequent browser tests and retries.
-  const source = (await (await hostRequest(page).get("/api/snapshot")).json())
-    .active;
+async function cloneSession(page: Page, sessionId: string) {
+  const source = (
+    await (
+      await hostRequest(page).get(
+        `/api/snapshot?detail=${encodeURIComponent(sessionId)}`,
+      )
+    ).json()
+  ).active;
   const created = await hostRequest(page).post("/api/branches/clone", {
     data: {
       sessionId: source.sessionId,
-      revision: source.transcriptPage.revision,
+      viewId: source.transcriptPage.viewId,
+      targetId: source.transcriptPage.effectiveLeafId,
     },
   });
   expect(created.ok()).toBe(true);
   const clone = await created.json();
-  const id = clone.sessionId;
-  const name = clone.snapshot.active.sessionName;
+  return {
+    id: clone.sessionId as string,
+    name: clone.snapshot.active.sessionName as string,
+  };
+}
+
+async function showHidden(page: Page, ids: string[]) {
   expect(
     (
       await hostRequest(page).patch("/api/preferences", {
-        data: { hiddenSessionIds: [id], hiddenProjectCwds: [] },
+        data: { hiddenSessionIds: ids, hiddenProjectCwds: [] },
       })
     ).ok(),
   ).toBe(true);
   await page.reload();
-  await expect(
-    page.getByRole("button", { name: /^Session actions:/ }),
-  ).toHaveText(name);
   const navigation = page.getByRole("button", {
     name: /^(Toggle|Expand|Collapse) navigation$/,
     exact: true,
@@ -46,16 +50,51 @@ test("deletes the visible idle session through one confirmation and returns to N
   )
     await navigation.click();
   const hidden = page.getByRole("button", { name: "Hidden", exact: true });
-  if ((await hidden.getAttribute("aria-expanded")) !== "true")
+  if ((await hidden.getAttribute("aria-pressed")) !== "true")
     await hidden.click();
-  const remove = page.locator(".nav__group--hidden").getByRole("button", {
+}
+
+/** Only disposable native copies are mutated by these tests. */
+async function hiddenClone(page: Page, title: RegExp, id?: string) {
+  await pairedPage(page);
+  const clone = await cloneSession(
+    page,
+    await openFixtureSession(page, title, id),
+  );
+  await showHidden(page, [clone.id]);
+  return clone;
+}
+
+test("deletes the visible idle session through one confirmation and returns to New session", async ({
+  page,
+}) => {
+  const { name } = await hiddenClone(
+    page,
+    /Calibration history fixture/,
+    "fixture-calibration-history",
+  );
+  // API cloning does not replace this browser's selected session.
+  await page
+    .locator(".nav__hidden-content .nav__row-main")
+    .filter({ has: page.getByText(name, { exact: true }) })
+    .click();
+  await expect(
+    page.getByRole("button", { name: /^Session actions:/ }),
+  ).toHaveText(name);
+  const remove = page.locator(".nav__hidden-content").getByRole("button", {
     name: `Delete "${name}"`,
     exact: true,
   });
+  await page
+    .locator(".nav__hidden-content .nav__row")
+    .filter({
+      has: page.getByRole("button", { name: `Delete "${name}"`, exact: true }),
+    })
+    .hover();
   await expect(remove).toBeEnabled();
   await remove.click();
   const dialog = page.getByRole("alertdialog", { name: "Delete session?" });
-  await expect(dialog.locator(".session-delete__warning")).toHaveCount(0);
+  await expect(dialog.locator(".dialog__warning")).toHaveCount(0);
   await dialog
     .getByRole("button", { name: "Delete session", exact: true })
     .click();
@@ -64,58 +103,30 @@ test("deletes the visible idle session through one confirmation and returns to N
     page.getByRole("form", { name: "Start a session" }),
   ).toBeVisible();
   await expect(remove).toHaveCount(0);
-  const snapshot = await hostRequest(page).get("/api/snapshot");
-  expect((await snapshot.json()).active).toBeNull();
 });
 
-test("failed deletion wraps a literal path inside the confirmation", async ({
+test("a refused deletion wraps its diagnostic, then an externally missing file requires new review", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 320, height: 900 });
-  await pairedPage(page);
-  await openMockSession(page, /Review extension event lifecycle/);
-  const source = (await (await hostRequest(page).get("/api/snapshot")).json())
-    .active;
-  const created = await hostRequest(page).post("/api/branches/clone", {
-    data: {
-      sessionId: source.sessionId,
-      revision: source.transcriptPage.revision,
-    },
-  });
-  expect(created.ok()).toBe(true);
-  const clone = await created.json();
-  const id = clone.sessionId;
-  const name = clone.snapshot.active.sessionName;
-  expect(
-    (
-      await hostRequest(page).patch("/api/preferences", {
-        data: { hiddenSessionIds: [id], hiddenProjectCwds: [] },
-      })
-    ).ok(),
-  ).toBe(true);
-  await page.reload();
-  const navigation = page.getByRole("button", {
-    name: /^(Toggle|Expand|Collapse) navigation$/,
-    exact: true,
-  });
-  if ((await navigation.getAttribute("aria-expanded")) === "false")
-    await navigation.click();
-  const hidden = page.getByRole("button", { name: "Hidden", exact: true });
-  if ((await hidden.getAttribute("aria-expanded")) !== "true")
-    await hidden.click();
+  const { id, name } = await hiddenClone(
+    page,
+    /Review extension event lifecycle/,
+  );
   const diagnostic =
     "Cannot delete /workspace/calibration/reference_measurement_comparison_for_multichannel_calibration_and_residual_validation_2026_10_17_results.json because the project is locked.";
   let attempted = 0;
-  await page.route(
-    `**/api/sessions/${encodeURIComponent(id)}`,
-    async (route) => {
-      if (route.request().method() !== "DELETE") return route.fallback();
-      attempted++;
+  await page.route("**/api/sessions/delete", async (route) => {
+    const body = route.request().postDataJSON();
+    if (body.scope !== "session" || body.sessionId !== id)
+      return route.fallback();
+    attempted++;
+    if (attempted === 1)
       await route.fulfill({ status: 409, json: { error: diagnostic } });
-    },
-  );
+    else await route.continue();
+  });
   await page
-    .locator(".nav__group--hidden")
+    .locator(".nav__hidden-content")
     .getByRole("button", {
       name: `Delete "${name}"`,
       exact: true,
@@ -154,349 +165,223 @@ test("failed deletion wraps a literal path inside the confirmation", async ({
   expect(geometry.textFits).toBe(true);
   expect(geometry.scroll).toBeLessThanOrEqual(geometry.client);
   expect(attempted).toBe(1);
-  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
-  await expect(dialog).toHaveCount(0);
-  // Even a deliberately failed delete must not hide or consume shared data.
+  // A different client commits the file deletion while this review remains open.
   expect(
     (
-      await hostRequest(page).delete(`/api/sessions/${encodeURIComponent(id)}`)
+      await hostRequest(page).post("/api/sessions/delete", {
+        data: { scope: "session", sessionId: id },
+      })
     ).ok(),
   ).toBe(true);
+  expect((await hostRequest(page).post("/api/sessions/refresh")).ok()).toBe(
+    true,
+  );
+  await dialog
+    .getByRole("button", { name: "Delete session", exact: true })
+    .click();
+  await expect(dialog.getByRole("alert")).toHaveText(/Session not found/);
+  await expect(
+    dialog.getByRole("button", { name: "Delete session" }),
+  ).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Review Hidden" }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.locator(`[data-session-id="${id}"]`)).toHaveCount(0);
+  expect(attempted).toBe(2);
 });
 
-for (const touch of [false, true]) {
-  test.describe(
-    touch ? "touch Hidden hierarchy" : "pointer Hidden hierarchy",
-    () => {
-      test.use({ hasTouch: touch });
-      test("independent rows stay distinct and folder deletion is scoped", async ({
-        page,
-      }) => {
-        await pairedPage(page);
-        await openMockSession(page, /Formula rendering and spectral analysis/);
-        const initial = await (
-          await hostRequest(page).get("/api/bootstrap")
-        ).json();
-        const catalogResponse = await hostRequest(page).get(
-          "/api/sessions?offset=0&limit=40",
-        );
-        const template = (await catalogResponse.json()).sessions[0];
-        const targetCwd = `${browserWorkspace}/target`;
-        const otherCwd = `${browserWorkspace}/other`;
-        const first = "hidden-target-one",
-          second = "hidden-target-two",
-          independent = "hidden-independent";
-        const other = initial.snapshot.active.sessionId as string;
-        let rows = [
-          { ...template, id: first, title: "Target one", cwd: targetCwd },
-          { ...template, id: second, title: "Target two", cwd: targetCwd },
-          {
-            ...template,
-            id: independent,
-            title: "Independent hidden session",
-            cwd: browserWorkspace,
-          },
-          {
-            ...template,
-            id: other,
-            title: "Other hidden session",
-            cwd: otherCwd,
-          },
-        ];
-        const curation = {
-          theme: "light",
-          palette: "classic-amber",
-          hiddenProjectCwds: [targetCwd, otherCwd],
-          hiddenSessionIds: [independent],
-          pinnedSessionIds: [],
-          pinnedProjectCwds: [],
-          navCollapsedGroups: [otherCwd],
-        };
-        let preferences: Record<string, unknown> = {};
-        // Browser projection owns hierarchy and the submitted scope. Real catalog
-        // completeness, reservations and filesystem deletion are server regressions.
-        let connected = false;
-        const transport = await routeMockSnapshots(page, {
-          event: (event) => {
-            if (event.type === "snapshot") connected = true;
-          },
-          snapshot: (snapshot) => {
-            if (snapshot.active)
-              Object.assign(snapshot.active, {
-                sessionId: other,
-                cwd: otherCwd,
-                sessionName: "Other hidden session",
-              });
-          },
-          bootstrap: (body) => {
-            Object.assign(body.preferences, curation);
-            preferences = body.preferences;
-          },
-        });
-        await page.route("**/api/sessions**", async (route) => {
-          const url = new URL(route.request().url());
-          if (url.pathname === "/api/sessions/by-cwd") {
-            const { cwds } = route.request().postDataJSON();
-            return route.fulfill({
-              json: { sessions: rows.filter((row) => cwds.includes(row.cwd)) },
-            });
-          }
-          if (url.pathname === "/api/sessions/by-id") {
-            const { ids } = route.request().postDataJSON();
-            return route.fulfill({
-              json: { sessions: rows.filter((row) => ids.includes(row.id)) },
-            });
-          }
-          if (url.pathname === "/api/sessions") {
-            const query = (url.searchParams.get("q") ?? "").toLowerCase();
-            const matches = rows.filter((row) =>
-              row.title.toLowerCase().includes(query),
-            );
-            return route.fulfill({
-              json: {
-                sessions: matches,
-                total: matches.length,
-                offset: 0,
-                limit: 40,
-              },
-            });
-          }
-          if (url.pathname === "/api/sessions/clear-hidden") {
-            rows = rows.filter((row) => row.cwd !== targetCwd);
-            curation.hiddenProjectCwds = [otherCwd];
-            return route.fulfill({
-              json: {
-                deleted: [first, second].map((sessionId) => ({
-                  sessionId,
-                  disposition: "trashed",
-                })),
-                preferences: { ...preferences, ...curation },
-              },
-            });
-          }
-          return route.fallback();
-        });
-        await page.route("**/api/preferences", async (route) => {
-          Object.assign(preferences, route.request().postDataJSON());
-          await route.fulfill({ json: preferences });
-        });
-        await page.reload();
-        await expect.poll(() => connected).toBe(true);
-        await page.getByRole("button", { name: "Hidden", exact: true }).click();
-        const drawer = page.locator(".nav__group--hidden");
-        const target = drawer.locator(".nav__group").filter({
-          has: page.getByRole("button", {
-            name: "Delete all sessions in folder target",
-            exact: true,
-          }),
-        });
-        const standalone = drawer
-          .locator(".nav__hidden-content > .nav__row")
-          .filter({
-            hasText: "Independent hidden session",
-          });
-        const trash = target.getByRole("button", {
-          name: "Delete all sessions in folder target",
-        });
-        await expect(trash).toBeEnabled();
-        await expect(
-          page.getByRole("button", { name: "Clear Hidden", exact: true }),
-        ).toBeEnabled();
-        // A pointer click must not keep one folder's actions revealed while
-        // another is hovered. Keyboard focus still owns a visible action row.
-        if (!touch) {
-          await page.setViewportSize({ width: 1440, height: 1000 });
-          const otherFolder = drawer.locator(".nav__group").filter({
-            has: page.getByRole("button", {
-              name: "Restore folder other",
-              exact: true,
-            }),
-          });
-          const toggle = target.locator(".nav__group-toggle");
-          await toggle.click();
-          await otherFolder.locator(".nav__group-title").hover();
-          await expect(toggle).toBeFocused();
-          expect(
-            await toggle.evaluate((el) => el.matches(":focus-visible")),
-          ).toBe(false);
-          await expect(target.locator(".nav__group-actions")).toHaveCSS(
-            "opacity",
-            "0",
-          );
-          await expect(target.locator(".nav__group-count")).toHaveCSS(
-            "opacity",
-            "1",
-          );
-          await expect(otherFolder.locator(".nav__group-actions")).toHaveCSS(
-            "opacity",
-            "1",
-          );
-          await page.keyboard.press("Tab");
-          await expect(
-            target.getByRole("button", {
-              name: "Restore folder target",
-              exact: true,
-            }),
-          ).toBeFocused();
-          await expect(target.locator(".nav__group-actions")).toHaveCSS(
-            "opacity",
-            "1",
-          );
-          await expect(target.locator(".nav__group-count")).toHaveCSS(
-            "opacity",
-            "0",
-          );
-        }
-        const revealRows = async () => {
-          const hiddenToggle = page.getByRole("button", {
-            name: "Hidden",
-            exact: true,
-          });
-          if ((await hiddenToggle.getAttribute("aria-expanded")) !== "true")
-            await hiddenToggle.click();
-          const folderToggle = target.locator(".nav__group-toggle");
-          if ((await folderToggle.getAttribute("aria-expanded")) !== "true")
-            await folderToggle.click();
-        };
-        for (const width of [1440, 390, 320]) {
-          await page.setViewportSize({ width, height: 1000 });
-          if (width < 768)
-            await page
-              .getByRole("button", { name: "Toggle navigation", exact: true })
-              .click();
-          await revealRows();
-          await expect(
-            target.getByText("Target one", { exact: true }),
-          ).toBeVisible();
-          const geometry = await drawer.evaluate((element) => {
-            const group = [...element.querySelectorAll(".nav__group")].find(
-              (group) =>
-                group.querySelector(".nav__group-name")?.textContent ===
-                "target",
-            )!;
-            const row = group.querySelector(".nav__row")!;
-            const loose = element.querySelector(
-              ".nav__hidden-content > .nav__row",
-            )!;
-            const centers = (element: Element, selector: string) =>
-              [...element.querySelectorAll(selector)].map((button) => {
-                const box = button.getBoundingClientRect();
-                return (box.left + box.right) / 2;
-              });
-            const active = element.querySelector(".nav__group-title--active")!;
-            const marker = getComputedStyle(active, "::before");
-            const markerRight =
-              active.getBoundingClientRect().left +
-              parseFloat(marker.left) +
-              parseFloat(marker.width);
-            return {
-              folderName: group
-                .querySelector(".nav__group-name")!
-                .getBoundingClientRect().left,
-              childName: row
-                .querySelector(".nav__row-name")!
-                .getBoundingClientRect().left,
-              independentName: loose
-                .querySelector(".nav__row-name")!
-                .getBoundingClientRect().left,
-              folderActions: centers(group, ".nav__group-actions > button"),
-              childActions: centers(row, ".nav__row-actions > button"),
-              independentActions: centers(loose, ".nav__row-actions > button"),
-              clearance:
-                active
-                  .querySelector(".nav__group-toggle > svg")!
-                  .getBoundingClientRect().left - markerRight,
-              overflow: element.scrollWidth > element.clientWidth,
-            };
-          });
-          expect(
-            Math.abs(geometry.folderName - geometry.childName),
-          ).toBeLessThanOrEqual(1);
-          expect(
-            geometry.childName - geometry.independentName,
-          ).toBeGreaterThanOrEqual(24);
-          expect(geometry.clearance).toBeGreaterThanOrEqual(3);
-          expect(geometry.overflow).toBe(false);
-          expect(geometry.folderActions).toHaveLength(2);
-          for (let slot = 0; slot < 2; slot++) {
-            expect(
-              Math.abs(
-                geometry.folderActions[slot]! - geometry.childActions[slot]!,
-              ),
-            ).toBeLessThanOrEqual(1);
-            expect(
-              Math.abs(
-                geometry.folderActions[slot]! -
-                  geometry.independentActions[slot]!,
-              ),
-            ).toBeLessThanOrEqual(1);
-          }
-          if (width < 768)
-            await page
-              .getByRole("button", { name: "Close navigation", exact: true })
-              .click();
-        }
-        await page.setViewportSize({ width: 390, height: 1000 });
-        await page
-          .getByRole("button", { name: "Toggle navigation", exact: true })
-          .click();
-        await revealRows();
-        // A filtered view must not become a destructive subset of a folder.
-        const search = page.getByRole("searchbox", { name: "Search sessions" });
-        await search.fill("Target one");
-        await expect(trash).toBeDisabled();
-        await search.clear();
-        transport.send({
-          type: "external_session_activity",
-          activities: { [first]: "working", [second]: "idle" },
-        });
-        await expect(target.getByRole("img", { name: /Pi/ })).toBeVisible();
-        await expect(trash).toBeEnabled();
-        await trash.focus();
-        await trash.press("Enter");
-        const dialog = page.getByRole("alertdialog", {
-          name: "Clear hidden folder?",
-        });
-        await expect(dialog).toContainText("target · 2 sessions");
-        await expect(dialog).toContainText(targetCwd);
-        await expect(dialog).toContainText(
-          "Open Pi terminals may write these sessions again.",
-        );
-        await dialog
-          .getByRole("button", { name: "Cancel", exact: true })
-          .click();
-        await expect(
-          target.getByText("Target one", { exact: true }),
-        ).toBeVisible();
-        await trash.click();
-        const response = page.waitForResponse(
-          (response) =>
-            response.url().endsWith("/api/sessions/clear-hidden") &&
-            response.request().method() === "POST",
-        );
-        await dialog
-          .getByRole("button", { name: "Delete 2 sessions", exact: true })
-          .click();
-        const receipt = await response;
-        expect(receipt.ok()).toBe(true);
-        expect(receipt.request().postDataJSON()).toEqual({
-          sessionIds: expect.arrayContaining([first, second]),
-          projectCwd: targetCwd,
-        });
-        expect(
-          (await receipt.json()).deleted
-            .map((result: { sessionId: string }) => result.sessionId)
-            .sort(),
-        ).toEqual([first, second].sort());
-        await expect(dialog).toBeHidden();
-        await expect(target).toHaveCount(0);
-        await expect(standalone).toBeVisible();
-
-        expect(curation.hiddenProjectCwds).toEqual([otherCwd]);
-        expect(rows.map((row) => row.id).sort()).toEqual(
-          [independent, other].sort(),
-        );
-      });
-    },
+test("a partial Hidden deletion requires a fresh confirmation of the remaining native session", async ({
+  page,
+}) => {
+  await pairedPage(page);
+  const source = await openFixtureSession(
+    page,
+    /Calibration history fixture/,
+    "fixture-calibration-history",
   );
+  const first = await cloneSession(page, source);
+  const remaining = await cloneSession(page, source);
+  await showHidden(page, [first.id, remaining.id]);
+  const reviews: string[][] = [];
+  await page.route("**/api/sessions/delete", async (route) => {
+    reviews.push(route.request().postDataJSON().sessionIds);
+    if (reviews.length > 1) return route.continue();
+    const native = await hostRequest(page).post("/api/sessions/delete", {
+      data: { scope: "session", sessionId: first.id },
+    });
+    expect(native.ok()).toBe(true);
+    await route.fulfill({
+      json: {
+        ...(await native.json()),
+        failure: {
+          sessionId: remaining.id,
+          message: "File changed during deletion",
+        },
+      },
+    });
+  });
+  const clear = page.getByRole("button", { name: "Clear Hidden", exact: true });
+  await clear.click();
+  const dialog = page.getByRole("alertdialog", { name: "Clear Hidden?" });
+  await dialog.getByRole("button", { name: "Delete 2 sessions" }).click();
+  await expect(dialog.getByRole("alert")).toContainText("Deleted 1 session");
+  await expect(
+    dialog.getByRole("button", { name: "Delete 2 sessions" }),
+  ).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Review Hidden" }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.locator(`[data-session-id="${first.id}"]`)).toHaveCount(0);
+  expect(reviews).toEqual([expect.arrayContaining([first.id, remaining.id])]);
+  await clear.click();
+  await dialog
+    .getByRole("button", { name: "Delete 1 session", exact: true })
+    .click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.locator(`[data-session-id="${remaining.id}"]`)).toHaveCount(
+    0,
+  );
+  expect(reviews[1]).toEqual([remaining.id]);
+});
+
+function folderGaps(folders: Locator) {
+  return folders.evaluateAll((elements) => {
+    const bounds = elements.map((folder) => folder.getBoundingClientRect());
+    return bounds
+      .slice(1)
+      .map((folder, index) => folder.top - bounds[index]!.bottom);
+  });
+}
+
+for (const { width, hasTouch } of [
+  { width: 1440, hasTouch: false },
+  { width: 320, hasTouch: true },
+]) {
+  test.describe(hasTouch ? "touch Hidden" : "pointer Hidden", () => {
+    test.use({ viewport: { width, height: 1000 }, hasTouch });
+
+    test("keeps selection and folder axes through collapse and Hidden", async ({
+      page,
+    }) => {
+      const transport = await navigationGroupsFixture(page);
+      await pairedPage(page);
+      const openDrawer = page.getByRole("button", {
+        name: "Toggle navigation",
+        exact: true,
+      });
+      if (hasTouch) await openDrawer.click();
+      const catalog = page.locator(".nav__list > .nav__group");
+      const reports = catalog.getByRole("button", {
+        name: "reports",
+        exact: true,
+      });
+      const selected = catalog.locator(
+        '[data-session-id="fixture-active"] .nav__row-main',
+      );
+      await expect(catalog).toHaveCount(3);
+      const [gap, secondGap] = await folderGaps(catalog);
+      expect(gap!).toBeGreaterThan(0);
+      expect(secondGap).toBeCloseTo(gap!, 0);
+      await reports.click();
+      await selected.click();
+      await expect(page.locator(".topbar__title-button")).toHaveText(
+        "Reports session",
+      );
+      if (hasTouch) await openDrawer.click();
+      await expect(selected).toHaveAttribute("aria-current", "page");
+      expect(
+        (await selected.locator(".nav__row-name").boundingBox())!.x,
+      ).toBeCloseTo(
+        (await reports.locator(".nav__group-name").boundingBox())!.x,
+        0,
+      );
+      await reports.click();
+      await expect(reports).toHaveAttribute("aria-expanded", "false");
+      await expect(selected).toBeHidden();
+      const markerClearance = await reports.evaluate((button) => {
+        const header = button.parentElement!;
+        const marker = getComputedStyle(header, "::before");
+        const markerWidth = parseFloat(marker.width);
+        const markerRight =
+          header.getBoundingClientRect().left +
+          parseFloat(marker.left) +
+          markerWidth;
+        const iconLeft = button
+          .querySelector("svg")!
+          .getBoundingClientRect().left;
+        return Math.min(markerWidth, iconLeft - markerRight);
+      });
+      expect(markerClearance).toBeGreaterThan(0);
+      await reports.press("Enter");
+      await expect(selected).toHaveAttribute("aria-current", "page");
+      expect(await folderGaps(catalog)).toEqual([gap, secondGap]);
+
+      await page.getByRole("button", { name: "Hidden", exact: true }).click();
+      const [hiddenGap] = await folderGaps(
+        page.locator(".nav__hidden-content > .nav__group"),
+      );
+      expect(hiddenGap).toBeCloseTo(gap!, 0);
+
+      const drawer = page.getByRole("region", { name: "Hidden", exact: true });
+      const folder = drawer.locator(".nav__group").filter({
+        has: page.getByRole("button", { name: "archived-a", exact: true }),
+      });
+      const toggle = folder.getByRole("button", {
+        name: "archived-a",
+        exact: true,
+      });
+      const actions = toggle.locator("..").locator(".nav__row-actions");
+      await toggle.click();
+      if (!hasTouch) {
+        const other = drawer.getByRole("button", {
+          name: "archived-b",
+          exact: true,
+        });
+        await other.hover();
+        await page.keyboard.press("Tab");
+        await expect(
+          folder.getByRole("button", { name: "Restore folder archived-a" }),
+        ).toBeFocused();
+      }
+
+      const child = folder.locator(".nav__row");
+      const independent = drawer
+        .locator(".nav__row")
+        .filter({ hasText: "Independent hidden session" });
+      const childTitle = child.locator(".nav__row-name");
+      const independentTitle = independent.locator(".nav__row-name");
+      const folderLabel = toggle.locator(".nav__group-name");
+      const axis = (await folderLabel.boundingBox())!.x;
+      expect((await childTitle.boundingBox())!.x).toBeCloseTo(axis, 0);
+      expect((await independentTitle.boundingBox())!.x).toBeCloseTo(axis, 0);
+
+      const buttons = [
+        actions,
+        child.locator(".nav__row-actions"),
+        independent.locator(".nav__row-actions"),
+      ];
+      const centers = [];
+      for (const area of buttons) {
+        await expect(area.getByRole("button")).toHaveCount(2);
+        const bounds = await area.getByRole("button").evaluateAll((items) =>
+          items.map((item) => {
+            const { x, width } = item.getBoundingClientRect();
+            return x + width / 2;
+          }),
+        );
+        centers.push(bounds);
+      }
+      expect(centers[1]).toEqual(centers[0]);
+      expect(centers[2]).toEqual(centers[0]);
+
+      await expect.poll(() => transport.ready("fixture-active")).toBe(true);
+      const before = await childTitle.boundingBox();
+      transport.send({
+        type: "external_session_activity",
+        activities: { "fixture-compaction": "blocked" },
+      });
+      await expect(child.locator(".nav__row-dot")).toBeVisible();
+      const after = await childTitle.boundingBox();
+      expect(after?.x).toBe(before?.x);
+      expect(after?.width).toBe(before?.width);
+    });
+  });
 }

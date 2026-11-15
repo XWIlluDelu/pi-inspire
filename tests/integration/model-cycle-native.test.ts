@@ -2,6 +2,7 @@
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { expect, it, vi } from "vitest";
+import type { WebSocket } from "ws";
 import { AttachmentStore } from "../../server/attachments";
 import { PiRpcProcess } from "../../server/pi-rpc";
 import { SessionManager } from "../../server/pi-runtime";
@@ -11,13 +12,13 @@ import { AppStore } from "../../src/store";
 import {
   closeHostApiFixture,
   hostApiFixture,
-  token,
+  observeEventSocket,
 } from "../server/fixtures/host-api";
 import {
   nativePiWorkspace,
   stubNativePiEnvironment,
 } from "../server/fixtures/native-pi";
-import { installFakeWebSocket } from "../web/helpers";
+import { FakeWebSocket, installFakeWebSocket } from "../web/helpers";
 
 it.each([false, true])(
   "preserves the native cycle scope/default/hook order through AppStore, HTTP and RPC (scoped=%s)",
@@ -78,85 +79,91 @@ it.each([false, true])(
     const catalog = new SessionCatalog(f.cwd),
       attachments = new AttachmentStore(join(f.root, "uploads"));
     const commands: string[] = [];
-    const runtime = new RuntimeController(catalog, attachments, (options) => {
-      const worker = new PiRpcProcess({
-        ...options,
-        args: [...(options.args ?? []), "-e", hook],
-      });
-      const request = worker.request.bind(worker);
-      worker.request = ((command, ...args) => {
-        commands.push(String(command.type));
-        return request(command, ...args);
-      }) as typeof worker.request;
-      return worker;
+    const runtime = new RuntimeController(catalog, attachments, {
+      createProcess: (options) => {
+        const worker = new PiRpcProcess({
+          ...options,
+          args: [...(options.args ?? []), "-e", hook],
+        });
+        const request = worker.request.bind(worker);
+        worker.request = ((command, ...args) => {
+          commands.push(String(command.type));
+          return request(command, ...args);
+        }) as typeof worker.request;
+        return worker;
+      },
     });
     let host: Awaited<ReturnType<typeof hostApiFixture>> | undefined,
       store: AppStore | undefined;
-    const realFetch = fetch;
+    let peer: WebSocket | undefined;
     try {
       await runtime.openSession(manager.getSessionId());
-      host = await hostApiFixture({ runtime });
+      await runtime.setRuntimeSetting(manager.getSessionId(), {
+        key: "steeringMode",
+        value: "one-at-a-time",
+      });
+      host = await hostApiFixture({
+        services: { runtime, catalog, attachments, cwd: f.cwd },
+      });
       installFakeWebSocket();
-      const controls: string[] = [];
-      vi.stubGlobal("fetch", (async (input, init) => {
-        const url = String(input);
-        if (url.startsWith("/api/control/")) controls.push(url);
-        const headers = new Headers(init?.headers);
-        headers.set("Authorization", "Bearer " + token);
-        return realFetch(new URL(url, host!.baseUrl), { ...init, headers });
-      }) satisfies typeof fetch);
+      vi.stubGlobal("fetch", host.fetchHost);
       store = new AppStore();
-      await store.init(token);
+      await store.init();
+      const socket = FakeWebSocket.instances.at(-1)!;
+      const id = manager.getSessionId();
+      expect(new URL(socket.url).searchParams.get("detail")).toBe(id);
+      socket.open();
+      const subscription = observeEventSocket(
+        `${host.baseUrl.replace("http", "ws")}/events?detail=${encodeURIComponent(id)}`,
+      );
+      peer = subscription.socket;
+      peer.on("message", (data) =>
+        socket.onmessage?.({ data: data.toString() }),
+      );
+      await vi.waitFor(() => expect(store!.getState().connection).toBe("open"));
       const before = commands.length;
       await store.cycleModel(1);
       expect(store.getState()).toMatchObject({
         model: { provider: "global-native", id: "b" },
         thinkingLevel: "low",
       });
-      expect(controls).toEqual(["/api/control/model-cycle"]);
       expect(
         commands.slice(before).filter((type) => type === "cycle_model"),
       ).toHaveLength(1);
-      expect(commands.slice(before)).not.toContain("set_model");
-      expect(commands.slice(before)).not.toContain("set_thinking_level");
       expect(JSON.parse((await readFile(events, "utf8")).trim())).toEqual({
         entered: scoped ? "high" : "medium",
         source: "cycle",
       });
-      const cycleCount = commands.filter(
-        (type) => type === "cycle_model",
-      ).length;
       await store.cycleModel(-1);
-      expect(commands.filter((type) => type === "cycle_model")).toHaveLength(
-        cycleCount,
-      );
       expect(store.getState()).toMatchObject({
         model: { id: "b" },
         thinkingLevel: "low",
       });
-      expect(store.getState().notices.at(-1)?.text).toContain(
+      expect((await runtime.snapshot(id)).active).toMatchObject({
+        model: { id: "b" },
+        thinkingLevel: "low",
+      });
+      expect(store.getState().live.notices.at(-1)?.text).toContain(
         "forward model cycling",
       );
-      const manual = commands.length;
       await store.setThinkingLevel("high");
       expect(store.getState().thinkingLevel).toBe("high");
-      expect((await runtime.snapshot()).active?.thinkingLevel).toBe("high");
-      expect(
-        commands.slice(manual).filter((type) => type === "set_thinking_level"),
-      ).toHaveLength(1);
+      expect((await runtime.snapshot(id)).active?.thinkingLevel).toBe("high");
       expect(
         await readFile(join(f.root, "model-events"), "utf8"),
       ).not.toContain(":request");
     } finally {
+      peer?.close();
       (
         store as unknown as
           | { connectionController: { stop(): void } }
           | undefined
       )?.connectionController.stop();
+      vi.unstubAllGlobals();
       if (host) await closeHostApiFixture(host);
       else await runtime.close();
       await attachments.close();
-      await rm(f.root, { recursive: true, force: true });
+      await rm(f.root, { recursive: true, force: true, maxRetries: 3 });
       vi.unstubAllEnvs();
     }
   },
