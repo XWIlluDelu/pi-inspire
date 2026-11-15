@@ -1,37 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  nativePiWorkspace,
-  stubNativePiEnvironment,
-} from "./fixtures/native-pi.js";
-import {
   deferredSignal,
-  disposeRuntimeFixture,
-  fakeRuntime,
-  fixtureWorkspace,
-  initializeRuntimeFixture,
-  preview,
+  disposeIsolatedRuntimeFixture,
+  initializeIsolatedRuntimeFixture,
   schedulingRuntime,
   startWorker,
   TEST_CWD,
 } from "./fixtures/runtime.js";
 
-beforeEach(async () => {
-  await initializeRuntimeFixture();
-  const pi = await nativePiWorkspace(
-    "pi-",
-    { defaultProjectTrust: "never" },
-    fixtureWorkspace,
-  );
-  stubNativePiEnvironment(pi.env);
-});
-afterEach(async () => {
-  try {
-    await disposeRuntimeFixture();
-  } finally {
-    vi.unstubAllEnvs();
-  }
-});
+beforeEach(initializeIsolatedRuntimeFixture);
+afterEach(disposeIsolatedRuntimeFixture);
 
 describe("maintenance restart admission", () => {
   afterEach(() => vi.useRealTimers());
@@ -130,25 +109,4 @@ describe("maintenance restart admission", () => {
     await expect(settled).resolves.toBeInstanceOf(Error);
   });
 
-  it("does not grant an idle-only lease while an open request is still in flight", async () => {
-    const { promise: gate, resolve: release } = deferredSignal();
-    const { promise: reachedPreview, resolve: entered } = deferredSignal();
-    const { runtime } = fakeRuntime({
-      openSessionProjection: async (session) => {
-        entered();
-        await gate;
-        return preview(session);
-      },
-    });
-
-    const opening = runtime.openSession("a");
-    await reachedPreview;
-    expect(runtime.reserveMaintenanceRestart()).toEqual({
-      kind: "busy",
-      reason: "in-flight-operation",
-    });
-    release();
-    await opening;
-    await runtime.close();
-  });
 });

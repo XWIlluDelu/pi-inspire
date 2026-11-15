@@ -20,7 +20,8 @@ covers:
   - tests/server/{app-auth,browser-auth,terminal-transport}.test.ts
   - tests/browser/pairing.spec.ts
   - server/{runtime,runtime-worker-lifecycle,runtime-events}.ts
-  - server/{host-restart,host-restart-backend,host-restart-preparation,host-restart-systemd,restart-preflight}.ts
+  - server/{host-restart,host-restart-backend,host-restart-preparation,restart-preflight}.ts
+  - server/restart-submission.mjs
   - server/launcher-restart.{mjs,d.mts}
   - server/pi-processes.{mjs,d.mts}
   - tests/server/global-pi-restart.test.ts
@@ -212,6 +213,9 @@ local requests, never by sending the reusable Host token.
 - Launcher lock ownership is explicit and scoped: `restart` retains exactly one lock from its stop
   boundary through the replacement start, including when no managed instance existed, while
   standalone `stop` releases any lock before every return.
+- CLI, browser and maintenance use the same systemd restart command for each scope. The CLI
+  verifies the replacement invocation before reporting success; the browser observes the
+  replacement Host and maintenance retains its lease until issuance is known.
 - Preference read/merge/rename writes are serialized both within one Host and across independent
   Host processes through the same bounded lock abstraction used by single-instance launch. Linux
   uses kernel `flock`; macOS and Windows use an atomically published ticket queue whose owner

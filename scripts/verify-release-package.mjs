@@ -252,7 +252,7 @@ try {
   // The installed smoke exercises the Host, launcher, recovery, fork and PTY
   // module graph. Keep a contents check for optional entries it cannot load.
   const required = [
-    "build/server/host-restart-systemd.js",
+    "build/server/restart-submission.mjs",
     "build/server/attached-pi-entry.js",
     "build/server/current-web-build.mjs",
     "build/shared/browser-build.mjs",

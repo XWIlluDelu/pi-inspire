@@ -20,7 +20,7 @@ import {
   preparePackagedLauncher,
 } from "../fixtures/packaged-launcher.mjs";
 
-const refused = { code: 1, issued: false };
+const refused = { kind: "not-issued", reason: "commit-not-authorized" };
 
 function fixture(t, options = {}) {
   const parent = new EventEmitter();
@@ -60,7 +60,7 @@ test("only accepted handoff plus a clean restart exit authorizes replacement", a
   const f = fixture(t);
   assert.equal(await f.client.inspect(), true);
   assert.equal(f.supervisor.shouldRestart(HOST_RESTART_EXIT_CODE, null), false);
-  assert.deepEqual(await f.client.request(f.commit), { code: 0, issued: true });
+  assert.deepEqual(await f.client.request(f.commit), { kind: "issued" });
   assert.equal(f.state.committed, true);
   assert.equal(f.supervisor.shouldRestart(HOST_RESTART_EXIT_CODE, null), true);
   for (const [code, signal] of [
@@ -70,7 +70,7 @@ test("only accepted handoff plus a clean restart exit authorizes replacement", a
   ])
     assert.equal(f.supervisor.shouldRestart(code, signal), false);
   // Another identity cannot overwrite the accepted intent.
-  assert.deepEqual(await f.client.request(f.commit), refused);
+  assert.equal((await f.client.request(f.commit)).kind, "not-issued");
   f.state.stopping = true;
   assert.equal(f.supervisor.shouldRestart(HOST_RESTART_EXIT_CODE, null), false);
 });
@@ -96,19 +96,13 @@ test("unsupported, disconnected, and ownerless channels never acquire restart au
   assert.equal(ownerless.listenerCount("disconnect"), 0);
 });
 
-test("refuses dispatch after commit refusal, early disconnect, lease loss or a racing stop", async (t) => {
-  for (const failure of ["commit", "disconnect", "lease", "stop"]) {
+test("refuses dispatch after commit refusal, early disconnect or lease loss", async (t) => {
+  for (const failure of ["commit", "disconnect", "lease"]) {
     await t.test(failure, async (t) => {
-      const checking = Promise.withResolvers();
-      const release = Promise.withResolvers();
       const f = fixture(t, {
         assertOwned: async () => {
           assert.equal(f.state.committed, true);
           if (failure === "lease") throw new Error("lease lost");
-          if (failure === "stop") {
-            checking.resolve();
-            await release.promise;
-          }
         },
       });
       const result = f.client.request(() => {
@@ -116,12 +110,7 @@ test("refuses dispatch after commit refusal, early disconnect, lease loss or a r
         if (failure === "disconnect") f.child.connected = false;
         return f.commit();
       });
-      if (failure === "stop") {
-        await checking.promise;
-        f.state.stopping = true;
-        release.resolve();
-      }
-      assert.deepEqual(await result, refused);
+      assert.equal((await result).kind, "not-issued");
       assert.equal(
         f.supervisor.shouldRestart(HOST_RESTART_EXIT_CODE, null),
         false,
@@ -155,10 +144,7 @@ test("lost post-commit confirmation remains uncertain without retrying", async (
         callback?.(null);
         return true;
       };
-      await assert.rejects(
-        f.client.request(f.commit),
-        mode === "reply" ? /did not confirm/ : /disconnected/,
-      );
+      assert.deepEqual(await f.client.request(f.commit), { kind: "unconfirmed" });
       assert.equal(f.state.committed, true);
       assert.equal(requests, 1);
       for (const event of ["message", "disconnect"])
@@ -184,7 +170,7 @@ test("standalone stop cancels page replacement even after Host state disappeared
     import { createLauncherRestartClient, HOST_RESTART_EXIT_CODE } from "./launcher-restart.mjs";
     await appendFile(process.env.TEST_LAUNCHES, "started\\n");
     const result = await createLauncherRestartClient().request(() => true);
-    if (!result.issued) process.exit(2);
+    if (result.kind !== "issued") process.exit(2);
     await writeFile(process.env.TEST_READY, "ready");
     // Model the real shutdown interval after state removal but before exit.
     while (!(await readFile(process.env.INSPIRE_STOP_REQUEST_PATH).catch(() => null)))

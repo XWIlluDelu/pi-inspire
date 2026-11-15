@@ -22,6 +22,7 @@ export async function preparePackagedLauncher(
       "instance-state",
       "instance-control",
       "launcher-restart",
+      "restart-submission",
       "npm-command",
       "platform-paths",
       "platform-environment",

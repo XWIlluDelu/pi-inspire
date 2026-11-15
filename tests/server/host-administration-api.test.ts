@@ -31,9 +31,9 @@ async function fixture(
 
 async function restartFixture() {
   const restart = vi.fn<HostRestartBackend["request"]>(
-    async (_scope, commit) => ({
-      code: (await commit()) ? 0 : 1,
-    }),
+    async (_scope, commit) => (await commit())
+      ? { kind: "issued" }
+      : { kind: "not-issued", reason: "commit-not-authorized" },
   );
   const prepare = vi.fn<HostRestartBackend["prepare"]>(async () => {});
   const inspect = vi.fn<HostRestartBackend["inspect"]>(async () => ({
@@ -184,27 +184,24 @@ describe("Host administration API", () => {
   });
 
   it.each([
-    "active-work",
     "in-flight-operation",
     "not-issued",
-    "failed",
-    "lost",
+    "unconfirmed",
   ] as const)(
     "fences %s at commit or submission and never replays the same receipt",
     async (fault) => {
       const f = await restartFixture();
       const commit = vi.spyOn(f.runtime, "commitMaintenanceRestart");
-      const veto = fault === "active-work" || fault === "in-flight-operation";
+      const veto = fault === "in-flight-operation";
       if (veto) commit.mockReturnValueOnce({ kind: "skipped", reason: fault });
       else
         f.restart.mockImplementationOnce(async (_scope, admit) => {
           expect(await admit()).toBe(true);
-          if (fault === "lost") throw new Error("IPC lost");
           return fault === "not-issued"
-            ? { code: 1, issued: false }
-            : { code: 1 };
+            ? { kind: "not-issued", reason: "restart-not-issued" }
+            : { kind: "unconfirmed" };
         });
-      const uncertain = fault === "failed" || fault === "lost";
+      const uncertain = fault === "unconfirmed";
       const phase = uncertain ? "unknown" : "rejected";
       const intent = f.intent();
       await f.submit(intent).expect(202);

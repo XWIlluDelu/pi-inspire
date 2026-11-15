@@ -1,5 +1,4 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import { acquireFileLock } from "./file-lock.mjs";
 import { observeProcessExit, processStartIdentity } from "./instance-state.mjs";
@@ -11,7 +10,7 @@ import {
   type TerminalDaemonInfo,
   type TerminalDaemonLaunchOptions,
 } from "./terminal-daemon-configuration.js";
-import { launchTerminalDaemon } from "./terminal-daemon-launcher.js";
+import { launchTerminalDaemon, waitForTerminalDaemon } from "./terminal-daemon-launcher.js";
 import { TERMINAL_DAEMON_PROTOCOL_VERSION } from "./terminal-daemon-protocol.js";
 import { addressAcceptsConnections } from "./terminal-daemon-socket.js";
 import { readTerminalDaemonSecret } from "./terminal-daemon-tls.js";
@@ -65,26 +64,34 @@ async function withTerminalClient<T>(
   }
 }
 
+async function verifiedDaemonInfo(
+  client: TerminalDaemonClient,
+  config: TerminalDaemonConfiguration,
+): Promise<TerminalDaemonInfo> {
+  const info = await client.daemonInfo();
+  if (!validInfo(info, config))
+    throw new TerminalServiceError(
+      "terminal_scope_mismatch",
+      409,
+      "The authenticated terminal endpoint belongs to a different instance.",
+    );
+  if ((await processStartIdentity(info.pid)) !== info.processStartTime)
+    throw new TerminalServiceError(
+      "terminal_scope_mismatch",
+      409,
+      "The terminal daemon process identity changed; inspect it again.",
+    );
+  return info;
+}
+
 export async function inspectTerminalDaemon(
   options: TerminalDaemonLaunchOptions,
 ): Promise<TerminalDaemonStatus> {
   const config = resolveTerminalDaemonConfiguration(options);
   try {
     const info = await withTerminalClient(config, (client) =>
-      client.daemonInfo(),
+      verifiedDaemonInfo(client, config),
     );
-    if (!validInfo(info, config))
-      throw new TerminalServiceError(
-        "terminal_scope_mismatch",
-        409,
-        "The authenticated terminal endpoint belongs to a different instance.",
-      );
-    if ((await processStartIdentity(info.pid)) !== info.processStartTime)
-      throw new TerminalServiceError(
-        "terminal_scope_mismatch",
-        409,
-        "The terminal daemon process identity changed; inspect it again.",
-      );
     return { kind: "running", info };
   } catch (error) {
     // A verified foreign owner is not absence, even if it stopped listening
@@ -158,28 +165,28 @@ export async function controlTerminalDaemon(
     });
     await handoff.release();
     if (action === "stop") return null;
-    if (unit) {
-      await execFile("systemctl", ["--user", "restart", "--", unit], {
-        env: options.environment ?? process.env,
-        timeout: 15_000,
-      });
-    } else {
+    const replacement = (info: TerminalDaemonInfo) => {
+      if (status.kind === "running" && info.instanceId === status.info.instanceId)
+        throw new Error("The terminal daemon was not replaced.");
+      return info;
+    };
+    if (!unit) {
       const client = await launchTerminalDaemon(options);
-      await client.close();
-    }
-    const readyDeadline = Date.now() + 8_000;
-    while (Date.now() < readyDeadline) {
-      const ready = await inspectTerminalDaemon(options);
-      if (ready.kind === "running") {
-        if (
-          status.kind === "running" &&
-          ready.info.instanceId === status.info.instanceId
-        )
-          throw new Error("The terminal daemon was not replaced.");
-        return ready.info;
+      try {
+        return replacement(await verifiedDaemonInfo(client, config));
+      } finally {
+        await client.close();
       }
-      await delay(75);
     }
+    await execFile("systemctl", ["--user", "restart", "--", unit], {
+      env: options.environment ?? process.env,
+      timeout: 15_000,
+    });
+    const ready = await waitForTerminalDaemon(async () => {
+      const state = await inspectTerminalDaemon(options);
+      return state.kind === "running" ? state.info : undefined;
+    });
+    if (ready) return replacement(ready);
     throw new Error(
       "The replacement terminal daemon has not become ready. Inspect terminal status.",
     );

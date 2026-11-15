@@ -7,6 +7,7 @@ import {
   matchesRestartIntent,
 } from "../shared/host-restart.js";
 import { requestError } from "./request-error.js";
+import { type RestartSubmission, settleRestart } from "./restart-submission.mjs";
 import type { RuntimeController } from "./runtime.js";
 
 export interface HostRestartBackend {
@@ -19,7 +20,7 @@ export interface HostRestartBackend {
   request(
     scope: HostRestartScope,
     commit: () => boolean | Promise<boolean>,
-  ): Promise<{ code: number; issued?: boolean; error?: string }>;
+  ): Promise<RestartSubmission>;
 }
 
 const UNAVAILABLE =
@@ -116,7 +117,7 @@ export class HostRestartController {
 
   private async execute(operation: HostRestartOperation): Promise<void> {
     let leaseId: string | undefined;
-    let mayHaveIssued = false;
+    let result: RestartSubmission;
     try {
       const available = await this.backend.inspect();
       const global = operation.scope === "all-pi";
@@ -150,7 +151,7 @@ export class HostRestartController {
           throw error;
         }
       }
-      const result = await this.backend.request(operation.scope, async () => {
+      result = await this.backend.request(operation.scope, async () => {
         if (!operation.interruptWork) {
           const busy = await this.runtime.checkAttachedRestartWork();
           if (busy) {
@@ -170,36 +171,35 @@ export class HostRestartController {
             operation.busyReason = committed.reason;
           return false;
         }
-        mayHaveIssued = true;
         // Publish domain state before submission can disconnect this observer.
         operation.phase = "submitted";
         return true;
       });
-      if (result.issued === false) mayHaveIssued = false;
-      if (result.code !== 0 || result.issued === false)
-        throw new Error(
-          result.error ??
-            (operation.busyReason
-              ? WORK_BUSY
-              : mayHaveIssued
-                ? "Restart outcome is unknown. Check the Host launcher or service."
-                : "Restart was not issued. Check the Host launcher or service configuration."),
-        );
     } catch (error) {
-      if (!mayHaveIssued && leaseId) {
-        try {
-          const released = this.runtime.releaseMaintenanceRestart(leaseId);
-          if (released.kind !== "released") mayHaveIssued = true;
-        } catch {
-          mayHaveIssued = true;
-        }
-      }
-      operation.phase = mayHaveIssued ? "unknown" : "rejected";
-      operation.error = mayHaveIssued
-        ? "Restart outcome is unknown. Check the Host launcher or service."
-        : error instanceof Error
-          ? error.message
-          : "Restart preparation failed.";
+      result = operation.phase === "submitted"
+        ? { kind: "unconfirmed" }
+        : {
+            kind: "not-issued",
+            reason: "pre-restart-failed",
+            error: error instanceof Error ? error : new Error("Restart preparation failed."),
+          };
     }
+    const lease = leaseId;
+    if (lease)
+      result = await settleRestart(result, () =>
+        this.runtime.releaseMaintenanceRestart(lease).kind === "released",
+      );
+    if (result.kind === "issued") return;
+    if (result.kind === "unconfirmed") {
+      operation.phase = "unknown";
+      operation.error = "Restart outcome is unknown. Check the Host launcher or service.";
+      return;
+    }
+    operation.phase = "rejected";
+    operation.error = result.error instanceof Error
+      ? result.error.message
+      : operation.busyReason
+        ? WORK_BUSY
+        : "Restart was not issued. Check the Host launcher or service configuration.";
   }
 }

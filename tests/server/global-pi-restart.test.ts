@@ -2,7 +2,8 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { systemdRestartBackend } from "../../server/host-restart-systemd.js";
+import { systemdRestartBackend } from "../../server/host-restart-backend.js";
+import { prepareHostRestart } from "../../server/host-restart-preparation.js";
 import {
   installSystemdManager,
   preparePackagedLauncher,
@@ -24,16 +25,15 @@ it("captures a bounded preflight error and allows a corrected retry", async () =
   expect(await backend.inspect()).toMatchObject({ host: false, allPi: false });
   const commit = vi.fn(() => true);
   await expect(backend.request("host", commit)).resolves.toEqual({
-    issued: false,
-    code: 1,
+    kind: "not-issued",
+    reason: "unsupported",
   });
   expect(commit).not.toHaveBeenCalled();
   await writeFile(
     launcher,
     `console.error("x".repeat(10000)); console.error("\\x1b[31mSynthetic missing runtime module\\x1b[0m"); process.exitCode = 1;`,
   );
-  const failure = await backend
-    .prepare()
+  const failure = await prepareHostRestart(root)
     .catch((error: Error) => error.message);
   expect(failure).toEqual(
     expect.stringContaining("Synthetic missing runtime module"),
@@ -44,7 +44,7 @@ it("captures a bounded preflight error and allows a corrected retry", async () =
     launcher,
     'if (process.argv[2] !== "prepare-restart") process.exit(1);',
   );
-  await expect(backend.prepare()).resolves.toBeUndefined();
+  await expect(prepareHostRestart(root)).resolves.toBeUndefined();
 });
 
 it.runIf(process.platform === "linux").each([
@@ -84,10 +84,9 @@ it.runIf(process.platform === "linux").each([
     });
     const issued = admit && !stopFails;
     expect(await backend.request("all-pi", commit)).toMatchObject({
-      code: issued ? 0 : 1,
-      issued,
+      kind: issued ? "issued" : "not-issued",
       ...(stopFails
-        ? { error: expect.stringContaining("PID fixture did not exit") }
+        ? { error: expect.objectContaining({ message: expect.stringContaining("PID fixture did not exit") }) }
         : {}),
     });
     if (admit) expect(stopPi).toHaveBeenCalledExactlyOnceWith({ includeHerdr });

@@ -4,8 +4,8 @@ import { submitSystemdRestart } from "./control.mjs";
 
 const source = new URL("../../server/instance-control.mjs", import.meta.url);
 const support = existsSync(source) ? "../../server/" : "../../build/server/";
-const [{ requestInstanceControl }, { readInstanceState }] = await Promise.all(
-  ["instance-control.mjs", "instance-state.mjs"].map((module) =>
+const [{ requestInstanceControl }, { readInstanceState }, { settleRestart }] = await Promise.all(
+  ["instance-control.mjs", "instance-state.mjs", "restart-submission.mjs"].map((module) =>
     import(new URL(support + module, import.meta.url).href),
   ),
 );
@@ -42,20 +42,15 @@ export async function runIdleMaintenanceRestart(
       return reply?.kind === "committed" && reply.leaseId === lease.leaseId;
     },
   }, systemd);
-  if (result.kind === "issued") return { kind: "restarted" };
-  if (result.kind === "unconfirmed")
-    return { kind: "recovery-required", reason: "restart-outcome-unknown" };
-  try {
+  const settled = await settleRestart(result, async () => {
     const released = await request(state, "release", lease.leaseId);
-    if (
-      released?.kind === "released" ||
-      (released?.kind === "skipped" && released.reason === "lease-invalid")
-    )
-      return { kind: "skipped", reason: result.reason };
-  } catch {
-    // A lost release response cannot prove that admission reopened.
-  }
-  return { kind: "recovery-required", reason: "release-unconfirmed" };
+    return released?.kind === "released" ||
+      (released?.kind === "skipped" && released.reason === "lease-invalid");
+  });
+  if (settled.kind === "issued") return { kind: "restarted" };
+  if (settled.kind === "unconfirmed")
+    return { kind: "recovery-required", reason: settled.reason ?? "restart-outcome-unknown" };
+  return { kind: "skipped", reason: settled.reason };
 }
 
 export async function runScheduledRestart(root, statePath) {

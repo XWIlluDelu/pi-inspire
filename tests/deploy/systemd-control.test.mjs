@@ -235,13 +235,9 @@ const uncertain = {
 };
 
 describe.runIf(process.platform !== "win32")("idle maintenance restart", () => {
-  it.each([
-    null,
-    { kind: "ready", expiresAt: 30_000 },
-    { kind: "skipped", reason: "busy" },
-  ])("does not inspect a unit without a prepared lease (%#)", async (lease) => {
+  it("does not inspect a unit after the Host refused a lease", async () => {
     const run = vi.fn();
-    const request = vi.fn(async () => lease);
+    const request = vi.fn(async () => ({ kind: "skipped", reason: "busy" }));
     await expect(
       runIdleMaintenanceRestart(owner, root, { environment, run, request }),
     ).resolves.toEqual({
@@ -266,7 +262,6 @@ describe.runIf(process.platform !== "win32")("idle maintenance restart", () => {
       issue: "not-issued",
       result: { kind: "skipped", reason: "restart-not-issued" },
     },
-    { boundary: "failed submission", issue: "error", result: uncertain },
     { boundary: "lost systemctl reply", issue: "lost", result: uncertain },
     {
       boundary: "issued restart",

@@ -26,6 +26,17 @@ import {
 const require = createRequire(import.meta.url);
 const START_TIMEOUT_MS = 8_000;
 
+export async function waitForTerminalDaemon<T>(
+  probe: () => Promise<T | undefined>,
+): Promise<T | undefined> {
+  const deadline = Date.now() + START_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const ready = await probe();
+    if (ready !== undefined) return ready;
+    await delay(75);
+  }
+}
+
 async function runSystemdUnit(
   command: string,
   args: string[],
@@ -184,17 +195,16 @@ export async function launchTerminalDaemon(
     child.unref();
   }
 
-  const deadline = Date.now() + START_TIMEOUT_MS;
   let lastError: unknown;
-  while (Date.now() < deadline) {
+  const ready = await waitForTerminalDaemon(async () => {
     try {
       await client.probe();
       return client;
     } catch (error) {
       lastError = error;
-      await delay(75);
     }
-  }
+  });
+  if (ready) return ready;
   throw new Error(
     `Unable to start the Inspire terminal service: ${
       lastError instanceof Error ? lastError.message : String(lastError)

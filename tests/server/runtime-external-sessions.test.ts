@@ -255,11 +255,11 @@ describe("continue an externally owned Pi", () => {
         }
         if (await commit()) {
           dispatch();
-          return { code: 0, issued: true };
+          return { kind: "issued" };
         }
         expect(f.native.read).toHaveBeenCalledTimes(before + 1);
         expect(events).not.toContain("agent_start");
-        return { code: 1, issued: false };
+        return { kind: "not-issued", reason: "commit-not-authorized" };
       },
     });
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });

@@ -6,8 +6,8 @@ import { isAbsolute, join, resolve } from "node:path";
 const support = existsSync(new URL("../../server/process-tree.mjs", import.meta.url))
   ? "../../server/"
   : "../../build/server/";
-const [{ runChild }, { installationKey }] = await Promise.all(
-  ["process-tree.mjs", "platform-paths.mjs"].map((module) =>
+const [{ runChild }, { installationKey }, { submitRestart }] = await Promise.all(
+  ["process-tree.mjs", "platform-paths.mjs", "restart-submission.mjs"].map((module) =>
     import(new URL(support + module, import.meta.url).href),
   ),
 );
@@ -140,11 +140,22 @@ async function mayHaveHostService(environment, inspectPath) {
   return false;
 }
 
-function showUnit(unit, fields, { environment = process.env, run = runSystemctl } = {}) {
-  return run(
-    ["--user", "show", unit, ...fields.map((field) => `--property=${field}`)],
-    environment,
-  );
+function controlUnit({ environment = process.env, run = runSystemctl } = {}, ...args) {
+  return run(["--user", ...args], environment);
+}
+
+function showUnit(unit, fields, options) {
+  return controlUnit(options, "show", unit, ...fields.map((field) => `--property=${field}`));
+}
+
+// Host After=terminal orders both shutdown and startup in one transaction.
+function restartCommand(terminals, detached = false) {
+  return [
+    ...(detached ? ["--no-block"] : []),
+    "restart",
+    ...(terminals ? [TERMINAL_SERVICE_NAME] : []),
+    HOST_SERVICE_NAME,
+  ];
 }
 
 /** A generic user-unit name is shared by installations. Require its checkout
@@ -244,10 +255,6 @@ export async function manageHostService(root, action, options = {}) {
       ["stop", HOST_SERVICE_NAME],
       ["stop", TERMINAL_SERVICE_NAME],
     ],
-    restart: [["restart", HOST_SERVICE_NAME]],
-    // One systemd transaction honors Host After=terminal: stop Host first,
-    // restart the terminal owner, then start Host after terminal readiness.
-    "restart-all": [["restart", TERMINAL_SERVICE_NAME, HOST_SERVICE_NAME]],
     enable: [
       ["enable", TERMINAL_SERVICE_NAME],
       ["enable", "--now", HOST_SERVICE_NAME],
@@ -258,20 +265,19 @@ export async function manageHostService(root, action, options = {}) {
       ["disable", "--now", TERMINAL_SERVICE_NAME],
     ],
   };
-  const commandsForAction = commands[action];
+  const commandsForAction = restart
+    ? [restartCommand(action === "restart-all")]
+    : commands[action];
   if (!commandsForAction)
     throw new Error(`Unsupported host-service action: ${action}`);
-  const control = (...args) => (options.run ?? runSystemctl)(
-    ["--user", ...args], options.environment,
-  );
 
   // Starting/enabling must not migrate ownership or end existing terminals.
   // Only explicit stop/disable includes the installation's transient owner.
   if (["stop", "disable"].includes(action))
-    await control("stop", transientTerminalServiceName(root));
+    await controlUnit(options, "stop", transientTerminalServiceName(root));
 
   for (const arguments_ of commandsForAction) {
-    const result = await control(...arguments_);
+    const result = await controlUnit(options, ...arguments_);
     if (result.code !== 0)
       return { kind: "control-failed", action, detail: commandDetail(result) };
   }
@@ -315,36 +321,26 @@ async function currentInvocation(invocationId, options) {
   return InvocationID === invocationId && ActiveState === "active";
 }
 
-export async function submitSystemdRestart(
+export function submitSystemdRestart(
   root,
   { invocationId, commit, beforeRestart, terminals = false, detached = false },
   options = {},
 ) {
-  const refused = (reason) => ({ kind: "not-issued", reason });
-  try {
+  return submitRestart(async () => {
     const target = await inspectRestartTarget(root, invocationId, options);
-    if (target.kind !== "managed") return refused(target.kind);
-    if (!(await commit())) return refused("commit-not-authorized");
+    if (target.kind !== "managed") return target.kind;
+    if (!(await commit())) return "commit-not-authorized";
     if (!(await currentInvocation(invocationId, options)))
-      return refused("invocation-changed");
-    if (beforeRestart) await beforeRestart();
-    if (beforeRestart && !(await currentInvocation(invocationId, options)))
-      return refused("invocation-changed");
-  } catch (error) {
-    return { ...refused("pre-restart-failed"), error };
-  }
-  try {
-    const result = await (options.run ?? runSystemctl)(
-      ["--user", ...(detached ? ["--no-block"] : []), "restart",
-        ...(terminals ? [TERMINAL_SERVICE_NAME] : []), HOST_SERVICE_NAME],
-      options.environment,
-    );
-    if (result.issued === false) return refused("restart-not-issued");
-    if (result.code === 0) return { kind: "issued" };
-  } catch {
-    // The command may have reached systemd before its result was lost.
-  }
-  return { kind: "unconfirmed" };
+      return "invocation-changed";
+    if (beforeRestart) {
+      await beforeRestart();
+      if (!(await currentInvocation(invocationId, options)))
+        return "invocation-changed";
+    }
+  }, async () => {
+    const result = await controlUnit(options, ...restartCommand(terminals, detached));
+    return result.issued === false ? false : result.code === 0 ? true : undefined;
+  });
 }
 
 export function reportHostService(result, action) {

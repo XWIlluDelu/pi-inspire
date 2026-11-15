@@ -21,6 +21,7 @@ for (const supportModule of [
   "instance-state.mjs",
   "instance-control.mjs",
   "launcher-restart.mjs",
+  "restart-submission.mjs",
   "npm-command.mjs",
   "platform-paths.mjs",
   "platform-environment.mjs",

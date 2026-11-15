@@ -315,7 +315,7 @@ async function showInstanceUrl(result, open = false) {
   if (open) openUrl(url);
 }
 
-async function showExisting(context) {
+async function showExisting(context, waitingForLock = false) {
   const result = await inspect(context);
   if (result.kind === "healthy") {
     console.log("INSΠRE is already running.");
@@ -323,6 +323,8 @@ async function showExisting(context) {
     return "shown";
   }
   if (result.kind === "unavailable") {
+    if (waitingForLock)
+      throw new Error("Another managed INSΠRE instance is not available");
     reportUnavailableHost();
     return "blocked";
   }
@@ -332,28 +334,28 @@ async function showExisting(context) {
   return "absent";
 }
 
-async function acquireInstanceLock(context, detectExisting = true) {
+async function tryInstanceLock(context, waitMs, retryMs) {
+  try {
+    return await acquireFileLock(context.lockPath, {
+      waitMs,
+      retryMs,
+      label: "INSΠRE instance",
+    });
+  } catch (error) {
+    if (error?.code === "ELOCKTIMEOUT") return null;
+    throw error;
+  }
+}
+
+async function acquireInstanceLock(context) {
   const deadline = Date.now() + 15_000;
   while (Date.now() < deadline) {
-    try {
-      return await acquireFileLock(context.lockPath, {
-        waitMs: Math.min(250, Math.max(1, deadline - Date.now())),
-        retryMs: 25,
-        label: "INSΠRE instance",
-      });
-    } catch (error) {
-      if (error?.code !== "ELOCKTIMEOUT") throw error;
-    }
-    if (detectExisting) {
-      const result = await inspect(context);
-      if (result.kind === "healthy") {
-        console.log("INSΠRE is already running.");
-        await showInstanceUrl(result, process.env.INSPIRE_OPEN !== "0");
-        return null;
-      }
-      if (result.kind === "unavailable")
-        throw new Error("Another managed INSΠRE instance is not available");
-    }
+    const lease = await tryInstanceLock(
+      context,
+      Math.min(250, Math.max(1, deadline - Date.now())),
+      25,
+    );
+    if (lease || (await showExisting(context, true)) === "shown") return lease;
   }
   throw new Error(
     "Another INSΠRE launcher is still starting or stopping this instance.",
@@ -505,19 +507,6 @@ async function startLocalHost(context, lease = null) {
   }
 }
 
-async function tryShortLock(context) {
-  try {
-    return await acquireFileLock(context.lockPath, {
-      waitMs: 75,
-      retryMs: 20,
-      label: "INSΠRE instance",
-    });
-  } catch (error) {
-    if (error?.code === "ELOCKTIMEOUT") return null;
-    throw error;
-  }
-}
-
 async function placeStopRequest(context) {
   await writeFile(
     context.stopRequestPath,
@@ -569,7 +558,7 @@ async function stopLocalHost(context, restart = false, target) {
           );
       }
 
-      lease = await tryShortLock(context);
+      lease = await tryInstanceLock(context, 75, 20);
       if (lease) {
         await rm(context.stopRequestPath, { force: true });
         cancellationPublished = false;
