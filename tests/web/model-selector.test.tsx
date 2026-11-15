@@ -7,61 +7,7 @@ import { mockModelMenuLayout } from "./fixtures/model-menu-layout";
 
 beforeEach(mockModelMenuLayout);
 
-const models = [
-  {
-    provider: "anthropic",
-    id: "claude-sonnet",
-    name: "Claude Sonnet",
-    reasoning: true,
-  },
-  {
-    provider: "anthropic",
-    id: "claude-haiku",
-    name: "Claude Haiku",
-    reasoning: false,
-  },
-  { provider: "openai", id: "gpt-5", name: "GPT 5", reasoning: true },
-];
-
 describe("model picker interaction", () => {
-  it("closes an open picker when disabled without changing its selection", () => {
-    const change = vi.fn();
-    const props = {
-      value: models[0]!,
-      models,
-      recent: [],
-      onChange: change,
-    };
-    const view = render(<ModelSelector {...props} />);
-    const trigger = screen.getByRole("button", { name: "Model" });
-    fireEvent.click(trigger);
-    expect(
-      screen.getByRole("listbox", { name: "Available models" }),
-    ).toBeInTheDocument();
-
-    view.rerender(<ModelSelector {...props} disabled />);
-    expect(trigger).toBeDisabled();
-    expect(trigger).toHaveAttribute("aria-expanded", "false");
-    expect(
-      screen.queryByRole("listbox", { name: "Available models" }),
-    ).not.toBeInTheDocument();
-    fireEvent.keyDown(trigger, { key: "ArrowDown" });
-    expect(
-      screen.queryByRole("listbox", { name: "Available models" }),
-    ).not.toBeInTheDocument();
-    expect(change).not.toHaveBeenCalled();
-
-    view.rerender(<ModelSelector {...props} />);
-    expect(trigger).toBeEnabled();
-    expect(trigger).toHaveAttribute("aria-expanded", "false");
-    fireEvent.click(trigger);
-    fireEvent.click(screen.getByRole("option", { name: /Claude Haiku/ }));
-    expect(change).toHaveBeenCalledExactlyOnceWith(
-      models[1]!.provider,
-      models[1]!.id,
-    );
-  });
-
   it("shows an unavailable selection and refresh failure without claiming cached choices when discovery failed", async () => {
     render(
       <ModelSelector

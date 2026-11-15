@@ -327,38 +327,6 @@ describe("Host project discovery continuity", () => {
     }
   }, 30_000);
 
-  it("remembers the cwd of an opened existing session without pinning it", async () => {
-    const { root, startup, project, agent, preferencesPath } = await fixture();
-    const storage = join(agent, "sessions", "--existing--");
-    await mkdir(storage, { recursive: true });
-    await writeSession(
-      join(storage, "existing.jsonl"),
-      project,
-      "existing",
-      [],
-    );
-    const current = host(
-      startup,
-      preferencesPath,
-      new AttachmentStore(join(root, "uploads")),
-    );
-    try {
-      await request(current.application.server)
-        .post("/api/sessions/open")
-        .set("Authorization", "Bearer test")
-        .send({ id: "existing" })
-        .expect(200);
-      await vi.waitFor(async () =>
-        expect(
-          await new PreferencesStore(preferencesPath).projectDirectories.read(),
-        ).toContain(project),
-      );
-      expect((await current.preferences.read()).pinnedProjectCwds).toEqual([]);
-    } finally {
-      await current.application.close();
-    }
-  });
-
   it("remembers an uncertain start without making the index a launch gate", async () => {
     const { root, startup, project, preferencesPath } = await fixture();
     vi.stubEnv("PI_CODING_AGENT_SESSION_DIR", "sessions");

@@ -88,7 +88,7 @@ async function configurationEditLockPaths(
   return [...new Set(details?.isFile() ? [target] : [lexical, target])].sort();
 }
 
-interface ConfigurationAuthority {
+export interface ConfigurationAuthority {
   path: string;
   /** Services retain project containment and other scope-specific authority. */
   resolveTarget?: () => Promise<string>;

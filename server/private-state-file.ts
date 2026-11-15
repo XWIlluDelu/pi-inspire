@@ -1,5 +1,24 @@
 import { randomUUID } from "node:crypto";
 import { rename, rm, writeFile } from "node:fs/promises";
+import { acquireFileLock } from "./file-lock.mjs";
+
+export async function editPrivateStateJson<T>(
+  path: string,
+  label: string,
+  edit: (publish: (value: unknown) => Promise<void>) => Promise<T>,
+): Promise<T> {
+  const lease = await acquireFileLock(`${path}.flock`, { label });
+  try {
+    await lease.assertOwned();
+    return await edit((value) =>
+      replacePrivateStateFile(path, `${JSON.stringify(value, null, 2)}\n`, {
+        beforeReplace: lease.assertOwned,
+      }),
+    );
+  } finally {
+    await lease.release();
+  }
+}
 
 /** Atomically replace private Host state. Callers own directory preparation,
  * serialization and write ordering; a lease can be rechecked before publication. */

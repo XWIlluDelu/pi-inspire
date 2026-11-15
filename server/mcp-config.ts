@@ -22,6 +22,7 @@ import {
 import {
   applyConfigurationPatch,
   configurationFileTarget,
+  type ConfigurationAuthority,
   editConfigurationDocument,
   readConfigurationDocument,
 } from "./configuration-file.js";
@@ -31,10 +32,10 @@ import { getAgentDir } from "./pi-runtime.js";
 import { requestError } from "./request-error.js";
 
 type JsonObject = Record<string, unknown>;
-const normalExposure = (value: unknown) =>
-  value === "codemode-deferred"
-    ? "codemode"
-    : mcpExposureSchema.safeParse(value).data;
+const normalizeExposure = (value: unknown) =>
+  value === "codemode-deferred" ? "codemode" : value;
+const parseExposure = (value: unknown) =>
+  mcpExposureSchema.safeParse(normalizeExposure(value)).data;
 const strings = (value: unknown) =>
   isJsonRecord(value) ? Object.keys(value) : [];
 const configFields = mcpConfigValuesSchema.shape;
@@ -80,7 +81,7 @@ function projectEntry(
           ? null
           : true,
     exposure:
-      normalExposure(value.exposure) ?? (policyOnly ? null : "codemode"),
+      parseExposure(value.exposure) ?? (policyOnly ? null : "codemode"),
     urlConfigured: mcpConnectionFields.url.presence(value.url),
     argumentCount: mcpConnectionFields.args.presence(value.args),
     [mcpSecretMaps.env.projection]: strings(value.env),
@@ -90,7 +91,7 @@ function projectEntry(
     toolExposure: Object.fromEntries(
       isJsonRecord(value.toolExposure)
         ? Object.entries(value.toolExposure).flatMap(([key, val]) => {
-            const mode = normalExposure(val);
+            const mode = parseExposure(val);
             return mode ? [[key, mode]] : [];
           })
         : [],
@@ -107,6 +108,19 @@ const mcpDocument = {
 function serversOf({ mcpServers = {} }: JsonObject): JsonObject {
   if (isJsonRecord(mcpServers)) return mcpServers;
   throw requestError(mcpDocument.invalid, 409);
+}
+
+async function readServers(
+  file: ConfigurationAuthority,
+  expected?: Parameters<typeof readConfigurationDocument>[2],
+) {
+  const { value, revision, error } = await readConfigurationDocument(
+    file,
+    mcpDocument,
+    expected,
+  );
+  if (error) throw requestError(error, 409);
+  return { servers: serversOf(value), revision };
 }
 
 function mergeValues(current: JsonObject, values: McpConfigValues): JsonObject {
@@ -156,12 +170,13 @@ function validate(value: JsonObject, scope: McpConfigScope): void {
   const known = Object.fromEntries(
     Object.entries(fields).filter(([key]) => Object.hasOwn(configFields, key)),
   );
-  if (known.exposure === "codemode-deferred") known.exposure = "codemode";
+  if (Object.hasOwn(known, "exposure"))
+    known.exposure = normalizeExposure(known.exposure);
   if (isJsonRecord(known.toolExposure))
     known.toolExposure = Object.fromEntries(
       Object.entries(known.toolExposure).map(([key, mode]) => [
         key,
-        mode === "codemode-deferred" ? "codemode" : mode,
+        normalizeExposure(mode),
       ]),
     );
   const oauthError = mcpOAuthError(oauth);
@@ -201,15 +216,11 @@ export class McpConfigService {
     const file = this.authority(cwd, scope);
     const identified = { scope, path: file.path };
     try {
-      const { value, revision, error } = await readConfigurationDocument(
-        file,
-        mcpDocument,
-      );
-      if (error) throw requestError(error, 409);
+      const { servers, revision } = await readServers(file);
       return {
         ...identified,
         revision,
-        entries: Object.entries(serversOf(value)).map(([name, record]) =>
+        entries: Object.entries(servers).map(([name, record]) =>
           projectEntry(name, record, scope),
         ),
       };
@@ -240,16 +251,11 @@ export class McpConfigService {
     cwd: string | null,
     request: McpConnectionRead,
   ): Promise<McpConnectionValues> {
-    const { value } = await readConfigurationDocument(
-      this.authority(cwd, request.scope),
-      mcpDocument,
-      {
-        revision: request.revision,
-        stale:
-          "MCP configuration changed elsewhere. Refresh files before viewing saved values.",
-      },
-    );
-    const servers = serversOf(value);
+    const { servers } = await readServers(this.authority(cwd, request.scope), {
+      revision: request.revision,
+      stale:
+        "MCP configuration changed elsewhere. Refresh files before viewing saved values.",
+    });
     const entry = Object.hasOwn(servers, request.name)
       ? servers[request.name]
       : undefined;
@@ -286,11 +292,11 @@ export class McpConfigService {
               : "That server no longer exists in this file",
             409,
           );
-        if (operation === "remove")
-          return {
-            ...document,
-            mcpServers: applyConfigurationPatch(servers, { [name]: null }),
-          };
+        const update = (value: JsonObject | null) => ({
+          ...document,
+          mcpServers: applyConfigurationPatch(servers, { [name]: value }),
+        });
+        if (operation === "remove") return update(null);
         const current = adding ? {} : servers[name];
         if (!isJsonRecord(current))
           throw requestError(
@@ -304,12 +310,7 @@ export class McpConfigService {
               "Project policy overrides can only edit enabled, exposure and toolExposure",
               400,
             );
-          const { value: inherited, error } = await readConfigurationDocument(
-            user,
-            mcpDocument,
-          );
-          if (error) throw requestError(error, 409);
-          const records = serversOf(inherited);
+          const { servers: records } = await readServers(user);
           const base = Object.hasOwn(records, name) ? records[name] : undefined;
           if (!isJsonRecord(base))
             throw requestError(
@@ -343,7 +344,7 @@ export class McpConfigService {
             "Server names differing only in hyphens and underscores conflict in Pi",
             409,
           );
-        return { ...document, mcpServers: { ...servers, [name]: value } };
+        return update(value);
       },
     );
   }

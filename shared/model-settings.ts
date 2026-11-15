@@ -5,6 +5,7 @@ import {
   fieldSchemas,
   nullableEdit,
   storedConfigurationField,
+  storedConfigurationValue,
 } from "./configuration-fields.js";
 import {
   type ModelIdentity,
@@ -124,7 +125,6 @@ const name = storedConfigurationField(
   { label: "Display name", placeholder: "Optional", maxLength: 512 },
   z.string().max(512),
 );
-const type = z.string().optional().catch(undefined);
 const input = z
   .array(z.unknown())
   .transform((items) =>
@@ -158,20 +158,15 @@ const providerValues = z.strictObject({
   ...fieldSchemas(providerDeclarationFields, "schema"),
   apiKey: apiKey.schema,
 });
-const modelValues = z.strictObject({
-  ...fieldSchemas(modelDeclarationFields, "schema"),
-  id: modelId,
-  reasoning: nullableEdit(z.boolean()),
-  input: nullableEdit(z.array(z.string().max(100)).max(8)),
-  type: nullableEdit(token),
-});
-export const modelDeclarationSchema = z.object({
-  ...fieldSchemas(modelDeclarationFields, "stored"),
-  id: z.string(),
-  reasoning: z.boolean().optional().catch(undefined),
-  input: input.optional().catch(undefined),
-  type,
-});
+const modelFields = {
+  ...modelDeclarationFields,
+  id: { schema: modelId, stored: z.string() },
+  reasoning: storedConfigurationValue(z.boolean(), z.boolean()),
+  input: storedConfigurationValue(input, z.array(z.string().max(100)).max(8)),
+  type: storedConfigurationValue(z.string(), token),
+};
+const modelValues = z.strictObject(fieldSchemas(modelFields, "schema"));
+export const modelDeclarationSchema = z.object(fieldSchemas(modelFields, "stored"));
 export const modelConfigEditSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     kind: z.literal("provider"),

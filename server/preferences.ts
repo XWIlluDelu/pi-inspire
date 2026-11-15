@@ -10,9 +10,8 @@ import {
   preferencesPatchSchema,
   preferencesSchema,
 } from "../shared/preferences-schema.js";
-import { acquireFileLock } from "./file-lock.mjs";
 import { inspireConfigDirectory } from "./platform-paths.mjs";
-import { replacePrivateStateFile } from "./private-state-file.js";
+import { editPrivateStateJson } from "./private-state-file.js";
 import { ProjectDirectoryStore } from "./project-directories.js";
 import { requestError } from "./request-error.js";
 
@@ -118,32 +117,6 @@ export class PreferencesStore {
     return (await this.inspect()).preferences;
   }
 
-  private async withWriteLock<T>(
-    operation: (assertOwned: () => Promise<void>) => Promise<T>,
-  ): Promise<T> {
-    const lease = await acquireFileLock(`${this.path}.flock`, {
-      label: "saved preferences",
-    });
-    try {
-      await lease.assertOwned();
-      return await operation(lease.assertOwned);
-    } finally {
-      await lease.release();
-    }
-  }
-
-  private async persist(
-    preferences: Record<string, unknown>,
-    assertOwned: () => Promise<void>,
-  ): Promise<void> {
-    await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
-    await replacePrivateStateFile(
-      this.path,
-      `${JSON.stringify(preferences, null, 2)}\n`,
-      { beforeReplace: assertOwned },
-    );
-  }
-
   private enqueue<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.writes.then(operation);
     this.writes = result.then(
@@ -157,7 +130,7 @@ export class PreferencesStore {
     transform: (current: InspirePreferences) => unknown,
   ): Promise<PreferencePublication> {
     return this.enqueue(() =>
-      this.withWriteLock(async (assertOwned) => {
+      editPrivateStateJson(this.path, "saved preferences", async (publish) => {
         const current = await this.readDisk();
         if (!current.source)
           throw requestError(
@@ -181,7 +154,8 @@ export class PreferencesStore {
             ...preferences.hiddenProjectCwds,
           ]);
         }
-        await this.persist(source, assertOwned);
+        await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
+        await publish(source);
         return { preferences, revision: ++this.revision };
       }),
     );

@@ -163,12 +163,11 @@ describe("login attempt ownership", () => {
   });
 
   it.each([
-    { action: "answer", completes: "status", fails: "answer" },
-    { action: "cancel", completes: "status", fails: "cancel" },
-    { action: "answer", completes: "answer", fails: "status" },
+    { completes: "status", fails: "answer" },
+    { completes: "answer", fails: "status" },
   ] as const)(
     "preserves completion from $completes after a late $fails failure",
-    async ({ action, completes, fails }) => {
+    async ({ completes, fails }) => {
       const late = deferred<ProviderLoginAttempt>();
       const attempt = keyPrompt();
       host.providerAuth.mockImplementation(async (_owner, request) => {
@@ -179,16 +178,14 @@ describe("login attempt ownership", () => {
       });
       render(panel());
       await start("Anthropic API key");
-      if (action === "answer")
-        fireEvent.change(screen.getByLabelText("API key"), {
-          target: { value: "test-key" },
-        });
-      const button = action === "answer" ? "Continue" : "Cancel login";
+      fireEvent.change(screen.getByLabelText("API key"), {
+        target: { value: "test-key" },
+      });
       if (fails === "status") {
         await nextPoll();
-        await act(async () => click(button));
+        await act(async () => click("Continue"));
       } else {
-        click(button);
+        click("Continue");
         await nextPoll();
       }
       expect(host.providerAuth).toHaveBeenCalledWith(

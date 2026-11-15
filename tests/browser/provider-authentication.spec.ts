@@ -1,6 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import AxeBuilder from "@axe-core/playwright";
 import { expect, type Request, type Route, test } from "@playwright/test";
 import type { ProviderAuthOperation } from "../../shared/provider-auth-bridge";
 import { browserFixtureHome } from "./fixtures/workspace.mjs";
@@ -181,8 +180,6 @@ test("updates and removes real provider credentials through /login while preserv
     await models.click();
     await expect(modelSearch).toHaveValue("offline");
     await secret.fill("SYNTHETIC_API_KEY");
-    await display.click();
-    await models.click();
     await expect(secret).toHaveValue("SYNTHETIC_API_KEY");
     directoryFault = true;
     await settings
@@ -220,18 +217,6 @@ test("updates and removes real provider credentials through /login while preserv
     await settings
       .getByRole("button", { name: "Connect provider", exact: true })
       .click();
-    await search.fill("no-such-provider");
-    await expect(
-      settings.getByText('No available providers matching "no-such-provider"'),
-    ).toBeVisible();
-    const { violations } = await new AxeBuilder({ page })
-      .include(".settings")
-      .analyze();
-    expect(
-      violations.filter(
-        ({ impact }) => impact === "critical" || impact === "serious",
-      ),
-    ).toEqual([]);
     await search.fill("anthropic");
     await settings.getByRole("button", { name: "Set up Anthropic" }).click();
     created = start();

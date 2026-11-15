@@ -1,5 +1,5 @@
 import { Plus, RefreshCw, Server } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { isBusyRunState } from "../../shared/contracts";
 import type {
   McpConfigEdit,
@@ -112,13 +112,13 @@ function McpConfiguration({
   const [saved, setSaved] = useState<string | null>(null);
   const [confirmReload, setConfirmReload] = useState(false);
   const { cwd, sessionId } = owner;
-  const read = () => load(() => store.readMcpConfig(owner));
+  const read = useCallback(
+    () => load(() => store.readMcpConfig(sessionId ? { sessionId } : { cwd })),
+    [load, sessionId, cwd],
+  );
   useEffect(() => {
-    if (active && !snapshot && !readFailed)
-      void load(() =>
-        store.readMcpConfig(sessionId ? { sessionId } : cwd ? { cwd } : {}),
-      );
-  }, [active, cwd, load, readFailed, sessionId, snapshot]);
+    if (active && !snapshot && !readFailed) void read();
+  }, [active, read, readFailed, snapshot]);
   const open = (next: Selection, opener: HTMLElement) => {
     configuration.open(next, opener, next.kind === "edit");
     setConfirmReload(false);

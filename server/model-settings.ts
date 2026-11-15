@@ -114,7 +114,13 @@ export async function commonModelOptions(
 
 export class ModelSettingsService {
   private nativeApiProviders: Promise<string[]> | undefined;
-  constructor(private readonly agentDir = getAgentDir()) {}
+  private readonly settingsFile: { path: string };
+  private readonly modelsFile: { path: string };
+
+  constructor(private readonly agentDir = getAgentDir()) {
+    this.settingsFile = { path: join(agentDir, "settings.json") };
+    this.modelsFile = { path: join(agentDir, "models.json") };
+  }
 
   async readCatalogPreferences(cwd: string) {
     const { effective, thinkingPreferences } = await readNativeModelSettings(
@@ -148,14 +154,8 @@ export class ModelSettingsService {
     models: ModelOption[],
   ): Promise<ModelSettingsSnapshot> {
     const [settings, modelsFile, native] = await Promise.all([
-      readConfigurationDocument(
-        { path: join(this.agentDir, "settings.json") },
-        settingsDocument,
-      ),
-      readConfigurationDocument(
-        { path: join(this.agentDir, "models.json") },
-        modelsDocument,
-      ),
+      readConfigurationDocument(this.settingsFile, settingsDocument),
+      readConfigurationDocument(this.modelsFile, modelsDocument),
       readNativeModelSettings(cwd, this.agentDir),
     ]);
     const effective = preferences(native.effective);
@@ -190,14 +190,11 @@ export class ModelSettingsService {
     };
   }
   async savePreferences(
-    expected: string,
+    expectedRevision: string,
     patch: ModelPreferencesPatch,
   ): Promise<void> {
     return editConfigurationDocument(
-      {
-        path: join(this.agentDir, "settings.json"),
-        expectedRevision: expected,
-      },
+      { ...this.settingsFile, expectedRevision },
       settingsDocument,
       (current) =>
         applyConfigurationPatch(current, {
@@ -213,13 +210,13 @@ export class ModelSettingsService {
   }
   saveConfig(
     cwd: string,
-    expected: string,
+    expectedRevision: string,
     edit: ModelConfigEdit,
   ): Promise<void> {
     return editConfigurationDocument(
       {
-        path: join(this.agentDir, "models.json"),
-        expectedRevision: expected,
+        ...this.modelsFile,
+        expectedRevision,
         validate: (path) =>
           validateModelConfig(cwd, this.agentDir, path).catch(() => {
             throw requestError(invalidDeclaration, 400);

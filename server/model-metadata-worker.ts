@@ -132,20 +132,18 @@ function readSettings(cwd: string) {
   const project = settings.getProjectSettings();
   const errors = settings.drainErrors();
   const thinkingPreferences = modelThinkingPreferences(settings);
+  const effective = {
+    defaultProvider: settings.getDefaultProvider(),
+    defaultModel: settings.getDefaultModel(),
+    defaultThinkingLevel: thinkingPreferences.defaultLevel,
+    enabledModels: settings.getEnabledModels(),
+  };
   return {
-    effective: {
-      defaultProvider: settings.getDefaultProvider(),
-      defaultModel: settings.getDefaultModel(),
-      defaultThinkingLevel: thinkingPreferences.defaultLevel,
-      enabledModels: settings.getEnabledModels(),
-    },
+    effective,
     thinkingPreferences,
-    projectOverrides: [
-      "defaultProvider",
-      "defaultModel",
-      "defaultThinkingLevel",
-      "enabledModels",
-    ].filter((key) => Object.hasOwn(project, key)),
+    projectOverrides: Object.keys(effective).filter((key) =>
+      Object.hasOwn(project, key),
+    ),
     globalError: errors.some(({ scope }) => scope === "global"),
     projectError: errors.some(({ scope }) => scope === "project"),
   };

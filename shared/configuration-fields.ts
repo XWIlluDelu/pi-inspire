@@ -23,15 +23,25 @@ export function configurationField<Schema extends z.ZodType>(
   return { schema: nullableEdit(schema), control };
 }
 
+export function storedConfigurationValue<
+  Stored extends z.ZodType,
+  Edited extends z.ZodType,
+>(
+  stored: Stored,
+  edited: Edited,
+) {
+  return {
+    schema: nullableEdit(edited),
+    stored: stored.optional().catch(undefined),
+  };
+}
+
 export function storedConfigurationField<Schema extends z.ZodType>(
   stored: Schema,
   control: ConfigurationControl,
   edited = stored,
 ) {
-  return {
-    ...configurationField(edited, control),
-    stored: stored.optional().catch(undefined),
-  };
+  return { ...storedConfigurationValue(stored, edited), control };
 }
 
 export function fieldSchemas<

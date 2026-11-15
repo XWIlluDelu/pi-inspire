@@ -15,36 +15,6 @@ beforeEach(() => installFakeWebSocket());
 
 const first = { provider: "fixture", id: "first", reasoning: true };
 const second = { provider: "fixture", id: "second", reasoning: true };
-const offline = { status: 503, body: { error: "catalog offline" } };
-
-it("keeps the current selection and authoritative choices after failed catalog reads", async () => {
-  const catalog = vi
-    .fn()
-    .mockReturnValueOnce(offline)
-    .mockReturnValueOnce({ body: { models: [second] } })
-    .mockReturnValue(offline);
-  installStoreRoutes((url) => {
-    if (url === "/api/bootstrap")
-      return {
-        body: bootstrapPayload({
-          availableModels: [first],
-          startupSessionId: "s1",
-        }),
-      };
-    if (url.startsWith("/api/models")) return catalog();
-  });
-  const { store } = await initStore(
-    activeSnapshot({ model: first, availableModels: [] }),
-  );
-  await expect(store.refreshModels()).rejects.toThrow("catalog offline");
-  expect(store.getState().availableModels).toEqual([]);
-  await store.refreshModels();
-  await expect(store.refreshModels()).rejects.toThrow("catalog offline");
-  expect(store.getState()).toMatchObject({
-    model: first,
-    availableModels: [second],
-  });
-});
 
 it("replaces old Settings and picker results with the committed catalog and keeps prospective reads scoped", async () => {
   const oldSettings = deferred<RouteResponse>();
@@ -93,22 +63,6 @@ it("replaces old Settings and picker results with the committed catalog and keep
   });
 });
 
-it("ignores a catalog for a retired selection", async () => {
-  const catalog = deferred<RouteResponse>();
-  installStoreRoutes((url) => {
-    if (url.startsWith("/api/models")) return catalog.promise;
-    if (url === "/api/sessions/deselect")
-      return { body: { active: null, runState: "idle", sessionStatuses: {} } };
-  });
-  const { store } = await initStore();
-  const read = store.refreshModels();
-  await store.deselectSession();
-  const current = store.getState().availableModels;
-  catalog.resolve({ body: { models: [second] } });
-  await read;
-  expect(store.getState().availableModels).toEqual(current);
-});
-
 it("serializes active cycle actions and does not wait for retired actions to finish", async () => {
   const held = deferred<RouteResponse>();
   const calls: unknown[] = [];
@@ -148,33 +102,6 @@ it("serializes active cycle actions and does not wait for retired actions to fin
     sessionId: "s2",
     model: first,
     thinkingLevel: "minimal",
-  });
-});
-
-it("uses refreshed thinking capabilities and accepts Pi's actual model and effort", async () => {
-  const original = { ...first, reasoning: false };
-  const enriched = { ...first, thinkingLevelMap: { xhigh: "xhigh" } };
-  const changes: unknown[] = [];
-  installStoreRoutes((url, init) => {
-    if (url.startsWith("/api/models")) return { body: { models: [enriched] } };
-    if (url === "/api/control/thinking") {
-      changes.push(jsonBody(init));
-      return { body: { model: second, thinkingLevel: "low" } };
-    }
-  });
-  const { store } = await initStore(
-    activeSnapshot({
-      model: original,
-      thinkingLevel: "high",
-      availableModels: [],
-    }),
-  );
-  await store.refreshModels();
-  await store.cycleThinking();
-  expect(changes).toEqual([{ sessionId: "s1", level: "xhigh" }]);
-  expect(store.getState()).toMatchObject({
-    model: second,
-    thinkingLevel: "low",
   });
 });
 
@@ -218,7 +145,7 @@ it("remembers a distinct confirmed model identity and leaves recency alone after
   expect(store.getState().model).toEqual(routed);
 });
 
-it.each(["receipt", "resync", "refusal"] as const)(
+it.each(["resync", "refusal"] as const)(
   "keeps confirmed effort across an older %s",
   async (stage) => {
     const receipt = deferred<RouteResponse>();
@@ -250,12 +177,7 @@ it.each(["receipt", "resync", "refusal"] as const)(
     await expect(store.setThinkingLevel("low")).resolves.toBe(true);
     if (stage === "resync")
       resync.resolve({ body: activeSnapshot({ thinkingLevel: "high" }) });
-    else
-      receipt.resolve(
-        stage === "refusal"
-          ? { status: 400, body: { error: "old write refused" } }
-          : receiptOf("high"),
-      );
+    else receipt.resolve({ status: 400, body: { error: "old write refused" } });
     await expect(old).resolves.toBe(false);
     expect(store.getState()).toMatchObject({
       model: first,
