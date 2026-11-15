@@ -73,7 +73,7 @@
     align-self: center;
   }
 
-  .nav__top .nav__new-session-row {
+  .nav__top .nav__new-session {
     grid-area: 1 / 1;
     align-self: center;
   }
@@ -100,7 +100,8 @@
 }
 
 .nav__close,
-.nav__settings {
+.nav__settings,
+.nav__needs-you {
   flex: 0 0 36px;
   width: 36px;
   height: 36px;
@@ -268,12 +269,6 @@
   flex-direction: column;
   gap: var(--space-2);
   padding: var(--space-1) var(--space-3) var(--space-4);
-}
-
-.nav__new-session-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
 }
 
 /* Needs you is a mode of the column: the bell is lit while the list shows

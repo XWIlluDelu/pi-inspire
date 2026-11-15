@@ -399,6 +399,32 @@ export const Nav = memo(function Nav({
             <Wordmark />
           </div>
           <div className="nav__header-actions">
+            <button
+              type="button"
+              className="icon-button nav__needs-you"
+              aria-pressed={view === "needs-you"}
+              aria-label={
+                needsYouCount > 0 ? `Needs you (${needsYouCount})` : "Needs you"
+              }
+              title={
+                view === "needs-you"
+                  ? "Showing sessions that need you. Click to show all sessions"
+                  : "Show only sessions waiting for input, failed, or finished and not yet seen"
+              }
+              onClick={() =>
+                chooseView(view === "needs-you" ? "all" : "needs-you")
+              }
+            >
+              <Bell size={15} aria-hidden />
+              {needsYouCount > 0 ? (
+                <span
+                  className={`navigation-toggle__attention${needsYouUrgent ? " navigation-toggle__attention--urgent" : ""}`}
+                  aria-hidden
+                >
+                  {needsYouCount > 9 ? "9+" : needsYouCount}
+                </span>
+              ) : null}
+            </button>
             {isModal && onClose ? (
               <>
                 {onOpenSettings ? (
@@ -437,45 +463,17 @@ export const Nav = memo(function Nav({
           </div>
         </div>
         <div className="nav__controls">
-          <div className="nav__new-session-row">
-            <button
-              type="button"
-              className="nav__new-session"
-              aria-label="New session"
-              onClick={onNewSession}
-            >
-              <span className="nav__new-session-label">
-                <Plus size={16} className="nav__new-session-icon" aria-hidden />
-                <span>New session</span>
-              </span>
-            </button>
-            <button
-              type="button"
-              className="icon-button nav__needs-you"
-              aria-pressed={view === "needs-you"}
-              aria-label={
-                needsYouCount > 0 ? `Needs you (${needsYouCount})` : "Needs you"
-              }
-              title={
-                view === "needs-you"
-                  ? "Showing sessions that need you. Click to show all sessions"
-                  : "Show only sessions waiting for input, failed, or finished and not yet seen"
-              }
-              onClick={() =>
-                chooseView(view === "needs-you" ? "all" : "needs-you")
-              }
-            >
-              <Bell size={15} aria-hidden />
-              {needsYouCount > 0 ? (
-                <span
-                  className={`navigation-toggle__attention${needsYouUrgent ? " navigation-toggle__attention--urgent" : ""}`}
-                  aria-hidden
-                >
-                  {needsYouCount > 9 ? "9+" : needsYouCount}
-                </span>
-              ) : null}
-            </button>
-          </div>
+          <button
+            type="button"
+            className="nav__new-session"
+            aria-label="New session"
+            onClick={onNewSession}
+          >
+            <span className="nav__new-session-label">
+              <Plus size={16} className="nav__new-session-icon" aria-hidden />
+              <span>New session</span>
+            </span>
+          </button>
           <SearchField
             className="nav__search"
             inputRef={searchInputRef}

@@ -146,7 +146,8 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   disagree. Folder pins use the exact cwd identity that already defines groups and their collapse
   state.
 
-- The Needs you bell sits next to New session and toggles the session column. Hidden has its own disclosure docked at the bottom of the column. Needs you is a flat
+- The Needs you bell sits beside the navigation collapse or close button and toggles the
+  session column. Hidden has its own disclosure docked at the bottom. Needs you is a flat
   cross-project list. Its count is green, or red when any session is waiting or failed.
   Needs you lists sessions waiting for input or recovery, then unseen failures, then unseen
   completions, newest activity first within each priority. Pinning changes the order in All.
