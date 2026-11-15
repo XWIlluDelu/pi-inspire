@@ -26,7 +26,7 @@ const sessionIdField = z.string().min(1).max(MAX_SESSION_ID_CHARS);
 interface RuntimeEventSocketOptions {
   runtime: Pick<
     RuntimeController,
-    "on" | "off" | "snapshot" | "retainSessionView"
+    "on" | "off" | "snapshot" | "retainSessionView" | "warmSessionView"
   >;
   updateCoordinator: Pick<UpdateCoordinator, "status" | "subscribe">;
   authorityId: string;
@@ -481,8 +481,10 @@ export function createRuntimeEventSockets({
               frame.sessionId && !wantsDetail(peer, frame.sessionId)
                 ? frame.background
                 : frame.message;
-            if (message && !sendBounded(socket, message)) break;
+            if (message && !sendBounded(socket, message)) return;
           }
+          if (peer.interest.sessionId)
+            runtime.warmSessionView(peer.interest.sessionId);
         },
         () => {
           if (peer.backlog !== queue) return;

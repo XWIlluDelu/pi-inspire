@@ -33,8 +33,8 @@ can extend a cached summary from the last complete frame. Full projections verif
 migrate old Pi entries in memory, and share the native entry index with History. A full scan after
 a prefix mismatch uses the same open file. Search still runs off-thread.
 
-Opening a session reads its saved entries and projects the active branch with Pi's context
-builder, without writing JSONL or waiting for extensions. The Live tail and native History page each
+The initial session snapshot reads saved entries and projects the active branch with Pi's context
+builder, without waiting for extension startup. The Live tail and native History page each
 bound the mounted rows. Auxiliary project-discovery writes and upload-retention registration are not prerequisites
 for history reads or writer admission.
 
@@ -43,9 +43,10 @@ or cannot be resolved. The snapshot reports `readOnlyReason: workspace-unavailab
 worker nor project model discovery starts. Worker-backed mutations and independent Fork/Clone reject
 at admission. The history source must still be valid: missing or corrupt JSONL keeps its own error.
 
-For an available project, ordinary open and reconnect read saved history and observe existing
-ownership. They do not launch a Pi. Sending a prompt or invoking a worker-backed operation admits
-the writer on demand. `runtime_ready` publishes authoritative RPC state after startup attestation.
+After publishing a browser's initial or switched session view, start Pi in the background if the
+view is editable and has no attached or managed Pi. Use the same writer admission as prompts and
+worker-backed commands. The worker publishes extension state, such as the selected service tier,
+without requiring a prompt. `runtime_ready` publishes authoritative RPC state after startup attestation.
 Reopening a workspace-unavailable session rechecks its recorded directory. If restored, retain its
 resolved physical root and renew the resource view. Do not create the directory, substitute the Host
 cwd, or rewrite the session header to make history executable.

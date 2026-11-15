@@ -40,9 +40,9 @@ deltas.
 
 A detail subscription retains its view before reading the initial snapshot. Observed views/workers
 are exempt from idle reclamation. Browsers retain independently;
-switching interest, disconnecting or closing the Host releases only that subscription. Retention
-does not eagerly start an ordinary worker; external read-only recovery
-follows [[session-persistence]]. It does not prevent explicit deletion. Host-restart recovery must
+switching interest, disconnecting or closing the Host releases only that subscription. After a
+successful join the Host starts an eligible Pi in the background under [[session-persistence]].
+Retention does not prevent explicit deletion. Host-restart recovery must
 restore history and input without a page refresh, and without repeatedly reclaiming/rebuilding the
 visible conversation when dependent reads fail.
 

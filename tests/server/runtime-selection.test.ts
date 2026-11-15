@@ -17,6 +17,43 @@ beforeEach(initializeRuntimeFixture);
 afterEach(disposeRuntimeFixture);
 
 describe("session selection and addressed reads", () => {
+  it("publishes extension state after a browser joins a saved conversation", async () => {
+    const { runtime, workers } = schedulingRuntime({
+      configure(worker) {
+        worker.startupEvent = {
+          type: "extension_ui_request",
+          method: "setStatus",
+          statusKey: "test:service-tier",
+          statusText: '{"tier":"standard"}',
+        };
+      },
+    });
+    trackRuntime(runtime);
+    const ready = vi.fn();
+    runtime.on("event", ready);
+    const release = runtime.retainSessionView("a");
+    try {
+      const first = await runtime.snapshot("a");
+      expect(first.active?.sessionId).toBe("a");
+      expect(workers).toHaveLength(0);
+
+      runtime.warmSessionView("a");
+      runtime.warmSessionView("a");
+      await vi.waitFor(() =>
+        expect(ready).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: "runtime_ready",
+            sessionId: "a",
+            extensionStatuses: { "test:service-tier": '{"tier":"standard"}' },
+          }),
+        ),
+      );
+      expect(workers).toHaveLength(1);
+    } finally {
+      release();
+    }
+  });
+
   it("routes writes to their addressed worker while another session is selected", async () => {
     const { runtime, workers } = schedulingRuntime({
       sessions: [record("a", "/project/one"), record("b", "/project/two")],

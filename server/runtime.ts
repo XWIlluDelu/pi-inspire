@@ -1469,8 +1469,8 @@ export class RuntimeController extends EventEmitter {
     externalChecked = false,
   ): Promise<PiRpcProcess> {
     this.requireWorkspace(slot, externalChecked);
-    // Every cold writer admission, including settings and branch commands,
-    // must discover an external owner. Selection warmup is not an authority.
+    // Every cold writer admission must discover an external owner, including
+    // when background startup follows an earlier ownership observation.
     if (!slot.process && !externalChecked)
       await this.connectExternalSession(slot);
     if (this.externalSessions?.has(slot))
@@ -4772,6 +4772,25 @@ export class RuntimeController extends EventEmitter {
         this.workerPool.schedule();
       }
     };
+  }
+
+  /** Start Pi after the browser has received its saved conversation. */
+  warmSessionView(sessionId: string): void {
+    const slot = this.slots.get(sessionId);
+    if (!slot) return;
+    const canStart = () =>
+      this.slots.get(sessionId) === slot &&
+      this.sessionViewObservers.has(sessionId) &&
+      !slot.process &&
+      !slot.readOnlyReason &&
+      !slot.conflict &&
+      !this.externalSessions?.has(slot);
+    if (!canStart()) return;
+    void this.withMaintenanceOperation(() =>
+      this.mutateSlot(slot, async () => {
+        if (canStart()) await this.ensureFreshWriterInsideGate(slot);
+      }),
+    ).catch(() => undefined);
   }
 
   async snapshot(sessionId: string | null): Promise<ActiveSnapshot> {
