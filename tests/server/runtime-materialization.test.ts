@@ -210,7 +210,7 @@ describe("new-session materialization", () => {
             attachmentIds: [image.id],
             projectFiles: [],
           }),
-        ).resolves.toBeNull();
+        ).resolves.toBeUndefined();
         await expect(
           fixture.attachments.resolveForPrompt([image.id]),
         ).rejects.toThrow(/expired/);

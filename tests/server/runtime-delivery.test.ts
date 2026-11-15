@@ -256,6 +256,10 @@ it.each([
       ).rejects.toMatchObject({ status: 409 });
     } else {
       const page = (await runtime.snapshot("a")).active!.transcriptPage;
+      if (failure === "history")
+        await expect(
+          runtime.sessionHistory("a", page.viewId, { kind: "composer" }),
+        ).rejects.toThrow(failure);
       expect(
         (await runtime.sessionHistory("a", page.viewId, { kind: "composer" }))
           .entries,

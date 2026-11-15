@@ -338,10 +338,12 @@ describe("native prompt admission and extension dialogs", () => {
     await vi.waitFor(() =>
       expect(f.observations[0]?.receipt).toMatchObject({ state: "pending" }),
     );
-    const pending = await f.runtime.snapshot(f.sessionId);
-    expect(pending.sessionStatuses[f.sessionId]?.runState).toBe("queued");
-    expect(pending.pendingExtensionUiRequests).toHaveLength(1);
-    const dialog = pending.pendingExtensionUiRequests![0]!;
+    const dialog = await vi.waitFor(async () => {
+      const pending = await f.runtime.snapshot(f.sessionId);
+      expect(pending.sessionStatuses[f.sessionId]?.runState).toBe("queued");
+      expect(pending.pendingExtensionUiRequests).toHaveLength(1);
+      return pending.pendingExtensionUiRequests![0]!;
+    });
     expect(dialog).toMatchObject({ method: "confirm", sessionId: f.sessionId });
     // Clear and Return can both reach Pi while the command owns its dialog.
     // Input held by the Host still has its own observable rejection.

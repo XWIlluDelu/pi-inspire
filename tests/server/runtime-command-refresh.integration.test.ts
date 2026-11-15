@@ -174,7 +174,7 @@ it("refreshes commands and extension UI on native reload without replacing eithe
     await runtime.prompt({ sessionId: a.id, message: "/reload-fixture" });
     await expect(
       runtime.prompt({ sessionId: a.id, message: "/admitted" }),
-    ).resolves.toBeNull();
+    ).resolves.toBeUndefined();
     expect(events).toContainEqual(
       expect.objectContaining({
         method: "notify",

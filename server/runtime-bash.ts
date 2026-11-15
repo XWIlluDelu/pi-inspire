@@ -39,28 +39,27 @@ export class RuntimeBashController {
     const excludeFromContext = entered.startsWith("!!");
     const command = entered.slice(excludeFromContext ? 2 : 1).trim();
     if (!command) throw requestError("Enter a command after ! or !!", 400);
-    if (slot.nativeBash)
-      throw requestError(
-        "A shell command is already running; stop it first",
-        409,
-      );
+    const assertAvailable = () => {
+      if (slot.nativeBash)
+        throw requestError(
+          "A shell command is already running; stop it first",
+          409,
+        );
+      if (slot.stoppingInput)
+        throw requestError(
+          "Stop is in progress; send again after it finishes",
+          409,
+        );
+      if (slot.pendingBranchBridge)
+        throw requestError(
+          "Branch navigation is in progress; run the shell command after it finishes",
+          409,
+        );
+    };
+    assertAvailable();
     const worker = await this.host.admit(slot);
     // Admission is asynchronous: another delivery, Stop or navigation can win.
-    if (slot.nativeBash)
-      throw requestError(
-        "A shell command is already running; stop it first",
-        409,
-      );
-    if (slot.stoppingInput)
-      throw requestError(
-        "Stop is in progress; send again after it finishes",
-        409,
-      );
-    if (slot.pendingBranchBridge)
-      throw requestError(
-        "Branch navigation is in progress; run the shell command after it finishes",
-        409,
-      );
+    assertAvailable();
     const message: Record<string, unknown> = {
       role: "bashExecution",
       command,
