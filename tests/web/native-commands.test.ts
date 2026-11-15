@@ -157,7 +157,7 @@ describe("Pi native command dispatch", () => {
       const second = change(accepted);
       expect(store.getState().runtimeSettings?.autoRetryEnabled).toBe(false);
       expect(store.getState().pendingRuntimeSettings.autoRetryEnabled).toBe(
-        true,
+        accepted,
       );
       expect(send.mock.calls).toEqual(
         [!accepted, accepted].map((value) => [

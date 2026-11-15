@@ -81,7 +81,8 @@ export class RuntimeReadController {
         if (
           query.kind === "page" ||
           query.kind === "search" ||
-          query.kind === "routes"
+          query.kind === "routes" ||
+          query.kind === "turns"
         ) {
           history = saved;
           // Do not switch to the file's most recent physical leaf if another

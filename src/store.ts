@@ -17,7 +17,6 @@ import {
   type ModelSelectionResponse,
   type NewSessionOptions,
   type PendingRecovery,
-  type PiRuntimeSettings,
   type PromptAcceptedResponse,
   parseExtensionStatuses,
   parsePendingQueues,
@@ -2183,7 +2182,7 @@ export class AppStore {
   setPiRuntimeSetting = (setting: RuntimeSetting): Promise<boolean> =>
     this.reportSelectionChange(() =>
       this.changeNativeSetting(
-        setting.key,
+        setting,
         "Failed to update Pi runtime settings",
         async (api, sessionId) => {
           await api.json("setRuntimeSetting", { body: { sessionId, setting } });
@@ -2192,27 +2191,28 @@ export class AppStore {
     );
 
   private showNativeSetting(
-    key: "thinking" | keyof PiRuntimeSettings,
+    setting: "thinking" | RuntimeSetting,
     active: boolean,
   ) {
-    if (key === "thinking") {
+    if (setting === "thinking") {
       this.set({ thinkingLevelPending: active });
     } else {
       const pending = { ...this.state.pendingRuntimeSettings };
-      if (active) pending[key] = true;
-      else delete pending[key];
+      if (active) Object.assign(pending, { [setting.key]: setting.value });
+      else delete pending[setting.key];
       this.set({ pendingRuntimeSettings: pending });
     }
   }
 
   private async changeNativeSetting(
-    key: "model" | "thinking" | keyof PiRuntimeSettings,
+    setting: "model" | "thinking" | RuntimeSetting,
     failure: string,
     write: (
       api: Api,
       sessionId: string,
     ) => Promise<ModelSelectionResponse | void>,
   ): Promise<CommandChangeResult> {
+    const key = typeof setting === "string" ? setting : setting.key;
     const { sessionId } = this.state;
     const generation = this.selectionGeneration;
     const selection = this.selection.generation;
@@ -2230,8 +2230,9 @@ export class AppStore {
       this.selectionGeneration === generation &&
       (key === "model" ||
         key === "thinking" ||
-        (this.selection.generation === selection && this.state.view.viewId === viewId));
-    if (key !== "model") this.showNativeSetting(key, true);
+        (this.selection.generation === selection &&
+          this.state.view.viewId === viewId));
+    if (setting !== "model") this.showNativeSetting(setting, true);
     try {
       const result = await write(api, sessionId);
       if (key === "model" && this.api === api && result && result.model)
@@ -2246,7 +2247,10 @@ export class AppStore {
           // A snapshot requested before this receipt cannot replace its values.
           this.resyncRecovery.reset();
           this.resyncRequest += 1;
-          this.set({ model: result.model, thinkingLevel: result.thinkingLevel });
+          this.set({
+            model: result.model,
+            thinkingLevel: result.thinkingLevel,
+          });
         } else {
           await this.resync(sessionId, generation);
         }
@@ -2255,11 +2259,12 @@ export class AppStore {
         return { status: "stale" };
       let message: string | undefined;
       if (result) {
-        message = key === "thinking"
-          ? `Thinking level is now ${result.thinkingLevel}.`
-          : result.model
-            ? `Active model is now ${result.model.provider}/${result.model.id}; thinking ${result.thinkingLevel}.`
-            : "Pi has no active model.";
+        message =
+          key === "thinking"
+            ? `Thinking level is now ${result.thinkingLevel}.`
+            : result.model
+              ? `Active model is now ${result.model.provider}/${result.model.id}; thinking ${result.thinkingLevel}.`
+              : "Pi has no active model.";
       }
       return { status: "success", message };
     } catch (error) {
@@ -2267,10 +2272,15 @@ export class AppStore {
       if (error instanceof ApiError && error.status === 401)
         this.handleAuthFailure();
       if (key !== "model" && !ownsIntent()) return { status: "stale" };
-      if (ownsView() && key !== "model") void this.resync(sessionId, generation);
-      return { status: "error", message: error instanceof Error ? error.message : failure };
+      if (ownsView() && key !== "model")
+        void this.resync(sessionId, generation);
+      return {
+        status: "error",
+        message: error instanceof Error ? error.message : failure,
+      };
     } finally {
-      if (ownsView() && key !== "model") this.showNativeSetting(key, false);
+      if (ownsView() && setting !== "model")
+        this.showNativeSetting(setting, false);
       if (this.nativeSettings.get(key) === intent)
         this.nativeSettings.delete(key);
     }

@@ -29,7 +29,10 @@ import { EarlierBranchBanner } from "./EarlierBranchBanner";
 import { ExtensionDisplaySurface } from "./ExtensionDisplays";
 import { TranscriptImageOwnerContext } from "./ImagePreview";
 import { NativeTurnReader } from "./NativeTurnReader";
+import { ScrollRail } from "./ScrollRail";
+import { useTranscriptHistory } from "./use-transcript-history";
 import { handleRichTextCopy } from "./rich-text-copy";
+import { TranscriptPromptMap } from "./TranscriptPromptMap";
 import { TranscriptUtilities } from "./TranscriptUtilities";
 import { useTranscriptRows } from "./transcript-row-projection";
 import { PendingQueueGroups } from "./transcript-rows";
@@ -63,6 +66,8 @@ export const Transcript = memo(function Transcript({
   sessionId = "",
   viewId = "",
   projectionIncarnation = "",
+  hasOlder = false,
+  historyVersion = "",
   queue = emptyPendingQueues(),
   pendingAction = null,
   extensionDisplays = [],
@@ -79,6 +84,8 @@ export const Transcript = memo(function Transcript({
   sessionId?: string;
   viewId?: string;
   projectionIncarnation?: string;
+  hasOlder?: boolean;
+  historyVersion?: string;
   queue?: PendingQueues;
   pendingAction?: "clear" | "recover" | null;
   extensionDisplays?: ExtensionDisplay[];
@@ -95,26 +102,27 @@ export const Transcript = memo(function Transcript({
     viewId,
     projectionIncarnation,
   );
-  const [historyOwner, setHistoryOwner] = useState<string | null>(null);
-  const historyKey = `${sessionId}:${viewId}`;
-  const readingHistory = historyOwner === historyKey;
+  const [historyLocation, setHistoryLocation] = useState<{
+    key: string;
+    entryId?: string;
+    full?: boolean;
+  } | null>(null);
+  const [mobilePromptsOpen, setMobilePromptsOpen] = useState(false);
+  const touchY = useRef<number>(null);
+  const hasPromptMap = Boolean(
+    sessionId &&
+      viewId &&
+      (hasOlder ||
+        messages.some(
+          (message) => message.role === "user" && message.__inspireEntryId,
+        )),
+  );
+  const historyKey = `${sessionId}:${projectionViewKey}`;
+  const readingHistory = historyLocation?.key === historyKey;
   const imageOwner = useMemo(
     () => ({ sessionId, viewId, projectionKey: projectionViewKey }),
     [sessionId, viewId, projectionViewKey],
   );
-  const rows = useTranscriptRows({
-    messages,
-    sessionId,
-    viewId,
-    projectionViewKey,
-    streaming,
-    runState,
-    activeAssistantMessageKey,
-    toolActivity,
-    thinkingVisibility,
-    toolVisibility,
-    activityFoldVisibility,
-  });
   const viewport = useTranscriptViewport({
     sessionId,
     viewId: projectionViewKey,
@@ -129,6 +137,46 @@ export const Transcript = memo(function Transcript({
     },
     [viewport.scrollRef],
   );
+  const history = useTranscriptHistory(
+    sessionId,
+    viewId,
+    projectionViewKey,
+    messages,
+    hasOlder,
+    scrollport,
+  );
+  const readEarlierNearTop = () => {
+    if (
+      readingHistory ||
+      !scrollport ||
+      scrollport.scrollTop > 140 ||
+      !history.canLoad ||
+      history.status
+    )
+      return;
+    viewport.releaseLatestFollow();
+    void history.loadEarlier();
+  };
+  const readFullEntry = useCallback(
+    (entryId: string) => {
+      setHistoryLocation({ key: historyKey, entryId, full: true });
+    },
+    [historyKey],
+  );
+  const rows = useTranscriptRows({
+    messages: history.messages,
+    sessionId,
+    viewId,
+    projectionViewKey,
+    streaming,
+    runState,
+    activeAssistantMessageKey,
+    toolActivity,
+    thinkingVisibility,
+    toolVisibility,
+    activityFoldVisibility,
+    onReadFullEntry: readFullEntry,
+  });
   const search = useTranscriptSearch({
     rows,
     sessionId,
@@ -177,8 +225,10 @@ export const Transcript = memo(function Transcript({
         ?.focus();
       return;
     }
-    if (window.matchMedia("(max-width: 900px)").matches)
+    if (window.matchMedia("(max-width: 900px)").matches) {
+      setMobilePromptsOpen(false);
       setMobileSearchOpen(true);
+    }
     // The layout effect focuses a newly opened narrow search after it renders.
     searchInputRef.current?.focus();
     searchInputRef.current?.select();
@@ -187,6 +237,7 @@ export const Transcript = memo(function Transcript({
   // A session or view change retires narrow tool state with its query.
   useLayoutEffect(() => {
     setMobileSearchOpen(false);
+    setMobilePromptsOpen(false);
   }, [sessionId, projectionViewKey]);
 
   useLayoutEffect(() => {
@@ -199,6 +250,7 @@ export const Transcript = memo(function Transcript({
     const narrow = window.matchMedia("(max-width: 900px)");
     const syncLayout = () => {
       setMobileSearchOpen(narrow.matches && Boolean(searchQueryRef.current));
+      if (!narrow.matches) setMobilePromptsOpen(false);
     };
     syncLayout();
     narrow.addEventListener("change", syncLayout);
@@ -239,11 +291,11 @@ export const Transcript = memo(function Transcript({
   useImperativeHandle(ref, () => ({
     openSearch,
     openHistory: () => {
-      if (sessionId && viewId) setHistoryOwner(historyKey);
+      if (sessionId && viewId) setHistoryLocation({ key: historyKey });
     },
     jumpToPending() {
       if (readingHistory) {
-        setHistoryOwner(null);
+        setHistoryLocation(null);
         requestAnimationFrame(jumpToPending);
       } else {
         jumpToPending();
@@ -312,16 +364,20 @@ export const Transcript = memo(function Transcript({
           ].includes(event.key)
         ) {
           viewport.markUserScrollIntent();
+          if (["ArrowUp", "PageUp", "Home"].includes(event.key))
+            readEarlierNearTop();
         }
       }}
     >
       {readingHistory ? (
         <NativeTurnReader
-          key={historyOwner}
+          key={`${historyKey}:${historyLocation.entryId ?? ""}`}
+          initialEntryId={historyLocation.entryId}
+          showFullEntry={historyLocation.full}
           sessionId={sessionId}
           viewId={viewId}
           onLive={() => {
-            setHistoryOwner(null);
+            setHistoryLocation(null);
             requestAnimationFrame(viewport.jumpToLatest);
           }}
         />
@@ -332,11 +388,25 @@ export const Transcript = memo(function Transcript({
           inputRef={searchInputRef}
           searchLauncherRef={searchLauncherRef}
           searchOpen={mobileSearchOpen}
-          onOpenSearch={() => setMobileSearchOpen(true)}
+          onOpenSearch={() => {
+            setMobilePromptsOpen(false);
+            setMobileSearchOpen(true);
+          }}
           onOpenHistory={
-            sessionId && viewId ? () => setHistoryOwner(historyKey) : undefined
+            sessionId && viewId
+              ? () => setHistoryLocation({ key: historyKey })
+              : undefined
           }
           onClose={closeMobileSearch}
+          onTogglePrompts={
+            hasPromptMap
+              ? () => {
+                  closeMobileSearch();
+                  setMobilePromptsOpen((open) => !open);
+                }
+              : undefined
+          }
+          promptsOpen={mobilePromptsOpen}
         />
         <EarlierBranchBanner key={`${sessionId}:${viewId}`} />
         <div
@@ -345,8 +415,12 @@ export const Transcript = memo(function Transcript({
           aria-live="polite"
           aria-busy={streaming}
           ref={bindScrollport}
-          onScroll={viewport.onScroll}
+          onScroll={() => {
+            viewport.onScroll();
+            if (!viewport.pinned) readEarlierNearTop();
+          }}
           onWheel={(event) => {
+            if (event.deltaY < 0) readEarlierNearTop();
             viewport.markUserScrollIntent(
               event.deltaY < 0
                 ? "history"
@@ -355,10 +429,19 @@ export const Transcript = memo(function Transcript({
                   : "unknown",
             );
           }}
-          onTouchStart={() => {
+          onTouchStart={(event) => {
+            touchY.current = event.touches[0]?.clientY ?? null;
             viewport.markUserScrollIntent();
           }}
-          onTouchMove={() => viewport.markUserScrollIntent()}
+          onTouchMove={(event) => {
+            const y = event.touches[0]?.clientY;
+            if (y === undefined || touchY.current === null) return;
+            viewport.markUserScrollIntent(
+              y > touchY.current ? "history" : "latest",
+            );
+            if (y > touchY.current) readEarlierNearTop();
+            touchY.current = y;
+          }}
           onFocus={(event) => {
             if (
               event.target instanceof Element &&
@@ -370,6 +453,20 @@ export const Transcript = memo(function Transcript({
           onCopy={handleRichTextCopy}
         >
           <div className="transcript__content" ref={viewport.contentRef}>
+            {history.status && (
+              <p className="transcript__history-status" role="status">
+                {history.status.error || "Loading earlier messages…"}
+                {history.status.error && (
+                  <button
+                    type="button"
+                    className="button button--quiet"
+                    onClick={() => void history.loadEarlier()}
+                  >
+                    Retry
+                  </button>
+                )}
+              </p>
+            )}
             {unconfirmed && (
               <p className="transcript__persistence-notice" role="status">
                 Some live output was not confirmed in Pi history.
@@ -391,6 +488,7 @@ export const Transcript = memo(function Transcript({
                         key={`${projectionViewKey}:${row.key}`}
                         data-transcript-row={index}
                         data-transcript-key={row.key}
+                        data-prompt-entry={row.promptEntry}
                       >
                         <TranscriptSearchReveal
                           value={
@@ -423,6 +521,32 @@ export const Transcript = memo(function Transcript({
             ) : null}
           </div>
         </div>
+        {!readingHistory && hasPromptMap && (
+          <TranscriptPromptMap
+            key={JSON.stringify([historyKey, historyVersion])}
+            sessionId={sessionId}
+            viewId={viewId}
+            scrollport={scrollport}
+            mobileActive={mobilePromptsOpen}
+            onDismissMobile={() => setMobilePromptsOpen(false)}
+            onJump={(turn) => {
+              setMobilePromptsOpen(false);
+              search.clearCurrentMatch();
+              viewport.releaseLatestFollow();
+              const row = scrollport?.querySelector<HTMLElement>(
+                `[data-prompt-entry="${CSS.escape(turn.id)}"]`,
+              );
+              if (row) row.scrollIntoView({ block: "start" });
+              else setHistoryLocation({ key: historyKey, entryId: turn.id });
+            }}
+          />
+        )}
+        {!readingHistory && (
+          <ScrollRail
+            container={viewport.scrollRef}
+            onUserScroll={viewport.markUserScrollIntent}
+          />
+        )}
         {!viewport.atLatest ? (
           <button
             type="button"

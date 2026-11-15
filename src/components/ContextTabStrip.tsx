@@ -34,6 +34,7 @@ export type TerminalDockTab = DocumentTab & {
   };
   beginRename(): void;
   move(direction: -1 | 1): void;
+  drop(fromId: string, after: boolean): void;
 };
 
 type DockTab = FileDockTab | TerminalDockTab;
@@ -49,8 +50,12 @@ function selector(tab: DockTab) {
 function DockTabButton({
   tab,
   onClose,
+  drag,
+  hidden,
 }: {
   tab: DockTab;
+  drag: React.RefObject<string | null>;
+  hidden: boolean;
   onClose(hadFocus: boolean): void;
 }) {
   const terminal = tab.kind === "terminal" ? tab : null;
@@ -58,7 +63,33 @@ function DockTabButton({
   return (
     <div
       className="dock-tab"
+      hidden={hidden}
       data-selected={tab.selected || undefined}
+      data-tab-key={tabKey(tab)}
+      draggable={Boolean(terminal && !rename)}
+      onDragStart={(event) => {
+        if (!terminal || rename) return;
+        drag.current = terminal.id;
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", terminal.label);
+      }}
+      onDragEnd={() => {
+        drag.current = null;
+      }}
+      onDragOver={(event) => {
+        if (terminal && drag.current && drag.current !== terminal.id)
+          event.preventDefault();
+      }}
+      onDrop={(event) => {
+        if (!terminal || !drag.current || terminal.id === drag.current) return;
+        event.preventDefault();
+        const bounds = event.currentTarget.getBoundingClientRect();
+        terminal.drop(
+          drag.current,
+          event.clientX >= bounds.left + bounds.width / 2,
+        );
+        drag.current = null;
+      }}
       role="presentation"
     >
       {rename ? (
@@ -148,8 +179,18 @@ function DockTabButton({
   );
 }
 
-export function ContextTabStrip({ tabs }: { tabs: readonly DockTab[] }) {
+export function ContextTabStrip({
+  tabs,
+  collapseOverflow,
+}: {
+  tabs: readonly DockTab[];
+  collapseOverflow: boolean;
+}) {
   const stripRef = useRef<HTMLDivElement>(null);
+  const shellRef = useRef<HTMLDivElement>(null);
+  const menuTrigger = useRef<HTMLButtonElement>(null);
+  const drag = useRef<string | null>(null);
+  const [overflow, setOverflow] = useState<string[]>([]);
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const list = useOptionList<DockTab>();
@@ -162,21 +203,66 @@ export function ContextTabStrip({ tabs }: { tabs: readonly DockTab[] }) {
         ?.querySelector<HTMLElement>(target)
         ?.focus(),
     );
+  // Measure from the shared fixed tab width. Hidden tabs keep their owner and
+  // become visible as soon as a user selects them from overflow.
   useLayoutEffect(() => {
+    const shell = shellRef.current;
     const strip = stripRef.current;
-    if (!strip || !activeSelector) return;
-    const reveal = () =>
-      strip
-        .querySelector(activeSelector)
-        ?.scrollIntoView({ block: "nearest", inline: "nearest" });
-    reveal();
-    const observer = new ResizeObserver(reveal);
-    observer.observe(strip);
+    if (!shell || !strip) return;
+    const measure = () => {
+      const first = strip.querySelector<HTMLElement>(".dock-tab:not([hidden])");
+      const width = first?.getBoundingClientRect().width || 156;
+      const total = shell.clientWidth;
+      if (
+        !collapseOverflow ||
+        !total ||
+        tabs.length * (width + 2) - 2 <= total
+      ) {
+        setOverflow((current) => (current.length ? [] : current));
+        return;
+      }
+      const visibleCount = Math.max(1, Math.floor((total - 34) / (width + 2)));
+      const keep = new Set(tabs.slice(0, visibleCount).map(tabKey));
+      if (selected && !keep.has(tabKey(selected))) {
+        const evicted = tabs[visibleCount - 1];
+        if (evicted) keep.delete(tabKey(evicted));
+        keep.add(tabKey(selected));
+      }
+      const next = tabs.filter((tab) => !keep.has(tabKey(tab))).map(tabKey);
+      const focused =
+        document.activeElement?.closest<HTMLElement>("[data-tab-key]");
+      if (focused?.dataset.tabKey && next.includes(focused.dataset.tabKey))
+        requestAnimationFrame(() => {
+          if (
+            !document.activeElement ||
+            document.activeElement === document.body ||
+            document.activeElement === focused
+          )
+            menuTrigger.current?.focus();
+        });
+      setOverflow((current) =>
+        current.length === next.length &&
+        current.every((id, index) => id === next[index])
+          ? current
+          : next,
+      );
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(shell);
     return () => observer.disconnect();
-  }, [activeSelector]);
+  }, [collapseOverflow, selected, tabs]);
+
+  useLayoutEffect(() => {
+    if (!collapseOverflow && activeSelector)
+      stripRef.current
+        ?.querySelector(activeSelector)
+        ?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, [activeSelector, collapseOverflow]);
   if (!tabs.length) return null;
   const filter = query.trim().toLocaleLowerCase();
   const options = tabs
+    .filter((tab) => overflow.includes(tabKey(tab)))
     .filter((tab) =>
       `${tab.label} ${tab.title}`.toLocaleLowerCase().includes(filter),
     )
@@ -200,12 +286,18 @@ export function ContextTabStrip({ tabs }: { tabs: readonly DockTab[] }) {
     focusTab(selector(tab));
   };
   return (
-    <div className="dock-tabs">
+    <div
+      className="dock-tabs"
+      ref={shellRef}
+      data-collapse-overflow={collapseOverflow || undefined}
+    >
       <div className="dock-tabs__scroll" ref={stripRef}>
         {tabs.map((tab) => (
           <DockTabButton
             key={tabKey(tab)}
             tab={tab}
+            drag={drag}
+            hidden={overflow.includes(tabKey(tab)) && !tab.selected}
             onClose={(hadFocus) => {
               tab.close();
               if (tab.kind === "file" && hadFocus)
@@ -214,9 +306,10 @@ export function ContextTabStrip({ tabs }: { tabs: readonly DockTab[] }) {
           />
         ))}
       </div>
-      {tabs.length > 1 && (
+      {overflow.length > 0 && (
         <ChoicePanel
-          label="Open tabs"
+          label="More tabs"
+          triggerRef={menuTrigger}
           open={open}
           setOpen={setMenuOpen}
           trigger={<MoreHorizontal size={16} aria-hidden />}

@@ -79,6 +79,7 @@ import {
   type TerminalDockTab,
 } from "./ContextTabStrip";
 import { DetailSummary } from "./DetailSummary";
+import { FloatingPaneActions } from "./FloatingPaneActions";
 import { handleDockTabKey } from "./dock-tab-keyboard";
 import { NoticeCard } from "./NoticeCard";
 import { PiLoader } from "./PiLoader";
@@ -781,12 +782,21 @@ export const WorkspaceDock = memo(function WorkspaceDock({
     });
   };
 
-  const moveTerminal = (terminal: TerminalDescriptor, direction: -1 | 1) => {
-    const from = terminals.indexOf(terminal);
-    const to = from + direction;
-    if (!cwd || from < 0 || to < 0 || to >= terminals.length) return;
-    const ids = terminals.map(({ id }) => id);
-    [ids[from], ids[to]] = [ids[to]!, ids[from]!];
+  const reorderTerminal = (
+    fromId: string,
+    targetId: string,
+    after: boolean,
+  ) => {
+    if (
+      !cwd ||
+      fromId === targetId ||
+      !terminals.some(({ id }) => id === fromId)
+    )
+      return;
+    const ids = terminals.map(({ id }) => id).filter((id) => id !== fromId);
+    const index = ids.indexOf(targetId);
+    if (index < 0) return;
+    ids.splice(index + (after ? 1 : 0), 0, fromId);
     void runControl("Terminal order could not be saved", async () => {
       catalogController.replace(
         await api.terminalOperation({
@@ -795,6 +805,11 @@ export const WorkspaceDock = memo(function WorkspaceDock({
         }),
       );
     });
+  };
+
+  const moveTerminal = (terminal: TerminalDescriptor, direction: -1 | 1) => {
+    const target = terminals[terminals.indexOf(terminal) + direction];
+    if (target) reorderTerminal(terminal.id, target.id, direction > 0);
   };
 
   const switchTerminal = useCallback(
@@ -880,18 +895,13 @@ export const WorkspaceDock = memo(function WorkspaceDock({
       } else if (
         !cwd ||
         !terminalActionHandlerRef.current({ action: shortcut, projectCwd: cwd })
-      ) return;
+      )
+        return;
       event.preventDefault();
     };
     window.addEventListener("keydown", handleShortcut, true);
     return () => window.removeEventListener("keydown", handleShortcut, true);
-  }, [
-    active,
-    cwd,
-    switchTerminal,
-    terminals.length,
-    uiSettings.shortcutMode,
-  ]);
+  }, [active, cwd, switchTerminal, terminals.length, uiSettings.shortcutMode]);
 
   const tabs: TerminalDockTab[] = terminals.map((terminal) => ({
     kind: "terminal",
@@ -922,6 +932,7 @@ export const WorkspaceDock = memo(function WorkspaceDock({
     beginRename: () => beginRename(terminal),
     close: () => void closeTerminal(terminal),
     move: (direction) => moveTerminal(terminal, direction),
+    drop: (fromId, after) => reorderTerminal(fromId, terminal.id, after),
   }));
 
   const terminalMatches = (text: string) =>
@@ -946,11 +957,14 @@ export const WorkspaceDock = memo(function WorkspaceDock({
     globalGroups.set(terminal.projectCwd, group);
   }
 
+  const terminalSurface = useRef<HTMLElement>(null);
   const toolbar = (
-    <div
-      className="pane-toolbar terminal-toolbar"
-      role="toolbar"
-      aria-label="Terminal controls"
+    <FloatingPaneActions
+      className="terminal-toolbar"
+      label="terminal controls"
+      readingSurface={terminalSurface}
+      owner={activeId ?? cwd}
+      onKeyDown={onMenuKeyDown}
     >
       {!showingContext && terminals.length > 0 && (
         <button
@@ -1272,7 +1286,7 @@ export const WorkspaceDock = memo(function WorkspaceDock({
           </button>
         </div>
       </details>
-    </div>
+    </FloatingPaneActions>
   );
 
   return (
@@ -1294,12 +1308,14 @@ export const WorkspaceDock = memo(function WorkspaceDock({
       >
         <ContextTabStrip
           tabs={showingContext ? [...context.files, ...tabs] : tabs}
+          collapseOverflow={Boolean(showingContext)}
         />
         {showingContext ? context.tools : null}
       </div>
       {showingContext ? context.body : null}
       <section
         className="terminal-pane"
+        ref={terminalSurface}
         id="context-terminal-content"
         role="tabpanel"
         aria-label="Terminal"

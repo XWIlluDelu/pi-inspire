@@ -353,6 +353,8 @@ const ConversationStage = memo(function ConversationStage({
       tools: source.live.tools,
       transcriptViewId: source.view.viewId,
       transcriptIncarnation: source.view.incarnation,
+      transcriptHasOlder: source.view.hasOlder,
+      historyVersion: source.view.composerHistoryVersion,
       queue: source.live.queue,
       pendingAction: source.pendingAction?.action ?? null,
       extensionDisplays: source.live.extensionDisplays,
@@ -378,6 +380,8 @@ const ConversationStage = memo(function ConversationStage({
       sessionId={state.sessionId}
       viewId={state.transcriptViewId ?? ""}
       projectionIncarnation={state.transcriptIncarnation ?? ""}
+      hasOlder={state.transcriptHasOlder}
+      historyVersion={state.historyVersion ?? ""}
       queue={state.queue}
       pendingAction={state.pendingAction}
       extensionDisplays={state.extensionDisplays}
@@ -1013,7 +1017,6 @@ export function App() {
           onToggleNavigation={toggleNavigation}
           onOpenCommandPalette={openCommandPalette}
           onExportSession={openExport}
-          onRenameSession={openRename}
           onToggleSettings={toggleSettings}
           onToggleResources={toggleResources}
         />

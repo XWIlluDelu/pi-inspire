@@ -21,7 +21,13 @@ export const historyQuerySchema = z.discriminatedUnion("kind", [
     kind: z.literal("page"),
     cursor: historyCursor.optional(),
     entryId: z.string().min(1).max(200).optional(),
+    direction: z.literal("earlier").optional(),
     leafId: z.string().min(1).max(200).optional(),
+  }),
+  z.strictObject({
+    ...historyAddress,
+    kind: z.literal("turns"),
+    start: historyStart,
   }),
   z.strictObject({
     ...historyAddress,

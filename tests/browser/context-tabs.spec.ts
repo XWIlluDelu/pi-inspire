@@ -10,7 +10,7 @@ import { terminalOperation } from "./support/terminal-operations";
 
 test.use({ contextOptions: { reducedMotion: "reduce" } });
 
-test("finds an open tab by name and keeps it reachable in the narrow workbench @cross-browser", async ({
+test("finds overflowed tabs and keeps them reachable in the narrow workbench @cross-browser", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1500, height: 850 });
@@ -28,8 +28,8 @@ test("finds an open tab by name and keeps it reachable in the narrow workbench @
     exact: true,
   });
   await expect(dialog).toBeVisible();
-  await dialog.getByRole("button", { name: "Open tabs", exact: true }).click();
-  const tabs = page.getByRole("dialog", { name: "Open tabs", exact: true });
+  await dialog.getByRole("button", { name: "More tabs", exact: true }).click();
+  const tabs = page.getByRole("dialog", { name: "More tabs", exact: true });
   const filter = tabs.getByRole("combobox", { name: "Find open tab" });
   await filter.fill("TerminalSettings");
   await expect(tabs.getByRole("option", { name: /document\.md/ })).toHaveCount(
@@ -48,7 +48,11 @@ test("finds an open tab by name and keeps it reachable in the narrow workbench @
   });
   await expect(selected).toHaveAttribute("aria-selected", "true");
   await expect(selected).toBeFocused();
-  await selected.press("ArrowRight");
+  await dialog.getByRole("button", { name: "More tabs", exact: true }).click();
+  await page
+    .getByRole("dialog", { name: "More tabs", exact: true })
+    .getByRole("option", { name: /document\.md/ })
+    .click();
   await expect(documentTab).toHaveAttribute("aria-selected", "true");
 });
 

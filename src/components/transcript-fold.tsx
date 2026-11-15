@@ -7,6 +7,8 @@ import {
   ReadingChoices,
 } from "./transcript-activity-visibility";
 
+import { useActivityCloseDelay } from "./use-activity-close-delay";
+
 const ACTIVITY_PAGE_SIZE = 24;
 
 export interface ActivityItem {
@@ -60,10 +62,15 @@ export function ResponseActivityFold({
   const [openChoice, setOpen] = useState<boolean | null>(null);
   const [focus, setFocus] = useState<string | true | null>(null);
   const [pageAnchor, setPageAnchor] = useState<string | null>(null);
+  const dynamicOpen = useActivityCloseDelay(
+    visibility === "dynamic" && live,
+    2400,
+    800,
+  );
   const open =
     openChoice ??
     (visibility === "dynamic"
-      ? live || focus !== null
+      ? dynamicOpen || focus !== null
       : visibility !== "collapsed");
   const anchor = typeof focus === "string" ? focus : pageAnchor;
   const at =
@@ -86,6 +93,7 @@ export function ResponseActivityFold({
   return (
     <section
       className="activity-fold"
+      data-dynamic={visibility === "dynamic" || undefined}
       aria-label="Assistant activity"
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) setFocus(null);

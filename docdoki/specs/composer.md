@@ -63,19 +63,22 @@ Append-only transcript updates preserve textarea focus and selection.
 Send remains mounted across idle/busy transitions. Conflict recovery is the sole action when
 delivery is unavailable.
 
-The textarea grows with its content up to a viewport-relative maximum in CSS. Browsers without
-content-based sizing use a bounded multiline field. Longer text scrolls inside the textarea.
-The size action sits next to the editor. Expand and Collapse change the height of the same input,
-preserving text, artifacts, focus and selection. Completion options appear below the input and
-replace the token at the caret.
+The textarea grows with its text within the available reading stage and viewport. Longer
+text scrolls inside the textarea. Expand appears when more room is available, and Collapse
+returns to the compact height. Both preserve text, artifacts, focus and selection. Completion
+opens in a floating list near the caret and replaces the token at that caret.
 
 ### Retained prompt history
 
-Input history opens from the composer or Alt+Up. Saved inputs come from the selected branch's
-retained user messages, including pre-compaction messages and reopened sessions. Recent inputs
-show accepted text-only sends in this browser separately. Select inputs with original artifacts
-from Saved inputs. Browsing and Cancel preserve the live draft.
-**Use this input** replaces its text and artifacts together if the branch and draft still match.
+Up at the start of the first visual line recalls the preceding input. Down at the last visual
+line moves toward the latest input and restores the draft on reaching it. Escape restores the
+draft without accepting the preview. Editing or sending the preview applies its text and
+artifacts to the current draft through the same owner and revision checks as **Use this input**.
+
+Input history is also available from the composer or Alt+Up. Saved inputs come from the
+selected branch's retained user messages, including pre-compaction messages and reopened
+sessions. Recent inputs show accepted text-only sends in this browser separately. Opening or
+cancelling the chooser preserves the live draft.
 
 Image-prompt recall omits Pi's appended dimension and coordinate-mapping notes from editable text
 while retaining the original image references. Mixed image and file prompts unwrap that suffix

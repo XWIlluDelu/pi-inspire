@@ -137,6 +137,8 @@ export function useOptionList<T>(initialKey?: string, keyboard = true) {
     navigate,
     pointer,
     reset,
+    activate: (key: string | undefined) =>
+      setChoice({ key, index: 0, keyboard: true }),
   };
 }
 

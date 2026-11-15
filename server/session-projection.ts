@@ -25,6 +25,8 @@ import {
   type SessionHistoryPages,
   type TranscriptPage,
 } from "../shared/contracts.js";
+import { HISTORY_PROMPT_PAGE_SIZE } from "../shared/contracts.js";
+import { userTurnSummary } from "../shared/user-turns.js";
 import type { SessionHistoryQuery } from "../shared/history-query.js";
 import { jsonRecord } from "../shared/json-record.js";
 import { resultChildCalls } from "../shared/tool-activity.js";
@@ -1106,6 +1108,26 @@ class SessionEntryIndex {
           query.leafId ?? effectiveLeafId,
           viewId,
         );
+      case "turns": {
+        const { messages, turns } = this.nativeHistory(effectiveLeafId);
+        const total = turns.length;
+        const size = HISTORY_PROMPT_PAGE_SIZE;
+        const start = Math.min(
+          query.start ?? Infinity,
+          Math.floor(Math.max(0, total - 1) / size) * size,
+        );
+        return {
+          start,
+          total,
+          turns: turns.slice(start, start + size).flatMap((index, offset) => {
+            const message = messages[index];
+            const id = jsonRecord(message)?.__inspireEntryId;
+            return typeof id === "string"
+              ? [{ id, ordinal: start + offset, ...userTurnSummary(message) }]
+              : [];
+          }),
+        };
+      }
       case "search":
         return this.findHistory(query.text, query.leafId ?? effectiveLeafId);
 
@@ -1210,7 +1232,8 @@ class SessionEntryIndex {
     if (query.entryId !== undefined && anchor === undefined)
       throw requestError("The entry is not on this branch", 404);
     const reverse =
-      cursor?.kind === "native-before" || (!cursor && anchor === undefined);
+      cursor?.kind === "native-before" ||
+      (!cursor && (anchor === undefined || query.direction === "earlier"));
     const pivot = cursor?.before ?? anchor ?? messages.length;
     const index = (i: number) => (reverse ? i - 1 : i);
     const advance = reverse ? -1 : 1;

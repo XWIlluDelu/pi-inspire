@@ -134,6 +134,33 @@ it("keeps the editor and open history through a streamed leaf, then recalls mate
   );
 });
 
+it("previews prior inputs with arrows and returns to the exact unsent draft", async () => {
+  host.historyEntries = [
+    { text: "newer saved prompt", images: [], files: [] },
+    { text: "older saved prompt", images: [], files: [] },
+  ];
+  render(<Composer />);
+  const input = screen.getByRole<HTMLTextAreaElement>("textbox", {
+    name: "Message",
+  });
+  typeDraft("draft before recall");
+  input.focus();
+  input.setSelectionRange(0, 0);
+  const press = (key: string) => fireEvent.keyDown(input, { key });
+  await waitFor(() => {
+    press("ArrowUp");
+    expect(input).toHaveValue("newer saved prompt");
+  });
+  expect(store.drafts.get("s1").text).toBe("draft before recall");
+  press("ArrowUp");
+  expect(input).toHaveValue("older saved prompt");
+  press("ArrowDown");
+  expect(input).toHaveValue("newer saved prompt");
+  press("ArrowDown");
+  expect(input).toHaveValue("draft before recall");
+  expect(input.selectionStart).toBe(0);
+});
+
 it("dispatches only the configured desktop send chord and disables proofing marks", async () => {
   render(<Composer />);
   const input = screen.getByRole("textbox", { name: "Message" });

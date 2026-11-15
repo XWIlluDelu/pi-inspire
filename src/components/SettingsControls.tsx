@@ -4,7 +4,7 @@ import {
   useLayoutEffect,
   useRef,
 } from "react";
-import { NativeSelect } from "./NativeSelect";
+import { Dropdown } from "./Dropdown";
 
 export function SettingsLayout<Category extends string>({
   label,
@@ -174,12 +174,12 @@ export function SelectField<Value extends string>({
   layout,
   ...select
 }: ChoiceField &
-  Omit<ComponentProps<typeof NativeSelect<Value>>, "label" | "className">) {
+  Omit<ComponentProps<typeof Dropdown<Value>>, "label" | "className">) {
   return (
     <SettingField
       {...{ label, description, status, feedback, className, layout }}
     >
-      <NativeSelect label={controlLabel ?? label} {...select} />
+      <Dropdown label={controlLabel ?? label} {...select} />
     </SettingField>
   );
 }

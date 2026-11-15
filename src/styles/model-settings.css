@@ -166,7 +166,7 @@
 .models-auth input:not(.search-field input) { box-sizing: border-box; min-width: 0; max-width: 100%; width: 100%; min-height: 36px; padding: var(--space-2) var(--space-3); border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg-control); color: var(--ink); font: inherit; font-size: var(--text-sm); }
 .models-settings input:not(.search-field input):focus-visible,
 .models-auth input:not(.search-field input):focus-visible { outline: 2px solid var(--accent-focus); outline-offset: 1px; }
-.models-form .native-select--field {
+.models-form .dropdown-trigger--field {
   width: 100%;
   min-width: 0;
   min-height: 36px;
@@ -211,7 +211,7 @@
   .models-settings .button,
   .models-auth .button,
   .models-auth input:not(.search-field input),
-  .models-form .native-select--field,
+  .models-form .dropdown-trigger--field,
   .models-icon-button,
   .models-settings input:where(:not([type=checkbox], [type=radio], .search-field input)),
   .models-text-button,
@@ -248,3 +248,17 @@
 @container settings-card (max-width: 320px) {
   .models-available .model-picker__list { padding-inline: 0; }
 }
+
+.models-declared-providers,
+.models-declared-models {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.models-provider-config {
+  min-width: 0;
+  padding-block: var(--space-1);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.models-provider-models { margin-inline-start: var(--space-3); }

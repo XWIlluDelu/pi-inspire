@@ -57,6 +57,29 @@ it("pages a large saved branch in both directions, including pre-compaction turn
   }
   expect(seen).toEqual(["u1", ...entries.map((value) => value.id), "compact"]);
   expect(ids(await read(page.later!))[0]).toBe(seen[page.messages.length]);
+  const before = await runtime.sessionHistory("session-a", viewId, {
+    kind: "page",
+    direction: "earlier",
+    entryId: "u18",
+  });
+  expect(ids(before).at(-1)).toBe("a17");
+  expect(ids(await read(before.later!))[0]).toBe("u18");
+  const prompts = await runtime.sessionHistory("session-a", viewId, {
+    kind: "turns",
+  });
+  expect(prompts).toMatchObject({
+    total: 20,
+    start: 0,
+    turns: [
+      expect.objectContaining({ id: "u1", ordinal: 0 }),
+      ...Array.from({ length: 19 }, (_, index) => ({
+        id: `u${index + 2}`,
+        ordinal: index + 1,
+        snippet: `Prompt ${index + 2}`,
+        attachmentCount: 0,
+      })),
+    ],
+  });
   const matches = await runtime.sessionHistory("session-a", viewId, {
     kind: "search",
     text: "needle_beyond_preview",

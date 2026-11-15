@@ -20,14 +20,16 @@ import {
 
 test.use({ serviceWorkers: "block", reducedMotion: "reduce" });
 
-const selectServer = (
+const selectServer = async (
   settings: Locator,
   name: string,
   scope: "user" | "project",
-) =>
-  settings
-    .getByRole("combobox", { name: "MCP server" })
-    .selectOption({ label: `${name} · ${scope}` });
+) => {
+  await settings.getByRole("combobox", { name: "MCP server" }).click();
+  await settings
+    .getByRole("option", { name: `${name} · ${scope}`, exact: true })
+    .click();
+};
 
 async function scenario(page: Page, session: "live" | "new") {
   const root = await realpath(
@@ -82,7 +84,8 @@ async function scenario(page: Page, session: "live" | "new") {
         },
       }),
     );
-    let reveals = 0, reloads = 0;
+    let reveals = 0,
+      reloads = 0;
     let sessionId = "";
     const transport =
       session === "live"
@@ -287,9 +290,11 @@ test.describe("touch MCP editor", () => {
         .click();
     };
     const choose = async (name: string, option: string) => {
+      await settings.getByRole("combobox", { name, exact: true }).click();
       await settings
-        .getByRole("combobox", { name, exact: true })
-        .selectOption({ label: option });
+        .getByRole("listbox", { name, exact: true })
+        .getByRole("option", { name: option, exact: true })
+        .click();
     };
     try {
       const userBefore = await fixture.json(fixture.userFile);
@@ -308,7 +313,9 @@ test.describe("touch MCP editor", () => {
       await choose("Transport", "Streamable HTTP");
       await expect(url).toHaveValue(privateUrl);
       await choose("Transport", "Stdio");
-      await expect(settings.getByLabel("Program", { exact: true })).toHaveValue("node");
+      await expect(settings.getByLabel("Program", { exact: true })).toHaveValue(
+        "node",
+      );
       const save = settings.getByRole("button", {
         name: "Save",
         exact: true,
@@ -331,7 +338,7 @@ test.describe("touch MCP editor", () => {
       ).toBeFocused();
       await expect(
         settings.getByRole("combobox", { name: "Tool exposure" }),
-      ).toHaveValue("inherit");
+      ).toContainText("Inherit from user");
       await choose("Enabled in this project", "Disabled");
       await save.click();
       const policyEdit = editProject("docs");

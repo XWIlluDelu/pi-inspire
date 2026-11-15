@@ -22,7 +22,7 @@ import type {
   SecretEdit,
 } from "../../shared/configuration-fields";
 import { ButtonLabel } from "./ButtonLabel";
-import { NativeSelect } from "./NativeSelect";
+import { Dropdown } from "./Dropdown";
 
 export function ConfigurationAction({
   label,
@@ -366,14 +366,14 @@ export function ConfigurationSelect<Value extends string>({
   caption,
   wide,
   ...props
-}: ComponentProps<typeof NativeSelect<Value>> & {
+}: ComponentProps<typeof Dropdown<Value>> & {
   caption?: string;
   wide?: boolean;
 }) {
   return (
     <label className={wide ? "models-form__wide" : undefined}>
       {caption ?? props.label}
-      <NativeSelect {...props} className="native-select--field" />
+      <Dropdown {...props} className="dropdown-trigger--field" />
     </label>
   );
 }

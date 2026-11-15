@@ -1,38 +1,23 @@
-import { useEffect, useId, useState } from "react";
+import { useId, useState } from "react";
 import type { ComposerHistoryEntry } from "../../shared/contracts";
-import type { ComposerHistoryScope } from "../composer-history";
-import { store } from "../store";
 import { Modal } from "./Modal";
 
 export function ComposerHistoryDialog({
-  scope,
   recent,
+  saved,
+  onRetry,
   onChoose,
   onClose,
 }: {
-  scope: ComposerHistoryScope;
   recent: readonly ComposerHistoryEntry[];
+  saved: readonly ComposerHistoryEntry[] | null | undefined;
+  onRetry: () => void;
   onChoose: (entry: ComposerHistoryEntry) => boolean;
   onClose: () => void;
 }) {
   const id = useId();
-  const [saved, setSaved] = useState<ComposerHistoryEntry[] | null>();
-  const [attempt, setAttempt] = useState(0);
   const [selection, setSelection] = useState<ComposerHistoryEntry | null>(null);
   const [draftChanged, setDraftChanged] = useState(false);
-  const { sessionId, viewId, incarnation, historyVersion } = scope;
-  useEffect(() => {
-    const read = new AbortController();
-    void store
-      .loadComposerHistory(
-        { sessionId, viewId, incarnation, historyVersion },
-        read.signal,
-      )
-      .then((entries) => {
-        if (!read.signal.aborted) setSaved(entries);
-      });
-    return () => read.abort();
-  }, [sessionId, viewId, incarnation, historyVersion, attempt]);
 
   const groups = [
     { key: "recent", label: "Recent inputs", entries: recent },
@@ -89,13 +74,7 @@ export function ComposerHistoryDialog({
           {saved === null && (
             <p role="alert">
               Could not load saved inputs.{" "}
-              <button
-                type="button"
-                onClick={() => {
-                  setSaved(undefined);
-                  setAttempt(attempt + 1);
-                }}
-              >
+              <button type="button" onClick={onRetry}>
                 Retry
               </button>
             </p>

@@ -86,7 +86,7 @@ independent project shells in [[terminal]].
 
 ## Short-window input and extension content
 
-File and terminal tabs share one horizontally scrollable strip with a searchable Open tabs list.
+File and terminal tabs share one strip with a searchable More tabs list for overflow.
 The selected tab is brought into view. Arrow keys, Home and End navigate the strip. On compact
 panes the tab strip gets its own row, keeping the selected tab and tools reachable. Opening,
 closing, renaming and resizing preserve the underlying readers and terminal processes.
@@ -169,15 +169,15 @@ completion behavior are unchanged.
   The text-only title opens the session menu on desktop and phones, with no chevron or separate
   More control; hover feedback and a keyboard focus outline keep the interactive affordance. The
   menu sits below the title button with a compact 216px width, limited by available space rather
-  than title length. Rename opens a dialog for the session that owns the heading. Enter or
-  Save commits the name, and Cancel or Escape dismisses the dialog. A session switch closes it.
+  than title length. Rename replaces the title with a focused input. Enter, Save or leaving the
+  field commits the name, and Escape cancels. A session switch closes the editor.
   A delayed result keeps newer text in the field. A rejected rename leaves the current identity
   intact and reports the failure.
 
   **Switch branch…** opens History. Choosing a branch there applies [[session-persistence]]
   admission. The title menu shows all actions in the order saved under Behavior settings. Its
-  default order is Rename, Copy session ID, Clone, Switch branch and Export. The menu focuses the
-  first enabled action and stays scrollable within the viewport. Arrows, Home/End, Enter and Escape
+  grips support dragging, and Alt+Up/Down moves a focused action. The default order is Rename,
+  Copy session ID, Clone, Switch branch and Export. The menu focuses the first enabled action and stays scrollable within the viewport. Arrows, Home/End, Enter and Escape
   operate it, and keyboard dismissal returns focus to the title.
 
   Copy session ID writes the complete selected Pi session ID, including for read-only history.
@@ -207,11 +207,11 @@ completion behavior are unchanged.
   scroll. File tabs keep independent reader modes and Source/rendered scroll offsets;
   [[resource-preview]] defines the boundary for embedded readers and execution.
 
-  The searchable Open tabs list keeps all open files and terminals reachable while the tool
-  actions remain available. The tab strip scrolls to its selection, keeps the label and Close
-  action together, and restores focus to the chosen tab after a search. File-specific and terminal
-  toolbars stay above their content. Deferred loading preserves the toolbar and keeps actionable
-  failure feedback in the content area.
+  The strip keeps the selected tab visible and lists the remaining overflow in More tabs. A
+  choice restores focus to the newly visible tab. Terminal tabs can be reordered by dragging or
+  with their keyboard shortcut. File and terminal controls float above the content. Interacting
+  with the reading surface reduces the controls to their toggle. Keyboard Escape also collapses
+  the controls and returns focus to that toggle.
 
   F5 restores the browser tab's navigation, pane widths and visibility, contextual tool, file-tab
   order and selection, and Files query and expansions. Saved session navigation is scoped to Host,

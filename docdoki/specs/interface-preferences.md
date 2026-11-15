@@ -76,8 +76,9 @@ values show Unavailable, not a confirmed state.
 ## Session action order
 
 Behavior shows the session title actions in order. Each row has Move up and Move down controls.
-Moving an action keeps focus on that row and announces its new position. The title menu uses the
-saved order and each action retains its eligibility rules.
+The title menu also supports dragging its grips and moving the focused action with Alt+Up/Down.
+Moving an action keeps focus on the control and announces its new position. Each action retains
+its eligibility rules.
 
 The order is a Host-persisted interface preference, saved through the existing field-owned write
 path and included in Reset preferences. An older saved order keeps its relative order and gains
@@ -109,7 +110,8 @@ a fresh resource scan and package update results cannot establish current-worker
 
 - Changes patch only their own fields through a serialized write path. Concurrent preference,
   session-pin, folder-pin, and hide changes preserve one another.
-- Settings present a pending choice separately from the Host-confirmed value. Refusal retires only
+- The selected value displays immediately during a Settings write. Runtime admission continues
+  to use the confirmed settings. Refusal retires only
   the corresponding intent; a newer local choice keeps its ownership. If a write's response is
   lost, check the saved value by reading it and keep an unresolved intent visible until observed
   or the workbench reconnects.

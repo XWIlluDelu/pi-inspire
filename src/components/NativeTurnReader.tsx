@@ -21,7 +21,7 @@ import { resourceReferenceFromEventTarget } from "../resources";
 import { shallowEqual, store, useAppState } from "../store";
 import { BashExecution } from "./BashExecution";
 import { CopyAction } from "./CopyAction";
-import { HistoryImage } from "./HistoryImage";
+import { HistoryImage } from "./ImagePreview";
 import { ImageGallery } from "./ImageGallery";
 import { PiLoader } from "./PiLoader";
 import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
@@ -69,10 +69,14 @@ export function NativeTurnReader({
   sessionId,
   viewId,
   onLive,
+  initialEntryId,
+  showFullEntry,
 }: {
   sessionId: string;
   viewId: string;
   onLive: () => void;
+  initialEntryId?: string;
+  showFullEntry?: boolean;
 }) {
   const key = `inspire:history-location-v1:${sessionId}`;
   const state = useAppState(
@@ -112,7 +116,16 @@ export function NativeTurnReader({
   const [instructions, setInstructions] = useState("");
   const pending = useRef<AbortController | null>(null);
   const scroll = useRef<HTMLDivElement>(null);
-  const initial = useRef(restoreLocation(key));
+  const initial = useRef<Location | null>(
+    initialEntryId
+      ? {
+          entryId: initialEntryId,
+          offset: 0,
+          bodyOffset: showFullEntry ? 0 : undefined,
+        }
+      : restoreLocation(key),
+  );
+  const scrollAnchor = useRef<{ entryId: string; offset: number } | null>(null);
   const wanted = useRef<Location | null>(null);
   const retry = useRef<(() => void) | null>(null);
 
@@ -172,6 +185,75 @@ export function NativeTurnReader({
     );
   }
 
+  function extend(direction: "earlier" | "later") {
+    const cursor = page?.[direction];
+    if (
+      !page ||
+      !cursor ||
+      pending.current ||
+      error ||
+      body ||
+      results ||
+      routes
+    )
+      return;
+    void observe(
+      (signal) =>
+        store.readNativeHistory(
+          sessionId,
+          viewId,
+          {
+            kind: "page",
+            cursor,
+            leafId: page.leafId ?? undefined,
+          },
+          signal,
+        ),
+      (next) => {
+        const port = scroll.current;
+        if (port) {
+          const top = port.getBoundingClientRect().top;
+          const visible = [
+            ...port.querySelectorAll<HTMLElement>("[data-history-entry]"),
+          ].find((row) => row.getBoundingClientRect().bottom > top);
+          if (visible?.dataset.historyEntry)
+            scrollAnchor.current = {
+              entryId: visible.dataset.historyEntry,
+              offset: visible.getBoundingClientRect().top - top,
+            };
+        }
+        const [first, last] =
+          direction === "earlier" ? [next, page] : [page, next];
+        setPage({
+          ...page,
+          firstTurn: first.firstTurn,
+          lastTurn: last.lastTurn,
+          earlier: first.earlier,
+          later: last.later,
+          messages: [...first.messages, ...last.messages],
+          branchPoints: [
+            ...new Map(
+              [...(first.branchPoints ?? []), ...(last.branchPoints ?? [])].map(
+                (point) => [point.id, point],
+              ),
+            ).values(),
+          ],
+        });
+      },
+      "History could not be loaded",
+    );
+  }
+
+  function loadNearBoundary(direction: "earlier" | "later") {
+    const port = scroll.current;
+    if (!port) return;
+    const distance =
+      direction === "earlier"
+        ? port.scrollTop
+        : port.scrollHeight - port.scrollTop - port.clientHeight;
+    if (distance <= 140) extend(direction);
+  }
+
   // biome-ignore lint/correctness/useExhaustiveDependencies: This keyed reader opens once per view; live state must not restart its reads.
   useEffect(() => {
     void read(undefined, initial.current ?? undefined);
@@ -182,6 +264,19 @@ export function NativeTurnReader({
   useLayoutEffect(() => {
     if (!page || !scroll.current) return;
     const port = scroll.current;
+    const anchor = scrollAnchor.current;
+    scrollAnchor.current = null;
+    if (anchor) {
+      const row = [
+        ...port.querySelectorAll<HTMLElement>("[data-history-entry]"),
+      ].find((item) => item.dataset.historyEntry === anchor.entryId);
+      if (row)
+        port.scrollTop +=
+          row.getBoundingClientRect().top -
+          port.getBoundingClientRect().top -
+          anchor.offset;
+      return;
+    }
     const location = wanted.current;
     const row =
       location &&
@@ -431,6 +526,25 @@ export function NativeTurnReader({
         ref={scroll}
         tabIndex={-1}
         onScroll={remember}
+        onWheel={(event) => {
+          if (event.deltaY)
+            loadNearBoundary(event.deltaY < 0 ? "earlier" : "later");
+        }}
+        onTouchMove={() => {
+          loadNearBoundary("earlier");
+          loadNearBoundary("later");
+        }}
+        onKeyDown={(event) => {
+          if (
+            isComposingKeyboardEvent(event.nativeEvent) ||
+            event.defaultPrevented
+          )
+            return;
+          if (["ArrowUp", "PageUp", "Home"].includes(event.key))
+            loadNearBoundary("earlier");
+          if (["ArrowDown", "PageDown", "End"].includes(event.key))
+            loadNearBoundary("later");
+        }}
         onClick={(event) => {
           const reference = resourceReferenceFromEventTarget(event.target);
           if (reference) {

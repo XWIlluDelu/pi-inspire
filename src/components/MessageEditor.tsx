@@ -36,6 +36,7 @@ export function MessageEditor({
   children,
   files,
   input,
+  beforeEdit = () => true,
   onSubmit,
 }: {
   sessionId: string | null;
@@ -70,14 +71,18 @@ export function MessageEditor({
     | "showHiddenFiles"
     | "onShowHiddenFilesChange"
   >;
+  beforeEdit?(): boolean;
   onSubmit(): void;
 }) {
   const sendKey = useAppState((state) => state.prefs.desktopSendKey);
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
+  const [sizeActionSlot, setSizeActionSlot] = useState<HTMLSpanElement | null>(
+    null,
+  );
   useLayoutEffect(() => setDragging(false), [sessionId]);
   const addFiles = (attachments: File[]) => {
-    if (!disabled && attachments.length)
+    if (!disabled && attachments.length && beforeEdit())
       void store.addFiles(attachments, sessionId);
   };
   const submit = () => {
@@ -123,22 +128,29 @@ export function MessageEditor({
         sessionId={sessionId}
         items={draft.attachments}
         disabled={disabled}
-        onRemove={(id) => store.removeAttachment(id, sessionId)}
+        onRemove={(id) => {
+          if (beforeEdit()) store.removeAttachment(id, sessionId);
+        }}
         onRetry={sessionId ? store.retryAttachment : undefined}
       />
       <ProjectFileChips
         paths={draft.projectFiles}
         disabled={disabled}
-        onRemove={(path) => store.removeProjectFile(path, sessionId)}
+        onRemove={(path) => {
+          if (beforeEdit()) store.removeProjectFile(path, sessionId);
+        }}
       />
       {beforeInput}
       <ComposerInput
         {...input}
         key={sessionId ? input.completionScope : undefined}
         value={draft.text}
-        onChange={(text) => store.drafts.setText(sessionId, text)}
+        onChange={(text) => {
+          if (beforeEdit()) store.drafts.setText(sessionId, text);
+        }}
         disabled={Boolean(sessionId) && disabled}
         completionDisabled={disabled}
+        sizeActionSlot={sizeActionSlot}
         searchProjectFiles={files.scope ? files.search : undefined}
         showHiddenFiles={files.showHidden}
         onShowHiddenFilesChange={files.onShowHiddenChange}
@@ -171,13 +183,14 @@ export function MessageEditor({
           selected={draft.projectFiles}
           disabled={disabled}
           search={files.search}
-          onAdd={(file) =>
-            store.addProjectFile(
-              file.path,
-              sessionId,
-              sessionId === null ? file.workspaceCwd : undefined,
-            )
-          }
+          onAdd={(file) => {
+            if (beforeEdit())
+              store.addProjectFile(
+                file.path,
+                sessionId,
+                sessionId === null ? file.workspaceCwd : undefined,
+              );
+          }}
         />
         <button
           type="button"
@@ -189,6 +202,7 @@ export function MessageEditor({
         >
           <Paperclip size={14} aria-hidden />
         </button>
+        <span className="composer__action-slot" ref={setSizeActionSlot} />
         {tools}
         <span className="composer__spacer" />
         {actions}

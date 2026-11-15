@@ -1,5 +1,5 @@
 import { SlidersHorizontal } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import type { PiCommand } from "../../shared/commands";
 import type { ThinkingLevel } from "../../shared/contracts";
 import { thinkingLevelOptions } from "../model-options";
@@ -9,7 +9,7 @@ import {
 } from "../presentation-adapters";
 import { shallowEqual, useAppState } from "../store";
 import { ChoicePanel } from "./ChoicePanel";
-import { NativeSelect } from "./NativeSelect";
+import { Dropdown } from "./Dropdown";
 import { StatusChoice, StatusChoiceIndicator } from "./StatusChoice";
 
 type ThinkingControlProps = {
@@ -53,27 +53,13 @@ export function ThinkingControl({
   const { configuration } = usePresentationAdapters();
   const controls = availableStatusControls(configuration, scope.commands);
   const [open, setOpen] = useState(false);
-  const select = useRef<HTMLSelectElement>(null);
-  const handled = useRef<number | undefined>(undefined);
-  useEffect(() => {
-    if (openRequest === undefined || handled.current === openRequest) return;
-    handled.current = openRequest;
-    if (!props.disabled && thinkingSupported) {
-      select.current?.focus({ preventScroll: true });
-      try {
-        select.current?.showPicker?.();
-      } catch {
-        /* Keyboard selection remains available. */
-      }
-    }
-    onOpenRequestHandled?.(openRequest);
-  }, [openRequest, onOpenRequestHandled, props.disabled, thinkingSupported]);
-
   return (
     <div className="composer-thinking-control">
-      <NativeSelect
+      <Dropdown
         {...props}
-        ref={select}
+        direction="up"
+        openRequest={openRequest}
+        onOpenRequestHandled={onOpenRequestHandled}
         className="thinking-select"
         disabled={props.disabled || !thinkingSupported}
         options={thinkingLevelOptions(levels)}

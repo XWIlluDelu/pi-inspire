@@ -2,6 +2,8 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Transcript } from "../../src/components/Transcript";
+import { store } from "../../src/store";
 import { useTranscriptViewport } from "../../src/components/transcript-viewport";
 
 class TestResizeObserver {
@@ -126,6 +128,86 @@ describe("transcript viewport geometry", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  it("prepends an older saved page without replacing the live scrollport or moving its row", async () => {
+    const reply = {
+      role: "assistant",
+      __inspireEntryId: "recent",
+      __inspireMessageId: "recent:0",
+      content: "Current reply",
+    };
+    const read = vi
+      .spyOn(store, "readNativeHistory")
+      .mockImplementation(async (_, __, query) => {
+        if (query.kind !== "page") return null;
+        return {
+          sessionId: "session",
+          viewId: "view",
+          incarnation: "incarnation",
+          revision: 1,
+          leafId: "recent",
+          messages: [
+            {
+              ...reply,
+              __inspireEntryId: "older",
+              __inspireMessageId: "older:0",
+              content: "Earlier reply",
+            },
+          ],
+          firstTurn: 1,
+          lastTurn: 1,
+          totalTurns: 2,
+          earlier: null,
+          later: null,
+        };
+      });
+    try {
+      render(
+        <Transcript
+          messages={[reply]}
+          sessionId="session"
+          viewId="view"
+          projectionIncarnation="incarnation"
+          hasOlder
+          streaming={false}
+          thinkingVisibility="expanded"
+          toolVisibility="collapsed"
+        />,
+      );
+      const log = screen.getByRole("log");
+      const visible = screen
+        .getByText("Current reply")
+        .closest<HTMLElement>("[data-transcript-key]")!;
+      log.scrollTop = 20;
+      vi.spyOn(visible, "getBoundingClientRect").mockImplementation(
+        () =>
+          new DOMRect(
+            0,
+            screen.queryByText("Earlier reply") ? 430 : 30,
+            200,
+            100,
+          ),
+      );
+      await act(async () => {
+        fireEvent.wheel(log, { deltaY: -150 });
+      });
+      expect(read).toHaveBeenCalledWith(
+        "session",
+        "view",
+        {
+          kind: "page",
+          direction: "earlier",
+          entryId: "recent",
+        },
+        expect.any(AbortSignal),
+      );
+      expect(screen.getByText("Earlier reply")).toBeVisible();
+      expect(screen.getByRole("log")).toBe(log);
+      expect(log.scrollTop).toBe(420);
+    } finally {
+      read.mockRestore();
+    }
   });
 
   it("keeps an upward wheel intent across a queued layout scroll at latest", () => {

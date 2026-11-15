@@ -74,14 +74,18 @@ test("native model controls adopt Pi's effective results and preserve the draft"
   const result = page.getByRole("option", { name: /Native first/ });
   await expect(result).toHaveCount(1);
   await search.press("Enter");
-  await expect(effort).toHaveValue("low");
+  await expect(effort).toContainText("Low");
   await expect(picker).toContainText("Native final");
   expect(changes[0]).toMatchObject({
     provider: "native-owner",
     modelId: "folder/chat",
   });
-  await effort.selectOption("high");
-  await expect(effort).toHaveValue("medium");
+  await effort.click();
+  await page
+    .getByRole("listbox", { name: /thinking/i })
+    .getByRole("option", { name: "High", exact: true })
+    .click();
+  await expect(effort).toContainText("Medium");
   expect(changes[1]).toMatchObject({ level: "high" });
 
   await expect(draft).toHaveValue(

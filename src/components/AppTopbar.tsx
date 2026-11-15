@@ -8,7 +8,14 @@ import {
   PanelRight,
   Settings as SettingsIcon,
 } from "lucide-react";
-import { memo, type Ref, useEffect, useRef, useState } from "react";
+import {
+  memo,
+  type Ref,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   type ProjectionConflict,
   projectionConflictSeverity,
@@ -120,22 +127,76 @@ function GitSummary() {
 
 const SessionIdent = memo(function SessionIdent({
   onExport,
-  onRename,
 }: {
   onExport: () => void;
-  onRename: (sessionId: string, name: string) => void;
 }) {
-  const { sessionId, heading, cwd, projectDisplay } = useAppState(
+  const { sessionId, heading, cwd, projectDisplay, readOnly } = useAppState(
     (state) => ({
       sessionId: state.sessionId,
       heading: sessionPresentationName(state),
       cwd: state.cwd,
       projectDisplay: state.prefs.projectDisplay,
+      readOnly: Boolean(state.readOnlyReason),
     }),
     shallowEqual,
   );
   const [menuOpen, setMenuOpen] = useState(false);
   const titleRef = useRef<HTMLButtonElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [edit, setEdit] = useState<{ initial: string; name: string } | null>(
+    null,
+  );
+  const [saving, setSaving] = useState(false);
+  const saveInFlight = useRef(false);
+  const editRef = useRef(edit);
+  editRef.current = edit;
+  const editing = edit !== null && !readOnly;
+  const focusTitle = useRef(false);
+  useLayoutEffect(() => {
+    if (editing) {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    } else if (focusTitle.current) {
+      focusTitle.current = false;
+      titleRef.current?.focus({ preventScroll: true });
+    }
+  }, [editing]);
+
+  const closeEditor = () => {
+    focusTitle.current = Boolean(
+      inputRef.current?.form?.contains(document.activeElement),
+    );
+    setEdit(null);
+  };
+  const saveName = async () => {
+    if (
+      !edit ||
+      !sessionId ||
+      saveInFlight.current ||
+      readOnly ||
+      store.getState().sessionId !== sessionId
+    )
+      return;
+    const name = edit.name.trim();
+    if (!name || name === edit.initial.trim()) {
+      closeEditor();
+      return;
+    }
+    saveInFlight.current = true;
+    setSaving(true);
+    try {
+      const saved = await store.renameSession(sessionId, name);
+      if (
+        saved &&
+        editRef.current === edit &&
+        store.getState().sessionId === sessionId
+      )
+        closeEditor();
+    } finally {
+      saveInFlight.current = false;
+      setSaving(false);
+    }
+  };
   const closeMenu = (restoreFocus = false) => {
     setMenuOpen(false);
     if (restoreFocus) titleRef.current?.focus({ preventScroll: true });
@@ -149,36 +210,76 @@ const SessionIdent = memo(function SessionIdent({
 
   return (
     <div className="topbar__ident">
-      <h1 className="topbar__title" aria-label={heading}>
-        <button
-          ref={titleRef}
-          type="button"
-          className="button button--quiet topbar__title-button"
-          aria-label={`Session actions: ${heading}`}
-          aria-haspopup="menu"
-          aria-expanded={menuOpen}
-          title={heading}
-          onClick={() => setMenuOpen((open) => !open)}
-          onKeyDown={(event) => {
-            if (
-              event.key === "ArrowDown" &&
-              !isComposingKeyboardEvent(event.nativeEvent)
-            ) {
-              event.preventDefault();
-              setMenuOpen(true);
-            }
+      {editing ? (
+        <form
+          className="topbar__rename"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void saveName();
+          }}
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget))
+              void saveName();
           }}
         >
-          <span>{heading}</span>
-        </button>
-      </h1>
+          <input
+            className="inline-rename-input"
+            aria-label="Session name"
+            ref={inputRef}
+            value={edit.name}
+            onChange={(event) => setEdit({ ...edit, name: event.target.value })}
+            onKeyDown={(event) => {
+              if (isComposingKeyboardEvent(event.nativeEvent)) {
+                event.stopPropagation();
+                if (event.key === "Enter") event.preventDefault();
+              } else if (event.key === "Escape") {
+                event.preventDefault();
+                event.stopPropagation();
+                closeEditor();
+              }
+            }}
+          />
+          <button
+            type="submit"
+            className="icon-button"
+            aria-label="Save session name"
+            disabled={saving || !edit.name.trim()}
+          >
+            <Check size={14} aria-hidden />
+          </button>
+        </form>
+      ) : (
+        <h1 className="topbar__title" aria-label={heading}>
+          <button
+            ref={titleRef}
+            type="button"
+            className="button button--quiet topbar__title-button"
+            aria-label={`Session actions: ${heading}`}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            title={heading}
+            onClick={() => setMenuOpen((open) => !open)}
+            onKeyDown={(event) => {
+              if (
+                event.key === "ArrowDown" &&
+                !isComposingKeyboardEvent(event.nativeEvent)
+              ) {
+                event.preventDefault();
+                setMenuOpen(true);
+              }
+            }}
+          >
+            <span>{heading}</span>
+          </button>
+        </h1>
+      )}
 
       {menuOpen ? (
         <SessionActionsMenu
           anchorRef={titleRef}
           sessionId={sessionId}
           onClose={closeMenu}
-          onRename={onRename}
+          onRename={(_, name) => setEdit({ initial: name, name })}
           onExport={onExport}
         />
       ) : null}
@@ -223,7 +324,6 @@ export const AppTopbar = memo(function AppTopbar({
   onToggleNavigation,
   onOpenCommandPalette,
   onExportSession,
-  onRenameSession,
   onToggleSettings,
   onToggleResources,
 }: {
@@ -234,7 +334,6 @@ export const AppTopbar = memo(function AppTopbar({
   onToggleNavigation: () => void;
   onOpenCommandPalette: () => void;
   onExportSession: () => void;
-  onRenameSession: (sessionId: string, name: string) => void;
   onToggleSettings: () => void;
   onToggleResources: () => void;
 }) {
@@ -276,11 +375,7 @@ export const AppTopbar = memo(function AppTopbar({
           <PanelLeft size={15} aria-hidden />
         </NavigationToggle>
       ) : null}
-      <SessionIdent
-        key={state.sessionId}
-        onExport={onExportSession}
-        onRename={onRenameSession}
-      />
+      <SessionIdent key={state.sessionId} onExport={onExportSession} />
       <div className="topbar__status" aria-live="polite">
         <StateChip
           runState={state.runState}

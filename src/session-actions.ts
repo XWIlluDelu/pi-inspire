@@ -119,3 +119,12 @@ export function sessionHeading(
   }
   return "New session";
 }
+export function moveSessionAction(
+  order: readonly SessionActionId[],
+  id: SessionActionId,
+  destination: number,
+): SessionActionId[] {
+  const next = order.filter((action) => action !== id);
+  next.splice(destination, 0, id);
+  return next;
+}

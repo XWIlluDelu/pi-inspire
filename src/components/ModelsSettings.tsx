@@ -46,7 +46,7 @@ import {
 import { DetailSummary } from "./DetailSummary";
 import { ModelForm, ProviderForm } from "./ModelDeclarationForms";
 import { ModelList } from "./ModelList";
-import { NativeSelect } from "./NativeSelect";
+import { Dropdown } from "./Dropdown";
 import { ProviderAuthentication } from "./ProviderAuthentication";
 import { SettingField } from "./SettingsControls";
 import { SettingsCardMessage, SettingsSection } from "./SettingsSection";
@@ -146,7 +146,7 @@ export function ModelsSettings({
   const declarationsRef = useRef<HTMLDetailsElement>(null);
   const savedEntriesRef = useRef<HTMLDetailsElement>(null);
   const addProviderRef = useRef<HTMLButtonElement>(null);
-  const defaultThinkingRef = useRef<HTMLSelectElement>(null);
+  const defaultThinkingRef = useRef<HTMLButtonElement>(null);
   const addModelRef = useRef<HTMLButtonElement>(null);
   const [selectedModelKey, setSelectedModelKey] = useState<string>();
   const providerGeneration = useRef(0);
@@ -431,24 +431,11 @@ export function ModelsSettings({
     ];
     void save({ enabledModels: patterns });
   };
-  const declarations =
-    snapshot?.providers.flatMap((provider) => [
-      { key: declarationKey(provider.id), provider, model: null },
-      ...provider.models.map((model) => ({
-        key: declarationKey(provider.id, model),
-        provider,
-        model,
-      })),
-    ]) ?? [];
-  const declaration = declarations.find(
-    ({ key }) => key === selectedDeclaration,
+  const providersWithDeclarations = snapshot?.providers ?? [];
+  const modelCount = providersWithDeclarations.reduce(
+    (count, provider) => count + provider.models.length,
+    0,
   );
-  const provider = declaration?.provider;
-  const declared = declaration?.model;
-  const providerCount = snapshot?.providers.length ?? 0;
-  const modelCount = declarations.length - providerCount;
-  const declarationIdentity =
-    provider && declarationLabel(provider.id, declared);
   const customConfiguration = (
     <details
       className="models-advanced-providers"
@@ -459,105 +446,116 @@ export function ModelsSettings({
         className="models-advanced-providers__summary"
         aria-label="Custom provider declarations"
       >
-        {providerCount} {providerCount === 1 ? "provider" : "providers"} ·{" "}
+        {providersWithDeclarations.length}{" "}
+        {providersWithDeclarations.length === 1 ? "provider" : "providers"} ·{" "}
         {modelCount} {modelCount === 1 ? "model" : "models"}
       </DetailSummary>
-      {declarations.length > 0 && (
-        <>
-          <NativeSelect
-            className="native-select--field configuration-selection"
-            label="Custom declaration"
-            value={declaration?.key ?? ""}
-            display={declaration ? undefined : "Choose custom declaration"}
-            options={declarations.map(({ key, provider, model }) => ({
-              value: key,
-              label: declarationLabel(provider.id, model),
-            }))}
-            disabled={busy}
-            onChange={(key) => {
-              if (removing) configuration.dismiss();
-              selectDeclaration(key);
-            }}
-          />
-          {provider && declarationIdentity && (
+      <div className="models-declared-providers">
+        {providersWithDeclarations.map((provider) => (
+          <section
+            className="models-provider-config"
+            key={provider.id}
+            aria-label={`Custom provider ${provider.id}`}
+          >
             <ConfigurationDetail
-              label={
-                declared
-                  ? `declared model ${declarationIdentity}`
-                  : `provider ${provider.id}`
-              }
-              name={declared?.name || declared?.id || provider.id}
+              label={`provider ${provider.id}`}
+              name={provider.id}
               description={
                 <code>
-                  {declared
-                    ? declarationIdentity
-                    : [provider.baseUrl, provider.api]
-                        .filter(Boolean)
-                        .join(" · ")}
+                  {[provider.baseUrl, provider.api].filter(Boolean).join(" · ")}
                 </code>
               }
               disabled={busy || configurationUnavailable}
               edit={(event) =>
                 openEditor(
-                  declared
-                    ? { kind: "model", provider: provider.id, value: declared }
-                    : { kind: "provider", value: provider },
+                  { kind: "provider", value: provider },
                   event.currentTarget,
                 )
               }
               remove={(event) =>
                 configuration.open(
-                  declared
-                    ? {
-                        kind: "remove-model",
-                        provider: provider.id,
-                        id: declared.id,
-                        type: declared.type,
-                      }
-                    : { kind: "remove-provider", id: provider.id },
+                  { kind: "remove-provider", id: provider.id },
                   event.currentTarget,
                 )
               }
             >
-              {!declared && (
-                <button
-                  type="button"
-                  className="button"
-                  aria-label={`Add model to ${provider.id}`}
-                  ref={addModelRef}
-                  disabled={busy || configurationUnavailable}
-                  onClick={(event) =>
-                    openEditor(
-                      {
-                        kind: "model",
-                        provider: provider.id,
-                        value: null,
-                      },
-                      event.currentTarget,
-                    )
-                  }
-                >
-                  <Plus size={13} aria-hidden /> Add model
-                </button>
-              )}
+              <button
+                type="button"
+                className="button"
+                aria-label={`Add model to ${provider.id}`}
+                ref={
+                  selectedDeclaration === declarationKey(provider.id)
+                    ? addModelRef
+                    : undefined
+                }
+                disabled={busy || configurationUnavailable}
+                onClick={(event) =>
+                  openEditor(
+                    { kind: "model", provider: provider.id, value: null },
+                    event.currentTarget,
+                  )
+                }
+              >
+                <Plus size={13} aria-hidden /> Add model
+              </button>
             </ConfigurationDetail>
-          )}
-          {removing && (
-            <ConfigurationConfirmation
-              confirmLabel="Remove configuration"
-              cancelDisabled={busy}
-              confirmDisabled={busy || configurationUnavailable}
-              onConfirm={() => void edit(removing)}
-              onCancel={configuration.dismiss}
-            >
-              Remove the{" "}
-              {removing.kind === "remove-provider"
-                ? `provider ${removing.id}`
-                : `model ${declarationLabel(removing.provider, removing)}`}{" "}
-              declaration?
-            </ConfigurationConfirmation>
-          )}
-        </>
+            {provider.models.length > 0 && (
+              <details className="models-provider-models">
+                <DetailSummary>Models ({provider.models.length})</DetailSummary>
+                <div className="models-declared-models">
+                  {provider.models.map((model) => {
+                    const id = declarationLabel(provider.id, model);
+                    return (
+                      <ConfigurationDetail
+                        key={declarationKey(provider.id, model)}
+                        label={`declared model ${id}`}
+                        name={model.name || model.id}
+                        description={<code>{id}</code>}
+                        disabled={busy || configurationUnavailable}
+                        edit={(event) =>
+                          openEditor(
+                            {
+                              kind: "model",
+                              provider: provider.id,
+                              value: model,
+                            },
+                            event.currentTarget,
+                          )
+                        }
+                        remove={(event) =>
+                          configuration.open(
+                            {
+                              kind: "remove-model",
+                              provider: provider.id,
+                              id: model.id,
+                              type: model.type,
+                            },
+                            event.currentTarget,
+                          )
+                        }
+                      />
+                    );
+                  })}
+                </div>
+              </details>
+            )}
+          </section>
+        ))}
+      </div>
+      {removing && (
+        <ConfigurationConfirmation
+          confirmLabel="Remove configuration"
+          cancelDisabled={busy}
+          confirmDisabled={busy || configurationUnavailable}
+          onConfirm={() => void edit(removing)}
+          onCancel={configuration.dismiss}
+        >
+          Remove the{" "}
+          {removing.kind === "remove-provider"
+            ? `provider ${removing.id}`
+            : `model ${declarationLabel(removing.provider, removing)}`}{" "}
+          declaration?
+        </ConfigurationConfirmation>
       )}
     </details>
   );
@@ -797,10 +795,10 @@ export function ModelsSettings({
                         : undefined
                     }
                   >
-                    <NativeSelect
+                    <Dropdown
                       ref={defaultThinkingRef}
                       label="Default thinking"
-                      className="native-select--field"
+                      className="dropdown-trigger--field"
                       value={snapshot.saved.defaultThinkingLevel ?? "unset"}
                       display={
                         preferencesUnavailable ? "Unavailable" : undefined

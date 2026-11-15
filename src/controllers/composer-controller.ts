@@ -112,6 +112,49 @@ interface ComposerControllerHost {
   handleAuthFailure(): void;
 }
 
+export function recalledInputAttachments(
+  scope: ComposerHistoryScope,
+  entry: ComposerHistoryEntry,
+): PendingAttachment[] {
+  const scopeKey = composerHistoryScopeKey(scope);
+  const owner = {
+    viewId: scope.viewId,
+    incarnation: scope.incarnation,
+    effectiveLeafId: scope.effectiveLeafId,
+    scopeKey,
+  };
+  const attachments = [
+    ...entry.images.map<PendingAttachment>((image, index) => ({
+      localId: `history:${scopeKey}:${image.reference}`,
+      fileName: `Recalled image ${index + 1}`,
+      mimeType: image.mimeType,
+      size: image.size,
+      kind: "image",
+      status: "ready",
+      recalledArtifact: {
+        ...owner,
+        type: "image",
+        reference: image.reference,
+      },
+    })),
+    ...entry.files.map<PendingAttachment>((file) => ({
+      localId: `history:${scopeKey}:${file.reference}`,
+      fileName: file.fileName,
+      mimeType: "application/octet-stream",
+      size: 0,
+      kind: "file",
+      status: "ready",
+      recalledArtifact: {
+        ...owner,
+        type: "file",
+        reference: file.reference,
+        fileKind: file.kind,
+      },
+    })),
+  ];
+  return attachments;
+}
+
 /** Owns staging and delivery resources. Editors read the draft itself. */
 export class ComposerController {
   private readonly deliveries = new Map<string, DeliveryRecord>();
@@ -927,42 +970,7 @@ export class ComposerController {
       ),
     );
     if (linked) linked.recovery = "previous";
-    const scopeKey = composerHistoryScopeKey(scope);
-    const owner = {
-      viewId: scope.viewId,
-      incarnation: scope.incarnation,
-      effectiveLeafId: scope.effectiveLeafId,
-      scopeKey,
-    };
-    const attachments = [
-      ...entry.images.map<PendingAttachment>((image, index) => ({
-        localId: `history:${scopeKey}:${image.reference}`,
-        fileName: `Recalled image ${index + 1}`,
-        mimeType: image.mimeType,
-        size: image.size,
-        kind: "image",
-        status: "ready",
-        recalledArtifact: {
-          ...owner,
-          type: "image",
-          reference: image.reference,
-        },
-      })),
-      ...entry.files.map<PendingAttachment>((file) => ({
-        localId: `history:${scopeKey}:${file.reference}`,
-        fileName: file.fileName,
-        mimeType: "application/octet-stream",
-        size: 0,
-        kind: "file",
-        status: "ready",
-        recalledArtifact: {
-          ...owner,
-          type: "file",
-          reference: file.reference,
-          fileKind: file.kind,
-        },
-      })),
-    ];
+    const attachments = recalledInputAttachments(scope, entry);
     this.host.drafts.update(sessionId, {
       attachments,
       projectFiles: [],

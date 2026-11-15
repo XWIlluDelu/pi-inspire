@@ -53,7 +53,6 @@ function renderTopbar(readOnly = false) {
       onToggleNavigation={noop}
       onOpenCommandPalette={noop}
       onExportSession={noop}
-      onRenameSession={noop}
       onToggleSettings={noop}
       onToggleResources={noop}
     />,
@@ -89,6 +88,37 @@ it.each(["resolve", "reject"] as const)(
 
 describe("Session actions", () => {
   afterEach(() => vi.restoreAllMocks());
+
+  it("renames from the title menu in place and preserves Escape for cancel", async () => {
+    renderTopbar();
+    const rename = vi.spyOn(store, "renameSession").mockResolvedValue(true);
+    const title = () =>
+      screen.getByRole("button", { name: "Session actions: Original title" });
+    fireEvent.click(title());
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Rename session" }),
+    );
+    const input = screen.getByRole("textbox", { name: "Session name" });
+    expect(input).toHaveFocus();
+    fireEvent.change(input, { target: { value: "Cancelled" } });
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(rename).not.toHaveBeenCalled();
+    expect(title()).toHaveFocus();
+
+    fireEvent.click(title());
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Rename session" }),
+    );
+    fireEvent.change(screen.getByRole("textbox", { name: "Session name" }), {
+      target: { value: "New title" },
+    });
+    await act(async () =>
+      fireEvent.click(
+        screen.getByRole("button", { name: "Save session name" }),
+      ),
+    );
+    expect(rename).toHaveBeenCalledExactlyOnceWith(sessionId, "New title");
+  });
 
   it("copies the complete ID in read-only sessions and reports clipboard failure before retry", async () => {
     const user = userEvent.setup();

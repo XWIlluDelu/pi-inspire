@@ -97,7 +97,21 @@ export function readRecentSessionsOpen(): boolean {
 }
 
 export function saveRecentSessionsOpen(open: boolean): void {
-  write(NAV_DISCLOSURES, { recentSessions: open });
+  write(NAV_DISCLOSURES, {
+    ...jsonRecord(read(NAV_DISCLOSURES)),
+    recentSessions: open,
+  });
+}
+
+export function readHiddenSessionsOpen(): boolean {
+  return jsonRecord(read(NAV_DISCLOSURES))?.hiddenSessions === true;
+}
+
+export function saveHiddenSessionsOpen(open: boolean): void {
+  write(NAV_DISCLOSURES, {
+    ...jsonRecord(read(NAV_DISCLOSURES)),
+    hiddenSessions: open,
+  });
 }
 
 export function readWorkbench(key: string | null): SavedWorkbench | null {

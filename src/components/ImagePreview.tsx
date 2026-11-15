@@ -30,10 +30,19 @@ export function messageImage(
   messageIndex: number | undefined,
   partIndex: number,
   owner: TranscriptImageOwner,
+  savedEntry?: string,
 ) {
   if (!part || typeof part !== "object") return null;
   const image = part as Record<string, unknown>;
   if (image.type !== "image") return null;
+  if (savedEntry)
+    return (
+      <HistoryImage
+        key={`saved:${partIndex}`}
+        targetId={savedEntry}
+        index={partIndex}
+      />
+    );
   if (Number.isSafeInteger(messageIndex) && owner.sessionId && owner.viewId)
     return (
       <TranscriptImage
@@ -231,6 +240,40 @@ export function TranscriptImage({
       name={name}
       title={title}
       className={className}
+    />
+  );
+}
+
+export function HistoryImage({
+  targetId,
+  index,
+}: {
+  targetId: string;
+  index: number;
+}) {
+  const [attempt, setAttempt] = useState(0);
+  const loadImage = useCallback(
+    (signal: AbortSignal) => store.readBranchImage(targetId, index, signal),
+    [targetId, index, attempt],
+  );
+  return (
+    <LoadedImagePreview
+      load={loadImage}
+      className="history-detail__image"
+      alt="image in this history entry"
+      pending={<span role="status">Loading image…</span>}
+      unavailable={
+        <div className="history-image-error">
+          <span>Image unavailable</span>
+          <button
+            type="button"
+            className="button button--quiet"
+            onClick={() => setAttempt((value) => value + 1)}
+          >
+            Retry image
+          </button>
+        </div>
+      }
     />
   );
 }

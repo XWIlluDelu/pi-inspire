@@ -146,7 +146,7 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   disagree. Folder pins use the exact cwd identity that already defines groups and their collapse
   state.
 
-- The catalog offers All, Needs you and Hidden above one scrolling list. Needs you is a flat
+- The catalog offers All and Needs you above one scrolling list. Hidden has its own collapsible section after All. Needs you is a flat
   cross-project list. Its count is green, or red when any session is waiting or failed.
   Needs you lists sessions waiting for input or recovery, then unseen failures, then unseen
   completions, newest activity first within each priority. Pinning changes the order in All.
@@ -186,9 +186,12 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   containing the visible session carries the active highlight on its header, and active search
   results stay visible regardless of saved collapse state.
 
-  Choosing Hidden keeps focus on the view button and shows its sessions in the same catalog.
-  All excludes hidden sessions during browsing. A search in All includes matching hidden sessions
-  after the ordinary results. Hidden and Needs you search within their views.
+  Hidden remembers its disclosure state on this browser. Search in All expands Hidden to
+  show matching sessions after ordinary results. Needs you searches within its own view.
+
+  Pin and Hide immediately update the catalog from the local choice. A failed write returns
+  the presentation to the confirmed preferences. Delete and Clear Hidden use the confirmed
+  catalog and wait for pending curation writes.
 
   Cross-project rows place the project and age beneath the title. Selection and search highlights
   cover the whole row, including its action area.
@@ -203,8 +206,8 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   curation intact. Folder headers have the same Restore/Delete columns. Folder Delete confirms the
   count and full path and clears only that complete hidden folder.
 
-  Clear Hidden has its own accessible name and click target beside the views. Clear confirms
-  the complete Hidden view with one count-bearing dialog. Search, incomplete catalog data, a target
+  Clear Hidden has its own accessible name and click target beside the Hidden heading. Clear confirms
+  the complete Hidden section with one count-bearing dialog. Search, incomplete catalog data, a target
   opening, or another deletion block admission. The folder action applies these checks to its own
   targets. [[session-deletion]] defines target validation, Pi instance shutdown and file removal.
 

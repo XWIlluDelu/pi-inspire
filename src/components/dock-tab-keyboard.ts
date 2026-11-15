@@ -12,7 +12,7 @@ export function handleDockTabKey(event: KeyboardEvent<HTMLElement>) {
     ...(target
       .closest('[role="tablist"]')
       ?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? []),
-  ];
+  ].filter((tab) => !tab.closest("[hidden]"));
   const index = tabs.indexOf(target as HTMLButtonElement);
   if (index < 0) return;
   const next =

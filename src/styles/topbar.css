@@ -272,3 +272,60 @@
 .banner--warning button:focus-visible {
   background: color-mix(in srgb, var(--warning) 8%, transparent);
 }
+.inline-rename-input {
+  min-width: 0;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-canvas);
+  padding: 2px var(--space-2);
+  transition:
+    border-color var(--dur-micro) var(--ease-standard),
+    box-shadow var(--dur-micro) var(--ease-standard);
+}
+
+.inline-rename-input:focus-visible {
+  outline: none;
+  border-color: var(--accent-focus);
+  box-shadow: 0 0 0 3px var(--accent-tint);
+}
+
+
+.topbar__rename {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.topbar__rename input {
+  width: clamp(180px, 28vw, 560px);
+  min-width: 0;
+  max-width: 100%;
+}
+
+.session-actions-menu__row {
+  display: flex;
+  align-items: center;
+}
+
+.choice-panel__body .session-actions-menu__row > [role="menuitem"] {
+  flex: 1;
+  text-align: start;
+}
+
+.choice-panel__body .session-actions-menu__grip {
+  width: 30px;
+  padding: 0;
+  justify-content: center;
+  cursor: grab;
+  touch-action: none;
+}
+
+.session-actions-menu__row[data-dragging] {
+  background: var(--accent-tint);
+}
+
+@media (max-width: 600px) {
+  .topbar__ident:has(.topbar__rename) .topbar__workspace-meta { display: none; }
+}

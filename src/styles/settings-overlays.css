@@ -359,12 +359,12 @@
   justify-content: flex-end;
 }
 
-.settings__field-control > .native-select {
+.settings__field-control > .dropdown-trigger {
   width: var(--set-choice-w);
   max-width: 100%;
 }
 
-.settings__field .native-select {
+.settings__field .dropdown-trigger {
   min-width: 0;
   min-height: var(--set-control-h);
   height: var(--set-control-h);
@@ -381,7 +381,7 @@
 }
 
 @media (pointer: coarse) {
-  .settings__field .native-select,
+  .settings__field .dropdown-trigger,
   .settings-switch,
   .settings__nav-item {
     min-height: 40px;

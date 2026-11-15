@@ -28,34 +28,37 @@ test("palette settings stay independent of luminosity from first paint through H
         field in response.request().postDataJSON(),
     );
 
-  await settings
-    .getByRole("combobox", { name: "Theme", exact: true })
-    .selectOption("dark");
+  const theme = settings.getByRole("combobox", { name: "Theme", exact: true });
+  await theme.click();
+  await settings.getByRole("option", { name: "Dark", exact: true }).click();
   await expect(html).toHaveAttribute("data-theme", "dark");
 
   await page.setViewportSize({ width: 320, height: 900 });
   await expect(picker).toBeInViewport();
-  await expect(picker.locator("option")).toHaveText(
-    preferenceChoices.palette.options.map(({ label }) => label),
-  );
+  await picker.click();
+  for (const { label } of preferenceChoices.palette.options)
+    await expect(
+      settings.getByRole("option", { name: label, exact: true }),
+    ).toBeVisible();
   const paletteSave = savePreference("palette");
-  await picker.selectOption("wisteria");
+  await settings.getByRole("option", { name: "Wisteria", exact: true }).click();
   expect(await (await paletteSave).json()).toMatchObject({
     preferences: { palette: "wisteria", theme: "dark" },
   });
   await expect(html).toHaveAttribute("data-palette", "wisteria");
-  await expect(picker).toHaveValue("wisteria");
+  await expect(picker).toContainText("Wisteria");
 
   const lightSave = savePreference("theme");
-  await settings
-    .getByRole("combobox", { name: "Theme", exact: true })
-    .selectOption("light");
+  await theme.click();
+  await settings.getByRole("option", { name: "Light", exact: true }).click();
   expect(await (await lightSave).json()).toMatchObject({
     preferences: { palette: "wisteria", theme: "light" },
   });
 
   await settings.getByRole("button", { name: "Close settings" }).click();
-  const resources = page.getByRole("button", { name: "Toggle resources panel" });
+  const resources = page.getByRole("button", {
+    name: "Toggle resources panel",
+  });
   if ((await resources.getAttribute("aria-expanded")) === "false")
     await resources.click();
   const files = page.getByRole("tab", { name: "Files", exact: true });

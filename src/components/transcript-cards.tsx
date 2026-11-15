@@ -54,6 +54,7 @@ import { CodeRows, CodeView } from "./CodeView";
 import { ImageGallery } from "./ImageGallery";
 import {
   ImagePreview,
+  HistoryImage,
   TranscriptImage,
   TranscriptImageOwnerContext,
 } from "./ImagePreview";
@@ -72,6 +73,8 @@ import {
 } from "./transcript-activity-visibility";
 import { TranscriptSearchReveal } from "./transcript-search";
 
+import { useActivityCloseDelay } from "./use-activity-close-delay";
+
 type StaticVisibility = Exclude<VisibilityPreference, "dynamic">;
 
 const CardInspectionContext = createContext<(() => void) | undefined>(
@@ -80,6 +83,7 @@ const CardInspectionContext = createContext<(() => void) | undefined>(
 
 interface CardProps {
   accessibleLabel?: string;
+  animate?: boolean;
   describedBy?: string;
   defaultVisibility: StaticVisibility;
   className: string;
@@ -113,6 +117,7 @@ export function CollapsibleCard({
   describedBy,
   id,
   revealOnSearch = false,
+  animate = false,
   children,
 }: CardProps) {
   // Per-card override is view-local only; it never mutates saved preferences.
@@ -127,7 +132,10 @@ export function CollapsibleCard({
   const bodyId = id ?? generatedId;
   const disclosureLabel = `${open ? "Collapse" : "Expand"} ${toggleLabel}`;
   return (
-    <section className={`card ${className}`}>
+    <section
+      className={`card ${className}`}
+      data-dynamic={animate || undefined}
+    >
       <ActivityHeader
         className="card__header"
         copy={
@@ -194,11 +202,16 @@ export function ThinkingCard({
     [clean, thinking],
   );
   const hasContent = Boolean(clean.trim()) || presentation !== null;
+  const dynamicOpen = useActivityCloseDelay(
+    visibility === "dynamic" && dynamicActive && hasContent,
+    1800,
+    600,
+  );
   const resolvedVisibility: StaticVisibility =
     !hasContent && visibility !== "hidden"
       ? "collapsed"
       : visibility === "dynamic"
-        ? dynamicActive
+        ? dynamicOpen
           ? "expanded"
           : "collapsed"
         : visibility;
@@ -206,6 +219,7 @@ export function ThinkingCard({
     <CollapsibleCard
       defaultVisibility={resolvedVisibility}
       className="card--thinking"
+      animate={visibility === "dynamic"}
       icon={<Brain size={14} aria-hidden />}
       label="Thinking"
       toggleLabel="Thinking"
@@ -612,7 +626,9 @@ function ToolImage({
   return (
     <figure className="tool-image-block">
       <ToolBlockHeading label={block.label} />
-      {block.reference ? (
+      {block.entry ? (
+        <HistoryImage targetId={block.entry.id} index={block.entry.index} />
+      ) : block.reference ? (
         owner ? (
           <TranscriptImage
             {...owner}
@@ -1100,6 +1116,13 @@ export function ToolCard({
   const { tools } = usePresentationAdapters();
   const owner = useContext(TranscriptImageOwnerContext);
   const status = toolStatus(result, activity, live, call);
+  const dynamicOpen = useActivityCloseDelay(
+    Boolean(
+      dynamic && dynamicActive && status !== "success" && status !== "failure",
+    ),
+    1500,
+    500,
+  );
   const presentation = useMemo(
     () => (call ? tools.resolve({ call, result }) : null),
     [call, result, tools],
@@ -1117,13 +1140,10 @@ export function ToolCard({
     <ToolArgumentPreviewContext value={call?.__inspireToolCall}>
       <CollapsibleCard
         defaultVisibility={
-          dynamic
-            ? dynamicActive && status !== "success" && status !== "failure"
-              ? "expanded"
-              : "collapsed"
-            : visibility
+          dynamic ? (dynamicOpen ? "expanded" : "collapsed") : visibility
         }
         className="card--tool"
+        animate={dynamic}
         icon={toolIcon(name)}
         label={
           <code className="card__tool-name">

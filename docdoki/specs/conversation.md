@@ -134,7 +134,7 @@ boundaries in this contract.
 
   Search performs case-insensitive literal matching over settled conversation text and can scope
   results to all searchable turns, user input only, or model output only. Previous/next navigation
-  wraps and jumps by transcript row within the bounded Live page. The streaming tail and hidden
+  wraps and jumps by row across the loaded transcript. The streaming tail and hidden
   thinking/tool payloads are excluded. An active selected match locks out geometric latest-follow
   across Live updates until search is cleared or the user explicitly jumps to latest.
   Deliberate search navigation opens the matching context-summary row so its matched body is
@@ -173,9 +173,16 @@ boundaries in this contract.
   after message rows. The search row and narrow tool launchers precede messages in keyboard order;
   Latest follows them.
 
-- Turn history is a separate reading destination. Its search covers the complete selected branch
-  and opens the page around a matching native entry. Live keeps its own local search and follow
-  position.
+- Scrolling toward the top of the conversation reads successive bounded native History pages
+  before the oldest live message. Prepending a page preserves the visible row and its offset.
+  The desktop ScrollRail follows the same scrollport. The Prompt Map shows current-branch
+  user turns with a hover disclosure and tick navigation. On narrow screens its launcher is
+  in the conversation tools. Loaded targets scroll in place and unloaded targets open their
+  saved entry in Turn history.
+
+- Turn history also supports branch and full-entry inspection. Its search covers the complete
+  selected branch. Scrolling near a page boundary loads adjacent pages. Live keeps its own
+  local search and follow position.
 
 ## Response streaming and message-owned outcomes
 
@@ -197,8 +204,10 @@ boundaries in this contract.
   cannot strand new content below the fold. Only an explicit wheel, touch, or keyboard gesture
   releases latest-follow outright.
 
-  Focusing activity pauses latest-follow while the reader inspects it. One persistent Activity
-  disclosure and bounded Earlier/Later pages keep navigation in the group. Input owns the
+  Focusing activity pauses latest-follow while the reader inspects it. Dynamic thought, tool and
+  activity disclosures stay open briefly after settling. Saved activity begins in its settled
+  state. Reduced motion skips the added minimum durations and animations. Activity pages keep
+  navigation within the group. Input owns the
   viewport before its deferred scroll event. Once follow is released, only reaching the latest
   boundary through user scrolling or choosing Jump to latest resumes it. Transcript search keeps
   its separate viewport lock.
@@ -353,7 +362,7 @@ history keep one result per native execution. [[pi-integration]] owns execution 
 
 ## Pagination and presentation ownership
 
-- History shows one bounded page, with Earlier and Later controls. A page is pinned to the
+- History reads bounded pages. Earlier and Later controls supplement scrolling. Each page is pinned to the
   native leaf it was read from; new Live output does not insert, remove or scroll historical
   rows. Returning to Live resumes following the latest output.
 - Page, search, and full-entry reads replace the prior navigation intent. A delayed response

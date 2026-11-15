@@ -15,10 +15,7 @@ import {
   isBusyRunState,
 } from "../../shared/contracts";
 import { contextUsage, selectedRunState } from "../app-state";
-import {
-  type ComposerHistoryScope,
-  recentComposerHistory,
-} from "../composer-history";
+import type { ComposerHistoryScope } from "../composer-history";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import {
   resolveModelMetadata,
@@ -30,6 +27,7 @@ import { ComposerHistoryDialog } from "./ComposerHistoryDialog";
 import { ComposerThinkingControl } from "./ComposerThinkingControl";
 import { MessageEditor } from "./MessageEditor";
 import { ModelSelector } from "./ModelSelector";
+import { useComposerRecall } from "./use-composer-recall";
 
 function DeliveryNotice({
   text,
@@ -52,8 +50,13 @@ function ContextUsageButton() {
   if (!reading) return null;
   const percent = reading.percent === null ? null : Math.round(reading.percent);
   const tone =
-    percent === null ? "" : percent >= 85 ? " composer__usage--error" :
-    percent >= 60 ? " composer__usage--warning" : "";
+    percent === null
+      ? ""
+      : percent >= 85
+        ? " composer__usage--error"
+        : percent >= 60
+          ? " composer__usage--warning"
+          : "";
   return (
     <button
       type="button"
@@ -133,6 +136,13 @@ export const Composer = memo(function Composer() {
     draftRevision: number;
   } | null>(null);
   const draft = useSessionDraft(store.drafts, sessionId ?? undefined);
+  const recall = useComposerRecall(
+    historyScope,
+    historyKey,
+    draft,
+    state.sessionSelectionPending,
+  );
+  const editorDraft = recall.displayed;
   useSyncExternalStore(
     store.subscribeComposerDeliveries,
     store.composerDeliveryVersion,
@@ -143,7 +153,7 @@ export const Composer = memo(function Composer() {
     reloaded: reloadedDelivery,
     previous: previousDelivery,
   } = store.composerDeliveryState(sessionId);
-  const observingDelivery = Boolean(draft.intentId || reloadedDelivery);
+  const observingDelivery = Boolean(editorDraft.intentId || reloadedDelivery);
   const [deliveryBehavior, setDeliveryBehavior] = useState<
     "steer" | "followUp"
   >("steer");
@@ -159,7 +169,7 @@ export const Composer = memo(function Composer() {
   const native = sessionId ? state.sessionStatuses[sessionId] : undefined;
   const terminalQueueOnly = busy && native?.external && !native.queueAdmission;
   const deliveryBusy = busy && !terminalQueueOnly;
-  const shellInput = draft.text.trim().startsWith("!");
+  const shellInput = editorDraft.text.trim().startsWith("!");
 
   const runStateClass = isRunning
     ? "composer--running"
@@ -218,9 +228,9 @@ export const Composer = memo(function Composer() {
       (observingDelivery ||
         (deliveryStorageIssue !== "format" &&
           !terminalQueueOnly &&
-          (draft.text.trim() ||
-            draft.attachments.length ||
-            draft.projectFiles.length))),
+          (editorDraft.text.trim() ||
+            editorDraft.attachments.length ||
+            editorDraft.projectFiles.length))),
   );
   const activeBehavior = deliveryBusy
     ? deliveryBehavior
@@ -228,11 +238,15 @@ export const Composer = memo(function Composer() {
       ? "steer"
       : undefined;
   const submit = (behavior?: "steer" | "followUp") => {
-    if (!canSend || store.getState().sessionId !== sessionId) return;
-    void store.sendPrompt(draft.text, behavior, draft);
+    if (!canSend || store.getState().sessionId !== sessionId || !recall.apply())
+      return;
+    const current = store.drafts.get(sessionId);
+    void store.sendPrompt(current.text, behavior, current);
   };
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    recall.onKeyDown(event);
+    if (event.defaultPrevented) return;
     if (
       event.key === "ArrowUp" &&
       event.altKey &&
@@ -284,11 +298,12 @@ export const Composer = memo(function Composer() {
   return (
     <MessageEditor
       sessionId={sessionId}
-      draft={draft}
+      draft={editorDraft}
       className={runStateClass}
       label="Message composer"
       busy={busy || sessionOpening}
       disabled={sessionOpening}
+      beforeEdit={recall.apply}
       onSubmit={() => submit(activeBehavior)}
       files={{
         scope: sessionId,
@@ -500,8 +515,9 @@ export const Composer = memo(function Composer() {
         historyOpen.key === historyKey &&
         !sessionOpening && (
           <ComposerHistoryDialog
-            scope={historyScope}
-            recent={recentComposerHistory(historyScope)}
+            recent={recall.recent}
+            saved={recall.saved}
+            onRetry={recall.retry}
             onChoose={useHistory}
             onClose={() => setHistoryOpen(null)}
           />

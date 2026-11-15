@@ -89,17 +89,27 @@ test.describe("touch model settings", () => {
     ).toBeEnabled();
     await settings.getByLabel("Custom provider declarations").click();
     await page.setViewportSize(viewport);
-    const editor = settings.getByRole("region", { name: "Edit model", exact: true });
-    const back = editor.getByRole("button", { name: "Back to models" });
-    const declaration = settings.getByRole("combobox", {
-      name: "Custom declaration",
+    const editor = settings.getByRole("region", {
+      name: "Edit model",
+      exact: true,
     });
-    const editModel = async (label: string) => {
-      await declaration.selectOption({ label });
-      await settings
-        .getByRole("button", { name: `Edit declared model ${label}` })
+    const back = editor.getByRole("button", { name: "Back to models" });
+    const provider = settings.getByRole("region", {
+      name: "Custom provider custom",
+      exact: true,
+    });
+    await provider
+      .getByText(`Models (${snapshot.providers[0]!.models.length})`, {
+        exact: true,
+      })
+      .click();
+    const editModel = (label: string) =>
+      provider
+        .getByRole("button", {
+          name: `Edit declared model ${label}`,
+          exact: true,
+        })
         .click();
-    };
     await editModel("custom/same (embedding)");
     await editor.getByLabel("Display name").fill("Unsaved embedding edit");
     await back.click();

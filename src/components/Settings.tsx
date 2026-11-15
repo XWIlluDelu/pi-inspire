@@ -412,14 +412,15 @@ export const SettingsContent = memo(function SettingsContent({
                 ],
               ] as const
             ).map(([key, label, description]) => {
-              const value = state.runtimeSettings?.[key];
-              const pending = state.pendingRuntimeSettings[key];
+              const desired = state.pendingRuntimeSettings[key];
+              const value = desired ?? state.runtimeSettings?.[key];
+              const pending = desired !== undefined;
               return (
                 <SelectField
                   key={key}
                   label={label}
                   description={description}
-                  status={pending ? "Saving…" : undefined}
+                  aria-busy={pending || undefined}
                   value={value ?? ""}
                   display={value == null ? "Unavailable" : undefined}
                   options={MESSAGE_DELIVERY_MODES}
@@ -445,21 +446,16 @@ export const SettingsContent = memo(function SettingsContent({
                 ],
               ] as const
             ).map(([key, label, description]) => {
-              const value = state.runtimeSettings?.[key];
-              const pending = state.pendingRuntimeSettings[key];
+              const desired = state.pendingRuntimeSettings[key];
+              const value = desired ?? state.runtimeSettings?.[key];
+              const pending = desired !== undefined;
               const unavailable = !state.sessionId || value == null;
               return (
                 <SwitchField
                   key={key}
                   label={label}
                   description={description}
-                  status={
-                    pending
-                      ? "Saving…"
-                      : unavailable
-                        ? "Unavailable"
-                        : undefined
-                  }
+                  status={unavailable ? "Unavailable" : undefined}
                   checked={value === true}
                   disabled={pending || unavailable}
                   onChange={(checked) =>

@@ -28,7 +28,8 @@ test("@cross-browser live text-size changes reflow the same draft across layouts
       .click();
     await settings
       .getByRole("combobox", { name: "Content text size", exact: true })
-      .selectOption({ label: name });
+      .click();
+    await settings.getByRole("option", { name, exact: true }).click();
     await page.keyboard.press("Escape");
     await expect(settings).toBeHidden();
   }

@@ -93,6 +93,7 @@ export function ExtensionDialogContent({
             label: option,
           }))}
           pending={pending}
+          optionClassName="extension-dialog__choice"
           onChoose={(value) => onRespond({ id: request.id, value })}
         />
       ) : request.message ? (

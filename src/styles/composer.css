@@ -238,27 +238,14 @@
   padding: var(--space-1);
 }
 
-.composer__input[data-expanded] {
-  height: 56dvh;
-  max-height: 56dvh;
-}
-
-@supports not (field-sizing: content) {
-  .composer__input { height: 4lh; }
-}
-
 .composer .composer__input-wrap {
   /* The dock can compress this row. The textarea and form keep one line. */
   min-height: 0;
 }
 
-.composer__size-action {
-  align-self: flex-end;
-  margin-inline-end: var(--space-2);
-}
+.composer__action-slot:empty { display: none; }
 
 .composer__input {
-  field-sizing: content;
   max-height: var(--editor-compact-height, 40dvh);
   min-height: calc(1lh + 4px);
   width: 100%;
@@ -367,7 +354,7 @@
   }
 }
 
-.native-select {
+.dropdown-trigger {
   max-width: 100%;
   min-width: 0;
   color: var(--ink);
@@ -380,12 +367,12 @@
   padding: 4px var(--space-2);
 }
 
-.native-select:focus-visible {
+.dropdown-trigger:focus-visible {
   outline: 2px solid var(--accent-focus);
   outline-offset: 1px;
 }
 
-.native-select:disabled { color: var(--faint); }
+.dropdown-trigger:disabled { color: var(--faint); }
 
 .composer-thinking-control {
   display: flex;
@@ -636,12 +623,19 @@
   color: var(--muted);
 }
 
-/* Completion shares the editor's width and moves with its layout. */
 .completion {
   --picker-row-font: var(--font-mono);
-  flex: 0 1 auto;
+  position: fixed;
+  z-index: 42;
   min-width: 0;
-  max-height: min(280px, 30dvh);
+  max-height: min(320px, 45dvh);
+  overflow-y: auto;
+  padding: var(--space-1);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-2);
+  animation: float-in var(--dur-standard) var(--ease-standard);
   display: flex;
   flex-direction: column;
 }
@@ -878,4 +872,45 @@
 .input-history__entry span,
 .input-history__entry small {
   display: block;
+}
+
+.dropdown-trigger {
+  display: inline-flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-1);
+  cursor: pointer;
+}
+
+.dropdown-trigger > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dropdown-trigger > svg { flex: none; }
+
+.dropdown-popup {
+  position: fixed;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  overflow: hidden;
+  padding: 3px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-overlay);
+}
+
+.dropdown-popup .picker__row {
+  display: flex;
+  justify-content: space-between;
+  text-align: start;
+}
+
+.dropdown-popup small {
+  display: block;
+  color: var(--muted);
 }

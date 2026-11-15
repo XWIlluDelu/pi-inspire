@@ -19,7 +19,7 @@ import {
   ConfigurationEditor,
 } from "./ConfigurationForm";
 import { McpServerForm } from "./McpServerForm";
-import { NativeSelect } from "./NativeSelect";
+import { Dropdown } from "./Dropdown";
 import { SettingsCardMessage, SettingsSection } from "./SettingsSection";
 
 const serverKey = (scope: McpConfigScope, name: string) =>
@@ -342,8 +342,8 @@ function McpConfiguration({
               </section>
             ))}
             {servers.length > 0 && (
-              <NativeSelect
-                className="native-select--field configuration-selection"
+              <Dropdown
+                className="dropdown-trigger--field configuration-selection"
                 label="MCP server"
                 value={detail?.key ?? ""}
                 display={detail ? undefined : "Choose MCP server"}

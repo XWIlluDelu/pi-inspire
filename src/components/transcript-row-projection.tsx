@@ -50,6 +50,7 @@ interface TranscriptRowProjectionOptions {
   thinkingVisibility: VisibilityPreference;
   toolVisibility: ToolVisibilityPreference;
   activityFoldVisibility: ActivityFoldVisibilityPreference;
+  onReadFullEntry?: (entryId: string) => void;
 }
 
 type Row = {
@@ -57,6 +58,7 @@ type Row = {
   node: ReactNode;
   searchText: string;
   searchScope: Exclude<TranscriptSearchScope, "all"> | null;
+  promptEntry?: string;
 };
 
 type ResponsePart = { start: number; passages: string[] };
@@ -125,6 +127,7 @@ export function useTranscriptRows(options: TranscriptRowProjectionOptions) {
     thinkingVisibility,
     toolVisibility,
     activityFoldVisibility,
+    onReadFullEntry,
   } = options;
   const choices = useMemo<ActivityReadingChoices>(
     () => new Map(),
@@ -181,9 +184,10 @@ export function useTranscriptRows(options: TranscriptRowProjectionOptions) {
       node: ReactNode,
       searchText = "",
       searchScope: Row["searchScope"] = null,
+      promptEntry?: string,
     ) {
       flushActivity();
-      rows.push({ key, node, searchText, searchScope });
+      rows.push({ key, node, searchText, searchScope, promptEntry });
     }
 
     for (const [index, message] of messages.entries()) {
@@ -215,6 +219,7 @@ export function useTranscriptRows(options: TranscriptRowProjectionOptions) {
             <UserBubble message={message} {...owner} />,
             settled ? userMessageSearchText(message) : "",
             "user",
+            message.__inspireEntryId,
           );
           group = turn ?? key;
           band = 0;
@@ -377,6 +382,23 @@ export function useTranscriptRows(options: TranscriptRowProjectionOptions) {
               });
           }
       }
+      if (
+        message.__inspireProjectionReduced &&
+        message.__inspireEntryId &&
+        onReadFullEntry
+      ) {
+        const entryId = message.__inspireEntryId;
+        addRow(
+          `${key}:full-entry`,
+          <button
+            className="button button--quiet transcript__full-entry"
+            type="button"
+            onClick={() => onReadFullEntry(entryId)}
+          >
+            Read full entry
+          </button>,
+        );
+      }
     }
     flushActivity(busy);
     return { rows, toolCalls, toolResults };
@@ -392,6 +414,7 @@ export function useTranscriptRows(options: TranscriptRowProjectionOptions) {
     thinkingVisibility,
     toolVisibility,
     activityFoldVisibility,
+    onReadFullEntry,
     configuration,
     choices,
   ]);

@@ -117,6 +117,9 @@ export const CustomMessage = memo(function CustomMessage({
                   message.__inspireMessageIndex,
                   index,
                   owner,
+                  message.__inspireSavedHistory
+                    ? message.__inspireEntryId
+                    : undefined,
                 )) || (
                 <ActivityText
                   key={index}

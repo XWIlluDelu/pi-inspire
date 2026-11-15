@@ -119,12 +119,14 @@ export function PromptChoices({
   options,
   pending,
   onChoose,
+  optionClassName,
   children,
 }: {
   label: string;
   options: readonly { value: string; label: string; details?: ReactNode }[];
   pending: boolean;
   onChoose: (value: string) => void;
+  optionClassName?: string;
   children?: ReactNode;
 }) {
   const [active, setActive] = useState(0);
@@ -146,12 +148,17 @@ export function PromptChoices({
             event.altKey ||
             event.ctrlKey ||
             event.metaKey ||
-            !["ArrowDown", "ArrowUp"].includes(event.key) ||
+            !["ArrowDown", "ArrowUp", "Enter"].includes(event.key) ||
             !(event.target instanceof HTMLButtonElement) ||
             event.target.getAttribute("role") !== "option"
           )
             return;
           event.preventDefault();
+          if (event.key === "Enter") {
+            const option = options[active];
+            if (option) onChoose(option.value);
+            return;
+          }
           const next =
             (active + (event.key === "ArrowDown" ? 1 : -1) + options.length) %
             options.length;
@@ -172,7 +179,7 @@ export function PromptChoices({
               onFocus={() => setActive(index)}
               onClick={() => onChoose(option.value)}
             >
-              {option.label}
+              <span className={optionClassName}>{option.label}</span>
             </button>
             {option.details}
           </div>

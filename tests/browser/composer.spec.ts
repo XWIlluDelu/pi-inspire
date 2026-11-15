@@ -195,7 +195,7 @@ test("composer expansion preserves selection and artifacts", async ({
   const collapse = page.getByRole("button", { name: "Collapse editor" });
   const inputOverflow = () =>
     input.evaluate((element) => element.scrollHeight - element.clientHeight);
-  const wrapped = "wrapped layout text ".repeat(55);
+  const wrapped = "wrapped layout text ".repeat(200);
   await input.fill(wrapped);
   await expect(expand).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
@@ -248,6 +248,6 @@ test.describe("touch expansion", () => {
     await input.press("Enter");
     await expect(input).toHaveValue("touch multiline\n");
     await page.getByRole("button", { name: "Collapse editor" }).tap();
-    await expect(expand).toBeVisible();
+    await expect(expand).toHaveCount(0);
   });
 });

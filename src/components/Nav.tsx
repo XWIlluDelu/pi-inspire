@@ -1,5 +1,7 @@
 import {
   CheckCheck,
+  ChevronDown,
+  EyeOff,
   Inbox,
   PanelLeft,
   Pin,
@@ -25,8 +27,10 @@ import { type NeedsYouReason, needsYouRows } from "../needs-you";
 import { shallowEqual, store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
 import {
+  readHiddenSessionsOpen,
   readSessionCatalogView,
   type SessionCatalogView,
+  saveHiddenSessionsOpen,
   saveSessionCatalogView,
 } from "../workbench-session";
 import { HiddenClearDialog } from "./HiddenClearDialog";
@@ -46,7 +50,6 @@ import { BrandLogo, Wordmark } from "./Wordmark";
 const views = [
   ["all", "All"],
   ["needs-you", "Needs you"],
-  ["hidden", "Hidden"],
 ] as const;
 
 export const Nav = memo(function Nav({
@@ -96,11 +99,21 @@ export const Nav = memo(function Nav({
   } = useAppState(
     (state) => ({
       sessions: state.sessions,
-      pinnedSessionIds: state.prefs.pinnedSessionIds,
-      pinnedProjectCwds: state.prefs.pinnedProjectCwds,
-      curatedHiddenSessionIds: state.prefs.hiddenSessionIds,
-      hiddenProjectCwds: state.prefs.hiddenProjectCwds,
-      collapsedGroupCwds: state.prefs.navCollapsedGroups,
+      pinnedSessionIds:
+        state.desiredPreferences.pinnedSessionIds ??
+        state.prefs.pinnedSessionIds,
+      pinnedProjectCwds:
+        state.desiredPreferences.pinnedProjectCwds ??
+        state.prefs.pinnedProjectCwds,
+      curatedHiddenSessionIds:
+        state.desiredPreferences.hiddenSessionIds ??
+        state.prefs.hiddenSessionIds,
+      hiddenProjectCwds:
+        state.desiredPreferences.hiddenProjectCwds ??
+        state.prefs.hiddenProjectCwds,
+      collapsedGroupCwds:
+        state.desiredPreferences.navCollapsedGroups ??
+        state.prefs.navCollapsedGroups,
       selectedSessionId: state.sessionId,
       openingSessionId: state.openingSessionId,
       sessionStatuses: state.sessionStatuses,
@@ -129,9 +142,15 @@ export const Nav = memo(function Nav({
     onClose,
   );
   const navRef = isModal ? modalNavRef : internalNavRef;
-  const [view, setView] = useState(readSessionCatalogView);
+  const [view, setView] = useState<Exclude<SessionCatalogView, "hidden">>(() =>
+    readSessionCatalogView() === "needs-you" ? "needs-you" : "all",
+  );
+  const [hiddenOpen, setHiddenOpen] = useState(
+    () => readSessionCatalogView() === "hidden" || readHiddenSessionsOpen(),
+  );
+  const hiddenContentId = useId();
   const listRef = useRef<HTMLDivElement>(null);
-  const chooseView = (next: SessionCatalogView) => {
+  const chooseView = (next: Exclude<SessionCatalogView, "hidden">) => {
     setView(next);
     saveSessionCatalogView(next);
     if (listRef.current) listRef.current.scrollTop = 0;
@@ -197,10 +216,15 @@ export const Nav = memo(function Nav({
   const displayed = catalogSections(
     catalog,
     view,
-    searching,
+    false,
     needsYou.map(({ session }) => session),
   );
-  const searchResults = displayed.flatMap((section) =>
+  const showHidden = view === "all" && (hiddenOpen || searching);
+  const hiddenSections = view === "all" ? catalog.hidden : [];
+  const searchResults = [
+    ...displayed,
+    ...(showHidden ? hiddenSections : []),
+  ].flatMap((section) =>
     section.kind === "folder" &&
     !searching &&
     collapsedGroupCwds.includes(section.group.cwd)
@@ -262,7 +286,7 @@ export const Nav = memo(function Nav({
   }
 
   const nameCounts = new Map<string, number>();
-  for (const section of displayed)
+  for (const section of [...displayed, ...hiddenSections])
     if (section.kind === "folder") {
       const { name } = section.group;
       nameCounts.set(name, (nameCounts.get(name) ?? 0) + 1);
@@ -305,6 +329,70 @@ export const Nav = memo(function Nav({
     hiddenSessions,
     deletionState,
   );
+
+  const renderSection = (section: (typeof displayed)[number]) => {
+    if (section.kind === "folder") {
+      const { group, hidden } = section;
+      return (
+        <ProjectGroup
+          key={group.cwd}
+          group={group}
+          searching={searching}
+          searchQuery={sessionQuery}
+          showContext={(nameCounts.get(group.name) ?? 0) > 1}
+          selectedSessionId={selectedSessionId}
+          highlightedSessionId={highlightedSessionId}
+          hidden={hidden}
+          onSelectSession={selectSession}
+          onDeleteSession={hidden ? setDeleteCandidate : undefined}
+          onDeleteGroup={
+            hidden
+              ? () =>
+                  setHiddenClearCandidate({
+                    sessionIds: group.sessions.map(({ id }) => id),
+                    projectCwd: group.cwd,
+                  })
+              : undefined
+          }
+          deleteGroupDisabledReason={
+            hidden
+              ? hiddenDeletionBlockReason(group.sessions, deletionState)
+              : null
+          }
+        />
+      );
+    }
+    const rows = section.sessions.map((session) => (
+      <SessionRow
+        key={session.id}
+        session={session}
+        searchQuery={sessionQuery}
+        selectedSessionId={selectedSessionId}
+        highlightedSessionId={highlightedSessionId}
+        showProject
+        onSelect={selectSession}
+        onDelete={section.kind === "hidden" ? setDeleteCandidate : undefined}
+      />
+    ));
+    return section.kind === "pinned" ? (
+      <section
+        key={section.kind}
+        className="nav__group nav__group--pinned"
+        aria-label="Pinned"
+      >
+        <h2 className="nav__group-title">
+          <Pin size={16} aria-hidden />
+          <span className="nav__group-name">Pinned</span>
+          <span className="nav__group-count" aria-hidden>
+            {section.sessions.length}
+          </span>
+        </h2>
+        {rows}
+      </section>
+    ) : (
+      <Fragment key={section.kind}>{rows}</Fragment>
+    );
+  };
 
   const contents = (
     <>
@@ -471,26 +559,6 @@ export const Nav = memo(function Nav({
             </button>
           ))}
         </div>
-        {view === "hidden" && hiddenSessions.length > 0 && (
-          <button
-            type="button"
-            className="icon-button nav__catalog-clear"
-            aria-label="Clear Hidden"
-            title={hiddenClearReason ?? "Clear Hidden"}
-            disabled={hiddenClearReason !== null}
-            onClick={() =>
-              setHiddenClearCandidate({
-                sessionIds: hiddenSessions.map(({ id }) => id),
-              })
-            }
-          >
-            {clearingHidden ? (
-              <PiLoader size={14} aria-hidden />
-            ) : (
-              <Trash2 size={14} aria-hidden />
-            )}
-          </button>
-        )}
       </div>
       {sessionActionError ? (
         <p className="nav__error" role="alert">
@@ -502,79 +570,11 @@ export const Nav = memo(function Nav({
         className={`nav__list nav__list--${view}`}
         role="region"
         aria-label={
-          view === "needs-you"
-            ? "Sessions that need you"
-            : view === "hidden"
-              ? "Hidden"
-              : "All sessions"
+          view === "needs-you" ? "Sessions that need you" : "All sessions"
         }
         aria-busy={curationPending || undefined}
       >
-        {displayed.map((section) => {
-          if (section.kind === "folder") {
-            const { group, hidden } = section;
-            return (
-              <ProjectGroup
-                key={group.cwd}
-                group={group}
-                searching={searching}
-                searchQuery={sessionQuery}
-                showContext={(nameCounts.get(group.name) ?? 0) > 1}
-                selectedSessionId={selectedSessionId}
-                highlightedSessionId={highlightedSessionId}
-                hidden={hidden}
-                onSelectSession={selectSession}
-                onDeleteSession={hidden ? setDeleteCandidate : undefined}
-                onDeleteGroup={
-                  hidden
-                    ? () =>
-                        setHiddenClearCandidate({
-                          sessionIds: group.sessions.map(({ id }) => id),
-                          projectCwd: group.cwd,
-                        })
-                    : undefined
-                }
-                deleteGroupDisabledReason={
-                  hidden
-                    ? hiddenDeletionBlockReason(group.sessions, deletionState)
-                    : null
-                }
-              />
-            );
-          }
-          const rows = section.sessions.map((session) => (
-            <SessionRow
-              key={session.id}
-              session={session}
-              searchQuery={sessionQuery}
-              selectedSessionId={selectedSessionId}
-              highlightedSessionId={highlightedSessionId}
-              showProject
-              onSelect={selectSession}
-              onDelete={
-                section.kind === "hidden" ? setDeleteCandidate : undefined
-              }
-            />
-          ));
-          return section.kind === "pinned" ? (
-            <section
-              key={section.kind}
-              className="nav__group nav__group--pinned"
-              aria-label="Pinned"
-            >
-              <h2 className="nav__group-title">
-                <Pin size={16} aria-hidden />
-                <span className="nav__group-name">Pinned</span>
-                <span className="nav__group-count" aria-hidden>
-                  {section.sessions.length}
-                </span>
-              </h2>
-              {rows}
-            </section>
-          ) : (
-            <Fragment key={section.kind}>{rows}</Fragment>
-          );
-        })}
+        {displayed.map(renderSection)}
         {sessionListIssues.length ? (
           <div className="nav__pagination">
             <details className="nav__source-issues">
@@ -641,6 +641,7 @@ export const Nav = memo(function Nav({
           </div>
         ) : null}
         {displayed.length === 0 &&
+          (!showHidden || hiddenSessions.length === 0) &&
           !sessionListBusy &&
           !sessionListError &&
           !sessionListIssues.length && (
@@ -659,12 +660,62 @@ export const Nav = memo(function Nav({
                     : "Nothing needs you"
                   : searching
                     ? "No sessions found"
-                    : view === "hidden"
-                      ? "No hidden sessions"
-                      : "No sessions yet"}
+                    : "No sessions yet"}
               </span>
             </div>
           )}
+        {hiddenSections.length > 0 && (
+          <section
+            className="nav__group nav__group--hidden"
+            aria-label="Hidden"
+          >
+            <h2 className="nav__group-title nav__hidden-heading">
+              <button
+                type="button"
+                className="nav__group-toggle"
+                aria-expanded={showHidden}
+                aria-controls={hiddenContentId}
+                onClick={() => {
+                  const next = !hiddenOpen;
+                  setHiddenOpen(next);
+                  saveHiddenSessionsOpen(next);
+                }}
+              >
+                <EyeOff size={16} aria-hidden />
+                <span className="nav__group-name">Hidden</span>
+                <span className="nav__group-count" aria-hidden>
+                  {hiddenSessions.length}
+                </span>
+                <ChevronDown size={12} aria-hidden />
+              </button>
+              <button
+                type="button"
+                className="icon-button nav__catalog-clear"
+                aria-label="Clear Hidden"
+                title={hiddenClearReason ?? "Clear Hidden"}
+                disabled={hiddenClearReason !== null}
+                onClick={() =>
+                  setHiddenClearCandidate({
+                    sessionIds: hiddenSessions.map(({ id }) => id),
+                  })
+                }
+              >
+                {clearingHidden ? (
+                  <PiLoader size={14} aria-hidden />
+                ) : (
+                  <Trash2 size={14} aria-hidden />
+                )}
+              </button>
+            </h2>
+            <div
+              className="nav__hidden-content"
+              id={hiddenContentId}
+              hidden={!showHidden}
+            >
+              {showHidden && hiddenSections.map(renderSection)}
+            </div>
+          </section>
+        )}
       </div>
       {deleteCandidate ? (
         <SessionDeleteDialog

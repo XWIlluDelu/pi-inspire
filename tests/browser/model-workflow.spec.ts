@@ -91,7 +91,7 @@ test("New resolves trusted model defaults and sends explicit then inherited nati
       "title",
       "Use workspace model defaults",
     );
-    await expect(thinking).toHaveValue("low");
+    await expect(thinking).toContainText("Low");
     const message = firstInput(page);
     const project = page.getByRole("textbox", { name: "Project directory" });
     const controls = page.getByRole("button", { name: "Extension controls" });
@@ -107,7 +107,11 @@ test("New resolves trusted model defaults and sends explicit then inherited nati
 
     await model.click();
     await page.getByRole("option", { name: /project router.*Router/ }).click();
-    await thinking.selectOption("high");
+    await thinking.click();
+    await page
+      .getByRole("listbox", { name: /thinking/i })
+      .getByRole("option", { name: "High", exact: true })
+      .click();
     await controls.click();
     await page.getByText("Quick", { exact: true }).click();
 
@@ -119,7 +123,7 @@ test("New resolves trusted model defaults and sends explicit then inherited nati
           "title",
           "Inherit model from source session",
         );
-        await expect(thinking).toHaveValue("high");
+        await expect(thinking).toContainText("High");
       }
       await message.fill(text);
       const started = creation(page);

@@ -1441,3 +1441,44 @@ body.pane-resizing .nav {
   flex: 0 0 auto;
   white-space: nowrap;
 }
+
+.file-preview,
+.terminal-pane {
+  position: relative;
+}
+
+.floating-pane-actions {
+  position: absolute;
+  z-index: 4;
+  inset-block-start: var(--space-2);
+  inset-inline-end: var(--space-3);
+  max-width: calc(100% - 2 * var(--space-3));
+  display: flex;
+  align-items: flex-start;
+  box-sizing: border-box;
+  gap: 2px;
+  padding: 2px 4px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+}
+
+.floating-pane-actions__buttons,
+.floating-pane-actions__toggle {
+  flex: 0 0 auto;
+}
+
+.floating-pane-actions__buttons {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
+  gap: 2px;
+}
+
+.floating-pane-actions__buttons[hidden] { display: none; }
+
+.dock-tab[hidden] { display: none; }
+.dock-tabs[data-collapse-overflow] .dock-tabs__scroll { overflow: hidden; }
+.dock-tabs[data-collapse-overflow] .dock-tab { max-width: 100%; }

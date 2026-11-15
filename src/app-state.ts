@@ -192,7 +192,7 @@ export interface AppState extends WorkspaceBrowserState, FileInspectionState {
   sessionFile: string | null;
   sessionStats: unknown;
   runtimeSettings: PiRuntimeSettings | null;
-  pendingRuntimeSettings: Partial<Record<keyof PiRuntimeSettings, true>>;
+  pendingRuntimeSettings: Partial<PiRuntimeSettings>;
   readOnlyReason: SessionReadOnlyReason | null;
   cwd: string | null;
   model: ModelOption | null;

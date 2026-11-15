@@ -144,10 +144,10 @@ export function AnchoredPanel({
       '[aria-current="location"]',
     );
     const first = panel.current?.querySelector<HTMLElement>(
-      ":is(input, select, button):enabled",
+      menu ? '[role="menuitem"]:enabled' : ":is(input, select, button):enabled",
     );
     (current ?? first)?.focus({ preventScroll: !current });
-  }, [shown, searchable, readOnly, model]);
+  }, [shown, searchable, readOnly, model, menu]);
   if (model && !shown) return null;
   const body = (
     // biome-ignore lint/a11y/useAriaPropsSupportedByRole: Both supported roles, menu and dialog, accept an accessible name.
@@ -204,7 +204,7 @@ export function AnchoredPanel({
           return;
         const actions = [
           ...event.currentTarget.querySelectorAll<HTMLButtonElement>(
-            "button:enabled",
+            '[role="menuitem"]:enabled',
           ),
         ];
         const index = actions.findIndex(

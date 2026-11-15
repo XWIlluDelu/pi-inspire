@@ -35,6 +35,7 @@ import { useFileChanges } from "./ChangesPane";
 import { CodeView, SourceReader } from "./CodeView";
 import { ContextPaneState } from "./ContextPaneState";
 import { CopyAction } from "./CopyAction";
+import { FloatingPaneActions } from "./FloatingPaneActions";
 import type { ContextPaneView } from "./context-pane-view";
 import { DocumentOutline } from "./DocumentOutline";
 import { DocumentPreview } from "./DocumentPreview";
@@ -627,10 +628,11 @@ export function FilePreview({
   }, [readingState, viewMode, preview?.status, descriptor?.id, showingChanges]);
   return (
     <div className="file-preview" ref={rootRef}>
-      <div
-        className="pane-toolbar file-preview__actions"
-        role="toolbar"
-        aria-label="File actions"
+      <FloatingPaneActions
+        className="file-preview__actions"
+        label="file actions"
+        readingSurface={contentRef}
+        owner={readingPosition}
       >
         {canToggle || showingChanges ? (
           <FileViewControl
@@ -707,7 +709,7 @@ export function FilePreview({
         >
           <Download size={16} aria-hidden />
         </button>
-      </div>
+      </FloatingPaneActions>
       <div
         className="file-preview__content"
         ref={contentRef}

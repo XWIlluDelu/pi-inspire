@@ -1,6 +1,7 @@
 import { Maximize2, Minimize2 } from "lucide-react";
 import {
   type ClipboardEventHandler,
+  type CSSProperties,
   type KeyboardEventHandler,
   type RefObject,
   useCallback,
@@ -11,6 +12,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import type { ModelOption } from "../../shared/contracts";
 import type { ProjectFileResult, ProjectFileSearchResult } from "../api";
 import {
@@ -25,7 +27,11 @@ import {
   resolveCommandInventory,
 } from "../composer-completion";
 import { isComposingKeyboardEvent } from "../keyboard-input";
-import { useFloatingMenuDismissal } from "../use-floating-menu";
+import { textareaCaretLineBounds } from "../textarea-caret";
+import {
+  useFloatingMenuDismissal,
+  useFloatingMenuPlacement,
+} from "../use-floating-menu";
 import { HiddenFilesToggle } from "./HiddenFilesToggle";
 import { type ListOption, OptionList, useOptionList } from "./OptionList";
 import {
@@ -34,6 +40,15 @@ import {
   projectFileOption,
   useProjectFileSearch,
 } from "./ProjectFiles";
+import { useComposerTextareaSize } from "./use-composer-textarea-size";
+
+const completionBounds = {
+  gap: 6,
+  horizontalMargin: 8,
+  verticalMargin: 8,
+  maxWidth: 720,
+  maxHeight: 320,
+};
 
 type CompletionItem =
   | { kind: "file"; file: ProjectFileResult }
@@ -51,6 +66,7 @@ function CompletionMenu({
   onPick,
   onDismiss,
   anchorRef,
+  placement,
 }: {
   list: ReturnType<typeof useOptionList<CompletionItem>>;
   token: CaretCompletion;
@@ -62,6 +78,7 @@ function CompletionMenu({
   onPick: (item: CompletionItem) => void;
   onDismiss: () => void;
   anchorRef: RefObject<HTMLDivElement | null>;
+  placement: ReturnType<typeof useFloatingMenuPlacement>;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
   useFloatingMenuDismissal(true, anchorRef, menuRef, onDismiss);
@@ -100,6 +117,18 @@ function CompletionMenu({
     <div
       ref={menuRef}
       className="completion"
+      data-placement={placement?.direction}
+      style={
+        placement
+          ? ({
+              left: placement.left,
+              top: placement.top,
+              bottom: placement.bottom,
+              width: placement.width,
+              maxHeight: placement.maxHeight,
+            } satisfies CSSProperties)
+          : { visibility: "hidden" }
+      }
       onClick={(event) => event.stopPropagation()}
     >
       {token.kind === "file" && onShowHiddenFilesChange ? (
@@ -176,6 +205,7 @@ export function ComposerInput({
   initialCaretAtEnd = false,
   onPaste,
   onKeyDown,
+  sizeActionSlot,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -197,6 +227,7 @@ export function ComposerInput({
   initialCaretAtEnd?: boolean;
   onPaste?: ClipboardEventHandler<HTMLTextAreaElement>;
   onKeyDown?: KeyboardEventHandler<HTMLTextAreaElement>;
+  sizeActionSlot?: HTMLElement | null;
 }) {
   const completionList = useOptionList<CompletionItem>();
   const editorId = useId();
@@ -217,6 +248,38 @@ export function ComposerInput({
   );
   const inputWrapRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const canExpand = useComposerTextareaSize(
+    textareaRef,
+    inputWrapRef,
+    value,
+    expanded,
+  );
+  const resolveCompletionTarget = useCallback(() => {
+    const input = textareaRef.current;
+    const wrap = inputWrapRef.current;
+    if (!input || !wrap) return null;
+    const horizontal = wrap.getBoundingClientRect();
+    const vertical =
+      textareaCaretLineBounds(input, completion?.end) ??
+      input.getBoundingClientRect();
+    return {
+      context: wrap,
+      anchor: {
+        left: horizontal.left,
+        right: horizontal.right,
+        top: vertical.top,
+        bottom: vertical.bottom,
+      },
+      preferredWidth: horizontal.width,
+      positioningRoot: wrap.closest<HTMLElement>("dialog[open]"),
+      observe: [wrap, input],
+    };
+  }, [completion?.end]);
+  const placement = useFloatingMenuPlacement(
+    completion !== null,
+    resolveCompletionTarget,
+    completionBounds,
+  );
   // Let an enclosing modal capture its opener before moving focus.
   useEffect(() => {
     if (autoFocus) textareaRef.current?.focus({ preventScroll: true });
@@ -472,54 +535,60 @@ export function ComposerInput({
           autoCorrect="off"
           data-modal-autofocus={autoFocus || undefined}
         />
-        {completion && (
-          <CompletionMenu
-            list={completionList}
-            token={completion}
-            options={options}
-            status={completion.kind === "file" ? completionStatus : "ready"}
-            truncated={completion.kind === "file" && completionTruncated}
-            showHiddenFiles={showHiddenFiles}
-            onShowHiddenFilesChange={
-              onShowHiddenFilesChange
-                ? (value) => {
-                    onShowHiddenFilesChange(value);
-                    textareaRef.current?.focus();
-                  }
-                : undefined
-            }
-            onPick={pickCompletion}
-            onDismiss={dismissCompletion}
-            anchorRef={inputWrapRef}
-          />
-        )}
+        {completion &&
+          createPortal(
+            <CompletionMenu
+              list={completionList}
+              token={completion}
+              options={options}
+              status={completion.kind === "file" ? completionStatus : "ready"}
+              truncated={completion.kind === "file" && completionTruncated}
+              showHiddenFiles={showHiddenFiles}
+              onShowHiddenFilesChange={
+                onShowHiddenFilesChange
+                  ? (value) => {
+                      onShowHiddenFilesChange(value);
+                      textareaRef.current?.focus();
+                    }
+                  : undefined
+              }
+              onPick={pickCompletion}
+              onDismiss={dismissCompletion}
+              anchorRef={inputWrapRef}
+              placement={placement}
+            />,
+            inputWrapRef.current?.closest("dialog[open]") ?? document.body,
+          )}
       </div>
       {usage && (
         <div className="composer__usage" role="note">
           {usage}
         </div>
       )}
-      {value || expanded ? (
-        <button
-          type="button"
-          className="composer__size-action icon-button"
-          aria-label={expanded ? "Collapse editor" : "Expand editor"}
-          title={expanded ? "Collapse editor" : "Expand editor"}
-          aria-expanded={expanded}
-          aria-controls={editorId}
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={() => {
-            setExpanded(!expanded);
-            textareaRef.current?.focus({ preventScroll: true });
-          }}
-        >
-          {expanded ? (
-            <Minimize2 size={16} aria-hidden />
-          ) : (
-            <Maximize2 size={16} aria-hidden />
-          )}
-        </button>
-      ) : null}
+      {canExpand || expanded
+        ? createPortal(
+            <button
+              type="button"
+              className="composer__size-action icon-button"
+              aria-label={expanded ? "Collapse editor" : "Expand editor"}
+              title={expanded ? "Collapse editor" : "Expand editor"}
+              aria-expanded={expanded}
+              aria-controls={editorId}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => {
+                setExpanded(!expanded);
+                textareaRef.current?.focus({ preventScroll: true });
+              }}
+            >
+              {expanded ? (
+                <Minimize2 size={16} aria-hidden />
+              ) : (
+                <Maximize2 size={16} aria-hidden />
+              )}
+            </button>,
+            sizeActionSlot ?? inputWrapRef.current ?? document.body,
+          )
+        : null}
     </>
   );
 }

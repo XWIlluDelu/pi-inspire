@@ -329,7 +329,11 @@ test.describe("touch reading controls", () => {
       .toMatchObject({ text: "Ready", code: true });
     const search = page.getByRole("search", { name: "Search conversation" });
     const scope = search.getByRole("combobox", { name: "Search scope" });
-    await scope.selectOption("user");
+    await scope.click();
+    await page
+      .getByRole("listbox", { name: "Search scope" })
+      .getByRole("option", { name: "User", exact: true })
+      .click();
     await expect(input).toHaveValue("Ready");
     await expect(page.getByLabel("Transcript search matches")).toHaveText(
       "0 matches",

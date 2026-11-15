@@ -4,7 +4,7 @@ import {
   type HostRestartStatus,
   restartObservation,
 } from "../../shared/host-restart";
-import { openSettings, pairAndOpen, pairedPage } from "./support/navigation";
+import { openSettings, pairedPage } from "./support/navigation";
 
 // These suites own mocked Host responses, not Service Worker fetch handling.
 test.use({ serviceWorkers: "block" });
@@ -136,7 +136,6 @@ test("busy Host restarts preserve the interruption grant across receipt retry", 
     receiptReady.resolve();
     await expect(message).toHaveText("Restart requested.");
     await expect(retry).toHaveCount(0);
-
   } finally {
     receiptReady.resolve();
   }
@@ -246,13 +245,16 @@ test("narrow Settings keeps footer actions usable after a cancelled reset", asyn
   await openConversation();
   await expect(reset).toBeInViewport();
   const activity = dialog.getByRole("combobox", { name: "Activity groups" });
-  await savePreference(() => activity.selectOption("collapsed"));
+  await activity.click();
+  await savePreference(() =>
+    dialog.getByRole("option", { name: "Collapsed", exact: true }).click(),
+  );
 
   await reset.click();
   await page.keyboard.press("Escape");
   await expect(confirmation).toBeHidden();
   await expect(reset).toBeFocused();
-  await expect(activity).toHaveValue("collapsed");
+  await expect(activity).toContainText("Collapsed");
   await reset.click();
   await savePreference(() => confirm.click());
 });

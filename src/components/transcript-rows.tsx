@@ -109,7 +109,15 @@ export const UserBubble = memo(function UserBubble({
   const images = Array.isArray(message.content)
     ? message.content
         .map((part, index) =>
-          messageImage(part, message.__inspireMessageIndex, index, owner),
+          messageImage(
+            part,
+            message.__inspireMessageIndex,
+            index,
+            owner,
+            message.__inspireSavedHistory
+              ? message.__inspireEntryId
+              : undefined,
+          ),
         )
         .filter((image) => image !== null)
     : [];
@@ -333,7 +341,13 @@ function PendingImage({ id, alt }: { id: string; alt: string }) {
     (signal: AbortSignal) => store.loadAttachmentImage(id, signal),
     [id],
   );
-  return <LoadedImagePreview load={loadImage} alt={alt} className="pending-group__image" />;
+  return (
+    <LoadedImagePreview
+      load={loadImage}
+      alt={alt}
+      className="pending-group__image"
+    />
+  );
 }
 
 export function PendingQueueGroups({

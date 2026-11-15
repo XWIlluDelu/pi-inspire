@@ -1,7 +1,7 @@
-import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
+import { ChevronDown, ChevronUp, ListTree, Search, X } from "lucide-react";
 import type { RefObject } from "react";
 import { isComposingKeyboardEvent } from "../keyboard-input";
-import { NativeSelect } from "./NativeSelect";
+import { Dropdown } from "./Dropdown";
 import { SearchField } from "./SearchField";
 import {
   TRANSCRIPT_SEARCH_SCOPES,
@@ -13,6 +13,8 @@ export function TranscriptUtilities({
   inputRef,
   searchLauncherRef,
   onOpenHistory,
+  onTogglePrompts,
+  promptsOpen,
   searchOpen,
   onOpenSearch,
   onClose,
@@ -21,6 +23,8 @@ export function TranscriptUtilities({
   inputRef: RefObject<HTMLInputElement | null>;
   searchLauncherRef: RefObject<HTMLButtonElement | null>;
   onOpenHistory?: () => void;
+  onTogglePrompts?: () => void;
+  promptsOpen: boolean;
   searchOpen: boolean;
   onOpenSearch: () => void;
   onClose: (restoreFocus?: boolean) => void;
@@ -38,6 +42,18 @@ export function TranscriptUtilities({
       role="toolbar"
       aria-label="Transcript tools"
     >
+      {onTogglePrompts && (
+        <button
+          type="button"
+          className="button transcript-tools__prompts"
+          aria-label="Prompt Map"
+          title="Prompt Map"
+          aria-expanded={promptsOpen}
+          onClick={onTogglePrompts}
+        >
+          <ListTree size={17} aria-hidden />
+        </button>
+      )}
       {onOpenHistory && (
         <button
           type="button"
@@ -85,7 +101,7 @@ export function TranscriptUtilities({
           title="Search loaded conversation messages"
           action={
             <>
-              <NativeSelect
+              <Dropdown
                 label="Search scope"
                 value={search.scope}
                 options={TRANSCRIPT_SEARCH_SCOPES}

@@ -14,6 +14,17 @@ interface MessageOwner {
   projectionKey: string;
 }
 
+function ownsMessage(owner: MessageOwner | null) {
+  const state = store.getState();
+  return (
+    owner &&
+    state.sessionId === owner.sessionId &&
+    state.view.viewId === owner.viewId &&
+    transcriptProjectionKey(state.view.viewId, state.view.incarnation) ===
+      owner.projectionKey
+  );
+}
+
 /** Declare formats synchronously; saved content is read on demand from its entry. */
 export function messageCopyLoader(
   message: ChatMessage | undefined,
@@ -31,19 +42,7 @@ export function messageCopyLoader(
         message?.__inspireEntryId &&
         ["user", "assistant", "custom"].includes(message.role)
       ) {
-        const current = () => {
-          const state = store.getState();
-          return (
-            owner &&
-            state.sessionId === owner.sessionId &&
-            state.view.viewId === owner.viewId &&
-            transcriptProjectionKey(
-              state.view.viewId,
-              state.view.incarnation,
-            ) === owner.projectionKey
-          );
-        };
-        if (!current())
+        if (!ownsMessage(owner))
           throw new DOMException(
             "The message's conversation changed",
             "AbortError",
@@ -54,7 +53,7 @@ export function messageCopyLoader(
           "message",
         );
         signal.throwIfAborted();
-        if (!content || !current())
+        if (!content || !ownsMessage(owner))
           throw new DOMException(
             "The message's conversation changed",
             "AbortError",
@@ -91,7 +90,20 @@ export async function messageCopyContent(
   if (Array.isArray(message?.content)) {
     for (const [index, part] of message.content.entries()) {
       if (!part || typeof part !== "object" || part.type !== "image") continue;
-      if (Number.isSafeInteger(message.__inspireMessageIndex)) {
+      if (message.__inspireSavedHistory && message.__inspireEntryId) {
+        if (!ownsMessage(owner))
+          throw new DOMException(
+            "The message's conversation changed",
+            "AbortError",
+          );
+        const image = await store.readBranchImage(
+          message.__inspireEntryId,
+          index,
+          signal,
+        );
+        if (!image) throw new Error("Image data is unavailable");
+        images.push(image);
+      } else if (Number.isSafeInteger(message.__inspireMessageIndex)) {
         if (!owner) throw new Error("The image's conversation is unavailable");
         images.push(
           await store.loadTranscriptImage(

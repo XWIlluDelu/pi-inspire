@@ -769,3 +769,12 @@ button.workspace-tree__status:hover:where(:not(.workspace-tree__status--error)) 
   cursor: default;
   opacity: 1;
 }
+
+.nav__hidden-heading {
+  display: flex;
+  align-items: center;
+}
+
+.nav__hidden-heading .nav__group-toggle { flex: 1; }
+.nav__hidden-heading .nav__group-toggle[aria-expanded="false"] > svg:last-child { rotate: -90deg; }
+.nav__hidden-content { padding-inline: var(--space-2); }

@@ -952,7 +952,17 @@ export interface HistoryMatch {
   snippet: string;
 }
 
+export const HISTORY_PROMPT_PAGE_SIZE = 100;
+
+export interface UserTurnAnchor {
+  id: string;
+  ordinal: number;
+  snippet: string;
+  attachmentCount: number;
+}
+
 export interface SessionHistoryPages {
+  turns: { total: number; start: number; turns: UserTurnAnchor[] };
   page: NativeTurnPage;
   search: { matches: HistoryMatch[]; more: boolean };
   routes: {

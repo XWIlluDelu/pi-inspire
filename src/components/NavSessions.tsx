@@ -157,9 +157,18 @@ export const SessionRow = memo(function SessionRow({
   } = useAppState(
     (state) => ({
       openingSessionId: state.openingSessionId,
-      pinned: state.prefs.pinnedSessionIds.includes(session.id),
-      individuallyHidden: state.prefs.hiddenSessionIds.includes(session.id),
-      projectHidden: state.prefs.hiddenProjectCwds.includes(session.cwd),
+      pinned: (
+        state.desiredPreferences.pinnedSessionIds ??
+        state.prefs.pinnedSessionIds
+      ).includes(session.id),
+      individuallyHidden: (
+        state.desiredPreferences.hiddenSessionIds ??
+        state.prefs.hiddenSessionIds
+      ).includes(session.id),
+      projectHidden: (
+        state.desiredPreferences.hiddenProjectCwds ??
+        state.prefs.hiddenProjectCwds
+      ).includes(session.cwd),
       runtimeStatus: state.sessionStatuses[session.id],
       externalActivity: state.externalSessionActivities[session.id],
       deletingSessionId: state.deletingSessionId,
@@ -340,9 +349,15 @@ export function ProjectGroup({
     curationPending,
   } = useAppState(
     (state) => ({
-      collapsed: state.prefs.navCollapsedGroups.includes(group.cwd),
+      collapsed: (
+        state.desiredPreferences.navCollapsedGroups ??
+        state.prefs.navCollapsedGroups
+      ).includes(group.cwd),
       deletingSessionId: state.deletingSessionId,
-      pinned: state.prefs.pinnedProjectCwds.includes(group.cwd),
+      pinned: (
+        state.desiredPreferences.pinnedProjectCwds ??
+        state.prefs.pinnedProjectCwds
+      ).includes(group.cwd),
       clearingHidden: state.clearingHidden,
       curationPending: state.curationPending,
     }),
