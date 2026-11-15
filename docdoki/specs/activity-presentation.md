@@ -88,7 +88,7 @@ the active theme's Tool/Thinking identity roles. [[design-system]] owns their pr
 Manual fold choices survive updates to the same Live turn. Checkpoints keep the turn's identity
 while adopting native entry IDs for its rows. A matching Pi tool-call ID keeps deliberate
 card and reader choices across pages and checkpoints. Other row-local choices can reset
-when the owning native row changes. Older activity remains readable in Turn history.
+when the owning native row changes. Older activity loads in the conversation scrollport.
 
 ## Independent card preferences
 

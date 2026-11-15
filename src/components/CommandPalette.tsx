@@ -197,25 +197,21 @@ export const CommandPalette = memo(function CommandPalette({
           )
             return [];
           const action = sessionActions[id];
-          const history = id === "switch-branch";
+          const branchSwitch = id === "switch-branch";
           return [
             {
               id,
-              title: history
-                ? "Open History"
-                : id === "rename"
-                  ? `${action.title}…`
-                  : action.title,
+              title: id === "rename" ? `${action.title}…` : action.title,
               aliases: [
                 `/${action.command}`,
-                ...(history
-                  ? ["history", "branches", "branch navigation"]
+                ...(branchSwitch
+                  ? ["branches", "branch navigation"]
                   : id === "rename"
                     ? ["rename"]
                     : []),
               ],
-              group: history || id === "clone" ? "Workspace" : "Actions",
-              default: history || id === "export",
+              group: branchSwitch || id === "clone" ? "Workspace" : "Actions",
+              default: branchSwitch || id === "export",
               keepOpen: id === "rename",
               run: () =>
                 runSessionAction(id, sessionId, {

@@ -85,7 +85,7 @@ test("New resolves trusted model defaults and sends explicit then inherited nati
     await pairedPage(page);
     await page.getByRole("textbox", { name: "Project directory" }).fill(cwd);
     const model = page.getByRole("button", { name: "Model", exact: true });
-    const thinking = page.getByRole("combobox", { name: "Thinking level" });
+    const thinking = page.getByLabel("Thinking level", { exact: true });
     await expect(model).toHaveText("project router");
     await expect(model).toHaveAttribute(
       "title",
@@ -94,16 +94,15 @@ test("New resolves trusted model defaults and sends explicit then inherited nati
     await expect(thinking).toContainText("Low");
     const message = firstInput(page);
     const project = page.getByRole("textbox", { name: "Project directory" });
-    const controls = page.getByRole("button", { name: "Extension controls" });
     await message.fill("/project-mode");
     await expect(
       page.getByRole("option", { name: /project-mode/ }),
     ).toBeVisible();
     await message.press("Escape");
     await project.fill(browserWorkspace);
-    await expect(controls).toHaveCount(0);
+    await expect(thinking).toHaveAttribute("aria-haspopup", "listbox");
     await project.fill(cwd);
-    await expect(controls).toBeVisible();
+    await expect(thinking).toHaveAttribute("aria-haspopup", "dialog");
 
     await model.click();
     await page.getByRole("option", { name: /project router.*Router/ }).click();
@@ -112,7 +111,7 @@ test("New resolves trusted model defaults and sends explicit then inherited nati
       .getByRole("listbox", { name: /thinking/i })
       .getByRole("option", { name: "High", exact: true })
       .click();
-    await controls.click();
+    await thinking.click();
     await page.getByText("Quick", { exact: true }).click();
 
     let sourceId: string | undefined;

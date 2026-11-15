@@ -5,7 +5,7 @@ covers:
   - src/use-inspection-history.ts
   - src/store.ts
   - src/controllers/{git,workspace}-controller.ts
-  - src/components/{AppTopbar,Nav,NavigationToggle,SessionActionsMenu,Composer,ExtensionDisplays,ContextPane,ContextPaneShell,FilesPane,ChangesPane,FileIndexRow,WorkspaceBrowser,NativeTurnReader,PaneResizeHandle}.tsx
+  - src/components/{AppTopbar,Nav,NavigationToggle,SessionActionsMenu,Composer,ExtensionDisplays,ContextPane,ContextPaneShell,FilesPane,ChangesPane,FileIndexRow,WorkspaceBrowser,PaneResizeHandle}.tsx
   - src/{git-presentation,source-diff,use-modal-focus,use-session-action-reorder}.ts
   - server/git-inspection.ts
   - shared/contracts.ts
@@ -174,7 +174,7 @@ completion behavior are unchanged.
   A delayed result keeps newer text in the field. A rejected rename leaves the current identity
   intact and reports the failure.
 
-  **Switch branch…** opens History. Choosing a branch there applies [[session-persistence]]
+  **Switch branch…** opens the saved branch list inside the title menu. Choosing a branch applies [[session-persistence]]
   admission. The title menu shows all actions in the order saved under Behavior settings. Its
   grips support dragging, and Alt+Up/Down moves a focused action. The default order is Rename,
   Copy session ID, Clone, Switch branch and Export. The menu focuses the first enabled action and stays scrollable within the viewport. Arrows, Home/End, Enter and Escape
@@ -240,7 +240,6 @@ completion behavior are unchanged.
   dismissing its content or leaving empty Back stops. Retired foreground markers cannot block a new
   drawer.
 
-  Turn history belongs to the conversation stage, as described in [[session-branches]].
   Reading a branch does not change the Composer or occupy the contextual pane.
 
   Terminal presents the current project's ordered shell tabs without splits. After first access it

@@ -12,7 +12,6 @@ export function TranscriptUtilities({
   search,
   inputRef,
   searchLauncherRef,
-  onOpenHistory,
   onTogglePrompts,
   promptsOpen,
   searchOpen,
@@ -22,7 +21,6 @@ export function TranscriptUtilities({
   search: ReturnType<typeof useTranscriptSearch>;
   inputRef: RefObject<HTMLInputElement | null>;
   searchLauncherRef: RefObject<HTMLButtonElement | null>;
-  onOpenHistory?: () => void;
   onTogglePrompts?: () => void;
   promptsOpen: boolean;
   searchOpen: boolean;
@@ -52,15 +50,6 @@ export function TranscriptUtilities({
           onClick={onTogglePrompts}
         >
           <ListTree size={17} aria-hidden />
-        </button>
-      )}
-      {onOpenHistory && (
-        <button
-          type="button"
-          className="button transcript-tools__history"
-          onClick={onOpenHistory}
-        >
-          Turn history
         </button>
       )}
       <button

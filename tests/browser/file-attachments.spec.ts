@@ -100,16 +100,7 @@ test("sent file prompts retain readable names, original bytes, and history acros
   await page.reload();
   await expect(files.getByText(names[0]!, { exact: true })).toBeVisible();
   await expect(bubble.locator(".rich-text")).toHaveText(question);
-  await page
-    .getByRole("button", { name: "Input history", exact: true })
-    .click();
-  const history = page.getByRole("dialog", { name: "Input history" });
-  await history
-    .getByRole("radio", { name: new RegExp(question.replace(/[?]/g, "\\?")) })
-    .first()
-    .check();
-  await expect(input).toHaveValue("");
-  await history.getByRole("button", { name: "Use this input" }).click();
+  await input.press("ArrowUp");
   await expect(input).toHaveValue(question);
   const recalled = page.locator(".composer__attachments");
   for (const name of names)

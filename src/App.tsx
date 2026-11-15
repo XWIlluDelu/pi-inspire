@@ -761,7 +761,6 @@ export function App() {
 
   const destinations = useMemo<WorkbenchDestinations>(
     () => ({
-      history: () => transcriptRef.current?.openHistory(),
       models: (request) =>
         openSettings("models", {
           query: request?.query,
@@ -787,6 +786,7 @@ export function App() {
     if (
       request.action === "model" ||
       request.action === "thinking" ||
+      request.action === "branches" ||
       extensionOverlayOpen
     )
       return;

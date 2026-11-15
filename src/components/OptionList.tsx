@@ -157,6 +157,7 @@ export function OptionList<T>({
   plain = false,
   children,
   optionButtons,
+  focusOptions = false,
   highlightAsSelection,
 }: {
   list: ReturnType<typeof useOptionList<T>>;
@@ -177,6 +178,7 @@ export function OptionList<T>({
   plain?: boolean;
   children?: ReactNode;
   optionButtons?: boolean;
+  focusOptions?: boolean;
   highlightAsSelection?: boolean;
 }) {
   const active = list.indexOf(options);
@@ -238,7 +240,13 @@ export function OptionList<T>({
         key={row.key}
         type={optionButtons ? "button" : undefined}
         disabled={optionButtons ? option.disabled : undefined}
-        tabIndex={optionButtons ? -1 : undefined}
+        tabIndex={
+          optionButtons
+            ? focusOptions && active === row.index
+              ? 0
+              : -1
+            : undefined
+        }
         id={list.optionId(row.index)}
         role="option"
         aria-label={option.label}
@@ -256,6 +264,7 @@ export function OptionList<T>({
           if (event.pointerType !== "touch" && !option.disabled)
             list.pointer(row.index, option.key);
         }}
+        onFocus={focusOptions ? () => list.activate(option.key) : undefined}
         onClick={() => onPick?.(option.value)}
       >
         {renderOption(option)}

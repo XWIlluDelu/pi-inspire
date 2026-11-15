@@ -1,5 +1,3 @@
-import { SlidersHorizontal } from "lucide-react";
-import { useState } from "react";
 import type { PiCommand } from "../../shared/commands";
 import type { ThinkingLevel } from "../../shared/contracts";
 import { thinkingLevelOptions } from "../model-options";
@@ -8,7 +6,6 @@ import {
   usePresentationAdapters,
 } from "../presentation-adapters";
 import { shallowEqual, useAppState } from "../store";
-import { ChoicePanel } from "./ChoicePanel";
 import { Dropdown } from "./Dropdown";
 import { StatusChoice, StatusChoiceIndicator } from "./StatusChoice";
 
@@ -52,62 +49,66 @@ export function ThinkingControl({
 }: ThinkingControlProps & { scope: ControlScope }) {
   const { configuration } = usePresentationAdapters();
   const controls = availableStatusControls(configuration, scope.commands);
-  const [open, setOpen] = useState(false);
+  const width = Math.max(
+    208,
+    ...controls.map(
+      (control) =>
+        20 +
+        control.options.length *
+          Math.max(...control.options.map((option) => option.label.length)) *
+          6.5,
+    ),
+  );
   return (
-    <div className="composer-thinking-control">
-      <Dropdown
-        {...props}
-        direction="up"
-        openRequest={openRequest}
-        onOpenRequestHandled={onOpenRequestHandled}
-        className="thinking-select"
-        disabled={props.disabled || !thinkingSupported}
-        options={thinkingLevelOptions(levels)}
-      />
-      {controls.length > 0 && (
-        <ChoicePanel
-          label="Extension controls"
-          open={open}
-          setOpen={setOpen}
-          trigger={controls
-            .map((control) => (
-              <StatusChoiceIndicator
-                key={control.id}
+    <Dropdown
+      {...props}
+      direction="up"
+      openRequest={openRequest}
+      onOpenRequestHandled={onOpenRequestHandled}
+      className="thinking-select"
+      menuWidth={width}
+      title={
+        controls.length ? "Thinking level and extension controls" : props.title
+      }
+      disabled={props.disabled || (!thinkingSupported && !controls.length)}
+      options={thinkingLevelOptions(thinkingSupported ? levels : [])}
+      indicator={controls.map((control) => (
+        <StatusChoiceIndicator
+          key={control.id}
+          control={control}
+          {...(scope.kind === "session"
+            ? { status: scope.statuses[control.state.key] }
+            : { draftValue: scope.values[control.id] ?? null })}
+        />
+      ))}
+      header={
+        controls.length > 0
+          ? controls.map((control) => (
+              <StatusChoice
+                key={
+                  scope.kind === "session"
+                    ? `${scope.sessionId}:${scope.generation}:${control.id}`
+                    : control.id
+                }
                 control={control}
+                disabled={Boolean(props.disabled)}
                 {...(scope.kind === "session"
-                  ? { status: scope.statuses[control.state.key] }
-                  : { draftValue: scope.values[control.id] ?? null })}
+                  ? {
+                      status: scope.statuses[control.state.key],
+                      owner: scope.sessionId,
+                      generation: scope.generation,
+                    }
+                  : {
+                      draft: {
+                        value: scope.values[control.id] ?? null,
+                        onSelect: (value) => scope.onSelect(control.id, value),
+                      },
+                    })}
               />
             ))
-            .concat(<SlidersHorizontal key="settings" size={14} aria-hidden />)}
-        >
-          {controls.map((control) => (
-            <StatusChoice
-              key={
-                scope.kind === "session"
-                  ? `${scope.sessionId}:${scope.generation}:${control.id}`
-                  : control.id
-              }
-              control={control}
-              disabled={Boolean(props.disabled)}
-              {...(scope.kind === "session"
-                ? {
-                    status: scope.statuses[control.state.key],
-                    owner: scope.sessionId,
-                    generation: scope.generation,
-                  }
-                : {
-                    draft: {
-                      value: scope.values[control.id] ?? null,
-                      onSelect: (value: string) =>
-                        scope.onSelect(control.id, value),
-                    },
-                  })}
-            />
-          ))}
-        </ChoicePanel>
-      )}
-    </div>
+          : undefined
+      }
+    />
   );
 }
 

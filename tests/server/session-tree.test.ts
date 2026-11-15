@@ -3,9 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   branchEntryContent,
   branchEntryText,
-  branchRouteLabel,
   indexSessionEntries,
-  sessionRoutes,
 } from "../../server/session-tree.js";
 
 const message = (
@@ -22,57 +20,7 @@ const message = (
     message: { role, content, timestamp: id.length },
   }) as SessionEntry;
 
-describe("saved history entries and branch routes", () => {
-  it("pages direct routes, preserves labels, and marks the route containing the live leaf", () => {
-    const fork = message("root", null, "user", "Start");
-    const entries = [
-      fork,
-      ...Array.from({ length: 104 }, (_, index) =>
-        message(`child-${index}`, fork.id, "assistant", `Answer ${index}`),
-      ),
-      {
-        type: "label",
-        id: "bookmark",
-        parentId: "child-103",
-        targetId: "child-103",
-        label: "Chosen path",
-        timestamp: "2026-08-01",
-      } as SessionEntry,
-    ];
-    const byId = indexSessionEntries(entries);
-    const latest = sessionRoutes(entries, byId, "bookmark", fork.id);
-    expect(latest.nodes).toHaveLength(100);
-    expect(latest.nodes.at(-1)).toEqual({
-      id: "child-103",
-      label: "Chosen path",
-      leafId: "bookmark",
-      current: true,
-    });
-    const older = sessionRoutes(
-      entries,
-      byId,
-      "bookmark",
-      fork.id,
-      latest.nextBefore!,
-    );
-    expect(older.nodes.map((node) => node.id)).toEqual([
-      "child-0",
-      "child-1",
-      "child-2",
-      "child-3",
-    ]);
-    expect(older.nextBefore).toBeNull();
-    expect(
-      sessionRoutes(entries, byId, "bookmark", null).nodes[0],
-    ).toMatchObject({
-      id: "root",
-      current: true,
-    });
-    expect(() =>
-      sessionRoutes(entries, byId, "bookmark", fork.id, "missing"),
-    ).toThrow(/routes changed/);
-  });
-
+describe("saved entry content", () => {
   it("keeps native system checkpoint bodies out of search/preview and uses ordinary keyed redaction", () => {
     const system = {
       ...message("system", null, "assistant", "private system body"),
@@ -145,38 +93,6 @@ describe("saved history entries and branch routes", () => {
     },
   );
 
-  it("keeps readable outlines within the preview bound", () => {
-    const mixed = message("preview", null, "assistant", "");
-    Object.assign(
-      (mixed as Extract<SessionEntry, { type: "message" }>).message,
-      {
-        content: [
-          { type: "text", text: " \nFirst block\t " },
-          { type: "thinking", thinking: "\nThought\tprocess" },
-          { type: "image", mimeType: "image/png", data: "unused" },
-          { type: "text", text: "Last block" },
-        ],
-      },
-    );
-    expect(branchRouteLabel(mixed)).toBe(
-      "First block Thinking Thought process [Image: image/png] Last block",
-    );
-
-    const entry = message("lazy-preview", null, "assistant", "");
-    Object.assign(
-      (entry as Extract<SessionEntry, { type: "message" }>).message,
-      {
-        content: [
-          { type: "text", text: "x".repeat(1000) },
-          { type: "text", text: "second block beyond the preview" },
-        ],
-      },
-    );
-    const preview = branchRouteLabel(entry);
-    expect(preview.startsWith("x")).toBe(true);
-    expect(preview.length).toBeLessThanOrEqual(240);
-  });
-
   it("keeps complete shell output containing many backtick runs literal", () => {
     const output = "`x".repeat(150_000);
     const entry: SessionEntry = {
@@ -197,7 +113,6 @@ describe("saved history entries and branch routes", () => {
     const text = branchEntryText(entry);
     expect(text).toContain(output);
     expect(text).toContain("!echo ```");
-    expect(branchRouteLabel(entry).length).toBeLessThanOrEqual(240);
   });
 
   it("rejects oversized raw entry and parent identities with a small typed error that never echoes them", () => {

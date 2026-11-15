@@ -39,8 +39,6 @@ it("pages a large saved branch in both directions, including pre-compaction turn
   const read = (cursor?: string) =>
     runtime.sessionHistory("session-a", viewId, { kind: "page", cursor });
   const newest = await read();
-  expect(newest.totalTurns).toBe(20);
-  expect(newest.lastTurn).toBe(20);
   const ids = (page: typeof newest) =>
     page.messages.map(
       (row) => (row as { __inspireEntryId: string }).__inspireEntryId,
@@ -80,11 +78,6 @@ it("pages a large saved branch in both directions, including pre-compaction turn
       })),
     ],
   });
-  const matches = await runtime.sessionHistory("session-a", viewId, {
-    kind: "search",
-    text: "needle_beyond_preview",
-  });
-  expect(matches.matches).toMatchObject([{ entryId: "giant", turn: 1 }]);
   const found = await runtime.sessionHistory("session-a", viewId, {
     kind: "page",
     entryId: "giant",

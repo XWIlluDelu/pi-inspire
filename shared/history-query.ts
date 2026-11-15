@@ -31,15 +31,7 @@ export const historyQuerySchema = z.discriminatedUnion("kind", [
   }),
   z.strictObject({
     ...historyAddress,
-    kind: z.literal("search"),
-    text: z.string().trim().min(1).max(200),
-    leafId: z.string().min(1).max(200).optional(),
-  }),
-  z.strictObject({
-    ...historyAddress,
-    kind: z.literal("routes"),
-    parentId: z.string().max(200),
-    before: z.string().min(1).max(200).optional(),
+    kind: z.literal("branches"),
   }),
   z.strictObject({
     ...historyAddress,

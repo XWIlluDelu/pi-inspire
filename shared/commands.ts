@@ -17,7 +17,7 @@ export interface PiCommand {
 
 type CommandSurface =
   | "settings"
-  | "history"
+  | "branches"
   | "changelog"
   | "hotkeys"
   | "new"
@@ -30,7 +30,6 @@ interface PiNativeCommandDescriptor {
   execution: PiNativeCommandExecution;
   surface?: CommandSurface;
   modelSettingsFocus?: "credentials" | "common";
-  selectionHint?: string;
   paletteTitle?: string;
   usage?: string;
   palette?: "prepare";
@@ -63,9 +62,9 @@ export const PI_NATIVE_COMMANDS = [
   },
   {
     name: "tree",
-    surface: "history",
+    surface: "branches",
     availableWithoutWorkspace: true,
-    description: "Open conversation history and branches",
+    description: "Switch between saved branches",
     execution: "surface",
   },
   {
@@ -150,11 +149,8 @@ export const PI_NATIVE_COMMANDS = [
   },
   {
     name: "fork",
-    paletteTitle: "Fork from History",
-    surface: "history",
-    selectionHint: "Choose a user message in History, then select Fork",
-    description: "Open History to fork from a user message",
-    execution: "surface",
+    description: "Fork from a user message",
+    execution: "client",
   },
   {
     name: "clone",

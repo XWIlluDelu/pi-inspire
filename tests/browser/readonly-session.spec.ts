@@ -95,15 +95,9 @@ test("unavailable-project history keeps its reading surface at desktop and phone
     ),
   ).toBeVisible();
 
-  const palette = await openCommandPalette(page);
-  await palette.getByLabel("Filter commands").fill("history");
-  await palette.getByRole("option", { name: /Open History/ }).click();
-  await expect(
-    page.getByRole("searchbox", { name: "Search this branch" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("region", { name: "Turn history" }),
-  ).toContainText("Show me a formula-rich example");
+  await expect(page.getByRole("log")).toContainText(
+    "Show me a formula-rich example",
+  );
 
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 844 });

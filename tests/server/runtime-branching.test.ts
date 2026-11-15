@@ -581,13 +581,12 @@ it("reads and copies the admitted external branch across appends, then retires i
       readOnlyReason: "external-active",
     });
     const current = await f.address();
-    const routes = await f.runtime.sessionHistory(id, current.viewId, {
-      kind: "routes",
-      parentId: "a1",
+    const branches = await f.runtime.sessionHistory(id, current.viewId, {
+      kind: "branches",
     });
-    expect(routes.nodes.map(({ leafId }) => leafId)).toEqual([
-      "later",
-      "alt-a",
+    expect(branches.leaves).toMatchObject([
+      { id: "alt-a", isCurrent: false },
+      { id: "later", isCurrent: true },
     ]);
     const watched = await f.navigate("alt-a", "watch");
     expect(watched.snapshot.active?.effectiveLeafId).toBe("alt-a");
@@ -620,7 +619,10 @@ it("reads and copies the admitted external branch across appends, then retires i
 it("advances saved History without moving the selected worker branch", async () => {
   const f = await fixture();
   await f.navigate("a1");
-  await appendFile(f.path, jsonl(entry("foreign", "a2", "assistant", "foreign", 60)));
+  await appendFile(
+    f.path,
+    jsonl(entry("foreign", "a2", "assistant", "foreign", 60)),
+  );
   const active = await f.active();
   expect(active).toMatchObject({
     durableLeafId: "foreign",

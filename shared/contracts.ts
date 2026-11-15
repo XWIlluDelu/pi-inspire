@@ -935,21 +935,9 @@ export interface NativeTurnPage {
   incarnation: string;
   revision: number;
   leafId: string | null;
-  firstTurn: number;
-  lastTurn: number;
-  totalTurns: number;
   messages: unknown[];
   earlier: string | null;
   later: string | null;
-  /** Native route points within this page, including intervening metadata. */
-  branchPoints?: { id: string; entryId: string; count: number }[];
-  rootCount?: number;
-}
-
-export interface HistoryMatch {
-  entryId: string;
-  turn: number;
-  snippet: string;
 }
 
 export const HISTORY_PROMPT_PAGE_SIZE = 100;
@@ -964,10 +952,14 @@ export interface UserTurnAnchor {
 export interface SessionHistoryPages {
   turns: { total: number; start: number; turns: UserTurnAnchor[] };
   page: NativeTurnPage;
-  search: { matches: HistoryMatch[]; more: boolean };
-  routes: {
-    nodes: { id: string; label: string; leafId: string; current: boolean }[];
-    nextBefore: string | null;
+  branches: {
+    total: number;
+    leaves: {
+      id: string;
+      excerpt: string;
+      updatedAt: string;
+      isCurrent: boolean;
+    }[];
   };
   composer: ComposerHistoryPage;
   entry: BranchEntryResponse;
@@ -1026,21 +1018,9 @@ export interface SavedShellDetails {
 }
 
 export interface BranchEntryResponse {
-  sessionId: string;
-  revision: number;
-  node: {
-    id: string;
-    leaf: boolean;
-    childCount: number;
-    canEdit: boolean;
-    canFork: boolean;
-    toolResult: boolean;
-  };
-  skipSummaryPrompt?: boolean;
   shell?: SavedShellDetails;
   text: string;
   nextOffset: number | null;
-  totalChars: number;
   images?: Array<{ index: number; mimeType: string }>;
 }
 

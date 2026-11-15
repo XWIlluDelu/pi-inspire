@@ -21,7 +21,6 @@ covers:
   - src/components/Transcript.tsx
   - src/components/TranscriptUtilities.tsx
   - tests/browser/reading-navigation.spec.ts
-  - src/components/NativeTurnReader.tsx
   - tests/server/native-turn-history.test.ts
   - src/components/transcript-activity.ts
   - src/components/transcript-cards.tsx
@@ -128,9 +127,7 @@ boundaries in this contract.
 ## Search in Live and History
 
 - View-local search covers already-loaded settled messages, not the whole branch. Its input tooltip
-  states that limit; there is no persistent scope disclaimer or second History-search action.
-  History keeps complete saved-history search across branches and tool activity in its own surface.
-  Do not preload all messages or build a new index to make this local utility look exhaustive.
+  states that limit. Scrolling and the Prompt Map load the saved portions of the branch in the same view.
 
   Search performs case-insensitive literal matching over settled conversation text and can scope
   results to all searchable turns, user input only, or model output only. Previous/next navigation
@@ -161,7 +158,7 @@ boundaries in this contract.
   active query visible in the corresponding desktop or narrow tool; neither layout keeps an
   invisible active search.
 
-  On a narrow workbench, adjacent 44px Search and Turn history launchers live in the conversation
+  On a narrow workbench, adjacent Search and Prompt Map launchers live in the conversation
   tool row. Search replaces that row in place with an input across the reading width, focusing
   and selecting its text. Close or Escape clears the query and match ownership, closes the row,
   and restores focus to its local launcher. An outside press dismisses narrow Search. The scope
@@ -177,12 +174,8 @@ boundaries in this contract.
   before the oldest live message. Prepending a page preserves the visible row and its offset.
   The desktop ScrollRail follows the same scrollport. The Prompt Map shows current-branch
   user turns with a hover disclosure and tick navigation. On narrow screens its launcher is
-  in the conversation tools. Loaded targets scroll in place and unloaded targets open their
-  saved entry in Turn history.
-
-- Turn history also supports branch and full-entry inspection. Its search covers the complete
-  selected branch. Scrolling near a page boundary loads adjacent pages. Live keeps its own
-  local search and follow position.
+  in the conversation tools. The map opens all targets in the same scrollport. At an unloaded
+  target it reads a bounded window around that prompt and continues paging in either direction.
 
 ## Response streaming and message-owned outcomes
 
@@ -331,13 +324,8 @@ history keep one result per native execution. [[pi-integration]] owns execution 
 
 ## History, extension interaction, and Pending
 
-- History inspection is read-only. Continue/Edit and independent Fork/Clone are explicit actions
-  under [[session-branches]], separate from Git branch selection. Edit confirms only when it would
-  replace an existing draft; Edit and Fork prepare the selected input without submitting it. A
-  settled user turn exposes a direct fork shortcut keyed by its opaque Pi entry id; the browser
-  refreshes the authoritative tree and reuses the same revision-checked fork operation, with no
-  second branch path. A known branch load or action failure stays actionable inside this pane and
-  is not duplicated into the global error banner.
+- A settled user turn offers Fork under [[session-branches]], addressed by its saved Pi entry id.
+  The title menu offers saved branches and Clone.
 
 - Unknown tools and noninteractive extension display messages receive a generic, attributable,
   inspectable fallback instead of disappearing. Available extension name or attribution is the
@@ -362,13 +350,9 @@ history keep one result per native execution. [[pi-integration]] owns execution 
 
 ## Pagination and presentation ownership
 
-- History reads bounded pages. Earlier and Later controls supplement scrolling. Each page is pinned to the
-  native leaf it was read from; new Live output does not insert, remove or scroll historical
-  rows. Returning to Live resumes following the latest output.
-- Page, search, and full-entry reads replace the prior navigation intent. A delayed response
-  cannot move a newer destination. A failed replacement keeps the confirmed page and offers
-  retry of the requested target. Native entry ID and reading offset restore the position when
-  History is reopened; long bodies use explicit previous/next sections.
+- The scrollport fetches saved windows in bounded pages pinned to their native leaf. A newer
+  prompt jump supersedes an in-flight page request. A failed read keeps the confirmed rows and
+  retries the requested location. Jump to latest reconnects the viewport to live output.
 - Live uses the bounded tail and native checkpoint updates. Manual scrolling or inspecting
   content pauses follow. If a checkpoint cannot confirm a live row, keep the output visible
   with an unconfirmed indication.

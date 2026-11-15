@@ -62,7 +62,7 @@ export function runSessionAction(
         sessionId,
         controls.renameName?.(state) ?? state.sessionName,
       );
-    if (id === "switch-branch") store.openHistory();
+    if (id === "switch-branch") store.openBranchMenu();
     if (id === "export") controls.export();
   }
   return true;
@@ -91,7 +91,7 @@ export function sessionPresentationName(state: AppState): string {
 
 export type WorkbenchDestination = Exclude<
   NativeCommandUiRequest["action"],
-  "model" | "thinking"
+  "model" | "thinking" | "branches"
 >;
 export type WorkbenchDestinations = Record<
   WorkbenchDestination,

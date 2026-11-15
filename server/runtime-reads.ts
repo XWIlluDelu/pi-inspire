@@ -20,7 +20,6 @@ interface RuntimeReadControllerHost {
   useSlot<T>(slot: RuntimeSlot, operation: () => Promise<T>): Promise<T>;
   reconcileSlot(slot: RuntimeSlot, force?: boolean): Promise<unknown>;
   promptFileName(path: string): string | null;
-  skipSummaryPrompt(slot: RuntimeSlot): boolean;
   throwIfConflicted(slot: RuntimeSlot): void;
 }
 
@@ -70,18 +69,14 @@ export class RuntimeReadController {
       (projection, slot, effectiveLeafId) => {
         if (query.kind === "entry") this.host.throwIfConflicted(slot);
         if (slot.viewId !== viewId)
-          throw requestError("The branch changed; reopen History", 409);
-        const explicitLeaf =
-          query.kind === "page" || query.kind === "search"
-            ? query.leafId
-            : undefined;
+          throw requestError("The branch changed; try again", 409);
+        const explicitLeaf = query.kind === "page" ? query.leafId : undefined;
         const saved = slot.projection!;
         let history = projection;
         let leaf = effectiveLeafId;
         if (
           query.kind === "page" ||
-          query.kind === "search" ||
-          query.kind === "routes" ||
+          query.kind === "branches" ||
           query.kind === "turns"
         ) {
           history = saved;
@@ -94,20 +89,9 @@ export class RuntimeReadController {
         } else if (query.kind === "entry" && saved.entry(query.targetId)) {
           history = saved;
         }
-        const page = history.historyPage(
-          query,
-          leaf,
-          slot.viewId,
-          slot.cwd,
-          (path) => this.host.promptFileName(path),
+        return history.historyPage(query, leaf, slot.viewId, slot.cwd, (path) =>
+          this.host.promptFileName(path),
         );
-        return query.kind === "entry"
-          ? {
-              ...page,
-              revision: slot.branchRevision,
-              skipSummaryPrompt: this.host.skipSummaryPrompt(slot),
-            }
-          : page;
       },
     );
   }

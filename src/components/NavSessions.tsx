@@ -227,7 +227,7 @@ export const SessionRow = memo(function SessionRow({
   return (
     <div
       data-session-id={session.id}
-      className={`nav__row ${selected ? "nav__row--active" : ""} ${session.id === highlightedSessionId ? "nav__row--highlighted" : ""}`}
+      className={`nav__row ${showProject ? "nav__row--cross-project" : ""} ${selected ? "nav__row--active" : ""} ${session.id === highlightedSessionId ? "nav__row--highlighted" : ""}`}
     >
       <button
         type="button"
@@ -238,30 +238,32 @@ export const SessionRow = memo(function SessionRow({
         aria-current={selected ? "page" : undefined}
         title={`${title} · ${session.messageCount} messages${externalLabel ? ` · ${externalLabel}` : ""}`}
       >
-        {attention ? (
-          <span
-            className={
-              attention === "attention"
-                ? "nav__row-dot nav__row-dot--attention"
-                : `nav__row-state nav__row-state--${attention}`
-            }
-            role="img"
-            aria-label={attentionLabel!}
-            title={attentionLabel!}
-          >
-            {attention === "running" ? (
-              <PiLoader size={12} aria-hidden />
-            ) : attention === "completed" || attention === "failed" ? (
-              <PiStatus
-                status={attention === "completed" ? "success" : "error"}
-                size={12}
-                aria-hidden
-              />
-            ) : null}
+        <span className="nav__row-title">
+          {attention ? (
+            <span
+              className={
+                attention === "attention"
+                  ? "nav__row-dot nav__row-dot--attention"
+                  : `nav__row-state nav__row-state--${attention}`
+              }
+              role="img"
+              aria-label={attentionLabel!}
+              title={attentionLabel!}
+            >
+              {attention === "running" ? (
+                <PiLoader size={12} aria-hidden />
+              ) : attention === "completed" || attention === "failed" ? (
+                <PiStatus
+                  status={attention === "completed" ? "success" : "error"}
+                  size={12}
+                  aria-hidden
+                />
+              ) : null}
+            </span>
+          ) : null}
+          <span className="nav__row-name">
+            <SearchMatchText text={title} ranges={titleMatches} />
           </span>
-        ) : null}
-        <span className="nav__row-name">
-          <SearchMatchText text={title} ranges={titleMatches} />
         </span>
         <span className="nav__row-meta">
           {showProject ? (

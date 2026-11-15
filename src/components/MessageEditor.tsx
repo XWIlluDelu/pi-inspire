@@ -32,7 +32,6 @@ export function MessageEditor({
   selectors,
   actions,
   send,
-  tools,
   children,
   files,
   input,
@@ -51,7 +50,6 @@ export function MessageEditor({
   selectors: ReactNode;
   actions?: ReactNode;
   send?: { label: string; title?: string; disabled: boolean; busy?: boolean };
-  tools?: ReactNode;
   children?: ReactNode;
   files: {
     scope: string | null;
@@ -203,7 +201,6 @@ export function MessageEditor({
           <Paperclip size={14} aria-hidden />
         </button>
         <span className="composer__action-slot" ref={setSizeActionSlot} />
-        {tools}
         <span className="composer__spacer" />
         {actions}
         {send && (

@@ -1,4 +1,4 @@
-import { History, Square } from "lucide-react";
+import { Square } from "lucide-react";
 import {
   memo,
   type ReactNode,
@@ -9,21 +9,15 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import {
-  type ComposerHistoryEntry,
-  isAbortableRunState,
-  isBusyRunState,
-} from "../../shared/contracts";
+import { isAbortableRunState, isBusyRunState } from "../../shared/contracts";
 import { contextUsage, selectedRunState } from "../app-state";
 import type { ComposerHistoryScope } from "../composer-history";
-import { isComposingKeyboardEvent } from "../keyboard-input";
 import {
   resolveModelMetadata,
   supportedThinkingLevels,
 } from "../model-options";
 import { hasDraftInput, useSessionDraft } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
-import { ComposerHistoryDialog } from "./ComposerHistoryDialog";
 import { ComposerThinkingControl } from "./ComposerThinkingControl";
 import { MessageEditor } from "./MessageEditor";
 import { ModelSelector } from "./ModelSelector";
@@ -131,10 +125,6 @@ export const Composer = memo(function Composer() {
   const historyKey = historyScope
     ? JSON.stringify([inputKey, historyScope.historyVersion])
     : null;
-  const [historyOpen, setHistoryOpen] = useState<{
-    key: string;
-    draftRevision: number;
-  } | null>(null);
   const draft = useSessionDraft(store.drafts, sessionId ?? undefined);
   const recall = useComposerRecall(
     historyScope,
@@ -181,33 +171,6 @@ export const Composer = memo(function Composer() {
           ? "composer--failed"
           : "";
 
-  const openHistory = () => {
-    if (!sessionOpening && sessionId && historyKey)
-      setHistoryOpen({
-        key: historyKey,
-        draftRevision: draft.revision,
-      });
-  };
-
-  const useHistory = (entry: ComposerHistoryEntry): boolean => {
-    if (
-      !historyScope ||
-      !historyOpen ||
-      !store.useComposerHistoryEntry(
-        historyScope,
-        entry,
-        historyOpen.draftRevision,
-      )
-    )
-      return false;
-    setHistoryOpen(null);
-    return true;
-  };
-
-  useLayoutEffect(() => {
-    setHistoryOpen(null);
-  }, [historyKey]);
-
   const previousSessionRef = useRef(sessionId);
   useLayoutEffect(() => {
     if (previousSessionRef.current === sessionId) return;
@@ -242,22 +205,6 @@ export const Composer = memo(function Composer() {
       return;
     const current = store.drafts.get(sessionId);
     void store.sendPrompt(current.text, behavior, current);
-  };
-
-  const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    recall.onKeyDown(event);
-    if (event.defaultPrevented) return;
-    if (
-      event.key === "ArrowUp" &&
-      event.altKey &&
-      !event.shiftKey &&
-      !event.ctrlKey &&
-      !event.metaKey &&
-      !isComposingKeyboardEvent(event.nativeEvent)
-    ) {
-      event.preventDefault();
-      openHistory();
-    }
   };
 
   const sendLabel = observingDelivery
@@ -324,7 +271,7 @@ export const Composer = memo(function Composer() {
               : "Queue a follow-up…"
             : "Message Pi…",
         label: "Message",
-        onKeyDown,
+        onKeyDown: recall.onKeyDown,
       }}
       beforeInput={
         <>
@@ -458,20 +405,6 @@ export const Composer = memo(function Composer() {
           />
         </>
       }
-      tools={
-        <button
-          type="button"
-          className="icon-button"
-          aria-label="Input history"
-          aria-haspopup="dialog"
-          aria-keyshortcuts="Alt+ArrowUp"
-          title="Input history (Alt+↑)"
-          disabled={sessionOpening || !historyScope}
-          onClick={openHistory}
-        >
-          <History size={16} aria-hidden />
-        </button>
-      }
       actions={
         <>
           <ContextUsageButton />
@@ -509,19 +442,6 @@ export const Composer = memo(function Composer() {
           ? { disabled: !canSend, label: sendLabel, title: sendTitle }
           : undefined
       }
-    >
-      {historyScope &&
-        historyOpen &&
-        historyOpen.key === historyKey &&
-        !sessionOpening && (
-          <ComposerHistoryDialog
-            recent={recall.recent}
-            saved={recall.saved}
-            onRetry={recall.retry}
-            onChoose={useHistory}
-            onClose={() => setHistoryOpen(null)}
-          />
-        )}
-    </MessageEditor>
+    />
   );
 });

@@ -86,7 +86,6 @@ import {
   PiRpcProcess,
   type PiRpcResponseFence,
 } from "./pi-rpc.js";
-import { getAgentDir, SettingsManager } from "./pi-runtime.js";
 import { requestWorkerAuth } from "./provider-auth-bridge.js";
 import { requestError } from "./request-error.js";
 import { RuntimeBashController } from "./runtime-bash.js";
@@ -637,7 +636,6 @@ export class RuntimeController extends EventEmitter {
         this.projectionCoordinator.reconcile(slot, force),
       throwIfConflicted: (slot) => this.throwIfConflicted(slot),
       promptFileName: (path) => this.attachments.promptFileName(path),
-      skipSummaryPrompt: (slot) => this.skipBranchSummaryPrompt(slot),
     });
     this.projectionCoordinator = new RuntimeProjectionCoordinator(
       {
@@ -3285,13 +3283,6 @@ export class RuntimeController extends EventEmitter {
       }
       throw error;
     }
-  }
-
-  private skipBranchSummaryPrompt(slot: RuntimeSlot): boolean {
-    return (
-      SettingsManager.create(slot.cwd, getAgentDir()).getBranchSummarySettings()
-        .skipPrompt ?? false
-    );
   }
 
   private requireHistoryView(slot: RuntimeSlot, viewId: string): void {

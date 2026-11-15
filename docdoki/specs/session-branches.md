@@ -8,7 +8,7 @@ covers:
   - server/extensions/inspire-branch-bridge.ts
   - shared/{branch-node-actions,branch-bridge-protocol}.ts
   - src/controllers/branch-controller.ts
-  - src/components/{NativeTurnReader,EarlierBranchBanner,AppTopbar}.tsx
+  - src/components/{SessionActionsMenu,EarlierBranchBanner,AppTopbar}.tsx
   - server/attachments.ts
   - shared/contracts.ts
   - src/store.ts
@@ -29,56 +29,18 @@ navigate, edit from, Fork or Clone native paths without inventing alternate bran
 Independent copies preserve the source worker. [[session-persistence]] owns durable trust and writer
 admission; [[session-transport]] owns browser continuity and observation lifetimes.
 
-## History inspection
+## Saved branches, reading, and copying
 
-### Native pages, routes and search
+**Switch branch…** in the title menu and `/tree` open the same saved branch list. Each choice
+corresponds to a Pi leaf and shows its latest user prompt. Clicking a choice enters that branch
+under the current revision and writer admission. Fork remains available on the original user
+message and Clone remains available in the title menu.
 
-History is the conversation's single native-turn reader. The title menu, command palette and
-`/tree` open the same destination. Earlier and Later load bounded pages on one pinned branch.
-Other routes shows the native siblings at a branch point; opening one reads its latest retained
-leaf without moving Pi. Current conversation returns to the live branch's saved history. Search
-matches the complete case-insensitive phrase anywhere on the selected saved branch, including
-entries outside the mounted page. Native entry ID, saved branch and reading offset survive
-reopening in the same browser tab. No message content or permission is stored with that location.
-
-Ordinary user-input snippets use the shared user-content projection: readable file names replace
-transport trailers, image-dimension notes are omitted, and image cues remain. Search snippets and
-detailed reads expose retained source so path matching, Copy and editing remain possible.
-
-Read complete retained entries in bounded chunks. Ordinary assistant/tool content stays rich;
-native shell records show command, output, status and context inclusion as Shell activity rather
-than system bodies or storage JSON. Live and History share the same Shell card. Saved output is
-paged as literal text; structured command, exit and full-log metadata are separate from stdout.
-History owns scrolling without a nested output viewport.
-
-Shell Copy reads the complete retained entry, combining its structured metadata with every output
-section. It does not copy a separate full-output file. The full-log button uses the authorized file
-preview. Text printed in stdout never becomes that reference.
-History text uses the same authorized file-preview actions as Transcript.
-
-### Copy, images and read recovery
-
-Each entry has a Copy action beside its preview.
-Read all bounded text chunks and structured images without expanding or scrolling the preview.
-Copy the retained record, not a separate full-output file or loaded excerpt. Image formats, ordering,
-plain-text alternatives and clipboard failures follow [[design-system]].
-
-Copy and image reads bind to the selected immutable entry and transcript view throughout. Leaving
-the entry/source cancels copying. Image coordinates remain Host-resolved and cancellable; saved
-images use the shared viewer with pointer/keyboard opening, fit/zoom, close and focus return.
-Images from the same entry share a gallery in native part order.
-Render structured images separately from descriptive placeholders and preserve user-written text
-that resembles a placeholder.
-
-Entry/image reads survive ordinary same-view appends. Navigation and source/worker/view replacement
-retire them; same-file mutations still require a fresh revision. Retiring a read also retires its
-progress, without letting an old completion clear newer progress.
-
-Each replacement page, route list or body belongs to one cancellable read. Failures leave the last
-confirmed page visible and offer Retry. Entry and image reads use bounded backoff for transient
-failures. Leaving a view aborts its page, route, entry, image, copy and saved-input observations
-together.
-Recovery never repeats navigation, Fork, Clone or clipboard copying.
+Saved pages read through the conversation scrollport and Prompt Map under [[conversation]].
+Copy and image reads bind to the selected immutable entry and transcript view throughout.
+The Host delivers long text in bounded chunks and returns images in their original part order.
+Leaving the view retires its reads. Shell Copy includes retained command, status and output.
+The authorized full-log button resolves Pi's separate file reference.
 
 ## Same-file navigation
 
@@ -124,18 +86,10 @@ reconciles disk instead of retrying.
 Extension responses use a separate process-instance-validated per-slot FIFO. Hooks can await input
 without deadlocking the mutation lane, and each accepted response is delivered once.
 
-### Optional branch summary
+### Native branch summary
 
-A deliberate same-session continuation may carry Pi's summary of the branch being left, with optional
-custom instructions. Group actions into This session and New session; user entries offer both Fork
-and Clone. Carry branch summary defaults off, reveals instructions when enabled, and precedes the
-same-session actions in visual/keyboard order; it applies only to those actions, not Fork/Clone.
-Keep the action dock bounded and independently scrollable, and identify the conversation being left.
-Honor Pi's skip-summary-prompt preference; searching and previewing never generate summaries.
-
-Cancellation follows Pi's outcome. Ordinary summary cancellation uses native abort and preserves
-the worker/extension locals when it settles. Confirmed worker retirement is the fallback for an
-explicitly cancelled operation that cannot settle; never show a falsely completed destination.
+The addressed native navigation operation supports carrying Pi's summary with optional
+instructions. Cancellation follows Pi's outcome and leaves the original branch selected.
 
 ## Independent Fork and Clone
 

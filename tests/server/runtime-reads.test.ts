@@ -26,7 +26,6 @@ function fixture() {
       operation(),
     reconcileSlot: vi.fn(async () => {}),
     promptFileName: () => null,
-    skipSummaryPrompt: () => false,
     throwIfConflicted: () => {},
   };
   return {

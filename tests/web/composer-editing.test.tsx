@@ -5,16 +5,11 @@ import {
   render,
   screen,
   waitFor,
-  within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { Composer } from "../../src/components/Composer";
 import { store } from "../../src/store";
-import {
-  attachFile,
-  createComposerFixture,
-  typeDraft,
-} from "./fixtures/composer";
+import { createComposerFixture, typeDraft } from "./fixtures/composer";
 import { activeSnapshot, deferred, FakeWebSocket } from "./helpers";
 
 let host: Awaited<ReturnType<typeof createComposerFixture>>;
@@ -23,7 +18,7 @@ beforeEach(async () => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-it("keeps the editor and open history through a streamed leaf, then recalls material under the current leaf", async () => {
+it("retains the editor across a streamed leaf and recalls material under the current leaf", async () => {
   const releaseHistory = deferred<void>();
   host.historyGate = releaseHistory.promise;
   host.historyEntries = [
@@ -72,14 +67,8 @@ it("keeps the editor and open history through a streamed leaf, then recalls mate
     name: "Message",
   });
   typeDraft("current draft");
-  await attachFile();
   input.focus();
   input.setSelectionRange(2, 6, "backward");
-  const openHistory = () =>
-    fireEvent.keyDown(input, { key: "ArrowUp", altKey: true });
-  openHistory();
-  const history = () =>
-    within(screen.getByRole("dialog", { name: "Input history" }));
   await waitFor(() => expect(host.historyRequests).toBe(1));
   stream("leaf-b", 11);
   expect(host.historyRequests).toBe(1);
@@ -91,27 +80,10 @@ it("keeps the editor and open history through a streamed leaf, then recalls mate
   ]).toEqual([2, 6, "backward"]);
   await act(async () => releaseHistory.resolve());
   host.historyGate = null;
-  const choose = async () =>
-    fireEvent.click(
-      await history().findByRole("radio", { name: /3 attachments/ }),
-    );
-  const useInput = () =>
-    fireEvent.click(history().getByRole("button", { name: "Use this input" }));
-  await choose();
-  typeDraft("newer draft");
-  useInput();
-  expect(history().getByRole("alert")).toHaveTextContent("The draft changed");
-  expect(input).toHaveValue("newer draft");
-  expect(screen.getByText("notes.txt")).toBeInTheDocument();
-  await act(async () => {
-    fireEvent.click(history().getByRole("button", { name: "Cancel" }));
-  });
-  expect(input).toHaveFocus();
-
-  openHistory();
-  await choose();
-  useInput();
-  expect(screen.queryByText("notes.txt")).toBeNull();
+  input.setSelectionRange(0, 0);
+  fireEvent.keyDown(input, { key: "ArrowUp" });
+  expect(input).toHaveValue("");
+  expect(store.drafts.get("s1").text).toBe("current draft");
   const send =
     screen.queryByRole("button", { name: "Send as steer" }) ??
     screen.getByRole("button", { name: "Send message" });

@@ -1,7 +1,5 @@
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { isBranchEditTarget } from "../shared/branch-node-actions.js";
-import type { SessionHistoryPages } from "../shared/contracts.js";
-import { userMessagePreviewText } from "../shared/user-message.js";
 import { requestError } from "./request-error.js";
 import { projectSafeValue } from "./safe-projection.js";
 
@@ -13,7 +11,6 @@ const completeSafeValue = (value: unknown) =>
   });
 
 export const BRANCH_CONTENT_PAGE_CHARS = 32_000;
-const BRANCH_SNIPPET_CHARS = 240;
 
 function validateEntryIdentity(
   value: unknown,
@@ -99,7 +96,6 @@ export function branchMessageSource(entry: SessionEntry): string {
 function* branchTextParts(
   entry: SessionEntry,
   imagePresentation: "describe" | "separate",
-  presentation: "source" | "preview" = "source",
 ): Generator<string> {
   if (
     entry.type === "message" &&
@@ -125,22 +121,10 @@ function* branchTextParts(
     ].filter(Boolean);
     return;
   }
-  let content =
+  const content =
     entry.type === "compaction" || entry.type === "branch_summary"
       ? entry.summary
       : branchEntryContent(entry);
-  if (
-    presentation === "preview" &&
-    entry.type === "message" &&
-    entry.message.role === "user"
-  ) {
-    content = [
-      { type: "text", text: userMessagePreviewText(content) },
-      ...(Array.isArray(content)
-        ? content.filter((block) => block?.type === "image")
-        : []),
-    ];
-  }
   if (typeof content === "string") yield content;
   else if (Array.isArray(content)) {
     for (const block of content) {
@@ -161,116 +145,6 @@ export function branchEntryText(
   imagePresentation: "describe" | "separate" = "describe",
 ): string {
   return [...branchTextParts(entry, imagePresentation)].join("\n\n");
-}
-
-function previewPrefix(entry: SessionEntry): string {
-  let text = "";
-  let space = false;
-  for (const part of branchTextParts(entry, "describe", "preview")) {
-    for (let index = 0; index < part.length; index++) {
-      const char = part[index]!;
-      if (/\s/u.test(char)) {
-        space = text.length > 0;
-        continue;
-      }
-      if (space) text += " ";
-      text += char;
-      space = false;
-      if (text.length > BRANCH_SNIPPET_CHARS) return text;
-    }
-    space = text.length > 0;
-  }
-  return text;
-}
-
-export function branchRouteLabel(entry: SessionEntry): string {
-  const text = previewPrefix(entry);
-  if (text.length > BRANCH_SNIPPET_CHARS)
-    return `${text.slice(0, BRANCH_SNIPPET_CHARS - 1)}…`;
-  return text || entry.type.replaceAll("_", " ");
-}
-
-/** Only structure is cached with the immutable saved entry array. */
-const treeIndexes = new WeakMap<
-  readonly SessionEntry[],
-  ReturnType<typeof indexRoutes>
->();
-
-function indexRoutes(entries: readonly SessionEntry[]) {
-  const children = new Map<string | null, SessionEntry[]>();
-  const labels = new Map<string, string>();
-  const latestLeaf = new Map<string, string>();
-  for (const entry of entries) {
-    const siblings = children.get(entry.parentId);
-    if (siblings) siblings.push(entry);
-    else children.set(entry.parentId, [entry]);
-    if (entry.type === "label") {
-      if (entry.label) labels.set(entry.targetId, entry.label.slice(0, 120));
-      else labels.delete(entry.targetId);
-    }
-  }
-  for (let i = entries.length - 1; i >= 0; i--) {
-    const entry = entries[i]!;
-    const leaf = latestLeaf.get(entry.id) ?? entry.id;
-    latestLeaf.set(entry.id, leaf);
-    if (entry.parentId !== null && !latestLeaf.has(entry.parentId))
-      latestLeaf.set(entry.parentId, leaf);
-  }
-  return { children, labels, latestLeaf };
-}
-
-function routesIndex(entries: readonly SessionEntry[]) {
-  let index = treeIndexes.get(entries);
-  if (!index) {
-    index = indexRoutes(entries);
-    treeIndexes.set(entries, index);
-  }
-  return index;
-}
-
-export function sessionChildCount(
-  entries: readonly SessionEntry[],
-  id: string | null,
-) {
-  return routesIndex(entries).children.get(id)?.length ?? 0;
-}
-
-export function sessionRoutes(
-  entries: readonly SessionEntry[],
-  byId: ReadonlyMap<string, SessionEntry>,
-  effectiveLeafId: string | null,
-  parentId: string | null,
-  before?: string,
-): SessionHistoryPages["routes"] {
-  if (parentId !== null && !byId.has(parentId))
-    throw requestError("That branch point no longer exists", 409);
-  const { children, labels, latestLeaf } = routesIndex(entries);
-  const siblings = children.get(parentId) ?? [];
-  const end = before
-    ? siblings.findIndex((entry) => entry.id === before)
-    : siblings.length;
-  if (end < 0)
-    throw requestError("History routes changed; refresh History", 409);
-  let current: string | undefined;
-  for (let id = effectiveLeafId; id !== null; ) {
-    const entry = byId.get(id);
-    if (!entry) break;
-    if (entry.parentId === parentId) {
-      current = entry.id;
-      break;
-    }
-    id = entry.parentId;
-  }
-  const start = Math.max(0, end - 100);
-  return {
-    nodes: siblings.slice(start, end).map((entry) => ({
-      id: entry.id,
-      label: labels.get(entry.id) ?? branchRouteLabel(entry),
-      leafId: latestLeaf.get(entry.id)!,
-      current: entry.id === current,
-    })),
-    nextBefore: start > 0 ? siblings[start]!.id : null,
-  };
 }
 
 export function boundedEditableText(

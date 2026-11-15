@@ -220,7 +220,6 @@ describe("SessionProjection framing and last-good state", () => {
       ),
     ).toMatchObject({
       text,
-      totalChars: text.length,
       nextOffset: null,
       images: [
         { index: 1, mimeType: "image/png" },

@@ -14,11 +14,9 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { assistantOutcome } from "../shared/assistant-outcome.js";
 import { interruptAssistantToolCalls } from "../shared/assistant-stream.js";
-import { isBranchEditTarget } from "../shared/branch-node-actions.js";
 import {
   type BranchEntryResponse,
   type ComposerHistoryPage,
-  type HistoryMatch,
   type ModelOption,
   type NativeTurnPage,
   type ProjectionHealth,
@@ -68,8 +66,6 @@ import {
   branchEntryText,
   branchMessageSource,
   indexSessionEntries,
-  sessionChildCount,
-  sessionRoutes,
 } from "./session-tree.js";
 
 export { MAX_PERSISTED_ENTRY_BYTES } from "./session-jsonl.js";
@@ -910,12 +906,10 @@ class SessionEntryIndex {
   private branchEntry(
     id: string,
     offset: number,
-    effectiveLeafId: string | null,
     format?: "message",
   ): BranchEntryResponse {
     const entry = this.currentEntriesById.get(id);
     if (!entry) throw requestError("History point no longer exists", 404);
-    const role = entry.type === "message" ? entry.message.role : undefined;
     const shell =
       entry.type === "message" && entry.message.role === "bashExecution"
         ? entry.message
@@ -934,16 +928,6 @@ class SessionEntryIndex {
         )
       : [];
     return {
-      sessionId: this.sessionId,
-      revision: this.revision,
-      node: {
-        id,
-        leaf: id === effectiveLeafId,
-        canEdit: isBranchEditTarget({ ...entry, role }),
-        canFork: role === "user",
-        toolResult: role === "toolResult",
-        childCount: sessionChildCount(this.currentEntries, id),
-      },
       ...(shell && offset === 0
         ? {
             shell: {
@@ -957,7 +941,6 @@ class SessionEntryIndex {
           }
         : {}),
       text: text.slice(offset, end),
-      totalChars: text.length,
       nextOffset: end < text.length ? end : null,
       images,
     };
@@ -1128,22 +1111,12 @@ class SessionEntryIndex {
           }),
         };
       }
-      case "search":
-        return this.findHistory(query.text, query.leafId ?? effectiveLeafId);
-
-      case "routes":
-        return sessionRoutes(
-          this.currentEntries,
-          this.currentEntriesById,
-          effectiveLeafId,
-          query.parentId || null,
-          query.before,
-        );
+      case "branches":
+        return this.branchLeaves(effectiveLeafId);
       case "entry":
         return this.branchEntry(
           query.targetId,
           query.offset ?? 0,
-          effectiveLeafId,
           query.format,
         );
       case "composer":
@@ -1198,7 +1171,7 @@ class SessionEntryIndex {
     // Cursor positions belong to a fixed leaf, even while Pi continues it.
     if (cursor) this.validateCursorAuthority(cursor, leafId, viewId);
     const pinnedLeaf = cursor ? cursor.effectiveLeafId : leafId;
-    const { messages, entries, turns } = this.nativeHistory(pinnedLeaf);
+    const { messages, entries } = this.nativeHistory(pinnedLeaf);
     if (cursor && cursor.before > messages.length)
       throw requestError("Transcript cursor is invalid", 400);
     const boundary = (at: number, direction: "before" | "after") =>
@@ -1221,9 +1194,6 @@ class SessionEntryIndex {
       revision: this.revision,
       leafId: pinnedLeaf,
       messages: rows,
-      firstTurn: turnOf(start),
-      lastTurn: turnOf(end - 1),
-      totalTurns: turns.length,
       earlier: start > 0 ? boundary(start, "before") : null,
       later: end < messages.length ? boundary(end, "after") : null,
     });
@@ -1237,11 +1207,8 @@ class SessionEntryIndex {
     const pivot = cursor?.before ?? anchor ?? messages.length;
     const index = (i: number) => (reverse ? i - 1 : i);
     const advance = reverse ? -1 : 1;
-    const branchPointBudget = 32 * 1024;
-    const builder = new TranscriptPageBuilder(
-      (end, rows) =>
-        reverse ? shell(end, pivot, rows) : shell(pivot, end, rows),
-      branchPointBudget,
+    const builder = new TranscriptPageBuilder((end, rows) =>
+      reverse ? shell(end, pivot, rows) : shell(pivot, end, rows),
     );
     let edge = pivot;
     while (
@@ -1260,57 +1227,39 @@ class SessionEntryIndex {
       if (!builder.add(edge + advance, item)) break;
       edge += advance;
     }
-    const page = builder.page(edge, reverse);
-    const points = new Map<
-      string,
-      { id: string; entryId: string; count: number }
-    >();
-    let routeBytes = 64;
-    for (const row of page.messages) {
-      const entryId = jsonRecord(row)?.__inspireEntryId;
-      if (typeof entryId !== "string") continue;
-      for (let id: string | null = entryId; id !== null; ) {
-        if (id !== entryId && entries.has(id)) break;
-        const count = sessionChildCount(this.currentEntries, id);
-        if (count > 1 && !points.has(id)) {
-          const point = { id, entryId, count };
-          const bytes = Buffer.byteLength(JSON.stringify(point)) + 1;
-          if (routeBytes + bytes <= branchPointBudget) {
-            routeBytes += bytes;
-            points.set(id, point);
-          }
-        }
-        id = this.currentEntriesById.get(id)?.parentId ?? null;
-      }
-    }
-    return {
-      ...page,
-      branchPoints: [...points.values()],
-      rootCount: sessionChildCount(this.currentEntries, null),
-    };
+    return builder.page(edge, reverse);
   }
 
-  private findHistory(text: string, leafId: string | null) {
-    const needle = text.toLowerCase();
-    const { entries, messages } = this.nativeHistory(leafId);
-    const matches: HistoryMatch[] = [];
-    for (const [entryId, index] of entries) {
-      const entry = this.currentEntriesById.get(entryId)!;
-      const body = branchEntryText(entry, "separate");
-      const offset = body.toLowerCase().indexOf(needle);
-      if (offset < 0) continue;
-      if (matches.length >= 40) return { matches, more: true };
-      matches.push({
-        entryId,
-        turn:
-          Number(jsonRecord(messages[index])?.__inspireUserTurnIndex ?? -1) + 1,
-        snippet: body.slice(
-          Math.max(0, offset - 45),
-          offset + needle.length + 90,
-        ),
-      });
-    }
-    return { matches, more: false };
+  private branchLeaves(
+    currentLeafId: string | null,
+  ): SessionHistoryPages["branches"] {
+    const entries = this.currentEntries;
+    const parents = new Set(entries.map((entry) => entry.parentId));
+    const ends = entries.filter((entry) => !parents.has(entry.id)).reverse();
+    const excerpt = (leaf: SessionEntry): string => {
+      const seen = new Set<string>();
+      let id: string | null = leaf.id;
+      while (id !== null && !seen.has(id)) {
+        seen.add(id);
+        const entry = this.currentEntriesById.get(id);
+        if (!entry) break;
+        if (entry.type === "message" && entry.message.role === "user") {
+          const text = branchEntryText(entry).replace(/\s+/gu, " ").trim();
+          return text.length > 80 ? `${text.slice(0, 79)}…` : text;
+        }
+        id = entry.parentId;
+      }
+      return "";
+    };
+    return {
+      total: ends.length,
+      leaves: ends.slice(0, 30).map((leaf) => ({
+        id: leaf.id,
+        excerpt: excerpt(leaf),
+        updatedAt: leaf.timestamp,
+        isCurrent: leaf.id === currentLeafId,
+      })),
+    };
   }
 
   private composerHistoryVersion(effectiveLeafId: string | null): string {

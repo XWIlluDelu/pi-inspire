@@ -12,6 +12,7 @@
   overflow-wrap: anywhere;
 }
 
+.dialog.settings,
 .dialog.terminal-settings {
   --set-control-h: 32px;
   --set-row-pad: 11px 16px;

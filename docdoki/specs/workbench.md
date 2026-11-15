@@ -146,7 +146,7 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   disagree. Folder pins use the exact cwd identity that already defines groups and their collapse
   state.
 
-- The catalog offers All and Needs you above one scrolling list. Hidden has its own collapsible section after All. Needs you is a flat
+- The Needs you bell sits next to New session and toggles the session column. Hidden has its own disclosure docked at the bottom of the column. Needs you is a flat
   cross-project list. Its count is green, or red when any session is waiting or failed.
   Needs you lists sessions waiting for input or recovery, then unseen failures, then unseen
   completions, newest activity first within each priority. Pinning changes the order in All.
@@ -155,16 +155,15 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   Needs you stays in place for the selected session. The browser remembers the catalog view
   independently of Recent on the start screen.
 
-- Each session row is 44px high, with the title above its activity age or search excerpt.
+- Desktop folder rows use one line with activity age on the right. Cross-project rows, search excerpts, and touch rows use two lines.
   The activity mark sits right-aligned inside the same 16px
   icon slot and 8px label gap as folder rows. The status mark renders at 10px, scaled about its
   painted right edge and vertical centre without moving the slot, text axis or selection marker.
   The text axis stays reserved when no status is present. Hidden separates its status mark from
   the selection marker.
 
-  Pin/Hide and Restore/Delete stay visible in a trailing column beside both text lines. The
-  actions have 24px targets on hover-capable desktop and 36px targets on phone-width or non-hover
-  layouts. An opening session keeps its Opening… status in the metadata line. The exact timestamp
+  Pin/Hide and Restore/Delete appear on hover or keyboard focus on desktop. They stay visible on
+  phone-width or non-hover layouts, with 36px targets. An opening session keeps its Opening… status in the metadata line. The exact timestamp
   and message count stay in tooltips.
 
   On devices without hover, the action's background shows during the press and clears on release.

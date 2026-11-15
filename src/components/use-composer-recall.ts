@@ -51,7 +51,6 @@ export function useComposerRecall(
   draft: SessionDraft,
   opening: boolean,
 ) {
-  const [attempt, setAttempt] = useState(0);
   const [history, setHistory] = useState<{
     key: string;
     entries: ComposerHistoryEntry[] | null;
@@ -74,7 +73,7 @@ export function useComposerRecall(
         if (!read.signal.aborted) setHistory({ key, entries });
       });
     return () => read.abort();
-  }, [attempt, historyVersion, incarnation, key, sessionId, viewId]);
+  }, [historyVersion, incarnation, key, sessionId, viewId]);
 
   useEffect(() => {
     setBrowsing(null);
@@ -192,12 +191,6 @@ export function useComposerRecall(
 
   return {
     displayed,
-    recent,
-    saved,
-    retry: () => {
-      setHistory(undefined);
-      setAttempt((current) => current + 1);
-    },
     onKeyDown,
     apply: () => {
       if (!entry || !scope) return true;

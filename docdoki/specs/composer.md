@@ -71,14 +71,10 @@ opens in a floating list near the caret and replaces the token at that caret.
 ### Retained prompt history
 
 Up at the start of the first visual line recalls the preceding input. Down at the last visual
-line moves toward the latest input and restores the draft on reaching it. Escape restores the
-draft without accepting the preview. Editing or sending the preview applies its text and
-artifacts to the current draft through the same owner and revision checks as **Use this input**.
-
-Input history is also available from the composer or Alt+Up. Saved inputs come from the
-selected branch's retained user messages, including pre-compaction messages and reopened
-sessions. Recent inputs show accepted text-only sends in this browser separately. Opening or
-cancelling the chooser preserves the live draft.
+line moves toward the latest input and restores the unsent draft on reaching it. Escape restores
+the draft. Editing or sending the preview applies its text and artifacts after checking the owner
+and draft revision. Saved inputs come from the selected branch's retained user messages, including
+pre-compaction messages and reopened sessions.
 
 Image-prompt recall omits Pi's appended dimension and coordinate-mapping notes from editable text
 while retaining the original image references. Mixed image and file prompts unwrap that suffix

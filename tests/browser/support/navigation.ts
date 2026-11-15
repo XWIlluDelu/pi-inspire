@@ -93,16 +93,6 @@ async function openContextPane(page: Page) {
   return pane;
 }
 
-export async function openHistoryPane(page: Page) {
-  const history = page.getByRole("region", { name: "Turn history" });
-  if (!(await history.isVisible()))
-    await page
-      .getByRole("button", { name: "Turn history", exact: true })
-      .click();
-  await expect(history).toBeVisible();
-  return history;
-}
-
 export async function openResourceFixture(page: Page) {
   await pairedPage(page);
   await openFixtureSession(

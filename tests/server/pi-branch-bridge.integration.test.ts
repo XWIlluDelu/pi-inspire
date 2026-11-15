@@ -598,14 +598,6 @@ export default function (pi) {
       },
     );
     await open();
-    const initialView = (await runtime.snapshot(SESSION_ID)).active!
-      .transcriptPage.viewId;
-    expect(
-      await runtime.sessionHistory(SESSION_ID, initialView, {
-        kind: "entry",
-        targetId: "u1",
-      }),
-    ).toMatchObject({ skipSummaryPrompt: true });
     const sourcePid = workers[0]!.pid;
     const beforeNavigation = await readFile(sourcePath, "utf8");
     const beforeCount = readEntries(beforeNavigation).length;

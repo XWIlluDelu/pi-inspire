@@ -87,7 +87,7 @@ export interface NativeCommandUiRequest {
     | "new"
     | "hotkeys"
     | "changelog"
-    | "history";
+    | "branches";
   query?: string;
   modelSettingsFocus?: "credentials" | "common";
   modelSettingsOwner?: ModelSettingsOwner;

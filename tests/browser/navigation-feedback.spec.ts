@@ -118,15 +118,14 @@ test.describe("short navigation drawer", () => {
     await hidden.focus();
     await expect(hidden).toHaveCSS("outline-style", "solid");
     await hidden.press("Enter");
-    await expect(hidden).toHaveAttribute("aria-pressed", "true");
+    await expect(hidden).toHaveAttribute("aria-expanded", "true");
     await expect(hidden).toBeFocused();
     expect(await hidden.evaluate(focusRingClipping)).toBeLessThanOrEqual(0.5);
 
     const body = nav.getByRole("region", { name: "Hidden", exact: true });
     await expect(body).toBeVisible();
-    const all = nav.getByRole("button", { name: "All", exact: true });
-    await all.press("Enter");
-    await expect(all).toBeFocused();
-    await expect(body).toHaveCount(0);
+    await hidden.press("Enter");
+    await expect(hidden).toBeFocused();
+    await expect(hidden).toHaveAttribute("aria-expanded", "false");
   });
 });

@@ -155,9 +155,6 @@ describe("transcript viewport geometry", () => {
               content: "Earlier reply",
             },
           ],
-          firstTurn: 1,
-          lastTurn: 1,
-          totalTurns: 2,
           earlier: null,
           later: null,
         };

@@ -20,7 +20,7 @@ export function TranscriptPromptMap({
   scrollport: HTMLDivElement | null;
   mobileActive: boolean;
   onDismissMobile: () => void;
-  onJump: (turn: UserTurnAnchor) => void;
+  onJump: (turn: UserTurnAnchor) => Promise<boolean>;
 }) {
   const pages = useRef(new Map<number, SessionHistoryPages["turns"]>());
   const pending = useRef(new Map<number, AbortController>());
@@ -132,8 +132,7 @@ export function TranscriptPromptMap({
           (item) => item.ordinal === ordinal,
         );
         if (!turn) return false;
-        onJump(turn);
-        return true;
+        return onJump(turn);
       }}
     />
   );

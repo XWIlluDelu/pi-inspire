@@ -1271,9 +1271,9 @@ export class AppStore {
     });
   }
 
-  openHistory = (): void => {
+  openBranchMenu = (): void => {
     const { sessionId } = this.state;
-    if (sessionId) this.requestNativeCommandUi(sessionId, "history");
+    if (sessionId) this.requestNativeCommandUi(sessionId, "branches");
   };
 
   consumeNativeCommandUiRequest = (id: number): void => {
@@ -1621,12 +1621,14 @@ export class AppStore {
       return this.launchHostNativeCommand(sessionId, descriptor.name, argument);
     if (descriptor.surface) {
       this.requestNativeCommandUi(sessionId, descriptor.surface);
-      if (descriptor.selectionHint)
-        this.notify("info", descriptor.selectionHint);
       return ACCEPTED_NATIVE_COMMAND;
     }
     if (descriptor.modelSettingsFocus) {
       this.openModelSettings(argument, descriptor.modelSettingsFocus);
+      return ACCEPTED_NATIVE_COMMAND;
+    }
+    if (name === "fork") {
+      this.notify("info", "Choose Fork on the user message where you want to start the new branch.");
       return ACCEPTED_NATIVE_COMMAND;
     }
     if (name === "clone") {

@@ -50,7 +50,6 @@ interface TranscriptRowProjectionOptions {
   thinkingVisibility: VisibilityPreference;
   toolVisibility: ToolVisibilityPreference;
   activityFoldVisibility: ActivityFoldVisibilityPreference;
-  onReadFullEntry?: (entryId: string) => void;
 }
 
 type Row = {
@@ -127,7 +126,6 @@ export function useTranscriptRows(options: TranscriptRowProjectionOptions) {
     thinkingVisibility,
     toolVisibility,
     activityFoldVisibility,
-    onReadFullEntry,
   } = options;
   const choices = useMemo<ActivityReadingChoices>(
     () => new Map(),
@@ -382,23 +380,6 @@ export function useTranscriptRows(options: TranscriptRowProjectionOptions) {
               });
           }
       }
-      if (
-        message.__inspireProjectionReduced &&
-        message.__inspireEntryId &&
-        onReadFullEntry
-      ) {
-        const entryId = message.__inspireEntryId;
-        addRow(
-          `${key}:full-entry`,
-          <button
-            className="button button--quiet transcript__full-entry"
-            type="button"
-            onClick={() => onReadFullEntry(entryId)}
-          >
-            Read full entry
-          </button>,
-        );
-      }
     }
     flushActivity(busy);
     return { rows, toolCalls, toolResults };
@@ -414,7 +395,6 @@ export function useTranscriptRows(options: TranscriptRowProjectionOptions) {
     thinkingVisibility,
     toolVisibility,
     activityFoldVisibility,
-    onReadFullEntry,
     configuration,
     choices,
   ]);

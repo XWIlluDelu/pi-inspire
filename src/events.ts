@@ -63,7 +63,6 @@ export interface ChatMessage {
   __inspireSettled?: boolean;
   __inspireEntryId?: string;
   __inspireSavedHistory?: true;
-  __inspireProjectionReduced?: boolean;
   /** Host-owned readable names, independent of physical upload cache basenames. */
   __inspireFileNames?: Record<string, string>;
   /** Position in Pi's authoritative active-path message projection. Embedded

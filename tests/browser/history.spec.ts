@@ -1,16 +1,5 @@
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
-import { expect, type Locator, type Page, test } from "@playwright/test";
-import type { ActiveSnapshot } from "../../shared/contracts";
-import { browserWorkspace } from "./fixtures/workspace.mjs";
-import { hostRequest } from "./support/host-request";
-import {
-  openFixtureSession,
-  openHistoryPane,
-  pairedPage,
-  reloadSession,
-} from "./support/navigation";
-import { textOverflowsInlineBounds } from "./support/text-bounds";
+import { expect, type Page, test } from "@playwright/test";
+import { openFixtureSession, pairedPage } from "./support/navigation";
 
 test.use({ serviceWorkers: "block", viewport: { width: 1280, height: 900 } });
 
@@ -28,22 +17,7 @@ async function connectCalibration(page: Page) {
   await chooseSource(page);
 }
 
-async function inspect(history: Locator, text: string, id: string) {
-  await history
-    .getByRole("searchbox", { name: "Search this branch" })
-    .fill(text);
-  await history.getByRole("button", { name: "Search", exact: true }).click();
-  await history
-    .getByRole("button", { name: /^Turn \d+:/ })
-    .first()
-    .click();
-  await history
-    .locator(`[data-history-entry="${id}"]`)
-    .getByRole("button", { name: "Read full entry" })
-    .click();
-}
-
-test("chooses an alternate native route from the title menu without moving Pi", async ({
+test("switches branches directly from the title menu and keeps the draft", async ({
   page,
 }) => {
   await connectCalibration(page);
@@ -51,19 +25,11 @@ test("chooses an alternate native route from the title menu without moving Pi", 
   await composer.fill("Keep the unsent draft");
   await page.getByRole("button", { name: /^Session actions:/ }).click();
   await page.getByRole("menuitem", { name: "Switch branch…" }).click();
-  const history = page.getByRole("region", { name: "Turn history" });
-  await history.getByRole("button", { name: "Earlier", exact: true }).click();
-  await history.getByRole("button", { name: "Other routes (2)" }).click();
-  await history
-    .getByRole("group", { name: "Routes from this point" })
-    .getByRole("button", { name: /alternate calibration/ })
-    .click();
-  await expect(history.getByText(/amber reference is retained/)).toBeVisible();
+  await page.getByRole("menuitem", { name: /alternate calibration/i }).click();
+  await expect(page.getByRole("log")).toContainText(
+    "amber reference is retained",
+  );
   await expect(composer).toHaveValue("Keep the unsent draft");
-  await history.getByRole("button", { name: "Live", exact: true }).click();
-  await expect(
-    page.getByRole("log").getByText(/amber reference is retained/),
-  ).toHaveCount(0);
 });
 
 test("Fork restores saved images for preview, editing and explicit resend", async ({
@@ -76,14 +42,22 @@ test("Fork restores saved images for preview, editing and explicit resend", asyn
     exact: true,
   });
   await input.fill("Keep this source draft");
-  const history = await openHistoryPane(page);
-  await inspect(history, "Compare the calibration strategies", "history-u-0");
+  const transcript = page.getByRole("log");
+  const turn = transcript.locator(".turn--user").filter({
+    hasText: "Compare the calibration strategies",
+  });
+  await page.getByRole("button", { name: "Open prompt map" }).focus();
+  const prompts = page.getByRole("list", { name: "User prompts" });
+  await prompts.press("Home");
+  await prompts
+    .getByRole("button", { name: /Compare the calibration strategies/ })
+    .press("Enter");
+  await expect(turn).toBeInViewport();
   const response = page.waitForResponse(
     (response) => new URL(response.url()).pathname === "/api/branches/fork",
   );
-  await history
-    .getByRole("button", { name: "Fork to new session", exact: true })
-    .click();
+  await turn.hover();
+  await turn.getByRole("button", { name: /fork/i }).click();
   const forked = await (await response).json();
   expect(forked.editorAttachments).toHaveLength(1);
   expect(forked.editorText).toContain("Compare the calibration strategies");
@@ -106,208 +80,4 @@ test("Fork restores saved images for preview, editing and explicit resend", asyn
   });
   await expect(restored).toHaveCount(0);
   await expect(input).toHaveValue("");
-
-});
-
-test("recovers a History image and opens local references in the authorized session reader", async ({
-  page,
-}) => {
-  await connectCalibration(page);
-  let imageAvailable = false;
-  const imageRequests: string[] = [];
-  await page.route("**/api/branches/image?**", async (route) => {
-    imageRequests.push(route.request().url());
-    // Fail the selected resource, not an arbitrary first request that a
-    // retired effect may abort before it reaches the browser.
-    if (!imageAvailable)
-      await route.fulfill({
-        status: 503,
-        json: { error: "Temporary image failure" },
-      });
-    else await route.continue();
-  });
-  const history = await openHistoryPane(page);
-  await inspect(history, "Compare the calibration strategies", "history-u-0");
-  await expect(
-    history.getByText("Loading image…", { exact: true }),
-  ).toBeVisible();
-  await expect.poll(() => imageRequests.length).toBeGreaterThan(0);
-  imageAvailable = true;
-  const image = history.getByRole("button", {
-    name: "Preview image in this history entry",
-  });
-  await expect
-    .poll(() =>
-      image
-        .locator("img")
-        .evaluate((node) => (node as HTMLImageElement).naturalWidth),
-    )
-    .toBeGreaterThan(0);
-  const body = history.locator(".native-history__body");
-  const external = body.getByRole("link", { name: "external docs" });
-  await expect(external).toHaveAttribute("href", "https://example.com/docs");
-  await expect(external).toHaveAttribute("target", "_blank");
-  await body.getByRole("link", { name: "the project document" }).click();
-  await expect(page.locator(".file-preview")).toBeVisible();
-  await openHistoryPane(page);
-  const shellPreview = history.getByRole("region", { name: "Shell record preview" });
-  await inspect(
-    history,
-    "COMPLETE_NATIVE_SHELL_LOG_END",
-    "history-shell-included",
-  );
-  await expect(shellPreview).toContainText("Included in context");
-  await expect(shellPreview.getByRole("status")).toHaveText("Exit 0");
-  await expect(shellPreview).toContainText("Pi truncated the recorded output.");
-  await page.setViewportSize({ width: 600, height: 900 });
-  const context = page.getByRole("dialog", { name: "Context panel" });
-  await context.getByRole("button", { name: "Close context pane" }).click();
-  await expect(context).toBeHidden();
-  const reference = resolve(browserWorkspace, "native-shell.log");
-  const resolvedLog = page.waitForRequest(
-    (request) => new URL(request.url()).pathname === "/api/resources/resolve",
-  );
-  await shellPreview
-    .getByRole("button", { name: "View full shell output" })
-    .click();
-  expect((await resolvedLog).postDataJSON()).toMatchObject({
-    sessionId: "fixture-calibration-history",
-    reference,
-  });
-  const source = page.getByRole("region", { name: "File source" });
-  await expect(source).toBeVisible();
-  expect(await source.locator("code").textContent()).toBe(
-    await readFile(reference, "utf8"),
-  );
-});
-
-test("History Edit with a delayed summary preserves a newer draft and image", async ({
-  page,
-}) => {
-  await connectCalibration(page);
-  // A carried summary commits history. Copy before compaction so the older
-  // input remains in the copied model context, without mutating the seed.
-  const source: ActiveSnapshot = await (
-    await hostRequest(page).get(
-      "/api/snapshot?detail=fixture-calibration-history",
-    )
-  ).json();
-  const copied = await hostRequest(page).post("/api/branches/clone", {
-    data: {
-      sessionId: source.active!.sessionId,
-      viewId: source.active!.transcriptPage.viewId,
-      targetId: "history-a-598",
-    },
-  });
-  expect(copied.ok()).toBe(true);
-  await reloadSession(page, (await copied.json()).snapshot.active.sessionId);
-  const composer = page.getByLabel("Message", { exact: true });
-  await composer.fill("Confirmed draft");
-  const history = await openHistoryPane(page);
-  await inspect(history, "Review calibration run 598", "history-u-598");
-  const edit = history.getByRole("button", {
-    name: "Edit in this session",
-    exact: true,
-  });
-  page.once("dialog", (dialog) => void dialog.dismiss());
-  await edit.click();
-  await expect(edit).toBeEnabled();
-  await expect(composer).toHaveValue("Confirmed draft");
-  await history.getByRole("checkbox", { name: "Carry branch summary" }).check();
-  await history
-    .getByRole("textbox", { name: "Summary instructions" })
-    .fill("Keep the measurements");
-  let release!: () => void;
-  const summary = new Promise<void>((resolveSummary) => {
-    release = resolveSummary;
-  });
-  await page.route("**/api/branches/navigate", async (route) => {
-    await summary;
-    await route.continue();
-  });
-  page.once("dialog", (dialog) => void dialog.accept());
-  const dispatched = page.waitForRequest("**/api/branches/navigate");
-  await edit.click();
-  expect((await dispatched).postDataJSON()).toMatchObject({
-    mode: "edit",
-    summarize: true,
-    customInstructions: "Keep the measurements",
-  });
-  await composer.fill("Newer draft typed while waiting");
-  await page.locator('input[type="file"]').setInputFiles({
-    name: "newer-image.gif",
-    mimeType: "image/gif",
-    buffer: Buffer.from(
-      "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
-      "base64",
-    ),
-  });
-  await expect(page.locator(".attachment--ready")).toBeVisible();
-  const completed = page.waitForResponse("**/api/branches/navigate");
-  release();
-  expect((await completed).ok()).toBe(true);
-  await expect(composer).toHaveValue("Newer draft typed while waiting");
-  await expect(page.locator(".attachment--image")).toHaveCount(1);
-  await expect(
-    page.getByText(/Conversation changed; your newer draft was kept\./),
-  ).toBeVisible();
-});
-
-test("earlier-branch restore remains reachable when its diagnostic wraps", async ({
-  page,
-}) => {
-  await connectCalibration(page);
-  const source: ActiveSnapshot = await (
-    await hostRequest(page).get(
-      "/api/snapshot?detail=fixture-calibration-history",
-    )
-  ).json();
-  const active = source.active!;
-  const copy = await hostRequest(page).post("/api/branches/clone", {
-    data: {
-      sessionId: active.sessionId,
-      viewId: active.transcriptPage.viewId,
-      targetId: active.durableLeafId,
-    },
-  });
-  expect(copy.ok()).toBe(true);
-  await reloadSession(page, (await copy.json()).sessionId);
-  page.on("dialog", (dialog) => void dialog.accept());
-  const history = await openHistoryPane(page);
-  await inspect(history, "Review calibration run 598", "history-u-598");
-  await history
-    .getByRole("button", { name: "Edit in this session", exact: true })
-    .click();
-  const banner = page.getByRole("region", { name: "Earlier continuation" });
-  await expect(banner).toBeVisible();
-  await page.setViewportSize({ width: 320, height: 900 });
-  let release!: () => void;
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const diagnostic =
-    "Unable to read the earlier conversation in /workspace/calibration/long-path-analysis/measurements/reference-calibration-history/session.jsonl. Restore access to the project directory and retry. No conversation changes were saved.";
-  await page.route("**/api/branches/navigate", async (route) => {
-    await gate;
-    await route.fulfill({ status: 503, json: { error: diagnostic } });
-  });
-  const restore = banner.getByRole("button", {
-    name: "Restore saved position",
-    exact: true,
-  });
-  try {
-    await restore.click();
-    await expect(restore).toHaveAttribute("aria-busy", "true");
-    await expect(restore).toBeDisabled();
-  } finally {
-    release();
-  }
-  await expect(banner.getByRole("alert")).toHaveText(diagnostic);
-  await expect(restore).toBeEnabled();
-  expect(
-    await banner.getByRole("alert").evaluate(textOverflowsInlineBounds),
-  ).toBe(false);
-  await page.unroute("**/api/branches/navigate");
-  await restore.click();
-  await expect(banner).toHaveCount(0);
 });

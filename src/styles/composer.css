@@ -374,13 +374,6 @@
 
 .dropdown-trigger:disabled { color: var(--faint); }
 
-.composer-thinking-control {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  flex: none;
-}
-
 .thinking-select {
   max-width: 115px;
   border-color: transparent;
@@ -913,4 +906,19 @@
 .dropdown-popup small {
   display: block;
   color: var(--muted);
+}
+
+.thinking-selector__menu {
+  padding: 4px 0;
+}
+
+.thinking-selector__menu .picker__row {
+  width: calc(100% - 12px);
+  margin-inline: 6px;
+  min-height: 30px;
+  padding: 0 6px;
+}
+
+@media (pointer: coarse) {
+  .thinking-selector__menu .picker__row { min-height: 44px; }
 }

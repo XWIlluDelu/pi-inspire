@@ -123,18 +123,16 @@ describe("native shell input", () => {
       const view = snapshot.active!.transcriptPage.viewId;
       if (!query || !command || !context)
         throw new Error("Missing shell fixture");
-      const matches = await f.runtime.sessionHistory(f.sessionId, view, {
-        kind: "search",
-        text: query,
-      });
+      const shellEntry = snapshot.active!.transcriptPage.messages.find(
+        (row) =>
+          (row as { role?: string; command?: string }).role ===
+            "bashExecution" &&
+          (row as { command?: string }).command === command.replace(/^!+/, ""),
+      ) as { __inspireEntryId: string } | undefined;
+      expect(shellEntry).toBeDefined();
       const detail = await f.runtime.sessionHistory(f.sessionId, view, {
         kind: "entry",
-        targetId: matches.matches[0]!.entryId,
-      });
-      expect(detail.node).toMatchObject({
-        toolResult: false,
-        canEdit: false,
-        canFork: false,
+        targetId: shellEntry!.__inspireEntryId,
       });
       expect(detail.text).toContain(query);
       expect(detail.shell).toMatchObject({

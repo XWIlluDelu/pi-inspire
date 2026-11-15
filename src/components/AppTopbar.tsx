@@ -118,7 +118,11 @@ function GitSummary() {
       <span className="topbar__git-branch">{branch}</span>
       {changes > 0 && !changesVisible ? (
         <span className="topbar__git-count" aria-hidden>
-          {changes > 99 ? "99+" : changes}
+          {changes}
+          <span className="topbar__git-count-word">
+            {" "}
+            {changes === 1 ? "change" : "changes"}
+          </span>
         </span>
       ) : null}
     </button>
@@ -130,17 +134,30 @@ const SessionIdent = memo(function SessionIdent({
 }: {
   onExport: () => void;
 }) {
-  const { sessionId, heading, cwd, projectDisplay, readOnly } = useAppState(
-    (state) => ({
-      sessionId: state.sessionId,
-      heading: sessionPresentationName(state),
-      cwd: state.cwd,
-      projectDisplay: state.prefs.projectDisplay,
-      readOnly: Boolean(state.readOnlyReason),
-    }),
-    shallowEqual,
-  );
+  const { sessionId, heading, cwd, projectDisplay, readOnly, branchRequest } =
+    useAppState(
+      (state) => ({
+        sessionId: state.sessionId,
+        heading: sessionPresentationName(state),
+        cwd: state.cwd,
+        projectDisplay: state.prefs.projectDisplay,
+        readOnly: Boolean(state.readOnlyReason),
+        branchRequest:
+          state.nativeCommandUiRequest?.action === "branches" &&
+          state.nativeCommandUiRequest.sessionId === state.sessionId
+            ? state.nativeCommandUiRequest.id
+            : null,
+      }),
+      shallowEqual,
+    );
   const [menuOpen, setMenuOpen] = useState(false);
+  const [branchRequested, setBranchRequested] = useState(false);
+  useLayoutEffect(() => {
+    if (branchRequest === null) return;
+    setBranchRequested(true);
+    setMenuOpen(true);
+    store.consumeNativeCommandUiRequest(branchRequest);
+  }, [branchRequest]);
   const titleRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [edit, setEdit] = useState<{ initial: string; name: string } | null>(
@@ -199,6 +216,7 @@ const SessionIdent = memo(function SessionIdent({
   };
   const closeMenu = (restoreFocus = false) => {
     setMenuOpen(false);
+    setBranchRequested(false);
     if (restoreFocus) titleRef.current?.focus({ preventScroll: true });
   };
   const { copied, copy } = useCopied({
@@ -277,6 +295,7 @@ const SessionIdent = memo(function SessionIdent({
       {menuOpen ? (
         <SessionActionsMenu
           anchorRef={titleRef}
+          initialBranchSelection={branchRequested}
           sessionId={sessionId}
           onClose={closeMenu}
           onRename={(_, name) => setEdit({ initial: name, name })}

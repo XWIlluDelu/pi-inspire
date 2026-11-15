@@ -211,7 +211,7 @@ test.describe("touch session drawer", () => {
       await expect(hiddenRow.locator('[aria-current="page"]')).toBeVisible();
       await action("Restore").tap();
       await expect(hiddenRow).toHaveCount(0);
-      await drawer.getByRole("button", { name: "All", exact: true }).tap();
+      await drawer.getByRole("button", { name: "Hidden", exact: true }).tap();
       await expect(action("Pin")).toBeVisible();
       await expect(input).toHaveValue("Keep this touch draft");
       await row.locator(".nav__row-main").tap();
@@ -281,7 +281,7 @@ test("catalog search follows curation and reviews the exact Hidden selection", a
   const hidden = nav.getByRole("button", { name: "Hidden", exact: true });
   await hidden.click();
   await page.reload();
-  await expect(hidden).toHaveAttribute("aria-pressed", "true");
+  await expect(hidden).toHaveAttribute("aria-expanded", "true");
   await expect(row).toBeVisible();
 
   const requests: Array<{
@@ -393,9 +393,7 @@ test("live attention filters and counts the relevant sessions through rail, draw
   const rows = page
     .getByRole("region", { name: "Sessions that need you" })
     .locator(".nav__row");
-  const all = page
-    .locator(".nav")
-    .getByRole("button", { name: "All", exact: true });
+  const all = page.locator(".nav").getByRole("button", { name: /^Needs you/ });
   await expect(rows).toHaveCount(2);
   await expect(rows.nth(0)).toHaveAttribute("data-session-id", newer);
   await expect(rows.nth(1)).toHaveAttribute("data-session-id", older);

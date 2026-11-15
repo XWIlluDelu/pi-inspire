@@ -1,6 +1,7 @@
 import {
   CheckCheck,
-  ChevronDown,
+  Bell,
+  ChevronUp,
   EyeOff,
   Inbox,
   PanelLeft,
@@ -46,11 +47,6 @@ import { PiLoader } from "./PiLoader";
 import { SearchField } from "./SearchField";
 import { SessionDeleteDialog } from "./SessionDeleteDialog";
 import { BrandLogo, Wordmark } from "./Wordmark";
-
-const views = [
-  ["all", "All"],
-  ["needs-you", "Needs you"],
-] as const;
 
 export const Nav = memo(function Nav({
   collapsed,
@@ -441,17 +437,45 @@ export const Nav = memo(function Nav({
           </div>
         </div>
         <div className="nav__controls">
-          <button
-            type="button"
-            className="nav__new-session"
-            aria-label="New session"
-            onClick={onNewSession}
-          >
-            <span className="nav__new-session-label">
-              <Plus size={16} className="nav__new-session-icon" aria-hidden />
-              <span>New session</span>
-            </span>
-          </button>
+          <div className="nav__new-session-row">
+            <button
+              type="button"
+              className="nav__new-session"
+              aria-label="New session"
+              onClick={onNewSession}
+            >
+              <span className="nav__new-session-label">
+                <Plus size={16} className="nav__new-session-icon" aria-hidden />
+                <span>New session</span>
+              </span>
+            </button>
+            <button
+              type="button"
+              className="icon-button nav__needs-you"
+              aria-pressed={view === "needs-you"}
+              aria-label={
+                needsYouCount > 0 ? `Needs you (${needsYouCount})` : "Needs you"
+              }
+              title={
+                view === "needs-you"
+                  ? "Showing sessions that need you. Click to show all sessions"
+                  : "Show only sessions waiting for input, failed, or finished and not yet seen"
+              }
+              onClick={() =>
+                chooseView(view === "needs-you" ? "all" : "needs-you")
+              }
+            >
+              <Bell size={15} aria-hidden />
+              {needsYouCount > 0 ? (
+                <span
+                  className={`navigation-toggle__attention${needsYouUrgent ? " navigation-toggle__attention--urgent" : ""}`}
+                  aria-hidden
+                >
+                  {needsYouCount > 9 ? "9+" : needsYouCount}
+                </span>
+              ) : null}
+            </button>
+          </div>
           <SearchField
             className="nav__search"
             inputRef={searchInputRef}
@@ -524,40 +548,6 @@ export const Nav = memo(function Nav({
               ? `${highlighted.title}. Up and Down select a session; Enter opens it.`
               : ""}
           </span>
-        </div>
-      </div>
-      <div className="nav__catalog-controls">
-        <div
-          className="nav__catalog-views"
-          role="group"
-          aria-label="Session views"
-        >
-          {views.map(([id, label]) => (
-            <button
-              key={id}
-              type="button"
-              className="button button--quiet"
-              aria-pressed={view === id}
-              aria-label={
-                id === "needs-you" && needsYouCount
-                  ? `${label} (${needsYouCount})`
-                  : label
-              }
-              onClick={() => chooseView(id)}
-            >
-              {label}
-              {id === "needs-you" && needsYouCount > 0 && (
-                <span
-                  aria-hidden
-                  className={
-                    needsYouUrgent ? "nav__view-count--urgent" : undefined
-                  }
-                >
-                  {needsYouCount > 9 ? "9+" : needsYouCount}
-                </span>
-              )}
-            </button>
-          ))}
         </div>
       </div>
       {sessionActionError ? (
@@ -664,59 +654,59 @@ export const Nav = memo(function Nav({
               </span>
             </div>
           )}
-        {hiddenSections.length > 0 && (
-          <section
-            className="nav__group nav__group--hidden"
-            aria-label="Hidden"
-          >
-            <h2 className="nav__group-title nav__hidden-heading">
-              <button
-                type="button"
-                className="nav__group-toggle"
-                aria-expanded={showHidden}
-                aria-controls={hiddenContentId}
-                onClick={() => {
-                  const next = !hiddenOpen;
-                  setHiddenOpen(next);
-                  saveHiddenSessionsOpen(next);
-                }}
-              >
-                <EyeOff size={16} aria-hidden />
-                <span className="nav__group-name">Hidden</span>
-                <span className="nav__group-count" aria-hidden>
-                  {hiddenSessions.length}
-                </span>
-                <ChevronDown size={12} aria-hidden />
-              </button>
-              <button
-                type="button"
-                className="icon-button nav__catalog-clear"
-                aria-label="Clear Hidden"
-                title={hiddenClearReason ?? "Clear Hidden"}
-                disabled={hiddenClearReason !== null}
-                onClick={() =>
-                  setHiddenClearCandidate({
-                    sessionIds: hiddenSessions.map(({ id }) => id),
-                  })
-                }
-              >
-                {clearingHidden ? (
-                  <PiLoader size={14} aria-hidden />
-                ) : (
-                  <Trash2 size={14} aria-hidden />
-                )}
-              </button>
-            </h2>
-            <div
-              className="nav__hidden-content"
-              id={hiddenContentId}
-              hidden={!showHidden}
-            >
-              {showHidden && hiddenSections.map(renderSection)}
-            </div>
-          </section>
-        )}
       </div>
+      {hiddenSections.length > 0 && (
+        <section className="nav__group nav__group--hidden" aria-label="Hidden">
+          <h2 className="nav__hidden-heading nav__dock-heading">
+            <button
+              type="button"
+              className="nav__hidden-toggle nav__dock-toggle"
+              aria-expanded={showHidden}
+              disabled={searching}
+              aria-controls={hiddenContentId}
+              onClick={() => {
+                const next = !hiddenOpen;
+                setHiddenOpen(next);
+                saveHiddenSessionsOpen(next);
+              }}
+            >
+              <EyeOff size={16} aria-hidden />
+              <span className="nav__group-name nav__dock-title">Hidden</span>
+              <span className="nav__hidden-count" aria-hidden>
+                {hiddenSessions.length}
+              </span>
+              <ChevronUp
+                size={12}
+                className={`chev-flip ${showHidden ? "chev-flip--open" : ""}`}
+                aria-hidden
+              />
+            </button>
+            <button
+              type="button"
+              className="nav__row-action nav__row-action--danger nav__hidden-clear"
+              aria-label="Clear Hidden"
+              title={hiddenClearReason ?? "Clear Hidden"}
+              disabled={hiddenClearReason !== null}
+              onClick={() =>
+                setHiddenClearCandidate({
+                  sessionIds: hiddenSessions.map(({ id }) => id),
+                })
+              }
+            >
+              {clearingHidden ? (
+                <PiLoader size={12} aria-hidden />
+              ) : (
+                <Trash2 size={12} aria-hidden />
+              )}
+            </button>
+          </h2>
+          {showHidden && (
+            <div className="nav__hidden-content" id={hiddenContentId}>
+              {hiddenSections.map(renderSection)}
+            </div>
+          )}
+        </section>
+      )}
       {deleteCandidate ? (
         <SessionDeleteDialog
           session={deleteCandidate}

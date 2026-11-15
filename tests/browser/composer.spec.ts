@@ -158,14 +158,10 @@ test("composer text drafts survive reload and stay partitioned through switching
   await input.fill(historyDraft);
   await input.press("ArrowUp");
   await expect(input).toHaveValue(historyDraft);
-  const historyDialog = page.getByRole("dialog", { name: "Input history" });
-  await input.press("Alt+ArrowUp");
-  await expect(
-    historyDialog.getByRole("radio", { name: repeated }).first(),
-  ).toBeVisible();
-  await historyDialog.getByRole("radio", { name: repeated }).first().check();
-  await expect(input).toHaveValue(historyDraft);
-  await historyDialog.getByRole("button", { name: "Cancel" }).click();
+  await input.press("Control+Home");
+  await input.press("ArrowUp");
+  await expect(input).toHaveValue(repeated);
+  await input.press("Escape");
   await expect(input).toHaveValue(historyDraft);
   await expect(input).toBeFocused();
   await input.fill("send and do not resurrect");
