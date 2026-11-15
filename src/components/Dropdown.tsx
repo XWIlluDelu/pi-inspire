@@ -80,7 +80,7 @@ export function Dropdown<Value extends string>({
       preferredWidth: Math.max(
         menuWidth ?? 148,
         anchor.width,
-        options.some((option) => option.description) ? 280 : 0,
+        options.some((option) => option.description) ? 320 : 0,
       ),
     };
   }, [menuWidth, options]);
@@ -102,6 +102,15 @@ export function Dropdown<Value extends string>({
   useEffect(() => {
     if (props.disabled) setOpen(false);
   }, [props.disabled]);
+  useEffect(() => {
+    const opener = trigger.current;
+    if (!open || !opener || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry && !entry.isIntersecting) setOpen(false);
+    });
+    observer.observe(opener);
+    return () => observer.disconnect();
+  }, [open]);
   useEffect(() => {
     if (openRequest === undefined || handled.current === openRequest) return;
     handled.current = openRequest;
@@ -181,7 +190,7 @@ export function Dropdown<Value extends string>({
             value}
         </span>
         {indicator}
-        <ChevronDown size={13} aria-hidden />
+        <ChevronDown size={composed ? 13 : 11} aria-hidden />
       </button>
       {open &&
         placement &&
@@ -250,20 +259,17 @@ export function Dropdown<Value extends string>({
                   if (composed) close();
                 }}
                 focusOptions={composed}
-                optionButtons
+                optionButtons={composed}
                 renderOption={(item) => {
-                  const option = options.find(
-                    ({ value }) => value === item.value,
-                  );
                   return (
                     <>
-                      <span>
+                      <span className="dropdown-popup__copy">
                         {item.label}
-                        {option?.description && (
-                          <small>{option.description}</small>
-                        )}
+                        {item.description && <small>{item.description}</small>}
                       </span>
-                      {item.selected && <Check size={13} aria-hidden />}
+                      {item.selected && (
+                        <Check size={composed ? 13 : 12} aria-hidden />
+                      )}
                     </>
                   );
                 }}

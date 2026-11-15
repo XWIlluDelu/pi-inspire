@@ -78,10 +78,11 @@ values show Unavailable, not a confirmed state.
 
 ## Session action order
 
-Behavior shows the session title actions in order. Each row has Move up and Move down controls.
-The title menu also supports dragging its grips and moving the focused action with Alt+Up/Down.
-Moving an action keeps focus on the control and announces its new position. Each action retains
-its eligibility rules.
+Behavior shows the session title actions in order with a drag grip on each row. Mouse and touch can
+drag the grip. Alt+Up/Down moves the focused action, and activating the grip opens Move up and
+Move down options. Escape closes the options and returns focus to the grip.
+The title menu also supports drag and Alt+Up/Down. Both surfaces announce moves and share the
+same order. Each action retains its eligibility rules.
 
 The order is a Host-persisted interface preference, saved through the existing field-owned write
 path and included in Reset preferences. An older saved order keeps its relative order and gains

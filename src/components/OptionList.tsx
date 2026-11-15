@@ -25,6 +25,7 @@ export interface ListOption<T> {
   selected?: boolean;
   title?: string;
   label?: string;
+  description?: string;
   group?: string;
 }
 

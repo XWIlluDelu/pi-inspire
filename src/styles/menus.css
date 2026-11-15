@@ -1,5 +1,6 @@
 /* Shared surface and action styles for compact menus. */
 .choice-panel__body,
+.dropdown-popup:not(.thinking-selector__menu),
 .terminal-menu__popover,
 .completion {
   padding: var(--space-1);

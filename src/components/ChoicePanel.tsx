@@ -110,6 +110,7 @@ export function AnchoredPanel({
   const model = modelPicker !== undefined;
   const menu = !model && role === "menu";
   const portal = menu || readOnly;
+  const dialog = anchorRef.current?.closest<HTMLDialogElement>("dialog[open]");
   const target = useCallback(() => {
     const context = anchorRef.current;
     return (
@@ -117,7 +118,7 @@ export function AnchoredPanel({
         context,
         anchor: context.getBoundingClientRect(),
         positioningRoot: portal
-          ? null
+          ? context.closest<HTMLDialogElement>("dialog[open]")
           : context.closest<HTMLElement>(".overlay"),
         observe: [
           context,
@@ -224,5 +225,5 @@ export function AnchoredPanel({
       {children}
     </div>
   );
-  return portal ? shown && createPortal(body, document.body) : body;
+  return portal ? shown && createPortal(body, dialog ?? document.body) : body;
 }

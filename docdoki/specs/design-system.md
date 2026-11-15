@@ -673,10 +673,10 @@ roving keyboard navigation.
 
 ## Compact menus
 
-Ordinary single-choice fields use native selects. Searchable model and dock tab lists, extension
-controls, session actions, Settings move options and terminal menus retain their own interaction
-semantics. Custom panels share a raised surface, hairline border, medium radius, compact padding
-and entry motion.
+Settings choice menus use full-width rows, with the selected value's check at the trailing edge.
+Searchable model and dock tab lists, extension controls, session actions, Settings move options
+and terminal menus retain their own interaction semantics. Custom panels share a raised surface,
+hairline border, medium radius, compact padding and entry motion.
 Action rows use the same small UI text, accent-tint interaction feedback and inset focus role.
 Anchored panels follow their trigger while scrolling and close once it is fully clipped.
 Searchable model lists and descriptive project groups keep their information hierarchy.

@@ -110,19 +110,64 @@ test.describe("phone session actions", () => {
       });
       await page.reload();
       await openSettings(page);
-      await page.getByRole("button", { name: "Behavior", exact: true }).tap();
-      const copyUp = page.getByRole("button", {
-        name: "Move Copy session ID up",
+      await page
+        .getByRole("button", { name: "Conversation", exact: true })
+        .tap();
+      const reasoning = page.getByRole("combobox", {
+        name: "Reasoning detail",
       });
-      const copyDown = page.getByRole("button", {
+      await reasoning.tap();
+      const choices = page.getByRole("listbox", { name: "Reasoning detail" });
+      const current = choices.getByRole("option", { selected: true });
+      const row = (await current.boundingBox())!;
+      const popup = (await choices.boundingBox())!;
+      expect(row.width).toBeCloseTo(popup.width, 0);
+      await current.tap({ position: { x: row.width - 8, y: row.height / 2 } });
+      await expect(choices).toBeHidden();
+      await page.getByRole("button", { name: "Behavior", exact: true }).tap();
+      const copyGrip = page.getByRole("button", {
+        name: "Reorder Copy session ID",
+      });
+      await copyGrip.press("Alt+ArrowUp");
+      await expect(copyGrip).toBeFocused();
+      await copyGrip.press("Enter");
+      await expect(
+        page.getByRole("menuitem", { name: "Move Copy session ID up" }),
+      ).toBeDisabled();
+      const copyDown = page.getByRole("menuitem", {
         name: "Move Copy session ID down",
       });
-      await copyUp.press("Enter");
-      await expect(copyUp).toBeDisabled();
       await expect(copyDown).toBeFocused();
-      await copyDown.press("Enter");
-      await expect(copyDown).toBeFocused();
-      await page.getByRole("button", { name: "Move Export session… up" }).tap();
+      await page.keyboard.press("Escape");
+      await expect(copyGrip).toBeFocused();
+      await copyGrip.tap();
+      await copyDown.tap();
+      await expect(copyGrip).toBeFocused();
+
+      const exportGrip = page.getByRole("button", {
+        name: "Reorder Export session…",
+      });
+      await exportGrip.scrollIntoViewIfNeeded();
+      const origin = (await exportGrip.boundingBox())!;
+      const target = (await page
+        .getByRole("button", { name: "Reorder Switch branch…" })
+        .boundingBox())!;
+      const x = Math.round(origin.x + origin.width / 2);
+      const y = Math.round(origin.y + origin.height / 2);
+      const touch = await context.newCDPSession(page);
+      await touch.send("Input.dispatchTouchEvent", {
+        type: "touchStart",
+        touchPoints: [{ x, y }],
+      });
+      await touch.send("Input.dispatchTouchEvent", {
+        type: "touchMove",
+        touchPoints: [{ x, y: Math.round(target.y + target.height / 2) }],
+      });
+      await touch.send("Input.dispatchTouchEvent", {
+        type: "touchEnd",
+        touchPoints: [],
+      });
+      await touch.detach();
       await expect
         .poll(savedOrder)
         .toEqual(["rename", "copy-id", "clone", "export", "switch-branch"]);
@@ -162,9 +207,7 @@ test.describe("phone session actions", () => {
       const input = page.getByRole("textbox", { name: "Session name" });
       await rename.tap();
       await expect(menu).toHaveCount(0);
-      await expect(
-        page.getByRole("dialog", { name: "Rename session" }),
-      ).toBeInViewport();
+      await expect(input).toBeInViewport();
       await expect(input).toBeFocused();
       await input.fill("Calibration 仪器");
       await expectCompositionEscape(input, "Calibration 仪器");
@@ -329,7 +372,10 @@ test("exports download the chosen format even if the dialog closes, preserving d
     buffer: Buffer.from("Preserve the export draft artifact"),
   });
   await expect(page.locator(".attachment--ready")).toBeVisible();
-  const dialog = page.getByRole("dialog", { name: "Export session", exact: true });
+  const dialog = page.getByRole("dialog", {
+    name: "Export session",
+    exact: true,
+  });
   const exports: unknown[] = [];
   page.on("request", (request) => {
     if (new URL(request.url()).pathname === "/api/sessions/export")
@@ -355,7 +401,9 @@ test("exports download the chosen format even if the dialog closes, preserving d
     await expect(exporting).toBeDisabled();
     await dialog.getByRole("button", { name: "Close", exact: true }).click();
     await paletteExport();
-    await expect(dialog.getByRole("radio", { name: "JSONL Current branch" })).toBeChecked();
+    await expect(
+      dialog.getByRole("radio", { name: "JSONL Current branch" }),
+    ).toBeChecked();
     await expect(exporting).toBeDisabled();
     await page.keyboard.press("Escape");
   } finally {
@@ -365,12 +413,17 @@ test("exports download the chosen format even if the dialog closes, preserving d
   expect(download.suggestedFilename()).toMatch(/\.jsonl$/);
   const path = info.outputPath("branch-copy.jsonl");
   await download.saveAs(path);
-  const records = (await readFile(path, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+  const records = (await readFile(path, "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
   expect(records[0]?.type).toBe("session");
-  expect(records).toContainEqual(expect.objectContaining({
-    type: "message",
-    message: expect.objectContaining({ role: "user" }),
-  }));
+  expect(records).toContainEqual(
+    expect.objectContaining({
+      type: "message",
+      message: expect.objectContaining({ role: "user" }),
+    }),
+  );
   await expect(page.locator(".attachment")).toContainText("draft.txt");
   await expect(dialog).toHaveCount(0);
   await expect(composer).toHaveValue(draft);
