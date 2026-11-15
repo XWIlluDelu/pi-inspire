@@ -373,10 +373,7 @@ export async function disposeProjectionFixture() {
     await Promise.all(runtimes.splice(0).map((runtime) => runtime.close()));
   } finally {
     await Promise.all(stores.splice(0).map((store) => store.close()));
-    await Promise.all(
-      directories
-        .splice(0)
-        .map((directory) => rm(directory, { recursive: true, force: true })),
-    );
+    for (const directory of directories.splice(0).reverse())
+      await rm(directory, { recursive: true, force: true, maxRetries: 3 });
   }
 }

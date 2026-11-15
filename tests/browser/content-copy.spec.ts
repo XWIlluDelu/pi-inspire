@@ -53,7 +53,7 @@ test.describe("touch file copy", () => {
   });
 });
 
-test("image-only Copy writes real PNGs in reverse order and pastes an image into Composer", async ({
+test("image-only Copy writes real PNGs in reverse order and pastes an image into Composer", { tag: "@platform-ui" }, async ({
   page,
   context,
 }) => {

@@ -11,6 +11,7 @@ import {
   pairAndOpen,
 } from "./support/navigation";
 import {
+  pasteTerminalText,
   terminalNodeCommand,
   terminalWriteCommand,
 } from "./support/terminal-command";
@@ -49,7 +50,7 @@ const terminalStatus = (page: Page, name = "Controlling") =>
   page.getByRole("status", { name, exact: true });
 
 async function writeTerminal(input: Locator, value: string) {
-  await input.pressSequentially(terminalWriteCommand(value));
+  await pasteTerminalText(input, terminalWriteCommand(value));
   await input.press("Enter");
 }
 
@@ -142,7 +143,7 @@ test("a replacement terminal snapshot retires output still waiting in xterm's pa
 });
 
 test("project terminals and a lost create response survive browser reload", {
-  tag: "@cross-browser",
+  tag: ["@cross-browser", "@platform-ui"],
 }, async ({ context, page }) => {
   // Real typing, replay, two clients and confirmed
   // serial PTY retirement share this budget; each operation keeps its deadline.
@@ -173,7 +174,11 @@ test("project terminals and a lost create response survive browser reload", {
 
     await writeTerminal(input, "终端✓\n");
     await expect(output).toContainText("终端✓");
-    await writeTerminal(input, "\u001b[?1049hINSPIRE_ALT_SCREEN");
+    const alternateScreen = terminalNodeCommand(
+      "process.stdin.once('data',()=>process.stdout.write('\\x1b[?1049lINSPIRE_NORMAL_SCREEN\\r\\n',()=>process.exit(0)));process.stdout.write('\\x1b[?1049hINSPIRE_ALT_SCREEN\\r\\n')",
+    );
+    await pasteTerminalText(input, alternateScreen);
+    await input.press("Enter");
     await expect(output).toContainText("INSPIRE_ALT_SCREEN");
 
     await page.route(routePattern, async (route) => {
@@ -244,11 +249,12 @@ test("project terminals and a lost create response survive browser reload", {
     await expect(foreignTab).toHaveAttribute("aria-selected", "true");
     await page
       .getByRole("button", { name: "Back to current project" })
-      .click();
+      .press("Enter");
     await terminalTab(page, firstId).click();
     await expect(terminalStatus(page)).toBeVisible();
     await expect(output).toContainText("INSPIRE_ALT_SCREEN");
-    await writeTerminal(input, "\u001b[?1049l");
+    await input.press("Enter");
+    await expect(output).toContainText("INSPIRE_NORMAL_SCREEN");
 
     const focusedPage = await context.newPage();
     const focusedUrl = new URL(page.url());
@@ -615,19 +621,28 @@ for (const platform of ["Win32", "MacIntel"]) {
   });
 }
 
-test("terminal search, last output, and asynchronous paste follow the active tab", async ({
+test("terminal search, last output, and asynchronous paste follow the active tab", { tag: "@platform-ui" }, async ({
   context,
   page,
   fixtures,
 }) => {
   await pairWithTerminalOutput(page);
-  const firstId = (await fixtures.create()).id;
-  const secondId = (await fixtures.create()).id;
+  const firstLabel = "Terminal search A";
+  const secondLabel = "Terminal search B";
+  const firstId = (await fixtures.create(firstLabel)).id;
+  const secondId = (await fixtures.create(secondLabel)).id;
   const firstTerminal = observeTerminalSocket(page, firstId);
   const secondTerminal = observeTerminalSocket(page, secondId);
   const selectTab = async (id: string) => {
     const tab = terminalTab(page, id);
-    await tab.click();
+    if (await tab.isVisible()) await tab.click();
+    else {
+      await page.getByRole("button", { name: "More tabs", exact: true }).click();
+      await page
+        .getByRole("listbox", { name: "Open tabs" })
+        .getByRole("option", { name: id === firstId ? firstLabel : secondLabel, exact: true })
+        .click();
+    }
     await expect(tab).toHaveAttribute("aria-selected", "true");
   };
   await openFixtureTerminal(page);
@@ -669,7 +684,8 @@ test("terminal search, last output, and asynchronous paste follow the active tab
   await expect(await terminalAction(page, "Copy last output")).toBeDisabled();
   await selectTab(firstId);
   await expect(searchInput).toHaveValue(marker);
-  await page.getByRole("button", { name: "Close terminal search" }).click();
+  await searchInput.press("Escape");
+  await expect(searchInput).toBeHidden();
   // xterm retains the search match as a selection, which owns the tools corner.
   await activeTerminal(page)
     .locator(".xterm-screen")

@@ -14,7 +14,7 @@ import {
 } from "./operation-fixture";
 
 const png = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==",
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==",
   "base64",
 );
 const gif = Buffer.from(
@@ -403,12 +403,19 @@ describe("native Pending recovery", () => {
     )
       .filter(({ role }) => role === "user")
       .at(-1);
-    const context = JSON.stringify(input);
-    expect(context).toContain(JSON.stringify(source).slice(1, -1));
-    expect(context).toContain(JSON.stringify(reportPath).slice(1, -1));
-    expect(context.match(/data:image\/gif;base64,/gu)).toHaveLength(
-      images.length + 1,
-    );
+    const content = input?.content as Array<{
+      type: string;
+      text?: string;
+      image_url?: { url: string };
+    }>;
+    const text = content.find(({ type }) => type === "text")?.text;
+    expect(text).toContain(JSON.stringify(source));
+    expect(text).toContain(JSON.stringify(reportPath));
+    expect(
+      content.filter(({ image_url }) =>
+        image_url?.url.startsWith("data:image/gif;base64,"),
+      ),
+    ).toHaveLength(images.length + 1);
     for (const { id } of images)
       await expect(f.api.attachmentPreview(id)).rejects.toMatchObject({
         status: 404,

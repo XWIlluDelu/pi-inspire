@@ -306,6 +306,7 @@ export function OptionList<T>({
     );
   };
   return (
+    // biome-ignore lint/a11y/useAriaPropsSupportedByRole: Grid and listbox both support an accessible name.
     <div
       ref={list.scrollRef}
       id={list.id}

@@ -1,10 +1,5 @@
-/** Range/Canvas baseline estimates can round each font size independently,
- * particularly in WebKit/CoreText. Compare their difference within one CSS px;
- * exact DOM edges, columns and padding keep their own tighter tolerances. */
-export const FIRST_TEXT_BASELINE_TOLERANCE_PX = 1;
-
 /** Estimate the first text baseline without changing grid baselines or :empty
- * selectors. Use after document.fonts.ready; see the estimate tolerance above. */
+ * selectors. Wait for document.fonts.ready before measuring. */
 export function firstTextBaseline(
   element: Element,
   relativeTo?: string,

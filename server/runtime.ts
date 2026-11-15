@@ -177,7 +177,7 @@ function formatTokenCount(value: number): string {
   );
 }
 
-export function safeProjection(value: unknown): unknown {
+function safeProjection(value: unknown): unknown {
   return projectSafeValue(value, {
     depth: 20,
     stringChars: 250_000,

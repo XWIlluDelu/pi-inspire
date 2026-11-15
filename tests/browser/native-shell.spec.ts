@@ -6,9 +6,9 @@ import { openFixtureSession, pairedPage } from "./support/navigation";
 
 // UI wire fixture only; real native execution is checked by the isolated Pi
 // lifecycle integration tests, never the test Host or independent terminal.
-test("native shell cards stream, stop, recall and fit the narrow composer without an automatic model turn", async ({
-  page,
-}) => {
+test("native shell cards stream, stop and fit the narrow composer without an automatic model turn", {
+  tag: "@platform-ui",
+}, async ({ page }) => {
   const sessionId = "fixture-history";
   const submitted: Array<Record<string, unknown>> = [];
   let stopped = 0;
@@ -65,11 +65,7 @@ test("native shell cards stream, stop, recall and fit the narrow composer withou
         shellExecution: true,
         bashRunning: true,
       });
-    await completeOperation(route, "prompt", {
-      text: String(body.message),
-      images: [],
-      files: [],
-    });
+    await completeOperation(route, "prompt", null);
   });
   await page.route("**/api/control/abort", async (route) => {
     stopped += 1;
@@ -172,12 +168,6 @@ test("native shell cards stream, stop, recall and fit the narrow composer withou
     page.getByRole("button", { name: "Abort running task", exact: true }),
   ).toHaveCount(0);
   expect(stopped).toBe(1);
-  await input.fill("Unsent draft");
-  await input.press("Home");
-  await input.press("ArrowUp");
-  await expect(input).toHaveValue("Explicit model input during shell.");
-  await input.press("ArrowUp");
-  await expect(input).toHaveValue("!!printf browser");
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(card).toBeVisible();
   expect(

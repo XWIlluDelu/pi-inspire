@@ -286,12 +286,9 @@ export default function (pi) {
     const navigationDialog = deferredSignal();
     let holdNavigation = true;
     runtime.on("event", (event) => {
-      const record = event as Record<string, unknown>;
-      if (
-        record.type !== "extension_ui_request" ||
-        (record.method !== "confirm" && record.method !== "input")
-      )
-        return;
+      if (event.type !== "extension_ui_pending") return;
+      const record = event.request;
+      if (record.method !== "confirm" && record.method !== "input") return;
       dialogs.push(record);
       if (holdNavigation) {
         navigationDialog.resolve();
@@ -467,7 +464,7 @@ export default function (pi) {
     const staleTree = (await runtime.snapshot(SESSION_ID)).active!;
     expect((await navigate("a1", "switch")).snapshot.active).toMatchObject({
       effectiveLeafId: "a1",
-      restoreSavedLeafId: "a2",
+      restoreSavedLeafId: staleTree.effectiveLeafId,
     });
     await expect(
       runtime.navigateBranch({

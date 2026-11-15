@@ -163,8 +163,9 @@ retaining both branch histories. Preserve `auto-dev` history during routine deve
 
 ```bash
 npm run dev       # Host and Vite development servers
-npm run check     # Formatting, lint, types, build, unit and launcher tests
-npm run ci        # Also runs browser tests
+npm run check          # Lint, types, build, unit and launcher tests
+npm run ci             # Also runs Chromium and Firefox tests
+npm run format:check   # Check formatting on demand
 ```
 
 `npm run dev` (or `npm run inspire -- dev`) opens the Vite page once the Host is ready, with a

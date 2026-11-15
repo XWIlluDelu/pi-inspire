@@ -1,10 +1,10 @@
-import { getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
 import type {
   BranchImageRequest,
   SessionHistoryPages,
 } from "../shared/contracts.js";
 import type { SessionHistoryQuery } from "../shared/history-query.js";
 import { lastAssistantText } from "./assistant-text.js";
+import { getAgentDir, SettingsManager } from "./pi-runtime.js";
 import { requestError } from "./request-error.js";
 import type { ResourceContext } from "./resources.js";
 import {

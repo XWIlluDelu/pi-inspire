@@ -69,12 +69,16 @@ describe("Terminal notification permission", () => {
       const bell = screen.getByRole("combobox", {
         name: "Terminal bell behavior",
       });
-      fireEvent.change(bell, { target: { value: "desktop" } });
+      fireEvent.click(bell);
+      fireEvent.click(
+        await screen.findByRole("option", { name: "Desktop notification" }),
+      );
       await act(async () => {});
       expect(screen.getByRole("status")).toHaveTextContent(feedback);
-      expect(bell).toHaveValue("visual");
+      expect(bell).toHaveTextContent("Mark terminal tab");
       expect(requestPermission).not.toHaveBeenCalled();
-      fireEvent.change(bell, { target: { value: "off" } });
+      fireEvent.click(bell);
+      fireEvent.click(await screen.findByRole("option", { name: /^Off$/u }));
       await act(async () => {});
       expect(screen.queryByRole("status")).toBeNull();
     },

@@ -222,11 +222,11 @@ it("keeps native virtual selection/effort across replies, real navigation, copie
     const readonly = await runtime.snapshot(id);
     expect(inherited.selection).toMatchObject({
       model: selected,
-      thinkingLevel: "high",
+      thinkingLevel: nativeState.thinkingLevel,
     });
     expect(readonly.active).toMatchObject({
       model: inherited.selection?.model,
-      thinkingLevel: "high",
+      thinkingLevel: nativeState.thinkingLevel,
     });
     expect(query).toHaveBeenCalledExactlyOnceWith(f.trusted);
 

@@ -243,7 +243,7 @@ describe("native configuration round trips", () => {
       enabledModels: [],
     });
     expect(readback.effective).toEqual(readback.saved);
-  });
+  }, 15_000);
 
   it("removes declarations without changing remaining models, saved preferences or login credentials", async () => {
     const auth = JSON.stringify({

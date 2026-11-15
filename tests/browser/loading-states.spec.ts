@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
-import { openSettings, pairAndOpen, pairedPage } from "./support/navigation";
+import { openSettings, pairAndOpen } from "./support/navigation";
 
 // The same deferred boundary is served as a source module by Vite and as a
 // hashed chunk by a packaged Host.

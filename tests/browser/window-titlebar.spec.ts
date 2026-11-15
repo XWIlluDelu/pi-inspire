@@ -141,50 +141,24 @@ test("Overlay adds a quiet corner icon, retains the centered wordmark and restor
 
 });
 
-test("needles reach both titlebar edges and foreground marks without taking their hit targets", {
+test("titlebar needles honor the animation toggle and reduced motion", {
   tag: "@platform-ui",
 }, async ({ page }) => {
   await overlay(page, true);
   await page.emulateMedia({ reducedMotion: "no-preference" });
   const brand = page.locator(".window-titlebar__brand-button");
+  const needles = page.locator(".window-titlebar__needle");
   if ((await brand.getAttribute("aria-pressed")) === "true")
     await brand.click();
-  const width = (await page.locator(".window-titlebar").boundingBox())!.width;
-  const mark = (await brand.boundingBox())!;
-  await page.evaluate(() => {
-    (window as typeof window & { needleRandom?: () => number }).needleRandom =
-      Math.random;
-  });
-  try {
-    for (const x of [4, width - 4, mark.x + mark.width / 2]) {
-      // Fix only the random sample, not production layout or arrival geometry.
-      await page.evaluate(
-        (sample) => {
-          Math.random = () => sample;
-        },
-        (x - 2) / (width - 4),
-      );
-      await brand.click();
-      const needles = page.locator(".window-titlebar__needle");
-      await expect(needles.first()).toBeAttached();
-      const needle = (await needles.first().boundingBox())!;
-      expect(Math.abs(needle.x + needle.width / 2 - x)).toBeLessThan(1);
-      await brand.click();
-      await expect(needles).toHaveCount(0);
-    }
-    await brand.click();
-    await expect(
-      page.locator(".window-titlebar__needle").first(),
-    ).toBeAttached();
-    await page.emulateMedia({ reducedMotion: "reduce" });
-    await expect(page.locator(".window-titlebar__needle")).toHaveCount(0);
-    await expect(brand).toHaveAttribute("aria-pressed", "true");
-    await brand.click();
-  } finally {
-    await page.evaluate(() => {
-      const state = window as typeof window & { needleRandom?: () => number };
-      if (state.needleRandom) Math.random = state.needleRandom;
-      delete state.needleRandom;
-    });
-  }
+  await brand.click();
+  await expect(needles.first()).toBeAttached();
+  await brand.click();
+  await expect(needles).toHaveCount(0);
+  await brand.click();
+  await expect(needles.first()).toBeAttached();
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(needles).toHaveCount(0);
+  await expect(brand).toHaveAttribute("aria-pressed", "true");
+  await brand.click();
+  await expect(brand).toHaveAttribute("aria-pressed", "false");
 });

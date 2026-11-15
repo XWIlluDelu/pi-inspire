@@ -138,7 +138,7 @@ describe("File Changes publication", () => {
   });
 
   it.each([
-    [null, null, "Git status unavailable"],
+    [null, null, "Reading Git status"],
     [clean, "failed", "Git status unavailable"],
     [{ kind: "not-repository" }, null, "Not in a Git repository"],
     [{ ...clean, truncated: true, total: 1001 }, null, "Git status incomplete"],

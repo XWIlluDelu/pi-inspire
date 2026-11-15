@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { PreferencesStore } from "../../server/preferences.js";
+import { editPrivateStateJson } from "../../server/private-state-file.js";
 import { defaultPreferences } from "../../shared/contracts.js";
 
 let root: string;
@@ -145,27 +146,21 @@ it("merges independent Host writes and keeps session cleanup available with a fa
   expect(await readFile(store.projectDirectories.path, "utf8")).toBe(invalid);
 });
 
-it("fails closed when the lock path is replaced", async () => {
-  await store.patch({ theme: "light" });
-  const previous = await read();
-  const lock = `${path}.flock`;
-  const replacement = "replacement lock inode\n";
-  const mutable = store as unknown as {
-    persist: (
-      preferences: typeof defaultPreferences,
-      assertOwned: () => Promise<void>,
-    ) => Promise<void>;
-  };
-  const persist = mutable.persist.bind(store);
-  mutable.persist = async (preferences, assertOwned) => {
-    await rename(lock, `${lock}.displaced`);
-    await writeFile(lock, replacement, { mode: 0o600, flag: "wx" });
-    await persist(preferences, assertOwned);
-  };
-
-  await expect(store.patch({ theme: "dark" })).rejects.toMatchObject({
-    status: 503,
-  });
-  expect(await read()).toBe(previous);
-  await expect(readFile(lock, "utf8")).resolves.toBe(replacement);
-});
+it.skipIf(process.platform !== "linux")(
+  "fails closed when the kernel lock path is replaced",
+  async () => {
+    await store.patch({ theme: "light" });
+    const previous = await read();
+    const lock = `${path}.flock`;
+    const replacement = "replacement lock inode\n";
+    await expect(
+      editPrivateStateJson(path, "saved preferences", async (publish) => {
+        await rename(lock, `${lock}.displaced`);
+        await writeFile(lock, replacement, { mode: 0o600, flag: "wx" });
+        await publish({ theme: "dark" });
+      }),
+    ).rejects.toMatchObject({ status: 503 });
+    expect(await read()).toBe(previous);
+    await expect(readFile(lock, "utf8")).resolves.toBe(replacement);
+  },
+);

@@ -15,7 +15,7 @@ interface StatusRequest {
   malformedError: Error;
 }
 
-export interface WorkerStatusOwner {
+interface WorkerStatusOwner {
   nonce: string;
   workerId: string;
   sessionId: string;

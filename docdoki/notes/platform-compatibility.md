@@ -31,15 +31,20 @@ and simulated Win32 contracts provide separate evidence.
 
 ## CI verification scope
 
-[CI](../../.github/workflows/ci.yml) runs the full matrix on main pushes. Pull requests omit
-installed-package verification, and `auto-dev` pushes require manual dispatch.
+[CI](../../.github/workflows/ci.yml) runs all unit and integration tests on Ubuntu. Pull
+requests and main pushes run Chromium and Firefox on Ubuntu and a focused Chromium set on
+macOS and Windows. macOS and Windows keep the native checks and skip browser component and
+platform-independent shared suites. Main pushes also verify the installed package on all three
+operating systems. The Linux size report uses the manifest of the package already being verified.
+Formatting remains available through `npm run format:check`. Pushes to `auto-dev` use manual dispatch.
 
 | Dispatch scope | Checks |
 | --- | --- |
 | `checks` (default) | Ubuntu `npm run check`. |
-| `windows-core`, `macos-core` | Build, portable and unit/integration checks, native Trash/recovery and launcher on the named OS. |
-| `windows`, `macos` | Named OS core and Chromium. macOS also runs WebKit. |
-| `full` | Complete matrix, with all three installed-package checks and size report. |
+| `windows-core`, `macos-core` | Build, portable, Node and native integration, native Trash/recovery and launcher on the named OS. |
+| `windows`, `macos` | Named OS core and targeted Chromium. |
+| `safari` | The cross-browser suite in native macOS WebKit. |
+| `full` | Ubuntu checks, full Chromium on all three OSes, Firefox on Ubuntu, and all three installed-package checks. |
 
 ```sh
 gh workflow run ci.yml --ref auto-dev -f scope=windows-core

@@ -38,7 +38,7 @@ locally and are not tracked.
 
 | State | Work |
 | --- | --- |
-| In progress | [Handbook simplification](stages/handbook-simplification.md) tracks implementation and remaining architecture and test replacement. |
+| In progress | [Internal simplification](stages/handbook-simplification.md) tracks the current state and remaining architecture and test cleanup. |
 | Implemented | [Session history](specs/session-transport.md#transcript-views) shares the [saved-session reader](specs/session-persistence.md#read-only-preview-and-independent-workers), history query, and transcript page budget. |
 | Implemented | [Restart all Pi](stages/follow-global-pi-restart-2026-11-12.md) closes current-user Pi with mode-dependent Herdr inclusion; the previous terminal-only CLI scope is `--terminals`. |
 | Device acceptance open | [Runtime quality](stages/follow-runtime-quality-2026-10-25.md) records native lifecycle evidence, the cross-platform baseline and remaining physical-device checks. |

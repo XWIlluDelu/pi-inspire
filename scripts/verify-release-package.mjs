@@ -12,7 +12,7 @@ import {
 } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
@@ -23,6 +23,7 @@ import {
 } from "../server/process-tree.mjs";
 import {
   npmPackageRecord,
+  packageSizeReport,
   parseNpmJsonOutput,
 } from "./npm-package-manifest.mjs";
 
@@ -291,6 +292,18 @@ try {
       `Release tarball contains source-only files: ${forbidden.join(", ")}`,
     );
 
+  const sizeReportPath = process.env.INSPIRE_SIZE_REPORT;
+  if (sizeReportPath) {
+    try {
+      await mkdir(dirname(sizeReportPath), { recursive: true });
+      await writeFile(
+        sizeReportPath,
+        JSON.stringify(packageSizeReport(record), null, 2),
+      );
+    } catch (error) {
+      console.warn("Could not write the package size report:", error);
+    }
+  }
   const tarball = join(packDirectory, record.filename);
   const publishDryRun = await execNpm(
     ["publish", tarball, "--dry-run", "--json"],
@@ -657,9 +670,8 @@ try {
   const terminal = await terminalMutation("create", {
     request: { cwd: canonicalWorkspace, cols: 80, rows: 24 },
   });
-  const { decodeTerminalServerDataFrame } = await installed(
-    "build/shared/terminal-contracts.js",
-  );
+  const { decodeTerminalServerDataFrame, encodeTerminalInputFrame } =
+    await installed("build/shared/terminal-contracts.js");
   let output = "";
   const attachment = await terminalClient.attach(
     { terminalId: terminal.id, clientId: randomUUID(), cols: 80, rows: 24 },
@@ -680,7 +692,7 @@ try {
       ? "echo INSPIRE_DAEMON_BE^FORE\r"
       : 'echo INSPIRE_DAEMON_"BEFORE"\r';
   try {
-    attachment.writeInput(1, Buffer.from(echo));
+    attachment.send({ data: encodeTerminalInputFrame(1, Buffer.from(echo)) });
     await waitFor(
       "real PTY output",
       () => output.includes("INSPIRE_DAEMON_BEFORE"),

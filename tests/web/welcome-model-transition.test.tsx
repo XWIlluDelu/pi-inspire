@@ -107,9 +107,9 @@ it("blocks New during inherited lookup and lets the same draft retry a failed so
     fireEvent.click(screen.getByRole("button", { name: "Retry" })),
   );
   expect(model()).toHaveTextContent("router");
-  expect(screen.getByRole("combobox", { name: "Thinking level" })).toHaveValue(
-    "max",
-  );
+  expect(
+    screen.getByRole("combobox", { name: "Thinking level" }),
+  ).toHaveTextContent(/max/i);
   expect(start()).toBeEnabled();
   expect(message()).toHaveValue("Keep this draft");
 });
