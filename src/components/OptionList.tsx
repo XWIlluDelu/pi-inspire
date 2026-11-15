@@ -159,10 +159,11 @@ export function OptionList<T>({
   optionButtons,
   focusOptions = false,
   highlightAsSelection,
+  interactiveRows = false,
 }: {
   list: ReturnType<typeof useOptionList<T>>;
   options: readonly ListOption<T>[];
-  renderOption: (option: ListOption<T>) => ReactNode;
+  renderOption: (option: ListOption<T>, active: boolean) => ReactNode;
   onPick?: (value: T) => void;
   heading?: (
     option: ListOption<T>,
@@ -180,6 +181,7 @@ export function OptionList<T>({
   optionButtons?: boolean;
   focusOptions?: boolean;
   highlightAsSelection?: boolean;
+  interactiveRows?: boolean;
 }) {
   const active = list.indexOf(options);
   const descendant = list.descendant(options);
@@ -248,26 +250,33 @@ export function OptionList<T>({
             : undefined
         }
         id={list.optionId(row.index)}
-        role="option"
+        role={interactiveRows ? "row" : "option"}
         aria-label={option.label}
         aria-selected={
           highlightAsSelection ? highlighted : Boolean(option.selected)
         }
-        aria-posinset={row.index + 1}
-        aria-setsize={options.length}
+        aria-rowindex={interactiveRows ? row.index + 1 : undefined}
+        aria-posinset={interactiveRows ? undefined : row.index + 1}
+        aria-setsize={interactiveRows ? undefined : options.length}
         className={`picker__row ${optionClass ?? ""}`}
         data-highlighted={highlighted || (optionButtons && option.selected)}
         title={option.title}
         style={style}
-        onMouseDown={(event) => event.preventDefault()}
+        onMouseDown={
+          interactiveRows ? undefined : (event) => event.preventDefault()
+        }
         onPointerMove={(event) => {
           if (event.pointerType !== "touch" && !option.disabled)
             list.pointer(row.index, option.key);
         }}
-        onFocus={focusOptions ? () => list.activate(option.key) : undefined}
+        onFocus={
+          focusOptions || interactiveRows
+            ? () => list.activate(option.key)
+            : undefined
+        }
         onClick={() => onPick?.(option.value)}
       >
-        {renderOption(option)}
+        {renderOption(option, active === row.index)}
       </Option>
     );
   };
@@ -302,8 +311,9 @@ export function OptionList<T>({
       data-keyboard-active={list.keyboard}
       tabIndex={onKeyDown ? -1 : undefined}
       onKeyDown={onKeyDown}
-      role="listbox"
+      role={interactiveRows ? "grid" : "listbox"}
       aria-label={label}
+      aria-rowcount={interactiveRows ? options.length : undefined}
       aria-busy={loading}
       aria-activedescendant={onKeyDown ? descendant : undefined}
       className={className ? `option-list ${className}` : "option-list"}

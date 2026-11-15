@@ -20,15 +20,17 @@ import {
 
 test.use({ serviceWorkers: "block", reducedMotion: "reduce" });
 
-const selectServer = async (
+const expectServer = async (
   settings: Locator,
   name: string,
   scope: "user" | "project",
 ) => {
-  await settings.getByRole("combobox", { name: "MCP server" }).click();
-  await settings
-    .getByRole("option", { name: `${name} · ${scope}`, exact: true })
-    .click();
+  await expect(
+    settings.getByRole("group", {
+      name: `${scope} server ${name}`,
+      exact: true,
+    }),
+  ).toBeVisible();
 };
 
 async function scenario(page: Page, session: "live" | "new") {
@@ -161,7 +163,7 @@ test("MCP reveals saved connection values on request, keeps edits scoped, and re
   });
   const description = settings.getByLabel("Description", { exact: true });
   try {
-    await selectServer(settings, "docs", "user");
+    await expectServer(settings, "docs", "user");
     await edit.click();
     const url = settings.getByLabel("Server URL", { exact: true });
     await expect(url).toBeFocused();
@@ -237,7 +239,7 @@ test("MCP reveals saved connection values on request, keeps edits scoped, and re
       },
       { times: 1 },
     );
-    await selectServer(settings, "docs", "user");
+    await expectServer(settings, "docs", "user");
     await edit.click();
     await settings.getByRole("button", { name: "Show saved URL" }).click();
     try {
@@ -250,7 +252,7 @@ test("MCP reveals saved connection values on request, keeps edits scoped, and re
         "fixture-history",
       );
       await fixture.open();
-      await selectServer(settings, "docs", "user");
+      await expectServer(settings, "docs", "user");
       await edit.click();
     } finally {
       release.resolve();
@@ -278,7 +280,7 @@ test.describe("touch MCP editor", () => {
         exact: true,
       });
     const removeProject = async (name: string) => {
-      await selectServer(settings, name, "project");
+      await expectServer(settings, name, "project");
       await settings
         .getByRole("button", {
           name: `Remove project server ${name}`,
@@ -329,7 +331,7 @@ test.describe("touch MCP editor", () => {
       await expect(editProject("project-tools")).toHaveCount(0);
       // Start without a project entry, then create a policy from the user server.
       await removeProject("docs");
-      await selectServer(settings, "docs", "user");
+      await expectServer(settings, "docs", "user");
       await settings
         .getByRole("button", { name: "Customize for this project: docs" })
         .click();
@@ -349,7 +351,7 @@ test.describe("touch MCP editor", () => {
         },
       );
       await removeProject("docs");
-      await selectServer(settings, "docs", "user");
+      await expectServer(settings, "docs", "user");
       await expect(
         settings.getByRole("button", {
           name: "Customize for this project: docs",

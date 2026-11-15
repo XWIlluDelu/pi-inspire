@@ -27,21 +27,23 @@ test("@cross-browser live text-size changes reflow the same draft across layouts
       .getByRole("button", { name: "Display", exact: true })
       .click();
     await settings
-      .getByRole("combobox", { name: "Content text size", exact: true })
+      .getByRole("group", { name: "Content text size", exact: true })
+      .getByRole("button", { name, exact: true })
       .click();
-    await settings.getByRole("option", { name, exact: true }).click();
     await page.keyboard.press("Escape");
     await expect(settings).toBeHidden();
   }
   await message.fill(draft);
   try {
     await changeSize("Compact");
-    const height = (await message.boundingBox())!.height;
+    const height = await message.evaluate((element) => element.scrollHeight);
     await page.setViewportSize({ width: 390, height: 900 });
     await changeSize("Large");
     await expect(message).toHaveValue(draft);
     await expect(message).toHaveCSS("font-size", "17px");
-    expect((await message.boundingBox())!.height).toBeGreaterThan(height);
+    await expect
+      .poll(() => message.evaluate((element) => element.scrollHeight))
+      .toBeGreaterThan(height);
   } finally {
     await changeSize("Comfortable");
     await message.fill("");

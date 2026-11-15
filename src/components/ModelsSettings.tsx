@@ -12,6 +12,7 @@ import {
 import {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -148,10 +149,9 @@ export function ModelsSettings({
   const addProviderRef = useRef<HTMLButtonElement>(null);
   const defaultThinkingRef = useRef<HTMLButtonElement>(null);
   const addModelRef = useRef<HTMLButtonElement>(null);
-  const [selectedModelKey, setSelectedModelKey] = useState<string>();
+  const defaultGroupName = useId();
   const providerGeneration = useRef(0);
   useLayoutEffect(() => {
-    setSelectedModelKey(undefined);
     setProviders([]);
     setAuthError(null);
     setProvidersLoaded(false);
@@ -238,7 +238,7 @@ export function ModelsSettings({
       () => store.editModelConfig(owner, snapshot.configRevision, edit),
       {
         close: true,
-        onSaved: (next) => {
+        onSaved: () => {
           if (
             edit.kind === "provider" &&
             editor?.kind === "provider" &&
@@ -255,19 +255,6 @@ export function ModelsSettings({
                 type: edit.values.type ?? edit.originalType,
               }),
             );
-            if (
-              next.snapshot?.models.some(
-                (model) =>
-                  model.provider === edit.provider &&
-                  model.id === edit.values.id,
-              )
-            )
-              setSelectedModelKey(
-                modelIdentityKey({
-                  provider: edit.provider,
-                  id: edit.values.id,
-                }),
-              );
           }
           if (edit.kind === "remove-model") {
             selectDeclaration(declarationKey(edit.provider));
@@ -319,30 +306,17 @@ export function ModelsSettings({
     editor?.kind === "model"
       ? snapshot?.providers.find((provider) => provider.id === editor.provider)
       : undefined;
-  const inspectedKey = selectedModelKey ?? savedKey ?? "";
-  const inspectedModel = models.available.get(inspectedKey) ?? null;
-  const declaredModel = models.declarations.get(inspectedKey);
-  const commonRules = inspectedModel
-    ? (snapshot?.savedCommonEntries.flatMap(({ pattern, models }) =>
-        models.some(
-          ({ id, provider }) =>
-            id === inspectedModel.id && provider === inspectedModel.provider,
-        )
-          ? [pattern]
-          : [],
-      ) ?? [])
-    : [];
-  const identity = inspectedModel
-    ? `${inspectedModel.provider}/${inspectedModel.id}`
-    : "";
-  const directCommon = commonRules.filter(
-    (entry) =>
-      entry === identity ||
-      THINKING_LEVELS.some((level) => entry === `${identity}:${level}`),
-  );
-  const commonPattern = commonRules.find(
-    (entry) => !directCommon.includes(entry),
-  );
+  const commonSources = useMemo(() => {
+    const sources = new Map<string, string[]>();
+    for (const entry of snapshot?.savedCommonEntries ?? [])
+      for (const model of entry.models) {
+        const key = modelIdentityKey(model),
+          entries = sources.get(key) ?? [];
+        entries.push(entry.pattern);
+        sources.set(key, entries);
+      }
+    return sources;
+  }, [snapshot]);
 
   const hasInheritedApi = Boolean(
     modelProvider &&
@@ -622,10 +596,7 @@ export function ModelsSettings({
                     }
                     models={snapshot.models}
                     status={snapshot.modelsWarning}
-                    value={inspectedModel}
-                    onSelect={(model) =>
-                      setSelectedModelKey(modelIdentityKey(model))
-                    }
+                    value={savedModel ?? null}
                     searchLabel="Search available models"
                     placeholder="Search models"
                     searchAction={
@@ -649,87 +620,119 @@ export function ModelsSettings({
                         Connect a provider
                       </button>
                     }
-                  />
-                  {inspectedModel && (
-                    <ConfigurationDetail
-                      label="Selected model"
-                      name={inspectedModel.name ?? inspectedModel.id}
-                      description={<code>{identity}</code>}
-                    >
-                      {declaredModel && (
+                    renderNameAction={(model, active) => {
+                      const declared = models.declarations.get(
+                        modelIdentityKey(model),
+                      );
+                      return declared ? (
                         <button
                           type="button"
-                          className="button button--quiet"
+                          className="models-icon-button models-name-action"
+                          tabIndex={active ? 0 : -1}
                           disabled={busy || configurationUnavailable}
-                          aria-label={`Edit model ${identity}`}
+                          aria-label={`Edit model ${model.provider}/${model.id}`}
                           onClick={(event) =>
                             openEditor(
                               {
                                 kind: "model",
-                                provider: inspectedModel.provider,
-                                value: declaredModel,
+                                provider: model.provider,
+                                value: declared,
                               },
                               event.currentTarget,
                             )
                           }
                         >
-                          Edit
+                          <Pencil size={13} aria-hidden />
                         </button>
-                      )}
-                      {commonPattern ? (
-                        <button
-                          type="button"
-                          className="button button--quiet"
-                          disabled={busy || preferencesUnavailable}
-                          aria-label={`Edit common pattern for ${inspectedModel.name ?? inspectedModel.id}`}
-                          onClick={(event) =>
-                            editCommon(commonPattern, event.currentTarget)
-                          }
-                        >
-                          Edit common rule
-                        </button>
-                      ) : (
-                        <label className="models-choice">
-                          <input
-                            type="checkbox"
-                            className="choice-input"
-                            aria-label={`Common: ${inspectedModel.name ?? inspectedModel.id}`}
-                            disabled={busy || preferencesUnavailable}
-                            checked={directCommon.length > 0}
-                            onChange={() =>
-                              void save({
-                                enabledModels: directCommon.length
-                                  ? snapshot.saved.enabledModels.filter(
-                                      (entry) => !directCommon.includes(entry),
-                                    )
-                                  : [...snapshot.saved.enabledModels, identity],
-                              })
-                            }
-                          />{" "}
-                          Common
-                        </label>
-                      )}
-                      <button
-                        type="button"
-                        className="button button--quiet"
-                        disabled={
-                          busy ||
-                          preferencesUnavailable ||
-                          savedKey === inspectedKey
-                        }
-                        onClick={() =>
-                          void save({
-                            defaultModel: {
-                              provider: inspectedModel.provider,
-                              id: inspectedModel.id,
-                            },
-                          })
-                        }
-                      >
-                        Set as default
-                      </button>
-                    </ConfigurationDetail>
-                  )}
+                      ) : null;
+                    }}
+                    renderActions={(model, active) => {
+                      const identity = `${model.provider}/${model.id}`;
+                      const sources =
+                        commonSources.get(modelIdentityKey(model)) ?? [];
+                      const exact = sources.filter(
+                        (entry) =>
+                          entry === identity ||
+                          THINKING_LEVELS.some(
+                            (level) => entry === `${identity}:${level}`,
+                          ),
+                      );
+                      const patterns = sources.filter(
+                        (entry) => !exact.includes(entry),
+                      );
+                      const selected =
+                        savedModel &&
+                        modelIdentityKey(savedModel) ===
+                          modelIdentityKey(model);
+                      return (
+                        <>
+                          {patterns.length ? (
+                            <button
+                              type="button"
+                              className="models-rule-action"
+                              data-model-action="common"
+                              tabIndex={active ? 0 : -1}
+                              disabled={busy || preferencesUnavailable}
+                              title={`Included by ${patterns.join(", ")} — edit rule`}
+                              aria-label={`Edit common pattern for ${model.name ?? model.id}`}
+                              onClick={(event) =>
+                                editCommon(patterns[0]!, event.currentTarget)
+                              }
+                            >
+                              <Pencil size={12} aria-hidden />
+                              Via rule
+                            </button>
+                          ) : (
+                            <label className="models-choice">
+                              <input
+                                type="checkbox"
+                                className="choice-input"
+                                data-model-action="common"
+                                tabIndex={active ? 0 : -1}
+                                disabled={busy || preferencesUnavailable}
+                                checked={Boolean(exact.length)}
+                                aria-label={`Common: ${model.name ?? model.id}`}
+                                onChange={() =>
+                                  void save({
+                                    enabledModels: exact.length
+                                      ? snapshot.saved.enabledModels.filter(
+                                          (entry) => !exact.includes(entry),
+                                        )
+                                      : [
+                                          ...snapshot.saved.enabledModels,
+                                          identity,
+                                        ],
+                                  })
+                                }
+                              />
+                              <span>Common</span>
+                            </label>
+                          )}
+                          <label className="models-choice">
+                            <input
+                              type="radio"
+                              className="choice-input"
+                              name={defaultGroupName}
+                              data-model-action="default"
+                              tabIndex={active ? 0 : -1}
+                              disabled={busy || preferencesUnavailable}
+                              checked={Boolean(selected)}
+                              aria-label={`Default: ${model.name ?? model.id}`}
+                              onChange={() =>
+                                void save({
+                                  defaultModel: {
+                                    provider: model.provider,
+                                    id: model.id,
+                                  },
+                                })
+                              }
+                            />
+                            <span>Default</span>
+                          </label>
+                        </>
+                      );
+                    }}
+                  />
                 </div>
 
                 <div className="models-results">

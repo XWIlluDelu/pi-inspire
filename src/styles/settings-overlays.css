@@ -371,7 +371,161 @@
   height: var(--set-control-h);
 }
 
+.settings__field .segmented {
+  display: inline-grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  width: var(--set-choice-w);
+  max-width: 100%;
+  height: var(--set-control-h);
+  padding: 3px;
+  box-sizing: border-box;
+}
+
+.settings__field .segmented > button {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  padding: 0 var(--space-1);
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  justify-content: center;
+}
+
+/* Named palettes remain independent tiles, not a recessed segmented group. */
+.palette-picker {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  width: var(--set-choice-w);
+  max-width: 100%;
+}
+
+.palette-picker__choice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  min-height: var(--set-control-h);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-control);
+  background: var(--bg-surface);
+  color: var(--body);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--dur-micro) var(--ease-standard),
+    border-color var(--dur-micro) var(--ease-standard),
+    box-shadow var(--dur-micro) var(--ease-standard);
+}
+
+.palette-picker__choice:hover {
+  background: var(--bg-control);
+  border-color: var(--line);
+}
+
+.palette-picker__choice[data-palette-choice="mono"] {
+  grid-column: 1 / -1;
+}
+
+.palette-picker__choice[aria-pressed="true"] {
+  background: var(--accent-tint);
+  border-color: var(--accent-deep);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 4%);
+}
+
+/* Scope this choice grammar to settings, including MCP's inline mode choices. */
+.dialog:is(.settings, .terminal-settings) .segmented button {
+  border: 1px solid transparent;
+}
+
+.dialog:is(.settings, .terminal-settings)
+  .segmented
+  button[aria-pressed="true"] {
+  background: var(--bg-surface);
+  border-color: var(--hairline);
+  font-weight: 600;
+  box-shadow: var(--shadow-1);
+}
+
+.dialog:is(.settings, .terminal-settings) .segmented button:disabled {
+  color: var(--faint);
+}
+
+.palette-picker__swatch {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-pill);
+  background: var(--palette-swatch);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 14%, transparent);
+}
+
+/* Swatches represent palette accents, not state or readable text. */
+[data-palette-choice="mono"] {
+  --palette-swatch: #4b4b4b;
+}
+:root[data-theme="dark"] [data-palette-choice="mono"] {
+  --palette-swatch: #c8c8c8;
+}
+[data-palette-choice="classic-jade"] {
+  --palette-swatch: #007d78;
+}
+[data-palette-choice="classic-amber"] {
+  --palette-swatch: #d95a00;
+}
+:root[data-theme="dark"] [data-palette-choice="classic-jade"] {
+  --palette-swatch: #52d2c9;
+}
+:root[data-theme="dark"] [data-palette-choice="classic-amber"] {
+  --palette-swatch: #ff781f;
+}
+[data-palette-choice="wisteria"] {
+  --palette-swatch: #6e5494;
+}
+[data-palette-choice="hydrangea"] {
+  --palette-swatch: #1f7a68;
+}
+[data-palette-choice="lycoris"] {
+  --palette-swatch: #bc5042;
+}
+[data-palette-choice="chimonanthus"] {
+  --palette-swatch: #b36010;
+}
+:root[data-theme="dark"] [data-palette-choice="wisteria"] {
+  --palette-swatch: #b39ddb;
+}
+:root[data-theme="dark"] [data-palette-choice="hydrangea"] {
+  --palette-swatch: #5ec4ae;
+}
+:root[data-theme="dark"] [data-palette-choice="lycoris"] {
+  --palette-swatch: #ee8474;
+}
+:root[data-theme="dark"] [data-palette-choice="chimonanthus"] {
+  --palette-swatch: #eaa03e;
+}
+
+@container settings-card (max-width: 320px) {
+  .palette-picker__choice {
+    gap: var(--space-1);
+    padding-inline: var(--space-1);
+  }
+}
+
+@media (pointer: coarse) {
+  .palette-picker__choice {
+    min-height: 44px;
+  }
+}
+
 @container settings-card (max-width: 439px) {
+  .settings__field-control > .palette-picker { width: 100%; }
   .settings__field[data-layout="adaptive"] {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -421,7 +575,10 @@
   height: 12px;
   border-radius: var(--radius-pill);
   background: var(--muted);
-  transition: transform var(--dur-standard) var(--ease-standard);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 15%);
+  transition:
+    transform var(--dur-standard) var(--ease-standard),
+    background var(--dur-micro) var(--ease-standard);
 }
 
 .settings-switch[aria-checked="true"]::before {
@@ -432,6 +589,12 @@
 .settings-switch[aria-checked="true"]::after {
   background: var(--on-accent);
   transform: translateX(14px);
+}
+
+.settings-switch:focus-visible::before {
+  box-shadow: 0 0 0 2px var(--accent-tint);
+  outline: 2px solid var(--accent-focus);
+  outline-offset: 1px;
 }
 
 .settings-switch:disabled { opacity: .5; cursor: default; }
@@ -462,6 +625,14 @@
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   white-space: nowrap;
+}
+
+.settings__version-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
 }
 
 .settings__installed {

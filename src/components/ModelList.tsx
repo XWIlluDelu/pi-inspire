@@ -87,7 +87,7 @@ const identityRanks = (models: readonly ModelIdentity[]) =>
 const lexicalOrder = (left: string, right: string) =>
   left < right ? -1 : left > right ? 1 : 0;
 
-/** Shared searchable model list. Actions belong to the selected model outside the list. */
+/** Shared searchable model list or settings grid with actions on each row. */
 export function ModelList({
   models,
   value,
@@ -101,6 +101,8 @@ export function ModelList({
   placeholder,
   searchLabel = "Search models",
   emptyAction,
+  renderActions,
+  renderNameAction,
 }: {
   models: ModelOption[];
   value: ModelOption | null;
@@ -114,6 +116,8 @@ export function ModelList({
   placeholder?: string;
   searchLabel?: string;
   emptyAction?: ReactNode;
+  renderActions?: (model: ModelOption, active: boolean) => ReactNode;
+  renderNameAction?: (model: ModelOption, active: boolean) => ReactNode;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState(initialQuery);
@@ -175,6 +179,51 @@ export function ModelList({
   useSearchFocus(autoFocus, inputRef, list.scrollRef);
   const navigate = (event: KeyboardEvent) => {
     if (isComposingKeyboardEvent(event.nativeEvent)) return;
+    const target = event.target;
+    if (
+      renderActions &&
+      target instanceof HTMLElement &&
+      target.dataset.modelAction
+    ) {
+      const radio =
+        target instanceof HTMLInputElement && target.type === "radio";
+      let key = event.key;
+      if (radio && key === "ArrowLeft") key = "ArrowUp";
+      if (radio && key === "ArrowRight") key = "ArrowDown";
+      if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(key)) return;
+      const index = list.indexOf(options);
+      const to =
+        key === "Home"
+          ? 0
+          : key === "End"
+            ? options.length - 1
+            : radio
+              ? (index + (key === "ArrowUp" ? -1 : 1) + options.length) %
+                options.length
+              : Math.max(
+                  0,
+                  Math.min(
+                    index + (key === "ArrowUp" ? -1 : 1),
+                    options.length - 1,
+                  ),
+                );
+      const option = options[to];
+      if (!option) return;
+      event.preventDefault();
+      list.activate(option.key);
+      const id = list.optionId(to);
+      const selector = `[data-model-action="${target.dataset.modelAction}"]:not(:disabled)`;
+      requestAnimationFrame(() => {
+        const next = document
+          .getElementById(id)
+          ?.querySelector<HTMLElement>(selector);
+        if (next) {
+          next.focus({ preventScroll: true });
+          if (radio) next.click();
+        }
+      });
+      return;
+    }
     list.navigate(event, options, pick, { edges: true });
   };
   return (
@@ -186,7 +235,7 @@ export function ModelList({
         role="combobox"
         aria-label={searchLabel}
         aria-autocomplete="list"
-        aria-haspopup="listbox"
+        aria-haspopup={renderActions ? "grid" : "listbox"}
         aria-expanded="true"
         aria-controls={list.id}
         aria-activedescendant={list.descendant(options)}
@@ -211,8 +260,13 @@ export function ModelList({
         options={options}
         label="Available models"
         className="model-picker__list"
-        optionClass="model-picker__option"
-        fixedRows
+        optionClass={
+          renderActions
+            ? "model-picker__option model-picker__option--actions"
+            : "model-picker__option"
+        }
+        fixedRows={!renderActions}
+        interactiveRows={Boolean(renderActions)}
         onPick={pick}
         onKeyDown={navigate}
         heading={({ group, value: { model, common } }, style, key) => (
@@ -231,12 +285,15 @@ export function ModelList({
             />
           </div>
         )}
-        renderOption={({ key, value: { model, common }, selected }) => {
+        renderOption={({ key, value: { model, common }, selected }, active) => {
           const name = model.name ?? model.id;
           const matches = modelSearchHighlights(model, query);
           return (
             <>
-              <span className="model-picker__option-copy">
+              <span
+                className="model-picker__option-copy"
+                role={renderActions ? "gridcell" : undefined}
+              >
                 <span className="model-picker__name">
                   <span className="model-picker__name-text">
                     <SearchMatchText text={name} ranges={matches.name} />
@@ -244,6 +301,7 @@ export function ModelList({
                   {model.virtual ? (
                     <span className="model-picker__badge">Router</span>
                   ) : null}
+                  {renderNameAction?.(model, active)}
                 </span>
                 <span className="model-picker__id">
                   {common ? (
@@ -258,15 +316,24 @@ export function ModelList({
                   <SearchMatchText text={model.id} ranges={matches.id} />
                 </span>
               </span>
-              <span className="model-picker__badges">
-                {!selected && recentRank.has(key) ? (
-                  <span className="model-picker__badge">Recent</span>
-                ) : null}
-                {model.reasoning === false ? (
-                  <span className="model-picker__badge">No thinking</span>
-                ) : null}
-                {selected ? <Check size={12} aria-hidden /> : null}
-              </span>
+              {renderActions ? (
+                <div
+                  className="models-actions models-row-actions"
+                  role="gridcell"
+                >
+                  {renderActions(model, active)}
+                </div>
+              ) : (
+                <span className="model-picker__badges">
+                  {!selected && recentRank.has(key) ? (
+                    <span className="model-picker__badge">Recent</span>
+                  ) : null}
+                  {model.reasoning === false ? (
+                    <span className="model-picker__badge">No thinking</span>
+                  ) : null}
+                  {selected ? <Check size={12} aria-hidden /> : null}
+                </span>
+              )}
             </>
           );
         }}

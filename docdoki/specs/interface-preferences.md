@@ -32,6 +32,9 @@ category before locating the requested section.
 [[design-system]] owns field-card layout, shared control sizing, selection markers and feedback
 presentation. These rules also apply to Terminal settings.
 
+Theme, text size, reading width, project location and Send key use segmented buttons. Color
+palette uses named swatch tiles with a visible selected state.
+
 | Category | Controls |
 | --- | --- |
 | Display | One field group: `Theme`, `Color palette`, `Content text size`, `Reading width`, `Project location`, then `Titlebar needles`. The workbench header and installed-window title bar have distinct scopes, explained beside their controls, not combined under a location-based heading. |

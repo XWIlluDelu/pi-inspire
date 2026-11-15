@@ -6,7 +6,30 @@
 .mcp-file { padding-block: var(--space-3); border-top: 1px solid var(--line); }
 .mcp-file:first-child { padding-top: 0; border-top: 0; }
 .mcp-file:last-child { padding-bottom: 0; }
-.mcp-file h4 { margin: 0; font-size: var(--text-sm); font-weight: 500; }
+.mcp-file__header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: var(--space-2);
+}
+.mcp-file__scope {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px var(--space-2);
+}
+.mcp-file__scope h4 {
+  flex: 0 0 auto;
+  max-width: 100%;
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--ink);
+}
+.mcp-file__hint {
+  font-size: var(--text-xs);
+  color: var(--faint);
+}
 .mcp-path {
   font-family: var(--font-mono);
   font-size: var(--text-xs);

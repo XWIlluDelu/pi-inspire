@@ -43,7 +43,7 @@ Models settings separates three tasks:
 
 | Section | Controls |
 | --- | --- |
-| Models | Searchable available models; selected-model details for Common, default and declaration actions; saved-default Clear; default thinking; ordered common rules |
+| Models | Searchable model rows with inline Common, Default and declaration actions; saved-default Clear; default thinking; ordered common rules |
 | Login & API keys | Saved credential status and Manage; Connect provider; provider → method → login navigation |
 | Custom providers | Collapsed declaration selector with counts; Add provider and selected declaration actions |
 

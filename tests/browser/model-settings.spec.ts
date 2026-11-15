@@ -70,23 +70,19 @@ test.describe("touch model settings", () => {
       exact: true,
     });
     await settings.getByRole("button", { name: "Models", exact: true }).click();
-    const list = settings.getByRole("listbox", { name: "Available models" });
+    const list = settings.getByRole("grid", { name: "Available models" });
     await expect(list).toBeAttached();
     await page.setViewportSize(desktop);
     const search = settings.getByRole("combobox", {
       name: "Search available models",
     });
-    await expect(list.getByRole("option").first()).toBeVisible();
+    await expect(list.getByRole("row").first()).toBeVisible();
     await search.fill(`${target.provider}/${target.id}`);
-    const matching = list.getByRole("option", {
+    const matching = list.getByRole("row", {
       name: new RegExp(target.name!),
     });
     await expect(matching).toBeVisible();
-    await search.press("Enter");
-    await expect(matching).toHaveAttribute("aria-selected", "true");
-    await expect(
-      settings.getByRole("button", { name: "Set as default" }),
-    ).toBeEnabled();
+    await expect(matching.getByRole("radio")).toBeEnabled();
     await settings.getByLabel("Custom provider declarations").click();
     await page.setViewportSize(viewport);
     const editor = settings.getByRole("region", {
@@ -230,18 +226,26 @@ test("New model settings save native declarations and defaults for the prospecti
     await api.fill("openai-completions");
     await form.getByLabel("Maximum output tokens").fill("512");
     await save.click();
+    await settings
+      .getByRole("combobox", { name: "Search available models" })
+      .fill("new-provider/new-model");
     const common = settings.getByRole("checkbox", {
       name: "Common: New available model",
     });
     await expect(common).toBeVisible();
     await common.press("Space");
     await expect(common).toBeFocused();
-    await settings.getByRole("button", { name: "Set as default" }).click();
+    await settings
+      .getByRole("radio", { name: "Default: New available model" })
+      .click();
     await expect.poll(savedPreferences).toMatchObject({
       defaultProvider: "new-provider",
       defaultModel: "new-model",
       enabledModels: ["new-provider/new-model"],
     });
+    await expect(
+      settings.getByRole("radio", { name: "Default: New available model" }),
+    ).toBeChecked();
     await settings.getByRole("button", { name: "Close settings" }).click();
     await expect(draft).toHaveValue(text);
     await expect(model).toHaveAttribute(

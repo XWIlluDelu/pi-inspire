@@ -2,11 +2,14 @@ import {
   Compass,
   Cpu,
   Laptop,
+  Monitor,
+  Moon,
   Palette,
   Puzzle,
   RefreshCw,
   ScrollText,
   Server,
+  Sun,
   Terminal,
 } from "lucide-react";
 import {
@@ -41,6 +44,7 @@ import { PresentationAdapterSettings } from "./PresentationAdapterSettings";
 import { SessionActionsSettings } from "./SessionActionsSettings";
 import {
   SelectField,
+  SettingField,
   SettingsFeedback,
   SettingsLayout,
   SettingsPage,
@@ -51,6 +55,12 @@ import { SystemVersionsCard } from "./SystemVersionsCard";
 
 type ChoicePreference = keyof typeof preferenceChoices;
 
+const themeIcons = {
+  light: Sun,
+  dark: Moon,
+  system: Monitor,
+};
+
 function PreferenceChoice({
   name,
   prefs,
@@ -59,12 +69,63 @@ function PreferenceChoice({
   prefs: InspirePreferences;
 }) {
   const field = preferenceChoices[name];
+  if (name === "palette")
+    return (
+      <SettingField label={field.label}>
+        <div className="palette-picker" role="group" aria-label={field.label}>
+          {preferenceChoices.palette.options.map(({ value, label }) => (
+            <button
+              key={value}
+              type="button"
+              className="palette-picker__choice"
+              data-palette-choice={value}
+              aria-pressed={prefs.palette === value}
+              onClick={() => store.setPreference("palette", value)}
+            >
+              <span className="palette-picker__swatch" aria-hidden />
+              <span>{label}</span>
+            </button>
+          ))}
+        </div>
+      </SettingField>
+    );
+  const description = "description" in field ? field.description : undefined;
+  if (
+    name === "theme" ||
+    name === "contentTextSize" ||
+    name === "readingWidth" ||
+    name === "projectDisplay" ||
+    name === "desktopSendKey"
+  )
+    return (
+      <SettingField label={field.label} description={description}>
+        <div className="segmented" role="group" aria-label={field.label}>
+          {preferenceChoices[name].options.map(({ value, label }) => {
+            const Icon =
+              name === "theme"
+                ? themeIcons[value as keyof typeof themeIcons]
+                : undefined;
+            return (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={prefs[name] === value}
+                onClick={() => store.setPreference(name, value)}
+              >
+                {Icon && <Icon size={13} aria-hidden />}
+                <span>{label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </SettingField>
+    );
   return (
     <SelectField
       label={field.label}
-      description={"description" in field ? field.description : undefined}
+      description={description}
       value={prefs[name]}
-      options={field.options}
+      options={preferenceChoices[name].options}
       onChange={(value) => store.setPreference(name, value)}
     />
   );
@@ -200,6 +261,7 @@ export const SettingsContent = memo(function SettingsContent({
         footer={
           <footer className="settings__footer">
             <div className="settings__footer-status">
+              <span className="settings__version-dot" aria-hidden />
               <span>
                 INSΠRE{" "}
                 {state.version ? `v${state.version}` : "version unavailable"}

@@ -15,7 +15,7 @@ test("palette settings stay independent of luminosity from first paint through H
   await pairAndOpen(page);
   await openSettings(page);
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
-  const picker = settings.getByRole("combobox", {
+  const picker = settings.getByRole("group", {
     name: "Color palette",
     exact: true,
   });
@@ -28,29 +28,30 @@ test("palette settings stay independent of luminosity from first paint through H
         field in response.request().postDataJSON(),
     );
 
-  const theme = settings.getByRole("combobox", { name: "Theme", exact: true });
-  await theme.click();
-  await settings.getByRole("option", { name: "Dark", exact: true }).click();
+  const theme = settings.getByRole("group", { name: "Theme", exact: true });
+  await theme.getByRole("button", { name: "Dark", exact: true }).click();
   await expect(html).toHaveAttribute("data-theme", "dark");
 
   await page.setViewportSize({ width: 320, height: 900 });
   await expect(picker).toBeInViewport();
-  await picker.click();
   for (const { label } of preferenceChoices.palette.options)
     await expect(
-      settings.getByRole("option", { name: label, exact: true }),
+      picker.getByRole("button", { name: label, exact: true }),
     ).toBeVisible();
   const paletteSave = savePreference("palette");
-  await settings.getByRole("option", { name: "Wisteria", exact: true }).click();
+  const wisteria = picker.getByRole("button", {
+    name: "Wisteria",
+    exact: true,
+  });
+  await wisteria.click();
   expect(await (await paletteSave).json()).toMatchObject({
     preferences: { palette: "wisteria", theme: "dark" },
   });
   await expect(html).toHaveAttribute("data-palette", "wisteria");
-  await expect(picker).toContainText("Wisteria");
+  await expect(wisteria).toHaveAttribute("aria-pressed", "true");
 
   const lightSave = savePreference("theme");
-  await theme.click();
-  await settings.getByRole("option", { name: "Light", exact: true }).click();
+  await theme.getByRole("button", { name: "Light", exact: true }).click();
   expect(await (await lightSave).json()).toMatchObject({
     preferences: { palette: "wisteria", theme: "light" },
   });
