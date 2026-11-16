@@ -188,9 +188,9 @@ all acquired handles close. [[composer]] owns the dialog and typed receipts.
 
 ## Earlier-branch presentation
 
-When a worker holds a navigation lease away from the latest saved point, show a compact notice above
-the transcript explaining that new messages continue from earlier history. **Restore saved position**
-uses the confirmed snapshot revision to restore where the next message will continue. If
+When a verified navigation leaves the worker on an earlier branch, show a compact notice in the
+shared top-right notification stack. It explains where the next message continues.
+**Continue from latest saved point** uses the confirmed snapshot revision to change that continuation. If
 the saved point is a user or custom message, restoring it retires the idle owned worker and the next
 local action opens Pi at the exact saved point. Other branch ends that Pi can only edit are still
 available through **Edit from here** in History.
@@ -198,7 +198,7 @@ The notice is available with History closed. Dismissing it hides it for the curr
 the continuation in place. The command palette still offers the restore action. **Clone current branch**
 in the session menu copies through the displayed point without changing the source session.
 
-Use the Host's navigation lease and durable/effective leaf pair for this presentation. A difference
-caused by following an attached Pi or viewing a saved session alone does not qualify. The notice fits
-the reading stage in normal flow above the transcript. Wrapped diagnostics resize the notice and
-leave the reading viewport and restore control accessible.
+Use the Host's verified navigation lease and durable/effective leaf pair for this presentation.
+Ordinary differences while the worker and saved history update independently do not qualify,
+including while following an attached Pi or viewing a saved session. The notice floats below the
+conversation tools and leaves the reading viewport in place.

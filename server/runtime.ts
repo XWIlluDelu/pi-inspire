@@ -506,6 +506,8 @@ export class RuntimeController extends EventEmitter {
             sealed,
           );
           view.nativeLeafId = marker.leaf;
+          if (view.navigationLeased && !workerOnSeparateBranch(slot))
+            view.navigationLeased = false;
           if (!sealed) return;
           const adopted = this.liveTail.seal(
             slot,
@@ -974,6 +976,9 @@ export class RuntimeController extends EventEmitter {
     const projection = slot.projection;
     if (!projection) return;
     if (slot.process) {
+      const view = slot.workerView;
+      if (view?.navigationLeased && !workerOnSeparateBranch(slot))
+        view.navigationLeased = false;
       if (!slot.pendingBranchBridge) this.checkpoints.refresh(slot);
       return;
     }
@@ -2072,7 +2077,9 @@ export class RuntimeController extends EventEmitter {
       durableLeafId: saved.leafId,
       effectiveLeafId,
       restoreSavedLeafId:
-        workerOnSeparateBranch(slot) && saved.leafId !== effectiveLeafId
+        slot.workerView?.navigationLeased &&
+        workerOnSeparateBranch(slot) &&
+        saved.leafId !== effectiveLeafId
           ? saved.leafId
           : null,
       branchRevision: slot.branchRevision,
@@ -3524,6 +3531,7 @@ export class RuntimeController extends EventEmitter {
       const { index, finishedMessages } = slot.workerView;
       index.appendWorkerEntries(delta, result.effectiveLeaf);
       slot.workerView.nativeLeafId = result.effectiveLeaf;
+      slot.workerView.navigationLeased = workerOnSeparateBranch(slot);
       slot.workerView.sealedCursor = index.tailEntryId;
       finishedMessages.clear();
     }

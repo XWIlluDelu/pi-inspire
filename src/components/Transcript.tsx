@@ -25,7 +25,6 @@ import { resourceReferenceFromEventTarget } from "../resources";
 import { store } from "../store";
 import { transcriptProjectionKey } from "../transcript-projection-key";
 import { hasActiveModal } from "../use-modal-focus";
-import { EarlierBranchBanner } from "./EarlierBranchBanner";
 import { ExtensionDisplaySurface } from "./ExtensionDisplays";
 import { TranscriptImageOwnerContext } from "./ImagePreview";
 import { ScrollRail } from "./ScrollRail";
@@ -375,7 +374,6 @@ export const Transcript = memo(function Transcript({
           }
           promptsOpen={mobilePromptsOpen}
         />
-        <EarlierBranchBanner key={`${sessionId}:${viewId}`} />
         <div
           className="transcript"
           role="log"

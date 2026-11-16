@@ -87,6 +87,8 @@ type PendingBranchBridge = ReturnType<typeof startBranchNavigation> & {
 
 export interface WorkerView {
   index: WorkerEntryIndex;
+  /** Verified navigation away from the saved branch, rather than checkpoint lag. */
+  navigationLeased: boolean;
   contextGeneration: number;
   finishedMessages: Map<string, string>;
   sealedCursor: string | null;

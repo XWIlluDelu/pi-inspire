@@ -1531,6 +1531,18 @@
   color: var(--body);
 }
 
+.earlier-branch-banner__restore.button {
+  min-height: var(--notice-control-size);
+  padding: 0;
+  color: var(--accent-deep);
+  font: inherit;
+  text-align: start;
+}
+
+.earlier-branch-banner [role="alert"] {
+  color: var(--error-ink);
+}
+
 @media (pointer: coarse), (max-width: 640px) {
   .notice { --notice-control-size: 32px; }
 }

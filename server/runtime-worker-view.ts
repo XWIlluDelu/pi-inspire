@@ -25,6 +25,7 @@ export function createWorkerView(
   index.appendWorkerEntries(entries, leaf);
   return {
     index,
+    navigationLeased: false,
     contextGeneration: 1,
     finishedMessages: new Map(),
     sealedCursor: entries.at(-1)?.id ?? null,

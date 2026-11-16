@@ -8,16 +8,6 @@
   outline: none;
 }
 
-.earlier-branch-banner {
-  align-self: center;
-  max-width: min(440px, calc(100% - var(--space-4)));
-  margin-block-end: var(--space-2);
-}
-
-.earlier-branch-banner [role="alert"] {
-  color: var(--error-ink);
-}
-
 .transcript {
   flex: 1;
   min-height: 0;

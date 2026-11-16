@@ -616,6 +616,21 @@ it("reads and copies the admitted external branch across appends, then retires i
   }
 });
 
+it("does not offer to restore a normal saved append before the worker catches up", async () => {
+  const f = await fixture();
+  const before = await f.active();
+  const parent = before.durableLeafId!;
+  await appendFile(
+    f.path,
+    jsonl(entry("ahead", parent, "user", "next question", 55)),
+  );
+  expect(await f.active()).toMatchObject({
+    durableLeafId: "ahead",
+    effectiveLeafId: before.effectiveLeafId,
+    restoreSavedLeafId: null,
+  });
+});
+
 it("advances saved History without moving the selected worker branch", async () => {
   const f = await fixture();
   await f.navigate("a1");

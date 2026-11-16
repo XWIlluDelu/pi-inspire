@@ -8,6 +8,7 @@ import {
   updateDetailsText,
 } from "../update-availability";
 import { readingDwellMs, useReadingDwell } from "../use-reading-dwell";
+import { EarlierBranchBanner } from "./EarlierBranchBanner";
 import { NoticeCard } from "./NoticeCard";
 
 function NoticeItem({ notice }: { notice: Notice }) {
@@ -85,6 +86,8 @@ export const Notices = memo(function Notices({
   const state = useAppState(
     (source) => ({
       sessionId: source.sessionId,
+      viewId: source.view.viewId,
+      restoreSavedLeafId: source.view.restoreSavedLeafId,
       notices: source.live.notices,
       error: source.error,
       connection: source.connection,
@@ -179,9 +182,16 @@ export const Notices = memo(function Notices({
       window.removeEventListener("resize", measure);
     };
   });
-  if (state.notices.length === 0 && !updates) return null;
+  if (state.notices.length === 0 && !updates && !state.restoreSavedLeafId)
+    return null;
   return (
     <div ref={ref} className="notices" aria-live="polite">
+      {state.restoreSavedLeafId ? (
+        <EarlierBranchBanner
+          key={`${state.sessionId}:${state.viewId}`}
+          restoreSavedLeafId={state.restoreSavedLeafId}
+        />
+      ) : null}
       {state.notices.map((notice) => (
         <NoticeItem key={`${notice.kind}:${notice.text}`} notice={notice} />
       ))}

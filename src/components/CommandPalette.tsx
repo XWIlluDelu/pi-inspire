@@ -270,8 +270,8 @@ export const CommandPalette = memo(function CommandPalette({
         actions.push({
           id: "latest-branch",
           group: "Workspace",
-          title: "Restore latest saved position",
-          aliases: ["Back to latest branch"],
+          title: "Continue from latest saved point",
+          aliases: ["Restore latest saved position", "Back to latest branch"],
           default: true,
           run: runInSession(() => void store.returnToLatestBranch()),
         });
