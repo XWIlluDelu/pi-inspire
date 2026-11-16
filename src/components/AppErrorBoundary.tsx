@@ -9,14 +9,14 @@ export function AppErrorBoundary({ children }: { children: ReactNode }) {
         <StartupCard
           role="alert"
           title="The workbench hit an error"
-          hint="Reload the page. Any running Pi session continues."
+          hint="Refresh the page. Any running Pi session continues."
         >
           <button
             type="button"
             className="button button--primary"
             onClick={() => window.location.reload()}
           >
-            Reload page
+            Refresh page
           </button>
         </StartupCard>
       }

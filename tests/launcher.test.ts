@@ -220,7 +220,7 @@ describe("production launcher", () => {
     expect(runLauncher(["stop"], env, checkoutLauncher)).toContain(
       "No managed INSΠRE instance is running.",
     );
-    // Cold startup publishes only the current build, even with leftover files.
+    // Cold startup ignores leftover files outside the published manifest.
     const outgoingAsset = "ContextPane-launcher-old.js";
     const publishedAsset = join(checkout, "dist", "assets", outgoingAsset);
     await mkdir(dirname(publishedAsset), { recursive: true });

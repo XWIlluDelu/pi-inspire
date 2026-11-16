@@ -424,15 +424,14 @@ unconfirmed submission keeps its domain phase and does not trigger a new restart
   leaves that stamp stale so the next launch rebuilds. A current stamp avoids rebuilding at startup.
   The npm distribution omits the stamp and uses its packaged build.
 
-- Source builds stage Vite output behind one installation lock and publish assets before
-  switching the index. A current manifest identifies the browser build and the assets it can
-  serve. After publication, old files are removed when possible and are excluded even if still
-  present on disk. Current JavaScript and CSS retain immutable validators, ranges and negotiated
-  Brotli/gzip variants. A missing asset returns `404` without falling through to the shell.
-- Paired browser requests and socket admission use the current build identity. The development
-  browser and Host share their development identity. A stale browser is told to reload, stops
-  reconnecting, and keeps its open draft for copying or manual reload. Native sessions and
-  notification storage are independent of shell publication.
+- Source builds stage Vite output behind one installation lock and publish the asset manifest
+  before switching the index. The two previous asset generations remain available to open tabs
+  for deferred imports. Release packages contain the current assets. JavaScript and CSS retain
+  immutable validators, ranges and negotiated Brotli/gzip variants. A missing asset returns
+  `404` without falling through to the shell.
+- Publishing browser assets leaves existing sessions, terminals and their connections active.
+  The next page load uses the new index. Browser API and socket admission use their normal
+  authentication and request contracts independently of static assets.
 
 ## Diagnostics
 

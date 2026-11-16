@@ -33,7 +33,6 @@ import { isJsonRecord } from "../shared/json-record";
 import type { ModelSettingsOwner } from "../shared/model-settings";
 import type { TaskNotificationGrouping } from "../shared/notifications";
 import type { ProviderAuthOperation } from "../shared/provider-auth-bridge";
-import { browserBuildId } from "./browser-auth";
 import { terminalOperations } from "./controllers/terminal-operation-controller";
 import {
   aborted,
@@ -488,12 +487,11 @@ export type Api = ReturnType<typeof createApi>;
 
 export function terminalUrl(ticket: string): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocol}//${window.location.host}/terminal?${new URLSearchParams({ ticket, build: browserBuildId() })}`;
+  return `${protocol}//${window.location.host}/terminal?${new URLSearchParams({ ticket })}`;
 }
 
 export function eventsUrl(ticket: string, sessionId: string | null): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const query = new URLSearchParams({ ticket, build: browserBuildId() });
-  query.set("detail", sessionId ?? "");
+  const query = new URLSearchParams({ ticket, detail: sessionId ?? "" });
   return `${protocol}//${window.location.host}/events?${query}`;
 }

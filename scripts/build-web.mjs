@@ -8,7 +8,7 @@ import { acquireFileLock } from "../server/file-lock.mjs";
 import { sourceBuildHash } from "./source-build-hash.mjs";
 import { publishWebBuild } from "./web-build-output.mjs";
 
-export async function buildWeb(sourceRoot) {
+export async function buildWeb(sourceRoot, { retainPrevious = true } = {}) {
   const root = await realpath(sourceRoot);
   const distDirectory = join(root, "dist");
   const lease = await acquireFileLock(join(root, ".inspire-web-build.lock"), {
@@ -31,6 +31,7 @@ export async function buildWeb(sourceRoot) {
       const publication = await publishWebBuild(
         stagingDirectory,
         distDirectory,
+        { retainPrevious },
       );
       if (publication.cleanupFailures > 0)
         console.warn(
@@ -46,4 +47,6 @@ export async function buildWeb(sourceRoot) {
 }
 
 if (import.meta.main)
-  await buildWeb(resolve(dirname(fileURLToPath(import.meta.url)), ".."));
+  await buildWeb(resolve(dirname(fileURLToPath(import.meta.url)), ".."), {
+    retainPrevious: !process.argv.includes("--clean"),
+  });

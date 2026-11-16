@@ -1,38 +1,9 @@
 import { expect, test, type WebSocketRoute } from "@playwright/test";
-import { BROWSER_UPGRADE_CLOSE } from "../../shared/browser-build.mjs";
-import { openFixtureSession, pairedPage } from "./support/navigation";
+import { pairedPage } from "./support/navigation";
 
 test.use({
   serviceWorkers: "block",
   contextOptions: { reducedMotion: "reduce" },
-});
-
-test("a retired build keeps the open draft and offers manual reload", async ({
-  page,
-}) => {
-  let socket!: WebSocketRoute;
-  let connections = 0;
-  await page.routeWebSocket(/\/events(?:\?|$)/, (client) => {
-    connections++;
-    socket = client;
-    const server = client.connectToServer();
-    server.onMessage((message) => client.send(message));
-    client.onMessage((message) => server.send(message));
-  });
-  await pairedPage(page);
-  await openFixtureSession(page, /Review extension event lifecycle/);
-  const input = page.getByRole("textbox", { name: "Message", exact: true });
-  await input.fill("Keep this draft across the upgrade");
-  const originalConnections = connections;
-  await socket.close({ code: BROWSER_UPGRADE_CLOSE, reason: "Reload Inspire" });
-  await expect(
-    page.getByRole("button", { name: "Reload", exact: true }),
-  ).toBeVisible();
-  await expect(input).toHaveValue("Keep this draft across the upgrade");
-  await page.evaluate(() => window.dispatchEvent(new Event("online")));
-  expect(connections).toBe(originalConnections);
-  await page.getByRole("button", { name: "Reload", exact: true }).click();
-  await expect(input).toHaveValue("Keep this draft across the upgrade");
 });
 
 test("initial workspace loading recovers through retry", async ({ page }) => {

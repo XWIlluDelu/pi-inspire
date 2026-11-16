@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import {
   copyFile,
   mkdir,
@@ -14,7 +14,9 @@ import { promisify } from "node:util";
 import { brotliCompress, constants, gzip } from "node:zlib";
 import {
   CURRENT_WEB_ASSETS_MANIFEST,
+  currentWebBuild,
   isCompressibleStaticAsset,
+  WEB_ASSET_GENERATIONS,
 } from "../server/current-web-build.mjs";
 
 const brotli = promisify(brotliCompress);
@@ -59,10 +61,6 @@ async function regularFiles(root, relativePath = "") {
   return files.sort();
 }
 
-function digest(content) {
-  return createHash("sha256").update(content).digest("hex");
-}
-
 async function publishFile(source, destination, skipMatchingContent = false) {
   await mkdir(dirname(destination), { recursive: true });
   if (skipMatchingContent) {
@@ -97,8 +95,12 @@ async function publishManifest(path, value) {
   }
 }
 
-/** Publish all current assets before switching the index, then clean old files. */
-export async function publishWebBuild(stagingDirectory, distDirectory) {
+/** Publish assets before switching the index and keep recent lazy chunks available. */
+export async function publishWebBuild(
+  stagingDirectory,
+  distDirectory,
+  { retainPrevious = true } = {},
+) {
   const stagingRoot = join(stagingDirectory, "assets");
   const stagedAssets = await regularFiles(stagingRoot);
   const encodedAssets = await precompressAssets(stagingRoot, stagedAssets);
@@ -130,25 +132,28 @@ export async function publishWebBuild(stagingDirectory, distDirectory) {
     );
   }
 
-  const stagedIndex = await readFile(join(stagingDirectory, "index.html"));
+  const assets = stagingAssets.map((path) => path.split(sep).join("/"));
+  const generations = [assets];
+  if (retainPrevious) {
+    const manifest = await currentWebBuild(distDirectory)();
+    for (const previous of manifest?.generations ?? []) {
+      if (previous.length === assets.length &&
+          previous.every((path, index) => path === assets[index])) continue;
+      generations.push(previous);
+      if (generations.length === WEB_ASSET_GENERATIONS) break;
+    }
+  }
+  await publishManifest(join(distDirectory, CURRENT_WEB_ASSETS_MANIFEST), {
+    version: 3,
+    generations,
+  });
   await publishFile(
     join(stagingDirectory, "index.html"),
     join(distDirectory, "index.html"),
   );
-  const indexDigest = digest(stagedIndex);
-  await publishManifest(join(distDirectory, CURRENT_WEB_ASSETS_MANIFEST), {
-    version: 2,
-    indexDigest,
-    buildId:
-      stagedIndex
-        .toString("utf8")
-        .match(/src="\/assets\/(index-[^"/]+\.js)"/u)?.[1] ?? indexDigest,
-    assets: stagingAssets.map((path) => path.split(sep).join("/")),
-  });
-
   const current = new Set([
     ...stagedFiles,
-    ...stagingAssets.map((path) => join("assets", path)),
+    ...generations.flat().map((path) => join("assets", path)),
     CURRENT_WEB_ASSETS_MANIFEST,
   ]);
   let cleanupFailures = 0;
@@ -157,7 +162,7 @@ export async function publishWebBuild(stagingDirectory, distDirectory) {
     try {
       await rm(join(distDirectory, relativePath), { force: true });
     } catch {
-      // The current manifest excludes old files even when Windows still has one open.
+      // Files still open on Windows remain outside the published manifest.
       cleanupFailures += 1;
     }
   }

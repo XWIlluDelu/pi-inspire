@@ -56,7 +56,6 @@ import {
   selectedRunState,
   transcriptDiagnostic,
 } from "./app-state";
-import { BrowserUpgradeRequired } from "./browser-auth";
 import {
   type PiCommand,
   resolveCommandInput,
@@ -742,9 +741,7 @@ export class AppStore {
       await this.connectionController.connect(detailSessionId);
     } catch (error) {
       if (!ownsBootstrap()) return;
-      if (error instanceof BrowserUpgradeRequired) {
-        this.requireBrowserUpgrade();
-      } else if (error instanceof ApiError && error.status === 401) {
+      if (error instanceof ApiError && error.status === 401) {
         this.handleAuthFailure();
       } else {
         this.set({
@@ -1066,20 +1063,7 @@ export class AppStore {
 
   // --- Connection lifecycle ---
 
-  requireBrowserUpgrade = (): void => {
-    this.connectionController.stop();
-    this.set({
-      startupPending: false,
-      connection: "offline",
-      connectionProblem: { kind: "browser-upgrade" },
-    });
-  };
-
-  retryConnection = (): void => {
-    if (this.state.connectionProblem?.kind === "browser-upgrade")
-      window.location.reload();
-    else this.connectionController.retry();
-  };
+  retryConnection = (): void => this.connectionController.retry();
 
   recoverConnection = (trigger: ConnectionRecoveryTrigger): void =>
     this.connectionController.recover(trigger);

@@ -3,7 +3,6 @@ import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 import type { Express } from "express";
 import { WebSocket, WebSocketServer } from "ws";
-import { BROWSER_UPGRADE_CLOSE } from "../shared/browser-build.mjs";
 import { hostEndpoints as routes } from "../shared/host-endpoints.js";
 import { MAX_TERMINAL_INPUT_BYTES } from "../shared/terminal-contracts.js";
 import {
@@ -33,7 +32,6 @@ const MAX_TERMINAL_SOCKETS = 128;
 interface TerminalSocketState {
   responsive: boolean;
   attachment: TerminalAttachment | "attaching" | null;
-  browserBuild: string | undefined;
   detach(): void;
 }
 
@@ -44,7 +42,6 @@ export function createTerminalGateway(
   app: Express,
   service: TerminalService | Pick<TerminalConnection, "run"> | undefined,
   heartbeatIntervalMs: number,
-  currentBrowserBuild: () => Promise<string | undefined>,
 ) {
   const terminalTickets = new Map<
     string,
@@ -183,7 +180,7 @@ export function createTerminalGateway(
     }
   };
   const stopHeartbeat = maintainBrowserSockets(
-    terminalSockets, heartbeatIntervalMs, currentBrowserBuild,
+    terminalSockets, heartbeatIntervalMs,
     (peer) => !!peer.attachment && peer.attachment !== "attaching",
     sendTerminalBounded, (socket) => terminalSockets.get(socket)?.detach(),
   );
@@ -191,12 +188,10 @@ export function createTerminalGateway(
   function openTerminalSocket(
     socket: WebSocket,
     origin: string | undefined,
-    build: string | undefined,
   ): void {
     const peer: TerminalSocketState = {
       responsive: true,
       attachment: null,
-      browserBuild: build,
       detach,
     };
     terminalSockets.set(socket, peer);
@@ -323,20 +318,10 @@ export function createTerminalGateway(
   }
 
   return {
-    rejectUpgrade(
-      request: IncomingMessage,
-      socket: Duplex,
-      head: Buffer,
-    ): void {
-      terminalWebsocket.handleUpgrade(request, socket, head, (client) =>
-        client.close(BROWSER_UPGRADE_CLOSE, "Reload Inspire"),
-      );
-    },
     upgrade(
       request: IncomingMessage,
       socket: Duplex,
       head: Buffer,
-      build: string | undefined,
     ): void {
       if (terminalSockets.size >= MAX_TERMINAL_SOCKETS) {
         socket.write(
@@ -346,7 +331,7 @@ export function createTerminalGateway(
         return;
       }
       terminalWebsocket.handleUpgrade(request, socket, head, (client) => {
-        openTerminalSocket(client, request.headers.origin, build);
+        openTerminalSocket(client, request.headers.origin);
       });
     },
     close(): void {

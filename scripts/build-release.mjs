@@ -35,8 +35,3 @@ for (const supportModule of [
     resolve(build, "server", supportModule),
   );
 }
-
-await cp(
-  resolve(root, "shared/browser-build.mjs"),
-  resolve(build, "shared/browser-build.mjs"),
-);

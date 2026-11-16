@@ -7,7 +7,6 @@ import { isJsonRecord } from "../shared/json-record";
 import {
   authenticatedFetch,
   BrowserPairingError,
-  BrowserUpgradeRequired,
 } from "./browser-auth";
 
 export class ApiError extends Error {
@@ -72,7 +71,7 @@ export async function applicationFetch(
   try {
     return await authenticatedFetch(input, init, transport);
   } catch (error) {
-    if (aborted(error) || error instanceof BrowserUpgradeRequired) throw error;
+    if (aborted(error)) throw error;
     if (error instanceof BrowserPairingError)
       throw new ApiError(401, error.message);
     throw new ApiTransportError("request");

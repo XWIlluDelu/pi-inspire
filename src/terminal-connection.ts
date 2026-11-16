@@ -1,4 +1,3 @@
-import { BROWSER_UPGRADE_CLOSE } from "../shared/browser-build.mjs";
 import type {
   TerminalAttachRequest,
   TerminalDescriptor,
@@ -11,7 +10,7 @@ import {
   MAX_TERMINAL_INPUT_BYTES,
 } from "../shared/terminal-contracts";
 import { type Api, terminalUrl } from "./api";
-import { BrowserUpgradeRequired, socketTicket } from "./browser-auth";
+import { socketTicket } from "./browser-auth";
 
 export type TerminalTransportStatus =
   | "connecting"
@@ -231,22 +230,15 @@ export class TerminalConnection {
           this.reconnect();
         }
       });
-      socket.addEventListener("close", (event) => {
+      socket.addEventListener("close", () => {
         if (this.stopped || generation !== this.generation) return;
-        if (event.code === BROWSER_UPGRADE_CLOSE) {
-          this.stop();
-          window.dispatchEvent(new Event("inspire-browser-upgrade"));
-        } else this.reconnect();
+        this.reconnect();
       });
       socket.addEventListener("error", () => {
         // The close event owns retry and user-visible status.
       });
     } catch (error) {
       if (this.stopped || generation !== this.generation) return;
-      if (error instanceof BrowserUpgradeRequired) {
-        this.stop();
-        return;
-      }
       this.callbacks.error(
         error instanceof Error ? error.message : "Terminal connection failed",
       );

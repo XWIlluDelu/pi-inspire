@@ -1,7 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DEVELOPMENT_BROWSER_BUILD } from "../shared/browser-build.mjs";
 import { defaultAccessTokenPath, resolveAccessToken } from "./access-token.js";
 import { createInspireServer } from "./app.js";
 import {
@@ -306,11 +305,6 @@ const application = createInspireServer({
       )
     : undefined,
   distDir,
-  requireBrowserBuild: true,
-  developmentBrowserBuild:
-    process.env.INSPIRE_DEV_HOST === "1"
-      ? DEVELOPMENT_BROWSER_BUILD
-      : undefined,
 });
 
 const statePath = process.env.INSPIRE_STATE_PATH;

@@ -10,10 +10,6 @@ import express, {
 import multer from "multer";
 import { ZodError, z } from "zod";
 import {
-  BROWSER_BUILD_HEADER,
-  BROWSER_UPGRADE_REQUIRED,
-} from "../shared/browser-build.mjs";
-import {
   type BootstrapResponse,
   MAX_ATTACHMENT_FILE_BYTES,
   MAX_ATTACHMENTS,
@@ -145,9 +141,6 @@ interface AppDependencies {
    * instance; test hosts default to one without checkers. */
   updateCoordinator?: UpdateCoordinator;
   distDir?: string;
-  /** Complete prior asset generations retained for already-open clients. */
-  developmentBrowserBuild?: string;
-  requireBrowserBuild?: boolean;
   /** The persistent PTY authority. Production connects to the terminal
    * daemon; tests may supply an in-process implementation. */
   terminal?: TerminalService | Pick<TerminalConnection, "run" | "close">;
@@ -273,14 +266,6 @@ export function createInspireServer(deps: AppDependencies): {
   const app = express();
   const distDir = resolve(deps.distDir ?? "dist");
   const currentBuild = currentWebBuild(distDir);
-  const currentBrowserBuild = async () =>
-    deps.developmentBrowserBuild ?? (await currentBuild())?.buildId;
-  const browserBuildAllowed = async (claimed: string | undefined) => {
-    const expected = await currentBrowserBuild();
-    return expected === undefined
-      ? !deps.requireBrowserBuild
-      : claimed === expected;
-  };
   const generatedExports = new GeneratedExportStore();
   // HTTP production behavior belongs to this application, not NODE_ENV:
   // changing the process environment also changes Pi and every tool it spawns.
@@ -527,21 +512,6 @@ export function createInspireServer(deps: AppDependencies): {
     response.locals.browserId = access.browserId;
     next();
   });
-  app.use("/api", async (request, response, next) => {
-    // Explicit non-browser bearer clients use their own request contract.
-    if (
-      !response.locals.browserId ||
-      (await browserBuildAllowed(request.get(BROWSER_BUILD_HEADER)))
-    )
-      return next();
-    response
-      .set(BROWSER_BUILD_HEADER, BROWSER_UPGRADE_REQUIRED)
-      .status(409)
-      .json({
-        code: BROWSER_UPGRADE_REQUIRED,
-        error: "Reload this page to use the current Inspire build.",
-      });
-  });
   app.post(
     "/api/auth/socket-ticket",
     (request, response: AuthenticatedResponse) => {
@@ -639,7 +609,6 @@ export function createInspireServer(deps: AppDependencies): {
     app,
     deps.terminal,
     heartbeatIntervalMs,
-    currentBrowserBuild,
   );
 
   jsonRoute(app, routes.checkUpdates, ({ query: { kind, refresh } }) =>
@@ -1342,14 +1311,17 @@ export function createInspireServer(deps: AppDependencies): {
     updateCoordinator,
     authorityId,
     heartbeatIntervalMs,
-    currentBrowserBuild,
     taskNotifications,
   });
 
   server.on("upgrade", (request, socket, head) => {
-    void upgrade(request, socket, head).catch(() => socket.destroy());
+    try {
+      upgrade(request, socket, head);
+    } catch {
+      socket.destroy();
+    }
   });
-  async function upgrade(
+  function upgrade(
     request: IncomingMessage,
     socket: import("node:stream").Duplex,
     head: Buffer,
@@ -1392,17 +1364,8 @@ export function createInspireServer(deps: AppDependencies): {
           : undefined,
         deps.token,
       );
-    const browserBuild = url.searchParams.get("build") ?? undefined;
-    if (browserAuthenticated && !(await browserBuildAllowed(browserBuild))) {
-      if (url.pathname === "/events")
-        runtimeEvents.rejectUpgrade(request, socket, head);
-      else if (url.pathname === "/terminal" && deps.terminal)
-        terminalGateway.rejectUpgrade(request, socket, head);
-      else socket.destroy();
-      return;
-    }
     if (url.pathname === "/terminal" && deps.terminal && browserAuthenticated) {
-      terminalGateway.upgrade(request, socket, head, browserBuild);
+      terminalGateway.upgrade(request, socket, head);
       return;
     }
     if (
@@ -1417,7 +1380,6 @@ export function createInspireServer(deps: AppDependencies): {
         browserAuthenticated && browserAuthenticated.browserId
           ? { id: browserAuthenticated.browserId, origin }
           : undefined,
-        browserAuthenticated ? browserBuild : undefined,
       );
       return;
     }

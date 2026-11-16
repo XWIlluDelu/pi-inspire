@@ -1,7 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
-import { browserBuildId, captureBrowserBootstrap } from "./browser-auth";
+import { captureBrowserBootstrap } from "./browser-auth";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
 import { WindowTitlebar } from "./components/WindowTitlebar";
 import { store } from "./store";
@@ -11,9 +11,6 @@ import "./styles.css";
 // origin-stored non-extractable browser key, never a persistent bearer/cookie.
 store.captureNotificationTarget();
 captureBrowserBootstrap();
-window.addEventListener("inspire-browser-upgrade", () =>
-  store.requireBrowserUpgrade(),
-);
 const initialization = store.init();
 
 // Browser freezes and network changes can strand an apparently open socket
@@ -51,7 +48,7 @@ if (import.meta.env.PROD && "serviceWorker" in navigator) {
   window.addEventListener(
     "load",
     () => {
-      const buildId = browserBuildId();
+      const buildId = new URL(import.meta.url).pathname.split("/").at(-1) ?? "production";
       void navigator.serviceWorker
         .register(`/service-worker.js?v=${encodeURIComponent(buildId)}`)
         .catch(() => undefined);

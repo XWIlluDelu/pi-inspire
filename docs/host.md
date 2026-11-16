@@ -390,5 +390,7 @@ needed. A stored generated token with an unsupported format requires explicit re
 browser re-pairing.
 Before upgrading across a Host control format change, stop the running Host with its current
 launcher or installed service manager. Start Inspire with the new version after it exits.
-In a source checkout, `npm run inspire -- restart` rebuilds changed client inputs when restarting a
-current Host. Pi extension changes use [`/reload`](pi-commands.md#compaction-and-reload).
+In a source checkout, `npm run build:web` publishes frontend changes while open pages keep working.
+The next page load uses the new frontend. For Host changes, use `npm run inspire -- restart`;
+it also rebuilds changed frontend inputs. Pi extension changes use
+[`/reload`](pi-commands.md#compaction-and-reload).

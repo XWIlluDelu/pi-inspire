@@ -159,8 +159,6 @@ and submits each terminal control through one typed terminal operation entry poi
 operations, with terminal epoch as executor identity. Validation failures with a valid identity
 return a matching rejection before dispatch. Records from a previous format remain explicitly
 unknown. The user can retire their tracking after inspecting the catalog; there is no replay.
-Browser build replacement retires the terminal
-attachment and leaves the PTY with its daemon.
 
 Diagnostics distinguish absent endpoints, unverified connections and data-protocol incompatibility.
 Terminal errors use the shared
@@ -210,7 +208,7 @@ HTTP controls use explicit bearer authentication; WebSocket upgrades use the ori
 socket tickets defined by [[host-lifecycle]]. Terminal attachment additionally consumes its
 short-lived, terminal-bound ticket. The Host forwards the same control and binary input frames
 to the daemon, which validates them at the PTY attachment. Runtime and terminal sockets share the
-Host liveness, current build and drain checks. Dimensions, titles, paths, messages, replay, IPC
+Host liveness and drain checks. Dimensions, titles, paths, messages, replay, IPC
 connections, pending input and outbound buffers are bounded. A slow viewer detaches independently of its PTY and other viewers.
 Diagnostics omit terminal input, output, and internal path-bearing failures.
 

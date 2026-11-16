@@ -100,7 +100,7 @@ function DeferredPanel({
             : `Loading ${surface.toLowerCase()}`
         }
         role={error ? "alert" : "status"}
-        action={error ? { label: "Reload", run: reloadPage } : undefined}
+        action={error ? { label: "Refresh page", run: reloadPage } : undefined}
       />
     </>
   );
@@ -242,12 +242,6 @@ function connectionProblemText(
   host: string,
 ): { title: string; detail: string } {
   switch (problem.kind) {
-    case "browser-upgrade":
-      return {
-        title: "Reload Inspire",
-        detail:
-          "A newer build is available. Reload when ready. Draft text stays in this tab; keep a copy of any unsent attachments.",
-      };
     case "device-offline":
       return {
         title: "This device is offline",
@@ -304,13 +298,11 @@ function HostUnavailable({
           className="button button--primary"
           onClick={() => store.retryConnection()}
         >
-          {problem.kind === "browser-upgrade" ? "Reload" : "Try again"}
+          Try again
         </button>
-        {problem.kind !== "browser-upgrade" ? (
-          <span>
-            <PiLoader size={12} aria-hidden /> Reconnecting automatically
-          </span>
-        ) : null}
+        <span>
+          <PiLoader size={12} aria-hidden /> Reconnecting automatically
+        </span>
       </div>
     </StartupCard>
   );
@@ -1060,9 +1052,7 @@ export function App() {
             </div>
           </div>
         ) : null}
-        {showConnectionBanner &&
-        (!state.error ||
-          state.connectionProblem?.kind === "browser-upgrade") ? (
+        {showConnectionBanner && !state.error ? (
           <div className="banner banner--warning" role="status">
             <span>
               {state.connectionProblem
@@ -1073,9 +1063,7 @@ export function App() {
                 : "Connection lost. Recent content stays visible."}
             </span>
             <button type="button" onClick={() => store.retryConnection()}>
-              {state.connectionProblem?.kind === "browser-upgrade"
-                ? "Reload"
-                : "Retry now"}
+              Retry now
             </button>
           </div>
         ) : null}

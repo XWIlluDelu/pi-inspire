@@ -3,7 +3,6 @@ import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer } from "ws";
 import { z } from "zod";
 import { MAX_ASSISTANT_STREAM_BATCH_EVENTS } from "../shared/assistant-stream.js";
-import { BROWSER_UPGRADE_CLOSE } from "../shared/browser-build.mjs";
 import {
   isSessionRuntimeStatus,
   MAX_SESSION_ID_CHARS,
@@ -31,7 +30,6 @@ interface RuntimeEventSocketOptions {
   updateCoordinator: Pick<UpdateCoordinator, "status" | "subscribe">;
   authorityId: string;
   heartbeatIntervalMs: number;
-  currentBrowserBuild?(): Promise<string | undefined>;
   taskNotifications?: Pick<TaskNotifications, "attach">;
 }
 
@@ -42,7 +40,6 @@ export function createRuntimeEventSockets({
   updateCoordinator,
   authorityId,
   heartbeatIntervalMs,
-  currentBrowserBuild,
   taskNotifications,
 }: RuntimeEventSocketOptions) {
   const websocket = new WebSocketServer({
@@ -72,7 +69,6 @@ export function createRuntimeEventSockets({
     principal?: NotificationPrincipal;
     unsubscribe?: () => void;
     backgroundStatuses: Map<string, string>;
-    browserBuild: string | null;
   };
   const peers = new Map<WebSocket, Peer>();
   const setDetailInterest = (peer: Peer, interest: DetailInterest) => {
@@ -135,7 +131,7 @@ export function createRuntimeEventSockets({
     }
   };
   const stopHeartbeat = maintainBrowserSockets(
-    peers, heartbeatIntervalMs, currentBrowserBuild,
+    peers, heartbeatIntervalMs,
     (peer) => !peer.backlog, sendBounded, forgetSocket,
   );
 
@@ -519,18 +515,12 @@ export function createRuntimeEventSockets({
   }
 
   return {
-    rejectUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer) {
-      websocket.handleUpgrade(request, socket, head, (client) =>
-        client.close(BROWSER_UPGRADE_CLOSE, "Reload Inspire"),
-      );
-    },
     upgrade(
       request: IncomingMessage,
       socket: Duplex,
       head: Buffer,
       url: URL,
       notificationPrincipal?: NotificationPrincipal,
-      browserBuild?: string,
     ): void {
       const detail = url.searchParams.get("detail");
       if (
@@ -548,7 +538,6 @@ export function createRuntimeEventSockets({
           interest,
           backgroundStatuses: new Map(),
           principal: notificationPrincipal,
-          browserBuild: browserBuild ?? null,
         };
         setDetailInterest(peer, interest);
         startPeer(client, peer);

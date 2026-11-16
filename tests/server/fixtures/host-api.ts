@@ -124,7 +124,6 @@ type HostFixtureOptions = Partial<
     | "promptObservationWindowMs"
     | "distDir"
     | "terminal"
-    | "developmentBrowserBuild"
     | "piVersion"
   >
 > & { services?: HostFixtureServices; restartBackend?: HostRestartBackend };

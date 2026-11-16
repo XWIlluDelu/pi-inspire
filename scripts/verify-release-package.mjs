@@ -256,7 +256,6 @@ try {
     "build/server/restart-submission.mjs",
     "build/server/attached-pi-entry.js",
     "build/server/current-web-build.mjs",
-    "build/shared/browser-build.mjs",
     "connections/dispatch.mjs",
     "connections/ssh-reverse/manifest.json",
     "connections/ssh-reverse/runner.mjs",
