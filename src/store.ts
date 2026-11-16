@@ -628,7 +628,7 @@ export class AppStore {
   private handleAuthFailure(): void {
     this.replaceTransport();
     this.hostAuthorityId = null;
-    this.runtimeEvents.resetStatusAcknowledgements();
+    this.runtimeEvents.setStatusAuthority(null);
     this.api = null;
     this.set({
       needsToken: true,
@@ -692,9 +692,8 @@ export class AppStore {
         needsToken: false,
         connectionProblem: null,
       });
-      if (this.hostAuthorityId !== boot.authorityId)
-        this.runtimeEvents.resetStatusAcknowledgements();
       this.hostAuthorityId = boot.authorityId;
+      this.runtimeEvents.setStatusAuthority(boot.authorityId);
       if (rememberedSession) this.autoContinued = true;
       this.composer.reconcileAuthority(boot.authorityId);
       const detailSessionId =

@@ -8,6 +8,31 @@ import { isExternalSessionActivities } from "../../shared/session-activity";
 import { type AppState, transcriptDiagnostic } from "../app-state";
 import { reduceEvent, type WireEvent } from "../events";
 
+const statusAcknowledgementsKey = "inspire.session-outcome-acknowledgements";
+const maxStatusAcknowledgements = 512;
+
+function readStatusAcknowledgements(authorityId: string): Map<string, number> {
+  try {
+    const saved = JSON.parse(
+      localStorage.getItem(statusAcknowledgementsKey) ?? "null",
+    );
+    if (saved?.authorityId === authorityId && Array.isArray(saved.entries))
+      return new Map(
+        saved.entries
+          .slice(-maxStatusAcknowledgements)
+          .filter(
+            (entry: unknown): entry is [string, number] =>
+              Array.isArray(entry) &&
+              typeof entry[0] === "string" &&
+              Number.isSafeInteger(entry[1]),
+          ),
+      );
+  } catch {
+    // Local storage is optional for acknowledging outcomes in an open page.
+  }
+  return new Map();
+}
+
 interface RuntimeEventHost {
   state(): AppState;
   patch(patch: Partial<AppState>): void;
@@ -33,7 +58,8 @@ interface RuntimeEventHost {
  * without giving event producers a second browser-state authority. */
 export class RuntimeEventController {
   private readonly titleAttention = new Set<string>();
-  private readonly acknowledgedStatus = new Map<string, number>();
+  private acknowledgedStatus = new Map<string, number>();
+  private statusAuthorityId: string | null = null;
   private pendingResync: {
     generation: number;
     timer: ReturnType<typeof setTimeout>;
@@ -85,13 +111,21 @@ export class RuntimeEventController {
   }
 
   private viewStatus(id: string, status?: SessionRuntimeStatus): void {
-    if (status?.attentionId === undefined) return;
-    this.acknowledgedStatus.delete(id);
-    this.acknowledgedStatus.set(id, status.attentionId);
-    if (this.acknowledgedStatus.size > 512) {
-      const oldest = this.acknowledgedStatus.keys().next().value;
-      if (oldest !== undefined) this.acknowledgedStatus.delete(oldest);
-    }
+    const attentionId = status?.attentionId;
+    if (
+      attentionId === undefined ||
+      (this.acknowledgedStatus.get(id) ?? -1) >= attentionId
+    )
+      return;
+    this.updateStatusAcknowledgements((entries) => {
+      if ((entries.get(id) ?? -1) > attentionId) return;
+      entries.delete(id);
+      entries.set(id, attentionId);
+      if (entries.size > maxStatusAcknowledgements) {
+        const oldest = entries.keys().next().value;
+        if (oldest !== undefined) entries.delete(oldest);
+      }
+    });
   }
 
   private displayStatus(
@@ -124,8 +158,31 @@ export class RuntimeEventController {
     this.pendingResync = null;
   }
 
-  resetStatusAcknowledgements(): void {
-    this.acknowledgedStatus.clear();
+  setStatusAuthority(authorityId: string | null): void {
+    if (this.statusAuthorityId === authorityId) return;
+    this.statusAuthorityId = authorityId;
+    this.acknowledgedStatus = authorityId
+      ? readStatusAcknowledgements(authorityId)
+      : new Map();
+  }
+
+  private updateStatusAcknowledgements(
+    update: (entries: Map<string, number>) => void,
+  ): void {
+    update(this.acknowledgedStatus);
+    const authorityId = this.statusAuthorityId;
+    if (!authorityId) return;
+    // Read before writing so another open tab's acknowledgements survive.
+    const entries = readStatusAcknowledgements(authorityId);
+    update(entries);
+    try {
+      localStorage.setItem(
+        statusAcknowledgementsKey,
+        JSON.stringify({ authorityId, entries: [...entries] }),
+      );
+    } catch {
+      // The in-memory acknowledgement still applies.
+    }
   }
 
   private scheduleResync(sessionId: string | null): void {
@@ -149,10 +206,10 @@ export class RuntimeEventController {
   }
 
   forgetAttention(sessionIds: ReadonlySet<string>): void {
-    for (const sessionId of sessionIds) {
-      this.titleAttention.delete(sessionId);
-      this.acknowledgedStatus.delete(sessionId);
-    }
+    for (const sessionId of sessionIds) this.titleAttention.delete(sessionId);
+    this.updateStatusAcknowledgements((entries) => {
+      for (const sessionId of sessionIds) entries.delete(sessionId);
+    });
     this.publishTitleAttention();
   }
 

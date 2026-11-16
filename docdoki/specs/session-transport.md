@@ -48,10 +48,10 @@ visible conversation when dependent reads fail.
 
 Foreground and navigation derive run state from one Host status per session. The addressed snapshot
 and live events use the same status contract. Message and lifecycle events still update transient content
-and request presentation. The browser acknowledges the outcome ID it viewed without clearing
-another browser's indication. Bounded Host-owned retry details accompany addressed snapshots and
-live events and retire outside retry phases. A valid `retrying` state remains visible if its detail
-is unavailable.
+and request presentation. The browser remembers viewed outcome IDs across reopening, scoped to
+the Host instance. Other browsers retain their own indications. Bounded Host-owned retry details
+accompany addressed snapshots and live events and retire outside retry phases. A valid `retrying`
+state remains visible if its detail is unavailable.
 
 ## Snapshot synchronization and reconnect
 
