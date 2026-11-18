@@ -1,7 +1,4 @@
-import type {
-  AgentSessionServices,
-  ModelRuntime,
-} from "@earendil-works/pi-coding-agent";
+import type { AgentSessionServices } from "@earendil-works/pi-coding-agent";
 import {
   type ModelOption,
   THINKING_LEVELS,
@@ -63,13 +60,6 @@ export function defaultModelOption(
     return null;
   }
   return modelOption(model);
-}
-
-/** Read Pi's configured model authority and expose only picker metadata. */
-export async function availableModelOptions(
-  runtime: Pick<ModelRuntime, "getAvailable">,
-): Promise<ModelOption[]> {
-  return (await runtime.getAvailable()).map(modelOption);
 }
 
 /** Metadata reads never grant project trust. Native saved parent decisions and

@@ -532,10 +532,8 @@ export const SettingsContent = memo(function SettingsContent({
         <SettingsPage hidden={activeCategory !== "models"}>
           <ModelsSettings
             active={activeCategory === "models"}
-            destination={{
-              ...modelDestination,
-              owner: modelDestination?.owner ?? workspaceOwner,
-            }}
+            owner={modelDestination?.owner ?? workspaceOwner}
+            destination={modelDestination}
           />
         </SettingsPage>
 
@@ -559,7 +557,10 @@ export const SettingsContent = memo(function SettingsContent({
                 navigate("updates", "settings-host-restart")
               }
             />
-            <HostRestartSettings suspended={suspended} />
+            <HostRestartSettings
+              visible={activeCategory === "updates" && !suspended}
+              suspended={suspended}
+            />
           </Section>
         </SettingsPage>
       </SettingsLayout>

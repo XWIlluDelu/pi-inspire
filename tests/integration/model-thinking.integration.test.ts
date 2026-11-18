@@ -1,6 +1,5 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import {
   modelOption,
@@ -9,32 +8,30 @@ import {
 } from "../../server/model-catalog.js";
 import {
   createAgentSession,
-  DefaultResourceLoader,
   ModelRuntime,
   ProjectTrustStore,
   SessionManager,
-  SettingsManager,
 } from "../../server/pi-runtime.js";
-import type { ModelOption, ThinkingLevel } from "../../shared/contracts.js";
 import { modelSwitchThinkingLevel } from "../../shared/model-settings.js";
 
+import {
+  clampThinkingLevel,
+  supportedThinkingLevels,
+} from "../../src/model-options";
+import {
+  nativePiWorkspace,
+  stubNativePiEnvironment,
+} from "../server/fixtures/native-pi";
+
 afterEach(() => vi.unstubAllEnvs());
-it("matches native setModel configured precedence and capability clamping without writing settings or sessions", async () => {
-  // Execute the actual browser policy without expanding the server composite
-  // project's source list to include browser modules.
-  const browserPolicyPath = resolve("src/model-options.ts");
-  const { clampThinkingLevel } = (await import(browserPolicyPath)) as {
-    clampThinkingLevel(
-      model: ModelOption | null,
-      level: ThinkingLevel,
-    ): ThinkingLevel;
-  };
-  const root = await mkdtemp(join(tmpdir(), "inspire-thinking-"));
-  vi.stubEnv("PI_CODING_AGENT_DIR", root);
-  vi.stubEnv("PI_OFFLINE", "1");
-  const cwd = join(root, "workspace");
-  await mkdir(join(cwd, ".pi"), { recursive: true });
-  new ProjectTrustStore(root).set(cwd, true);
+it("matches native setModel preferences, supported levels and capability clamping", async () => {
+  const { root, agent, cwd, env } = await nativePiWorkspace(
+    "inspire-thinking-",
+    {},
+  );
+  stubNativePiEnvironment(env);
+  await mkdir(join(cwd, ".pi"));
+  new ProjectTrustStore(agent).set(cwd, true);
   const models = [
     {
       id: "extended",
@@ -55,9 +52,8 @@ it("matches native setModel configured precedence and capability clamping withou
     },
     { id: "plain", reasoning: false },
   ];
-  await writeFile(join(root, "auth.json"), "{}");
   await writeFile(
-    join(root, "models.json"),
+    join(agent, "models.json"),
     JSON.stringify({
       providers: {
         fixture: {
@@ -79,16 +75,7 @@ it("matches native setModel configured precedence and capability clamping withou
       ["max", "holes", undefined, "minimal", undefined, "high"],
       ["high", "plain", "max", undefined, undefined, "off"],
       ["low", "ordinary", "low", "high", "medium", "medium"],
-    ] as Array<
-      [
-        ThinkingLevel,
-        string,
-        ThinkingLevel | undefined,
-        ThinkingLevel | undefined,
-        ThinkingLevel | undefined,
-        ThinkingLevel,
-      ]
-    >) {
+    ] as const) {
       const settingsText = JSON.stringify({
         defaultThinkingLevel: global,
         modelThinkingLevels: perModel
@@ -100,46 +87,40 @@ it("matches native setModel configured precedence and capability clamping withou
           ? { [`fixture/${target}`]: project }
           : undefined,
       });
-      await writeFile(join(root, "settings.json"), settingsText);
+      await writeFile(join(agent, "settings.json"), settingsText);
       await writeFile(join(cwd, ".pi/settings.json"), projectText);
-      const settings = SettingsManager.create(cwd, root);
-      const loader = new DefaultResourceLoader({
-        cwd,
-        agentDir: root,
-        settingsManager: settings,
-        noExtensions: true,
-        noSkills: true,
-        noPromptTemplates: true,
-        noThemes: true,
-        noContextFiles: true,
-      });
-      await loader.reload();
+      const settings = modelSettings(cwd, agent);
       const { session } = await createAgentSession({
         cwd,
-        agentDir: root,
+        agentDir: agent,
         settingsManager: settings,
         modelRuntime: runtime,
         model: runtime.getModel("fixture", "extended")!,
         thinkingLevel: current,
         sessionManager: SessionManager.inMemory(cwd),
-        resourceLoader: loader,
         noTools: "all",
       });
       try {
+        expect(supportedThinkingLevels(modelOption(session.model!))).toEqual(
+          session.getAvailableThinkingLevels(),
+        );
         const targetModel = runtime.getModel("fixture", target)!;
         const choice = modelOption(targetModel);
         const predicted = clampThinkingLevel(
           choice,
           modelSwitchThinkingLevel(
             choice,
-            modelThinkingPreferences(modelSettings(cwd)),
+            modelThinkingPreferences(settings),
             current,
           ),
         );
         await session.setModel(targetModel);
+        expect(supportedThinkingLevels(choice)).toEqual(
+          session.getAvailableThinkingLevels(),
+        );
         expect(predicted).toBe(expected);
         expect(session.thinkingLevel).toBe(predicted);
-        expect(await readFile(join(root, "settings.json"), "utf8")).toBe(
+        expect(await readFile(join(agent, "settings.json"), "utf8")).toBe(
           settingsText,
         );
         expect(await readFile(join(cwd, ".pi/settings.json"), "utf8")).toBe(

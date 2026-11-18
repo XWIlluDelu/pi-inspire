@@ -181,19 +181,18 @@ test("MCP reveals saved connection values on request, keeps edits scoped, and re
     await expect(
       settings.getByLabel("Header value for Authorization"),
     ).toHaveValue("");
+    await settings.getByRole("button", { name: "Remove header X-Tenant" }).click();
+    await settings.getByText("OAuth client configuration", { exact: true }).click();
+    await settings.getByLabel("Callback port", { exact: true }).fill("8765");
     await save.click();
-    await expect(
-      settings.getByText(
-        "MCP settings saved.",
-      ),
-    ).toBeVisible();
+    await expect(settings.getByText("MCP settings saved.")).toBeVisible();
     await expect(edit).toBeFocused();
     expect(fixture.reloads()).toBe(0);
     const saved = (await fixture.json(fixture.userFile)).mcpServers.docs;
     expect(saved.description).toBe("Updated documentation");
     expect(saved.url).toContain("stored-url-secret");
-    expect(saved.headers.Authorization).toBe("Bearer stored-header-secret");
-    expect(saved.oauth.clientSecret).toBe("stored-oauth-secret");
+    expect(saved.headers).toEqual({ Authorization: "Bearer stored-header-secret" });
+    expect(saved.oauth).toMatchObject({ clientSecret: "stored-oauth-secret", callbackPort: 8765 });
     await settings
       .getByRole("button", { name: "Reload selected session…" })
       .click();

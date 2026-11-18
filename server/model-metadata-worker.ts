@@ -1,6 +1,5 @@
 import { join } from "node:path";
 import {
-  availableModelOptions,
   createModelPreview,
   defaultModelOption,
   modelOption,
@@ -72,7 +71,7 @@ async function discover(cwd: string, validationPath?: string) {
   const { session } = await createModelPreview(services);
   try {
     const loader = services.resourceLoader;
-    const models = await availableModelOptions(runtime);
+    const models = (await runtime.getAvailable()).map(modelOption);
     const defaults = {
       cwd,
       model: defaultModelOption(session.model),

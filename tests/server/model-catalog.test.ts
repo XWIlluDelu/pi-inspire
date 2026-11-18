@@ -1,12 +1,8 @@
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type {
-  ModelRuntime,
-  SessionEntry,
-} from "@earendil-works/pi-coding-agent";
+import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 import {
-  availableModelOptions,
   defaultModelOption,
   modelSettings,
 } from "../../server/model-catalog.js";
@@ -44,42 +40,31 @@ describe("new-session model catalog", () => {
     }
   });
 
-  it("does not expose Pi's absent-model sentinel as a default", () => {
+  it("projects browser-safe picker metadata and omits Pi's absent-model sentinel", () => {
     expect(
       defaultModelOption({ provider: "unknown", id: "unknown" }),
     ).toBeNull();
-  });
-
-  it("projects only browser-safe picker metadata from Pi's available models", async () => {
-    const runtime = {
-      getAvailable: async () => [
-        {
-          provider: "anthropic",
-          id: "claude-sonnet",
-          name: "Claude Sonnet",
-          reasoning: true,
-          thinkingLevelMap: {
-            minimal: "low",
-            xhigh: "high",
-            max: null,
-            other: "ignored",
-          },
-          baseUrl: "https://secret.invalid",
-          headers: { Authorization: "Bearer secret" },
-          api: "anthropic-messages",
-        },
-      ],
-    } as unknown as Pick<ModelRuntime, "getAvailable">;
-
-    await expect(availableModelOptions(runtime)).resolves.toEqual([
-      {
-        provider: "anthropic",
-        id: "claude-sonnet",
-        name: "Claude Sonnet",
-        reasoning: true,
-        thinkingLevelMap: { minimal: "low", xhigh: "high", max: null },
+    const native = {
+      provider: "anthropic",
+      id: "claude-sonnet",
+      name: "Claude Sonnet",
+      reasoning: true,
+      thinkingLevelMap: {
+        minimal: "low",
+        xhigh: "high",
+        max: null,
+        other: "ignored",
       },
-    ]);
+      baseUrl: "https://secret.invalid",
+      headers: { Authorization: "Bearer secret" },
+    };
+    expect(defaultModelOption(native)).toEqual({
+      provider: "anthropic",
+      id: "claude-sonnet",
+      name: "Claude Sonnet",
+      reasoning: true,
+      thinkingLevelMap: { minimal: "low", xhigh: "high", max: null },
+    });
   });
 });
 

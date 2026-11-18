@@ -2480,9 +2480,10 @@ export class AppStore {
       query: owner,
       body: { revision, patch },
     });
-    if (result.snapshot && current()) {
+    if (current()) {
       this.modelCatalogRead++;
-      this.set({ commonModels: result.snapshot.commonModels });
+      if (result.snapshot && !result.snapshot.modelDiscoveryFailed)
+        this.set({ commonModels: result.snapshot.commonModels });
     }
     return result;
   };
@@ -2497,12 +2498,13 @@ export class AppStore {
       query: owner,
       body: { revision, edit },
     });
-    if (result.snapshot && current()) {
+    if (current()) {
       this.modelCatalogRead++;
-      this.set({
-        availableModels: result.snapshot.models,
-        commonModels: result.snapshot.commonModels,
-      });
+      if (result.snapshot && !result.snapshot.modelDiscoveryFailed)
+        this.set({
+          availableModels: result.snapshot.models,
+          commonModels: result.snapshot.commonModels,
+        });
     }
     return result;
   };

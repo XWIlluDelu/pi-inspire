@@ -71,23 +71,6 @@ export async function configurationFileTarget(
   return join(await parentAt(dirname(absolute)), basename(absolute));
 }
 
-/** The caller resolved the parent and target before locking. A regular final
- * component has just the target authority: native realpath may canonicalize
- * its case/spelling without introducing another file. Symlinks still need
- * both lexical and target locks; missing files retain their creation authority.
- * Callers must recheck the target and revision before publishing.
- */
-async function configurationEditLockPaths(
-  lexical: string,
-  target: string,
-): Promise<string[]> {
-  const details = await lstat(lexical).catch((error: NodeJS.ErrnoException) => {
-    if (error.code === "ENOENT") return null;
-    throw error;
-  });
-  return [...new Set(details?.isFile() ? [target] : [lexical, target])].sort();
-}
-
 export interface ConfigurationAuthority {
   path: string;
   /** Services retain project containment and other scope-specific authority. */
@@ -120,12 +103,6 @@ function resolveAuthority(file: ConfigurationAuthority): Promise<string> {
   return file.resolveTarget?.() ?? configurationFileTarget(file.path);
 }
 
-export async function readConfigurationFile(file: ConfigurationAuthority) {
-  const target = await resolveAuthority(file);
-  const source = await readConfigurationText(target);
-  return { source, revision: revisionOf(source, target) };
-}
-
 function parseConfigurationObject(
   source: string | undefined,
   { invalid, comments }: JsonDocument,
@@ -150,14 +127,21 @@ export async function readConfigurationDocument(
   recipe: JsonDocument,
   expected?: { revision: string; stale: string },
 ) {
-  const { source, revision } = await readConfigurationFile(file);
-  if (expected && revision !== expected.revision)
-    throw requestError(expected.stale, 409);
+  let revision = "";
   try {
+    const target = await resolveAuthority(file);
+    const source = await readConfigurationText(target);
+    revision = revisionOf(source, target);
+    if (expected && revision !== expected.revision)
+      throw requestError(expected.stale, 409);
     return { value: parseConfigurationObject(source, recipe), revision };
   } catch (error) {
     if (expected) throw error;
-    return { value: {}, revision, error: recipe.invalid };
+    return {
+      value: {},
+      revision,
+      error: error instanceof Error ? error.message : recipe.invalid,
+    };
   }
 }
 
@@ -171,29 +155,17 @@ export function applyConfigurationPatch(
     if (value === null) delete next[key];
     else if (value !== undefined) next[key] = value;
   }
-  return { ...next };
+  return next;
 }
 
-export function editConfigurationDocument(
+/** One native-compatible lock/revision/publication boundary for Pi file editors.
+ * A revision binds the exact reviewed text to its resolved native target. */
+export async function editConfigurationDocument(
   edit: ConfigurationEdit,
   recipe: JsonDocument,
   transform: (
     document: ConfigurationObject,
   ) => ConfigurationObject | Promise<ConfigurationObject>,
-): Promise<void> {
-  return editConfigurationFile(edit, async (source) => {
-    const document = await transform(parseConfigurationObject(source, recipe));
-    const indent =
-      (recipe.preserveIndent && source?.match(/^([ \t]+)\S/m)?.[1]) || "  ";
-    return `${JSON.stringify(document, null, indent)}\n`;
-  });
-}
-
-/** One native-compatible lock/revision/publication boundary for Pi file editors.
- * A revision binds the exact reviewed text to its resolved native target. */
-export async function editConfigurationFile(
-  edit: ConfigurationEdit,
-  transform: (source: string | undefined) => Promise<string>,
 ): Promise<void> {
   const authorities = await Promise.all(
     [edit, ...(edit.alsoLock ?? [])].map(async (file) => ({
@@ -209,7 +181,16 @@ export async function editConfigurationFile(
       await realpath(dirname(file.path)),
       basename(file.path),
     );
-    lockPaths.push(...(await configurationEditLockPaths(lexical, file.target)));
+    const details = await lstat(lexical).catch(
+      (error: NodeJS.ErrnoException) => {
+        if (error.code !== "ENOENT") throw error;
+        return null;
+      },
+    );
+    // Case aliases of a regular file share its native target lock. A symlink
+    // or missing name also owns its lexical path.
+    if (!details?.isFile()) lockPaths.push(lexical);
+    lockPaths.push(file.target);
   }
   const releases: Array<() => Promise<void>> = [];
   let compromised = false;
@@ -239,7 +220,11 @@ export async function editConfigurationFile(
     }
     const source = await readConfigurationText(target);
     if (revisionOf(source, target) !== edit.expectedRevision) throw changed();
-    await replacePrivateStateFile(target, await transform(source), {
+    const document = await transform(parseConfigurationObject(source, recipe));
+    const indent =
+      (recipe.preserveIndent && source?.match(/^([ \t]+)\S/m)?.[1]) || "  ";
+    const text = `${JSON.stringify(document, null, indent)}\n`;
+    await replacePrivateStateFile(target, text, {
       beforeReplace: async (candidate) => {
         await edit.validate?.(candidate);
         for (const file of authorities)

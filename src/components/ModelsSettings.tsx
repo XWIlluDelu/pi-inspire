@@ -34,7 +34,7 @@ import type {
   ProviderLoginOption,
 } from "../../shared/model-settings";
 import { thinkingLevelLabel, thinkingLevelOptions } from "../model-options";
-import { shallowEqual, store, useAppState } from "../store";
+import { store, useAppState } from "../store";
 import { useConfigurationDocument } from "../use-configuration-document";
 import {
   ConfigurationAction,
@@ -81,35 +81,16 @@ function declarationLabel(
 }
 const unavailable = "The Host could not complete this operation";
 export function ModelsSettings({
+  owner,
   destination,
-  active = true,
+  active,
 }: {
+  owner: ModelSettingsOwner;
   destination?: ModelSettingsDestination;
-  active?: boolean;
+  active: boolean;
 }) {
-  const state = useAppState(
-    (source) => ({
-      sessionId: source.sessionId,
-      cwd: source.cwd,
-      transport: source.transportGeneration,
-    }),
-    shallowEqual,
-  );
-  const owner = useMemo<ModelSettingsOwner>(
-    () =>
-      destination?.owner ??
-      (state.sessionId
-        ? { sessionId: state.sessionId }
-        : state.cwd
-          ? { cwd: state.cwd }
-          : {}),
-    [destination?.owner, state.sessionId, state.cwd],
-  );
-  const settingsOwner = JSON.stringify([
-    owner.sessionId,
-    owner.cwd,
-    state.transport,
-  ]);
+  const transport = useAppState((state) => state.transportGeneration);
+  const settingsOwner = JSON.stringify([owner.sessionId, owner.cwd, transport]);
   const configuration = useConfigurationDocument<
     ModelSettingsSnapshot,
     Selection
@@ -151,7 +132,9 @@ export function ModelsSettings({
   const addModelRef = useRef<HTMLButtonElement>(null);
   const defaultGroupName = useId();
   const providerGeneration = useRef(0);
+  const opened = useRef(false);
   useLayoutEffect(() => {
+    opened.current = false;
     setProviders([]);
     setAuthError(null);
     setProvidersLoaded(false);
@@ -191,9 +174,11 @@ export function ModelsSettings({
     return providers;
   };
   useEffect(() => {
+    if (!active || opened.current) return;
+    opened.current = true;
     void load();
     void refreshProviders();
-  }, [load, refreshProviders]);
+  }, [active, load, refreshProviders]);
   const focusedDestination = useRef<string | undefined>(undefined);
   useEffect(() => {
     const key = `${destination?.focus ?? ""}/${destination?.query ?? ""}`;

@@ -5,6 +5,7 @@ import {
   fieldSchemas,
   nullableEdit,
   storedConfigurationField,
+  storedConfigurationValue,
 } from "./configuration-fields.js";
 
 /** File configuration only; none of these values attest a Pi worker's loaded state. */
@@ -39,17 +40,9 @@ export const mcpPolicyFields = {
   exposure: nullableEdit(mcpExposureSchema),
   toolExposure: z.record(mapKey, mcpExposureSchema.nullable()).optional(),
 };
-export const mcpConnectionFields = {
-  url: {
-    schema: nullableEdit(text),
-    stored: z.string().optional().catch(undefined),
-    presence: (value: unknown) => typeof value === "string",
-  },
-  args: {
-    schema: nullableEdit(z.array(text).max(256)),
-    stored: z.array(z.string()).optional().catch(undefined),
-    presence: (value: unknown) => (Array.isArray(value) ? value.length : 0),
-  },
+const mcpConnectionFields = {
+  url: storedConfigurationValue(z.string(), text),
+  args: storedConfigurationValue(z.array(z.string()), z.array(text).max(256)),
 } as const;
 export const mcpServerFields = {
   command: storedConfigurationField(
@@ -91,18 +84,6 @@ export const mcpServerFields = {
 export const mcpPublicValuesSchema = z.object(
   fieldSchemas(mcpServerFields, "stored"),
 );
-export const mcpSecretMaps = {
-  env: {
-    label: "Environment variable",
-    schema: stringMap.optional(),
-    projection: "envKeys",
-  },
-  headers: {
-    label: "Header",
-    schema: stringMap.optional(),
-    projection: "headerKeys",
-  },
-} as const;
 const callbackPort = z.number().int().min(1).max(65535);
 export const mcpOAuthFields = {
   clientId: oauthText("Client ID"),
@@ -122,7 +103,8 @@ export const mcpConfigValuesSchema = z.strictObject({
   ...mcpPolicyFields,
   ...fieldSchemas(mcpServerFields, "schema"),
   ...fieldSchemas(mcpConnectionFields, "schema"),
-  ...fieldSchemas(mcpSecretMaps, "schema"),
+  env: stringMap.optional(),
+  headers: stringMap.optional(),
   oauth: z
     .strictObject({
       ...fieldSchemas(mcpOAuthFields, "schema"),
@@ -159,7 +141,6 @@ export type McpConfigEntry = z.infer<typeof mcpPublicValuesSchema> & {
   /** Registration policy is public; OAuth credentials remain write-only. */
   oauthClientRegistration?: McpClientRegistration;
   toolExposure: Record<string, McpExposure>;
-  extraFieldCount: number;
 };
 export interface McpConfigFile {
   scope: McpConfigScope;

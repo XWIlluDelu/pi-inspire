@@ -110,11 +110,12 @@ export class HostRestartClient {
       throw new Error("Restart storage unavailable");
     }
   }
-  refresh = (): Promise<void> =>
-    this.observation.observe("status", () => this.observe());
-  private async observe(): Promise<void> {
+  refresh = (pendingOnly = false): Promise<void> =>
+    this.observation.observe("status", () => this.observe(pendingOnly));
+  private async observe(pendingOnly: boolean): Promise<void> {
     const receiptRevision = this.receiptRevision;
     const restored = this.restore();
+    if (pendingOnly && !this.state.pending) return;
     try {
       const status = await this.api.hostRestartStatus();
       // A pre-POST read of the same Host can still describe the last attempt.

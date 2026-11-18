@@ -12,8 +12,10 @@ const RESTART_NAMES: Record<SettingsRestartScope, string> = {
 };
 
 export function HostRestartSettings({
+  visible,
   suspended = false,
 }: {
+  visible: boolean;
   suspended?: boolean;
 }) {
   const state = useSyncExternalStore(
@@ -24,19 +26,20 @@ export function HostRestartSettings({
     scope: SettingsRestartScope;
     hostId: string;
   } | null>(null);
+  const observing = visible || Boolean(state.pending);
   useEffect(() => {
     let retired = false;
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
-      await hostRestartClient.refresh();
-      if (!retired) timer = setTimeout(() => void poll(), 2_000);
+      await hostRestartClient.refresh(!observing);
+      if (observing && !retired) timer = setTimeout(() => void poll(), 2_000);
     };
     void poll();
     return () => {
       retired = true;
       clearTimeout(timer);
     };
-  }, []);
+  }, [observing]);
   const operation = state.status?.operation;
   const active = operation && operation.phase !== "rejected";
   const disabled = !state.status || state.blocked || state.sending || !!active;

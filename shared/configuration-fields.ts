@@ -52,16 +52,3 @@ export function fieldSchemas<
     Object.entries(fields).map(([name, field]) => [name, field[key]]),
   ) as { [Field in keyof Fields]: Fields[Field][Key] };
 }
-
-/** Protected wire values encode keep as omission and remove as null. */
-export type SecretEdit<Value extends string | number = string> =
-  | { kind: "keep" }
-  | { kind: "replace"; value: Value }
-  | { kind: "remove" };
-
-export function secretValue<Value extends string | number>(
-  edit: SecretEdit<Value>,
-): Value | null | undefined {
-  if (edit.kind === "replace") return edit.value;
-  return edit.kind === "remove" ? null : undefined;
-}
