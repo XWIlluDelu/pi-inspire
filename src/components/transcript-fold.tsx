@@ -1,6 +1,7 @@
 import { ChevronRight } from "lucide-react";
 import {
   type ReactNode,
+  useContext,
   useEffect,
   useId,
   useLayoutEffect,
@@ -10,6 +11,7 @@ import {
 import type { ActivityFoldVisibilityPreference } from "../../shared/contracts";
 import {
   ActivityItemOwner,
+  hasOpenActivityCard,
   type ActivityReadingChoices,
   ReadingChoices,
 } from "./transcript-activity-visibility";
@@ -148,12 +150,16 @@ function ActivityItems({
   items: readonly ActivityItem[];
   collapseTools: boolean;
 }) {
+  const choices = useContext(ReadingChoices);
+  const canGroup = (item: ActivityItem | undefined) =>
+    item?.expandedNode &&
+    !item.live &&
+    !hasOpenActivityCard(choices, item.toolCallId);
   const children: ReactNode[] = [];
   for (let start = 0; start < items.length; ) {
     const item = items[start]!;
     let end = start + 1;
-    if (collapseTools && item.expandedNode && !item.live)
-      while (items[end]?.expandedNode && !items[end]?.live) end++;
+    if (collapseTools && canGroup(item)) while (canGroup(items[end])) end++;
     children.push(
       end - start > 1 ? (
         <ToolStrip key={item.key} items={items.slice(start, end)} />
@@ -324,24 +330,21 @@ export function ResponseActivityFold({
                 collapseTools={collapseTools}
               />
             </ReadingChoices>
-            {items.length > 1 && (
-              <button
-                type="button"
-                className="button button--quiet disclosure-row"
-                ref={footer}
-                onClick={() => choose(collapseTo, "bottom")}
-              >
-                <ChevronRight
-                  size={14}
-                  className="chev chev--open"
-                  aria-hidden
-                />{" "}
-                {collapseLabel}
-              </button>
-            )}
           </>
         )}
       </div>
+      {open && items.length > 1 && (
+        <button
+          type="button"
+          className="disclosure-row activity-fold__disclosure"
+          ref={footer}
+          aria-controls={id}
+          onClick={() => choose(collapseTo, "bottom")}
+        >
+          <ChevronRight size={14} className="chev chev--open" aria-hidden />
+          <span>{collapseLabel}</span>
+        </button>
+      )}
     </section>
   );
 }

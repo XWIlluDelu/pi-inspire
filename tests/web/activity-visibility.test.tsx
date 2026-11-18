@@ -1,10 +1,13 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Transcript } from "../../src/components/Transcript";
 
+afterEach(() => vi.useRealTimers());
+
 describe("transcript density preferences", () => {
-  it("opens active work, settles completed tools, and keeps explicitly opened details", () => {
+  it("opens active work, settles completed tools, and keeps explicitly opened details", async () => {
+    vi.useFakeTimers();
     const message = {
       role: "assistant",
       timestamp: 1,
@@ -54,6 +57,7 @@ describe("transcript density preferences", () => {
     fireEvent.click(screen.getByRole("button", { name: "Collapse read tool" }));
     fireEvent.click(screen.getByRole("button", { name: "Expand read tool" }));
     rerender(view(false));
+    await act(() => vi.advanceTimersByTimeAsync(2500));
     expect(
       screen.getByRole("button", { name: "Expand Thinking" }),
     ).toBeVisible();

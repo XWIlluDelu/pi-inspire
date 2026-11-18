@@ -182,13 +182,9 @@ summary.disclosure-row::-webkit-details-marker { display: none; }
   line-height: var(--leading-ui);
 }
 
-/* Thinking summaries are prose, not machine data. Inline Markdown keeps its
-   emphasis and math inside the one-line ellipsis contract. */
+/* Keep inline Markdown inside the one-line summary. */
 .card__summary--prose {
   max-width: none;
-  color: var(--body);
-  font-family: var(--font-sans);
-  font-size: var(--text-sm);
 }
 
 .card__summary--prose .rich-text {
@@ -204,7 +200,7 @@ summary.disclosure-row::-webkit-details-marker { display: none; }
 }
 
 .card__summary--prose :is(strong, b) {
-  font-weight: 400;
+  font-weight: inherit;
 }
 
 .card__status {

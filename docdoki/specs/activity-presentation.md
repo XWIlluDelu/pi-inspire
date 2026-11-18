@@ -37,8 +37,10 @@ Displayed custom messages break the group and remain independently readable.
 | Collapsed | Shows the Activity disclosure and matrix. Opening reveals Compact. |
 | Adaptive (`dynamic`) | Starts Compact while running and closes when settled unless the reader has opened or is inspecting it. |
 
-The header and footer can collapse an open group. Earlier activity expands the omitted prefix
-in place. The group stays open during inspection and no page controls interrupt reading.
+The header and footer can collapse an open group. The footer shares the header's disclosure
+typography and chevron axis and sits below the group's vertical guide. Earlier activity expands
+the omitted prefix in place. The group stays open during inspection and no page controls interrupt
+reading.
 
 Adjacent activity items share one spacing rhythm across assistant-message boundaries; prose and
 expanded details keep their internal spacing. On fine-pointer desktops, activity headers are at
@@ -70,10 +72,11 @@ without an inert arrow.
 
 Thinking and tool details open as indented reading content with no outer frame, tint, or shadow.
 Expanded text aligns with its header title. Code, Diff and output keep their local reading surfaces;
-a nested tool list has its own shallow guide. Summaries are prose and metadata is subdued. A summary is
-separated from its identity/status group more clearly than an adjacent expanded-state Copy is;
-tightening Copy spacing must not crowd the summary. Completion/failure marks
-keep their semantic green/red in parent tools and nested calls; live work keeps its running cue.
+a nested tool list has its own shallow guide. Thinking summaries use the same subdued typography
+as CodeMode duration and call counts. A summary is separated from its identity/status group more
+clearly than an adjacent expanded-state Copy is. Tightening Copy spacing must not crowd the summary.
+Completion/failure marks keep their semantic green/red in parent tools and nested calls.
+Live work keeps its running cue.
 
 
 Open activity bodies share one outer rhythm; no trailing card margin is added to the fold gap.
