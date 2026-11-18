@@ -30,7 +30,6 @@ const root = dirname(scriptPath);
 process.chdir(root);
 const sourceRuntime = join(root, "server", "index.ts");
 const releaseRuntime = join(root, "build", "server", "index.js");
-const connectionDispatcher = join(root, "connections", "dispatch.mjs");
 const hostServiceInstaller = join(root, "deploy", "systemd", "install.mjs");
 const distribution =
   !(await exists(sourceRuntime)) && (await exists(releaseRuntime));
@@ -657,7 +656,7 @@ function requireLinuxService() {
 
 function printHelp() {
   console.log(
-    `Usage:\n  inspire                 start the configured service or local Host\n  inspire restart             restart Inspire and its Pi workers; keep terminals\n  inspire restart --terminals  also close project terminals (Linux services)\n  inspire restart --all        close Pi sessions and restart; include Herdr in enhanced mode (Linux services)\n  inspire stop            stop the service or local Host\n  inspire status          inspect the service or local Host\n  inspire token           show the verified Host token for manual pairing\n  inspire recover-session <folder>  restore a session recovery bundle\n  inspire pi [--session <session.jsonl>]  open native Pi with remote queue receipts\n  inspire terminal <status|stop|restart> [--force]  manage this instance\'s terminals\n  inspire dev             run Vite and the development Host\n  inspire build           build the source checkout\n  inspire connection <name> [action]\n  inspire --ssh-reverse [action]\n  inspire service [install-host|enable-host|disable-host|status-host]\n\nCore lifecycle commands support Linux, macOS, and Windows. System service\ncommands remain Linux-only.`,
+    `Usage:\n  inspire                 start the configured service or local Host\n  inspire restart             restart Inspire and its Pi workers; keep terminals\n  inspire restart --terminals  also close project terminals (Linux services)\n  inspire restart --all        close Pi sessions and restart; include Herdr in enhanced mode (Linux services)\n  inspire stop            stop the service or local Host\n  inspire status          inspect the service or local Host\n  inspire token           show the verified Host token for manual pairing\n  inspire recover-session <folder>  restore a session recovery bundle\n  inspire pi [--session <session.jsonl>]  open native Pi with remote queue receipts\n  inspire terminal <status|stop|restart> [--force]  manage this instance\'s terminals\n  inspire dev             run Vite and the development Host\n  inspire build           build the source checkout\n  inspire connection list | <name> [action]\n  inspire --ssh-reverse [action]\n  inspire service [install-host|enable-host|disable-host|status-host]\n\nCore lifecycle commands support Linux, macOS, and Windows. System service\ncommands remain Linux-only.`,
   );
 }
 
@@ -746,9 +745,11 @@ async function main() {
       return runInherited(process.execPath, runtimeArgs(entry, args));
     }
     case "connection":
-      return runNodeEntry(connectionDispatcher, args);
-    case "--ssh-reverse":
-      return runNodeEntry(connectionDispatcher, ["ssh-reverse", ...args]);
+    case "--ssh-reverse": {
+      const { dispatchConnection } = await import("./connections/dispatch.mjs");
+      const connectionArgs = mode === "connection" ? args : ["ssh-reverse", ...args];
+      return dispatchConnection(root, connectionArgs, runNodeEntry);
+    }
     case "service": {
       requireLinuxService();
       const [action] = args;

@@ -1,32 +1,20 @@
-import { spawn } from "node:child_process";
 import { readFile, readdir } from "node:fs/promises";
-import { dirname, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 
 const MODULE_ID = /^[a-z][a-z0-9-]{0,63}$/;
 
-function usage() {
-  console.error(
-    "Use: inspire connection <name> [start|stop|status|init|supervise|install-service]",
-  );
-}
-
-function connectionRoot(root, id) {
+async function loadConnectionManifest(root, id) {
   if (!MODULE_ID.test(id)) throw new Error("Connection name is not valid");
-  const base = resolve(root, "connections");
-  const path = resolve(base, id);
-  if (!path.startsWith(`${base}${sep}`))
-    throw new Error("Connection module escapes the connections directory");
-  return path;
-}
-
-export async function loadConnectionManifest(root, id) {
-  const directory = connectionRoot(root, id);
+  const directory = join(root, "connections", id);
   let manifest;
   try {
-    manifest = JSON.parse(await readFile(resolve(directory, "manifest.json"), "utf8"));
-  } catch {
-    throw new Error(`Connection module \`${id}\` is not installed`);
+    manifest = JSON.parse(await readFile(join(directory, "manifest.json"), "utf8"));
+  } catch (error) {
+    if (error.code === "ENOENT")
+      throw new Error(`Connection module \`${id}\` is not installed`);
+    if (error instanceof SyntaxError)
+      throw new Error(`Connection module \`${id}\` has an invalid manifest`);
+    throw error;
   }
   if (
     !manifest ||
@@ -44,18 +32,15 @@ export async function loadConnectionManifest(root, id) {
   ) {
     throw new Error(`Connection module \`${id}\` has an invalid manifest`);
   }
-  const entry = resolve(directory, manifest.entry);
-  if (dirname(entry) !== directory)
-    throw new Error(`Connection module \`${id}\` has an invalid entry`);
-  return { directory, manifest, entry };
+  return { manifest, entry: join(directory, manifest.entry) };
 }
 
 async function listConnections(root) {
-  const directory = resolve(root, "connections");
-  const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
+  const directory = join(root, "connections");
+  const entries = await readdir(directory, { withFileTypes: true });
   const ids = [];
   for (const entry of entries) {
-    if (!entry.isDirectory() || !MODULE_ID.test(entry.name)) continue;
+    if (!entry.isDirectory()) continue;
     try {
       await loadConnectionManifest(root, entry.name);
       ids.push(entry.name);
@@ -64,62 +49,30 @@ async function listConnections(root) {
       // list rather than causing unrelated modules to disappear.
     }
   }
-  if (ids.length === 0) {
-    console.log("No connection modules are installed.");
-    return;
-  }
-  for (const id of ids.sort()) console.log(id);
+  console.log(ids.sort().join("\n") || "No connection modules are installed.");
 }
 
-async function main() {
-  const [rootFlag, rootValue, name, action = "start", ...rest] =
-    process.argv.slice(2);
-  if (rootFlag !== "--root" || !rootValue || !name) {
-    usage();
-    process.exitCode = 64;
-    return;
+/** The launcher starts the chosen runner with the same installation root. */
+export async function dispatchConnection(root, [name, action, ...rest], runEntry) {
+  if (!name || (name === "list" && action !== undefined)) {
+    console.error("Use: inspire connection list | inspire connection <name> [action]");
+    return 64;
   }
-  const root = resolve(rootValue);
   if (name === "list") {
-    if (action !== "start" || rest.length > 0) {
-      usage();
-      process.exitCode = 64;
-      return;
-    }
     await listConnections(root);
-    return;
+    return 0;
   }
-  const module = await loadConnectionManifest(root, name);
-  if (
-    module.manifest.platforms &&
-    !module.manifest.platforms.includes(process.platform)
-  ) {
+  action ??= "start";
+  const { manifest, entry } = await loadConnectionManifest(root, name);
+  if (manifest.platforms && !manifest.platforms.includes(process.platform)) {
     throw new Error(
-      `Connection module \`${name}\` supports ${module.manifest.platforms.join(", ")}, not ${process.platform}`,
+      `Connection module \`${name}\` supports ${manifest.platforms.join(", ")}, not ${process.platform}`,
     );
   }
-  if (!module.manifest.actions.includes(action)) {
+  if (!manifest.actions.includes(action)) {
     throw new Error(
       `Connection module \`${name}\` does not support \`${action}\``,
     );
   }
-  const child = spawn(
-    process.execPath,
-    [module.entry, "--root", root, action, ...rest],
-    { stdio: "inherit", env: process.env },
-  );
-  const code = await new Promise((resolveChild, reject) => {
-    child.once("error", reject);
-    child.once("exit", (exitCode, signal) =>
-      resolveChild(exitCode ?? (signal ? 1 : 0)),
-    );
-  });
-  process.exitCode = code;
-}
-
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  await main().catch((error) => {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exitCode = 1;
-  });
+  return runEntry(entry, [action, ...rest]);
 }

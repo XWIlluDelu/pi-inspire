@@ -38,14 +38,6 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
 import { runSshReverseAction } from "../../connections/ssh-reverse/runner.mjs";
 
-function deferred() {
-  let resolve;
-  const promise = new Promise((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
-
 /** Real private files and kernel locks; SSH/systemd and /proc identities are
  * synthetic. No remote connection or existing process is ever controlled. */
 describe.runIf(process.platform === "linux")(
@@ -61,7 +53,10 @@ describe.runIf(process.platform === "linux")(
       return promise;
     };
     const holdLaunch = () => {
-      const gate = { entered: deferred(), release: deferred() };
+      const gate = {
+        entered: Promise.withResolvers(),
+        release: Promise.withResolvers(),
+      };
       gates.push(gate);
       nextLaunch = gate;
       return gate;
