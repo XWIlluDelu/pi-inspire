@@ -1,9 +1,8 @@
 // @vitest-environment jsdom
-import { fireEvent, render } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { Transcript } from "../../src/components/Transcript";
-import { openTranscriptSearch } from "./helpers";
 
 describe("Live transcript search navigation", () => {
   it("clears view-local search when the branch projection changes", () => {
@@ -15,7 +14,7 @@ describe("Live transcript search navigation", () => {
       toolVisibility: "collapsed" as const,
     };
     const { rerender } = render(<Transcript {...props} viewId="branch-a" />);
-    const search = openTranscriptSearch();
+    const search = screen.getByRole("searchbox", { name: "Search conversation" });
     fireEvent.change(search, { target: { value: "answer" } });
     expect(search).toHaveValue("answer");
 

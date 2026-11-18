@@ -23,7 +23,12 @@ export function TranscriptPromptMap({
   onJump: (turn: UserTurnAnchor) => Promise<boolean>;
 }) {
   const pages = useRef(new Map<number, SessionHistoryPages["turns"]>());
-  const pending = useRef(new Map<number, AbortController>());
+  const pending = useRef(
+    new Map<
+      number,
+      { request: AbortController; task: Promise<UserTurnAnchor[]> }
+    >(),
+  );
   const [turns, setTurns] = useState<UserTurnAnchor[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState<number[]>([]);
@@ -32,7 +37,7 @@ export function TranscriptPromptMap({
 
   useEffect(
     () => () => {
-      for (const request of pending.current.values()) request.abort();
+      for (const { request } of pending.current.values()) request.abort();
       pending.current.clear();
     },
     [],
@@ -43,17 +48,20 @@ export function TranscriptPromptMap({
     let frame: number | null = null;
     const measure = () => {
       frame = null;
-      const top = scrollport.getBoundingClientRect().top;
+      const boundary = scrollport.getBoundingClientRect().top + 36;
       const rows = scrollport.querySelectorAll<HTMLElement>(
         "[data-prompt-entry]",
       );
-      let entry: string | null = null;
-      for (const row of rows) {
-        const bounds = row.getBoundingClientRect();
-        if (entry !== null && bounds.top > top + 36) break;
-        entry = row.dataset.promptEntry ?? null;
+      // Prompts are laid out in transcript order. Find the last one at or
+      // above the boundary without measuring every earlier row.
+      let lo = 1;
+      let hi = rows.length;
+      while (lo < hi) {
+        const mid = Math.floor((lo + hi) / 2);
+        if (rows[mid]!.getBoundingClientRect().top <= boundary) lo = mid + 1;
+        else hi = mid;
       }
-      setActive(entry);
+      setActive(rows[lo - 1]?.dataset.promptEntry ?? null);
     };
     const schedule = () => {
       frame ??= requestAnimationFrame(measure);
@@ -72,41 +80,45 @@ export function TranscriptPromptMap({
   }, [scrollport]);
 
   const load = useCallback(
-    async (start?: number) => {
+    (start?: number) => {
       const key = start ?? -1;
       const cached = pages.current.get(key);
-      if (cached) return cached.turns;
-      if (pending.current.has(key)) return [];
+      if (cached) return Promise.resolve(cached.turns);
+      const existing = pending.current.get(key);
+      if (existing) return existing.task;
       const request = new AbortController();
-      pending.current.set(key, request);
-      setLoading([...pending.current.keys()]);
-      setError(null);
-      try {
-        const page = await store.readNativeHistory(
+      const task = store
+        .readNativeHistory(
           sessionId,
           viewId,
           { kind: "turns", start },
           request.signal,
-        );
-        if (!page || request.signal.aborted) return [];
-        pages.current.set(page.start, page);
-        setTurns([...pages.current.values()].flatMap(({ turns }) => turns));
-        setTotal(page.total);
-        return page.turns;
-      } catch (reason) {
-        if (!request.signal.aborted)
-          setError(
-            reason instanceof Error
-              ? reason.message
-              : "User prompts could not be loaded",
-          );
-        return [];
-      } finally {
-        if (pending.current.get(key) === request) {
+        )
+        .then((page) => {
+          if (!page || request.signal.aborted) return [];
+          pages.current.set(page.start, page);
+          setTurns([...pages.current.values()].flatMap(({ turns }) => turns));
+          setTotal(page.total);
+          return page.turns;
+        })
+        .catch((error: unknown) => {
+          if (!request.signal.aborted)
+            setError(
+              error instanceof Error
+                ? error.message
+                : "User prompts could not be loaded",
+            );
+          return [];
+        })
+        .finally(() => {
+          if (request.signal.aborted) return;
           pending.current.delete(key);
-          if (!request.signal.aborted) setLoading([...pending.current.keys()]);
-        }
-      }
+          setLoading([...pending.current.keys()]);
+        });
+      pending.current.set(key, { request, task });
+      setLoading([...pending.current.keys()]);
+      setError(null);
+      return task;
     },
     [sessionId, viewId],
   );
@@ -121,7 +133,6 @@ export function TranscriptPromptMap({
       activeOrdinal={turns.find(({ id }) => id === active)?.ordinal ?? null}
       loadedStarts={[...pages.current.keys()]}
       loadingStarts={loading}
-      navigatingOrdinal={null}
       error={error}
       onLoad={load}
       onNavigate={async (ordinal) => {

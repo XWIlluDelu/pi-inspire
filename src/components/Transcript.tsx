@@ -24,7 +24,6 @@ import { isComposingKeyboardEvent } from "../keyboard-input";
 import { resourceReferenceFromEventTarget } from "../resources";
 import { store } from "../store";
 import { transcriptProjectionKey } from "../transcript-projection-key";
-import { hasActiveModal } from "../use-modal-focus";
 import { ExtensionDisplaySurface } from "./ExtensionDisplays";
 import { TranscriptImageOwnerContext } from "./ImagePreview";
 import { ScrollRail } from "./ScrollRail";
@@ -325,22 +324,6 @@ export const Transcript = memo(function Transcript({
         )
           return;
         if (
-          event.key.toLowerCase() === "f" &&
-          event.metaKey !== event.ctrlKey &&
-          !event.altKey &&
-          !event.shiftKey
-        ) {
-          if (
-            hasActiveModal() ||
-            (event.target instanceof Element &&
-              event.target.closest(
-                '[role=menu], [role=listbox], [role=combobox][aria-expanded="true"]',
-              ))
-          )
-            return;
-          event.preventDefault();
-          openSearch();
-        } else if (
           viewport.scrollRef.current?.contains(event.target as Node) &&
           [
             "ArrowUp",

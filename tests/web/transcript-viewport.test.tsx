@@ -61,7 +61,6 @@ function ViewportHarness({
     <div
       ref={viewport.scrollRef}
       role="log"
-      data-pinned={viewport.pinned}
       data-at-latest={viewport.atLatest}
       onScroll={viewport.onScroll}
       onWheel={(event) =>
@@ -231,7 +230,6 @@ describe("transcript viewport geometry", () => {
     });
 
     expect(log.scrollTop).toBe(110);
-    expect(log).toHaveAttribute("data-pinned", "false");
     expect(log).toHaveAttribute("data-at-latest", "false");
     act(() => vi.runOnlyPendingTimers());
     expect(log.scrollTop).toBe(110);
@@ -244,13 +242,20 @@ describe("transcript viewport geometry", () => {
       flushAnimationFrames();
     });
     expect(log.scrollTop).toBe(550);
-    expect(log).toHaveAttribute("data-pinned", "false");
 
     fireEvent.wheel(log, { deltaY: 60 });
     log.scrollTop = 610;
     fireEvent.scroll(log);
-    expect(log).toHaveAttribute("data-pinned", "true");
     expect(log).toHaveAttribute("data-at-latest", "true");
+    Object.defineProperty(log, "scrollHeight", {
+      configurable: true,
+      value: 1_110,
+    });
+    act(() => {
+      TestResizeObserver.trigger(log);
+      flushAnimationFrames();
+    });
+    expect(log.scrollTop).toBe(710);
   });
 
   it("retains follow when an upward wheel cannot move a short transcript", () => {
@@ -261,7 +266,6 @@ describe("transcript viewport geometry", () => {
     fireEvent.scroll(log);
     fireEvent.wheel(log, { deltaY: -500 });
     fireEvent.scroll(log);
-    expect(log).toHaveAttribute("data-pinned", "true");
 
     Object.defineProperty(log, "scrollHeight", {
       configurable: true,
@@ -286,14 +290,12 @@ describe("transcript viewport geometry", () => {
     fireEvent.wheel(log);
     log.scrollTop = 550;
     fireEvent.scroll(log);
-    expect(log).toHaveAttribute("data-pinned", "false");
     expect(log).toHaveAttribute("data-at-latest", "false");
 
     // Programmatic navigation can reach latest without acquiring live-follow.
     act(() => vi.advanceTimersByTime(450));
     log.scrollTop = 600;
     fireEvent.scroll(log);
-    expect(log).toHaveAttribute("data-pinned", "false");
     expect(log).toHaveAttribute("data-at-latest", "true");
     Object.defineProperty(log, "scrollHeight", {
       configurable: true,
@@ -308,11 +310,11 @@ describe("transcript viewport geometry", () => {
   });
 
   it.each([
-    { scrollTop: 560, expectedTop: 560, expectedPinned: "false" },
-    { scrollTop: 599.5, expectedTop: 700, expectedPinned: "true" },
+    { scrollTop: 560, expectedTop: 560 },
+    { scrollTop: 599.5, expectedTop: 700 },
   ])(
     "restores follow after clearing search only at the latest boundary ($scrollTop)",
-    ({ scrollTop, expectedTop, expectedPinned }) => {
+    ({ scrollTop, expectedTop }) => {
       vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
       render(<ViewportHarness />);
       const log = screen.getByRole("log");
@@ -321,11 +323,9 @@ describe("transcript viewport geometry", () => {
       fireEvent.wheel(log);
       log.scrollTop = scrollTop;
       fireEvent.scroll(log);
-      expect(log).toHaveAttribute("data-pinned", "false");
       act(() => vi.advanceTimersByTime(450));
 
       fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
-      expect(log).toHaveAttribute("data-pinned", expectedPinned);
       Object.defineProperty(log, "scrollHeight", {
         configurable: true,
         value: 1_100,
@@ -349,11 +349,9 @@ describe("transcript viewport geometry", () => {
     fireEvent.wheel(log);
     log.scrollTop = 300;
     fireEvent.scroll(log);
-    expect(log).toHaveAttribute("data-pinned", "false");
     expect(log).toHaveAttribute("data-at-latest", "false");
 
     rerender(<ViewportHarness {...projection} />);
-    expect(log).toHaveAttribute("data-pinned", "true");
     expect(log).toHaveAttribute("data-at-latest", "true");
     expect(log.scrollTop).toBe(600);
 

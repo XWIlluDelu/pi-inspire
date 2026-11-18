@@ -61,7 +61,6 @@ export function PromptMap({
   activeOrdinal,
   loadedStarts,
   loadingStarts,
-  navigatingOrdinal,
   error,
   onLoad,
   onNavigate,
@@ -74,13 +73,12 @@ export function PromptMap({
   activeOrdinal: number | null;
   loadedStarts: readonly number[];
   loadingStarts: readonly number[];
-  navigatingOrdinal: number | null;
   error: string | null;
   onLoad: (start?: number) => Promise<readonly UserTurnAnchor[]>;
   onNavigate: (ordinal: number) => Promise<boolean>;
 }) {
   const [open, setOpen] = useState(false);
-  const [localNavigating, setLocalNavigating] = useState(false);
+  const [navigating, setNavigating] = useState(false);
   const [retryOrdinal, setRetryOrdinal] = useState<number | null>(null);
   const [tickWindowStart, setTickWindowStart] = useState(() =>
     centeredTickWindowStart(total, activeOrdinal),
@@ -283,7 +281,7 @@ export function PromptMap({
   const navigate = async (ordinal: number) => {
     if (navigatingRef.current) return;
     navigatingRef.current = true;
-    setLocalNavigating(true);
+    setNavigating(true);
     setRetryOrdinal(null);
     try {
       if (!(await onNavigate(ordinal))) {
@@ -299,10 +297,9 @@ export function PromptMap({
       setRetryOrdinal(ordinal);
     } finally {
       navigatingRef.current = false;
-      setLocalNavigating(false);
+      setNavigating(false);
     }
   };
-  const navigating = navigatingOrdinal !== null || localNavigating;
   const outlineRetryStart = (() => {
     const missing = virtualItems.find((item) => !turnByOrdinal.has(item.index));
     return missing

@@ -14,6 +14,8 @@ interface TranscriptSearchMatch {
   offset: number;
 }
 
+const NO_MATCHES: TranscriptSearchMatch[] = [];
+
 export type TranscriptSearchScope = "all" | "user" | "model";
 
 export const TRANSCRIPT_SEARCH_SCOPES: Array<{
@@ -80,11 +82,13 @@ export function useTranscriptSearch<Row extends TranscriptSearchRow>({
 
   const matches = useMemo(
     () =>
-      rows.flatMap((row, rowIndex) =>
-        scope === "all" || row.searchScope === scope
-          ? findLiteralMatches(row.searchText, query, rowIndex)
-          : [],
-      ),
+      query
+        ? rows.flatMap((row, rowIndex) =>
+            scope === "all" || row.searchScope === scope
+              ? findLiteralMatches(row.searchText, query, rowIndex)
+              : [],
+          )
+        : NO_MATCHES,
     [query, rows, scope],
   );
 
