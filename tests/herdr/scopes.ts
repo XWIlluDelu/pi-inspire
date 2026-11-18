@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { assertHerdrWorkerScopesAvailable } from "../../../server/herdr-process-group.js";
+import { assertHerdrWorkerScopesAvailable } from "../../server/herdr-process-group.js";
 
 export const herdrScopesAvailable =
   process.platform === "linux" &&

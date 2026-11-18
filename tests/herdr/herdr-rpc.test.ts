@@ -10,7 +10,7 @@ import { PiRpcProcess } from "../../server/pi-rpc.js";
 import {
   herdrScopesAvailable,
   processCanRun,
-} from "./fixtures/herdr-scopes.js";
+} from "./scopes.js";
 
 const roots: string[] = [];
 const workers: PiRpcProcess[] = [];

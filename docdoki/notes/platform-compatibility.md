@@ -41,6 +41,9 @@ Block Service Workers where interception must reach a test route. Keep real PTY,
 and clipboard checks on their native transports. Browser projects that start Pi live under the
 fixture home, which is reset before the next test Host starts.
 
+Vitest projects use private runtime directories. On Linux, only the Herdr scope tests link
+the user's systemd manager socket, so they can exercise cgroup cleanup with an isolated Pi registry.
+
 ## Git and native file representation
 
 Read-only Git inspection preserves repository, worktree and submodule configuration precedence.

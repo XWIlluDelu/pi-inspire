@@ -24,11 +24,15 @@ export default defineConfig({
           name: "node",
           include: [
             "tests/*.test.{ts,mjs}",
-            "tests/!(web|portable|integration)/**/*.test.{ts,mjs}",
+            "tests/!(web|portable|integration|herdr)/**/*.test.{ts,mjs}",
             ...staticWebTests,
           ],
           environment: "node",
         },
+      },
+      {
+        extends: true,
+        test: { name: "herdr-scopes", include: ["tests/herdr/**/*.test.ts"] },
       },
       {
         extends: true,

@@ -21,7 +21,7 @@ import { piInstallation } from "../../server/pi-runtime.js";
 import {
   processCanRun,
   herdrScopesAvailable as supported,
-} from "./fixtures/herdr-scopes.js";
+} from "./scopes.js";
 
 const require = createRequire(import.meta.url);
 const fixtures: {
