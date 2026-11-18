@@ -91,9 +91,7 @@ test("source follows a saved line link and keeps its position after refresh", as
   }
 });
 
-test("a Files preview error keeps Retry reachable in a short drawer", {
-  tag: "@cross-browser",
-}, async ({ page }) => {
+test("a Files preview error keeps Retry reachable in a short drawer", async ({ page }) => {
   const pane = await openReadingPane(page, 568, 320);
   let inaccessible = true;
   await page.route("**/api/resources/resolve", (route) =>
@@ -120,9 +118,7 @@ test("a Files preview error keeps Retry reachable in a short drawer", {
   ).toBeVisible();
 });
 
-test("BOM text previews decode Unicode and download original bytes", {
-  tag: "@cross-browser",
-}, async ({ page }) => {
+test("BOM text previews decode Unicode and download original bytes", async ({ page }) => {
   const name = "encoding-be.plist";
   const source =
     '<?xml version="1.0" encoding="UTF-16"?>\r\n<plist version="1.0"><dict><key>message</key><string>你好 🌍</string></dict></plist>\r\n';

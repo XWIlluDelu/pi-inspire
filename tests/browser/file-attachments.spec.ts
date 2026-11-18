@@ -7,9 +7,7 @@ import { openEventSession } from "./support/host-events";
 // Exercise native artifact admission and persisted file references through the Host.
 test.use({ serviceWorkers: "block" });
 
-test("sent file prompts retain readable names, original bytes, and history across reload", {
-  tag: "@cross-browser",
-}, async ({ page, context, browserName }) => {
+test("sent file prompts retain readable names, original bytes, and history across reload", async ({ page, context, browserName }) => {
   if (browserName === "chromium")
     await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await openEventSession(

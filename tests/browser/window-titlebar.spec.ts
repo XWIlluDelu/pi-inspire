@@ -99,9 +99,7 @@ test.beforeEach(async ({ page }) => {
   await pairAndOpen(page);
 });
 
-test("Overlay adds a quiet corner icon, retains the centered wordmark and restores sidebar branding on exit", {
-  tag: "@platform-ui",
-}, async ({ page }) => {
+test("Overlay adds a quiet corner icon, retains the centered wordmark and restores sidebar branding on exit", async ({ page }) => {
   const brand = page.locator(".window-titlebar__brand-button");
   await expect(brand).toBeHidden();
   for (const [left, right, height, top] of [[0, 138, 24, 0], [80, 0, 32, 6]]) {
@@ -141,9 +139,7 @@ test("Overlay adds a quiet corner icon, retains the centered wordmark and restor
 
 });
 
-test("titlebar needles honor the animation toggle and reduced motion", {
-  tag: "@platform-ui",
-}, async ({ page }) => {
+test("titlebar needles honor the animation toggle and reduced motion", async ({ page }) => {
   await overlay(page, true);
   await page.emulateMedia({ reducedMotion: "no-preference" });
   const brand = page.locator(".window-titlebar__brand-button");

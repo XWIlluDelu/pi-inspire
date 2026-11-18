@@ -10,7 +10,7 @@ import { terminalOperation } from "./support/terminal-operations";
 
 test.use({ contextOptions: { reducedMotion: "reduce" } });
 
-test("finds overflowed tabs and keeps them reachable in the narrow workbench @cross-browser", async ({
+test("finds overflowed tabs and keeps them reachable in the narrow workbench", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1500, height: 850 });

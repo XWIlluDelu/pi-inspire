@@ -48,9 +48,7 @@ test("initial workspace loading recovers through retry", async ({ page }) => {
   }
 });
 
-test("reconnect and offline feedback fit Welcome and a narrow session, then clear on recovery", {
-  tag: "@cross-browser",
-}, async ({ page }) => {
+test("reconnect and offline feedback fit Welcome and a narrow session, then clear on recovery", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   let socket!: WebSocketRoute;
   let hold = false;

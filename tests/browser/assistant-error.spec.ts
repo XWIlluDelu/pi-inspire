@@ -20,7 +20,7 @@ test.describe("narrow conversation", () => {
     contextOptions: { reducedMotion: "reduce" },
   });
 
-  test("Stopped preserves output and drafts without hiding later failures @cross-browser", async ({
+  test("Stopped preserves output and drafts without hiding later failures", async ({
     page,
   }) => {
     const fixture = await assistantOutcomeScenario(page);

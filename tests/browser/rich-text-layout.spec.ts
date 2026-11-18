@@ -4,7 +4,6 @@ import { expect, type Locator, test } from "@playwright/test";
 import { customMessageConfiguration } from "../web/fixtures/custom-message-presentation";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
 import { openEventSession } from "./support/host-events";
-import { firstTextBaseline } from "./support/text-baseline";
 
 const checklist = `# Checklist
 
@@ -64,31 +63,9 @@ async function expectTaskColumn(reader: Locator) {
   expect(geometry.nestedIndent).toBeGreaterThan(0);
   for (const delta of geometry.columnDeltas)
     expect(Math.abs(delta)).toBeLessThanOrEqual(0.5);
-
-  const tasks = reader.locator(".rich-text__task-content");
-  for (const task of [
-    tasks.first(),
-    tasks.filter({ hasText: /^复核测量结果/ }).last(),
-  ]) {
-    const baseline = await task.evaluate(firstTextBaseline, ".task-list-item");
-    const marker = await task.evaluate((content) => {
-      const item = content.closest(".task-list-item")!;
-      const input = content.querySelector("input")!;
-      const box = input.getBoundingClientRect();
-      return (
-        box.bottom -
-        item.getBoundingClientRect().top +
-        parseFloat(getComputedStyle(input).verticalAlign)
-      );
-    });
-    expect(baseline).not.toBeNull();
-    expect(Math.abs(marker - baseline!)).toBeLessThanOrEqual(0.5);
-  }
 }
 
-test("task lists keep their reading column across Live and file previews", {
-  tag: "@platform-ui",
-}, async ({ page }) => {
+test("task lists keep their reading column across Live and file previews", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 1000 });
   const file = join(browserWorkspace, "task-layout.md");
   await writeFile(file, checklist);

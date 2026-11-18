@@ -3,6 +3,7 @@ import { cp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { expect, type Page, test } from "@playwright/test";
+import { browserFixtureHome } from "./fixtures/workspace.mjs";
 import { hostRequest } from "./support/host-request";
 import {
   openWorkspaceFile,
@@ -12,13 +13,9 @@ import {
 
 test.use({ serviceWorkers: "block" });
 
-const root = resolve(
-  process.env.INSPIRE_BROWSER_TEST_OUTPUT_DIR ?? "output/playwright",
-  "filesystem-fixture",
-);
+const root = resolve(browserFixtureHome, "filesystem-fixture");
 test.beforeAll(async () => {
   for (const dir of [
-    root,
     resolve(root, "empty"),
     resolve(root, "dist"),
     resolve(root, ".settings"),
@@ -220,9 +217,7 @@ test("Files works with a corrupt Git index and preserves its tabs and search whe
 
 });
 
-test("native authenticated download streams complete bytes beyond the media preview cap", {
-  tag: "@cross-browser",
-}, async ({ page }) => {
+test("native authenticated download streams complete bytes beyond the media preview cap", async ({ page }) => {
   await openFilesystemSession(page, "Large download fixture");
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
   await page.getByRole("tab", { name: "Files", exact: true }).click();
@@ -256,9 +251,7 @@ test("native authenticated download streams complete bytes beyond the media prev
   expect(contentRequests).toEqual([]);
 });
 
-test("hidden inline references send unchanged text; only explicit picker selections deliver files", {
-  tag: "@cross-browser",
-}, async ({ page }) => {
+test("hidden inline references send unchanged text; only explicit picker selections deliver files", async ({ page }) => {
   await openFilesystemSession(page, "Project file delivery fixture");
   const input = page.getByRole("textbox", { name: "Message", exact: true });
   const completion = page.getByRole("listbox", {

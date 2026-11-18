@@ -18,9 +18,7 @@ async function openLaunchLink(page: Page, link: string) {
   await expect(page.getByRole("main")).toBeVisible();
 }
 
-test("pairing opens the workbench without external requests, cookies, or persistent bearers", {
-  tag: "@cross-browser",
-}, async ({ page, context, baseURL }) => {
+test("pairing opens the workbench without external requests, cookies, or persistent bearers", async ({ page, context, baseURL }) => {
   await context.addCookies([
     { name: "fixture_cookie", value: "present", url: baseURL },
   ]);
@@ -30,7 +28,7 @@ test("pairing opens the workbench without external requests, cookies, or persist
   const externalRequests: string[] = [];
   page.on("request", (request) => {
     const url = new URL(request.url());
-    if (url.hostname !== "127.0.0.1" && url.hostname !== "localhost")
+    if (/^https?:$/u.test(url.protocol) && url.origin !== baseURL)
       externalRequests.push(url.href);
   });
   await page.goto(`/?token=${encodeURIComponent(token)}`);
@@ -93,9 +91,7 @@ test("pairing opens the workbench without external requests, cookies, or persist
   await tab.close();
 });
 
-test("local one-use launch links preserve existing pairing and repair rotated authority", {
-  tag: "@cross-browser",
-}, async ({ page, browser }) => {
+test("local one-use launch links preserve existing pairing and repair rotated authority", async ({ page, browser }) => {
   const host = await restartableAuthHost(token);
   const pairs: string[] = [];
   page.on("request", (request) => {
@@ -139,9 +135,7 @@ test("local one-use launch links preserve existing pairing and repair rotated au
   }
 });
 
-test("independent Host ports require their own pairing; restart reconnects and rotation returns to Pair", {
-  tag: "@cross-browser",
-}, async ({ page, context }) => {
+test("independent Host ports require their own pairing; restart reconnects and rotation returns to Pair", async ({ page, context }) => {
   const host = await restartableAuthHost(token);
   const other = await restartableAuthHost(token);
   let snapshots = 0;
@@ -189,9 +183,7 @@ test("independent Host ports require their own pairing; restart reconnects and r
   }
 });
 
-test("unsupported origin storage reports a useful Pair error without falling back to cookies", {
-  tag: "@cross-browser",
-}, async ({ page }) => {
+test("unsupported origin storage reports a useful Pair error without falling back to cookies", async ({ page }) => {
   await page.addInitScript(() =>
     Object.defineProperty(window, "indexedDB", { value: undefined }),
   );

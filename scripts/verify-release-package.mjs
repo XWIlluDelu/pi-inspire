@@ -12,7 +12,7 @@ import {
 } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
@@ -23,7 +23,6 @@ import {
 } from "../server/process-tree.mjs";
 import {
   npmPackageRecord,
-  packageSizeReport,
   parseNpmJsonOutput,
 } from "./npm-package-manifest.mjs";
 
@@ -291,18 +290,6 @@ try {
       `Release tarball contains source-only files: ${forbidden.join(", ")}`,
     );
 
-  const sizeReportPath = process.env.INSPIRE_SIZE_REPORT;
-  if (sizeReportPath) {
-    try {
-      await mkdir(dirname(sizeReportPath), { recursive: true });
-      await writeFile(
-        sizeReportPath,
-        JSON.stringify(packageSizeReport(record), null, 2),
-      );
-    } catch (error) {
-      console.warn("Could not write the package size report:", error);
-    }
-  }
   const tarball = join(packDirectory, record.filename);
   const publishDryRun = await execNpm(
     ["publish", tarball, "--dry-run", "--json"],

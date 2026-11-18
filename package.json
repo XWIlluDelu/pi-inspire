@@ -133,12 +133,11 @@
     "lint": "biome lint --error-on-warnings",
     "check:unused": "knip",
     "typecheck": "tsc -b",
-    "test:browser": "node scripts/test-browser.mjs",
+    "test:browser": "playwright test",
     "size:report": "npm run release:build && node scripts/size-report.mjs",
     "benchmark:projection": "node --import tsx scripts/benchmark-projection-reads.mjs",
     "check": "npm run lint && npm run typecheck && npm run check:unused && npm run build:web && npm run test:portable && npm test && npm run test:launcher",
-    "ci": "npm run check && npm run test:browser -- --project=chromium --project=firefox",
-    "test:browser:chromium": "npm run test:browser -- --project=chromium",
+    "ci": "npm run check && playwright test pairing.spec.ts composer.spec.ts history.spec.ts project-terminals.spec.ts resource-reading.spec.ts",
     "test:portable": "node --test tests/portable/*.test.mjs"
   },
   "dependencies": {

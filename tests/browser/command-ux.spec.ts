@@ -249,9 +249,6 @@ test("completes a wrapped filename in prose and restores committed references", 
 
 test(
   "preserves prepared arguments through IME, an overlapping question and a rejected submission",
-  {
-    tag: "@cross-browser",
-  },
   async ({ page }, info) => {
     const transport = await routeSnapshots(page, {});
     const sessionId = await openNativeCommandSession(page, info);

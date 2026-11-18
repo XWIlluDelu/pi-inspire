@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { chmod, cp, mkdir, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { independentProcessEnvironment } from "../server/user-environment.mjs";
 import {
@@ -15,28 +15,12 @@ if (!Number.isInteger(port) || port < 1 || port > 65_535) {
   process.exit(64);
 }
 
-const output = resolve(
-  process.env.INSPIRE_BROWSER_TEST_OUTPUT_DIR ?? "output/playwright",
-);
-const preferencesPath = resolve(output, "preferences.json");
-const instanceStatePath = resolve(output, "instance.json");
-const stopRequestPath = resolve(output, "stop-request.json");
-const diagnosticsPath = resolve(output, "diagnostics.jsonl");
 await rm(home, { recursive: true, force: true });
 await mkdir(home, { recursive: true, mode: 0o700 });
 await writeFile(
   resolve(home, ".zshrc"),
   "# Isolated browser fixture; no user startup or first-run wizard.\n",
 );
-await mkdir(output, { recursive: true, mode: 0o700 });
-if (process.platform !== "win32") await chmod(output, 0o700);
-await Promise.all([
-  rm(preferencesPath, { force: true }),
-  rm(instanceStatePath, { force: true }),
-  rm(`${instanceStatePath}.lock`, { force: true }),
-  rm(stopRequestPath, { force: true }),
-  rm(diagnosticsPath, { force: true }),
-]);
 
 // UI acceptance needs real files, not a search of node_modules, build output,
 // and prior test artifacts. That search is intentionally bounded and can be
@@ -65,6 +49,8 @@ const child = spawn(
   [
     resolve("node_modules", "tsx", "dist", "cli.mjs"),
     "tests/browser/fixtures/start-host.ts",
+    home,
+    browserWorkspace,
   ],
   {
     env: {
@@ -89,12 +75,10 @@ const child = spawn(
       ),
       INSPIRE_TOKEN: "inspire-browser-test-token",
       INSPIRE_PI_COMMAND: testPiCommand,
-      INSPIRE_BROWSER_FIXTURE_ROOT: home,
-      INSPIRE_BROWSER_FIXTURE_WORKSPACE: browserWorkspace,
-      INSPIRE_PREFERENCES_PATH: preferencesPath,
-      INSPIRE_STATE_PATH: instanceStatePath,
-      INSPIRE_STOP_REQUEST_PATH: stopRequestPath,
-      INSPIRE_LOG_PATH: diagnosticsPath,
+      INSPIRE_PREFERENCES_PATH: resolve(home, "preferences.json"),
+      INSPIRE_STATE_PATH: resolve(home, "instance.json"),
+      INSPIRE_STOP_REQUEST_PATH: resolve(home, "stop-request.json"),
+      INSPIRE_LOG_PATH: resolve(home, "diagnostics.jsonl"),
       INSPIRE_PORT: String(port),
       INSPIRE_TERMINAL_IN_PROCESS: "1",
     },

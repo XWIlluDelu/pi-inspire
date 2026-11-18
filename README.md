@@ -119,7 +119,6 @@ fixes, with platform-specific differences in features such as installation and n
 | Host, Pi sessions, launcher, project terminals | Supported | Supported | Supported |
 | Page Restart (launcher-owned or installed service) | Supported | Supported | Supported |
 | Restart all (Pi sessions + installed Host and terminals) | Supported | — | — |
-| Chromium workbench tests in CI | Yes | Yes | Yes |
 | Native session Trash | Freedesktop Trash | `~/.Trash` | Recycle Bin |
 | Persistent systemd services | Yes | — | — |
 | Herdr enhancement and managed reverse SSH | Yes | — | — |
@@ -164,7 +163,7 @@ retaining both branch histories. Preserve `auto-dev` history during routine deve
 ```bash
 npm run dev       # Host and Vite development servers
 npm run check          # Lint, types, build, unit and launcher tests
-npm run ci             # Also runs Chromium and Firefox tests
+npm run ci             # Also runs key workflows in Chromium
 npm run format:check   # Check formatting on demand
 ```
 

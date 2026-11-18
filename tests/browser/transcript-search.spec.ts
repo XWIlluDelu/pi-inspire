@@ -24,7 +24,7 @@ const current = () => {
   };
 };
 
-test("@cross-browser search keeps tab order, wraps matches, and yields composing keys", async ({
+test("search keeps tab order, wraps matches, and yields composing keys", async ({
   page,
 }) => {
   const emit = await searchFixture(page, "Composition-owned search");

@@ -78,7 +78,7 @@ for (const touch of [false, true]) {
   });
 }
 
-test("keeps the project-file search field still and rejects a superseded response @cross-browser", async ({
+test("keeps the project-file search field still and rejects a superseded response", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });

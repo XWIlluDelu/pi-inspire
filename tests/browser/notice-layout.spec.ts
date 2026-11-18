@@ -28,9 +28,7 @@ async function openNoticeSession(page: Page) {
   };
 }
 
-test("overflowing warnings keep their reading position, full text and reachable actions", {
-  tag: "@platform-ui",
-}, async ({ page, context }) => {
+test("overflowing warnings keep their reading position, full text and reachable actions", async ({ page, context }) => {
   await page.setViewportSize({ width: 1366, height: 900 });
   const warn = await openNoticeSession(page);
   const editor = page.getByRole("textbox", { name: "Message", exact: true });

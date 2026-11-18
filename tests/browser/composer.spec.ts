@@ -106,9 +106,7 @@ test("a delayed model refusal leaves focus on the closed picker trigger", async 
   await expect(picker).toBeFocused();
 });
 
-test("composer text drafts survive reload and stay partitioned through switching, history, sending and clearing", {
-  tag: "@cross-browser",
-}, async ({ page }) => {
+test("composer text drafts survive reload and stay partitioned through switching, history, sending and clearing", async ({ page }) => {
   await pairedPage(page);
   await openFixtureSession(page, /Review extension event lifecycle/);
   const input = page.getByRole("textbox", { name: "Message", exact: true });

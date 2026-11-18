@@ -9,9 +9,7 @@ import { pairedPage } from "./support/navigation";
 // Playwright request routing (notably in WebKit), so keep that fixture seam explicit.
 test.use({ serviceWorkers: "block" });
 
-test("directory navigation keeps focus and never shows entries for a failed path", {
-  tag: "@cross-browser",
-}, async ({ page }) => {
+test("directory navigation keeps focus and never shows entries for a failed path", async ({ page }) => {
   const late = Promise.withResolvers<void>();
   const entered = Promise.withResolvers<void>();
   const childListing = Promise.withResolvers<void>();
@@ -110,9 +108,7 @@ test("directory navigation keeps focus and never shows entries for a failed path
   ).toHaveValue("/workspace/src");
 });
 
-test("directory picker preserves hidden visibility across opaque Host roots and resets on reopen", {
-  tag: "@cross-browser",
-}, async ({ page }) => {
+test("directory picker preserves hidden visibility across opaque Host roots and resets on reopen", async ({ page }) => {
   const drive = "R:\\";
   const share = "\\\\server\\share";
   const child = `${share}\\实验项目`;
@@ -189,7 +185,7 @@ test("directory picker preserves hidden visibility across opaque Host roots and 
   await expect(browse).toBeFocused();
 });
 
-test.describe("New project on a phone", { tag: "@cross-browser" }, () => {
+test.describe("New project on a phone", () => {
     test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
     test("creates only after explicit activation and starts with the original first message", async ({
       page,

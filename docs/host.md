@@ -374,7 +374,8 @@ inspire
 
 Use the tarball name printed by `npm pack`. `prepack` builds the release. `release:verify` installs
 the tarball with production dependencies and exercises the installed CLI, an external Pi session
-and a project terminal that survives Host restart. CI runs this on Linux, macOS and Windows.
+and a project terminal that survives Host restart. CI runs this on Linux after a push to main.
+Run the same command on macOS or Windows to verify a package on that Host platform.
 [Platform evidence](https://github.com/XWIlluDelu/pi-inspire/blob/main/docdoki/notes/platform-compatibility.md#verified-native-baseline)
 records the checked versions.
 

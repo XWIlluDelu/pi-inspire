@@ -33,8 +33,8 @@ font styles and is a record of that snapshot.
   existing terminal attachments and native process lifetimes remain independently owned.
 - Frontend builds keep recent hashed assets available to open tabs. Native Pi session files
   and stored attachments remain readable.
-- Linux runs the complete web suite. macOS and Windows run native checks and targeted Chromium
-  tests by default. [Full release acceptance and Safari are available on demand](../notes/platform-compatibility.md#ci-verification-scope).
+- Ubuntu CI runs the core checks and key Chromium workflows. Main pushes also run the installed
+  package check. See [CI verification](../notes/platform-compatibility.md#ci-verification-scope).
 - HTTP test routes supply current receipts and preference publications explicitly. The transport
   fixture passes malformed responses through unchanged. Composer and local notification tests
   exercise their own controllers directly where they do not need full store wiring.

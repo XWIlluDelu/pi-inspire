@@ -149,7 +149,7 @@ test.describe("phone action dialogs", () => {
   });
 });
 
-test("Settings keeps modal ownership when the workspace becomes a drawer @cross-browser", async ({
+test("Settings keeps modal ownership when the workspace becomes a drawer", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 900 });

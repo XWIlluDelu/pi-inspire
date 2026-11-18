@@ -40,7 +40,7 @@ async function checkKeyboardFocus(control: Locator) {
     .toBeLessThanOrEqual(0.5);
 }
 
-test("@cross-browser keeps renamed, conflicting and opaque paths readable in narrow Changes", async ({
+test("keeps renamed, conflicting and opaque paths readable in narrow Changes", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 320, height: 760 });
@@ -188,9 +188,7 @@ test.describe("narrow Changes controls", () => {
   });
 });
 
-test("keeps long line numbers aligned during horizontal scroll", {
-  tag: "@cross-browser",
-}, async ({ page }) => {
+test("keeps long line numbers aligned during horizontal scroll", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 900 });
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.route("**/api/git/diff", async (route) => {

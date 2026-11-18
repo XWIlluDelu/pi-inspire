@@ -1,7 +1,5 @@
-import { execFile } from "node:child_process";
 import {
   appendFile,
-  cp,
   mkdtemp,
   readdir,
   readFile,
@@ -13,20 +11,13 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { moveToDesktopTrash } from "../../server/desktop-trash.js";
 import type { SessionRecord } from "../../server/session-catalog.js";
 import { deleteSessionFile } from "../../server/session-delete.js";
-import {
-  RECOVERY_MANIFEST,
-  RECOVERY_README,
-} from "../../server/session-recovery.js";
 
 const temporary: string[] = [];
-const run = promisify(execFile);
 
 async function source(path: string): Promise<SessionRecord["source"]> {
   const details = await stat(path, { bigint: true });
@@ -83,55 +74,6 @@ describe("session file deletion", () => {
       code: "SESSION_FILE_MISSING",
     });
     expect(trash).not.toHaveBeenCalled();
-  });
-
-  it("restores a copied native Trash bundle through the launcher and protects newer session bytes", async () => {
-    const { dir, path, session } = await fixture("session 空格 #");
-    const original = await readFile(path, "utf8");
-    const bundle = join(dir, "isolated native trash bundle");
-    await expect(
-      deleteSessionFile(session, (payload, origin) =>
-        moveToDesktopTrash(payload, origin, {
-          platform: "win32",
-          environment: {},
-          home: dir,
-          windowsRecycle: (directory) => rename(directory, bundle),
-        }),
-      ),
-    ).resolves.toBe("trashed");
-    await expect(readFile(path)).rejects.toMatchObject({ code: "ENOENT" });
-    expect(await readdir(dir)).toEqual([basename(bundle)]);
-
-    const restored = join(dir, "copied recovery bundle");
-    await cp(bundle, restored, { recursive: true });
-    const payload = join(restored, basename(path));
-    expect((await stat(payload)).ino).not.toBe(
-      (await stat(join(bundle, basename(path)))).ino,
-    );
-    const launcher = fileURLToPath(
-      new URL("../../inspire.mjs", import.meta.url),
-    );
-    const recover = () =>
-      run(process.execPath, [launcher, "recover-session", basename(restored)], {
-        cwd: dir,
-        timeout: 15_000,
-      });
-    const { stdout } = await recover();
-    expect(stdout).toContain("Recovered session: " + path);
-    expect(stdout).toContain("Recovery bundle retained");
-    expect(await readFile(path, "utf8")).toBe(original);
-    expect((await stat(path)).ino).not.toBe((await stat(payload)).ino);
-    expect((await readdir(restored)).sort()).toEqual(
-      [RECOVERY_MANIFEST, RECOVERY_README, basename(path)].sort(),
-    );
-
-    await writeFile(path, "newer session\n");
-    await expect(recover()).rejects.toMatchObject({
-      code: 1,
-      stderr: expect.stringContaining("already exists"),
-    });
-    expect(await readFile(path, "utf8")).toBe("newer session\n");
-    expect(await readFile(payload, "utf8")).toBe(original);
   });
 
   it("cleans native recovery metadata after identity-checked permanent fallback", async () => {

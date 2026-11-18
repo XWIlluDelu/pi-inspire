@@ -6,9 +6,7 @@ import { pairAndOpen } from "./support/navigation";
 test.use({ serviceWorkers: "block" });
 
 // The PTY integration owns native API semantics; this verifies the routed browser controls.
-test("native model controls adopt Pi's effective results and preserve the draft", {
-  tag: "@cross-browser",
-}, async ({ page }) => {
+test("native model controls adopt Pi's effective results and preserve the draft", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 850 });
   await page.emulateMedia({ reducedMotion: "reduce" });
   const models: ModelOption[] = [

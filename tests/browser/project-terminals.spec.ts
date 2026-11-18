@@ -154,9 +154,7 @@ test("a replacement terminal snapshot retires output still waiting in xterm's pa
   await expect(terminalStatus(page)).toBeVisible();
 });
 
-test("project terminals and a lost create response survive browser reload", {
-  tag: ["@cross-browser", "@platform-ui"],
-}, async ({ context, page }) => {
+test("project terminals and a lost create response survive browser reload", async ({ context, page }) => {
   // Real typing, replay, two clients and confirmed
   // serial PTY retirement share this budget; each operation keeps its deadline.
   test.setTimeout(60_000);
@@ -440,9 +438,7 @@ function nativeClipboard(
 }
 
 for (const platform of ["Win32", "MacIntel"]) {
-  test(`${platform} preserves clipboard and layout input in the terminal`, {
-    tag: "@cross-browser",
-  }, async ({ page, fixtures }) => {
+  test(`${platform} preserves clipboard and layout input in the terminal`, async ({ page, fixtures }) => {
     const mac = platform === "MacIntel";
     await page.addInitScript((platform) => {
       Object.defineProperty(navigator, "platform", {
@@ -626,7 +622,7 @@ for (const platform of ["Win32", "MacIntel"]) {
   });
 }
 
-test("terminal search, last output, and asynchronous paste follow the active tab", { tag: "@platform-ui" }, async ({
+test("terminal search, last output, and asynchronous paste follow the active tab", async ({
   context,
   page,
   fixtures,
