@@ -68,22 +68,30 @@ describe("prompt delivery transport", () => {
     ).toHaveLength(1);
   });
 
-  it("recovers a lost submission after a transient receipt read failure", async () => {
-    vi.useFakeTimers();
-    const fetch = transport(
-      new TypeError("Lost submission response"),
-      Response.json({}, { status: 503 }),
-      Response.json(accepted),
-    );
-    const delivery = createApi().prompt(prompt);
-    await vi.advanceTimersByTimeAsync(1_500);
-    await expect(delivery).resolves.toEqual({ accepted: true });
-    expect(fetch.mock.calls.map(([url, init]) => [url, init?.method])).toEqual([
-      ["/api/prompt", "POST"],
-      [receiptPath, undefined],
-      [receiptPath, undefined],
-    ]);
-  });
+  it.each([
+    new TypeError("Lost submission response"),
+    new Response("<html>Malformed submission response</html>"),
+  ])(
+    "recovers an uncertain submission through the original receipt",
+    async (initial) => {
+      vi.useFakeTimers();
+      const fetch = transport(
+        initial,
+        Response.json({}, { status: 503 }),
+        Response.json(accepted),
+      );
+      const delivery = createApi().prompt(prompt);
+      await vi.advanceTimersByTimeAsync(1_500);
+      await expect(delivery).resolves.toEqual({ accepted: true });
+      expect(
+        fetch.mock.calls.map(([url, init]) => [url, init?.method]),
+      ).toEqual([
+        ["/api/prompt", "POST"],
+        [receiptPath, undefined],
+        [receiptPath, undefined],
+      ]);
+    },
+  );
 
   it("waits beyond 30s using owned pending receipts without posting the prompt again", async () => {
     vi.useFakeTimers();

@@ -161,21 +161,23 @@ export function ModelsSettings({
   }, [settingsOwner]);
   const openEditor = (next: DeclarationEditor, opener: HTMLElement) =>
     configuration.open(next, opener, true);
-  const load = useCallback(
-    () => readSettings(() => store.readModelSettings(owner, true)),
-    [readSettings, owner],
+  const readConfig = useCallback(
+    () => store.readModelSettings(owner, true),
+    [owner],
   );
+  const load = useCallback(() => readSettings(readConfig), [readSettings, readConfig]);
   const refreshProviders = useCallback(async () => {
     if (!alive.current) return;
     const current = ++providerGeneration.current;
     const owns = () => alive.current && providerGeneration.current === current;
     setProvidersLoading(true);
     try {
-      const auth = await store.providerAuth(owner, { operation: "providers" });
+      const auth = (await store.providerAuth(owner, { operation: "providers" })) as ProviderLoginOption[];
       if (owns()) {
-        setProviders(auth as ProviderLoginOption[]);
+        setProviders(auth);
         setProvidersLoaded(true);
         setAuthError(null);
+        return auth;
       }
     } catch (error) {
       if (owns())
@@ -185,7 +187,8 @@ export function ModelsSettings({
     }
   }, [owner, alive]);
   const refreshCredentials = async () => {
-    await Promise.all([refreshProviders(), load()]);
+    const [providers] = await Promise.all([refreshProviders(), load()]);
+    return providers;
   };
   useEffect(() => {
     void load();
@@ -219,6 +222,7 @@ export function ModelsSettings({
       () => store.saveModelPreferences(owner, snapshot.settingsRevision, patch),
       {
         close: fromEditor,
+        readBack: readConfig,
         onSaved: () =>
           patch.defaultModel === null
             ? () => defaultThinkingRef.current
@@ -238,6 +242,7 @@ export function ModelsSettings({
       () => store.editModelConfig(owner, snapshot.configRevision, edit),
       {
         close: true,
+        readBack: readConfig,
         onSaved: () => {
           if (
             edit.kind === "provider" &&

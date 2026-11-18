@@ -185,7 +185,7 @@ test("MCP reveals saved connection values on request, keeps edits scoped, and re
     await save.click();
     await expect(
       settings.getByText(
-        "Saved to file. Running sessions have not been reloaded.",
+        "MCP settings saved.",
       ),
     ).toBeVisible();
     await expect(edit).toBeFocused();

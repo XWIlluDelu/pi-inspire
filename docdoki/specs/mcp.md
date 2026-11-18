@@ -128,13 +128,11 @@ keeps the form draft; Refresh reads the new revision without clearing edits, and
 Save merges only the edited subset. Drafts survive category changes but are withdrawn on
 session/directory/Host ownership changes; stale asynchronous results cannot populate the new owner.
 
-A successful write reports saved-to-file, not applied. For an Inspire-owned session, the optional,
-confirmed **Reload selected session** uses the existing idle-worker Reload path. Busy, unready or
-read-only targets are unavailable with an explanation; a declined dispatch is not reported as sent.
+For an Inspire-owned session, the optional, confirmed **Reload selected session** uses the existing
+idle-worker Reload path and reports its result in MCP settings.
 For a taken-over terminal Pi, the panel directs the user to run `/reload` in its terminal.
 New workers read the saved configuration.
-Save failure keeps the draft. A successful save followed by a read failure still reports the
-successful commit and asks for Refresh.
+Save failure keeps the draft. A committed save retries a failed readback before showing feedback.
 
 User guide: [MCP configuration](../../docs/mcp.md).
 

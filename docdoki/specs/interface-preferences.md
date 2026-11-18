@@ -174,10 +174,8 @@ a fresh resource scan and package update results cannot establish current-worker
   without replacing known results. A new request or observed Host check clears that request error;
   transport replacement retires the old request and its recovery. HTTP failure or disconnection does
   not mark a running Host check finished.
-- Observations and the exact-set 24-hour snooze belong to the Host deployment. Bootstrap and events
-  reconcile local and forwarded views; dismissal anywhere hides the notice everywhere. Host restart
-  preserves the remaining interval, and a changed version or extension set bypasses the snooze.
-  Rendering a notice does not consume it.
+- Dismissal hides the exact update set immediately for 24 hours while the Host records it across
+  browsers and restarts. A changed update set bypasses the snooze.
 
 ## Independent activity density
 

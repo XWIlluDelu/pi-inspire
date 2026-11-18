@@ -128,7 +128,8 @@ test("New resolves trusted model defaults and sends explicit then inherited nati
       const started = creation(page);
       await startButton(page).click();
       const response = await started;
-      expect(response.request().postDataJSON()).toEqual({
+      const { receipt: _receipt, ...options } = response.request().postDataJSON();
+      expect(options).toEqual({
         cwd,
         model: { provider: "project-router", id: "auto" },
         thinkingLevel: "high",
@@ -214,9 +215,8 @@ test("a new mixed draft sends the original canonical project file and image", as
       (response) => response.url().endsWith("/api/prompt") && response.ok(),
     );
     await startButton(page).click();
-    expect((await started).request().postDataJSON()).toEqual({
-      cwd: await realpath(original),
-    });
+    const { receipt: _receipt, ...options } = (await started).request().postDataJSON();
+    expect(options).toEqual({ cwd: await realpath(original) });
     expect((await prompted).request().postDataJSON()).toMatchObject({
       message: "Review the first image and project file",
       projectFiles: [file],

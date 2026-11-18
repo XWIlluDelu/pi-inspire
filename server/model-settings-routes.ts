@@ -108,7 +108,7 @@ export function registerModelSettingsRoutes(
     deps.invalidateModels?.();
     return savedConfiguration(
       () => readSettings(service, owner, refresh),
-      "Saved to Pi. Model settings could not reload; reload settings before the next edit.",
+      "Saved. Model settings could not be refreshed.",
     );
   }
   jsonRoute(

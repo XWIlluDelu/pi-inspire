@@ -171,34 +171,30 @@ require the original selection/API/transport owner; cancelled late replies or 40
 current view/authentication. Socket loss alone does not supersede a current HTTP selection, but a
 subsequent bootstrap replacement does.
 
-Transport failure cannot establish mutation outcome. Read-only POSTs report read uncertainty.
-Creation has no retained receipt: suppress concurrent creates and require explicit confirmation to
-inspect the list before creating again after an unconfirmed outcome. This guard survives selection
-and transport replacement within the page, but not page reload. Gateway timeouts and lost error
-bodies remain uncertain; pre-dispatch cancellation is known not to have created a session and needs
-no confirmation. Non-JSON error pages keep HTTP status and edge markers for connection feedback.
+An uncertain New request recovers once using the same Host-scoped receipt. Repeating the same
+creation in the tab keeps that identity until a confirmed result or Host replacement. Other
+projects can start independently. Read-only POSTs report read uncertainty, and non-JSON error
+pages retain HTTP status and edge markers.
 
 ## Prompt delivery observations
 
 The Host admits each random prompt operation id once for its process lifetime and checks that
 a retry of uncertain input observes the original receipt without posting again. POST waits up to
 20 seconds before returning a pending receipt. Authenticated GETs observe that receipt. Each browser request has a
-30-second deadline. After a lost HTTP response, up to three consecutive receipt reads recover the
-same operation. A valid pending receipt renews the read budget. Replacing the transport cancels
-the browser observation while execution continues.
+30-second deadline. A lost or malformed response triggers up to three consecutive receipt reads
+for the same operation. A valid pending receipt renews that budget. Replacing the transport retires
+the browser observer while execution continues.
 
 The browser API confirms a result only from a retained receipt with matching Host authority,
 command and operation ID. Transport failures and unavailable or unknown receipts leave delivery
 unconfirmed.
-[[composer]] tracks the operation before dispatch. Retry delivery observes the same id even when
-the draft or delivery selection has changed. Same-version tab reload restores the original
-identity and request fingerprint for receipt observation. Unsupported records can be explicitly
-retired. The stored record contains the proof used for observation and has no replayable input. After a Host
-restart, the old result remains unknown and the user can inspect history before starting new input.
+[[composer]] records the operation identity and fingerprint before dispatch. Reconnect and tab
+reload observe that receipt in the background. When the Host changes, the composer retires old
+receipts and makes input still held by the tab available for editing.
 
 Prompt, terminal and restart tracking share bounded storage reads and writes. Each validates its
-own current records before dispatch. A read failure blocks writes until the original record can be
-checked. Invalid records require explicit retirement. The existing tab records retain their keys
+own current records before dispatch. A storage read failure blocks writes until the records can be
+read. The existing tab records retain their keys
 and formats, and each executor keeps its own identity and receipt semantics.
 
 ## Pending handoff observations
@@ -216,7 +212,7 @@ ordinary staging ownership under [[composer]].
 A matched rejected receipt ends that intent. A retired or missing receipt, plain HTTP 500,
 mismatched proof and transport loss stay uncertain; retrying the same intent only observes.
 
-Prompt, Return and Stop share one Host receipt table with command-specific fingerprints. It retains
+New session, Prompt, Return and Stop share one Host receipt table with command-specific fingerprints. It retains
 at most 2,048 settled results and 32 MiB for 15 minutes. Process-lifetime tombstones prevent
 redispatch or reuse of an ID for another command. The table refuses admission beyond 65,536
 identities. Terminal receipts retain their own daemon admission epoch and expiry policy.
@@ -307,7 +303,7 @@ identity/name publish only the completed call.
 
 ## Checks
 
-- `session-detail-confirmation.test.ts` checks HTTP/WebSocket synchronization through browser
+- `connection-controller.test.ts` checks HTTP/WebSocket synchronization through browser
   routing. `store.test.ts` checks invalid acknowledgements. `app-events.test.ts` checks unchanged,
   changed and foreign authorities. Its stable window over 500,000 characters uses under 2,000
   bytes of synchronization and queued lifecycle frames.

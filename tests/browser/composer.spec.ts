@@ -54,7 +54,7 @@ test.describe("touch recovery", () => {
     await input.fill("Keep this newer draft");
     release();
     const restore = page.getByRole("button", {
-      name: "Restore",
+      name: "Restore draft",
       exact: true,
     });
     await expect(restore).toBeDisabled();
@@ -102,7 +102,7 @@ test("a delayed model refusal leaves focus on the closed picker trigger", async 
   } finally {
     release();
   }
-  await expect(page.getByText(error, { exact: true })).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: error })).toBeVisible();
   await expect(picker).toBeFocused();
 });
 
@@ -161,7 +161,7 @@ test("composer text drafts survive reload and stay partitioned through switching
   await input.press("Control+Home");
   await input.press("ArrowUp");
   await expect(input).toHaveValue(repeated);
-  await input.press("Escape");
+  await input.press("ArrowDown");
   await expect(input).toHaveValue(historyDraft);
   await expect(input).toBeFocused();
   await input.fill("send and do not resurrect");

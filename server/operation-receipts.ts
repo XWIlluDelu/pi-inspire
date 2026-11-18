@@ -166,7 +166,7 @@ export class HostOperationReceipts {
     fingerprint?: string,
     execute?: () => Promise<HostOperationResults[Command]>,
   ): Promise<HostOperationResults[Command]> {
-    const group = command === "prompt" ? "PROMPT" : "PENDING";
+    const group = command === "create" ? "SESSION_CREATION" : command === "prompt" ? "PROMPT" : "PENDING";
     const refuse = (suffix: string, message: string, outcomeUnknown = !execute): never => {
       throw requestError(message, suffix === "CAPACITY" ? 503 : 409, {
         code: `${group}_OPERATION_${suffix}`,
@@ -181,7 +181,9 @@ export class HostOperationReceipts {
           (fingerprint !== undefined && previous.fingerprint !== prefix + fingerprint))
         refuse("MISMATCH", "That operation ID belongs to a different input or action.");
       if (!previous.result)
-        refuse("RESULT_RETIRED", "The original receipt retired. Inspect the conversation before trying again.", true);
+        refuse("RESULT_RETIRED", command === "create"
+          ? "Couldn’t open the new session. Try again."
+          : "The original receipt retired. Inspect the conversation before trying again.", true);
       return previous.result as Promise<HostOperationResults[Command]>;
     }
     if (!execute || fingerprint === undefined)

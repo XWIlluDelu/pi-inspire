@@ -75,11 +75,6 @@ it("shares concurrent Stop requests and reclaims both lost handoffs while stoppi
       expect(selectedRunState(store!.getState())).toBe("aborted"),
     );
     expect(store.drafts.get(f.sessionId).text).toBe("newer draft");
-    expect(store.getState().live.notices).toContainEqual(
-      expect.objectContaining({
-        text: expect.stringContaining("Pending recovery failed"),
-      }),
-    );
     expect(posts.map(({ path }) => path)).toEqual([recoverPath, stopPath]);
     receiptsUnavailable = false;
     await f.api.prompt(f.delivery("Second isolated run"));

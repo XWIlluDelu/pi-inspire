@@ -290,6 +290,7 @@ export class AppStore {
   private readonly selection = new SessionSelectionController({
     state: () => this.state,
     api: () => this.api,
+    authorityId: () => this.hostAuthorityId,
     patch: (patch) => this.set(patch),
     onOpenIntent: () => {
       this.branches.invalidate();
@@ -307,10 +308,6 @@ export class AppStore {
     refreshSessionCatalog: () => void this.catalog.refreshLoaded(),
     notify: (kind, text) => this.notify(kind, text),
     handleAuthFailure: () => this.handleAuthFailure(),
-    confirmUncertainCreation: () =>
-      window.confirm(
-        "Session creation may still complete. Check the session list before creating another. Continue?",
-      ),
   });
   private readonly runtimeEvents = new RuntimeEventController({
     state: () => this.state,
@@ -363,15 +360,14 @@ export class AppStore {
   private readonly pendingRecovery = new PendingRecoveryController({
     api: () => this.api,
     authorityId: () => this.hostAuthorityId,
-    restore: (sessionId, recovered) =>
-      this.restorePendingInput(sessionId, recovered),
+    restore: (sessionId, recovered, feedback) =>
+      this.restorePendingInput(sessionId, recovered, feedback),
     handleAuthFailure: () => this.handleAuthFailure(),
   });
   private readonly updates = new UpdateController({
     state: () => this.state,
     patch: (patch) => this.set(patch),
     api: () => this.api,
-    notify: (kind, text) => this.notify(kind, text),
   });
   /** ConnectionController owns WebSocket lifetime/backoff only. AppStore
    * continues to publish connection state and owns every stream consequence. */
@@ -388,6 +384,7 @@ export class AppStore {
         this.afterInitialSnapshot = null;
         complete?.();
         this.composer.resumeUploads();
+        this.composer.resumeDeliveries();
         this.pendingRecovery.resume();
         void this.notifications.openTarget();
       }
@@ -1193,22 +1190,27 @@ export class AppStore {
       persistent?: boolean;
       fallback?: string;
       afterReceipt?: () => void;
+      onResult?: (status: NativeCommandActivity["status"], message: string) => void;
     } = {},
   ): PromptAcceptedResponse {
     const api = this.api;
     const id = this.presentCommandActivity(sessionId, command, "running", message);
+    const publish = (result: Awaited<ReturnType<typeof run>>) => {
+      if (options.onResult) {
+        this.dismissCommandActivity(sessionId, id);
+        options.onResult(result.status, result.message);
+      } else if (result.status === "success" && !options.persistent) {
+        this.dismissCommandActivity(sessionId, id);
+        if (this.state.sessionId === sessionId)
+          this.notify("info", result.message);
+      } else this.updateCommandActivity(sessionId, id, result);
+    };
     // Dispatch here so clipboard reads are still in the initiating gesture.
     void (async () => {
       try {
         const result = await run();
         if (options.afterReceipt && this.api !== api) return;
-        if (result.status === "success" && !options.persistent) {
-          this.dismissCommandActivity(sessionId, id);
-          if (this.state.sessionId === sessionId)
-            this.notify("info", result.message);
-        } else {
-          this.updateCommandActivity(sessionId, id, result);
-        }
+        publish(result);
         options.afterReceipt?.();
       } catch (error) {
         if (options.afterReceipt && this.api !== api) return;
@@ -1216,13 +1218,13 @@ export class AppStore {
         const unknown =
           error instanceof ApiTransportError ||
           (error instanceof ApiError && error.code === "PI_RPC_OUTCOME_UNKNOWN");
-        this.updateCommandActivity(sessionId, id, {
+        publish({
           status: unknown && !options.scopedAuth ? "warning" : "error",
           message:
             unauthenticated && !options.scopedAuth
               ? "Host authentication expired before the command completed."
               : unknown && !options.scopedAuth
-                ? "Could not confirm the command result. Reconnect and check the session before trying again."
+                ? "Couldn’t confirm that the command finished."
                 : error instanceof Error
                   ? error.message
                   : options.fallback ?? `/${command} failed`,
@@ -1371,6 +1373,7 @@ export class AppStore {
     sessionId: string,
     command: HostNativeCommandName,
     argument: string,
+    onResult?: (status: NativeCommandActivity["status"], message: string) => void,
   ): PromptAcceptedResponse | false {
     const api = this.api;
     if (!api) return false;
@@ -1381,7 +1384,7 @@ export class AppStore {
           nativeCommand(activity.command)?.execution === "host",
       )
     ) {
-      this.notify("warning", "Wait for the active command to finish");
+      if (!onResult) this.notify("warning", "Wait for the active command to finish");
       return false;
     }
     const selectionGeneration = this.selectionGeneration;
@@ -1402,8 +1405,14 @@ export class AppStore {
     }, {
       persistent: command === "export",
       afterReceipt: () => void this.resync(sessionId, selectionGeneration),
+      onResult,
     });
   }
+
+  reloadSessionResources = (
+    sessionId: string,
+    onResult: (status: NativeCommandActivity["status"], message: string) => void,
+  ) => this.launchHostNativeCommand(sessionId, "reload", "", onResult);
 
   private sessionCommandDetails(): NonNullable<
     NativeCommandActivity["details"]
@@ -1771,22 +1780,7 @@ export class AppStore {
 
   readonly subscribeComposerDeliveries = this.composer.subscribe;
   readonly composerDeliveryVersion = this.composer.getDeliveryVersion;
-  readonly composerDeliveryState = this.composer.deliveryState;
-
-  retryPreviousComposerDelivery = (): void => {
-    if (this.state.sessionId)
-      void this.composer.retryPrevious(this.state.sessionId);
-  };
-
-  forgetPreviousComposerDelivery = (): void => {
-    if (this.state.sessionId)
-      this.composer.forgetPrevious(this.state.sessionId);
-  };
-
-  forgetUnsupportedComposerDeliveries = (): void => {
-    if (this.state.sessionId)
-      this.composer.forgetUnsupportedDeliveries(this.state.sessionId);
-  };
+  readonly failedComposerDeliveryCount = this.composer.failedDeliveryCount;
 
   sendPrompt = async (
     message: string,
@@ -1892,7 +1886,7 @@ export class AppStore {
         )
       ) {
         try {
-          await this.pendingRecovery.run(sessionId, "recover", viewId);
+          await this.pendingRecovery.run(sessionId, "recover", viewId, false);
         } catch (error) {
           if (this.api !== api) return;
           if (
@@ -1904,11 +1898,6 @@ export class AppStore {
             this.handleAuthFailure();
             return;
           }
-          if (this.state.sessionId === sessionId)
-            this.notify(
-              "warning",
-              `Pending recovery failed: ${error instanceof Error ? error.message : "request failed"}`,
-            );
           // Stop remains owned even if its preliminary recovery failed. The
           // Host will clear again or retire the worker rather than resume input.
         }
@@ -1940,6 +1929,7 @@ export class AppStore {
   private restorePendingInput(
     sessionId: string,
     recovered: PendingRecovery,
+    feedback: boolean,
   ): boolean {
     const text = [...recovered.steering, ...recovered.followUp].join("\n\n");
     const hasImages = Boolean(recovered.attachments?.length);
@@ -1956,7 +1946,7 @@ export class AppStore {
         .join("\n\n");
       this.drafts.setText(sessionId, draft);
     }
-    if (this.state.sessionId === sessionId) {
+    if (feedback && this.state.sessionId === sessionId) {
       if (recovered.interruptionScope === "agent")
         this.notify(
           "info",

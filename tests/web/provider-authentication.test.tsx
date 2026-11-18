@@ -111,9 +111,7 @@ describe("login attempt ownership", () => {
     expect(login.getByLabelText("Authorization code")).toBeEnabled();
 
     await nextPoll();
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "503 temporarily unavailable",
-    );
+    expect(screen.queryByRole("alert")).toBeNull();
     const reconnected = vi.fn(async () => {});
     view.rerender(panel({ onRefresh: reconnected }));
     expect(login.getByLabelText("Authorization code")).toBeEnabled();

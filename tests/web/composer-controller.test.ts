@@ -159,7 +159,7 @@ it.each([true, false])(
     );
     expect(f.handles()).toEqual(returned ? ["sent", "next"] : ["next"]);
     expect(f.draft(other).attachments).toEqual([]);
-    expect(f.controller.deliveryState(owner).failedCount).toBe(0);
+    expect(f.controller.failedDeliveryCount(owner)).toBe(0);
     expect(f.deleteAttachment.mock.calls).toEqual(returned ? [] : [["sent"]]);
   },
 );
@@ -181,14 +181,13 @@ it("ignores a retired result and observes the original operation on the new tran
   expect(signal?.aborted).toBe(true);
   expect(f.draft().text).toBe("");
   expect(f.draft().intentId).toBeUndefined();
-  expect(f.controller.deliveryState(owner).previous).toBe(
-    f.receipt().operationId,
-  );
+  expect(JSON.parse(sessionStorage.getItem(ledger)!)).toMatchObject([f.receipt()]);
 
   f.edit("replacement");
   submission.resolve(accepted);
   expect(await sending).toBe(false);
-  await f.controller.retryPrevious(owner);
+  f.controller.resumeDeliveries();
+  await vi.waitFor(() => expect(sessionStorage.getItem(ledger)).toBeNull());
   expect(f.observePrompt).toHaveBeenCalledExactlyOnceWith(
     f.receipt(),
     expect.any(AbortSignal),
@@ -196,16 +195,16 @@ it("ignores a retired result and observes the original operation on the new tran
   expect(f.prompt).toHaveBeenCalledOnce();
   expect(f.draft().text).toBe("replacement");
   expect(f.draft().intentId).toBeUndefined();
+  expect(f.notice).not.toHaveBeenCalled();
 });
 
 it("reloads a current receipt for observation and blocks writes when tab storage cannot track them", async () => {
   const original = fixture();
   const unknown = new ApiTransportError("response", true);
   original.prompt.mockRejectedValue(unknown);
-  original.observePrompt.mockRejectedValue(unknown);
   expect(await original.send("unconfirmed", "followUp")).toBe(false);
   const saved = sessionStorage.getItem(ledger);
-  expect(JSON.parse(saved!)).toEqual([original.receipt()]);
+  expect(JSON.parse(saved!)).toMatchObject([{ ...original.receipt(), text: "unconfirmed" }]);
 
   const storage = sessionStorage;
   const writes = vi.spyOn(window, "sessionStorage", "get").mockReturnValue({
@@ -218,9 +217,7 @@ it("reloads a current receipt for observation and blocks writes when tab storage
   } as Storage);
   try {
     expect(await original.send("new draft")).toBe(false);
-    expect(original.controller.deliveryState(owner).storageIssue).toBe(
-      "storage",
-    );
+    expect(original.draft().text).toBe("new draft");
     expect(sessionStorage.getItem(ledger)).toBe(saved);
   } finally {
     writes.mockRestore();
@@ -240,9 +237,7 @@ it("reloads a current receipt for observation and blocks writes when tab storage
   } as unknown as Storage);
   try {
     expect(await reopened.send("new draft")).toBe(false);
-    expect(reopened.controller.deliveryState(owner).storageIssue).toBe(
-      "storage",
-    );
+    expect(reopened.draft().text).toBe("new draft");
   } finally {
     reads.mockRestore();
   }
@@ -261,21 +256,15 @@ it("reloads a current receipt for observation and blocks writes when tab storage
   expect(reopened.draft().text).toBe("");
   await vi.waitFor(() => expect(sessionStorage.getItem(ledger)).toBeNull());
 
-  // Old records block fresh sends until the user stops tracking them.
+  // Unsupported metadata is replaced by the next valid observation record.
   const unsupported = fixture();
   unsupported.prompt.mockResolvedValue(accepted);
   const old = '[{"old":true}]';
   sessionStorage.setItem(ledger, old);
-  expect(await unsupported.send("new draft")).toBe(false);
-  expect(unsupported.controller.deliveryState(owner).storageIssue).toBe(
-    "format",
-  );
-  expect(sessionStorage.getItem(ledger)).toBe(old);
-  expect(unsupported.prompt).not.toHaveBeenCalled();
-  unsupported.controller.forgetUnsupportedDeliveries(owner);
-  expect(sessionStorage.getItem(ledger)).toBeNull();
   expect(await unsupported.send("new draft")).toEqual(accepted);
   expect(unsupported.prompt).toHaveBeenCalledOnce();
+  expect(sessionStorage.getItem(ledger)).toBeNull();
+  expect(unsupported.notice).not.toHaveBeenCalled();
 });
 
 it("can send a new draft after an unknown delivery without resubmitting its attachments", async () => {
@@ -284,22 +273,32 @@ it("can send a new draft after an unknown delivery without resubmitting its atta
   f.prompt
     .mockRejectedValueOnce(new ApiTransportError("request", true))
     .mockResolvedValue(accepted);
-  f.observePrompt.mockRejectedValue(new ApiTransportError("request", true));
 
   expect(await f.send("First caption", "steer")).toBe(false);
-  expect(f.controller.deliveryState(owner).previous).toBe(
-    f.receipt().operationId,
-  );
-  expect(f.observePrompt).toHaveBeenCalledExactlyOnceWith(
-    f.receipt(),
-    expect.any(AbortSignal),
-  );
+  expect(JSON.parse(sessionStorage.getItem(ledger)!)).toMatchObject([f.receipt()]);
+  expect(f.observePrompt).not.toHaveBeenCalled();
 
   expect(await f.send("New message")).toEqual(accepted);
   expect(f.prompt.mock.calls[1]![0]).toMatchObject({ message: "New message" });
   expect(f.prompt.mock.calls[1]![0].attachmentIds).toBeUndefined();
   expect(f.receipt(1).operationId).not.toBe(f.receipt().operationId);
   expect(f.deleteAttachment).not.toHaveBeenCalled();
+});
+
+it("recovers confirmed unsent input from a background check without clearing the newer draft", async () => {
+  const f = fixture();
+  f.prompt.mockRejectedValue(new ApiTransportError("response", true));
+  expect(await f.send("original")).toBe(false);
+  expect(f.controller.failedDeliveryCount(owner)).toBe(0);
+  f.edit("newer");
+  f.observePrompt.mockRejectedValueOnce(new ApiError(409, "not sent"));
+  f.controller.resumeDeliveries();
+  await vi.waitFor(() => expect(f.controller.failedDeliveryCount(owner)).toBe(1));
+  expect(f.draft().text).toBe("newer");
+  expect(f.prompt).toHaveBeenCalledOnce();
+  f.edit("");
+  expect(f.controller.restoreFailedPrompt(owner)).toBe(true);
+  expect(f.draft().text).toBe("original");
 });
 
 it("restages browser-held bytes from a failed delivery in its inactive partition after Host replacement", async () => {

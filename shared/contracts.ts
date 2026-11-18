@@ -113,7 +113,7 @@ export interface ModelSelectionResponse {
   thinkingLevel: string;
 }
 
-export type NewSessionOptions = Omit<Body<"newSession">, "cwd">;
+export type NewSessionOptions = Omit<Body<"newSession">, "cwd" | "receipt">;
 
 /** Pi's resolved startup choice for a new session in one canonical workspace.
  * This is a preflight projection; the creating worker remains authoritative. */

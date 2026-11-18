@@ -685,9 +685,23 @@ export function createInspireServer(deps: AppDependencies): {
     deps.runtime.openSession(body.id),
   );
   jsonRoute(app, routes.deselectSession, () => deps.runtime.deselectSession());
-  jsonRoute(app, routes.newSession, ({ body: { cwd, ...options } }) =>
-    deps.runtime.newSession(cwd, options),
-  );
+  jsonRoute(app, routes.newSession, ({ body: { cwd, receipt, ...options } }) => {
+    if (!receipt) return deps.runtime.newSession(cwd, options);
+    if (receipt.authorityId !== authorityId)
+      throw requestError("The Host restarted before the session opened", 409);
+    return inputOperations.read(
+      "create",
+      receipt.operationId,
+      createHash("sha256").update(JSON.stringify([cwd, options])).digest("hex"),
+      () => deps.runtime.newSession(cwd, options).catch((error) => {
+        if (Number(error?.status) < 500) throw error;
+        throw requestError("Couldn’t start the session.", 500, {
+          code: "SESSION_CREATION_FAILED",
+          cause: error,
+        });
+      }),
+    );
+  });
   registerModelSettingsRoutes(app, deps);
   registerMcpConfigRoutes(app, deps);
   jsonRoute(

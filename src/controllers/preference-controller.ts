@@ -156,37 +156,25 @@ export class PreferenceController {
           this.host.handleAuthFailure();
           return;
         }
+        const relevant = () => [...this.desired.values()].includes(intent);
+        let message =
+          error instanceof Error ? error.message : "Couldn’t save the setting.";
         if (isTransientFailure(error)) {
           try {
             const observation = await api.json("preferences", {});
             if (this.host.api() !== api) return;
-            if (this.matches(intent, observation.preferences))
-              this.clear(intent);
             this.publish(observation);
-            this.host.notify(
-              "warning",
-              "Preference save was not confirmed. Showing the value currently saved by the Host.",
-            );
-            return;
+            message = this.matches(intent, this.host.state().prefs)
+              ? ""
+              : "That change wasn’t saved.";
           } catch {
             if (this.host.api() !== api) return;
-            // Keep the outstanding intent available for read-only recheck.
-            this.host.notify(
-              "warning",
-              "Preference save was not confirmed. Refresh the workbench to check the saved value.",
-            );
-            return;
+            message = "Couldn’t check the change. Showing the last saved setting.";
           }
-        } else {
-          this.clear(intent);
-          this.host.patch(this.desiredState());
         }
-        this.host.notify(
-          "warning",
-          error instanceof Error
-            ? error.message
-            : "Failed to save the preference",
-        );
+        if (message && relevant()) this.host.notify("warning", message);
+        this.clear(intent);
+        this.host.patch(this.desiredState());
       } finally {
         if (this.host.api() !== api && this.authority === authority) {
           this.pendingObservation = true;

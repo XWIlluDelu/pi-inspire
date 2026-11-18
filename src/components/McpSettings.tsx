@@ -106,11 +106,13 @@ function McpConfiguration({
   const removing = selection?.kind === "remove" ? selection : null;
   const [saved, setSaved] = useState<string | null>(null);
   const [confirmReload, setConfirmReload] = useState(false);
+  const [reloading, setReloading] = useState(false);
   const { cwd, sessionId } = owner;
-  const read = useCallback(
-    () => load(() => store.readMcpConfig(sessionId ? { sessionId } : { cwd })),
-    [load, sessionId, cwd],
+  const readConfig = useCallback(
+    () => store.readMcpConfig(sessionId ? { sessionId } : { cwd }),
+    [sessionId, cwd],
   );
+  const read = useCallback(() => load(readConfig), [load, readConfig]);
   useEffect(() => {
     if (active && !snapshot && !readFailed) void read();
   }, [active, read, readFailed, snapshot]);
@@ -122,12 +124,8 @@ function McpConfiguration({
   function save(edit: McpConfigEdit) {
     void write(() => store.editMcpConfig(owner, edit), {
       close: true,
-      onSaved: (result) => {
-        setSaved(
-          result.warning ??
-            "Saved to file. Running sessions have not been reloaded.",
-        );
-      },
+      readBack: readConfig,
+      onSaved: () => setSaved("MCP settings saved."),
       onError: () =>
         configuration.root.current?.querySelector<HTMLElement>(
           '.models-form [role="alert"], .mcp-config > [role="alert"]',
@@ -150,26 +148,19 @@ function McpConfiguration({
       });
   }
   function reload() {
+    if (!sessionId || store.getState().sessionId !== sessionId) return;
     setError(null);
-    const current = store.getState();
-    if (
-      current.sessionId !== owner.sessionId ||
-      current.readOnlyReason ||
-      (current.sessionId &&
-        current.sessionStatuses[current.sessionId]?.external) ||
-      isBusyRunState(selectedRunState(current))
-    ) {
-      setError("Reload requires an available, idle session.");
-      return;
-    }
-    if (!store.runPaletteNativeCommand("/reload")) {
-      setError(
-        "Reload could not be started. Check the selected session and try again.",
-      );
+    if (!store.reloadSessionResources(sessionId, (status, message) => {
+      setReloading(false);
+      if (status === "success") setSaved("Pi reloaded.");
+      else if (status === "cancelled") setSaved(message);
+      else setError(message);
+    })) {
+      setError("Pi reload couldn’t start.");
       return;
     }
     setConfirmReload(false);
-    setSaved("Reload requested. Check its result in the conversation.");
+    setReloading(true);
   }
   return (
     <div
@@ -247,26 +238,19 @@ function McpConfiguration({
             ) : null}
             {saved ? (
               <div className="mcp-save-result" role="status">
-                <p className="models-status">{saved}</p>
+                <p className="models-status">{reloading ? "Reloading Pi…" : saved}</p>
                 {canReload ? (
                   <button
                     type="button"
                     className="models-text-button"
-                    disabled={reloadBlocked || busy}
+                    disabled={reloadBlocked || reloading || busy}
                     onClick={() => setConfirmReload(!confirmReload)}
                   >
                     Reload selected session…
                   </button>
-                ) : (
+                ) : nativeReload ? (
                   <p className="models-status">
-                    {nativeReload
-                      ? "Run /reload in the original Pi terminal."
-                      : "New sessions use the saved configuration."}
-                  </p>
-                )}
-                {canReload && reloadBlocked ? (
-                  <p className="models-status">
-                    Wait for Pi to finish before reloading.
+                    Run /reload in the original Pi terminal.
                   </p>
                 ) : null}
               </div>

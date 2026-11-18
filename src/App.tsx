@@ -1018,23 +1018,11 @@ export function App() {
             className={`banner banner--${state.errorSeverity}`}
             role={state.errorSeverity === "warning" ? "status" : "alert"}
           >
-            <span className="banner__message">
-              {state.error}
-              {state.projectionConflict?.incidentId ? (
-                <span role="group" aria-label="Diagnostic incident">
-                  <code
-                    className="banner__incident"
-                    title="Diagnostic incident ID"
-                  >
-                    {state.projectionConflict.incidentId}
-                  </code>
-                </span>
-              ) : null}
-            </span>
+            <span className="banner__message">{state.error}</span>
             <div className="banner__actions">
               {state.projectionConflict ? (
                 <button type="button" onClick={() => void store.abort()}>
-                  Recover
+                  Reopen saved conversation
                 </button>
               ) : (
                 <>

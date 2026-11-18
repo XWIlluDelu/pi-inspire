@@ -100,7 +100,7 @@ describe("AppErrorBoundary", () => {
       screen.getByRole("heading", { name: "The workbench hit an error" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Reload page" }),
+      screen.getByRole("button", { name: "Refresh page" }),
     ).toBeInTheDocument();
     expect(screen.queryByText("private render detail")).not.toBeInTheDocument();
   });

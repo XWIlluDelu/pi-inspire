@@ -51,13 +51,9 @@ handoff cannot match a cleared or replaced draft. First-message creation transfe
 input to the assigned session. Before submission it checks the destination after attachment upload
 and initial controls. New input typed during that handoff remains available.
 
-An uncertain prompt retains the original operation. Automatic restoration requires the revision
-left by the handoff. After an edit and clear, Restore can recover the prior input explicitly.
-Editing the restored draft keeps its link. Retry delivery observes the original receipt. **New
-input** detaches the link so an intentional duplicate can be sent as a separate prompt, restaging
-browser-held files. Same-version tab reload retains receipt tracking for observation only.
-Unreadable receipt records remain in place until Stop tracking. A failure to publish the next
-receipt leaves the draft editable and blocks its dispatch.
+Same-version tab reload retains observation metadata. Unsupported metadata is discarded
+automatically. A browser storage failure that prevents dispatch leaves the draft editable and
+reports that the message could not be sent.
 Append-only transcript updates preserve textarea focus and selection.
 
 Send remains mounted across idle/busy transitions. Conflict recovery is the sole action when
@@ -301,9 +297,9 @@ Submission, including the first Welcome message, synchronously hands the exact d
 an operation keyed by its original receipt and leaves the editor ready for the next input.
 Sending, unknown acceptance and draft recovery belong to that record. On definitive failure,
 input returns to the unedited draft left by the handoff. Restore offers it alongside later edits.
-An ambiguous response is checked silently against its original receipt, including on reopening a
-tab. If the check still cannot confirm delivery, one quiet notice offers another receipt check
-when the Host can address it. It can be dismissed and the normal Send action keeps working. While text or artifacts occupy the
+An ambiguous response is checked silently against its original receipt, including after reconnecting
+or reopening a tab. The tab retains text and project file references with the original receipt.
+Confirmed rejection returns that input to the draft or Restore. While text or artifacts occupy the
 editor, Restore's compact quiet action uses the shared neutral unavailable state and keeps its 32px
 target. Artifacts are released only on confirmed acceptance, explicit Clear, or withdrawal after
 restoration. Known acceptance remains non-retryable even if later projection reconciliation
@@ -319,9 +315,8 @@ accepts bounded Host-held input at Pi's actual boundary under [[pi-integration]]
 remains abortable but is not active busy ownership.
 
 The adjacent activity surface names Retry/Compaction from session state, including automatic work and
-reconnect. Available attempt/reason details enrich the label; missing details never invent counters.
-Ordinary, compaction and summary retry keep short status separate from wrapping reasons. Executing
-and failed tools remain in their chronological activity entries.
+reconnect. Active retries use short labels with optional details on hover. Executing and failed
+tools remain in their chronological activity entries.
 
 Pending sits at Transcript's end and immediately shows ordered Steer/Queue input. Its header contains
 the total and the actions Copy, Return, Clear, in that order; panel emphasis and action visibility

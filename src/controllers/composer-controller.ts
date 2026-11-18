@@ -1,5 +1,6 @@
 import { sha256 } from "@noble/hashes/sha2";
 import { bytesToHex } from "@noble/hashes/utils";
+import { z } from "zod";
 import {
   type ComposerHistoryEntry,
   MAX_ATTACHMENTS,
@@ -14,6 +15,7 @@ import {
   operationFingerprintSchema,
   promptFingerprintInput,
   promptObservationSchema,
+  promptSchema,
 } from "../../shared/host-operations";
 import {
   isImageMimeType,
@@ -29,7 +31,7 @@ import {
   rememberComposerHistory,
 } from "../composer-history";
 import { inputRejection, ReceiptRead } from "../operation-observer";
-import { type ReceiptStorageIssue, receiptStorage } from "../receipt-storage";
+import { receiptStorage } from "../receipt-storage";
 import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
 import {
   hasDraftInput,
@@ -83,7 +85,7 @@ interface DeliveryRecord {
   projectFiles: string[];
   /** Controls the available recovery action after observation. */
   recovery: "draft" | "previous" | "palette";
-  refused?: boolean;
+  refused?: true;
   confirmation: ReceiptRead<Api, PromptAcceptedResponse | false>;
   handoffRevision?: number;
   historyScope?: ComposerHistoryScope;
@@ -92,12 +94,17 @@ interface DeliveryRecord {
 const DELIVERY_STORAGE = "inspire:composer-operations:v1:";
 const MAX_SAVED_DELIVERIES = 16;
 const savedDeliveries = promptObservationSchema
-  .extend({ fingerprint: operationFingerprintSchema })
+  .extend({
+    fingerprint: operationFingerprintSchema,
+    text: promptSchema.shape.message.optional(),
+    projectFiles: promptSchema.shape.projectFiles,
+    refused: z.literal(true).optional(),
+  })
   .array()
   .max(MAX_SAVED_DELIVERIES);
 
 const deliveryStorage = receiptStorage(
-  MAX_SAVED_DELIVERIES * 256,
+  MAX_SAVED_DELIVERIES * (6 * (MAX_PROMPT_CHARS + MAX_PROJECT_FILES * 4_096) + 256),
   savedDeliveries.parse,
   [],
 );
@@ -158,11 +165,7 @@ export function recalledInputAttachments(
 /** Owns staging and delivery resources. Editors read the draft itself. */
 export class ComposerController {
   private readonly deliveries = new Map<string, DeliveryRecord>();
-  /** Absence means this session's receipt storage has not been read yet. */
-  private readonly storageState = new Map<
-    string,
-    ReceiptStorageIssue | "unread" | null
-  >();
+  private readonly loadedDeliveries = new Set<string>();
   private readonly listeners = new Set<() => void>();
   private deliveryVersion = 0;
   private readonly stagedFiles = new Map<string, StagedFile>();
@@ -178,20 +181,8 @@ export class ComposerController {
 
   getDeliveryVersion = () => this.deliveryVersion;
 
-  deliveryState = (sessionId: string | null) => {
-    const previous = this.deliveriesFor(sessionId, "previous").at(-1)?.receipt;
-    return {
-      failedCount: this.deliveriesFor(sessionId, "draft").length,
-      storageIssue: sessionId ? this.storageIssue(sessionId) : undefined,
-      previous: previous?.operationId,
-      canCheckPrevious: previous?.authorityId === this.host.authorityId(),
-    };
-  };
-
-  private storageIssue(sessionId: string): ReceiptStorageIssue | undefined {
-    const issue = this.storageState.get(sessionId);
-    return issue === "unread" ? "storage" : (issue ?? undefined);
-  }
+  failedDeliveryCount = (sessionId: string | null) =>
+    this.deliveriesFor(sessionId, "draft").length;
 
   private deliveriesFor(
     sessionId: string | null,
@@ -208,53 +199,64 @@ export class ComposerController {
   }
 
   loadDeliveries(sessionId: string): void {
-    const previous = this.storageState.get(sessionId);
-    if (previous !== undefined && previous !== "unread") return;
+    if (this.loadedDeliveries.has(sessionId)) return;
     const saved = deliveryStorage.read(DELIVERY_STORAGE + sessionId);
+    if (saved.issue === "storage") return;
+    this.loadedDeliveries.add(sessionId);
     const operations = saved.value ?? [];
     const ids = new Set(operations.map(({ operationId }) => operationId));
-    const issue =
-      saved.issue ??
-      (ids.size !== operations.length ||
+    if (
+      saved.issue ||
+      ids.size !== operations.length ||
       [...ids].some((id) => this.deliveries.has(id))
-        ? "format"
-        : null);
-    this.storageState.set(sessionId, issue === "storage" ? "unread" : issue);
-    if (!issue)
-      for (const receipt of operations) {
-        const record: DeliveryRecord = {
-          sessionId,
-          receipt,
-          message: "",
-          attachments: [],
-          projectFiles: [],
-          recovery: "previous",
-          confirmation: new ReceiptRead(),
-        };
-        this.deliveries.set(receipt.operationId, record);
-        if (receipt.authorityId === this.host.authorityId()) void this.observe(record);
-      }
-    if (issue || operations.length || previous === "unread") this.publish();
+    ) {
+      this.persist(sessionId);
+      return;
+    }
+    const { revision } = this.host.drafts.get(sessionId);
+    for (const { text, projectFiles = [], refused, ...receipt } of operations) {
+      this.deliveries.set(receipt.operationId, {
+        sessionId,
+        receipt,
+        message: text ?? "",
+        attachments: [],
+        projectFiles,
+        refused,
+        recovery: refused ? "draft" : "previous",
+        handoffRevision: text === undefined ? undefined : revision,
+        confirmation: new ReceiptRead(),
+      });
+    }
+    for (const record of this.deliveriesFor(sessionId, "draft"))
+      this.settleDelivery(record, true);
+    this.resumeDeliveries(sessionId);
   }
 
   private persist(sessionId: string): boolean {
+    if (!this.loadedDeliveries.has(sessionId)) return false;
     try {
-      const issue = this.storageState.get(sessionId);
-      if (issue === "format" || issue === "unread") return false;
-      const records = this.deliveriesFor(sessionId).filter(({ refused }) => !refused);
-      const overflow = Math.max(0, records.length - MAX_SAVED_DELIVERIES);
-      const retired = new Set(this.deliveriesFor(sessionId, "previous").slice(0, overflow));
-      if (retired.size < overflow) return false;
-      const operations = records.filter((record) => !retired.has(record)).map(({ receipt }) => receipt);
-      deliveryStorage.write(DELIVERY_STORAGE + sessionId, operations.length ? operations : null);
-      for (const record of retired) {
-        this.deliveries.delete(record.receipt.operationId);
-        for (const item of record.attachments) this.retireFile(item);
+      const records = this.deliveriesFor(sessionId);
+      let retired: DeliveryRecord | undefined;
+      if (records.length > MAX_SAVED_DELIVERIES) {
+        const index = records.findIndex(
+          (record) => record.recovery === "previous" &&
+            record.handoffRevision === undefined && !record.confirmation.pending,
+        );
+        if (index === -1) return false;
+        [retired] = records.splice(index, 1);
       }
-      this.storageState.set(sessionId, null);
+      const operations = records.map(
+        ({ receipt, message, projectFiles, refused, recovery, handoffRevision }) => ({
+          ...receipt,
+          ...(recovery === "draft" || handoffRevision !== undefined
+            ? { text: message, projectFiles, refused }
+            : {}),
+        }),
+      );
+      deliveryStorage.write(DELIVERY_STORAGE + sessionId, operations.length ? operations : null);
+      if (retired) this.deliveries.delete(retired.receipt.operationId);
       return true;
     } catch {
-      this.storageState.set(sessionId, "storage");
       return false;
     }
   }
@@ -292,7 +294,7 @@ export class ComposerController {
       )
         return item;
       const staged = this.stagedFiles.get(item.localId);
-      if (staged && !staged.submitted) {
+      if (staged) {
         staged.recovery.reset();
         return {
           ...item,
@@ -443,7 +445,7 @@ export class ComposerController {
       this.deliveries.delete(id);
     }
     this.releaseAttachments([...attachments.values()]);
-    this.storageState.set(sessionId, null);
+    this.loadedDeliveries.add(sessionId);
     this.persist(sessionId);
     this.publish();
     discardComposerHistory(sessionId);
@@ -601,8 +603,9 @@ export class ComposerController {
     if (!this.persist(sessionId)) {
       this.deliveries.delete(request.operationId);
       this.publish();
-      const message =
-        "The prompt could not be tracked in this tab. Check previous delivery records before sending.";
+      const message = independent
+        ? "Couldn't send the message from this tab."
+        : "Couldn't send from this tab. Your message is still in the editor.";
       if (independent) this.host.notify("warning", message);
       else this.host.notifyVisible(sessionId, message);
       return false;
@@ -666,19 +669,7 @@ export class ComposerController {
         return { accepted: true };
       } catch (error) {
         if (!ownsTransport()) return false;
-        let failure = error;
-        if (!inputRejection(failure) && request && ownsTransport()) {
-          try {
-            await api.observePrompt(receipt, signal);
-            if (!ownsTransport()) return false;
-            this.finishDelivery(record, "accepted");
-            return { accepted: true };
-          } catch (observationError) {
-            if (!ownsTransport()) return false;
-            failure = observationError;
-          }
-        }
-        const rejection = inputRejection(failure);
+        const rejection = inputRejection(error);
         if (rejection) {
           for (const item of record.attachments) {
             const staged = this.stagedFiles.get(item.localId);
@@ -704,9 +695,9 @@ export class ComposerController {
         this.settleDelivery(record, Boolean(rejection));
         if (rejection?.code === "ATTACHMENTS_EXPIRED") this.resumeUploads();
         if (rejection?.code === "PROMPT_ABORTED") return false;
-        if (failure instanceof ApiError && failure.status === 401) {
+        if (error instanceof ApiError && error.status === 401) {
           this.host.handleAuthFailure();
-        } else if (rejection) {
+        } else if (request && rejection && record.recovery !== "previous") {
           if (record.recovery === "palette") this.host.notify("warning", rejection.message);
           else this.host.notifyVisible(sessionId, rejection.message);
         }
@@ -754,11 +745,7 @@ export class ComposerController {
     record: DeliveryRecord,
     outcome: "accepted" | "returned" | "cleared",
   ): false {
-    const {
-      sessionId,
-      attachments,
-      receipt: { operationId },
-    } = record;
+    const { sessionId, attachments, receipt: { operationId } } = record;
     if (this.isLinked(record)) {
       const draft = this.host.drafts.get(sessionId);
       const ids = new Set(record.attachments.map((item) => item.localId));
@@ -789,10 +776,7 @@ export class ComposerController {
   }
 
   private settleDelivery(record: DeliveryRecord, refused = false): void {
-    const {
-      sessionId,
-      receipt: { operationId },
-    } = record;
+    const { sessionId, receipt: { operationId } } = record;
     record.confirmation.cancel();
     const draft = this.host.drafts.get(sessionId);
     if (!refused) {
@@ -800,7 +784,9 @@ export class ComposerController {
       if (this.isLinked(record)) this.host.drafts.update(sessionId, { intentId: undefined });
     } else if (this.isLinked(record)) {
       this.host.drafts.update(sessionId, { intentId: undefined });
-    } else if (record.recovery === "draft") {
+      this.deliveries.delete(operationId);
+    } else if (record.handoffRevision !== undefined) {
+      record.recovery = "draft";
       record.refused = true;
       if (!draft.intentId && draft.revision === record.handoffRevision && !hasDraftInput(draft))
         this.restore(record);
@@ -808,30 +794,31 @@ export class ComposerController {
       this.finishDelivery(record, "cleared");
       return;
     }
-    if (refused) {
-      if (!record.refused) this.deliveries.delete(operationId);
-      this.persist(sessionId);
+    if (refused) this.persist(sessionId);
+    this.publish();
+  }
+
+  resumeDeliveries(sessionId?: string): void {
+    const authorityId = this.host.authorityId();
+    if (!authorityId || !this.host.api()) return;
+    for (const record of this.deliveries.values()) {
+      if (
+        record.recovery !== "previous" ||
+        record.confirmation.pending ||
+        (sessionId !== undefined && record.sessionId !== sessionId)
+      )
+        continue;
+      if (record.receipt.authorityId === authorityId) {
+        void this.observe(record);
+      } else {
+        for (const item of record.attachments) {
+          const staged = this.stagedFiles.get(item.localId);
+          if (staged) staged.submitted = false;
+        }
+        this.settleDelivery(record, true);
+        this.resumeUploads();
+      }
     }
-    this.publish();
-  }
-
-  async retryPrevious(sessionId: string): Promise<void> {
-    const record = this.deliveriesFor(sessionId, "previous").at(-1);
-    if (record && (await this.observe(record)))
-      this.host.notifyVisible(sessionId, "The original prompt was accepted.");
-  }
-
-  private forget(record: DeliveryRecord): void {
-    this.deliveries.delete(record.receipt.operationId);
-    if (!this.persist(record.sessionId))
-      this.deliveries.set(record.receipt.operationId, record);
-    else for (const item of record.attachments) this.retireFile(item);
-    this.publish();
-  }
-
-  forgetPrevious(sessionId: string): void {
-    const record = this.deliveriesFor(sessionId, "previous").at(-1);
-    if (record) this.forget(record);
   }
 
   restoreFailedPrompt(sessionId: string): boolean {
@@ -840,6 +827,7 @@ export class ComposerController {
     const record = this.deliveriesFor(sessionId, "draft")[0];
     if (!record) return false;
     this.restore(record);
+    this.persist(sessionId);
     this.publish();
     this.resumeUploads();
     return true;
@@ -857,13 +845,6 @@ export class ComposerController {
       intentId: record.refused ? undefined : operationId,
     }).revision;
     if (record.refused) this.deliveries.delete(operationId);
-  }
-
-  forgetUnsupportedDeliveries(sessionId: string): void {
-    if (this.storageState.get(sessionId) !== "format") return;
-    this.storageState.set(sessionId, null);
-    this.persist(sessionId);
-    this.publish();
   }
 
   useHistoryEntry(

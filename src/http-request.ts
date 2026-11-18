@@ -44,7 +44,7 @@ export class ApiTransportError extends Error {
   ) {
     super(
       outcomeUnknown
-        ? "INSΠRE could not confirm the result. This action may still complete. Check before trying again."
+        ? "INSΠRE could not confirm that the action finished."
         : timedOut
           ? "The request timed out. Try again."
           : phase === "request"

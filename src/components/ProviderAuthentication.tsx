@@ -11,6 +11,7 @@ import type {
   ProviderLoginOption,
 } from "../../shared/model-settings";
 import type { ProviderAuthOperation } from "../../shared/provider-auth-bridge";
+import { isTransientFailure } from "../recovery-backoff";
 import { store } from "../store";
 import { ConfigurationConfirmation } from "./ConfigurationForm";
 import { PromptChoices, PromptInput } from "./PromptFields";
@@ -44,7 +45,7 @@ function RemoteLoginHelp({ instruction }: { instruction: string }) {
 type AuthenticationProps = {
   owner: Owner;
   providers: ProviderLoginOption[];
-  onRefresh: () => Promise<void>;
+  onRefresh: () => Promise<ProviderLoginOption[] | void>;
   initialQuery?: string;
   discover?: boolean;
   loadError?: string | null;
@@ -137,7 +138,6 @@ function AuthenticationPanel({
     if (!attemptId || attemptStatus !== "pending") return;
     let observing = true;
     let timer: ReturnType<typeof setTimeout>;
-    let pollError: string | null = null;
     const poll = async () => {
       const revision = mutationRevision.current;
       try {
@@ -151,18 +151,13 @@ function AuthenticationPanel({
         if (
           next.status !== "pending" ||
           mutationRevision.current === revision
-        ) {
-          if (pollError) {
-            const recovered = pollError;
-            setError((error) => (error === recovered ? null : error));
-            pollError = null;
-          }
-          update(next);
-        }
+        ) update(next);
       } catch (error) {
         if (!observing || !ownsPendingAttempt(attemptId)) return;
-        pollError = messageOf(error);
-        setError(pollError);
+        if (!isTransientFailure(error)) {
+          update(null);
+          setError(messageOf(error));
+        }
       }
       if (observing && ownsPendingAttempt(attemptId))
         timer = setTimeout(() => void poll(), 750);
@@ -200,15 +195,20 @@ function AuthenticationPanel({
     setBusy(true);
     setError(null);
     try {
-      const result = await store.providerAuth(owner, request);
       if (request.operation === "logout") {
-        if (owns()) {
-          setRemoving(null);
-          setView({ kind: "saved" });
-          await onRefresh();
-        }
+        const removed = await store.providerAuth(owner, request).then(
+          () => true, () => false,
+        );
+        if (!owns()) return;
+        const current = await onRefresh();
+        if (!owns()) return;
+        if (!removed && (!current || current.some(
+          (provider) => provider.id === request.provider && provider.stored,
+        ))) throw new Error("Couldn’t remove the saved credentials.");
+        setRemoving(null);
+        setView({ kind: "saved" });
       } else {
-        const next = result as ProviderLoginAttempt | null;
+        const next = (await store.providerAuth(owner, request)) as ProviderLoginAttempt | null;
         if (owns()) update(next);
         else if (request.operation === "start" && next?.status === "pending")
           void store

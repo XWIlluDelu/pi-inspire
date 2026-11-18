@@ -301,7 +301,7 @@ async function deliverPrompt(
         error instanceof ApiError
           ? error.operation ||
             (error.status < 500 && error.status !== 408 && error.status !== 429)
-          : !(error instanceof ApiTransportError) || error.phase === "response"
+          : !(error instanceof ApiTransportError)
       )
         throw error;
       const retry = retryDelays[failures++];
@@ -443,7 +443,6 @@ export function createApi() {
       call(routes.providerAuth, { query, body }, undefined, {
         mutation: body.operation !== "providers" && body.operation !== "status",
       }),
-    retryTerminalOperation: (key: string) => terminalOperations.retry(key),
     terminalOperation: terminalOperations.run.bind(terminalOperations),
     prompt: (
       body: PromptDeliveryRequest,

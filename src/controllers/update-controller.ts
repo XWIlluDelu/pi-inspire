@@ -2,6 +2,7 @@ import {
   type HostUpdateStatus,
   type PiUpdateCheckResponse,
   type UpdateCheckResponse,
+  UPDATE_SNOOZE_MS,
 } from "../../shared/contracts";
 import type { Api } from "../api";
 import type { WireEvent } from "../events";
@@ -28,7 +29,6 @@ interface UpdateControllerHost {
   state(): UpdateControllerState;
   patch(patch: Partial<UpdateControllerState>): void;
   api(): UpdateApi | null;
-  notify(kind: "warning", text: string): void;
 }
 
 function checkedStatus(value: unknown): HostUpdateStatus {
@@ -56,29 +56,17 @@ function checkedStatus(value: unknown): HostUpdateStatus {
   return status as HostUpdateStatus;
 }
 
-function projection(status: HostUpdateStatus): Partial<UpdateControllerState> {
-  return {
-    inspireUpdateCheck: status.inspireUpdateCheck,
-    piUpdateCheck: status.piUpdateCheck,
-    inspireUpdateChecking: status.inspireUpdateChecking,
-    piUpdateChecking: status.piUpdateChecking,
-    availableUpdateIdentity: status.availableUpdateIdentity,
-    updateSnoozedUntil: status.updateSnoozedUntil,
-  };
-}
-
 /** Projects Host-owned checks and owns browser request feedback and recovery. */
 export class UpdateController {
   private readonly checks = new Map<UpdateKind, RecoveryBackoff>();
   private statusRevision = -1;
-  private snoozeIntent: { identity: string } | null = null;
+  private dismissal?: { identity: string; until: number };
 
   constructor(private readonly host: UpdateControllerHost) {}
 
   invalidateForTransportReplacement(): void {
     for (const kind of UPDATE_KINDS) this.retireCheck(kind);
     this.statusRevision = -1;
-    this.snoozeIntent = null;
     // Losing this request's transport cannot declare the Host's work finished.
     this.host.patch({
       inspireUpdateRequestPending: false,
@@ -93,7 +81,7 @@ export class UpdateController {
     const checked = checkedStatus(status);
     this.statusRevision = checked.revision;
     return {
-      ...projection(checked),
+      ...this.project(checked),
       inspireUpdateRequestError: null,
       piUpdateRequestError: null,
     };
@@ -123,24 +111,39 @@ export class UpdateController {
 
   snooze(): void {
     const api = this.host.api();
-    const identity = this.host.state().availableUpdateIdentity;
-    if (!api || !identity || this.snoozeIntent) return;
-    const intent = { identity };
-    this.snoozeIntent = intent;
-    const owns = () => this.snoozeIntent === intent && api === this.host.api();
+    const { availableUpdateIdentity: identity, updateSnoozedUntil } = this.host.state();
+    if (!identity || updateSnoozedUntil !== null) return;
+    const dismissal = { identity, until: Date.now() + UPDATE_SNOOZE_MS };
+    this.dismissal = dismissal;
+    this.host.patch({ updateSnoozedUntil: dismissal.until });
+    setTimeout(() => {
+      if (this.dismissal !== dismissal) return;
+      this.dismissal = undefined;
+      if (this.host.state().availableUpdateIdentity === identity)
+        this.host.patch({ updateSnoozedUntil: null });
+    }, UPDATE_SNOOZE_MS);
     void api
-      .json("snoozeUpdate", { body: { identity } })
+      ?.json("snoozeUpdate", { body: { identity } })
       .then((status) => {
-        if (!owns()) return;
-        this.applyStatus(checkedStatus(status));
+        if (api === this.host.api()) this.applyStatus(checkedStatus(status));
       })
-      .catch(() => {
-        if (owns())
-          this.host.notify("warning", "Unable to close the update notice.");
-      })
-      .finally(() => {
-        if (this.snoozeIntent === intent) this.snoozeIntent = null;
-      });
+      .catch(() => {});
+  }
+
+  private project(status: HostUpdateStatus): Partial<UpdateControllerState> {
+    const local = this.dismissal?.identity === status.availableUpdateIdentity
+      ? this.dismissal
+      : undefined;
+    if (local && status.updateSnoozedUntil !== null) this.dismissal = undefined;
+    return {
+      inspireUpdateCheck: status.inspireUpdateCheck,
+      piUpdateCheck: status.piUpdateCheck,
+      inspireUpdateChecking: status.inspireUpdateChecking,
+      piUpdateChecking: status.piUpdateChecking,
+      availableUpdateIdentity: status.availableUpdateIdentity,
+      updateSnoozedUntil: status.updateSnoozedUntil ??
+        (local && local.until > Date.now() ? local.until : null),
+    };
   }
 
   private retireCheck(kind: UpdateKind): void {
@@ -193,7 +196,7 @@ export class UpdateController {
   private applyStatus(status: HostUpdateStatus): void {
     if (status.revision < this.statusRevision) return;
     this.statusRevision = status.revision;
-    const patch = projection(status);
+    const patch = this.project(status);
     for (const kind of UPDATE_KINDS) {
       if (!status[`${kind}UpdateChecking`]) continue;
       this.retireCheck(kind);

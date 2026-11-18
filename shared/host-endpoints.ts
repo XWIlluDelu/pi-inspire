@@ -31,6 +31,7 @@ import {
 } from "./contracts.js";
 import type { HerdrEnhancementStatus } from "./herdr.js";
 import { historyQuerySchema } from "./history-query.js";
+import { hostOperationIdentitySchema } from "./host-operations.js";
 import {
   HOST_RESTART_PATH,
   type HostRestartStatus,
@@ -118,6 +119,7 @@ const sessionDeletionSchema = z.discriminatedUnion("scope", [
 const newSchema = z
   .object({
     cwd: z.string().min(1).max(4_096),
+    receipt: hostOperationIdentitySchema.optional(),
     createDirectory: z.boolean().optional(),
     name: z.string().max(160).optional(),
     model: z

@@ -198,8 +198,8 @@ Model and MCP editors use the same native-file transaction and revision of the r
 exact source text. Writes detect conflicting external edits, accept native file syntax and follow
 existing configuration symlinks under the same lock authority as native edits. Regular files take
 one native target lock; final symlinks keep lexical and target authorities. Publication rechecks the
-target and revision. After publication, a readback failure produces a warning and a recovery action
-without changing the save result. Reload the files before the next edit.
+target and revision. After publication, the editor retries a failed readback before reporting that
+the save succeeded and the settings could not be refreshed.
 
 A configuration save invalidates cached workspace metadata. For an addressed session, it refreshes
 that worker only; other workspaces rediscover on demand. Without a session, it refreshes the edited

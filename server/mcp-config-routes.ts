@@ -42,7 +42,7 @@ export function registerMcpConfigRoutes(
     await service.save(cwd, body);
     return savedConfiguration(
       () => service.read(cwd),
-      "Saved to Pi. Refresh files before the next edit.",
+      "Saved. MCP settings could not be refreshed.",
     );
   });
 }

@@ -84,7 +84,6 @@ function harness() {
     availableUpdateIdentity: null,
     updateSnoozedUntil: null,
   };
-  const notify = vi.fn();
   const api = {
     update: vi.fn(async (_force?: boolean) =>
       updateStatus(2, { inspireUpdateCheck: available() }),
@@ -112,12 +111,10 @@ function harness() {
       state = { ...state, ...patch };
     },
     api: () => current,
-    notify,
   });
   return {
     controller,
     api,
-    notify,
     state: () => state,
     bootstrap: (status: HostUpdateStatus) => {
       state = { ...state, ...controller.bootstrap(status) };
@@ -289,7 +286,7 @@ describe("update status controller", () => {
     });
   });
 
-  it("snoozes the Host-issued update set and lets the user retry a failed write explicitly", async () => {
+  it("dismisses an update immediately and keeps it dismissed if the write fails", async () => {
     vi.useFakeTimers();
     const test = harness();
     const status = updateStatus(4, {
@@ -297,48 +294,14 @@ describe("update status controller", () => {
       availableUpdateIdentity: "host-issued-set",
     });
     test.bootstrap(status);
-    test.api.snoozeUpdate
-      .mockResolvedValueOnce({} as HostUpdateStatus)
-      .mockResolvedValueOnce({
-        ...status,
-        revision: 5,
-        updateSnoozedUntil: 2_000_000,
-      });
-
+    test.api.snoozeUpdate.mockRejectedValueOnce(new Error("Offline"));
     test.controller.snooze();
-    test.controller.snooze();
-    await vi.runAllTimersAsync();
-    expect(test.notify).toHaveBeenCalledExactlyOnceWith(
-      "warning",
-      "Unable to close the update notice.",
-    );
-    expect(test.api.snoozeUpdate).toHaveBeenCalledExactlyOnceWith(
-      "host-issued-set",
-    );
-    expect(test.state().updateSnoozedUntil).toBeNull();
-
-    test.controller.snooze();
-    await vi.runAllTimersAsync();
-    expect(test.api.snoozeUpdate.mock.calls).toEqual([
-      ["host-issued-set"],
-      ["host-issued-set"],
-    ]);
-    expect(test.state().updateSnoozedUntil).toBe(2_000_000);
-  });
-
-  it("ignores an invalid snooze reply after its transport is replaced", async () => {
-    vi.useFakeTimers();
-    const test = harness();
-    const pending = deferred<HostUpdateStatus>();
-    test.bootstrap(
-      updateStatus(4, { availableUpdateIdentity: "host-issued-set" }),
-    );
-    test.api.snoozeUpdate.mockReturnValueOnce(pending.promise);
-    test.controller.snooze();
+    expect(test.state().updateSnoozedUntil).not.toBeNull();
+    await vi.advanceTimersByTimeAsync(0);
     test.replaceTransport();
-    pending.resolve({} as HostUpdateStatus);
-    await vi.runAllTimersAsync();
-    expect(test.notify).not.toHaveBeenCalled();
+    test.bootstrap(status);
+    expect(test.state().updateSnoozedUntil).not.toBeNull();
+    test.controller.applySnapshot({ ...status, revision: 5, availableUpdateIdentity: "new-set" });
     expect(test.state().updateSnoozedUntil).toBeNull();
   });
 });

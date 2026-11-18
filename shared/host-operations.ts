@@ -4,6 +4,7 @@ import {
   COMPOSER_HISTORY_IMAGE_REFERENCE,
 } from "./composer-artifact-references.js";
 import type {
+  ActiveSnapshot,
   PendingRecovery,
   UploadedAttachment,
 } from "./contracts.js";
@@ -119,6 +120,7 @@ export interface HostOperationError {
 }
 
 export type HostOperationResults = {
+  create: ActiveSnapshot;
   prompt: null;
   recover: PendingRecovery;
   abort: PendingRecovery;

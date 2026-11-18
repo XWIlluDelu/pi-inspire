@@ -180,9 +180,7 @@ describe("runtime-owned activity", () => {
     snapshot.summarizationRetry = retry;
     act(() => socket().emitSnapshot(snapshot));
     renderActivity();
-    expect(progress()).toHaveTextContent(
-      "Compaction retry 2/3 — waiting — Provider overloaded",
-    );
+    expect(progress()).toHaveTextContent("Retrying compaction");
 
     const update = (summarizationRetry: typeof retry | null) =>
       act(() =>
@@ -197,7 +195,7 @@ describe("runtime-owned activity", () => {
     update(null);
     expect(progress()).toHaveTextContent("Compacting context");
     update({ attempt: 3, maxAttempts: 3, message: "Still overloaded" });
-    expect(progress()).toHaveTextContent("Compaction retry 3/3");
+    expect(progress()).toHaveTextContent("Retrying compaction");
     expect(retryStatus()).not.toBeInTheDocument();
     update(null);
     expect(progress()).toHaveTextContent("Compacting context");
