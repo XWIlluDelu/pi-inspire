@@ -4,10 +4,7 @@ import { parseUnifiedDiff } from "../../src/diff";
 import type { ChatMessage, ToolCallContent } from "../../src/events";
 import { compileToolPresentationRules } from "../../src/tool-presentations/declarative";
 import { toolPresentationSummaryText } from "../../src/tool-presentations/model";
-import {
-  createThinkingPresentationRegistry,
-  createToolPresentationRegistry,
-} from "../../src/tool-presentations/registry";
+import { createToolPresentationRegistry } from "../../src/tool-presentations/registry";
 
 const toolPresentationRegistry = createToolPresentationRegistry();
 
@@ -229,7 +226,7 @@ describe("declarative tool presentation rules", () => {
       version: 1,
       rules: {
         "user.custom.rule": {
-          summary: [{ value: { path: "result.text" } }],
+          summary: [{ value: { literal: "Preview" } }],
           blocks: [{ type: "html", source: { path: "result.text" } }],
         },
       },
@@ -238,58 +235,6 @@ describe("declarative tool presentation rules", () => {
     expect(toolPresentationConfigurationSchema.safeParse(unsafe).success).toBe(
       false,
     );
-  });
-});
-
-describe("declarative Thinking presentation", () => {
-  it("projects display-cleaned text through the shared summary and block protocol", () => {
-    const configuration = toolPresentationConfigurationSchema.parse({
-      version: 1,
-      rules: {},
-      mappings: {},
-      thinking: {
-        summary: [
-          { value: { literal: "Reasoning" } },
-          {
-            value: { path: "thinking.text", format: "first-line" },
-            subdued: true,
-          },
-        ],
-        blocks: [
-          {
-            type: "properties",
-            items: [
-              {
-                label: "Characters",
-                value: { path: "thinking.text", format: "count" },
-              },
-            ],
-          },
-          {
-            type: "markdown",
-            label: "Trace",
-            source: { path: "thinking.text" },
-          },
-        ],
-      },
-    });
-    const registry = createThinkingPresentationRegistry(configuration.thinking);
-    const presentation = registry.resolve("# Plan\n\n- inspect\n- decide");
-
-    expect(
-      presentation && toolPresentationSummaryText(presentation.summary),
-    ).toBe("Reasoning # Plan");
-    expect(presentation?.blocks()).toEqual([
-      {
-        type: "properties",
-        items: [{ label: "Characters", value: "26" }],
-      },
-      {
-        type: "markdown",
-        label: "Trace",
-        text: "# Plan\n\n- inspect\n- decide",
-      },
-    ]);
   });
 });
 
@@ -452,7 +397,16 @@ describe("shipped Pi tool rules", () => {
     expect(blocks()).toEqual([requested]);
     expect(
       blocks(result("done", { diff: "-1 ignored\n+1 ignored", patch })),
-    ).toEqual([{ type: "diff", label: "Applied changes", path, text: patch }]);
+    ).toMatchObject([
+      {
+        type: "diff",
+        label: "Applied changes",
+        path,
+        lines: expect.arrayContaining([
+          expect.objectContaining({ kind: "add", text: "+applied after" }),
+        ]),
+      },
+    ]);
     expect(blocks(result("rejected", { patch }, true))).toEqual([
       requested,
       expect.objectContaining({ label: "Error", text: "rejected" }),
@@ -551,5 +505,8 @@ describe("unified tool patches", () => {
   it("does not color prose or headerless changes as a patch", () => {
     expect(parseUnifiedDiff("- bullet one\n+ emphasis")).toBeNull();
     expect(parseUnifiedDiff("@@ -1 +1 @@\n----\n++++")).toBeNull();
+    expect(
+      parseUnifiedDiff("--- old-a\n--- old-b\n@@ -1 +1 @@\n-old\n++++"),
+    ).toBeNull();
   });
 });

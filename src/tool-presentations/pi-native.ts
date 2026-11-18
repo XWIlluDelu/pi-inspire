@@ -370,18 +370,14 @@ function editRule(): ToolPresentationRule {
         () => {
           if (input.result && !input.result.isError) {
             const details = detailsOf(input);
-            const patch =
-              typeof details?.patch === "string" ? details.patch : null;
-            // The selected semantic rule owns this name. If its authoritative
-            // native result shape is absent, return null directly to raw rather
-            // than guessing from the requested old/new text.
-            if (!patch || !parseUnifiedDiff(patch)) return null;
+            const lines = typeof details?.patch === "string" ? parseUnifiedDiff(details.patch) : null;
+            if (!lines) return null;
             return [
               {
                 type: "diff",
                 label: "Applied changes",
                 path,
-                text: patch,
+                lines,
               },
             ];
           }

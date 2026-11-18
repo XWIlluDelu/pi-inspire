@@ -1,9 +1,6 @@
 import { MAX_STREAM_TEXT_CHARS } from "../shared/assistant-stream.js";
-import { jsonRecord } from "../shared/json-record.js";
-import {
-  type ToolArgumentUpdate,
-  toolArgumentAt,
-} from "../shared/tool-argument-updates.js";
+import { jsonRecord, jsonValueAt } from "../shared/json-record.js";
+import type { ToolArgumentUpdate } from "../shared/tool-argument-updates.js";
 
 /** Host-only provenance: message was produced by applyAssistantMessageDelta
  * from this previous overlay, then decorated with its next stream revision. */
@@ -52,8 +49,8 @@ export function assistantDeltaProjectionBytes(
       // Container/key changes retain ordinary full validation; the growing
       // body string is the hot path and never needs cumulative serialization.
       if (!("append" in update)) return null;
-      const prefix = toolArgumentAt(before.arguments, update.path);
-      const text = toolArgumentAt(after.arguments, update.path);
+      const prefix = jsonValueAt(before.arguments, update.path);
+      const text = jsonValueAt(after.arguments, update.path);
       if (
         typeof prefix !== "string" ||
         typeof text !== "string" ||

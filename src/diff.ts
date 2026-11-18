@@ -18,19 +18,19 @@ export function parseUnifiedDiff(text: string): DiffLine[] | null {
   if (!text.includes("@@") || !text.includes("---") || !text.includes("+++"))
     return null;
   const lines = classifyUnifiedDiffLines(text.split("\n"));
-  let hunks = 0;
-  let changes = 0;
-  let fileMarkers = 0;
-  for (const line of lines) {
-    if (line.kind === "hunk") hunks += 1;
-    else if (line.kind === "add" || line.kind === "delete") changes += 1;
-    // File markers are metadata only outside their hunk body.
-    else if (
+  let hasFileHeader = false;
+  for (let index = 1; index < lines.length; index++) {
+    const previous = lines[index - 1]!;
+    const line = lines[index]!;
+    if (
       line.kind === "meta" &&
-      (line.text.startsWith("+++") || line.text.startsWith("---"))
+      line.text.startsWith("+++ ") &&
+      previous.kind === "meta" &&
+      previous.text.startsWith("--- ")
     )
-      fileMarkers += 1;
+      hasFileHeader = true;
+    else if (hasFileHeader && (line.kind === "add" || line.kind === "delete"))
+      return lines;
   }
-  if (hunks === 0 || changes === 0 || fileMarkers < 2) return null;
-  return lines;
+  return null;
 }

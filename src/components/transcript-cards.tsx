@@ -270,8 +270,7 @@ const pendingToolText: Record<ToolStatus, string> = {
 };
 
 type ContentBlock =
-  | Exclude<ToolPresentationBlock, { type: "diff" }>
-  | (Extract<ToolPresentationBlock, { type: "diff" }> & { lines: DiffLine[] })
+  | ToolPresentationBlock
   | { type: "result"; text: string; error?: boolean }
   | { type: "live"; label: string; text: string; truncated: boolean }
   | { type: "inspection"; data: object }
@@ -486,7 +485,7 @@ function rawResultBlocks(result: ChatMessage): ContentBlock[] {
   const output = toolResultText(result);
   const diff = !result.isError ? parseUnifiedDiff(output) : null;
   const blocks: ContentBlock[] = [];
-  if (diff) blocks.push({ type: "diff", text: output, lines: diff });
+  if (diff) blocks.push({ type: "diff", lines: diff });
   else if (output)
     blocks.push({
       type: "result",
@@ -830,11 +829,7 @@ function renderToolBlock(block: ContentBlock) {
     case "terminal":
       return (
         <ToolActivityText
-          text={
-            block.type === "terminal"
-              ? stripTerminalSequences(block.text)
-              : block.text
-          }
+          text={block.text}
           label={
             block.type === "result"
               ? "Result text"
@@ -858,18 +853,7 @@ function presentationBlocks(
   presentation: ToolPresentation,
 ): ContentBlock[] | null {
   try {
-    const source = presentation.blocks();
-    if (!source) return null;
-    const result: ContentBlock[] = [];
-    for (const block of source) {
-      if (block.type !== "diff") result.push(block);
-      else {
-        const lines = parseUnifiedDiff(block.text);
-        if (!lines) return null;
-        result.push({ ...block, lines });
-      }
-    }
-    return result;
+    return presentation.blocks();
   } catch {
     return null;
   }
@@ -975,9 +959,9 @@ function ToolDetails({
     : codemode && !call && result
       ? codeModeResultBlocks(result)
       : null;
-  const blocks = formatted ?? (result ? rawResultBlocks(result) : []);
+  let blocks: ContentBlock[] = formatted ?? (result ? rawResultBlocks(result) : []);
   if (preview)
-    blocks.push({ type: "live", label: "Output (live preview)", ...preview });
+    blocks = [...blocks, { type: "live", label: "Output (live preview)", ...preview }];
   const hasCalls = calls && (calls.calls.length > 0 || !calls.complete);
   const inspect = useContext(CardInspectionContext);
   const inlineArgs = !result && !codemode && !calls;

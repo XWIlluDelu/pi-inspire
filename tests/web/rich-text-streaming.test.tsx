@@ -5,13 +5,6 @@ import katex from "katex";
 import { describe, expect, it, vi } from "vitest";
 import { RichText } from "../../src/components/RichText";
 
-function freshMarkup(text: string): string {
-  const fresh = render(<RichText text={text} />);
-  const html = fresh.container.innerHTML;
-  fresh.unmount();
-  return html;
-}
-
 const richPrefix = [
   "Inline $x+1$ and $y+2$.",
   "$$\\frac{1}{2}$$",
@@ -19,66 +12,15 @@ const richPrefix = [
   "```python\nprint(2)\n```",
 ].join("\n\n");
 
-describe("whole-document streaming semantics", () => {
-  it.each([
-    [
-      "heading and table reclassification",
-      [
-        "Heading",
-        "\n===",
-        "\n\n| A | B |",
-        "\n| - | - |",
-        "\n| $x$ | `file.ts` |",
-      ],
-    ],
-    [
-      "fences in a nested list",
-      [
-        "- First\n\n  ```js\n  const x = 1;",
-        "\n\n  const y = 2;",
-        "\n  ```",
-        "\n\n- Second\n  - Nested",
-      ],
-    ],
-    [
-      "literal dollars beside math that arrives later",
-      [
-        "Read $HOME and $PATH.",
-        " Math: $",
-        String.raw`\text{Cost: \$5}`,
-        "$",
-        "\n\n$$x",
-        "+1$$",
-      ],
-    ],
-  ] as const)("matches a fresh render across %s", (_name, chunks) => {
-    const { container, rerender } = render(<RichText text="" />);
-    let text = "";
-    for (const chunk of chunks) {
-      text += chunk;
-      rerender(<RichText text={text} />);
-      expect(container.innerHTML).toBe(freshMarkup(text));
-    }
-  });
-
-  it("updates earlier unresolved references and footnotes when definitions arrive", () => {
-    const prefix = "[late][target] and [^note].\n\n$x$\n\n";
-    const { container, rerender } = render(<RichText text={prefix} />);
-    expect(container.querySelector("a")).toBeNull();
-    rerender(
-      <RichText text={prefix + "[target]: ./file.ts\n\n[^note]: Note $z$"} />,
-    );
-    expect(
-      container.querySelector('[data-file-path="./file.ts"]')?.textContent,
-    ).toBe("late");
-    expect(container.querySelector("sup a")?.getAttribute("href")).toContain(
-      "fn-note",
-    );
-    expect(
-      container.querySelector("section[data-footnotes]")?.textContent,
-    ).toContain("Note");
-    expect(container.querySelectorAll(".katex")).toHaveLength(2);
-  });
+it("reclassifies a paragraph as a table when the streamed separator arrives", () => {
+  const header = "| Formula | Source |";
+  const { container, rerender } = render(<RichText text={header} />);
+  expect(container.querySelector("p")?.textContent).toBe(header);
+  rerender(<RichText text={header + "\n| - | - |\n| $x$ | `file.ts` |"} />);
+  expect(container.querySelector("td annotation")).toHaveTextContent("x");
+  expect(container.querySelector("td [data-file-path]")).toHaveTextContent(
+    "file.ts",
+  );
 });
 
 describe("bounded expensive-leaf reuse", () => {

@@ -1,12 +1,12 @@
 import { useSyncExternalStore } from "react";
-import type { PiCommand } from "../shared/commands";
+import { nativeCommand, type PiCommand } from "../shared/commands";
+import { jsonValueAt } from "../shared/json-record";
 import {
   emptyToolPresentationConfiguration,
   type PresentationAdapterInfo,
   type StatusControlDeclaration,
   type ToolPresentationConfiguration,
 } from "../shared/tool-presentation-config";
-import { resolveCommandInventory } from "./composer-completion";
 import { createCustomMessagePresentationRegistry } from "./custom-message-presentations";
 import type { ChatMessage } from "./events";
 import { compileToolPresentationRules } from "./tool-presentations/declarative";
@@ -69,45 +69,42 @@ export function configurePresentationAdapters(
   for (const listener of listeners) listener();
 }
 
-/** Every entry point admits the same declared controls from its own command inventory. */
+export function hasStatusControlCommand(
+  control: StatusControlDeclaration,
+  commands: readonly PiCommand[],
+): boolean {
+  const name = control.command.slice(1);
+  return (
+    !nativeCommand(name) &&
+    commands.find((command) => command.name === name)?.source === "extension"
+  );
+}
+
 export function availableStatusControls(
   configuration: ToolPresentationConfiguration,
   commands: readonly PiCommand[],
 ): StatusControlDeclaration[] {
-  const inventory = resolveCommandInventory(commands);
   return (
     configuration.controls?.filter((control) =>
-      inventory.some(
-        (command) =>
-          command.source === "extension" &&
-          "/" + command.name === control.command,
-      ),
+      hasStatusControlCommand(control, commands),
     ) ?? []
   );
 }
 
-function field(value: unknown, path: string): unknown {
-  for (const key of path.split(".")) {
-    if (!value || typeof value !== "object" || !Object.hasOwn(value, key))
-      return undefined;
-    value = (value as Record<string, unknown>)[key];
-  }
-  return value;
-}
 export function controlState(control: StatusControlDeclaration, text?: string) {
   try {
     const data: unknown = JSON.parse(text ?? "");
-    const value = field(data, control.state.value);
+    const value = jsonValueAt(data, control.state.value);
     if (
       typeof value !== "string" ||
       !control.options.some((option) => option.value === value)
     )
       return null;
     const supported = control.state.supported
-      ? field(data, control.state.supported)
+      ? jsonValueAt(data, control.state.supported)
       : undefined;
     const active = control.state.active
-      ? field(data, control.state.active)
+      ? jsonValueAt(data, control.state.active)
       : undefined;
     if (control.state.active && typeof active !== "boolean") return null;
     if (

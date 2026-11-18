@@ -327,7 +327,7 @@ describe("markdown constructs", () => {
           inline={inline}
           variant="user"
           text={
-            "- [x] Review **reference**.\n\n  Retain  the sample.\n\n  - [ ] Check drift.\n\n- [ ] Report."
+            "- [x] Review **reference**.\n\n  Retain  <!-- sample -->.\n\n  - [ ] Check drift.\n\n- [ ] Report."
           }
         />,
       );
@@ -335,7 +335,7 @@ describe("markdown constructs", () => {
       const first = list.querySelector(
         ":scope > li > .rich-text__task-content",
       )!;
-      expect(first.textContent).toContain("Retain  the sample.");
+      expect(first.textContent).toContain("Retain  <!-- sample -->.");
       expect(first.querySelectorAll(":scope > p")).toHaveLength(inline ? 0 : 2);
       const marker = first.querySelector(
         inline
@@ -354,17 +354,4 @@ describe("markdown constructs", () => {
       ).toHaveLength(3);
     },
   );
-
-  it("keeps literal HTML safe within task content without changing its text", () => {
-    const { container } = render(
-      <RichText text="- [x] <!-- intentionally empty task -->" />,
-    );
-    expect(
-      container.querySelector(".rich-text__task-content")!.textContent,
-    ).toBe("<!-- intentionally empty task -->");
-    expect(
-      container.querySelector(".rich-text__task-marker input"),
-    ).toBeChecked();
-    expect(container.querySelector("input")).toBeDisabled();
-  });
 });

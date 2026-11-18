@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { cleanup, render, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 import {
   MAX_ATTACHMENT_FILE_BYTES,
   MAX_ATTACHMENT_UPLOAD_BYTES,
@@ -13,63 +13,38 @@ import { AttachmentList } from "../../src/components/AttachmentList";
 import type { PendingAttachment } from "../../src/controllers/composer-controller";
 import { store } from "../../src/store";
 
-afterEach(() => {
-  cleanup();
-  vi.restoreAllMocks();
-  vi.unstubAllGlobals();
-});
+it("reads a recalled image using its original view when the projection incarnation is absent", async () => {
+  const load = vi
+    .spyOn(store, "loadTranscriptImage")
+    .mockResolvedValue(new Blob(["png"]));
+  const item: PendingAttachment = {
+    localId: "recalled-image",
+    fileName: "image.png",
+    mimeType: "image/png",
+    size: 3,
+    kind: "image",
+    status: "ready",
+    recalledArtifact: {
+      type: "image",
+      scopeKey: "history-scope",
+      viewId: "history-view",
+      incarnation: null,
+      effectiveLeafId: null,
+      reference: "pi-history-image://entry-4/0",
+    },
+  };
 
-describe("attachment presentation", () => {
-  it("normalizes a recalled image without a projection incarnation", async () => {
-    const originalLoad = store.loadTranscriptImage;
-    const load = vi.fn(async () => new Blob(["png"], { type: "image/png" }));
-    store.loadTranscriptImage = load;
-    Object.defineProperty(URL, "createObjectURL", {
-      configurable: true,
-      value: vi.fn(() => "blob:recalled-image"),
-    });
-    Object.defineProperty(URL, "revokeObjectURL", {
-      configurable: true,
-      value: vi.fn(),
-    });
-    const item: PendingAttachment = {
-      localId: "recalled-image",
-      fileName: "image.png",
-      mimeType: "image/png",
-      size: 3,
-      kind: "image",
-      status: "ready",
-      recalledArtifact: {
-        type: "image",
-        scopeKey: "history-scope",
-        viewId: "history-view",
-        incarnation: null,
-        effectiveLeafId: null,
-        reference: "pi-history-image://entry-4/0",
-      },
-    };
-
-    try {
-      render(
-        <AttachmentList
-          sessionId="session-a"
-          items={[item]}
-          onRemove={() => undefined}
-        />,
-      );
-      await waitFor(() =>
-        expect(load).toHaveBeenCalledWith(
-          "session-a",
-          "history-view",
-          "history-view\u0000",
-          "pi-history-image://entry-4/0",
-          expect.any(AbortSignal),
-        ),
-      );
-    } finally {
-      store.loadTranscriptImage = originalLoad;
-    }
-  });
+  render(
+    <AttachmentList sessionId="session-a" items={[item]} onRemove={() => {}} />,
+  );
+  expect(await screen.findByRole("img")).toHaveAttribute("src", "blob:test");
+  expect(load).toHaveBeenCalledWith(
+    "session-a",
+    "history-view",
+    "history-view\u0000",
+    "pi-history-image://entry-4/0",
+    expect.any(AbortSignal),
+  );
 });
 
 function file(
@@ -77,7 +52,9 @@ function file(
   size: number,
   type = "application/octet-stream",
 ): File {
-  return new File([new Uint8Array(size)], name, { type });
+  return Object.defineProperty(new File([], name, { type }), "size", {
+    value: size,
+  });
 }
 
 describe("attachment selection budgets", () => {
