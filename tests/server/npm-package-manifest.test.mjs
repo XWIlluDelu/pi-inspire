@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  npmPackageRecord,
-  parseNpmJsonOutput,
-} from "../../scripts/npm-package-manifest.mjs";
+import { npmPackageRecord } from "../../scripts/npm-package-manifest.mjs";
 
 const record = {
   id: "inspire-pi-gui@0.1.0",
@@ -14,13 +11,14 @@ describe("npm package manifest compatibility", () => {
     ["array", [record]],
     ["direct object", record],
     ["package-name keyed object", { "inspire-pi-gui": record }],
-  ])("extracts npm's %s record after lifecycle output", (_name, manifest) => {
-    const output = `building release assets\n${JSON.stringify(manifest)}\n`;
-    expect(npmPackageRecord(parseNpmJsonOutput(output))).toEqual(record);
+  ])("extracts npm's %s record", (_name, manifest) => {
+    expect(npmPackageRecord(JSON.stringify(manifest), "npm pack")).toEqual(
+      record,
+    );
   });
 
   it("rejects JSON that does not contain a package record", () => {
-    expect(() => npmPackageRecord({ package: {} })).toThrow(
+    expect(() => npmPackageRecord('{"package":{}}', "npm pack")).toThrow(
       "did not report a package record",
     );
   });

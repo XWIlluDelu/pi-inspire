@@ -10,35 +10,21 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { createServer } from "node:net";
+import { once } from "node:events";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { npmInvocation } from "../server/npm-command.mjs";
 import {
   isolatedProcessOptions,
   signalProcessTree,
 } from "../server/process-tree.mjs";
-import {
-  npmPackageRecord,
-  parseNpmJsonOutput,
-} from "./npm-package-manifest.mjs";
+import { freeLoopbackPort } from "../tests/fixtures/packaged-launcher.mjs";
+import { execNpm, npmPackageRecord } from "./npm-package-manifest.mjs";
 
 const execFile = promisify(execFileCallback);
 const root = resolve(import.meta.dirname, "..");
-
-async function execNpm(args, options = {}) {
-  const invocation = npmInvocation(args, {
-    environment: options.env ?? process.env,
-    cwd: options.cwd ?? root,
-  });
-  return execFile(invocation.command, invocation.args, {
-    ...options,
-    env: invocation.environment,
-  });
-}
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
@@ -110,24 +96,6 @@ async function verifyInstalledFonts(installedRoot, expectedFonts) {
     );
 }
 
-async function freePort() {
-  return new Promise((resolvePort, reject) => {
-    const server = createServer();
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (!address || typeof address === "string") {
-        server.close();
-        reject(new Error("Unable to allocate a release-smoke port"));
-        return;
-      }
-      server.close((error) =>
-        error ? reject(error) : resolvePort(address.port),
-      );
-    });
-  });
-}
-
 async function waitFor(description, read, timeoutMs = 20_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -140,27 +108,7 @@ async function waitFor(description, read, timeoutMs = 20_000) {
 
 async function waitForExit(child, timeoutMs = 10_000) {
   if (child.exitCode !== null || child.signalCode !== null) return;
-  await new Promise((resolveExit, reject) => {
-    const cleanup = () => {
-      clearTimeout(timer);
-      child.off("exit", exited);
-      child.off("error", failed);
-    };
-    const exited = () => {
-      cleanup();
-      resolveExit();
-    };
-    const failed = (error) => {
-      cleanup();
-      reject(error);
-    };
-    const timer = setTimeout(() => {
-      cleanup();
-      reject(new Error("Packaged host did not stop"));
-    }, timeoutMs);
-    child.once("exit", exited);
-    child.once("error", failed);
-  });
+  await once(child, "exit", { signal: AbortSignal.timeout(timeoutMs) });
 }
 
 function startProcess(bin, args, options) {
@@ -238,14 +186,16 @@ try {
     );
   }
   const packed = await execNpm(
-    ["pack", "--silent", "--json", "--pack-destination", packDirectory],
-    {
-      cwd: root,
-      maxBuffer: 10 * 1024 * 1024,
-    },
+    [
+      "pack",
+      "--json",
+      "--foreground-scripts=false",
+      "--pack-destination",
+      packDirectory,
+    ],
+    { cwd: root },
   );
-  const manifest = parseNpmJsonOutput(packed.stdout, "npm pack");
-  const record = npmPackageRecord(manifest, "npm pack");
+  const record = npmPackageRecord(packed.stdout, "npm pack");
   if (typeof record.filename !== "string" || record.filename.length === 0) {
     throw new Error("npm pack did not report a tarball");
   }
@@ -293,10 +243,7 @@ try {
   const tarball = join(packDirectory, record.filename);
   const publishDryRun = await execNpm(
     ["publish", tarball, "--dry-run", "--json"],
-    {
-      cwd: root,
-      maxBuffer: 10 * 1024 * 1024,
-    },
+    { cwd: root },
   );
   if (
     /auto-corrected|errors corrected|invalid and removed/iu.test(
@@ -307,12 +254,8 @@ try {
       `npm publish would rewrite release metadata:\n${publishDryRun.stderr}`,
     );
   }
-  const publishManifest = parseNpmJsonOutput(
-    publishDryRun.stdout,
-    "npm publish dry-run",
-  );
   const publishRecord = npmPackageRecord(
-    publishManifest,
+    publishDryRun.stdout,
     "npm publish dry-run",
   );
   if (publishRecord.id !== `${sourcePackage.name}@${sourcePackage.version}`) {
@@ -330,7 +273,7 @@ try {
       "--no-fund",
       tarball,
     ],
-    { cwd: root, maxBuffer: 10 * 1024 * 1024 },
+    { cwd: root },
   );
 
   const installedRoot = join(
@@ -469,7 +412,7 @@ try {
   assert.equal(stagedFork.destinationLeafId, parentId);
   await forkModule.discardStagedSessionFork(stagedFork);
 
-  const port = await freePort();
+  const port = await freeLoopbackPort();
   const token = "inspire-release-smoke-token";
   const loopback = "127.0.0.1";
   const bin = join(installedRoot, "inspire.mjs");
