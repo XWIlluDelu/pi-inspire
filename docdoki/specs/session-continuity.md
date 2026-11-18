@@ -7,7 +7,6 @@ covers:
   - server/pi-session-activity.ts
   - server/attach-control.ts
   - extensions/attach-control.ts
-  - extensions/inspire-session-bridge.ts
   - tests/server/attach-control*.test.ts
   - tests/web/session-activity.test.tsx
   - shared/assistant-stream.ts
@@ -19,7 +18,6 @@ covers:
   - server/session-search-query.ts
   - server/session-search-worker.ts
   - server/session-jsonl.ts
-  - server/session-preview.ts
   - server/session-projection.ts
   - server/session-delete.ts
   - server/model-catalog.ts
@@ -42,7 +40,6 @@ covers:
   - src/controllers/session-selection-controller.ts
   - src/controllers/session-management-controller.ts
   - src/controllers/runtime-event-controller.ts
-  - src/controllers/transcript-data-controller.ts
   - src/components/EarlierBranchBanner.tsx
   - src/styles.css
   - src/styles/*.css

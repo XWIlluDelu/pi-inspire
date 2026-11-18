@@ -108,7 +108,6 @@
       "server/launcher-restart.d.mts",
       "server/restart-submission.d.mts",
       "server/current-web-build.d.mts",
-      "shared/browser-build.d.mts",
       "server/user-environment.d.mts",
       "tests/fixtures/packaged-launcher.d.mts"
     ]

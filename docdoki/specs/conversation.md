@@ -20,9 +20,8 @@ covers:
   - tests/browser/rich-text-delimiters.spec.ts
   - src/components/Transcript.tsx
   - src/components/TranscriptUtilities.tsx
-  - tests/browser/reading-navigation.spec.ts
   - tests/server/native-turn-history.test.ts
-  - src/components/transcript-activity.ts
+  - src/components/transcript-activity-visibility.tsx
   - src/components/transcript-cards.tsx
   - src/components/transcript-fold.tsx
   - src/components/transcript-rows.tsx
@@ -54,8 +53,8 @@ covers:
   - tests/browser/custom-message.spec.ts
   - tests/browser/assistant-error.spec.ts
   - tests/web/transcript-fold.test.tsx
-  - tests/web/prompt-map.test.tsx
-  - tests/web/transcript-virtual-search.test.tsx
+  - tests/browser/history.spec.ts
+  - tests/web/live-transcript-search.test.tsx
   - tests/web/transcript-viewport.test.tsx
   - tests/server/runtime-transcript.test.ts
 ---

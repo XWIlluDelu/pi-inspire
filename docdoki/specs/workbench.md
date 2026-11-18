@@ -25,7 +25,6 @@ covers:
   - src/controllers/preference-controller.ts
   - src/controllers/runtime-event-controller.ts
   - src/controllers/session-management-controller.ts
-  - src/controllers/transcript-data-controller.ts
   - src/git-presentation.ts
   - src/controllers/git-controller.ts
   - src/controllers/workspace-controller.ts
@@ -103,7 +102,6 @@ covers:
   - tests/web/nav-render.test.tsx
   - tests/web/workspace-controller.test.ts
   - tests/web/pane-resize.test.tsx
-  - tests/web/branch-tree.test.tsx
 ---
 
 # Workbench shell

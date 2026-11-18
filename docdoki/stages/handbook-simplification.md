@@ -31,8 +31,8 @@ font styles and is a record of that snapshot.
   Uncertain prompt delivery does not block drafting or sending another message.
 - File and terminal actions float over the content. Both use the unified tab strip while the
   existing terminal attachments and native process lifetimes remain independently owned.
-- The current browser and Host use one asset build and current transport formats. Native Pi
-  session files and their stored attachments remain readable.
+- Frontend builds keep recent hashed assets available to open tabs. Native Pi session files
+  and stored attachments remain readable.
 - Linux runs the complete web suite. macOS and Windows run native checks and targeted Chromium
   tests by default. [Full release acceptance and Safari are available on demand](../notes/platform-compatibility.md#ci-verification-scope).
 - HTTP test routes supply current receipts and preference publications explicitly. The transport

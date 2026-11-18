@@ -94,6 +94,6 @@ Persisted entries, active-branch projections and child RPC frames need independe
 - Keep malformed/unterminated child-output guards fatal. Read large histories through paged projection
   rather than raising the guard to accommodate aggregate `get_messages`.
 
-The relevant boundaries are in `server/pi-rpc.ts`, `server/session-preview.ts`,
+The relevant boundaries are in `server/pi-rpc.ts`, `server/session-jsonl.ts`,
 [[session-persistence]] and [[session-transport]]. For each measurement, state the fixture, compared
 operations, cold/warm state and output-equivalence check.

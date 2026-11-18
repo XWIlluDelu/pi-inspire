@@ -12,7 +12,7 @@ covers:
   - tests/integration/git-long-prefix.test.ts
   - tests/web/source-presentation.test.ts
   - src/styles/*.css
-  - tests/web/{workspace-controller,pane-resize,branch-tree,modal-focus}.test.ts*
+  - tests/web/{workspace-controller,pane-resize,modal-focus}.test.ts*
   - tests/browser/{composer,session-actions}.spec.ts
 ---
 

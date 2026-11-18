@@ -42,8 +42,6 @@ covers:
   - tests/fixtures/host-control-faults.mjs
   - server/*diagnostic*.ts
   - server/host-restart*.ts
-  - server/pi-worker-keeper.mjs
-  - tests/server/pi-worker-keeper.test.ts
   - tests/launcher.test.ts
   - tests/server/terminal-daemon-launcher.test.ts
   - tests/portable/**
