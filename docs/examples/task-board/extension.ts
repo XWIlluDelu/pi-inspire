@@ -59,14 +59,15 @@ export default function (pi: ExtensionAPI) {
   const restoreBranch = (ctx: ExtensionContext) => {
     clearTimers();
     tasks = [];
-    for (const entry of ctx.sessionManager.getBranch()) {
-      if (
-        entry.type === "custom_message" &&
-        entry.customType === TASK_BOARD_TYPE
-      ) {
-        const data = readTaskBoard(entry.details);
-        if (data) tasks = structuredClone(data.tasks);
-      }
+    const branch = ctx.sessionManager.getBranch();
+    for (let index = branch.length - 1; index >= 0; index--) {
+      const entry = branch[index]!;
+      if (entry.type !== "custom_message" || entry.customType !== TASK_BOARD_TYPE)
+        continue;
+      const data = readTaskBoard(entry.details);
+      if (!data) continue;
+      tasks = structuredClone(data.tasks);
+      break;
     }
     // Reload or native branch navigation ends local demo work, not its saved notes.
     for (const task of tasks)

@@ -9,20 +9,10 @@ Inspire ships native cards for `read`, `write`, `edit`, `bash`, `powershell`, `g
 also loads an internal GUI bridge (branch navigation, model-catalog refresh, retry settings and
 authentication) that adds no model tools.
 
-| I want to… | Use | Changes Inspire source? |
-| --- | --- | --- |
-| Ask the user a question or a permission | `ctx.ui.select` / `confirm` / `input` / `editor` ([recipes](#permission-and-question-recipes)) | No |
-| Show a short live fact (usage, mode) | `ctx.ui.setStatus` ([usage footer](#usage-footer)) | No |
-| Show a live list near the Composer | `ctx.ui.setWidget` ([Todo widget](#todo-widget)) | No |
-| Offer an occasional action | `registerCommand` (palette and `/` completion) | No |
-| Give a custom tool a readable card | [Tool-presentation rule](tool-presentations.md#example) | No (JSON) |
-| Add a Fast/Standard-style toggle | [Status control](tool-presentations.md#extension-adapters) | No (JSON) |
-| Add a dedicated panel or control | [Source customization](#custom-cards-and-source-changes) and the [task-board example](https://github.com/XWIlluDelu/pi-inspire/tree/main/docs/examples/task-board) | Yes |
-
-Start with the [native UI example](#try-the-native-ui-example). Use native RPC for standard
-interactions and declarative rules for stable display data. A dedicated panel needs a source
-checkout and a frontend build. The extension owns state, persistence and behavior in all cases.
-[Reload and verify](#reload-and-verify) explains how to apply changes.
+For an end-to-end example, run the [native UI extension](#try-the-native-ui-example).
+For custom tool cards and status controls, see [tool presentations](tool-presentations.md).
+The [task-board example](https://github.com/XWIlluDelu/pi-inspire/tree/main/docs/examples/task-board)
+shows how to add a React view in a source checkout.
 
 ## What works through RPC
 
@@ -30,10 +20,10 @@ checkout and a frontend build. The extension owns state, persistence and behavio
 | --- | --- | --- |
 | `registerCommand()` | Command palette and Composer `/` completion. | Use for occasional actions. Native command names take precedence; namespaced commands avoid collisions. |
 | `registerTool()` | Runs in Pi and receives a native, configured, or generic card. | Add a presentation rule for a useful stable data shape. |
-| `select`, `confirm`, `input`, `editor` | Shared keyboard, pointer, and touch dialogs after worker startup. | Move interactive setup into a command; see [startup](#startup) and the [runnable example](#try-the-native-ui-example). |
+| `select`, `confirm`, `input`, `editor` | Shared keyboard, pointer, and touch dialogs after worker startup. | Move interactive setup into a command. See [startup](#startup) and the [permission example](#permission-prompt). |
 | `notify` | Transient notice. | Use for completion, warning, or failure. |
 | `setStatus` | Compact top-bar status at every screen width; click, tap or use the keyboard to read full status text. Retained up to 1,024 characters, restored on reconnect, cleared with the worker. | Keep the main fact short; full retained text remains readable on demand. |
-| `setWidget(key, string[], options)` | Supplied text and Copy above or below Composer, without a key-derived heading. Reusing a key replaces it; `undefined` clears it. | Use for Todo lists, quotas, or next-prompt context. |
+| `setWidget(key, string[], options)` | Supplied text and Copy above or below Composer, without a key-derived heading. Reusing a key replaces it; `undefined` clears it. | See the [Todo widget](#todo-widget) and [usage footer](#usage-footer). |
 | `setWidget(key, componentFactory)` | Ignored by Pi in RPC mode. | Supply a string-array branch for RPC. |
 | `setTitle` | Browser document title. | Treat it as transient session presentation. |
 | `setEditorText`, `pasteToEditor` | Replace the Composer draft; RPC paste does not insert into existing text. | Use for a complete replacement, not an append. |
@@ -159,11 +149,8 @@ normal extension configuration and reloading an idle session:
 - `/ui-demo timeout` — try a ten-second input request.
 - `/ui-demo clear` — remove the demo status and widgets. The recorded custom message stays in history.
 
-The example makes no model request and requires no credentials. It also serves as the isolated native
-integration fixture. Status and widget keys are update identities, not user-facing titles. Clear them
-with `undefined`; use supplied text to communicate what matters. No terminal component factory is
-needed here. For richer TUI components, retain a terminal branch and publish supported text/dialog
-primitives for RPC rather than trying to serialize terminal rendering into the browser.
+The demo requires no model credentials. Use stable keys to replace or clear status and widgets;
+the browser displays the supplied text.
 
 ## Text-widget recipes
 
@@ -267,20 +254,9 @@ export default function (pi: ExtensionAPI) {
 A timeout or dismissal returns `undefined`, which this example treats as Deny. Stop sends
 `cancelled` to pending dialogs, so the same branch handles it.
 
-### Several questions
-
-Pi's RPC dialogs ask one question at a time. Chain them, stop on the first `undefined`, and show
-the collected answers in a widget so the user can see what was chosen:
-
-```ts
-const scope = await ctx.ui.select("Scope", ["Current file", "Whole project"]);
-if (scope === undefined) return;
-const depth = await ctx.ui.select("Depth", ["Quick", "Thorough"]);
-if (depth === undefined) return;
-ctx.ui.setWidget("example.review-plan", [`Scope: ${scope}`, `Depth: ${depth}`], {
-  placement: "aboveEditor",
-});
-```
+For a sequence of questions, the [native UI example](examples/native-ui.ts) collects a choice,
+confirmation, name and notes. It stops when the user cancels and publishes the completed review
+in text widgets.
 
 ## Custom cards and source changes
 
