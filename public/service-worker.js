@@ -1,5 +1,5 @@
 const BUILD_ID = new URL(self.location.href).searchParams.get("v")?.replace(/[^a-zA-Z0-9._-]/g, "-") || "production";
-const CACHE = `inspire-shell-${BUILD_ID}`;
+const CACHE = `inspire-shell-v2-${BUILD_ID}`;
 // Notification state is separate from disposable shell caches.
 const NOTIFICATION_DB = "inspire-notifications";
 const NOTIFICATION_LIFETIME = 15 * 60 * 1000;
@@ -253,21 +253,15 @@ self.addEventListener("notificationclick", (event) => {
   })());
 });
 
-const SHELL = [
-  "/",
-  "/theme-init.js",
-];
-
 self.addEventListener("install", (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE);
-    await cache.addAll(SHELL);
     const shell = await fetch("/");
-    if (!shell.ok) return;
-    await cache.put("/", shell.clone());
-    const html = await shell.text();
+    if (!shell.ok) throw new Error("Application shell could not be loaded");
+    const html = await shell.clone().text();
     const assets = [...html.matchAll(/(?:src|href)="(\/assets\/[^"?#]+)"/g)].map((match) => match[1]);
-    if (assets.length > 0) await cache.addAll([...new Set(assets)]);
+    await cache.addAll(["/theme-init.js", ...new Set(assets)]);
+    await cache.put("/", shell);
   })());
   self.skipWaiting();
 });
@@ -284,25 +278,8 @@ self.addEventListener("fetch", (event) => {
   const request = event.request;
   const url = new URL(request.url);
   if (request.method !== "GET" || url.origin !== self.location.origin) return;
-  if (url.pathname.startsWith("/api/") || url.pathname === "/events") return;
 
-  // Browser/PWA metadata and icons are mutable outside Vite's hashed asset
-  // graph. Fetch from the host so tab and installed icons can receive updates.
-  if (
-    [
-      "/manifest.webmanifest",
-      "/favicon.svg",
-      "/app-icon-192.png",
-      "/app-icon-512.png",
-      "/app-icon-maskable-512.png",
-      "/apple-touch-icon.png",
-    ].includes(url.pathname)
-  ) {
-    event.respondWith(fetch(request));
-    return;
-  }
-
-  if (request.mode === "navigate") {
+  if (request.mode === "navigate" && url.pathname === "/") {
     event.respondWith(
       fetch(request)
         .then((response) => {
@@ -317,7 +294,9 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  const cacheKey = new Request(`${url.origin}${url.pathname}`);
+  const cacheKey = url.pathname;
+  if ((cacheKey !== "/theme-init.js" && !cacheKey.startsWith("/assets/")) ||
+      request.headers.has("range")) return;
   event.respondWith(
     caches.match(cacheKey).then((cached) => cached ?? fetch(request).then((response) => {
       if (response.ok) {

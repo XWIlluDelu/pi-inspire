@@ -272,10 +272,9 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   remain authoritative and immediately replace stale cache state. [[design-system]] owns PWA
   metadata: active Window Controls Overlay follows the workspace frame, ordinary tabs and
   standalone fallback use neutral hints, and installed icons keep their fixed neutral identity. The
-  production origin is installable as a standalone PWA. Its service worker caches only the
-  versioned application shell and same-origin static assets, never API, event, attachment or
-  resource responses. The cached shell can present the host-aware states above but cannot start a
-  local process; Pi/session capability still requires the loopback host and its authenticated API.
+  production origin is installable as a standalone PWA. Its service worker caches the root shell,
+  theme bootstrap and application assets. Browser networking handles metadata, API and resource
+  requests. Pi and session operations require the authenticated loopback Host.
 
 - The welcome page host-deselects any visible session before presenting the
   first-message/project-directory composer. The prior session then no longer owns topbar status,

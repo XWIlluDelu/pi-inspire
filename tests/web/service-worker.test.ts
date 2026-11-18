@@ -176,19 +176,17 @@ function projectNotification(
   };
 }
 
-it("reads mutable PWA metadata from the Host with an installed shell still cached", async () => {
+it("serves cached shell assets and leaves metadata and resources to the browser", async () => {
   const worker = fixture();
   for (const path of [
     "/manifest.webmanifest",
-    "/favicon.svg",
-    "/app-icon-192.png",
-    "/app-icon-512.png",
     "/app-icon-maskable-512.png",
-    "/apple-touch-icon.png",
-  ]) {
-    const response = await worker.fetchAsset(path + "?v=fixture");
-    expect(await response?.text(), path).toBe("current metadata");
-  }
+    "/html-preview/fixture/index.html",
+    "/api/files",
+  ])
+    expect(await worker.fetchAsset(path + "?v=fixture"), path).toBeUndefined();
+  const shellAsset = await worker.fetchAsset("/assets/index-fixture.js");
+  expect(await shellAsset?.text()).toBe("cached metadata");
 });
 
 describe("project notification grouping", () => {
