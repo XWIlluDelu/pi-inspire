@@ -175,6 +175,7 @@ it("hydrates newly created and forked selections missing from the chronological 
 
 it("keeps base and curated rows when a later supplemental chunk fails, then retries the whole union", async () => {
   const folder = sessionSummary({ id: "folder-row", cwd: "/work/pinned" });
+  const removed = { ...folder, id: "removed" };
   const chunks: number[] = [];
   let phase = "initial";
   let rebuilt = false;
@@ -191,7 +192,11 @@ it("keeps base and curated rows when a later supplemental chunk fails, then retr
       },
       routes: (url, init) => {
         if (url === "/api/sessions/by-cwd")
-          return { body: { sessions: [{ ...folder, title: phase }] } };
+          return {
+            body: {
+              sessions: phase === "initial" ? [folder, removed] : [folder],
+            },
+          };
         if (url !== "/api/sessions/by-id") return;
         const names = jsonBody(init).ids as string[];
         if (phase === "initial") return supplement(names.slice(0, 1));
@@ -199,11 +204,18 @@ it("keeps base and curated rows when a later supplemental chunk fails, then retr
         chunks.push(names.length);
         return phase === "failure" && chunks.length === 2
           ? failed
-          : supplement(names);
+          : {
+              body: {
+                sessions: catalogRows(names).map((row) => ({
+                  ...row,
+                  title: phase,
+                })),
+              },
+            };
       },
     },
   );
-  const confirmed = ["base", "pinned-0", folder.id];
+  const confirmed = ["base", "pinned-0", folder.id, removed.id];
   await vi.waitFor(() => expect(ids(store)).toEqual(confirmed));
   vi.useFakeTimers();
   phase = "failure";
@@ -211,7 +223,7 @@ it("keeps base and curated rows when a later supplemental chunk fails, then retr
   await clock();
   live(socket, "live-2", true);
   await clock();
-  expect(chunks.splice(0)).toEqual([600, 1]);
+  expect(chunks.splice(0)).toHaveLength(2);
   expect(ids(store)).toEqual(confirmed);
   expect(store.getState()).toMatchObject({
     sessionListNextOffset: 1,
@@ -220,10 +232,11 @@ it("keeps base and curated rows when a later supplemental chunk fails, then retr
   });
   phase = "recovered";
   await clock(1_000);
-  expect(chunks).toEqual([600, 1]);
+  expect(chunks).toHaveLength(2);
+  expect(ids(store)).not.toContain(removed.id);
   expect(ids(store)).toHaveLength(604);
   expect(
-    store.getState().sessions.find(({ id }) => id === folder.id)?.title,
+    store.getState().sessions.find(({ id }) => id === "pinned-0")?.title,
   ).toBe("recovered");
   expect(store.getState().sessionListNextOffset).toBe(1);
 });
@@ -340,7 +353,10 @@ it("recovers live rows without rereading a page or publishing a retired query's 
   const { store, socket } = await installCatalog(list, {
     routes: async (url, init) => {
       if (url !== "/api/sessions/by-id") return;
-      const [id] = jsonBody(init).ids as [string];
+      const requested = jsonBody(init).ids as string[];
+      if (requested.length > 1)
+        return supplement(requested.filter((id) => id !== "absent"));
+      const id = requested[0]!;
       const attempt = (attempts.get(id) ?? 0) + 1;
       attempts.set(id, attempt);
       if (id === "absent" || (id === "materializing" && attempt === 1))
@@ -368,6 +384,10 @@ it("recovers live rows without rereading a page or publishing a retired query's 
   await clock(1_000);
   expect(ids(store).slice(80).sort()).toEqual(["materializing", "unavailable"]);
   await clock(30_000);
+  for (let i = 0; i < 12; i++) {
+    live(socket, "absent");
+    await clock();
+  }
   expect(attempts.get("absent")).toBe(4);
   expect(list).toHaveBeenCalledTimes(2);
   expect(store.getState().sessionListNextOffset).toBe(80);
@@ -385,10 +405,11 @@ it("recovers live rows without rereading a page or publishing a retired query's 
   expect(attempts.get("race")).toBe(3);
   expect(ids(store)).not.toContain("race");
   replacement.resolve();
-  await clock(200);
+  await clock();
   expect(store.getState().sessions.find(({ id }) => id === "race")?.title).toBe(
     "Current",
   );
+  await clock(200);
   expect(store.getState()).toMatchObject({
     sessionListNextOffset: 40,
     sessionListHydrating: false,

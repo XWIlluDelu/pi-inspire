@@ -74,10 +74,10 @@ export function useOptionList<T>(initialKey?: string, keyboard = true) {
     return -1;
   }
   const optionId = (index: number) => `${id}-option-${index}`;
-  const descendant = (options: readonly ListOption<T>[]) => {
-    const index = indexOf(options);
-    return choice.keyboard && index >= 0 ? optionId(index) : undefined;
-  };
+  const descendant = (
+    options: readonly ListOption<T>[],
+    index = indexOf(options),
+  ) => (choice.keyboard && index >= 0 ? optionId(index) : undefined);
   function navigate(
     event: KeyboardEvent,
     options: readonly ListOption<T>[],
@@ -185,18 +185,23 @@ export function OptionList<T>({
   interactiveRows?: boolean;
 }) {
   const active = list.indexOf(options);
-  const descendant = list.descendant(options);
+  const descendant = list.descendant(options, active);
+  const hasHeadings = Boolean(heading);
   const rows = useMemo(() => {
     const offsets: number[] = [];
     const items: { key: string; index: number; heading?: boolean }[] = [];
     for (const [index, option] of options.entries()) {
-      if (heading && option.group && option.group !== options[index - 1]?.group)
+      if (
+        hasHeadings &&
+        option.group &&
+        option.group !== options[index - 1]?.group
+      )
         items.push({ key: `heading:${option.key}`, index, heading: true });
       offsets.push(items.length);
       items.push({ key: option.key, index });
     }
     return { items, offsets };
-  }, [options, heading]);
+  }, [options, hasHeadings]);
   const activeRow = rows.offsets[active];
   const virtual = !plain && Boolean(fixedRows || options.length > 50);
   const getScrollElement = useCallback(

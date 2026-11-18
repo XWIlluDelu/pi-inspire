@@ -10,6 +10,11 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / 1_048_576).toFixed(1)} MB`;
 }
 
+const shortDate = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+});
+
 /**
  * Session activity age on one ladder for every session list: "now"/"12m"/"3h"/
  * "5d" (compact) or the same with " ago" (relative), then a short date.
@@ -29,10 +34,7 @@ function sessionAge(
   if (hours < 24) return `${hours}h${suffix}`;
   const days = Math.floor(hours / 24);
   if (days < 30) return `${days}d${suffix}`;
-  return new Date(time).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-  });
+  return shortDate.format(time);
 }
 
 /** Dense navigation rows; the exact timestamp stays in the row tooltip. */

@@ -18,7 +18,11 @@ import {
 } from "./helpers";
 
 const continueBootstrap = bootstrapPayload({
-  preferences: { ...DEFAULT_PREFS, launch: "continue" },
+  preferences: {
+    ...DEFAULT_PREFS,
+    launch: "continue",
+    pinnedSessionIds: ["off-page"],
+  },
 });
 
 describe("initial workbench restoration", () => {
@@ -51,8 +55,9 @@ describe("initial workbench restoration", () => {
       const opened = deferred<Awaited<ReturnType<RouteHandler>>>();
       const open = vi.fn(() => opened.promise);
       route = (url) => {
-        if (url.startsWith("/api/bootstrap"))
-          return { body: continueBootstrap };
+        if (url === "/api/bootstrap") return { body: continueBootstrap };
+        if (url === "/api/sessions/by-id")
+          return opened.promise.then(() => ({ body: { sessions: [] } }));
         if (url === "/api/sessions/open") return open();
         if (url.startsWith("/api/sessions"))
           return catalog.promise.then((body) => ({ body }));
@@ -130,7 +135,7 @@ describe("initial workbench restoration", () => {
         open();
         return { body: activeSnapshot() };
       }
-      if (url.startsWith("/api/sessions"))
+      if (url.startsWith("/api/sessions?"))
         return { body: await catalog.promise };
     };
     render(<App />);

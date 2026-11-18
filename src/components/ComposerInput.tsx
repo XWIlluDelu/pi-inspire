@@ -14,7 +14,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import type { ModelOption } from "../../shared/contracts";
-import type { ProjectFileResult, ProjectFileSearchResult } from "../api";
+import type { ProjectFileResult } from "../api";
 import {
   type CaretCompletion,
   commandArgumentCandidates,
@@ -37,6 +37,7 @@ import { type ListOption, OptionList, useOptionList } from "./OptionList";
 import {
   ProjectFileFeedback,
   ProjectFileLabel,
+  type ProjectFileSearch,
   projectFileOption,
   useProjectFileSearch,
 } from "./ProjectFiles";
@@ -216,7 +217,7 @@ export function ComposerInput({
   completionDisabled?: boolean;
   disabled?: boolean;
   completionScope?: string | null;
-  searchProjectFiles?: (query: string) => Promise<ProjectFileSearchResult>;
+  searchProjectFiles?: ProjectFileSearch;
   showHiddenFiles?: boolean;
   onShowHiddenFilesChange?: (value: boolean) => void;
   rows?: number;

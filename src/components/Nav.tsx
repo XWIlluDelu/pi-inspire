@@ -39,7 +39,6 @@ import { NavigationToggle } from "./NavigationToggle";
 import { ProjectGroup, SessionRow } from "./NavSessions";
 import {
   buildSessionCatalog,
-  catalogSections,
   hiddenDeletionBlockReason,
   sectionSessions,
 } from "./nav-model";
@@ -68,31 +67,7 @@ export const Nav = memo(function Nav({
   onSelectSession: (id: string) => void;
   searchInputRef?: Ref<HTMLInputElement>;
 }) {
-  const {
-    sessions,
-    pinnedSessionIds,
-    pinnedProjectCwds,
-    curatedHiddenSessionIds,
-    hiddenProjectCwds,
-    collapsedGroupCwds,
-    selectedSessionId,
-    openingSessionId,
-    sessionStatuses,
-    externalSessionActivities,
-    sessionQuery,
-    sessionListNextOffset,
-    sessionListTotal,
-    sessionListLoading,
-    sessionListLoadingOlder,
-    sessionListHydrating,
-    sessionListOperation,
-    sessionListError,
-    sessionListIssues,
-    sessionActionError,
-    curationPending,
-    clearingHidden,
-    deletingSessionId,
-  } = useAppState(
+  const catalogState = useAppState(
     (state) => ({
       sessions: state.sessions,
       pinnedSessionIds:
@@ -131,6 +106,30 @@ export const Nav = memo(function Nav({
     shallowEqual,
   );
 
+  const {
+    sessions,
+    pinnedSessionIds,
+    pinnedProjectCwds,
+    curatedHiddenSessionIds,
+    hiddenProjectCwds,
+    collapsedGroupCwds,
+    selectedSessionId,
+    openingSessionId,
+    sessionStatuses,
+    externalSessionActivities,
+    sessionQuery,
+    sessionListNextOffset,
+    sessionListTotal,
+    sessionListLoading,
+    sessionListLoadingOlder,
+    sessionListHydrating,
+    sessionListOperation,
+    sessionListError,
+    sessionListIssues,
+    sessionActionError,
+    curationPending,
+    clearingHidden,
+  } = catalogState;
   const internalNavRef = useRef<HTMLElement>(null);
   const modalNavRef = useModalFocus<HTMLDivElement>(
     isModal,
@@ -209,12 +208,16 @@ export const Nav = memo(function Nav({
     setRetainedNeed(row?.reason ? { id, reason: row.reason } : null);
     onSelectSession(id);
   };
-  const displayed = catalogSections(
-    catalog,
-    view,
-    false,
-    needsYou.map(({ session }) => session),
-  );
+  const displayed = (
+    view === "needs-you"
+      ? [
+          {
+            kind: "needs-you" as const,
+            sessions: needsYou.map(({ session }) => session),
+          },
+        ]
+      : catalog.all
+  ).filter((section) => sectionSessions(section).length);
   const showHidden = view === "all" && (hiddenOpen || searching);
   const hiddenSections = view === "all" ? catalog.hidden : [];
   const searchResults = [
@@ -309,21 +312,9 @@ export const Nav = memo(function Nav({
         ? "Loading older sessions…"
         : "Loading sessions…";
   const hiddenSessions = catalog.hidden.flatMap(sectionSessions);
-  const deletionState = {
-    openingSessionId,
-    sessionQuery,
-    sessionListLoading,
-    sessionListLoadingOlder,
-    sessionListHydrating,
-    sessionListError,
-    sessionListIssues,
-    curationPending,
-    clearingHidden,
-    deletingSessionId,
-  };
   const hiddenClearReason = hiddenDeletionBlockReason(
     hiddenSessions,
-    deletionState,
+    catalogState,
   );
 
   const renderSection = (section: (typeof displayed)[number]) => {
@@ -352,7 +343,7 @@ export const Nav = memo(function Nav({
           }
           deleteGroupDisabledReason={
             hidden
-              ? hiddenDeletionBlockReason(group.sessions, deletionState)
+              ? hiddenDeletionBlockReason(group.sessions, catalogState)
               : null
           }
         />

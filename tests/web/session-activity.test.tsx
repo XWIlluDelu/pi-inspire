@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { countBusySessions } from "../../shared/session-activity";
 import { type AppState, createInitialAppState } from "../../src/app-state";
 import { HiddenClearDialog } from "../../src/components/HiddenClearDialog";
+import { NavigationToggle } from "../../src/components/NavigationToggle";
 import { SessionRow } from "../../src/components/NavSessions";
 import { SessionDeleteDialog } from "../../src/components/SessionDeleteDialog";
 import { RuntimeEventController } from "../../src/controllers/runtime-event-controller";
@@ -49,7 +50,14 @@ beforeEach(() => {
 
 function row() {
   return (
-    <SessionRow session={external} selectedSessionId="s1" onSelect={() => {}} />
+    <>
+      <NavigationToggle aria-label="Expand sessions" />
+      <SessionRow
+        session={external}
+        selectedSessionId="s1"
+        onSelect={() => {}}
+      />
+    </>
   );
 }
 
@@ -165,6 +173,9 @@ describe("session activity presentation", () => {
       screen.getByRole("img", { name: "Waiting for input in Pi" }),
     ).toBeVisible();
 
+    expect(
+      screen.getByRole("button", { name: "Expand sessions" }),
+    ).toHaveAccessibleDescription("1 other session needs attention");
     state.sessionStatuses = {
       external: { runState: "conflict", indicator: "attention" },
     };
@@ -179,9 +190,11 @@ describe("session activity presentation", () => {
     state.sessionStatuses = {};
     view.rerender(row());
     expect(screen.getByTitle(/Idle in Pi/)).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Expand sessions" }),
+    ).not.toHaveAccessibleDescription();
     observe();
     view.rerender(row());
     expect(screen.queryByTitle(/Idle in Pi/)).toBeNull();
   });
-
 });

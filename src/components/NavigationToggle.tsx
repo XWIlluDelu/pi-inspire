@@ -1,4 +1,5 @@
 import { type ComponentProps, useId } from "react";
+import { presentSessionActivity } from "../session-activity-presentation";
 import { shallowEqual, useAppState } from "../store";
 
 /** Navigation entrances share unread attention while their session list is hidden. */
@@ -8,22 +9,26 @@ export function NavigationToggle({
   ...props
 }: ComponentProps<"button">) {
   const descriptionId = useId();
-  const { count, urgent } = useAppState((state) => {
-    let count = 0;
-    let urgent = false;
-    for (const [id, status] of Object.entries(state.sessionStatuses)) {
-      if (id === state.sessionId) continue;
-      if (status.indicator === "completed") count += 1;
-      else if (
-        status.indicator === "failed" ||
-        status.indicator === "attention"
-      ) {
-        count += 1;
-        urgent = true;
-      }
-    }
-    return { count, urgent };
-  }, shallowEqual);
+  const { selected, managed, external } = useAppState(
+    (state) => ({
+      selected: state.sessionId,
+      managed: state.sessionStatuses,
+      external: state.externalSessionActivities,
+    }),
+    shallowEqual,
+  );
+  let count = 0;
+  let urgent = false;
+  for (const id of new Set([
+    ...Object.keys(managed),
+    ...Object.keys(external),
+  ])) {
+    if (id === selected) continue;
+    const { indicator } = presentSessionActivity(managed[id], external[id]);
+    if (!indicator || indicator === "running") continue;
+    count++;
+    if (indicator !== "completed") urgent = true;
+  }
 
   return (
     <button

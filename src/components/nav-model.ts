@@ -4,7 +4,6 @@ import {
   type SessionSummary,
 } from "../../shared/contracts";
 import type { AppState } from "../app-state";
-import type { SessionCatalogView } from "../workbench-session";
 
 type HiddenDeletionState = Pick<
   AppState,
@@ -167,21 +166,4 @@ export function buildSessionCatalog(
       ).map((group) => groupSection(group, true)),
     ],
   };
-}
-
-export function catalogSections(
-  catalog: Catalog,
-  view: SessionCatalogView,
-  searching: boolean,
-  needsYou: SessionSummary[],
-): CatalogSection[] {
-  const sections =
-    view === "needs-you"
-      ? [{ kind: "needs-you" as const, sessions: needsYou }]
-      : view === "hidden"
-        ? catalog.hidden
-        : searching
-          ? [...catalog.all, ...catalog.hidden]
-          : catalog.all;
-  return sections.filter((section) => sectionSessions(section).length);
 }

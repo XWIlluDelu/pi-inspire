@@ -31,7 +31,7 @@ interface PreferenceControllerHost {
   api(): Api | null;
   notify(kind: "info" | "warning" | "error", text: string): void;
   handleAuthFailure(): void;
-  curationChanged(hydrate: boolean): void;
+  curationChanged(added: ReturnType<typeof sessionCurationOwners>): void;
   clearCompletionAttention(): void;
 }
 
@@ -126,13 +126,9 @@ export class PreferenceController {
     this.curationRevision++;
     const before = sessionCurationOwners(previous);
     const after = sessionCurationOwners(preferences);
-    const loaded = new Set(
-      this.host.state().sessions.map((session) => session.id),
-    );
-    this.host.curationChanged(
-      [...after.ids].some((id) => !before.ids.has(id) && !loaded.has(id)) ||
-        [...after.cwds].some((cwd) => !before.cwds.has(cwd)),
-    );
+    for (const id of before.ids) after.ids.delete(id);
+    for (const cwd of before.cwds) after.cwds.delete(cwd);
+    this.host.curationChanged(after);
   }
 
   private save(patch: PreferencePatch): void {

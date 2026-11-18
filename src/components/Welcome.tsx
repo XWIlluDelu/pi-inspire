@@ -328,11 +328,12 @@ export function Welcome({
   );
 
   const searchProjectFiles = useCallback(
-    (query: string) =>
+    (query: string, signal: AbortSignal) =>
       store.searchNewSessionProjectFiles(
         effectiveDirectory,
         query,
         showHiddenFiles,
+        signal,
       ),
     [effectiveDirectory, showHiddenFiles],
   );

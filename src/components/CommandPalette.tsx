@@ -305,7 +305,7 @@ export const CommandPalette = memo(function CommandPalette({
 
     const visible = visibleSessions(state.sessions, state.prefs);
     const recentIds = new Set(
-      [...visible]
+      visible
         .filter((session) => session.id !== state.sessionId)
         .sort(
           (left, right) =>
@@ -412,15 +412,16 @@ export const CommandPalette = memo(function CommandPalette({
     return [...byGroup.values()].flat();
   }, [items]);
 
-  const searching = Boolean(searchQuery.trim());
-  const options = (
-    searching ? rankPaletteItems(items, searchQuery) : defaultItems
-  ).map((item) => ({
-    key: item.id,
-    value: item,
-    group: searching ? "Results" : item.group,
-    title: item.title,
-  }));
+  const options = useMemo(() => {
+    const searching = Boolean(searchQuery.trim());
+    const matches = searching ? rankPaletteItems(items, searchQuery) : defaultItems;
+    return matches.map((item) => ({
+      key: item.id,
+      value: item,
+      group: searching ? "Results" : item.group,
+      title: item.title,
+    }));
+  }, [items, searchQuery, defaultItems]);
 
   const runItem = (item: PaletteItem | undefined) => {
     if (!item) return;
@@ -511,7 +512,7 @@ export const CommandPalette = memo(function CommandPalette({
               commands={state.commands}
               searchProjectFiles={
                 preparedCommand?.source !== "builtin"
-                  ? (query) => store.searchProjectFiles(query)
+                  ? store.searchProjectFiles
                   : undefined
               }
               models={state.models}

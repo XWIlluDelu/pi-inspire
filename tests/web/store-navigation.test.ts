@@ -74,22 +74,34 @@ it("hydrates confirmed folder curation without rereading pages and prunes it bef
   const write = deferred<void>();
   const stale = deferred<void>();
   const catalog = vi.fn(() => summary([recent], 8));
+  const byId = vi.fn((requested: string[]) =>
+    summary(requested.map((id) => sessionSummary({ id }))),
+  );
   const lookup = vi
     .fn<() => RouteResponse | Promise<RouteResponse>>()
     .mockReturnValue(summary([offPage]));
   const { store } = await installCatalog(catalog, {
+    preferences: { pinnedSessionIds: ["first"] },
     routes: async (url, init) => {
       if (url === "/api/preferences" && init.method === "PATCH")
         await write.promise;
       if (url === "/api/sessions/by-cwd") return lookup();
+      if (url === "/api/sessions/by-id")
+        return byId(jsonBody(init).ids as string[]);
       if (url === "/api/sessions/refresh") return { body: { ok: true } };
     },
   });
-  await vi.waitFor(() => expect(ids(store)).toEqual([recent.id]));
+  await vi.waitFor(() => expect(ids(store)).toEqual([recent.id, "first"]));
   store.toggleProjectHidden(offPage.cwd);
   expect(store.getState().prefs.hiddenProjectCwds).toEqual([]);
   write.resolve();
-  await vi.waitFor(() => expect(ids(store)).toEqual([recent.id, offPage.id]));
+  await vi.waitFor(() => expect(ids(store)).toContain(offPage.id));
+  store.toggleSessionPin("next");
+  await vi.waitFor(() =>
+    expect(ids(store)).toEqual([recent.id, "first", offPage.id, "next"]),
+  );
+  expect(byId.mock.calls.flat()).toEqual([["first"], ["next"]]);
+  expect(lookup).toHaveBeenCalledOnce();
   expect(catalog).toHaveBeenCalledOnce();
   expect(store.getState()).toMatchObject({
     prefs: { hiddenProjectCwds: [offPage.cwd] },
@@ -101,10 +113,10 @@ it("hydrates confirmed folder curation without rereading pages and prunes it bef
   const refreshed = store.refreshSessions();
   await vi.waitFor(() => expect(lookup).toHaveBeenCalledTimes(2));
   store.toggleProjectHidden(offPage.cwd);
-  await vi.waitFor(() => expect(ids(store)).toEqual([recent.id]));
+  await vi.waitFor(() => expect(ids(store)).not.toContain(offPage.id));
   stale.resolve();
   await refreshed;
-  expect(ids(store)).toEqual([recent.id]);
+  expect(ids(store)).toEqual([recent.id, "first", "next"]);
   expect(catalog).toHaveBeenCalledTimes(2);
 });
 
@@ -128,7 +140,9 @@ it.each(["rejected", "confirmed"] as const)(
     });
     write.resolve(
       outcome === "confirmed"
-        ? { body: { preferences: prefs({ hiddenSessionIds: [] }), revision: 1 } }
+        ? {
+            body: { preferences: prefs({ hiddenSessionIds: [] }), revision: 1 },
+          }
         : { status: 409, body: { error: "Preference write rejected" } },
     );
     await vi.waitFor(() =>

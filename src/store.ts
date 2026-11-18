@@ -271,10 +271,7 @@ export class AppStore {
     api: () => this.api,
     notify: (kind, text) => this.notify(kind, text),
     handleAuthFailure: () => this.handleAuthFailure(),
-    curationChanged: (hydrate) => {
-      this.catalog.reconcileCuration();
-      if (hydrate) void this.catalog.hydrateCuration();
-    },
+    curationChanged: (added) => this.catalog.reconcileCuration(added),
     clearCompletionAttention: () => this.runtimeEvents.clearTitleAttention(),
   });
   /** SessionCatalogController owns pagination, curation/live hydration, and
@@ -510,30 +507,26 @@ export class AppStore {
     });
   }
 
-  private forgetSessions(
-    sessionIds: ReadonlySet<string>,
-  ): AppState["sessionStatuses"] {
+  private forgetSessions(sessionIds: ReadonlySet<string>): void {
     const sessionStatuses = { ...this.state.sessionStatuses };
     const commandActivities = { ...this.state.commandActivities };
+    const externalSessionActivities = {
+      ...this.state.externalSessionActivities,
+    };
+    this.catalog.remove(sessionIds);
     for (const sessionId of sessionIds) {
-      this.catalog.remove(sessionId);
+      delete externalSessionActivities[sessionId];
       delete sessionStatuses[sessionId];
       delete commandActivities[sessionId];
       this.composer.discard(sessionId);
     }
-    const externalSessionActivities = {
-      ...this.state.externalSessionActivities,
-    };
-    for (const sessionId of sessionIds)
-      delete externalSessionActivities[sessionId];
-    this.set({ commandActivities, externalSessionActivities });
+    this.set({ commandActivities, externalSessionActivities, sessionStatuses });
     this.runtimeEvents.forgetAttention(sessionIds);
     // Commit only the deleted identity's view. A newer open/new request keeps
     // its selection owner and can still publish its own snapshot afterwards.
     if (this.state.sessionId && sessionIds.has(this.state.sessionId)) {
       this.applySnapshot({ active: null, sessionStatuses });
     }
-    return sessionStatuses;
   }
 
   acknowledgeVisibleSession = (): void =>
@@ -2296,17 +2289,22 @@ export class AppStore {
 
   searchProjectFiles = async (
     query: string,
+    signal: AbortSignal,
   ): Promise<ProjectFileSearchResult> => {
     const sessionId = this.state.sessionId;
     if (!this.api || !sessionId) return { files: [] };
-    return this.api.json("searchFiles", {
-      query: {
-        sessionId,
-        q: query,
-        limit: 50,
-        showHidden: this.state.workspaceShowHidden ? "1" : undefined,
+    return this.api.json(
+      "searchFiles",
+      {
+        query: {
+          sessionId,
+          q: query,
+          limit: 50,
+          showHidden: this.state.workspaceShowHidden ? "1" : undefined,
+        },
       },
-    });
+      signal,
+    );
   };
 
   setWorkspaceShowHidden = (value: boolean): void =>
@@ -2582,17 +2580,22 @@ export class AppStore {
   searchNewSessionProjectFiles = async (
     cwd: string,
     query: string,
-    showHidden = false,
+    showHidden: boolean,
+    signal: AbortSignal,
   ): Promise<ProjectFileSearchResult> => {
     if (!this.api) return { files: [] };
-    const result = await this.api.json("searchNewSessionFiles", {
-      query: {
-        cwd,
-        q: query,
-        limit: 50,
-        showHidden: showHidden ? "1" : undefined,
+    const result = await this.api.json(
+      "searchNewSessionFiles",
+      {
+        query: {
+          cwd,
+          q: query,
+          limit: 50,
+          showHidden: showHidden ? "1" : undefined,
+        },
       },
-    });
+      signal,
+    );
     return {
       ...result,
       files: result.files.map((file) => ({
@@ -3148,8 +3151,6 @@ export function useAppState<T>(
     const candidate = selector ? selector(source) : source;
     const selection =
       previous &&
-      previous.selector === selector &&
-      previous.isEqual === isEqual &&
       (isEqual ?? Object.is)(previous.selection as T, candidate as T)
         ? previous.selection
         : candidate;

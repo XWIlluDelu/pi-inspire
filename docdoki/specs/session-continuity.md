@@ -197,16 +197,16 @@ Keep chronological base pages separate from hydration. Advance pagination only b
 Query changes and explicit refresh replace the generation and abort its pending HTTP observation
 and content search. Generation checks also reject late replies from transports that ignore abort.
 
-Curation changes reclassify known rows synchronously. Hydrate only newly off-page session ids and
-exact cwds, deduplicating and splitting their unions within route bounds. Preserve chronology and
-confirmed rows without global loading or manual hydration controls. Authentication loss follows the
-shared transport boundary; other partial failures keep the confirmed base/curated union and retry in
-the background with bounded backoff. A selected/live id can precede its catalog row: a successful
-lookup that has not found it yet is a materialization delay, not a failure.
+Curation changes reclassify known rows synchronously and request newly curated off-page IDs and
+exact cwds. A catalog refresh also rechecks existing pins and folders for renames and moves.
+Batch both lookups within route bounds. Keep confirmed rows in order while updates run in the
+background without global loading or manual controls. Authentication loss follows the shared
+transport boundary. Retry other transient failures with bounded backoff. A selected/live ID
+can be known before its catalog row is available.
 
-Standalone selected/live lookup retries only that generation's id hydration and merges the result
-without changing the base extent. A new query, list refresh or lost owner interest retires its
-recovery. Foreground initial, search and older-page failures keep local retry controls.
+An absent selected/live session shares one retry budget across events within its generation.
+Its lookup preserves the base extent. A new query, list refresh or lost owner interest retires
+the lookup. Foreground initial, search and older-page failures keep local retry controls.
 
 Settlement hints atomically refetch the consumed extent in bounded sequential pages under one
 generation, even beyond one server page. Background retries keep that extent instead of collapsing

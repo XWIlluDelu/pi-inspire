@@ -46,16 +46,15 @@ const indexFile = { name: /index\.ts/ };
 it("retires file completions from superseded queries and extension draft replacement", async () => {
   const slow = deferred<void>();
   host.slowSearchGate = slow.promise;
-  const search = vi.spyOn(store, "searchProjectFiles");
+  const slowRequest = () =>
+    vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes("q=slow"));
   const input = renderComposer();
   complete(input, "@slow");
-  await waitFor(() => expect(search).toHaveBeenCalledWith("slow"));
+  await waitFor(() => expect(slowRequest()).toBeDefined());
   complete(input, "@ind");
   const option = await screen.findByRole("option", indexFile);
-  await act(async () => {
-    slow.resolve();
-    await search.mock.results[0]!.value;
-  });
+  expect(slowRequest()![1]?.signal?.aborted).toBe(true);
+  await act(async () => slow.resolve());
   expect(screen.queryByRole("option", { name: /slow\.ts/ })).toBeNull();
   expect(option).toBeInTheDocument();
 
