@@ -1,7 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
 import {
-  access,
   mkdir,
   mkdtemp,
   readFile,
@@ -148,69 +147,32 @@ describe("Inspire instance state", () => {
     });
   });
 
-  it("does not merge distinct case-sensitive roots even under Windows rules", async (context) => {
+  it("matches installation roots by their identity on the actual volume", async () => {
     const path = await temporaryStatePath();
     const lower = path + "-root";
     const upper = path + "-ROOT";
     await mkdir(lower);
-    if (
-      await access(upper).then(
-        () => true,
-        () => false,
-      )
-    )
-      return context.skip();
-    await mkdir(upper);
-    const owner = {
-      ...state(),
-      root: upper,
-      processStartTime: await processStartIdentity(process.pid),
-    };
-    await writeInstanceState(path, owner);
-    // Use the real case-sensitive filesystem while selecting Windows path
-    // rules. Reject before any process query/network call; no OS is emulated.
-    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
-    Object.defineProperty(process, "platform", { value: "win32" });
-    try {
-      await expect(
-        inspectInstance(path, {
-          root: lower,
-          host: owner.host,
-          port: owner.port,
-        }),
-      ).resolves.toEqual({ kind: "stale" });
-    } finally {
-      Object.defineProperty(process, "platform", platform);
-    }
-  }, 30_000);
-
-  it("accepts an existing root's case alias only on an actually aliasing volume", async (context) => {
-    const path = await temporaryStatePath();
-    const lower = path + "-root";
-    const upper = path + "-ROOT";
-    await mkdir(lower);
-    if (
-      !(await access(upper).then(
-        () => true,
-        () => false,
-      ))
-    )
-      return context.skip();
+    const distinct = (await mkdir(upper, { recursive: true })) !== undefined;
     const owner = {
       ...state(),
       root: lower,
       processStartTime: await processStartIdentity(process.pid),
     };
     await writeInstanceState(path, owner);
-    // A live non-Host test process is unavailable, not a mismatched-root stale
-    // publication, when the native filesystem confirms that both names alias.
-    await expect(
-      inspectInstance(path, {
+    // Windows directories can be case-sensitive. Exercise that combination
+    // even when the test volume belongs to another operating system.
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    if (distinct) Object.defineProperty(process, "platform", { value: "win32" });
+    try {
+      const result = await inspectInstance(path, {
         root: upper,
         host: owner.host,
         port: owner.port,
-      }),
-    ).resolves.toMatchObject({ kind: "unavailable" });
+      });
+      expect(result.kind).toBe(distinct ? "stale" : "unavailable");
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+    }
   }, 30_000);
 
   it("reports port ownership without disturbing the listener", async () => {

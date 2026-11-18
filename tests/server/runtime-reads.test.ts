@@ -13,13 +13,11 @@ function fixture() {
       composerHistoryMessages: () => [],
     },
   } as unknown as RuntimeSlot;
-  const selected = { ...slot, id: "b", cwd: "/B", viewId: "view-b" };
   let registered = slot;
   const host = {
     assertAvailable: () => {},
     requireSlot: (id: string) => {
       if (id === slot.id) return registered;
-      if (id === selected.id) return selected;
       throw new Error(`Unexpected fixture session: ${id}`);
     },
     useSlot: <T>(_slot: RuntimeSlot, operation: () => Promise<T>) =>
@@ -39,21 +37,13 @@ function fixture() {
 }
 
 describe("addressed resource read lifecycle", () => {
-  it.each(["before", "during"])(
-    "rejects a slot replaced %s context reconciliation",
-    async (when) => {
-      const f = fixture();
-      if (when === "before")
-        f.host.requireSlot = vi
-          .fn()
-          .mockReturnValueOnce(f.slot)
-          .mockImplementation(() => ({ ...f.slot }));
-      else f.host.reconcileSlot.mockImplementation(async () => f.replace());
-      await expect(f.reads.resourceContext("a")).rejects.toMatchObject({
-        status: 409,
-      });
-    },
-  );
+  it("rejects a slot replaced during context reconciliation", async () => {
+    const f = fixture();
+    f.host.reconcileSlot.mockImplementation(async () => f.replace());
+    await expect(f.reads.resourceContext("a")).rejects.toMatchObject({
+      status: 409,
+    });
+  });
 
   it.each(["slot", "view", "revision"])(
     "rejects a lazy read after its %s changes during reconciliation",

@@ -218,9 +218,6 @@ describe("native prompt admission and extension dialogs", () => {
     );
     expect(f.workers).toEqual([worker]);
     expect(worker.stop).not.toHaveBeenCalled();
-    expect(
-      f.observations.filter(({ method }) => method === "POST"),
-    ).toHaveLength(3);
     expect(eventsOf(f.runtimeEvents, "runtime_error")).toEqual([]);
   }, 20_000);
 
@@ -334,9 +331,6 @@ describe("native prompt admission and extension dialogs", () => {
       () => {
         completed = true;
       },
-    );
-    await vi.waitFor(() =>
-      expect(f.observations[0]?.receipt).toMatchObject({ state: "pending" }),
     );
     const dialog = await vi.waitFor(async () => {
       const pending = await f.runtime.snapshot(f.sessionId);

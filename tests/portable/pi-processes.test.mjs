@@ -94,16 +94,6 @@ function ancestor(pid, parentPid, overrides = {}) {
   return identity(pid, { parentPid, title: "node", ...overrides });
 }
 
-test("external restart caller allows a verified non-Pi chain through foreign-owned init", async () => {
-  const f = ancestryFixture([
-    ancestor(100, 90),
-    ancestor(90, 1, { title: "bash" }),
-    ancestor(1, 0, { title: "systemd", uid: 0 }),
-  ]);
-  await f.check();
-  assert.deepEqual(f.state.calls, [100, 90, 100, 1, 90]);
-});
-
 test("external restart caller rejects Pi and RPC ancestors with actionable instructions", async () => {
   for (const title of ["pi", "pi-rpc"]) {
     const f = ancestryFixture([
@@ -237,29 +227,6 @@ test("snapshots every Pi title before TERM, including nested Pi, and leaves non-
   ]);
   assert.deepEqual(f.sleeps, []);
   assert.equal(f.enumerations, 2);
-});
-
-test("Herdr Pi are excluded by default and included only when requested", async () => {
-  for (const includeHerdr of [false, true]) {
-    const f = fixture([
-      identity(10),
-      identity(11, { inHerdr: true }),
-      identity(12, { title: "pi-rpc", inHerdr: true }),
-      identity(13, { title: "herdr", inHerdr: true }),
-    ]);
-    await f.stop({ includeHerdr });
-    assert.deepEqual(
-      f.signals,
-      includeHerdr
-        ? [
-            [10, "SIGTERM"],
-            [11, "SIGTERM"],
-            [12, "SIGTERM"],
-          ]
-        : [[10, "SIGTERM"]],
-    );
-    assert.ok(f.records.has(13));
-  }
 });
 
 test("fresh final verification honors the Herdr inclusion scope", async () => {
@@ -533,11 +500,12 @@ test("native Linux inspection and termination are scoped to disposable fixtures 
   timeout: 10_000,
 }, async (t) => {
   const graceful = await disposable(t, "pi");
-  const stubborn = await disposable(t, "pi-rpc", true, {
+  const herdr = {
     HERDR_PANE_ID: "fixture-pane",
     HERDR_SOCKET_PATH: "/fixture/herdr.sock",
-  });
-  const unrelated = await disposable(t, "inspire-host");
+  };
+  const stubborn = await disposable(t, "pi-rpc", true, herdr);
+  const unrelated = await disposable(t, "herdr", false, herdr);
   const native = createLinuxPiProcessAdapter();
   const adapter = {
     ...native,

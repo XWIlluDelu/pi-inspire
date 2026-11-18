@@ -7,20 +7,12 @@ import type { TerminalDescriptor } from "../../shared/terminal-contracts.js";
 import type { TerminalOperation } from "../../shared/terminal-operations.js";
 import { terminalDaemonFixture } from "./fixtures/terminal-daemon.js";
 
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((yes) => {
-    resolve = yes;
-  });
-  return { promise, resolve };
-}
-
 describe("terminal control receipts over isolated IPC", () => {
   it("replays a lost receipt through a replacement Host and retires it when the daemon changes", async () => {
     const f = await terminalDaemonFixture();
     const host = f.connect();
-    const committed = deferred<void>();
-    const reply = deferred<TerminalDescriptor>();
+    const committed = Promise.withResolvers<void>();
+    const reply = Promise.withResolvers<TerminalDescriptor>();
     const result = {
       id: "synthetic-terminal",
       catalogEpoch: "catalog",
@@ -128,7 +120,7 @@ describe("bounded terminal receipts", () => {
       limit: 1,
     });
     const operation = createIntent(receipts.getEpoch());
-    const gate = deferred<{ id: string }>();
+    const gate = Promise.withResolvers<{ id: string }>();
     const execute = vi.fn(() => gate.promise);
     const observe = () => receipts.run(operation);
     await expect(observe()).rejects.toMatchObject({

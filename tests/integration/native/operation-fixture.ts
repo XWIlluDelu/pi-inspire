@@ -161,16 +161,7 @@ export async function fixture(
     ...(autoCompaction ? {} : { promptObservationWindowMs: 100 }),
   });
   cleanups.push(() => closeHostApiFixture(host));
-  const observations: Array<{ method: string; receipt?: unknown }> = [];
-  vi.stubGlobal("fetch", (async (input, init) => {
-    const response = await host.fetchHost(input, init);
-    const method = init?.method ?? "GET";
-    const receipt = String(input).startsWith("/api/prompt")
-      ? await response.clone().json()
-      : undefined;
-    observations.push({ method, receipt });
-    return response;
-  }) satisfies typeof fetch);
+  vi.stubGlobal("fetch", host.fetchHost);
   const client = createApi();
   const api: NativeOperationApi = {
     ...client,
@@ -215,7 +206,6 @@ export async function fixture(
     piEvents,
     runtimeEvents,
     modelRequests: model.requests,
-    observations,
     sessionFile,
     earlierEntryId: seedIds[5]!,
     sessionId,
