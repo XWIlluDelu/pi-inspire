@@ -97,18 +97,8 @@
       "@earendil-works/pi-ai"
     ],
     "ignore": [
-      "server/instance-state.d.mts",
-      "server/instance-control.d.mts",
+      "server/*.d.mts",
       "server/proper-lockfile.d.ts",
-      "server/file-lock.d.mts",
-      "server/platform-paths.d.mts",
-      "server/platform-environment.d.mts",
-      "server/process-tree.d.mts",
-      "server/pi-processes.d.mts",
-      "server/launcher-restart.d.mts",
-      "server/restart-submission.d.mts",
-      "server/current-web-build.d.mts",
-      "server/user-environment.d.mts",
       "tests/fixtures/packaged-launcher.d.mts"
     ]
   },

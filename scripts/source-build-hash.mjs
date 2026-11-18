@@ -23,23 +23,25 @@ const buildInputs = [
   "scripts/licenses",
 ];
 
-async function filesUnder(root, relativePath) {
-  const path = join(root, relativePath);
-  let entry;
+async function filesUnder(root, relativePath, entry) {
   try {
-    entry = await lstat(path);
+    entry ??= await lstat(join(root, relativePath));
+    if (entry.isFile()) return [relativePath];
+    if (!entry.isDirectory()) return [];
+    const children = await readdir(join(root, relativePath), {
+      withFileTypes: true,
+    });
+    return (
+      await Promise.all(
+        children.map((child) =>
+          filesUnder(root, join(relativePath, child.name), child),
+        ),
+      )
+    ).flat();
   } catch (error) {
-    if (error && typeof error === "object" && error.code === "ENOENT")
-      return [];
+    if (error?.code === "ENOENT") return [];
     throw error;
   }
-  if (entry.isFile()) return [relativePath];
-  if (!entry.isDirectory()) return [];
-  const children = await readdir(path, { withFileTypes: true });
-  const nested = await Promise.all(
-    children.map((child) => filesUnder(root, join(relativePath, child.name))),
-  );
-  return nested.flat();
 }
 
 /** Fingerprint the source and build inputs that can alter the Vite client.
@@ -60,6 +62,3 @@ export async function sourceBuildHash(root = defaultRoot) {
   }
   return hash.digest("hex");
 }
-
-if (process.argv[1] === fileURLToPath(import.meta.url))
-  process.stdout.write(`${await sourceBuildHash()}\n`);

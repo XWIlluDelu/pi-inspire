@@ -98,57 +98,37 @@ Keep state scoped to its Pi session and reconstruct it from persisted entries du
 
 ## Share sessions with terminal Pi
 
-[attach-control](../extensions/attach-control.ts) is a generic Pi extension that lets a local
-client attach to a live Pi and control it. Inspire uses it to show terminal Pi sessions and their
-activity, and to continue them. It is a single file that ships with Inspire:
+Install [attach-control](../extensions/attach-control.ts) to share a terminal Pi with Inspire:
 
 ```sh
 pi install /absolute/path/to/inspire/extensions/attach-control.ts
 ```
 
-New Pi processes load it. Run `/reload` in an idle terminal Pi to activate it there. Use
-`extensions/attach-control.ts` as the configured extension path.
+New Pi processes load it automatically. Run `/reload` in an existing idle terminal Pi.
+Inspire attaches automatically when one idle, controllable Pi is continuing the viewed branch.
+If that Pi is busy, **Take over** connects the browser to the running task. Both interfaces can
+send input, stop the task, rename the session or change its model and thinking level. If several
+processes match the viewed branch, leave the session in the others before taking over.
 
-With attach-control installed:
+**Input during a run.** Start `inspire pi` in the project directory to use Steer and Follow up
+from the browser. To resume a session, use `inspire pi --session <session.jsonl>`. Relative
+paths start in the calling directory. From another project with a source installation, invoke
+`node /path/to/inspire/inspire.mjs pi` there. This terminal uses Pi's native UI, saved trust,
+model scope and built-in MCP. Pi confirms each queued or handled input. With a regular `pi`
+process, send browser input while idle and queue busy input from the terminal. Both keep
+terminal queues outside Inspire's Pending.
 
-- A terminal Pi and Inspire can use the same session at the same time. There is no release or
-  handoff step. Search for **Copy resume command** in the command palette to get the terminal
-  command for the selected session.
-- Opening a session automatically attaches to a sole controllable Pi on the viewed branch if
-  it is idle. A busy Pi leaves the view read-only with progress and **Take over**. If the branch
-  is free, Inspire continues it with its own Pi.
-- **Take over** attaches to that Pi. The terminal keeps working, and both interfaces operate the
-  same context and work: input, Stop, rename, model and thinking go to it. A Pi
-  still at an older shared position does not block attaching to the one continuing the branch
-  you see. If several Pi processes match that view, leave the session in the other processes
-  before taking over.
-- If the attached Pi exits, moves to another session or branch, or stops answering for longer than a
-  reload takes, Inspire says which of these happened. It continues the same view with its own Pi
-  once the branch is available.
-  It does not claim a task failed: a Pi that moved or stopped answering may still be working, and
-  a task interrupted by an exit is reported as ended with an unknown outcome.
-- A read-only view follows the branch it opened on, even when another branch becomes the default.
-  **Switch branch…** in the title menu opens History to choose another branch. Appends from other Pi processes are ordinary session use. A session you
-  are working on in Inspire keeps its branch.
+Run shell and slash commands and answer native dialogs in the terminal. Browser Stop requests
+agent interruption. When Pi cannot confirm admission or a reply is lost, Inspire keeps the
+draft and checks the original receipt on retry. An input still in Pi's hooks can leave Stop
+unconfirmed.
 
-Limits of attaching to another Pi:
-
-- To send Steer or Follow up from the browser, start the terminal session with
-  `inspire pi` or `inspire pi --session <session.jsonl>` (from a source checkout:
-  `npm run inspire -- pi --session <session.jsonl>`). This opens Pi's native terminal UI using
-  its SDK, existing model scope, built-in MCP support and saved project trust. It confirms each input when Pi
-  queues or handles it. Native terminal queues remain outside Inspire's Pending.
-- A regular `pi` process running the extension can accept browser input when idle. While it
-  works, queue input in its terminal. The extension API cannot return a per-input queue
-  receipt, so Inspire refuses remote queue operations before sending them.
-- Stop interrupts agent work. Run Pi slash commands and start or stop terminal shell commands
-  from the attached Pi's own interface.
-- Answer a terminal Pi's native dialogs in its terminal.
-- A prompt receipt requires evidence of native admission. If an idle input is handled without
-  an observable result, or if the receipt is lost, Inspire retains the draft and checks the
-  original receipt on retry. Stop requests agent interruption and reports an
-  uncertain outcome while earlier input may still be in Pi's input hooks.
-- A Pi without attach-control is invisible to Inspire; both can still append to the same session.
+A read-only view stays on its branch. Use **Switch branch…** in the title menu to choose another,
+or **Copy resume command** in the palette to open the session in a terminal. If the attached Pi
+exits, switches sessions or branches, or stops answering beyond the reload window, Inspire reports
+what it observed. The Host continues the same view with its own Pi when that branch is free.
+An interrupted task with no confirmed outcome is shown as unknown. A terminal Pi without
+attach-control can still append to the session independently.
 
 **Protocol.** Each live session context writes a record (session ID and file, current branch
 leaf, activity, model, process identity, endpoint and token) to `pi-attach-control` under

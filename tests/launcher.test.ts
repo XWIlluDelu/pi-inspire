@@ -7,6 +7,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   symlink,
   writeFile,
@@ -21,7 +22,10 @@ import {
 } from "../server/process-tree.mjs";
 import { TerminalDaemonClient } from "../server/terminal-daemon-client.js";
 import { terminalDaemonSecretPath } from "../server/terminal-daemon-tls.js";
-import { directLauncherEnvironment } from "./fixtures/packaged-launcher.mjs";
+import {
+  directLauncherEnvironment,
+  preparePackagedLauncher,
+} from "./fixtures/packaged-launcher.mjs";
 import { isolatedTestEnvironment } from "./server/fixtures/isolated-environment.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -134,6 +138,31 @@ afterEach(async () => {
 });
 
 describe("production launcher", () => {
+  it("starts terminal Pi in the caller's project and keeps the installation separate", async () => {
+    const install = await mkdtemp(join(tmpdir(), "inspire-pi-launch-"));
+    temporaryDirectories.push(install);
+    await preparePackagedLauncher(install);
+    const project = join(install, "my project");
+    await mkdir(project);
+    await writeFile(join(project, "local.jsonl"), "caller session");
+    await writeFile(
+      join(install, "build/server/attached-pi-entry.js"),
+      `import { readFileSync } from "node:fs";
+       console.log(readFileSync(process.argv[3], "utf8"), process.env.INSPIRE_INSTALLATION_ROOT);`,
+    );
+    expect(
+      execFileSync(
+        process.execPath,
+        [join(install, "inspire.mjs"), "pi", "--session", "local.jsonl"],
+        {
+          cwd: project,
+          encoding: "utf8",
+          env: { ...process.env, INSPIRE_ENVIRONMENT: "inherit" },
+        },
+      ).trim(),
+    ).toBe(`caller session ${await realpath(install)}`);
+  });
+
   it("stops the readiness wait when the service process exits", async () => {
     const directory = await mkdtemp(join(tmpdir(), "inspire-systemd-ready-"));
     temporaryDirectories.push(directory);

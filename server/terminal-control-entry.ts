@@ -1,3 +1,4 @@
+import { hostListener } from "./instance-state.mjs";
 import {
   controlTerminalDaemon,
   inspectTerminalDaemon,
@@ -22,8 +23,7 @@ async function main(): Promise<void> {
     );
   const options = {
     root: process.cwd(),
-    host: process.env.INSPIRE_HOST ?? "127.0.0.1",
-    port: Number(process.env.INSPIRE_PORT ?? "4587"),
+    ...hostListener(),
   };
   if (action === "status") {
     const result = await inspectTerminalDaemon(options);

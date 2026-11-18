@@ -30,7 +30,7 @@ Set overrides in the environment that launches the Host:
 | Variable | Meaning |
 | --- | --- |
 | `INSPIRE_HOST` | Loopback address: `127.0.0.1` (default), `::1`, or `localhost`. Remote access goes through an HTTPS ingress such as reverse SSH. |
-| `INSPIRE_PORT` | TCP port, default `4587`. Use a separate port for another Host or a development instance. |
+| `INSPIRE_PORT` | Decimal TCP port from 1 to 65535, default `4587`. Use a separate port for another Host or a development instance. |
 | `INSPIRE_OPEN=0` | Do not open a browser automatically; the launcher still prints a local pairing link. |
 | `INSPIRE_PI_COMMAND` | A specific Pi executable, by name or path, instead of `pi` on PATH. It must resolve to the Pi package, not a shell command with arguments. |
 | `INSPIRE_STATE_PATH` | Private launcher instance-state file. Normally unset; if set, reuse it for that instance's status, stop and restart commands. |
@@ -160,60 +160,34 @@ that Pi to apply the update.
 
 ## Host and terminal maintenance
 
-**Settings → System → Host** offers two restart actions.
+In **Settings → System → Host**, **Restart** replaces Inspire and its own Pi workers.
+Attached Pi processes and project terminals stay open. Use `/reload` in a terminal Pi to
+reload its resources. If work is active, the Host identifies it and offers **Stop work and
+restart**. If Stop remains unconfirmed, review the affected sessions before choosing
+**Restart anyway**.
 
-| Action | Effect |
-| --- | --- |
-| **Restart** | Restarts Inspire and its own Pi workers. Project terminals and attached Pi processes stay open. Use `/reload` in a terminal Pi to reload its resources. |
-| **Restart all** | On installed Linux services, closes current-user Pi sessions and project terminals, then restarts Inspire. |
+**Restart all** closes current-user Pi sessions and project terminals on installed Linux
+services. The running Host's enhancement mode determines whether Herdr Pi are included.
+The shared Herdr server stays up. Inspire starts again after Pi shutdown succeeds.
 
-**Restart** checks for unfinished work, including work in a taken-over Pi. After a workload refusal,
-the same row offers **Stop work and restart**. If the Host cannot confirm Stop for an attached Pi,
-it lists the affected sessions; **Restart anyway** proceeds without another Stop request.
+The page follows the restart in the background and retains browser pairing. Ordinary restart
+requires a launcher or installed service. A Host started directly from the internal server
+entry needs an operator restart. If the listener is down, run `inspire stop` with the same
+port and state-path overrides and start it again after shutdown.
 
-**Restart all** asks for confirmation before stopping work. The running Host's Herdr mode determines
-whether it closes Pi in Herdr. The shared Herdr server stays running, and Inspire starts again
-only after Pi shutdown succeeds.
-
-Inspire checks an unconfirmed restart in the background.
-
-Page restart works with the Inspire launcher on Windows, macOS and Linux, and with the installed
-Linux service. It reuses the launcher or service, configuration and browser pairing. Preparation
-or worker-retirement failure prevents replacement. A Host started directly from the internal
-server entry point needs an operator restart.
-
-Restarts leave connection services running. `inspire restart --all` and `--terminals` require the
-installed Linux services and an external OS terminal, since the project terminal running the command could close
-before it shows the result. Run `--all` outside Pi as well, so closing Pi cannot end the restart command. Settings shows the availability of both restart scopes.
-
-If the listener is down, use `inspire stop` with the running Host's port and state-path overrides,
-then start Inspire after shutdown. Stopping an installed service also ends its project terminals.
+Run CLI `--terminals` and `--all` from an external OS terminal. Run `--all` outside Pi so
+the restart command survives Pi shutdown. Connection services continue across restarts.
 
 ### Terminal-service maintenance
 
-**Restart** keeps the existing terminal daemon. Manage it from an
-**external terminal**, not from an Inspire project terminal (stopping the daemon would end the
-command; it refuses to run there, while `status` is allowed):
+Use `inspire terminal status` in any terminal. From an external terminal, use
+`inspire terminal stop` or `inspire terminal restart`. Add `--force` to confirm closing live
+terminals. Saved tabs reopen as exited. The Host keeps running.
 
-```sh
-inspire terminal status
-inspire terminal restart
-# Confirm ending every live project terminal in this daemon:
-inspire terminal restart --force
-# Or stop it without a replacement:
-inspire terminal stop --force
-```
-
-Reuse the Host's `INSPIRE_HOST`, `INSPIRE_PORT`, `INSPIRE_TERMINAL_DAEMON_ADDRESS`,
-`INSPIRE_TERMINAL_TOKEN_PATH` and `INSPIRE_TERMINAL_STATE_PATH` overrides. These commands leave the
-Host and Pi workers running. `--force` confirms ending live terminals but does not bypass
-authentication; saved tabs return as exited without rerunning commands.
-
-If PTY cleanup fails or is unconfirmed, replacement is refused and terminal writes are blocked;
-status and lifecycle controls stay available. A missing endpoint means nothing is listening, not
-that the process has exited. The installed Linux terminal unit keeps systemd ownership;
-[terminal ownership](https://github.com/XWIlluDelu/pi-inspire/blob/main/docdoki/specs/terminal.md#process-ownership)
-defines the handoff.
+Use the same `INSPIRE_HOST`, `INSPIRE_PORT`, `INSPIRE_TERMINAL_DAEMON_ADDRESS`,
+`INSPIRE_TERMINAL_TOKEN_PATH` and `INSPIRE_TERMINAL_STATE_PATH` overrides as the Host.
+Failed or unconfirmed PTY cleanup blocks terminal writes and replacement.
+Status and lifecycle controls remain available. An absent socket alone cannot confirm process exit.
 
 ### Connection recovery and upgrades
 

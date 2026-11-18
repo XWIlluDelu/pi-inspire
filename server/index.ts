@@ -9,7 +9,7 @@ import {
   takeoverCandidate,
 } from "./attach-control.js";
 import { AttachmentStore } from "./attachments.js";
-import { openBrowser } from "./browser-opener.js";
+import { openBrowser } from "./browser-opener.mjs";
 import {
   defaultDiagnosticLogPath,
   nullDiagnosticLogger,
@@ -26,6 +26,7 @@ import { hostRestartBackend } from "./host-restart-backend.js";
 import {
   completeInstanceShutdown,
   consumeStopRequest,
+  hostListener,
   INSTANCE_STATE_VERSION,
   type InstanceState,
   instanceUrl,
@@ -93,13 +94,7 @@ const packageJson = JSON.parse(
   repository?: string | { url?: string };
 };
 
-const host = process.env.INSPIRE_HOST ?? "127.0.0.1";
-if (host !== "127.0.0.1" && host !== "::1" && host !== "localhost") {
-  throw new Error("Inspire binds to loopback only in the local release");
-}
-const port = Number.parseInt(process.env.INSPIRE_PORT ?? "4587", 10);
-if (!Number.isInteger(port) || port < 1 || port > 65_535)
-  throw new Error("INSPIRE_PORT must be a valid TCP port");
+const { host, port } = hostListener();
 const token = await resolveAccessToken(
   process.env.INSPIRE_TOKEN,
   defaultAccessTokenPath(root, host, port),
@@ -414,7 +409,7 @@ async function announceStarted(): Promise<void> {
     console.log(`  ${url}\n`);
   }
   if (process.env.INSPIRE_OPEN === "1") {
-    openBrowser(url, (error) => {
+    void openBrowser(url).catch((error: Error) => {
       diagnostics.record("warning", "browser_open_failed", {
         errorName: error.name,
         errorCode: (error as NodeJS.ErrnoException).code,

@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import { acquireFileLock } from "./file-lock.mjs";
-import { processStartIdentity } from "./instance-state.mjs";
+import { hostListener, processStartIdentity } from "./instance-state.mjs";
 import {
   resolveTerminalDaemonConfiguration,
   type TerminalDaemonConfiguration,
@@ -44,8 +44,7 @@ function configuration(): TerminalDaemonConfiguration {
   }
   return resolveTerminalDaemonConfiguration({
     root: resolve(argument("--root") ?? process.cwd()),
-    host: argument("--host") ?? process.env.INSPIRE_HOST ?? "127.0.0.1",
-    port: Number(argument("--port") ?? process.env.INSPIRE_PORT ?? "4587"),
+    ...hostListener(argument("--host"), argument("--port")),
     environment,
   });
 }

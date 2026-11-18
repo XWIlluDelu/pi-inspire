@@ -1,76 +1,53 @@
 import { EventEmitter } from "node:events";
-import { describe, expect, it, vi } from "vitest";
-import { openBrowser } from "../../server/browser-opener.js";
+import { expect, it, vi } from "vitest";
+import { openBrowser } from "../../server/browser-opener.mjs";
 
-class FakeChild extends EventEmitter {
-  readonly unref = vi.fn();
+const url = "http://127.0.0.1:4587/#inspire-bootstrap=transfer";
+function child() {
+  return Object.assign(new EventEmitter(), { unref: vi.fn() });
 }
 
-describe("openBrowser", () => {
-  it("observes an asynchronous missing-opener error without throwing", () => {
-    const child = new FakeChild();
-    const onError = vi.fn();
-    const spawn = vi.fn(() => child);
-    openBrowser("http://127.0.0.1:4587", onError, "linux", spawn);
-
-    const error = Object.assign(new Error("spawn xdg-open ENOENT"), {
-      code: "ENOENT",
+it.each([
+  ["darwin", "open", [url]],
+  [
+    "win32",
+    "C:\\Windows\\System32\\rundll32.exe",
+    ["url.dll,FileProtocolHandler", url],
+  ],
+] as const)(
+  "passes the pairing URL as one argument on %s",
+  async (platform, command, args) => {
+    const opener = child();
+    const spawn = vi.fn(() => opener);
+    const result = openBrowser(url, platform, spawn, {
+      systemroot: "C:\\Windows",
     });
-    child.emit("error", error);
-    child.emit("exit", 1, null);
-    expect(onError).toHaveBeenCalledExactlyOnceWith(error);
-    expect(spawn).toHaveBeenCalledWith(
-      "xdg-open",
-      ["http://127.0.0.1:4587"],
-      expect.objectContaining({ detached: true, stdio: "ignore" }),
-    );
-    expect(child.unref).toHaveBeenCalledOnce();
-  });
-
-  it("reports a nonzero opener exit without affecting the Host", () => {
-    const child = new FakeChild();
-    const onError = vi.fn();
-    openBrowser(
-      "http://127.0.0.1:4587/?token=launch-token",
-      onError,
-      "linux",
-      () => child,
-    );
-
-    child.emit("exit", 3, null);
-    expect(onError).toHaveBeenCalledOnce();
-    expect(onError.mock.calls[0]?.[0]).toMatchObject({ code: "EXIT_3" });
-    expect(onError.mock.calls[0]?.[0].message).not.toContain("launch-token");
-  });
-
-  it("reports a synchronous spawn failure", () => {
-    const error = new Error("invalid spawn options");
-    const onError = vi.fn();
-    openBrowser("http://127.0.0.1:4587", onError, "linux", () => {
-      throw error;
+    expect(spawn).toHaveBeenCalledWith(command, args, {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
     });
-    expect(onError).toHaveBeenCalledWith(error);
-  });
+    opener.emit("exit", 0, null);
+    await result;
+  },
+);
 
-  it("uses the native macOS opener", () => {
-    const url = "http://127.0.0.1:4587";
-    const spawn = vi.fn(() => new FakeChild());
-    openBrowser(url, vi.fn(), "darwin", spawn, {});
-    expect(spawn).toHaveBeenCalledWith("open", [url], expect.any(Object));
+it("tries gio when xdg-open is missing and reports a failed exit without the pairing URL", async () => {
+  const spawn = vi.fn((command: string) => {
+    const opener = child();
+    queueMicrotask(() => {
+      if (command === "xdg-open")
+        opener.emit("error", Object.assign(new Error(), { code: "ENOENT" }));
+      else opener.emit("exit", 3, null);
+    });
+    return opener;
   });
-
-  it("uses copied SystemRoot and forwards the complete URL as one argument", () => {
-    const spawn = vi.fn<NonNullable<Parameters<typeof openBrowser>[3]>>(
-      () => new FakeChild(),
-    );
-    const url = "http://127.0.0.1:4587/?token=value&next=files";
-    openBrowser(url, vi.fn(), "win32", spawn, { systemroot: "C:\\Windows" });
-
-    expect(spawn).toHaveBeenCalledWith(
-      "C:\\Windows\\System32\\rundll32.exe",
-      ["url.dll,FileProtocolHandler", url],
-      expect.any(Object),
-    );
-    expect(spawn.mock.calls[0]?.[2]?.shell).toBeFalsy();
+  await expect(openBrowser(url, "linux", spawn)).rejects.toMatchObject({
+    code: "EXIT_3",
+    message: "Desktop browser opener exited with status 3",
   });
+  expect(spawn.mock.calls.map(([command]) => command)).toEqual([
+    "xdg-open",
+    "gio",
+  ]);
 });

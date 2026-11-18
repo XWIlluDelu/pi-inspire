@@ -30,12 +30,21 @@ const execFile = promisify(execFileCallback);
 
 export { INSTANCE_STATE_VERSION };
 
-function displayHost(host) {
-  return host === "::1" ? "[::1]" : host;
+/** All commands address the same loopback listener and installation state. */
+export function hostListener(
+  host = process.env.INSPIRE_HOST ?? "127.0.0.1",
+  portText = process.env.INSPIRE_PORT ?? "4587",
+) {
+  if (!["127.0.0.1", "::1", "localhost"].includes(host))
+    throw new Error("INSPIRE_HOST must be a loopback address (127.0.0.1, ::1, or localhost)");
+  const port = Number(portText);
+  if (!/^\d+$/u.test(portText) || port < 1 || port > 65_535)
+    throw new Error("INSPIRE_PORT must be a valid TCP port");
+  return { host, port };
 }
 
-export function instanceUrl(state) {
-  return `http://${displayHost(state.host)}:${state.port}/`;
+export function instanceUrl({ host, port }) {
+  return `http://${host === "::1" ? "[::1]" : host}:${port}/`;
 }
 
 /** A pairing transfer, not a reusable token in process arguments/navigation.

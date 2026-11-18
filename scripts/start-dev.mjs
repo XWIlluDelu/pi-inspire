@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
+  hostListener,
   portAvailable,
   stopManagedInstance,
 } from "../server/instance-state.mjs";
@@ -14,17 +15,7 @@ import {
 } from "../server/process-tree.mjs";
 
 const root = resolve(import.meta.dirname, "..");
-const host = process.env.INSPIRE_HOST ?? "127.0.0.1";
-const port = Number(process.env.INSPIRE_PORT ?? "4587");
-if (
-  !["127.0.0.1", "::1", "localhost"].includes(host) ||
-  !Number.isInteger(port) ||
-  port < 1 ||
-  port > 65535
-)
-  throw new Error(
-    "Development requires a loopback INSPIRE_HOST and valid INSPIRE_PORT",
-  );
+const { host, port } = hostListener();
 if (!(await portAvailable(host, port)))
   throw new Error(
     `Development Host port ${host}:${port} is in use; choose a separate INSPIRE_PORT`,

@@ -180,6 +180,8 @@ describe.runIf(process.platform === "linux")(
       );
       f.env.FIXTURE_OUTDATED = "1";
       expect(() => f.run(["status"])).toThrow(/unit is outdated/u);
+      f.env.INSPIRE_PORT = "4587oops";
+      expect(() => f.run(["status"])).toThrow(/valid TCP port/u);
       f.env.INSPIRE_PORT = "4589";
       expect(() => f.run(["status"])).toThrow(/INSΠRE is not running/u);
     }, 30_000);

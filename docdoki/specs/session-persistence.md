@@ -227,7 +227,8 @@ file-backed images and final Stop/session fences. The browser identifies the bra
 from. A changed branch blocks delivery. Stop and its preliminary Pending recovery share the view
 selected at the click. Input, rename, model and thinking changes stay addressed
 to the attachment present when the request begins.
-An SDK-hosted native terminal (`inspire pi`) confirms Steer and Follow up using Pi's per-input
+`inspire pi` starts in the caller's working directory and resolves relative session paths there.
+This SDK-hosted terminal confirms Steer and Follow up using Pi's per-input
 return value, independently of the next turn. A regular terminal Pi exposes no such result
 through its extension interface; busy remote input is refused before submission and its local
 queue remains under its terminal's control.

@@ -100,12 +100,8 @@ describe("Inspire instance state", () => {
     await writeInstanceState(path, value);
 
     expect(JSON.parse(await readFile(path, "utf8"))).toEqual(value);
-    expect(instanceUrl({ ...value, token: "custom/token?" })).toBe(
-      "http://127.0.0.1:4587/",
-    );
-    expect(instanceUrl({ ...value, token: "local-token", host: "::1" })).toBe(
-      "http://[::1]:4587/",
-    );
+    expect(instanceUrl(value)).toBe("http://127.0.0.1:4587/");
+    expect(instanceUrl({ ...value, host: "::1" })).toBe("http://[::1]:4587/");
     if (process.platform !== "win32")
       expect((await stat(path)).mode & 0o777).toBe(0o600);
     await removeInstanceState(path, { ...value, token: "different-owner" });

@@ -30,13 +30,6 @@ const root = dirname(scriptPath);
 process.chdir(root);
 const sourceRuntime = join(root, "server", "index.ts");
 const releaseRuntime = join(root, "build", "server", "index.js");
-const sourceTerminalRuntime = join(root, "server", "terminal-daemon-entry.ts");
-const releaseTerminalRuntime = join(
-  root,
-  "build",
-  "server",
-  "terminal-daemon-entry.js",
-);
 const connectionDispatcher = join(root, "connections", "dispatch.mjs");
 const hostServiceInstaller = join(root, "deploy", "systemd", "install.mjs");
 const distribution =
@@ -47,8 +40,8 @@ const supportRoot = distribution
 const { acquireFileLock } = await import(
   pathToFileURL(join(supportRoot, "file-lock.mjs")).href
 );
-const { environmentValue } = await import(
-  pathToFileURL(join(supportRoot, "platform-environment.mjs")).href
+const { openBrowser } = await import(
+  pathToFileURL(join(supportRoot, "browser-opener.mjs")).href
 );
 const { npmInvocation } = await import(
   pathToFileURL(join(supportRoot, "npm-command.mjs")).href
@@ -56,6 +49,7 @@ const { npmInvocation } = await import(
 const {
   assertInstanceTarget,
   consumeStopRequest,
+  hostListener,
   inspectInstance,
   instanceLaunchUrl,
   observeProcessExit,
@@ -91,17 +85,13 @@ function localBin(name) {
   );
 }
 
-function childResult(command, args, options = {}) {
-  return runChild(command, args, {
+async function runInherited(command, args, options = {}) {
+  const result = await runChild(command, args, {
     cwd: options.cwd ?? root,
     env: options.env ?? process.env,
     windowsHide: true,
-    stdio: options.capture ? ["ignore", "pipe", "pipe"] : "inherit",
+    stdio: "inherit",
   });
-}
-
-async function runInherited(command, args, options = {}) {
-  const result = await childResult(command, args, options);
   if (result.code !== 0) process.exitCode = result.code;
   return result.code;
 }
@@ -136,27 +126,11 @@ async function ensureDependencies() {
       ),
     ),
   );
-  if (
-    (await exists(join(root, "node_modules"))) &&
-    stamped.trim() === expected &&
-    required.every(Boolean)
-  )
-    return;
+  if (stamped.trim() === expected && required.every(Boolean)) return;
   console.log("Installing dependencies…");
   const code = await runNpmInherited(["install", "--include=dev"]);
   if (code !== 0) throw new Error("Dependency installation failed");
   await writeFile(stamp, `${expected}\n`, "utf8");
-}
-
-async function sourceHash() {
-  const result = await childResult(
-    process.execPath,
-    [join(root, "scripts", "source-build-hash.mjs")],
-    { capture: true },
-  );
-  if (result.code !== 0)
-    throw new Error(result.stderr.trim() || "Unable to fingerprint the source");
-  return result.stdout.trim();
 }
 
 async function build() {
@@ -171,62 +145,19 @@ async function build() {
 
 async function ensureBuild() {
   if (distribution) {
-    for (const path of [
-      join(root, "dist", "index.html"),
-      releaseRuntime,
-      releaseTerminalRuntime,
-      join(root, "build", "server", "instance-state.mjs"),
-      join(root, "build", "server", "file-lock.mjs"),
-      join(root, "build", "server", "npm-command.mjs"),
-      join(root, "build", "server", "platform-paths.mjs"),
-      join(root, "build", "server", "process-tree.mjs"),
-      join(root, "build", "server", "user-environment.mjs"),
-    ]) {
+    const required = [join(root, "dist", "index.html"), join(supportRoot, "terminal-daemon-entry.js")];
+    for (const path of required) {
       if (!(await exists(path)))
         throw new Error("The installed INSΠRE package is incomplete.");
     }
     return;
   }
-  const stamp = await readFile(join(root, ".inspire-build"), "utf8").catch(
-    () => "",
-  );
-  if (
-    !(await exists(join(root, "dist", "index.html"))) ||
-    stamp.trim() !== (await sourceHash())
-  )
-    await build();
-}
-
-function openUrl(url) {
-  const systemRoot = environmentValue(process.env, "SystemRoot");
-  const windowsOpener = systemRoot
-    ? join(systemRoot, "System32", "rundll32.exe")
-    : "rundll32.exe";
-  const candidates =
-    process.platform === "darwin"
-      ? [["open", [url]]]
-      : process.platform === "win32"
-        ? [[windowsOpener, ["url.dll,FileProtocolHandler", url]]]
-        : [
-            ["xdg-open", [url]],
-            ["gio", ["open", url]],
-          ];
-  const attempt = (index) => {
-    const candidate = candidates[index];
-    if (!candidate) return;
-    try {
-      const child = spawn(candidate[0], candidate[1], {
-        detached: true,
-        windowsHide: true,
-        stdio: "ignore",
-      });
-      child.once("error", () => attempt(index + 1));
-      child.unref();
-    } catch {
-      attempt(index + 1);
-    }
-  };
-  attempt(0);
+  const stamp = await readFile(join(root, ".inspire-build"), "utf8").catch(() => "");
+  if (stamp && (await exists(join(root, "dist", "index.html")))) {
+    const { sourceBuildHash } = await import("./scripts/source-build-hash.mjs");
+    if (stamp.trim() === (await sourceBuildHash(root))) return;
+  }
+  await build();
 }
 
 function defaultInstanceStatePath(host, port) {
@@ -272,10 +203,7 @@ async function serviceController(context) {
 }
 
 function instanceContext() {
-  const host = process.env.INSPIRE_HOST ?? "127.0.0.1";
-  const port = Number.parseInt(process.env.INSPIRE_PORT ?? "4587", 10);
-  if (!Number.isInteger(port) || port < 1 || port > 65_535)
-    throw new Error("INSPIRE_PORT must be a valid TCP port");
+  const { host, port } = hostListener();
   const statePath =
     process.env.INSPIRE_STATE_PATH ?? defaultInstanceStatePath(host, port);
   return {
@@ -288,12 +216,8 @@ function instanceContext() {
   };
 }
 
-function expected(context) {
-  return { root: context.root, host: context.host, port: context.port };
-}
-
 async function inspect(context) {
-  return inspectInstance(context.statePath, expected(context));
+  return inspectInstance(context.statePath, context);
 }
 
 function reportUnavailableHost() {
@@ -312,7 +236,7 @@ async function showInstanceUrl(result, open = false) {
     );
     return;
   }
-  if (open) openUrl(url);
+  if (open) void openBrowser(url).catch((error) => console.error(error.message));
 }
 
 async function showExisting(context, waitingForLock = false) {
@@ -377,20 +301,11 @@ async function requireFreePort(context) {
   );
 }
 
-function terminalRuntimeCommand() {
-  if (distribution) return [process.execPath, [releaseTerminalRuntime]];
-  return [
-    process.execPath,
-    [
-      join(root, "node_modules", "tsx", "dist", "cli.mjs"),
-      sourceTerminalRuntime,
-    ],
-  ];
-}
-
-function runtimeCommand() {
-  if (distribution) return [process.execPath, [releaseRuntime]];
-  return [process.execPath, ["--import", "tsx", sourceRuntime]];
+function runtimeArgs(name, args = []) {
+  const entry = join(supportRoot, name + (distribution ? ".js" : ".ts"));
+  return distribution
+    ? [entry, ...args]
+    : ["--import", import.meta.resolve("tsx"), entry, ...args];
 }
 
 async function superviseHost(context, lease) {
@@ -407,7 +322,7 @@ async function superviseHost(context, lease) {
     if (!currentChild) return;
     void (async () => {
       try {
-        await stopManagedInstance(context.statePath, expected(context), {
+        await stopManagedInstance(context.statePath, context, {
           timeoutMs: 10_000,
         });
       } catch (error) {
@@ -430,7 +345,6 @@ async function superviseHost(context, lease) {
         return 0;
       if (restarting) await requireFreePort(context);
       if (stopping) return 0;
-      const [command, args] = runtimeCommand();
       const environment = {
         ...process.env,
         INSPIRE_OPEN: restarting ? "0" : (process.env.INSPIRE_OPEN ?? "1"),
@@ -438,7 +352,7 @@ async function superviseHost(context, lease) {
         INSPIRE_STATE_PATH: context.statePath,
         INSPIRE_STOP_REQUEST_PATH: context.stopRequestPath,
       };
-      child = spawn(command, args, {
+      child = spawn(process.execPath, runtimeArgs("index"), {
         cwd: root,
         env: environment,
         windowsHide: true,
@@ -540,7 +454,7 @@ async function stopLocalHost(context, restart = false, target) {
       if (!stoppedMessage) {
         const result = await stopManagedInstance(
           context.statePath,
-          expected(context),
+          context,
           { target, ...(waitingForStartup ? { timeoutMs: 5_000 } : {}) },
         );
         if (result.kind === "stopped") {
@@ -607,14 +521,7 @@ async function hostLifecycle(action) {
 async function prepareRestart() {
   await ensureDependencies();
   await ensureBuild();
-  const entry = join(
-    supportRoot,
-    distribution ? "restart-preflight.js" : "restart-preflight.ts",
-  );
-  const args = distribution
-    ? [entry]
-    : [join(root, "node_modules", "tsx", "dist", "cli.mjs"), entry];
-  if ((await runInherited(process.execPath, args)) !== 0)
+  if ((await runInherited(process.execPath, runtimeArgs("restart-preflight"))) !== 0)
     throw new Error(
       "Restart preparation failed. The running Host was not stopped.",
     );
@@ -784,17 +691,8 @@ async function main() {
         return 64;
       }
       await ensureDependencies();
-      const entry = join(
-        supportRoot,
-        distribution
-          ? "session-recovery-entry.js"
-          : "session-recovery-entry.ts",
-      );
-      const recoveryArgs = distribution ? [entry] : ["--import", "tsx", entry];
-      return runInherited(process.execPath, [
-        ...recoveryArgs,
-        resolveUserPath(args[0], invocationCwd),
-      ]);
+      const bundle = resolveUserPath(args[0], invocationCwd);
+      return runInherited(process.execPath, runtimeArgs("session-recovery-entry", [bundle]));
     }
     case "prepare-restart":
       if (args.length) return 64;
@@ -836,34 +734,16 @@ async function main() {
       return 0;
     case "pi": {
       await ensureDependencies();
-      const entry = join(
-        supportRoot,
-        distribution ? "attached-pi-entry.js" : "attached-pi-entry.ts",
-      );
-      return runInherited(process.execPath, [
-        ...(distribution ? [] : ["--import", "tsx"]),
-        entry,
-        ...args,
-      ]);
+      return runInherited(process.execPath, runtimeArgs("attached-pi-entry", args), {
+        cwd: invocationCwd,
+        env: { ...process.env, INSPIRE_INSTALLATION_ROOT: root },
+      });
     }
-    case "terminal": {
-      await ensureDependencies();
-      const entry = join(
-        supportRoot,
-        distribution
-          ? "terminal-control-entry.js"
-          : "terminal-control-entry.ts",
-      );
-      return runInherited(process.execPath, [
-        ...(distribution ? [] : ["--import", "tsx"]),
-        entry,
-        ...args,
-      ]);
-    }
+    case "terminal":
     case "terminal-daemon": {
       await ensureDependencies();
-      const [command, terminalArgs] = terminalRuntimeCommand();
-      return runInherited(command, [...terminalArgs, ...args]);
+      const entry = mode === "terminal" ? "terminal-control-entry" : "terminal-daemon-entry";
+      return runInherited(process.execPath, runtimeArgs(entry, args));
     }
     case "connection":
       return runNodeEntry(connectionDispatcher, args);

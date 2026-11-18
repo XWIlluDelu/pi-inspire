@@ -1,4 +1,4 @@
-import { chmod, copyFile, cp, mkdir, writeFile } from "node:fs/promises";
+import { chmod, copyFile, cp, glob, mkdir, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { join } from "node:path";
 
@@ -17,26 +17,10 @@ export async function preparePackagedLauncher(
     writeFile(join(dist, "index.html"), ""),
     writeFile(join(build, "index.js"), host),
     writeFile(join(build, "terminal-daemon-entry.js"), terminal),
-    ...[
-      "file-lock",
-      "instance-state",
-      "instance-control",
-      "launcher-restart",
-      "restart-submission",
-      "npm-command",
-      "platform-paths",
-      "platform-environment",
-      "process-tree",
-      "pi-processes",
-      "current-web-build",
-      "user-environment",
-    ].map((name) =>
-      copyFile(
-        new URL(`server/${name}.mjs`, source),
-        join(build, `${name}.mjs`),
-      ),
-    ),
   ]);
+  for await (const name of glob("*.mjs", { cwd: new URL("server/", source) })) {
+    await copyFile(new URL("server/" + name, source), join(build, name));
+  }
 }
 
 export async function freeLoopbackPort() {
