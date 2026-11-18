@@ -48,6 +48,7 @@ export async function assistantOutcomeScenario(page: Page) {
     ];
     snapshot.active.transcriptPage = {
       ...snapshot.active.transcriptPage,
+      incarnation: "fixture-assistant-outcomes",
       messages,
       hasOlder: false,
     };

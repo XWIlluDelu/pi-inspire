@@ -7,6 +7,8 @@ import {
   openResourceFixture,
 } from "./support/navigation";
 
+test.use({ serviceWorkers: "block" });
+
 const changeRow = /page\.html, modified/;
 const fileTab = { name: "page.html", exact: true };
 const gitToggle = { name: "Git changes", exact: true };

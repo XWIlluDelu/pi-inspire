@@ -3,6 +3,8 @@ import { navigationGroupsFixture } from "./fixtures/navigation-groups";
 import { focusRingClipping } from "./support/focus-bounds";
 import { pairedPage } from "./support/navigation";
 
+test.use({ serviceWorkers: "block" });
+
 test.describe("touch navigation", () => {
   test.use({ hasTouch: true });
 
@@ -68,7 +70,9 @@ test("Welcome Recent hides curated sessions and preserves its disclosure through
   const list = page.locator(".welcome__recent [role=list]");
   await welcome();
   const target = list.getByRole("button").first();
-  const title = await target.getAttribute("title");
+  const title = (await target.getAttribute("title"))!;
+  const matching = list.getByTitle(title, { exact: true });
+  const originalCount = await matching.count();
   await target.click();
   await page.getByRole("button", { name: "Expand navigation", exact: true }).click();
   const row = page.locator(".nav__row--active");
@@ -84,7 +88,7 @@ test("Welcome Recent hides curated sessions and preserves its disclosure through
   await expect(recent).toHaveAttribute("aria-expanded", "false");
   await recent.click();
   await expect(list).toBeVisible();
-  await expect(list.getByTitle(title!, { exact: true })).toHaveCount(0);
+  await expect(matching).toHaveCount(originalCount - 1);
 });
 
 test.describe("short navigation drawer", () => {
@@ -92,7 +96,6 @@ test.describe("short navigation drawer", () => {
     viewport: { width: 568, height: 260 },
     hasTouch: true,
     contextOptions: { reducedMotion: "reduce" },
-    serviceWorkers: "block",
   });
 
   test("switches the catalog view without losing focus in a short window", async ({

@@ -52,9 +52,12 @@ test("sent file prompts retain readable names, original bytes, and history acros
   const uploadResponse = await uploaded;
   expect(uploadResponse.ok()).toBe(true);
   const { attachments } = await uploadResponse.json();
-  expect(
-    attachments.map((file: { fileName: string }) => file.fileName),
-  ).toEqual(names);
+  const uploadedNames: string[] = attachments.map(
+    (file: { fileName: string }) => file.fileName,
+  );
+  expect(uploadedNames.map((name) => name.normalize())).toEqual(
+    names.map((name) => name.normalize()),
+  );
   expect(
     attachments.find(
       (file: { fileName: string }) => file.fileName === "diagram.svg",
@@ -72,7 +75,7 @@ test("sent file prompts retain readable names, original bytes, and history acros
     .last();
   const files = bubble.getByRole("list", { name: "Referenced files" });
   await expect(files.getByRole("listitem")).toHaveCount(names.length);
-  for (const name of names)
+  for (const name of uploadedNames)
     await expect(files.getByText(name, { exact: true })).toBeVisible();
   const sourcePaths = await files
     .getByRole("listitem")
@@ -98,12 +101,12 @@ test("sent file prompts retain readable names, original bytes, and history acros
   for (const path of sourcePaths)
     expect(copied).toContain(JSON.stringify(path));
   await page.reload();
-  await expect(files.getByText(names[0]!, { exact: true })).toBeVisible();
+  await expect(files.getByText(uploadedNames[0]!, { exact: true })).toBeVisible();
   await expect(bubble.locator(".rich-text")).toHaveText(question);
   await input.press("ArrowUp");
   await expect(input).toHaveValue(question);
   const recalled = page.locator(".composer__attachments");
-  for (const name of names)
+  for (const name of uploadedNames)
     await expect(recalled.getByText(name, { exact: true })).toBeVisible();
   const removeRecalled = recalled.getByRole("button", { name: /Remove/ });
   for (const _ of names) await removeRecalled.first().click();

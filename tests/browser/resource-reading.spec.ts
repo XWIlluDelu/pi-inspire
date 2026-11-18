@@ -8,6 +8,8 @@ import {
   openWorkspaceFile,
 } from "./support/navigation";
 
+test.use({ serviceWorkers: "block" });
+
 async function openReadingPane(page: Page, width = 1280, height = 900) {
   await page.setViewportSize({ width, height });
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -93,16 +95,16 @@ test("a Files preview error keeps Retry reachable in a short drawer", {
   tag: "@cross-browser",
 }, async ({ page }) => {
   const pane = await openReadingPane(page, 568, 320);
-  await page.route(
-    "**/api/resources/resolve",
-    (route) =>
-      route.fulfill({
-        status: 403,
-        json: {
-          error: "This file is unavailable. Check access and try again.",
-        },
-      }),
-    { times: 1 },
+  let inaccessible = true;
+  await page.route("**/api/resources/resolve", (route) =>
+    inaccessible
+      ? route.fulfill({
+          status: 403,
+          json: {
+            error: "This file is unavailable. Check access and try again.",
+          },
+        })
+      : route.continue(),
   );
   await openPreviewFixture(pane, "document.md");
   const frame = pane.locator(".file-preview__content");
@@ -111,6 +113,7 @@ test("a Files preview error keeps Retry reachable in a short drawer", {
   await expect(state).toContainText("Preview unavailable");
   await retry.scrollIntoViewIfNeeded();
   await expect(retry).toBeInViewport({ ratio: 1 });
+  inaccessible = false;
   await retry.click();
   await expect(
     pane.getByRole("heading", { name: "Observation log · Station 07" }),

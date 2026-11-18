@@ -10,6 +10,8 @@ import {
   reloadSession,
 } from "./support/navigation";
 
+test.use({ serviceWorkers: "block" });
+
 const root = resolve(
   process.env.INSPIRE_BROWSER_TEST_OUTPUT_DIR ?? "output/playwright",
   "filesystem-fixture",

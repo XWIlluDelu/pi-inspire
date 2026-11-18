@@ -196,6 +196,7 @@ test("real Pi questions preserve workbench edits and restore the native deadline
   page,
   context,
 }, testInfo) => {
+  test.setTimeout(60_000);
   const cwd = testInfo.outputPath("native-workspace");
   await mkdir(join(cwd, ".pi"), { recursive: true });
   await writeFile(

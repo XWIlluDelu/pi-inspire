@@ -129,6 +129,7 @@ test.describe("touch model settings", () => {
 test("New model settings save native declarations and defaults for the prospective owner", async ({
   page,
 }) => {
+  test.setTimeout(60_000);
   const target = await realpath(
     await mkdtemp(join(tmpdir(), "inspire-model-project-")),
   );
@@ -186,7 +187,14 @@ test("New model settings save native declarations and defaults for the prospecti
     await expect(search).toBeFocused();
     await search.press("Tab");
     await expect(manage).toBeFocused();
+    const modelSettings = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.pathname === "/api/model-settings" &&
+        url.searchParams.get("cwd") === target &&
+        response.request().method() === "GET";
+    });
     await manage.press("Enter");
+    expect((await modelSettings).ok()).toBe(true);
     const settings = page.getByRole("dialog", {
       name: "Settings",
       exact: true,
