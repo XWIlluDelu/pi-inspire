@@ -2,14 +2,12 @@ import type { Dirent } from "node:fs";
 import { readdir, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { SessionHeader } from "@earendil-works/pi-coding-agent";
-import type { SessionCatalogIssue } from "../shared/contracts.js";
-import { stripImageDimensionNotes } from "../shared/image-dimension-notes.js";
 import { jsonRecord } from "../shared/json-record.js";
 import { userMessageTitle } from "../shared/user-message.js";
 import {
   isDisappearedSessionPath,
+  MissingSessionHeaderError,
   PersistedJsonlError,
-  preservesSessionPrefix,
   SessionDocumentReader,
   type SessionSourceIdentity,
   SessionSourceTypeError,
@@ -17,7 +15,6 @@ import {
   sameSessionVersion,
   sessionVersionAtPath,
 } from "./session-jsonl.js";
-import { compileSessionSearch } from "./session-search-query.js";
 
 const MAX_INDEXED_TEXT_CHARS = 10_000;
 const SESSION_READ_CONCURRENCY = 4;
@@ -55,7 +52,7 @@ interface CachedSessionRecord {
   completeBytes: number;
   state: SessionMetadataState | null;
   record: SessionRecord | null;
-  malformed?: true;
+  unavailable: boolean;
 }
 
 function timestamp(value: unknown): number | null {
@@ -68,23 +65,6 @@ function timestamp(value: unknown): number | null {
   return Number.isFinite(parsed) && Math.abs(parsed) <= 8_640_000_000_000_000
     ? parsed
     : null;
-}
-
-function searchMessageText(message: Record<string, unknown>): string {
-  const content = message.content;
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  const imageCount = content.filter(
-    (value) => jsonRecord(value)?.type === "image",
-  ).length;
-  return content
-    .flatMap((value) => {
-      const block = jsonRecord(value);
-      return block?.type === "text" && typeof block.text === "string"
-        ? [stripImageDimensionNotes(block.text, imageCount)]
-        : [];
-    })
-    .join(" ");
 }
 
 function emptyState(): SessionMetadataState {
@@ -182,22 +162,18 @@ async function scanSessionFile(
 }
 
 function readFailure(
-  issues: SessionCatalogIssue[] | undefined,
+  unavailablePaths: string[] | undefined,
   path: string,
   error: unknown,
 ): void {
-  if (!issues) throw error;
-  issues.push({
-    path,
-    message:
-      error instanceof Error ? error.message : "Session source is unavailable",
-  });
+  if (!unavailablePaths) throw error;
+  unavailablePaths.push(path);
 }
 
 async function sessionFiles(
   root: string,
   nested: boolean,
-  issues?: SessionCatalogIssue[],
+  unavailablePaths?: string[],
 ): Promise<string[]> {
   let entries: Dirent[];
   try {
@@ -218,9 +194,9 @@ async function sessionFiles(
     if (!entry.isDirectory()) continue;
     const path = join(root, entry.name);
     try {
-      files.push(...(await sessionFiles(path, false, issues)));
+      files.push(...(await sessionFiles(path, false, unavailablePaths)));
     } catch (error) {
-      readFailure(issues, path, error);
+      readFailure(unavailablePaths, path, error);
     }
   }
   return files;
@@ -249,7 +225,7 @@ export class SessionMetadataIndex {
 
   async list(
     directories: string | readonly (string | undefined)[] = [undefined],
-    issues?: SessionCatalogIssue[],
+    unavailablePaths?: string[],
   ): Promise<SessionRecord[]> {
     const roots = typeof directories === "string" ? [directories] : directories;
     const pathsByCanonical = new Map<string, string>();
@@ -263,23 +239,21 @@ export class SessionMetadataIndex {
       );
       let canonicalRoot: string;
       let files: string[];
-      const issuesBefore = issues?.length ?? 0;
+      const failuresBefore = unavailablePaths?.length ?? 0;
       try {
         canonicalRoot = await realpath(configuredRoot);
         files = await sessionFiles(
           configuredRoot,
           customSessionDir === undefined,
-          issues,
+          unavailablePaths,
         );
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
-        readFailure(issues, configuredRoot, error);
+        readFailure(unavailablePaths, configuredRoot, error);
         failedRoots.push(configuredRoot);
         continue;
       }
-      failedRoots.push(
-        ...(issues?.slice(issuesBefore).map((issue) => issue.path) ?? []),
-      );
+      failedRoots.push(...(unavailablePaths?.slice(failuresBefore) ?? []));
       for (const path of files) {
         const canonical = resolve(
           canonicalRoot,
@@ -320,14 +294,10 @@ export class SessionMetadataIndex {
         const file = files[index]!;
         try {
           const observed = await this.read(file.path, file.canonical);
-          if (observed?.malformed)
-            issues?.push({
-              path: file.path,
-              message: "Session file contains malformed JSONL",
-            });
+          if (observed?.unavailable) unavailablePaths?.push(file.path);
           records[index] = observed?.record ?? null;
         } catch (error) {
-          readFailure(issues, file.path, error);
+          readFailure(unavailablePaths, file.path, error);
           records[index] = this.cache.get(file.path)?.record ?? null;
         }
       }
@@ -342,83 +312,6 @@ export class SessionMetadataIndex {
       ...records.filter((record): record is SessionRecord => record !== null),
       ...retained,
     ];
-  }
-
-  /** Worker-only scan: one complete session at a time, never cached. */
-  async scanSearch(
-    sessions: readonly SessionRecord[],
-    query: string,
-    issues?: SessionCatalogIssue[],
-    snippets?: Map<string, string>,
-  ): Promise<SessionRecord[]> {
-    const search = compileSessionSearch(query);
-    if (!search) return [];
-    const matches: SessionRecord[] = [];
-    for (const session of sessions) {
-      let document: SessionDocumentReader | undefined;
-      try {
-        const { source } = session;
-        document = await SessionDocumentReader.open(session.path);
-        const canonical = await realpath(session.path);
-        if (
-          !source ||
-          !preservesSessionPrefix(document.source, source) ||
-          !(await document.stillAddressesPrefix(canonical))
-        ) {
-          throw new Error("Session source changed; refresh the session list");
-        }
-        let name: string | undefined;
-        const messages: string[] = [];
-        const limit = Number(source.size);
-        const scan = await document.scan(
-          0,
-          (entry) => {
-            if (entry.type === "session_info")
-              name =
-                typeof entry.name === "string"
-                  ? entry.name.trim() || undefined
-                  : undefined;
-            if (entry.type !== "message") return;
-            const message = jsonRecord(entry.message);
-            if (message?.role !== "user" && message?.role !== "assistant")
-              return;
-            const text = searchMessageText(message);
-            if (text) messages.push(text);
-          },
-          undefined,
-          undefined,
-          limit,
-        );
-        if (
-          scan.end !== limit ||
-          scan.header?.id !== session.id ||
-          scan.header.cwd !== session.cwd ||
-          !(await document.stillAddressesPrefix(canonical))
-        ) {
-          throw new Error("Session source changed while searching; try again");
-        }
-        const allMessagesText = messages.join(" ");
-        if (
-          search.matches({
-            id: session.id,
-            cwd: session.cwd,
-            name,
-            allMessagesText,
-          })
-        ) {
-          matches.push(session);
-          if (snippets) {
-            const snippet = search.snippet(allMessagesText);
-            if (snippet) snippets.set(session.id, snippet);
-          }
-        }
-      } catch (error) {
-        readFailure(issues, session.path, error);
-      } finally {
-        await document?.close();
-      }
-    }
-    return matches;
   }
 
   private async read(
@@ -474,7 +367,12 @@ export class SessionMetadataIndex {
             record: scan
               ? scan.record && { ...scan.record, source: before }
               : (previous?.record ?? null),
-            ...(!scan && { malformed: true }),
+            // A loose JSONL file without a session header has no catalog identity.
+            // Losing the header of a previously indexed session is a read failure.
+            unavailable:
+              !scan &&
+              (!(scanError instanceof MissingSessionHeaderError) ||
+                Boolean(previous?.record)),
           };
           this.cache.set(path, observed);
           return observed;

@@ -117,16 +117,20 @@ afterEach(async () => {
 describe("SessionProjection framing and last-good state", () => {
   it("owns an unfinished frame when the caller reuses its read buffer", () => {
     const frames: Buffer[] = [];
-    const decoder = new JsonlObjectDecoder((frame) => {
+    const entries: unknown[] = [];
+    const decoder = new JsonlObjectDecoder((entry, frame) => {
+      entries.push(entry);
       frames.push(Buffer.from(frame));
     });
     const buffer = Buffer.alloc(16);
 
     let length = buffer.write('{"value"');
-    expect(decoder.push(buffer.subarray(0, length))).toEqual([]);
+    decoder.push(buffer.subarray(0, length));
+    expect(entries).toEqual([]);
 
     length = buffer.write(':"ok"}\n');
-    expect(decoder.push(buffer.subarray(0, length))).toEqual([{ value: "ok" }]);
+    decoder.push(buffer.subarray(0, length));
+    expect(entries).toEqual([{ value: "ok" }]);
     expect(Buffer.concat(frames).toString("utf8")).toBe('{"value":"ok"}\n');
   });
 

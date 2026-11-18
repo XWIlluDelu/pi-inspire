@@ -279,18 +279,16 @@ it.each(["curated", "live"] as const)(
   },
 );
 
-it("publishes a preserved multi-page extent and source corrections atomically after retry", async () => {
+it("publishes a preserved multi-page extent atomically after retry", async () => {
   const initial = numbered("old", 260);
   const fresh = ["added", ...numbered("fresh", 260)];
   const release = deferred<void>();
   const requests: Array<[number, number]> = [];
-  const issue = { path: "/missing", message: "Permission denied" };
   let phase = "initial";
   const { store, socket } = await installCatalog(
     async (page) => {
       if (page.query) return pageResult(["new-result"]);
-      if (phase === "initial")
-        return { body: { ...pageOf(initial, page).body, issues: [issue] } };
+      if (phase === "initial") return pageOf(initial, page);
       requests.push([page.offset, page.limit]);
       if (page.offset === 100) {
         if (phase === "failed") return failed;
@@ -317,15 +315,11 @@ it("publishes a preserved multi-page extent and source corrections atomically af
   await clock();
   expect(requests.splice(0)).toEqual(middle);
   expect(ids(store)).toEqual(initial.slice(0, 240));
-  expect(store.getState()).toMatchObject({
-    sessionListIssues: [issue],
-    sessionListError: null,
-  });
+  expect(store.getState().sessionListError).toBeNull();
   phase = "retry";
   await clock(1_000);
   expect(requests.splice(0)).toEqual([...middle, [200, 41]]);
   expect(ids(store)).toEqual(fresh.slice(0, 241));
-  expect(store.getState().sessionListIssues).toEqual([]);
   phase = "superseded";
   live(socket, "other-background", true);
   await clock();

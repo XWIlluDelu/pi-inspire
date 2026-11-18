@@ -10,7 +10,6 @@ import {
   projectionConflictSeverity,
   type ResourceProbeResult,
   type RunState,
-  type SessionCatalogIssue,
   type SessionReadOnlyReason,
   type SessionRuntimeStatus,
   type SessionSummary,
@@ -221,7 +220,6 @@ export interface AppState extends WorkspaceBrowserState, FileInspectionState {
   /** Current operation, retained after failure so retry copy stays truthful. */
   sessionListOperation: "reset" | "older" | "refresh" | null;
   sessionListError: string | null;
-  sessionListIssues: SessionCatalogIssue[];
   /** Selection failures stay with the session navigation/start surface rather
    * than competing with transcript integrity errors in the topbar. */
   sessionActionError: string | null;
@@ -341,7 +339,6 @@ export function createInitialAppState(): AppState {
     sessionListHydrating: false,
     sessionListOperation: null,
     sessionListError: null,
-    sessionListIssues: [],
     sessionActionError: null,
     exportingSessions: {},
     sessionDeleteError: null,

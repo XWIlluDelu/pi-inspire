@@ -205,9 +205,9 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   count and full path and clears only that complete hidden folder.
 
   Clear Hidden has its own accessible name and click target beside the Hidden heading. Clear confirms
-  the complete Hidden section with one count-bearing dialog. Search, incomplete catalog data, a target
-  opening, or another deletion block admission. The folder action applies these checks to its own
-  targets. [[session-deletion]] defines target validation, Pi instance shutdown and file removal.
+  the complete Hidden section with one count-bearing dialog. Search, pending list reads, a target
+  opening or another deletion block the action. The Host checks the complete target set before
+  deleting. Folder Delete follows the same rules for its own targets. See [[session-deletion]].
 
 ### Search and pagination
 

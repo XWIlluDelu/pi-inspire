@@ -97,7 +97,6 @@ export const Nav = memo(function Nav({
       sessionListHydrating: state.sessionListHydrating,
       sessionListOperation: state.sessionListOperation,
       sessionListError: state.sessionListError,
-      sessionListIssues: state.sessionListIssues,
       sessionActionError: state.sessionActionError,
       curationPending: state.curationPending,
       clearingHidden: state.clearingHidden,
@@ -125,7 +124,6 @@ export const Nav = memo(function Nav({
     sessionListHydrating,
     sessionListOperation,
     sessionListError,
-    sessionListIssues,
     sessionActionError,
     curationPending,
     clearingHidden,
@@ -554,31 +552,6 @@ export const Nav = memo(function Nav({
         aria-busy={curationPending || undefined}
       >
         {displayed.map(renderSection)}
-        {sessionListIssues.length ? (
-          <div className="nav__pagination">
-            <details className="nav__source-issues">
-              <summary>Some sessions may be missing</summary>
-              <p>Counts may be incomplete.</p>
-              <ul>
-                {sessionListIssues.map((issue) => (
-                  <li key={issue.path}>
-                    <strong>{issue.path}</strong>
-                    <br />
-                    {issue.message}
-                  </li>
-                ))}
-              </ul>
-            </details>
-            <button
-              type="button"
-              className="button button--quiet"
-              disabled={sessionListBusy}
-              onClick={() => void store.refreshSessions()}
-            >
-              Retry loading sessions
-            </button>
-          </div>
-        ) : null}
         {showSessionListActivity ? (
           <div className="nav__pagination">
             <span
@@ -622,8 +595,7 @@ export const Nav = memo(function Nav({
         {displayed.length === 0 &&
           (!showHidden || hiddenSessions.length === 0) &&
           !sessionListBusy &&
-          !sessionListError &&
-          !sessionListIssues.length && (
+          !sessionListError && (
             <div className="empty-state">
               {searching ? (
                 <SearchX size={26} strokeWidth={1.5} aria-hidden />

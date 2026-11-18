@@ -43,12 +43,9 @@ async function fixture({
     fixtureWorkspace,
     catalogFailure
       ? {
-          list: async (_directories, issues) => {
+          list: async (_directories, unavailablePaths) => {
             if (catalogFailure === "catalog unavailable")
-              issues!.push({
-                path: "/offline",
-                message: "Storage unavailable",
-              });
+              unavailablePaths!.push("/offline");
             return records;
           },
         }

@@ -14,7 +14,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import { SessionCatalog } from "../../server/session-catalog.js";
 import { SessionMetadataIndex } from "../../server/session-metadata.js";
 import { ATTACHMENT_CONTEXT_HEADING } from "../../shared/attachment-context.js";
-import type { SessionCatalogIssue } from "../../shared/contracts.js";
 
 const directories: string[] = [];
 
@@ -105,7 +104,6 @@ describe("SessionMetadataIndex", () => {
     expect(await catalog.list()).toMatchObject({
       sessions: rows,
       total: 2,
-      issues: [{ path: offline }],
     });
     expect(await catalog.get("one")).toMatchObject({
       path: join(healthy, "one.jsonl"),
@@ -113,16 +111,15 @@ describe("SessionMetadataIndex", () => {
     await expect(catalog.get("unknown")).rejects.toMatchObject(incomplete);
     expect(await catalog.listByCwds([header().cwd])).toMatchObject(rows);
 
-    const coldIssues: SessionCatalogIssue[] = [];
+    const unavailablePaths: string[] = [];
     expect(
-      await new SessionMetadataIndex().list(roots, coldIssues),
+      await new SessionMetadataIndex().list(roots, unavailablePaths),
     ).toMatchObject([{ id: "one" }]);
-    expect(coldIssues).toMatchObject([{ path: offline }]);
+    expect(unavailablePaths).toEqual([offline]);
 
     await rm(offline);
     await rename(`${offline}-saved`, offline);
     await catalog.refresh(true, { requireComplete: true });
-    expect(await catalog.list()).not.toHaveProperty("issues");
     expect(await catalog.get("unknown")).toBeUndefined();
   });
 
@@ -138,9 +135,9 @@ describe("SessionMetadataIndex", () => {
         await expect(index.list(root)).rejects.toMatchObject({
           code: "EACCES",
         });
-        const issues: SessionCatalogIssue[] = [];
-        await expect(index.list(root, issues)).resolves.toEqual([]);
-        expect(issues).toEqual([expect.objectContaining({ path })]);
+        const unavailablePaths: string[] = [];
+        await expect(index.list(root, unavailablePaths)).resolves.toEqual([]);
+        expect(unavailablePaths).toEqual([path]);
       } finally {
         await chmod(path, 0o600);
       }
@@ -211,7 +208,6 @@ describe("SessionMetadataIndex", () => {
       }),
     );
     const index = new SessionMetadataIndex();
-    const records = await index.list(root);
     const catalog = new SessionCatalog(root, { list: () => index.list(root) });
     expect((await catalog.list()).sessions).toMatchObject([
       { id: "empty", title: "New session" },
@@ -219,13 +215,13 @@ describe("SessionMetadataIndex", () => {
       { id: "review", title: "Review this report", project: "project" },
     ]);
     expect(
-      (await index.scanSearch(records, "report.csv"))
+      (await catalog.list({ query: "report.csv" })).sessions
         .map(({ id }) => id)
         .sort(),
     ).toEqual(["file-only", "review"]);
-    expect(await index.scanSearch(records, '"Multiply coordinates"')).toEqual(
-      [],
-    );
+    expect(
+      (await catalog.list({ query: '"Multiply coordinates"' })).sessions,
+    ).toEqual([]);
   });
 
   it("counts a partial append once after its final frame arrives", async () => {
@@ -251,7 +247,7 @@ describe("SessionMetadataIndex", () => {
       });
   });
 
-  it("rejects malformed session authority instead of inventing catalog identity", async () => {
+  it("skips headerless fragments but reports damaged session authority", async () => {
     const root = await directory();
     await writeFile(
       join(root, "missing-cwd.jsonl"),
@@ -266,7 +262,19 @@ describe("SessionMetadataIndex", () => {
       `${JSON.stringify(header("first"))}\n${JSON.stringify(header("second"))}\n`,
     );
 
-    await expect(new SessionMetadataIndex().list(root)).resolves.toEqual([]);
+    await writeFile(
+      join(root, "fragment.jsonl"),
+      jsonl(message("u1", "user", "orphan", 0)) + "{broken}\n",
+    );
+    const unavailable: string[] = [];
+    expect(await new SessionMetadataIndex().list(root, unavailable)).toEqual(
+      [],
+    );
+    expect(unavailable.sort()).toEqual(
+      ["missing-cwd", "relative-cwd", "second-header"].map((name) =>
+        join(root, name + ".jsonl"),
+      ),
+    );
   });
 
   it("lists only verified catalog metadata across corruptions and repairs", async () => {
@@ -275,7 +283,9 @@ describe("SessionMetadataIndex", () => {
     const damaged = jsonl(header()) + "{broken}\n";
     await writeFile(path, damaged);
     const warm = new SessionMetadataIndex();
-    expect(await warm.list(root)).toEqual([]);
+    const unavailable: string[] = [];
+    expect(await warm.list(root, unavailable)).toEqual([]);
+    expect(unavailable).toEqual([path]);
     await writeFile(
       path,
       jsonl(header(), message("u1", "user", "repaired", 1_767_225_601_000)),
@@ -285,11 +295,13 @@ describe("SessionMetadataIndex", () => {
       firstMessage: "repaired",
     });
 
-    await writeFile(path, damaged);
-    expect((await warm.list(root))[0]).toMatchObject({
+    await writeFile(path, jsonl(message("u1", "user", "orphan", 0)));
+    unavailable.length = 0;
+    expect((await warm.list(root, unavailable))[0]).toMatchObject({
       id: "session-a",
       firstMessage: "repaired",
     });
+    expect(unavailable).toEqual([path]);
     expect(await new SessionMetadataIndex().list(root)).toEqual([]);
   });
 });

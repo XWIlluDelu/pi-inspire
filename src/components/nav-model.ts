@@ -13,7 +13,6 @@ type HiddenDeletionState = Pick<
   | "sessionListLoadingOlder"
   | "sessionListHydrating"
   | "sessionListError"
-  | "sessionListIssues"
   | "curationPending"
   | "clearingHidden"
   | "deletingSessionId"
@@ -41,8 +40,6 @@ export function hiddenDeletionBlockReason(
   ) {
     return "Wait for Hidden sessions to finish loading";
   }
-  if (state.sessionListIssues.length)
-    return "Restore unavailable session sources and refresh before clearing Hidden";
   if (sessions.some((session) => session.id === state.openingSessionId))
     return "Wait for these sessions to finish opening";
   return null;

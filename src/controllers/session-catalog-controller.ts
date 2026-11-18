@@ -2,7 +2,6 @@ import {
   MAX_SESSION_CWD_HYDRATION_CWDS,
   MAX_SESSION_ID_HYDRATION_IDS,
   MAX_SESSION_LIST_PAGE_SIZE,
-  type SessionCatalogIssue,
   type SessionListResponse,
   type SessionSummary,
 } from "../../shared/contracts";
@@ -257,7 +256,6 @@ export class SessionCatalogController {
       this.publishUnion({
         ...listFeedback(),
         sessionListTotal: page.total,
-        sessionListIssues: page.issues,
         sessionListNextOffset: page.nextOffset,
       });
       // Supplemental discovery must never hold back a confirmed base page.
@@ -288,7 +286,6 @@ export class SessionCatalogController {
     query: string,
     action: ListAction,
   ) {
-    const issues = new Map<string, SessionCatalogIssue>();
     const sessions: SessionSummary[] = [];
     const preserve = action.kind === "preserve" ? action : null;
     let nextOffset = action.kind === "older" ? action.offset : 0;
@@ -318,14 +315,12 @@ export class SessionCatalogController {
           target + Math.max(0, page.total - preserve.total),
         );
       sessions.push(...page.sessions);
-      for (const issue of page.issues ?? []) issues.set(issue.path, issue);
       nextOffset += page.sessions.length;
     } while (nextOffset < target && nextOffset < page.total);
     return {
       sessions,
       nextOffset,
       total: page.total,
-      issues: [...issues.values()],
     };
   }
 

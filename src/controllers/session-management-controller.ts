@@ -171,8 +171,7 @@ export class SessionManagementController {
       state.sessionListLoading ||
       state.sessionListLoadingOlder ||
       state.sessionListHydrating ||
-      state.sessionListError ||
-      state.sessionListIssues.length
+      state.sessionListError
     ) {
       return null;
     }

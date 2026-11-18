@@ -353,16 +353,7 @@ export interface SessionSummary {
   matchSnippet?: string;
 }
 
-export interface SessionCatalogIssue {
-  /** Directory or file whose contents could not be observed. */
-  path: string;
-  message: string;
-}
-
 export interface SessionListResponse {
-  /** Incomplete totals count known summaries/matches, not the complete catalog.
-   * Diagnostics are bounded to the first 20 unavailable sources. */
-  issues?: SessionCatalogIssue[];
   sessions: SessionSummary[];
   total: number;
   offset: number;

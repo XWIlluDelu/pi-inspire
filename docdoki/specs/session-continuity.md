@@ -165,8 +165,7 @@ cached with the reusable query result. [[workbench]] owns labels, emphasis and s
 Read one session's complete admitted JSONL prefix at a time, without a whole-catalog conversation
 cache. Same-inode appends may continue beyond that prefix. Equal-size observations require an
 unchanged stat version. Truncation, replaced/rebound paths and changed header identity exclude the
-source and report it unavailable; never substitute cached or replacement content. Other admitted
-sources still contribute results, whose totals cover only successfully searched sources.
+source from the results. Totals cover the sources successfully searched.
 
 Run synchronous parsing/fuzzy/regex work in an isolated cancellable worker using Inspire's matcher,
 without private Pi dependencies. Cancellation retires obsolete workers; the 30-second deadline
@@ -174,13 +173,9 @@ allows an expensive query to be retried with a simpler expression.
 
 ### Unavailable and ambiguous sources
 
-Isolate directory and file failures. Publish healthy sources and keep last complete summaries for
-known rows under unavailable sources; a present malformed session may likewise keep its summary for
-inspection. Missing roots remain distinct from unreadable roots.
-
-Pages carry bounded `issues`: the first 20 unavailable paths and explanations. An expandable source
-notice and refresh action accompany available history. Incomplete-page counts are not complete
-catalog counts; successful refresh clears the notice.
+Pi session files begin with a session header. A newly discovered JSONL file beginning with
+another record is outside the catalog. An unreadable source or a damaged session makes the scan
+incomplete. Keep the last verified summary of a known session and continue listing healthy sources.
 
 Ordinary open and individual delete revalidate the addressed path, identity and header. Unknown ids
 in an incomplete catalog are not confirmed absent. Hidden clearing requires a fresh complete scan
