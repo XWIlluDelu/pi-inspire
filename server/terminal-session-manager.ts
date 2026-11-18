@@ -38,6 +38,7 @@ import {
   type TerminalOperation,
   type TerminalOperationResults,
 } from "../shared/terminal-operations.js";
+import { captureTerminalContinuation } from "./terminal-continuation.js";
 import { TerminalOperationReceipts } from "./terminal-operation-receipts.js";
 import { terminalDirectoryFromUrl } from "./terminal-paths.js";
 import {
@@ -154,12 +155,11 @@ interface ManagedTerminal extends TerminalSessionMetadata {
   ring: TerminalRingBuffer;
   emulator: HeadlessTerminal;
   serializer: SerializeAddon;
-  emulatorTail: Promise<void>;
+  continuation: () => Buffer | null;
   emulatorPendingBytes: number;
   ptyPausedForEmulator: boolean;
   pty: TerminalPty | null;
   ptyDisposables: Disposable[];
-  emulatorDisposables: Disposable[];
   attachments: Map<string, ManagedAttachment>;
   owner: OwnerLease | null;
   exitPromise: Promise<void>;
@@ -995,7 +995,7 @@ export class TerminalSessionManager implements TerminalService {
     return profile;
   }
 
-  /** Live and restored tabs share one emulator and advisory-event setup. */
+  /** Live and restored tabs use the same output emulator. */
   private createSession(metadata: TerminalSessionMetadata): ManagedTerminal {
     const emulator = new HeadlessTerminalConstructor({
       allowProposedApi: true,
@@ -1007,7 +1007,7 @@ export class TerminalSessionManager implements TerminalService {
     });
     const serializer = new SerializeAddonConstructor();
     emulator.loadAddon(serializer as never);
-    const session: ManagedTerminal = {
+    return {
       ...metadata,
       activeCommand: "",
       commandStartedAt: null,
@@ -1019,29 +1019,19 @@ export class TerminalSessionManager implements TerminalService {
       ring: new TerminalRingBuffer(RING_BYTES),
       emulator,
       serializer,
-      emulatorTail: Promise.resolve(),
+      continuation: captureTerminalContinuation(
+        emulator,
+        MAX_SERIALIZED_SNAPSHOT_BYTES,
+      ),
       emulatorPendingBytes: 0,
       ptyPausedForEmulator: false,
       pty: null,
       ptyDisposables: [],
-      emulatorDisposables: [],
       attachments: new Map(),
       owner: null,
       exitPromise: Promise.resolve(),
       resolveExit: () => {},
     };
-    session.emulatorDisposables.push(
-      emulator.onTitleChange((title) => this.handleTitle(session, title)),
-      emulator.parser.registerOscHandler(7, (value) => {
-        this.handleWorkingDirectory(session, value);
-        return false;
-      }),
-      emulator.parser.registerOscHandler(INSPIRE_SHELL_OSC, (value) => {
-        this.handleShellMarker(session, value);
-        return true;
-      }),
-    );
-    return session;
   }
 
   private spawnSession(
@@ -1081,6 +1071,16 @@ export class TerminalSessionManager implements TerminalService {
     }
     session.pty = pty;
     session.status = "running";
+    const { emulator } = session;
+    emulator.onTitleChange((title) => this.handleTitle(session, title));
+    emulator.parser.registerOscHandler(7, (value) => {
+      this.handleWorkingDirectory(session, value);
+      return false;
+    });
+    emulator.parser.registerOscHandler(INSPIRE_SHELL_OSC, (value) => {
+      this.handleShellMarker(session, value);
+      return true;
+    });
     session.exitPromise = new Promise<void>((resolveExit) => {
       session.resolveExit = resolveExit;
     });
@@ -1253,40 +1253,58 @@ export class TerminalSessionManager implements TerminalService {
         session.ptyPausedForEmulator = false;
       }
     };
-    session.emulatorTail = session.emulatorTail
-      .then(
-        () =>
-          new Promise<void>((resolvePromise) => {
-            session.emulator.write(data, resolvePromise);
-          }),
-      )
-      .then(settle, settle);
+    session.emulator.write(data, settle);
   }
 
-  private async snapshot(session: ManagedTerminal): Promise<{
+  private snapshot(session: ManagedTerminal): Promise<{
     data: Uint8Array;
     offset: number;
     resizeRevision: number;
   }> {
     const offset = session.ring.nextOffset;
     const resizeRevision = session.resizeRevision;
-    let serialized = "";
-    const task = session.emulatorTail.then(() => {
-      let scrollback = this.scrollbackRows;
-      do {
-        serialized = session.serializer.serialize({ scrollback });
-        if (Buffer.byteLength(serialized) <= MAX_SERIALIZED_SNAPSHOT_BYTES)
-          break;
-        scrollback = Math.floor(scrollback / 2);
-      } while (scrollback > 0);
+    return new Promise((resolve, reject) => {
+      // Serialize at this offset, between earlier writes and the live tail.
+      session.emulator.write("", () => {
+        try {
+          const continuation = session.continuation();
+          if (
+            continuation &&
+            continuation.byteLength < MAX_SERIALIZED_SNAPSHOT_BYTES
+          ) {
+            for (
+              let scrollback = this.scrollbackRows;
+              ;
+              scrollback = Math.floor(scrollback / 2)
+            ) {
+              const screen = session.serializer.serialize({ scrollback });
+              if (
+                Buffer.byteLength(screen) + continuation.byteLength <=
+                MAX_SERIALIZED_SNAPSHOT_BYTES
+              ) {
+                const bytes = Buffer.from(screen, "utf8");
+                resolve({
+                  data: continuation.byteLength
+                    ? Buffer.concat([bytes, continuation])
+                    : bytes,
+                  offset,
+                  resizeRevision,
+                });
+                return;
+              }
+              if (!scrollback) break;
+            }
+          }
+          terminalError(
+            "terminal_snapshot_limit",
+            409,
+            "Terminal snapshot exceeds its replay limit",
+          );
+        } catch (error) {
+          reject(error);
+        }
+      });
     });
-    session.emulatorTail = task.catch(() => {});
-    await task;
-    return {
-      data: Buffer.from(serialized, "utf8"),
-      offset,
-      resizeRevision,
-    };
   }
 
   private async sendSnapshot(
@@ -1307,7 +1325,6 @@ export class TerminalSessionManager implements TerminalService {
         snapshot.resizeRevision,
         snapshot.offset,
         snapshot.data,
-        false,
       );
       this.sendRingFrom(session, attachment, snapshot.offset);
       return;
@@ -1342,7 +1359,6 @@ export class TerminalSessionManager implements TerminalService {
     resizeRevision: number,
     offset: number,
     data: Uint8Array,
-    advanceOffset = true,
   ): void {
     if (data.byteLength === 0) {
       this.sendData(
@@ -1365,7 +1381,7 @@ export class TerminalSessionManager implements TerminalService {
         encodeTerminalServerDataFrame(
           kind === "snapshot" && index > 0 ? "snapshot-continuation" : kind,
           resizeRevision,
-          advanceOffset ? offset + index : offset,
+          kind === "output" ? offset + index : offset,
           chunk,
         ),
       );
@@ -1478,11 +1494,7 @@ export class TerminalSessionManager implements TerminalService {
     // detached full-screen client. Preserve absolute offsets, but force those
     // clients through a fresh headless-terminal snapshot.
     session.ring.discardRetained();
-    session.emulatorTail = session.emulatorTail
-      .then(() => {
-        session.emulator.resize(cols, rows);
-      })
-      .catch(() => {});
+    session.emulator.write("", () => session.emulator.resize(cols, rows));
     this.touch(session);
     this.broadcastControl(
       session,
@@ -1566,8 +1578,6 @@ export class TerminalSessionManager implements TerminalService {
   private disposeRuntime(session: ManagedTerminal): void {
     if (session.owner?.releaseTimer) clearTimeout(session.owner.releaseTimer);
     for (const disposable of session.ptyDisposables) disposable.dispose();
-    for (const disposable of session.emulatorDisposables) disposable.dispose();
-    session.serializer.dispose();
     session.emulator.dispose();
   }
 
@@ -1586,7 +1596,7 @@ export class TerminalSessionManager implements TerminalService {
       shellLabel: session.profile.label,
       currentCwd: session.currentCwd,
       currentCommand: session.currentCommand,
-      commandRunning: session.activeCommand !== "",
+      commandRunning: session.status === "running" && session.activeCommand !== "",
       status: session.status,
       exitCode: session.exitCode,
       signal: session.signal,

@@ -175,16 +175,17 @@ export class TerminalConnection {
       const request = new AbortController();
       this.ticketRequest = request;
       this.armDeadline(CONNECT_TIMEOUT_MS, "Terminal ticket request timed out");
-      const { ticket } = await this.api.json(
-        "terminalAttachTicket",
-        { params: { id: this.terminalId } },
-        request.signal,
-      );
+      const [{ ticket }, admission] = await Promise.all([
+        this.api.json(
+          "terminalAttachTicket",
+          { params: { id: this.terminalId } },
+          request.signal,
+        ),
+        socketTicket("terminal", request.signal),
+      ]);
       if (this.stopped || generation !== this.generation) return;
       this.ticketRequest = null;
       this.armDeadline(CONNECT_TIMEOUT_MS, "Terminal connection timed out");
-      const admission = await socketTicket("terminal");
-      if (this.stopped || generation !== this.generation) return;
       const socket = new WebSocket(terminalUrl(admission));
       socket.binaryType = "arraybuffer";
       this.socket = socket;

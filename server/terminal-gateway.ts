@@ -47,25 +47,13 @@ export function createTerminalGateway(
     string,
     { terminalId: string; origin: string; expiresAt: number }
   >();
-  const pruneTerminalTickets = (now = Date.now()): void => {
-    for (const [ticket, entry] of terminalTickets) {
-      if (entry.expiresAt <= now) terminalTickets.delete(ticket);
-    }
-    while (terminalTickets.size >= MAX_TERMINAL_ATTACH_TICKETS) {
-      const oldest = terminalTickets.keys().next().value;
-      if (typeof oldest !== "string") break;
-      terminalTickets.delete(oldest);
-    }
-  };
   const consumeTerminalTicket = (
     ticket: string,
     origin: string | undefined,
   ): { terminalId: string } | null => {
-    const now = Date.now();
-    pruneTerminalTickets(now);
     const entry = terminalTickets.get(ticket);
     terminalTickets.delete(ticket);
-    return entry && entry.expiresAt > now && entry.origin === origin
+    return entry && entry.expiresAt > Date.now() && entry.origin === origin
       ? { terminalId: entry.terminalId }
       : null;
   };
@@ -134,15 +122,17 @@ export function createTerminalGateway(
   jsonRoute(
     app,
     routes.terminalAttachTicket,
-    async ({ params: { id: terminalId } }, request) => {
-      const catalog = await terminal((service) => terminalDaemonMethods.getCatalog(service, {}));
-      if (!catalog.terminals.some((candidate) => candidate.id === terminalId))
-        throw requestError("Terminal was not found", 404, {
-          code: "terminal_not_found",
-        });
-      pruneTerminalTickets();
+    ({ params: { id: terminalId } }, request) => {
+      // The daemon checks the live terminal at attachment, where it owns admission.
+      const now = Date.now();
+      for (const [ticket, entry] of terminalTickets)
+        if (entry.expiresAt <= now) terminalTickets.delete(ticket);
+      if (terminalTickets.size === MAX_TERMINAL_ATTACH_TICKETS) {
+        const oldest = terminalTickets.keys().next();
+        if (!oldest.done) terminalTickets.delete(oldest.value);
+      }
       const ticket = randomUUID();
-      const expiresAt = Date.now() + TERMINAL_ATTACH_TICKET_TTL_MS;
+      const expiresAt = now + TERMINAL_ATTACH_TICKET_TTL_MS;
       terminalTickets.set(ticket, {
         terminalId,
         origin: canonicalOrigin(request.get("host"), request.secure),

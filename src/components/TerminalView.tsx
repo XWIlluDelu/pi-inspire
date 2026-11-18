@@ -233,7 +233,6 @@ export const TerminalView = memo(function TerminalView({
   const modifiersRef = useRef(NO_TERMINAL_MODIFIERS);
   const replayGenerationRef = useRef(0);
   const clipboardEpochRef = useRef(0);
-  const snapshotStartedRef = useRef(false);
   const resizeFrameRef = useRef<number | null>(null);
   const bellTimerRef = useRef<number | null>(null);
   const commandStartRef = useRef<{ marker: IMarker; column: number } | null>(
@@ -311,12 +310,8 @@ export const TerminalView = memo(function TerminalView({
 
   const fitAndResize = useCallback(() => {
     if (!activeRef.current || !writableRef.current) return;
-    const dimensions = currentDimensions();
-    const xterm = xtermRef.current;
-    if (!xterm) return;
-    if (xterm.cols !== dimensions.cols || xterm.rows !== dimensions.rows)
-      xterm.resize(dimensions.cols, dimensions.rows);
-    connectionRef.current?.resize(dimensions.cols, dimensions.rows);
+    const { cols, rows } = currentDimensions();
+    connectionRef.current?.resize(cols, rows);
   }, [currentDimensions]);
 
   const applyDescriptor = useCallback(
@@ -336,20 +331,24 @@ export const TerminalView = memo(function TerminalView({
       )
         clipboardEpochRef.current += 1;
       const xterm = xtermRef.current;
+      const size =
+        message.type === "attached"
+          ? message.terminal
+          : message.type === "resized"
+            ? message
+            : null;
+      if (xterm && size)
+        xterm.write("", () => {
+          if (xterm.cols !== size.cols || xterm.rows !== size.rows)
+            xterm.resize(size.cols, size.rows);
+        });
       if (message.type === "attached") {
         replayGenerationRef.current += 1;
-        snapshotStartedRef.current = false;
         writableRef.current = message.writable;
         setWritable(message.writable);
         setReady(false);
         setError(null);
         applyDescriptor(message.terminal);
-        if (
-          xterm &&
-          (xterm.cols !== message.terminal.cols ||
-            xterm.rows !== message.terminal.rows)
-        )
-          xterm.resize(message.terminal.cols, message.terminal.rows);
       } else if (message.type === "replay_complete") {
         const replayGeneration = replayGenerationRef.current;
         const completeReplay = () => {
@@ -368,12 +367,6 @@ export const TerminalView = memo(function TerminalView({
         setWritable(message.writable);
         if (message.writable && activeRef.current)
           requestAnimationFrame(fitAndResize);
-      } else if (message.type === "resized") {
-        if (
-          xterm &&
-          (xterm.cols !== message.cols || xterm.rows !== message.rows)
-        )
-          xterm.resize(message.cols, message.rows);
       } else if (message.type === "descriptor") {
         applyDescriptor(message.terminal);
       } else if (message.type === "command_complete") {
@@ -393,13 +386,10 @@ export const TerminalView = memo(function TerminalView({
     (frame: TerminalServerDataFrame) => {
       const xterm = xtermRef.current;
       if (!xterm) return;
-      if (frame.kind === "snapshot" && !snapshotStartedRef.current) {
+      if (frame.kind === "snapshot") {
         clearCommandOutput();
-        // A retired connection can still have output in xterm's parser queue.
-        // Reset at the same ordered boundary as the replacement snapshot;
-        // synchronous reset() would let those queued bytes repaint it.
-        xterm.write("\u001bc");
-        snapshotStartedRef.current = true;
+        // Byte CAN aborts pending UTF-8/VT input before the ordered RIS reset.
+        xterm.write(Uint8Array.of(0x18, 0x1b, 0x63));
       }
       xterm.write(frame.data, () => {
         setOutputBelow(

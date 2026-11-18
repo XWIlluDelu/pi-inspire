@@ -235,12 +235,13 @@ export async function authenticatedFetch(
 
 export async function socketTicket(
   audience: "events" | "terminal",
+  signal = AbortSignal.timeout(10_000),
 ): Promise<string> {
   const response = await authenticatedFetch("/api/auth/socket-ticket", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ audience }),
-    signal: AbortSignal.timeout(10_000),
+    signal,
   });
   if (!response.ok) {
     if (response.status === 401)

@@ -66,8 +66,9 @@ authentication or unknown-PID killing. Admission fences pending creates before s
 cleanup retains failed sessions, rejects shutdown completion and leaves lifecycle controls reachable
 for inspection/retry while data requests are fenced. A lifetime lease covers startup, state writing
 and complete PTY drain; CLI controls serialize handoff and confirm actual process exit before replacement.
-Saved tabs restore as exited without executing commands. The dedicated installed terminal unit retains
-systemd ownership; arbitrary enclosing services are never treated as terminal restart authority.
+Saved tabs restore as exited. Saved output restores the screen, while live PTY output supplies
+command, title and cwd updates. Exited tabs report no running command. Only the installed terminal
+unit establishes systemd restart authority.
 
 Detached daemon fallback removes inherited service notification/socket-activation identity, and
 systemd handoff has a bounded wait. A detached spawn error rejects launch instead of escaping as an
@@ -180,9 +181,11 @@ pre-request cross-project boundary.
 ## Stream, input, and authentication
 
 Output carries an epoch, byte offset, and resize revision. Matching retained clients receive missing
-bytes; stale epochs, evicted offsets, or incompatible dimensions receive a bounded headless-terminal
-snapshot followed by the exact live tail. Ambiguous continuity requests a fresh snapshot. Interrupted
-replay discards its incomplete screen.
+bytes in their current parser. Other clients receive a bounded snapshot of the screen and pending
+UTF‑8 and VT input at the same xterm write barrier. The live tail starts at that barrier's byte
+offset. The browser queues resize and parser reset with the replay bytes. An offset or revision
+mismatch requests a new snapshot. Interrupted replay discards its incomplete screen.
+The snapshot adapter uses the pinned headless xterm parser.
 
 | Transport observation | Deadline / cadence |
 | --- | --- |
@@ -200,9 +203,9 @@ the bounded grace period.
 
 HTTP controls use explicit bearer authentication; WebSocket upgrades use the origin/audience-bound
 socket tickets defined by [[host-lifecycle]]. Terminal attachment additionally consumes its
-short-lived, terminal-bound ticket. The Host forwards the same control and binary input frames
-to the daemon, which validates them at the PTY attachment. Runtime and terminal sockets share the
-Host liveness and drain checks. Dimensions, titles, paths, messages, replay, IPC
+short-lived, terminal-bound ticket. The daemon checks terminal availability at WebSocket attachment.
+The Host forwards control and binary input frames for the daemon to validate. Runtime and
+terminal sockets share the Host liveness and drain checks. Dimensions, titles, paths, messages, replay, IPC
 connections, pending input and outbound buffers are bounded. A slow viewer detaches independently of its PTY and other viewers.
 Diagnostics omit terminal input, output, and internal path-bearing failures.
 

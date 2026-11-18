@@ -1,40 +1,34 @@
-import { describe, expect, it } from "vitest";
+import { expect, it } from "vitest";
 import { TerminalRingBuffer } from "../../server/terminal-ring-buffer.js";
 
-const bytes = (...values: number[]) => Uint8Array.from(values);
+it("replays contiguous bytes at absolute offsets across eviction, oversized writes, and resize", () => {
+  const ring = new TerminalRingBuffer(5);
+  function replay(offset: number) {
+    const slices = ring.slicesFrom(offset);
+    return (
+      slices &&
+      Buffer.concat(
+        slices.map((slice) => {
+          expect(slice.offset).toBe(offset);
+          offset += slice.data.byteLength;
+          return slice.data;
+        }),
+      ).toString()
+    );
+  }
 
-describe("TerminalRingBuffer", () => {
-  it("replays retained bytes with absolute offsets after eviction", () => {
-    const ring = new TerminalRingBuffer(5);
-    ring.append(bytes(1, 2, 3));
-    expect(ring.append(bytes(4, 5, 6, 7))).toBe(3);
+  ring.append(Buffer.from("abc"));
+  expect(ring.append(Buffer.from("defg"))).toBe(3);
+  expect(replay(1)).toBeNull();
+  expect(replay(2)).toBe("cdefg");
+  expect(replay(4)).toBe("efg");
+  expect(replay(7)).toBe("");
 
-    expect(ring.slicesFrom(1)).toBeNull();
-    expect(
-      ring.slicesFrom(2)?.map((slice) => [slice.offset, [...slice.data]]),
-    ).toEqual([
-      [2, [3]],
-      [3, [4, 5, 6, 7]],
-    ]);
-    expect(ring.slicesFrom(7)).toEqual([]);
-  });
-
-  it("keeps the suffix of a single chunk larger than capacity", () => {
-    const ring = new TerminalRingBuffer(3);
-    ring.append(bytes(1, 2, 3, 4, 5));
-    expect(ring.slicesFrom(1)).toBeNull();
-    expect(ring.slicesFrom(2)).toEqual([
-      { offset: 2, data: Buffer.from([3, 4, 5]) },
-    ]);
-  });
-
-  it("can discard stale-grid bytes without rewinding offsets", () => {
-    const ring = new TerminalRingBuffer(8);
-    ring.append(bytes(1, 2, 3));
-    ring.discardRetained();
-
-    expect(ring.slicesFrom(2)).toBeNull();
-    expect(ring.append(bytes(4))).toBe(3);
-    expect(ring.slicesFrom(3)).toEqual([{ offset: 3, data: Buffer.from([4]) }]);
-  });
+  ring.append(Buffer.from("123456789"));
+  expect(replay(10)).toBeNull();
+  expect(replay(11)).toBe("56789");
+  ring.discardRetained();
+  expect(replay(15)).toBeNull();
+  expect(ring.append(Buffer.from("z"))).toBe(16);
+  expect(replay(16)).toBe("z");
 });
