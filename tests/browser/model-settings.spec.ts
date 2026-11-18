@@ -205,7 +205,13 @@ test("New model settings save native declarations and defaults for the prospecti
     await settings
       .getByLabel("API key", { exact: true })
       .fill("CONFIG_FIXTURE_SECRET");
+    const providerSaved = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/model-settings/config" &&
+        response.request().method() === "PATCH",
+    );
     await settings.getByRole("button", { name: "Save", exact: true }).click();
+    expect((await providerSaved).ok()).toBe(true);
     const addModel = settings.getByRole("button", {
       name: "Add model to new-provider",
       exact: true,

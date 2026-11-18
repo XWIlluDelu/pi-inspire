@@ -1,5 +1,6 @@
 import { expect, type Page, test } from "@playwright/test";
 import { checkpointAdapterConfiguration } from "../web/fixtures/extension-adapters";
+import { clipboardLines } from "./support/clipboard";
 import { openEventSession } from "./support/host-events";
 import {
   openCommandPalette,
@@ -307,9 +308,7 @@ test.describe("touch reading controls", () => {
     expect(right.x - left.x - left.width).toBeGreaterThanOrEqual(8);
     await context.grantPermissions(["clipboard-read", "clipboard-write"]);
     await copy.tap();
-    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
-      code,
-    );
+    expect(await clipboardLines(page)).toEqual(code.split("\n"));
     await expect(page.locator(".ctx")).toHaveCount(0);
     const log = page.getByRole("log");
     const readingPosition = () =>

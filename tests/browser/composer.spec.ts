@@ -158,7 +158,9 @@ test("composer text drafts survive reload and stay partitioned through switching
   await input.fill(historyDraft);
   await input.press("ArrowUp");
   await expect(input).toHaveValue(historyDraft);
-  await input.press("Control+Home");
+  await input.evaluate((element: HTMLTextAreaElement) => {
+    element.setSelectionRange(0, 0);
+  });
   await input.press("ArrowUp");
   await expect(input).toHaveValue(repeated);
   await input.press("ArrowDown");

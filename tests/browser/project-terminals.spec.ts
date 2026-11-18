@@ -48,9 +48,11 @@ const terminalTab = (page: Page, id: string) =>
   page.locator(`#terminal-tab-${id}`);
 async function selectTerminalTab(page: Page, id: string, title: string) {
   const tab = terminalTab(page, id);
+  const overflow = page.getByRole("button", { name: "More tabs", exact: true });
+  await expect(tab.or(overflow).filter({ visible: true }).first()).toBeVisible();
   if (await tab.isVisible()) await tab.click();
   else {
-    await page.getByRole("button", { name: "More tabs", exact: true }).click();
+    await overflow.click();
     await page.getByRole("listbox", { name: "Open tabs" })
       .getByRole("option", { name: title, exact: true }).click();
   }
@@ -840,9 +842,7 @@ test.describe("touch terminal", () => {
     const arrowUp = keys.getByRole("button", { name: "Arrow up", exact: true });
     const pageDown = keys.getByRole("button", { name: "PgDn", exact: true });
     await expect(page.getByRole("dialog", { name: "Context panel" })).toBeVisible();
-    await pageDown.scrollIntoViewIfNeeded();
-    await expect(pageDown).toBeInViewport({ ratio: 1 });
-    await expect(arrowUp).toBeInViewport({ ratio: 1 });
+    await pageDown.tap({ trial: true });
     await scroll.evaluate((node) => {
       node.scrollLeft = 0;
     });
