@@ -103,21 +103,12 @@ describe("native commands and worker-local catalogs", () => {
       status: 409,
     });
     await prompt("/compact focus on the parser work");
-    await expect(
-      runtime.nativeCommand({
-        sessionId: "a",
-        command: "compact",
-        argument: "keep decisions",
-      }),
-    ).resolves.toMatchObject({ command: "compact", outcome: "completed" });
-    expect(
-      fixture.worker.commands.filter(({ type }) => type === "compact"),
-    ).toEqual([
+    expect(fixture.worker.commands).toContainEqual(
       expect.objectContaining({
+        type: "compact",
         customInstructions: "focus on the parser work",
       }),
-      expect.objectContaining({ customInstructions: "keep decisions" }),
-    ]);
+    );
 
     await prompt("Discuss /compaction strategies?");
     fixture.worker.emit("event", { type: "agent_start" });

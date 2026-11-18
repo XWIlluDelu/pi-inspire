@@ -219,13 +219,13 @@ export const PI_NATIVE_COMMANDS = [
   },
 ] as const satisfies readonly PiNativeCommandDescriptor[];
 
-type NativeCommand = (typeof PI_NATIVE_COMMANDS)[number] &
+export type NativeCommand = (typeof PI_NATIVE_COMMANDS)[number] &
   PiNativeCommandDescriptor;
 const nativeByName = new Map<string, NativeCommand>(
   PI_NATIVE_COMMANDS.map((command) => [command.name, command]),
 );
 
-interface CommandInvocation {
+export interface CommandInvocation {
   name: string;
   argument: string;
   raw: string;
@@ -265,13 +265,4 @@ export function parseCommandInvocation(
 
 export function nativeCommand(name: string): NativeCommand | undefined {
   return nativeByName.get(name);
-}
-
-export function parseNativeCommand(
-  input: string,
-): (CommandInvocation & { descriptor: NativeCommand }) | null {
-  const invocation = parseCommandInvocation(input);
-  if (!invocation) return null;
-  const descriptor = nativeCommand(invocation.name);
-  return descriptor ? { ...invocation, descriptor } : null;
 }

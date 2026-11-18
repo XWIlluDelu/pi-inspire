@@ -1,8 +1,4 @@
-import {
-  isComposingKeyboardEvent,
-  isMacKeyboardPlatform,
-} from "./keyboard-input";
-
+import { isMacKeyboardPlatform } from "./keyboard-input";
 import { store } from "./store";
 
 export const modelCycles = {
@@ -18,14 +14,7 @@ export function runModelCycle(action: ModelCycleAction) {
 }
 type ModelCycleKey = Pick<
   KeyboardEvent,
-  | "key"
-  | "altKey"
-  | "ctrlKey"
-  | "metaKey"
-  | "shiftKey"
-  | "isComposing"
-  | "keyCode"
-  | "getModifierState"
+  "key" | "altKey" | "ctrlKey" | "metaKey" | "shiftKey"
 >;
 
 export const workbenchShortcuts = {
@@ -61,8 +50,6 @@ export function modelCycleAction(
   event: ModelCycleKey,
   mac = isMacKeyboardPlatform(),
 ): ModelCycleAction | null {
-  if (isComposingKeyboardEvent(event) || event.getModifierState("AltGraph"))
-    return null;
   const modifiers = mac
     ? event.ctrlKey && event.metaKey && !event.altKey && !event.shiftKey
     : event.altKey && event.shiftKey && !event.ctrlKey && !event.metaKey;

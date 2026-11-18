@@ -1,5 +1,9 @@
 import { useCallback, useRef, useSyncExternalStore } from "react";
-import { nativeCommand, parseNativeCommand } from "../shared/commands";
+import {
+  type CommandInvocation,
+  type NativeCommand,
+  nativeCommand,
+} from "../shared/commands";
 import {
   type ActiveSnapshot,
   type BranchNavigateRequest,
@@ -55,11 +59,7 @@ import {
   selectedRunState,
   transcriptDiagnostic,
 } from "./app-state";
-import {
-  type PiCommand,
-  resolveCommandInput,
-  resolveCommandInventory,
-} from "./composer-completion";
+import { type PiCommand, resolveCommandInput } from "./composer-completion";
 import type { ComposerHistoryScope } from "./composer-history";
 import {
   type CopySource,
@@ -100,6 +100,7 @@ import { TaskNotificationController } from "./notifications";
 import {
   configurePresentationAdapters,
   controlState,
+  hasStatusControlCommand,
 } from "./presentation-adapters";
 import { isTransientFailure, RecoveryBackoff } from "./recovery-backoff";
 import {
@@ -1439,12 +1440,6 @@ export class AppStore {
     return details;
   }
 
-  /** Palette actions never borrow an unfinished message's artifacts. */
-  runPaletteNativeCommand = (input: string): PromptAcceptedResponse | false => {
-    const command = parseNativeCommand(input);
-    return command ? this.executeNativeCommand(command, false) : false;
-  };
-
   sendPreparedCommand = (
     input: string,
     behavior?: "steer" | "followUp",
@@ -1463,11 +1458,7 @@ export class AppStore {
     if (!sessionId || !current()) return false;
     if (
       !control.options.some((option) => option.value === value) ||
-      !resolveCommandInventory(this.state.commands).some(
-        (command) =>
-          command.source === "extension" &&
-          "/" + command.name === control.command,
-      )
+      !hasStatusControlCommand(control, this.state.commands)
     )
       throw new Error("This control is not available in this session.");
     const confirmed = () =>
@@ -1530,12 +1521,9 @@ export class AppStore {
   };
 
   private executeNativeCommand(
-    {
-      descriptor,
-      argument,
-      raw,
-    }: NonNullable<ReturnType<typeof parseNativeCommand>>,
-    includeDraftArtifacts = true,
+    descriptor: NativeCommand,
+    { argument, raw }: CommandInvocation,
+    includeDraftArtifacts: boolean,
   ): PromptAcceptedResponse | false {
     const sessionId = this.state.sessionId;
     if (!sessionId) return false;
@@ -1792,10 +1780,7 @@ export class AppStore {
     const sessionId = this.state.sessionId;
     const input = message.trimStart();
     const invocation = input.startsWith("/")
-      ? resolveCommandInput(
-          message,
-          resolveCommandInventory(this.state.commands),
-        )
+      ? resolveCommandInput(message, this.state.commands)
       : null;
     if (!invocation) {
       if (prepared) {
@@ -1808,10 +1793,7 @@ export class AppStore {
     }
     const descriptor = nativeCommand(invocation.name);
     if (descriptor) {
-      const result = this.executeNativeCommand(
-        { ...invocation, descriptor },
-        !prepared,
-      );
+      const result = this.executeNativeCommand(descriptor, invocation, !prepared);
       if (
         result &&
         sessionId &&

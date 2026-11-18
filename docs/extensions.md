@@ -303,11 +303,12 @@ For interactions that need a dedicated control, modify the relevant source owner
 A pinned command button should use `store.sendPreparedCommand("/goal")`, which dispatches independently of the Composer's draft, attachments, and project-file references. Disable the button when the command is absent. Put occasional or argument-taking actions in the palette/Composer instead of adding permanent controls.
 
 `src/components/ExtensionDialogContent.tsx` exports the existing standard dialog body without a
-store or transport dependency. It accepts `request`, controlled `value`, `pending`, `error`,
-`onValueChange`, `onRespond` and `onCancel`. `ExtensionUiDialog.tsx` keeps session/request ownership,
-form state, communication, deadlines and modal focus. A source-owned dialog can reuse the body and
-its normal styles; supply its own outer dialog/focus owner. Permission prompts should normally use
-Pi's native `ctx.ui.confirm`, without introducing a persistent permission-list panel.
+store or transport dependency. Pass `request`, `pending`, `onRespond`, `onCancel` and an optional
+`error`. For input and editor requests, pass `value` and `onValueChange` to control the text, or
+let the form keep its own draft. Give each request a distinct React key and provide the
+surrounding modal and focus handling. Inspire's `ExtensionUiDialog.tsx`
+handles session ownership, transport and deadlines. Use Pi's native `ctx.ui.confirm` for permission
+prompts.
 
 Reuse existing icons, tokens, modal focus, and responsive drawers. Keep runtime widgets near the Composer, tool results in their cards, and project details in Files and Changes. Settings is for persisted preferences. Follow neighboring controls' accessible labels, keyboard behavior, and pointer/touch target sizes, and respect reduced motion.
 

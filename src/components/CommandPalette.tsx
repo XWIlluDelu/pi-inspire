@@ -379,7 +379,7 @@ export const CommandPalette = memo(function CommandPalette({
                   // The palette must release modal focus before its native picker opens.
                   requestAnimationFrame(
                     runInSession(() =>
-                      store.runPaletteNativeCommand(`/${command.name}`),
+                      void store.sendPreparedCommand(`/${command.name}`),
                     ),
                   );
                 }

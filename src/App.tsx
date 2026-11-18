@@ -14,7 +14,7 @@ import {
   useState,
 } from "react";
 import { flushSync } from "react-dom";
-import { isAbortableRunState, type ThemePreference } from "../shared/contracts";
+import type { ThemePreference } from "../shared/contracts";
 import type { ModelSettingsDestination } from "../shared/model-settings";
 import { selectedRunState } from "./app-state";
 import { pairBrowser } from "./browser-auth";
@@ -45,7 +45,7 @@ import { SettingsDialog } from "./components/SettingsDialog";
 import { StartupCard } from "./components/StartupCard";
 import { Transcript, type TranscriptNavigation } from "./components/Transcript";
 import { Welcome, type WelcomeInheritance } from "./components/Welcome";
-import { isComposingKeyboardEvent } from "./keyboard-input";
+import { isComposingKeyboardEvent, isEditableTarget } from "./keyboard-input";
 import { thinkingLevelLabel } from "./model-options";
 import { runStop, type WorkbenchDestinations } from "./session-actions";
 import { shallowEqual, store, useAppState } from "./store";
@@ -507,7 +507,6 @@ export function App() {
       attentionCount: source.attentionSessionIds.length,
       sessionId: source.sessionId,
       runState: selectedRunState(source),
-      bashRunning: source.live.bashRunning,
       error: source.error,
       errorSeverity: source.errorSeverity,
       projectionConflict: source.view.conflict,
@@ -875,10 +874,7 @@ export function App() {
       const target = event.target instanceof Element ? event.target : null;
       const cycleAction = modelCycleAction(event);
       if (cycleAction) {
-        const editable = target?.closest(
-          "input,textarea,[contenteditable=true]",
-        );
-        const draft = editable && target?.closest(".composer");
+        const draft = target?.matches("textarea.composer__input");
         const combobox = target?.closest("[role=combobox]");
         if (
           !store.getState().sessionId ||
@@ -887,7 +883,7 @@ export function App() {
           ) ||
           (combobox &&
             (!draft || combobox.getAttribute("aria-expanded") !== "false")) ||
-          (editable && !draft)
+          (isEditableTarget(target) && !draft)
         )
           return;
         event.preventDefault();
@@ -924,11 +920,7 @@ export function App() {
       ) {
         event.preventDefault();
         store.setResourcesOpen(false);
-      } else if (
-        event.key === "Escape" &&
-        !event.defaultPrevented &&
-        (isAbortableRunState(state.runState) || state.bashRunning)
-      ) {
+      } else if (event.key === "Escape") {
         runStop(state.sessionId);
       }
     };
@@ -936,7 +928,6 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [
     state.runState,
-    state.bashRunning,
     state.sessionId,
     state.resourcesOpen,
     narrowViewport,

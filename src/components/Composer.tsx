@@ -101,7 +101,7 @@ const ContextMeter = memo(function ContextMeter() {
         onBlur={() => setOpen(false)}
         onClick={() => {
           setOpen(false);
-          void store.runPaletteNativeCommand("/session");
+          void store.sendPreparedCommand("/session");
         }}
       >
         <span

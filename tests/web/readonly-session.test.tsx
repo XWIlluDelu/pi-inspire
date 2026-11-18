@@ -83,7 +83,7 @@ it.each([
     expect(await screen.findByText("Retained answer")).toBeVisible();
     expect(screen.getByText(notice)).toBeVisible();
     expect(screen.queryByRole("textbox", { name: "Message" })).toBeNull();
-    expect(store.runPaletteNativeCommand("/reload")).toBe(false);
+    await expect(store.sendPreparedCommand("/reload")).resolves.toBe(false);
 
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
     const filter = within(

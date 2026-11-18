@@ -16,7 +16,6 @@ import {
   exportArgumentPath,
   nativeCommand,
   parseCommandInvocation,
-  parseNativeCommand,
 } from "../shared/commands.js";
 import {
   type ActiveSnapshot,
@@ -49,6 +48,7 @@ import {
 } from "../shared/contracts.js";
 import type { SessionHistoryQuery } from "../shared/history-query.js";
 import type { RuntimeSetting } from "../shared/host-endpoints.js";
+import { isJsonRecord } from "../shared/json-record.js";
 import type { TaskNotification, TaskOutcome } from "../shared/notifications.js";
 import {
   PROVIDER_AUTH_SUFFIX,
@@ -192,19 +192,11 @@ function assertNativeCommandIdle(slot: RuntimeSlot, commandName: string): void {
   );
 }
 
-function runtimeResourceOwnsCommand(
-  slot: RuntimeSlot,
-  commandName: string,
-  source?: string,
-): boolean {
-  if (nativeCommand(commandName)) return false;
-  const command = slot.commands?.find((command) => {
-    if (!command || typeof command !== "object") return false;
-    const name = (command as { name?: unknown }).name;
-    return typeof name === "string" && name === commandName;
-  });
-  return Boolean(
-    command && (!source || (command as { source?: unknown }).source === source),
+function runtimeResource(slot: RuntimeSlot, name: string) {
+  if (nativeCommand(name)) return undefined;
+  return slot.commands?.find(
+    (command): command is Record<string, unknown> =>
+      isJsonRecord(command) && command.name === name,
   );
 }
 
@@ -2904,23 +2896,23 @@ export class RuntimeController extends EventEmitter {
     const invocation = parseCommandInvocation(
       entered,
       (name) =>
-        runtimeResourceOwnsCommand(slot, name) ||
+        Boolean(runtimeResource(slot, name)) ||
         this.previewModels
           .get(slot)
           ?.data?.commands?.some((command) => command.name === name) === true,
     );
-    const native = parseNativeCommand(entered);
+    const native =
+      invocation && nativeCommand(invocation.name) ? invocation : null;
     if (invocation && !native && slot.process && slot.ready)
       await this.readRuntimeCommands(slot, slot.process);
     assertPromptView();
+    const resource = invocation && runtimeResource(slot, invocation.name);
     const canQueue = Boolean(
       (request.behavior || slot.deferredPrompts.length > 0) &&
         !native &&
         !entered.startsWith("!") &&
         this.deliveryWorker(slot) &&
-        (!invocation ||
-          (runtimeResourceOwnsCommand(slot, invocation.name) &&
-            !runtimeResourceOwnsCommand(slot, invocation.name, "extension"))),
+        (!invocation || (resource && resource.source !== "extension")),
     );
     if (
       canQueue &&
@@ -2937,7 +2929,7 @@ export class RuntimeController extends EventEmitter {
         slot.runState === "retrying");
     if (
       invocation &&
-      !runtimeResourceOwnsCommand(slot, invocation.name) &&
+      !resource &&
       ((native ? native.name !== "compact" : slot.ready) ||
         request.attachmentIds?.length ||
         request.historyArtifacts ||
@@ -3046,9 +3038,10 @@ export class RuntimeController extends EventEmitter {
           const command =
             invocation ??
             parseCommandInvocation(entered, (name) =>
-              runtimeResourceOwnsCommand(slot, name),
+              Boolean(runtimeResource(slot, name)),
             );
-          if (command && !runtimeResourceOwnsCommand(slot, command.name))
+          const resource = command && runtimeResource(slot, command.name);
+          if (command && !resource)
             throw requestError(
               `Pi command /${command.name} is no longer available; refresh the command inventory`,
               409,
@@ -3181,8 +3174,7 @@ export class RuntimeController extends EventEmitter {
           let admissionTimer: ReturnType<typeof setTimeout> | undefined;
           if (
             !isBusyRunState(previousRunState) &&
-            command &&
-            runtimeResourceOwnsCommand(slot, command.name, "extension")
+            resource?.source === "extension"
           ) {
             // A fast setting command should not flash Stop and queue controls.
             // Native activity still publishes immediately.

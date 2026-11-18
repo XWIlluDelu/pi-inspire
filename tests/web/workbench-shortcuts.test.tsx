@@ -37,9 +37,6 @@ it.each([
       expect(modelCycleShortcut(action, mac)).toBe(`${hint}+${key}`);
     }
     for (const init of [
-      { isComposing: true },
-      { keyCode: 229 },
-      { modifierAltGraph: true },
       { key: "∏", code: "KeyP" },
       { key: "Dead", code: "KeyP" },
       ...extra,
@@ -67,7 +64,7 @@ describe("workbench keyboard ownership", () => {
     const model = vi.spyOn(store, "cycleModel").mockResolvedValue();
     const chord = { key: "m", ctrlKey: true, metaKey: true };
     render(<App />);
-    const editor = document.createElement("textarea");
+    const editor = document.createElement("select");
     document.body.append(editor);
     try {
       expect(fireEvent.keyDown(editor, chord)).toBe(true);
@@ -78,6 +75,12 @@ describe("workbench keyboard ownership", () => {
       name: "Message",
     });
     draft.focus();
+    for (const composing of [
+      { isComposing: true },
+      { keyCode: 229 },
+      { modifierAltGraph: true },
+    ])
+      expect(fireEvent.keyDown(draft, { ...chord, ...composing })).toBe(true);
     fireEvent.change(draft, { target: { value: "/com" } });
     draft.setSelectionRange(4, 4);
     fireEvent.select(draft);
