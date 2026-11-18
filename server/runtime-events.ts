@@ -319,8 +319,7 @@ export class RuntimeEventController {
           "assistant")
     )
       this.argumentStreams.delete(rpc);
-    // Pi 0.86 system loadouts/checkpoints stay host-side, including live events
-    // and the aggregate agent_end payload, without becoming overlay messages.
+    // System loadouts and checkpoints stay out of the live overlay.
     if (
       (record.type === "message_start" ||
         record.type === "message_update" ||
@@ -328,15 +327,7 @@ export class RuntimeEventController {
       isSystemMessage(record.message)
     )
       return;
-    let forwardedEvent: unknown =
-      record.type === "agent_end" && Array.isArray(record.messages)
-        ? {
-            ...record,
-            messages: record.messages.filter(
-              (message) => !isSystemMessage(message),
-            ),
-          }
-        : event;
+    let forwardedEvent = event;
     if (
       record.type === "message_start" ||
       record.type === "message_update" ||
@@ -753,6 +744,9 @@ export class RuntimeEventController {
     event: unknown,
     record: Record<string, unknown>,
   ): void {
+    // Message and tool events already project these bodies. Persistence
+    // checkpoints and agent_settled own the browser's final state.
+    if (record.type === "turn_end" || record.type === "agent_end") return;
     // Artifact identity uses the exact wire boundary, before async projection
     // ordering or response fences can advance.
     const pendingInput =
