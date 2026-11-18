@@ -256,7 +256,9 @@ export class TaskNotificationController {
       if (!current()) return;
       this.initialSettingsApi = null;
       if (settings.mode === "desktop") {
-        const registration = await navigator.serviceWorker?.getRegistration();
+        const registration = browserNotificationPermission() === "granted"
+          ? await navigator.serviceWorker?.getRegistration()
+          : undefined;
         const subscription = await registration?.pushManager?.getSubscription();
         const key = subscription?.options.applicationServerKey;
         const encoded = key
@@ -267,12 +269,13 @@ export class TaskNotificationController {
           : null;
         if (!current()) return;
         if (
+          !subscription ||
           browserNotificationPermission() !== "granted" ||
           encoded !== settings.publicKey
         ) {
           if (settings.subscribed)
             settings = await this.save(undefined, null, undefined, api);
-        } else if (subscription!.endpoint !== settings.endpoint) {
+        } else if (subscription.endpoint !== settings.endpoint) {
           // Browser enrollment can succeed even if its Host registration fails
           // or times out. Reconcile the existing subscription, not a new one:
           // no permission prompt, no subscribe(), and no rewrite of intent.
@@ -280,7 +283,7 @@ export class TaskNotificationController {
           // only a different browser subscription can repair that destination.
           settings = await this.save(
             undefined,
-            subscription!.toJSON(),
+            subscription.toJSON(),
             undefined,
             api,
           );
@@ -307,6 +310,7 @@ export class TaskNotificationController {
 
   private async unsubscribe(current: () => boolean): Promise<boolean> {
     if (!current()) return false;
+    if (browserNotificationPermission() !== "granted") return true;
     const registration = await navigator.serviceWorker?.getRegistration();
     if (!current()) return false;
     const subscription = await registration?.pushManager?.getSubscription();

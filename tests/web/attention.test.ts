@@ -253,6 +253,20 @@ beforeEach(() => {
 });
 
 describe("device-local task alerts", () => {
+  it.each(["off", "title", "desktop"] as const)(
+    "skips push lookup without permission when saved mode is %s",
+    async (choice) => {
+      Permission.permission = "default";
+      subscribed = choice === "desktop";
+      const registration = (await navigator.serviceWorker.getRegistration())!;
+      const getSubscription = vi.spyOn(registration.pushManager, "getSubscription");
+      const { alerts } = await notificationController(choice);
+      expect(getSubscription).not.toHaveBeenCalled();
+      expect(alerts()).toMatchObject({ mode: choice, subscribed: false });
+      expect(mutations).toEqual(choice === "desktop" ? [{ subscription: null }] : []);
+    },
+  );
+
   it("opens the conversation and consumes the first offer while repairing existing Desktop enrollment", async () => {
     const enrollment = deferred<PushSubscription | null>();
     const registration = (await navigator.serviceWorker.getRegistration())!;

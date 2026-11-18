@@ -142,6 +142,7 @@ notification offers on the initial event connection. Subscription recovery and w
 independently of session loading. Recheck on Settings open and app resume. Repair an existing
 browser subscription whose Host registration failed without prompting again. A Host-expired
 endpoint needs an explicit Enable gesture to replace the browser subscription.
+Only query the browser's push subscription while notification permission is granted.
 
 Save mode intent immediately. Permission, enrollment and display results apply only to the
 current choice and API owner. Enrollment updates delivery health without changing intent.
