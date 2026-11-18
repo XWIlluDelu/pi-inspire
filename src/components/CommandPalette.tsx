@@ -522,7 +522,7 @@ export const CommandPalette = memo(function CommandPalette({
               label="Prepared command"
               placeholder="Command and arguments…"
               initialCaretAtEnd
-              autoFocus
+              autoFocus={active && !preparationSending}
               onKeyDown={(event) => {
                 if (shouldSubmitComposerEnter(event.nativeEvent, "mod-enter")) {
                   event.preventDefault();

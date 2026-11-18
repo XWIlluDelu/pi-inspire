@@ -481,7 +481,10 @@ export function Welcome({
                 aria-label="Browse host directories"
                 title="Browse host directories"
                 disabled={starting}
-                onClick={() => setBrowsing(true)}
+                onClick={(event) => {
+                  event.currentTarget.focus({ preventScroll: true });
+                  setBrowsing(true);
+                }}
               >
                 <FolderOpen size={14} aria-hidden />
               </button>

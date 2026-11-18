@@ -137,6 +137,9 @@ test.describe("phone action dialogs", () => {
       await expect(dialog).toHaveCount(0);
       await expect(page).toHaveURL(inspireUrl);
       await open();
+      await expect
+        .poll(() => dialog.evaluate((element) => element.contains(document.activeElement)))
+        .toBe(true);
       await page.keyboard.press("Escape");
       await expect(dialog).toHaveCount(0);
       await expect.poll(depth).toBe(0);
@@ -162,14 +165,12 @@ test("Settings keeps modal ownership when the workspace becomes a drawer @cross-
   const system = dialog.getByRole("navigation", { name: "Settings categories" })
     .getByRole("button", { name: "System", exact: true });
   await system.press("Enter");
-  const content = dialog.locator(".settings__content");
-  const position = await content.evaluate((el) => (el.scrollTop = 8, el.scrollTop));
   const background = page.getByRole("button", { name: "Toggle resources panel" });
   await background.evaluate((element) => element.focus());
   await expect(dialog.locator(":focus")).toBeVisible();
   await page.setViewportSize({ width: 390, height: 760 });
   await expect(system).toHaveAttribute("aria-current", "location");
-  if (position) await expect.poll(() => content.evaluate((el) => el.scrollTop)).toBe(position);
+  await expect(system).toBeFocused();
   const close = dialog.getByRole("button", { name: "Close settings" });
   await close.focus();
   await page.keyboard.press("Shift+Tab");
