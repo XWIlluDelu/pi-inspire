@@ -162,7 +162,6 @@ test("project terminals and a lost create response survive browser reload", {
   const terminalIds = [firstId];
   let foreignId: string | undefined;
   const deliveries: boolean[] = [];
-  const check = Promise.withResolvers<void>();
   const routePattern = /\/api\/terminal-operations(?:\?observe=1)?$/;
   try {
     const pane = page.locator(".ctx");
@@ -195,12 +194,10 @@ test("project terminals and a lost create response survive browser reload", {
         // The daemon committed the create before the browser lost the response.
         return route.abort("failed");
       }
-      await check.promise;
       await route.fulfill({ response });
     });
     await page.getByRole("button", { name: "New terminal" }).click();
-    const pending = page.locator(".terminal-pending");
-    await expect(pending).toContainText("Outcome unknown");
+    await expect.poll(() => deliveries).toEqual([false, true]);
     const secondTab = terminalTab(page, terminalIds[1]!);
     // Catalog observation finds the second tab without sending another create.
     await expect(secondTab).toBeVisible({ timeout: 10_000 });
@@ -236,17 +233,6 @@ test("project terminals and a lost create response survive browser reload", {
       .click();
     const foreignTab = terminalTab(page, foreign.id);
     await expect(foreignTab).toHaveAttribute("aria-selected", "true");
-    await expect(pending).toContainText(browserWorkspace);
-    await pending
-      .getByRole("button", { name: "Retry same operation" })
-      .press("Enter");
-    await expect(
-      pending.getByRole("button", { name: "Checking…" }),
-    ).toBeDisabled();
-    check.resolve();
-    await expect(pending).toHaveCount(0);
-    expect(deliveries).toEqual([false, true]);
-    await expect(foreignTab).toHaveAttribute("aria-selected", "true");
     await page
       .getByRole("button", { name: "Back to current project" })
       .press("Enter");
@@ -280,7 +266,6 @@ test("project terminals and a lost create response survive browser reload", {
     );
     await focusedPage.close();
   } finally {
-    check.resolve();
     await page.unroute(routePattern);
     for (const terminalId of foreignId
       ? [...terminalIds, foreignId]

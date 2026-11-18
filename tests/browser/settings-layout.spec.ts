@@ -72,7 +72,6 @@ test("busy Host restarts preserve the interruption grant across receipt retry", 
   const row = settings.locator(".host-restart__status-row");
   const message = row.locator(".host-restart__status");
   const dialog = page.getByRole("alertdialog");
-  await expect(row).toBeVisible();
 
   try {
     const restart = settings.getByRole("button", {
@@ -87,7 +86,6 @@ test("busy Host restarts preserve the interruption grant across receipt retry", 
       name: "Stop work and restart",
       exact: true,
     });
-    const retry = row.getByRole("button", { name: "Retry same request" });
     await expect(restart).toBeEnabled();
     await expect(settings.getByText(ready.allPiReason!)).toBeVisible();
     await expect(all).toBeDisabled();
@@ -119,23 +117,19 @@ test("busy Host restarts preserve the interruption grant across receipt retry", 
       exact: true,
     });
     await anyway.click();
-    await expect(retry).toBeVisible();
-    const unconfirmed = submitted.at(-1)!;
+    await expect.poll(() => submitted.length).toBe(4);
+    const unconfirmed = submitted[2]!;
     expect(unconfirmed).toMatchObject({
       hostId: ready.hostId,
       scope: "host",
       interruptWork: true,
       skipAttachedStop: true,
     });
-    await expect(anyway).toBeDisabled();
-    await retry.click();
     await expect(message).toHaveText("Preparing restart…");
-    await expect.poll(() => submitted.length).toBe(4);
     expect(submitted.at(-1)).toEqual(unconfirmed);
 
     receiptReady.resolve();
     await expect(message).toHaveText("Restart requested.");
-    await expect(retry).toHaveCount(0);
   } finally {
     receiptReady.resolve();
   }

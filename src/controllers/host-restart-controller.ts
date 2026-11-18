@@ -16,24 +16,22 @@ interface State {
   pending: HostRestartRequest | null;
   sending: boolean;
   blocked: boolean;
-  recoveryInvalid: boolean;
   error: string | null;
   notice: string | null;
 }
 
-/** Delivery identity is persisted before dispatch. Recheck only reads; an
- * explicit retry sends the same identity, never a new restart after a timeout. */
+/** Reconnect and retry preserve the original restart and its interruption grant. */
 export class HostRestartClient {
   private state: State = {
     status: null,
     pending: null,
     sending: false,
     blocked: false,
-    recoveryInvalid: false,
     error: null,
     notice: null,
   };
   private loaded = false;
+  private checked?: string;
   private readonly listeners = new Set<() => void>();
   private readonly observation = new ReceiptRead<"status", void>();
   private readonly tracking: ReturnType<
@@ -70,14 +68,17 @@ export class HostRestartClient {
         this.track(loaded.value);
         return true;
       }
-      this.patch({
-        blocked: true,
-        recoveryInvalid: loaded.issue === "format",
-        error:
-          loaded.issue === "format"
-            ? "Can't read the saved restart status. You can still recheck the Host."
-            : "Can't access browser storage. Recheck Host status before restarting.",
-      });
+      if (loaded.issue === "format") {
+        try {
+          this.persist(null);
+        } catch {
+          return false;
+        }
+      } else
+        this.patch({
+          blocked: true,
+          error: "Restart is unavailable in this tab.",
+        });
     }
     return this.loaded;
   }
@@ -89,7 +90,6 @@ export class HostRestartClient {
     this.patch({
       pending,
       blocked: false,
-      recoveryInvalid: false,
       error: null,
       ...patch,
     });
@@ -105,8 +105,7 @@ export class HostRestartClient {
       this.loaded = false;
       this.patch({
         blocked: true,
-        recoveryInvalid: false,
-        error: "Couldn't update the saved restart status. Recheck the Host.",
+        error: "Restart is unavailable in this tab.",
       });
       throw new Error("Restart storage unavailable");
     }
@@ -129,31 +128,23 @@ export class HostRestartClient {
       const pending = this.state.pending;
       if (pending && pending.hostId !== status.hostId) {
         this.persist(null, { notice: "Host reconnected." });
+      } else if (pending && matchesRestartIntent(status.operation, pending)) {
+        this.checked = pending.operationId;
+        if (status.operation?.phase === "rejected") this.persist(null);
       } else if (
         pending &&
-        status.operation?.phase === "rejected" &&
-        matchesRestartIntent(status.operation, pending)
+        !this.state.sending &&
+        this.checked !== pending.operationId &&
+        (!status.operation || status.operation.phase === "rejected")
       ) {
-        this.persist(null);
+        this.checked = pending.operationId;
+        void this.retry();
       }
     } catch {
       if (!this.state.blocked && receiptRevision === this.receiptRevision)
-        this.patch({ error: "Host status unavailable. Recheck status." });
+        this.patch({ error: "Couldn’t reach Inspire." });
     }
   }
-  /** Explicitly discard browser tracking, never cancel or resend a Host restart. */
-  clearRecovery = async (): Promise<void> => {
-    if (this.state.sending) return;
-    try {
-      this.persist(null, {
-        notice:
-          "Saved restart status cleared. Any requested restart can still run.",
-      });
-      await this.refresh();
-    } catch {
-      // The storage error remains visible; do not discard an in-memory identity.
-    }
-  };
   start = async (
     scope: HostRestartScope,
     hostId: string,
@@ -166,6 +157,8 @@ export class HostRestartClient {
         !this.restore() ||
         this.state.pending ||
         !this.state.status ||
+        (this.state.status.operation &&
+          this.state.status.operation.phase !== "rejected") ||
         (scope === "all-pi" && !interruptWork) ||
         !(scope === "all-pi"
           ? this.state.status.allPiAvailable
@@ -188,7 +181,13 @@ export class HostRestartClient {
   };
   retry = async (): Promise<void> => {
     const pending = this.state.pending;
-    if (!pending || this.state.sending || this.state.blocked) return;
+    if (
+      !pending ||
+      this.state.sending ||
+      this.state.blocked ||
+      this.state.status?.hostId !== pending.hostId
+    )
+      return;
     this.patch({ sending: true, error: null });
     await this.send(pending);
   };
@@ -205,6 +204,7 @@ export class HostRestartClient {
       )
         return;
 
+      this.checked = pending.operationId;
       const operation = status.operation;
       // A GET can already have seen a later phase, or another restart after
       // this one was rejected. Keep that observation instead of regressing it.
@@ -227,7 +227,7 @@ export class HostRestartClient {
     } catch {
       if (!this.state.blocked && this.state.pending === pending)
         this.patch({
-          error: "Couldn't confirm the restart request. Recheck status.",
+          error: "Couldn’t confirm the restart.",
         });
     } finally {
       this.patch({ sending: false });

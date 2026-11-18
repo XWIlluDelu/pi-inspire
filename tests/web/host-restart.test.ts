@@ -113,7 +113,7 @@ describe("browser restart delivery", () => {
     expect(f.api.restartHost).toHaveBeenCalledOnce();
   });
 
-  it("clears broken browser tracking explicitly without sending or clearing a running Host operation", async () => {
+  it("clears broken browser tracking automatically without sending or clearing a running Host operation", async () => {
     const f = fixture();
     f.status.operation = {
       id: crypto.randomUUID(),
@@ -130,15 +130,12 @@ describe("browser restart delivery", () => {
       }),
     );
     await f.client.refresh();
-    expect(f.client.snapshot().recoveryInvalid).toBe(true);
-    await f.client.start("host", f.status.hostId);
-    await f.client.clearRecovery();
     expect(f.client.snapshot()).toMatchObject({
       blocked: false,
-      recoveryInvalid: false,
       pending: null,
       status: f.status,
     });
+    await f.client.start("host", f.status.hostId);
     expect(sessionStorage.getItem(recoveryKey)).toBeNull();
     expect(f.api.restartHost).not.toHaveBeenCalled();
   });
@@ -171,8 +168,6 @@ describe("browser restart delivery", () => {
       blocked: true,
       status: { operation: { phase: "rejected", error: "Build failed" } },
     });
-    expect(client.snapshot().error).toMatch(/saved restart status/);
-    await client.clearRecovery();
     expect(client.snapshot().pending).not.toBeNull();
     expect(f.api.restartHost).toHaveBeenCalledOnce();
     canRemove = true;
@@ -218,7 +213,6 @@ describe("browser restart delivery", () => {
     await client.refresh();
     await client.start("host", f.status.hostId);
     expect(client.snapshot().blocked).toBe(true);
-    expect(client.snapshot().recoveryInvalid).toBe(false);
     expect(f.api.restartHost).not.toHaveBeenCalled();
   });
 });

@@ -137,7 +137,7 @@ owner refuses reuse with different parameters. Lost
 responses, deadlines, and disconnects leave the outcome unresolved; they do not cancel work.
 Read-only catalog/settings reads and attachment/input continuity remain independent. A confirmed
 completion or rejection remains authoritative even if the browser cannot remove its recovery record.
-Report that local cleanup failure separately; retrying cleanup sends no terminal mutation.
+Local cleanup happens in the background and sends no terminal mutation.
 
 | Receipt bound | Value |
 | --- | --- |
@@ -148,17 +148,11 @@ Report that local cleanup failure separately; retrying cleanup sends no terminal
 
 Running operations are not evicted. Before forgetting an identity, reclamation fences its admission
 epoch; daemon replacement also changes the epoch. Unknown old identities are refused. The browser
-retains unresolved controls across pane, project, and reload generations, offers same-operation checks,
-and releases them after a confirmed result or definite refusal. After inspecting current terminals,
-users may explicitly stop tracking an unresolved result, including an expired receipt or retired epoch.
-Confirmation explains that this neither cancels the old work nor establishes its outcome. It sends no
-mutation, persists retirement before releasing the local identity, and is unavailable during a check.
-A subsequent deliberate action gets a new identity; retries never silently become new work.
-Unavailable or malformed storage blocks untracked writes. The browser persists the typed intent
-and submits each terminal control through one typed terminal operation entry point. Results use the same receipt shape as Host
-operations, with terminal epoch as executor identity. Validation failures with a valid identity
-return a matching rejection before dispatch. Records from a previous format remain explicitly
-unknown. The user can retire their tracking after inspecting the catalog; there is no replay.
+retains unresolved controls across pane, project, and reload generations and checks them in the
+background. A deliberate repeat of an unresolved action uses the same identity if the daemon
+confirms there is no receipt for it. Confirmed results and expired receipts retire automatically.
+A different intent gets a new identity. Malformed current storage blocks untracked writes.
+Records in retired formats have no role in admission or recovery.
 
 Diagnostics distinguish absent endpoints, unverified connections and data-protocol incompatibility.
 Terminal errors use the shared

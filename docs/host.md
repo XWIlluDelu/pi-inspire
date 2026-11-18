@@ -187,8 +187,7 @@ not a saved setting waiting for restart: disabled mode preserves Herdr Pi; enabl
 Pi in Herdr too. The shared Herdr server stays running. Pi shutdown must succeed before Inspire
 starts again. This action requires the installed Linux services.
 
-Use **Recheck status** if a restart request is unconfirmed. **Reset restart recovery…** clears
-an invalid browser record while any submitted restart continues on the Host.
+Inspire checks an unconfirmed restart in the background.
 
 Page restart works with the Inspire launcher on Windows, macOS and Linux, and with the installed
 Linux service. It reuses the launcher or service, configuration and browser pairing. Preparation

@@ -16,7 +16,6 @@ import type {
 } from "../../shared/terminal-contracts";
 import type { TerminalIntent } from "../../shared/terminal-operations";
 import { WorkspaceDock } from "../../src/components/WorkspaceDock";
-import { terminalOperations } from "../../src/controllers/terminal-operation-controller";
 import {
   clearTerminalActions,
   clearTerminalInsertions,
@@ -33,7 +32,6 @@ import { deferred, installLocalStorage } from "./helpers";
 
 const api = vi.hoisted(() => ({
   terminals: vi.fn(),
-  retryTerminalOperation: vi.fn(),
   terminalSettings: vi.fn(),
 }));
 const controls = vi.hoisted(() => ({
@@ -305,34 +303,6 @@ describe("terminal project ownership", () => {
     await screen.findByRole("tab", { name: "new shell", selected: true });
     expect(controls.remove).not.toHaveBeenCalled();
     expect(controls.restart).not.toHaveBeenCalled();
-  });
-
-  it("requires confirmation to stop tracking an unknown terminal operation", async () => {
-    const operation = {
-      canRetry: true,
-      label: "Create terminal · /A",
-      busy: false,
-    };
-    vi.spyOn(terminalOperations, "snapshot").mockReturnValue([
-      { ...operation, key: "lost", outcome: "unknown" },
-    ]);
-    const stopTracking = vi
-      .spyOn(terminalOperations, "stopTracking")
-      .mockImplementation(() => {});
-    vi.stubGlobal(
-      "confirm",
-      vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true),
-    );
-    render(<WorkspaceDock cwd="/A" />);
-
-    const stop = await screen.findByRole("button", { name: "Stop tracking…" });
-    fireEvent.click(stop);
-    expect(stopTracking).not.toHaveBeenCalled();
-    fireEvent.click(stop);
-    expect(stopTracking).toHaveBeenCalledExactlyOnceWith("lost");
-    expect(api.retryTerminalOperation).not.toHaveBeenCalled();
-
-    expect(controls.create).not.toHaveBeenCalled();
   });
 
   it("leaves B selected when A's Close, reorder and poll settle late", async () => {

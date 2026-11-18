@@ -402,19 +402,13 @@ unconfirmed submission keeps its domain phase and does not trigger a new restart
   non-issuance releases admission; uncertain submission retains the drain and reports recovery
   required. A lost launcher acceptance cannot trigger shutdown from a late reply or turn a later
   normal exit into a restart.
-- The browser persists identity in tab-session storage before POST; invalid or unavailable storage
-  blocks dispatch, not read-only Host observation. Recheck retries local recovery and clears the
-  browser's blocked state once storage recovers. Retrying an unconfirmed request keeps its identity.
-  A new Host identity or a matching rejected operation automatically retires browser tracking;
-  uncertain requests keep their identity. Only malformed saved data offers **Reset restart
-  recovery…**, beside its error and with confirmation; normal pending/recovery controls and
-  unavailable storage (which retries) offer no local-record cleanup. Reset discards only browser
-  tracking, neither sending nor cancelling a restart; the Host's pending operation still fences new
-  admission. Failed local cleanup preserves the record and reports a storage problem, not an
-  unknown restart. A rejected receipt is labelled **last attempt**, because it is historical rather
+- The browser persists its request before POST and observes it in the background. If the same
+  Host has no active restart, it can retry once with the original identity and grants. A deliberate
+  retry uses that same identity. A replacement Host or matching rejection retires the record.
+  Malformed tracking is cleared automatically. Unavailable storage blocks dispatch.
+  A rejected receipt is labelled **last attempt**, because it is historical rather
   than a current busy check. A new submission replaces the old result with preparation immediately.
-  A POST receipt establishes the operation before polling catches up. The status row reserves room
-  for ordinary progress and refusal so these transitions keep their layout.
+  A POST receipt establishes the operation before polling catches up.
 - The CLI checks readiness after restart; the browser reports reconnection to a new Host.
 
 ## Atomic browser-build publication
