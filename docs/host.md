@@ -119,13 +119,11 @@ See [Chrome's manifest update process](https://web.dev/articles/manifest-updates
 
 ## Task notifications
 
-In **Settings → Behavior → Task alerts**, choose **System notification** on each device that should
-receive alerts, then click **Enable notifications**, allow the browser permission, and check for
-**Background notifications enabled**. Choosing **System notification** alone does not finish setup.
-**While Inspire is open** means background delivery is unavailable, though alerts still work while
-the page is open. Settings explains setup failures. Reopening Inspire or Settings retries an
-interrupted registration without asking for permission again; an expired subscription needs
-**Enable notifications** again.
+In **Settings → Behavior → Task alerts**, choose **System notification** and allow the browser
+permission. **Background notifications enabled** confirms enrollment. **While Inspire is open**
+means delivery uses the open page. Reopening Inspire or Settings can repair the Host registration
+for an existing subscription. Use **Enable notifications** to retry setup or replace an expired
+subscription.
 
 Completions and errors notify you when you are away from the conversation; a confirmed Stop does
 not. **Notification grouping** chooses **Session** (default) or **Project** on this device, and a
@@ -133,7 +131,7 @@ newer result replaces the group's older notification. Project grouping shows the
 one conversation or **n sessions** for several; repeated runs in one session count once.
 Dismissing or clicking a notification resets its count, and viewing one session leaves its unread
 project peers in place. Changing grouping clears existing notifications without affecting
-permission or enrollment. **Mark tab** applies only to open pages.
+permission or enrollment. **Mark tab** uses the browser tab indicator.
 
 Titles show the saved session name (or **Unnamed session**) and can appear on the lock screen; the
 body names the project, never message text or error details. Duplicate or delayed delivery of an
@@ -151,9 +149,8 @@ Push needs no inbound access to the Host, but opening the conversation still nee
 (including VPN or reverse SSH). Remote phones need trusted HTTPS; on iPhone/iPad, add Inspire to the
 Home Screen and enable notifications in that app. Force-stopping the browser can prevent delivery.
 
-Alert choices are device-local: a new browser starts Off, and existing paired browsers keep their
-choice but must enable background delivery explicitly. Reset preferences affects only the current
-device. Pending alerts expire after 15 minutes. Notification state, including VAPID and
+Alert choices and Reset apply to this browser installation, which defaults to Off. Pending alerts
+expire after 15 minutes. Notification state, including VAPID and
 subscription secrets, is stored beside the preferences file as
 `<preferences-path>.notifications-<authority-namespace>.json`; do not publish it.
 

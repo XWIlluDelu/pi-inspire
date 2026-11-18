@@ -46,10 +46,6 @@ Standalone manual compaction keeps its own operation identity. Terminal alerts f
 [[terminal]]; they share browser permission handling but keep separate delivery intent.
 Waiting-for-input alerts are outside this design.
 
-The owned Pi lifecycle and the attached Pi receiver publish task outcomes at their settlement
-boundaries. The Host supplies one increasing outcome order, including results within a clock tick.
-The delivery service consumes those outcomes; snapshots and browser event replay do not trigger it.
-
 ## Viewing and delivery
 
 - A focused, visible window displaying the owning conversation at settlement consumes the outcome
@@ -92,7 +88,7 @@ notification.
   consumed by foreground viewing, and the represented sessions of visible project notifications.
   A stale unseen member can update the count silently without replacing newer result content;
   mandatory push repaints after dismissal do not count already-handled sessions as fresh members.
-- Order results by Host settlement time, distinguishing settlements within one clock tick. A
+- The Host assigns increasing order at settlement, including within one clock tick. A
   delayed local offer is acknowledged without display; a delayed or duplicate push silently redraws
   the latest known result instead of restoring older content.
 - Stable tags and handled outcome identities keep display replacement separate from delivery
@@ -139,7 +135,8 @@ tests Host-to-push delivery.
 
 Persist intent and delivery health per Host and browser installation. Apply device settings before
 notification offers on the initial event connection. Subscription recovery and worker sync run
-independently of session loading. Recheck on Settings open and app resume. Repair an existing
+independently of session loading. Settings and initial connection reconcile enrollment. Focus and
+visibility changes recheck permission. Repair an existing
 browser subscription whose Host registration failed without prompting again. A Host-expired
 endpoint needs an explicit Enable gesture to replace the browser subscription.
 Only query the browser's push subscription while notification permission is granted.
@@ -164,9 +161,9 @@ outcome evidence. Poll failures or missing presence records do not establish pro
 Independently confirmed process exit during an observed run is failure evidence; attachment follows
 [[session-persistence]].
 
-Bound and persist subscriptions and short-lived pending sends per Host with stable VAPID keys and
-standard Web Push. Restart preserves still-current queued sends without generating new historical outcomes.
-Disabling a subscription or retiring its authority cancels its pending sends.
+Persist subscriptions, bounded pending sends and VAPID keys across Host restart. A push failure
+applies to the enrollment that sent it. Expiry retires that subscription and clears its queue
+even after a grouping edit. A replacement subscription keeps its own delivery health and queue.
 
 ## Security, content and navigation
 
@@ -210,9 +207,6 @@ Linux Chrome app while another application is focused, a background or locked An
 an iOS Home Screen app; current evidence and gaps stay in the stage.
 
 ## Sources
-
-Design follows the notification investigation on 2026-10-22; implementation evidence is in
-[[follow-notifications-2026-10-22]].
 
 - [MDN: Notification constructor](https://developer.mozilla.org/en-US/docs/Web/API/Notification/Notification) — mobile display support.
 - [MDN: Push API](https://developer.mozilla.org/en-US/docs/Web/API/Push_API) — subscriptions and worker wakeup.

@@ -17,10 +17,6 @@ export interface TaskNotification {
   createdAt: number;
   test?: true;
 }
-export interface NotificationSubscription {
-  endpoint: string;
-  keys: { p256dh: string; auth: string };
-}
 export interface TaskAlertSettings {
   mode: CompletionAttentionPreference;
   grouping: TaskNotificationGrouping;
@@ -90,3 +86,17 @@ export const pushSubscriptionSchema = z
       .strict(),
   })
   .strict();
+
+export const taskAlertUpdateSchema = z
+  .strictObject({
+    mode: z.enum(["off", "title", "desktop"]).optional(),
+    grouping: z.enum(["session", "project"]).optional(),
+    subscription: pushSubscriptionSchema.nullable().optional(),
+  })
+  .refine(
+    (body) => Object.values(body).some((value) => value !== undefined),
+    "Provide a mode, subscription or grouping update",
+  );
+
+export type TaskAlertUpdate = z.infer<typeof taskAlertUpdateSchema>;
+export type NotificationSubscription = z.infer<typeof pushSubscriptionSchema>;

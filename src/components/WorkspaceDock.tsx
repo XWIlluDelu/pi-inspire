@@ -58,6 +58,7 @@ import {
   terminalOperations,
 } from "../controllers/terminal-operation-controller";
 import { isComposingKeyboardEvent } from "../keyboard-input";
+import { sessionValue, setSessionValue } from "../session-storage";
 import {
   hasTerminalInsertion,
   subscribeTerminalActions,
@@ -152,23 +153,6 @@ function readTerminalLaunchTarget(): TerminalLaunchTarget | null {
   const id = params.get("terminal")?.trim();
   if (!id) return null;
   return { id, focus: params.get("terminalFocus") === "1" };
-}
-
-function storedActiveTerminal(cwd: string): string | null {
-  try {
-    return sessionStorage.getItem(`${ACTIVE_KEY_PREFIX}${cwd}`);
-  } catch {
-    return null;
-  }
-}
-
-function storeActiveTerminal(cwd: string, id: string | null): void {
-  try {
-    if (id) sessionStorage.setItem(`${ACTIVE_KEY_PREFIX}${cwd}`, id);
-    else sessionStorage.removeItem(`${ACTIVE_KEY_PREFIX}${cwd}`);
-  } catch {
-    // Selection persistence is a convenience; terminal authority is remote.
-  }
 }
 
 function terminalLabel(terminal: TerminalDescriptor): string {
@@ -325,7 +309,7 @@ export const WorkspaceDock = memo(function WorkspaceDock({
         const next = await api.json("terminals", { query: { cwd } });
         if (!current() || !catalogController.replace(next)) return;
         setActiveId((id) => {
-          const preferred = id ?? storedActiveTerminal(cwd);
+          const preferred = id ?? sessionValue(ACTIVE_KEY_PREFIX + cwd);
           return next.terminals.some((terminal) => terminal.id === preferred)
             ? preferred
             : (next.terminals[0]?.id ?? null);
@@ -398,7 +382,8 @@ export const WorkspaceDock = memo(function WorkspaceDock({
   );
 
   useEffect(() => {
-    if (active && cwd && catalog) storeActiveTerminal(cwd, activeId);
+    if (active && cwd && catalog)
+      setSessionValue(ACTIVE_KEY_PREFIX + cwd, activeId);
     const ids = new Set(terminals.map((terminal) => terminal.id));
     const selected = active ? activeId : null;
     setOpenedIds((current) => {

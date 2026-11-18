@@ -1,17 +1,39 @@
 import type { CompletionAttentionPreference } from "../shared/contracts";
 import type {
+  NotificationSubscription,
   TaskAlertSettings,
   TaskAlertState,
+  TaskAlertUpdate,
   TaskNotification,
   TaskNotificationGrouping,
 } from "../shared/notifications";
 import type { Api } from "./api";
 import type { AppState } from "./app-state";
+import { base64url } from "./base64url";
 import {
   browserNotificationPermission,
   requestBrowserNotificationPermission,
 } from "./browser-notifications";
 import type { SessionOpenResult } from "./controllers/session-selection-controller";
+import { sessionValue, setSessionValue } from "./session-storage";
+
+function subscriptionData(
+  subscription: PushSubscription,
+): NotificationSubscription {
+  const { keys } = subscription.toJSON();
+  return {
+    endpoint: subscription.endpoint,
+    keys: keys as NotificationSubscription["keys"],
+  };
+}
+
+function matchesPushKey(
+  subscription: PushSubscription,
+  publicKey: string,
+): boolean {
+  const key = subscription.options.applicationServerKey;
+  return !!key && base64url(key) === publicKey;
+}
 
 function deadline<T>(
   operation: Promise<T>,
@@ -83,11 +105,7 @@ export class TaskNotificationController {
     const fragment = new URLSearchParams(url.hash.slice(1));
     const target = fragment.get("inspire-session");
     if (!target) return;
-    try {
-      sessionStorage.setItem(this.targetKey, target);
-    } catch {
-      /* private storage */
-    }
+    setSessionValue(this.targetKey, target);
     fragment.delete("inspire-session");
     url.hash = fragment.toString();
     history.replaceState(null, "", url.pathname + url.search + url.hash);
@@ -107,11 +125,7 @@ export class TaskNotificationController {
       data?.type === "inspire-notification-open" &&
       typeof data.sessionId === "string"
     ) {
-      try {
-        sessionStorage.setItem(this.targetKey, data.sessionId);
-      } catch {
-        /* storage disabled */
-      }
+      setSessionValue(this.targetKey, data.sessionId);
       void this.openTarget();
     } else if (
       data?.type === "inspire-notification-shown" &&
@@ -125,12 +139,7 @@ export class TaskNotificationController {
   };
   async openTarget(): Promise<void> {
     if (this.host.state().connection !== "open") return;
-    let target: string | null = null;
-    try {
-      target = sessionStorage.getItem(this.targetKey);
-    } catch {
-      /* storage disabled */
-    }
+    const target = sessionValue(this.targetKey);
     if (!target || this.openingTarget?.id === target) return;
     const opening = { id: target };
     this.openingTarget = opening;
@@ -138,12 +147,12 @@ export class TaskNotificationController {
       const result = await this.host.openSession(target);
       if (
         this.openingTarget === opening &&
-        sessionStorage.getItem(this.targetKey) === target &&
+        sessionValue(this.targetKey) === target &&
         (result === "opened" ||
           result === "missing" ||
           (result === "superseded" && this.host.state().connection === "open"))
       )
-        sessionStorage.removeItem(this.targetKey);
+        setSessionValue(this.targetKey, null);
     } finally {
       if (this.openingTarget === opening) this.openingTarget = null;
     }
@@ -256,37 +265,28 @@ export class TaskNotificationController {
       if (!current()) return;
       this.initialSettingsApi = null;
       if (settings.mode === "desktop") {
-        const registration = browserNotificationPermission() === "granted"
-          ? await navigator.serviceWorker?.getRegistration()
-          : undefined;
+        const registration =
+          browserNotificationPermission() === "granted"
+            ? await navigator.serviceWorker?.getRegistration()
+            : undefined;
         const subscription = await registration?.pushManager?.getSubscription();
-        const key = subscription?.options.applicationServerKey;
-        const encoded = key
-          ? btoa(String.fromCharCode(...new Uint8Array(key)))
-              .replace(/=/g, "")
-              .replace(/\+/g, "-")
-              .replace(/\//g, "_")
-          : null;
         if (!current()) return;
         if (
           !subscription ||
           browserNotificationPermission() !== "granted" ||
-          encoded !== settings.publicKey
+          !matchesPushKey(subscription, settings.publicKey)
         ) {
           if (settings.subscribed)
-            settings = await this.save(undefined, null, undefined, api);
+            settings = await this.save(api, { subscription: null });
         } else if (subscription.endpoint !== settings.endpoint) {
           // Browser enrollment can succeed even if its Host registration fails
           // or times out. Reconcile the existing subscription, not a new one:
           // no permission prompt, no subscribe(), and no rewrite of intent.
           // A retained endpoint with subscribed=false was explicitly expired;
           // only a different browser subscription can repair that destination.
-          settings = await this.save(
-            undefined,
-            subscription.toJSON(),
-            undefined,
-            api,
-          );
+          settings = await this.save(api, {
+            subscription: subscriptionData(subscription),
+          });
         }
       } else {
         await this.updateEnrollment(() => this.unsubscribe(current));
@@ -330,10 +330,8 @@ export class TaskNotificationController {
     );
   }
   private save(
-    mode: CompletionAttentionPreference | undefined,
-    subscription?: PushSubscriptionJSON | null,
-    grouping?: TaskNotificationGrouping,
-    api = this.host.api(),
+    api: Api | null,
+    update: TaskAlertUpdate,
   ): Promise<TaskAlertSettings> {
     if (!api) return Promise.reject(new Error("Connect to the Host first"));
     const operation = this.writes
@@ -343,7 +341,7 @@ export class TaskNotificationController {
           throw new Error(
             "The Host connection changed before notification settings were saved",
           );
-        return api.configureTaskAlerts(mode, subscription, grouping);
+        return api.json("configureTaskAlerts", { body: update });
       });
     this.writes = operation;
     return operation;
@@ -408,7 +406,7 @@ export class TaskNotificationController {
       generation === this.groupingGeneration && api === this.host.api();
     this.patch({ grouping, groupingBusy: true, groupingError: null });
     try {
-      const settings = await this.save(undefined, undefined, grouping);
+      const settings = await this.save(api, { grouping });
       if (!current()) return false;
       this.groupingSettings = settings;
       this.patch({
@@ -451,7 +449,10 @@ export class TaskNotificationController {
       // result may fill in transport, but cannot rewrite another window's Off.
       const [granted, saved] = await Promise.all([
         permission,
-        this.save(mode, mode === "desktop" ? undefined : null, undefined, api),
+        this.save(api, {
+          mode,
+          subscription: mode === "desktop" ? undefined : null,
+        }),
       ]);
       if (!current()) return false;
       this.patch({ permission: granted, subscribed: saved.subscribed });
@@ -462,7 +463,7 @@ export class TaskNotificationController {
           return this.unsubscribe(current);
         }
         if (granted !== "granted") {
-          const disabled = await this.save(undefined, null, undefined, api);
+          const disabled = await this.save(api, { subscription: null });
           if (current()) this.patch({ subscribed: disabled.subscribed });
           return false;
         }
@@ -474,17 +475,10 @@ export class TaskNotificationController {
           );
         let subscription = await registration.pushManager.getSubscription();
         if (!current()) return false;
-        const bytes = Uint8Array.from(
-          atob(saved.publicKey.replace(/-/g, "+").replace(/_/g, "/")),
-          (c) => c.charCodeAt(0),
-        );
         if (subscription) {
-          const existing = subscription.options.applicationServerKey;
           if (
             (!saved.subscribed && subscription.endpoint === saved.endpoint) ||
-            !existing ||
-            new Uint8Array(existing).some((value, i) => value !== bytes[i]) ||
-            existing.byteLength !== bytes.length
+            !matchesPushKey(subscription, saved.publicKey)
           ) {
             await subscription.unsubscribe();
             if (!current()) return false;
@@ -494,7 +488,10 @@ export class TaskNotificationController {
         subscription ??= await deadline(
           registration.pushManager.subscribe({
             userVisibleOnly: true,
-            applicationServerKey: bytes,
+            applicationServerKey: Uint8Array.from(
+              atob(saved.publicKey.replace(/-/g, "+").replace(/_/g, "/")),
+              (char) => char.charCodeAt(0),
+            ),
           }),
           15_000,
           "Background setup timed out. Notifications still work while Inspire is open; retry when the browser can reach its push service.",
@@ -506,12 +503,9 @@ export class TaskNotificationController {
         }
         // Enrollment fills in transport, not intent: another window may have
         // disabled alerts while the browser was creating this subscription.
-        const enrolled = await this.save(
-          undefined,
-          subscription.toJSON(),
-          undefined,
-          api,
-        );
+        const enrolled = await this.save(api, {
+          subscription: subscriptionData(subscription),
+        });
         if (!current()) return false;
         this.patch({ subscribed: enrolled.subscribed, error: enrolled.error });
         if (enrolled.mode !== "desktop") {

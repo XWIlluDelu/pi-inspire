@@ -11,6 +11,7 @@ import {
 } from "../shared/terminal-contracts";
 import { type Api, terminalUrl } from "./api";
 import { socketTicket } from "./browser-auth";
+import { sessionValue, setSessionValue } from "./session-storage";
 
 export type TerminalTransportStatus =
   | "connecting"
@@ -41,24 +42,6 @@ const CONNECT_TIMEOUT_MS = 10_000;
 const REPLAY_TIMEOUT_MS = 30_000;
 const HEARTBEAT_INTERVAL_MS = 10_000;
 const INACTIVITY_TIMEOUT_MS = 30_000;
-
-function sessionValue(key: string): string | null {
-  try {
-    return window.sessionStorage.getItem(key);
-  } catch {
-    return null;
-  }
-}
-
-function setSessionValue(key: string, value: string | null): void {
-  try {
-    if (value === null) window.sessionStorage.removeItem(key);
-    else window.sessionStorage.setItem(key, value);
-  } catch {
-    // A privacy-restricted browser may not expose session storage. The live
-    // socket remains fully functional; only seamless writer reclaim is lost.
-  }
-}
 
 function terminalClientId(): string {
   const existing = sessionValue(CLIENT_ID_KEY);

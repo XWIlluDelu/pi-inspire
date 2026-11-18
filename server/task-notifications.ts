@@ -8,6 +8,7 @@ import {
   pushSubscriptionSchema,
   type TaskAlertEvent,
   type TaskAlertSettings,
+  type TaskAlertUpdate,
   type TaskNotification,
   type TaskNotificationGrouping,
 } from "../shared/notifications.js";
@@ -16,13 +17,12 @@ import { requestError } from "./request-error.js";
 
 export interface NotificationPrincipal {
   id: string;
-  origin: string;
 }
+type AlertClient = (event: TaskAlertEvent) => void;
 const LIFETIME = 15 * 60_000;
 const ACK_WAIT = 2_000;
 
 interface Device {
-  origin: string;
   mode: CompletionAttentionPreference;
   grouping?: TaskNotificationGrouping;
   groupingUpdatedAt?: number;
@@ -72,10 +72,7 @@ export class TaskNotifications {
   private readonly ready: Promise<void>;
   private writes: Promise<void> = Promise.resolve();
   private lastOutcomeAt = 0;
-  private readonly clients = new Map<
-    string,
-    Set<(event: TaskAlertEvent) => boolean>
-  >();
+  private readonly clients = new Map<string, Set<AlertClient>>();
   private flushing: Promise<void> | null = null;
   private readonly timer: ReturnType<typeof setInterval>;
   private closed = false;
@@ -165,16 +162,15 @@ export class TaskNotifications {
   }
   async configure(
     principal: NotificationPrincipal,
-    mode: CompletionAttentionPreference | undefined,
-    subscription?: NotificationSubscription | null,
-    grouping?: TaskNotificationGrouping,
+    update: TaskAlertUpdate,
   ): Promise<TaskAlertSettings> {
     await this.ready;
-    const previous = this.saved.devices[principal.id];
-    const modeProvided = mode !== undefined;
-    mode ??= previous?.mode ?? "off";
+    const { id } = principal;
+    const previous = this.saved.devices[id];
     if (!previous && Object.keys(this.saved.devices).length >= 64)
       throw requestError("Too many notification devices registered", 409);
+    const device: Device = previous ?? { mode: "off" };
+    const { subscription, grouping, mode = device.mode } = update;
     if (subscription) {
       pushSubscriptionSchema.parse(subscription);
       if (subscription.endpoint === previous?.expiredEndpoint)
@@ -183,34 +179,41 @@ export class TaskNotifications {
           409,
         );
     }
-    this.saved.devices[principal.id] = {
-      origin: principal.origin,
-      mode,
-      grouping: grouping ?? previous?.grouping ?? "session",
-      groupingUpdatedAt:
-        grouping !== undefined && grouping !== (previous?.grouping ?? "session")
-          ? Math.max(Date.now(), (previous?.groupingUpdatedAt ?? 0) + 1)
-          : (previous?.groupingUpdatedAt ?? 0),
-      ...(!subscription && previous?.expiredEndpoint
-        ? { expiredEndpoint: previous.expiredEndpoint }
-        : {}),
-      ...(previous?.error &&
-      mode === "desktop" &&
-      subscription !== null &&
-      (!subscription ||
-        subscription.endpoint === previous.subscription?.endpoint)
-        ? { error: previous.error }
-        : {}),
-      ...(mode === "desktop" && subscription !== null
-        ? { subscription: subscription ?? previous?.subscription }
-        : {}),
-    };
-    if ((modeProvided && mode !== "desktop") || subscription === null)
+
+    const old = device.subscription;
+    const next =
+      mode === "desktop" && subscription !== null
+        ? (subscription ?? old)
+        : undefined;
+    // Keep the enrollment identity used by in-flight sends across settings edits.
+    if (
+      next?.endpoint !== old?.endpoint ||
+      next?.keys.auth !== old?.keys.auth ||
+      next?.keys.p256dh !== old?.keys.p256dh
+    ) {
+      device.subscription = next;
+      delete device.error;
+    }
+    device.mode = mode;
+    if (grouping !== undefined && grouping !== (device.grouping ?? "session")) {
+      device.grouping = grouping;
+      device.groupingUpdatedAt = Math.max(
+        Date.now(),
+        (device.groupingUpdatedAt ?? 0) + 1,
+      );
+    }
+    if (mode !== "desktop" || subscription === null) delete device.error;
+    if (subscription) delete device.expiredEndpoint;
+    this.saved.devices[id] = device;
+    if (
+      (update.mode !== undefined && mode !== "desktop") ||
+      subscription === null
+    )
       this.saved.pending = this.saved.pending.filter(
-        (item) => item.deviceId !== principal.id,
+        (item) => item.deviceId !== id,
       );
     await this.save();
-    return this.publishSettings(principal.id);
+    return this.publishSettings(id);
   }
   private publishSettings(id: string): TaskAlertSettings {
     const settings = this.currentSettings(id);
@@ -278,10 +281,7 @@ export class TaskNotifications {
     ))
       this.offer(item);
   }
-  attach(
-    principal: NotificationPrincipal,
-    send: (event: TaskAlertEvent) => boolean,
-  ): () => void {
+  attach(principal: NotificationPrincipal, send: AlertClient): () => void {
     const clients = this.clients.get(principal.id) ?? new Set();
     clients.add(send);
     this.clients.set(principal.id, clients);
@@ -293,17 +293,7 @@ export class TaskNotifications {
           settings: this.currentSettings(principal.id),
         });
         for (const item of this.saved.pending)
-          if (
-            item.deviceId === principal.id &&
-            item.event.createdAt + LIFETIME > Date.now()
-          )
-            send({
-              type: "task_notification",
-              notification: this.delivery(
-                item.event,
-                this.saved.devices[item.deviceId]!,
-              ),
-            });
+          if (item.deviceId === principal.id) this.offer(item, [send]);
       })
       .catch(() => {});
     return () => {
@@ -319,16 +309,19 @@ export class TaskNotifications {
       notificationOwner: this.saved.vapid.publicKey,
     };
   }
-  private offer(item: Pending): void {
-    if (item.event.createdAt + LIFETIME <= Date.now()) return;
-    for (const send of this.clients.get(item.deviceId) ?? [])
-      send({
-        type: "task_notification",
-        notification: this.delivery(
-          item.event,
-          this.saved.devices[item.deviceId]!,
-        ),
-      });
+  private offer(
+    item: Pending,
+    clients: Iterable<AlertClient> | undefined = this.clients.get(
+      item.deviceId,
+    ),
+  ): void {
+    if (!clients || item.event.createdAt + LIFETIME <= Date.now()) return;
+    const notification = this.delivery(
+      item.event,
+      this.saved.devices[item.deviceId]!,
+    );
+    for (const send of clients)
+      send({ type: "task_notification", notification });
   }
   async acknowledge(
     principal: NotificationPrincipal,
@@ -357,11 +350,7 @@ export class TaskNotifications {
     };
     if (device.subscription) {
       try {
-        await this.push(device, event);
-        delete device.error;
-      } catch (error) {
-        this.pushFailure(principal.id, device, error);
-        throw requestError(device.error!, 502);
+        await this.push(principal.id, event);
       } finally {
         await this.save();
         this.publishSettings(principal.id);
@@ -373,84 +362,91 @@ export class TaskNotifications {
     await this.enqueue(event, principal.id);
     return { transport: "page" };
   }
-  private async push(device: Device, event: TaskNotification): Promise<void> {
-    // No redirects: web-push uses https.request directly and exposes non-2xx.
-    await this.sendPush(
-      device.subscription!,
-      JSON.stringify({ type: "inspire-task", ...this.delivery(event, device) }),
-      {
-        TTL: Math.max(
-          1,
-          Math.floor((event.createdAt + LIFETIME - Date.now()) / 1000),
-        ),
-        urgency: "normal",
-        timeout: 10_000,
-        vapidDetails: {
-          subject: "https://github.com/XWIlluDelu/pi-inspire",
-          ...this.saved.vapid,
+  private async push(deviceId: string, event: TaskNotification): Promise<void> {
+    const device = this.saved.devices[deviceId]!;
+    const subscription = device.subscription!;
+    try {
+      await this.sendPush(
+        subscription,
+        JSON.stringify({
+          type: "inspire-task",
+          ...this.delivery(event, device),
+        }),
+        {
+          TTL: Math.max(
+            1,
+            Math.floor((event.createdAt + LIFETIME - Date.now()) / 1000),
+          ),
+          urgency: "normal",
+          timeout: 10_000,
+          vapidDetails: {
+            subject: "https://github.com/XWIlluDelu/pi-inspire",
+            ...this.saved.vapid,
+          },
+          ...(process.env.HTTPS_PROXY
+            ? { proxy: process.env.HTTPS_PROXY }
+            : {}),
         },
-        ...(process.env.HTTPS_PROXY ? { proxy: process.env.HTTPS_PROXY } : {}),
-      },
-    );
+      );
+    } catch (error) {
+      const status = (error as { statusCode?: number } | null)?.statusCode;
+      const expired = status === 404 || status === 410;
+      const message = expired
+        ? "Background subscription expired. Enable notifications again."
+        : "The Host could not reach the browser push service. Check its network connection and retry.";
+      if (device.subscription === subscription) {
+        device.error = message;
+        if (expired) {
+          device.expiredEndpoint = subscription.endpoint;
+          delete device.subscription;
+          this.saved.pending = this.saved.pending.filter(
+            (item) => item.deviceId !== deviceId,
+          );
+        }
+      }
+      throw requestError(message, 502);
+    }
+    if (device.subscription === subscription) delete device.error;
   }
   private async flush(): Promise<void> {
     await this.ready;
-    if (this.closed) return;
+    if (this.closed || !this.saved.pending.length) return;
     const now = Date.now();
-    const expired = this.saved.pending.filter(
-      (item) => item.event.createdAt + LIFETIME <= now,
+    const pending = this.saved.pending;
+    this.saved.pending = pending.filter(
+      (item) => item.event.createdAt + LIFETIME > now,
     );
-    if (expired.length) {
-      this.saved.pending = this.saved.pending.filter(
-        (item) => !expired.includes(item),
-      );
-      await this.save();
-    }
+    let dirty = this.saved.pending.length !== pending.length;
+    const delivered = new Set<Pending>();
+    const changedSettings = new Set<string>();
     await Promise.all(
       this.saved.pending.map(async (item) => {
         const device = this.saved.devices[item.deviceId];
         if (
           item.nextAttempt > now ||
-          !this.saved.pending.includes(item) ||
           device?.mode !== "desktop" ||
           !device.subscription
         )
           return;
+        dirty = true;
         const previousError = device.error;
         try {
-          await this.push(device, item.event);
-          this.saved.pending = this.saved.pending.filter(
-            (candidate) => candidate !== item,
-          );
-          delete device.error;
-        } catch (error) {
-          this.pushFailure(item.deviceId, device, error);
+          await this.push(item.deviceId, item.event);
+          delivered.add(item);
+        } catch {
           item.attempts++;
           item.nextAttempt =
             Date.now() + Math.min(60_000, 10_000 * item.attempts);
-        } finally {
-          await this.save();
-          if (previousError !== device.error)
-            this.publishSettings(item.deviceId);
         }
+        if (previousError !== device.error) changedSettings.add(item.deviceId);
       }),
     );
-  }
-  private pushFailure(deviceId: string, device: Device, error: unknown): void {
-    const status = (error as { statusCode?: number }).statusCode;
-    device.error =
-      status === 404 || status === 410
-        ? "Background subscription expired. Enable notifications again."
-        : "The Host could not reach the browser push service. Check its network connection and retry.";
-    if (status === 404 || status === 410) {
-      device.expiredEndpoint =
-        device.subscription?.endpoint ?? device.expiredEndpoint;
-      delete device.subscription;
-      if (this.saved.devices[deviceId] === device)
-        this.saved.pending = this.saved.pending.filter(
-          (item) => item.deviceId !== deviceId,
-        );
-    }
+    if (delivered.size)
+      this.saved.pending = this.saved.pending.filter(
+        (item) => !delivered.has(item),
+      );
+    if (dirty) await this.save();
+    for (const id of changedSettings) this.publishSettings(id);
   }
   async close(): Promise<void> {
     this.closed = true;

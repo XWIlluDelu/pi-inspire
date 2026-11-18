@@ -58,7 +58,7 @@ import {
   modelPreferencesPatchSchema,
 } from "./model-settings.js";
 import {
-  pushSubscriptionSchema,
+  taskAlertUpdateSchema,
   type TaskAlertSettings,
 } from "./notifications.js";
 import { preferencesPatchSchema } from "./preferences-schema.js";
@@ -327,23 +327,13 @@ const read = { mutation: false };
 
 const taskSettings = endpoint<TaskAlertSettings>();
 const quick = { timeoutMs: 10_000 };
-const taskUpdate = z
-  .strictObject({
-    mode: z.enum(["off", "title", "desktop"]).optional(),
-    grouping: z.enum(["session", "project"]).optional(),
-    subscription: pushSubscriptionSchema.nullable().optional(),
-  })
-  .refine(
-    (body) => Object.values(body).some((value) => value !== undefined),
-    "Provide a mode, subscription or grouping update",
-  );
 
 export const hostEndpoints = {
   taskAlertSettings: taskSettings("get", "/api/notifications", {}, quick),
   configureTaskAlerts: taskSettings(
     "put",
     "/api/notifications",
-    { body: taskUpdate },
+    { body: taskAlertUpdateSchema },
     quick,
   ),
   acknowledgeTaskAlert: ok(

@@ -1,6 +1,5 @@
 import type {
   BranchImageRequest,
-  CompletionAttentionPreference,
   PendingRecovery,
   PromptAcceptedResponse,
   PromptDeliveryRequest,
@@ -31,7 +30,6 @@ import type {
 } from "../shared/json-endpoints";
 import { isJsonRecord } from "../shared/json-record";
 import type { ModelSettingsOwner } from "../shared/model-settings";
-import type { TaskNotificationGrouping } from "../shared/notifications";
 import type { ProviderAuthOperation } from "../shared/provider-auth-bridge";
 import { terminalOperations } from "./controllers/terminal-operation-controller";
 import {
@@ -369,23 +367,6 @@ function hostJson<K extends keyof HostEndpoint>(
 export function createApi() {
   return {
     json: hostJson,
-    configureTaskAlerts: (
-      mode: CompletionAttentionPreference | undefined,
-      subscription?: PushSubscriptionJSON | null,
-      grouping?: TaskNotificationGrouping,
-    ) =>
-      call(routes.configureTaskAlerts, {
-        body: {
-          mode,
-          grouping,
-          subscription: subscription
-            ? {
-                endpoint: subscription.endpoint!,
-                keys: subscription.keys as { p256dh: string; auth: string },
-              }
-            : subscription,
-        },
-      }),
     hostRestartStatus: () => call(routes.hostRestartStatus, {}),
     restartHost: async (intent: HostRestartRequest) => {
       const value = await call(routes.restartHost, { body: intent });

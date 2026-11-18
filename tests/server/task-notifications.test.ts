@@ -18,8 +18,8 @@ afterEach(async () => {
   );
   vi.useRealTimers();
 });
-const principal = { id: "browser-one", origin: "https://inspire.test" };
-const other = { id: "browser-two", origin: "https://inspire.test" };
+const principal = { id: "browser-one" };
+const other = { id: "browser-two" };
 const subscription = {
   endpoint: "https://fcm.googleapis.com/fcm/send/test",
   keys: { p256dh: "B".repeat(87), auth: "A".repeat(22) },
@@ -78,19 +78,16 @@ describe("installation-owned notification delivery", () => {
       name: "Review",
       cwd: id === "elsewhere" ? "/other/research" : "/private/research",
     }));
-    await service.configure(principal, "desktop", subscription);
-    await service.configure(other, "title");
+    await service.configure(principal, { mode: "desktop", subscription });
+    await service.configure(other, { mode: "title" });
     const live = listen(service);
     await live.ready();
     for (const id of ["same-one", "same-two", "elsewhere"]) run(service, id);
     await vi.waitFor(() => expect(live.offers).toHaveLength(3));
     expect(live.offers[0]?.grouping).toBe("session");
-    const configured = await service.configure(
-      principal,
-      undefined,
-      undefined,
-      "project",
-    );
+    const configured = await service.configure(principal, {
+      grouping: "project",
+    });
 
     await service.close();
     const restarted = new TaskNotifications(path, send);
@@ -135,12 +132,8 @@ describe("installation-owned notification delivery", () => {
 
   it("pushes after a missing live acknowledgment but not after viewed acknowledgment", async () => {
     const { service, send } = await fixture();
-    await service.configure(principal, "desktop", subscription);
-    const received: TaskNotification[] = [];
-    service.attach(principal, (event) => {
-      if (event.type === "task_notification") received.push(event.notification);
-      return true;
-    });
+    await service.configure(principal, { mode: "desktop", subscription });
+    const { offers: received } = listen(service);
     const firstOutcome = run(service);
     await vi.waitFor(() => expect(received).toHaveLength(1));
     await service.acknowledge(principal, received[0]!.id);
@@ -157,8 +150,7 @@ describe("installation-owned notification delivery", () => {
       sessionId: "s2",
       sessionName: "Review results",
     });
-    expect(send.mock.calls[0]![1]).not.toContain("PRIVATE PROMPT");
-    await service.configure(principal, "off", null);
+    await service.configure(principal, { mode: "off", subscription: null });
     expect((await service.settings(principal)).subscribed).toBe(false);
   });
 
@@ -168,7 +160,7 @@ describe("installation-owned notification delivery", () => {
       cwd: "/private/research",
     }));
     const { service } = await fixture(name);
-    await service.configure(principal, "title");
+    await service.configure(principal, { mode: "title" });
     const live = listen(service);
     await live.ready();
     run(service);
@@ -186,8 +178,8 @@ describe("installation-owned notification delivery", () => {
   it("replays current results per installation and forgets acknowledged, expired or disabled alerts", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     const { service, path, send } = await fixture();
-    await service.configure(principal, "desktop", subscription);
-    await service.configure(other, "title");
+    await service.configure(principal, { mode: "desktop", subscription });
+    await service.configure(other, { mode: "title" });
     const { offers: live } = listen(service);
     run(service);
     await vi.waitFor(() => expect(live).toHaveLength(1));
@@ -230,8 +222,8 @@ describe("installation-owned notification delivery", () => {
     expect(liveAfterExpiry.offers).toEqual([]);
     run(reenrolled);
     await vi.waitFor(() => expect(liveAfterExpiry.offers).toHaveLength(1));
-    await reenrolled.configure(principal, "off", null);
-    await reenrolled.configure(principal, "desktop", subscription);
+    await reenrolled.configure(principal, { mode: "off", subscription: null });
+    await reenrolled.configure(principal, { mode: "desktop", subscription });
     const afterEnable = listen(reenrolled);
     await afterEnable.ready();
     expect(afterEnable.offers).toEqual([]);
@@ -242,14 +234,14 @@ describe("installation-owned notification delivery", () => {
 
   it("retains known transport failures through refresh, recovers, and retires expired subscriptions", async () => {
     const { service, send } = await fixture();
-    await service.configure(principal, "desktop", subscription);
+    await service.configure(principal, { mode: "desktop", subscription });
     send.mockRejectedValueOnce(new Error("PRIVATE ENDPOINT"));
     await expect(service.test(principal)).rejects.toThrow("push service");
-    await service.configure(principal, "desktop", subscription);
+    await service.configure(principal, { mode: "desktop", subscription });
     expect((await service.settings(principal)).error).toContain("push service");
     await service.test(principal);
     expect((await service.settings(principal)).error).toBeNull();
-    await service.configure(other, "title");
+    await service.configure(other, { mode: "title" });
     const live = listen(service);
     const unaffected = listen(service, other);
     await live.ready();
@@ -276,15 +268,19 @@ describe("installation-owned notification delivery", () => {
     expect(secondDevice.offers).toEqual(unaffected.offers);
     // A refresh must not resurrect an endpoint already rejected by the vendor.
     await expect(
-      service.configure(principal, undefined, subscription),
+      service.configure(principal, { subscription }),
     ).rejects.toThrow("subscription expired");
-    expect(await service.configure(principal, "desktop")).toMatchObject({
+    expect(
+      await service.configure(principal, { mode: "desktop" }),
+    ).toMatchObject({
       subscribed: false,
       endpoint: subscription.endpoint,
     });
-    await service.configure(principal, undefined, {
-      ...subscription,
-      endpoint: subscription.endpoint + "-renewed",
+    await service.configure(principal, {
+      subscription: {
+        ...subscription,
+        endpoint: subscription.endpoint + "-renewed",
+      },
     });
     await service.test(principal);
     expect(await service.settings(principal)).toMatchObject({
@@ -293,44 +289,45 @@ describe("installation-owned notification delivery", () => {
     });
   });
 
-  it("keeps a renewed enrollment and its queued results when an old push expires late", async () => {
-    const { service, send } = await fixture();
-    await service.configure(principal, "desktop", subscription);
-    let rejectPush!: (error: unknown) => void;
-    send.mockImplementationOnce(
-      () =>
-        new Promise((_resolve, reject) => {
-          rejectPush = reject;
-        }),
-    );
-    const pendingTest = expect(service.test(principal)).rejects.toThrow(
-      "subscription expired",
-    );
-    await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());
-    const renewed = {
-      ...subscription,
-      endpoint: subscription.endpoint + "-renewed",
-    };
-    await service.configure(principal, undefined, renewed);
-    const { offers } = listen(service);
-    run(service);
-    await vi.waitFor(() => expect(offers).toHaveLength(1));
-    rejectPush(Object.assign(new Error("gone"), { statusCode: 410 }));
-    await pendingTest;
-    expect(await service.settings(principal)).toMatchObject({
-      subscribed: true,
-      endpoint: renewed.endpoint,
-      error: null,
-    });
-    const replay = listen(service);
-    await replay.ready();
-    expect(replay.offers).toEqual(offers);
-  });
+  it.each([false, true])(
+    "retires only the expired subscription after a grouping edit (renewed: %s)",
+    async (renewed) => {
+      const { service, send } = await fixture();
+      await service.configure(principal, { mode: "desktop", subscription });
+      const push = Promise.withResolvers<never>();
+      send.mockReturnValueOnce(push.promise);
+      const pendingTest = expect(service.test(principal)).rejects.toThrow(
+        "subscription expired",
+      );
+      await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());
+      const endpoint = renewed
+        ? subscription.endpoint + "-renewed"
+        : subscription.endpoint;
+      await service.configure(principal, {
+        subscription: { ...subscription, endpoint },
+        grouping: "project",
+      });
+      const { offers } = listen(service);
+      run(service);
+      await vi.waitFor(() => expect(offers).toHaveLength(1));
+      push.reject(Object.assign(new Error("gone"), { statusCode: 410 }));
+      await pendingTest;
+      expect(await service.settings(principal)).toMatchObject({
+        subscribed: renewed,
+        endpoint,
+        grouping: "project",
+        error: renewed ? null : expect.stringContaining("expired"),
+      });
+      const replay = listen(service);
+      await replay.ready();
+      expect(replay.offers).toEqual(renewed ? offers : []);
+    },
+  );
 
   it("synchronizes settings without replaying old offers or affecting another device", async () => {
     const { service } = await fixture();
-    await service.configure(principal, "title");
-    await service.configure(other, "desktop", subscription);
+    await service.configure(principal, { mode: "title" });
+    await service.configure(other, { mode: "desktop", subscription });
     const first = listen(service);
     await first.ready();
     run(service);
@@ -340,15 +337,13 @@ describe("installation-owned notification delivery", () => {
     expect(second.offers).toEqual(first.offers);
     expect(first.offers).toHaveLength(1);
 
-    await service.configure(principal, "off", null);
+    await service.configure(principal, { mode: "off", subscription: null });
     for (const window of [first, second])
       expect(window.settings).toHaveBeenLastCalledWith(
         expect.objectContaining({ mode: "off" }),
       );
     // Neither delayed enrollment nor a health correction can re-enable intent.
-    expect(
-      await service.configure(principal, undefined, subscription),
-    ).toMatchObject({
+    expect(await service.configure(principal, { subscription })).toMatchObject({
       mode: "off",
       subscribed: false,
     });

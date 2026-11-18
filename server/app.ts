@@ -545,18 +545,13 @@ export function createInspireServer(deps: AppDependencies): {
         "Refresh browser authentication to configure notifications",
         401,
       );
-    return { id, origin };
+    return { id };
   };
   jsonRoute(app, routes.taskAlertSettings, (_input, request, response) =>
     taskNotifications.settings(notificationPrincipal(request, response)),
   );
   jsonRoute(app, routes.configureTaskAlerts, ({ body }, request, response) =>
-    taskNotifications.configure(
-      notificationPrincipal(request, response),
-      body.mode,
-      body.subscription,
-      body.grouping,
-    ),
+    taskNotifications.configure(notificationPrincipal(request, response), body),
   );
   jsonRoute(
     app,
@@ -1395,7 +1390,7 @@ export function createInspireServer(deps: AppDependencies): {
         head,
         url,
         browserAuthenticated && browserAuthenticated.browserId
-          ? { id: browserAuthenticated.browserId, origin }
+          ? { id: browserAuthenticated.browserId }
           : undefined,
       );
       return;

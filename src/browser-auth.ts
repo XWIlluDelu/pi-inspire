@@ -1,3 +1,5 @@
+import { base64url } from "./base64url";
+
 /** Durable browser authority is an origin-stored, non-extractable signing key.
  * Certificates are public. API bearers exist only in this module's memory. */
 interface BrowserIdentity {
@@ -124,13 +126,6 @@ export async function pairBrowser(token?: string): Promise<void> {
     privateKey: keys.privateKey,
     certificate,
   });
-}
-
-function base64url(bytes: ArrayBuffer): string {
-  return btoa(String.fromCharCode(...new Uint8Array(bytes)))
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replace(/=+$/, "");
 }
 
 function signingIdentity(
