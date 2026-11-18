@@ -2665,16 +2665,18 @@ export class AppStore {
     payload: Record<string, unknown>,
   ): Promise<string | null> => {
     const api = this.api;
-    const ownsTransport = (): boolean => this.api === api;
     if (!api || this.state.live.extensionUiRespondingId) return null;
     const request = this.state.live.extensionUiRequests[0];
     if (!request || payload.id !== request.id) return null;
+    const generation = this.selectionGeneration;
+    const current = () =>
+      this.api === api && this.selectionGeneration === generation;
     this.patchLive({ extensionUiRespondingId: request.id });
     try {
       await api.json("respondExtensionUi", {
         body: { ...payload, id: request.id, sessionId: request.sessionId },
       });
-      if (ownsTransport() && this.state.sessionId === request.sessionId) {
+      if (current()) {
         this.patchLive({
           extensionUiRequests: this.state.live.extensionUiRequests.filter(
             (candidate) => candidate.id !== request.id,
@@ -2682,7 +2684,7 @@ export class AppStore {
         });
       }
     } catch (error) {
-      if (!ownsTransport()) return null;
+      if (!current()) return null;
       if (error instanceof ApiError && error.status === 401) {
         this.handleAuthFailure();
         return null;
@@ -2691,7 +2693,6 @@ export class AppStore {
       // remove the owning request before the HTTP result arrives. That stale
       // completion must not turn a later dialog into a global error.
       if (
-        this.state.sessionId === request.sessionId &&
         this.state.live.extensionUiRequests.some(
           (candidate) => candidate.id === request.id,
         )
@@ -2701,11 +2702,7 @@ export class AppStore {
           : "Failed to answer the extension";
       }
     } finally {
-      if (
-        ownsTransport() &&
-        this.state.live.extensionUiRespondingId === request.id
-      )
-        this.patchLive({ extensionUiRespondingId: null });
+      if (current()) this.patchLive({ extensionUiRespondingId: null });
     }
     return null;
   };

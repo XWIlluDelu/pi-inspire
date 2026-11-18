@@ -6,6 +6,8 @@ export function PromptInput({
   title,
   kind = "text",
   initialValue = "",
+  value: controlledValue,
+  onValueChange,
   placeholder,
   pending,
   required = false,
@@ -18,6 +20,8 @@ export function PromptInput({
   title: string;
   kind?: "text" | "secret" | "editor";
   initialValue?: string;
+  value?: string;
+  onValueChange?: (value: string) => void;
   placeholder?: string;
   pending: boolean;
   required?: boolean;
@@ -28,7 +32,8 @@ export function PromptInput({
   inlineLabel?: boolean;
 }) {
   const id = useId();
-  const [value, setValue] = useState(initialValue);
+  const [draft, setDraft] = useState(initialValue);
+  const value = controlledValue ?? draft;
   const [revealed, setRevealed] = useState(false);
   const field = {
     id,
@@ -40,7 +45,10 @@ export function PromptInput({
     value,
     onChange: (
       event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
-    ) => setValue(event.target.value),
+    ) => {
+      if (controlledValue === undefined) setDraft(event.currentTarget.value);
+      onValueChange?.(event.currentTarget.value);
+    },
   };
   const input = (
     <input
@@ -148,17 +156,12 @@ export function PromptChoices({
             event.altKey ||
             event.ctrlKey ||
             event.metaKey ||
-            !["ArrowDown", "ArrowUp", "Enter"].includes(event.key) ||
+            !["ArrowDown", "ArrowUp"].includes(event.key) ||
             !(event.target instanceof HTMLButtonElement) ||
             event.target.getAttribute("role") !== "option"
           )
             return;
           event.preventDefault();
-          if (event.key === "Enter") {
-            const option = options[active];
-            if (option) onChoose(option.value);
-            return;
-          }
           const next =
             (active + (event.key === "ArrowDown" ? 1 : -1) + options.length) %
             options.length;

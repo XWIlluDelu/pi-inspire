@@ -11,8 +11,6 @@ import { shallowEqual, store, useAppState } from "../store";
 import { ExtensionDialogContent } from "./ExtensionDialogContent";
 import { Modal } from "./Modal";
 
-type Respond = (payload: Record<string, unknown>) => void;
-
 function RequestTime({ expiresAt }: { expiresAt: number }) {
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -52,7 +50,7 @@ export const ExtensionUiDialog = memo(function ExtensionUiDialog({
     owner: string;
     message: string;
   } | null>(null);
-  const onRespond: Respond = (payload) => {
+  const onRespond = (payload: Record<string, unknown>) => {
     if (!owner) return;
     setResponseError(null);
     void store.respondExtensionUi(payload).then((message) => {
@@ -78,9 +76,8 @@ export const ExtensionUiDialog = memo(function ExtensionUiDialog({
         <div className="extension-dialog__identity">
           <Puzzle size={14} aria-hidden /> Extension request
         </div>
-        {/* key remounts the form state per request */}
         <ExtensionDialogContent
-          key={`${request.sessionId}:${request.id}`}
+          key={owner}
           request={request}
           pending={responding}
           error={responseError?.owner === owner ? responseError.message : null}
@@ -88,10 +85,7 @@ export const ExtensionUiDialog = memo(function ExtensionUiDialog({
           onCancel={() => onRespond({ id: request.id, cancelled: true })}
         />
         {request.expiresAt !== undefined ? (
-          <RequestTime
-            key={`${request.sessionId}:${request.id}:${request.expiresAt}`}
-            expiresAt={request.expiresAt}
-          />
+          <RequestTime key={request.expiresAt} expiresAt={request.expiresAt} />
         ) : null}
       </div>
     </Modal>

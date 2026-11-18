@@ -5,19 +5,25 @@ import {
   ActivityText,
 } from "./transcript-activity-visibility";
 
-export function ExtensionDialogContent({
-  request,
-  pending,
-  error,
-  onRespond,
-  onCancel,
-}: {
+export interface ExtensionDialogContentProps {
   request: ExtensionUiRequest;
+  value?: string;
+  onValueChange?: (value: string) => void;
   pending: boolean;
   error?: string | null;
   onRespond: (payload: Record<string, unknown>) => void;
   onCancel: () => void;
-}) {
+}
+
+export function ExtensionDialogContent({
+  request,
+  value,
+  onValueChange,
+  pending,
+  error,
+  onRespond,
+  onCancel,
+}: ExtensionDialogContentProps) {
   const title =
     request.title ||
     (request.unsupported
@@ -49,6 +55,8 @@ export function ExtensionDialogContent({
         title={title}
         kind={editor ? "editor" : "text"}
         initialValue={editor ? request.prefill : undefined}
+        value={value}
+        onValueChange={onValueChange}
         placeholder={request.placeholder}
         pending={pending}
         error={reportError}

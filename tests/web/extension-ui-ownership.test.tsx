@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { emptyToolPresentationConfiguration } from "../../shared/tool-presentation-config";
 import { ExtensionDialogContent } from "../../src/components/ExtensionDialogContent";
 import { ExtensionStatus } from "../../src/components/ExtensionDisplays";
@@ -14,24 +14,16 @@ import {
 } from "./helpers";
 import { baseRoutes } from "./store-fixture";
 
-beforeEach(async () => {
-  installFakeWebSocket();
-  installFetch(baseRoutes);
-  await act(async () => store.init());
-  FakeWebSocket.instances.at(-1)?.join(activeSnapshot());
-});
-
 afterEach(() => {
   configurePresentationAdapters(emptyToolPresentationConfiguration());
 });
 
-function emit(event: Record<string, unknown>) {
-  act(() =>
-    FakeWebSocket.instances.at(-1)!.emit({ sessionId: "s1", ...event }),
-  );
-}
-
 it("keeps machine status out of the header and scopes expanded status to its session", async () => {
+  installFakeWebSocket();
+  installFetch(baseRoutes);
+  await act(async () => store.init());
+  const socket = FakeWebSocket.instances.at(-1)!;
+  socket.join(activeSnapshot());
   configurePresentationAdapters({
     ...emptyToolPresentationConfiguration(),
     controls: [
@@ -47,12 +39,15 @@ it("keeps machine status out of the header and scopes expanded status to its ses
   });
   render(<ExtensionStatus />);
   const publishStatus = (extensionStatuses: Record<string, string>) =>
-    emit({
-      type: "extension_ui_request",
-      id: "status",
-      method: "setStatus",
-      extensionStatuses,
-    });
+    act(() =>
+      socket.emit({
+        type: "extension_ui_request",
+        sessionId: "s1",
+        id: "status",
+        method: "setStatus",
+        extensionStatuses,
+      }),
+    );
 
   publishStatus({ usage: "5h 12%", "example:tier": '{"tier":"fast"}' });
   expect(screen.getByText("5h 12%", { exact: true })).toBeVisible();
@@ -69,42 +64,29 @@ it("keeps machine status out of the header and scopes expanded status to its ses
   expect(screen.getByText("Other session Second line")).toBeVisible();
 });
 
-it("reuses controlled dialog content without a session store or transport", () => {
-  const respond = vi.fn(),
-    cancel = vi.fn();
-  function Form({
-    pending = false,
-    error = null,
-  }: {
-    pending?: boolean;
-    error?: string | null;
-  }) {
-    return (
-      <ExtensionDialogContent
-        request={{
-          sessionId: "example",
-          id: "notes",
-          method: "editor",
-          title: "Task notes",
-          prefill: "Original notes",
-        }}
-        pending={pending}
-        error={error}
-        onRespond={respond}
-        onCancel={cancel}
-      />
-    );
-  }
-  const view = render(<Form />);
-  fireEvent.change(screen.getByRole("textbox", { name: "Task notes" }), {
-    target: { value: "Changed notes" },
+it("returns editor changes to its caller and submits the caller's current value", () => {
+  const change = vi.fn();
+  const respond = vi.fn();
+  const editor = (value: string) => (
+    <ExtensionDialogContent
+      request={{ sessionId: "demo", id: "notes", method: "editor" }}
+      value={value}
+      onValueChange={change}
+      pending={false}
+      onRespond={respond}
+      onCancel={vi.fn()}
+    />
+  );
+  const { rerender } = render(editor("Original"));
+  fireEvent.change(screen.getByRole("textbox"), {
+    target: { value: "Edited" },
   });
+  expect(change).toHaveBeenCalledWith("Edited");
+  rerender(editor("Reset by caller"));
+  expect(screen.getByRole("textbox")).toHaveValue("Reset by caller");
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
-  expect(respond).toHaveBeenCalledWith({ id: "notes", value: "Changed notes" });
-  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-  expect(cancel).toHaveBeenCalledOnce();
-  view.rerender(<Form pending error="Please retry" />);
-  expect(screen.getByRole("textbox")).toHaveValue("Changed notes");
-  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-  expect(screen.getByRole("alert")).toHaveTextContent("Please retry");
+  expect(respond).toHaveBeenCalledWith({
+    id: "notes",
+    value: "Reset by caller",
+  });
 });

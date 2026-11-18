@@ -122,10 +122,13 @@ describe("feedback scope", () => {
     "scopes a dialog answer to its original request (%s)",
     async (outcome) => {
       const response = deferred<RouteResponse>();
+      const nextResponse = deferred<RouteResponse>();
       const submitted = deferred<Record<string, unknown>>();
       installFetch((url, init) => {
         if (url !== "/api/extension-ui") return baseRoutes(url, init);
-        submitted.resolve(jsonBody(init));
+        const body = jsonBody(init);
+        if (body.sessionId === "s2") return nextResponse.promise;
+        submitted.resolve(body);
         return response.promise;
       });
       const { store, socket } = await initStore();
@@ -155,6 +158,7 @@ describe("feedback scope", () => {
           id: "choice",
           reason: "expired",
         });
+      let nextAnswer: Promise<string | null> | undefined;
       if (outcome === "changed session") {
         const next = activeSnapshot({ sessionId: "s2" });
         next.pendingExtensionUiRequests = [
@@ -166,6 +170,10 @@ describe("feedback scope", () => {
           },
         ];
         await selectSession(store, next);
+        nextAnswer = store.respondExtensionUi({
+          id: "choice",
+          confirmed: true,
+        });
       }
 
       response.resolve(
@@ -180,13 +188,16 @@ describe("feedback scope", () => {
         error: null,
         live: {
           notices: [],
-          extensionUiRespondingId: null,
+          extensionUiRespondingId: nextAnswer ? "choice" : null,
         },
       });
-      if (outcome === "changed session")
+      if (nextAnswer) {
         expect(store.getState().live.extensionUiRequests).toMatchObject([
           { sessionId: "s2", id: "choice" },
         ]);
+        nextResponse.resolve({ body: { ok: true } });
+        await nextAnswer;
+      }
     },
   );
 });
