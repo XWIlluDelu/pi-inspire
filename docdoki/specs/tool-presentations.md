@@ -24,7 +24,7 @@ covers:
   - tests/fixtures/pi-child-calls-extension.ts
   - tests/web/thinking-presentations.test.tsx
   - tests/web/tool-presentations.test.ts
-  - tests/web/custom-message*.test.{ts,tsx}
+  - tests/web/custom-message-presentations.test.ts
 ---
 
 # Configurable presentations

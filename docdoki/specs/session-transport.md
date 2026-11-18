@@ -14,7 +14,7 @@ covers:
   - src/controllers/{connection,session-selection,runtime-event,branch,resource,session-catalog}-controller.ts
   - tests/server/{app-events,app-input-operations,runtime-worker-pool}.test.ts
   - tests/integration/session-detail-join.test.ts
-  - tests/web/{events,store,store-transcript,store-navigation,store-async-ownership}.test.ts
+  - tests/web/{events,store,store-navigation,store-async-ownership}.test.ts
 ---
 
 # Session transport and browser ownership
@@ -241,12 +241,10 @@ Append-compatible cursors stay usable across any number of appends. A file repla
 them even when the new file contains identical bytes. Late pages across a branch boundary are
 aborted or discarded.
 
-Pi system prompts/tool-loadout messages stay in Host canonical state, outside browser rows and live
-overlays. Apply this consistently to compaction checkpoints, aggregate agent events, full/incremental
-and reopened/branch views, History search, complete-entry preview and image access. Preserve SDK
-entry identities and chronological compaction summaries; system placeholders produce no empty search
-results. Filtering does not change native or saved entries. Use the ordinary
-structured-key redaction policy without an extra text-redaction rule.
+Pi system prompts and tool-loadout messages stay in Host canonical state. Browser checkpoints,
+transcript and History reads, complete-entry previews and image access omit them while preserving
+native entry identities and chronological compaction summaries. Filtering applies only to the
+browser projection and follows the ordinary structured-key redaction policy.
 
 ## Bounded streaming
 
@@ -259,6 +257,9 @@ text/argument previews grow. Coalesce adjacent updates to one tool while preserv
 and its original revision span, including through render-window batching and the 2,048-source-event
 ceiling. Invalid identity, reconstructed length, serialization or size state requires an
 authoritative snapshot instead of guessing across a gap.
+
+Checkpoints, message and tool events carry displayed content. `agent_settled` carries the outcome.
+The Host keeps Pi's cumulative `turn_end` and `agent_end` messages off the browser stream.
 
 An observed projection or branch change publishes its native rows, branch ownership and
 diagnostics in one stamped detail frame. A rejected replacement recovers through a new addressed

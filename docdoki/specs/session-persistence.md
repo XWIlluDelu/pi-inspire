@@ -4,7 +4,7 @@ covers:
   - server/runtime*.ts
   - server/external-session.ts
   - server/attach-control.ts
-  - extensions/inspire-session-bridge.ts
+  - server/extensions/inspire-branch-bridge.ts
   - server/pi-rpc.ts
   - server/session-{projection,jsonl,metadata,tree,document-worker,search,search-worker,fork,fork-worker}.ts
   - server/persisted-json.ts
@@ -12,7 +12,7 @@ covers:
   - tests/server/runtime*.test.ts
   - tests/server/session-projection*.test.ts
   - scripts/benchmark-projection-reads.mjs
-  - tests/server/pi-{rpc,compat.integration,startup.integration}.test.ts
+  - tests/server/pi-{rpc,startup.integration}.test.ts
 ---
 
 # Session persistence and worker ownership

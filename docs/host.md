@@ -97,18 +97,10 @@ On a trusted HTTPS origin, use the browser's **Install app** or **Add to Home Sc
 installed app uses the same Host and project data, so the Host and any remote connection must stay
 available. Enable [task notifications](#task-notifications) separately on that device.
 
-The page follows Inspire's theme. Android's gesture/navigation area belongs to the browser and OS:
-the manifest sets no theme color and the page supplies a dynamic hint, which does not guarantee
-that the system bar matches. The manifest background stays neutral light for startup.
-
-An Android WebAPK can keep older installed colors after a manifest update. Open the installed app
-so Chrome checks for an update, then let the background update finish (Chrome usually waits until
-the app is closed and the device has Wi-Fi and power; see
-[Chrome's manifest update process](https://web.dev/articles/manifest-updates#updates_on_chrome_for_android)).
-`chrome://webapks` shows the installed metadata and offers **Update**; a current package has no
-fixed **Theme color**. Keep the same app URL and installation; clearing site data, pairing again or
-reinstalling does not speed up the update. To tell a browser issue from an installed-app issue,
-compare the same page and theme in an ordinary Chrome tab.
+The page supplies a dynamic theme hint. Android's browser and OS control the system navigation
+area. If the installed app keeps older colors after a manifest update, compare the same page in a
+Chrome tab and let the existing installation update.
+See [Chrome's manifest update process](https://web.dev/articles/manifest-updates#updates_on_chrome_for_android).
 
 ## Lifecycle
 
@@ -176,16 +168,15 @@ that Pi to apply the update.
 | Action | Effect |
 | --- | --- |
 | **Restart** | Restarts Inspire and its own Pi workers. Project terminals and attached Pi processes stay open. Use `/reload` in a terminal Pi to reload its resources. |
-| **Restart all** | Closes current-user Pi sessions and project terminals, then restarts Inspire. Includes Herdr Pi when enhancement is active. |
+| **Restart all** | On installed Linux services, closes current-user Pi sessions and project terminals, then restarts Inspire. |
 
 **Restart** checks for unfinished work, including work in a taken-over Pi. After a workload refusal,
 the same row offers **Stop work and restart**. If the Host cannot confirm Stop for an attached Pi,
 it lists the affected sessions; **Restart anyway** proceeds without another Stop request.
 
-**Restart all** confirms that running tasks will stop. It uses the current Host\'s Herdr mode,
-not a saved setting waiting for restart: disabled mode preserves Herdr Pi; enabled mode closes
-Pi in Herdr too. The shared Herdr server stays running. Pi shutdown must succeed before Inspire
-starts again. This action requires the installed Linux services.
+**Restart all** asks for confirmation before stopping work. The running Host's Herdr mode determines
+whether it closes Pi in Herdr. The shared Herdr server stays running, and Inspire starts again
+only after Pi shutdown succeeds.
 
 Inspire checks an unconfirmed restart in the background.
 
@@ -339,11 +330,10 @@ The Host writes rotated JSONL diagnostics in the per-user state directory:
 | macOS | `~/Library/Application Support/Inspire` |
 | Windows | `%LOCALAPPDATA%\Inspire` |
 
-A projection-conflict banner shows an incident ID that matches a log record. Logs contain operation,
-process, timing and persistence metadata, never prompts, tool output, extension payloads,
-credentials or raw child stderr. Files are private (`0700`/`0600` on POSIX, the user-profile ACL on
-Windows). Rotation keeps five 5 MiB files. `INSPIRE_LOG_PATH` selects another file inside an
-existing private directory.
+For a conversation conflict, find the `projection_conflict` record by session ID and time. Its
+incident ID correlates recovery records. Logs contain operation, process, timing and persistence
+metadata. Files are private (`0700`/`0600` on POSIX, the user-profile ACL on Windows). Rotation
+keeps five 5 MiB files. `INSPIRE_LOG_PATH` selects another file inside an existing private directory.
 
 ## Development checkout
 
@@ -372,9 +362,11 @@ npm install --global ./inspire-pi-gui-0.7.0.tgz
 inspire
 ```
 
-Use the tarball name printed by `npm pack`. `prepack` builds the release. `release:verify` installs
-the tarball with production dependencies and exercises the installed CLI, an external Pi session
-and a project terminal that survives Host restart. CI runs this on Linux after a push to main.
+Use the tarball name printed by `npm pack`. Build from a separate checkout if the source Host is
+in use. Packaging keeps only the current asset generation, so older open tabs may lose lazy-loaded
+assets. `release:verify` installs the tarball with production dependencies and exercises the CLI,
+an external Pi session and a project terminal that survives Host restart. CI runs this on Linux
+after a push to main.
 Run the same command on macOS or Windows to verify a package on that Host platform.
 [Platform evidence](https://github.com/XWIlluDelu/pi-inspire/blob/main/docdoki/notes/platform-compatibility.md#verified-native-baseline)
 records the checked versions.
@@ -388,8 +380,7 @@ through its original owner. Stop all old Hosts that share the same upload store.
 Start the updated Host and reload the browser. Use the launcher link or Pair form if pairing is
 needed. A stored generated token with an unsupported format requires explicit replacement and
 browser re-pairing.
-Before upgrading across a Host control format change, stop the running Host with its current
-launcher or installed service manager. Start Inspire with the new version after it exits.
+
 In a source checkout, `npm run build:web` publishes frontend changes while open pages keep working.
 The next page load uses the new frontend. For Host changes, use `npm run inspire -- restart`;
 it also rebuilds changed frontend inputs. Pi extension changes use

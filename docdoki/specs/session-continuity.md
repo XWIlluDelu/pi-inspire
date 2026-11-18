@@ -65,7 +65,7 @@ covers:
   - tests/server/project-discovery.integration.test.ts
   - tests/server/runtime-{selection,worker-pool,worker-lifecycle}.test.ts
   - tests/server/runtime-branching.test.ts
-  - tests/server/runtime-{materialization,persistence-ownership,startup-attestation}.test.ts
+  - tests/server/runtime-{materialization,startup-attestation}.test.ts
   - tests/server/pi-rpc.test.ts
   - tests/browser/session-navigation.spec.ts
   - tests/server/session-projection.test.ts
@@ -158,8 +158,8 @@ Results keep chronological catalog order, authoritative totals and explicit pagi
 not a filter over loaded browser rows. Reuse the last successful query across pages while its
 catalog generation and admitted source records remain unchanged; failed or partial scans do not
 become reusable results. A match with a contiguous literal or regex hit in message text carries
-`matchSnippet`: about 120 characters of Markdown-stripped text starting roughly one word before the
-hit. Fuzzy-only and title/ID/cwd matches carry none, and browsing pages never do. The excerpt is
+`matchSnippet`, up to 120 characters of Markdown-stripped text plus truncation marks. Fuzzy-only
+and title/ID/cwd matches carry none, and browsing pages never do. The excerpt is
 cached with the reusable query result. [[workbench]] owns labels, emphasis and search interaction.
 
 Read one session's complete admitted JSONL prefix at a time, without a whole-catalog conversation

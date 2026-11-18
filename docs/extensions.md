@@ -17,27 +17,12 @@ authentication) that adds no model tools.
 | Offer an occasional action | `registerCommand` (palette and `/` completion) | No |
 | Give a custom tool a readable card | [Tool-presentation rule](tool-presentations.md#example) | No (JSON) |
 | Add a Fast/Standard-style toggle | [Status control](tool-presentations.md#extension-adapters) | No (JSON) |
-| Add a dedicated panel or control | [Source DIY](#custom-cards-and-source-changes), e.g. the [task board](examples/task-board/README.md) | Yes |
+| Add a dedicated panel or control | [Source customization](#custom-cards-and-source-changes) and the [task-board example](https://github.com/XWIlluDelu/pi-inspire/tree/main/docs/examples/task-board) | Yes |
 
-Start with the [native UI example](#try-the-native-ui-example). To share sessions with terminal
-Pi, install [attach-control](#share-sessions-with-terminal-pi). [Reload and verify](#reload-and-verify)
-explains how to apply each kind of change.
-
-## Choose the smallest integration
-
-There are three levels:
-
-1. **Native RPC, no frontend changes:** commands, standard dialogs, notices, status and text widgets.
-2. **Declarative presentation:** map stable tool/custom-message data to existing typed blocks, or
-   bind a discrete choice to an extension command and structured RPC status. See the
-   [status-control contract](tool-presentations.md#extension-adapters). Use this before adding
-   source-owned buttons; the extension retains state, persistence, and capability decisions.
-3. **Source DIY:** add purpose-built React controls and a small adapter in a checkout. Pi extensions
-   still own state and behavior; Inspire does not supply a scheduler or permission policy.
-
-The [task-board example](examples/task-board/README.md) is a complete source integration: the Pi
-extension, shared data and actions, a props-only list/detail UI, the adapter, styles, mounting and
-reload steps, and cleanup checks. It runs demonstration timers instead of launching agents.
+Start with the [native UI example](#try-the-native-ui-example). Use native RPC for standard
+interactions and declarative rules for stable display data. A dedicated panel needs a source
+checkout and a frontend build. The extension owns state, persistence and behavior in all cases.
+[Reload and verify](#reload-and-verify) explains how to apply changes.
 
 ## What works through RPC
 
@@ -345,8 +330,6 @@ its normal styles; supply its own outer dialog/focus owner. Permission prompts s
 Pi's native `ctx.ui.confirm`, without introducing a persistent permission-list panel.
 
 Reuse existing icons, tokens, modal focus, and responsive drawers. Keep runtime widgets near the Composer, tool results in their cards, and project details in Files and Changes. Settings is for persisted preferences. Follow neighboring controls' accessible labels, keyboard behavior, and pointer/touch target sizes, and respect reduced motion.
-
-Inspire has no runtime React plugin API. Source customization needs a checkout and a rebuilt frontend; the npm package contains the built application.
 
 ## Reload and verify
 

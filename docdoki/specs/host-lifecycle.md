@@ -45,7 +45,7 @@ covers:
   - tests/launcher.test.ts
   - tests/server/terminal-daemon-launcher.test.ts
   - tests/portable/**
-  - tests/server/{app,access-token,pi-installation,pi-rpc,current-web-build}.test.ts
+  - tests/server/{app,app-auth,pi-installation,pi-rpc,current-web-build}.test.ts
 ---
 
 # Host lifecycle, pairing, and distribution
@@ -430,8 +430,8 @@ unconfirmed submission keeps its domain phase and does not trigger a new restart
 - Projection and RPC diagnostics are durable enough to explain an ownership rejection after the
   fact. A private rotated JSONL log correlates host id, slot incarnation, session/worker/PID, RPC
   id/type/timing, projection revision/fingerprint/identity/bytes, persistence expectation
-  transitions, ownership-decision reason, and an opaque incident id shown in conflict UI. Logging is
-  metadata-only: prompts, message text, tool results, extension payloads, credentials, tokens,
+  transitions, ownership-decision reason, and an opaque incident ID linking conflict and recovery
+  records. Diagnostics omit prompts, message text, tool results, extension payloads, credentials, tokens,
   absolute working directories, and raw child stderr are excluded. POSIX directories/files are
   `0700`/`0600`; Windows uses the current user-profile ACL boundary. A configured path is accepted
   only inside an existing private current-user directory.

@@ -128,7 +128,7 @@ React view. Actions require both declared capability and current command invento
 `sendPreparedCommand` preserves drafts and attachments. Nested-property display alone does not
 provide subagent management or scheduling.
 
-The [task-board example](../../docs/extensions.md#choose-the-smallest-integration) demonstrates
+The [task-board example](../../docs/examples/task-board/README.md) demonstrates
 persisted custom messages, editable notes and cancellable local timers. Startup/tree navigation
 cancels local timers and restores the selected branch's saved state without resuming process-local
 work. UI state belongs to its session/view/transport. An explicit Show tasks action obtains a missing snapshot; selection

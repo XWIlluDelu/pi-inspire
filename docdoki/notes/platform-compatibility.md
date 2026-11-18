@@ -187,8 +187,9 @@ after every source and conversion validates. Pending includes omitted rows in it
 reads full content first if an unavailable deferred upload makes that total unknown. Explicit
 background-write permission allows reverse multi-image history writes. A newer clipboard action retires
 pending reads globally; unmount/session/view/transport retirement retains its own cancellation.
-`tests/browser/clipboard-gesture.spec.ts` exercises real text/PNG writes, delayed last-response Copy,
-and retirement in Chromium, Firefox and WebKit.
+The current clipboard gesture browser test exercises saved text and PNG writes. The clipboard
+transport unit tests cover retirement by another control. Earlier acceptance included Chromium,
+Firefox and WebKit.
 
 Quoted Windows PATH entries can contain spaces and semicolons. Environment-name lookup stays
 case-insensitive after copying `process.env` into a normal object; Pi discovery and terminal profiles

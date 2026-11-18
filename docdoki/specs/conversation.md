@@ -16,7 +16,7 @@ covers:
   - src/components/RichText*.tsx
   - src/rich-text-*.ts
   - src/remark-math-boundaries.ts
-  - tests/web/rich-text*.{ts,tsx}
+  - tests/web/rich-text*.test.tsx
   - tests/browser/rich-text-delimiters.spec.ts
   - src/components/Transcript.tsx
   - src/components/TranscriptUtilities.tsx

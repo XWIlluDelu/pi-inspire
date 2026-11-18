@@ -18,7 +18,7 @@ connect remotely to the same Host.
 
 - **Technical conversations:** streaming Markdown, syntax-highlighted code, tables, and inline/display mathematics, with search and a prompt outline.
 - **Concurrent sessions:** search retained conversation text, inspect History, continue branches, and Fork/Clone independent sessions. Switching keeps background work running; navigation shows running work and unseen results.
-- **Shared with terminal Pi:** a terminal Pi and Inspire can use the same session; **Take over** continues a running terminal Pi from the browser while the terminal keeps working.
+- **Shared with terminal Pi:** with `attach-control` installed, an idle terminal Pi can attach automatically. **Take over** controls a running Pi from the browser while its process stays in the terminal.
 - **Rich input:** project-file references, images/files, retained drafts and prompt history, plus Steer/Queue with text/image recovery during a run.
 - **Native Pi controls:** model/thinking selection, saved defaults/common models, provider configuration/login, direct shell input, compaction, and HTML/JSONL export.
 - **Inspectable activity:** live tool output, native and customizable tool cards, and independent Thinking/tool detail settings. Adaptive mode shows current work and compacts completed activity.
@@ -138,8 +138,6 @@ lists changes and upgrade notes.
 - [MCP configuration](docs/mcp.md): scoped native server forms, protected values, and explicit Reload.
 - [Tool presentations](docs/tool-presentations.md): local JSON rules for custom tools and Thinking cards, including exact tool-name overrides.
 
-Tool-presentation files customize the GUI; they do not select which extensions run.
-
 ## Remote access and Herdr
 
 [Reverse SSH](docs/ssh-reverse.md) connects a Linux Host to a user-controlled HTTPS edge. The browser and terminal use the same tunnel; Pi, session files, and project processes stay on the Host.
@@ -161,15 +159,13 @@ integration, a two-parent synchronization commit brings `auto-dev` to the review
 retaining both branch histories. Preserve `auto-dev` history during routine development.
 
 ```bash
-npm run dev       # Host and Vite development servers
-npm run check          # Lint, types, build, unit and launcher tests
+npm run dev            # Host and Vite development servers
+npm run check          # Static checks, build and non-browser tests
 npm run ci             # Also runs key workflows in Chromium
 npm run format:check   # Check formatting on demand
 ```
 
-`npm run dev` (or `npm run inspire -- dev`) opens the Vite page once the Host is ready, with a
-one-use pairing link and separate development credentials. An occupied port is an error rather than
-a fallback to another port. See [development checkout](docs/host.md#development-checkout).
+See [development checkout](docs/host.md#development-checkout) for ports and pairing.
 
 The [design overview](https://github.com/XWIlluDelu/pi-inspire/blob/main/docdoki/spec_abstract.md) links to the design contracts and open work. [Host operations](docs/host.md#build-and-install-a-package) covers release packaging.
 

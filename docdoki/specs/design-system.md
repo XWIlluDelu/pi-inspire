@@ -27,7 +27,7 @@ covers:
   - shared/contracts.ts
   - src/**/*.tsx
   - tests/web/theme-init.test.ts
-  - tests/browser/{shell-layout,settings-layout,palette-preferences,responsive-inputs}.spec.ts
+  - tests/browser/{shell-layout,settings-layout,palette-preferences}.spec.ts
   - tests/browser/support/colors.ts
   - tests/browser/loading-states.spec.ts
 ---
