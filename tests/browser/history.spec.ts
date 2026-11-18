@@ -46,8 +46,9 @@ test("Fork restores saved images for preview, editing and explicit resend", asyn
   const turn = transcript.locator(".turn--user").filter({
     hasText: "Compare the calibration strategies",
   });
-  await page.getByRole("button", { name: "Open prompt map" }).focus();
+  await page.getByRole("button", { name: "Open prompt map" }).click();
   const prompts = page.getByRole("list", { name: "User prompts" });
+  await expect(prompts.getByRole("button").first()).toBeVisible();
   await prompts.press("Home");
   await prompts
     .getByRole("button", { name: /Compare the calibration strategies/ })
