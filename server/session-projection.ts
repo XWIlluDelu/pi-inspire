@@ -299,11 +299,12 @@ function isLinearAppend(
   return true;
 }
 
-function changesComposerHistory(entry: SessionEntry): boolean {
-  return (
+function composerInputMessage(entry: SessionEntry) {
+  if (
     entry.type === "message" &&
     (entry.message.role === "user" || entry.message.role === "bashExecution")
-  );
+  )
+    return entry.message;
 }
 
 interface BoundedTranscriptItem {
@@ -755,7 +756,7 @@ class SessionEntryIndex {
     if (thinking) this.currentThinkingLevel = thinking.thinkingLevel;
     else if (!linear) this.currentThinkingLevel = "off";
     this.currentHistoryAnchor =
-      branch.findLast(changesComposerHistory)?.id ??
+      branch.findLast(composerInputMessage)?.id ??
       (linear ? this.currentHistoryAnchor : null);
     this.currentEntries = entries;
     this.currentEntriesById = byId;
@@ -936,23 +937,14 @@ class SessionEntryIndex {
   composerHistoryMessages(
     effectiveLeafId: string | null = this.currentLeafId,
   ): readonly ComposerHistoryMessage[] {
-    const messages: ComposerHistoryMessage[] = [];
-    for (const entry of branchAncestors(
-      this.currentEntriesById,
-      effectiveLeafId,
-    )) {
-      if (
-        entry.type === "message" &&
-        (entry.message.role === "user" ||
-          entry.message.role === "bashExecution")
-      ) {
-        messages.push({
-          ...entry.message,
-          __inspireHistoryEntryId: entry.id,
-        });
-      }
+    return [...this.recentComposerMessages(effectiveLeafId)].reverse();
+  }
+
+  private *recentComposerMessages(leaf: string | null) {
+    for (const entry of branchAncestors(this.currentEntriesById, leaf)) {
+      const message = composerInputMessage(entry);
+      if (message) yield { ...message, __inspireHistoryEntryId: entry.id };
     }
-    return messages.reverse();
   }
 
   latestPage(
@@ -1250,7 +1242,7 @@ class SessionEntryIndex {
         this.currentEntriesById,
         effectiveLeafId,
       )) {
-        if (changesComposerHistory(entry)) {
+        if (composerInputMessage(entry)) {
           anchor = entry.id;
           break;
         }
@@ -1269,7 +1261,7 @@ class SessionEntryIndex {
     fileNameForPath?: ComposerHistoryFileNameResolver,
   ): ComposerHistoryPage {
     return projectComposerHistoryPage(
-      this.composerHistoryMessages(effectiveLeafId),
+      this.recentComposerMessages(effectiveLeafId),
       {
         sessionId: this.sessionId,
         revision: this.revision,

@@ -139,13 +139,13 @@ function samePrompt(
 
 /** Reproduce Pi's newest-first editor history with persisted prompt artifacts. */
 export function composerHistoryEntries(
-  messages: readonly ComposerHistoryMessage[],
+  newestFirst: Iterable<ComposerHistoryMessage>,
   cwd?: string,
   fileNameForPath?: ComposerHistoryFileNameResolver,
 ): ComposerHistoryEntry[] {
   const history: ComposerHistoryCandidate[] = [];
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const candidate = userMessageEntry(messages[index]!, cwd, fileNameForPath);
+  for (const message of newestFirst) {
+    const candidate = userMessageEntry(message, cwd, fileNameForPath);
     if (!candidate) continue;
     const previous = history.at(-1);
     if (previous && samePrompt(previous, candidate)) {
@@ -160,19 +160,6 @@ export function composerHistoryEntries(
   return history.map((candidate) => candidate.entry);
 }
 
-function historyIdentity(entries: readonly ComposerHistoryEntry[]): string {
-  const hash = createHash("sha256");
-  for (const entry of entries) {
-    const serialized = JSON.stringify(entry);
-    const bytes = Buffer.byteLength(serialized);
-    hash.update(String(bytes));
-    hash.update(":");
-    hash.update(serialized);
-    hash.update("\0");
-  }
-  return hash.digest("base64url");
-}
-
 type ComposerHistoryOwner = Pick<
   ComposerHistoryPage,
   | "sessionId"
@@ -184,31 +171,37 @@ type ComposerHistoryOwner = Pick<
 >;
 
 export function projectComposerHistoryPage(
-  messages: readonly ComposerHistoryMessage[],
+  newestFirst: Iterable<ComposerHistoryMessage>,
   owner: ComposerHistoryOwner,
   start = 0,
   cwd?: string,
   fileNameForPath?: ComposerHistoryFileNameResolver,
 ): ComposerHistoryPage {
-  const history = composerHistoryEntries(messages, cwd, fileNameForPath);
+  const history = composerHistoryEntries(newestFirst, cwd, fileNameForPath);
   if (!Number.isSafeInteger(start) || start < 0 || start > history.length) {
     throw requestError("Composer history offset is invalid", 400);
   }
 
+  const hash = createHash("sha256");
+  const entryBytes = history.map((entry) => {
+    const json = JSON.stringify(entry);
+    const bytes = Buffer.byteLength(json);
+    hash.update(String(bytes)).update(":").update(json).update("\0");
+    return bytes;
+  });
   const entries: ComposerHistoryEntry[] = [];
   const base: ComposerHistoryPage = {
     ...owner,
-    historyId: historyIdentity(history),
+    historyId: hash.digest("base64url"),
     total: history.length,
     start,
     entries,
     nextStart: null,
   };
+  // A numeric nextStart is at most 100 and fits in the reserved "null".
   let serializedBytes = Buffer.byteLength(JSON.stringify(base));
   for (let index = start; index < history.length; index += 1) {
-    const entry = history[index]!;
-    const addedBytes =
-      Buffer.byteLength(JSON.stringify(entry)) + (entries.length > 0 ? 1 : 0);
+    const addedBytes = entryBytes[index]! + (entries.length > 0 ? 1 : 0);
     if (serializedBytes + addedBytes > MAX_COMPOSER_HISTORY_PAGE_BYTES) {
       if (entries.length === 0) {
         throw requestError(
@@ -218,15 +211,10 @@ export function projectComposerHistoryPage(
       }
       break;
     }
-    entries.push(entry);
+    entries.push(history[index]!);
     serializedBytes += addedBytes;
   }
   base.nextStart =
     start + entries.length < history.length ? start + entries.length : null;
-  if (
-    Buffer.byteLength(JSON.stringify(base)) > MAX_COMPOSER_HISTORY_PAGE_BYTES
-  ) {
-    throw new Error("Composer history response exceeded its serialized limit");
-  }
   return base;
 }

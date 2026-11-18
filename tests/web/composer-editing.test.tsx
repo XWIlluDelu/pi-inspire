@@ -44,6 +44,7 @@ it("retains the editor across a streamed leaf and recalls material under the cur
         },
       ],
     },
+    { text: "older saved prompt", images: [], files: [] },
   ];
   const socket = FakeWebSocket.instances.at(-1)!;
   const stream = (leaf: string, revision: number) =>
@@ -81,9 +82,17 @@ it("retains the editor across a streamed leaf and recalls material under the cur
   await act(async () => releaseHistory.resolve());
   host.historyGate = null;
   input.setSelectionRange(0, 0);
-  fireEvent.keyDown(input, { key: "ArrowUp" });
+  const press = (key: string) => fireEvent.keyDown(input, { key });
+  press("ArrowUp");
   expect(input).toHaveValue("");
   expect(store.drafts.get("s1").text).toBe("current draft");
+  press("ArrowUp");
+  expect(input).toHaveValue("older saved prompt");
+  press("ArrowDown");
+  expect(input).toHaveValue("");
+  press("ArrowDown");
+  expect(input.selectionStart).toBe(0);
+  press("ArrowUp");
   const send =
     screen.queryByRole("button", { name: "Send as steer" }) ??
     screen.getByRole("button", { name: "Send message" });
@@ -104,33 +113,6 @@ it("retains the editor across a streamed leaf and recalls material under the cur
       },
     }),
   );
-});
-
-it("previews prior inputs with arrows and returns to the exact unsent draft", async () => {
-  host.historyEntries = [
-    { text: "newer saved prompt", images: [], files: [] },
-    { text: "older saved prompt", images: [], files: [] },
-  ];
-  render(<Composer />);
-  const input = screen.getByRole<HTMLTextAreaElement>("textbox", {
-    name: "Message",
-  });
-  typeDraft("draft before recall");
-  input.focus();
-  input.setSelectionRange(0, 0);
-  const press = (key: string) => fireEvent.keyDown(input, { key });
-  await waitFor(() => {
-    press("ArrowUp");
-    expect(input).toHaveValue("newer saved prompt");
-  });
-  expect(store.drafts.get("s1").text).toBe("draft before recall");
-  press("ArrowUp");
-  expect(input).toHaveValue("older saved prompt");
-  press("ArrowDown");
-  expect(input).toHaveValue("newer saved prompt");
-  press("ArrowDown");
-  expect(input).toHaveValue("draft before recall");
-  expect(input.selectionStart).toBe(0);
 });
 
 it("dispatches only the configured desktop send chord and disables proofing marks", async () => {
