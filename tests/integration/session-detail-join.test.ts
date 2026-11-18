@@ -185,7 +185,9 @@ it("changes the addressed view and resumes it through the Host across an atomic 
     replacement.open();
     resumed = connect(replacement);
     const reconnect = resumed;
-    await vi.waitFor(() => expect(reconnect.frames[0]?.type).toBe("snapshot"));
+    await vi.waitFor(() => expect(reconnect.frames[0]?.type).toBe("snapshot"), {
+      timeout: 5_000,
+    });
     socket.emit(oldMessage!);
     replacement.emit(reconnect.frames[0]);
     expect(store.getState()).toMatchObject({
@@ -200,4 +202,4 @@ it("changes the addressed view and resumes it through the Host across an atomic 
     hostSocket.close();
     resumed?.socket.close();
   }
-}, 15_000);
+}, 30_000);

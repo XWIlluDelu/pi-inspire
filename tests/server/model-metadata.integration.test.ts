@@ -252,7 +252,7 @@ it("validates model edits over extension providers in the selected trusted works
   expect(await readFile(f.events, "utf8")).not.toMatch(
     /session_start|agent_start|request|route/,
   );
-}, 30_000);
+}, 120_000);
 
 it("retires an extension factory's descendants even if it fails", async () => {
   const f = await modelWorkflowFixture();

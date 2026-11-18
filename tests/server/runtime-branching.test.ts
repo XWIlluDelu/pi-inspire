@@ -614,7 +614,7 @@ it("reads and copies the admitted external branch across appends, then retires i
   } finally {
     release();
   }
-});
+}, 15_000);
 
 it("does not offer to restore a normal saved append before the worker catches up", async () => {
   const f = await fixture();

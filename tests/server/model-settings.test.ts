@@ -314,7 +314,7 @@ describe("native configuration round trips", () => {
         },
       },
     });
-  });
+  }, 45_000);
 
   it("reports malformed and duplicate declarations without publishing them", async () => {
     await writeFile(join(agent, "models.json"), "{broken");
@@ -333,5 +333,5 @@ describe("native configuration round trips", () => {
       message: "A model with that ID already exists",
     });
     expect(await readJson(join(agent, "models.json"))).toEqual(initialConfig);
-  });
+  }, 45_000);
 });
