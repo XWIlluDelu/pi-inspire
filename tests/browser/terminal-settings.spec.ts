@@ -71,8 +71,10 @@ test.describe("narrow terminal settings", () => {
     const reset = settings.getByRole("button", {
       name: "Restore browser defaults",
     });
-    await settings.getByRole("combobox", { name: "Terminal cursor shape" })
-      .selectOption("bar");
+    await settings
+      .getByRole("group", { name: "Terminal cursor shape" })
+      .getByRole("button", { name: "Bar", exact: true })
+      .click();
     await page.setViewportSize({ width: 320, height: 460 });
     await category("Interaction").click();
     await expect(reset).toBeInViewport();
@@ -92,8 +94,9 @@ test.describe("narrow terminal settings", () => {
     const retention = settings.getByRole("combobox", {
       name: "Terminal output retention",
     });
-    await retention.selectOption("90");
-    await expect(retention).toHaveValue("90");
+    await retention.click();
+    await settings.getByRole("option", { name: "90 days", exact: true }).click();
+    await expect(retention).toHaveText("90 days");
     await expect(retention).toBeEnabled();
     page.once("dialog", (dialog) => dialog.accept());
     await settings

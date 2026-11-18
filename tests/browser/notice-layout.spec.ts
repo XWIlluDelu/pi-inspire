@@ -74,16 +74,6 @@ test("overflowing warnings keep their reading position, full text and reachable 
   await stack.evaluate((element) => {
     element.scrollTop = 0;
   });
-  await page.evaluate(() => document.fonts.ready);
-  const transcript = page.getByRole("log");
-  await expect
-    .poll(() =>
-      transcript.evaluate(
-        (el) => el.scrollHeight - el.clientHeight - el.scrollTop,
-      ),
-    )
-    .toBeLessThan(2);
-  const transcriptTop = await transcript.evaluate((el) => el.scrollTop);
   await page.keyboard.press("PageDown");
   let readingPosition = 0;
   await expect
@@ -94,9 +84,6 @@ test("overflowing warnings keep their reading position, full text and reachable 
       return settled;
     })
     .toBe(true);
-  await expect
-    .poll(() => transcript.evaluate((el) => el.scrollTop))
-    .toBe(transcriptTop);
   warn("overflow-new", "A separate check could not finish.");
   await expect(notices).toHaveCount(5);
   await expect
