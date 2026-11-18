@@ -6,6 +6,7 @@ import {
   type UpdateCheckResponse,
 } from "../../shared/contracts";
 import { type Api, ApiError } from "../../src/api";
+import { createInitialAppState } from "../../src/app-state";
 import { UpdateController } from "../../src/controllers/update-controller";
 import { AppStore } from "../../src/store";
 import { sessionPage } from "./fixtures/session-catalog";
@@ -16,20 +17,8 @@ import {
   FakeWebSocket,
   installFakeWebSocket,
   installFetch,
+  updateStatus,
 } from "./helpers";
-
-interface State {
-  inspireUpdateCheck: UpdateCheckResponse | null;
-  piUpdateCheck: PiUpdateCheckResponse | null;
-  inspireUpdateChecking: boolean;
-  piUpdateChecking: boolean;
-  inspireUpdateRequestPending: boolean;
-  piUpdateRequestPending: boolean;
-  inspireUpdateRequestError: string | null;
-  piUpdateRequestError: string | null;
-  availableUpdateIdentity: string | null;
-  updateSnoozedUntil: number | null;
-}
 
 function available(latestVersion = "1.1.0"): UpdateCheckResponse {
   return {
@@ -55,35 +44,8 @@ function piAvailable(latestVersion = "0.84.3"): PiUpdateCheckResponse {
   };
 }
 
-function updateStatus(
-  revision: number,
-  overrides: Partial<HostUpdateStatus> = {},
-): HostUpdateStatus {
-  return {
-    revision,
-    inspireUpdateCheck: null,
-    piUpdateCheck: null,
-    inspireUpdateChecking: false,
-    piUpdateChecking: false,
-    availableUpdateIdentity: null,
-    updateSnoozedUntil: null,
-    ...overrides,
-  };
-}
-
 function harness() {
-  let state: State = {
-    inspireUpdateCheck: null,
-    piUpdateCheck: null,
-    inspireUpdateChecking: false,
-    piUpdateChecking: false,
-    inspireUpdateRequestPending: false,
-    piUpdateRequestPending: false,
-    inspireUpdateRequestError: null,
-    piUpdateRequestError: null,
-    availableUpdateIdentity: null,
-    updateSnoozedUntil: null,
-  };
+  let state = createInitialAppState();
   const api = {
     update: vi.fn(async (_force?: boolean) =>
       updateStatus(2, { inspireUpdateCheck: available() }),

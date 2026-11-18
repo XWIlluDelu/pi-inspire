@@ -1,8 +1,7 @@
 import type {
   AvailableUpdate,
   PiExtensionUpdate,
-  PiUpdateCheckResponse,
-  UpdateCheckResponse,
+  HostUpdateStatus,
 } from "../shared/contracts";
 
 export function updateDetailsText(updates: AvailableUpdates): string {
@@ -32,26 +31,15 @@ export function updateDetailsText(updates: AvailableUpdates): string {
   return lines.join("\n");
 }
 
-interface UpdateAvailabilityState {
-  inspireUpdateCheck: UpdateCheckResponse | null;
-  piUpdateCheck: PiUpdateCheckResponse | null;
-}
-
-export interface AvailablePiUpdate {
-  currentVersion: string;
-  latestVersion: string;
-  releaseUrl: string;
-}
-
 export interface AvailableUpdates {
   inspire: AvailableUpdate | null;
-  pi: AvailablePiUpdate | null;
+  pi: AvailableUpdate | null;
   extensions: PiExtensionUpdate[];
 }
 
 /** Browser presentation only; update identity and snoozing belong to the Host. */
 export function availableUpdates(
-  state: UpdateAvailabilityState,
+  state: Pick<HostUpdateStatus, "inspireUpdateCheck" | "piUpdateCheck">,
 ): AvailableUpdates | null {
   const inspire =
     state.inspireUpdateCheck?.kind === "available"
@@ -59,21 +47,17 @@ export function availableUpdates(
       : null;
   const piCheck = state.piUpdateCheck;
   const piStatus = piCheck?.pi;
-  const pi: AvailablePiUpdate | null =
-    piCheck && piStatus?.kind === "available"
+  const pi =
+    piCheck?.installedVersion && piStatus?.kind === "available"
       ? {
-          currentVersion: piCheck.installedVersion ?? piCheck.currentVersion,
+          currentVersion: piCheck.installedVersion,
           latestVersion: piStatus.latestVersion,
           releaseUrl: piStatus.releaseUrl,
         }
       : null;
-  const extensionStatus = state.piUpdateCheck?.extensions;
+  const extensionStatus = piCheck?.extensions;
   const extensions =
-    extensionStatus?.kind === "available"
-      ? [...extensionStatus.updates].sort((left, right) =>
-          left.displayName.localeCompare(right.displayName),
-        )
-      : [];
+    extensionStatus?.kind === "available" ? extensionStatus.updates : [];
   if (!inspire && !pi && extensions.length === 0) return null;
 
   return {

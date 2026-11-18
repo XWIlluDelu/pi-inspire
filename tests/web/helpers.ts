@@ -179,7 +179,7 @@ export class FakeWebSocket {
     this.emit({
       type: "snapshot",
       authorityId: TEST_HOST_AUTHORITY,
-      updateStatus: hostUpdateStatus(),
+      updateStatus: updateStatus(),
       detailSessionId: interest.sessionId,
       detailRevision: interest.revision,
       runtimeSequence: data.runtimeSequence,
@@ -267,11 +267,12 @@ export function sessionSummary(
   };
 }
 
-function hostUpdateStatus(
+export function updateStatus(
+  revision = 0,
   overrides: Partial<HostUpdateStatus> = {},
 ): HostUpdateStatus {
   return {
-    revision: 0,
+    revision,
     inspireUpdateCheck: null,
     piUpdateCheck: null,
     inspireUpdateChecking: false,
@@ -289,7 +290,7 @@ export function bootstrapPayload(overrides: Partial<BootstrapResponse> = {}) {
     startupSessionId: null,
     version: "0.1.0",
     piVersion: "0.80.10",
-    updateStatus: hostUpdateStatus(),
+    updateStatus: updateStatus(),
     preferences: DEFAULT_PREFS,
     preferenceRevision: 0,
     toolPresentations: emptyToolPresentationConfiguration(),

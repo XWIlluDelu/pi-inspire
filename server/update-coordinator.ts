@@ -320,10 +320,6 @@ export class UpdateCoordinator {
     await Promise.all([this.checkInspire(false), this.checkPi(false)]);
   }
 
-  private observationsPresent(): boolean {
-    return this.inspire.result !== null || this.pi.result !== null;
-  }
-
   private currentIdentity(): string | null {
     return availableUpdateIdentity(this.inspire.result, this.pi.result);
   }
@@ -362,13 +358,7 @@ export class UpdateCoordinator {
 
   private reconcileSnooze(): Promise<void> {
     return this.enqueueMutation(async () => {
-      if (
-        this.closed ||
-        this.inspire.probing ||
-        this.pi.probing ||
-        !this.observationsPresent()
-      )
-        return;
+      if (this.closed || this.inspire.probing || this.pi.probing) return;
       const snooze = this.persisted.snooze;
       if (!snooze) return;
       if (this.activeSnoozeUntil() !== null) {

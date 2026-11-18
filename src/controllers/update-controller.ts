@@ -1,24 +1,16 @@
 import {
   type HostUpdateStatus,
-  type PiUpdateCheckResponse,
-  type UpdateCheckResponse,
   UPDATE_SNOOZE_MS,
 } from "../../shared/contracts";
 import type { Api } from "../api";
 import type { WireEvent } from "../events";
 import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
 
-interface UpdateControllerState {
-  inspireUpdateCheck: UpdateCheckResponse | null;
-  piUpdateCheck: PiUpdateCheckResponse | null;
-  inspireUpdateChecking: boolean;
-  piUpdateChecking: boolean;
+interface UpdateControllerState extends Omit<HostUpdateStatus, "revision"> {
   inspireUpdateRequestPending: boolean;
   piUpdateRequestPending: boolean;
   inspireUpdateRequestError: string | null;
   piUpdateRequestError: string | null;
-  availableUpdateIdentity: string | null;
-  updateSnoozedUntil: number | null;
 }
 
 type UpdateApi = Pick<Api, "json">;
