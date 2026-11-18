@@ -255,7 +255,7 @@ export class AppStore {
     },
     applyFork: (response) => {
       this.applySnapshot(response.snapshot);
-      this.ensureSessionVisible(response.sessionId);
+      this.catalog.ensureVisible(response.sessionId);
       this.composer.restoreStagedAttachments(
         response.sessionId,
         response.editorAttachments ?? [],
@@ -302,7 +302,7 @@ export class AppStore {
       });
     },
     applySnapshot: (snapshot) => this.applySnapshot(snapshot),
-    ensureSessionVisible: (sessionId) => this.ensureSessionVisible(sessionId),
+    ensureSessionVisible: (sessionId) => this.catalog.ensureVisible(sessionId),
     setActionError: (sessionActionError) => this.set({ sessionActionError }),
     rememberModel: (model) => this.preferences.rememberModel(model),
     refreshSessionCatalog: () => void this.catalog.refreshLoaded(),
@@ -316,7 +316,7 @@ export class AppStore {
     applySnapshot: (snapshot) => this.applySnapshot(snapshot),
     applyTranscript: (sessionId, data, sequence, statuses) =>
       this.applyLiveTranscript(sessionId, data, sequence, statuses),
-    ensureSessionVisible: (sessionId) => this.ensureSessionVisible(sessionId),
+    ensureSessionVisible: (sessionId) => this.catalog.ensureVisible(sessionId),
     refreshLoadedSessions: () => this.catalog.refreshLoaded(),
     hasVisibleGitSurface: () => this.git.hasVisibleSurface(),
     refreshGitStatus: () => this.git.refreshStatus(),
@@ -1078,10 +1078,6 @@ export class AppStore {
 
   refreshSessions = (retryQuery = this.state.sessionQuery): Promise<void> =>
     this.catalog.refresh(retryQuery);
-
-  private ensureSessionVisible(id: string): void {
-    this.catalog.ensureVisible(id);
-  }
 
   openSession = async (id: string): Promise<void> => {
     await this.selection.open(id);

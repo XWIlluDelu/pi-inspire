@@ -63,21 +63,6 @@ function listFeedback(
   };
 }
 
-function uniqueSessions(
-  ...sources: Iterable<SessionSummary>[]
-): SessionSummary[] {
-  const sessions: SessionSummary[] = [];
-  const seen = new Set<string>();
-  for (const source of sources) {
-    for (const session of source) {
-      if (seen.has(session.id)) continue;
-      seen.add(session.id);
-      sessions.push(session);
-    }
-  }
-  return sessions;
-}
-
 type ReadScope = ReturnType<typeof readScope>;
 type VisibleRead = {
   recovery: RecoveryBackoff;
@@ -103,7 +88,7 @@ interface SessionCatalogControllerHost {
  * catalog projection.
  */
 export class SessionCatalogController {
-  private basePages: SessionSummary[] = [];
+  private readonly basePages = new Map<string, SessionSummary>();
   private readonly hydration = new Map<string, SessionSummary>();
   private list: ListRead | null = null;
   private curation: { key: string; scope: ReadScope } | null = null;
@@ -169,7 +154,7 @@ export class SessionCatalogController {
   }
 
   private resetRows(query: string): SessionCatalogPatch {
-    this.basePages = [];
+    this.basePages.clear();
     return {
       sessionQuery: query,
       sessions: query.trim() ? [] : [...this.hydration.values()],
@@ -239,7 +224,7 @@ export class SessionCatalogController {
 
   remove(id: string): void {
     this.cancelCurationRequest();
-    this.basePages = this.basePages.filter((session) => session.id !== id);
+    this.basePages.delete(id);
     this.hydration.delete(id);
     this.retireVisibleRead(id);
     this.publishUnion({ sessionListHydrating: false });
@@ -299,10 +284,10 @@ export class SessionCatalogController {
         perform,
         operation === null ? this.preserveRecovery : undefined,
       );
-      this.basePages = uniqueSessions(
-        append ? this.basePages : [],
-        page.sessions,
-      );
+      if (!append) this.basePages.clear();
+      for (const session of page.sessions)
+        if (!this.basePages.has(session.id))
+          this.basePages.set(session.id, session);
       if (!append) this.pruneHydration();
       this.publishUnion({
         ...listFeedback(),
@@ -380,14 +365,11 @@ export class SessionCatalogController {
   }
 
   private publishUnion(patch: SessionCatalogPatch = {}): void {
-    const state = this.host.state();
-    this.host.patch({
-      ...patch,
-      sessions: uniqueSessions(
-        this.basePages,
-        state.sessionQuery.trim() ? [] : this.hydration.values(),
-      ),
-    });
+    const sessions = [...this.basePages.values()];
+    if (!this.host.state().sessionQuery.trim())
+      for (const [id, row] of this.hydration)
+        if (!this.basePages.has(id)) sessions.push(row);
+    this.host.patch({ ...patch, sessions });
   }
 
   private curationOwnerKey(): string {
@@ -415,9 +397,7 @@ export class SessionCatalogController {
   }
 
   private hasSession(id: string): boolean {
-    return (
-      this.hydration.has(id) || this.basePages.some((row) => row.id === id)
-    );
+    return this.basePages.has(id) || this.hydration.has(id);
   }
 
   private retireVisibleRead(id: string): void {
@@ -435,10 +415,10 @@ export class SessionCatalogController {
 
   private pruneHydration(): boolean {
     const { ids, cwds } = this.hydrationOwners(this.host.state().prefs);
-    const baseIds = new Set(this.basePages.map((session) => session.id));
     let changed = false;
     for (const [id, session] of this.hydration) {
-      if (!baseIds.has(id) && (ids.has(id) || cwds.has(session.cwd))) continue;
+      if (!this.basePages.has(id) && (ids.has(id) || cwds.has(session.cwd)))
+        continue;
       this.hydration.delete(id);
       changed = true;
     }
@@ -515,14 +495,11 @@ export class SessionCatalogController {
     signal: AbortSignal,
   ): Promise<Map<string, SessionSummary>> {
     const { ids, cwds } = this.hydrationOwners(this.host.state().prefs);
-    const baseIds = new Set(this.basePages.map((session) => session.id));
     const hydration = new Map<string, SessionSummary>();
     const reads = [
       {
         field: "id",
-        owners: [...ids].filter(
-          (id) => !baseIds.has(id) && !this.hydration.has(id),
-        ),
+        owners: [...ids].filter((id) => !this.hasSession(id)),
         limit: MAX_SESSION_ID_HYDRATION_IDS,
         read: (chunk: string[]) =>
           api.json("sessionsByIds", { body: { ids: chunk } }, signal),
@@ -543,7 +520,7 @@ export class SessionCatalogController {
         signal.throwIfAborted();
         const requested = new Set(chunk);
         for (const session of response.sessions) {
-          if (requested.has(session[field]) && !baseIds.has(session.id))
+          if (requested.has(session[field]) && !this.basePages.has(session.id))
             hydration.set(session.id, session);
         }
       }

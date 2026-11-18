@@ -66,6 +66,7 @@ export interface SessionCatalogLike {
 
 export class SessionCatalog implements SessionCatalogLike {
   private cached: SessionRecord[] = [];
+  private navigable: SessionRecord[] = [];
   private searchResult: {
     query: string;
     sources: readonly SessionRecord[];
@@ -213,11 +214,19 @@ export class SessionCatalog implements SessionCatalogLike {
       const byId = new Map<string, SessionRecord | null>();
       for (const session of cached)
         byId.set(session.id, byId.has(session.id) ? null : session);
+      const navigable =
+        byId.size === cached.length
+          ? cached
+          : cached.filter((session) => byId.get(session.id) !== null);
       const idByPath = new Map(
-        cached
-          .filter((session) => byId.get(session.id) !== null)
-          .map((session) => [session.path, session.id]),
+        navigable.map((session) => [session.path, session.id]),
       );
+      // Unchanged metadata records keep the same search sources across scans.
+      if (
+        this.navigable.length !== navigable.length ||
+        navigable.some((session, index) => session !== this.navigable[index])
+      )
+        this.navigable = navigable;
       this.cached = cached;
       this.issues = issues;
       this.byId = byId;
@@ -266,9 +275,8 @@ export class SessionCatalog implements SessionCatalogLike {
       signal?: AbortSignal;
     } = {},
   ): Promise<SessionListResponse> {
-    const sessions = (await this.refresh()).filter(
-      (session) => this.byId.get(session.id) !== null,
-    );
+    await this.refreshRecords(false);
+    const sessions = this.navigable;
     const query = options.query?.trim().slice(0, 200) ?? "";
     const requestedOffset = Number.isFinite(options.offset)
       ? Math.floor(options.offset!)
@@ -285,21 +293,15 @@ export class SessionCatalog implements SessionCatalogLike {
       Math.max(1, requestedLimit),
     );
     const issues = [...this.issues];
-    const snippets = new Map<string, string>();
-    const filtered = query
-      ? await this.searchRecords(
-          sessions,
-          query,
-          options.signal,
-          issues,
-          snippets,
-        )
-      : sessions;
+    const result = query
+      ? await this.searchRecords(sessions, query, options.signal, issues)
+      : undefined;
+    const filtered = result?.matches ?? sessions;
 
     return {
       sessions: filtered.slice(offset, offset + limit).map((session) => {
         const summary = this.project(session);
-        const matchSnippet = snippets.get(session.id);
+        const matchSnippet = result?.snippets.get(session.id);
         return matchSnippet ? { ...summary, matchSnippet } : summary;
       }),
       total: filtered.length,
@@ -320,40 +322,38 @@ export class SessionCatalog implements SessionCatalogLike {
     query: string,
     signal: AbortSignal | undefined,
     issues: SessionCatalogIssue[],
-    snippets: Map<string, string>,
-  ): Promise<SessionRecord[]> {
+  ): Promise<NonNullable<SessionCatalog["searchResult"]>> {
     signal?.throwIfAborted();
     const cached = this.searchResult;
     if (
+      !issues.length &&
       cached?.query === query &&
-      cached.sources.length === sessions.length &&
-      sessions.every((session, index) => session === cached.sources[index])
-    ) {
-      for (const [id, snippet] of cached.snippets) snippets.set(id, snippet);
-      return cached.matches;
-    }
+      cached.sources === sessions
+    )
+      return cached;
     const generation = this.generation;
-    const searchIssues: SessionCatalogIssue[] = [];
-    const found = new Map<string, string>();
+    const snippets = new Map<string, string>();
+    const unavailable = issues.length
+      ? new Set(issues.map(({ path }) => path))
+      : undefined;
     const matches = await searchSessionRecords(
-      sessions,
+      unavailable
+        ? sessions.filter(({ path }) => !unavailable.has(path))
+        : sessions,
       query,
       signal,
-      searchIssues,
-      found,
+      issues,
+      snippets,
     );
-    issues.push(...searchIssues);
-    for (const [id, snippet] of found) snippets.set(id, snippet);
+    const result = { query, sources: sessions, matches, snippets };
     // Retain only the last successful query; failed reads remain recoverable.
-    if (generation === this.generation && searchIssues.length === 0) {
-      this.searchResult = {
-        query,
-        sources: sessions,
-        matches,
-        snippets: found,
-      };
-    }
-    return matches;
+    if (
+      generation === this.generation &&
+      sessions === this.navigable &&
+      issues.length === 0
+    )
+      this.searchResult = result;
+    return result;
   }
 
   async listByIds(ids: readonly string[]): Promise<SessionSummary[]> {
@@ -376,9 +376,9 @@ export class SessionCatalog implements SessionCatalogLike {
   async listByCwds(cwds: readonly string[]): Promise<SessionSummary[]> {
     if (cwds.length === 0) return [];
     const requested = new Set(cwds);
-    const sessions = (await this.refresh()).filter(
-      (session) =>
-        requested.has(session.cwd) && this.byId.get(session.id) !== null,
+    await this.refreshRecords(false);
+    const sessions = this.navigable.filter((session) =>
+      requested.has(session.cwd),
     );
     if (sessions.length > MAX_CURATED_SESSION_RESULTS) {
       throw requestError(

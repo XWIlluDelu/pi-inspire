@@ -40,7 +40,7 @@ export function sameSessionObject(
   return left.dev === right.dev && left.ino === right.ino;
 }
 
-function sameSessionVersion(
+export function sameSessionVersion(
   left: SessionSourceIdentity,
   right: SessionSourceIdentity,
 ): boolean {
@@ -49,6 +49,17 @@ function sameSessionVersion(
     left.size === right.size &&
     left.mtimeNs === right.mtimeNs &&
     left.ctimeNs === right.ctimeNs
+  );
+}
+
+/** Admit same-file growth under Pi's append-only persistence model. */
+export function preservesSessionPrefix(
+  current: SessionSourceIdentity,
+  observed: SessionSourceIdentity,
+): boolean {
+  return (
+    sameSessionVersion(current, observed) ||
+    (sameSessionObject(current, observed) && current.size > observed.size)
   );
 }
 
@@ -61,7 +72,10 @@ export class SessionSourceTypeError extends Error {}
 
 async function sourceAtPath(
   path: string,
+  canonicalPath?: string,
 ): Promise<SessionSourceIdentity | null> {
+  if (canonicalPath !== undefined && (await realpath(path)) !== canonicalPath)
+    return null;
   const details = await lstat(path, { bigint: true });
   return details.isFile() ? details : null;
 }
@@ -69,8 +83,9 @@ async function sourceAtPath(
 export async function sessionVersionAtPath(
   path: string,
   source: SessionSourceIdentity,
+  canonicalPath?: string,
 ): Promise<boolean> {
-  const addressed = await sourceAtPath(path);
+  const addressed = await sourceAtPath(path, canonicalPath);
   return addressed !== null && sameSessionVersion(addressed, source);
 }
 
@@ -115,18 +130,12 @@ export class SessionDocumentReader {
     allowGrowth = false,
   ): Promise<boolean> {
     try {
-      if (
-        canonicalPath !== undefined &&
-        (await realpath(this.path)) !== canonicalPath
-      )
-        return false;
-      const addressed = await sourceAtPath(this.path);
+      const addressed = await sourceAtPath(this.path, canonicalPath);
       return (
         addressed !== null &&
-        (sameSessionVersion(addressed, this.source) ||
-          (allowGrowth &&
-            sameSessionObject(addressed, this.source) &&
-            addressed.size > this.source.size))
+        (allowGrowth
+          ? preservesSessionPrefix(addressed, this.source)
+          : sameSessionVersion(addressed, this.source))
       );
     } catch (error) {
       if (isDisappearedSessionPath(error)) return false;
