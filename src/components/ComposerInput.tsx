@@ -26,7 +26,7 @@ import {
   replaceFileCompletion,
   resolveCommandInventory,
 } from "../composer-completion";
-import { isComposingKeyboardEvent } from "../keyboard-input";
+import { isComposingKeyboardEvent, isEditableTarget } from "../keyboard-input";
 import { textareaCaretLineBounds } from "../textarea-caret";
 import {
   useFloatingMenuDismissal,
@@ -224,7 +224,7 @@ export function ComposerInput({
   placeholder: string;
   label: string;
   completionLabel?: string;
-  autoFocus?: boolean;
+  autoFocus?: boolean | "unless-editing";
   initialCaretAtEnd?: boolean;
   onPaste?: ClipboardEventHandler<HTMLTextAreaElement>;
   onKeyDown?: KeyboardEventHandler<HTMLTextAreaElement>;
@@ -283,7 +283,12 @@ export function ComposerInput({
   );
   // Let an enclosing modal capture its opener before moving focus.
   useEffect(() => {
-    if (autoFocus) textareaRef.current?.focus({ preventScroll: true });
+    if (
+      autoFocus === true ||
+      (autoFocus === "unless-editing" &&
+        !isEditableTarget(document.activeElement))
+    )
+      textareaRef.current?.focus({ preventScroll: true });
   }, [autoFocus]);
   const composingRef = useRef(false);
   const completionSelectionRef = useRef<{
@@ -534,7 +539,7 @@ export function ComposerInput({
           aria-label={label}
           spellCheck={false}
           autoCorrect="off"
-          data-modal-autofocus={autoFocus || undefined}
+          data-modal-autofocus={autoFocus === true || undefined}
         />
         {completion &&
           createPortal(

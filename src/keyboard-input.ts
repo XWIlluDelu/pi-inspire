@@ -7,6 +7,14 @@ export function isMacKeyboardPlatform(): boolean {
   );
 }
 
+export function isEditableTarget(target: Element | null): boolean {
+  return Boolean(
+    target?.closest(
+      'input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"]',
+    ),
+  );
+}
+
 type CompositionKeyEvent = Pick<KeyboardEvent, "isComposing"> &
   Partial<Pick<KeyboardEvent, "keyCode">>;
 

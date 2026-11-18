@@ -107,6 +107,8 @@ describe("initial workbench restoration", () => {
     render(<App />);
     await act(() => current.init());
     expectRestoring();
+    const search = screen.getByRole("searchbox", { name: "Search sessions" });
+    act(() => search.focus());
     const socket = FakeWebSocket.instances.at(-1)!;
     expect(new URL(socket.url).searchParams.get("detail")).toBe("deleted");
     socket.open();
@@ -123,6 +125,7 @@ describe("initial workbench restoration", () => {
     expect(
       screen.getByText(/The previous session no longer exists/),
     ).toBeInTheDocument();
+    expect(search).toHaveFocus();
   });
 
   it("lets an explicit new-session choice settle before the startup catalog returns", async () => {

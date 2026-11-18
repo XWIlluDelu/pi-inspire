@@ -486,9 +486,10 @@ bounded successful-only provider-local MRU; unavailable MRU entries stay saved b
 - Changes commit selection/recency only on success; failed thinking rolls back, and both failures
   warn.
 
-New shares the editor, attachment controls and project-file picker with the session composer. The
-first-message editor receives autofocus. The editable project path and its browse control sit above
-it. Enter in the path field does not submit a session, and IME confirmation stays native.
+New shares the editor, attachment controls and project-file picker with the session composer.
+Its first-message editor takes focus unless the user is already editing another field. The project
+path and browse control sit above it. Enter in the path field does not submit a session, and
+IME confirmation stays native.
 [[workbench]] owns directory browsing and [[session-continuity]] owns explicit folder creation.
 **Create folder and start** needs no second confirmation. Changing the path retires the action for
 the old path. Creation preserves the staged input and explicit or inherited model and thinking

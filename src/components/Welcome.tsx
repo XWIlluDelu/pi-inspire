@@ -471,7 +471,7 @@ export function Welcome({
           placeholder: "What do you want to work on?",
           label: "First message",
           completionLabel: "First message completion",
-          autoFocus: true,
+          autoFocus: "unless-editing",
         }}
         header={
           <>
