@@ -28,6 +28,7 @@ const repository: GitStatusResponse = {
   head: { kind: "branch", name: "main", oid: "0123456789abcdef" },
   files: [readme],
   total: 1,
+  conflicts: 0,
   truncated: false,
 };
 const binary: GitDiffResponse = { kind: "binary", path: readme.path };

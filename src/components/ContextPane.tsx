@@ -8,9 +8,9 @@ import {
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fencedMarkdown } from "../../shared/markdown-fence";
 import { resourceReferenceLabel } from "../../shared/resource-references";
+import { showsGitDetails } from "../controllers/git-controller";
 import { gitChangeCount } from "../git-presentation";
 import { appendDraftBlock } from "../reader-quote";
-import { inspectedFileTab } from "../resource-preview";
 import { type ResourceRow, resourceRows } from "../resources";
 import { shallowEqual, store, useAppState } from "../store";
 import { queueTerminalAction } from "../terminal-actions";
@@ -94,10 +94,11 @@ export const ContextPane = memo(function ContextPane({
     resourcePage.owner.transcriptViewId === transcriptViewId
       ? resourcePage.rows
       : NO_RECENT_FILES;
-  const browsingFiles =
+  const showingRecentFiles =
     state.resourcesOpen &&
     state.contextMode === "files" &&
-    fileInspection.kind === "browse";
+    fileInspection.kind === "browse" &&
+    !state.workspaceQuery.trim();
   const currentResourcePage = resourcePage?.owner === resourceOwner;
   const loadResources = useCallback(async () => {
     resourceRequest.current?.abort();
@@ -128,11 +129,16 @@ export const ContextPane = memo(function ContextPane({
   }, [resourceOwner]);
 
   useEffect(() => {
-    if (browsingFiles && sessionId && transcriptViewId && !currentResourcePage)
+    if (
+      showingRecentFiles &&
+      sessionId &&
+      transcriptViewId &&
+      !currentResourcePage
+    )
       void loadResources();
     return () => resourceRequest.current?.abort();
   }, [
-    browsingFiles,
+    showingRecentFiles,
     currentResourcePage,
     loadResources,
     sessionId,
@@ -142,20 +148,16 @@ export const ContextPane = memo(function ContextPane({
   useEffect(() => {
     // Keep the last rows visible while the new list is loading. Only probe
     // the references confirmed for the current transcript and transport.
-    if (!browsingFiles || !currentResourcePage) return;
+    if (!showingRecentFiles || !currentResourcePage) return;
+    const request = new AbortController();
     void store.probeResources(
       recentRows.map((row) => row.reference ?? row.label),
+      request.signal,
     );
-  }, [browsingFiles, currentResourcePage, recentRows]);
+    return () => request.abort();
+  }, [showingRecentFiles, currentResourcePage, recentRows]);
 
-  useEffect(() => () => store.cancelResourceProbes(), []);
-
-  const gitDetailView =
-    state.resourcesOpen &&
-    (state.contextMode === "changes" ||
-      (state.contextMode === "files" &&
-        (fileInspection.kind === "browse" ||
-          inspectedFileTab(state)?.view === "changes")));
+  const gitDetailView = showsGitDetails(state);
   useEffect(() => {
     store.setGitSurfaceVisible("resources-pane", gitDetailView);
     return () => store.setGitSurfaceVisible("resources-pane", false);
@@ -232,12 +234,14 @@ export const ContextPane = memo(function ContextPane({
     setManualRefresh(request);
     try {
       if (state.contextMode === "files") {
-        store.cancelResourceProbes();
+        if (showingRecentFiles) store.cancelResourceProbes();
         await Promise.all([
           store.refreshWorkspaceBrowser(),
-          fileInspection.kind === "browse"
+          showingRecentFiles
             ? loadResources()
-            : store.refreshFileTab(),
+            : activeFile
+              ? store.refreshFileTab()
+              : undefined,
         ]);
       } else {
         await store.refreshGitStatus();

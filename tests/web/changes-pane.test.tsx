@@ -1,24 +1,25 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type {
-  GitDiffResponse,
-  GitStatusResponse,
-} from "../../shared/contracts";
+import type { GitDiffResponse, GitStatusDetail } from "../../shared/contracts";
 import { createInitialAppState } from "../../src/app-state";
 import type { ContextPaneView } from "../../src/components/context-pane-view";
 import { selectContextPaneView } from "../../src/components/context-pane-view";
 import { FilePreview } from "../../src/components/FilePreview";
 import type { FileReadingState } from "../../src/workbench-session";
 
-const clean: Extract<GitStatusResponse, { kind: "repository" }> = {
+const summary = {
   kind: "repository",
   head: { kind: "branch", name: "main", oid: "abc" },
-  files: [],
   total: 0,
+  conflicts: 0,
+} as const;
+const clean: Extract<GitStatusDetail, { kind: "repository" }> = {
+  ...summary,
+  files: [],
   truncated: false,
 };
-const changed: Extract<GitStatusResponse, { kind: "repository" }> = {
+const changed: Extract<GitStatusDetail, { kind: "repository" }> = {
   ...clean,
   files: [
     {
@@ -139,6 +140,7 @@ describe("File Changes publication", () => {
 
   it.each([
     [null, null, "Reading Git status"],
+    [summary, null, "Reading Git status"],
     [clean, "failed", "Git status unavailable"],
     [{ kind: "not-repository" }, null, "Not in a Git repository"],
     [{ ...clean, truncated: true, total: 1001 }, null, "Git status incomplete"],

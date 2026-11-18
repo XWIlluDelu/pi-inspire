@@ -651,13 +651,12 @@ export class ResourceStore {
     }
 
     let path = await realpath(lexicalPath).catch(() => null);
-    if (path === null && lexicalInside) invalidateProjectFiles();
-    // Recover shorthand only when a complete filesystem search proves
-    // uniqueness. A bounded/failed subtree cannot establish absence.
+    // Shorthand needs fresh discovery, but simultaneous misses can share
+    // its in-flight scan. The absent literal name isn't a stale search result.
     const name =
       path === null && !exactWorkspaceSelection ? bareName(reference) : null;
     const search = name
-      ? await workspaceBasenameMatches(context.cwd, name)
+      ? await workspaceBasenameMatches(context.cwd, name, true)
       : { matches: [], truncated: false };
     const { matches } = search;
     if (path === null && (matches.length > 1 || search.truncated)) {
@@ -676,6 +675,7 @@ export class ResourceStore {
     if (path === null && recovered)
       path = await realpath(selectedPath).catch(() => null);
     if (path === null) {
+      if (lexicalInside && (!name || recovered)) invalidateProjectFiles();
       throw requestError("The referenced file was not found", 404);
     }
 

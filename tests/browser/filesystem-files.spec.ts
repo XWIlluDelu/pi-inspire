@@ -16,7 +16,7 @@ test.use({ serviceWorkers: "block" });
 const root = resolve(browserFixtureHome, "filesystem-fixture");
 test.beforeAll(async () => {
   for (const dir of [
-    resolve(root, "empty"),
+    resolve(root, "constructor"),
     resolve(root, "dist"),
     resolve(root, ".settings"),
   ])
@@ -158,12 +158,12 @@ test("Files works with a corrupt Git index and preserves its tabs and search whe
     tree.getByRole("button", { name: "dist", exact: true }),
   ).toBeVisible();
   await expect(
-    tree.getByRole("button", { name: "empty", exact: true }),
+    tree.getByRole("button", { name: "constructor", exact: true }),
   ).toBeVisible();
   await expect(
     tree.getByRole("button", { name: ".settings", exact: true }),
   ).toHaveCount(0);
-  await tree.getByRole("button", { name: "empty", exact: true }).click();
+  await tree.getByRole("button", { name: "constructor", exact: true }).click();
   await expect(tree.getByText("Empty", { exact: true })).toBeVisible();
   const toggle = pane.getByRole("button", {
     name: "Show hidden files",

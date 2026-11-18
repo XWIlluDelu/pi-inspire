@@ -76,23 +76,23 @@ function StateChip({
 }
 
 function GitSummary() {
-  const { gitStatus, gitStatusError, changesVisible } = useAppState(
-    (state) => ({
-      gitStatus: state.gitStatus,
-      gitStatusError: state.gitStatusError,
-      // Changes already states the same authoritative count beside the list.
-      changesVisible: state.resourcesOpen && state.contextMode === "changes",
-    }),
-    shallowEqual,
-  );
-  const branch = gitHeadLabel(gitStatus);
-  const changes = gitChangeCount(gitStatus);
+  const { branch, changes, conflictCount, gitStatusError, changesVisible } =
+    useAppState(
+      (state) => ({
+        branch: gitHeadLabel(state.gitStatus),
+        changes: gitChangeCount(state.gitStatus),
+        conflictCount:
+          state.gitStatus?.kind === "repository"
+            ? state.gitStatus.conflicts
+            : 0,
+        gitStatusError: state.gitStatusError,
+        // Changes already states the same authoritative count beside the list.
+        changesVisible: state.resourcesOpen && state.contextMode === "changes",
+      }),
+      shallowEqual,
+    );
   if (!branch || changes === null) return null;
 
-  const conflictCount =
-    gitStatus?.kind === "repository"
-      ? gitStatus.files.filter((file) => file.conflict).length
-      : 0;
   const changeLabel = changes === 1 ? "1 change" : `${changes} changes`;
   const conflictLabel =
     conflictCount === 1 ? "1 conflict" : `${conflictCount} conflicts`;

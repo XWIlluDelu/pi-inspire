@@ -95,6 +95,9 @@ describe("document image ownership and budgets", () => {
     expect(URL.createObjectURL).toHaveBeenCalledTimes(7);
     owner.dispose();
     expect(URL.revokeObjectURL).toHaveBeenCalledTimes(7);
+    await expect(owner.load("one.png")).rejects.toMatchObject({
+      name: "AbortError",
+    });
   });
 
   it("aborts running work, retires queued work, and rejects late successes without allocating URLs", async () => {

@@ -161,7 +161,7 @@ completion behavior are unchanged.
   Session title, project, Git and extension status form one leading cluster. Secondary labels
   truncate as space shrinks. A compact desktop header can hide the project label. On mobile,
   Git yields space to the project location by showing the branch glyph and numeric count.
-  Git shows up to `99+` changes, with the exact total and branch in the
+  Git shows up to `99+` changes, with the exact change and conflict counts and branch in the
   accessible name. Truncated extension statuses remain available by click, tap or keyboard.
   Trailing actions keep their own space.
 

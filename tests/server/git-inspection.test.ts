@@ -68,7 +68,7 @@ describe("porcelain-v2 parser", () => {
       ),
       Buffer.from("nested/"),
     );
-    const both = parsed.response.files[0]!;
+    const both = parsed.files[0]!;
     expect(both.path.id).toBe(path.toString("base64url"));
     expect(both.path.workspacePath).toBe("space tab\tline\nname.txt");
     expect(both.path.display).toBe("nested/space tab\\tline\\nname.txt");
@@ -76,21 +76,21 @@ describe("porcelain-v2 parser", () => {
       staged: { kind: "modified" },
       unstaged: { kind: "modified" },
     });
-    const arbitrary = parsed.response.files[1]!;
+    const arbitrary = parsed.files[1]!;
     expect(arbitrary.path.id).toBe(invalid.toString("base64url"));
     expect(arbitrary.path.utf8Path).toBeUndefined();
     expect(arbitrary.path.display).toBe("bad\\xff");
-    expect(parsed.response.files[2]?.unstaged).toEqual({ kind: "deleted" });
+    expect(parsed.files[2]?.unstaged).toEqual({ kind: "deleted" });
   });
 
   it("keeps both paths of a copied entry", () => {
     const copy = Buffer.from(
       `2 C. N... 100644 100644 100644 ${hash} ${hash} C075 copied name`,
     );
-    const { response } = parsePorcelainV2(
+    const { files } = parsePorcelainV2(
       statusBuffer(...headers(), copy, Buffer.from("source name")),
     );
-    expect(response.files[0]).toMatchObject({
+    expect(files[0]).toMatchObject({
       path: { utf8Path: "copied name" },
       staged: { kind: "copied", originalPath: { utf8Path: "source name" } },
     });
@@ -154,33 +154,49 @@ describe("porcelain-v2 parser", () => {
 });
 
 describe("bounded diff contract", () => {
-  it("caps visible status after excluding canceled index edits", async () => {
-    const canceled = Array.from({ length: 1_005 }, (_, index) =>
-      ordinary("MM", "N...", Buffer.from(`tracked-${index}`)),
+  it("keeps the exact net change and conflict counts beyond the visible status cap", async () => {
+    const paths = Array.from(
+      { length: 1_005 },
+      (_, index) => `tracked-${index}`,
     );
-    const untracked = Array.from({ length: 1_001 }, (_, index) =>
-      Buffer.from(`? untracked-${index}`),
+    const conflict = "zz-conflict";
+    const status = statusBuffer(
+      ...headers(),
+      ...paths.map((path) => ordinary("MM", "N...", Buffer.from(path))),
+      Buffer.from(
+        `u UU N... 100644 100644 100644 100644 ${hash} ${hash} ${hash} ${conflict}`,
+      ),
+      Buffer.from("? untracked"),
     );
-    const status = statusBuffer(...headers(), ...canceled, ...untracked);
-    const service = runnerForStatus(
-      status,
-      undefined,
-      Buffer.from("M\0tracked-1004\0"),
+    const net = Buffer.from(
+      [
+        ...paths.slice(5).flatMap((path) => ["M", path]),
+        "M",
+        conflict,
+        "",
+      ].join("\0"),
     );
+    const service = runnerForStatus(status, undefined, net);
     const result = await service.status("/workspace");
-    expect(result).toMatchObject({
+    const summary = {
       kind: "repository",
+      head: { kind: "branch", name: "main", oid: hash },
       total: 1_002,
-      truncated: true,
-    });
-    if (result.kind !== "repository") throw new Error("Expected repository");
+      conflicts: 1,
+    };
+    expect(await service.status("/workspace", undefined, "summary")).toEqual(
+      summary,
+    );
+    expect(result).toMatchObject({ ...summary, truncated: true });
+    if (!("files" in result)) throw new Error("Expected repository detail");
     expect(result.files).toHaveLength(1_000);
     expect(
       result.files.find(({ path }) => path.utf8Path === "tracked-1004"),
     ).toMatchObject({
       worktree: { kind: "modified" },
     });
-    expect(result.files.filter(({ untracked }) => untracked)).toHaveLength(999);
+    expect(result.files.some((file) => file.conflict)).toBe(false);
+    expect(result.files[0]?.path.utf8Path).toBe("tracked-5");
   });
 
   it("distinguishes marker-like hunk content from the next file's headers", () => {

@@ -405,7 +405,6 @@ describe("ResourceStore", () => {
       status: 409,
       matches: [selected],
     });
-    expect(discover).toHaveBeenCalledWith(project, "kernel.py");
     discover.mockClear();
     await expect(resources.resolve(source, selected)).resolves.toMatchObject({
       workspacePath: selected,

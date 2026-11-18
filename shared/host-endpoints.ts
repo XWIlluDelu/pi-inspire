@@ -566,7 +566,7 @@ export const hostEndpoints = {
     { query: fileListSchema },
   ),
   gitStatus: endpoint<GitStatusResponse>()("get", "/api/git/status", {
-    query: sessionAddress,
+    query: sessionAddress.extend({ view: z.literal("summary").optional() }),
   }),
   gitDiff: endpoint<GitDiffResponse>()(
     "post",

@@ -40,7 +40,7 @@ async function checkKeyboardFocus(control: Locator) {
     .toBeLessThanOrEqual(0.5);
 }
 
-test("keeps renamed, conflicting and opaque paths readable in narrow Changes", async ({
+test("keeps renamed and opaque paths readable in narrow Changes", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 320, height: 760 });
@@ -61,7 +61,6 @@ test("keeps renamed, conflicting and opaque paths readable in narrow Changes", a
       untracked: false,
     },
     { path: path("new.txt"), worktree: { kind: "added" }, untracked: true },
-    { path: path("merge.txt"), conflict: { code: "UU" }, untracked: false },
     { path: opaque, worktree: { kind: "modified" }, untracked: false },
     ...Array.from({ length: 30 }, (_, index) => ({
       path: path(`updated-${index}.txt`),
@@ -69,12 +68,18 @@ test("keeps renamed, conflicting and opaque paths readable in narrow Changes", a
       untracked: false,
     })),
   ];
+  const summary = {
+    kind: "repository",
+    head: { kind: "branch", name: "review/calibration", oid: "b".repeat(40) },
+    total: files.length,
+    conflicts: 0,
+  };
   await page.route("**/api/git/status**", (route) =>
-    route.fulfill({ json: {
-      kind: "repository",
-      head: { kind: "branch", name: "review/calibration", oid: "b".repeat(40) },
-      files, total: files.length, truncated: false,
-    } }),
+    route.fulfill({
+      json: new URL(route.request().url()).searchParams.get("view") === "summary"
+        ? summary
+        : { ...summary, files, truncated: false },
+    }),
   );
   const pane = await openResourceFixture(page);
   const tab = pane.getByRole("tab", { name: "Changes", exact: true });

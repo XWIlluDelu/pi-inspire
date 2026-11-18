@@ -7,7 +7,6 @@ import {
   type ComposerHistoryEntry,
   emptyPendingQueues,
   type GitFileChange,
-  type GitStatusResponse,
   type HostDirListing,
   type HostNativeCommandName,
   type HostRootsResponse,
@@ -3032,15 +3031,13 @@ export class AppStore {
 
   openGitDiff = (pathId: string): Promise<void> => this.git.openChange(pathId);
 
-  cancelResourceProbes = (clearStanding = false): void => {
-    this.resources.cancelProbes(clearStanding);
-  };
+  cancelResourceProbes = (): void => this.resources.cancelProbes();
 
   loadSessionResources = (signal?: AbortSignal) =>
     this.resources.loadSessionResources(signal);
 
-  probeResources = (references: string[]): Promise<void> =>
-    this.resources.probeResources(references);
+  probeResources = (references: string[], signal?: AbortSignal): Promise<void> =>
+    this.resources.probeResources(references, signal);
 
   loadDocumentImage = (
     documentId: string,
@@ -3099,14 +3096,6 @@ export class AppStore {
         : undefined,
     );
   };
-}
-
-export function gitChangeForWorkspacePath(
-  status: GitStatusResponse | null,
-  workspacePath: string,
-): GitFileChange | undefined {
-  if (!status || status.kind !== "repository") return undefined;
-  return status.files.find((file) => file.path.workspacePath === workspacePath);
 }
 
 export const store = new AppStore();

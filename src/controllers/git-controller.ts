@@ -4,6 +4,7 @@ import type {
   GitStatusResponse,
 } from "../../shared/contracts";
 import { type Api, ApiError } from "../api";
+import { gitStatusDetail } from "../git-presentation";
 import { readScope } from "../recovery-backoff";
 import {
   type FileInspectionState,
@@ -23,13 +24,14 @@ export function inspectedGitChange(
   state: FileInspectionState,
   status: GitStatusResponse | null,
 ): GitFileChange | undefined {
-  if (status?.kind !== "repository") return undefined;
+  const detail = gitStatusDetail(status);
+  if (detail?.kind !== "repository") return undefined;
   const tab = inspectedFileTab(state);
   const inspection = state.fileInspection;
   const workspacePath =
     inspection.kind === "file" ? inspection.workspacePath : tab?.workspacePath;
   const pathId = tab?.view === "changes" ? tab.git?.pathId : undefined;
-  return status.files.find(
+  return detail.files.find(
     (file) =>
       hasWorktreeChange(file) &&
       (workspacePath
@@ -46,6 +48,17 @@ export function showsFileComparison(
     state.contextMode === "files" &&
     state.fileInspection.kind === "file" &&
     inspectedFileTab(state)?.view === "changes"
+  );
+}
+
+export function showsGitDetails(
+  state: FileInspectionState & { resourcesOpen: boolean; contextMode: string },
+): boolean {
+  return (
+    state.resourcesOpen &&
+    (state.contextMode === "changes" ||
+      (state.contextMode === "files" &&
+        (state.fileInspection.kind === "browse" || showsFileComparison(state))))
   );
 }
 
@@ -95,6 +108,7 @@ type GitChangeSelection = GitReadOwner & { change: GitFileChange };
  */
 export class GitController {
   private statusRead: {
+    detail: boolean;
     scope: ReturnType<typeof readScope>;
     task: Promise<void>;
     queued: boolean;
@@ -126,12 +140,15 @@ export class GitController {
     const nextInterval = this.refreshInterval();
     if (nextInterval !== null) {
       this.observeVisibility();
-      if (previousInterval === null) {
-        void this.refreshStatus();
-      } else if (previousInterval !== nextInterval) {
+      if (previousInterval !== nextInterval) {
         this.clearRefreshTimer();
-        if (nextInterval < previousInterval) void this.refreshStatus();
-        else if (!this.statusRead) this.scheduleRefresh();
+        if (previousInterval === null || nextInterval < previousInterval) {
+          if (this.statusRead?.detail !== showsGitDetails(this.host.state()))
+            void this.refreshStatus();
+        } else {
+          if (this.statusRead?.detail) this.cancelStatusRefresh();
+          if (!this.statusRead) this.scheduleRefresh();
+        }
       }
       return;
     }
@@ -160,15 +177,20 @@ export class GitController {
     );
   }
 
-  private startStatusRefresh(periodic: boolean): Promise<void> {
+  private startStatusRefresh(
+    periodic: boolean,
+    detail = showsGitDetails(this.host.state()),
+  ): Promise<void> {
     const owner = this.readOwner();
     if (!owner || !this.pageVisible()) return Promise.resolve();
-    if (this.statusRead) {
+    if (this.statusRead?.detail === detail) {
       this.statusRead.queued = true;
       return this.statusRead.task;
     }
+    if (this.statusRead) this.cancelStatusRefresh();
     this.clearRefreshTimer();
     const request = {
+      detail,
       scope: readScope(() => this.owns(owner)),
       queued: false,
       task: Promise.resolve().then(async () => {
@@ -193,9 +215,10 @@ export class GitController {
   ): Promise<GitChangeSelection | null> {
     const owner = this.readOwner();
     if (!owner) return null;
-    if (!this.host.state().gitStatus) await this.refreshStatus();
+    if (!gitStatusDetail(this.host.state().gitStatus))
+      await this.startStatusRefresh(false, true);
     if (!this.owns(owner)) return null;
-    const status = this.host.state().gitStatus;
+    const status = gitStatusDetail(this.host.state().gitStatus);
     const change =
       status?.kind === "repository"
         ? status.files.find(
@@ -308,6 +331,9 @@ export class GitController {
   ): Promise<void> {
     const { api, sessionId } = owner;
     const { current, read } = request.scope;
+    const query = request.detail
+      ? { sessionId }
+      : { sessionId, view: "summary" as const };
     while (current()) {
       request.queued = false;
       const state = this.host.state();
@@ -315,20 +341,20 @@ export class GitController {
       const selectionEpoch = this.selectionEpoch;
       try {
         const status = await read((signal) =>
-          api.json("gitStatus", { query: { sessionId } }, signal),
+          api.json("gitStatus", { query }, signal),
         );
         const currentState = this.host.state();
         const selectedChange = inspectedGitChange(currentState, status);
         const selectionChanged =
           selectedChange?.path.id !==
           inspectedGitChange(currentState, currentState.gitStatus)?.path.id;
+        const sameStatus =
+          JSON.stringify(currentState.gitStatus) === JSON.stringify(status);
         let unchanged =
-          !state.gitStatusError &&
-          !selectionChanged &&
-          JSON.stringify(state.gitStatus) === JSON.stringify(status);
+          !state.gitStatusError && !selectionChanged && sameStatus;
         if (selectionChanged) this.cancelDiff();
         this.host.patch({
-          gitStatus: status,
+          gitStatus: sameStatus ? currentState.gitStatus : status,
           gitStatusError: null,
           ...(selectionChanged ? { gitDiff: null } : {}),
         });
@@ -373,6 +399,7 @@ export class GitController {
       if (
         !request.queued ||
         !this.pageVisible() ||
+        request.detail !== showsGitDetails(this.host.state()) ||
         (!this.hasVisibleSurface() && !showsFileComparison(this.host.state()))
       )
         return;

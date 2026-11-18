@@ -173,11 +173,16 @@ async function scanFilesystem(
 async function projectPaths(
   cwd: string,
   showHidden: boolean,
+  refresh = false,
 ): Promise<FileScan> {
   const root = await realpath(cwd);
   const key = JSON.stringify([root, showHidden]);
   const existing = cache.get(key);
-  if (existing && existing.expiresAt > Date.now()) {
+  if (
+    existing &&
+    (existing.expiresAt === Number.POSITIVE_INFINITY ||
+      (!refresh && existing.expiresAt > Date.now()))
+  ) {
     cache.delete(key);
     cache.set(key, existing);
     return existing.scan;
@@ -225,8 +230,9 @@ export async function searchProjectFiles(
 export async function workspaceBasenameMatches(
   cwd: string,
   name: string,
+  refresh = false,
 ): Promise<{ matches: string[]; truncated: boolean }> {
-  const scan = await projectPaths(cwd, true);
+  const scan = await projectPaths(cwd, true, refresh);
   const matches = scan.paths.filter((path) => basename(path) === name);
   return {
     matches: matches.slice(0, 12),

@@ -173,8 +173,8 @@ it("keeps verified probe batches, retries only failed references and drops retri
   f.state.view.revision++;
   await vi.advanceTimersByTimeAsync(14_000);
   expect(f.probeResources).toHaveBeenCalledTimes(4);
-  f.controller.cancelProbes(true);
-  expect(f.state.resourceStanding).toEqual({});
+  f.controller.cancelProbes();
+  expect(f.standing("later.md")).toBe("available");
   expect(f.resourceContent).not.toHaveBeenCalled();
 });
 

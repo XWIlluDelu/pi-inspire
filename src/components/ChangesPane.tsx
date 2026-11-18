@@ -18,7 +18,11 @@ import {
 } from "react";
 import type { GitDiffResponse, GitFileChange } from "../../shared/contracts";
 import { inspectedGitChange } from "../controllers/git-controller";
-import { gitHeadLabel, presentGitFacet } from "../git-presentation";
+import {
+  gitHeadLabel,
+  gitStatusDetail,
+  presentGitFacet,
+} from "../git-presentation";
 import { sourceDiffRows } from "../source-diff";
 import { store } from "../store";
 import type { FileReadingState } from "../workbench-session";
@@ -161,7 +165,7 @@ function ChangeGroup({
 }
 
 function ChangesIndex({ state }: { state: ContextPaneView }) {
-  const status = state.gitStatus;
+  const status = gitStatusDetail(state.gitStatus);
   if (!status) {
     const error = state.gitStatusPending ? null : state.gitStatusError;
     return (
@@ -224,11 +228,11 @@ function ChangesIndex({ state }: { state: ContextPaneView }) {
 }
 
 function ChangesIndexHeader({ state }: { state: ContextPaneView }) {
-  const status = state.gitStatus;
+  const status = gitStatusDetail(state.gitStatus);
   const repo = status?.kind === "repository" ? status : null;
   const isClean = repo?.total === 0 && !repo.truncated;
-  const hasConflict = repo?.files.some((file) => file.conflict);
-  const headLabel = gitHeadLabel(status);
+  const hasConflict = Boolean(repo?.conflicts);
+  const headLabel = gitHeadLabel(state.gitStatus);
   return (
     <div className="res__index-header res__index-header--git">
       <GitBranch size={13} aria-hidden />
@@ -263,9 +267,8 @@ export function useFileChanges({
     rendered: { current: null },
   });
   const reading = readingState ?? localReading.current;
-  const change = enabled
-    ? inspectedGitChange(state, state.gitStatus)
-    : undefined;
+  const status = gitStatusDetail(state.gitStatus);
+  const change = enabled ? inspectedGitChange(state, status) : undefined;
   const pathId = change?.path.id ?? null;
   const hasComparison = change !== undefined;
   const pending = state.gitDiff;
@@ -298,11 +301,11 @@ export function useFileChanges({
   const waitingForStatus =
     statusPending && confirmedStatusScope.current !== scope;
   useLayoutEffect(() => {
-    if (!enabled || !state.gitStatus || confirmedStatusScope.current !== scope)
+    if (!enabled || !status || confirmedStatusScope.current !== scope)
       confirmedStatusScope.current = null;
-    if (enabled && state.gitStatus && !statusPending && !state.gitStatusError)
+    if (enabled && status && !statusPending && !state.gitStatusError)
       confirmedStatusScope.current = scope;
-  }, [enabled, state.gitStatus, state.gitStatusError, statusPending, scope]);
+  }, [enabled, status, state.gitStatusError, statusPending, scope]);
   const readingKey = pathId ? JSON.stringify([scope, pathId]) : null;
   const readingOwner = useRef({ reading, scope });
   const sameReadingScope =
@@ -394,17 +397,16 @@ export function useFileChanges({
   };
   if (!enabled) return null;
 
-  const readingStatus =
-    waitingForStatus || (!state.gitStatus && !state.gitStatusError);
+  const readingStatus = waitingForStatus || (!status && !state.gitStatusError);
   const noComparison = hasComparison
     ? null
     : readingStatus
       ? "Reading Git status"
       : state.gitStatusError
         ? "Git status unavailable"
-        : state.gitStatus?.kind !== "repository"
+        : status?.kind !== "repository"
           ? "Not in a Git repository"
-          : state.gitStatus.truncated
+          : status.truncated
             ? "Git status incomplete"
             : "No Git comparison";
 
@@ -570,7 +572,7 @@ export function ChangesPane({
         ref={listRef}
         data-pane-scroll-active="true"
       >
-        {state.gitStatus && state.gitStatusError ? (
+        {gitStatusDetail(state.gitStatus) && state.gitStatusError ? (
           <p className="changes__projection-note" role="status">
             Refresh failed; showing the last known status.
           </p>

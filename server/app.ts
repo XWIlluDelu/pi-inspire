@@ -1076,10 +1076,13 @@ export function createInspireServer(deps: AppDependencies): {
       return listProjectDirectory(cwd, dir, showHidden);
     },
   );
-  jsonRoute(app, routes.gitStatus, ({ query }, request, response) =>
-    withRequestSignal(request, response, (signal) =>
-      deps.git.status(openSessionCwd(query.sessionId), signal),
-    ),
+  jsonRoute(
+    app,
+    routes.gitStatus,
+    ({ query: { sessionId, view } }, request, response) =>
+      withRequestSignal(request, response, (signal) =>
+        deps.git.status(openSessionCwd(sessionId), signal, view),
+      ),
   );
   jsonRoute(app, routes.gitDiff, ({ body }, request, response) =>
     withRequestSignal(request, response, (signal) =>

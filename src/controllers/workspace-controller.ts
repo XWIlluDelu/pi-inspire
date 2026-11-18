@@ -2,14 +2,18 @@ import type { ProjectDirEntry } from "../../shared/contracts";
 import { type Api, ApiError, type ProjectFileResult } from "../api";
 import { recoverableRead } from "../recovery-backoff";
 
+interface DirectoryLevel {
+  entries?: ProjectDirEntry[];
+  truncated?: boolean;
+  error?: string;
+}
+
 export interface WorkspaceBrowserState {
   workspaceShowHidden: boolean;
-  workspaceTruncatedDirs: Record<string, boolean>;
   workspaceSearchTruncated: boolean;
-  workspaceLevels: Record<string, ProjectDirEntry[]>;
+  workspaceLevels: ReadonlyMap<string, DirectoryLevel>;
   workspaceExpandedDirs: string[];
-  workspaceLoadingDirs: string[];
-  workspaceDirectoryErrors: Record<string, string>;
+  workspaceDirectoryLoading: boolean;
   workspaceQuery: string;
   workspaceMatches: ProjectFileResult[];
   workspaceSearchLoading: boolean;
@@ -21,12 +25,10 @@ export interface WorkspaceBrowserState {
 export function emptyWorkspaceBrowserState(): WorkspaceBrowserState {
   return {
     workspaceShowHidden: false,
-    workspaceTruncatedDirs: {},
     workspaceSearchTruncated: false,
-    workspaceLevels: {},
+    workspaceLevels: new Map(),
     workspaceExpandedDirs: [],
-    workspaceLoadingDirs: [],
-    workspaceDirectoryErrors: {},
+    workspaceDirectoryLoading: false,
     workspaceQuery: "",
     workspaceMatches: [],
     workspaceSearchLoading: false,
@@ -101,12 +103,10 @@ export class WorkspaceController {
       // the confirmed snapshot without copying it on both sides of a switch.
       this.statesByCwd.set(current.cwd, {
         workspaceShowHidden: current.workspaceShowHidden,
-        workspaceTruncatedDirs: current.workspaceTruncatedDirs,
         workspaceSearchTruncated: current.workspaceSearchTruncated,
         workspaceLevels: current.workspaceLevels,
         workspaceExpandedDirs: current.workspaceExpandedDirs,
-        workspaceLoadingDirs: [],
-        workspaceDirectoryErrors: current.workspaceDirectoryErrors,
+        workspaceDirectoryLoading: false,
         workspaceQuery: current.workspaceQuery,
         workspaceMatches: current.workspaceMatches,
         workspaceSearchLoading: current.workspaceSearchLoading,
@@ -162,26 +162,22 @@ export class WorkspaceController {
     const api = this.host.api();
     const before = this.host.state();
     const { sessionId, cwd, workspaceLevels } = before;
+    const previous = workspaceLevels.get(dir);
     if (
       !api ||
       !sessionId ||
       !cwd ||
       this.directoryRequests.has(dir) ||
-      (!options.refresh &&
-        Object.hasOwn(workspaceLevels, dir) &&
-        !before.workspaceDirectoryErrors[dir])
+      (!options.refresh && previous?.entries && !previous.error)
     )
       return;
     const request = recoverableRead(() => this.owns(api, sessionId, cwd));
     this.directoryRequests.set(dir, request);
-    const errors = { ...before.workspaceDirectoryErrors };
-    delete errors[dir];
-    this.host.patch({
-      workspaceLoadingDirs: [...new Set([...before.workspaceLoadingDirs, dir])],
-      workspaceDirectoryErrors: errors,
-    });
+    if (!before.workspaceDirectoryLoading)
+      this.host.patch({ workspaceDirectoryLoading: true });
+    let level: DirectoryLevel | undefined;
     try {
-      const response = await request.read((signal) =>
+      level = await request.read((signal) =>
         api.json(
           "listFiles",
           {
@@ -195,39 +191,22 @@ export class WorkspaceController {
           signal,
         ),
       );
-      if (!request.current()) return;
-      const current = this.host.state();
-      this.host.patch({
-        workspaceLevels: {
-          ...current.workspaceLevels,
-          [dir]: response.entries,
-        },
-        workspaceTruncatedDirs: {
-          ...current.workspaceTruncatedDirs,
-          [dir]: Boolean(response.truncated),
-        },
-      });
     } catch (error) {
       if (!request.current()) return;
       if (error instanceof ApiError && error.status === 401) {
         this.host.handleAuthFailure();
         return;
       }
-      const current = this.host.state();
-      this.host.patch({
-        workspaceDirectoryErrors: {
-          ...current.workspaceDirectoryErrors,
-          [dir]: messageOf(error, "Directory unavailable"),
-        },
-      });
+      level = { ...previous, error: messageOf(error, "Directory unavailable") };
     } finally {
       if (this.directoryRequests.get(dir) === request) {
         this.directoryRequests.delete(dir);
-        const current = this.host.state();
+        let levels = this.host.state().workspaceLevels;
+        if (level && request.current())
+          levels = new Map(levels).set(dir, level);
         this.host.patch({
-          workspaceLoadingDirs: current.workspaceLoadingDirs.filter(
-            (path) => path !== dir,
-          ),
+          workspaceLevels: levels,
+          workspaceDirectoryLoading: this.directoryRequests.size > 0,
         });
       }
     }
@@ -239,8 +218,7 @@ export class WorkspaceController {
     if (expanded.has(dir)) expanded.delete(dir);
     else {
       expanded.add(dir);
-      if (!Object.hasOwn(state.workspaceLevels, dir))
-        void this.loadDirectory(dir);
+      void this.loadDirectory(dir);
     }
     this.host.patch({ workspaceExpandedDirs: [...expanded] });
   }
@@ -254,10 +232,6 @@ export class WorkspaceController {
       workspaceExpandedDirs: [...expanded],
       workspaceRevealRequest: { path, nonce: ++this.revealNonce },
     });
-    for (const dir of ["", ...parents]) {
-      if (!Object.hasOwn(state.workspaceLevels, dir))
-        void this.loadDirectory(dir);
-    }
   }
 
   consumeRevealRequest(nonce: number): boolean {
@@ -347,8 +321,7 @@ export class WorkspaceController {
     this.cancelRequests();
     const generation = this.refreshGeneration;
     this.host.patch({
-      workspaceLoadingDirs: [],
-      workspaceDirectoryErrors: {},
+      workspaceDirectoryLoading: false,
       workspaceSearchError: null,
       workspaceSearchLoading: Boolean(query.trim()),
     });

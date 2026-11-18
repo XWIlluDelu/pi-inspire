@@ -15,6 +15,7 @@ import type {
   GitFileChange,
   GitHead,
   GitPathIdentity,
+  GitStatusDetail,
   GitStatusResponse,
   GitSubmoduleState,
 } from "../shared/contracts.js";
@@ -206,7 +207,6 @@ function submoduleState(field: string): GitSubmoduleState | undefined {
 }
 
 const MAX_BRANCH_REF_BYTES = 4_096;
-const MAX_BRANCH_AB_BYTES = 64;
 
 function validBranchRef(value: Buffer): boolean {
   if (value.length === 0 || value.length > MAX_BRANCH_REF_BYTES) return false;
@@ -235,25 +235,9 @@ function validBranchRef(value: Buffer): boolean {
     );
 }
 
-function validBranchAb(value: Buffer): boolean {
-  if (
-    value.length === 0 ||
-    value.length > MAX_BRANCH_AB_BYTES ||
-    value.some((byte) => byte > 0x7f)
-  )
-    return false;
-  const text = value.toString("ascii");
-  if (text === "+? -?") return true;
-  const match = /^\+([0-9]+) -([0-9]+)$/.exec(text);
-  if (!match) return false;
-  return [match[1], match[2]].every((count) => {
-    const numeric = Number(count);
-    return Number.isSafeInteger(numeric) && numeric >= 0;
-  });
-}
-
 interface ParsedRepository {
-  response: Extract<GitStatusResponse, { kind: "repository" }>;
+  head: GitHead;
+  files: GitFileChange[];
 }
 
 export function parsePorcelainV2(
@@ -270,48 +254,28 @@ export function parsePorcelainV2(
     .map((part) => Buffer.from(part, "latin1"));
   let branchOid: string | undefined;
   let branchHead: string | undefined;
-  let branchUpstreamSeen = false;
-  let branchAbSeen = false;
   const files: GitFileChange[] = [];
   const seenIds = new Map<string, GitFileChange>();
-  let total = 0;
 
   for (let index = 0; index < records.length; index += 1) {
     const record = records[index]!;
-    if (record.subarray(0, 13).toString("ascii") === "# branch.oid ") {
-      if (branchOid !== undefined)
-        throw new GitInspectionError("Git returned duplicate branch data");
-      const value = record.subarray(13);
-      if (value.length === 0 || value.some((byte) => byte > 0x7f)) {
-        throw new GitInspectionError("Git returned malformed branch data");
+    if (record[0] === 0x23 && record[1] === 0x20) {
+      // Porcelain v2 headers are extensible. Only HEAD identity enters this view.
+      const space = record.indexOf(0x20, 2);
+      const end = space < 0 ? record.length : space;
+      const key = record.toString("latin1", 2, end);
+      const value = record.subarray(end + 1);
+      if (key === "branch.oid") {
+        if (branchOid !== undefined)
+          throw new GitInspectionError("Git returned duplicate branch data");
+        branchOid = value.toString("latin1");
+      } else if (key === "branch.head") {
+        if (branchHead !== undefined)
+          throw new GitInspectionError("Git returned duplicate branch data");
+        if (!(value.equals(Buffer.from("(detached)")) || validBranchRef(value)))
+          throw new GitInspectionError("Git returned malformed branch data");
+        branchHead = controlSafeDisplay(value);
       }
-      branchOid = value.toString("ascii");
-      continue;
-    }
-    if (record.subarray(0, 14).toString("ascii") === "# branch.head ") {
-      if (branchHead !== undefined)
-        throw new GitInspectionError("Git returned duplicate branch data");
-      const value = record.subarray(14);
-      if (!(value.equals(Buffer.from("(detached)")) || validBranchRef(value))) {
-        throw new GitInspectionError("Git returned malformed branch data");
-      }
-      branchHead = controlSafeDisplay(value);
-      continue;
-    }
-    if (record.subarray(0, 18).toString("ascii") === "# branch.upstream ") {
-      if (branchUpstreamSeen)
-        throw new GitInspectionError("Git returned duplicate branch data");
-      branchUpstreamSeen = true;
-      if (!validBranchRef(record.subarray(18)))
-        throw new GitInspectionError("Git returned malformed branch data");
-      continue;
-    }
-    if (record.subarray(0, 12).toString("ascii") === "# branch.ab ") {
-      if (branchAbSeen)
-        throw new GitInspectionError("Git returned duplicate branch data");
-      branchAbSeen = true;
-      if (!validBranchAb(record.subarray(12)))
-        throw new GitInspectionError("Git returned malformed branch data");
       continue;
     }
     const type = String.fromCharCode(record[0] ?? 0);
@@ -383,7 +347,6 @@ export function parsePorcelainV2(
     } else {
       throw new GitInspectionError("Git returned an unsupported status record");
     }
-    total += 1;
     const previous = seenIds.get(change.path.id);
     if (previous) {
       // Git legitimately emits D + ? when an index deletion leaves a file on
@@ -394,7 +357,6 @@ export function parsePorcelainV2(
         !previous.untracked
       ) {
         previous.untracked = true;
-        total -= 1;
         continue;
       }
       throw new GitInspectionError("Git returned duplicate path identities");
@@ -405,10 +367,6 @@ export function parsePorcelainV2(
 
   if (branchOid === undefined || branchHead === undefined)
     throw new GitInspectionError("Git omitted branch identity");
-  if (branchUpstreamSeen !== branchAbSeen)
-    throw new GitInspectionError(
-      "Git returned incomplete branch tracking data",
-    );
   if (
     branchOid !== "(initial)" &&
     !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(branchOid)
@@ -425,14 +383,7 @@ export function parsePorcelainV2(
   } else {
     head = { kind: "branch", name: branchHead, oid: branchOid };
   }
-  const response: ParsedRepository["response"] = {
-    kind: "repository",
-    head,
-    files,
-    total,
-    truncated: total > files.length,
-  };
-  return { response };
+  return { head, files };
 }
 
 function decodePatchLines(
@@ -717,11 +668,9 @@ export class GitInspectionService {
     inspected: InspectionRepository,
     runner: GitRunner,
     signal?: AbortSignal,
-  ): Promise<void> {
-    const native = new Map(
-      inspected.response.files.map((file) => [file.path.id, file]),
-    );
-    const head = inspected.response.head;
+  ): Promise<Extract<GitStatusDetail, { kind: "repository" }>> {
+    const native = new Map(inspected.files.map((file) => [file.path.id, file]));
+    const { head } = inspected;
     // hash-object without -w computes the format-specific empty tree ID and
     // never writes an object or touches the user's index.
     inspected.comparisonBase =
@@ -848,7 +797,10 @@ export class GitInspectionService {
         }
       }
     }
+    const files: GitFileChange[] = [];
+    let conflicts = 0;
     for (const file of net.values()) {
+      if (file.conflict) conflicts += 1;
       if (
         file.worktree?.kind === "renamed" &&
         file.worktree.originalPath &&
@@ -857,22 +809,30 @@ export class GitInspectionService {
         // The source still exists: this is a new destination, not a rename.
         file.worktree = { kind: "added" };
       }
+      if (files.length < MAX_GIT_STATUS_FILES) files.push(file);
     }
-    const files = [...net.values()].slice(0, MAX_GIT_STATUS_FILES);
-    inspected.response = {
-      ...inspected.response,
+    return {
+      kind: "repository",
+      head,
       files,
       total: net.size,
+      conflicts,
       truncated: net.size > files.length,
     };
   }
 
-  async status(cwd: string, signal?: AbortSignal): Promise<GitStatusResponse> {
+  async status(
+    cwd: string,
+    signal?: AbortSignal,
+    view?: "summary",
+  ): Promise<GitStatusResponse> {
     return this.withRunner(cwd, async (runner) => {
       const inspected = await this.inspect(cwd, signal, runner);
       if (!inspected) return { kind: "not-repository" };
-      await this.projectWorktree(inspected, runner, signal);
-      return inspected.response;
+      const detail = await this.projectWorktree(inspected, runner, signal);
+      if (view !== "summary") return detail;
+      const { kind, head, total, conflicts } = detail;
+      return { kind, head, total, conflicts };
     });
   }
 
@@ -892,10 +852,8 @@ export class GitInspectionService {
       const inspected = await this.inspect(cwd, signal, runner);
       if (!inspected)
         throw requestError("That session is not in a Git repository", 409);
-      await this.projectWorktree(inspected, runner, signal);
-      const change = inspected.response.files.find(
-        (file) => file.path.id === pathId,
-      );
+      const { files } = await this.projectWorktree(inspected, runner, signal);
+      const change = files.find((file) => file.path.id === pathId);
       if (!change || !(change.conflict ?? change.worktree))
         throw requestError("That path is not present in fresh status", 409);
       const base = { path: change.path };

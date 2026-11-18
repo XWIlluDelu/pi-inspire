@@ -8,15 +8,10 @@ import {
   useRef,
 } from "react";
 import type { GitFileChange } from "../../shared/contracts";
-import { gitDecorationForDirectory } from "../git-presentation";
+import type { workspaceGitChanges } from "../git-presentation";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import { inspectedFileTab } from "../resource-preview";
-import {
-  gitChangeForWorkspacePath,
-  shallowEqual,
-  store,
-  useAppState,
-} from "../store";
+import { shallowEqual, store, useAppState } from "../store";
 import { FileIndexRow } from "./FileIndexRow";
 import { HiddenFilesToggle } from "./HiddenFilesToggle";
 import { PiLoader } from "./PiLoader";
@@ -144,19 +139,21 @@ const WorkspaceFileRow = memo(function WorkspaceFileRow({
   );
 });
 
-export function WorkspaceTree() {
+type WorkspaceGitProps = { changes: ReturnType<typeof workspaceGitChanges> };
+
+export const WorkspaceTree = memo(function WorkspaceTree({
+  changes,
+}: WorkspaceGitProps) {
   const state = useAppState(
     (source) => ({
       sessionId: source.sessionId,
       cwd: source.cwd,
       workspaceExpandedDirs: source.workspaceExpandedDirs,
       workspaceLevels: source.workspaceLevels,
-      workspaceLoadingDirs: source.workspaceLoadingDirs,
-      workspaceDirectoryErrors: source.workspaceDirectoryErrors,
-      workspaceTruncatedDirs: source.workspaceTruncatedDirs,
+      workspaceDirectoryLoading: source.workspaceDirectoryLoading,
+      transportGeneration: source.transportGeneration,
       workspaceRevealRequest: source.workspaceRevealRequest,
       selectedPath: selectedWorkspacePath(source),
-      gitStatus: source.gitStatus,
     }),
     shallowEqual,
   );
@@ -169,33 +166,9 @@ export function WorkspaceTree() {
 
   useEffect(() => {
     if (!state.sessionId || !state.cwd) return;
-    for (const dir of ["", ...state.workspaceExpandedDirs]) {
-      if (
-        !Object.prototype.hasOwnProperty.call(state.workspaceLevels, dir) &&
-        !state.workspaceLoadingDirs.includes(dir) &&
-        !state.workspaceDirectoryErrors[dir]
-      )
-        void store.loadWorkspaceDirectory(dir);
-    }
-  }, [
-    state.cwd,
-    state.sessionId,
-    state.workspaceDirectoryErrors,
-    state.workspaceExpandedDirs,
-    state.workspaceLevels,
-    state.workspaceLoadingDirs,
-  ]);
-
-  // Returning to a workspace revalidates its failed visible reads once. An
-  // error arriving in this owner is handled by the controller's bounded retry.
-  useEffect(() => {
-    if (!state.sessionId || !state.cwd) return;
-    const current = store.getState();
-    for (const dir of ["", ...current.workspaceExpandedDirs]) {
-      if (current.workspaceDirectoryErrors[dir])
-        void store.loadWorkspaceDirectory(dir);
-    }
-  }, [state.cwd, state.sessionId]);
+    for (const dir of ["", ...store.getState().workspaceExpandedDirs])
+      void store.loadWorkspaceDirectory(dir);
+  }, [state.cwd, state.sessionId, state.transportGeneration]);
 
   useLayoutEffect(() => {
     const request = state.workspaceRevealRequest;
@@ -209,8 +182,7 @@ export function WorkspaceTree() {
   }, [state.workspaceLevels, state.workspaceRevealRequest]);
 
   const renderLevel = (dir: string, depth: number): React.ReactNode => {
-    const entries = state.workspaceLevels[dir];
-    const error = state.workspaceDirectoryErrors[dir];
+    const { entries, error, truncated } = state.workspaceLevels.get(dir) ?? {};
     const indent = { paddingLeft: `${8 + depth * 14}px` };
     const failure = error ? (
       <button
@@ -240,12 +212,12 @@ export function WorkspaceTree() {
     return (
       <>
         {failure}
-        {entries.length === 0 && !state.workspaceTruncatedDirs[dir] ? (
+        {entries.length === 0 && !truncated ? (
           <div className="workspace-tree__status" style={indent}>
             Empty
           </div>
         ) : null}
-        {state.workspaceTruncatedDirs[dir] ? (
+        {truncated ? (
           <div className="workspace-tree__status" role="status" style={indent}>
             Partial directory listing.
           </div>
@@ -259,12 +231,12 @@ export function WorkspaceTree() {
                 path={path}
                 name={entry.name}
                 selectedPath={selectedPath}
-                change={gitChangeForWorkspacePath(state.gitStatus, path)}
+                change={changes.files.get(path)}
                 depth={depth}
               />
             );
           const open = expanded.has(path);
-          const rollup = gitDecorationForDirectory(state.gitStatus, path);
+          const rollup = changes.directories.get(path);
           const rollupLabel = rollup
             ? rollup === "conflict"
               ? "Contains conflicts"
@@ -317,7 +289,7 @@ export function WorkspaceTree() {
       className="workspace-tree"
       role="region"
       aria-label="Workspace file tree"
-      aria-busy={state.workspaceLoadingDirs.length > 0}
+      aria-busy={state.workspaceDirectoryLoading}
       ref={rootRef}
     >
       {state.sessionId && state.cwd ? (
@@ -327,9 +299,11 @@ export function WorkspaceTree() {
       )}
     </div>
   );
-}
+});
 
-export function WorkspaceSearchResults() {
+export const WorkspaceSearchResults = memo(function WorkspaceSearchResults({
+  changes,
+}: WorkspaceGitProps) {
   const state = useAppState(
     (source) => ({
       workspaceQuery: source.workspaceQuery,
@@ -338,7 +312,6 @@ export function WorkspaceSearchResults() {
       workspaceMatches: source.workspaceMatches,
       workspaceSearchTruncated: source.workspaceSearchTruncated,
       selectedPath: selectedWorkspacePath(source),
-      gitStatus: source.gitStatus,
     }),
     shallowEqual,
   );
@@ -384,7 +357,7 @@ export function WorkspaceSearchResults() {
             path={file.path}
             name={file.name}
             selectedPath={selectedPath}
-            change={gitChangeForWorkspacePath(state.gitStatus, file.path)}
+            change={changes.files.get(file.path)}
             showPath
             query={state.workspaceQuery}
           />
@@ -392,4 +365,4 @@ export function WorkspaceSearchResults() {
       )}
     </div>
   );
-}
+});

@@ -447,17 +447,26 @@ export type GitHead =
   | { kind: "unborn"; name: string }
   | { kind: "detached"; oid: string };
 
-export type GitStatusResponse =
-  | { kind: "not-repository" }
-  | {
-      kind: "repository";
-      head: GitHead;
+type GitNotRepository = { kind: "not-repository" };
+
+interface GitRepositorySummary {
+  kind: "repository";
+  head: GitHead;
+  /** Worktree change and conflict counts before projecting the bounded file list. */
+  total: number;
+  conflicts: number;
+}
+
+export type GitStatusSummary = GitNotRepository | GitRepositorySummary;
+
+export type GitStatusDetail =
+  | GitNotRepository
+  | (GitRepositorySummary & {
       files: GitFileChange[];
-      /** Total changed identities parsed before bounded projection. */
-      total: number;
-      /** True when `files` is only the first bounded projection. */
       truncated: boolean;
-    };
+    });
+
+export type GitStatusResponse = GitStatusSummary | GitStatusDetail;
 
 export interface GitDiffLine {
   kind: "meta" | "hunk" | "context" | "add" | "delete";

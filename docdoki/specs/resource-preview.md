@@ -179,14 +179,11 @@ revoked access replaces the old preview with its actual failure. Authority repla
 inherits old content. Refresh retires interactive HTML immediately, even while static content stays
 visible; recovery does not restart execution.
 
-Explicit Refresh renews Recent and probes in Files, or the selected preview in a file tab, alongside
-workspace discovery without requesting Git status. The existing Files Refresh is the explicit
-refresh action. Compatible transcript appends refresh Recent only while Browse is visible and keep
-previous rows until success; a visible preview keeps its reader mounted and does not load hidden
-Recent. Transient Recent reads recover automatically without replacing retained rows with retry
-controls. An initial read stays loading during recovery; after persistent failure its local empty
-surface says Recent is unavailable rather than claiming there are no references. Pane close or
-owner changes cancel pending recovery.
+Files Refresh renews workspace discovery and the visible Recent list or file preview.
+Transcript appends refresh Recent only while browsing without an active search. Previous rows stay
+visible until refreshed. Leaving Recent for search, a file or another pane cancels its list and
+probe reads. Transient failure keeps confirmed rows; if the initial read still fails after retry,
+the list reports that Recent is unavailable.
 
 Selection replacement, pane close, session/view change, or API/transport replacement retires
 affected requests and object URLs. Cancellation closes the exact opened file even if it arrives
@@ -432,6 +429,10 @@ parameter. Staging is not a separate browsing mode. Changes canceled by later wo
 not remain as phantom rows. An unborn repository compares against the empty tree. Conflicts keep
 their explicit unsupported-comparison boundary.
 
+The Host counts changes and conflicts before limiting file rows. When only the topbar needs Git
+status, the same read returns the branch identity and counts. Files discovery, Changes and a
+visible file comparison request the bounded file list, whose response also supplies the counts.
+
 Files and Changes share the active file tab and its reading mode. An exact workspace path can
 identify the same tab from either entry point. Opaque Git paths use their Git ID for the comparison;
 the display name is a label. Body and comparison reads have separate authority, so a deleted or
@@ -477,7 +478,7 @@ claim that the file is clean.
 - Files discovery, Changes and a visible diff use four-second polling. Two consecutive unchanged
   successful polls extend that interval to eight seconds; a visible diff is actually reread before
   being judged unchanged. A changed result, failure, explicit refresh, owner change or visibility
-  return resets the cadence. Body-only file readers need only the twenty-second topbar summary.
+  return resets the cadence. Body-only file readers use the twenty-second topbar summary.
   Hidden pages pause polling. The next poll starts after the current read finishes. Tool completion,
   terminal command completion and Refresh queue at most one additional observation.
 - Unified-diff file headers are recognized outside hunk bodies. Hunk lines with repeated `+` or `-`
