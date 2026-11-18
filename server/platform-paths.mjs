@@ -39,19 +39,26 @@ function absoluteEnvironmentPath(environment, key, platform) {
     : undefined;
 }
 
+function windowsInspireDirectory(home, environment, scope) {
+  const [primary, fallback] =
+    scope === "Roaming"
+      ? ["APPDATA", "LOCALAPPDATA"]
+      : ["LOCALAPPDATA", "APPDATA"];
+  const base =
+    absoluteEnvironmentPath(environment, primary, "win32") ??
+    absoluteEnvironmentPath(environment, fallback, "win32") ??
+    win32.join(home, "AppData", scope);
+  return win32.join(base, "Inspire");
+}
+
 /** Platform-native per-user configuration directory for INSΠRE. */
 export function inspireConfigDirectory(options = {}) {
   const platform = options.platform ?? process.platform;
   const environment = options.environment ?? process.env;
   const home = options.home ?? homedir();
   const { join } = pathApi(platform);
-  if (platform === "win32") {
-    const base =
-      absoluteEnvironmentPath(environment, "APPDATA", platform) ??
-      absoluteEnvironmentPath(environment, "LOCALAPPDATA", platform) ??
-      join(home, "AppData", "Roaming");
-    return join(base, "Inspire");
-  }
+  if (platform === "win32")
+    return windowsInspireDirectory(home, environment, "Roaming");
   if (platform === "darwin")
     return join(home, "Library", "Application Support", "Inspire");
   return join(
@@ -67,13 +74,8 @@ export function inspireCacheDirectory(options = {}) {
   const environment = options.environment ?? process.env;
   const home = options.home ?? homedir();
   const { join } = pathApi(platform);
-  if (platform === "win32") {
-    const base =
-      absoluteEnvironmentPath(environment, "LOCALAPPDATA", platform) ??
-      absoluteEnvironmentPath(environment, "APPDATA", platform) ??
-      join(home, "AppData", "Local");
-    return join(base, "Inspire", "Cache");
-  }
+  if (platform === "win32")
+    return join(windowsInspireDirectory(home, environment, "Local"), "Cache");
   if (platform === "darwin") return join(home, "Library", "Caches", "Inspire");
   return join(
     absoluteEnvironmentPath(environment, "XDG_CACHE_HOME", platform) ??
@@ -88,13 +90,8 @@ export function inspireStateDirectory(options = {}) {
   const environment = options.environment ?? process.env;
   const home = options.home ?? homedir();
   const { join } = pathApi(platform);
-  if (platform === "win32") {
-    const base =
-      absoluteEnvironmentPath(environment, "LOCALAPPDATA", platform) ??
-      absoluteEnvironmentPath(environment, "APPDATA", platform) ??
-      join(home, "AppData", "Local");
-    return join(base, "Inspire");
-  }
+  if (platform === "win32")
+    return windowsInspireDirectory(home, environment, "Local");
   if (platform === "darwin")
     return join(home, "Library", "Application Support", "Inspire");
   return join(

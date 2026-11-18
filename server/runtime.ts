@@ -2186,6 +2186,11 @@ export class RuntimeController extends EventEmitter {
     this.projectionCoordinator.attach(slot, projection);
   }
 
+  private retainedCatalogSlot(id: string): RuntimeSlot | undefined {
+    const slot = this.slots.get(id);
+    return slot && (slot.projection || slot.process) ? slot : undefined;
+  }
+
   /** Read-only admission can refresh a stale catalog once. Never retry a
    * destructive operation or replace an already-owned live projection here. */
   private async prepareCatalogSlot(id: string): Promise<RuntimeSlot> {
@@ -4536,11 +4541,8 @@ export class RuntimeController extends EventEmitter {
     inherit = false,
   ): Promise<NativeModelCatalog> {
     this.assertMaintenanceAvailable();
-    const retained = this.slots.get(sessionId);
     const slot =
-      retained && (retained.projection || retained.process)
-        ? retained
-        : await this.prepareCatalogSlot(sessionId);
+      this.retainedCatalogSlot(sessionId) ?? (await this.prepareCatalogSlot(sessionId));
     return this.useSlot(slot, async () => {
       this.requireWorkspace(slot);
       if (!slot.process && this.externalSessions)
@@ -4844,11 +4846,8 @@ export class RuntimeController extends EventEmitter {
   async snapshot(sessionId: string | null): Promise<ActiveSnapshot> {
     this.assertMaintenanceAvailable();
     if (sessionId === null) return this.emptySnapshot();
-    const retained = this.slots.get(sessionId);
     const slot =
-      retained && (retained.projection || retained.process)
-        ? retained
-        : await this.prepareCatalogSlot(sessionId);
+      this.retainedCatalogSlot(sessionId) ?? (await this.prepareCatalogSlot(sessionId));
     return this.useSlot(slot, async () => {
       if (!slot.mutationQueue.pending && this.sessionViewObservers.has(slot.id))
         await this.observeExternalOwner(slot);
