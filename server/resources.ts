@@ -651,7 +651,7 @@ export class ResourceStore {
     }
 
     let path = await realpath(lexicalPath).catch(() => null);
-    if (path === null && lexicalInside) invalidateProjectFiles(context.cwd);
+    if (path === null && lexicalInside) invalidateProjectFiles();
     // Recover shorthand only when a complete filesystem search proves
     // uniqueness. A bounded/failed subtree cannot establish absence.
     const name =
@@ -756,7 +756,7 @@ export class ResourceStore {
       const code = (error as NodeJS.ErrnoException).code;
       if (code === "ENOENT") {
         if (resource.workspaceRoot)
-          invalidateProjectFiles(resource.workspaceRoot);
+          invalidateProjectFiles();
         throw requestError("The referenced file was not found", 404);
       }
       if (

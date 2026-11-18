@@ -428,7 +428,7 @@ describe("ResourceStore", () => {
     expect(await readResource(descriptor)).toBe("kernel");
     const duplicate = "other/kernel.py";
     await writeFile(join(project, duplicate), "duplicate");
-    projectFiles.invalidateProjectFiles(project);
+    projectFiles.invalidateProjectFiles();
     await expect(resources.resolve(source, "kernel.py")).rejects.toMatchObject({
       status: 409,
       matches: expect.arrayContaining([selected, duplicate]),
@@ -478,7 +478,7 @@ describe("ResourceStore", () => {
     await writeFile(join(project, "literal"), "different file");
     const descriptor = await resources.resolve(source, selected, selected);
     await writeFile(join(project, ".gitignore"), `${selected}\n`);
-    projectFiles.invalidateProjectFiles(project);
+    projectFiles.invalidateProjectFiles();
     await resources.authorize(descriptor.id, source);
     expect(await readResource(descriptor)).toBe(`${selected}\n`);
   });

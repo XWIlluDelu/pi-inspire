@@ -1072,7 +1072,7 @@ export function createInspireServer(deps: AppDependencies): {
     routes.listFiles,
     ({ query: { sessionId, dir, refresh, showHidden } }) => {
       const cwd = openSessionCwd(sessionId);
-      if (refresh) invalidateProjectFiles(cwd);
+      if (refresh) invalidateProjectFiles();
       return listProjectDirectory(cwd, dir, showHidden);
     },
   );

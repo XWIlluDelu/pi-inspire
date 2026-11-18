@@ -48,6 +48,16 @@ export async function listProjectDirectory(
   const path = await realpath(requested);
   if ((await filesystemRelativePath(root, path)) === null)
     throw requestError("Directory is outside the project", 403);
+  return readProjectDirectory(root, requested, path, showHidden, cwd);
+}
+
+async function readProjectDirectory(
+  root: string,
+  requested: string,
+  path: string,
+  showHidden: boolean,
+  cwd = root,
+): Promise<{ entries: ProjectDirEntry[]; truncated: boolean }> {
   const before = await stat(path, { bigint: true });
   if (!before.isDirectory()) throw requestError("Not a directory", 400);
   const hidden = showHidden
@@ -128,14 +138,20 @@ async function scanFilesystem(
     }
     const dir = pending[index]!;
     try {
-      const canonical = await realpath(resolve(root, dir));
+      const requested = resolve(root, dir);
+      const canonical = await realpath(requested);
       if ((await filesystemRelativePath(root, canonical)) === null) {
         truncated = true;
         continue;
       }
       if (visited.has(canonical)) continue; // Directory symlink cycles/aliases.
       visited.add(canonical);
-      const level = await listProjectDirectory(root, dir, showHidden);
+      const level = await readProjectDirectory(
+        root,
+        requested,
+        canonical,
+        showHidden,
+      );
       truncated ||= level.truncated;
       for (const entry of level.entries) {
         const path = dir ? `${dir}/${entry.name}` : entry.name;
@@ -192,16 +208,15 @@ export async function searchProjectFiles(
 ): Promise<{ files: FileMatch[]; truncated: boolean }> {
   const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const scan = await projectPaths(cwd, showHidden);
-  const matches = scan.paths.filter((path) =>
-    words.every((word) => path.toLowerCase().includes(word)),
-  );
   const count = Math.min(100, Math.max(1, limit));
-  return {
-    files: matches
-      .slice(0, count)
-      .map((path) => ({ path, name: basename(path) })),
-    truncated: scan.truncated || matches.length > count,
-  };
+  const files: FileMatch[] = [];
+  for (const path of scan.paths) {
+    const lower = path.toLowerCase();
+    if (!words.every((word) => lower.includes(word))) continue;
+    if (files.length >= count) return { files, truncated: true };
+    files.push({ path, name: basename(path) });
+  }
+  return { files, truncated: scan.truncated };
 }
 
 /** Bare-name recovery is bounded discovery, not authority. An incomplete scan
@@ -221,6 +236,6 @@ export async function workspaceBasenameMatches(
 
 /** Invalidate bounded discovery, never access authority. Small global eviction
  * also covers cwd aliases without retaining another path-identity registry. */
-export function invalidateProjectFiles(_cwd: string): void {
+export function invalidateProjectFiles(): void {
   cache.clear();
 }

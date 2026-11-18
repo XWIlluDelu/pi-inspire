@@ -23,7 +23,7 @@ async function scratch() {
 }
 afterEach(async () => {
   vi.restoreAllMocks();
-  invalidateProjectFiles("");
+  invalidateProjectFiles();
   await Promise.all(
     roots
       .splice(0)
@@ -118,7 +118,7 @@ describe("filesystem discovery, independent of Git", () => {
     expect((await searchProjectFiles(root)).files).toHaveLength(1);
     // Directory levels are read on demand, not derived from a cached file index.
     expect((await listProjectDirectory(root)).entries).toHaveLength(2);
-    invalidateProjectFiles(root);
+    invalidateProjectFiles();
     expect((await searchProjectFiles(root)).files).toHaveLength(2);
   });
 
@@ -143,7 +143,7 @@ describe("filesystem discovery, independent of Git", () => {
         return Promise.reject(new Error("unreadable fixture"));
       return original(path, options);
     });
-    invalidateProjectFiles(root);
+    invalidateProjectFiles();
     expect(await workspaceBasenameMatches(root, "one.txt")).toMatchObject({
       matches: ["one.txt"],
       truncated: true,
