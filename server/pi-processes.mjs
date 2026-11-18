@@ -289,14 +289,17 @@ export async function stopAllPiProcesses(options = {}) {
     const started = performance.now();
     let waited = 0;
     while (targets.size) {
+      const remaining = timeoutMs - Math.max(waited, performance.now() - started);
       for (const [pid, original] of targets) {
         try {
           if (!(await remains(pid, original))) targets.delete(pid);
         } catch (error) {
-          failure(pid, "cannot verify exit", error);
+          // An exiting process can lose access to its environment before its
+          // stat reports exit. Use the existing wait budget to verify it again.
+          if (remaining <= 0 || !["EACCES", "EPERM"].includes(error?.code))
+            failure(pid, "cannot verify exit", error);
         }
       }
-      const remaining = timeoutMs - Math.max(waited, performance.now() - started);
       if (!targets.size || remaining <= 0) return;
       const interval = Math.min(pollMs, remaining);
       await adapter.sleep(interval);

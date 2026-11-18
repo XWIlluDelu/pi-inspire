@@ -450,15 +450,22 @@ test("reports signal failures while still terminating the other snapshotted Pi",
   ]);
 });
 
-test("inaccessible exit verification reports failure without issuing an unchecked KILL", async () => {
-  const f = fixture([identity(10)], {
-    signal() {},
-    inspect(_pid, state) {
-      if (state.inspections.length >= 3) throw denied();
-    },
-  });
-  await assert.rejects(f.stop(), /cannot verify exit: permission denied/);
-  assert.deepEqual(f.signals, [[10, "SIGTERM"]]);
+test("observes a retiring process through a transient read denial without issuing an unchecked KILL", async () => {
+  for (const exits of [true, false]) {
+    const f = fixture([identity(10)], {
+      signal() {},
+      inspect(_pid, state) {
+        if (state.inspections.length >= 3 && state.records.size) throw denied();
+      },
+      sleep(_ms, state) {
+        if (exits) state.records.delete(10);
+      },
+    });
+    const stopped = f.stop({ graceMs: 1_000, pollMs: 500 });
+    if (exits) await stopped;
+    else await assert.rejects(stopped, /cannot verify exit: permission denied/);
+    assert.deepEqual(f.signals, [[10, "SIGTERM"]]);
+  }
 });
 
 test("waits for KILL to take effect and errors if the original process survives", async () => {
