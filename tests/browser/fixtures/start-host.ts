@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
-import { delimiter, dirname, join, resolve } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import { executablePathDirectories } from "../../../server/platform-environment.mjs";
 import { prepareWorkbenchEnvironment } from "../../fixtures/workbench-environment.js";
 
@@ -47,10 +47,7 @@ for (const [key, value] of Object.entries(env)) {
   else process.env[key] = value;
 }
 Object.assign(process.env, hostEnvironment);
-if (process.platform === "win32")
-  process.env.PATH = [process.env.PATH, dirname(process.execPath), gitDirectory]
-    .filter(Boolean)
-    .join(delimiter);
+if (gitDirectory) process.env.PATH += `${delimiter}${gitDirectory}`;
 // Changes acceptance inspects an actual disposable Git index and working tree.
 const git = (args: string[]) =>
   execFileSync("git", ["-C", cwd, ...args], {

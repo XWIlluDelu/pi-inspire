@@ -460,8 +460,11 @@ for (const platform of ["Win32", "MacIntel"]) {
     await selectTerminalTab(page, firstId, firstTitle);
     await expect(terminalStatus(page)).toBeVisible();
     const input = terminalInput(page);
+    const interruptStart = wire.inputs.length;
     await input.press("Control+c");
-    await expect.poll(bytes).toBe("\u0003");
+    await expect.poll(() =>
+      wire.inputs.slice(interruptStart).filter((chunk) => chunk === "\u0003"),
+    ).toHaveLength(1);
 
     await writeTerminal(input, "COPY_ME\r\n");
     const rendered = terminalOutput(page).getByText("COPY_ME", { exact: true });
