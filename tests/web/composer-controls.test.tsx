@@ -77,9 +77,7 @@ it("announces unknown context occupancy and above-capacity usage with the known 
     );
   update(null, null);
   render(<Composer />);
-  const usage = screen.getByRole("button", {
-    name: "Session & usage, context unknown",
-  });
+  const usage = screen.getByRole("button", { name: "Session & usage, context unknown" });
   fireEvent.click(usage);
   const details = () => store.getState().commandActivities.s1?.at(-1)?.details;
   expect(details()).toContainEqual({
@@ -88,9 +86,7 @@ it("announces unknown context occupancy and above-capacity usage with the known 
     value: "— / 131,072 · Updates after the next reply",
   });
   update(196_608, 150);
-  expect(usage).toHaveAccessibleName(
-    "Session & usage, context 150 percent full",
-  );
+  expect(usage).toHaveAccessibleName("Session & usage, context 150 percent full");
   fireEvent.click(usage);
   expect(details()).toContainEqual({
     id: "context",

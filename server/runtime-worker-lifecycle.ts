@@ -31,16 +31,11 @@ import type {
 } from "./session-projection.js";
 
 const NEW_SESSION_ENTRY_MAX_COUNT = 10_000;
-const extensionSuffix = fileURLToPath(import.meta.url).endsWith(".ts")
-  ? "ts"
-  : "js";
+const extensionSuffix = fileURLToPath(import.meta.url).endsWith(".ts") ? "ts" : "js";
 const workerExtensions = [
   `./extensions/inspire-branch-bridge.${extensionSuffix}`,
   `../extensions/attach-control.${extensionSuffix}`,
-].flatMap((path) => [
-  "--extension",
-  fileURLToPath(new URL(path, import.meta.url)),
-]);
+].flatMap((path) => ["--extension", fileURLToPath(new URL(path, import.meta.url))]);
 
 interface StartupProjectionBaseline {
   entries: readonly SessionEntry[];
@@ -114,17 +109,14 @@ export class RuntimeWorkerLifecycle {
       cwd,
       args: [...args, ...workerExtensions],
       workerId: bridge.workerId,
-      diagnostic: (level, event, fields) =>
-        this.diagnostics.record(level, event, fields),
+      diagnostic: (level, event, fields) => this.diagnostics.record(level, event, fields),
       env: {
         // An owned worker is excluded from external Pi presence.
         PI_ATTACH_CONTROL_TAG: bridge.workerId,
         INSPIRE_BRANCH_COMMAND: bridge.command,
         INSPIRE_BRANCH_STATUS_KEY: bridge.statusKey,
         INSPIRE_BRANCH_WORKER_ID: bridge.workerId,
-        ...(resume && {
-          INSPIRE_NATIVE_START_COUNT: String(resume.entryCount),
-        }),
+        ...(resume && { INSPIRE_NATIVE_START_COUNT: String(resume.entryCount) }),
       },
       ...(resume && { sessionId: resume.sessionId }),
     });
@@ -174,10 +166,7 @@ export class RuntimeWorkerLifecycle {
       if (attest) await attest(rpc);
       this.host.assertNotClosing();
       if (attest && (slot.process !== rpc || !rpc.available))
-        throw requestError(
-          "Pi runtime stopped during startup attestation",
-          503,
-        );
+        throw requestError("Pi runtime stopped during startup attestation", 503);
     } catch (error) {
       // A reopened worker may have run startup hooks. Require an explicit retry.
       if (attest) slot.readOnlyReason = null;
@@ -273,8 +262,7 @@ export class RuntimeWorkerLifecycle {
   ): Promise<void> {
     const rpc = slot.process;
     if (!rpc) {
-      if (reason === "closed")
-        this.collaborators.extensionUi.clear(slot, reason);
+      if (reason === "closed") this.collaborators.extensionUi.clear(slot, reason);
       if (slot.stopping) await slot.stopping;
       return;
     }
@@ -354,7 +342,9 @@ export class RuntimeWorkerLifecycle {
     }
   }
 
-  async ensureFreshWriter(slot: RuntimeSlot): Promise<PiRpcProcess> {
+  async ensureFreshWriter(
+    slot: RuntimeSlot,
+  ): Promise<PiRpcProcess> {
     await this.host.reconcile(slot, true);
     if (!slot.projection || slot.projection.health.status === "error") {
       throw requestError(
@@ -396,15 +386,10 @@ export class RuntimeWorkerLifecycle {
     try {
       const baseline = captureStartupProjection(projection);
       const bridge = newBridgeIdentity();
-      rpc = await this.createWorker(
-        slot.cwd,
-        ["--session", slot.sessionPath],
-        bridge,
-        {
-          sessionId: slot.id,
-          entryCount: baseline.entries.length,
-        },
-      );
+      rpc = await this.createWorker(slot.cwd, ["--session", slot.sessionPath], bridge, {
+        sessionId: slot.id,
+        entryCount: baseline.entries.length,
+      });
       this.host.assertNotClosing();
       slot.process = rpc;
       installed = true;
@@ -436,7 +421,7 @@ export class RuntimeWorkerLifecycle {
       this.publishReady(slot, rpc);
       this.host.scheduleIdleWorkerEviction();
     } catch (error) {
-      const failure = installed ? (slot.startupError ?? error) : error;
+      const failure = installed ? slot.startupError ?? error : error;
       if (installed && slot.process === rpc) {
         await this.stop(slot);
         // Ownership observation retains read-only state; actual preparation or
@@ -539,10 +524,7 @@ export class RuntimeWorkerLifecycle {
         return fail();
       }
     })();
-    const state = await rpc.request<{
-      sessionId?: unknown;
-      sessionFile?: unknown;
-    }>({
+    const state = await rpc.request<{ sessionId?: unknown; sessionFile?: unknown }>({
       type: "get_state",
     });
     if (

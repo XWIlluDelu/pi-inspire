@@ -46,9 +46,7 @@ test("initial workspace loading recovers through retry", async ({ page }) => {
   await page.getByRole("button", { name: "Toggle navigation" }).click();
   const empty = page.locator(".nav .empty-state");
   await expect(empty).toContainText("No sessions yet");
-  await page
-    .getByRole("searchbox", { name: "Search sessions" })
-    .fill("no match");
+  await page.getByRole("searchbox", { name: "Search sessions" }).fill("no match");
   await expect(empty).toContainText("No sessions found");
   await page.getByRole("button", { name: "Close navigation" }).click();
   await page.unroute(catalog);
@@ -82,19 +80,13 @@ test("initial workspace loading recovers through retry", async ({ page }) => {
 test("reconnect and offline feedback fit Welcome and a narrow session, then clear on recovery", {
   tag: "@cross-browser",
 }, async ({ page }) => {
-  await page.setViewportSize({ width: 320, height: 900 });
+  await page.setViewportSize({ width: 1440, height: 900 });
   let socket!: WebSocketRoute;
-  let withheld: WebSocketRoute | undefined;
   let hold = false;
-  let offline = false;
   let ready = false;
-  await page.routeWebSocket(/\/events(?:\?|$)/, async (client) => {
+  await page.routeWebSocket(/\/events(?:\?|$)/, (client) => {
     socket = client;
-    if (offline) return client.close();
-    if (hold) {
-      withheld = client;
-      return;
-    }
+    if (hold) return;
     const server = client.connectToServer();
     server.onMessage((message) => {
       if (JSON.parse(String(message)).type === "snapshot") ready = true;
@@ -104,51 +96,31 @@ test("reconnect and offline feedback fit Welcome and a narrow session, then clea
   });
   await pairedPage(page);
   await expect.poll(() => ready).toBe(true);
-  const navigation = page.getByRole("button", {
-    name: "Toggle navigation",
-    exact: true,
-  });
-  await expect(navigation).toBeVisible();
-  await expect(
-    page.getByRole("textbox", { name: "First message", exact: true }),
-  ).toBeVisible();
 
   hold = true;
   ready = false;
-  await socket.close();
+  socket.close();
   const topbar = page.locator(".topbar");
   const reconnect = topbar.getByTitle("Reconnecting", { exact: true });
   await expect(reconnect).toBeVisible();
   await expect(reconnect).toHaveAttribute("role", "status");
 
+  await page.setViewportSize({ width: 320, height: 900 });
   const title = /Formula rendering and spectral analysis/;
-  await navigation.click();
-  const drawer = page.getByRole("dialog", { name: "Sessions", exact: true });
-  await expect(drawer).toBeVisible();
-  await drawer
-    .getByRole("searchbox", { name: "Search sessions" })
-    .fill(title.source);
-  await drawer
-    .locator('[data-session-id="fixture-active"] .nav__row-main')
-    .click();
+  await page.locator(".welcome").getByRole("button", { name: title }).click();
   await expect(topbar.locator(".topbar__title-button")).toHaveText(title);
   await expect(reconnect).toBeVisible();
   expect(await topbar.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(
     true,
   );
 
-  offline = true;
   await page.context().setOffline(true);
-  // Network emulation does not close a fully mocked socket. Close the
-  // withheld connection so the app can detect the failed reconnect.
-  await withheld?.close();
   const warning = topbar.getByTitle("Device offline", { exact: true });
-  await expect(warning).toBeVisible({ timeout: 15_000 });
+  await expect(warning).toBeVisible();
   await expect(reconnect).toBeHidden();
   await expect(topbar.locator(".topbar__title-button")).toHaveText(title);
 
   hold = false;
-  offline = false;
   await page.context().setOffline(false);
   await expect.poll(() => ready).toBe(true);
   await expect(reconnect).toHaveCount(0);

@@ -75,11 +75,7 @@ export async function openFixtureSession(
 
 export async function pairAndOpen(page: Page) {
   await pairedPage(page);
-  await openFixtureSession(
-    page,
-    /Review extension event lifecycle/,
-    "fixture-history",
-  );
+  await openFixtureSession(page, /Review extension event lifecycle/);
   await expect(
     page.getByRole("textbox", { name: "Message", exact: true }),
   ).toBeVisible();

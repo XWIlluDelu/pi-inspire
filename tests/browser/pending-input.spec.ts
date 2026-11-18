@@ -195,12 +195,7 @@ test("Pending Clear all keeps its explicit two-step confirmation and leaves the 
   );
   await expect(pending).toContainText("first pending instruction");
   await composer.getByRole("button", { name: "Queue", exact: true }).click();
-  await sendInput(
-    composer,
-    input,
-    "Queue after current task",
-    "second pending instruction",
-  );
+  await sendInput(composer, input, "Queue after current task", "second pending instruction");
   await input.fill("draft that must survive Clear all");
   const clear = pending.getByRole("button", {
     name: "Clear all Pending input",

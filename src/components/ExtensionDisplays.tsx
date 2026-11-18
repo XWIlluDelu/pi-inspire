@@ -70,9 +70,7 @@ export const ExtensionStatus = memo(function ExtensionStatus() {
       const text = stripTerminalSequences(status);
       return text.trim() ? [text] : [];
     });
-  return visible.length ? (
-    <ExtensionStatusReader key={sessionId} values={visible} />
-  ) : null;
+  return visible.length ? <ExtensionStatusReader key={sessionId} values={visible} /> : null;
 });
 
 function ExtensionStatusReader({ values }: { values: string[] }) {

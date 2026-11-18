@@ -5,7 +5,11 @@ import {
   hostApiFixture,
 } from "../server/fixtures/host-api";
 import { upload } from "../server/fixtures/runtime";
-import { deferred, FakeWebSocket, installFakeWebSocket } from "../web/helpers";
+import {
+  deferred,
+  FakeWebSocket,
+  installFakeWebSocket,
+} from "../web/helpers";
 import { initStore } from "../web/store-fixture";
 
 describe("Pending intent and receipt lifecycle", () => {
@@ -16,9 +20,7 @@ describe("Pending intent and receipt lifecycle", () => {
   const connect = async () => initStore(await snapshot(), authority());
   const returnPath = "/api/pending/recover";
   const receiptPath = "/api/pending/operations/";
-  const hold = (
-    intercept: typeof fetch = (input, init) => f.fetchHost(input, init),
-  ) => {
+  const hold = (intercept: typeof fetch = (input, init) => f.fetchHost(input, init)) => {
     const delivered = deferred<void>();
     const release = deferred<void>();
     vi.stubGlobal("fetch", (async (input, init) => {
@@ -48,8 +50,7 @@ describe("Pending intent and receipt lifecycle", () => {
     });
     const read = vi.fn();
     const { delivered, release } = hold((input, init) => {
-      if (!String(input).startsWith(receiptPath))
-        return f.fetchHost(input, init);
+      if (!String(input).startsWith(receiptPath)) return f.fetchHost(input, init);
       read();
       return Promise.resolve(Response.json({}, { status: 503 }));
     });
@@ -59,9 +60,7 @@ describe("Pending intent and receipt lifecycle", () => {
       await delivered.promise;
       store.recoverConnection("online");
       await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2));
-      FakeWebSocket.instances[1]!.join(await snapshot(), {
-        authorityId: authority(),
-      });
+      FakeWebSocket.instances[1]!.join(await snapshot(), { authorityId: authority() });
       await vi.waitFor(() => expect(read).toHaveBeenCalledOnce());
       expect(store.getState().pendingAction?.action).toBe("recover");
     } finally {
@@ -73,9 +72,7 @@ describe("Pending intent and receipt lifecycle", () => {
   });
 
   it("restores a held Return into its original draft after selection and bootstrap", async () => {
-    const attachment = await f.attachments.add(
-      upload("recovered.png", "image/png"),
-    );
+    const attachment = await f.attachments.add(upload("recovered.png", "image/png"));
     const recover = vi.spyOn(f.runtime, "recoverPending").mockResolvedValue({
       steering: ["first handoff"],
       followUp: [],

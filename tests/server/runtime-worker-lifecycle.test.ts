@@ -138,22 +138,18 @@ describe("worker startup and retirement", () => {
       method: "confirm",
     });
     first.emit("exit", new Error("RPC disconnected"));
-    const delivery = runtime
-      .openSession("a")
-      .then(() => runtime.prompt({ sessionId: "a", message: "after exit" }));
+    const delivery = runtime.openSession("a").then(() =>
+      runtime.prompt({ sessionId: "a", message: "after exit" }),
+    );
     try {
       await vi.waitFor(() => expect(stop).toHaveBeenCalledOnce());
       expect(workers).toHaveLength(1);
-      expect((await runtime.snapshot("a")).pendingExtensionUiRequests).toEqual(
-        [],
-      );
+      expect((await runtime.snapshot("a")).pendingExtensionUiRequests).toEqual([]);
       gate.resolve();
       await delivery;
       expect(workers).toHaveLength(2);
       first.emit("exit", new Error("Late exit from retired worker"));
-      expect(
-        (await runtime.snapshot("a")).sessionStatuses.a?.runState,
-      ).not.toBe("failed");
+      expect((await runtime.snapshot("a")).sessionStatuses.a?.runState).not.toBe("failed");
     } finally {
       gate.resolve();
       await delivery.catch(() => undefined);
@@ -280,9 +276,7 @@ describe("worker startup and retirement", () => {
       configure: (worker) => {
         if (workers.length === 0) return;
         if (workers.length === 1) {
-          worker.start = async () => {
-            throw startupError;
-          };
+          worker.start = async () => { throw startupError; };
           return;
         }
         if (workers.length <= 3) {

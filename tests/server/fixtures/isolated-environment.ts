@@ -57,7 +57,6 @@ export function isolatedTestEnvironment(
     ...(windows && programFiles
       ? { PSModulePath: win32.join(programFiles, "PowerShell", "7", "Modules") }
       : {}),
-    ...(windows ? { PATHEXT: ".COM;.EXE;.BAT;.CMD" } : {}),
     PATH: windows
       ? [
           dirname(process.execPath),

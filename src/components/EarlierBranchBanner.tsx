@@ -5,14 +5,15 @@ import { NoticeCard } from "./NoticeCard";
 import { PiLoader } from "./PiLoader";
 
 export const EarlierBranchBanner = memo(function EarlierBranchBanner() {
-  const { restoreSavedLeafId, actionId, treeError } = useAppState(
-    (state) => ({
-      restoreSavedLeafId: state.view.restoreSavedLeafId,
-      actionId: state.branchActionId,
-      treeError: state.branchTreeError,
-    }),
-    shallowEqual,
-  );
+  const { restoreSavedLeafId, actionId, treeError } =
+    useAppState(
+      (state) => ({
+        restoreSavedLeafId: state.view.restoreSavedLeafId,
+        actionId: state.branchActionId,
+        treeError: state.branchTreeError,
+      }),
+      shallowEqual,
+    );
   const [dismissed, setDismissed] = useState(false);
   const bannerRef = useRef<HTMLElement>(null);
   if (!restoreSavedLeafId || dismissed) return null;

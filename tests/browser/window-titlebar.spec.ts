@@ -104,10 +104,7 @@ test("Overlay adds a quiet corner icon, retains the centered wordmark and restor
 }, async ({ page }) => {
   const brand = page.locator(".window-titlebar__brand-button");
   await expect(brand).toBeHidden();
-  for (const [left, right, height, top] of [
-    [0, 138, 24, 0],
-    [80, 0, 32, 6],
-  ]) {
+  for (const [left, right, height, top] of [[0, 138, 24, 0], [80, 0, 32, 6]]) {
     await overlay(page, true, left, right, height, top);
     await expect(brand).toBeVisible();
     const safe = page.locator(".window-titlebar__safe");
@@ -118,16 +115,12 @@ test("Overlay adds a quiet corner icon, retains the centered wordmark and restor
       height,
     });
     const x = left ? 4 : 1276;
-    expect(
-      await page.evaluate(
-        ({ x, y }) =>
-          Boolean(document.elementFromPoint(x, y)?.closest(".window-titlebar")),
-        { x, y: top + height / 2 },
-      ),
-    ).toBe(false);
-    expect(
-      (await page.getByRole("main").boundingBox())!.y,
-    ).toBeGreaterThanOrEqual(top + height);
+    expect(await page.evaluate(({ x, y }) =>
+      Boolean(document.elementFromPoint(x, y)?.closest(".window-titlebar")),
+      { x, y: top + height / 2 },
+    )).toBe(false);
+    expect((await page.getByRole("main").boundingBox())!.y)
+      .toBeGreaterThanOrEqual(top + height);
   }
   await expect(page.locator(".nav__brand-lockup")).toBeHidden();
   await overlay(page, true);
@@ -145,6 +138,7 @@ test("Overlay adds a quiet corner icon, retains the centered wordmark and restor
   await expect(brand).toBeHidden();
   await expect(page.locator(".window-titlebar__corner-logo")).toBeHidden();
   await expect(page.locator(".nav__brand-lockup")).toBeVisible();
+
 });
 
 test("titlebar needles honor the animation toggle and reduced motion", {
@@ -156,15 +150,15 @@ test("titlebar needles honor the animation toggle and reduced motion", {
   const needles = page.locator(".window-titlebar__needle");
   if ((await brand.getAttribute("aria-pressed")) === "true")
     await brand.click();
-      await brand.click();
-      await expect(needles.first()).toBeAttached();
-      await brand.click();
-      await expect(needles).toHaveCount(0);
-    await brand.click();
+  await brand.click();
   await expect(needles.first()).toBeAttached();
-    await page.emulateMedia({ reducedMotion: "reduce" });
+  await brand.click();
   await expect(needles).toHaveCount(0);
-    await expect(brand).toHaveAttribute("aria-pressed", "true");
-    await brand.click();
+  await brand.click();
+  await expect(needles.first()).toBeAttached();
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(needles).toHaveCount(0);
+  await expect(brand).toHaveAttribute("aria-pressed", "true");
+  await brand.click();
   await expect(brand).toHaveAttribute("aria-pressed", "false");
 });

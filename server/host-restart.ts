@@ -7,10 +7,7 @@ import {
   matchesRestartIntent,
 } from "../shared/host-restart.js";
 import { requestError } from "./request-error.js";
-import {
-  type RestartSubmission,
-  settleRestart,
-} from "./restart-submission.mjs";
+import { type RestartSubmission, settleRestart } from "./restart-submission.mjs";
 import type { RuntimeController } from "./runtime.js";
 
 export interface HostRestartBackend {
@@ -179,37 +176,30 @@ export class HostRestartController {
         return true;
       });
     } catch (error) {
-      result =
-        operation.phase === "submitted"
-          ? { kind: "unconfirmed" }
-          : {
-              kind: "not-issued",
-              reason: "pre-restart-failed",
-              error:
-                error instanceof Error
-                  ? error
-                  : new Error("Restart preparation failed."),
-            };
+      result = operation.phase === "submitted"
+        ? { kind: "unconfirmed" }
+        : {
+            kind: "not-issued",
+            reason: "pre-restart-failed",
+            error: error instanceof Error ? error : new Error("Restart preparation failed."),
+          };
     }
     const lease = leaseId;
     if (lease)
-      result = await settleRestart(
-        result,
-        () => this.runtime.releaseMaintenanceRestart(lease).kind === "released",
+      result = await settleRestart(result, () =>
+        this.runtime.releaseMaintenanceRestart(lease).kind === "released",
       );
     if (result.kind === "issued") return;
     if (result.kind === "unconfirmed") {
       operation.phase = "unknown";
-      operation.error =
-        "Restart outcome is unknown. Check the Host launcher or service.";
+      operation.error = "Restart outcome is unknown. Check the Host launcher or service.";
       return;
     }
     operation.phase = "rejected";
-    operation.error =
-      result.error instanceof Error
-        ? result.error.message
-        : operation.busyReason
-          ? WORK_BUSY
-          : "Restart was not issued. Check the Host launcher or service configuration.";
+    operation.error = result.error instanceof Error
+      ? result.error.message
+      : operation.busyReason
+        ? WORK_BUSY
+        : "Restart was not issued. Check the Host launcher or service configuration.";
   }
 }

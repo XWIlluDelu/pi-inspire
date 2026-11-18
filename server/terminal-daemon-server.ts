@@ -199,8 +199,7 @@ export class TerminalDaemonServer {
           throw new Error("Terminal daemon received an unknown IPC frame");
         const control = decodeTerminalIpcJson(frame.payload);
         if (
-          (control as { type?: unknown } | null)?.type !==
-          "terminal_daemon_detach"
+          (control as { type?: unknown } | null)?.type !== "terminal_daemon_detach"
         ) {
           attachment.send({ control });
           return;
@@ -210,9 +209,7 @@ export class TerminalDaemonServer {
         socket.end();
       } catch (error) {
         const message =
-          error instanceof Error
-            ? error.message
-            : "Terminal message is invalid";
+          error instanceof Error ? error.message : "Terminal message is invalid";
         const handle = attachment;
         attachment = null;
         handle?.detach();
@@ -253,10 +250,7 @@ export class TerminalDaemonServer {
             if (typeof message.requestId !== "string")
               throw new Error("Terminal daemon RPC requires a request ID");
             void this.handleRpc(
-              socket,
-              message.requestId,
-              message.method,
-              message.params,
+              socket, message.requestId, message.method, message.params,
             );
           } else if (message.mode === "attach") {
             attaching = true;
@@ -314,10 +308,7 @@ export class TerminalDaemonServer {
     const response: TerminalDaemonRpcResponse = { requestId, ok: false };
     try {
       response.result = await dispatchTerminalDaemonRpc(
-        this.terminals,
-        this.lifecycle,
-        method,
-        params,
+        this.terminals, this.lifecycle, method, params,
       );
       response.ok = true;
     } catch (error) {

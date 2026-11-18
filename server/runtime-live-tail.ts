@@ -28,22 +28,14 @@ function nativeMessage(
  * keeping a second copy of images, thinking or tool output in the live tail. */
 function messageEvidence(message: Record<string, unknown>): string {
   const { role } = message;
-  const keys =
-    role === "custom"
-      ? ["role", "customType", "content", "display", "details"]
-      : role === "bashExecution"
-        ? [
-            "role",
-            "command",
-            "output",
-            "exitCode",
-            "cancelled",
-            "truncated",
-            "fullOutputPath",
-            "excludeFromContext",
-            "__inspireBashRunning",
-          ]
-        : null;
+  const keys = role === "custom"
+    ? ["role", "customType", "content", "display", "details"]
+    : role === "bashExecution"
+      ? [
+          "role", "command", "output", "exitCode", "cancelled", "truncated",
+          "fullOutputPath", "excludeFromContext", "__inspireBashRunning",
+        ]
+      : null;
   const value = keys
     ? Object.fromEntries(keys.map((key) => [key, message[key]]))
     : message;

@@ -5,7 +5,6 @@ import { independentProcessEnvironment } from "../server/user-environment.mjs";
 import {
   browserWorkspace,
   browserFixtureHome as home,
-  browserFixtureProjects,
 } from "../tests/browser/fixtures/workspace.mjs";
 import { testPiCommand } from "./test-pi-command.mjs";
 
@@ -25,10 +24,6 @@ const stopRequestPath = resolve(output, "stop-request.json");
 const diagnosticsPath = resolve(output, "diagnostics.jsonl");
 await rm(home, { recursive: true, force: true });
 await mkdir(home, { recursive: true, mode: 0o700 });
-const removeProjects = () =>
-  rm(browserFixtureProjects, { recursive: true, force: true, maxRetries: 5 });
-await removeProjects();
-await mkdir(browserFixtureProjects, { recursive: true, mode: 0o700 });
 await writeFile(
   resolve(home, ".zshrc"),
   "# Isolated browser fixture; no user startup or first-run wizard.\n",
@@ -129,5 +124,4 @@ try {
 } finally {
   process.off("SIGINT", onInterrupt);
   process.off("SIGTERM", onTerminate);
-  await removeProjects();
 }

@@ -213,9 +213,9 @@ describe("ordinary HTTP observation", () => {
 
   it("leaves a dispatched creation unconfirmed after losing the error body", async () => {
     const response = new Response("", { status: 400 });
-    vi.spyOn(response, "json").mockRejectedValue(
-      new DOMException("Connection lost", "AbortError"),
-    );
+    vi.spyOn(response, "json").mockRejectedValue(new DOMException(
+      "Connection lost", "AbortError",
+    ));
     const fetch = transport(response);
     await expect(
       createApi().json("newSession", { body: { cwd: "/workspace" } }),
@@ -253,11 +253,9 @@ describe("ordinary HTTP observation", () => {
     vi.useFakeTimers();
     const fetch = vi.fn(() => new Promise<never>(() => {}));
     vi.stubGlobal("fetch", fetch);
-    const outcome = expect(
-      createApi().json("forkBranch", {
-        body: { sessionId: "s1", viewId: "view-1", targetId: "t1" },
-      }),
-    ).rejects.toMatchObject({ timedOut: true, outcomeUnknown: true });
+    const outcome = expect(createApi().json("forkBranch", {
+      body: { sessionId: "s1", viewId: "view-1", targetId: "t1" },
+    })).rejects.toMatchObject({ timedOut: true, outcomeUnknown: true });
     await vi.advanceTimersByTimeAsync(120_000);
     await outcome;
     expect(fetch).toHaveBeenCalledOnce();

@@ -31,9 +31,7 @@ export class TerminalIpcDecoder {
 
   push(value: Uint8Array | string): TerminalIpcFrame[] {
     const incoming =
-      typeof value === "string"
-        ? Buffer.from(value, "utf8")
-        : Buffer.from(value);
+      typeof value === "string" ? Buffer.from(value, "utf8") : Buffer.from(value);
     this.buffered =
       this.buffered.byteLength === 0
         ? incoming

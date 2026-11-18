@@ -113,8 +113,7 @@ describe("terminal Host and daemon transport", () => {
     const dispatch = vi.spyOn(backend.manager, "operate");
     const operationIdForInvalidIntent = randomUUID();
     const invalid = { command: "rename", params: { id: "tab", title: 42 } };
-    await api
-      .post(TERMINAL_OPERATIONS_PATH)
+    await api.post(TERMINAL_OPERATIONS_PATH)
       .send({ intent: invalid })
       .expect(400);
     expect(
@@ -231,16 +230,11 @@ describe("terminal Host and daemon transport", () => {
       expect(pty.writes.map(String)).toEqual(["echo once\r", "echo current\r"]);
       expect(pty.resizes.at(-1)).toEqual([130, 50]);
       const invalidInput = await connect(await browserClient.url());
-      invalidInput.send(
-        attach(await browserClient.attachTicket(terminal.id), "invalid"),
-      );
+      invalidInput.send(attach(await browserClient.attachTicket(terminal.id), "invalid"));
       await invalidInput.waitFor({ type: "replay_complete" });
       const closed = once(invalidInput.socket, "close");
       invalidInput.socket.send(Buffer.from([0, 0, 0, 0, 0, 0]));
-      await invalidInput.waitFor({
-        type: "error",
-        code: "invalid_terminal_message",
-      });
+      await invalidInput.waitFor({ type: "error", code: "invalid_terminal_message" });
       expect((await closed)[0]).toBe(1008);
       expect(pty.writes.map(String)).toEqual(["echo once\r", "echo current\r"]);
       const origin = { Origin: baseUrl };

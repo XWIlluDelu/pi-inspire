@@ -60,10 +60,7 @@ export const ContextPane = memo(function ContextPane({
     error?: string;
   } | null>(null);
   const [historyRefresh, setHistoryRefresh] = useState(0);
-  const historyReading = useMemo(
-    () => store.historyReadingState(),
-    [sessionId, cwd],
-  );
+  const historyReading = useMemo(() => store.historyReadingState(), [sessionId, cwd]);
   const [terminalReloadKey, setTerminalReloadKey] = useState(0);
   const resourceRequest = useRef<AbortController | null>(null);
   const changesScrollTop = useMemo(() => ({ current: 0 }), [sessionId, cwd]);
@@ -270,16 +267,8 @@ export const ContextPane = memo(function ContextPane({
   const tools = (
     <div className="ctx__tools">
       {(["files", "changes", "history"] as const).map((mode) => {
-        const label = {
-          files: "Files",
-          changes: "Changes",
-          history: "History",
-        }[mode];
-        const Icon = {
-          files: Folder,
-          changes: GitCompareArrows,
-          history: History,
-        }[mode];
+        const label = { files: "Files", changes: "Changes", history: "History" }[mode];
+        const Icon = { files: Folder, changes: GitCompareArrows, history: History }[mode];
         const selected =
           state.contextMode === mode && (mode !== "files" || !activeFile);
         const changesCount =
@@ -380,12 +369,7 @@ export const ContextPane = memo(function ContextPane({
         <ChangesPane state={state} browseScrollTop={changesScrollTop} />
       </div>
     ) : state.contextMode === "history" ? (
-      <div
-        className="ctx__content"
-        id="context-history-content"
-        role="tabpanel"
-        aria-label="History"
-      >
+      <div className="ctx__content" id="context-history-content" role="tabpanel" aria-label="History">
         <BranchTree
           key={`${sessionId}:${transcriptViewId}`}
           readingState={historyReading}

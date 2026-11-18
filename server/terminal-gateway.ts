@@ -14,10 +14,7 @@ import {
   terminalReceiptIdentity,
 } from "../shared/terminal-operations.js";
 import { canonicalOrigin } from "./browser-auth.js";
-import {
-  maintainBrowserSockets,
-  terminateUpgradedSockets,
-} from "./browser-socket-lifecycle.js";
+import { maintainBrowserSockets, terminateUpgradedSockets } from "./browser-socket-lifecycle.js";
 import { jsonRoute } from "./json-route.js";
 import { settleOperation } from "./operation-receipts.js";
 import { requestError } from "./request-error.js";
@@ -111,8 +108,7 @@ export function createTerminalGateway(
       async () =>
         (await terminal((service) =>
           terminalDaemonMethods[observeOnly ? "observeOperation" : "operate"](
-            service,
-            operation,
+            service, operation,
           ),
         )) ?? null,
       ({ code, status }) =>
@@ -142,9 +138,7 @@ export function createTerminalGateway(
     app,
     routes.terminalAttachTicket,
     async ({ params: { id: terminalId } }, request) => {
-      const catalog = await terminal((service) =>
-        terminalDaemonMethods.getCatalog(service, {}),
-      );
+      const catalog = await terminal((service) => terminalDaemonMethods.getCatalog(service, {}));
       if (!catalog.terminals.some((candidate) => candidate.id === terminalId))
         throw requestError("Terminal was not found", 404, {
           code: "terminal_not_found",
@@ -189,12 +183,9 @@ export function createTerminalGateway(
     }
   };
   const stopHeartbeat = maintainBrowserSockets(
-    terminalSockets,
-    heartbeatIntervalMs,
-    currentBrowserBuild,
+    terminalSockets, heartbeatIntervalMs, currentBrowserBuild,
     (peer) => !!peer.attachment && peer.attachment !== "attaching",
-    sendTerminalBounded,
-    (socket) => terminalSockets.get(socket)?.detach(),
+    sendTerminalBounded, (socket) => terminalSockets.get(socket)?.detach(),
   );
 
   function openTerminalSocket(

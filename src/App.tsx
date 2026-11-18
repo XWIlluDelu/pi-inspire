@@ -551,9 +551,7 @@ export function App() {
   const closeInspection = useCallback(() => setInspection(null), []);
   const closeCommandPalette = useCallback(() => {
     setInspection((current) =>
-      current?.kind === "palette" || current?.kind === "rename"
-        ? null
-        : current,
+      current?.kind === "palette" || current?.kind === "rename" ? null : current,
     );
   }, []);
   const openCommandHelp = useCallback((mode: "hotkeys" | "changelog") => {

@@ -297,9 +297,7 @@ export const Composer = memo(function Composer() {
       sessionId &&
       deliveryStorageIssue !== "format" &&
       !terminalQueueOnly &&
-      (editorDraft.text.trim() ||
-        editorDraft.attachments.length ||
-        editorDraft.projectFiles.length),
+      (editorDraft.text.trim() || editorDraft.attachments.length || editorDraft.projectFiles.length),
   );
   const activeBehavior = deliveryBusy
     ? deliveryBehavior
@@ -314,13 +312,15 @@ export const Composer = memo(function Composer() {
   };
 
   const sendLabel = shellInput
-    ? "Run shell command"
-    : !deliveryBusy
-      ? "Send message"
-      : deliveryBehavior === "steer"
-        ? "Send as steer"
-        : "Queue after current task";
-  const sendTitle = !shellInput && !deliveryBusy ? "Send" : sendLabel;
+      ? "Run shell command"
+      : !deliveryBusy
+        ? "Send message"
+        : deliveryBehavior === "steer"
+          ? "Send as steer"
+          : "Queue after current task";
+  const sendTitle = !shellInput && !deliveryBusy
+      ? "Send"
+      : sendLabel;
   const activeModel = resolveModelMetadata(state.model, state.availableModels);
   // Owned workers and attached terminal Pi both take model and thinking changes.
   const modelsDisabled =
@@ -399,11 +399,11 @@ export const Composer = memo(function Composer() {
           {previousDelivery && (
             <DeliveryNotice text="Previous message unconfirmed">
               {canCheckPrevious &&
-                deliveryAction(
-                  "Check receipt",
-                  store.retryPreviousComposerDelivery,
-                )}
-              {deliveryAction("Dismiss", store.forgetPreviousComposerDelivery)}
+                deliveryAction("Check receipt", store.retryPreviousComposerDelivery)}
+              {deliveryAction(
+                "Dismiss",
+                store.forgetPreviousComposerDelivery,
+              )}
             </DeliveryNotice>
           )}
         </>
@@ -520,7 +520,9 @@ export const Composer = memo(function Composer() {
         </>
       }
       send={
-        !abortable || deliveryBusy || state.bashRunning
+        !abortable ||
+        deliveryBusy ||
+        state.bashRunning
           ? { disabled: !canSend, label: sendLabel, title: sendTitle }
           : undefined
       }

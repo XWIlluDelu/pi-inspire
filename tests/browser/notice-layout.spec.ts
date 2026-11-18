@@ -12,27 +12,10 @@ async function openNoticeSession(page: Page) {
   const transport = await routeSnapshots(page, {
     snapshot: (snapshot) => {
       sessionId = snapshot.active?.sessionId ?? null;
-      if (!snapshot.active) return;
-      const transcript = snapshot.active.transcriptPage;
-      transcript.hasOlder = false;
-      transcript.messages = [
-        {
-          role: "user",
-          timestamp: 1,
-          content: "Keep the original reading position.\n\n".repeat(55),
-        },
-      ];
     },
   });
   await pairedPage(page);
-  await openFixtureSession(
-    page,
-    /Review extension event lifecycle/,
-    "fixture-history",
-  );
-  await expect(
-    page.getByRole("button", { name: /^Session & usage/ }),
-  ).toBeVisible();
+  await openFixtureSession(page, /Review extension event lifecycle/);
   return (id: string, message: string) => {
     transport.send({
       type: "extension_ui_request",
@@ -93,21 +76,14 @@ test("overflowing warnings keep their reading position, full text and reachable 
   });
   await page.evaluate(() => document.fonts.ready);
   const transcript = page.getByRole("log");
-  // Release follow-latest before testing that the notice stack owns PageDown.
-  await transcript.evaluate((element) => {
-    element.dispatchEvent(
-      new WheelEvent("wheel", {
-        bubbles: true,
-        deltaY: -300,
-      }),
-    );
-    element.scrollTop = 300;
-  });
-  await expect(
-    page.getByRole("button", { name: "Jump to latest" }),
-  ).toBeVisible();
-  await expect.poll(() => transcript.evaluate((el) => el.scrollTop)).toBe(300);
-  const transcriptTop = 300;
+  await expect
+    .poll(() =>
+      transcript.evaluate(
+        (el) => el.scrollHeight - el.clientHeight - el.scrollTop,
+      ),
+    )
+    .toBeLessThan(2);
+  const transcriptTop = await transcript.evaluate((el) => el.scrollTop);
   await page.keyboard.press("PageDown");
   let readingPosition = 0;
   await expect

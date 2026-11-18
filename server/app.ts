@@ -61,10 +61,7 @@ import type { NativeModelCatalog } from "./model-metadata.js";
 import type { ModelSettingsService } from "./model-settings.js";
 import { commonModelOptions } from "./model-settings.js";
 import { registerModelSettingsRoutes } from "./model-settings-routes.js";
-import {
-  HostOperationReceipts,
-  settleOperation,
-} from "./operation-receipts.js";
+import { HostOperationReceipts, settleOperation } from "./operation-receipts.js";
 import { resolveProjectDirectory } from "./paths.js";
 import { installedPiChangelog } from "./pi-changelog.js";
 import type { PreferencesStore } from "./preferences.js";
@@ -305,40 +302,31 @@ export function createInspireServer(deps: AppDependencies): {
   ): Promise<HostOperationReceipt<Command>> {
     const receipt = hostReceipt(command, identity);
     const completion = inputOperations.read(
-      command,
-      identity.operationId,
-      fingerprint,
-      execute,
+      command, identity.operationId, fingerprint, execute,
     );
     const completed = settleOperation(
-      receipt,
-      () => completion,
-      (error) => error.outcomeUnknown === true,
+      receipt, () => completion, (error) => error.outcomeUnknown === true,
     );
     let timer: ReturnType<typeof setTimeout> | undefined;
     let disconnected: (() => void) | undefined;
     try {
-      const outcome =
-        command !== "prompt"
-          ? await completed
-          : await Promise.race([
-              completed,
-              new Promise<HostOperationReceipt<Command>>((resolve) => {
-                disconnected = () => resolve({ ...receipt, state: "pending" });
-                timer = setTimeout(
-                  disconnected,
-                  deps.promptObservationWindowMs ??
-                    PROMPT_OBSERVATION_WINDOW_MS,
-                );
-                response.once("close", disconnected);
-              }),
-            ]);
+      const outcome = command !== "prompt"
+        ? await completed
+        : await Promise.race([
+            completed,
+            new Promise<HostOperationReceipt<Command>>((resolve) => {
+              disconnected = () => resolve({ ...receipt, state: "pending" });
+              timer = setTimeout(
+                disconnected,
+                deps.promptObservationWindowMs ?? PROMPT_OBSERVATION_WINDOW_MS,
+              );
+              response.once("close", disconnected);
+            }),
+          ]);
       response.status(
         outcome.state === "unknown" || outcome.state === "rejected"
           ? outcome.error.status
-          : command === "prompt"
-            ? 202
-            : 200,
+          : command === "prompt" ? 202 : 200,
       );
       return outcome;
     } finally {
@@ -907,12 +895,7 @@ export function createInspireServer(deps: AppDependencies): {
           code: "HOST_AUTHORITY_CHANGED",
           outcomeUnknown: true,
         });
-      return observeOperation(
-        "prompt",
-        { operationId, authorityId },
-        fingerprint,
-        response,
-      );
+      return observeOperation("prompt", { operationId, authorityId }, fingerprint, response);
     },
   );
   jsonRoute(app, routes.piChangelog, installedPiChangelog);

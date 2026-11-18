@@ -66,17 +66,13 @@ function daemonError(value: unknown): TerminalServiceError {
 
 function serviceStopping(): TerminalServiceError {
   return new TerminalServiceError(
-    "terminal_service_closed",
-    503,
-    "The terminal service is stopping.",
+    "terminal_service_closed", 503, "The terminal service is stopping.",
   );
 }
 
 function connectionLost(): TerminalServiceError {
   return new TerminalServiceError(
-    "terminal_daemon_unavailable",
-    503,
-    "The terminal service is unavailable.",
+    "terminal_daemon_unavailable", 503, "The terminal service is unavailable.",
   );
 }
 
@@ -159,8 +155,7 @@ export class TerminalDaemonClient implements TerminalService {
       const socket = this.connect({ mode: "attach", options });
       socket.setNoDelay(true);
       const decoder = new TerminalIpcDecoder();
-      let state: "connecting" | "publishing" | "ready" | "closed" =
-        "connecting";
+      let state: "connecting" | "publishing" | "ready" | "closed" = "connecting";
       let attachment: TerminalAttachment | null = null;
       let attachTimeout: ReturnType<typeof setTimeout> | null = null;
       const pendingDeliveries: Array<() => void> = [];
@@ -199,10 +194,7 @@ export class TerminalDaemonClient implements TerminalService {
               "data" in frame
                 ? encodeTerminalIpcFrame(TERMINAL_IPC_INPUT_FRAME, frame.data)
                 : encodeTerminalIpcJson(frame.control);
-            if (
-              socket.writableLength + packet.byteLength >
-              IPC_BUFFER_LIMIT_BYTES
-            ) {
+            if (socket.writableLength + packet.byteLength > IPC_BUFFER_LIMIT_BYTES) {
               socket.destroy();
               throw new Error("Terminal attachment is too slow");
             }
@@ -214,9 +206,7 @@ export class TerminalDaemonClient implements TerminalService {
             clearDeadline();
             this.attachments.delete(handle);
             if (!socket.destroyed)
-              socket.end(
-                encodeTerminalIpcJson({ type: "terminal_daemon_detach" }),
-              );
+              socket.end(encodeTerminalIpcJson({ type: "terminal_daemon_detach" }));
           },
         };
         attachment = handle;
@@ -233,8 +223,7 @@ export class TerminalDaemonClient implements TerminalService {
           }
           state = "ready";
           try {
-            for (const operation of pendingDeliveries.splice(0))
-              deliver(operation);
+            for (const operation of pendingDeliveries.splice(0)) deliver(operation);
           } catch (error) {
             fail(error);
             socket.destroy();
@@ -261,9 +250,7 @@ export class TerminalDaemonClient implements TerminalService {
             const message = asRecord(decodeTerminalIpcJson(frame.payload));
             if (message?.type === TERMINAL_DAEMON_READY_TYPE) {
               if (state === "connecting")
-                throw new Error(
-                  "Terminal daemon did not identify the attachment",
-                );
+                throw new Error("Terminal daemon did not identify the attachment");
               clearDeadline();
               continue;
             }
@@ -281,11 +268,7 @@ export class TerminalDaemonClient implements TerminalService {
                   ? message.reason
                   : "Terminal closed";
               if (state === "connecting")
-                throw new TerminalServiceError(
-                  "terminal_attach_failed",
-                  503,
-                  reason,
-                );
+                throw new TerminalServiceError("terminal_attach_failed", 503, reason);
               deliver(() => {
                 state = "closed";
                 clearDeadline();
@@ -299,9 +282,7 @@ export class TerminalDaemonClient implements TerminalService {
             }
             if (message?.type === "attached") establishAttachment();
             if (attachment === null && state !== "closed")
-              throw new Error(
-                "Terminal daemon did not identify the attachment",
-              );
+              throw new Error("Terminal daemon did not identify the attachment");
             deliver(() =>
               sink.sendControl(
                 message as unknown as TerminalServerControlMessage,

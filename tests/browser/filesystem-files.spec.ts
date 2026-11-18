@@ -215,6 +215,7 @@ test("Files works with a corrupt Git index and preserves its tabs and search whe
   await expect(search).toHaveValue("report.md");
   await page.goBack();
   await expect(drawer).toBeHidden();
+
 });
 
 test("native authenticated download streams complete bytes beyond the media preview cap", {

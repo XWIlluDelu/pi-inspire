@@ -166,9 +166,7 @@ const modelFields = {
   type: storedConfigurationValue(z.string(), token),
 };
 const modelValues = z.strictObject(fieldSchemas(modelFields, "schema"));
-export const modelDeclarationSchema = z.object(
-  fieldSchemas(modelFields, "stored"),
-);
+export const modelDeclarationSchema = z.object(fieldSchemas(modelFields, "stored"));
 export const modelConfigEditSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     kind: z.literal("provider"),

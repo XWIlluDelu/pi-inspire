@@ -101,4 +101,4 @@ it("runs native task commands and restores each branch's own task state", async 
   expect(restored.map(({ status, notes }) => ({ status, notes }))).toEqual(
     Array.from({ length: 3 }, () => ({ status: "stopped", notes: "" })),
   );
-}, 20_000);
+});

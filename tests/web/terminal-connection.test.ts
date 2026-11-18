@@ -184,7 +184,8 @@ describe("TerminalConnection", () => {
       connection.start();
       await nextTurn();
       const old = FakeWebSocket.sockets[0];
-      if (phase !== "ticket") old!.open();
+      if (phase !== "ticket")
+        old!.open();
       if (phase === "replay") {
         attachForReplay(old!);
         old!.receive(dataFrame("snapshot"));

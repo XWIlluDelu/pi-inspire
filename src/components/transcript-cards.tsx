@@ -65,7 +65,6 @@ import { ResourcePathLabel } from "./ResourcePathLabel";
 import {
   ActivityCode,
   ActivityDetails,
-  ACTIVITY_CARD_READER,
   ActivityHeader,
   ActivityReader,
   ActivityReadingBlock,
@@ -122,10 +121,7 @@ export function CollapsibleCard({
   children,
 }: CardProps) {
   // Per-card override is view-local only; it never mutates saved preferences.
-  const [override, setOverride] = useActivityReaderExpanded(
-    ACTIVITY_CARD_READER,
-    null,
-  );
+  const [override, setOverride] = useActivityReaderExpanded("card", null);
   const generatedId = useId();
   const search = useContext(TranscriptSearchReveal);
   useLayoutEffect(() => {

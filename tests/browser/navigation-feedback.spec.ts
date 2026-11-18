@@ -67,14 +67,13 @@ test("Welcome Recent hides curated sessions and preserves its disclosure through
   };
   const list = page.locator(".welcome__recent [role=list]");
   await welcome();
-  const title = await list.locator(".welcome__row-title").first().innerText();
-  const pattern = new RegExp(title.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"));
-  await openFixtureSession(page, pattern);
+  await expect(list).toContainText("Formula rendering and spectral analysis");
+  await openFixtureSession(page, /Formula rendering and spectral analysis/);
   const row = page.locator(".nav__row--active");
   await row.hover();
   await row
     .getByRole("button", {
-      name: `Hide "${title}"`,
+      name: 'Hide "Formula rendering and spectral analysis"',
     })
     .click();
   await welcome();
@@ -87,7 +86,9 @@ test("Welcome Recent hides curated sessions and preserves its disclosure through
   await expect(recent).toHaveAttribute("aria-expanded", "false");
   await recent.click();
   await expect(list).toBeVisible();
-  await expect(list).not.toContainText(title);
+  await expect(list).not.toContainText(
+    "Formula rendering and spectral analysis",
+  );
 });
 
 test.describe("short navigation drawer", () => {

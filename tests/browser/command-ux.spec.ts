@@ -111,9 +111,7 @@ test("ranks narrow palette results and keeps model selection out of the draft", 
     "project",
   );
   await filter.fill("mdl");
-  await expect(palette.getByRole("option", { selected: true })).toContainText(
-    "Choose model",
-  );
+  await expect(palette.getByRole("option", { selected: true })).toContainText("Choose model");
   await filter.dispatchEvent("keydown", { key: "Enter", isComposing: true });
   await expect(palette).toBeVisible();
   await palette.getByRole("option", { selected: true }).click();
@@ -124,9 +122,7 @@ test("ranks narrow palette results and keeps model selection out of the draft", 
   await expectDraft(page);
 });
 
-test("a busy Pi settling does not change the prepared queue delivery", async ({
-  page,
-}) => {
+test("a busy Pi settling does not change the prepared queue delivery", async ({ page }) => {
   let busy = true;
   const transport = await routeSnapshots(page, {
     snapshot(snapshot) {
@@ -147,14 +143,10 @@ test("a busy Pi settling does not change the prepared queue delivery", async ({
   await palette.getByLabel("Prepared command").fill("/plan scoped work");
   await palette.getByRole("button", { name: "Queue", exact: true }).click();
   const release = Promise.withResolvers<void>();
-  await page.route(
-    "**/api/prompt",
-    async (route) => {
-      await release.promise;
-      await completeOperation(route, "prompt", null);
-    },
-    { times: 1 },
-  );
+  await page.route("**/api/prompt", async (route) => {
+    await release.promise;
+    await completeOperation(route, "prompt", null);
+  }, { times: 1 });
   const request = page.waitForRequest("**/api/prompt");
   try {
     await palette.getByRole("button", { name: "Queue prompt" }).click();
@@ -162,10 +154,8 @@ test("a busy Pi settling does not change the prepared queue delivery", async ({
       message: "/plan scoped work",
       behavior: "followUp",
     });
-    const settled = page.waitForResponse(
-      (response) =>
-        new URL(response.url()).searchParams.get("detail") ===
-        "fixture-history",
+    const settled = page.waitForResponse((response) =>
+      new URL(response.url()).searchParams.get("detail") === "fixture-history",
     );
     busy = false;
     transport.send({
@@ -174,9 +164,7 @@ test("a busy Pi settling does not change the prepared queue delivery", async ({
       sessionStatus: { runState: "idle" },
     });
     await (await settled).finished();
-    await expect(
-      palette.getByRole("button", { name: "Sending…" }),
-    ).toBeDisabled();
+    await expect(palette.getByRole("button", { name: "Sending…" })).toBeDisabled();
   } finally {
     release.resolve();
   }

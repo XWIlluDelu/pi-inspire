@@ -37,9 +37,7 @@ export default defineConfig({
     },
     {
       name: "webkit",
-      // WebKit's automation can stall after a worker claims the test page.
-      // Keep the daily UI checks on the origin and exercise worker logic separately.
-      use: { ...devices["Desktop Safari"], serviceWorkers: "block" },
+      use: { ...devices["Desktop Safari"] },
       grep: /@cross-browser/,
     },
   ],

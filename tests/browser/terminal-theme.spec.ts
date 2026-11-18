@@ -2,10 +2,7 @@ import { expect } from "@playwright/test";
 import { clipboardLines } from "./support/clipboard";
 import { resolvedColor } from "./support/colors";
 import { openProjectTerminal, pairAndOpen } from "./support/navigation";
-import {
-  pasteTerminalText,
-  terminalNodeCommand,
-} from "./support/terminal-command";
+import { terminalNodeCommand } from "./support/terminal-command";
 import {
   observeTerminalSocket,
   terminalTest,
@@ -50,8 +47,7 @@ terminalTest(
         { theme, palette },
       );
     await setTheme("light", "wisteria");
-    await pasteTerminalText(
-      input,
+    await input.pressSequentially(
       terminalNodeCommand(
         "for(let i=0;i<70;i++)console.log('r'+('0'+i).slice(-2)+': need'+'le NEED'+'LE need'+'les');console.log('a'+'.b axb a'+'.bx')",
       ),

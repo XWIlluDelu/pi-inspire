@@ -364,7 +364,7 @@ export class RuntimeController extends EventEmitter {
         taskOutcome: (slot, outcome, id) =>
           this.publishTaskOutcome(slot, outcome, id),
         reconcile: (slot, force) =>
-          this.projectionCoordinator.reconcile(slot, force),
+        this.projectionCoordinator.reconcile(slot, force),
         released: (slot) => {
           // Recover the viewed position after checking who still owns it.
           if (
@@ -935,9 +935,7 @@ export class RuntimeController extends EventEmitter {
     sessionId: string,
     operation: (slot: RuntimeSlot) => Promise<T>,
   ): Promise<T> {
-    return this.withMaintenanceOperation(() =>
-      operation(this.requireSlot(sessionId)),
-    );
+    return this.withMaintenanceOperation(() => operation(this.requireSlot(sessionId)));
   }
 
   /** Working directory of an open session, or null when it is not open.
@@ -1065,10 +1063,10 @@ export class RuntimeController extends EventEmitter {
   ): boolean {
     return Boolean(
       this.destination(id, path, "open") ||
-        [...this.slots.values()].some((slot) => slot.sessionPath === path) ||
-        [...this.provisionalSlots.values()].some(
-          ({ slot }) => slot !== excluding && slot.sessionPath === path,
-        ),
+      [...this.slots.values()].some((slot) => slot.sessionPath === path) ||
+      [...this.provisionalSlots.values()].some(
+        ({ slot }) => slot !== excluding && slot.sessionPath === path,
+      ),
     );
   }
 
@@ -1190,10 +1188,7 @@ export class RuntimeController extends EventEmitter {
 
   private deliveryWorker(slot: RuntimeSlot): PiRpcProcess | null {
     const rpc = slot.process;
-    return rpc?.available &&
-      slot.ready &&
-      !slot.conflict &&
-      this.ownsLiveSlot(slot)
+    return rpc?.available && slot.ready && !slot.conflict && this.ownsLiveSlot(slot)
       ? rpc
       : null;
   }
@@ -1312,9 +1307,7 @@ export class RuntimeController extends EventEmitter {
 
   private rejectDeferredPrompts(slot: RuntimeSlot, worker: PiRpcProcess): void {
     for (const item of this.takeDeferredPrompts(slot, worker))
-      item.reject(
-        requestError("Pi worker changed before message delivery", 409),
-      );
+      item.reject(requestError("Pi worker changed before message delivery", 409));
   }
 
   private resumeDeferredPrompts(slot: RuntimeSlot): void {
@@ -1527,9 +1520,7 @@ export class RuntimeController extends EventEmitter {
         true,
       );
       if (
-        result.cancelled ||
-        slot.process !== rpc ||
-        effectiveRuntimeLeaf(slot) !== target
+        result.cancelled || slot.process !== rpc || effectiveRuntimeLeaf(slot) !== target
       )
         throw requestError("The viewed branch could not be restored", 409);
     } catch (error) {
@@ -1581,14 +1572,8 @@ export class RuntimeController extends EventEmitter {
       );
     }
     if (slot.projection)
-      await this.projectionCoordinator
-        .reconcile(slot, true)
-        .catch(() => undefined);
-    const conflict = this.setProjectionConflict(
-      slot,
-      "outcome-unknown",
-      message,
-    );
+      await this.projectionCoordinator.reconcile(slot, true).catch(() => undefined);
+    const conflict = this.setProjectionConflict(slot, "outcome-unknown", message);
     this.emitSlotEvent(slot, { type: "session_projection_conflict", conflict });
     throw requestError(message, 504, { code, outcomeUnknown: true });
   }
@@ -1973,8 +1958,7 @@ export class RuntimeController extends EventEmitter {
     if (typeof runtimeThinkingLevel === "string") return runtimeThinkingLevel;
     return (
       (slot.projection?.sourceIdentity
-        ? (slot.workerView?.index.thinkingLevel ??
-          slot.projection.thinkingLevel)
+        ? slot.workerView?.index.thinkingLevel ?? slot.projection.thinkingLevel
         : slot.startupThinkingLevel) ??
       slot.preview?.thinkingLevel ??
       "off"
@@ -2728,8 +2712,7 @@ export class RuntimeController extends EventEmitter {
       )
         throw new Error("Pi created a duplicate or reserved session identity");
       if (
-        reportedPath !== null &&
-        this.sessionPathInUse(sessionId, reportedPath, slot)
+        reportedPath !== null && this.sessionPathInUse(sessionId, reportedPath, slot)
       )
         throw new Error("Pi created a duplicate session path");
       slot.id = sessionId;
@@ -3447,18 +3430,13 @@ export class RuntimeController extends EventEmitter {
       throw requestError("A branch operation is already pending", 409);
 
     const pending = {
-      ...startBranchNavigation(
-        rpc,
-        bridge,
-        {
-          sessionId: slot.id,
-          operation: "navigate",
-          targetId: request.targetId,
-          summarize: request.summarize ?? false,
-          customInstructions: request.customInstructions,
-        },
-        this.branchBridgeTimeoutMs,
-      ),
+      ...startBranchNavigation(rpc, bridge, {
+        sessionId: slot.id,
+        operation: "navigate",
+        targetId: request.targetId,
+        summarize: request.summarize ?? false,
+        customInstructions: request.customInstructions,
+      }, this.branchBridgeTimeoutMs),
       summarize: request.summarize ?? false,
     };
     slot.pendingBranchBridge = pending;
@@ -4046,10 +4024,7 @@ export class RuntimeController extends EventEmitter {
     completion?: readonly Promise<unknown>[],
     cancelledCommand?: "bash" | "compact" | "prompt",
   ): Promise<boolean> {
-    const request = worker.request(
-      { type },
-      completion ? STOP_GRACE_MS : 30_000,
-    );
+    const request = worker.request({ type }, completion ? STOP_GRACE_MS : 30_000);
     let deadline: ReturnType<typeof setTimeout> | undefined;
     try {
       await (completion
@@ -4144,11 +4119,7 @@ export class RuntimeController extends EventEmitter {
           this.extensionUi.clear(slot, "aborted");
         } else {
           await this.interruptWorker(
-            slot,
-            bash.worker,
-            "abort_bash",
-            [bash.finished],
-            "bash",
+            slot, bash.worker, "abort_bash", [bash.finished], "bash",
           );
         }
         return { steering: [], followUp: [] };
@@ -4187,35 +4158,18 @@ export class RuntimeController extends EventEmitter {
         const branch = slot.pendingBranchBridge;
         if (compaction?.worker === rpc) {
           await this.interruptWorker(
-            slot,
-            rpc,
-            "abort",
-            [compaction.finished],
-            "compact",
+            slot, rpc, "abort", [compaction.finished], "compact",
           );
-        } else if (
-          branch?.summarize &&
-          slot.pendingExtensionDialogs.size === 0
-        ) {
-          if (
-            await this.interruptWorker(
-              slot,
-              rpc,
-              "abort",
-              [branch.result, branch.finished],
-              "prompt",
-            )
-          )
+        } else if (branch?.summarize && slot.pendingExtensionDialogs.size === 0) {
+          if (await this.interruptWorker(
+            slot, rpc, "abort", [branch.result, branch.finished], "prompt",
+          ))
             slot.runState = slot.conflict ? "conflict" : "aborted";
         } else {
           // A pre-prompt hook can own the persistence lane without installing an abort controller.
           const retirePrompt = slot.pendingPromptCount > 0 || branch !== null;
           if (retirePrompt) await this.workerLifecycle.stop(slot, "prompt");
-          if (
-            retirePrompt
-              ? !slot.process
-              : await this.interruptWorker(slot, rpc, "abort")
-          ) {
+          if (retirePrompt ? !slot.process : await this.interruptWorker(slot, rpc, "abort")) {
             slot.runState = slot.conflict ? "conflict" : "aborted";
             this.emitSlotEvent(slot, { type: "prompt_cancelled" });
           }
@@ -4250,14 +4204,11 @@ export class RuntimeController extends EventEmitter {
   clearPending(sessionId: string): Promise<void> {
     return this.withSessionSlot(sessionId, (slot) =>
       this.withDeliveryOwner(slot, "clearing Pending", async (worker) => {
-        const process =
-          worker ?? (await this.ensureFreshWriterInsideGate(slot));
+        const process = worker ?? (await this.ensureFreshWriterInsideGate(slot));
         for (const item of this.takeDeferredPrompts(slot))
-          item.reject(
-            requestError("Pending message was cleared", 409, {
-              code: "PROMPT_CLEARED",
-            }),
-          );
+          item.reject(requestError("Pending message was cleared", 409, {
+            code: "PROMPT_CLEARED",
+          }));
         // Consumption may race this request. queue_update, not the receipt,
         // owns the display; discard Pi's potentially large returned texts.
         await this.clearNativePending(slot, process, false);
@@ -4354,8 +4305,7 @@ export class RuntimeController extends EventEmitter {
               await writeBranchExport(outputPath!, content);
               return { path: outputPath! };
             }
-            const process =
-              worker ?? (await this.ensureFreshWriterInsideGate(slot));
+            const process = worker ?? (await this.ensureFreshWriterInsideGate(slot));
             return process.request<{ path?: unknown }>(
               {
                 type: "export_html",
@@ -4945,16 +4895,15 @@ export class RuntimeController extends EventEmitter {
         void stopped.catch(() => undefined);
       }
     };
-    const drain = (slots: Iterable<RuntimeSlot>) =>
-      Promise.allSettled(
-        [...slots].flatMap((slot) => [
-          slot.mutationQueue.tail,
-          slot.deliveryQueue.tail,
-          slot.extensionResponseQueue.tail,
-          slot.eventTail,
-          slot.projectionTail,
-        ]),
-      );
+    const drain = (slots: Iterable<RuntimeSlot>) => Promise.allSettled(
+      [...slots].flatMap((slot) => [
+        slot.mutationQueue.tail,
+        slot.deliveryQueue.tail,
+        slot.extensionResponseQueue.tail,
+        slot.eventTail,
+        slot.projectionTail,
+      ]),
+    );
     // Provisional workers are registered before startup's first await, so the
     // same shutdown ownership covers them and established slots.
     const provisional = [...this.provisionalSlots.values()];

@@ -80,13 +80,10 @@ async function queryModelWorker<Query extends ModelQuery>(
     let retirement: Promise<void> | undefined;
     const retire = () =>
       (retirement ??= signalProcessTree(child, "SIGKILL", { isolated: true }));
-    const timer = setTimeout(
-      () => {
-        timedOut = true;
-        void retire();
-      },
-      process.platform === "win32" ? 30_000 : 15_000,
-    );
+    const timer = setTimeout(() => {
+      timedOut = true;
+      void retire();
+    }, 15_000);
     child.on("message", (message: { ok?: boolean; result?: unknown }) => {
       if (message.ok) {
         const parsed = queryResults[query.kind].safeParse(message.result);
@@ -97,10 +94,7 @@ async function queryModelWorker<Query extends ModelQuery>(
         )
           result = parsed.data as Result;
       }
-      if (typeof message.ok === "boolean") {
-        clearTimeout(timer);
-        void retire();
-      }
+      if (typeof message.ok === "boolean") void retire();
     });
     child.once("error", (error) => {
       clearTimeout(timer);

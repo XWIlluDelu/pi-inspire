@@ -102,7 +102,7 @@ test("a delayed model refusal leaves focus on the closed picker trigger", async 
   } finally {
     release();
   }
-  await expect(page.getByText(error)).toBeVisible();
+  await expect(page.getByText(error, { exact: true })).toBeVisible();
   await expect(picker).toBeFocused();
 });
 
@@ -158,15 +158,10 @@ test("composer text drafts survive reload and stay partitioned through switching
   await input.fill(historyDraft);
   await input.press("ArrowUp");
   await expect(input).toHaveValue(historyDraft);
-  await input.evaluate((element: HTMLTextAreaElement) =>
-    element.setSelectionRange(0, 0),
-  );
+  await input.press("Control+Home");
   await input.press("ArrowUp");
   await expect(input).toHaveValue(repeated);
-  await input.evaluate((element: HTMLTextAreaElement) =>
-    element.setSelectionRange(element.value.length, element.value.length),
-  );
-  await input.press("ArrowDown");
+  await input.press("Escape");
   await expect(input).toHaveValue(historyDraft);
   await expect(input).toBeFocused();
   await input.fill("send and do not resurrect");

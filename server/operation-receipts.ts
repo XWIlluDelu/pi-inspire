@@ -15,19 +15,15 @@ type ReceiptIdentity<Executor, Command> = {
 export async function settleOperation<Executor, Command, Result>(
   identity: ReceiptIdentity<Executor, Command>,
   execute: () => Promise<Result>,
-  unknown: (
-    error: HostOperationError & { outcomeUnknown?: boolean },
-  ) => boolean,
+  unknown: (error: HostOperationError & { outcomeUnknown?: boolean }) => boolean,
   fallback = "Operation failed",
 ): Promise<OperationReceipt<Executor, Command, Result>> {
   try {
     return { ...identity, state: "completed", result: await execute() };
   } catch (error) {
-    const detail = error as
-      | (Partial<HostOperationError> & {
-          outcomeUnknown?: boolean;
-        })
-      | null;
+    const detail = error as (Partial<HostOperationError> & {
+      outcomeUnknown?: boolean;
+    }) | null;
     const failure = {
       message: error instanceof Error ? error.message : fallback,
       status: detail?.status ?? 500,
@@ -85,21 +81,19 @@ export class ReceiptWindow<Result> {
     execute: () => Promise<Result>,
   ): Promise<Result> {
     let bytes = 0;
-    const task = Promise.resolve()
-      .then(execute)
-      .then((value) => {
-        let serialized: string | undefined;
-        try {
-          serialized = JSON.stringify(value);
-        } catch (error) {
-          if (this.policy.snapshot) throw error;
-        }
-        const result = this.policy.snapshot
-          ? this.policy.snapshot(value, serialized)
-          : value;
-        bytes = serialized === undefined ? 0 : Buffer.byteLength(serialized);
-        return result;
-      });
+    const task = Promise.resolve().then(execute).then((value) => {
+      let serialized: string | undefined;
+      try {
+        serialized = JSON.stringify(value);
+      } catch (error) {
+        if (this.policy.snapshot) throw error;
+      }
+      const result = this.policy.snapshot
+        ? this.policy.snapshot(value, serialized)
+        : value;
+      bytes = serialized === undefined ? 0 : Buffer.byteLength(serialized);
+      return result;
+    });
     const entry: Receipt<Result> = { fingerprint, result: task, bytes: 0 };
     this.records.set(key, entry);
     const settle = () => {
@@ -127,8 +121,7 @@ export class ReceiptWindow<Result> {
         this.retained.size <= resultLimit &&
         now - at < resultTtlMs &&
         (!retirement || now - at < retirement.ttlMs)
-      )
-        break;
+      ) break;
       this.dropResult(key);
     }
     if (retirement) this.forgetExpired(now - retirement.ttlMs);
@@ -160,9 +153,7 @@ export class ReceiptWindow<Result> {
 
 /** All Host input commands share one process-lifetime ID namespace. */
 export class HostOperationReceipts {
-  private readonly receipts = new ReceiptWindow<
-    HostOperationResults[HostOperationCommand]
-  >({
+  private readonly receipts = new ReceiptWindow<HostOperationResults[HostOperationCommand]>({
     now: () => Date.now(),
     resultTtlMs: 15 * 60_000 + 1,
     resultLimit: 2_048,
@@ -176,11 +167,7 @@ export class HostOperationReceipts {
     execute?: () => Promise<HostOperationResults[Command]>,
   ): Promise<HostOperationResults[Command]> {
     const group = command === "prompt" ? "PROMPT" : "PENDING";
-    const refuse = (
-      suffix: string,
-      message: string,
-      outcomeUnknown = !execute,
-    ): never => {
+    const refuse = (suffix: string, message: string, outcomeUnknown = !execute): never => {
       throw requestError(message, suffix === "CAPACITY" ? 503 : 409, {
         code: `${group}_OPERATION_${suffix}`,
         ...(outcomeUnknown && { outcomeUnknown: true }),
@@ -190,36 +177,17 @@ export class HostOperationReceipts {
     this.receipts.prune();
     const previous = this.receipts.get(id);
     if (previous) {
-      if (
-        !previous.fingerprint.startsWith(prefix) ||
-        (fingerprint !== undefined &&
-          previous.fingerprint !== prefix + fingerprint)
-      )
-        refuse(
-          "MISMATCH",
-          "That operation ID belongs to a different input or action.",
-        );
+      if (!previous.fingerprint.startsWith(prefix) ||
+          (fingerprint !== undefined && previous.fingerprint !== prefix + fingerprint))
+        refuse("MISMATCH", "That operation ID belongs to a different input or action.");
       if (!previous.result)
-        refuse(
-          "RESULT_RETIRED",
-          "The original receipt retired. Inspect the conversation before trying again.",
-          true,
-        );
+        refuse("RESULT_RETIRED", "The original receipt retired. Inspect the conversation before trying again.", true);
       return previous.result as Promise<HostOperationResults[Command]>;
     }
     if (!execute || fingerprint === undefined)
-      return refuse(
-        "NOT_FOUND",
-        "This Host cannot identify that receipt.",
-        true,
-      );
+      return refuse("NOT_FOUND", "This Host cannot identify that receipt.", true);
     if (this.receipts.size >= 65_536)
-      refuse(
-        "CAPACITY",
-        "This Host reached its input operation receipt limit.",
-      );
-    return this.receipts.start(id, prefix + fingerprint, execute) as Promise<
-      HostOperationResults[Command]
-    >;
+      refuse("CAPACITY", "This Host reached its input operation receipt limit.");
+    return this.receipts.start(id, prefix + fingerprint, execute) as Promise<HostOperationResults[Command]>;
   }
 }

@@ -88,9 +88,7 @@ it.each(profiles)(
     let attachment: TerminalAttachment | undefined;
     let sequence = 0;
     const write = (text: string) =>
-      attachment!.send({
-        data: encodeTerminalInputFrame(++sequence, Buffer.from(text)),
-      });
+      attachment!.send({ data: encodeTerminalInputFrame(++sequence, Buffer.from(text)) });
 
     terminal.parser.registerOscHandler(6973, (value) => {
       const phase = value.split(";")[0];

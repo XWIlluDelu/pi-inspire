@@ -78,8 +78,6 @@
 }
 
 .terminal-project-context {
-  position: relative;
-  z-index: 5;
   color: var(--muted);
   background: var(--bg-raised);
   font-size: var(--text-xs);
@@ -101,18 +99,10 @@
   outline-offset: -2px;
 }
 
-.terminal-project-context + .terminal-toolbar {
-  inset-block-start: calc(var(--pane-tool-size) + 2 * var(--space-2));
-}
-
 .terminal-toolbar {
   z-index: 4;
   justify-content: flex-end;
   background: var(--bg-context);
-}
-
-.terminal-pane:has(.terminal-view--active :is(.terminal-search, .terminal-selection)) > .terminal-toolbar {
-  visibility: hidden;
 }
 
 .terminal-tab__status {
@@ -795,10 +785,6 @@
   .terminal-touch-keys__scroller > button {
     scroll-snap-align: start;
     scroll-snap-stop: always;
-  }
-
-  .terminal-touch-keys__scroller > button:last-child {
-    scroll-snap-align: end;
   }
 
   .terminal-touch-keys__arrows {

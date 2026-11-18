@@ -175,20 +175,11 @@ describe("WebSocket observation and transport limits", () => {
       b.frames.length = 0;
       const sessionId = "fixture-active";
       const running = { runState: "running" };
-      runtime.emit("event", {
-        type: "agent_start",
-        sessionId,
-        sessionStatus: running,
-      });
+      runtime.emit("event", { type: "agent_start", sessionId, sessionStatus: running });
       runtime.emit("event", {
         type: "extension_ui_pending",
         sessionId,
-        request: {
-          sessionId,
-          id: "question",
-          method: "input",
-          title: "private dialog body",
-        },
+        request: { sessionId, id: "question", method: "input", title: "private dialog body" },
         sessionStatus: { ...running, needsInput: true, external: true },
       });
       runtime.emit("event", {
@@ -209,34 +200,22 @@ describe("WebSocket observation and transport limits", () => {
         .expect(200);
       await vi.waitFor(() => {
         for (const { frames } of [a, b])
-          expect(frames).toContainEqual(
-            expect.objectContaining({
-              type: "update_status",
-              updateStatus: expect.objectContaining({
-                updateSnoozedUntil: dismissed.body.updateSnoozedUntil,
-              }),
+          expect(frames).toContainEqual(expect.objectContaining({
+            type: "update_status",
+            updateStatus: expect.objectContaining({
+              updateSnoozedUntil: dismissed.body.updateSnoozedUntil,
             }),
-          );
+          }));
       });
-      expect(a.frames).toContainEqual(
-        expect.objectContaining({
-          type: "extension_ui_pending",
-          sessionId,
-        }),
-      );
-      const background = b.frames.filter(
-        (frame) => frame.sessionId === sessionId,
-      );
+      expect(a.frames).toContainEqual(expect.objectContaining({
+        type: "extension_ui_pending",
+        sessionId,
+      }));
+      const background = b.frames.filter((frame) => frame.sessionId === sessionId);
       expect(background.map((frame) => frame.type)).toEqual([
-        "agent_start",
-        "session_status",
-        "agent_settled",
-        "runtime_error",
+        "agent_start", "session_status", "agent_settled", "runtime_error",
       ]);
-      expect(background[1]?.sessionStatus).toMatchObject({
-        needsInput: true,
-        external: true,
-      });
+      expect(background[1]?.sessionStatus).toMatchObject({ needsInput: true, external: true });
       expect(JSON.stringify(background)).not.toContain("private");
     } finally {
       a.socket.close();
@@ -467,12 +446,7 @@ describe("WebSocket observation and transport limits", () => {
         ),
       ).toBe(true);
       expect(batches.at(-1)?.streamRevision).toBe(revision);
-      expect(
-        batches.reduce(
-          (count, frame) => count + Number(frame.sourceEventCount),
-          0,
-        ),
-      ).toBe(revision);
+      expect(batches.reduce((count, frame) => count + Number(frame.sourceEventCount), 0)).toBe(revision);
       expect(
         backgroundFrames.filter(
           (frame) =>

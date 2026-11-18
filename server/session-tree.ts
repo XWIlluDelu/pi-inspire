@@ -1,10 +1,6 @@
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { isBranchEditTarget } from "../shared/branch-node-actions.js";
-import type {
-  BranchNodeRole,
-  BranchTreeNode,
-  BranchTreeQuery,
-} from "../shared/contracts.js";
+import type { BranchNodeRole, BranchTreeNode, BranchTreeQuery } from "../shared/contracts.js";
 import { userMessagePreviewText } from "../shared/user-message.js";
 import { requestError } from "./request-error.js";
 import { projectSafeValue } from "./safe-projection.js";
@@ -170,11 +166,7 @@ function entryRole(entry: SessionEntry): BranchNodeRole {
 
 function entryPreviewText(entry: SessionEntry): string {
   const content = branchEntryContent(entry);
-  if (
-    entry.type === "message" &&
-    entry.message.role === "user" &&
-    Array.isArray(content)
-  )
+  if (entry.type === "message" && entry.message.role === "user" && Array.isArray(content))
     return userMessagePreviewText(content);
   return branchEntryText(entry);
 }
@@ -330,8 +322,7 @@ export function projectSessionTree(
   effectiveLeafId: string | null,
   query: BranchTreeQuery = {},
 ) {
-  const { byId, depth, labels, children, descendant } =
-    sessionTreeIndex(entries);
+  const { byId, depth, labels, children, descendant } = sessionTreeIndex(entries);
   const active = new Set(ancestorPath(byId, effectiveLeafId));
   const routeLeafId = query.leafId ?? effectiveLeafId;
   const path =

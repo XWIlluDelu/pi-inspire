@@ -943,12 +943,10 @@ class SessionEntryIndex {
             },
           }
         : {}),
-      ...(pointLeaf !== undefined
-        ? {
-            node: projectHistoryPoint(this.currentEntries, entry, pointLeaf),
-            totalChars: text.length,
-          }
-        : {}),
+      ...(pointLeaf !== undefined ? {
+        node: projectHistoryPoint(this.currentEntries, entry, pointLeaf),
+        totalChars: text.length,
+      } : {}),
       text: text.slice(offset, end),
       nextOffset: end < text.length ? end : null,
       images,

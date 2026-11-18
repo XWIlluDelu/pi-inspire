@@ -226,27 +226,22 @@ describe("worker and projection retention", () => {
       sessions: ids.map((id) => record(id, "/tmp")),
     });
     try {
-      const slots = (
-        runtime as unknown as {
-          slots: Map<string, { projection: unknown }>;
-        }
-      ).slots;
+      const slots = (runtime as unknown as {
+        slots: Map<string, { projection: unknown }>;
+      }).slots;
       for (const id of ids) {
         await runtime.openSession(id);
         await startWorker(runtime, id);
-        workers
-          .find((worker) => worker.sessionId === id)!
+        workers.find((worker) => worker.sessionId === id)!
           .emit("exit", new Error("worker exited"));
       }
       await vi.waitFor(() =>
-        expect(
-          [...slots.values()].filter((slot) => slot.projection).length,
-        ).toBeLessThanOrEqual(1),
+        expect([...slots.values()].filter((slot) => slot.projection).length)
+          .toBeLessThanOrEqual(1),
       );
       const { sessionStatuses } = await runtime.snapshot(null);
-      expect(ids.map((id) => sessionStatuses[id]?.runState)).toEqual(
-        ids.map(() => "failed"),
-      );
+      expect(ids.map((id) => sessionStatuses[id]?.runState))
+        .toEqual(ids.map(() => "failed"));
 
       await runtime.openSession(ids[0]!);
       await startWorker(runtime, ids[0]!);

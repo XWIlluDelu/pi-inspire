@@ -33,9 +33,8 @@ it("captures a bounded preflight error and allows a corrected retry", async () =
     launcher,
     `console.error("x".repeat(10000)); console.error("\\x1b[31mSynthetic missing runtime module\\x1b[0m"); process.exitCode = 1;`,
   );
-  const failure = await prepareHostRestart(root).catch(
-    (error: Error) => error.message,
-  );
+  const failure = await prepareHostRestart(root)
+    .catch((error: Error) => error.message);
   expect(failure).toEqual(
     expect.stringContaining("Synthetic missing runtime module"),
   );
@@ -87,11 +86,7 @@ it.runIf(process.platform === "linux").each([
     expect(await backend.request("all-pi", commit)).toMatchObject({
       kind: issued ? "issued" : "not-issued",
       ...(stopFails
-        ? {
-            error: expect.objectContaining({
-              message: expect.stringContaining("PID fixture did not exit"),
-            }),
-          }
+        ? { error: expect.objectContaining({ message: expect.stringContaining("PID fixture did not exit") }) }
         : {}),
     });
     if (admit) expect(stopPi).toHaveBeenCalledExactlyOnceWith({ includeHerdr });

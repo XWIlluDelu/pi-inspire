@@ -8,10 +8,7 @@ import {
   isSessionRuntimeStatus,
   MAX_SESSION_ID_CHARS,
 } from "../shared/contracts.js";
-import {
-  maintainBrowserSockets,
-  terminateUpgradedSockets,
-} from "./browser-socket-lifecycle.js";
+import { maintainBrowserSockets, terminateUpgradedSockets } from "./browser-socket-lifecycle.js";
 import type { RuntimeController } from "./runtime.js";
 import type {
   NotificationPrincipal,
@@ -138,12 +135,8 @@ export function createRuntimeEventSockets({
     }
   };
   const stopHeartbeat = maintainBrowserSockets(
-    peers,
-    heartbeatIntervalMs,
-    currentBrowserBuild,
-    (peer) => !peer.backlog,
-    sendBounded,
-    forgetSocket,
+    peers, heartbeatIntervalMs, currentBrowserBuild,
+    (peer) => !peer.backlog, sendBounded, forgetSocket,
   );
 
   const queueOrSend = (socket: WebSocket, peer: Peer, frame: EventFrame) => {

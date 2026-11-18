@@ -52,14 +52,9 @@ test("sent file prompts retain readable names, original bytes, and history acros
   const uploadResponse = await uploaded;
   expect(uploadResponse.ok()).toBe(true);
   const { attachments } = await uploadResponse.json();
-  const uploadedNames: string[] = attachments.map(
-    (file: { fileName: string }) => file.fileName,
-  );
-  // Safari normalizes local filenames before uploading. Verify the same
-  // Unicode name and require the UI to show the Host's accepted spelling.
-  expect(uploadedNames.map((name) => name.normalize("NFC"))).toEqual(
-    names.map((name) => name.normalize("NFC")),
-  );
+  expect(
+    attachments.map((file: { fileName: string }) => file.fileName),
+  ).toEqual(names);
   expect(
     attachments.find(
       (file: { fileName: string }) => file.fileName === "diagram.svg",
@@ -77,7 +72,7 @@ test("sent file prompts retain readable names, original bytes, and history acros
     .last();
   const files = bubble.getByRole("list", { name: "Referenced files" });
   await expect(files.getByRole("listitem")).toHaveCount(names.length);
-  for (const name of uploadedNames)
+  for (const name of names)
     await expect(files.getByText(name, { exact: true })).toBeVisible();
   const sourcePaths = await files
     .getByRole("listitem")
@@ -108,7 +103,7 @@ test("sent file prompts retain readable names, original bytes, and history acros
   await input.press("ArrowUp");
   await expect(input).toHaveValue(question);
   const recalled = page.locator(".composer__attachments");
-  for (const name of uploadedNames)
+  for (const name of names)
     await expect(recalled.getByText(name, { exact: true })).toBeVisible();
   const removeRecalled = recalled.getByRole("button", { name: /Remove/ });
   for (const _ of names) await removeRecalled.first().click();

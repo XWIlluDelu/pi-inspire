@@ -1,7 +1,6 @@
 import { ChevronRight } from "lucide-react";
 import {
   type ReactNode,
-  useContext,
   useEffect,
   useId,
   useLayoutEffect,
@@ -11,7 +10,6 @@ import {
 import type { ActivityFoldVisibilityPreference } from "../../shared/contracts";
 import {
   ActivityItemOwner,
-  hasOpenActivityCard,
   type ActivityReadingChoices,
   ReadingChoices,
 } from "./transcript-activity-visibility";
@@ -150,16 +148,12 @@ function ActivityItems({
   items: readonly ActivityItem[];
   collapseTools: boolean;
 }) {
-  const choices = useContext(ReadingChoices);
-  const canGroup = (item: ActivityItem | undefined) =>
-    item?.expandedNode &&
-    !item.live &&
-    !hasOpenActivityCard(choices, item.toolCallId);
   const children: ReactNode[] = [];
   for (let start = 0; start < items.length; ) {
     const item = items[start]!;
     let end = start + 1;
-    if (collapseTools && canGroup(item)) while (canGroup(items[end])) end++;
+    if (collapseTools && item.expandedNode && !item.live)
+      while (items[end]?.expandedNode && !items[end]?.live) end++;
     children.push(
       end - start > 1 ? (
         <ToolStrip key={item.key} items={items.slice(start, end)} />

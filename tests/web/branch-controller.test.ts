@@ -243,43 +243,26 @@ describe("BranchController", () => {
     expect(harness.state().branchActionId).toBeNull();
   });
 
-  it.each(["clone", "fork"] as const)(
-    "retires a successful %s even after reselecting its source",
-    async (action) => {
-      const f = createHarness();
-      const response = deferred<BranchForkResponse>();
-      (action === "clone" ? f.cloneBranch : f.forkBranch).mockReturnValue(
-        response.promise,
-      );
-      const copying =
-        action === "clone" ? f.controller.clone() : f.controller.fork("u1");
-      for (const sessionId of ["s2", "s1"]) {
-        f.invalidateSelection();
-        f.patch({ sessionId });
-      }
-      response.resolve({
-        sessionId: "forked",
-        snapshot: activeSnapshot({ sessionId: "forked" }),
-        editorText: "",
-        editorAttachments:
-          action === "fork"
-            ? [
-                {
-                  id: "discarded-image",
-                  fileName: "image.png",
-                  mimeType: "image/png",
-                  size: 1,
-                  kind: "image",
-                },
-              ]
-            : [],
-      });
-      expect(await copying).toBe(false);
-      if (action === "fork")
-        expect(f.deleteAttachment).toHaveBeenCalledExactlyOnceWith(
-          "discarded-image",
-        );
-      expect(f.applyFork).not.toHaveBeenCalled();
-    },
-  );
+  it.each(["clone", "fork"] as const)("retires a successful %s even after reselecting its source", async (action) => {
+    const f = createHarness();
+    const response = deferred<BranchForkResponse>();
+    (action === "clone" ? f.cloneBranch : f.forkBranch).mockReturnValue(response.promise);
+    const copying = action === "clone" ? f.controller.clone() : f.controller.fork("u1");
+    for (const sessionId of ["s2", "s1"]) {
+      f.invalidateSelection();
+      f.patch({ sessionId });
+    }
+    response.resolve({
+      sessionId: "forked",
+      snapshot: activeSnapshot({ sessionId: "forked" }),
+      editorText: "",
+      editorAttachments: action === "fork"
+        ? [{ id: "discarded-image", fileName: "image.png", mimeType: "image/png", size: 1, kind: "image" }]
+        : [],
+    });
+    expect(await copying).toBe(false);
+    if (action === "fork")
+      expect(f.deleteAttachment).toHaveBeenCalledExactlyOnceWith("discarded-image");
+    expect(f.applyFork).not.toHaveBeenCalled();
+  });
 });

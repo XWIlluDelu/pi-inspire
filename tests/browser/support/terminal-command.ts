@@ -6,7 +6,7 @@ export function terminalNodeCommand(script: string) {
   // POSIX login shells may reset PATH; Windows profiles retain the fixture PATH.
   const node =
     process.platform === "win32"
-      ? "node.exe"
+      ? "node"
       : `'${process.execPath.replaceAll("'", "'\\''")}'`;
   return `${node} -e "${script}"`;
 }

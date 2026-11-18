@@ -20,20 +20,14 @@ export function maintainBrowserSockets<Peer extends PeerLiveness>(
   const timer = setInterval(() => {
     if (!checking && peers.size && currentBuild) {
       checking = true;
-      void currentBuild()
-        .then((build) => {
-          if (!build) return;
-          for (const [socket, peer] of peers) {
-            if (peer.browserBuild === null || peer.browserBuild === build)
-              continue;
-            detach(socket);
-            socket.close(BROWSER_UPGRADE_CLOSE, "Reload Inspire");
-          }
-        })
-        .catch(() => {})
-        .finally(() => {
-          checking = false;
-        });
+      void currentBuild().then((build) => {
+        if (!build) return;
+        for (const [socket, peer] of peers) {
+          if (peer.browserBuild === null || peer.browserBuild === build) continue;
+          detach(socket);
+          socket.close(BROWSER_UPGRADE_CLOSE, "Reload Inspire");
+        }
+      }).catch(() => {}).finally(() => { checking = false; });
     }
     for (const [socket, peer] of peers) {
       if (socket.readyState !== WebSocket.OPEN) continue;
@@ -56,13 +50,9 @@ export function maintainBrowserSockets<Peer extends PeerLiveness>(
 }
 
 export async function terminateUpgradedSockets(websocket: WebSocketServer) {
-  await Promise.all(
-    [...websocket.clients].map((socket) => {
-      const closed = new Promise<void>((resolve) =>
-        socket.once("close", resolve),
-      );
-      socket.terminate();
-      return closed;
-    }),
-  );
+  await Promise.all([...websocket.clients].map((socket) => {
+    const closed = new Promise<void>((resolve) => socket.once("close", resolve));
+    socket.terminate();
+    return closed;
+  }));
 }

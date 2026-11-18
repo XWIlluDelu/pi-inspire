@@ -18,7 +18,9 @@ export function WindowTitlebar() {
         <button
           type="button"
           className="window-titlebar__brand-button"
-          onClick={() => store.setPreference("titlebarNeedles", !needlesActive)}
+          onClick={() =>
+            store.setPreference("titlebarNeedles", !needlesActive)
+          }
           aria-label="Inspire — Buffon's needles"
           aria-pressed={needlesActive}
           title={

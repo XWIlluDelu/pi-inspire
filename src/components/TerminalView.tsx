@@ -1031,13 +1031,11 @@ export const TerminalView = memo(function TerminalView({
                 aria-label="Search terminal output"
                 placeholder="Find"
               />
-              {(
-                [
-                  ["caseSensitive", "Match case", "Aa"],
-                  ["wholeWord", "Match whole word", "ab"],
-                  ["regex", "Use regular expression", ".*"],
-                ] as const
-              ).map(([option, label, text]) => (
+              {([
+                ["caseSensitive", "Match case", "Aa"],
+                ["wholeWord", "Match whole word", "ab"],
+                ["regex", "Use regular expression", ".*"],
+              ] as const).map(([option, label, text]) => (
                 <button
                   key={option}
                   type="button"
@@ -1055,12 +1053,10 @@ export const TerminalView = memo(function TerminalView({
                   ? `${search.resultIndex + 1}/${search.resultCount}`
                   : "0/0"}
               </span>
-              {(
-                [
-                  ["previous", "Previous", ChevronUp],
-                  ["next", "Next", ChevronDown],
-                ] as const
-              ).map(([direction, label, Icon]) => (
+              {([
+                ["previous", "Previous", ChevronUp],
+                ["next", "Next", ChevronDown],
+              ] as const).map(([direction, label, Icon]) => (
                 <button
                   key={direction}
                   type="button"

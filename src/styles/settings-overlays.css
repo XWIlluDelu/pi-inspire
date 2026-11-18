@@ -1430,7 +1430,6 @@
   align-self: flex-end;
 }
 .notices--scrollable {
-  overflow-anchor: none;
   pointer-events: auto;
   overflow-y: auto;
   overscroll-behavior: contain;

@@ -212,9 +212,7 @@ export class TerminalConnection {
         this.lastReceivedAt = Date.now();
         try {
           const data =
-            event.data instanceof Blob
-              ? await event.data.arrayBuffer()
-              : event.data;
+            event.data instanceof Blob ? await event.data.arrayBuffer() : event.data;
           if (!current()) return;
           if (data instanceof ArrayBuffer) {
             this.receiveData(decodeTerminalServerDataFrame(data));

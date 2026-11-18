@@ -44,8 +44,7 @@ Formatting remains available through `npm run format:check`. Pushes to `auto-dev
 | `windows-core`, `macos-core` | Build, portable, Node and native integration, native Trash/recovery and launcher on the named OS. |
 | `windows`, `macos` | Named OS core and targeted Chromium. |
 | `safari` | The cross-browser suite in native macOS WebKit. |
-| `release` | Same checks as a main push, including all three installed-package checks. |
-| `full` | Release checks with the complete Chromium suite on macOS and Windows. |
+| `full` | Ubuntu checks, full Chromium on all three OSes, Firefox on Ubuntu, and all three installed-package checks. |
 
 ```sh
 gh workflow run ci.yml --ref auto-dev -f scope=windows-core

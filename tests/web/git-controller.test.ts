@@ -203,9 +203,15 @@ it("coalesces repeated status hints into one follow-up read", async () => {
   await Promise.all([original, ...hints]);
   expect(f.gitStatus).toHaveBeenCalledTimes(2);
   expect(f.state.gitDiff).toMatchObject({ result: diff("latest update") });
+
+
 });
 
-it.each(["changed diff", "diff error", "page visibility"] as const)(
+it.each([
+  "changed diff",
+  "diff error",
+  "page visibility",
+] as const)(
   "returns to fast polling after %s breaks a stable comparison",
   async (intent) => {
     vi.useFakeTimers();

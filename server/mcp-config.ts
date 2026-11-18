@@ -80,7 +80,8 @@ function projectEntry(
         : policyOnly
           ? null
           : true,
-    exposure: parseExposure(value.exposure) ?? (policyOnly ? null : "codemode"),
+    exposure:
+      parseExposure(value.exposure) ?? (policyOnly ? null : "codemode"),
     urlConfigured: mcpConnectionFields.url.presence(value.url),
     argumentCount: mcpConnectionFields.args.presence(value.args),
     [mcpSecretMaps.env.projection]: strings(value.env),

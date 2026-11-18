@@ -70,35 +70,16 @@ export async function terminalCatalog(page: Page, cwd = browserWorkspace) {
 }
 
 function terminalFixtures(page: Page) {
-  const ids = new Set<string>();
+  const ids: string[] = [];
   return {
-    track(id: string) {
-      ids.add(id);
-    },
-    async remove(id: string) {
-      const response = await terminalOperation(page, {
-        command: "remove",
-        params: { id, force: true },
-      });
-      expect(response.ok()).toBe(true);
-      ids.delete(id);
-    },
-    async create(title?: string) {
+    async create() {
       const created = await terminalOperation(page, {
         command: "create",
         params: { request: { cwd: browserWorkspace } },
       });
       expect(created.ok()).toBe(true);
       const terminal = (await created.json()).result as TerminalDescriptor;
-      ids.add(terminal.id);
-      if (title !== undefined) {
-        const renamed = await terminalOperation(page, {
-          command: "rename",
-          params: { id: terminal.id, title },
-        });
-        expect(renamed.ok()).toBe(true);
-        return (await renamed.json()).result as TerminalDescriptor;
-      }
+      ids.push(terminal.id);
       return terminal;
     },
     async close() {

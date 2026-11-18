@@ -39,10 +39,9 @@ export function watchWorkerStatus(
     )
       return;
     try {
-      const value = decodeBranchBridgeJson(
-        event.statusText,
-        maxBytes,
-      ) as Record<string, unknown> | null;
+      const value = decodeBranchBridgeJson(event.statusText, maxBytes) as
+        | Record<string, unknown>
+        | null;
       if (
         !value ||
         value.nonce !== owner.nonce ||
@@ -87,29 +86,16 @@ export async function requestWorkerStatus(
   options: StatusRequest,
   receive: (value: Record<string, unknown>) => void,
 ): Promise<void> {
-  const owner = {
-    nonce: runtimeToken("status"),
-    workerId: bridge.workerId,
-    sessionId,
-  };
+  const owner = { nonce: runtimeToken("status"), workerId: bridge.workerId, sessionId };
   let invalid = false;
   const unwatch = watchWorkerStatus(
-    rpc,
-    `${bridge.statusKey}${options.suffix}`,
-    owner,
-    options.maxResultBytes,
-    receive,
-    () => {
-      invalid = true;
-    },
+    rpc, `${bridge.statusKey}${options.suffix}`, owner, options.maxResultBytes,
+    receive, () => { invalid = true; },
   );
   try {
     await sendWorkerStatusRequest(
-      rpc,
-      `${bridge.command}${options.suffix}`,
-      { ...options.argument, ...owner },
-      options.maxArgumentBytes,
-      options.timeoutMs ?? 30_000,
+      rpc, `${bridge.command}${options.suffix}`, { ...options.argument, ...owner },
+      options.maxArgumentBytes, options.timeoutMs ?? 30_000,
     );
     if (invalid) throw options.malformedError;
   } finally {

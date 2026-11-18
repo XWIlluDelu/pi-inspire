@@ -614,7 +614,7 @@ it("reads and copies the admitted external branch across appends, then retires i
   } finally {
     release();
   }
-}, 15_000);
+});
 
 it("advances saved History without moving the selected worker branch", async () => {
   const f = await fixture();

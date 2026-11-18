@@ -90,7 +90,7 @@ afterEach(async () => {
   host = undefined;
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
-  await rm(root, { recursive: true, force: true, maxRetries: 5 });
+  await rm(root, { recursive: true, force: true });
 });
 
 const readJson = async (path: string) =>
@@ -314,7 +314,7 @@ describe("native configuration round trips", () => {
         },
       },
     });
-  }, 30_000);
+  });
 
   it("reports malformed and duplicate declarations without publishing them", async () => {
     await writeFile(join(agent, "models.json"), "{broken");
@@ -333,5 +333,5 @@ describe("native configuration round trips", () => {
       message: "A model with that ID already exists",
     });
     expect(await readJson(join(agent, "models.json"))).toEqual(initialConfig);
-  }, 15_000);
+  });
 });
