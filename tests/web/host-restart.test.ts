@@ -180,39 +180,32 @@ describe("browser restart delivery", () => {
     expect(f.api.restartHost).toHaveBeenCalledOnce();
   });
 
-  it("observes Host and blocks dispatch until browser storage becomes available", async () => {
-    const { status, api } = fixture();
-    let available = false;
-    const client = new HostRestartClient(api, () => {
-      if (!available) throw new Error("storage unavailable");
-      return sessionStorage;
-    });
-    await client.refresh();
-    expect(client.snapshot()).toMatchObject({ blocked: true, status });
-    await client.start("host", status.hostId);
-    expect(api.restartHost).not.toHaveBeenCalled();
-    available = true;
-    await client.refresh();
-    expect(client.snapshot()).toMatchObject({ blocked: false, error: null });
-    await client.start("host", status.hostId);
-    expect(api.restartHost).toHaveBeenCalledOnce();
-  });
-
-  it("does not dispatch when it cannot persist the request", async () => {
-    const f = fixture();
-    const client = new HostRestartClient(
-      f.api,
-      () =>
-        ({
-          getItem: () => null,
-          setItem: () => {
-            throw new Error("quota");
-          },
-        }) as unknown as Storage,
-    );
-    await client.refresh();
-    await client.start("host", f.status.hostId);
-    expect(client.snapshot().blocked).toBe(true);
-    expect(f.api.restartHost).not.toHaveBeenCalled();
-  });
+  it.each(["read", "write"] as const)(
+    "observes Host while storage %s failure blocks dispatch",
+    async (failure) => {
+      const { status, api } = fixture();
+      let available = false;
+      const storage = {
+        getItem: (key: string) => sessionStorage.getItem(key),
+        setItem: (key: string, value: string) => {
+          if (failure === "write" && !available) throw new Error("quota");
+          sessionStorage.setItem(key, value);
+        },
+      } as Storage;
+      const client = new HostRestartClient(api, () => {
+        if (failure === "read" && !available)
+          throw new Error("storage unavailable");
+        return storage;
+      });
+      await client.refresh();
+      await client.start("host", status.hostId);
+      expect(client.snapshot()).toMatchObject({ blocked: true, status });
+      expect(api.restartHost).not.toHaveBeenCalled();
+      available = true;
+      await client.refresh();
+      expect(client.snapshot()).toMatchObject({ blocked: false, error: null });
+      await client.start("host", status.hostId);
+      expect(api.restartHost).toHaveBeenCalledOnce();
+    },
+  );
 });

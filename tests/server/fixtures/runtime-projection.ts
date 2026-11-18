@@ -13,6 +13,7 @@ import type { RuntimeSlot } from "../../../server/runtime-slot.js";
 import type { SessionRecord } from "../../../server/session-catalog.js";
 import { RETRY_STATE_SUFFIX } from "../../../shared/branch-bridge-protocol.js";
 
+import { nativePiWorkspace, stubNativePiEnvironment } from "./native-pi.js";
 import { catalog, FakeRpc, workerAttachmentStore } from "./runtime.js";
 import { jsonl } from "./session-jsonl.js";
 
@@ -368,10 +369,19 @@ export async function setup(
   return { runtime, workers, sequence, path, opened, startup };
 }
 
+export async function initializeProjectionFixture() {
+  const pi = await nativePiWorkspace("inspire-projection-pi-", {
+    defaultProjectTrust: "never",
+  });
+  directories.push(pi.root);
+  stubNativePiEnvironment(pi.env);
+}
+
 export async function disposeProjectionFixture() {
   try {
     await Promise.all(runtimes.splice(0).map((runtime) => runtime.close()));
   } finally {
+    vi.unstubAllEnvs();
     await Promise.all(stores.splice(0).map((store) => store.close()));
     for (const directory of directories.splice(0).reverse())
       await rm(directory, { recursive: true, force: true, maxRetries: 3 });

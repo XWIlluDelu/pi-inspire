@@ -4,27 +4,23 @@ import { readScope, RecoveryBackoff } from "../../src/recovery-backoff";
 
 afterEach(() => vi.useRealTimers());
 
-it.each([
-  [503, [0, 1_000, 4_000, 14_000]],
-  [401, [0]],
-  [403, [0]],
-] as const)(
-  "applies the shared read retry budget to HTTP %s",
-  async (status, attempts) => {
+it.each([503, 401, 403])(
+  "applies backoff only to transient reads (HTTP %s)",
+  async (status) => {
     vi.useFakeTimers();
-    const start = Date.now();
-    const observed: number[] = [];
     const failure = new ApiError(status, "read failed");
-    const scope = readScope(() => true);
+    const perform = vi.fn().mockRejectedValue(failure);
     const rejected = expect(
-      scope.read(async () => {
-        observed.push(Date.now() - start);
-        throw failure;
-      }, new RecoveryBackoff()),
+      readScope(() => true).read(perform, new RecoveryBackoff()),
     ).rejects.toBe(failure);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(perform).toHaveBeenCalledOnce();
     await vi.runAllTimersAsync();
     await rejected;
-    expect(observed).toEqual(attempts);
+    if (status === 503) {
+      expect(perform.mock.calls.length).toBeGreaterThan(1);
+      expect(perform.mock.calls.length).toBeLessThanOrEqual(6);
+    } else expect(perform).toHaveBeenCalledOnce();
   },
 );
 

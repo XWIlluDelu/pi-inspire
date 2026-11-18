@@ -2,15 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   deferredSignal,
-  disposeIsolatedRuntimeFixture,
-  initializeIsolatedRuntimeFixture,
+  disposeRuntimeFixture,
+  initializeRuntimeFixture,
   schedulingRuntime,
   startWorker,
   TEST_CWD,
 } from "./fixtures/runtime.js";
 
-beforeEach(initializeIsolatedRuntimeFixture);
-afterEach(disposeIsolatedRuntimeFixture);
+beforeEach(initializeRuntimeFixture);
+afterEach(disposeRuntimeFixture);
 
 describe("maintenance restart admission", () => {
   afterEach(() => vi.useRealTimers());

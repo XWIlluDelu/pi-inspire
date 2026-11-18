@@ -1,13 +1,15 @@
 import { appendFile, readFile, rename, writeFile } from "node:fs/promises";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it } from "vitest";
 import { TRANSCRIPT_PAGE_MAX_BYTES } from "../../server/session-projection.js";
 import {
   disposeProjectionFixture,
+  initializeProjectionFixture,
   setup,
   runtimeProjection,
 } from "./fixtures/runtime-projection.js";
 import { jsonl, messageEntry } from "./fixtures/session-jsonl.js";
 
+beforeEach(initializeProjectionFixture);
 afterEach(disposeProjectionFixture);
 
 const entry = (id: string, parentId: string, role: string, content: string) =>

@@ -6,16 +6,16 @@ import {
   MAX_EXTENSION_STATUSES,
 } from "../../shared/contracts.js";
 import {
-  disposeIsolatedRuntimeFixture,
+  disposeRuntimeFixture,
   fakeRuntime,
-  initializeIsolatedRuntimeFixture,
+  initializeRuntimeFixture,
   persistedRecord,
   startWorker,
   trackRuntime,
 } from "./fixtures/runtime.js";
 
-beforeEach(initializeIsolatedRuntimeFixture);
-afterEach(disposeIsolatedRuntimeFixture);
+beforeEach(initializeRuntimeFixture);
+afterEach(disposeRuntimeFixture);
 
 async function fixture() {
   const f = fakeRuntime({

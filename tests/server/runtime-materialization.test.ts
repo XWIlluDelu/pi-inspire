@@ -1,7 +1,7 @@
 import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AttachmentStore } from "../../server/attachments.js";
 import { type PiRpcProcess } from "../../server/pi-rpc.js";
 import { MAX_IDLE_WORKERS, RuntimeController } from "../../server/runtime.js";
@@ -10,11 +10,13 @@ import { catalog } from "./fixtures/runtime.js";
 import {
   directories,
   disposeProjectionFixture,
+  initializeProjectionFixture,
   NewSessionRpc,
   setupNewSession,
   stores,
 } from "./fixtures/runtime-projection.js";
 
+beforeEach(initializeProjectionFixture);
 afterEach(disposeProjectionFixture);
 
 describe("new-session materialization", () => {

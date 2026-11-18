@@ -7,11 +7,11 @@ import { SessionProjection } from "../../server/session-projection.js";
 import type { SessionDeletionRequest } from "../../shared/contracts.js";
 import {
   deferredSignal,
-  disposeIsolatedRuntimeFixture,
+  disposeRuntimeFixture,
   fakeRuntime,
   fixtureWorkspace,
   HIDDEN_FOLDER_CWD,
-  initializeIsolatedRuntimeFixture,
+  initializeRuntimeFixture,
   persistedRecord,
   startWorker,
   trackRuntime,
@@ -19,10 +19,10 @@ import {
 import { jsonl } from "./fixtures/session-jsonl.js";
 
 beforeEach(async () => {
-  await initializeIsolatedRuntimeFixture();
+  await initializeRuntimeFixture();
   vi.stubEnv("PI_CODING_AGENT_SESSION_DIR", fixtureWorkspace);
 });
-afterEach(disposeIsolatedRuntimeFixture);
+afterEach(disposeRuntimeFixture);
 
 async function fixture({
   catalogFailure,

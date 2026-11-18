@@ -1,13 +1,6 @@
 import { EventEmitter } from "node:events";
 import { existsSync, realpathSync, writeFileSync } from "node:fs";
-import {
-  mkdir,
-  mkdtemp,
-  realpath,
-  rm,
-  stat,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { vi } from "vitest";
@@ -480,10 +473,12 @@ export function upload(name: string, type: string): Express.Multer.File {
 }
 
 export async function initializeRuntimeFixture() {
-  fixtureWorkspace = await realpath(
-    await mkdtemp(join(tmpdir(), "inspire-runtime-fixture-")),
-  );
+  const pi = await nativePiWorkspace("inspire-runtime-fixture-", {
+    defaultProjectTrust: "never",
+  });
+  fixtureWorkspace = pi.root;
   workspaceDirectories.push(fixtureWorkspace);
+  stubNativePiEnvironment(pi.env);
   await Promise.all(
     [
       "previews",
@@ -501,24 +496,6 @@ export async function initializeRuntimeFixture() {
   HIDDEN_FOLDER_CWD = fixtureCwd("/folder");
 }
 
-export async function initializeIsolatedRuntimeFixture() {
-  await initializeRuntimeFixture();
-  const pi = await nativePiWorkspace(
-    "pi-",
-    { defaultProjectTrust: "never" },
-    fixtureWorkspace,
-  );
-  stubNativePiEnvironment(pi.env);
-}
-
-export async function disposeIsolatedRuntimeFixture() {
-  try {
-    await disposeRuntimeFixture();
-  } finally {
-    vi.unstubAllEnvs();
-  }
-}
-
 export async function disposeRuntimeFixture() {
   try {
     const closed = await Promise.allSettled(
@@ -527,6 +504,7 @@ export async function disposeRuntimeFixture() {
     for (const result of closed)
       if (result.status === "rejected") throw result.reason;
   } finally {
+    vi.unstubAllEnvs();
     await Promise.all(attachments.splice(0).map((store) => store.close()));
     await Promise.all(
       workspaceDirectories

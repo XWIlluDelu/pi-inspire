@@ -5,32 +5,16 @@ import {
   TRANSIENT_OVERLAY_MAX_BYTES,
 } from "../../server/session-projection.js";
 import {
-  nativePiWorkspace,
-  stubNativePiEnvironment,
-} from "./fixtures/native-pi.js";
-import {
-  directories,
   disposeProjectionFixture,
+  initializeProjectionFixture,
   setup,
 } from "./fixtures/runtime-projection.js";
 import { jsonl, messageEntry } from "./fixtures/session-jsonl.js";
 
 const id = "session-a";
 const jsonBytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
-beforeEach(async () => {
-  const pi = await nativePiWorkspace("inspire-transcript-pi-", {
-    defaultProjectTrust: "never",
-  });
-  directories.push(pi.root);
-  stubNativePiEnvironment(pi.env);
-});
-afterEach(async () => {
-  try {
-    await disposeProjectionFixture();
-  } finally {
-    vi.unstubAllEnvs();
-  }
-});
+beforeEach(initializeProjectionFixture);
+afterEach(disposeProjectionFixture);
 
 async function fixture() {
   const {

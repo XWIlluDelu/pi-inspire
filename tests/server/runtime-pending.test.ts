@@ -9,9 +9,9 @@ import {
 } from "../../shared/contracts.js";
 import {
   deferredSignal,
-  disposeIsolatedRuntimeFixture,
+  disposeRuntimeFixture,
   fakeRuntime,
-  initializeIsolatedRuntimeFixture,
+  initializeRuntimeFixture,
   persistedRecord,
   startWorker,
   trackedAttachmentStore,
@@ -22,8 +22,8 @@ import {
 const trailer = `${ATTACHMENT_CONTEXT_HEADING}\n- "/demo/report.csv"`;
 const emptyInput = (): PendingInput => ({ steering: [], followUp: [] });
 
-beforeEach(initializeIsolatedRuntimeFixture);
-afterEach(disposeIsolatedRuntimeFixture);
+beforeEach(initializeRuntimeFixture);
+afterEach(disposeRuntimeFixture);
 
 async function fixture({ running = true, track = true } = {}) {
   const store = trackedAttachmentStore();

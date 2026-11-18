@@ -8,18 +8,18 @@ import {
 import type { RuntimeSlot } from "../../server/runtime-slot.js";
 import {
   deferredSignal,
-  disposeIsolatedRuntimeFixture,
+  disposeRuntimeFixture,
   fakeRuntime,
   fixtureWorkspace,
-  initializeIsolatedRuntimeFixture,
+  initializeRuntimeFixture,
   persistedRecord,
   startWorker,
   trackedAttachmentStore,
   upload,
 } from "./fixtures/runtime.js";
 
-beforeEach(initializeIsolatedRuntimeFixture);
-afterEach(disposeIsolatedRuntimeFixture);
+beforeEach(initializeRuntimeFixture);
+afterEach(disposeRuntimeFixture);
 
 async function fixture(
   options: NonNullable<Parameters<typeof fakeRuntime>[0]> = {},

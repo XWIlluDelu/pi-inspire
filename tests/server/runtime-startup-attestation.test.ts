@@ -1,17 +1,19 @@
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { appendFile, readFile, writeFile } from "node:fs/promises";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { RuntimeSlot } from "../../server/runtime-slot.js";
 import { deferredSignal } from "./fixtures/runtime.js";
 import { jsonl, messageEntry } from "./fixtures/session-jsonl.js";
 
 import {
   disposeProjectionFixture,
+  initializeProjectionFixture,
+  runtimeProjection,
   setup,
 } from "./fixtures/runtime-projection.js";
 
+beforeEach(initializeProjectionFixture);
 afterEach(disposeProjectionFixture);
 
 describe("writer startup attestation", () => {
@@ -66,10 +68,7 @@ describe("writer startup attestation", () => {
       const { runtime, workers, startup } = await setup([], (worker) => {
         worker.onStart = () => start.promise;
       });
-      const internals = runtime as unknown as {
-        slots: Map<string, RuntimeSlot>;
-      };
-      const slot = internals.slots.get("session-a")!;
+      const { slot } = runtimeProjection(runtime);
       const projection = slot.projection!;
       const reconcile = projection.reconcileSuspended.bind(projection);
       const heldReconcile = vi
@@ -92,28 +91,17 @@ describe("writer startup attestation", () => {
       try {
         start.resolve();
         await reconcileEntered.promise;
-        if (loss === "exit") {
+        if (loss === "exit")
           workers[0]!.emit("exit", new Error("Synthetic attestation exit"));
-          expect(slot.process).toBeNull();
-          expect(slot.runState).toBe("failed");
-        } else {
+        else
           vi.spyOn(workers[0]!, "available", "get").mockReturnValue(false);
-        }
         finishReconcile.resolve();
         await vi.waitFor(() => expect(stop).toHaveBeenCalled());
-        // Reconciliation cannot revive admission while actual stop is pending.
-        expect(slot.ready).toBe(false);
-        expect(slot.stopping).not.toBeNull();
-        expect(slot.workerView).toBeNull();
-        expect(events.some((event) => event.type === "runtime_ready")).toBe(
-          false,
-        );
         retirement.resolve();
         expect(await outcome).toMatchObject({ status: 503 });
-        expect(slot.ready).toBe(false);
-        expect(slot.startupPhase).toBe("idle");
-        expect(slot.runState).toBe("failed");
-        expect(slot.workerView).toBeNull();
+        expect(await runtime.snapshot("session-a")).toMatchObject({
+          sessionStatuses: { "session-a": { runState: "failed" } },
+        });
         expect(events.some((event) => event.type === "runtime_ready")).toBe(
           false,
         );

@@ -13,10 +13,6 @@ import { stageSessionFork } from "../../server/session-fork.js";
 import { SessionProjection } from "../../server/session-projection.js";
 import type { BranchNavigateRequest } from "../../shared/contracts.js";
 import {
-  nativePiWorkspace,
-  stubNativePiEnvironment,
-} from "./fixtures/native-pi.js";
-import {
   deferredSignal,
   disposeRuntimeFixture,
   FakeRpc,
@@ -143,23 +139,8 @@ class BranchRpc extends FakeRpc {
   }
 }
 
-let workspace: Awaited<ReturnType<typeof nativePiWorkspace>>;
-beforeEach(async () => {
-  await initializeRuntimeFixture();
-  workspace = await nativePiWorkspace(
-    "pi-",
-    { defaultProjectTrust: "never" },
-    fixtureWorkspace,
-  );
-  stubNativePiEnvironment(workspace.env);
-});
-afterEach(async () => {
-  try {
-    await disposeRuntimeFixture();
-  } finally {
-    vi.unstubAllEnvs();
-  }
-});
+beforeEach(initializeRuntimeFixture);
+afterEach(disposeRuntimeFixture);
 
 async function fixture({
   userContent = "second question",
@@ -173,7 +154,8 @@ async function fixture({
   external?: boolean;
   cold?: boolean;
 } = {}) {
-  const { cwd, sessions: directory } = workspace;
+  const cwd = join(fixtureWorkspace, "workspace");
+  const directory = join(fixtureWorkspace, "sessions");
   const path = join(directory, "session.jsonl");
   const timestamp = "2026-08-01T00:00:00.000Z";
   const header = { type: "session", version: 3, id, timestamp, cwd };
@@ -564,7 +546,7 @@ it("reads and copies the admitted external branch across appends, then retires i
       );
       expect(header).toMatchObject({
         id: copy.sessionId,
-        cwd: workspace.cwd,
+        cwd: join(fixtureWorkspace, "workspace"),
         parentSession: f.path,
       });
       expect(entries.map(({ id }) => id)).toEqual(copiedIds);

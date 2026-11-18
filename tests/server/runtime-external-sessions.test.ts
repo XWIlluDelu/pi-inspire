@@ -24,7 +24,7 @@ import {
   disposeRuntimeFixture,
   FakeRpc,
   fixtureWorkspace,
-  initializeIsolatedRuntimeFixture,
+  initializeRuntimeFixture,
   persistedRecord,
   preview,
   record,
@@ -40,7 +40,7 @@ const directlyAttached: Array<{
 }> = [];
 
 beforeEach(async () => {
-  await initializeIsolatedRuntimeFixture();
+  await initializeRuntimeFixture();
   vi.stubEnv("PI_CODING_AGENT_SESSION_DIR", fixtureWorkspace);
 });
 afterEach(async () => {
@@ -49,10 +49,9 @@ afterEach(async () => {
       external.close();
       await projection.close();
     }
-    await disposeRuntimeFixture();
   } finally {
     vi.useRealTimers();
-    vi.unstubAllEnvs();
+    await disposeRuntimeFixture();
   }
 });
 
