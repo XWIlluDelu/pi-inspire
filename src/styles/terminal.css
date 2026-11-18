@@ -105,6 +105,10 @@
   background: var(--bg-context);
 }
 
+.terminal-pane:has(.terminal-view--active .terminal-search) .terminal-toolbar {
+  visibility: hidden;
+}
+
 .terminal-tab__status {
   width: 6px;
   height: 6px;
