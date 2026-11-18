@@ -145,6 +145,7 @@ Page restart needs tests against the direct launcher as well as systemd. For sou
 Node's `--import tsx` loader keeps the tracked IPC child itself the Host. An extra wrapper can
 hide that ownership. Native source checks preserve an independent terminal across restart, and
 installed-package checks exercise page restart with an idle Pi worker and real daemon I/O.
+The global Pi shutdown checks used disposable processes and injected systemd controls.
 [[host-lifecycle#Explicit restart controls]] defines the scopes. Pairing guidance offers installed
 and source commands because the browser's OS does not identify the Host's OS.
 
