@@ -157,7 +157,8 @@ boundaries in this contract.
 
   On a narrow workbench, equal-sized Search and Prompt Map launchers float at the top-right of
   the transcript. The container is transparent and outside the layout flow so the full available
-  height goes to the conversation. Opening a tool preserves the scrollport and reading position.
+  height goes to the conversation. A top inset keeps the first row's actions below the launchers.
+  Opening a tool preserves the scrollport and reading position.
   Search replaces the launchers with a floating input across the reading width, focusing
   and selecting its text. Close or Escape clears the query and match ownership, closes the input,
   and restores focus to its local launcher. An outside press dismisses narrow Search. The scope

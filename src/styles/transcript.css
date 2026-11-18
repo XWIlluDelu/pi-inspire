@@ -13,7 +13,7 @@
   min-height: 0;
   overflow-y: auto;
   padding-inline: var(--space-6);
-  scroll-padding-top: var(--space-3);
+  scroll-padding-top: var(--transcript-top-inset, var(--space-3));
   /* With no hairline under the topbar, scrolled content dissolves just
      before reaching it instead of colliding with the session title. */
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 20px);
@@ -25,7 +25,7 @@
 .transcript__content {
   min-height: 100%;
   padding-block:
-    var(--space-3)
+    var(--transcript-top-inset, var(--space-3))
     var(--transcript-padding-bottom, var(--space-16));
   display: flow-root;
 }
@@ -39,8 +39,11 @@
   color: var(--on-accent);
 }
 
-.transcript-tools {
+.transcript-live {
   --transcript-tool-size: 24px;
+}
+
+.transcript-tools {
   align-self: center;
   width: min(var(--content-max), calc(100% - 2 * var(--space-4)));
   padding-block: var(--space-2);
@@ -97,10 +100,14 @@
 .transcript-tools__close.icon-button { display: none; }
 
 @media (pointer: coarse), (max-width: 900px) {
-  .transcript-tools { --transcript-tool-size: 36px; }
+  .transcript-live { --transcript-tool-size: 36px; }
 }
 
 @media (max-width: 900px) {
+  .transcript-live {
+    --transcript-top-inset: calc(var(--transcript-tool-size) + var(--space-2));
+  }
+
   .transcript-tools {
     position: absolute;
     z-index: 4;

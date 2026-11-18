@@ -250,8 +250,14 @@ export const Transcript = memo(function Transcript({
       return;
     const closeFromOutside = (event: PointerEvent) => {
       const target = event.target;
-      if (!(target instanceof Element)) return;
-      if (!target.closest(".transcript-tools")) closeMobileSearch();
+      if (!(target instanceof Element) || target.closest(".transcript-tools"))
+        return;
+      const scopeMenuId = searchInputRef.current
+        ?.closest(".transcript-tools")
+        ?.querySelector(".transcript-search__scope")
+        ?.getAttribute("aria-controls");
+      if (!scopeMenuId || !document.getElementById(scopeMenuId)?.contains(target))
+        closeMobileSearch();
     };
     document.addEventListener("pointerdown", closeFromOutside, true);
     return () => {
