@@ -217,18 +217,16 @@ test("keeps long line numbers aligned during horizontal scroll", {
   const source = await selectChange(pane);
   await expect(source).toContainText("1000");
   await page.evaluate(() => document.fonts.ready);
-  const gutter = source.locator(".code-row__gutter").first();
-  const scroll = (left: number) =>
-    source.evaluate(
-      (element, left) => ((element.scrollLeft = left), element.scrollLeft),
-      left,
-    );
-  expect(await scroll(80)).toBeGreaterThan(0);
-  const gutterX = (await gutter.boundingBox())!.x;
-  expect(await scroll(160)).toBeGreaterThan(80);
-  await expect
-    .poll(async () => (await gutter.boundingBox())!.x)
-    .toBeCloseTo(gutterX, 0);
+  for (const left of [80, 160]) {
+    expect(await source.evaluate((element, left) => {
+      element.scrollLeft = left;
+      return element.scrollLeft;
+    }, left)).toBe(left);
+    await expect.poll(() => source.evaluate((element) => {
+      const gutter = element.querySelector(".code-row__gutter")!;
+      return gutter.getBoundingClientRect().left - element.getBoundingClientRect().left;
+    })).toBeCloseTo(0, 0);
+  }
 });
 
 test.describe("touch source navigation", () => {

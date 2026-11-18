@@ -242,6 +242,7 @@ test("catalog search follows curation and reviews the exact Hidden selection", a
   await search.press("ArrowDown");
   await expect(selected).toHaveText("Independent hidden session");
   await search.press("ArrowUp");
+  await row.hover();
   await action("Pin").click();
   await expect(action("Unpin")).toBeVisible();
   await search.focus();
@@ -303,6 +304,7 @@ test("catalog search follows curation and reviews the exact Hidden selection", a
   const folder = nav.getByRole("button", {
     name: "Delete all sessions in folder archived-a",
   });
+  await nav.getByRole("button", { name: "archived-a", exact: true }).hover();
   await folder.click();
   const dialog = page.getByRole("alertdialog", {
     name: "Clear hidden folder?",
@@ -312,6 +314,7 @@ test("catalog search follows curation and reviews the exact Hidden selection", a
   await dialog.getByRole("button", { name: "Cancel" }).click();
   await expect(dialog).toBeHidden();
   expect(requests).toEqual([]);
+  await nav.getByRole("button", { name: "archived-a", exact: true }).hover();
   await folder.click();
   await deleteOne.click();
   await expect

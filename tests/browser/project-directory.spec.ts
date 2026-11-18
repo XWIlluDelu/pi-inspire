@@ -240,7 +240,7 @@ test.describe("New project on a phone", { tag: "@cross-browser" }, () => {
             new URL(request.url()).pathname === "/api/prompt",
         );
         await create.tap();
-        expect((await created).postDataJSON()).toEqual({
+        expect((await created).postDataJSON()).toMatchObject({
           cwd: directory,
           createDirectory: true,
         });

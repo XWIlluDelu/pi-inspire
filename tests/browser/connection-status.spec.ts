@@ -77,8 +77,9 @@ test("reconnect and offline feedback fit Welcome and a narrow session, then clea
   await expect(reconnect).toHaveAttribute("role", "status");
 
   await page.setViewportSize({ width: 320, height: 900 });
-  const title = /Formula rendering and spectral analysis/;
-  await page.locator(".welcome").getByRole("button", { name: title }).click();
+  const recent = page.locator(".welcome__row").first();
+  const title = await recent.locator(".welcome__row-title").innerText();
+  await recent.click();
   await expect(topbar.locator(".topbar__title-button")).toHaveText(title);
   await expect(reconnect).toBeVisible();
   expect(await topbar.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(

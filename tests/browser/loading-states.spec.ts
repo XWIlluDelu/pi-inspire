@@ -40,7 +40,7 @@ test("deferred Settings and Context failures retain focus and recover after relo
   await expect(settings).toHaveCount(0);
   await openSettings(page);
   await page.unroute(settingsModule);
-  await settings.getByRole("button", { name: "Reload" }).click();
+  await settings.getByRole("button", { name: "Refresh page" }).click();
   await openSettings(page);
   await expect(
     settings.getByRole("navigation", { name: "Settings categories" }),
@@ -75,7 +75,7 @@ test("deferred Settings and Context failures retain focus and recover after relo
     await toggle.click();
     await expect(pane.getByRole("alert")).toBeVisible();
     await page.unroute(contextModule);
-    await pane.getByRole("button", { name: "Reload" }).click();
+    await pane.getByRole("button", { name: "Refresh page" }).click();
     await expect(page.getByRole("main")).toBeVisible();
     // Recovery reload restores the open drawer and its focus owner.
     await expect(toggle).toHaveAttribute("aria-expanded", "true");

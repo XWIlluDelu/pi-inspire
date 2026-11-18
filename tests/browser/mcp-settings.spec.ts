@@ -9,6 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, type Locator, type Page, test } from "@playwright/test";
+import type { SessionRuntimeStatus } from "../../shared/contracts";
 import { browserFixtureHome } from "./fixtures/workspace.mjs";
 import { expectConfigurationField } from "./support/configuration-form";
 import { routeSnapshots } from "./support/host-events";
@@ -89,11 +90,14 @@ async function scenario(page: Page, session: "live" | "new") {
     let reveals = 0,
       reloads = 0;
     let sessionId = "";
+    let workerStatus: SessionRuntimeStatus | undefined;
     const transport =
       session === "live"
         ? await routeSnapshots(page, {
-            snapshot: ({ active }) => {
-              if (active) sessionId = active.sessionId;
+            snapshot: ({ active, sessionStatuses }) => {
+              if (!active) return;
+              sessionId = active.sessionId;
+              if (workerStatus) sessionStatuses[sessionId] = workerStatus;
             },
           })
         : null;
@@ -136,12 +140,10 @@ async function scenario(page: Page, session: "live" | "new") {
       projectFile,
       settings,
       open,
-      worker: (runState: "running" | "idle", external = false) =>
-        transport?.send({
-          type: "session_status",
-          sessionId,
-          sessionStatus: { runState, external },
-        }),
+      worker: (runState: "running" | "idle", external = false) => {
+        workerStatus = { runState, external };
+        transport?.send({ type: "session_status", sessionId, sessionStatus: workerStatus });
+      },
       reveals: () => reveals,
       reloads: () => reloads,
       json: async (path: string) => JSON.parse(await readFile(path, "utf8")),

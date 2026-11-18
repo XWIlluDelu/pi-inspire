@@ -110,6 +110,8 @@ test("Markdown and Notebook figures share scoped galleries while authored links 
   ).toHaveAttribute("download", "vector.svg");
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
+  const actions = resources.getByRole("button", { name: "Show file actions" });
+  if (await actions.isVisible()) await actions.click();
   const source = resources.getByRole("button", { name: "Source", exact: true });
   await source.click();
   await expect(

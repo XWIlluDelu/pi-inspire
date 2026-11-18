@@ -519,9 +519,8 @@ test("saved tool images survive presentation changes and full logs open in the n
     fallback = true;
     await page.setViewportSize({ width: 390, height: 844 });
     await reloadSession(page, selected);
-    const detail = toolCard(page, "read");
-    await detail.getByRole("button", { name: "Expand read tool" }).click();
-    const thumbnail = detail.getByRole("button", {
+    await page.getByRole("button", { name: "read tool details", exact: true }).click();
+    const thumbnail = toolCard(page, "read").getByRole("button", {
       name: "Preview Tool result image 1",
     });
     await thumbnail.press("Enter");
@@ -536,9 +535,8 @@ test("saved tool images survive presentation changes and full logs open in the n
       .toBeGreaterThan(0);
     await page.keyboard.press("Escape");
     await expect(thumbnail).toBeFocused();
-    const shell = toolCard(page, "bash");
-    await shell.getByRole("button", { name: "Expand bash tool" }).click();
-    await shell
+    await page.getByRole("button", { name: "bash tool details", exact: true }).click();
+    await toolCard(page, "bash")
       .getByRole("button", { name: "View full output" })
       .press("Enter");
     const output = page.getByRole("region", {

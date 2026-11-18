@@ -40,9 +40,15 @@ export async function openFixtureSession(
     (await page.locator(".nav--rail").count())
   )
     await toggle.click();
+  // Copies can share these fixture titles, including after curation changes.
+  sessionId ??= title.source === "Review extension event lifecycle"
+    ? "fixture-history"
+    : title.source === "Formula rendering and spectral analysis"
+      ? "fixture-active"
+      : undefined;
   const row = sessionId
     ? page.locator(`[data-session-id="${sessionId}"] .nav__row-main`)
-    : page.locator(".nav__row-main").filter({ hasText: title });
+    : page.locator(".nav__list .nav__row-main").filter({ hasText: title });
   // Native creations can page an older sample out of Recent. Use real search
   // to locate that identity, then leave the next interaction an unfiltered nav.
   const searched = sessionId !== undefined && (await row.count()) === 0;

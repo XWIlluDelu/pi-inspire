@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { navigationGroupsFixture } from "./fixtures/navigation-groups";
 import { focusRingClipping } from "./support/focus-bounds";
-import { openFixtureSession, pairedPage } from "./support/navigation";
+import { pairedPage } from "./support/navigation";
 
 test.describe("touch navigation", () => {
   test.use({ hasTouch: true });
@@ -67,15 +67,13 @@ test("Welcome Recent hides curated sessions and preserves its disclosure through
   };
   const list = page.locator(".welcome__recent [role=list]");
   await welcome();
-  await expect(list).toContainText("Formula rendering and spectral analysis");
-  await openFixtureSession(page, /Formula rendering and spectral analysis/);
+  const target = list.getByRole("button").first();
+  const title = await target.getAttribute("title");
+  await target.click();
+  await page.getByRole("button", { name: "Expand navigation", exact: true }).click();
   const row = page.locator(".nav__row--active");
   await row.hover();
-  await row
-    .getByRole("button", {
-      name: 'Hide "Formula rendering and spectral analysis"',
-    })
-    .click();
+  await row.getByRole("button", { name: `Hide "${title}"`, exact: true }).click();
   await welcome();
   const recent = page.getByRole("button", {
     name: "Recent sessions",
@@ -86,9 +84,7 @@ test("Welcome Recent hides curated sessions and preserves its disclosure through
   await expect(recent).toHaveAttribute("aria-expanded", "false");
   await recent.click();
   await expect(list).toBeVisible();
-  await expect(list).not.toContainText(
-    "Formula rendering and spectral analysis",
-  );
+  await expect(list.getByTitle(title!, { exact: true })).toHaveCount(0);
 });
 
 test.describe("short navigation drawer", () => {

@@ -36,9 +36,13 @@ async function openSavedCopy(page: Page) {
 test("copies complete saved messages and images from bounded conversation previews", async ({
   page,
 }) => {
-  const opened = page.waitForResponse("**/api/sessions/open");
+  // Copy reads are scoped to a projection. Wait for the saved preview to be
+  // replaced by the warm Pi worker before exercising a multi-page copy.
+  const ready = page.waitForResponse((response) =>
+    response.ok() && new URL(response.url()).searchParams.get("detail") === COPY_FIXTURE_SESSION_ID,
+  );
   await openSavedCopy(page);
-  const { active } = await (await opened).json();
+  const { active } = await (await ready).json();
   const copyTail = /(?:USER|ASSISTANT|CUSTOM|DETAIL)_COPY_TAIL/u;
   expect(JSON.stringify(active.transcriptPage.messages)).not.toMatch(copyTail);
   await observeWrites(page);

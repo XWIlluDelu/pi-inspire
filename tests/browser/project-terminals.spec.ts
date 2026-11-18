@@ -46,6 +46,16 @@ const terminalInput = (page: Page) =>
   activeTerminal(page).locator(".xterm-helper-textarea");
 const terminalTab = (page: Page, id: string) =>
   page.locator(`#terminal-tab-${id}`);
+async function selectTerminalTab(page: Page, id: string, title: string) {
+  const tab = terminalTab(page, id);
+  if (await tab.isVisible()) await tab.click();
+  else {
+    await page.getByRole("button", { name: "More tabs", exact: true }).click();
+    await page.getByRole("listbox", { name: "Open tabs" })
+      .getByRole("option", { name: title, exact: true }).click();
+  }
+  await expect(tab).toHaveAttribute("aria-selected", "true");
+}
 const terminalStatus = (page: Page, name = "Controlling") =>
   page.getByRole("status", { name, exact: true });
 
@@ -284,6 +294,7 @@ test("project terminals and a lost create response survive browser reload", {
 
 test("Escape restores the owners of terminal menus in the narrow pane", async ({
   page,
+  fixtures,
 }) => {
   await page.setViewportSize({ width: 320, height: 900 });
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -306,9 +317,14 @@ test("Escape restores the owners of terminal menus in the narrow pane", async ({
   const picker = page.getByLabel("Choose terminal profile", { exact: true });
   await page.locator(".terminal-empty").getByRole("button", { name: "New terminal" }).click();
   await expect(picker).toBeFocused();
+  const created = page.waitForResponse((response) =>
+    response.url().endsWith("/api/terminal-operations") &&
+    response.request().method() === "POST" &&
+    response.request().postDataJSON()?.intent?.command === "create",
+  );
   await page.getByRole("button", { name: alternative }).click();
+  fixtures.track((await (await created).json()).result.id);
   await expect(terminalStatus(page)).toBeVisible();
-  const [terminal] = (await terminalCatalog(page)).terminals;
   const actions = page.getByLabel("Terminal actions", { exact: true });
   const projects = page.getByLabel("Terminals in all projects", {
     exact: true,
@@ -343,12 +359,10 @@ test("Escape restores the owners of terminal menus in the narrow pane", async ({
   await expect(actions).toBeFocused();
 
   await page.keyboard.press("Escape");
-  await expect(page.locator(".ctx")).toHaveCount(0);
-  const removed = await terminalOperation(page, {
-    command: "remove",
-    params: { id: terminal!.id, force: true },
-  });
-  expect(removed.ok()).toBe(true);
+  const controls = page.getByRole("button", { name: "Show terminal controls" });
+  await expect(controls).toBeFocused();
+  await controls.press("Escape");
+  await expect(page.getByRole("dialog", { name: "Context panel" })).toHaveCount(0);
 });
 
 // Playwright's physical chords cannot produce a character from a foreign
@@ -435,11 +449,13 @@ for (const platform of ["Win32", "MacIntel"]) {
       });
     }, platform);
     await pairWithTerminalOutput(page);
-    const firstId = (await fixtures.create()).id;
+    const firstTitle = "Clipboard terminal";
+    const firstId = (await fixtures.create(firstTitle)).id;
     const secondId = mac ? undefined : (await fixtures.create()).id;
     const wire = observeTerminalSocket(page, firstId);
     const bytes = () => wire.inputs.join("");
     await openFixtureTerminal(page);
+    await selectTerminalTab(page, firstId, firstTitle);
     await expect(terminalStatus(page)).toBeVisible();
     const input = terminalInput(page);
     await input.press("Control+c");
@@ -507,12 +523,10 @@ for (const platform of ["Win32", "MacIntel"]) {
       const response = await create;
       expect(response.ok()).toBe(true);
       const { result: created } = await response.json();
+      fixtures.track(created.id);
       await expect(terminalTab(page, created.id)).toHaveAttribute("aria-selected", "true");
-      await firstTab.click();
-      expect((await terminalOperation(page, {
-        command: "remove",
-        params: { id: created.id, force: true },
-      })).ok()).toBe(true);
+      await selectTerminalTab(page, firstId, firstTitle);
+      await fixtures.remove(created.id);
     }
     const openInteraction = async () => {
       await (await terminalAction(page, "Settings")).click();
@@ -525,8 +539,9 @@ for (const platform of ["Win32", "MacIntel"]) {
     const setShortcutPriority = async (name: "Shell" | "Workbench") => {
       const dialog = await openInteraction();
       await dialog
-        .getByRole("combobox", { name: "Terminal shortcut priority" })
-        .selectOption({ label: name });
+        .getByRole("group", { name: "Terminal shortcut priority" })
+        .getByRole("button", { name, exact: true })
+        .click();
       await dialog
         .getByRole("button", { name: "Close terminal settings" })
         .click();
@@ -618,18 +633,7 @@ test("terminal search, last output, and asynchronous paste follow the active tab
   const secondId = (await fixtures.create(secondLabel)).id;
   const firstTerminal = observeTerminalSocket(page, firstId);
   const secondTerminal = observeTerminalSocket(page, secondId);
-  const selectTab = async (id: string) => {
-    const tab = terminalTab(page, id);
-    if (await tab.isVisible()) await tab.click();
-    else {
-      await page.getByRole("button", { name: "More tabs", exact: true }).click();
-      await page
-        .getByRole("listbox", { name: "Open tabs" })
-        .getByRole("option", { name: id === firstId ? firstLabel : secondLabel, exact: true })
-        .click();
-    }
-    await expect(tab).toHaveAttribute("aria-selected", "true");
-  };
+  const selectTab = (id: string) => selectTerminalTab(page, id, id === firstId ? firstLabel : secondLabel);
   await openFixtureTerminal(page);
   await selectTab(firstId);
   await expect(terminalStatus(page)).toBeVisible();
@@ -819,9 +823,11 @@ test.describe("touch terminal", () => {
     });
     await composer.fill("Existing question");
     await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-    const { id } = await fixtures.create();
+    const title = "Touch input terminal";
+    const { id } = await fixtures.create(title);
     const { inputs } = observeTerminalSocket(page, id);
     await openFixtureTerminal(page);
+    await selectTerminalTab(page, id, title);
     await expect(terminalStatus(page)).toBeVisible();
     const input = terminalInput(page);
     const keys = page.getByRole("group", {
@@ -833,9 +839,8 @@ test.describe("touch terminal", () => {
     await page.setViewportSize({ width: 320, height: 844 });
     const arrowUp = keys.getByRole("button", { name: "Arrow up", exact: true });
     const pageDown = keys.getByRole("button", { name: "PgDn", exact: true });
-    await scroll.evaluate((node) => {
-      node.scrollLeft = node.scrollWidth;
-    });
+    await expect(page.getByRole("dialog", { name: "Context panel" })).toBeVisible();
+    await pageDown.scrollIntoViewIfNeeded();
     await expect(pageDown).toBeInViewport({ ratio: 1 });
     await expect(arrowUp).toBeInViewport({ ratio: 1 });
     await scroll.evaluate((node) => {
