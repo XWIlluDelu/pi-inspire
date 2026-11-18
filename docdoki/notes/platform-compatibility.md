@@ -60,6 +60,10 @@ transports. Clipboard observers record only successful browser writes. Use Tab f
 geometry and wait for lifecycle signals or explicit actions instead of request ordinals or polling
 deadlines.
 
+Browser tests that start native Pi keep their temporary projects until the fixture Host exits.
+The browser test runner removes those projects after Playwright finishes, so a live Windows process
+cannot hold its working directory during per-test cleanup.
+
 ## Git and native file representation
 
 Read-only Git inspection preserves repository, worktree and submodule configuration precedence.

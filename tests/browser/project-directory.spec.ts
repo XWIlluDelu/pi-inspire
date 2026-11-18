@@ -1,7 +1,7 @@
-import { mkdtemp, realpath, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { realpath, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
+import { createBrowserProject } from "./fixtures/workspace.mjs";
 import { hostRequest } from "./support/host-request";
 import { pairedPage } from "./support/navigation";
 
@@ -194,76 +194,70 @@ test.describe("New project on a phone", { tag: "@cross-browser" }, () => {
     test("creates only after explicit activation and starts with the original first message", async ({
       page,
     }) => {
-      const root = await mkdtemp(
-        join(tmpdir(), "inspire-new-project-browser-"),
-      );
+      const root = await createBrowserProject("new-");
       const directory = join(root, "projects", "new-project");
-      try {
-        await pairedPage(page);
-        await hostRequest(page).post("/api/sessions/deselect");
-        await page.reload();
-        const message = page.getByRole("textbox", { name: "First message" });
-        await expect(message).toBeVisible();
-        const project = page.getByRole("textbox", {
-          name: "Project directory",
-        });
-        const file = join(root, "not-a-folder");
-        await writeFile(file, "fixture");
-        await project.fill(file);
-        await message.fill("Review the new project");
-        await expect(page.getByRole("alert")).toContainText(
-          "Project path is not a directory",
-        );
-        await expect(
-          page.getByRole("button", { name: "Create folder and start" }),
-        ).toHaveCount(0);
-        await project.fill(directory);
-        await expect(message).toHaveValue("Review the new project");
-        const create = page.getByRole("button", {
-          name: "Create folder and start",
-        });
-        await expect(create).toBeEnabled();
-        await expect(
-          page.getByRole("button", { name: "Start session", exact: true }),
-        ).toBeDisabled();
-        await expect(stat(join(root, "projects"))).rejects.toMatchObject({
-          code: "ENOENT",
-        });
-        const created = page.waitForRequest(
-          (request) =>
-            request.method() === "POST" &&
-            new URL(request.url()).pathname === "/api/sessions/new",
-        );
-        const prompted = page.waitForRequest(
-          (request) =>
-            request.method() === "POST" &&
-            new URL(request.url()).pathname === "/api/prompt",
-        );
-        await create.tap();
-        expect((await created).postDataJSON()).toMatchObject({
-          cwd: directory,
-          createDirectory: true,
-        });
-        const { sessionId, message: promptText } = (
-          await prompted
-        ).postDataJSON();
-        expect(promptText).toBe("Review the new project");
-        await expect(
-          page.getByRole("textbox", { name: "Message", exact: true }),
-        ).toBeVisible();
-        expect((await stat(directory)).isDirectory()).toBe(true);
-        const snapshot = await (
-          await hostRequest(page).get(
-            `/api/snapshot?detail=${encodeURIComponent(sessionId)}`,
-          )
-        ).json();
-        expect(snapshot.active.cwd).toBe(await realpath(directory));
-        expect(snapshot.active).toMatchObject({
-          model: { provider: "workbench", id: "offline" },
-          thinkingLevel: "medium",
-        });
-      } finally {
-        await rm(root, { recursive: true, force: true });
-      }
+      await pairedPage(page);
+      await hostRequest(page).post("/api/sessions/deselect");
+      await page.reload();
+      const message = page.getByRole("textbox", { name: "First message" });
+      await expect(message).toBeVisible();
+      const project = page.getByRole("textbox", {
+        name: "Project directory",
+      });
+      const file = join(root, "not-a-folder");
+      await writeFile(file, "fixture");
+      await project.fill(file);
+      await message.fill("Review the new project");
+      await expect(page.getByRole("alert")).toContainText(
+        "Project path is not a directory",
+      );
+      await expect(
+        page.getByRole("button", { name: "Create folder and start" }),
+      ).toHaveCount(0);
+      await project.fill(directory);
+      await expect(message).toHaveValue("Review the new project");
+      const create = page.getByRole("button", {
+        name: "Create folder and start",
+      });
+      await expect(create).toBeEnabled();
+      await expect(
+        page.getByRole("button", { name: "Start session", exact: true }),
+      ).toBeDisabled();
+      await expect(stat(join(root, "projects"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      const created = page.waitForRequest(
+        (request) =>
+          request.method() === "POST" &&
+          new URL(request.url()).pathname === "/api/sessions/new",
+      );
+      const prompted = page.waitForRequest(
+        (request) =>
+          request.method() === "POST" &&
+          new URL(request.url()).pathname === "/api/prompt",
+      );
+      await create.tap();
+      expect((await created).postDataJSON()).toMatchObject({
+        cwd: directory,
+        createDirectory: true,
+      });
+      const { sessionId, message: promptText } = (
+        await prompted
+      ).postDataJSON();
+      expect(promptText).toBe("Review the new project");
+      await expect(
+        page.getByRole("textbox", { name: "Message", exact: true }),
+      ).toBeVisible();
+      expect((await stat(directory)).isDirectory()).toBe(true);
+      const snapshot = await (
+        await hostRequest(page).get(
+          `/api/snapshot?detail=${encodeURIComponent(sessionId)}`,
+        )
+      ).json();
+      expect(snapshot.active.cwd).toBe(await realpath(directory));
+      expect(snapshot.active).toMatchObject({
+        model: { provider: "workbench", id: "offline" },
+        thinkingLevel: "medium",
+      });
     });
   });

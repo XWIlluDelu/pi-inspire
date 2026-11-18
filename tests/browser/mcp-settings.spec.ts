@@ -1,16 +1,14 @@
 import {
   mkdir,
-  mkdtemp,
   readFile,
   realpath,
   rm,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import type { SessionRuntimeStatus } from "../../shared/contracts";
-import { browserFixtureHome } from "./fixtures/workspace.mjs";
+import { browserFixtureHome, createBrowserProject } from "./fixtures/workspace.mjs";
 import { expectConfigurationField } from "./support/configuration-form";
 import { routeSnapshots } from "./support/host-events";
 import {
@@ -36,7 +34,7 @@ const expectServer = async (
 
 async function scenario(page: Page, session: "live" | "new") {
   const root = await realpath(
-    await mkdtemp(join(tmpdir(), "inspire-browser-mcp-")),
+    await createBrowserProject("mcp-"),
   );
   const cwd = join(root, "project");
   const userFile = join(browserFixtureHome, "agent/mcp.json");
@@ -48,7 +46,6 @@ async function scenario(page: Page, session: "live" | "new") {
   const close = async () => {
     if (previous) await writeFile(userFile, previous);
     else await rm(userFile, { force: true });
-    await rm(root, { recursive: true, force: true });
   };
   try {
     await mkdir(join(cwd, ".pi"), { recursive: true });
