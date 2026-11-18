@@ -174,11 +174,11 @@ function entryPreviewText(entry: SessionEntry): string {
 /** Normalize only enough retained text to decide the outline snippet. */
 function previewPrefix(entry: SessionEntry): string {
   const parts =
-    entry.type === "message" && entry.message.role === "bashExecution"
-      ? [entryPreviewText(entry)]
-      : entry.type === "message" && entry.message.role === "user"
-        ? [entryPreviewText(entry)]
-        : branchTextParts(entry, "describe");
+    entry.type === "message" &&
+    entry.message.role === "user" &&
+    Array.isArray(entry.message.content)
+      ? [userMessagePreviewText(entry.message.content)]
+      : branchTextParts(entry, "describe");
   let text = "";
   let space = false;
   for (const part of parts) {
@@ -198,54 +198,17 @@ function previewPrefix(entry: SessionEntry): string {
   return text;
 }
 
-function branchNode(
-  entry: SessionEntry,
-  active: boolean,
-  leaf: boolean,
-  text = previewPrefix(entry),
-): BranchTreeNode {
-  const role = entryRole(entry);
-  const snippet =
-    text.length > BRANCH_SNIPPET_CHARS
-      ? `${text.slice(0, BRANCH_SNIPPET_CHARS - 1)}…`
-      : text;
-  const target = {
-    ...entry,
-    role: entry.type === "message" ? entry.message.role : undefined,
-  };
-  const edit = isBranchEditTarget(target);
-  return {
-    id: entry.id,
-    parentId: entry.parentId,
-    depth: 0,
-    type: entry.type,
-    role,
-    label: snippet || entry.type.replaceAll("_", " "),
-    snippet,
-    timestamp: entry.timestamp,
-    active,
-    leaf,
-    canEdit: edit,
-    canFork: role === "user",
-  };
-}
-
-function ancestorPath(
+/** The entry index admits each parent before its children. */
+export function* branchAncestors(
   byId: ReadonlyMap<string, SessionEntry>,
   leafId: string | null,
-): string[] {
-  const path: string[] = [];
-  const seen = new Set<string>();
-  let id = leafId;
-  while (id) {
-    if (seen.has(id)) throw new Error("Session tree contains a parent cycle");
-    seen.add(id);
+): Generator<SessionEntry> {
+  for (let id = leafId; id !== null; ) {
     const entry = byId.get(id);
     if (!entry) throw requestError("History point no longer exists", 409);
-    path.push(id);
+    yield entry;
     id = entry.parentId;
   }
-  return path.reverse();
 }
 
 /** SessionProjection replaces its immutable entry array on every committed
@@ -256,20 +219,11 @@ const treeIndexes = new WeakMap<
 >();
 
 function indexSessionTree(entries: readonly SessionEntry[]) {
-  const byId = new Map<string, SessionEntry>();
   const depth = new Map<string, number>();
   const labels = new Map<string, string>();
   const children = new Map<string | null, number>();
   const descendant = new Map<string, string>();
   for (const entry of entries) {
-    validateEntryIdentity(entry.id, "entry");
-    if (entry.parentId !== null)
-      validateEntryIdentity(entry.parentId, "parent");
-    if (entry.parentId !== null && !byId.has(entry.parentId))
-      throw new Error(
-        `Session entry ${entry.id} has a missing or forward parent`,
-      );
-    byId.set(entry.id, entry);
     depth.set(
       entry.id,
       entry.parentId === null ? 0 : depth.get(entry.parentId)! + 1,
@@ -287,7 +241,7 @@ function indexSessionTree(entries: readonly SessionEntry[]) {
     if (entry.parentId !== null && !descendant.has(entry.parentId))
       descendant.set(entry.parentId, leaf);
   }
-  return { byId, depth, labels, children, descendant };
+  return { depth, labels, children, descendant };
 }
 
 /** One bounded page. The complete projection remains action/search authority;
@@ -304,46 +258,65 @@ function sessionTreeIndex(entries: readonly SessionEntry[]) {
 export function projectHistoryPoint(
   entries: readonly SessionEntry[],
   entry: SessionEntry,
-  effectiveLeafId: string | null,
+  active: boolean,
+  leaf: boolean,
+  text = previewPrefix(entry),
 ): BranchTreeNode {
-  const { byId, children } = sessionTreeIndex(entries);
+  const { depth, labels, children, descendant } = sessionTreeIndex(entries);
+  const role = entryRole(entry);
+  const snippet =
+    text.length > BRANCH_SNIPPET_CHARS
+      ? `${text.slice(0, BRANCH_SNIPPET_CHARS - 1)}…`
+      : text;
+  const target = {
+    ...entry,
+    role: entry.type === "message" ? entry.message.role : undefined,
+  };
+  const edit = isBranchEditTarget(target);
   return {
-    ...branchNode(
-      entry,
-      ancestorPath(byId, effectiveLeafId).includes(entry.id),
-      entry.id === effectiveLeafId,
-    ),
+    id: entry.id,
+    parentId: entry.parentId,
+    depth: depth.get(entry.id)!,
     childCount: children.get(entry.id) ?? 0,
+    routeLeafId: descendant.get(entry.id)!,
+    type: entry.type,
+    role,
+    label: labels.get(entry.id) ?? (snippet || entry.type.replaceAll("_", " ")),
+    snippet,
+    timestamp: entry.timestamp,
+    active,
+    leaf,
+    canEdit: edit,
+    canFork: role === "user",
   };
 }
 
 export function projectSessionTree(
   entries: readonly SessionEntry[],
+  byId: ReadonlyMap<string, SessionEntry>,
   effectiveLeafId: string | null,
   query: BranchTreeQuery = {},
 ) {
-  const { byId, depth, labels, children, descendant } = sessionTreeIndex(entries);
-  const active = new Set(ancestorPath(byId, effectiveLeafId));
+  const { labels, children } = sessionTreeIndex(entries);
+  const active = new Set(branchAncestors(byId, effectiveLeafId));
   const routeLeafId = query.leafId ?? effectiveLeafId;
   const path =
     routeLeafId === effectiveLeafId
       ? active
-      : new Set(ancestorPath(byId, routeLeafId));
+      : new Set(branchAncestors(byId, routeLeafId));
   const search = query.query?.trim().toLocaleLowerCase();
   const routeParent = query.parentId === "" ? null : query.parentId;
-  const candidates = entries.filter((entry) =>
-    search
-      ? !(
-          entry.type === "message" &&
-          (entry.message as { role: string }).role === "system"
-        ) &&
-        `${labels.get(entry.id) ?? ""}\n${branchEntryText(entry)}`
-          .toLocaleLowerCase()
-          .includes(search)
-      : routeParent !== undefined
-        ? entry.parentId === routeParent
-        : path.has(entry.id),
-  );
+  const candidates = search
+    ? entries.filter(
+        (entry) =>
+          !(entry.type === "message" && entry.message.role === "system") &&
+          `${labels.get(entry.id) ?? ""}\n${branchEntryText(entry)}`
+            .toLocaleLowerCase()
+            .includes(search),
+      )
+    : routeParent !== undefined
+      ? entries.filter((entry) => entry.parentId === routeParent)
+      : [...path].reverse();
   let end = candidates.length;
   if (query.before) {
     const index = candidates.findIndex((entry) => entry.id === query.before);
@@ -351,18 +324,14 @@ export function projectSessionTree(
       throw requestError("History page changed; refresh History", 409);
     end = index;
   }
-  const nodeFor = (entry: SessionEntry, preview?: string): BranchTreeNode => ({
-    ...branchNode(
+  const nodeFor = (entry: SessionEntry, preview?: string) =>
+    projectHistoryPoint(
+      entries,
       entry,
-      active.has(entry.id),
+      active.has(entry),
       entry.id === effectiveLeafId,
       preview,
-    ),
-    depth: depth.get(entry.id)!,
-    childCount: children.get(entry.id) ?? 0,
-    routeLeafId: descendant.get(entry.id)!,
-    ...(labels.has(entry.id) ? { label: labels.get(entry.id)! } : {}),
-  });
+    );
   const nodes: BranchTreeNode[] = [];
   let start = end;
   let bytes = 4096;
@@ -392,14 +361,11 @@ export function projectSessionTree(
     nodes[0] &&
     nodes[0].role !== "user"
   ) {
-    let parentId = nodes[0].parentId;
-    while (parentId) {
-      const entry = byId.get(parentId)!;
+    for (const entry of branchAncestors(byId, nodes[0].parentId)) {
       if (entry.type === "message" && entry.message.role === "user") {
         leadingPrompt = nodeFor(entry);
         break;
       }
-      parentId = entry.parentId;
     }
   }
   return {

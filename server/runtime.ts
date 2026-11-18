@@ -133,7 +133,6 @@ import {
 } from "./session-delete.js";
 import {
   assertExportDestination,
-  serializeBranchExport,
   writeBranchExport,
 } from "./session-export.js";
 import {
@@ -4308,14 +4307,10 @@ export class RuntimeController extends EventEmitter {
               this.throwIfConflicted(slot);
               // A saved branch is independently readable, even without its cwd
               // or a writable Pi. Never launch a worker merely to export it.
-              const content = serializeBranchExport(slot.id, slot.cwd, {
-                entries: (
-                  slot.workerView?.index ?? slot.projection!
-                ).entriesAfter(null),
-                leafId: effectiveRuntimeLeaf(slot),
-              });
-              await assertExportDestination(outputPath!, slot.sessionPath);
-              await writeBranchExport(outputPath!, content);
+              const entries = runtimeHistory(slot)!.branchEntries(
+                effectiveRuntimeLeaf(slot),
+              );
+              await writeBranchExport(outputPath!, slot, entries);
               return { path: outputPath! };
             }
             const process = worker ?? (await this.ensureFreshWriterInsideGate(slot));

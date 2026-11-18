@@ -375,7 +375,7 @@ export const ContextPane = memo(function ContextPane({
     ) : state.contextMode === "history" ? (
       <div className="ctx__content" id="context-history-content" role="tabpanel" aria-label="History">
         <BranchTree
-          key={`${sessionId}:${transcriptViewId}`}
+          key={JSON.stringify([sessionId, cwd, transcriptViewId, state.transcriptIncarnation])}
           readingState={historyReading}
           refreshKey={historyRefresh}
           onContextChange={isModal ? onClose : undefined}

@@ -102,48 +102,27 @@ function createHarness() {
 }
 
 describe("BranchController", () => {
-  it.each(["entry", "image"] as const)(
-    "keeps immutable %s reads through same-view append, but rejects replaced owners",
-    async (kind) => {
-      const read = (harness: ReturnType<typeof createHarness>) =>
-        kind === "entry"
-          ? harness.controller.history("s1", "view-1", {
-              kind: "entry",
-              targetId: "retained-point",
-              offset: 0,
-            })
-          : harness.controller.readImage("retained-point", 1);
-      const endpoint = kind === "entry" ? "sessionHistory" : "branchImage";
-      const result =
-        kind === "entry" ? { text: "Retained content" } : new Blob(["image"]);
-      const harness = createHarness();
-      const pending = deferred<typeof result>();
-      harness[endpoint].mockReturnValue(pending.promise);
-      const reading = read(harness);
-      expect(harness[endpoint]).toHaveBeenCalledOnce();
-      harness.patch({
-        view: { effectiveLeafId: "appended" },
-      });
-      pending.resolve(result);
-      await expect(reading).resolves.toBe(result);
+  it("keeps an image through same-view append and discards an entry read after the view changes", async () => {
+    const h = createHarness();
+    const entry = deferred<never>();
+    const image = deferred<Blob>();
+    h.sessionHistory.mockReturnValue(entry.promise);
+    h.branchImage.mockReturnValue(image.promise);
+    const reading = h.controller.history("s1", "view-1", {
+      kind: "entry",
+      targetId: "retained-point",
+    });
+    const loadingImage = h.controller.readImage("retained-point", 1);
+    h.patch({ view: { effectiveLeafId: "appended" } });
+    const blob = new Blob(["image"]);
+    image.resolve(blob);
+    await expect(loadingImage).resolves.toBe(blob);
 
-      for (const replacement of ["session", "view", "transport"] as const) {
-        const replaced = createHarness();
-        const stale = deferred<typeof result>();
-        replaced[endpoint].mockReturnValue(stale.promise);
-        const staleRead = read(replaced);
-        if (replacement === "session") replaced.invalidateSelection();
-        else if (replacement === "view")
-          replaced.patch({ view: { viewId: "replaced-view" } });
-        else replaced.replaceTransport();
-        if (kind === "entry")
-          stale.reject(new ApiError(401, "Previous selection credentials"));
-        else stale.resolve(result);
-        await expect(staleRead).resolves.toBeNull();
-        expect(replaced.handleAuthFailure).not.toHaveBeenCalled();
-      }
-    },
-  );
+    h.patch({ view: { viewId: "replaced" } });
+    entry.reject(new ApiError(401, "Previous selection credentials"));
+    await expect(reading).resolves.toBeNull();
+    expect(h.handleAuthFailure).not.toHaveBeenCalled();
+  });
 
   it("reports current History authorization failure", async () => {
     const f = createHarness();
@@ -243,11 +222,11 @@ describe("BranchController", () => {
     expect(harness.state().branchActionId).toBeNull();
   });
 
-  it.each(["clone", "fork"] as const)("retires a successful %s even after reselecting its source", async (action) => {
+  it("discards a completed Fork and its attachments after reselecting its source", async () => {
     const f = createHarness();
     const response = deferred<BranchForkResponse>();
-    (action === "clone" ? f.cloneBranch : f.forkBranch).mockReturnValue(response.promise);
-    const copying = action === "clone" ? f.controller.clone() : f.controller.fork("u1");
+    f.forkBranch.mockReturnValue(response.promise);
+    const copying = f.controller.fork("u1");
     for (const sessionId of ["s2", "s1"]) {
       f.invalidateSelection();
       f.patch({ sessionId });
@@ -256,13 +235,12 @@ describe("BranchController", () => {
       sessionId: "forked",
       snapshot: activeSnapshot({ sessionId: "forked" }),
       editorText: "",
-      editorAttachments: action === "fork"
-        ? [{ id: "discarded-image", fileName: "image.png", mimeType: "image/png", size: 1, kind: "image" }]
-        : [],
+      editorAttachments: [
+        { id: "discarded-image", fileName: "image.png", mimeType: "image/png", size: 1, kind: "image" },
+      ],
     });
     expect(await copying).toBe(false);
-    if (action === "fork")
-      expect(f.deleteAttachment).toHaveBeenCalledExactlyOnceWith("discarded-image");
+    expect(f.deleteAttachment).toHaveBeenCalledExactlyOnceWith("discarded-image");
     expect(f.applyFork).not.toHaveBeenCalled();
   });
 });

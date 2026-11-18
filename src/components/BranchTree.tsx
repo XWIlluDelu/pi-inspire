@@ -28,13 +28,12 @@ import { isComposingKeyboardEvent } from "../keyboard-input";
 import { resourceReferenceFromEventTarget } from "../resources";
 import { hasDraftInput } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
-import { useImageUrl } from "../use-image-url";
 import type { HistoryReadingState } from "../workbench-session";
 import { ContextPaneState } from "./ContextPaneState";
 import { CopyAction } from "./CopyAction";
 import { BashExecution } from "./BashExecution";
 import { ImageGallery } from "./ImageGallery";
-import { ImagePreview } from "./ImagePreview";
+import { HistoryImage } from "./ImagePreview";
 import { PiLoader } from "./PiLoader";
 import { RichText } from "./RichText";
 import { SearchField } from "./SearchField";
@@ -96,41 +95,6 @@ function pointKind(node: BranchTreeNode): string {
   return kinds[node.type] ?? "Session event";
 }
 
-function HistoryImage({
-  targetId,
-  index,
-}: {
-  targetId: string;
-  index: number;
-}) {
-  const [attempt, setAttempt] = useState(0);
-  const loadImage = useCallback(
-    (signal: AbortSignal) => store.readBranchImage(targetId, index, signal),
-    [targetId, index, attempt],
-  );
-  const { src: url, error } = useImageUrl(loadImage);
-  return error ? (
-    <div className="history-image-error">
-      <span>Image unavailable</span>
-      <button
-        type="button"
-        className="button button--quiet"
-        onClick={() => setAttempt((value) => value + 1)}
-      >
-        Retry image
-      </button>
-    </div>
-  ) : url ? (
-    <ImagePreview
-      className="history-detail__image"
-      src={url}
-      alt="image in this history entry"
-    />
-  ) : (
-    <span role="status">Loading image…</span>
-  );
-}
-
 /** History has read-only inspection state; AppStore/Pi still own the active
  * conversation. Keeping the outline mounted preserves its exact place. */
 type InspectedPoint = BranchEntryResponse & { node: BranchTreeNode };
@@ -164,7 +128,7 @@ async function readEntry(
 
 export function BranchTree({
   onContextChange,
-  readingState,
+  readingState: savedReading,
   refreshKey,
 }: {
   onContextChange?: () => void;
@@ -198,7 +162,6 @@ export function BranchTree({
     stale: outline?.revision !== runtime.revision,
     error: outlineError,
   };
-  const savedReading = readingState;
   const [query, setQueryState] = useState(savedReading.query);
   const [page, setPage] = useState<BranchTreeResponse | null>(null);
   const [routeLeaf, setRouteLeafState] = useState<string | undefined>(
@@ -234,25 +197,22 @@ export function BranchTree({
   const outlineOwnerRef = useRef<string | null>(null);
   const readOwnerRef = useRef<AbortController | null>(null);
   const restorationAttemptRef = useRef<string | null>(null);
-  const identityRef = useRef({
-    sessionId: state.sessionId,
-    viewId: state.viewId,
-    reading: savedReading,
-  });
-  const loadedSearchRef = useRef<string | null>(null);
   const tree = page ?? state.tree;
   const searching = Boolean(query.trim());
   function setQuery(value: string) {
-    if (savedReading.query !== value) {
-      savedReading.outline = { top: 0, left: 0 };
-      outlineScrollRef.current = 0;
-      restoreOutline.current = false;
-    }
+    if (savedReading.query === value) return;
+    retireRead();
+    setPage(null);
+    savedReading.outline = { top: 0, left: 0 };
+    outlineScrollRef.current = 0;
+    restoreOutline.current = false;
     savedReading.query = value;
     savedReading.save?.();
     setQueryState(value);
   }
   function setRouteLeaf(value: string | undefined) {
+    retireRead();
+    setPage(null);
     savedReading.outline = { top: 0, left: 0 };
     outlineScrollRef.current = 0;
     restoreOutline.current = false;
@@ -383,49 +343,7 @@ export function BranchTree({
     refreshKey,
   ]);
 
-  useLayoutEffect(() => {
-    const identity = identityRef.current;
-    if (
-      identity.sessionId === state.sessionId &&
-      identity.viewId === state.viewId &&
-      identity.reading === savedReading
-    )
-      return;
-    identityRef.current = {
-      sessionId: state.sessionId,
-      viewId: state.viewId,
-      reading: savedReading,
-    };
-    retireRead();
-    setQueryState(savedReading.query);
-    setPage(null);
-    setRouteLeafState(savedReading.routeLeafId ?? undefined);
-    setRoutes(null);
-    setSelectedState(null);
-    setRestoringEntryId(savedReading.selectedEntryId);
-    setDetail(null);
-    setCarrySummary(false);
-    setInstructions("");
-    setReadError(null);
-    setExpandedState(new Set(savedReading.expanded));
-    setSummarizing(false);
-    outlineScrollRef.current = savedReading.outline.top;
-    restoreOutline.current = savedReading.restored;
-    restoreDetail.current = savedReading.selectedEntryId
-      ? { ...savedReading.detail }
-      : null;
-    selectedButtonRef.current = null;
-    outlineOwnerRef.current = null;
-    loadedSearchRef.current = null;
-    restorationAttemptRef.current = null;
-  }, [state.sessionId, state.viewId, savedReading, retireRead]);
-
-  const treeReady = Boolean(
-    state.tree &&
-      state.tree.sessionId === state.sessionId &&
-      !state.stale &&
-      !state.loading,
-  );
+  const treeReady = Boolean(state.tree && !state.stale);
   useEffect(() => {
     if (
       !restoringEntryId ||
@@ -465,21 +383,12 @@ export function BranchTree({
   ]);
 
   useEffect(() => {
-    if (
-      !state.tree ||
-      selectedId ||
-      query !== savedReading.query ||
-      routeLeaf !== (savedReading.routeLeafId ?? undefined)
-    )
-      return;
-    if (!query.trim() && !routeLeaf) {
-      setPage((current) =>
-        current && current.revision !== state.tree!.revision ? null : current,
-      );
+    if (!state.tree || selectedId) return;
+    if (page && page.revision >= state.tree.revision) return;
+    if (!searching && !routeLeaf) {
+      setPage(null);
       return;
     }
-    const key = `${state.tree.revision}\0${query.trim()}\0${routeLeaf ?? ""}`;
-    if (loadedSearchRef.current === key) return;
     const controller = beginRead();
     const timer = setTimeout(
       () => {
@@ -490,10 +399,7 @@ export function BranchTree({
               query.trim() ? { query: query.trim() } : { leafId: routeLeaf },
               signal,
             ),
-          (result) => {
-            loadedSearchRef.current = key;
-            setPage(result);
-          },
+          setPage,
           "History could not be loaded",
         );
       },
@@ -507,8 +413,8 @@ export function BranchTree({
     query,
     routeLeaf,
     state.tree,
+    page,
     selectedId,
-    savedReading,
     searching,
     beginRead,
     performRead,
@@ -609,15 +515,15 @@ export function BranchTree({
     await performRead(beginRead(), request, commit, failure);
   }
 
-  async function readPage(options: BranchTreeQuery, append = false) {
+  async function readEarlierPage() {
+    if (!tree?.nextBefore) return;
+    const options = {
+      before: tree.nextBefore,
+      ...(searching ? { query: query.trim() } : { leafId: routeLeaf }),
+    };
     await read(
       (signal) => readOutline(options, signal),
-      (result) =>
-        setPage(
-          append && tree
-            ? { ...result, nodes: [...result.nodes, ...tree.nodes] }
-            : result,
-        ),
+      (result) => setPage({ ...result, nodes: [...result.nodes, ...tree.nodes] }),
       "History could not be loaded",
     );
   }
@@ -754,8 +660,6 @@ export function BranchTree({
               setRouteLeaf(node.routeLeafId ?? node.id);
               setRoutes(null);
               setQuery("");
-              setPage(null);
-              outlineScrollRef.current = 0;
             }}
           >
             <GitBranch size={13} aria-hidden />
@@ -842,20 +746,13 @@ export function BranchTree({
           value={query}
           placeholder="Find in history"
           aria-label="Find in history"
-          onValueChange={(value) => {
-            setQuery(value);
-            setPage(null);
-            loadedSearchRef.current = null;
-            outlineScrollRef.current = 0;
-          }}
+          onValueChange={setQuery}
           onKeyDown={(event) => {
             if (isComposingKeyboardEvent(event.nativeEvent)) return;
             if (event.key === "Escape" && query) {
               event.preventDefault();
               event.stopPropagation();
               setQuery("");
-              setPage(null);
-              loadedSearchRef.current = null;
             }
           }}
         />
@@ -865,10 +762,7 @@ export function BranchTree({
             <button
               type="button"
               className="button button--quiet"
-              onClick={() => {
-                setRouteLeaf(undefined);
-                setPage(null);
-              }}
+              onClick={() => setRouteLeaf(undefined)}
             >
               Current conversation
             </button>
@@ -901,19 +795,7 @@ export function BranchTree({
               type="button"
               className="button button--quiet history-load"
               disabled={reading}
-              onClick={() =>
-                void readPage(
-                  {
-                    before: tree.nextBefore!,
-                    ...(searching
-                      ? { query: query.trim() }
-                      : routeLeaf
-                        ? { leafId: routeLeaf }
-                        : {}),
-                  },
-                  true,
-                )
-              }
+              onClick={() => void readEarlierPage()}
             >
               {searching ? "More matches" : "Earlier conversation"}
             </button>

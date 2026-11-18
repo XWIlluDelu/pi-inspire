@@ -17,6 +17,22 @@ async function connectCalibration(page: Page) {
   await chooseSource(page);
 }
 
+test("can revisit a saved route after returning to the current conversation", async ({
+  page,
+}) => {
+  await connectCalibration(page);
+  await page.getByRole("button", { name: "Toggle resources panel" }).click();
+  await page.getByRole("tab", { name: "History", exact: true }).click();
+  const history = page.getByRole("region", { name: "Conversation history" });
+  for (let visit = 0; visit < 2; visit++) {
+    await history.getByRole("button", { name: "Earlier conversation" }).click();
+    await history.getByRole("button", { name: "Other routes" }).click();
+    await history.getByRole("button", { name: /alternate calibration/i }).click();
+    await expect(history.getByRole("button", { name: /amber reference/i })).toBeVisible();
+    await history.getByRole("button", { name: "Current conversation" }).click();
+  }
+});
+
 test("switches branches directly from the title menu and keeps the draft", async ({
   page,
 }) => {

@@ -55,6 +55,7 @@ export function runtimeHistory(
   | "entry"
   | "viewMessages"
   | "branchImage"
+  | "branchEntries"
   | "latestPage"
   | "historyPage"
   | "composerHistoryMessages"

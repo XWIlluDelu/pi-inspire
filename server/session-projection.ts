@@ -37,7 +37,6 @@ import {
 import { samePersistedJson } from "./persisted-json.js";
 import {
   buildContextEntries,
-  buildSessionContext,
   CURRENT_SESSION_VERSION,
   migrateSessionEntries,
   sessionEntryToContextMessages,
@@ -55,7 +54,6 @@ import {
 import {
   appendModelSelection,
   type BranchModelSelection,
-  branchModelSelection,
   selectedBranchModel,
 } from "./session-model-selection.js";
 import {
@@ -65,6 +63,7 @@ import {
   branchEntryContent,
   branchEntryText,
   branchMessageSource,
+  branchAncestors,
   projectHistoryPoint,
   projectSessionTree,
   indexSessionEntries,
@@ -93,7 +92,8 @@ interface Candidate {
   previousTailFingerprint: string | null;
   header: SessionHeader | null;
   entries: SessionEntry[];
-  entriesById: Map<string, SessionEntry>;
+  /** Byte offset where the entries scan began. */
+  start: number;
 }
 
 export type InitialMaterializationAttestation =
@@ -185,6 +185,7 @@ export interface SessionProjectionView {
   entry(id: string): ProjectionEntryTarget | null;
   /** Committed append suffix after an operation's admitted durable tail. */
   entriesAfter(tailEntryId: string | null): readonly SessionEntry[];
+  branchEntries(leafId: string | null): SessionEntry[];
   persistedEntryMatches(entry: SessionEntry): boolean;
   userText(id: string, maxChars: number): string;
   userImages(id: string): Array<{ data: string; mimeType: string }>;
@@ -225,34 +226,6 @@ async function sameDirectory(left: string, right: string): Promise<boolean> {
   }
 }
 
-/** System prompts/tool declarations remain canonical Pi state, not transcript
- * rows. Keep the SDK's original per-entry index for stable message identities,
- * including summaries returned after a compaction's system checkpoint. */
-function transcriptEntryMessages(entry: SessionEntry) {
-  const source =
-    entry.type === "compaction" &&
-    entry.details &&
-    typeof entry.details === "object" &&
-    "source" in entry.details &&
-    typeof entry.details.source === "string"
-      ? entry.details.source
-      : undefined;
-  return sessionEntryToContextMessages(entry).flatMap((message, index) =>
-    message.role === "system"
-      ? []
-      : [
-          {
-            ...message,
-            __inspireMessageId: `${entry.id}:${index}`,
-            __inspireEntryId: entry.id,
-            ...(source && message.role === "compactionSummary"
-              ? { __inspireCompactionSource: source }
-              : {}),
-          },
-        ],
-  );
-}
-
 function contextMessages(
   entries: SessionEntry[],
   leafId: string | null,
@@ -272,52 +245,45 @@ function contextMessages(
 }
 
 function appendContextMessages(
-  previous: readonly unknown[],
+  previous: unknown[],
   entries: readonly SessionEntry[],
 ): unknown[] {
-  let turnOrdinal = -1;
-  let turnId: string | null = null;
-  for (let index = previous.length - 1; index >= 0; index -= 1) {
-    const value = previous[index];
-    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
-    const record = value as Record<string, unknown>;
-    if (
-      Number.isSafeInteger(record.__inspireUserTurnIndex) &&
-      typeof record.__inspireUserTurnId === "string"
-    ) {
-      turnOrdinal = record.__inspireUserTurnIndex as number;
-      turnId = record.__inspireUserTurnId;
-      break;
-    }
-  }
-  const appended = entries.flatMap(transcriptEntryMessages).map((message) => {
-    if (message.role === "user") {
-      turnOrdinal += 1;
-      turnId = message.__inspireMessageId;
-    }
-    return {
-      ...message,
-      ...(turnId !== null
-        ? {
-            __inspireUserTurnId: turnId,
-            __inspireUserTurnIndex: turnOrdinal,
-          }
-        : {}),
-    };
-  });
-  return [...previous, ...appended];
-}
-
-function appendedThinkingLevel(
-  currentThinkingLevel: string,
-  entries: readonly SessionEntry[],
-): string {
-  let thinkingLevel = currentThinkingLevel;
+  const last = jsonRecord(previous.at(-1));
+  let turnOrdinal = Number(last?.__inspireUserTurnIndex ?? -1);
+  let turnId = last?.__inspireUserTurnId;
+  let messages = previous;
   for (const entry of entries) {
-    if (entry.type === "thinking_level_change")
-      thinkingLevel = entry.thinkingLevel;
+    const source =
+      entry.type === "compaction"
+        ? jsonRecord(entry.details)?.source
+        : undefined;
+    // Keep Pi's per-entry indices even when a system checkpoint precedes a summary.
+    for (const [index, message] of sessionEntryToContextMessages(
+      entry,
+    ).entries()) {
+      if (message.role === "system") continue;
+      if (messages === previous) messages = previous.slice();
+      const id = `${entry.id}:${index}`;
+      if (message.role === "user") {
+        turnOrdinal++;
+        turnId = id;
+      }
+      messages.push({
+        ...message,
+        __inspireMessageId: id,
+        __inspireEntryId: entry.id,
+        ...(typeof source === "string" &&
+        source &&
+        message.role === "compactionSummary"
+          ? { __inspireCompactionSource: source }
+          : {}),
+        // Pi messages may carry extension fields; these coordinates belong to the projection.
+        __inspireUserTurnId: turnId,
+        __inspireUserTurnIndex: turnId === undefined ? undefined : turnOrdinal,
+      });
+    }
   }
-  return thinkingLevel;
+  return messages;
 }
 
 function isLinearAppend(
@@ -326,10 +292,11 @@ function isLinearAppend(
 ): boolean {
   let parentId = currentLeafId;
   for (const entry of entries) {
-    if (entry.parentId !== parentId) return false;
+    if (entry.parentId !== parentId || entry.type === "compaction")
+      return false;
     parentId = entry.id;
   }
-  return !entries.some((entry) => entry.type === "compaction");
+  return true;
 }
 
 function changesComposerHistory(entry: SessionEntry): boolean {
@@ -337,20 +304,6 @@ function changesComposerHistory(entry: SessionEntry): boolean {
     entry.type === "message" &&
     (entry.message.role === "user" || entry.message.role === "bashExecution")
   );
-}
-
-function composerHistoryAnchor(
-  entries: ReadonlyMap<string, SessionEntry>,
-  leafId: string | null,
-): string | null {
-  let id = leafId;
-  while (id !== null) {
-    const entry = entries.get(id);
-    if (!entry) break;
-    if (changesComposerHistory(entry)) return id;
-    id = entry.parentId;
-  }
-  return null;
 }
 
 interface BoundedTranscriptItem {
@@ -565,7 +518,6 @@ class TranscriptPageBuilder<Page> {
 
   constructor(
     private readonly shell: (boundary: number, messages: unknown[]) => Page,
-    private readonly reservedBytes = 0,
   ) {}
 
   get length(): number {
@@ -582,7 +534,7 @@ class TranscriptPageBuilder<Page> {
       Number(this.messages.length > 0);
     if (
       bytes + Buffer.byteLength(JSON.stringify(this.shell(boundary, []))) >
-      TRANSCRIPT_PAGE_MAX_BYTES - this.reservedBytes
+      TRANSCRIPT_PAGE_MAX_BYTES
     )
       return false;
     this.messages.push(item.value);
@@ -731,7 +683,6 @@ class SessionEntryIndex {
   protected historySourceGeneration = 0;
   private historyCache?: {
     leafId: string | null;
-    revision: number;
     messages: unknown[];
     entries: Map<string, number>;
     turns: number[];
@@ -791,31 +742,26 @@ class SessionEntryIndex {
               jsonRecord(row)?.__inspireMessageId !==
               jsonRecord(messages[index])?.__inspireMessageId,
           )));
-    if (linear) {
-      this.currentModelSelection = appendModelSelection(
-        this.currentModelSelection,
-        suffix,
-      );
-      this.currentThinkingLevel = appendedThinkingLevel(
-        this.currentThinkingLevel,
-        suffix,
-      );
-      for (const entry of suffix)
-        if (changesComposerHistory(entry)) this.currentHistoryAnchor = entry.id;
-    } else {
-      const thinkingLevel = buildSessionContext(
-        entries,
-        leafId,
-        byId,
-      ).thinkingLevel;
-      this.currentModelSelection = branchModelSelection(byId, leafId);
-      this.currentThinkingLevel = thinkingLevel;
-      this.currentHistoryAnchor = composerHistoryAnchor(byId, leafId);
-    }
+    const branch = linear
+      ? suffix
+      : [...branchAncestors(byId, leafId)].reverse();
+    this.currentModelSelection = appendModelSelection(
+      linear ? this.currentModelSelection : { change: null, fallback: null },
+      branch,
+    );
+    const thinking = branch.findLast(
+      (entry) => entry.type === "thinking_level_change",
+    );
+    if (thinking) this.currentThinkingLevel = thinking.thinkingLevel;
+    else if (!linear) this.currentThinkingLevel = "off";
+    this.currentHistoryAnchor =
+      branch.findLast(changesComposerHistory)?.id ??
+      (linear ? this.currentHistoryAnchor : null);
     this.currentEntries = entries;
     this.currentEntriesById = byId;
     this.currentLeafId = leafId;
     this.currentMessages = messages;
+    this.historyCache = undefined;
     this.currentRevision += 1;
     if (replacesRows) this.appendFromRevision = this.currentRevision;
     return replacesRows;
@@ -867,13 +813,11 @@ class SessionEntryIndex {
   }
 
   entriesAfter(tailEntryId: string | null): readonly SessionEntry[] {
-    const index =
-      tailEntryId === null
-        ? -1
-        : this.currentEntries.findLastIndex(
-            (entry) => entry.id === tailEntryId,
-          );
-    if (tailEntryId !== null && index < 0)
+    if (tailEntryId === null) return this.currentEntries;
+    const index = this.currentEntries.findLastIndex(
+      (entry) => entry.id === tailEntryId,
+    );
+    if (index < 0)
       throw requestError("Session persistence boundary no longer exists", 409);
     return this.currentEntries.slice(index + 1);
   }
@@ -943,10 +887,17 @@ class SessionEntryIndex {
             },
           }
         : {}),
-      ...(pointLeaf !== undefined ? {
-        node: projectHistoryPoint(this.currentEntries, entry, pointLeaf),
-        totalChars: text.length,
-      } : {}),
+      ...(pointLeaf !== undefined
+        ? {
+            node: projectHistoryPoint(
+              this.currentEntries,
+              entry,
+              this.continues(pointLeaf, entry.id),
+              entry.id === pointLeaf,
+            ),
+            totalChars: text.length,
+          }
+        : {}),
       text: text.slice(offset, end),
       nextOffset: end < text.length ? end : null,
       images,
@@ -985,15 +936,11 @@ class SessionEntryIndex {
   composerHistoryMessages(
     effectiveLeafId: string | null = this.currentLeafId,
   ): readonly ComposerHistoryMessage[] {
-    if (
-      effectiveLeafId !== null &&
-      !this.currentEntriesById.has(effectiveLeafId)
-    )
-      throw requestError("Effective branch leaf does not exist", 409);
     const messages: ComposerHistoryMessage[] = [];
-    let id = effectiveLeafId;
-    while (id !== null) {
-      const entry = this.currentEntriesById.get(id)!;
+    for (const entry of branchAncestors(
+      this.currentEntriesById,
+      effectiveLeafId,
+    )) {
       if (
         entry.type === "message" &&
         (entry.message.role === "user" ||
@@ -1004,7 +951,6 @@ class SessionEntryIndex {
           __inspireHistoryEntryId: entry.id,
         });
       }
-      id = entry.parentId;
     }
     return messages.reverse();
   }
@@ -1016,14 +962,41 @@ class SessionEntryIndex {
     entryTurns?: ReadonlyMap<string, string>,
   ): TranscriptPage {
     const persisted = this.viewMessages(effectiveLeafId);
-    const messages = overlay.length ? [...persisted, ...overlay] : persisted;
-    return this.buildPage(
-      messages,
-      persisted.length,
-      effectiveLeafId,
+    const identity = {
+      sessionId: this.sessionId,
+      revision: this.revision,
       viewId,
-      entryTurns,
-    );
+      incarnation: this.incarnation,
+      appendFromRevision: this.appendFromRevision,
+      effectiveLeafId,
+      composerHistoryVersion: this.composerHistoryVersion(effectiveLeafId),
+    };
+    const builder = new TranscriptPageBuilder((start, messages) => ({
+      ...identity,
+      messages,
+      hasOlder: start > 0,
+    }));
+    let start = persisted.length + overlay.length;
+    while (start > 0 && builder.length < TRANSCRIPT_PAGE_MAX_MESSAGES) {
+      const index = start - 1;
+      const saved = index < persisted.length;
+      const message = saved
+        ? persisted[index]
+        : overlay[index - persisted.length];
+      const raw = jsonRecord(message);
+      const entryId = raw?.__inspireEntryId;
+      const turn =
+        typeof entryId === "string" ? entryTurns?.get(entryId) : undefined;
+      const item = boundedTranscriptItem(
+        turn ? { ...raw, __inspireTurnId: turn } : message,
+        saved ? index : undefined,
+        this.fileNameForPath,
+      );
+      if (!builder.add(index, item)) break;
+      start = index;
+    }
+    if (builder.length === 0 && start > 0) oversizedTranscriptItem();
+    return builder.page(start, true);
   }
 
   private historyCursor(
@@ -1125,7 +1098,12 @@ class SessionEntryIndex {
           incarnation: this.incarnation,
           durableLeafId: this.currentLeafId,
           effectiveLeafId,
-          ...projectSessionTree(this.currentEntries, effectiveLeafId, query),
+          ...projectSessionTree(
+            this.currentEntries,
+            this.currentEntriesById,
+            effectiveLeafId,
+            query,
+          ),
         };
       case "branches":
         return this.branchLeaves(effectiveLeafId);
@@ -1147,21 +1125,13 @@ class SessionEntryIndex {
     }
   }
 
+  branchEntries(leafId: string | null): SessionEntry[] {
+    return [...branchAncestors(this.currentEntriesById, leafId)].reverse();
+  }
+
   private nativeHistory(leafId: string | null) {
-    if (
-      this.historyCache?.leafId === leafId &&
-      this.historyCache.revision === this.revision
-    )
-      return this.historyCache;
-    const path: SessionEntry[] = [];
-    for (let id = leafId; id !== null; ) {
-      const entry = this.currentEntriesById.get(id);
-      if (!entry)
-        throw requestError("The selected branch no longer exists", 409);
-      path.push(entry);
-      id = entry.parentId;
-    }
-    const messages = appendContextMessages([], path.reverse());
+    if (this.historyCache?.leafId === leafId) return this.historyCache;
+    const messages = appendContextMessages([], this.branchEntries(leafId));
     const entries = new Map<string, number>();
     const turns: number[] = [];
     messages.forEach((message, index) => {
@@ -1172,7 +1142,6 @@ class SessionEntryIndex {
     });
     return (this.historyCache = {
       leafId,
-      revision: this.revision,
       messages,
       entries,
       turns,
@@ -1254,17 +1223,11 @@ class SessionEntryIndex {
     const parents = new Set(entries.map((entry) => entry.parentId));
     const ends = entries.filter((entry) => !parents.has(entry.id)).reverse();
     const excerpt = (leaf: SessionEntry): string => {
-      const seen = new Set<string>();
-      let id: string | null = leaf.id;
-      while (id !== null && !seen.has(id)) {
-        seen.add(id);
-        const entry = this.currentEntriesById.get(id);
-        if (!entry) break;
+      for (const entry of branchAncestors(this.currentEntriesById, leaf.id)) {
         if (entry.type === "message" && entry.message.role === "user") {
           const text = branchEntryText(entry).replace(/\s+/gu, " ").trim();
           return text.length > 80 ? `${text.slice(0, 79)}…` : text;
         }
-        id = entry.parentId;
       }
       return "";
     };
@@ -1280,10 +1243,19 @@ class SessionEntryIndex {
   }
 
   private composerHistoryVersion(effectiveLeafId: string | null): string {
-    const anchor =
-      effectiveLeafId === this.currentLeafId
-        ? this.currentHistoryAnchor
-        : composerHistoryAnchor(this.currentEntriesById, effectiveLeafId);
+    let anchor = this.currentHistoryAnchor;
+    if (effectiveLeafId !== this.currentLeafId) {
+      anchor = null;
+      for (const entry of branchAncestors(
+        this.currentEntriesById,
+        effectiveLeafId,
+      )) {
+        if (changesComposerHistory(entry)) {
+          anchor = entry.id;
+          break;
+        }
+      }
+    }
     // Entry ancestry is immutable during append. A rewrite may reuse IDs with
     // changed content, so it starts a new history epoch even at the same leaf.
     return JSON.stringify([this.historySourceGeneration, anchor]);
@@ -1310,46 +1282,6 @@ class SessionEntryIndex {
       cwd,
       fileNameForPath,
     );
-  }
-
-  private buildPage(
-    source: readonly unknown[],
-    persistedLength: number,
-    effectiveLeafId: string | null,
-    viewId: string,
-    entryTurns?: ReadonlyMap<string, string>,
-  ): TranscriptPage {
-    const identity = {
-      sessionId: this.sessionId,
-      revision: this.revision,
-      viewId,
-      incarnation: this.incarnation,
-      appendFromRevision: this.appendFromRevision,
-      effectiveLeafId,
-      composerHistoryVersion: this.composerHistoryVersion(effectiveLeafId),
-    };
-    const builder = new TranscriptPageBuilder((start, messages) => ({
-      ...identity,
-      messages,
-      hasOlder: start > 0,
-    }));
-    let start = source.length;
-    while (start > 0 && builder.length < TRANSCRIPT_PAGE_MAX_MESSAGES) {
-      const index = start - 1;
-      const raw = jsonRecord(source[index]);
-      const entryId = raw?.__inspireEntryId;
-      const turn =
-        typeof entryId === "string" ? entryTurns?.get(entryId) : undefined;
-      const item = boundedTranscriptItem(
-        turn ? { ...raw, __inspireTurnId: turn } : source[index],
-        index < persistedLength ? index : undefined,
-        this.fileNameForPath,
-      );
-      if (!builder.add(index, item)) break;
-      start = index;
-    }
-    if (builder.length === 0 && source.length > 0) oversizedTranscriptItem();
-    return builder.page(start, true);
   }
 }
 
@@ -1738,13 +1670,19 @@ export class SessionProjection
             previousTailVerified)
             ? "append"
             : "rewrite";
-        replacesRows = this.publishEntries(
+        const appended = candidate.start > 0;
+        const entries = appended
+          ? this.currentEntries.concat(candidate.entries)
+          : candidate.entries;
+        const byId = indexSessionEntries(
           candidate.entries,
-          candidate.entriesById,
-          candidate.entries.at(-1)?.id ?? null,
-          kind === "append"
-            ? candidate.entries.slice(this.currentEntries.length)
-            : [],
+          appended ? this.currentEntriesById : undefined,
+        );
+        replacesRows = this.publishEntries(
+          entries,
+          byId,
+          entries.at(-1)?.id ?? null,
+          kind === "append" ? entries.slice(this.currentEntries.length) : [],
           kind,
         );
         this.currentHeader = candidate.header;
@@ -1907,11 +1845,6 @@ export class SessionProjection
         >;
         if (header && !prefix) migrateSessionEntries(mutable);
         const suffix = (prefix ? mutable : mutable.slice(1)) as SessionEntry[];
-        const entries = prefix ? [...this.currentEntries, ...suffix] : suffix;
-        const entriesById = indexSessionEntries(
-          suffix,
-          prefix ? this.currentEntriesById : undefined,
-        );
         return {
           identity: document.source,
           fingerprint: header
@@ -1931,8 +1864,8 @@ export class SessionProjection
             scan.end - committed,
           ),
           header,
-          entries,
-          entriesById,
+          entries: suffix,
+          start,
         };
       } finally {
         await document.close();

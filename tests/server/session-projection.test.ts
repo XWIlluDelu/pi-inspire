@@ -479,11 +479,15 @@ describe("SessionProjection replacement and Pi context semantics", () => {
   it("builds incremental context from a verified suffix exactly as a fresh Pi read would", async () => {
     const { path, record, projection } = await fixture([
       message("s1", null, "system", "host-only startup", 0),
-      message("u1", "s1", "user", "one", 1),
+      message("intro", "s1", "assistant", "notice", 1, {
+        __inspireUserTurnId: "extension-field",
+        __inspireUserTurnIndex: "bad",
+      }),
     ]);
     const prefix = projection.messages[0];
     expect(projection.viewMessages("s1")).toEqual([]);
     const entries = [
+      message("u1", "intro", "user", "one", 2),
       { type: "session_info", id: "info", parentId: "u1", name: "Named" },
       {
         type: "model_change",
@@ -533,6 +537,10 @@ describe("SessionProjection replacement and Pi context semantics", () => {
       replacesRows: false,
     });
     expect(projection.messages[0]).toBe(prefix);
+    expect(projection.messages[1]).toMatchObject({
+      __inspireUserTurnId: "u1:0",
+      __inspireUserTurnIndex: 0,
+    });
     expect(projection.leafId).toBe("s2");
     expect(projection.viewMessages("s2")).toEqual(projection.messages);
     expect(JSON.stringify(projection.latestPage())).not.toContain("host-only");

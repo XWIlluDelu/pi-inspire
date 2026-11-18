@@ -18,13 +18,18 @@ export type ContextPaneView = Pick<
   | "gitStatusError"
   | "gitStatusPending"
   | "gitDiff"
-> & { transcriptViewId: string | null; transcriptRevision: number };
+> & {
+  transcriptViewId: string | null;
+  transcriptIncarnation: string | null;
+  transcriptRevision: number;
+};
 
 export function selectContextPaneView(state: AppState): ContextPaneView {
   return {
     transportGeneration: state.transportGeneration,
     sessionId: state.sessionId,
     transcriptViewId: state.view.viewId,
+    transcriptIncarnation: state.view.incarnation,
     transcriptRevision: state.view.revision,
     resourcesOpen: state.resourcesOpen,
     contextMode: state.contextMode,

@@ -431,7 +431,13 @@ it.each([
   "final projection",
 ] as const)("preserves the Fork commit boundary after %s", async (failure) => {
   let staged!: Awaited<ReturnType<typeof stageSessionFork>>;
-  const occupied = "existing destination\n";
+  const occupied = jsonl({
+    type: "session",
+    version: 3,
+    id: "occupied",
+    cwd: fixtureWorkspace,
+    timestamp: new Date(0).toISOString(),
+  });
   const f = await fixture({
     cold: true,
     userContent: [image],
@@ -517,9 +523,16 @@ it("reads and copies the admitted external branch across appends, then retires i
       f.runtime.sessionHistory(id, source.viewId, {
         kind: "entry",
         targetId: "u2",
+        point: offset === undefined ? "1" : undefined,
         offset,
       });
     const first = await read();
+    expect(first.node).toMatchObject({
+      id: "u2",
+      depth: 2,
+      routeLeafId: "a2",
+      active: true,
+    });
     expect(first.nextOffset).toBe(32_000);
     await expect(f.navigate("u2", "edit")).rejects.toMatchObject({
       code: "EXTERNAL_PI_WRITER_ACTIVE",

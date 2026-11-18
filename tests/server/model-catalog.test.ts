@@ -16,7 +16,6 @@ import {
 } from "../../server/pi-runtime.js";
 import {
   appendModelSelection,
-  branchModelSelection,
   selectedBranchModel,
 } from "../../server/session-model-selection.js";
 import { nativePiWorkspace } from "./fixtures/native-pi.js";
@@ -142,19 +141,17 @@ it("restores selected models from branch history and uses physical replies as fa
       },
     },
   ] as SessionEntry[];
-  const byId = new Map(entries.map((entry) => [entry.id, entry]));
-  let incremental = branchModelSelection(byId, null);
-  for (const entry of entries) {
-    incremental = appendModelSelection(incremental, [entry]);
-    expect(incremental).toEqual(branchModelSelection(byId, entry.id));
-  }
-  const routed = branchModelSelection(byId, "failed-route");
+  const routed = appendModelSelection(
+    { change: null, fallback: null },
+    entries.slice(0, 3),
+  );
+  const physical = appendModelSelection(routed, entries.slice(3));
   expect(selectedBranchModel(routed, [router])).toEqual(router);
   expect(selectedBranchModel(routed, [])).toEqual({
     provider: "physical",
     id: "a",
   });
-  expect(selectedBranchModel(incremental, [router])).toEqual({
+  expect(selectedBranchModel(physical, [router])).toEqual({
     provider: "physical",
     id: "b",
   });
