@@ -43,24 +43,24 @@ export function TranscriptUtilities({
       {onTogglePrompts && (
         <button
           type="button"
-          className="button transcript-tools__prompts"
+          className="button"
           aria-label="Prompt Map"
           title="Prompt Map"
           aria-expanded={promptsOpen}
           onClick={onTogglePrompts}
         >
-          <ListTree size={17} aria-hidden />
+          <ListTree size={16} aria-hidden />
         </button>
       )}
       <button
         ref={searchLauncherRef}
         type="button"
-        className="button transcript-tools__open"
+        className="button"
         aria-label="Open conversation search"
         title="Search conversation"
         onClick={onOpenSearch}
       >
-        <Search size={18} aria-hidden />
+        <Search size={16} aria-hidden />
       </button>
       <section
         className="transcript-search"

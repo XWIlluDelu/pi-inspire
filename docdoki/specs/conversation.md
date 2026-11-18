@@ -152,15 +152,15 @@ boundaries in this contract.
   surfaces keep their keyboard ownership. Local-tool placement follows [[design-system]]: the
   launcher and working surface form one interaction rather than disconnected destinations.
 
-  [[design-system]] owns the row's surface and states. Search and narrow navigation surfaces reserve
-  no layout height; opening them preserves the
-  scrollport and reading position. Session/view changes retire search state. Width changes keep an
-  active query visible in the corresponding desktop or narrow tool; neither layout keeps an
-  invisible active search.
+  [[design-system]] owns the search surface and states. Search and narrow navigation surfaces
+  reserve no layout height. Session/view changes retire search state. Width changes keep an active
+  query visible in the corresponding desktop or narrow tool.
 
-  On a narrow workbench, adjacent Search and Prompt Map launchers live in the conversation
-  tool row. Search replaces that row in place with an input across the reading width, focusing
-  and selecting its text. Close or Escape clears the query and match ownership, closes the row,
+  On a narrow workbench, equal-sized Search and Prompt Map launchers float at the top-right of
+  the transcript. The container is transparent and outside the layout flow so the full available
+  height goes to the conversation. Opening a tool preserves the scrollport and reading position.
+  Search replaces the launchers with a floating input across the reading width, focusing
+  and selecting its text. Close or Escape clears the query and match ownership, closes the input,
   and restores focus to its local launcher. An outside press dismisses narrow Search. The scope
   choice stays inside the shared search field.
 

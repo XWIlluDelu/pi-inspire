@@ -27,7 +27,7 @@ import { ContextPaneState } from "./ContextPaneState";
 import type { ContextPaneView } from "./context-pane-view";
 import { FileIndexRow } from "./FileIndexRow";
 import { PiLoader } from "./PiLoader";
-import { ResourcePathLabel } from "./ResourcePathLabel";
+import { parentPath, ResourcePathLabel } from "./ResourcePathLabel";
 
 function pathName(change: GitFileChange): string {
   return change.path.utf8Path ?? change.path.display;
@@ -86,6 +86,10 @@ const ChangeRow = memo(function ChangeRow({
   selectedPathId: string | null;
 }) {
   const facet = presentGitFacet(change);
+  const path = pathName(change);
+  const parent = parentPath(path);
+  const name = parent ? path.slice(parent.length + 1) : path;
+  const directory = parent && <ResourcePathLabel path={parent} title={path} />;
   const originalPath = change.worktree?.originalPath;
   const sourceLabel = originalPath
     ? `${change.worktree?.kind === "copied" ? "copied" : "renamed"} from ${originalPath.display}`
@@ -93,13 +97,18 @@ const ChangeRow = memo(function ChangeRow({
   const selected = selectedPathId === change.path.id;
   return (
     <FileIndexRow
-      file={pathName(change)}
-      name={<ResourcePathLabel path={pathName(change)} />}
+      file={path}
+      name={name}
       context={
-        originalPath && (
-          <span className="changes__source" title={originalPath.display}>
-            from <ResourcePathLabel path={originalPath.display} />
-          </span>
+        originalPath ? (
+          <>
+            {directory}
+            <span className="changes__source" title={originalPath.display}>
+              from <ResourcePathLabel path={originalPath.display} />
+            </span>
+          </>
+        ) : (
+          directory
         )
       }
       stacked={Boolean(originalPath)}
@@ -107,13 +116,13 @@ const ChangeRow = memo(function ChangeRow({
       className={originalPath ? "file-row--renamed" : undefined}
       aria-current={selected || undefined}
       data-git-path={change.path.id}
-      aria-label={[pathName(change), facet?.label, sourceLabel]
+      aria-label={[path, facet?.label, sourceLabel]
         .filter(Boolean)
         .join(", ")}
       title={
         change.path.workspacePath
-          ? `${pathName(change)}\nCtrl+click: Show in file manager`
-          : pathName(change)
+          ? `${path}\nCtrl+click: Show in file manager`
+          : path
       }
       onClick={(event) => {
         const workspacePath = change.path.workspacePath;
@@ -136,9 +145,9 @@ function ChangeGroup({
 }) {
   if (changes.length === 0) return null;
   return (
-    <section className="changes__group">
+    <section className="res__index-section">
       <h3>
-        {title} <span>{changes.length}</span>
+        {title} <span className="changes__group-count">{changes.length}</span>
       </h3>
       {changes.map((change) => (
         <ChangeRow
@@ -221,7 +230,7 @@ function ChangesIndexHeader({ state }: { state: ContextPaneView }) {
   const hasConflict = repo?.files.some((file) => file.conflict);
   const headLabel = gitHeadLabel(status);
   return (
-    <div className="pane-toolbar res__index-header">
+    <div className="res__index-header res__index-header--git">
       <GitBranch size={13} aria-hidden />
       <span className="res__index-title" title={headLabel ?? undefined}>
         {headLabel ?? "Workspace"}
@@ -554,9 +563,13 @@ export function ChangesPane({
     };
   }, [browseScrollTop]);
   return (
-    <div className="res__body res__body--changes">
+    <div className="res__body">
       <ChangesIndexHeader state={state} />
-      <div className="res__list" ref={listRef} data-pane-scroll-active="true">
+      <div
+        className="res__index-list"
+        ref={listRef}
+        data-pane-scroll-active="true"
+      >
         {state.gitStatus && state.gitStatusError ? (
           <p className="changes__projection-note" role="status">
             Refresh failed; showing the last known status.

@@ -354,12 +354,12 @@ body.pane-resizing .nav {
 }
 
 .res {
-  --files-section-title-size: 34px;
+  --res-index-control-height: 34px;
   overflow: hidden;
 }
 
 @media (max-width: 900px) {
-  .res { --files-section-title-size: 40px; }
+  .res { --res-index-control-height: 40px; }
 }
 
 .res__body {
@@ -369,14 +369,6 @@ body.pane-resizing .nav {
   flex-direction: column;
   overflow: hidden;
   background: var(--bg-context);
-}
-
-.files-browser {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
 }
 
 .file-search-controls {
@@ -403,45 +395,53 @@ body.pane-resizing .nav {
   outline-offset: -2px;
 }
 
-.files-browser__search {
-  height: auto;
-  box-sizing: border-box;
-  flex: 0 0 auto;
-  border-bottom: none;
-  padding: var(--space-2) var(--space-3) var(--space-1);
-  background: transparent;
+.res__index-header {
+  --search-height: var(--res-index-control-height);
+  display: flex;
+  flex: none;
+  align-items: center;
+  min-height: calc(var(--res-index-control-height) + var(--space-2));
+  padding: var(--space-2) var(--space-3) 0;
+  margin-block-end: var(--space-1);
 }
 
-.files-browser__search > .icon-button {
+.res__index-header > .icon-button {
   margin-right: 0;
 }
 
-.files-browser__scroll {
+.res__index-list {
+  display: flex;
+  flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
-  /* Row highlights share the search field's edges (right: the reserved
-     8px scrollbar slot), as History and the session list do. */
-  padding: 0 var(--space-1) var(--space-2) var(--space-3);
+  scrollbar-gutter: stable;
+  padding: 0 var(--space-1) var(--space-2);
 }
 
-.files-browser__section {
+.res__index-section {
   display: flex;
+  flex: none;
   min-width: 0;
   flex-direction: column;
+  gap: 1px;
 }
 
-.files-browser__section + .files-browser__section {
+.res__index-section + .res__index-section {
   margin-top: var(--space-3);
 }
 
-.files-browser__section h2 {
-  height: var(--space-6);
-  box-sizing: border-box;
+.res__index-section--workspace {
+  padding-bottom: var(--space-3);
+}
+
+.res__index-section > :is(h2, h3) {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
+  justify-content: space-between;
+  min-height: var(--space-6);
   margin: 0;
   padding: 0 var(--space-2);
   overflow: hidden;
@@ -449,10 +449,6 @@ body.pane-resizing .nav {
   font: 600 var(--text-xs)/1 var(--font-sans);
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.files-browser__section--workspace {
-  padding-bottom: var(--space-3);
 }
 
 .files-browser__more:focus-visible {
@@ -491,12 +487,6 @@ body.pane-resizing .nav {
   text-align: left;
 }
 
-.recent-files {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
 .file-row {
   display: flex;
   width: 100%;
@@ -532,11 +522,7 @@ body.pane-resizing .nav {
   color: var(--accent-deep);
 }
 
-.recent-file {
-  --file-row-gap: 6px;
-}
-
-:is(.recent-file, .workspace-tree__row--file)::before {
+.workspace-tree__row--file:not(.workspace-tree__row--result)::before {
   content: "";
   flex: 0 0 11px;
 }
@@ -593,14 +579,14 @@ body.pane-resizing .nav {
   font: var(--text-xs)/var(--leading-ui) var(--font-mono);
 }
 
-.recent-file .file-row__context {
+.file-row__label:not([data-stacked]) > .file-row__context {
   display: flex;
   min-width: 3rem;
   align-items: center;
   gap: var(--space-1);
 }
 
-.recent-file .file-row__context::before {
+.file-row__label:not([data-stacked]) > .file-row__context::before {
   content: "·";
   color: var(--hairline-strong);
 }
@@ -704,13 +690,14 @@ body.pane-resizing .nav {
   }
 }
 
-.pane-toolbar.res__index-header {
+.res__index-header--git {
   gap: var(--space-2);
-  min-height: calc(var(--files-section-title-size) + var(--space-2));
-  padding-inline: var(--space-3);
+  box-shadow: inset 0 -1px var(--hairline);
   color: var(--muted);
   font-size: var(--text-xs);
 }
+
+.res__index-header--git > svg { flex: none; }
 
 .res__index-title {
   min-width: 0;
@@ -818,20 +805,6 @@ body.pane-resizing .nav {
   text-align: center;
 }
 
-.res__list {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: var(--space-2);
-  overflow: auto;
-}
-
-.res__body--changes > .res__list {
-  padding: var(--space-1) var(--space-1) var(--space-2);
-}
-
 .res__choices {
   display: flex;
   flex-direction: column;
@@ -916,29 +889,7 @@ body.pane-resizing .nav {
   font: 500 var(--text-xs)/var(--leading-ui) var(--font-sans);
 }
 
-.changes__group {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.changes__group + .changes__group {
-  margin-top: var(--space-3);
-}
-
-.changes__group h3 {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin: 0;
-  box-sizing: border-box;
-  min-height: var(--space-6);
-  padding: 0 var(--space-2);
-  color: var(--faint);
-  font: 600 var(--text-xs)/1 var(--font-sans);
-}
-
-.changes__group h3 span {
+.changes__group-count {
   color: var(--muted);
   font: 400 10px/1 var(--font-mono);
   padding: 2px 6px;

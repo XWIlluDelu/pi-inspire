@@ -231,7 +231,7 @@ export const Transcript = memo(function Transcript({
 
   useLayoutEffect(() => {
     if (!mobileSearchOpen) return;
-    searchInputRef.current?.focus();
+    searchInputRef.current?.focus({ preventScroll: true });
     searchInputRef.current?.select();
   }, [mobileSearchOpen]);
 

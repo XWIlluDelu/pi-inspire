@@ -69,7 +69,6 @@ export function WorkspaceFileSearch() {
   }, [state.cwd, state.sessionId]);
   return (
     <SearchField
-      className="workspace-search"
       aria-label="Search workspace files"
       placeholder="Search workspace"
       value={state.workspaceQuery}

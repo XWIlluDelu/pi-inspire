@@ -22,7 +22,7 @@ async function selectBody(pane: Locator) {
   const clear = pane.getByRole("button", { name: "Clear workspace search" });
   if (await clear.isVisible()) await clear.click();
   await pane
-    .locator(".files-browser__section")
+    .locator(".res__index-section")
     .filter({ hasText: "Recent" })
     .getByRole("button", { name: /page\.html/ })
     .click();
@@ -85,7 +85,7 @@ test("@cross-browser keeps renamed, conflicting and opaque paths readable in nar
   await expect(
     pane.getByRole("button", { name: /new\.txt, Untracked/ }),
   ).toBeVisible();
-  const list = pane.locator(".res__list");
+  const list = pane.locator(".res__index-list");
   const offset = await list.evaluate((element) => {
     element.scrollTop = 380;
     return element.scrollTop;

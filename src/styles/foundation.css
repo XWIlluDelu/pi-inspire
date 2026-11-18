@@ -685,10 +685,6 @@ input[type="search"]::-webkit-search-cancel-button:hover {
   }
 }
 
-.files-browser__scroll {
-  scrollbar-gutter: stable;
-}
-
 /* Pane searches share controls, while each owner retains its width and margins. */
 .search-field {
   display: flex;
@@ -781,12 +777,6 @@ input[type="search"]::-webkit-search-cancel-button:hover {
     width: 28px;
     height: 28px;
     flex-basis: 28px;
-  }
-}
-
-@media (max-width: 900px) {
-  .workspace-search {
-    --search-height: 40px;
   }
 }
 

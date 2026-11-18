@@ -247,6 +247,33 @@
   .topbar__status:not(:empty) { min-width: 24px; }
 }
 
+@media (max-width: 900px) {
+  .topbar > .navigation-toggle .navigation-toggle__attention {
+    /* Anchor to the centered glyph on both pointer layouts. */
+    top: calc(50% - 15px);
+    right: calc(50% - 16px);
+    min-width: 14px;
+    height: 11px;
+    padding-inline: 3px;
+    line-height: 11px;
+  }
+
+  .topbar__ident { gap: var(--space-1); }
+  .topbar__workspace-meta {
+    flex: none;
+    max-width: max(55%, 5rem);
+  }
+
+  .topbar__project.button { display: inline-flex; }
+  .topbar__project-label { display: block; }
+
+  .topbar__git { flex: none; }
+  .topbar__project-icon,
+  .topbar__git-branch,
+  .topbar__git-count::before,
+  .topbar__git-count-word { display: none; }
+}
+
 @media (max-width: 600px), (pointer: coarse) {
   .topbar { --header-control-height: 44px; }
   .topbar__project.button,
