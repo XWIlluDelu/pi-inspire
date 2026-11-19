@@ -155,10 +155,12 @@ boundaries in this contract.
   reserve no layout height. Session/view changes retire search state. Width changes keep an active
   query visible in the corresponding desktop or narrow tool.
 
-  On a narrow workbench, equal-sized Search and Prompt Map launchers float at the top-right of
-  the transcript. The container is transparent and outside the layout flow so the full available
-  height goes to the conversation. A top inset keeps the first row's actions below the launchers.
-  Opening a tool preserves the scrollport and reading position.
+  On narrow screens, equal-sized Search and Prompt Map buttons float at the transcript's top-right.
+  The Prompt Map icon echoes the navigation bar's vertical ticks. The transparent toolbar takes
+  no layout height. A top inset keeps the first row's actions below the buttons.
+  Opening a tool preserves the scrollport and reading position. Prompt Map has a Close button in
+  both the compact navigation bar and the expanded prompt list. It dismisses the whole tool and
+  returns focus to its launcher.
   Search replaces the launchers with a floating input across the reading width, focusing
   and selecting its text. Close or Escape clears the query and match ownership, closes the input,
   and restores focus to its local launcher. An outside press dismisses narrow Search. The scope

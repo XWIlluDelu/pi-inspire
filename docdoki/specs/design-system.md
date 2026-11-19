@@ -311,9 +311,11 @@ pressed states. Settings, pickers, History, Files/Changes, document previews and
 scrolling inherit this treatment. Chromium/WebKit use an 8px track with a 6px visible thumb and no
 arrow buttons; Firefox uses its native thin geometry. High-contrast mode retains system colors.
 
-Terminal's own slider uses the same color roles and visible thickness while retaining its drag
-target and scroll handling. Navigation, conversation and editor activity docks use native scroll
-areas. Tab strips hide their scrollbars. Embedded documents retain their own styles.
+Navigation and editor activity docks scroll natively. The session list and Hidden use the full
+width when they fit. With a fine pointer, the conversation's draggable scrollbar floats in the
+reading column's right margin. Touch scrolls natively.
+Terminal's slider keeps its own drag target and scroll handling with the same thumb colors and
+visible thickness. Tab strips hide their scrollbars. Embedded documents retain their own styles.
 
 ## Pane and navigation presentation
 

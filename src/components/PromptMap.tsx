@@ -1,5 +1,5 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Paperclip } from "lucide-react";
+import { Paperclip, X } from "lucide-react";
 import {
   type CSSProperties,
   useEffect,
@@ -54,7 +54,7 @@ function FlatChevron({ direction }: { direction: "up" | "down" }) {
 
 export function PromptMap({
   container,
-  mobileActive = false,
+  mobileActive,
   onDismissMobile,
   turns,
   total,
@@ -66,8 +66,8 @@ export function PromptMap({
   onNavigate,
 }: {
   container?: HTMLElement | null;
-  mobileActive?: boolean;
-  onDismissMobile?: () => void;
+  mobileActive: boolean;
+  onDismissMobile: () => void;
   turns: readonly UserTurnAnchor[];
   total: number;
   activeOrdinal: number | null;
@@ -95,7 +95,6 @@ export function PromptMap({
   const followedOrdinalRef = useRef<number | null>(null);
   const listUserOwnedRef = useRef(false);
   const previousTickOrdinalRef = useRef(activeOrdinal);
-  const previousMobileActiveRef = useRef(mobileActive);
   const turnByOrdinal = useMemo(
     () => new Map(turns.map((turn) => [turn.ordinal, turn])),
     [turns],
@@ -190,9 +189,9 @@ export function PromptMap({
     };
   }, [container, mobileActive, open]);
 
-  useEffect(() => {
-    if (previousMobileActiveRef.current && !mobileActive) setOpen(false);
-    previousMobileActiveRef.current = mobileActive;
+  useLayoutEffect(() => {
+    if (mobileActive) navRef.current?.focus({ preventScroll: true });
+    else setOpen(false);
   }, [mobileActive]);
 
   useEffect(
@@ -348,6 +347,18 @@ export function PromptMap({
     }, 120);
   };
 
+  const closeButton = mobileActive && (
+    <button
+      type="button"
+      className="icon-button prompt-map__close"
+      aria-label="Close prompt map"
+      title="Close prompt map"
+      onClick={onDismissMobile}
+    >
+      <X size={14} aria-hidden />
+    </button>
+  );
+
   return (
     <nav
       ref={navRef}
@@ -388,13 +399,14 @@ export function PromptMap({
           event.stopPropagation();
           disclosureFocusRef.current = "escape";
           setOpen(false);
-        } else if (mobileActive && onDismissMobile) {
+        } else if (mobileActive) {
           event.preventDefault();
           event.stopPropagation();
           onDismissMobile();
         }
       }}
     >
+      {open && closeButton}
       <button
         type="button"
         className="prompt-map__step prompt-map__step--previous"
@@ -586,6 +598,7 @@ export function PromptMap({
       >
         <FlatChevron direction="down" />
       </button>
+      {!open && closeButton}
     </nav>
   );
 }

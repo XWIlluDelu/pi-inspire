@@ -27,10 +27,9 @@ independent project shells in [[terminal]].
 ## Responsive reading and pane geometry
 
 - The desktop layout has stable regions for project/session navigation, conversation, and contextual
-  work. Conversation search and the prompt outline launcher occupy the reading surface without
-  reserving a toolbar row. The prompt outline opens as the same bounded dialog on desktop and
-  narrow screens. The transcript scrollbar fits the trailing reading gutter.
-  [[conversation]] owns search, prompt outline, and floating `Jump to latest` behavior.
+  work. Conversation search and Prompt Map sit on the reading surface without reserving a toolbar
+  row. The transcript scrollbar fits the trailing reading gutter. [[conversation]] owns these
+  reading tools and the floating `Jump to latest` control.
 
 - The navigation and contextual regions can collapse so the conversation can use the available
   width. Desktop navigation owns its toggle: the expanded header's right-hand control collapses it,
@@ -61,8 +60,8 @@ independent project shells in [[terminal]].
 
   Each side region's width is adjusted by dragging its boundary with the conversation through a
   focusable handle with pointer and keyboard control. Widths persist across reloads, and
-  double-click resets only the chosen side to its default. Each boundary's scroll thumb keeps grab
-  priority where the two overlap. The two desktop side panes share a width budget that reserves
+  double-click resets only the chosen side to its default. Scrollbars stay inside their panes so
+  the boundary remains available for resizing. The side panes share a width budget that reserves
   400px for the conversation, or all remaining width after their 220px/320px minimums immediately
   above the drawer breakpoint. Resizing either side (pointer or keyboard) holds the other side at
   its current rendered width and clamps only the active side. A saved width is clamped live as the
@@ -165,11 +164,9 @@ completion behavior are unchanged.
   accessible name. Truncated extension statuses remain available by click, tap or keyboard.
   Trailing actions keep their own space.
 
-  Global controls stay on the right. Header actions are the command palette, Settings (desktop
-  only) and the contextual pane toggle. Conversation search stays with its reading surface under
-  [[conversation]], rather than adding a global header launcher. Narrow
-  layouts reach Settings from the navigation drawer header and the palette, giving that width to
-  session identity. Detailed Git status remains in Changes.
+  On desktop and narrow screens, the right end of the header holds the command palette, Settings
+  and the contextual pane toggle, in that order. Conversation search stays on its reading surface.
+  Detailed Git status remains in Changes.
 
   The text-only title opens the session menu on desktop and phones, with no chevron or separate
   More control; hover feedback and a keyboard focus outline keep the interactive affordance. The

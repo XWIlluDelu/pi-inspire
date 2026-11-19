@@ -8,7 +8,6 @@ import {
   Pin,
   Plus,
   SearchX,
-  Settings as SettingsIcon,
   Trash2,
   X,
 } from "lucide-react";
@@ -51,7 +50,6 @@ export const Nav = memo(function Nav({
   collapsed,
   isModal = false,
   onClose,
-  onOpenSettings,
   onToggleNavigation,
   onNewSession,
   onSelectSession,
@@ -60,8 +58,6 @@ export const Nav = memo(function Nav({
   collapsed: boolean;
   isModal?: boolean;
   onClose?: () => void;
-  /** Narrow drawers own Settings so the header can favor session identity. */
-  onOpenSettings?: () => void;
   onToggleNavigation: () => void;
   onNewSession: () => void;
   onSelectSession: (id: string) => void;
@@ -415,28 +411,15 @@ export const Nav = memo(function Nav({
               ) : null}
             </button>
             {isModal && onClose ? (
-              <>
-                {onOpenSettings ? (
-                  <button
-                    type="button"
-                    className="icon-button nav__settings"
-                    aria-label="Settings"
-                    title="Settings"
-                    onClick={onOpenSettings}
-                  >
-                    <SettingsIcon size={15} aria-hidden />
-                  </button>
-                ) : null}
-                <button
-                  type="button"
-                  className="icon-button nav__close"
-                  aria-label="Close navigation"
-                  title="Close navigation"
-                  onClick={onClose}
-                >
-                  <X size={15} aria-hidden />
-                </button>
-              </>
+              <button
+                type="button"
+                className="icon-button nav__close"
+                aria-label="Close navigation"
+                title="Close navigation"
+                onClick={onClose}
+              >
+                <X size={15} aria-hidden />
+              </button>
             ) : !isModal ? (
               <button
                 type="button"

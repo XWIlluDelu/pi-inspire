@@ -353,6 +353,16 @@
     opacity: 0.6;
   }
 
+  .prompt-map__close.icon-button {
+    width: 44px;
+    height: 44px;
+    flex: none;
+  }
+
+  .prompt-map--open .prompt-map__close {
+    align-self: flex-end;
+  }
+
   .prompt-map--mobile-active .prompt-map__step--previous svg,
   .prompt-map--mobile-active .prompt-map__step--next svg {
     transform: rotate(-90deg);
@@ -427,7 +437,7 @@
     left: max(var(--space-2), var(--safe-left));
     display: flex;
     width: auto;
-    height: min(62dvh, calc(24px + var(--prompt-map-list-height)));
+    height: min(62dvh, calc(68px + var(--prompt-map-list-height)));
     min-height: 0;
     flex-direction: column;
     overflow: hidden;

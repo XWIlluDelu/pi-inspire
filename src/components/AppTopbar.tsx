@@ -10,7 +10,6 @@ import {
 } from "lucide-react";
 import {
   memo,
-  type Ref,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -338,7 +337,6 @@ const SessionIdent = memo(function SessionIdent({
 export const AppTopbar = memo(function AppTopbar({
   narrowViewport,
   mobileNavOpen,
-  mobileNavToggleRef,
   settingsOpen,
   onToggleNavigation,
   onOpenCommandPalette,
@@ -348,7 +346,6 @@ export const AppTopbar = memo(function AppTopbar({
 }: {
   narrowViewport: boolean;
   mobileNavOpen: boolean;
-  mobileNavToggleRef?: Ref<HTMLButtonElement>;
   settingsOpen: boolean;
   onToggleNavigation: () => void;
   onOpenCommandPalette: () => void;
@@ -384,7 +381,6 @@ export const AppTopbar = memo(function AppTopbar({
     <header className="topbar">
       {narrowViewport ? (
         <NavigationToggle
-          ref={mobileNavToggleRef}
           className="icon-button"
           onClick={onToggleNavigation}
           aria-label="Toggle navigation"
@@ -447,19 +443,15 @@ export const AppTopbar = memo(function AppTopbar({
         >
           <Command size={15} aria-hidden />
         </button>
-        {narrowViewport ? null : (
-          // Narrow layouts reach Settings from the navigation drawer and the
-          // command palette, leaving header width to the session identity.
-          <button
-            type="button"
-            className={`icon-button ${settingsOpen ? "icon-button--active" : ""}`}
-            onClick={onToggleSettings}
-            aria-label="Settings"
-            title="Settings"
-          >
-            <SettingsIcon size={15} aria-hidden />
-          </button>
-        )}
+        <button
+          type="button"
+          className={`icon-button ${settingsOpen ? "icon-button--active" : ""}`}
+          onClick={onToggleSettings}
+          aria-label="Settings"
+          title="Settings"
+        >
+          <SettingsIcon size={15} aria-hidden />
+        </button>
         <button
           type="button"
           className={`icon-button ${state.resourcesOpen ? "icon-button--active" : ""}`}

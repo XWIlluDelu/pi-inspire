@@ -1,4 +1,10 @@
-import { ChevronDown, ChevronUp, ListTree, Search, X } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronUp,
+  GalleryHorizontalEnd,
+  Search,
+  X,
+} from "lucide-react";
 import type { RefObject } from "react";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import { Dropdown } from "./Dropdown";
@@ -12,7 +18,8 @@ export function TranscriptUtilities({
   search,
   inputRef,
   searchLauncherRef,
-  onTogglePrompts,
+  promptLauncherRef,
+  onOpenPrompts,
   promptsOpen,
   searchOpen,
   onOpenSearch,
@@ -21,12 +28,14 @@ export function TranscriptUtilities({
   search: ReturnType<typeof useTranscriptSearch>;
   inputRef: RefObject<HTMLInputElement | null>;
   searchLauncherRef: RefObject<HTMLButtonElement | null>;
-  onTogglePrompts?: () => void;
+  promptLauncherRef: RefObject<HTMLButtonElement | null>;
+  onOpenPrompts?: () => void;
   promptsOpen: boolean;
   searchOpen: boolean;
   onOpenSearch: () => void;
   onClose: (restoreFocus?: boolean) => void;
 }) {
+  if (promptsOpen) return null;
   const matchCount = search.matches.length;
   const currentMatch = Math.min(search.currentMatch + 1, matchCount);
   const matchStatus = currentMatch
@@ -40,16 +49,17 @@ export function TranscriptUtilities({
       role="toolbar"
       aria-label="Transcript tools"
     >
-      {onTogglePrompts && (
+      {onOpenPrompts && (
         <button
+          ref={promptLauncherRef}
           type="button"
           className="button"
           aria-label="Prompt Map"
           title="Prompt Map"
-          aria-expanded={promptsOpen}
-          onClick={onTogglePrompts}
+          aria-expanded="false"
+          onClick={onOpenPrompts}
         >
-          <ListTree size={16} aria-hidden />
+          <GalleryHorizontalEnd size={16} aria-hidden />
         </button>
       )}
       <button

@@ -100,7 +100,6 @@
 }
 
 .nav__close,
-.nav__settings,
 .nav__needs-you {
   flex: 0 0 36px;
   width: 36px;
@@ -256,8 +255,7 @@
     min-height: 44px;
   }
 
-  .nav__close,
-  .nav__settings {
+  .nav__close {
     flex-basis: 44px;
     width: 44px;
     height: 44px;
@@ -291,7 +289,6 @@
    28px targets, 15px glyphs, 4px apart. Touch keeps its 36px targets. */
 @media (min-width: 901px) and (pointer: fine) {
   .nav__close,
-  .nav__settings,
   .nav__needs-you {
     flex-basis: 28px;
     width: 28px;

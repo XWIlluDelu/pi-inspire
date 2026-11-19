@@ -93,6 +93,7 @@ export const Transcript = memo(function Transcript({
   const searchOwnsViewportRef = useRef(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchLauncherRef = useRef<HTMLButtonElement>(null);
+  const promptLauncherRef = useRef<HTMLButtonElement>(null);
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const projectionViewKey = transcriptProjectionKey(
     viewId,
@@ -347,21 +348,22 @@ export const Transcript = memo(function Transcript({
           search={search}
           inputRef={searchInputRef}
           searchLauncherRef={searchLauncherRef}
+          promptLauncherRef={promptLauncherRef}
           searchOpen={mobileSearchOpen}
           onOpenSearch={() => {
             setMobilePromptsOpen(false);
             setMobileSearchOpen(true);
           }}
           onClose={closeMobileSearch}
-          onTogglePrompts={
+          onOpenPrompts={
             hasPromptMap
               ? () => {
                   closeMobileSearch();
-                  setMobilePromptsOpen((open) => !open);
+                  setMobilePromptsOpen(true);
                 }
               : undefined
           }
-          promptsOpen={mobilePromptsOpen}
+          promptsOpen={hasPromptMap && mobilePromptsOpen}
         />
         <div
           className="transcript"
@@ -483,7 +485,12 @@ export const Transcript = memo(function Transcript({
             viewId={viewId}
             scrollport={scrollport}
             mobileActive={mobilePromptsOpen}
-            onDismissMobile={() => setMobilePromptsOpen(false)}
+            onDismissMobile={() => {
+              setMobilePromptsOpen(false);
+              requestAnimationFrame(() =>
+                promptLauncherRef.current?.focus({ preventScroll: true }),
+              );
+            }}
             onJump={async (turn) => {
               search.clearCurrentMatch();
               viewport.releaseLatestFollow();

@@ -13,7 +13,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { flushSync } from "react-dom";
 import type { ThemePreference } from "../shared/contracts";
 import type { ModelSettingsDestination } from "../shared/model-settings";
 import { selectedRunState } from "./app-state";
@@ -534,7 +533,6 @@ export function App() {
   const [navCollapsed, setNavCollapsed] = useState(readNavCollapsed);
   useEffect(() => saveNavCollapsed(navCollapsed), [navCollapsed]);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const mobileNavToggleRef = useRef<HTMLButtonElement>(null);
   const navSearchRef = useRef<HTMLInputElement>(null);
   const narrowViewport = useMediaQuery("(max-width: 900px)");
   const [inspection, setInspection] = useState<Inspection | null>(null);
@@ -628,13 +626,6 @@ export function App() {
   const closeMobileNavigation = useCallback(() => {
     setMobileNavOpen(false);
   }, []);
-  const openNavigationSettings = useCallback(() => {
-    // The drawer closes, so Settings returns focus to the toggle that reopens
-    // it. Commit the close first: the header is inert while the drawer is open.
-    flushSync(() => setMobileNavOpen(false));
-    mobileNavToggleRef.current?.focus();
-    openSettings("display");
-  }, [openSettings]);
   const closeResources = useCallback(() => {
     store.setResourcesOpen(false);
   }, []);
@@ -956,7 +947,6 @@ export function App() {
         collapsed={narrowViewport ? false : navCollapsed}
         isModal={isNavModal}
         onClose={closeMobileNavigation}
-        onOpenSettings={openNavigationSettings}
         onToggleNavigation={toggleNavigation}
         searchInputRef={navSearchRef}
         onNewSession={newSession}
@@ -996,7 +986,6 @@ export function App() {
         <AppTopbar
           narrowViewport={narrowViewport}
           mobileNavOpen={mobileNavOpen}
-          mobileNavToggleRef={mobileNavToggleRef}
           settingsOpen={settingsOpen}
           onToggleNavigation={toggleNavigation}
           onOpenCommandPalette={openCommandPalette}
