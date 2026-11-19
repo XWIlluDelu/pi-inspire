@@ -184,8 +184,11 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   containing the visible session carries the active highlight on its header, and active search
   results stay visible regardless of saved collapse state.
 
-  Hidden remembers its disclosure state on this browser. Search in All expands Hidden to
-  show matching sessions after ordinary results. Needs you searches within its own view.
+  Hidden uses a leading chevron that points right when collapsed and down when expanded.
+  Clear Hidden shares the trailing axis and target size of the navigation collapse or close button.
+  Hidden folder and session Delete actions share that axis when the list fits without a scrollbar.
+  It remembers its disclosure state on this browser. Search in All expands Hidden to show
+  matching sessions after ordinary results. Needs you searches within its own view.
 
   Pin and Hide immediately update the catalog from the local choice. A failed write returns
   the presentation to the confirmed preferences. Delete and Clear Hidden use the confirmed

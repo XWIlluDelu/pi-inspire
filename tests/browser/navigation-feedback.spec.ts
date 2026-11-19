@@ -20,6 +20,13 @@ test.describe("touch navigation", () => {
       .filter({ has: page.getByRole("button", { name: /^calibration/ }) });
     await folder.locator(".nav__group-toggle").tap();
     const row = folder.locator(".nav__row");
+    // Touch keeps curation visible on the selected session.
+    const session = row.locator(".nav__row-main");
+    await session.tap();
+    await expect(session).toHaveAttribute("aria-current", "page");
+    const selectedFill = await row.evaluate(
+      (element) => getComputedStyle(element).backgroundColor,
+    );
     const pin = row.getByRole("button", { name: 'Pin "Geometry session"' });
     // Keep the row in place for one tap so curation cannot mask stale hover.
     await pin.evaluate((button) => {
@@ -29,7 +36,7 @@ test.describe("touch navigation", () => {
     });
     await pin.tap();
     await expect(pin).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-    await expect(row).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    await expect(row).toHaveCSS("background-color", selectedFill);
 
     await page.unrouteAll({ behavior: "wait" });
   });
@@ -123,6 +130,13 @@ test.describe("short navigation drawer", () => {
 
     const body = nav.getByRole("region", { name: "Hidden", exact: true });
     await expect(body).toBeVisible();
+    const close = (await nav
+      .getByRole("button", { name: "Close navigation" })
+      .boundingBox())!;
+    const clear = (await body
+      .getByRole("button", { name: "Clear Hidden" })
+      .boundingBox())!;
+    expect(clear.x + clear.width / 2).toBeCloseTo(close.x + close.width / 2, 1);
     await hidden.press("Enter");
     await expect(hidden).toBeFocused();
     await expect(hidden).toHaveAttribute("aria-expanded", "false");

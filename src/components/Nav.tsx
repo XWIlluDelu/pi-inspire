@@ -1,8 +1,7 @@
 import {
   CheckCheck,
   Bell,
-  ChevronUp,
-  EyeOff,
+  ChevronRight,
   Inbox,
   PanelLeft,
   Pin,
@@ -601,10 +600,10 @@ export const Nav = memo(function Nav({
       </div>
       {hiddenSections.length > 0 && (
         <section className="nav__group nav__group--hidden" aria-label="Hidden">
-          <h2 className="nav__hidden-heading nav__dock-heading">
+          <h2 className="nav__hidden-heading">
             <button
               type="button"
-              className="nav__hidden-toggle nav__dock-toggle"
+              className="nav__hidden-toggle"
               aria-expanded={showHidden}
               disabled={searching}
               aria-controls={hiddenContentId}
@@ -614,16 +613,11 @@ export const Nav = memo(function Nav({
                 saveHiddenSessionsOpen(next);
               }}
             >
-              <EyeOff size={16} aria-hidden />
-              <span className="nav__group-name nav__dock-title">Hidden</span>
+              <ChevronRight size={16} className="chev" aria-hidden />
+              <span className="nav__hidden-title">Hidden</span>
               <span className="nav__hidden-count" aria-hidden>
                 {hiddenSessions.length}
               </span>
-              <ChevronUp
-                size={12}
-                className={`chev-flip ${showHidden ? "chev-flip--open" : ""}`}
-                aria-hidden
-              />
             </button>
             <button
               type="button"

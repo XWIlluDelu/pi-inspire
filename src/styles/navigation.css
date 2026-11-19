@@ -3,6 +3,8 @@
 .nav {
   /* Shared 16px icon slot, 8px label gap and 8px inner inset. */
   --nav-label-inset: calc(var(--space-2) + var(--space-4) + var(--space-2));
+  --nav-edge-action-size: 36px;
+  --nav-row-action-size: 24px;
   width: var(--nav-w);
   flex: 0 0 auto;
   display: flex;
@@ -99,11 +101,15 @@
   padding: 0;
 }
 
-.nav__close,
 .nav__needs-you {
   flex: 0 0 36px;
   width: 36px;
   height: 36px;
+}
+
+.nav__close {
+  width: var(--nav-edge-action-size);
+  height: var(--nav-edge-action-size);
 }
 
 .nav__header-actions {
@@ -243,6 +249,8 @@
 }
 
 @media (max-width: 900px), (pointer: coarse) {
+  .nav { --nav-edge-action-size: 44px; }
+
   .nav__new-session,
   .nav__search {
     min-height: 36px;
@@ -253,12 +261,6 @@
     width: 44px;
     height: 44px;
     min-height: 44px;
-  }
-
-  .nav__close {
-    flex-basis: 44px;
-    width: 44px;
-    height: 44px;
   }
 }
 
@@ -285,10 +287,10 @@
   right: 2px;
 }
 
-/* With a mouse, the column header's buttons match the conversation header:
-   28px targets, 15px glyphs, 4px apart. Touch keeps its 36px targets. */
+/* Fine-pointer header actions match the conversation header. */
 @media (min-width: 901px) and (pointer: fine) {
-  .nav__close,
+  .nav { --nav-edge-action-size: 28px; }
+
   .nav__needs-you {
     flex-basis: 28px;
     width: 28px;
@@ -387,7 +389,6 @@
 .nav__row--active,
 .nav__row--active:hover {
   background: var(--nav-active-bg);
-  box-shadow: inset 0 0 0 1px var(--accent-soft);
 }
 
 .nav__row--highlighted {
@@ -398,7 +399,7 @@
 
 .nav__row-actions {
   position: absolute;
-  right: 4px;
+  inset-inline-end: var(--space-1);
   bottom: 1px;
   display: flex;
   align-items: center;
@@ -417,8 +418,8 @@
 .nav__row-action {
   --nav-action-ink: var(--accent-deep);
   --nav-action-fill: color-mix(in srgb, var(--ink) 8%, transparent);
-  width: 24px;
-  height: 24px;
+  width: var(--nav-row-action-size);
+  height: var(--nav-row-action-size);
   padding: 0;
   display: inline-flex;
   align-items: center;
@@ -661,6 +662,8 @@
 }
 
 @media (hover: none), (max-width: 600px) {
+  .nav { --nav-row-action-size: 36px; }
+
   /* Persistent touch actions own a separate column beside both text lines. */
   .nav__row {
     display: grid;
@@ -686,9 +689,7 @@
   }
 
   .nav__row-action {
-    flex: 0 0 36px;
-    width: 36px;
-    height: 36px;
+    flex: 0 0 var(--nav-row-action-size);
   }
 }
 
@@ -934,22 +935,25 @@ button.workspace-tree__status:hover:where(:not(.workspace-tree__status--error)) 
   cursor: default;
   opacity: 1;
 }
-/* Hidden stays docked below the scrolling session catalog. */
-.nav__dock-heading {
-  flex: 0 0 44px;
+/* Hidden shares the header's trailing action axis. */
+.nav__hidden-heading {
+  flex: none;
+  min-height: 44px;
   display: flex;
-  align-items: stretch;
+  align-items: center;
   margin: 0;
+  padding-inline-end: var(--space-3);
   border-top: 1px solid var(--hairline);
 }
 
-.nav__dock-toggle {
+.nav__hidden-toggle {
   display: flex;
   flex: 1;
   min-width: 0;
+  align-self: stretch;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-3) var(--space-2) var(--space-4);
+  padding: 0 var(--space-2) 0 var(--space-4);
   border: 0;
   background: transparent;
   color: var(--muted);
@@ -962,32 +966,34 @@ button.workspace-tree__status:hover:where(:not(.workspace-tree__status--error)) 
     color var(--dur-micro) var(--ease-standard);
 }
 
-.nav__dock-toggle:hover:not(:disabled) {
-  background: var(--bg-control);
-  color: var(--ink);
+@media (hover: hover) {
+  .nav__hidden-heading:has(.nav__hidden-toggle:hover:not(:disabled)) {
+    background: var(--bg-control);
+  }
+
+  .nav__hidden-toggle:hover:not(:disabled) {
+    color: var(--ink);
+  }
 }
 
-.nav__dock-toggle:focus-visible {
-  /* Full-width dock headers meet the app/drawer edge; keep every side visible. */
+:is(.nav__hidden-toggle, .nav__hidden-clear):focus-visible {
   outline-offset: -2px;
 }
 
-.nav__dock-toggle:disabled {
-  cursor: default;
+.nav__hidden-clear {
+  flex: 0 0 var(--nav-edge-action-size);
+  width: var(--nav-edge-action-size);
+  height: var(--nav-edge-action-size);
 }
 
-.nav__dock-toggle > svg {
-  flex: 0 0 auto;
-}
-
-/* The eye-off, trash and chevron glyphs paint below their boxes' centres;
-   lift them so they sit on the label like the folder rows' marks do. */
-.nav__dock-toggle > svg,
+.nav__hidden-toggle > svg,
 .nav__hidden-clear > svg {
-  transform: translateY(-1px);
+  flex: none;
+  /* Align the strokes with the label ink without overriding chevron rotation. */
+  translate: 0 -1px;
 }
 
-.nav__dock-title {
+.nav__hidden-title {
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -1042,36 +1048,7 @@ button.workspace-tree__status:hover:where(:not(.workspace-tree__status--error)) 
   background: transparent;
 }
 
-.nav__hidden-heading {
-  --hidden-action-width: 28px;
-  position: relative;
-}
-
-.nav__hidden-toggle .nav__hidden-count {
-  margin-right: var(--hidden-action-width);
-}
-
-/* An independent hit target between the count and disclosure, never nested
-   inside the toggle and never taking a row from the content. */
-.nav__hidden-clear {
-  position: absolute;
-  right: 28px;
-  top: 0;
-  bottom: 0;
-  margin: auto 0;
-  width: var(--hidden-action-width);
-  height: 28px;
-}
-
 @media (hover: none), (max-width: 600px) {
-  .nav__hidden-heading {
-    --hidden-action-width: 36px;
-  }
-
-  .nav__hidden-clear {
-    height: 34px;
-  }
-
   .nav__row--cross-project .nav__row-project {
     max-width: none;
     color: var(--faint);
@@ -1079,6 +1056,10 @@ button.workspace-tree__status:hover:where(:not(.workspace-tree__status--error)) 
 }
 
 @media (hover: hover) and (min-width: 601px) {
+  .nav__hidden-content .nav__row-actions {
+    inset-inline-end: calc((var(--nav-edge-action-size) - var(--nav-row-action-size)) / 2);
+  }
+
   .nav__group-title--folder .nav__row-actions {
     top: 50%;
     bottom: auto;
