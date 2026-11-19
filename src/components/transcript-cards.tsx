@@ -163,13 +163,7 @@ export function CollapsibleCard({
           title={disclosureLabel}
           onClick={() => setOverride(!open)}
         >
-          <span className="card__chevron">
-            <ChevronRight
-              size={14}
-              className={open ? "chev chev--open" : "chev"}
-              aria-hidden
-            />
-          </span>
+          <ChevronRight size={14} className="card__chevron chev" aria-hidden />
           <span className="card__icon">{icon}</span>
           <span className="card__label">{label}</span>
           {status && <span className="card__status">{status}</span>}

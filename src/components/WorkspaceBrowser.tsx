@@ -256,11 +256,7 @@ export const WorkspaceTree = memo(function WorkspaceTree({
                   else store.toggleWorkspaceDirectory(path);
                 }}
               >
-                <ChevronRight
-                  size={11}
-                  className={`chev ${open ? "chev--open" : ""}`}
-                  aria-hidden
-                />
+                <ChevronRight size={11} className="chev" aria-hidden />
                 <Folder size={13} aria-hidden />
                 <span
                   className={`file-row__name ${rollup ? `git-deco--${rollup}` : ""}`}

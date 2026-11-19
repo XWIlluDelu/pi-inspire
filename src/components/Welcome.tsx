@@ -667,11 +667,7 @@ export function Welcome({
               aria-expanded={recentOpen}
               onClick={toggleRecent}
             >
-              <ChevronRight
-                size={12}
-                className={`chev ${recentOpen ? "chev--open" : ""}`}
-                aria-hidden
-              />
+              <ChevronRight size={12} className="chev" aria-hidden />
               Recent sessions
             </button>
           </h2>

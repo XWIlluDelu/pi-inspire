@@ -1,4 +1,4 @@
-import { ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import {
   type ReactNode,
   useContext,
@@ -286,11 +286,7 @@ export function ResponseActivityFold({
         }
         onClick={() => choose(open ? collapseTo : "compact")}
       >
-        <ChevronRight
-          size={14}
-          className={open ? "chev chev--open" : "chev"}
-          aria-hidden
-        />
+        <ChevronRight size={14} className="chev" aria-hidden />
         <span className="activity-fold__label">Activity</span>
         <ActivityMatrix
           items={matrixItems}
@@ -345,7 +341,7 @@ export function ResponseActivityFold({
           aria-controls={id}
           onClick={() => choose(collapseTo, "bottom")}
         >
-          <ChevronRight size={14} className="chev chev--open" aria-hidden />
+          <ChevronDown size={14} aria-hidden />
           <span className="activity-fold__label">{collapseLabel}</span>
         </button>
       )}

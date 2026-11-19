@@ -68,8 +68,9 @@
   box-shadow: var(--shadow-1);
 }
 
-.transcript-search__field:has([data-query-active]) {
+.transcript-search__field:has(input:not(:placeholder-shown)) {
   --search-border: var(--accent-deep);
+  --search-hover-border: var(--search-border);
 }
 
 .transcript-search__scope.dropdown-trigger {
@@ -105,7 +106,8 @@
 
 @media (max-width: 900px) {
   .transcript-live {
-    --transcript-top-inset: calc(var(--transcript-tool-size) + var(--space-2));
+    --transcript-tools-height: 44px;
+    --transcript-top-inset: calc(var(--transcript-tools-height) + var(--space-2));
   }
 
   .transcript-tools {
@@ -113,6 +115,7 @@
     z-index: 4;
     inset-block-start: var(--space-1);
     inset-inline-end: max(var(--space-3), var(--safe-right));
+    min-height: var(--transcript-tools-height);
     width: auto;
     padding: 0;
     gap: var(--space-1);
@@ -130,7 +133,10 @@
     padding: 0;
   }
 
-  .transcript-search__field.search-field { min-height: 44px; }
+  .transcript-search__field.search-field {
+    min-height: var(--transcript-tools-height);
+    padding-inline-end: var(--space-1);
+  }
   .transcript-tools__close.icon-button { display: inline-flex; }
 
   .transcript-tools:not([data-search-open]) > .transcript-search,
@@ -1215,24 +1221,6 @@ body.srail-dragging {
 .prompt-map__error:focus-visible {
   border-color: color-mix(in srgb, var(--error) 56%, var(--hairline));
   background: color-mix(in srgb, var(--error-tint) 78%, var(--bg-surface));
-}
-
-.transcript-gap {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  color: var(--faint);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  white-space: nowrap;
-}
-
-.transcript-gap::before,
-.transcript-gap::after {
-  content: "";
-  height: 1px;
-  flex: 1;
-  background: var(--hairline);
 }
 
 @keyframes prompt-map-shimmer {

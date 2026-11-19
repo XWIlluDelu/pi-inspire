@@ -11,13 +11,6 @@
   font: 500 var(--text-xs)/var(--leading-ui) var(--font-sans);
 }
 
-/* Keep PDF controls clear of the floating file actions in a narrow pane. */
-@container file-preview (max-width: 420px) {
-  .pdf-preview__toolbar {
-    padding-top: 48px;
-  }
-}
-
 .pdf-preview__page-number {
   min-width: 3.5em;
   text-align: center;

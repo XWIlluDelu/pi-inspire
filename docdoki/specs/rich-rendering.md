@@ -35,8 +35,8 @@ thinking, documents, and extension Markdown share one rendering authority with d
   and nested lists keep their text alignment and hierarchy. Original Markdown and read-only
   checkbox semantics remain intact. Ordinary entries in mixed lists keep their bullets or
   ordered numbers and share the content column with task entries.
-  Table columns preserve whole-word minimum widths and wrap ordinary prose at word boundaries;
-  wide tables and unbroken cell tokens scroll within the table, not the reading column.
+  Table columns honor authored alignment, preserve whole-word minimum widths and wrap at word
+  boundaries. Wide tables scroll within the reading column.
   Inline mathematics keeps its natural text baseline and visible script/fraction extents, without
   becoming an independent scroll container. Display mathematics scrolls locally only when the
   expression exceeds the available reading width. Chat and Markdown file previews share this rule.
@@ -51,7 +51,8 @@ thinking, documents, and extension Markdown share one rendering authority with d
   by a slash and ordinal suffixes, remain valid.
 - Raw HTML-shaped source, including generic types such as `Array<T>`, renders as inert text; it is
   never interpreted as elements or silently discarded.
-- Code blocks preserve whitespace, identify their language when available, highlight syntax, and
+- Inline code and code blocks share the current reading code size. Code in headings follows the
+  heading scale. Blocks preserve whitespace, identify their language, highlight syntax, and
   copy the original source. Parsed `pre` structure determines block identity: unlabeled, indented,
   and incomplete fences keep block/copy behavior. Only inline code can become a file-reference button.
   Markdown fences, notebook code, file source and tool output share a code surface. Git and tool

@@ -12,15 +12,14 @@
 }
 .history-outline[hidden] { display: none; }
 .branch-tree__search {
+  --search-height: var(--index-search-height);
   flex: none;
-  margin: var(--space-2) var(--space-3);
+  margin: var(--space-2) var(--space-3) var(--space-1);
 }
 .branch-tree__rows {
   min-height: 0;
   overflow: auto;
-  /* Row highlights share the search field's edges, like the session list;
-     the right side already holds the reserved 8px scrollbar slot. */
-  padding: 0 var(--space-1) var(--space-6) var(--space-3);
+  padding: 0 var(--space-3) var(--space-6);
 }
 .history-turn {
   padding: var(--space-2) 0;

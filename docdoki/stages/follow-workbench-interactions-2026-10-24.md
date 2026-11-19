@@ -22,8 +22,9 @@ Keep reading, composing, and inspection consistent across desktop and narrow lay
   dismissal, short-window reachability, independent file offsets, and refresh without lost content.
   Restoring a selected session during bootstrap keeps the Welcome composer from flashing. Files
   fixtures exercise authored links, long paths, PDF, and Source/rendered position retention.
-- Prior matched Chromium views covered desktop, 320–390px phone widths and landscape in light and
-  Mono dark. Narrow-input checks also ran in Firefox. Physical-device font and installed-window
+- Chromium checks at desktop and 320–390px phone widths cover navigation control alignment, search
+  geometry, file reader clearance and all three code sizes. Short landscape checks cover terminal
+  menu scrolling. Prior narrow-input checks also ran in Firefox. Physical-device font and installed-window
   appearance remain open under [[follow-runtime-quality-2026-10-25]].
 - Linux file-manager acceptance used the authenticated endpoint and acknowledged FileManager1
   calls. Native Finder and Windows invocation still need acceptance.

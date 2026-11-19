@@ -137,9 +137,14 @@ test("task lists keep their reading column across Live and file previews", async
     expect(wrappedLines).toBeGreaterThan(1);
     await page.getByRole("link", { name: "checklist", exact: true }).click();
     const preview = page.locator(".ctx .rich-text");
-    await expect(
-      preview.getByRole("heading", { name: "Checklist" }),
-    ).toBeVisible();
+    const heading = preview.getByRole("heading", { name: "Checklist" });
+    await expect(heading).toBeVisible();
+    const actions = (await page
+      .getByRole("toolbar", { name: "File actions" })
+      .boundingBox())!;
+    expect((await heading.boundingBox())!.y).toBeGreaterThanOrEqual(
+      actions.y + actions.height,
+    );
     await expectTaskColumn(preview);
     await expect(preview.locator("strong")).toHaveText("reference calibration");
     await expect(preview.locator("input[type=checkbox]:checked")).toHaveCount(

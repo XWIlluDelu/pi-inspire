@@ -77,11 +77,8 @@ independent project shells in [[terminal]].
   2px divider with round caps and inset ends, not an outline around the adjacent pane's corners.
   The session header shares the reading surface without a separate bottom seam.
 
-  Composer's model and thinking selectors follow the reading pane's actual width, not only the
-  browser viewport. When side panes narrow the desktop conversation, selectors use the existing
-  compact upper row; file/attachment actions, usage, and separate Stop/Send controls stay below in
-  their existing order. Normal-width desktop panes keep the single-row toolbar, and narrow-screen
-  startup composition keeps its existing responsive arrangement.
+  Composer toolbar groups wrap when the reading pane cannot fit both groups on one row, including
+  when desktop side panes or additional actions consume its width.
 
 ## Short-window input and extension content
 
@@ -95,13 +92,13 @@ which documents the strip lists and preserves the mounted terminal view.
 
 Files, Changes and History use the same selection tint as open file and terminal tabs. The Terminal shortcut
 creates a terminal. A pane at most 400px wide gives open tabs a second row when present.
-File and terminal actions float over their content. PDF keeps its compact control row and reserves
-clearance below the file actions in a narrow pane. Terminal search
-and selection overlays stay within the output area.
+File actions occupy a row above the reader, including above the PDF controls. Terminal actions
+float over the output, and search takes their corner while open. Terminal menus fit and scroll
+within the pane.
 Desktop HTML previews use the context perimeter instead of a second complete inner frame.
 
-The Files search field starts 8px below contextual chrome with 12px horizontal insets. It uses the
-shared search control and keeps its adjacent hidden-files control.
+Files and History share search geometry under [[design-system]]. Files keeps its adjacent
+hidden-files control.
 
 Files and Changes share the header height, section heading and list insets. The search and branch
 summary use the same 8px top inset and 34px desktop or 40px narrow control area. The search field's
@@ -211,9 +208,8 @@ completion behavior are unchanged.
 
   The strip keeps the selected tab visible and lists the remaining overflow in More tabs. A
   choice restores focus to the newly visible tab. Terminal tabs can be reordered by dragging or
-  with their keyboard shortcut. File and terminal controls float above the content. Interacting
-  with the reading surface reduces the controls to their toggle. Keyboard Escape also collapses
-  the controls and returns focus to that toggle.
+  with their keyboard shortcut. Interacting with a file reader reduces its actions to their toggle.
+  Keyboard Escape collapses the file or terminal controls and returns focus to the toggle.
 
   F5 restores the browser tab's navigation, pane widths and visibility, contextual tool, file-tab
   order and selection, and Files query and expansions. Saved session navigation is scoped to Host,

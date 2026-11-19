@@ -76,8 +76,9 @@ test("side panes fit the reading budget and restore their independent widths", a
   await expect.poll(() => width(nav)).toBeLessThan(originalNav);
   expect(await width(ctx)).toBeCloseTo(previous, 0);
   const leftWidth = await width(nav);
-  const limit = Number(await right.getAttribute("aria-valuemax"));
-  expect(limit).toBeGreaterThan(previous);
+  const rightLimit = async () => Number(await right.getAttribute("aria-valuemax"));
+  await expect.poll(rightLimit).toBeGreaterThan(previous);
+  const limit = await rightLimit();
   await drag(right, -400);
   await expect.poll(() => width(ctx)).toBeCloseTo(limit, 0);
   await left.press("ArrowRight");

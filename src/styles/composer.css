@@ -351,32 +351,35 @@
   font-size: inherit;
 }
 
-.composer__meta {
+.composer__meta,
+.composer__selectors,
+.composer__actions {
   display: flex;
   align-items: center;
   min-width: 0;
   gap: var(--space-1);
+}
+
+.composer__meta {
+  flex-wrap: wrap;
+  column-gap: var(--space-2);
   font-size: var(--text-sm);
   color: var(--muted);
 }
 
-.composer__selectors {
-  display: contents;
+.composer__actions {
+  flex: 1 1 auto;
+  flex-wrap: wrap;
 }
+
+.composer__selectors > .thinking-select { flex: none; }
 
 @media (min-width: 901px) and (pointer: fine) {
   .composer { padding-inline: var(--space-2); }
 }
 
 @container reading-stage (max-width: 460px) {
-  .composer__meta { flex-wrap: wrap; }
-
-  .composer__selectors {
-    display: flex;
-    flex: 1 0 100%;
-    gap: var(--space-2);
-    min-width: 0;
-  }
+  .composer__selectors .model-picker__value { max-width: 104px; }
 }
 
 .dropdown-trigger {
@@ -853,6 +856,7 @@
   min-width: 0;
   overflow: hidden;
   padding: 3px var(--space-2);
+  padding-inline-start: calc(var(--composer-content-inset, 9px) - 1px);
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
   background: transparent;

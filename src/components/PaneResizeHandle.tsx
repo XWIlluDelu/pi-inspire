@@ -117,19 +117,20 @@ export function PaneResizeHandle(props: PaneResizeHandleProps) {
   // (which may be temporarily clamped), without replacing its saved preference.
   const holdAdjacentPane = () => {
     const pane = paneElement();
-    const current = rawSize();
-    if (pane && current !== null) {
+    const peer = props.peerPane
+      ? document.querySelector<HTMLElement>(props.peerPane.paneSelector)
+      : null;
+    // A width write can immediately redistribute flex space between the panes.
+    const current = pane?.getBoundingClientRect().width;
+    const peerWidth = peer?.getBoundingClientRect().width;
+    if (pane && current !== undefined) {
       setLiveSize(current);
       pane.style.flexShrink = "1";
     }
-    if (!props.peerPane) return;
-    const peer = document.querySelector<HTMLElement>(
-      props.peerPane.paneSelector,
-    );
-    if (!peer) return;
+    if (!props.peerPane || !peer || peerWidth === undefined) return;
     document.documentElement.style.setProperty(
       props.peerPane.cssVar,
-      `${peer.getBoundingClientRect().width}px`,
+      `${peerWidth}px`,
     );
     peer.style.flexShrink = "0";
   };

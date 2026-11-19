@@ -47,8 +47,8 @@ expanded details keep their internal spacing. On fine-pointer desktops, activity
 least 28px high and adjacent Activity groups and context checkpoints are 8px apart.
 
 A single neutral vertical guide connects the open group's activity. Assistant-turn attribution rows
-and divider ticks are absent inside and outside groups. The group heading uses Flux Mono at 13px,
-secondary ink. Individual identities use the smaller compact size and medium weight. Labels retain
+and divider ticks are absent inside and outside groups. The group heading uses Flux Mono at 11.5px,
+in secondary ink. Individual identities use 12.5px and medium weight. Labels retain
 their intrinsic width. The matrix sits beside the Activity label, with a wider gap before the summary.
 
 The group header includes a one-line summary in the label's mono face at metadata size (`11.5px`) on the label baseline with quieter ink, separated
@@ -99,9 +99,8 @@ Thinking supports Adaptive, Expanded, Collapsed, and Hidden. Tool activity addit
 Compact. These preferences are independent of the surrounding band's density.
 
 Thinking remains separate from answer text. Terminal control formatting is removed for display;
-Pi history is unchanged. Tool Compact keeps each card header visible with its body closed.
-Tool Compact uses individual tool disclosure rows. Collapsed presents consecutive settled calls
-as a strip of tool icons. Choosing an icon opens its card below the strip.
+Pi history is unchanged. Tool Compact shows individual disclosure rows with their bodies closed.
+Collapsed groups consecutive settled calls into an icon strip. Choosing an icon opens its card below.
 
 Empty native Thinking bodies, including whitespace-only and display-stripped terminal formatting,
 stay closed under Expanded or Adaptive preferences. Their headers remain available, and a manual

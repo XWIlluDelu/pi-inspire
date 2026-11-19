@@ -288,10 +288,9 @@
 .models-login__input { display: flex; min-width: 0; flex-direction: column; align-items: stretch; gap: var(--space-2); margin: var(--space-3) 0; }
 .models-login__input > button { align-self: flex-start; }
 .models-remote { color: var(--muted); font-size: var(--text-xs); overflow-wrap: anywhere; }
-.models-remote summary { cursor: pointer; padding-block: var(--space-1); }
 .models-remote p { margin: var(--space-1) 0; }
 @media (pointer: coarse) {
-  .models-remote summary { display: list-item; min-height: 36px; align-content: center; }
+  .models-remote summary { min-height: 36px; }
 }
 .model-picker__manage { flex: 0 0 auto; width: 100%; min-height: 40px; padding: var(--space-2) var(--space-3); text-align: left; border: 0; border-top: 1px solid var(--hairline); background: var(--bg-surface); color: var(--accent-deep); font: inherit; font-size: var(--text-sm); cursor: pointer; }
 .model-picker__manage:hover { background: var(--bg-control); }

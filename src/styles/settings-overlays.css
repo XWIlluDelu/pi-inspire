@@ -148,19 +148,11 @@
   display: none;
 }
 
-.dialog.settings .button {
+.dialog:is(.settings, .terminal-settings) .button {
   height: var(--set-control-h);
   min-height: var(--set-control-h);
   padding: 0 var(--space-3);
-  font-size: 13px;
-  box-sizing: border-box;
-}
-
-@media (pointer: coarse) {
-  .dialog.settings .button {
-    min-height: 40px;
-    height: 40px;
-  }
+  font-size: var(--text-sm);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -184,16 +176,24 @@
   background: transparent;
 }
 
+.settings__section-heading,
 .settings__section-title-wrap {
   display: flex;
-  align-items: start;
   gap: var(--space-2);
-  width: 100%;
+}
+
+.settings__section-heading {
+  align-items: center;
+  justify-content: space-between;
+}
+
+.settings__section-title-wrap {
+  min-width: 0;
+  align-items: start;
 }
 
 .settings__section-action {
   flex: none;
-  margin-left: auto;
 }
 
 .settings__section-action .button {
@@ -346,7 +346,7 @@
   justify-items: start;
   gap: var(--space-1);
   padding: var(--set-row-pad);
-  font-size: 12px;
+  font-size: var(--text-xs);
   line-height: 1.4;
   color: var(--muted);
   overflow-wrap: anywhere;
@@ -386,7 +386,7 @@
 }
 
 .settings__field-label {
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 500;
   color: var(--ink);
   line-height: 19px;
@@ -396,13 +396,13 @@
   margin: 0;
   max-width: 52ch;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--text-xs);
   line-height: 17px;
 }
 
 .settings__field-status,
 .settings__field-feedback {
-  font-size: 12px;
+  font-size: var(--text-xs);
   line-height: 1.4;
   color: var(--warning-ink);
   overflow-wrap: anywhere;

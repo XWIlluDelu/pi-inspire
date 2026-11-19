@@ -14,6 +14,7 @@ import type { ProviderAuthOperation } from "../../shared/provider-auth-bridge";
 import { isTransientFailure } from "../recovery-backoff";
 import { store } from "../store";
 import { ConfigurationConfirmation } from "./ConfigurationForm";
+import { DetailSummary } from "./DetailSummary";
 import { PromptChoices, PromptInput } from "./PromptFields";
 import { SearchField } from "./SearchField";
 import { SearchMatchText, searchMatchRanges } from "./SearchMatchText";
@@ -36,7 +37,7 @@ function matchesProvider(
 function RemoteLoginHelp({ instruction }: { instruction: string }) {
   return (
     <details className="models-remote">
-      <summary>Remote login</summary>
+      <DetailSummary>Remote login</DetailSummary>
       <p>{instruction}</p>
     </details>
   );

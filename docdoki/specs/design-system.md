@@ -368,7 +368,8 @@ navigation buttons stay anchored as the query changes. The field can yield trail
 compact numeric count with a full accessible announcement. Navigation buttons keep at least 24px
 targets, with 36px targets for touch and phone layouts, clear of the count.
 Workspace and History search share a 34px field, 13px search icon, 12px inner inset and
-8px icon/text gap, starting 4px below the contextual tool header.
+8px icon/text gap, starting 8px below the contextual tool header. Both fields are 40px high
+in the drawer and on coarse-pointer layouts.
 
 Selected session rows and collapsed folders containing the selection use a quiet accent tint. The
 row retains its selection fill when its select button is disabled. Folder rows and headings share a
@@ -437,11 +438,9 @@ optional Stop and rightmost Send. Context usage uses a ring and a stable-width p
 hover/focus tooltip for token counts. It fits the same row as Send and preserves the empty
 composer's height. Send is icon-only. Stop has a square glyph and filled error-color treatment,
 including compaction and shell cancellation. DOM and tab order follow visual order.
-At viewport widths up to 460px, Model and Thinking share the first row, with file tools, context
-and Send/Stop below. Selectors in the compact arrangement stay adjacent with an 8px
-gap. Thinking keeps its full width and Model shrinks without filling spare space. Long model labels
-truncate inside their trigger. Steer/Queue split their row equally. Constrained desktop panes also use the
-compact arrangement under [[workspace-layout]]. Completion titles wrap without displacing
+Model and Thinking stay together, with file and delivery actions wrapping as a group when the
+toolbar has insufficient width. Thinking keeps its label, and long model names truncate inside
+their trigger. Steer/Queue split their row equally. Completion titles wrap without displacing
 adjacent path hints. Model badges and selected rows keep AA contrast.
 
 Running, Retry and Compaction use static semantic halos. Conflict recovery keeps its warning
@@ -785,8 +784,7 @@ follows [Content copying](#content-copying), independently of presentation type.
 - Motion explains a transient surface, disclosure, or live work. Shared durations are 90ms micro,
   150ms standard, and 180ms panel. Short card/palette entrance and disclosure transforms are
   permitted. [Composer presentation](#composer-presentation) defines its state halo. Reduced motion
-  removes nonessential animation and collapses transitions to a negligible duration; each live-state
-  surface keeps a static indication.
+  disables animations and transitions. Each live-state surface keeps a static indication.
   - Indeterminate work uses one seven-point Π, with a staggered pulse in the square icon
     slot. Reduced motion keeps the same glyph static.
   - Sidebar working states use Π; unread completion/failure use matching linked-dot check/cross.

@@ -30,6 +30,7 @@
   --nav-w-collapsed: 48px;
   --ctx-w: clamp(340px, 38vw, 760px);
   --topbar-h: 44px;
+  --pane-tool-size: 28px;
   --window-titlebar-height: 0px;
   --app-height: calc(100dvh - var(--window-titlebar-height));
   --activity-copy-size: 24px;
@@ -61,6 +62,10 @@
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-left: env(safe-area-inset-left, 0px);
   --safe-right: env(safe-area-inset-right, 0px);
+}
+
+@media (pointer: coarse), (max-width: 900px) {
+  :root { --pane-tool-size: 32px; }
 }
 
 :root[data-content-text-size="compact"] {
@@ -1132,6 +1137,15 @@ button.icon-button:disabled {
   background: transparent;
   color: var(--faint);
   cursor: default;
+}
+
+.chev {
+  transition: rotate var(--dur-standard) var(--ease-standard);
+}
+
+[aria-expanded="true"] > .chev,
+details[open] > summary > .chev {
+  rotate: 90deg;
 }
 
 /* --- Chips & badges --- */

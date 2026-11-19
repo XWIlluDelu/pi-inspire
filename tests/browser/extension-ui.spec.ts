@@ -350,9 +350,7 @@ test("real Pi questions preserve workbench edits and restore the native deadline
   await expect(url).toHaveValue("https://example.invalid/v1");
   await page.keyboard.press("Escape");
   await expect(settings).toHaveCount(0);
-  await expect(
-    page.getByRole("button", { name: "Toggle navigation", exact: true }),
-  ).toBeFocused();
+  await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeFocused();
   await expect(draft).toHaveValue("Keep this unsent draft");
 
   await run("timeout 15000");

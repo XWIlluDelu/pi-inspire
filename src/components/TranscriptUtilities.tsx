@@ -79,7 +79,6 @@ export function TranscriptUtilities({
       >
         <SearchField
           className="transcript-search__field"
-          data-query-active={Boolean(search.query) || undefined}
           inputRef={inputRef}
           value={search.query}
           onValueChange={search.setQuery}

@@ -256,8 +256,16 @@
     flex: 0 0 auto;
     gap: 4px;
     padding: var(--space-1) var(--space-2);
-    font-size: var(--text-xs);
+    border-block-end-width: 2px;
     white-space: nowrap;
+  }
+
+  .settings__nav-item--active {
+    border-color: transparent transparent var(--accent-deep);
+    background: transparent;
+    box-shadow: none;
+    color: var(--accent-deep);
+    font-weight: 500;
   }
 
   .settings__nav-item:focus-visible {
@@ -314,7 +322,7 @@
   *::before,
   *::after {
     animation: none !important;
-    transition-duration: 0.01ms !important;
+    transition: none !important;
   }
 }
 
@@ -326,12 +334,12 @@
   .prompt-map--mobile-active {
     position: absolute;
     z-index: 5;
-    top: var(--space-2);
+    top: var(--space-1);
     right: max(var(--space-3), var(--safe-right));
     left: max(var(--space-3), var(--safe-left));
     display: flex;
     width: auto;
-    height: 44px;
+    height: var(--transcript-tools-height);
     flex-direction: row;
     align-items: center;
     gap: var(--space-1);
@@ -354,8 +362,8 @@
   }
 
   .prompt-map__close.icon-button {
-    width: 44px;
-    height: 44px;
+    width: var(--transcript-tools-height);
+    height: var(--transcript-tools-height);
     flex: none;
   }
 
@@ -432,9 +440,7 @@
   .prompt-map--mobile-active.prompt-map--open {
     position: fixed;
     z-index: 45;
-    top: calc(var(--window-titlebar-height) + var(--topbar-h) + var(--safe-top) + var(--space-2));
-    right: max(var(--space-2), var(--safe-right));
-    left: max(var(--space-2), var(--safe-left));
+    top: calc(var(--window-titlebar-height) + var(--topbar-h) + var(--safe-top) + var(--space-1));
     display: flex;
     width: auto;
     height: min(62dvh, calc(68px + var(--prompt-map-list-height)));
