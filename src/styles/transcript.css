@@ -171,38 +171,38 @@
   align-items: stretch;
 }
 
-.activity-fold__disclosure {
+.disclosure-row.activity-fold__disclosure {
   width: calc(100% + var(--disclosure-outdent));
   margin-inline-start: calc(-1 * var(--disclosure-outdent));
-  gap: 6px;
+  gap: 0;
   padding: 0 var(--space-1);
   border: 0;
   background: transparent;
   color: var(--muted);
   font: var(--text-xs)/var(--leading-ui) var(--font-mono);
-  letter-spacing: 0.08em;
   text-align: start;
+}
+
+.activity-fold__label {
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
 .activity-fold__disclosure > svg {
   flex-shrink: 0;
+  margin-inline-end: var(--space-1);
 }
 
 /* The expanded summary shares the mono voice in quieter metadata scale and ink. */
 .activity-fold__summary {
   min-width: 0;
-  margin-inline-start: 2px;
+  margin-inline-start: var(--space-3);
   overflow: hidden;
   color: var(--faint);
-  font-size: var(--text-xs);
   font-weight: 400;
   letter-spacing: -0.02em;
-  /* Counts and tool names are data; only the heading is an eyebrow. */
-  text-transform: none;
   text-overflow: ellipsis;
   white-space: nowrap;
-  transform: translateY(0.5px);
 }
 
 .activity-fold__summary-failed {
@@ -219,8 +219,7 @@
   gap: 2px;
   width: 10px;
   height: 10px;
-  margin-inline-start: 2px;
-  transform: translateY(-0.1px);
+  margin-inline-start: var(--space-2);
 }
 
 .activity-fold__kind,

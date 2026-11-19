@@ -209,7 +209,7 @@ export function ResponseActivityFold({
         : "collapsed"
       : visibility);
   const open = density !== "collapsed";
-  const start =
+  const earlierCount =
     density === "compact" ? Math.max(0, items.length - ACTIVITY_PAGE_SIZE) : 0;
   const matrixItems = items.filter((item) => item.kind).slice(-9);
   const matrixDescription = matrixItems.length
@@ -291,7 +291,7 @@ export function ResponseActivityFold({
           className={open ? "chev chev--open" : "chev"}
           aria-hidden
         />
-        <span>Activity</span>
+        <span className="activity-fold__label">Activity</span>
         <ActivityMatrix
           items={matrixItems}
           description={matrixDescription}
@@ -315,18 +315,22 @@ export function ResponseActivityFold({
       <div id={id} className="activity-fold__content" hidden={!open}>
         {open && (
           <>
-            {start > 0 && (
+            {earlierCount > 0 && (
               <button
                 type="button"
-                className="button button--quiet disclosure-row"
+                className="disclosure-row activity-fold__disclosure"
                 onClick={() => choose("expanded")}
               >
-                <ChevronRight size={14} aria-hidden /> Earlier activity
+                <ChevronRight size={14} aria-hidden />
+                <span>
+                  Show {earlierCount} earlier{" "}
+                  {earlierCount === 1 ? "step" : "steps"}
+                </span>
               </button>
             )}
             <ReadingChoices value={choices}>
               <ActivityItems
-                items={items.slice(start)}
+                items={items.slice(earlierCount)}
                 collapseTools={collapseTools}
               />
             </ReadingChoices>
@@ -342,7 +346,7 @@ export function ResponseActivityFold({
           onClick={() => choose(collapseTo, "bottom")}
         >
           <ChevronRight size={14} className="chev chev--open" aria-hidden />
-          <span>{collapseLabel}</span>
+          <span className="activity-fold__label">{collapseLabel}</span>
         </button>
       )}
     </section>

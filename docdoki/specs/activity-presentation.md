@@ -33,14 +33,14 @@ Displayed custom messages break the group and remain independently readable.
 | Density | Presentation |
 | --- | --- |
 | Expanded | All activity in source order. |
-| Compact | Latest 24 items. Earlier activity reveals the omitted prefix in the same group. |
+| Compact | Latest 24 items. The disclosure shows how many earlier steps it will reveal in the same group. |
 | Collapsed | Shows the Activity disclosure and matrix. Opening reveals Compact. |
 | Adaptive (`dynamic`) | Starts Compact while running and closes when settled unless the reader has opened or is inspecting it. |
 
 The header and footer can collapse an open group. The footer shares the header's disclosure
-typography and chevron axis and sits below the group's vertical guide. Earlier activity expands
-the omitted prefix in place. The group stays open during inspection and no page controls interrupt
-reading.
+typography and chevron axis and sits below the group's vertical guide. The earlier steps expand
+in place from a plain disclosure row aligned with the nested activity arrows.
+The group stays open during inspection and no page controls interrupt reading.
 
 Adjacent activity items share one spacing rhythm across assistant-message boundaries; prose and
 expanded details keep their internal spacing. On fine-pointer desktops, activity headers are at
@@ -48,9 +48,8 @@ least 28px high and adjacent Activity groups and context checkpoints are 8px apa
 
 A single neutral vertical guide connects the open group's activity. Assistant-turn attribution rows
 and divider ticks are absent inside and outside groups. The group heading uses Flux Mono at 13px,
-secondary ink. Individual identities use the smaller compact size and medium weight. Labels retain intrinsic
-layout width; positive 8px gaps separate label and summary without horizontal scaling or
-label-length-specific negative margins.
+secondary ink. Individual identities use the smaller compact size and medium weight. Labels retain
+their intrinsic width. The matrix sits beside the Activity label, with a wider gap before the summary.
 
 The group header includes a one-line summary in the label's mono face at metadata size (`11.5px`) on the label baseline with quieter ink, separated
 by `" · "` like peer tool metadata and built from the same bounded telemetry: the step count, up to
