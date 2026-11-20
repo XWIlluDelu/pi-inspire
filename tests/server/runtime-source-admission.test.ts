@@ -137,9 +137,9 @@ describe("runtime source admission", () => {
       trackedAttachmentStore(),
       {
         createProcess,
+        modelMetadata: new ModelMetadataCatalog(queryModels),
       },
     );
-    runtime.setModelMetadataCatalog(new ModelMetadataCatalog(queryModels));
     trackRuntime(runtime);
     const missing = await runtime.snapshot("a");
     expect(missing.active).toMatchObject({
@@ -166,7 +166,7 @@ describe("runtime source admission", () => {
       text: "persisted:a",
     });
     const resources = await runtime.resourceContext("a");
-    expect(await resources.loadMessages?.()).toContainEqual(
+    expect(await resources.loadMessages()).toContainEqual(
       expect.objectContaining({ role: "user", content: "persisted:a" }),
     );
     for (const operation of [
@@ -196,6 +196,12 @@ describe("runtime source admission", () => {
     expect(restored.active?.readOnlyReason).toBeUndefined();
     expect(restored.active?.cwd).toBe(await realpath(session.cwd));
     expect(restored.active?.transcriptPage.viewId).not.toBe(viewId);
+    await expect(resources.loadMessages()).rejects.toMatchObject({
+      status: 409,
+    });
+    await expect(resources.loadHistoryImage("u1", 0)).rejects.toMatchObject({
+      status: 409,
+    });
     expect(createProcess).not.toHaveBeenCalled();
     await startWorker(runtime);
     expect(createProcess).toHaveBeenCalledExactlyOnceWith(

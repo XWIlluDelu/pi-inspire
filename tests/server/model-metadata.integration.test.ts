@@ -56,14 +56,11 @@ it("discovers native global/trusted-project registrations and resolves defaults 
   global.extensions.push(broken);
   await writeFile(globalPath, JSON.stringify(global));
   const catalog = new ModelMetadataCatalog();
-  const readMetadata = vi.fn((cwd: string, refresh?: boolean) =>
-    catalog.read(cwd, refresh),
-  );
+  const readMetadata = vi.spyOn(catalog, "read");
   const host = await hostApiFixture({
     services: { cwd: f.root, ...hostServices(f.root) },
-    modelMetadata: readMetadata,
+    modelMetadata: catalog,
     modelSettings: new ModelSettingsService(f.agent),
-    invalidateModels: () => catalog.invalidate(),
   });
   try {
     const endpoint = host.localRequest;

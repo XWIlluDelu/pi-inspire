@@ -155,7 +155,7 @@ async function fixture({
   external = false,
   cold = external,
   ...options
-}: Pick<RuntimeControllerOptions, "openForkProjection" | "stageFork"> & {
+}: Pick<RuntimeControllerOptions, "stageFork"> & {
   userContent?: Parameters<typeof entry>[3];
   extra?: ReturnType<typeof entry>[];
   external?: boolean;
@@ -182,9 +182,13 @@ async function fixture({
   ]);
   const catalog = new SessionCatalog(cwd);
   const attachments = trackedAttachmentStore();
+  let externalLeaf = "a2";
   const workers: BranchRpc[] = [];
   const runtime = new RuntimeController(catalog, attachments, {
     ...options,
+    externalLeaves: external
+      ? async (session) => (session === id ? [externalLeaf] : [])
+      : undefined,
     createProcess: (options) => {
       const worker = new BranchRpc(options);
       workers.push(worker);
@@ -192,11 +196,6 @@ async function fixture({
     },
   });
   trackRuntime(runtime);
-  let externalLeaf = "a2";
-  if (external)
-    runtime.setExternalSessionPresence(async (session) =>
-      session === id ? [externalLeaf] : [],
-    );
   await runtime.openSession(id);
   if (!cold) await startWorker(runtime, id);
   const snapshot = () => runtime.snapshot(id);
@@ -434,14 +433,16 @@ it("holds a published destination reservation and restages ordered duplicate ima
   const f = await fixture({
     cold: true,
     userContent: images,
-    async openForkProjection(record) {
-      if (!record.path.includes(".inspire-fork-")) {
-        destination = record.id;
-        opened.resolve();
-        await release.promise;
-      }
-      return SessionProjection.open(record);
-    },
+  });
+  const adopt = SessionProjection.prototype.adoptPublishedFork;
+  vi.spyOn(
+    SessionProjection.prototype,
+    "adoptPublishedFork",
+  ).mockImplementationOnce(async function (this: SessionProjection, path) {
+    destination = this.sessionId;
+    opened.resolve();
+    await release.promise;
+    await adopt.call(this, path);
   });
   const forking = f.runtime.forkBranch(await f.address());
   try {
@@ -514,15 +515,12 @@ it.each([
         await writeFile(staged.destinationPath, occupied);
       return staged;
     },
-    async openForkProjection(record) {
-      if (
-        failure === "final projection" &&
-        record.path === staged.destinationPath
-      )
-        throw new Error("projection fixture failed");
-      return SessionProjection.open(record);
-    },
   });
+  if (failure === "final projection")
+    vi.spyOn(
+      SessionProjection.prototype,
+      "adoptPublishedFork",
+    ).mockRejectedValueOnce(new Error("projection fixture failed"));
   const images = vi.spyOn(f.attachments, "stageImages");
   const outcome = await f.runtime
     .forkBranch(await f.address())

@@ -3,16 +3,14 @@ import { resolve } from "node:path";
 import { parseComposerArtifactReference } from "../shared/composer-artifact-references.js";
 import {
   MAX_ATTACHMENT_FILE_BYTES,
-  MAX_ATTACHMENT_UPLOAD_BYTES,
-  MAX_ATTACHMENTS,
   MAX_PROJECT_FILES,
-  MAX_PROMPT_IMAGE_BYTES,
-  MAX_PROMPT_IMAGE_ENCODED_BYTES,
   type PromptRequest,
 } from "../shared/contracts.js";
 import { isSupportedPromptImageMimeType } from "../shared/image-types.js";
 import { jsonRecord } from "../shared/json-record.js";
 import {
+  addAttachmentContext,
+  assertAttachmentBudget,
   type AttachmentContextFile,
   type AttachmentStore,
   resolveProjectFiles,
@@ -49,7 +47,7 @@ function equalItems<T>(
   );
 }
 
-export function samePromptArtifacts(
+function samePromptArtifacts(
   left: PromptArtifacts,
   right: PromptArtifacts,
 ): boolean {
@@ -245,13 +243,51 @@ export async function revalidateProjectFiles(
   return current;
 }
 
-export async function preparePromptArtifacts(
+/** Start both reads on admission. Return only leases that this submission acquired. */
+export async function stagePromptInput(
   slot: RuntimeSlot,
   request: PromptRequest,
-  staged: Awaited<ReturnType<AttachmentStore["resolveForPrompt"]>>,
-  selected: readonly string[],
-  history: PromptArtifacts,
+  attachments: AttachmentStore,
+): Promise<{
+  staged: Awaited<ReturnType<AttachmentStore["resolveForPrompt"]>>;
+  projectFiles: string[];
+}> {
+  const ids = request.attachmentIds ?? [];
+  const uploads = attachments.resolveForPrompt(ids);
+  try {
+    const [staged, projectFiles] = await Promise.all([
+      uploads,
+      resolveProjectFiles(slot.cwd, request.projectFiles),
+    ]);
+    return { staged, projectFiles };
+  } catch (error) {
+    await uploads.then(
+      () => attachments.restage(ids),
+      () => {},
+    );
+    throw error;
+  }
+}
+
+export async function preparePiPrompt(
+  slot: RuntimeSlot,
+  request: PromptRequest,
+  message: string,
+  input: Awaited<ReturnType<typeof stagePromptInput>>,
+  attachments: AttachmentStore,
+  earlierHistory?: PromptArtifacts,
 ) {
+  const { staged, projectFiles: selected } = input;
+  const history = await resolveComposerHistoryArtifacts(
+    slot,
+    request,
+    attachments,
+  );
+  if (earlierHistory && !samePromptArtifacts(history, earlierHistory))
+    throw requestError(
+      "A recalled attachment changed before prompt delivery",
+      409,
+    );
   const files = [...staged.files, ...history.files];
   const fileBytes = staged.files.reduce(
     (sum, file) => sum + (file.kind === "file" ? file.size : 0),
@@ -269,12 +305,20 @@ export async function preparePromptArtifacts(
     [...(request.projectFiles ?? []), ...history.projectFiles],
     expected,
   );
-  assertPromptArtifactBudget(
-    files.length + history.images.length,
-    fileBytes,
-    images,
+  // Uploaded images come from verified bytes. Recalled images were checked as canonical base64.
+  const imageBytes = images.reduce(
+    (sum, image) => sum + Buffer.byteLength(image.data, "base64"),
+    0,
   );
-  return { files, images, projectFiles };
+  assertAttachmentBudget(
+    files.length + history.images.length,
+    fileBytes + imageBytes,
+    imageBytes,
+  );
+  const fullMessage = addAttachmentContext(message, files, projectFiles);
+  if (!fullMessage && images.length === 0)
+    throw requestError("Message or attachment is required", 400);
+  return { fullMessage, images, recalledImages: history.images };
 }
 
 /** Read recalled images without preparing files or transferring upload ownership. */
@@ -313,55 +357,4 @@ export async function resolveComposerHistoryArtifacts(
     attachments,
   );
   return { images, ...resolvedFiles };
-}
-
-export function assertPromptArtifactBudget(
-  attachmentCount: number,
-  ordinaryFileBytes: number,
-  images: readonly { data: string }[],
-): void {
-  if (attachmentCount > MAX_ATTACHMENTS) {
-    throw requestError(
-      `At most ${MAX_ATTACHMENTS} attachments per message`,
-      413,
-    );
-  }
-  const imageBytes = images.map((image) => {
-    const size = canonicalBase64DecodedSize(image.data);
-    if (size === null || size === 0)
-      throw requestError("A prompt image is invalid", 422);
-    return size;
-  });
-  if (
-    ordinaryFileBytes + imageBytes.reduce((sum, bytes) => sum + bytes, 0) >
-    MAX_ATTACHMENT_UPLOAD_BYTES
-  ) {
-    throw requestError(
-      `Attachments per message must total at most ${MAX_ATTACHMENT_UPLOAD_BYTES} bytes`,
-      413,
-    );
-  }
-  if (imageBytes.some((bytes) => bytes > MAX_ATTACHMENT_FILE_BYTES)) {
-    throw requestError(
-      `Each image must be at most ${MAX_ATTACHMENT_FILE_BYTES} bytes`,
-      413,
-    );
-  }
-  const rawBytes = imageBytes.reduce((sum, bytes) => sum + bytes, 0);
-  if (rawBytes > MAX_PROMPT_IMAGE_BYTES) {
-    throw requestError(
-      `Images per message must total at most ${MAX_PROMPT_IMAGE_BYTES} bytes`,
-      413,
-    );
-  }
-  const encodedBytes = images.reduce(
-    (sum, image) => sum + Buffer.byteLength(image.data),
-    0,
-  );
-  if (encodedBytes > MAX_PROMPT_IMAGE_ENCODED_BYTES) {
-    throw requestError(
-      `Encoded images exceed the ${MAX_PROMPT_IMAGE_ENCODED_BYTES}-byte prompt budget`,
-      413,
-    );
-  }
 }

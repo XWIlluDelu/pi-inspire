@@ -24,14 +24,11 @@ const runtimes: RuntimeController[] = [];
 export function runtimeProjection(runtime: RuntimeController) {
   const internals = runtime as unknown as {
     slots: Map<string, RuntimeSlot>;
-    projectionCoordinator: {
-      reconcile(slot: RuntimeSlot, force: boolean): Promise<unknown>;
-    };
   };
   const slot = internals.slots.get("session-a")!;
   return {
     slot,
-    reconcile: () => internals.projectionCoordinator.reconcile(slot, true),
+    reconcile: () => slot.projection!.reconcile(true),
   };
 }
 

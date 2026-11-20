@@ -112,8 +112,7 @@ it("commits a session edit while an old workspace catalog query is pending", asy
   const pending = catalog.read(cwd);
   host = await configurationHost(workspace, {
     modelSettings: service,
-    modelMetadata: (cwd, refresh) => catalog.read(cwd, refresh),
-    invalidateModels: () => catalog.invalidate(),
+    modelMetadata: catalog,
   });
   const { localRequest: http, runtime, sessionId } = host;
   const read = (query: {

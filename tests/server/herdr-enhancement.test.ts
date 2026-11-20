@@ -13,7 +13,6 @@ import { HerdrClient } from "../../server/herdr-client.js";
 import { HerdrEnhancement } from "../../server/herdr-enhancement.js";
 import * as workerScopes from "../../server/herdr-process-group.js";
 import { HerdrWorkerRegistry } from "../../server/herdr-worker-registry.js";
-import { PiRpcProcess } from "../../server/pi-rpc.js";
 
 const directories: string[] = [];
 const enhancements: HerdrEnhancement[] = [];
@@ -160,7 +159,6 @@ describe.skipIf(process.platform !== "linux")(
           runState: "idle",
           needsInput: false,
         } as const;
-        enhancement.updateWorkerStatus(new PiRpcProcess({ cwd: root }), idle);
         const statuses = [
           { ...idle, state: "idle" },
           { ...idle, runState: "running", state: "working" },
@@ -169,7 +167,7 @@ describe.skipIf(process.platform !== "linux")(
           { ...idle, sessionId: "session-two", state: "idle" },
         ] as const;
         for (const [index, { state, ...status }] of statuses.entries()) {
-          enhancement.updateWorkerStatus(worker, status);
+          worker.emit("worker_status", status.sessionId, status);
           await vi.waitFor(() =>
             expect(report).toHaveBeenCalledTimes(index + 1),
           );
@@ -178,16 +176,26 @@ describe.skipIf(process.platform !== "linux")(
             expect.objectContaining({ state, sessionId: status.sessionId }),
           );
           if (index === 0) {
-            enhancement.updateWorkerStatus(worker, status);
+            worker.emit("worker_status", status.sessionId, status);
             await new Promise<void>((resolve) => setImmediate(resolve));
             expect(report).toHaveBeenCalledOnce();
           }
         }
 
+        report.mockRejectedValueOnce(new Error("Herdr disconnected"));
+        worker.emit("worker_status", idle.sessionId, idle);
+        await vi.waitFor(() =>
+          expect(report).toHaveBeenCalledTimes(statuses.length + 1),
+        );
+        worker.emit("worker_status", idle.sessionId, idle);
+        await vi.waitFor(() =>
+          expect(report).toHaveBeenCalledTimes(statuses.length + 2),
+        );
+
         worker.emit("exit", new Error("RPC retired before confirmed Pi exit"));
-        enhancement.updateWorkerStatus(worker, idle);
+        worker.emit("worker_status", idle.sessionId, idle);
         await new Promise<void>((resolve) => setImmediate(resolve));
-        expect(report).toHaveBeenCalledTimes(statuses.length);
+        expect(report).toHaveBeenCalledTimes(statuses.length + 2);
         expect(closePane).not.toHaveBeenCalled();
         expect(await registry.list()).toHaveLength(1);
       } finally {

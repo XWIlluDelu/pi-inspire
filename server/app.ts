@@ -53,11 +53,17 @@ import { jsonRoute } from "./json-route.js";
 import type { MaintenanceRestartController } from "./maintenance-restart.js";
 import type { McpConfigService } from "./mcp-config.js";
 import { registerMcpConfigRoutes } from "./mcp-config-routes.js";
-import type { NativeModelCatalog } from "./model-metadata.js";
+import type {
+  ModelMetadataCatalog,
+  NativeModelCatalog,
+} from "./model-metadata.js";
 import type { ModelSettingsService } from "./model-settings.js";
 import { commonModelOptions } from "./model-settings.js";
 import { registerModelSettingsRoutes } from "./model-settings-routes.js";
-import { HostOperationReceipts, settleOperation } from "./operation-receipts.js";
+import {
+  HostOperationReceipts,
+  settleOperation,
+} from "./operation-receipts.js";
 import { resolveProjectDirectory } from "./paths.js";
 import { installedPiChangelog } from "./pi-changelog.js";
 import type { PreferencesStore } from "./preferences.js";
@@ -127,15 +133,9 @@ interface AppDependencies {
   activeHerdrMode?: boolean;
   /** Effective-at-startup Herdr state; omitted when this Host has no enhancement integration. */
   getHerdrStatus?: () => Promise<HerdrEnhancementStatus>;
-  /** Already-known picker metadata; bootstrap never starts model discovery. */
-  bootstrapModels?: () => BootstrapResponse["availableModels"];
-  modelMetadata?: (
-    cwd: string,
-    refresh?: boolean,
-  ) => Promise<import("./model-metadata.js").ModelMetadata>;
+  modelMetadata?: ModelMetadataCatalog;
   modelSettings?: ModelSettingsService;
   mcpConfig?: McpConfigService;
-  invalidateModels?: () => void;
   providerAuth?: ProviderAuthService;
   /** Shared update-state owner. Production supplies the persistent deployment
    * instance; test hosts default to one without checkers. */
@@ -649,7 +649,7 @@ export function createInspireServer(deps: AppDependencies): {
       ...(toolPresentationState.warning
         ? { toolPresentationsWarning: toolPresentationState.warning }
         : {}),
-      availableModels: deps.bootstrapModels?.() ?? [],
+      availableModels: deps.modelMetadata?.peek(process.cwd())?.models ?? [],
     };
     response.set(
       "Server-Timing",
@@ -708,7 +708,7 @@ export function createInspireServer(deps: AppDependencies): {
         : process.cwd();
       const result: NativeModelCatalog = sessionId
         ? await deps.runtime.refreshModels(sessionId, inherit === "1")
-        : ((await deps.modelMetadata?.(cwd, true)) ?? { models: [] });
+        : ((await deps.modelMetadata?.read(cwd, true)) ?? { models: [] });
       const { models, commands, defaults, selection, warning } = result;
       const catalogCwd = sessionId ? deps.runtime.sessionCwd(sessionId) : cwd;
       const preferences =

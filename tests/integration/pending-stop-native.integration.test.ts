@@ -1,3 +1,4 @@
+import { stageUpload } from "../server/fixtures/runtime.js";
 // @vitest-environment jsdom
 
 import { expect, it, vi } from "vitest";
@@ -58,7 +59,7 @@ it("shares concurrent Stop requests and reclaims both lost handoffs while stoppi
       "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
       "base64",
     );
-    const image = await f.attachments.add({
+    const image = await stageUpload(f.attachments, {
       originalname: "queued.gif",
       mimetype: "image/gif",
       size: bytes.length,

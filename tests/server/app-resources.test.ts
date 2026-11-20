@@ -195,6 +195,7 @@ describe("HTTP resource and upload authority", () => {
       viewId: context.viewId,
       revision: context.revision + 1,
       cwd: context.cwd,
+      loadHistoryImage: async () => null,
       loadMessages: async () => [
         {
           role: "assistant",

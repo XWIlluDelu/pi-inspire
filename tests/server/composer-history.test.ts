@@ -386,10 +386,9 @@ it("recalls retained branch prompts and exact artifacts through live compaction,
       viewId: slot.viewId,
       revision: projection.revision,
       cwd,
-      loadMessages: async () => [
-        ...projection.viewMessages(),
-        ...projection.composerHistoryMessages(),
-      ],
+      loadMessages: async () => projection.viewMessages(),
+      loadHistoryImage: async (entry: string, part: number) =>
+        projection.historyImage(entry, part, projection.leafId),
     };
     for (const [reference, expected] of [
       [recalled.images[0]!.reference, "original image"],

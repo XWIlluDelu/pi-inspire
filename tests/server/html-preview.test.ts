@@ -40,6 +40,7 @@ describe("interactive HTML capabilities", () => {
       viewId: "view-1",
       revision: 1,
       cwd,
+      loadHistoryImage: async () => null,
       loadMessages: async () => [],
     };
     vi.spyOn(fixture.runtime, "resourceContext").mockImplementation(

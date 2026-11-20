@@ -7,7 +7,6 @@ covers:
   - server/operation-receipts.ts
   - src/controllers/pending-recovery-controller.ts
   - tests/integration/pending-{recovery-lifecycle,stop-native.integration}.test.ts
-  - server/runtime-worker-pool.ts
   - shared/{contracts,host-endpoints,host-operations,json-endpoints,assistant-stream,tool-argument-updates}.ts
   - server/{tool-argument-stream,tool-argument-batches,runtime-stream-budget}.ts
   - src/{api,events,store,snapshot-transition,transport-performance,recovery-backoff,operation-observer,receipt-storage}.ts

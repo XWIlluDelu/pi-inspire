@@ -20,7 +20,7 @@ interface ComposerHistoryCandidate {
   filePaths: string[];
 }
 
-export interface ComposerHistoryMessage extends Record<string, unknown> {
+interface ComposerHistoryMessage extends Record<string, unknown> {
   __inspireHistoryEntryId: string;
 }
 

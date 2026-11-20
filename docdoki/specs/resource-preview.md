@@ -2,7 +2,7 @@
 purpose: Session-authorized files, documents, media, and Git changes are inspectable beside the conversation.
 covers:
   - shared/{contracts,resource-references}.ts
-  - server/{resources,resource-http,html-preview,image-content,project-files,git-inspection,git-runner,app,runtime,runtime-reads}.ts
+  - server/{resources,resource-http,html-preview,image-content,project-files,git-inspection,git-runner,app,runtime}.ts
   - shared/html-preview.ts
   - src/{api,resources,resource-preview,document-resources,diff,source-diff,file-icons,syntax-highlighting,store,pdf-renderer,pdf-find,delimited-text,reader-quote}.ts
   - scripts/vite-pdf-assets.ts
@@ -13,7 +13,7 @@ covers:
   - src/App.tsx
   - src/styles.css
   - src/styles/*.css
-  - tests/server/{app-resources,app-auth,resources,resources-windows-paths,runtime-reads,git-inspection,git-configuration,runtime-selection}.test.ts
+  - tests/server/{app-resources,app-auth,resources,resources-windows-paths,runtime-source-admission,git-inspection,git-configuration,runtime-selection}.test.ts
   - tests/web/{resources,document-resources,resource-controller,git-controller,workspace-controller,workbench-session}.test.ts
   - tests/web/{document-preview,pdf-preview,file-preview,search-match-text,changes-pane,pane-resize,rich-text}.test.tsx
   - tests/web/{source-presentation,reader-quote}.test.ts

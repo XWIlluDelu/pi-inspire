@@ -45,3 +45,11 @@ export function projectSafeValue(
     ]),
   );
 }
+
+export function projectRuntimeValue(value: unknown): unknown {
+  return projectSafeValue(value, {
+    depth: 20,
+    stringChars: 250_000,
+    arrayItems: 10_000,
+  });
+}

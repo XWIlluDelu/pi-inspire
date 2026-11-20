@@ -1,6 +1,6 @@
 import { rm } from "node:fs/promises";
 import { expect, it, vi } from "vitest";
-import { refreshWorkerCatalog } from "../../server/model-catalog-refresh.js";
+import { refreshWorkerCatalog } from "../../server/worker-status-request.js";
 import { nativeBridgeWorker, nativePiWorkspace } from "./fixtures/native-pi.js";
 import {
   startOfflineModel,

@@ -7,6 +7,7 @@ import {
 } from "../../server/pi-rpc.js";
 import type { RuntimeSlot } from "../../server/runtime-slot.js";
 import {
+  stageUpload,
   deferredSignal,
   disposeRuntimeFixture,
   fakeRuntime,
@@ -33,16 +34,13 @@ async function fixture(
   await f.runtime.openSession("a");
   const internals = f.runtime as unknown as {
     slots: Map<string, RuntimeSlot>;
-    projectionCoordinator: {
-      reconcile(slot: RuntimeSlot, force?: boolean): Promise<unknown>;
-    };
   };
   const slot = internals.slots.get("a")!;
   return {
     ...f,
     store,
     slot,
-    reconcile: () => vi.spyOn(internals.projectionCoordinator, "reconcile"),
+    reconcile: () => vi.spyOn(slot.projection!, "reconcile"),
   };
 }
 
@@ -81,7 +79,7 @@ it("refuses a project file removed during worker startup before dispatching inpu
 it("returns a staged attachment to its editor after a definitive Pi refusal", async () => {
   const f = await fixture();
   await startWorker(f.runtime);
-  const file = await f.store.add(upload("notes.txt", "text/plain"));
+  const file = await stageUpload(f.store, upload("notes.txt", "text/plain"));
   const leased = deferredSignal();
   const release = deferredSignal();
   f.workers[0]!.responseOverrides.set("prompt", async () => {
@@ -146,7 +144,7 @@ it.each([
     });
     const file =
       operation === "prompt"
-        ? await f.store.add(upload("notes.txt", "text/plain"))
+        ? await stageUpload(f.store, upload("notes.txt", "text/plain"))
         : null;
     if (fault === "upload cleanup")
       vi.spyOn(f.store, "releaseConsumed").mockRejectedValueOnce(failure);
@@ -218,7 +216,7 @@ it.each([
   const startsConflict = shell || failure === "settlement";
   const files =
     failure === "upload cleanup"
-      ? [await store.add(upload("notes.txt", "text/plain"))]
+      ? [await stageUpload(store, upload("notes.txt", "text/plain"))]
       : [];
   worker.responseOverrides.set(operation, () => {
     if (shell)

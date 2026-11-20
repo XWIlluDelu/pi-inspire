@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import type { PiRpcProcess } from "../../server/pi-rpc.js";
-import { requestWorkerAuth } from "../../server/provider-auth-bridge.js";
+import { requestWorkerAuth } from "../../server/worker-status-request.js";
 import { readPendingImageEvidence } from "../../server/runtime-pending-image-evidence.js";
 import { requestWorkerStatus } from "../../server/worker-status-request.js";
 import {

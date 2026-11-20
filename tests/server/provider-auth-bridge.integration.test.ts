@@ -1,8 +1,10 @@
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
-import { refreshWorkerCatalog } from "../../server/model-catalog-refresh.js";
-import { requestWorkerAuth } from "../../server/provider-auth-bridge.js";
+import {
+  refreshWorkerCatalog,
+  requestWorkerAuth,
+} from "../../server/worker-status-request.js";
 import type {
   ProviderLoginAttempt,
   ProviderLoginOption,

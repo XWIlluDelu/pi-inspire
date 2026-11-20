@@ -48,9 +48,6 @@ export const MAX_ATTACHMENT_FILE_BYTES = 16 * 1024 * 1024;
 export const MAX_ATTACHMENT_UPLOAD_BYTES = 32 * 1024 * 1024;
 /** Keeps persisted base64 image messages and their RPC envelope below the 32 MiB line budget. */
 export const MAX_PROMPT_IMAGE_BYTES = 20 * 1024 * 1024;
-/** Worst-case sum of separately padded base64 images at the raw-image cap. */
-export const MAX_PROMPT_IMAGE_ENCODED_BYTES =
-  Math.ceil(MAX_PROMPT_IMAGE_BYTES / 3) * 4 + MAX_ATTACHMENTS * 4;
 export const MAX_RPC_OUTBOUND_LINE_BYTES = 32 * 1024 * 1024;
 /** Bounded text-only projection of public Pi queue_update events. */
 export const MAX_PENDING_MESSAGES = 1_000;
@@ -1014,7 +1011,6 @@ export interface BranchTreeResponse {
   incarnation: string;
   durableLeafId: string | null;
   effectiveLeafId: string | null;
-  activePath: string[];
   nodes: BranchTreeNode[];
   /** The containing input when this route page begins inside a long turn. */
   leadingPrompt?: BranchTreeNode;
@@ -1324,26 +1320,11 @@ export interface UploadedAttachment {
   kind: "image" | "file";
 }
 
-export interface ComposerHistoryArtifactsRequest {
-  viewId: string;
-  incarnation: string | null;
-  effectiveLeafId: string | null;
-  imageReferences: string[];
-  fileReferences: string[];
-}
-
-export interface PromptRequest {
-  /** Target session: writes never fall back to the host's current selection,
-   * so a concurrent navigation cannot redirect a prompt. */
-  sessionId: string;
-  /** Branch view observed by the sending browser. */
-  expectedViewId?: string;
-  message: string;
-  attachmentIds?: string[];
-  historyArtifacts?: ComposerHistoryArtifactsRequest;
-  projectFiles?: string[];
-  behavior?: "steer" | "followUp";
-}
+/** Runtime receives the addressed input after HTTP has admitted its receipt identity. */
+export type PromptRequest = Omit<
+  PromptDeliveryRequest,
+  "operationId" | "authorityId"
+>;
 
 export interface SessionExportResponse {
   downloadId: string;

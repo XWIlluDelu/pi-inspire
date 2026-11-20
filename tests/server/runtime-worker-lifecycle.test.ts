@@ -78,14 +78,15 @@ describe("worker startup and retirement", () => {
             return worker as unknown as PiRpcProcess;
           },
           openSessionProjection: preview,
+          externalLeaves: async () => {
+            if (inspectedWorker) {
+              entered.resolve();
+              await gate.promise;
+            }
+            return [];
+          },
         },
-      ).setExternalSessionPresence(async () => {
-        if (inspectedWorker) {
-          entered.resolve();
-          await gate.promise;
-        }
-        return [];
-      });
+      );
       if (kind === "existing") await runtime.openSession("a");
       const opening =
         kind === "existing"

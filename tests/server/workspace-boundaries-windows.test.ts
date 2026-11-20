@@ -43,6 +43,7 @@ const context = {
   viewId: "v1",
   revision: 1,
   cwd: root,
+  loadHistoryImage: async () => null,
   loadMessages: async () => [],
 };
 const resources = new ResourceStore();

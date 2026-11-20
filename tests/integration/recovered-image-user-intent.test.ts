@@ -1,3 +1,4 @@
+import { stageUpload } from "../server/fixtures/runtime.js";
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
@@ -63,7 +64,10 @@ it.each([
       await runtime.openSession("a");
       await startWorker(runtime);
       const worker = workers[0]!;
-      const image = await attachments.add(upload("intent.png", "image/png"));
+      const image = await stageUpload(
+        attachments,
+        upload("intent.png", "image/png"),
+      );
       const original = await attachments.imagePreview(image.id);
       let isCompacting = true;
       worker.responseOverrides.set("get_state", () => ({

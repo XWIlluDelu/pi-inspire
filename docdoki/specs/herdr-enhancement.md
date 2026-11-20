@@ -4,7 +4,7 @@ progress: done
 covers:
   - server/herdr-*.ts
   - server/pi-rpc*.ts
-  - server/{runtime,runtime-worker-lifecycle,runtime-worker-pool}.ts
+  - server/{runtime,runtime-worker-lifecycle}.ts
   - server/index.ts
   - server/preferences.ts
   - shared/contracts.ts

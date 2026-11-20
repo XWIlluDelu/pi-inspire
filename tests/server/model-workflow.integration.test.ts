@@ -51,7 +51,8 @@ it("keeps native virtual selection/effort across replies, real navigation, copie
         workers.push(worker);
         return worker;
       },
-    }).setModelMetadataCatalog(metadata);
+      modelMetadata: metadata,
+    });
   let runtime = makeRuntime();
   const selected = { provider: "project-router", id: "auto", virtual: true };
   const settle = async (id: string) => {

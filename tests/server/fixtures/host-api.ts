@@ -11,6 +11,7 @@ import {
   HostRestartController,
 } from "../../../server/host-restart.js";
 import { PreferencesStore } from "../../../server/preferences.js";
+import { ModelMetadataCatalog } from "../../../server/model-metadata.js";
 import { ResourceStore } from "../../../server/resources.js";
 import { ToolPresentationConfigStore } from "../../../server/tool-presentation-config.js";
 import { UpdateCoordinator } from "../../../server/update-coordinator.js";
@@ -114,7 +115,6 @@ type HostFixtureOptions = Partial<
     | "mcpConfig"
     | "modelMetadata"
     | "providerAuth"
-    | "invalidateModels"
     | "token"
     | "activeHerdrMode"
     | "maintenanceRestart"
@@ -151,6 +151,15 @@ export async function hostApiFixture({
     services = workbench;
   }
   const { cwd, runtime, catalog, attachments } = services;
+  const modelMetadata =
+    options.modelMetadata ??
+    new ModelMetadataCatalog(async (cwd) => ({
+      models: [fixtureModel],
+      virtualModels: [],
+      thinkingPreferences: { byModel: {} },
+      defaults: { cwd, model: fixtureModel, thinkingLevel: "high" },
+    }));
+  if (!options.modelMetadata) await modelMetadata.read(process.cwd());
   const application = createInspireServer({
     token,
     runtime,
@@ -191,12 +200,7 @@ export async function hostApiFixture({
         },
       }),
     }),
-    bootstrapModels: () => [fixtureModel],
-    modelMetadata: async (cwd) => ({
-      models: [fixtureModel],
-      virtualModels: [],
-      defaults: { cwd, model: fixtureModel, thinkingLevel: "high" },
-    }),
+    modelMetadata,
     distDir: join(temporary, "missing-dist"),
     ...options,
   });

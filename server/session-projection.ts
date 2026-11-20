@@ -31,7 +31,6 @@ import { resultChildCalls } from "../shared/tool-activity.js";
 import { userMessageContent } from "../shared/user-message.js";
 import {
   type ComposerHistoryFileNameResolver,
-  type ComposerHistoryMessage,
   projectComposerHistoryPage,
 } from "./composer-history.js";
 import { samePersistedJson } from "./persisted-json.js";
@@ -523,7 +522,7 @@ function isVisibleTranscriptBoundary(value: unknown): boolean {
   );
 }
 
-function signedCursor(payloadValue: Record<string, unknown>): string {
+function signedCursor(payloadValue: ParsedCursor): string {
   const payload = Buffer.from(JSON.stringify(payloadValue)).toString(
     "base64url",
   );
@@ -545,50 +544,23 @@ interface ParsedCursor {
 }
 
 function parseCursor(cursor: string): ParsedCursor {
-  const [payload, supplied] = cursor.split(".");
-  if (!payload || !supplied)
-    throw requestError("Transcript cursor is invalid", 400);
-  const expected = createHmac("sha256", CURSOR_KEY).update(payload).digest();
-  let actual: Buffer;
-  try {
-    actual = Buffer.from(supplied, "base64url");
-  } catch {
-    throw requestError("Transcript cursor is invalid", 400);
-  }
-  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
-    throw requestError("Transcript cursor is invalid", 400);
-  }
-  try {
-    const parsed = JSON.parse(
-      Buffer.from(payload, "base64url").toString("utf8"),
-    ) as Record<string, unknown>;
+  const [payload, supplied, extra] = cursor.split(".");
+  if (payload && supplied && extra === undefined) {
+    const expected = createHmac("sha256", CURSOR_KEY)
+      .update(payload)
+      .digest("base64url");
+    const signature = Buffer.from(supplied);
     if (
-      typeof parsed.sessionId !== "string" ||
-      typeof parsed.incarnation !== "string" ||
-      !Number.isSafeInteger(parsed.sourceGeneration) ||
-      !Number.isSafeInteger(parsed.revision) ||
-      !Number.isSafeInteger(parsed.before) ||
-      Number(parsed.before) < 0 ||
-      (parsed.effectiveLeafId !== null &&
-        typeof parsed.effectiveLeafId !== "string") ||
-      typeof parsed.viewId !== "string" ||
-      !parsed.viewId ||
-      (parsed.kind !== "native-before" && parsed.kind !== "native-after")
-    )
-      throw new Error("invalid");
-    return {
-      kind: parsed.kind,
-      sessionId: parsed.sessionId,
-      incarnation: parsed.incarnation,
-      sourceGeneration: Number(parsed.sourceGeneration),
-      revision: Number(parsed.revision),
-      before: Number(parsed.before),
-      effectiveLeafId: parsed.effectiveLeafId,
-      viewId: parsed.viewId,
-    };
-  } catch {
-    throw requestError("Transcript cursor is invalid", 400);
+      signature.length === expected.length &&
+      timingSafeEqual(signature, Buffer.from(expected))
+    ) {
+      // Only signedCursor can produce a payload for this process-lifetime key.
+      return JSON.parse(
+        Buffer.from(payload, "base64url").toString("utf8"),
+      ) as ParsedCursor;
+    }
   }
+  throw requestError("Transcript cursor is invalid", 400);
 }
 
 function healthError(error: unknown): ProjectionHealth {
@@ -603,7 +575,7 @@ export interface SessionProjectionReadHooks {
 /** Read queries over native entries, independent of any filesystem source. */
 class SessionEntryIndex {
   readonly sessionId: string;
-  readonly path: string;
+  protected currentPath: string;
   protected currentRevision = 0;
   readonly incarnation = randomBytes(18).toString("base64url");
   protected appendFromRevision = 0;
@@ -629,7 +601,11 @@ class SessionEntryIndex {
     private readonly fileNameForPath?: ComposerHistoryFileNameResolver,
   ) {
     this.sessionId = session.id;
-    this.path = resolve(session.path);
+    this.currentPath = resolve(session.path);
+  }
+
+  get path(): string {
+    return this.currentPath;
   }
 
   get revision(): number {
@@ -898,10 +874,27 @@ class SessionEntryIndex {
     return contextMessages(effectiveLeafId, this.currentEntriesById);
   }
 
-  composerHistoryMessages(
-    effectiveLeafId: string | null = this.currentLeafId,
-  ): readonly ComposerHistoryMessage[] {
-    return [...this.recentComposerMessages(effectiveLeafId)].reverse();
+  /** Preserve the displayed image number from the chronological recall list. */
+  historyImage(id: string, part: number, leaf: string | null) {
+    const entry = this.currentEntriesById.get(id);
+    if (
+      entry?.type !== "message" ||
+      entry.message.role !== "user" ||
+      jsonRecord(entry.message)?.display === false ||
+      !this.continues(leaf, id)
+    )
+      return null;
+    const block = Array.isArray(entry.message.content)
+      ? entry.message.content[part]
+      : undefined;
+    if (block?.type !== "image") return null;
+    let messageIndex = this.viewMessages(leaf).length;
+    for (const ancestor of branchAncestors(
+      this.currentEntriesById,
+      entry.parentId,
+    ))
+      if (composerInputMessage(ancestor)) messageIndex++;
+    return { block, messageIndex };
   }
 
   /** Retained user entry on this branch, independent of model compaction. */
@@ -1283,8 +1276,7 @@ export class SessionProjection extends SessionEntryIndex {
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private hintReading = false;
   private hintDirty = false;
-  private reconciliationResume: Promise<void> | null = null;
-  private resolveReconciliationResume: (() => void) | null = null;
+  private reconciliationResume: PromiseWithResolvers<void> | null = null;
   private closed = false;
   /** Pi reserves a path for a new session but delays creating the JSONL.
    * Only new-session ownership may enter this state; it remains active across
@@ -1423,11 +1415,7 @@ export class SessionProjection extends SessionEntryIndex {
     return this.currentUncommittedBytes;
   }
   async suspendReconciliation(): Promise<void> {
-    if (!this.reconciliationResume) {
-      this.reconciliationResume = new Promise<void>((resolveResume) => {
-        this.resolveReconciliationResume = resolveResume;
-      });
-    }
+    this.reconciliationResume ??= Promise.withResolvers<void>();
     if (this.watchTimer) clearTimeout(this.watchTimer);
     if (this.pollTimer) clearInterval(this.pollTimer);
     this.watchTimer = null;
@@ -1437,9 +1425,24 @@ export class SessionProjection extends SessionEntryIndex {
     await this.reconcileTail;
   }
 
+  /** The published hard link must address the same complete bytes we indexed in staging. */
+  async adoptPublishedFork(path: string): Promise<void> {
+    const identity = this.sourceIdentity;
+    const fingerprint = this.fingerprint;
+    this.currentPath = resolve(path);
+    await this.reconcileSuspended(true);
+    if (
+      this.health.status !== "ok" ||
+      this.sourceIdentity !== identity ||
+      this.fingerprint !== fingerprint ||
+      this.uncommittedBytes !== 0
+    )
+      throw new Error("Published fork destination failed revalidation");
+    this.resumeReconciliation();
+  }
+
   resumeReconciliation(): void {
-    this.resolveReconciliationResume?.();
-    this.resolveReconciliationResume = null;
+    this.reconciliationResume?.resolve();
     this.reconciliationResume = null;
     if (!this.closed && !this.watcher && !this.pollTimer) this.startWatching();
   }
@@ -1511,7 +1514,7 @@ export class SessionProjection extends SessionEntryIndex {
   }
 
   async reconcile(force = false): Promise<ProjectionReconcileResult> {
-    while (this.reconciliationResume) await this.reconciliationResume;
+    while (this.reconciliationResume) await this.reconciliationResume.promise;
     return this.enqueueReconcile(force, true);
   }
 
@@ -1822,8 +1825,7 @@ export class SessionProjection extends SessionEntryIndex {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
-    this.resolveReconciliationResume?.();
-    this.resolveReconciliationResume = null;
+    this.reconciliationResume?.resolve();
     this.reconciliationResume = null;
     if (this.watchTimer) clearTimeout(this.watchTimer);
     if (this.pollTimer) clearInterval(this.pollTimer);

@@ -27,7 +27,6 @@ type SessionMetadata = Pick<
   | "thinkingLevel"
   | "stats"
   | "runtimeSettings"
-  | "commands"
 >;
 
 export interface PendingExtensionDialog {

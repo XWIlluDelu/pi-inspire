@@ -9,11 +9,7 @@ import {
   type PromptRequest,
 } from "../shared/contracts.js";
 import type { TaskOutcome } from "../shared/notifications.js";
-import {
-  type AttachmentStore,
-  addAttachmentContext,
-  resolveProjectFiles,
-} from "./attachments.js";
+import type { AttachmentStore } from "./attachments.js";
 import {
   type AttachmentEnd,
   type ConnectExternalSession,
@@ -24,8 +20,8 @@ import {
 } from "./external-session.js";
 import { requestError } from "./request-error.js";
 import {
-  preparePromptArtifacts,
-  resolveComposerHistoryArtifacts,
+  preparePiPrompt,
+  stagePromptInput,
 } from "./runtime-composer-artifacts.js";
 import type { RuntimeSlot } from "./runtime-slot.js";
 
@@ -524,45 +520,23 @@ export class RuntimeExternalSessions {
         { code: "ATTACH_CONTROL_QUEUE_ACK_UNAVAILABLE" },
       );
     const originalIds = request.attachmentIds ?? [];
-    const prepared = await this.attachments.resolveForPrompt(originalIds);
+    const input = await stagePromptInput(slot, request, this.attachments);
     const copied: string[] = [];
     let delivered = false;
     let uncertain = false;
     try {
-      const history = await resolveComposerHistoryArtifacts(
+      const { fullMessage, images } = await preparePiPrompt(
         slot,
         request,
+        message,
+        input,
         this.attachments,
-      );
-      const selected = await resolveProjectFiles(
-        slot.cwd,
-        request.projectFiles,
-      );
-      const artifacts = await preparePromptArtifacts(
-        slot,
-        request,
-        prepared,
-        selected,
-        history,
       );
       // The receiver may outlive a lost receipt. Its copies have a separate
       // lifetime from the editor's original upload handles.
-      const transportImages = await this.attachments.prepareTransportImages(
-        artifacts.images,
-      );
+      const transportImages =
+        await this.attachments.prepareTransportImages(images);
       copied.push(...transportImages.map((image) => image.id));
-      const files = artifacts.files.filter((file) => file.kind === "file");
-      const images = transportImages.map(({ path, mimeType }) => ({
-        path,
-        mimeType,
-      }));
-      const fullMessage = addAttachmentContext(
-        message,
-        files,
-        artifacts.projectFiles,
-      );
-      if (!fullMessage && images.length === 0)
-        throw requestError("Message or attachment is required", 400);
       const beforeSend = () => {
         assertView();
         if (
@@ -588,7 +562,9 @@ export class RuntimeExternalSessions {
           fullMessage,
           request.behavior,
           beforeSend,
-          images.length ? images : undefined,
+          transportImages.length
+            ? transportImages.map(({ path, mimeType }) => ({ path, mimeType }))
+            : undefined,
           connection.state.leafId,
         );
         delivered = true;

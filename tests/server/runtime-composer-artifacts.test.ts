@@ -11,7 +11,6 @@ import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { resolveProjectFiles } from "../../server/attachments.js";
 import {
-  assertPromptArtifactBudget,
   revalidateProjectFiles,
 } from "../../server/runtime-composer-artifacts.js";
 
@@ -60,11 +59,4 @@ it("revalidates one canonical file after Git changes and refuses symlink retarge
       revalidateProjectFiles(cwd, ["selected.txt"], expected),
     ).rejects.toMatchObject({ status: 409 });
   }
-});
-
-it("rejects malformed or empty prompt image bytes", () => {
-  for (const data of ["T Q==", ""])
-    expect(() => assertPromptArtifactBudget(1, 0, [{ data }])).toThrow(
-      "A prompt image is invalid",
-    );
 });

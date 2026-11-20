@@ -26,21 +26,18 @@ function setup(incremental = true) {
   slot.startupPhase = "ready";
   const ownership = new RuntimeLiveTail(() => null);
   let forwarded: Record<string, unknown> = {};
+  if (!incremental) {
+    const update = ownership.updateOverlay.bind(ownership);
+    vi.spyOn(ownership, "updateOverlay").mockImplementation(
+      (slot, message, phase) => update(slot, message, phase),
+    );
+  }
   const events = new RuntimeEventController({
-    updateBash: () => false,
+    bash: { update: () => false },
+    checkpoints: { observe: () => false, refresh: () => undefined },
+    liveTail: ownership,
+    extensionUi: { add: () => null },
     finishTask: () => {},
-    checkpoint: () => false,
-    refreshCheckpoint: () => undefined,
-    activeAssistantOverlayMessage: (owner) =>
-      ownership.activeAssistantOverlayMessage(owner),
-    updateOverlay: (owner, message, phase, delta) =>
-      ownership.updateOverlay(
-        owner,
-        message,
-        phase,
-        incremental ? delta : undefined,
-      ),
-    addPendingExtensionUi: () => null,
     invalidateCatalog: () => {},
     scheduleIdleWorkerEviction: () => {},
     refreshPendingQueues: () => {},
@@ -54,7 +51,6 @@ function setup(incremental = true) {
     },
     stopWriter: async () => {},
     logRuntimeError: () => {},
-    safeProjection: (value) => value,
   });
   const emit = (event: unknown) =>
     events.dispatchProcessEvent(slot, rpc, event);

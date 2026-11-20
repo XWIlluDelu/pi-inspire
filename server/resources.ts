@@ -11,7 +11,7 @@ import {
   sep,
 } from "node:path";
 import { fileURLToPath } from "node:url";
-import { composerArtifactReference } from "../shared/composer-artifact-references.js";
+import { parseComposerArtifactReference } from "../shared/composer-artifact-references.js";
 import {
   MAX_PROMPT_IMAGE_BYTES,
   type ResourceDescriptor,
@@ -22,6 +22,7 @@ import {
   HTML_PREVIEW_BYTES,
   type HtmlPreviewResponse,
 } from "../shared/html-preview.js";
+import { jsonRecord } from "../shared/json-record.js";
 import { isSupportedPromptImageMimeType } from "../shared/image-types.js";
 import {
   collectSessionResourceReferences,
@@ -35,10 +36,7 @@ import {
   stripResourceLocation,
 } from "../shared/resource-references.js";
 import { filesystemRelativePath } from "./filesystem-containment.js";
-import {
-  canonicalBase64DecodedSize,
-  decodeCanonicalBase64,
-} from "./image-content.js";
+import { canonicalBase64DecodedSize } from "./image-content.js";
 import { resolveUserPath } from "./paths.js";
 import {
   invalidateProjectFiles,
@@ -52,7 +50,11 @@ export interface ResourceContext {
   viewId: string;
   revision: number;
   cwd: string;
-  loadMessages(): Promise<unknown[]>;
+  loadMessages(): Promise<readonly unknown[]>;
+  loadHistoryImage(
+    entryId: string,
+    part: number,
+  ): Promise<{ block: unknown; messageIndex: number } | null>;
 }
 
 const RESOURCE_OPEN_FLAGS = constants.O_RDONLY | constants.O_NONBLOCK;
@@ -325,77 +327,55 @@ function kindFor(mimeType: string): ResourceKind {
   return "binary";
 }
 
-interface EmbeddedCitation {
-  messageIndex: number;
-  mimeType: string;
-  size: number;
-}
-
 interface ResourceCitationIndex {
   recent: SessionResourceReference[];
   citedPaths: Set<string>;
-  embedded: Map<string, EmbeddedCitation>;
 }
 
-function citationIndexKey(context: ResourceContext): string {
-  return JSON.stringify([context.sessionId, context.viewId, context.revision]);
-}
-
-function visitEmbeddedImages(
-  messages: unknown[],
-  visit: (reference: string, image: EmbeddedCitation, encoded: string) => void,
-  expectedReference?: string,
-): void {
-  messages.forEach((message, messageIndex) => {
-    if (!message || typeof message !== "object") return;
-    const record = message as Record<string, unknown>;
-    if (record.display === false || !Array.isArray(record.content)) return;
-    const entryId = record.__inspireHistoryEntryId;
-    const contextIndex = Number.isSafeInteger(record.__inspireMessageIndex)
-      ? Number(record.__inspireMessageIndex)
-      : messageIndex;
-    record.content.forEach((part, partIndex) => {
-      if (!part || typeof part !== "object") return;
-      const image = part as Record<string, unknown>;
-      if (
-        image.type !== "image" ||
-        typeof image.data !== "string" ||
-        typeof image.mimeType !== "string"
-      )
-        return;
-      if (!isSupportedPromptImageMimeType(image.mimeType)) return;
-      const reference =
-        typeof entryId === "string"
-          ? composerArtifactReference("image", entryId, partIndex)
-          : `pi-embedded://${contextIndex}/${partIndex}`;
-      if (expectedReference !== undefined && reference !== expectedReference)
-        return;
-      const size = canonicalBase64DecodedSize(image.data);
-      if (size === null || size === 0 || size > MAX_PROMPT_IMAGE_BYTES) return;
-      visit(
-        reference,
-        { messageIndex, mimeType: image.mimeType, size },
-        image.data,
-      );
-    });
-  });
+async function embeddedImage(context: ResourceContext, reference: string) {
+  const history = parseComposerArtifactReference("image", reference);
+  let image: { messageIndex: number; block: unknown } | null = null;
+  if (history) {
+    image = await context.loadHistoryImage(...history);
+  } else {
+    const coordinates = /^pi-embedded:\/\/(0|[1-9]\d*)\/(0|[1-9]\d*)$/.exec(
+      reference,
+    );
+    if (coordinates) {
+      const messageIndex = Number(coordinates[1]);
+      const message = jsonRecord((await context.loadMessages())[messageIndex]);
+      if (message?.display !== false && Array.isArray(message?.content))
+        image = {
+          messageIndex,
+          block: message.content[Number(coordinates[2])],
+        };
+    }
+  }
+  const block = jsonRecord(image?.block);
+  if (
+    image &&
+    block?.type === "image" &&
+    typeof block.data === "string" &&
+    typeof block.mimeType === "string" &&
+    isSupportedPromptImageMimeType(block.mimeType)
+  ) {
+    const size = canonicalBase64DecodedSize(block.data);
+    if (size && size <= MAX_PROMPT_IMAGE_BYTES)
+      return {
+        messageIndex: image.messageIndex,
+        data: block.data,
+        mimeType: block.mimeType,
+        size,
+      };
+  }
+  throw requestError("The embedded image is no longer available", 404);
 }
 
 function buildCitationIndex(
   context: ResourceContext,
-  messages: unknown[],
+  messages: readonly unknown[],
 ): ResourceCitationIndex {
-  // Retained history images are recall/preview authority, not additional
-  // visible transcript resources or external-path citations.
-  const resources = collectSessionResourceReferences(
-    messages.filter(
-      (message) =>
-        !message ||
-        typeof message !== "object" ||
-        typeof (message as Record<string, unknown>).__inspireHistoryEntryId !==
-          "string",
-    ),
-  );
+  const resources = collectSessionResourceReferences(messages);
   const recent: SessionResourceReference[] = [];
   const citedPaths = new Set<string>();
   let writes = 0;
@@ -417,11 +397,7 @@ function buildCitationIndex(
     }
   }
 
-  const embedded = new Map<string, EmbeddedCitation>();
-  visitEmbeddedImages(messages, (reference, image) =>
-    embedded.set(reference, image),
-  );
-  return { recent, citedPaths, embedded };
+  return { recent, citedPaths };
 }
 
 function referencedByIndex(
@@ -439,58 +415,37 @@ function referencedByIndex(
 export class ResourceStore {
   private readonly handles = new Map<string, ResolvedResource>();
   private readonly htmlPreviews = new Map<string, HtmlPreview>();
+  // One current observation per session. An older in-flight reader retains its own promise.
   private readonly citationIndexes = new Map<
     string,
     {
-      sessionId: string;
-      generation: number;
-      promise: Promise<ResourceCitationIndex>;
+      viewId: string;
+      revision: number;
+      index: Promise<ResourceCitationIndex>;
     }
   >();
-  private citationIndexGeneration = 0;
 
   private citationIndex(
     context: ResourceContext,
   ): Promise<ResourceCitationIndex> {
-    const key = citationIndexKey(context);
-    const cached = this.citationIndexes.get(key);
-    if (cached) {
-      this.citationIndexes.delete(key);
-      this.citationIndexes.set(key, cached);
-      return cached.promise;
+    const { sessionId, viewId, revision } = context;
+    const cached = this.citationIndexes.get(sessionId);
+    this.citationIndexes.delete(sessionId);
+    if (cached?.viewId === viewId && cached.revision === revision) {
+      this.citationIndexes.set(sessionId, cached);
+      return cached.index;
     }
-    const promise = context
+    const index = context
       .loadMessages()
       .then((messages) => buildCitationIndex(context, messages));
-    const entry = {
-      sessionId: context.sessionId,
-      generation: ++this.citationIndexGeneration,
-      promise,
-    };
-    this.citationIndexes.set(key, entry);
-    if (this.citationIndexes.size > MAX_CITATION_INDEXES) {
-      this.citationIndexes.delete(
-        this.citationIndexes.keys().next().value as string,
-      );
-    }
-    void promise.then(
-      () => {
-        if (this.citationIndexes.get(key) !== entry) return;
-        for (const [staleKey, stale] of this.citationIndexes) {
-          if (
-            staleKey !== key &&
-            stale.sessionId === context.sessionId &&
-            stale.generation < entry.generation
-          )
-            this.citationIndexes.delete(staleKey);
-        }
-      },
-      () => {
-        if (this.citationIndexes.get(key) === entry)
-          this.citationIndexes.delete(key);
-      },
-    );
-    return promise;
+    this.citationIndexes.set(sessionId, { viewId, revision, index });
+    if (this.citationIndexes.size > MAX_CITATION_INDEXES)
+      this.citationIndexes.delete(this.citationIndexes.keys().next().value!);
+    void index.catch(() => {
+      if (this.citationIndexes.get(sessionId)?.index === index)
+        this.citationIndexes.delete(sessionId);
+    });
+    return index;
   }
 
   /** Include the newest references and the most recent writes outside that page. */
@@ -504,16 +459,12 @@ export class ResourceStore {
     context: ResourceContext,
     references: string[],
   ): Promise<ResourceProbeResult[]> {
-    let index: Promise<ResourceCitationIndex> | null = null;
-    const getIndex = () => (index ??= this.citationIndex(context));
     return Promise.all(
       references.map(async (reference) => {
         try {
           const resource = await this.resolveCandidate(
             context,
             reference,
-            undefined,
-            getIndex,
           );
           return {
             reference,
@@ -579,13 +530,9 @@ export class ResourceStore {
     context: ResourceContext,
     reference: string,
     workspacePath?: string,
-    getIndex = () => this.citationIndex(context),
   ): Promise<ResourceCandidate> {
     if (isEmbeddedImageReference(reference)) {
-      const embedded = (await getIndex()).embedded.get(reference);
-      if (!embedded) {
-        throw requestError("The embedded image is no longer available", 404);
-      }
+      const embedded = await embeddedImage(context, reference);
       return {
         descriptor: {
           sessionId: context.sessionId,
@@ -622,7 +569,7 @@ export class ResourceStore {
     // authority and are loaded only when that authority is needed.
     let cited: Promise<boolean> | null = null;
     const isCited = () =>
-      (cited ??= getIndex().then((index) =>
+      (cited ??= this.citationIndex(context).then((index) =>
         referencedByIndex(index, context, reference),
       ));
     const lexicalWithin = await filesystemRelativePath(
@@ -782,9 +729,7 @@ export class ResourceStore {
     for (const [id, resource] of this.handles) {
       if (resource.descriptor.sessionId === sessionId) this.forgetHandle(id);
     }
-    for (const [key, entry] of this.citationIndexes) {
-      if (entry.sessionId === sessionId) this.citationIndexes.delete(key);
-    }
+    this.citationIndexes.delete(sessionId);
   }
 
   async createHtmlPreview(
@@ -886,20 +831,10 @@ export class ResourceStore {
     resource: ResolvedResource,
     context: ResourceContext,
   ): Promise<{ data: Buffer; mimeType: string }> {
-    const messages = await context.loadMessages();
-    let encoded = "";
-    let mimeType = "";
-    visitEmbeddedImages(
-      messages,
-      (_reference, image, value) => {
-        encoded = value;
-        mimeType = image.mimeType;
-      },
+    const { data, mimeType } = await embeddedImage(
+      context,
       resource.descriptor.reference,
     );
-    const data = decodeCanonicalBase64(encoded);
-    if (!data?.length)
-      throw requestError("The embedded image is no longer available", 404);
-    return { data, mimeType };
+    return { data: Buffer.from(data, "base64"), mimeType };
   }
 }

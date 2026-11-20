@@ -8,6 +8,7 @@ import {
   type PendingInput,
 } from "../../shared/contracts.js";
 import {
+  stageUpload,
   deferredSignal,
   disposeRuntimeFixture,
   fakeRuntime,
@@ -61,7 +62,7 @@ it.each(["Return", "Stop"] as const)(
   async (action) => {
     const f = await fixture({ running: false });
     const { runtime, worker, store } = f;
-    const image = await store.add(upload("original.png", "image/png"));
+    const image = await stageUpload(store, upload("original.png", "image/png"));
     worker.emit("event", { type: "compaction_start", reason: "auto" });
     worker.responseOverrides.set("get_state", {
       sessionId: "a",
@@ -160,7 +161,7 @@ it("keeps bounded Pending visible but requires a complete current queue for Copy
 it("fences a held image preparation after Stop has already settled", async () => {
   const f = await fixture();
   const { runtime, worker, store } = f;
-  const image = await store.add(upload("held.png", "image/png"));
+  const image = await stageUpload(store, upload("held.png", "image/png"));
   const waiting = deferredSignal();
   const release = deferredSignal();
   const hold = store.holdPendingImages.bind(store);

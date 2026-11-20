@@ -395,7 +395,6 @@ export function projectSessionTree(
   return {
     nodes,
     ...(leadingPrompt ? { leadingPrompt } : {}),
-    activePath: nodes.filter((node) => node.active).map((node) => node.id),
     truncated: start > 0,
     nextBefore: start > 0 ? nodes[0]!.id : null,
     routeLeafId,

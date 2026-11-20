@@ -1,3 +1,4 @@
+import { stageUpload } from "../../server/fixtures/runtime.js";
 import { randomUUID } from "node:crypto";
 import { access, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -23,7 +24,7 @@ const gif = Buffer.from(
 );
 function addImage(f: Awaited<ReturnType<typeof fixture>>, name: string) {
   const bytes = name.endsWith(".gif") ? gif : png;
-  return f.attachments.add({
+  return stageUpload(f.attachments, {
     originalname: name,
     mimetype: name.endsWith(".gif") ? "image/gif" : "image/png",
     size: bytes.length,
@@ -240,7 +241,8 @@ describe("native Pending recovery", () => {
       writeFile(outside, "outside this workspace"),
       writeFile(join(f.workspace, ".gitignore"), ".settings/\n"),
     ]);
-    const report = await f.attachments.add(
+    const report = await stageUpload(
+      f.attachments,
       upload("report.pdf", "application/pdf"),
     );
     const reportPath = join(
@@ -342,7 +344,10 @@ describe("native Pending recovery", () => {
 
     const first = await addImage(f, "first.gif");
     const second = await addImage(f, "second.png");
-    const notes = await f.attachments.add(upload("notes.txt", "text/plain"));
+    const notes = await stageUpload(
+      f.attachments,
+      upload("notes.txt", "text/plain"),
+    );
     const cleared = [
       f.api.prompt({
         ...f.delivery("Clear this"),

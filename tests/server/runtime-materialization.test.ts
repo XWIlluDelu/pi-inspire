@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AttachmentStore } from "../../server/attachments.js";
 import { type PiRpcProcess } from "../../server/pi-rpc.js";
 import { MAX_IDLE_WORKERS, RuntimeController } from "../../server/runtime.js";
-import { catalog } from "./fixtures/runtime.js";
+import { stageUpload, catalog } from "./fixtures/runtime.js";
 
 import {
   directories,
@@ -198,7 +198,7 @@ describe("new-session materialization", () => {
       });
 
       try {
-        const image = await fixture.attachments.add({
+        const image = await stageUpload(fixture.attachments, {
           originalname: "first.png",
           mimetype: "image/png",
           size: 3,

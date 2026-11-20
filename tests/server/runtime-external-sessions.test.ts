@@ -220,11 +220,11 @@ async function attachedRuntime(connect: ConnectExternalSession) {
   const session = record("a", fixtureWorkspace);
   await (await preview(session, [])).close();
   vi.stubEnv("PI_CODING_AGENT_SESSION_DIR", join(fixtureWorkspace, "previews"));
-  return runtimeFor(session)
-    .setExternalSessionPresence(async () => [null])
-    .setExternalSessionConnector(async (id, file, match, idleOnly) =>
+  return runtimeFor(session, {
+    externalLeaves: async () => [null],
+    connectExternalSession: async (id, file, match, idleOnly) =>
       idleOnly ? null : connect(id, file, match, idleOnly),
-    );
+  });
 }
 
 /** Opening shows the live Pi read-only; Take over attaches to it. */
@@ -321,15 +321,16 @@ describe("continue an externally owned Pi", () => {
     const presence = vi.fn(
       async (
         ..._args: Parameters<
-          Parameters<RuntimeController["setExternalSessionPresence"]>[0]
+          NonNullable<RuntimeControllerOptions["externalLeaves"]>
         >
       ): Promise<(string | null | undefined)[]> => ["u1"],
     );
-    const runtime = runtimeFor(session, { createProcess })
-      .setExternalSessionPresence(presence)
-      .setExternalSessionConnector(async (_id, _file, _match, idleOnly) =>
+    const runtime = runtimeFor(session, {
+      createProcess,
+      externalLeaves: presence,
+      connectExternalSession: async (_id, _file, _match, idleOnly) =>
         idleOnly ? native : null,
-      );
+    });
     const snapshot = () => runtime.snapshot("a");
     const send = () =>
       runtime.prompt({ sessionId: "a", message: "First input" });
@@ -419,13 +420,12 @@ describe("continue an externally owned Pi", () => {
     const session = await persistedRecord("a");
     await persistedRecord("b");
     let live = false;
-    const runtime = runtimeFor(session, { createProcess })
-      .setExternalSessionPresence(async (id) =>
-        live && id === "a" ? ["u1"] : [],
-      )
-      .setExternalSessionConnector(async (id, _file, _match, idleOnly) =>
+    const runtime = runtimeFor(session, {
+      createProcess,
+      externalLeaves: async (id) => (live && id === "a" ? ["u1"] : []),
+      connectExternalSession: async (id, _file, _match, idleOnly) =>
         live && id === "a" && !idleOnly ? f.native : null,
-      );
+    });
     const settled = vi.fn();
     runtime.on("event", (event) => {
       if (event.type === "agent_settled") settled(event);
@@ -496,11 +496,12 @@ describe("continue an externally owned Pi", () => {
         throw new Error("Pi did not attest the selected branch");
       });
     });
-    const runtime = runtimeFor(session, { createProcess })
-      .setExternalSessionPresence(presence)
-      .setExternalSessionConnector(async (_id, _file, _match, idleOnly) =>
+    const runtime = runtimeFor(session, {
+      createProcess,
+      externalLeaves: presence,
+      connectExternalSession: async (_id, _file, _match, idleOnly) =>
         idleOnly ? null : f.native,
-      );
+    });
     const send = (message: string, expectedViewId?: string) =>
       runtime.prompt({ sessionId: "a", message, expectedViewId });
     const active = async () => (await runtime.snapshot("a")).active!;
@@ -605,17 +606,17 @@ describe("continue an externally owned Pi", () => {
     const { createProcess } = workerFactory();
     let receiver: ExternalSessionConnection | null = current.native;
     const connect = vi.fn(async () => receiver);
-    const runtime = runtimeFor(session, { createProcess })
-      .setExternalSessionPresence(async () =>
+    const runtime = runtimeFor(session, {
+      createProcess,
+      externalLeaves: async () =>
         receiver === current.native
           ? ["native-current"]
           : receiver
             ? ["native-reply"]
             : [],
-      )
-      .setExternalSessionConnector(async (_id, _file, _match, idleOnly) =>
+      connectExternalSession: async (_id, _file, _match, idleOnly) =>
         idleOnly ? null : connect(),
-      );
+    });
     const outcomes = vi.fn();
     const events: string[] = [];
     runtime.on("task_outcome", outcomes);
@@ -762,9 +763,10 @@ describe("continue an externally owned Pi", () => {
       const runtime = runtimeFor(await persistedRecord("a"), {
         branchBridgeTimeoutMs: 15_000,
         deleteSessionRecord: remove,
-      })
-        .setExternalSessionPresence(async () => [null])
-        .setExternalSessionConnector(async () => f.native);
+        stopExternalSession: terminated,
+        externalLeaves: async () => [null],
+        connectExternalSession: async () => f.native,
+      });
       try {
         await openAttached(runtime, "a");
         const sending =
@@ -772,7 +774,6 @@ describe("continue an externally owned Pi", () => {
             ? runtime.prompt({ sessionId: "a", message: "Hold" })
             : runtime.abort("a");
         await entered.promise;
-        runtime.setExternalSessionTerminator(terminated);
         await runtime.deleteSessions(
           { scope: "session", sessionId: "a" },
           { hiddenSessionIds: ["a"], hiddenProjectCwds: [] },

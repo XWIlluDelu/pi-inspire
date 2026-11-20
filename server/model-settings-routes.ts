@@ -29,8 +29,7 @@ export function registerModelSettingsRoutes(
     >;
     modelSettings?: ModelSettingsService;
     providerAuth?: ProviderAuthService;
-    invalidateModels?: () => void;
-    modelMetadata?: ModelMetadataCatalog["read"];
+    modelMetadata?: ModelMetadataCatalog;
   },
 ): void {
   async function context({ sessionId, cwd }: ModelSettingsOwner) {
@@ -53,7 +52,7 @@ export function registerModelSettingsRoutes(
   }> {
     try {
       if (!owner.sessionId) {
-        const metadata = await deps.modelMetadata?.(owner.cwd, refresh);
+        const metadata = await deps.modelMetadata?.read(owner.cwd, refresh);
         return {
           models: metadata?.models ?? [],
           modelsWarning: metadata?.warning,
@@ -105,7 +104,7 @@ export function registerModelSettingsRoutes(
     const service = configuration();
     const owner = await context(query);
     await apply(service, owner.cwd);
-    deps.invalidateModels?.();
+    deps.modelMetadata?.invalidate();
     return savedConfiguration(
       () => readSettings(service, owner, refresh),
       "Saved. Model settings could not be refreshed.",
@@ -140,7 +139,6 @@ export function registerModelSettingsRoutes(
     state: import("../shared/model-settings.js").ProviderLoginAttempt;
     endpoint: AuthEndpoint | null;
   };
-  const authOwners = new Map<string, OwnedAttempt>();
   const authAttempts = new Map<string, OwnedAttempt>();
   const authWrites = new Map<string, Promise<ProviderAuthResult>>();
   async function dispatchAuth(
@@ -179,10 +177,9 @@ export function registerModelSettingsRoutes(
     if (attempt.state.status !== "pending" && attempt.endpoint === null) return;
     attempt.state = value;
     if (attempt.state.status !== "pending") {
-      if (attempt.state.status === "completed") deps.invalidateModels?.();
+      if (attempt.state.status === "completed")
+        deps.modelMetadata?.invalidate();
       attempt.endpoint = null;
-      if (authOwners.get(attempt.state.provider) === attempt)
-        authOwners.delete(attempt.state.provider);
       // A response can be lost after settlement. Keep a small receipt window,
       // independently of pending credential-write ownership and worker lifetime.
       const terminal = [...authAttempts.values()].filter(
@@ -246,20 +243,21 @@ export function registerModelSettingsRoutes(
     const write = previousWrite
       .catch(() => {})
       .then(async () => {
-        const previous = authOwners.get(provider);
+        const previous = [...authAttempts.values()].find(
+          (attempt) => attempt.endpoint && attempt.state.provider === provider,
+        );
         if (previous)
           await observe(previous, {
             operation: "cancel",
             id: previous.state.id,
           });
         const result = await selected.request(operation);
-        if (operation.operation === "logout") deps.invalidateModels?.();
+        if (operation.operation === "logout") deps.modelMetadata?.invalidate();
         if (operation.operation === "start") {
           if (!result || Array.isArray(result))
             throw requestError("Pi returned no authentication attempt", 502);
           const attempt = { state: result, endpoint: selected };
           authAttempts.set(attempt.state.id, attempt);
-          authOwners.set(provider, attempt);
           record(attempt, result);
         }
         return result;

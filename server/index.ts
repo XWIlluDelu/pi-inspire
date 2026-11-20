@@ -44,7 +44,6 @@ import { McpConfigService } from "./mcp-config.js";
 import { ModelMetadataCatalog } from "./model-metadata.js";
 import { ModelSettingsService } from "./model-settings.js";
 import { resolvePiInstallationIdentity } from "./pi-installation.js";
-import type { PiRpcProcess } from "./pi-rpc.js";
 import {
   DefaultPackageManager,
   getAgentDir,
@@ -60,7 +59,7 @@ import {
   ProviderAuthService,
 } from "./provider-auth.js";
 import { ResourceStore } from "./resources.js";
-import { RuntimeController, type RuntimeWorkerStatus } from "./runtime.js";
+import { RuntimeController } from "./runtime.js";
 import { createHostSessionCatalog } from "./session-catalog.js";
 import {
   connectExistingTerminalDaemon,
@@ -173,34 +172,27 @@ const attachControl: AttachControlRegistry = new AttachControlRegistry(
 const runtime: RuntimeController = new RuntimeController(catalog, attachments, {
   createProcess: (options) => herdr.createProcess(options),
   diagnostics,
-})
-  .setModelMetadataCatalog(modelMetadata)
-  .setExternalSessionConnector(
-    async (sessionId, sessionFile, match, idleOnly) => {
-      const instance = takeoverCandidate(
-        await attachControl.forSession(sessionId, sessionFile, {
-          includeStale: idleOnly,
-        }),
-        match,
-        idleOnly,
-      );
-      return instance
-        ? new AttachControlConnection(attachControl, instance)
-        : null;
-    },
-  )
-  .setExternalSessionTerminator((sessionId, sessionFile) =>
+  modelMetadata,
+  connectExternalSession: async (sessionId, sessionFile, match, idleOnly) => {
+    const instance = takeoverCandidate(
+      await attachControl.forSession(sessionId, sessionFile, {
+        includeStale: idleOnly,
+      }),
+      match,
+      idleOnly,
+    );
+    return instance
+      ? new AttachControlConnection(attachControl, instance)
+      : null;
+  },
+  stopExternalSession: (sessionId, sessionFile) =>
     attachControl.stopSession(sessionId, sessionFile),
-  )
-  .setExternalSessionPresence((sessionId, sessionFile, fresh, isAncestor) =>
+  externalLeaves: (sessionId, sessionFile, fresh, isAncestor) =>
     attachControl.branchLeaves(sessionId, sessionFile, {
       observe: !fresh,
       isAncestor,
     }),
-  )
-  .on("worker_status", (rpc: PiRpcProcess, status: RuntimeWorkerStatus) => {
-    herdr.updateWorkerStatus(rpc, status);
-  });
+});
 const sessionActivity = new PiSessionActivity({
   catalog,
   registry: attachControl,
@@ -285,10 +277,7 @@ const application = createInspireServer({
     }),
   ),
   updateCoordinator,
-  bootstrapModels: () => modelMetadata.peek(process.cwd())?.models ?? [],
-  invalidateModels: () => modelMetadata.invalidate(),
-  modelMetadata: (cwd: string, refresh?: boolean) =>
-    modelMetadata.read(cwd, refresh),
+  modelMetadata,
   modelSettings: new ModelSettingsService(),
   mcpConfig: new McpConfigService(),
   providerAuth: modelRuntime

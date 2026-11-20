@@ -1,3 +1,4 @@
+import { stageUpload } from "./fixtures/runtime.js";
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
@@ -200,9 +201,9 @@ describe("temporary uploads and durable delivered assets", () => {
 
   it("removes staged copies on shutdown and reloads the complete name of a delivered file", async () => {
     const { parent, root, store } = await fixture();
-    const abandoned = await store.add(upload());
+    const abandoned = await stageUpload(store, upload());
     const name = "文".repeat(100) + ".txt";
-    const delivered = await store.add(upload(name));
+    const delivered = await stageUpload(store, upload(name));
     const { files } = await store.resolveForPrompt([delivered.id]);
     expect(
       JSON.parse(await readFile(join(root, delivered.id + ".json"), "utf8"))
@@ -225,7 +226,7 @@ describe("temporary uploads and durable delivered assets", () => {
 
   it("does not hand a file to Pi when its durable handoff cannot be recorded", async () => {
     const { root, store } = await fixture();
-    const doc = await store.add(upload());
+    const doc = await stageUpload(store, upload());
     const metadata = join(root, doc.id + ".json");
     await rm(metadata);
     await mkdir(metadata);
@@ -244,7 +245,7 @@ describe("temporary uploads and durable delivered assets", () => {
     const failed = await Promise.allSettled([store.ready(), store.ready()]);
     expect(failed.every((result) => result.status === "rejected")).toBe(true);
     await rm(root);
-    await expect(store.add(upload())).resolves.toMatchObject({
+    await expect(stageUpload(store, upload())).resolves.toMatchObject({
       fileName: "notes.txt",
     });
   });

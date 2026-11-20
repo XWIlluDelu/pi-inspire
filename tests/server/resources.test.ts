@@ -34,7 +34,13 @@ async function workspace() {
 }
 
 function scope(cwd: string, revision = 1, viewId = "view-s1") {
-  return { sessionId: "s1", cwd, revision, viewId };
+  return {
+    sessionId: "s1",
+    cwd,
+    revision,
+    viewId,
+    loadHistoryImage: async () => null,
+  };
 }
 
 function context(
@@ -290,12 +296,16 @@ describe("ResourceStore", () => {
     const reference = "pi-embedded://3/0";
     const embedded = (data: string, mimeType: string) => ({
       role: "toolResult",
-      __inspireMessageIndex: 3,
       content: [{ type: "image", data, mimeType }],
     });
     const image = (text: string) => Buffer.from(text).toString("base64");
     const descriptor = await resources.resolve(
-      context(project, [embedded(image("old-image"), "image/png")]),
+      context(project, [
+        null,
+        null,
+        null,
+        embedded(image("old-image"), "image/png"),
+      ]),
       reference,
     );
     const resource = resources.get(
@@ -308,7 +318,12 @@ describe("ResourceStore", () => {
         resource,
         context(
           project,
-          [citation("replacement"), embedded(image("new-image"), "image/jpeg")],
+          [
+            citation("replacement"),
+            null,
+            null,
+            embedded(image("new-image"), "image/jpeg"),
+          ],
           2,
         ),
       ),
@@ -323,7 +338,11 @@ describe("ResourceStore", () => {
       [embedded(image("html"), "text/html")],
     ];
     for (const [offset, messages] of invalid.entries()) {
-      const current = context(project, messages, 3 + offset);
+      const current = context(
+        project,
+        [null, null, null, ...messages],
+        3 + offset,
+      );
       await expect(resources.resolve(current, reference)).rejects.toMatchObject(
         { status: 404 },
       );

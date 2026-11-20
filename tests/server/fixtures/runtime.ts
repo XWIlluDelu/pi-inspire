@@ -451,15 +451,14 @@ export function schedulingRuntime(options?: Parameters<typeof fakeRuntime>[0]) {
   return fakeRuntime({ openSessionProjection: preview, ...options });
 }
 
-export function deferredSignal(): {
-  promise: Promise<void>;
-  resolve: () => void;
-} {
-  let resolve!: () => void;
-  const promise = new Promise<void>((settle) => {
-    resolve = settle;
-  });
-  return { promise, resolve };
+export const deferredSignal = () => Promise.withResolvers<void>();
+
+export async function stageUpload(
+  store: AttachmentStore,
+  file: Express.Multer.File,
+) {
+  const [staged] = await store.addMany([file]);
+  return staged!;
 }
 
 export function upload(name: string, type: string): Express.Multer.File {

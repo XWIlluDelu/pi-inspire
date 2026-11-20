@@ -149,10 +149,11 @@ including header-only output. Source work and pending input continue while the c
 Appends and partial trailing writes beyond the admitted prefix stay outside the copy.
 
 Before publication, open the private projection, reserve the generated id/final path, and recheck
-the source view. Publish the complete JSONL atomically without replacement, reopen under that reservation, and attach a processless
-destination. Viewing the copy stays processless until a worker-backed action. Concurrent
-open/create/delete shares the reservation;
-catalog-driven opens wait for it. Destination attachment is independent of Host selection.
+the source view. Publish the complete JSONL atomically without replacement. Under the same
+reservation, verify the published file's identity and committed bytes, then attach the staged
+projection at its final path. Viewing the copy stays processless until a worker-backed action.
+Concurrent open, create and delete share the reservation. Catalog-driven opens wait for it.
+Destination attachment is independent of Host selection.
 
 The response always identifies the destination. Change automatic Host selection only if the source
 is still selected and no newer selection intent arose since dispatch, including while awaiting the

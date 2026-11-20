@@ -1,3 +1,4 @@
+import { stageUpload } from "../../server/fixtures/runtime.js";
 import { readFile } from "node:fs/promises";
 
 import { join } from "node:path";
@@ -63,12 +64,9 @@ describe("native prompt admission and extension dialogs", () => {
       // messages and attests them through the ordinary get_entries protocol.
       const internals = f.runtime as unknown as {
         slots: Map<string, RuntimeSlot>;
-        projectionCoordinator: {
-          reconcile(slot: RuntimeSlot, force: boolean): Promise<unknown>;
-        };
       };
       const slot = internals.slots.get(f.sessionId)!;
-      await internals.projectionCoordinator.reconcile(slot, true);
+      await slot.projection!.reconcile(true);
       release();
       await settled(f, 1);
       await vi.waitFor(() => {
@@ -120,7 +118,7 @@ describe("native prompt admission and extension dialogs", () => {
 
   it("settles handled input without agent events and preserves its delivered file", async () => {
     const f = await fixture(false);
-    const file = await f.attachments.add({
+    const file = await stageUpload(f.attachments, {
       originalname: "handled.txt",
       mimetype: "text/plain",
       size: 7,

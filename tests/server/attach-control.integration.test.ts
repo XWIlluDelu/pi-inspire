@@ -39,7 +39,7 @@ import {
   stubNativePiEnvironment,
 } from "./fixtures/native-pi.js";
 import { writeOfflineModels } from "./fixtures/offline-model.js";
-import { upload } from "./fixtures/runtime.js";
+import { stageUpload, upload } from "./fixtures/runtime.js";
 import { messageEntry, writeSession } from "./fixtures/session-jsonl.js";
 
 const cleanup: Array<() => Promise<unknown>> = [];
@@ -65,13 +65,12 @@ function replacementRuntime({
   const spawn = vi.fn(() => {
     throw new Error("An external session must reuse its live Pi");
   });
-  const services = hostServices(home, { cwd: root, createProcess: spawn });
-  const { runtime } = services;
-  runtime
-    .setExternalSessionPresence((id, file, fresh, isAncestor) =>
+  const services = hostServices(home, {
+    cwd: root,
+    createProcess: spawn,
+    externalLeaves: (id, file, fresh, isAncestor) =>
       registry.branchLeaves(id, file, { observe: !fresh, isAncestor }),
-    )
-    .setExternalSessionConnector(async (id, file, match, idleOnly) => {
+    connectExternalSession: async (id, file, match, idleOnly) => {
       const candidate = takeoverCandidate(
         await registry.forSession(id, file),
         match,
@@ -80,7 +79,9 @@ function replacementRuntime({
       return candidate
         ? new AttachControlConnection(registry, candidate)
         : null;
-    });
+    },
+  });
+  const { runtime } = services;
   cleanup.push(() => services.attachments.close());
   cleanup.push(() => runtime.close());
   return { ...services, spawn, cwd: root };
@@ -332,8 +333,8 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
     );
     imageUpload.size = imageUpload.buffer.length;
     const fileUpload = upload("notes.txt", "text/plain");
-    const image = await store.add(imageUpload);
-    const file = await store.add(fileUpload);
+    const image = await stageUpload(store, imageUpload);
+    const file = await stageUpload(store, fileUpload);
     const attachmentIds = [image.id, file.id];
     const uploadDirectory = await store.uploadDirectory();
     const beforeSend = new Set(await readdir(uploadDirectory));
@@ -751,9 +752,8 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
           ).toHaveLength(1);
           await rename(payload, trash);
         }),
-    }).setExternalSessionTerminator((id, path) =>
-      first.registry.stopSession(id, path),
-    );
+      stopExternalSession: (id, path) => first.registry.stopSession(id, path),
+    });
     cleanup.push(() => attachments.close());
     cleanup.push(() => runtime.close());
     await expect(

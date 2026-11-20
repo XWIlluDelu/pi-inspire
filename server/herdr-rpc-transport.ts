@@ -105,12 +105,7 @@ export class HerdrRpcTransport extends EventEmitter implements PiRpcTransport {
   private bridgePid: number | null = null;
   private granting: Promise<void> | null = null;
   private readonly sockets = new Set<Socket>();
-  private resolveHandshake!: () => void;
-  private rejectHandshake!: (error: Error) => void;
-  private readonly handshake = new Promise<void>((resolve, reject) => {
-    this.resolveHandshake = resolve;
-    this.rejectHandshake = reject;
-  });
+  private readonly handshake = Promise.withResolvers<void>();
 
   constructor(
     private readonly launch: PiRpcLaunch,
@@ -119,7 +114,7 @@ export class HerdrRpcTransport extends EventEmitter implements PiRpcTransport {
     super();
     // The bridge can connect before allocation returns. The ready promise
     // remains the caller's error boundary while its private lease is recorded.
-    void this.handshake.catch(() => undefined);
+    void this.handshake.promise.catch(() => undefined);
     this.ready = Promise.resolve().then(() => this.start());
   }
 
@@ -141,7 +136,7 @@ export class HerdrRpcTransport extends EventEmitter implements PiRpcTransport {
   }
 
   private fail(error: Error): void {
-    this.rejectHandshake(error);
+    this.handshake.reject(error);
     this.startup.abort();
     if (!this.stopping && this.connected) {
       this.connected = false;
@@ -208,7 +203,7 @@ export class HerdrRpcTransport extends EventEmitter implements PiRpcTransport {
       );
       this.assertStarting();
       this.maybeGrant(command.entry, ticket);
-      await this.handshake;
+      await this.handshake.promise;
     } finally {
       clearTimeout(timeout);
     }
@@ -294,7 +289,7 @@ export class HerdrRpcTransport extends EventEmitter implements PiRpcTransport {
     this.stdin.pipe(rpc);
     rpc.pipe(this.stdout);
     this.connected = true;
-    this.resolveHandshake();
+    this.handshake.resolve();
   }
 
   stop(graceful: boolean, diagnostic: PiRpcStopDiagnostic): Promise<void> {
@@ -302,7 +297,7 @@ export class HerdrRpcTransport extends EventEmitter implements PiRpcTransport {
     this.stopping = true;
     this.connected = false;
     this.startup.abort();
-    this.rejectHandshake(new Error("Herdr worker startup was stopped"));
+    this.handshake.reject(new Error("Herdr worker startup was stopped"));
     this.stopPromise = this.stopInside(graceful, diagnostic);
     return this.stopPromise;
   }

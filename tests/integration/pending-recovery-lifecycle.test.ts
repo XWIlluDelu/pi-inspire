@@ -1,3 +1,4 @@
+import { stageUpload } from "../server/fixtures/runtime.js";
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -72,7 +73,10 @@ describe("Pending intent and receipt lifecycle", () => {
   });
 
   it("restores a held Return into its original draft after selection and bootstrap", async () => {
-    const attachment = await f.attachments.add(upload("recovered.png", "image/png"));
+    const attachment = await stageUpload(
+      f.attachments,
+      upload("recovered.png", "image/png"),
+    );
     const recover = vi.spyOn(f.runtime, "recoverPending").mockResolvedValue({
       steering: ["first handoff"],
       followUp: [],

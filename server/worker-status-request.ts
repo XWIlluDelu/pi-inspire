@@ -1,4 +1,13 @@
 import {
+  PROVIDER_AUTH_LIMIT,
+  PROVIDER_AUTH_SUFFIX,
+  type ProviderAuthOperation,
+  type ProviderAuthResult,
+} from "../shared/provider-auth-bridge.js";
+import { requestError } from "./request-error.js";
+import {
+  MODEL_REFRESH_SUFFIX,
+  MODEL_REFRESH_TIMEOUT_MS,
   BRANCH_BRIDGE_MAX_ARGUMENT_BYTES,
   BRANCH_BRIDGE_MAX_RESULT_BYTES,
   decodeBranchBridgeJson,
@@ -112,4 +121,81 @@ export async function requestWorkerStatus(
   } finally {
     unwatch();
   }
+}
+
+/** A single-reply command must produce exactly one matching packet before its RPC receipt. */
+export async function workerStatusReply(
+  rpc: PiRpcProcess,
+  bridge: BranchBridgeIdentity,
+  sessionId: string,
+  options: StatusRequest,
+  missing = options.malformedError,
+): Promise<Record<string, unknown>> {
+  let reply: Record<string, unknown> | undefined;
+  await requestWorkerStatus(rpc, bridge, sessionId, options, (packet) => {
+    if (reply) throw options.malformedError;
+    reply = packet;
+  });
+  if (!reply) throw missing;
+  return reply;
+}
+
+export async function refreshWorkerCatalog(
+  rpc: PiRpcProcess,
+  bridge: BranchBridgeIdentity,
+  sessionId: string,
+) {
+  const malformed = new Error("Malformed model refresh result");
+  const { ok, warning } = await workerStatusReply(
+    rpc,
+    bridge,
+    sessionId,
+    {
+      suffix: MODEL_REFRESH_SUFFIX,
+      maxArgumentBytes: 4_096,
+      timeoutMs: MODEL_REFRESH_TIMEOUT_MS + 5_000,
+      malformedError: malformed,
+    },
+    new Error("Pi did not confirm model refresh"),
+  );
+  if (
+    typeof ok !== "boolean" ||
+    (warning !== undefined &&
+      (typeof warning !== "string" || warning.length > 300))
+  )
+    throw malformed;
+  if (!ok) throw new Error(warning ?? "Model refresh failed");
+  return warning;
+}
+
+export async function requestWorkerAuth(
+  rpc: PiRpcProcess,
+  bridge: BranchBridgeIdentity,
+  sessionId: string,
+  operation: ProviderAuthOperation,
+): Promise<ProviderAuthResult> {
+  const malformed = requestError(
+    "Pi returned an invalid authentication response",
+    409,
+  );
+  const packet = await workerStatusReply(
+    rpc,
+    bridge,
+    sessionId,
+    {
+      suffix: PROVIDER_AUTH_SUFFIX,
+      argument: operation,
+      maxArgumentBytes: PROVIDER_AUTH_LIMIT,
+      maxResultBytes: PROVIDER_AUTH_LIMIT,
+      malformedError: malformed,
+    },
+    requestError("Pi did not confirm this authentication operation", 409),
+  );
+  if (
+    !Object.hasOwn(packet, "result") ||
+    (packet.error !== undefined && typeof packet.error !== "string")
+  )
+    throw malformed;
+  if (packet.error) throw requestError(packet.error, 409);
+  return packet.result as ProviderAuthResult;
 }

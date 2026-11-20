@@ -14,7 +14,7 @@ import {
 import type { PiRpcProcess } from "./pi-rpc.js";
 import { requestError } from "./request-error.js";
 import type { BranchBridgeIdentity } from "./runtime-slot.js";
-import { requestWorkerStatus } from "./worker-status-request.js";
+import { workerStatusReply } from "./worker-status-request.js";
 
 const toolLoadout = z.object({
   tools: z.array(
@@ -35,30 +35,18 @@ export async function requestWorkerToolLoadout(
   sessionId: string,
   change?: ToolLoadoutChange,
 ): Promise<ToolLoadoutSnapshot> {
-  let result: z.infer<typeof toolLoadout> | "unavailable" | undefined;
-  const malformed = new Error("Pi returned an invalid tool loadout");
+  let result: z.infer<typeof toolLoadout> | "unavailable";
   try {
-    await requestWorkerStatus(
-      worker,
-      bridge,
-      sessionId,
-      {
-        suffix: TOOL_LOADOUT_SUFFIX,
-        ...(change
-          ? { argument: { name: change.name, active: change.active } }
-          : {}),
-        maxResultBytes: TOOL_LOADOUT_PACKET_LIMIT,
-        malformedError: malformed,
-      },
-      (value) => {
-        if (result) throw malformed;
-        result =
-          value.unavailable === true && change
-            ? "unavailable"
-            : toolLoadout.parse(value);
-      },
-    );
-    if (!result) throw malformed;
+    const packet = await workerStatusReply(worker, bridge, sessionId, {
+      suffix: TOOL_LOADOUT_SUFFIX,
+      argument: change && { ...change },
+      maxResultBytes: TOOL_LOADOUT_PACKET_LIMIT,
+      malformedError: new Error("Pi returned an invalid tool loadout"),
+    });
+    result =
+      packet.unavailable === true && change
+        ? "unavailable"
+        : toolLoadout.parse(packet);
   } catch {
     // Pi may have applied the change before the receipt was lost. Keep the
     // worker intact and require a new observation before another change.

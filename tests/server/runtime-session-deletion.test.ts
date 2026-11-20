@@ -93,11 +93,11 @@ describe("runtime session deletion", () => {
   ] as const)(
     "does not stop or move any target with %s at Hidden preflight",
     async (cause) => {
+      const stop = vi.fn(async () => {});
       const f = await fixture({
+        stopExternalSession: stop,
         catalogFailure: cause === "omitted member" ? undefined : cause,
       });
-      const stop = vi.fn(async () => {});
-      f.runtime.setExternalSessionTerminator(stop);
       await f.source.refresh();
       const [a, , c] = f.records;
       if (cause === "missing file") await rm(c!.path);
@@ -178,7 +178,22 @@ describe("runtime session deletion", () => {
   it.each(["complete", "partial"] as const)(
     "clears the reviewed Hidden union with a %s outcome",
     async (mode) => {
-      const f = await fixture();
+      const finalEntry = "Still the same session";
+      const f = await fixture({
+        stopExternalSession: async (id, path) => {
+          if (id === "a")
+            await appendFile(
+              path,
+              jsonl({
+                type: "session_info",
+                id: "name",
+                parentId: "u1",
+                timestamp: new Date().toISOString(),
+                name: finalEntry,
+              }),
+            );
+        },
+      });
       const [a, b, c, other] = f.records;
       await f.runtime.openSession("a");
       await startWorker(f.runtime);
@@ -192,20 +207,6 @@ describe("runtime session deletion", () => {
       await f.runtime.openSession("other");
       await startWorker(f.runtime, "other");
       await f.runtime.openSession("a");
-      const finalEntry = "Still the same session";
-      f.runtime.setExternalSessionTerminator(async (id, path) => {
-        if (id === "a")
-          await appendFile(
-            path,
-            jsonl({
-              type: "session_info",
-              id: "name",
-              parentId: "u1",
-              timestamp: new Date().toISOString(),
-              name: finalEntry,
-            }),
-          );
-      });
       f.trash.mockImplementation(async (payload, original) => {
         expect(aWorker.stops).toBe(1);
         expect(f.workers[1]!.stops).toBe(0);
@@ -247,9 +248,11 @@ describe("runtime session deletion", () => {
       const move = vi.fn(async () => {
         throw new Error("Trash unavailable");
       });
-      const f = await fixture({ deleteSessionRecord: move });
-      f.runtime.setExternalSessionTerminator(async () => {
-        if (failure === "Pi still alive") throw new Error(failure);
+      const f = await fixture({
+        deleteSessionRecord: move,
+        stopExternalSession: async () => {
+          if (failure === "Pi still alive") throw new Error(failure);
+        },
       });
       await f.runtime.openSession("a");
       await startWorker(f.runtime);

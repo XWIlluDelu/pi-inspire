@@ -15,7 +15,6 @@ import {
 import {
   boundedExtensionStatus,
   type ExtensionDisplay,
-  type ExtensionUiRequest,
   isBusyRunState,
   MAX_EXTENSION_DISPLAYS,
   MAX_EXTENSION_KEY_CHARS,
@@ -42,7 +41,11 @@ import type { PiRpcProcess } from "./pi-rpc.js";
 import { requestError } from "./request-error.js";
 import { exactPendingInput } from "./runtime-pending.js";
 import type { RuntimeSlot } from "./runtime-slot.js";
-import type { ReducedAssistantDelta } from "./runtime-stream-budget.js";
+import type { RuntimeBashController } from "./runtime-bash.js";
+import type { WorkerCheckpointReader } from "./runtime-worker-view.js";
+import type { RuntimeLiveTail } from "./runtime-live-tail.js";
+import type { RuntimeExtensionUiController } from "./runtime-extension-ui.js";
+import { projectRuntimeValue } from "./safe-projection.js";
 import { ToolArgumentStream } from "./tool-argument-stream.js";
 
 const STREAM_REVISION_FIELD = "__inspireStreamRevision";
@@ -74,26 +77,14 @@ const PI_STARTUP_RESPONSE_UI_ERROR =
   "Pi startup cannot accept a response-bearing extension UI request before RPC startup completes";
 
 interface RuntimeEventControllerHost {
-  updateBash(slot: RuntimeSlot, event: Record<string, unknown>): boolean;
+  bash: Pick<RuntimeBashController, "update">;
+  checkpoints: Pick<WorkerCheckpointReader, "observe" | "refresh">;
+  liveTail: Pick<
+    RuntimeLiveTail,
+    "activeAssistantOverlayMessage" | "updateOverlay"
+  >;
+  extensionUi: Pick<RuntimeExtensionUiController, "add">;
   finishTask(slot: RuntimeSlot, outcome: TaskOutcome | null): void;
-  checkpoint(
-    slot: RuntimeSlot,
-    rpc: PiRpcProcess,
-    record: Record<string, unknown>,
-  ): boolean;
-  refreshCheckpoint(slot: RuntimeSlot): void;
-  activeAssistantOverlayMessage(slot: RuntimeSlot): unknown;
-  updateOverlay(
-    slot: RuntimeSlot,
-    message: unknown,
-    phase: "start" | "update" | "end",
-    delta?: ReducedAssistantDelta,
-  ): unknown;
-  addPendingExtensionUi(
-    slot: RuntimeSlot,
-    event: unknown,
-    rpc: PiRpcProcess,
-  ): ExtensionUiRequest | null;
   invalidateCatalog(): void;
   scheduleIdleWorkerEviction(): void;
   emitSlotEvent(slot: RuntimeSlot, event: unknown): void;
@@ -107,7 +98,6 @@ interface RuntimeEventControllerHost {
   ): ProjectionConflict;
   stopWriter(slot: RuntimeSlot): Promise<void>;
   logRuntimeError(sessionId: string, error: unknown, source?: string): void;
-  safeProjection(value: unknown): unknown;
 }
 
 /** Owns the Pi event boundary: persistence provenance is recorded before
@@ -230,7 +220,7 @@ export class RuntimeEventController {
         lines: [...widgetLines] as string[],
       };
     } else {
-      const projected = this.host.safeProjection(record);
+      const projected = projectRuntimeValue(record);
       const encoded = JSON.stringify(projected);
       const payload =
         Buffer.byteLength(encoded) <= MAX_EXTENSION_DISPLAY_PAYLOAD_BYTES
@@ -270,7 +260,7 @@ export class RuntimeEventController {
         slot.toolActivity,
         record.parentToolCallId,
         childCallFromEvent(
-          this.host.safeProjection(record) as Record<string, unknown>,
+          projectRuntimeValue(record) as Record<string, unknown>,
         ),
       );
     const existing = slot.toolActivity[id];
@@ -339,7 +329,8 @@ export class RuntimeEventController {
           typeof record.message === "object" &&
           !Array.isArray(record.message),
       );
-      const previousMessage = this.host.activeAssistantOverlayMessage(slot);
+      const previousMessage =
+        this.host.liveTail.activeAssistantOverlayMessage(slot);
       let message = record.message;
       if (record.type === "message_update" && !suppliedCompleteMessage) {
         const delta = record.assistantMessageEvent as
@@ -404,7 +395,7 @@ export class RuntimeEventController {
                 ? Number(previousRevision) + 1
                 : 0
             : null;
-        const projectedMessage = this.host.updateOverlay(
+        const projectedMessage = this.host.liveTail.updateOverlay(
           slot,
           streamRevision === null
             ? message
@@ -493,7 +484,7 @@ export class RuntimeEventController {
       case "bash_execution_update":
         // Only the matching id-tagged native request owns these deltas. Do not
         // expose raw unbounded chunks from unrelated extension executions.
-        this.host.updateBash(slot, record);
+        this.host.bash.update(slot, record);
         return;
       case "extension_ui_request": {
         if (
@@ -518,7 +509,7 @@ export class RuntimeEventController {
             return;
           slot.extensionStatuses = {};
           slot.extensionDisplays = [];
-          this.host.refreshCheckpoint(slot);
+          this.host.checkpoints.refresh(slot);
           forwardedEvent = {
             type: "extension_ui_request",
             id: record.id,
@@ -530,7 +521,7 @@ export class RuntimeEventController {
           break;
         }
         const owned = { ...record, sessionId: slot.id };
-        const pending = this.host.addPendingExtensionUi(slot, owned, rpc);
+        const pending = this.host.extensionUi.add(slot, owned, rpc);
         const statusMethod = record.method === "setStatus";
         this.updateExtensionStatus(slot, owned);
         const displayChanged = this.updateExtensionDisplay(slot, owned);
@@ -710,7 +701,7 @@ export class RuntimeEventController {
       record.type === "agent_settled" ||
       (record.type === "message_end" && !isBusyRunState(slot.runState))
     )
-      this.host.refreshCheckpoint(slot);
+      this.host.checkpoints.refresh(slot);
   }
 
   private rejectUnsupportedStartupUi(
@@ -762,7 +753,7 @@ export class RuntimeEventController {
     )
       slot.manualCompaction.aborted = record.aborted === true;
     if (record.type === "entry_appended") {
-      if (!isBusyRunState(slot.runState)) this.host.refreshCheckpoint(slot);
+      if (!isBusyRunState(slot.runState)) this.host.checkpoints.refresh(slot);
       return;
     }
     const handle = () =>
@@ -848,7 +839,7 @@ export class RuntimeEventController {
       ].includes(record.statusKey as string)
     )
       return;
-    if (this.host.checkpoint(slot, rpc, record)) return;
+    if (this.host.checkpoints.observe(slot, rpc, record)) return;
     if (this.rejectUnsupportedStartupUi(slot, rpc, record)) return;
     this.dispatchNativeEvent(slot, rpc, event, record);
   }
