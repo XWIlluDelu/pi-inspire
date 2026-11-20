@@ -80,13 +80,17 @@ afterEach(async () => {
 });
 
 describe("ResourceStore", () => {
-  it("keeps the newest ordered citation index when an older transcript finishes late", async () => {
-    const { project } = await workspace();
+  it("keeps full citation authority behind the bounded list when an older read finishes late", async () => {
+    const { root, project } = await workspace();
+    const outside = join(root, "outside.md");
+    const reference = pathToFileURL(outside).href;
+    await writeFile(outside, "An older citation");
     const older = Promise.withResolvers<unknown[]>();
     const loadOlder = vi.fn(() => older.promise);
     const current = {
       ...scope(project, 8),
       loadMessages: vi.fn(async () => [
+        citation(`[Outside](${reference})`),
         {
           role: "assistant",
           content: [
@@ -117,7 +121,9 @@ describe("ResourceStore", () => {
     });
     older.resolve([citation("See \`older.md\`.")]);
     await expect(pending).resolves.toMatchObject([{ reference: "older.md" }]);
-    await resources.probe(current, ["file-19.md", "file-0.md"]);
+    await expect(resources.probe(current, [reference])).resolves.toEqual([
+      { reference, availability: "available" },
+    ]);
     await expect(resources.list(current)).resolves.toEqual(listed);
     expect(current.loadMessages).toHaveBeenCalledOnce();
     expect(loadOlder).toHaveBeenCalledOnce();

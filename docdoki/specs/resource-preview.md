@@ -139,9 +139,9 @@ citations. Remote URLs stay external, including paths inside their query strings
   canonical workspace, and exactly one immediate or lazy message source. Contained workspace reads
   do not load the transcript; citation and embedded-image authorization load it on demand.
 
-The Host derives a complete ordered reference index independently of transcript pagination. Lazy
-message reads recheck their slot, view, and revision after reconciliation. Resources address that
-session slot, never the Host's last global selection, so one browser cannot retarget another's reads.
+The Host derives complete citation authority independently of transcript pagination and caches
+only the Recent list's rows for display. Lazy message reads recheck the addressed slot, view,
+and revision after reconciliation.
 
 ### File handles and content
 

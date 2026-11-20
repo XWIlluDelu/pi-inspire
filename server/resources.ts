@@ -345,7 +345,7 @@ interface EmbeddedCitation {
 }
 
 interface ResourceCitationIndex {
-  resources: SessionResourceReference[];
+  recent: SessionResourceReference[];
   citedPaths: Set<string>;
   embedded: Map<string, EmbeddedCitation>;
 }
@@ -409,8 +409,18 @@ function buildCitationIndex(
           "string",
     ),
   );
+  const recent: SessionResourceReference[] = [];
   const citedPaths = new Set<string>();
+  let writes = 0;
   for (const resource of resources) {
+    // Keep the newest page and enough older writes to fill the output list.
+    if (
+      recent.length < MAX_RESOURCE_LIST_PAGE_SIZE ||
+      (resource.writes && writes < MAX_RESOURCE_LIST_PAGE_SIZE)
+    ) {
+      recent.push(resource);
+      if (resource.writes) writes++;
+    }
     if (!resource.reference || resource.reference.startsWith("pi-embedded://"))
       continue;
     try {
@@ -424,7 +434,7 @@ function buildCitationIndex(
   visitEmbeddedImages(messages, (reference, image) =>
     embedded.set(reference, image),
   );
-  return { resources, citedPaths, embedded };
+  return { recent, citedPaths, embedded };
 }
 
 function referencedByIndex(
@@ -498,17 +508,7 @@ export class ResourceStore {
 
   /** Include the newest references and the most recent writes outside that page. */
   async list(context: ResourceContext): Promise<SessionResourceReference[]> {
-    const index = await this.citationIndex(context);
-    const recent = index.resources.slice(0, MAX_RESOURCE_LIST_PAGE_SIZE);
-    const remaining =
-      MAX_RESOURCE_LIST_PAGE_SIZE -
-      recent.filter(({ writes }) => writes).length;
-    return recent.concat(
-      index.resources
-        .slice(recent.length)
-        .filter(({ writes }) => writes)
-        .slice(0, remaining),
-    );
+    return (await this.citationIndex(context)).recent.slice();
   }
 
   /** Check a bounded reference set without retaining content handles. Every
