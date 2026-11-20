@@ -1,6 +1,7 @@
 import { jsonRecord } from "../shared/json-record";
 import type { AppState } from "./app-state";
 import type { ResourceFileTab } from "./resource-preview";
+import { sessionValue, setSessionValue } from "./session-storage";
 
 // Browser-tab-local, origin-scoped navigation metadata, like composer drafts.
 // Host process epochs may change on restart; paths are reauthorized on each read.
@@ -45,19 +46,14 @@ type SavedWorkbench = Pick<
 
 function read(key: string): unknown {
   try {
-    return JSON.parse(window.sessionStorage.getItem(key) ?? "null");
+    return JSON.parse(sessionValue(key) ?? "null");
   } catch {
     return null;
   }
 }
 
 function write(key: string, value: unknown): void {
-  try {
-    if (value === null) window.sessionStorage.removeItem(key);
-    else window.sessionStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    // Refused or full storage must not interrupt ordinary navigation.
-  }
+  setSessionValue(key, JSON.stringify(value));
 }
 
 function path(value: unknown): value is string {
@@ -313,5 +309,5 @@ export function readFileReading(
 }
 
 export function forgetFileReading(key: string | null, reference: string): void {
-  if (key) write(readingKey(key, reference), null);
+  if (key) setSessionValue(readingKey(key, reference), null);
 }
