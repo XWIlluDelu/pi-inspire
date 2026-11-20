@@ -315,6 +315,19 @@ describe("ConnectionController", () => {
     ]);
     host.applyEvent.mockClear();
 
+    // An overlap followed by a gap can have the correct final count but wrong text.
+    const repeated = deltaBatch("assistant-a", "r", 1);
+    const skipped = deltaBatch("assistant-a", "s", 3);
+    socket.emit(repeated);
+    socket.emit(skipped);
+    socket.emit(end);
+    expect(host.applyEvent.mock.calls.map(([event]) => event)).toEqual([
+      repeated,
+      skipped,
+      end,
+    ]);
+    host.applyEvent.mockClear();
+
     const limit = MAX_ASSISTANT_STREAM_BATCH_EVENTS;
     const full = deltaBatch("assistant-b", "a".repeat(limit));
     const continuation = deltaBatch("assistant-b", "b", limit);
