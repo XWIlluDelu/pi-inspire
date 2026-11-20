@@ -42,23 +42,22 @@ export interface TerminalService {
 
 /** Initialize only on demand. Connection failures may be retried; dispatched work never is. */
 export class TerminalConnection {
-  private pending: Promise<TerminalService> | null = null;
+  private connection: Promise<TerminalService> | null;
   private closing: Promise<void> | null = null;
 
   constructor(
     private readonly connect: () => Promise<TerminalService>,
-    private service: TerminalService | null = null,
-  ) {}
+    service: TerminalService | null = null,
+  ) {
+    this.connection = service ? Promise.resolve(service) : null;
+  }
 
   close(): Promise<void> {
-    if (this.closing) return this.closing;
-    this.closing = (async () => {
-      await this.pending?.catch(() => {});
-      const service = this.service;
-      this.service = null;
-      await service?.close();
-    })();
-    return this.closing;
+    return (this.closing ??=
+      this.connection?.then(
+        (service) => service.close(),
+        () => {},
+      ) ?? Promise.resolve());
   }
 
   private closedError(): TerminalServiceError {
@@ -72,33 +71,19 @@ export class TerminalConnection {
   async run<Result>(
     operation: (service: TerminalService) => Result | Promise<Result>,
   ): Promise<Result> {
-    const service = await this.connectOnce();
     if (this.closing) throw this.closedError();
-    return operation(service);
-  }
-
-  private async connectOnce(): Promise<TerminalService> {
-    if (this.closing) throw this.closedError();
-    if (this.service) return this.service;
-    if (this.pending) return this.pending;
-    const pending: Promise<TerminalService> = Promise.resolve()
+    this.connection ??= Promise.resolve()
       .then(() => {
         if (this.closing) throw this.closedError();
         return this.connect();
       })
-      .then(async (service) => {
-        if (this.closing) {
-          await service.close();
-          throw this.closedError();
-        }
-        this.service = service;
-        return service;
-      })
-      .finally(() => {
-        if (this.pending === pending) this.pending = null;
+      .catch((error) => {
+        this.connection = null;
+        throw error;
       });
-    this.pending = pending;
-    return pending;
+    const service = await this.connection;
+    if (this.closing) throw this.closedError();
+    return operation(service);
   }
 }
 

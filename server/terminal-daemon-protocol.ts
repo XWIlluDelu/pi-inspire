@@ -51,8 +51,8 @@ function mutation(
   return terminal.operate(operation.data, observeOnly);
 }
 
-/** Both transports use these service calls. Only the IPC side decodes its request envelope. */
-export const terminalDaemonMethods = {
+/** IPC decodes untrusted daemon requests before invoking the typed service. */
+const terminalDaemonMethods = {
   async ping(terminal: TerminalService) {
     return {
       protocolVersion: TERMINAL_DAEMON_PROTOCOL_VERSION,

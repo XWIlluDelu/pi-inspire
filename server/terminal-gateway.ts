@@ -17,7 +17,6 @@ import { maintainBrowserSockets, terminateUpgradedSockets } from "./browser-sock
 import { jsonRoute } from "./json-route.js";
 import { settleOperation } from "./operation-receipts.js";
 import { requestError } from "./request-error.js";
-import { terminalDaemonMethods } from "./terminal-daemon-protocol.js";
 import {
   type TerminalAttachment,
   type TerminalConnection,
@@ -69,7 +68,7 @@ export function createTerminalGateway(
   app.get(TERMINAL_OPERATIONS_PATH, async (_request, response) => {
     response.set("Cache-Control", "no-store");
     response.json({
-      epoch: (await terminal(terminalDaemonMethods.ping)).operationEpoch,
+      epoch: await terminal((service) => service.operationEpoch()),
     });
   });
   app.post(TERMINAL_OPERATIONS_PATH, async (request, response) => {
@@ -92,9 +91,7 @@ export function createTerminalGateway(
       terminalReceiptIdentity(operation),
       async () =>
         (await terminal((service) =>
-          terminalDaemonMethods[observeOnly ? "observeOperation" : "operate"](
-            service, operation,
-          ),
+          service.operate(operation, observeOnly),
         )) ?? null,
       ({ code, status }) =>
         status < 400 ||
@@ -112,12 +109,10 @@ export function createTerminalGateway(
     response.json(receipt);
   });
   jsonRoute(app, routes.terminals, ({ query }) =>
-    terminal((service) =>
-      terminalDaemonMethods.getCatalog(service, { projectCwd: query.cwd }),
-    ),
+    terminal((service) => service.list(query.cwd)),
   );
   jsonRoute(app, routes.terminalSettings, () =>
-    terminal(terminalDaemonMethods.getSettings),
+    terminal((service) => service.getSettings()),
   );
   jsonRoute(
     app,
