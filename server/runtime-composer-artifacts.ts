@@ -1,5 +1,6 @@
 import { realpath, stat } from "node:fs/promises";
 import { resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { parseComposerArtifactReference } from "../shared/composer-artifact-references.js";
 import {
   MAX_ATTACHMENT_FILE_BYTES,
@@ -30,33 +31,6 @@ interface PromptArtifacts {
   files: AttachmentContextFile[];
   fileBytes: number;
   projectFiles: string[];
-}
-
-function equalItems<T>(
-  left: readonly T[],
-  right: readonly T[],
-  equals: (a: T, b: T) => boolean,
-): boolean {
-  return (
-    left.length === right.length &&
-    left.every((value, index) => equals(value, right[index]!))
-  );
-}
-
-function samePromptArtifacts(
-  left: PromptArtifacts,
-  right: PromptArtifacts,
-): boolean {
-  return (
-    left.fileBytes === right.fileBytes &&
-    equalItems(
-      left.images,
-      right.images,
-      (a, b) => a.mimeType === b.mimeType && a.data === b.data,
-    ) &&
-    equalItems(left.files, right.files, (a, b) => a.path === b.path) &&
-    equalItems(left.projectFiles, right.projectFiles, (a, b) => a === b)
-  );
 }
 
 function historyUserContent(
@@ -227,10 +201,7 @@ export async function revalidateProjectFiles(
       { cause: error },
     );
   }
-  if (
-    current.length !== expected.length ||
-    current.some((path, index) => path !== expected[index])
-  ) {
+  if (!isDeepStrictEqual(current, expected)) {
     throw requestError(
       "A selected project file changed before prompt delivery",
       409,
@@ -279,7 +250,7 @@ export async function preparePiPrompt(
     request,
     attachments,
   );
-  if (earlierHistory && !samePromptArtifacts(history, earlierHistory))
+  if (earlierHistory && !isDeepStrictEqual(history, earlierHistory))
     throw requestError(
       "A recalled attachment changed before prompt delivery",
       409,

@@ -1,3 +1,4 @@
+import { isPiRpcOutcomeUnknown } from "./pi-rpc.js";
 import type {
   ModelCatalog as NativeModelCatalog,
   ModelSelection as NativeModelSelection,
@@ -467,11 +468,15 @@ export class RuntimeExternalSessions {
     this.host.released(slot);
   }
 
-  bindPrompt(slot: RuntimeSlot) {
+  bindPrompt(
+    slot: RuntimeSlot,
+    request: PromptRequest,
+    epoch: number,
+    assertView: () => void,
+  ) {
     const connection = this.connections.get(slot);
-    if (!connection) return undefined;
-    return (request: PromptRequest, epoch: number, assertView: () => void) =>
-      this.prompt(slot, connection, request, epoch, assertView);
+    if (connection)
+      return () => this.prompt(slot, connection, request, epoch, assertView);
   }
 
   private async prompt(
@@ -516,9 +521,8 @@ export class RuntimeExternalSessions {
       );
     const originalIds = request.attachmentIds ?? [];
     const input = await stagePromptInput(slot, request, this.attachments);
-    const copied: string[] = [];
-    let delivered = false;
-    let uncertain = false;
+    let copied: string[] = [];
+    let outcome: "rejected" | "accepted" | "unknown" = "rejected";
     try {
       const { fullMessage, images } = await preparePiPrompt(
         slot,
@@ -531,7 +535,7 @@ export class RuntimeExternalSessions {
       // lifetime from the editor's original upload handles.
       const transportImages =
         await this.attachments.prepareTransportImages(images);
-      copied.push(...transportImages.map((image) => image.id));
+      copied = transportImages.map((image) => image.id);
       const beforeSend = () => {
         assertView();
         if (
@@ -562,16 +566,14 @@ export class RuntimeExternalSessions {
             : undefined,
           connection.state.leafId,
         );
-        delivered = true;
+        outcome = "accepted";
         if (this.connections.get(slot) === connection) {
           await this.host
             .reconcile(slot, false)
             .catch((error) => this.host.log(slot, error));
         }
       } catch (error) {
-        uncertain = Boolean(
-          (error as { outcomeUnknown?: boolean })?.outcomeUnknown,
-        );
+        if (isPiRpcOutcomeUnknown(error)) outcome = "unknown";
         if (
           this.connections.get(slot) === connection &&
           slot.runState === "queued"
@@ -584,9 +586,9 @@ export class RuntimeExternalSessions {
         connection.sending -= 1;
       }
     } finally {
-      if (uncertain) {
+      if (outcome === "unknown") {
         this.attachments.restageUncertainPrompt(originalIds, copied);
-      } else if (delivered) {
+      } else if (outcome === "accepted") {
         await this.attachments
           .releaseConsumed([...originalIds, ...copied])
           .catch((error) => this.host.log(slot, error));

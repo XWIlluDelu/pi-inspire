@@ -5,8 +5,6 @@ import { basename, resolve } from "node:path";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import {
   BRANCH_BRIDGE_VERSION,
-  MODEL_REFRESH_SUFFIX,
-  PENDING_IMAGE_SUFFIX,
   RETRY_STATE_SUFFIX,
 } from "../shared/branch-bridge-protocol.js";
 import {
@@ -55,16 +53,11 @@ import type { SessionHistoryQuery } from "../shared/history-query.js";
 import type { RuntimeSetting } from "../shared/host-endpoints.js";
 import { isJsonRecord } from "../shared/json-record.js";
 import type { TaskNotification, TaskOutcome } from "../shared/notifications.js";
-import {
-  PROVIDER_AUTH_SUFFIX,
-  type ProviderAuthOperation,
-  type ProviderAuthResult,
+import type {
+  ProviderAuthOperation,
+  ProviderAuthResult,
 } from "../shared/provider-auth-bridge.js";
-import {
-  TOOL_LOADOUT_SUFFIX,
-  type ToolLoadoutChange,
-} from "../shared/tool-loadout.js";
-import { CHECKPOINT_SUFFIX } from "../shared/worker-checkpoint.js";
+import type { ToolLoadoutChange } from "../shared/tool-loadout.js";
 import { AttachmentStore } from "./attachments.js";
 import { type DiagnosticLogger, nullDiagnosticLogger } from "./diagnostics.js";
 import type {
@@ -197,13 +190,17 @@ function runtimeResource(slot: RuntimeSlot, name: string) {
   );
 }
 
+function isBridgeCommand(slot: RuntimeSlot, name: unknown): boolean {
+  const prefix = slot.bridge?.command;
+  return Boolean(
+    prefix &&
+      typeof name === "string" &&
+      (name === prefix || name.startsWith(`${prefix}_`)),
+  );
+}
+
 function assertPublicPrompt(slot: RuntimeSlot, entered: string): void {
-  if (!slot.bridge) return;
-  const name = /^\/([^\s]+)/u.exec(entered)?.[1];
-  if (
-    name === slot.bridge.command ||
-    name?.startsWith(`${slot.bridge.command}_`)
-  )
+  if (isBridgeCommand(slot, /^\/([^\s]+)/u.exec(entered)?.[1]))
     throw requestError("That command is reserved for Inspire", 403);
 }
 
@@ -281,8 +278,8 @@ export class RuntimeController extends EventEmitter {
   >();
   private lastOpenedSessionId: string | null = null;
   private readonly quietCommandAdmission = new WeakMap<
-    RuntimeSlot,
-    { worker: PiRpcProcess; previousState: RuntimeSlot["runState"] }
+    PiRpcProcess,
+    RuntimeSlot["runState"]
   >();
   private readonly modelMetadata?: ModelMetadataCatalog;
   // Null means discovery failed, not that no virtual definitions exist.
@@ -484,7 +481,9 @@ export class RuntimeController extends EventEmitter {
         this.workingSessions.delete(sessionId);
       },
       mutateSlot: (slot, operation) =>
-        this.queueSlotOperation(slot, slot.mutationQueue, operation, true),
+        this.queueSlotOperation(slot, slot.mutationQueue, operation, {
+          allowDeleting: true,
+        }),
       stopInstances: async (session, slot) => {
         if (slot) slot.inputStopEpoch += 1;
         await Promise.all([
@@ -1134,16 +1133,19 @@ export class RuntimeController extends EventEmitter {
     slot: RuntimeSlot,
     queue: RuntimeOperationQueue,
     operation: () => Promise<T>,
-    allowDeleting = false,
+    options?: { allowDeleting?: boolean; settle?: () => Promise<void> },
   ): Promise<T> {
     const guarded = async () => {
       if (this.closing) throw requestError("Runtime is closing", 503);
-      if (!allowDeleting && this.deletions.isDeleting(slot.id))
+      if (!options?.allowDeleting && this.deletions.isDeleting(slot.id))
         throw requestError("That session is being deleted", 409);
       return operation();
     };
     const release = this.retainSlot(slot);
-    const run = queue.pending++ === 0 ? guarded() : queue.tail.then(guarded);
+    const task = queue.pending++ === 0 ? guarded() : queue.tail.then(guarded);
+    // A prompt leases uploads before joining the FIFO. Settle them even when
+    // admission fails, and before the next writer can acquire those uploads.
+    const run = options?.settle ? task.finally(options.settle) : task;
     queue.tail = run.then(
       () => undefined,
       () => undefined,
@@ -1241,11 +1243,9 @@ export class RuntimeController extends EventEmitter {
 
   private deferPrompt(
     slot: RuntimeSlot,
+    worker: PiRpcProcess,
     request: PromptRequest,
   ): Promise<void> {
-    const worker = this.deliveryWorker(slot);
-    if (!worker)
-      throw requestError("Pi worker changed before message delivery", 409);
     if (slot.deferredPrompts.length >= MAX_DEFERRED_PROMPTS)
       throw requestError(
         "Pending input is full; clear it or try again later",
@@ -1676,10 +1676,9 @@ export class RuntimeController extends EventEmitter {
   }
 
   private statusFor(slot: RuntimeSlot): SessionRuntimeStatus {
-    const quiet = this.quietCommandAdmission.get(slot);
     const runState =
-      quiet && quiet.worker === slot.process && slot.runState === "queued"
-        ? quiet.previousState
+      slot.process && slot.runState === "queued"
+        ? (this.quietCommandAdmission.get(slot.process) ?? slot.runState)
         : slot.runState;
     let indicator: SessionRuntimeStatus["indicator"];
     if (isBusyRunState(runState) || slot.nativeBash) {
@@ -1864,28 +1863,14 @@ export class RuntimeController extends EventEmitter {
       .request<{ commands: unknown[] }>({ type: "get_commands" })
       .then(
         (result) => {
-          const reserved = slot.bridge?.command;
-          const internal = reserved
-            ? [
-                reserved,
-                `${reserved}${MODEL_REFRESH_SUFFIX}`,
-                `${reserved}${PROVIDER_AUTH_SUFFIX}`,
-                `${reserved}${RETRY_STATE_SUFFIX}`,
-                `${reserved}${PENDING_IMAGE_SUFFIX}`,
-                `${reserved}${TOOL_LOADOUT_SUFFIX}`,
-                `${reserved}${CHECKPOINT_SUFFIX}`,
-                // Used by attached clients, not typed by people.
-                "attach-control",
-              ]
-            : [];
-          return result.commands.filter((command) => {
-            if (!command || typeof command !== "object") return true;
-            const record = command as Record<string, unknown>;
-            return (
-              !internal.includes(String(record.name)) &&
-              !internal.includes(String(record.invocationName))
-            );
-          });
+          if (!slot.bridge) return result.commands;
+          const hidden = (name: unknown) =>
+            name === "attach-control" || isBridgeCommand(slot, name);
+          return result.commands.filter(
+            (command) =>
+              !isJsonRecord(command) ||
+              (!hidden(command.name) && !hidden(command.invocationName)),
+          );
         },
         (error) =>
           this.runtimeCapabilityUnavailable(slot, rpc, "get_commands", error),
@@ -2928,11 +2913,13 @@ export class RuntimeController extends EventEmitter {
     };
     assertPromptView(deferred ? undefined : request.expectedViewId);
     const external = this.externalSessions;
-    const deliverAttached = external?.bindPrompt(slot);
-    if (deliverAttached)
-      return this.deliverySlot(slot, () =>
-        deliverAttached(request, stopEpoch, assertPromptView),
-      );
+    const attached = external?.bindPrompt(
+      slot,
+      request,
+      stopEpoch,
+      assertPromptView,
+    );
+    if (attached) return this.deliverySlot(slot, attached);
     if (slot.readOnlyReason === "external-active") {
       await this.observeExternalOwner(slot);
       assertPromptView(request.expectedViewId);
@@ -2960,53 +2947,6 @@ export class RuntimeController extends EventEmitter {
           .get(slot)
           ?.data?.commands?.some((command) => command.name === name) === true,
     );
-    const native =
-      invocation && nativeCommand(invocation.name) ? invocation : null;
-    if (
-      invocation &&
-      !native &&
-      slot.process &&
-      slot.startupPhase === "ready"
-    ) {
-      await this.readRuntimeCommands(slot, slot.process);
-      assertPromptView();
-    }
-    const resource = invocation && runtimeResource(slot, invocation.name);
-    const canQueue = Boolean(
-      (request.behavior || slot.deferredPrompts.length > 0) &&
-        !native &&
-        !entered.startsWith("!") &&
-        this.deliveryWorker(slot) &&
-        (!invocation || (resource && resource.source !== "extension")),
-    );
-    if (
-      canQueue &&
-      !deferred &&
-      (slot.runState === "compacting" ||
-        slot.runState === "queued" ||
-        slot.deferredPrompts.length > 0)
-    )
-      return this.deferPrompt(slot, request);
-    const directDelivery =
-      canQueue &&
-      (deferred?.streaming ||
-        slot.runState === "running" ||
-        slot.runState === "retrying");
-    if (
-      invocation &&
-      !resource &&
-      ((native ? native.name !== "compact" : slot.startupPhase === "ready") ||
-        hasArtifacts)
-    ) {
-      throw requestError(
-        hasArtifacts
-          ? "Pi commands cannot include attachments or project-file references"
-          : native
-            ? `/${native.name} must be executed through INSΠRE's native command surface`
-            : `Unknown Pi command /${invocation.name}; type / to inspect the current command inventory`,
-        409,
-      );
-    }
     if (entered.startsWith("!")) {
       if (hasArtifacts)
         throw requestError(
@@ -3020,19 +2960,73 @@ export class RuntimeController extends EventEmitter {
         this.workingSessions.add(slot.id);
       });
     }
-    // The first-message Composer uses the prompt boundary after creating its
-    // session. Compact still shares the standalone command's writer lifecycle;
-    // command admission above has already rejected attached artifacts.
-    if (native?.name === "compact") {
+    if (invocation && hasArtifacts)
+      throw requestError(
+        "Pi commands cannot include attachments or project-file references",
+        409,
+      );
+    if (invocation && nativeCommand(invocation.name)) {
+      if (invocation.name !== "compact")
+        throw requestError(
+          `/${invocation.name} must be executed through INSΠRE's native command surface`,
+          409,
+        );
       return this.mutateSlot(slot, async () => {
         await this.compactSlot(
           slot,
-          native.argument || undefined,
+          invocation.argument || undefined,
           assertPromptView,
         );
         this.workingSessions.add(slot.id);
       });
     }
+    const queueWorker =
+      request.behavior || slot.deferredPrompts.length
+        ? this.deliveryWorker(slot)
+        : null;
+    if (
+      invocation &&
+      slot.process &&
+      slot.startupPhase === "ready" &&
+      (queueWorker || isBusyRunState(slot.runState))
+    ) {
+      // Busy Pi must reject unknown commands without waiting behind its turn.
+      // The current inventory also determines whether this resource can queue.
+      await this.readRuntimeCommands(slot, slot.process);
+      assertPromptView();
+      assertNotStopped();
+      if (queueWorker && this.deliveryWorker(slot) !== queueWorker)
+        throw requestError(
+          "Session or worker changed before prompt delivery",
+          409,
+        );
+      if (!runtimeResource(slot, invocation.name))
+        throw requestError(
+          `Unknown Pi command /${invocation.name}; type / to inspect the current command inventory`,
+          409,
+        );
+    }
+    const admittedResource =
+      invocation && runtimeResource(slot, invocation.name);
+    const canQueue =
+      queueWorker &&
+      (!invocation ||
+        (admittedResource && admittedResource.source !== "extension"));
+    if (
+      canQueue &&
+      !deferred &&
+      (slot.runState === "compacting" ||
+        slot.runState === "queued" ||
+        slot.deferredPrompts.length > 0)
+    )
+      return this.deferPrompt(slot, queueWorker, request);
+    const directWorker =
+      canQueue &&
+      (deferred?.streaming ||
+        slot.runState === "running" ||
+        slot.runState === "retrying")
+        ? queueWorker
+        : null;
     // Lease uploads and begin the first project-file authorization before the
     // persistence FIFO. A worker startup already occupying that FIFO must not
     // leave staged files withdrawable or postpone selection until delivery.
@@ -3041,9 +3035,7 @@ export class RuntimeController extends EventEmitter {
     let pendingImages:
       | { owner: PendingImageRecovery; delivery: PendingImageDelivery }
       | undefined;
-    let uploadsSettled = false;
     const settleUploads = async () => {
-      uploadsSettled = true;
       if (!consumeUploads) {
         this.attachments.restage(attachmentIds);
       } else if (attachmentIds.length > 0) {
@@ -3062,263 +3054,255 @@ export class RuntimeController extends EventEmitter {
           );
       }
     };
-    try {
-      if (!this.ownsLiveSlot(slot))
-        throw requestError("The session changed before prompt delivery", 409);
-      const deliver = async () => {
-        try {
-          assertPromptView();
-          const commandText = entered.startsWith("/");
-          const previousHistory =
-            request.historyArtifacts && (!directDelivery || commandText)
-              ? await resolveComposerHistoryArtifacts(
-                  slot,
-                  request,
-                  this.attachments,
-                )
-              : undefined;
-          const readyProcess = directDelivery
-            ? slot.process
-            : await this.ensureFreshWriterInsideGate(slot);
-          if (!readyProcess || slot.startupPhase !== "ready")
-            throw requestError("Pi runtime failed to start", 503);
-          assertPublicPrompt(slot, entered);
-          // Cold previews can miss extension names with punctuation or Unicode.
-          if (commandText) await this.readRuntimeCommands(slot, readyProcess);
-          const command =
-            invocation ??
-            parseCommandInvocation(entered, (name) =>
-              Boolean(runtimeResource(slot, name)),
-            );
-          const resource = command && runtimeResource(slot, command.name);
-          if (command && !resource)
-            throw requestError(
-              `Pi command /${command.name} is no longer available; refresh the command inventory`,
-              409,
-            );
-          if (command && hasArtifacts)
-            throw requestError(
-              "Pi commands cannot include attachments or project-file references",
-              409,
-            );
-          // Pi splits extension commands on a literal space.
-          const message = command
-            ? `/${command.name}${command.argument ? ` ${command.argument}` : ""}`
-            : entered;
-          const { fullMessage, images, recalledImages } = await preparePiPrompt(
-            slot,
-            request,
-            message,
-            input,
-            this.attachments,
-            previousHistory,
-          );
-          const assertDeliveryOwner = () => {
-            assertPromptView();
-            assertNotStopped();
-            if (
-              !this.ownsLiveSlot(slot) ||
-              slot.process !== readyProcess ||
-              slot.startupPhase !== "ready" ||
-              (expected && !this.ownsDeferredPrompt(slot, expected))
-            )
-              throw requestError(
-                "Session or worker changed before prompt delivery",
-                409,
-              );
-            if (expected && !slot.deferredPrompts.includes(expected))
-              throw requestError("Pending message was cleared", 409, {
-                code: "PROMPT_CLEARED",
-              });
-            if (
-              pendingImages &&
-              !pendingImages.owner.isPrepared(pendingImages.delivery)
-            )
-              throw requestError(
-                "Image preparation was cancelled before delivery",
-                409,
-                { code: "PROMPT_ABORTED" },
-              );
-          };
-          if (directDelivery) {
-            assertDeliveryOwner();
-            if (request.behavior && images.length > 0) {
-              if (!slot.pendingImages) {
-                await slot.eventTail;
-                assertDeliveryOwner();
-              }
-              const owner = (slot.pendingImages ??= new PendingImageRecovery(
+    const deliver = async () => {
+      try {
+        if (!this.ownsLiveSlot(slot))
+          throw requestError("The session changed before prompt delivery", 409);
+        assertPromptView();
+        const commandText = entered.startsWith("/");
+        const previousHistory =
+          request.historyArtifacts && (!directWorker || commandText)
+            ? await resolveComposerHistoryArtifacts(
+                slot,
+                request,
                 this.attachments,
-                slot.piPendingInput,
-                (error) =>
-                  this.logRuntimeError(slot.id, error, "pending_image_lifecycle"),
-                (since) =>
-                  readPendingImageEvidence(
-                    readyProcess,
-                    slot.bridge!,
-                    slot.id,
-                    since,
-                  ),
-              ));
-              await owner.prepare();
-              assertDeliveryOwner();
-              const delivery = await owner.begin(
-                request.behavior,
-                fullMessage,
-                images,
-                attachmentIds,
-                recalledImages,
-              );
-              pendingImages = { owner, delivery };
-            }
-            await this.reconcileSlot(slot, false);
-            this.throwIfConflicted(slot);
-            if (slot.projection?.health.status === "pending")
-              throw requestError(
-                "The session file has an incomplete JSONL entry",
-                409,
-              );
-          }
-          assertDeliveryOwner();
-          if (expected) {
-            slot.deferredPrompts.splice(
-              slot.deferredPrompts.indexOf(expected),
-              1,
-            );
-            this.refreshPendingQueues(slot, true);
-          }
-          deferred?.dispatched();
-          const previousRunState = slot.runState;
-          // Pi owns preflight, including hooks/compaction/dialogs, before its
-          // prompt receipt. Publish admission so a silent hook is stoppable.
-          if (!isBusyRunState(previousRunState)) slot.runState = "queued";
-          slot.pendingPromptCount += 1;
-          let admissionTimer: ReturnType<typeof setTimeout> | undefined;
-          if (
-            !isBusyRunState(previousRunState) &&
-            resource?.source === "extension"
-          ) {
-            // A fast setting command should not flash Stop and queue controls.
-            // Native activity still publishes immediately.
-            this.quietCommandAdmission.set(slot, {
-              worker: readyProcess,
-              previousState: previousRunState,
-            });
-            admissionTimer = setTimeout(() => {
-              this.quietCommandAdmission.delete(slot);
-              if (slot.process === readyProcess && slot.runState === "queued")
-                this.emitSlotEvent(slot, { type: "prompt_pending" });
-            }, 180);
-          } else {
-            this.emitSlotEvent(slot, { type: "prompt_pending" });
-          }
-          try {
-            // Publication/listeners cannot admit work prepared before Stop.
-            assertPromptView();
-            assertNotStopped();
-            if (slot.process !== readyProcess)
-              throw requestError(
-                "This input was stopped or changed before delivery",
-                409,
-                { code: "PROMPT_ABORTED" },
-              );
-            if (pendingImages)
-              pendingImages.owner.dispatched(pendingImages.delivery);
-            const receipt = await this.requestPersistence<{
-              disposition?: unknown;
-            }>(slot, readyProcess, {
-              type: "prompt",
-              message: fullMessage,
-              ...(images.length > 0 ? { images } : {}),
-              ...(request.behavior
-                ? { streamingBehavior: request.behavior }
-                : {}),
-            });
-            consumeUploads = true;
-            this.workingSessions.add(slot.id);
-            if (pendingImages)
-              pendingImages.owner.accepted(
-                pendingImages.delivery,
-                receipt?.disposition,
-              );
-            // Commands and input hooks can handle a prompt without starting
-            // an agent. Only Pi's idle state can retire that silent admission;
-            // a receipt alone must not clear queued or newer work.
-            if (slot.runState === "queued") {
-              try {
-                const state = await readyProcess.request<{
-                  isStreaming: boolean;
-                  isCompacting: boolean;
-                  pendingMessageCount: number;
-                }>({ type: "get_state" });
-                await slot.eventTail;
-                if (
-                  slot.process === readyProcess &&
-                  slot.runState === "queued" &&
-                  slot.pendingPromptCount === 1 &&
-                  state.isStreaming === false &&
-                  state.isCompacting === false &&
-                  state.pendingMessageCount === 0
-                ) {
-                  slot.runState = isBusyRunState(previousRunState)
-                    ? "idle"
-                    : previousRunState;
-                  if (!invocation)
-                    this.emitSlotEvent(slot, { type: "prompt_finished" });
-                }
-              } catch (error) {
-                this.logRuntimeError(
-                  slot.id,
-                  error,
-                  "accepted_prompt_state_read_failed",
-                );
-              }
-            }
-            // An extension command can reload resources while model work is
-            // still active. Its completion refreshes browser discovery without
-            // treating the agent or any pending input as settled.
-            if (command) this.emitSlotEvent(slot, { type: "prompt_finished" });
-            await this.reconcileAcceptedPersistence(slot, "the prompt", true);
-          } catch (error) {
-            if (slot.process === readyProcess && slot.runState === "queued") {
-              slot.runState = previousRunState;
-              this.emitSlotEvent(slot, { type: "prompt_finished" });
-            }
-            throw error;
-          } finally {
-            if (admissionTimer) {
-              clearTimeout(admissionTimer);
-              const stillQuiet = this.quietCommandAdmission.delete(slot);
-              if (
-                stillQuiet &&
-                slot.process === readyProcess &&
-                slot.runState === "queued"
               )
-                this.emitSlotEvent(slot, { type: "prompt_pending" });
-            }
-            if (slot.process === readyProcess) slot.pendingPromptCount -= 1;
-          }
-        } catch (error) {
-          // Acceptance or a lost response both forbid reuse of the uploads.
-          consumeUploads ||= isPiRpcOutcomeUnknown(error);
-          if (consumeUploads) throw error;
-          if (pendingImages)
-            await pendingImages.owner.rejected(pendingImages.delivery);
-          if (slot.inputStopEpoch !== stopEpoch)
-            throw requestError("This input was stopped before delivery", 409, {
-              code: "PROMPT_ABORTED",
+            : undefined;
+        const readyProcess =
+          directWorker ?? (await this.ensureFreshWriterInsideGate(slot));
+        if (slot.process !== readyProcess)
+          throw requestError(
+            "Session or worker changed before prompt delivery",
+            409,
+          );
+        if (slot.startupPhase !== "ready")
+          throw requestError("Pi runtime failed to start", 503);
+        assertPublicPrompt(slot, entered);
+        // Cold previews can miss extension names with punctuation or Unicode.
+        if (commandText) await this.readRuntimeCommands(slot, readyProcess);
+        const command =
+          invocation ??
+          parseCommandInvocation(entered, (name) =>
+            Boolean(runtimeResource(slot, name)),
+          );
+        const resource = command && runtimeResource(slot, command.name);
+        if (command && !resource)
+          throw requestError(
+            admittedResource
+              ? `Pi command /${command.name} is no longer available; refresh the command inventory`
+              : `Unknown Pi command /${command.name}; type / to inspect the current command inventory`,
+            409,
+          );
+        if (command && hasArtifacts)
+          throw requestError(
+            "Pi commands cannot include attachments or project-file references",
+            409,
+          );
+        // Pi splits extension commands on a literal space.
+        const message = command
+          ? `/${command.name}${command.argument ? ` ${command.argument}` : ""}`
+          : entered;
+        const { fullMessage, images, recalledImages } = await preparePiPrompt(
+          slot,
+          request,
+          message,
+          input,
+          this.attachments,
+          previousHistory,
+        );
+        const assertDeliveryOwner = () => {
+          assertPromptView();
+          assertNotStopped();
+          if (
+            !this.ownsLiveSlot(slot) ||
+            slot.process !== readyProcess ||
+            slot.startupPhase !== "ready" ||
+            (expected && !this.ownsDeferredPrompt(slot, expected))
+          )
+            throw requestError(
+              "Session or worker changed before prompt delivery",
+              409,
+            );
+          if (expected && !slot.deferredPrompts.includes(expected))
+            throw requestError("Pending message was cleared", 409, {
+              code: "PROMPT_CLEARED",
             });
+          if (
+            pendingImages &&
+            !pendingImages.owner.isPrepared(pendingImages.delivery)
+          )
+            throw requestError(
+              "Image preparation was cancelled before delivery",
+              409,
+              { code: "PROMPT_ABORTED" },
+            );
+        };
+        if (directWorker) {
+          assertDeliveryOwner();
+          if (request.behavior && images.length > 0) {
+            if (!slot.pendingImages) {
+              await slot.eventTail;
+              assertDeliveryOwner();
+            }
+            const owner = (slot.pendingImages ??= new PendingImageRecovery(
+              this.attachments,
+              slot.piPendingInput,
+              (error) =>
+                this.logRuntimeError(slot.id, error, "pending_image_lifecycle"),
+              (since) =>
+                readPendingImageEvidence(
+                  readyProcess,
+                  slot.bridge!,
+                  slot.id,
+                  since,
+                ),
+            ));
+            await owner.prepare();
+            assertDeliveryOwner();
+            const delivery = await owner.begin(
+              request.behavior,
+              fullMessage,
+              images,
+              attachmentIds,
+              recalledImages,
+            );
+            pendingImages = { owner, delivery };
+          }
+          await this.reconcileSlot(slot, false);
+          this.throwIfConflicted(slot);
+          if (slot.projection?.health.status === "pending")
+            throw requestError(
+              "The session file has an incomplete JSONL entry",
+              409,
+            );
+        }
+        assertDeliveryOwner();
+        if (expected) {
+          slot.deferredPrompts.splice(
+            slot.deferredPrompts.indexOf(expected),
+            1,
+          );
+          this.refreshPendingQueues(slot, true);
+        }
+        deferred?.dispatched();
+        const previousRunState = slot.runState;
+        // Pi owns preflight, including hooks/compaction/dialogs, before its
+        // prompt receipt. Publish admission so a silent hook is stoppable.
+        if (!isBusyRunState(previousRunState)) slot.runState = "queued";
+        slot.pendingPromptCount += 1;
+        const revealAdmission = () => {
+          if (
+            this.quietCommandAdmission.delete(readyProcess) &&
+            slot.process === readyProcess &&
+            slot.runState === "queued"
+          )
+            this.emitSlotEvent(slot, { type: "prompt_pending" });
+        };
+        let admissionTimer: ReturnType<typeof setTimeout> | undefined;
+        if (
+          !isBusyRunState(previousRunState) &&
+          resource?.source === "extension"
+        ) {
+          // A fast setting command stays visually idle until native activity.
+          this.quietCommandAdmission.set(readyProcess, previousRunState);
+          admissionTimer = setTimeout(revealAdmission, 180);
+        } else {
+          this.emitSlotEvent(slot, { type: "prompt_pending" });
+        }
+        try {
+          // Publication/listeners cannot admit work prepared before Stop.
+          assertPromptView();
+          assertNotStopped();
+          if (slot.process !== readyProcess)
+            throw requestError(
+              "This input was stopped or changed before delivery",
+              409,
+              { code: "PROMPT_ABORTED" },
+            );
+          if (pendingImages)
+            pendingImages.owner.dispatched(pendingImages.delivery);
+          const receipt = await this.requestPersistence<{
+            disposition?: unknown;
+          }>(slot, readyProcess, {
+            type: "prompt",
+            message: fullMessage,
+            ...(images.length > 0 ? { images } : {}),
+            ...(request.behavior
+              ? { streamingBehavior: request.behavior }
+              : {}),
+          });
+          consumeUploads = true;
+          this.workingSessions.add(slot.id);
+          if (pendingImages)
+            pendingImages.owner.accepted(
+              pendingImages.delivery,
+              receipt?.disposition,
+            );
+          // Commands and input hooks can handle a prompt without starting
+          // an agent. Only Pi's idle state can retire that silent admission;
+          // a receipt alone must not clear queued or newer work.
+          if (slot.runState === "queued") {
+            try {
+              const state = await readyProcess.request<{
+                isStreaming: boolean;
+                isCompacting: boolean;
+                pendingMessageCount: number;
+              }>({ type: "get_state" });
+              await slot.eventTail;
+              if (
+                slot.process === readyProcess &&
+                slot.runState === "queued" &&
+                slot.pendingPromptCount === 1 &&
+                state.isStreaming === false &&
+                state.isCompacting === false &&
+                state.pendingMessageCount === 0
+              ) {
+                slot.runState = isBusyRunState(previousRunState)
+                  ? "idle"
+                  : previousRunState;
+                if (!command)
+                  this.emitSlotEvent(slot, { type: "prompt_finished" });
+              }
+            } catch (error) {
+              this.logRuntimeError(
+                slot.id,
+                error,
+                "accepted_prompt_state_read_failed",
+              );
+            }
+          }
+          // An extension command can reload resources while model work is
+          // still active. Its completion refreshes browser discovery without
+          // treating the agent or any pending input as settled.
+          if (command) this.emitSlotEvent(slot, { type: "prompt_finished" });
+          await this.reconcileAcceptedPersistence(slot, "the prompt", true);
+        } catch (error) {
+          if (slot.process === readyProcess && slot.runState === "queued") {
+            slot.runState = previousRunState;
+            this.emitSlotEvent(slot, { type: "prompt_finished" });
+          }
           throw error;
         } finally {
-          // The next deferred input can take a returned lease as soon as its
-          // predecessor releases the writer gate.
-          await settleUploads();
+          if (admissionTimer) {
+            clearTimeout(admissionTimer);
+            revealAdmission();
+          }
+          if (slot.process === readyProcess) slot.pendingPromptCount -= 1;
         }
-      };
-      await (directDelivery ? deliver() : this.mutateSlot(slot, deliver));
-    } finally {
-      if (!uploadsSettled) await settleUploads();
-    }
+      } catch (error) {
+        consumeUploads ||= isPiRpcOutcomeUnknown(error);
+        if (consumeUploads) throw error;
+        if (pendingImages)
+          await pendingImages.owner.rejected(pendingImages.delivery);
+        assertNotStopped();
+        throw error;
+      }
+    };
+    return directWorker
+      ? deliver().finally(settleUploads)
+      : this.queueSlotOperation(slot, slot.mutationQueue, deliver, {
+          settle: settleUploads,
+        });
   }
 
   private requireHistoryView(slot: RuntimeSlot, viewId: string): void {
