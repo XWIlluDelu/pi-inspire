@@ -24,6 +24,7 @@ import { isComposingKeyboardEvent } from "../keyboard-input";
 import { resourceReferenceFromEventTarget } from "../resources";
 import { store } from "../store";
 import { transcriptProjectionKey } from "../transcript-projection-key";
+import { EmptyState } from "./EmptyState";
 import { ExtensionDisplaySurface } from "./ExtensionDisplays";
 import { TranscriptImageOwnerContext } from "./ImagePreview";
 import { ScrollRail } from "./ScrollRail";
@@ -432,12 +433,11 @@ export const Transcript = memo(function Transcript({
             <TranscriptImageOwnerContext value={imageOwner}>
               <div className="transcript__column">
                 {rows.length === 0 ? (
-                  <div className="empty-state empty-state--conversation">
-                    <p className="empty-state__title">Empty session</p>
-                    <p className="empty-state__hint">
-                      Send a message to start.
-                    </p>
-                  </div>
+                  <EmptyState
+                    className="empty-state--conversation"
+                    title="Empty session"
+                    hint="Send a message to start."
+                  />
                 ) : (
                   rows.map((row, index) => {
                     return (

@@ -16,6 +16,9 @@
   margin: var(--space-2) 0;
   line-height: 1.6;
 }
+.task-board .empty-state p {
+  margin: 0;
+}
 .task-board__status {
   color: var(--muted);
   font-size: var(--text-sm);

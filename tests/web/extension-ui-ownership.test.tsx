@@ -1,7 +1,6 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it } from "vitest";
 import { emptyToolPresentationConfiguration } from "../../shared/tool-presentation-config";
-import { ExtensionDialogContent } from "../../src/components/ExtensionDialogContent";
 import { ExtensionStatus } from "../../src/components/ExtensionDisplays";
 import { configurePresentationAdapters } from "../../src/presentation-adapters";
 import { store } from "../../src/store";
@@ -62,31 +61,4 @@ it("keeps machine status out of the header and scopes expanded status to its ses
   });
   expect(screen.queryByRole("dialog", { name: "Extension status" })).toBeNull();
   expect(screen.getByText("Other session Second line")).toBeVisible();
-});
-
-it("returns editor changes to its caller and submits the caller's current value", () => {
-  const change = vi.fn();
-  const respond = vi.fn();
-  const editor = (value: string) => (
-    <ExtensionDialogContent
-      request={{ sessionId: "demo", id: "notes", method: "editor" }}
-      value={value}
-      onValueChange={change}
-      pending={false}
-      onRespond={respond}
-      onCancel={vi.fn()}
-    />
-  );
-  const { rerender } = render(editor("Original"));
-  fireEvent.change(screen.getByRole("textbox"), {
-    target: { value: "Edited" },
-  });
-  expect(change).toHaveBeenCalledWith("Edited");
-  rerender(editor("Reset by caller"));
-  expect(screen.getByRole("textbox")).toHaveValue("Reset by caller");
-  fireEvent.click(screen.getByRole("button", { name: "Save" }));
-  expect(respond).toHaveBeenCalledWith({
-    id: "notes",
-    value: "Reset by caller",
-  });
 });

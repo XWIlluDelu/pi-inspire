@@ -1,32 +1,40 @@
-import type { ExtensionUiRequest } from "../../shared/contracts";
+import type { ReactNode } from "react";
 import { PromptChoices, PromptInput } from "./PromptFields";
-import {
-  ActivityDetails,
-  ActivityText,
-} from "./transcript-activity-visibility";
+
+type ExtensionDialogQuestion = { title?: string } & (
+  | {
+      unsupported?: false;
+      method: "select" | "confirm" | "input" | "editor";
+      message?: string;
+      options?: readonly string[];
+      placeholder?: string;
+      prefill?: string;
+    }
+  | { unsupported: true; details: ReactNode }
+);
 
 export interface ExtensionDialogContentProps {
-  request: ExtensionUiRequest;
+  question: ExtensionDialogQuestion;
   value?: string;
   onValueChange?: (value: string) => void;
   pending: boolean;
   error?: string | null;
-  onRespond: (payload: Record<string, unknown>) => void;
+  onAnswer: (answer: string | boolean) => void;
   onCancel: () => void;
 }
 
 export function ExtensionDialogContent({
-  request,
+  question,
   value,
   onValueChange,
   pending,
   error,
-  onRespond,
+  onAnswer,
   onCancel,
 }: ExtensionDialogContentProps) {
   const title =
-    request.title ||
-    (request.unsupported
+    question.title ||
+    (question.unsupported
       ? "Unsupported extension request"
       : "Pi extension request");
   const reportError = error && (
@@ -46,22 +54,22 @@ export function ExtensionDialogContent({
   );
 
   if (
-    !request.unsupported &&
-    (request.method === "input" || request.method === "editor")
+    !question.unsupported &&
+    (question.method === "input" || question.method === "editor")
   ) {
-    const editor = request.method === "editor";
+    const editor = question.method === "editor";
     return (
       <PromptInput
         title={title}
         kind={editor ? "editor" : "text"}
-        initialValue={editor ? request.prefill : undefined}
+        initialValue={editor ? question.prefill : undefined}
         value={value}
         onValueChange={onValueChange}
-        placeholder={request.placeholder}
+        placeholder={question.placeholder}
         pending={pending}
         error={reportError}
         submitLabel={editor ? "Save" : "Submit"}
-        onSubmit={(value) => onRespond({ id: request.id, value })}
+        onSubmit={onAnswer}
       >
         {cancel}
       </PromptInput>
@@ -71,45 +79,30 @@ export function ExtensionDialogContent({
   return (
     <>
       <h2 className="dialog__title">{title}</h2>
-      {request.unsupported ? (
+      {question.unsupported ? (
         <>
           <p className="dialog__message">
             Inspire can't handle this extension request.
           </p>
-          <ActivityDetails
-            reader="extension-request"
-            label="Request details"
-            className="dialog__details"
-            key={request.id}
-          >
-            {() => (
-              <>
-                <code>{request.method}</code>
-                <ActivityText
-                  label="Request payload"
-                  text={JSON.stringify(request.payload, null, 2)}
-                />
-              </>
-            )}
-          </ActivityDetails>
+          {question.details}
         </>
-      ) : request.method === "select" ? (
+      ) : question.method === "select" ? (
         <PromptChoices
           label={title}
-          options={(request.options ?? []).map((option) => ({
+          options={(question.options ?? []).map((option) => ({
             value: option,
             label: option,
           }))}
           pending={pending}
           optionClassName="extension-dialog__choice"
-          onChoose={(value) => onRespond({ id: request.id, value })}
+          onChoose={onAnswer}
         />
-      ) : request.message ? (
-        <p className="dialog__message">{request.message}</p>
+      ) : question.message ? (
+        <p className="dialog__message">{question.message}</p>
       ) : null}
       {reportError}
       <div className="dialog__actions">
-        {request.unsupported ? (
+        {question.unsupported ? (
           <button
             type="button"
             className="button button--primary"
@@ -119,7 +112,7 @@ export function ExtensionDialogContent({
           >
             Cancel request
           </button>
-        ) : request.method === "confirm" ? (
+        ) : question.method === "confirm" ? (
           [false, true].map((confirmed) => (
             <button
               key={String(confirmed)}
@@ -127,7 +120,7 @@ export function ExtensionDialogContent({
               className={confirmed ? "button button--primary" : "button"}
               data-modal-autofocus={confirmed || undefined}
               disabled={pending}
-              onClick={() => onRespond({ id: request.id, confirmed })}
+              onClick={() => onAnswer(confirmed)}
             >
               {confirmed ? "Yes" : "No"}
             </button>

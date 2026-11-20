@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { EmptyState } from "../../../src/components/EmptyState";
 import type { TaskAction, TaskItem } from "./types";
 import "./task-board.css";
 
@@ -99,10 +100,11 @@ export function TaskBoard({
               ))}
             </ul>
           ) : (
-            <p>
-              No task snapshot is loaded. Use Show tasks to read the extension's
-              current state.
-            </p>
+            <EmptyState
+              role="status"
+              title="No task snapshot is loaded."
+              hint="Use Show tasks to read the extension's current state."
+            />
           )}
         </>
       )}

@@ -9,7 +9,7 @@ progress and sends commands back to the extension. Replace `run()` to drive your
 | --- | --- |
 | [extension.ts](extension.ts) | Session-scoped state, native persistence, timers and namespaced commands. Stop/Retry operate the demo timer; Open notes uses Pi's normal editor dialog. |
 | [types.ts](types.ts) | Small versioned data shape, decoder and command names shared by this example. |
-| [TaskBoard.tsx](TaskBoard.tsx) | Props-only list/detail view with keyboard focus, status, summary, notes and capability-backed actions. |
+| [TaskBoard.tsx](TaskBoard.tsx) | Props-only list/detail view with keyboard focus, status, summary, notes and capability-backed actions. It uses the shared [EmptyState](../../../src/components/EmptyState.tsx) when no snapshot is loaded. |
 | [TaskBoardAdapter.tsx](TaskBoardAdapter.tsx) | Read the selected session's newest admitted snapshot, check its command inventory, and dispatch prepared commands. |
 | [task-board.css](task-board.css) | Existing Inspire typography, surface and spacing tokens; no second theme system. |
 

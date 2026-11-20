@@ -278,15 +278,60 @@ For interactions that need a dedicated control, modify the relevant source owner
 
 A pinned command button should use `store.sendPreparedCommand("/goal")`, which dispatches independently of the Composer's draft, attachments, and project-file references. Disable the button when the command is absent. Put occasional or argument-taking actions in the palette/Composer instead of adding permanent controls.
 
-`src/components/ExtensionDialogContent.tsx` exports the existing standard dialog body without a
-store or transport dependency. Pass `request`, `pending`, `onRespond`, `onCancel` and an optional
-`error`. For input and editor requests, pass `value` and `onValueChange` to control the text, or
-let the form keep its own draft. Give each request a distinct React key and provide the
-surrounding modal and focus handling. Inspire's `ExtensionUiDialog.tsx`
-handles session ownership, transport and deadlines. Use Pi's native `ctx.ui.confirm` for permission
-prompts.
+### Reusable components in a source checkout
 
-Reuse existing icons, tokens, modal focus, and responsive drawers. Keep runtime widgets near the Composer, tool results in their cards, and project details in Files and Changes. Settings is for persisted preferences. Follow neighboring controls' accessible labels, keyboard behavior, and pointer/touch target sizes, and respect reduced motion.
+Use these components with Inspire's styles or bring your own view. Keep extension state and
+permission decisions in Pi. An adapter checks the current session, view, and command inventory
+before dispatching an action. Pass the result and callbacks into the view.
+
+| Component | Interaction and props |
+| --- | --- |
+| [Modal, DialogHeader, ConfirmationDialog](../src/components/Modal.tsx) | Name the modal with `aria-label` or `aria-labelledby`. `Modal` manages initial focus, Tab and focus restoration. Pass `onDismiss` for Escape and backdrop dismissal, or `onEscape` for Escape alone. Use `ConfirmationDialog` for a browser-side confirmation with a description, action and busy/error state. |
+| [ExtensionDialogContent](../src/components/ExtensionDialogContent.tsx) | Pass a `question` with a title and a `method` of `select`, `confirm`, `input` or `editor`. `onAnswer` receives a string from selection/text or a boolean from confirmation. `onCancel` is a separate action. `pending` disables responses and `error` displays a failed response. Provide a new React key for a new question. |
+| [PromptInput, PromptChoices](../src/components/PromptFields.tsx) | Use one field or choice list inline or in a modal. `PromptInput` accepts `initialValue` for its own draft, or `value` and `onValueChange` for a controlled draft. `PromptChoices` accepts labelled options and reports the selected value through `onChoose`. |
+| [EmptyState](../src/components/EmptyState.tsx) | Give the state a short `title`, an optional `hint` and an action as a child when available. Use `role="status"` for changing state or `role="alert"` for an error that needs attention. |
+| [DetailSummary](../src/components/DetailSummary.tsx), [CodeView](../src/components/CodeView.tsx) | Use `DetailSummary` as the first child of a native `<details>`. `CodeView` displays text and accepts an optional syntax language. |
+
+For a local choice, compose the question body with the modal. Mount this component when a
+question opens. The parent handles the answer and closes the dialog.
+
+```tsx
+import { ExtensionDialogContent } from "./src/components/ExtensionDialogContent";
+import { Modal } from "./src/components/Modal";
+
+function ReviewFormat({
+  onChoose,
+  onClose,
+}: {
+  onChoose: (value: string) => void;
+  onClose: () => void;
+}) {
+  const title = "Choose a review format";
+  return (
+    <Modal aria-label={title} onDismiss={onClose}>
+      <div className="dialog">
+        <ExtensionDialogContent
+          question={{ method: "select", title, options: ["Summary", "Full report"] }}
+          pending={false}
+          onAnswer={(answer) => {
+            if (typeof answer === "string") onChoose(answer);
+          }}
+          onCancel={onClose}
+        />
+      </div>
+    </Modal>
+  );
+}
+```
+
+For an extension permission prompt, ask with Pi's native `ctx.ui.confirm`. Inspire's
+`ExtensionUiDialog` connects native questions to this presentation and owns the request identity,
+transport and deadline. The [task-board example](examples/task-board/README.md) shows the full
+extension, adapter and view, including how to reuse `EmptyState` in a custom panel.
+
+Keep runtime widgets near Composer, tool results in their cards, and project details in Files and
+Changes. Use Settings for persisted preferences. Follow neighboring controls' accessible labels,
+keyboard behavior and pointer/touch target sizes.
 
 ## Reload and verify
 

@@ -119,9 +119,11 @@ the public callback interface it needs.
 
 ## Extension UI reuse and source DIY
 
-Standard dialog bodies accept controlled props for values, pending/error state and response/cancel
-callbacks. Their connected wrapper owns session/request identity, communication, lifetime, deadlines
-and modal focus. Reusing the body grants no runtime control or global-store dependency.
+Standard dialog bodies accept presentation props for the question and text draft, pending and error
+state, and answer and cancel callbacks. The body reports the answer value. Its connected wrapper
+owns session/request identity, wire response shape, communication, lifetime, deadlines and modal
+focus. The [extension guide](../../docs/extensions.md#reusable-components-in-a-source-checkout)
+documents optional props-based components for source views.
 
 Prefer native RPC primitives, then typed declarative displays. Purpose-built source customization
 uses a Pi extension for state and namespaced commands, an adapter for admitted data/actions, and a
