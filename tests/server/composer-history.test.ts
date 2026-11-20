@@ -8,10 +8,7 @@ import {
 } from "../../server/composer-history.js";
 import { ResourceStore } from "../../server/resources.js";
 import { resolveComposerHistoryArtifacts } from "../../server/runtime-composer-artifacts.js";
-import {
-  effectiveRuntimeLeaf,
-  type RuntimeSlot,
-} from "../../server/runtime-slot.js";
+import { RuntimeSlot } from "../../server/runtime-slot.js";
 import { SessionProjection } from "../../server/session-projection.js";
 import {
   composerArtifactReference,
@@ -296,17 +293,13 @@ it("recalls retained branch prompts and exact artifacts through live compaction,
   const record = { ...sessionRecord(id, cwd), path };
   let projection = await SessionProjection.open(record);
   const resources = new ResourceStore();
-  const slot = {
-    id,
-    cwd,
-    viewId: "view-original",
-    workerView: null,
-    projection,
-  } as unknown as RuntimeSlot;
+  const slot = new RuntimeSlot(id, cwd);
+  slot.projection = projection;
+  slot.viewId = "view-original";
   const page = () =>
     projection.historyPage(
       { kind: "composer", start: 0 },
-      effectiveRuntimeLeaf(slot),
+      slot.effectiveLeaf,
       slot.viewId,
       cwd,
     );
@@ -316,7 +309,7 @@ it("recalls retained branch prompts and exact artifacts through live compaction,
     historyArtifacts: {
       viewId: slot.viewId,
       incarnation: projection.incarnation,
-      effectiveLeafId: effectiveRuntimeLeaf(slot),
+      effectiveLeafId: slot.effectiveLeaf,
       imageReferences: entry.images.map((image) => image.reference),
       fileReferences: entry.files.map((file) => file.reference),
     },

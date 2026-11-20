@@ -917,7 +917,7 @@ class SessionEntryIndex {
   }
 
   latestPage(
-    overlay: readonly unknown[] = [],
+    overlay: readonly { message: unknown }[] = [],
     effectiveLeafId: string | null = this.currentLeafId,
     viewId = this.incarnation,
     entryTurns?: ReadonlyMap<string, string>,
@@ -943,7 +943,7 @@ class SessionEntryIndex {
       const saved = index < persisted.length;
       const message = saved
         ? persisted[index]
-        : overlay[index - persisted.length];
+        : overlay[index - persisted.length]!.message;
       const raw = jsonRecord(message);
       const entryId = raw?.__inspireEntryId;
       const turn =

@@ -19,11 +19,7 @@ import { savedComposerPrompt } from "./composer-history.js";
 import { filesystemRelativePath } from "./filesystem-containment.js";
 import { canonicalBase64DecodedSize } from "./image-content.js";
 import { requestError } from "./request-error.js";
-import {
-  effectiveRuntimeLeaf,
-  type RuntimeSlot,
-  runtimeHistory,
-} from "./runtime-slot.js";
+import type { RuntimeSlot } from "./runtime-slot.js";
 
 type HistorySelection = NonNullable<PromptRequest["historyArtifacts"]>;
 type RecalledImage = { type: "image"; data: string; mimeType: string };
@@ -67,8 +63,8 @@ function historyUserContent(
   slot: RuntimeSlot,
   selection: HistorySelection,
 ): UserContentLookup {
-  const projection = runtimeHistory(slot);
-  const effectiveLeafId = effectiveRuntimeLeaf(slot);
+  const projection = slot.history;
+  const effectiveLeafId = slot.effectiveLeaf;
   if (
     !projection ||
     selection.viewId !== slot.viewId ||

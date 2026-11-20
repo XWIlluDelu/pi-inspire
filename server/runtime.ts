@@ -127,7 +127,6 @@ import { lastAssistantText } from "./assistant-text.js";
 import { SettingsManager, getAgentDir } from "./pi-runtime.js";
 import { requestWorkerToolLoadout } from "./runtime-tool-loadout.js";
 import { RuntimeSessionDeletionController } from "./runtime-session-deletion.js";
-import { runtimeToken as bridgeToken } from "./runtime-token.js";
 import { RuntimeWorkerLifecycle } from "./runtime-worker-lifecycle.js";
 import {
   createWorkerView,
@@ -158,14 +157,7 @@ export const MAX_IDLE_WORKERS = 3;
 const MAX_IDLE_PROJECTIONS = MAX_IDLE_WORKERS + 1;
 
 import type { ResourceContext } from "./resources.js";
-import {
-  createRuntimeSlot,
-  effectiveRuntimeLeaf,
-  type RuntimeOperationQueue,
-  type RuntimeSlot,
-  runtimeHistory,
-  workerOnSeparateBranch,
-} from "./runtime-slot.js";
+import { type RuntimeOperationQueue, RuntimeSlot } from "./runtime-slot.js";
 import { projectRuntimeValue } from "./safe-projection.js";
 import {
   type ProjectionReconcileResult,
@@ -398,21 +390,7 @@ export class RuntimeController extends EventEmitter {
                 this.observeExternalOwner(slot),
               ).catch(() => undefined);
           },
-          corresponds: (slot, leafId) => this.leafContinuesView(slot, leafId),
-          continues: (slot, leafId) => {
-            const view = effectiveRuntimeLeaf(slot);
-            const { projection } = slot;
-            return (
-              leafId === view ||
-              Boolean(
-                leafId !== null &&
-                  projection?.entry(leafId) &&
-                  projection.continues(leafId, view),
-              )
-            );
-          },
           followLeaf: (slot, leafId) => this.followAttachedLeaf(slot, leafId),
-          renewView: (slot) => this.renewView(slot),
           assertUsable: (slot) => {
             if (this.deletions.isDeleting(slot.id))
               throw requestError("That session is being deleted", 409);
@@ -436,7 +414,7 @@ export class RuntimeController extends EventEmitter {
             if (marker.contextGeneration < view.contextGeneration) return;
             view.contextGeneration = marker.contextGeneration;
             view.sealedCursor = view.index.tailEntryId;
-            this.renewView(slot);
+            slot.renewView();
           }
           // The startup attestor or branch command can already have installed
           // the beginning of this native batch while its RPC receipt was pending.
@@ -461,7 +439,7 @@ export class RuntimeController extends EventEmitter {
             sealed,
           );
           view.nativeLeafId = marker.leaf;
-          if (view.navigationLeased && !workerOnSeparateBranch(slot))
+          if (view.navigationLeased && !slot.workerOnSeparateBranch)
             view.navigationLeased = false;
           if (!sealed) return;
           const adopted = this.liveTail.seal(
@@ -598,7 +576,6 @@ export class RuntimeController extends EventEmitter {
         setProjectionConflict: (slot, kind, message) =>
           this.setProjectionConflict(slot, kind, message),
         markLiveUnconfirmed: (slot) => this.liveTail.markUnconfirmed(slot),
-        renewView: (slot) => this.renewView(slot),
         emitSlotEvent: (slot, event) => this.emitSlotEvent(slot, event),
         dispatchProcessEvent: (slot, rpc, event) =>
           this.events.dispatchProcessEvent(slot, rpc, event),
@@ -871,7 +848,7 @@ export class RuntimeController extends EventEmitter {
     if (!projection) return;
     if (slot.process) {
       const view = slot.workerView;
-      if (view?.navigationLeased && !workerOnSeparateBranch(slot))
+      if (view?.navigationLeased && !slot.workerOnSeparateBranch)
         view.navigationLeased = false;
       if (!slot.pendingBranchBridge) this.checkpoints.refresh(slot);
       return;
@@ -885,13 +862,13 @@ export class RuntimeController extends EventEmitter {
           ? reported
           : projection.latestContinuation(slot.viewLeafId);
     }
-    this.recordViewChange(slot, projection, before, effectiveRuntimeLeaf(slot));
+    this.recordViewChange(slot, projection, before, slot.effectiveLeaf);
   }
 
   private followAttachedLeaf(slot: RuntimeSlot, leafId: string | null): void {
     const projection = slot.projection;
     if (!projection || (leafId !== null && !projection.entry(leafId))) return;
-    const before = effectiveRuntimeLeaf(slot);
+    const before = slot.effectiveLeaf;
     slot.viewLeafId = leafId;
     if (before === leafId) return;
     this.recordViewChange(slot, projection, before, leafId);
@@ -913,11 +890,7 @@ export class RuntimeController extends EventEmitter {
   ): void {
     if (projection.continues(after, before)) return;
     slot.branchRevision += 1;
-    this.renewView(slot);
-  }
-
-  private renewView(slot: RuntimeSlot): void {
-    slot.viewId = bridgeToken("view");
+    slot.renewView();
   }
 
   private destination(
@@ -1122,7 +1095,7 @@ export class RuntimeController extends EventEmitter {
       slot.pendingExtensionDialogs.size === 0 &&
       slot.pendingQueues.totalCount === 0 &&
       !slot.conflict &&
-      !workerOnSeparateBranch(slot) &&
+      !slot.workerOnSeparateBranch &&
       !slot.pendingBranchBridge
     );
   }
@@ -1505,7 +1478,7 @@ export class RuntimeController extends EventEmitter {
     // Pi opens at the saved default; continue from the branch being viewed.
     const target = slot.viewLeafId;
     slot.viewLeafId = undefined;
-    const current = effectiveRuntimeLeaf(slot);
+    const current = slot.effectiveLeaf;
     if (
       target === undefined ||
       target === current ||
@@ -1536,7 +1509,9 @@ export class RuntimeController extends EventEmitter {
         true,
       );
       if (
-        result.cancelled || slot.process !== rpc || effectiveRuntimeLeaf(slot) !== target
+        result.cancelled ||
+        slot.process !== rpc ||
+        slot.effectiveLeaf !== target
       )
         throw requestError("The viewed branch could not be restored", 409);
     } catch (error) {
@@ -2047,8 +2022,8 @@ export class RuntimeController extends EventEmitter {
 
   private liveTranscript(slot: RuntimeSlot): LiveTranscript {
     const saved = slot.projection!;
-    const effectiveLeafId = effectiveRuntimeLeaf(slot);
-    const transcriptPage = runtimeHistory(slot)!.latestPage(
+    const effectiveLeafId = slot.effectiveLeaf;
+    const transcriptPage = slot.history!.latestPage(
       slot.overlay,
       effectiveLeafId,
       slot.viewId,
@@ -2062,7 +2037,7 @@ export class RuntimeController extends EventEmitter {
       effectiveLeafId,
       restoreSavedLeafId:
         slot.workerView?.navigationLeased &&
-        workerOnSeparateBranch(slot) &&
+        slot.workerOnSeparateBranch &&
         saved.leafId !== effectiveLeafId
           ? saved.leafId
           : null,
@@ -2173,10 +2148,10 @@ export class RuntimeController extends EventEmitter {
     if (root && slot.readOnlyReason === "workspace-unavailable") {
       slot.cwd = root;
       slot.readOnlyReason = null;
-      this.renewView(slot);
+      slot.renewView();
     } else if (!root && slot.readOnlyReason !== "workspace-unavailable") {
       slot.readOnlyReason = "workspace-unavailable";
-      this.renewView(slot);
+      slot.renewView();
     }
   }
 
@@ -2188,12 +2163,13 @@ export class RuntimeController extends EventEmitter {
       if (slot.projection !== projection || this.closing) return;
       if (!result.changed && !result.healthChanged && !result.sourceChanged)
         return;
-      const handling = this.observeProjection(slot, projection, result);
-      slot.projectionTail = handling.catch((error) => {
+      try {
+        await this.observeProjection(slot, projection, result);
+      } catch (error) {
         if (!this.closing)
           this.logRuntimeError(slot.id, error, "projection_update_failed");
-      });
-      await handling;
+        throw error;
+      }
     });
   }
 
@@ -2213,7 +2189,7 @@ export class RuntimeController extends EventEmitter {
     const writer = slot.process;
     const before = slot.conflict;
     if (result.changed) slot.branchRevision += 1;
-    if (!writer && result.replacesRows) this.renewView(slot);
+    if (!writer && result.replacesRows) slot.renewView();
     if (writer) {
       const live =
         isBusyRunState(slot.runState) ||
@@ -2221,7 +2197,7 @@ export class RuntimeController extends EventEmitter {
         slot.pendingExtensionDialogs.size > 0 ||
         slot.pendingBranchBridge ||
         slot.activeOperations > 0 ||
-        workerOnSeparateBranch(slot);
+        slot.workerOnSeparateBranch;
       if (result.previousUncommittedBytes > 0 && !result.previousTailVerified) {
         this.setProjectionConflict(
           slot,
@@ -2287,7 +2263,7 @@ export class RuntimeController extends EventEmitter {
       : await projection.reconcile(force);
     if (slot.projection !== projection)
       throw requestError("Session projection changed while reconciling", 409);
-    if (startupAttestation && result.replacesRows) this.renewView(slot);
+    if (startupAttestation && result.replacesRows) slot.renewView();
     return result;
   }
 
@@ -2378,11 +2354,6 @@ export class RuntimeController extends EventEmitter {
       const cwd = workspaceRoot ?? session.cwd;
       const readOnlyReason = !workspaceRoot ? "workspace-unavailable" : null;
       const projection = await this.openSessionProjection(session);
-      const preview = {
-        sessionName: session.name,
-        model: projection.model,
-        thinkingLevel: projection.thinkingLevel,
-      };
       if (this.closing) {
         await projection.close();
         this.assertNotClosing();
@@ -2396,36 +2367,23 @@ export class RuntimeController extends EventEmitter {
         const retainedRunState = current.runState;
         const retainedConflict = current.conflict;
         await current.projection?.close();
-        current.projection = projection;
+        current.adoptSavedProjection(projection, session.name);
         this.attachProjection(current, projection);
-        current.preview = preview;
         current.cwd = cwd;
         current.readOnlyReason = readOnlyReason;
-        current.sessionPath = resolve(projection.path);
         current.runState = retainedConflict ? "conflict" : retainedRunState;
         current.compactionReturnState = null;
         current.summarizationRetry = null;
         await this.workerLifecycle.releaseWorkerView(current, "replaced");
         this.liveTail.clearOverlay(current);
         current.conflict = retainedConflict;
-        current.branchRevision = projection.revision;
-        this.renewView(current);
+        current.renewView();
         return current;
       }
 
-      const slot = createRuntimeSlot({
-        id: session.id,
-        cwd,
-        readOnlyReason,
-        sessionPath: resolve(projection.path),
-        process: null,
-        preview,
-        projection,
-        bridge: null,
-        branchRevision: projection.revision,
-        incarnationId: bridgeToken("slot"),
-        viewId: bridgeToken("view"),
-      });
+      const slot = new RuntimeSlot(session.id, cwd);
+      slot.readOnlyReason = readOnlyReason;
+      slot.adoptSavedProjection(projection, session.name);
       this.slots.set(slot.id, slot);
       this.attachProjection(slot, projection);
       return slot;
@@ -2497,15 +2455,6 @@ export class RuntimeController extends EventEmitter {
     this.emitSlotEvent(slot, { type: "runtime_ready" });
   }
 
-  /** A leaf on this view's root-to-leaf line: an ancestor of the displayed
-   * leaf (a report may lag one append) or a continuation of it. */
-  private leafContinuesView(slot: RuntimeSlot, leafId: string | null): boolean {
-    const view = effectiveRuntimeLeaf(slot);
-    if (leafId === view) return true;
-    if (!slot.projection) return false;
-    return slot.projection.onSameLine(view, leafId);
-  }
-
   private async externalWriterContinues(
     slot: RuntimeSlot,
     target: string | null,
@@ -2551,7 +2500,7 @@ export class RuntimeController extends EventEmitter {
   ): Promise<void> {
     const watching = await this.externalWriterContinues(
       slot,
-      effectiveRuntimeLeaf(slot),
+      slot.effectiveLeaf,
       fresh,
       refreshProjection,
     );
@@ -2576,13 +2525,7 @@ export class RuntimeController extends EventEmitter {
       const connected = await this.externalSessions.connect(slot);
       if (connected) return true;
     }
-    if (
-      !(await this.externalWriterContinues(
-        slot,
-        effectiveRuntimeLeaf(slot),
-        true,
-      ))
-    )
+    if (!(await this.externalWriterContinues(slot, slot.effectiveLeaf, true)))
       return false;
     if (
       attachIdle &&
@@ -2610,7 +2553,7 @@ export class RuntimeController extends EventEmitter {
     if (!projection || !target)
       throw requestError("That branch no longer exists", 404);
     if (
-      targetId === effectiveRuntimeLeaf(slot) ||
+      targetId === slot.effectiveLeaf ||
       targetId === this.externalSessions?.reportedLeaf(slot)
     )
       return;
@@ -2655,11 +2598,11 @@ export class RuntimeController extends EventEmitter {
     slot.viewLeafId = leafId;
     slot.branchRevision += 1;
     slot.deliveryNavigationEpoch += 1;
-    this.renewView(slot);
+    slot.renewView();
     this.emitSlotEvent(slot, {
       type: "branch_changed",
       revision: slot.branchRevision,
-      effectiveLeafId: effectiveRuntimeLeaf(slot),
+      effectiveLeafId: slot.effectiveLeaf,
     });
   }
 
@@ -2787,19 +2730,10 @@ export class RuntimeController extends EventEmitter {
       await rpc.stop();
       this.assertNotClosing();
     }
-    const slot = createRuntimeSlot({
-      id: `pending-${++this.provisionalSequence}`,
-      cwd,
-      sessionPath: null,
-      startupThinkingLevel: options.thinkingLevel ?? null,
-      process: rpc,
-      preview: null,
-      projection: null,
-      bridge,
-      branchRevision: 1,
-      incarnationId: bridgeToken("slot"),
-      viewId: bridgeToken("view"),
-    });
+    const slot = new RuntimeSlot(`pending-${++this.provisionalSequence}`, cwd);
+    slot.startupThinkingLevel = options.thinkingLevel ?? null;
+    slot.process = rpc;
+    slot.bridge = bridge;
     const provisionalId = slot.id;
     let committed = false;
     let committedSnapshot: ActiveSnapshot | null = null;
@@ -2972,12 +2906,12 @@ export class RuntimeController extends EventEmitter {
     const slot = this.requireSlot(request.sessionId);
     const stopEpoch = slot.inputStopEpoch;
     const navigationEpoch = slot.deliveryNavigationEpoch;
-    const sourceLeaf = effectiveRuntimeLeaf(slot);
+    const sourceLeaf = slot.effectiveLeaf;
     const assertPromptView = (expectedViewId?: string) => {
       if (
         (expectedViewId !== undefined && expectedViewId !== slot.viewId) ||
         slot.deliveryNavigationEpoch !== navigationEpoch ||
-        !this.leafContinuesView(slot, sourceLeaf)
+        !slot.sharesBranch(sourceLeaf)
       )
         throw requestError(
           "The conversation branch changed before delivery.",
@@ -3458,7 +3392,7 @@ export class RuntimeController extends EventEmitter {
       !request.customInstructions &&
       (editable || !slot.workerView?.index.entry(target.id))
     ) {
-      if (request.targetId !== effectiveRuntimeLeaf(slot))
+      if (request.targetId !== slot.effectiveLeaf)
         await this.restoreSavedPositionInsideGate(
           slot,
           projection,
@@ -3479,7 +3413,7 @@ export class RuntimeController extends EventEmitter {
       : undefined;
     const beforeLeaf = slot.workerView
       ? slot.workerView.nativeLeafId
-      : effectiveRuntimeLeaf(slot);
+      : slot.effectiveLeaf;
     const navigationTarget = nativeNavigationLeaf(target, beforeLeaf);
     if (request.targetId === beforeLeaf)
       return {
@@ -3582,14 +3516,14 @@ export class RuntimeController extends EventEmitter {
     }
     slot.branchRevision += 1;
     if (!restoringView) slot.deliveryNavigationEpoch += 1;
-    this.renewView(slot);
+    slot.renewView();
     if (slot.workerView) {
-      const { index, finishedMessages } = slot.workerView;
+      const { index } = slot.workerView;
       index.appendWorkerEntries(delta, result.effectiveLeaf);
       slot.workerView.nativeLeafId = result.effectiveLeaf;
-      slot.workerView.navigationLeased = workerOnSeparateBranch(slot);
+      slot.workerView.navigationLeased = slot.workerOnSeparateBranch;
       slot.workerView.sealedCursor = index.tailEntryId;
-      finishedMessages.clear();
+      for (const row of slot.overlay) delete row.evidence;
     }
     this.checkpoints.refresh(slot);
     this.emitSlotEvent(slot, {
@@ -3621,7 +3555,7 @@ export class RuntimeController extends EventEmitter {
         );
     };
     assertSavedTarget();
-    slot.viewLeafId = effectiveRuntimeLeaf(slot);
+    slot.viewLeafId = slot.effectiveLeaf;
     await this.workerLifecycle.stop(slot);
     await this.reconcileSlot(slot, true);
     assertSavedTarget();
@@ -3805,23 +3739,11 @@ export class RuntimeController extends EventEmitter {
           throw new Error("Fork destination ownership changed before attach");
         }
 
-        const destinationViewId = bridgeToken("view");
-        const destination = createRuntimeSlot({
-          id: destinationId,
-          cwd,
-          sessionPath: destinationPath,
-          process: null,
-          preview: {
-            ...(staged.sessionName ? { sessionName: staged.sessionName } : {}),
-            model: destinationProjection.model,
-            thinkingLevel: destinationProjection.thinkingLevel || "off",
-          },
-          projection: destinationProjection,
-          bridge: null,
-          branchRevision: destinationProjection.revision,
-          incarnationId: bridgeToken("slot"),
-          viewId: destinationViewId,
-        });
+        const destination = new RuntimeSlot(destinationId, cwd);
+        destination.adoptSavedProjection(
+          destinationProjection,
+          staged.sessionName,
+        );
         destination.lastUsed = ++this.useSequence;
         destination.opened = true;
         this.attachProjection(destination, destinationProjection);
@@ -4375,13 +4297,12 @@ export class RuntimeController extends EventEmitter {
               this.throwIfConflicted(slot);
               // A saved branch is independently readable, even without its cwd
               // or a writable Pi. Never launch a worker merely to export it.
-              const entries = runtimeHistory(slot)!.branchEntries(
-                effectiveRuntimeLeaf(slot),
-              );
+              const entries = slot.history!.branchEntries(slot.effectiveLeaf);
               await writeBranchExport(outputPath!, slot, entries);
               return { path: outputPath! };
             }
-            const process = worker ?? (await this.ensureFreshWriterInsideGate(slot));
+            const process =
+              worker ?? (await this.ensureFreshWriterInsideGate(slot));
             return process.request<{ path?: unknown }>(
               {
                 type: "export_html",
@@ -4438,7 +4359,7 @@ export class RuntimeController extends EventEmitter {
     assertView?.();
     const previousRunState = slot.runState;
     const previousTailEntryId = slot.projection?.tailEntryId ?? null;
-    const previousEffectiveLeafId = effectiveRuntimeLeaf(slot);
+    const previousEffectiveLeafId = slot.effectiveLeaf;
     // This is a user-started standalone compaction. Automatic compaction
     // captures and restores the surrounding agent state from its events.
     slot.compactionReturnState = "idle";
@@ -4975,7 +4896,7 @@ export class RuntimeController extends EventEmitter {
   private projectionRead<T>(
     sessionId: string,
     read: (
-      index: NonNullable<ReturnType<typeof runtimeHistory>>,
+      index: NonNullable<RuntimeSlot["history"]>,
       slot: RuntimeSlot,
       leaf: string | null,
     ) => T,
@@ -4984,7 +4905,7 @@ export class RuntimeController extends EventEmitter {
     this.assertMaintenanceAvailable();
     const slot = this.requireSlot(sessionId);
     const current = () => {
-      const index = runtimeHistory(slot);
+      const index = slot.history;
       if (
         owner &&
         (owner.slot !== slot ||
@@ -5004,7 +4925,7 @@ export class RuntimeController extends EventEmitter {
       await this.reconcileSlot(slot, false);
       if (this.requireSlot(sessionId) !== slot)
         throw requestError("The session view changed while reading", 409);
-      return read(current(), slot, effectiveRuntimeLeaf(slot));
+      return read(current(), slot, slot.effectiveLeaf);
     });
   }
 
@@ -5141,15 +5062,15 @@ export class RuntimeController extends EventEmitter {
         void stopped.catch(() => undefined);
       }
     };
-    const drain = (slots: Iterable<RuntimeSlot>) => Promise.allSettled(
-      [...slots].flatMap((slot) => [
-        slot.mutationQueue.tail,
-        slot.deliveryQueue.tail,
-        slot.extensionResponseQueue.tail,
-        slot.eventTail,
-        slot.projectionTail,
-      ]),
-    );
+    const drain = (slots: Iterable<RuntimeSlot>) =>
+      Promise.allSettled(
+        [...slots].flatMap((slot) => [
+          slot.mutationQueue.tail,
+          slot.deliveryQueue.tail,
+          slot.extensionResponseQueue.tail,
+          slot.eventTail,
+        ]),
+      );
     // Provisional workers are registered before startup's first await, so the
     // same shutdown ownership covers them and established slots.
     const provisional = [...this.provisionalSlots.values()];

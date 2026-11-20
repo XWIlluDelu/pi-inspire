@@ -162,7 +162,6 @@ it("keeps same-timestamp turns separate, drops stale cumulative text, and applie
   });
   expect(
     emit("message_update", {
-      streamDelta: true,
       streamMessageKey: "live:first",
       streamTextLength: 3,
       streamRevision: 2,

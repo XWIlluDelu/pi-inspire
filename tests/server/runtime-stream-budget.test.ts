@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { PiRpcProcess } from "../../server/pi-rpc.js";
 import { RuntimeEventController } from "../../server/runtime-events.js";
 import { RuntimeLiveTail } from "../../server/runtime-live-tail.js";
-import { createRuntimeSlot } from "../../server/runtime-slot.js";
+import { RuntimeSlot } from "../../server/runtime-slot.js";
 import {
   boundedTranscriptProjection,
   TRANSCRIPT_ITEM_MAX_BYTES,
@@ -11,18 +11,8 @@ import {
 
 function setup(incremental = true) {
   const rpc = {} as PiRpcProcess;
-  const slot = createRuntimeSlot({
-    id: "stream-test",
-    cwd: "/tmp",
-    sessionPath: null,
-    process: rpc,
-    preview: null,
-    projection: null,
-    bridge: null,
-    branchRevision: 0,
-    incarnationId: "incarnation",
-    viewId: "view",
-  });
+  const slot = new RuntimeSlot("stream-test", "/tmp");
+  slot.process = rpc;
   slot.startupPhase = "ready";
   const ownership = new RuntimeLiveTail(() => null);
   let forwarded: Record<string, unknown> = {};
@@ -74,10 +64,11 @@ function setup(incremental = true) {
 }
 
 function expectExactBudget(slot: ReturnType<typeof setup>["slot"]) {
-  expect(slot.overlayItemBytes).toEqual(
-    slot.overlay.map((item) => Buffer.byteLength(JSON.stringify(item))),
+  const messages = slot.overlay.map((row) => row.message);
+  expect(slot.overlay.map((row) => row.bytes)).toEqual(
+    messages.map((message) => Buffer.byteLength(JSON.stringify(message))),
   );
-  expect(Buffer.byteLength(JSON.stringify(slot.overlay))).toBeLessThanOrEqual(
+  expect(Buffer.byteLength(JSON.stringify(messages))).toBeLessThanOrEqual(
     TRANSIENT_OVERLAY_MAX_BYTES,
   );
 }
@@ -140,14 +131,14 @@ describe("runtime assistant stream byte budget", () => {
       }
     }
     fixture.delta("text_delta", 0, "z".repeat(70_000));
-    const message = fixture.slot.overlay.at(-1) as {
+    const message = fixture.slot.overlay.at(-1)?.message as {
       content: { text: string }[];
     };
     expect(message.content[0]!.text).toHaveLength(64_000);
     expectExactBudget(fixture.slot);
-    const before = fixture.slot.overlay.at(-1);
+    const before = fixture.slot.overlay.at(-1)?.message;
     fixture.delta("text_delta", 0, "ignored beyond cap");
-    expect(fixture.slot.overlay.at(-1)).toBe(before);
+    expect(fixture.slot.overlay.at(-1)?.message).toBe(before);
   });
 
   it("retains full fallback for malformed, structural, complete, and final messages", () => {
@@ -194,7 +185,10 @@ describe("runtime assistant stream byte budget", () => {
       expect(JSON.stringify(fast.slot.overlay)).not.toContain("private");
       expectExactBudget(fast.slot);
     }
-    expect(fast.slot.overlay.at(-1)).toHaveProperty("__inspireSettled", true);
+    expect(fast.slot.overlay.at(-1)?.message).toHaveProperty(
+      "__inspireSettled",
+      true,
+    );
   });
 
   it("falls back at the item byte ceiling and preserves snapshot validation", () => {
@@ -213,14 +207,14 @@ describe("runtime assistant stream byte budget", () => {
         fixture.delta("thinking_delta", 3, "\u0000".repeat(1000));
       expect(fast.slot.overlay).toEqual(full.slot.overlay);
       expectExactBudget(fast.slot);
-      expect(fast.slot.overlayItemBytes[0]).toBeLessThanOrEqual(
+      expect(fast.slot.overlay[0]!.bytes).toBeLessThanOrEqual(
         TRANSCRIPT_ITEM_MAX_BYTES,
       );
     }
     // Snapshot projection still independently validates the complete value.
-    expect(boundedTranscriptProjection(fast.slot.overlay[0]).value).toEqual(
-      fast.slot.overlay[0],
-    );
+    expect(
+      boundedTranscriptProjection(fast.slot.overlay[0]!.message).value,
+    ).toEqual(fast.slot.overlay[0]!.message);
   });
 
   it("evicts oldest overlay items when an incremental delta crosses the total budget", () => {
@@ -264,11 +258,11 @@ function startTool(
 }
 
 describe("runtime tool argument streaming", () => {
-  it("publishes a redacted typed argument preview from partial fields", () => {
+  it("forwards bounded, redacted argument previews and stops sending past the cap", () => {
     const fixture = setup();
     fixture.start();
     startTool(fixture);
-    const before = fixture.slot.overlay.at(-1);
+    const before = fixture.slot.overlay.at(-1)?.message;
     expect(before).toMatchObject({
       content: [
         {
@@ -286,13 +280,17 @@ describe("runtime tool argument streaming", () => {
       "two",
       "\\uD83D",
       "\\uDE00",
-      '","apiKey":"NEVER-SEND"}',
+      '","apiKey":"NEVER-SEND","tail":"',
+      "\\u0000",
+      '\\"',
+      "\\\\",
+      "中文",
     ]) {
       fixture.delta("toolcall_delta", 0, fragment);
       expectExactBudget(fixture.slot);
       expect(JSON.stringify(fixture.forwarded())).not.toContain("NEVER-SEND");
     }
-    expect(fixture.slot.overlay.at(-1)).toMatchObject({
+    expect(fixture.slot.overlay.at(-1)?.message).toMatchObject({
       content: [
         {
           arguments: {
@@ -304,6 +302,14 @@ describe("runtime tool argument streaming", () => {
       ],
     });
     expect(before).toMatchObject({ content: [{ arguments: {} }] });
+    fixture.delta("toolcall_delta", 0, "x".repeat(40_000));
+    expectExactBudget(fixture.slot);
+    expect(fixture.slot.overlay.at(-1)?.message).toMatchObject({
+      content: [{ __inspireToolCall: { truncated: true } }],
+    });
+    const capped = fixture.forwarded();
+    fixture.delta("toolcall_delta", 0, "x".repeat(1_000_000));
+    expect(fixture.forwarded()).toBe(capped);
   });
 
   it("does not reset a live tool parser for interleaved extension messages or a second call", () => {
@@ -323,7 +329,9 @@ describe("runtime tool argument streaming", () => {
     fixture.delta("toolcall_delta", 1, '{"command":"echo hello"}');
     fixture.delta("toolcall_delta", 0, ' second"}');
     expect(
-      fixture.slot.overlay.find((value: any) => value.role === "assistant"),
+      fixture.slot.overlay
+        .map((row) => row.message)
+        .find((value: any) => value.role === "assistant"),
     ).toMatchObject({
       content: [
         { id: "call-0", arguments: { content: "first second" } },
@@ -354,12 +362,12 @@ describe("runtime tool argument streaming", () => {
     });
     expect(fixture.forwarded()).not.toHaveProperty("assistantMessageEvent");
     expect(JSON.stringify(fixture.forwarded())).not.toContain("NEVER-SEND");
-    expect(fixture.slot.overlay.at(-1)).toMatchObject({
+    expect(fixture.slot.overlay.at(-1)?.message).toMatchObject({
       content: [{ arguments: { token: "[redacted]" } }],
     });
-    expect((fixture.slot.overlay.at(-1) as any).content[0]).not.toHaveProperty(
-      "__inspireToolCall",
-    );
+    expect(
+      (fixture.slot.overlay.at(-1)?.message as any).content[0],
+    ).not.toHaveProperty("__inspireToolCall");
     const previous = fixture.forwarded();
     fixture.delta("toolcall_delta", 0, "ignored late delta");
     expect(fixture.forwarded()).toBe(previous);
@@ -382,7 +390,7 @@ describe("runtime tool argument streaming", () => {
         ],
       },
     });
-    expect(fixture.slot.overlay.at(-1)).toMatchObject({
+    expect(fixture.slot.overlay.at(-1)?.message).toMatchObject({
       content: [{ __inspireToolCall: { phase: "interrupted" } }],
     });
     expectExactBudget(fixture.slot);
@@ -401,36 +409,9 @@ describe("runtime tool argument streaming", () => {
     fixture.delta("toolcall_delta", 3, "\\u0000".repeat(16_000));
     const frame = fixture.forwarded();
     expect(frame.message).toHaveProperty("__inspireProjectionReduced", true);
-    expect(frame).not.toHaveProperty("streamDelta");
+    expect(frame.type).toBe("message_update");
     expect(frame).not.toHaveProperty("assistantMessageEvent");
-    expect(frame.message).toEqual(fixture.slot.overlay.at(-1));
+    expect(frame.message).toEqual(fixture.slot.overlay.at(-1)?.message);
     expectExactBudget(fixture.slot);
-  });
-
-  it("bounds escaped and split-surrogate argument growth and suppresses updates past the cap", () => {
-    const fixture = setup();
-    fixture.start();
-    startTool(fixture);
-    fixture.delta("toolcall_delta", 0, '{"content":"');
-    for (const fragment of [
-      "\\uD83D",
-      "\\uDE00",
-      "\\n",
-      "\\u0000",
-      '\\"',
-      "\\\\",
-      "中文",
-    ]) {
-      fixture.delta("toolcall_delta", 0, fragment);
-      expectExactBudget(fixture.slot);
-    }
-    fixture.delta("toolcall_delta", 0, "x".repeat(40_000));
-    expectExactBudget(fixture.slot);
-    expect(fixture.slot.overlay.at(-1)).toMatchObject({
-      content: [{ __inspireToolCall: { truncated: true } }],
-    });
-    const capped = fixture.forwarded();
-    fixture.delta("toolcall_delta", 0, "x".repeat(1_000_000));
-    expect(fixture.forwarded()).toBe(capped);
   });
 });

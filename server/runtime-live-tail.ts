@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
+import { jsonRecord } from "../shared/json-record.js";
 import { messageFallbackCorrelation } from "../shared/message-identity.js";
 import { canonicalPersistedJson } from "./persisted-json.js";
 import type { RuntimeSlot } from "./runtime-slot.js";
@@ -70,28 +71,19 @@ function overlayItemBytes(value: unknown): number {
   return Buffer.byteLength(JSON.stringify(value) ?? "null");
 }
 
-function overlayArrayBytes(items: readonly number[]): number {
-  return (
-    2 +
-    items.reduce((total, bytes) => total + bytes, 0) +
-    Math.max(0, items.length - 1)
-  );
-}
-
-function recountOverlay(slot: RuntimeSlot): void {
-  slot.overlayItemBytes = slot.overlay.map(overlayItemBytes);
+function trimOverlay(rows: RuntimeSlot["overlay"]): void {
+  let bytes = 2 + Math.max(0, rows.length - 1);
+  for (const row of rows) bytes += row.bytes;
+  let drop = 0;
+  while (drop < rows.length && bytes > TRANSIENT_OVERLAY_MAX_BYTES)
+    bytes -= rows[drop++]!.bytes + 1;
+  if (drop) rows.splice(0, drop);
 }
 
 export class RuntimeLiveTail {
   constructor(
     private readonly promptFileName: (path: string) => string | null,
   ) {}
-
-  private overlayIdentity(value: unknown): string | null {
-    if (!value || typeof value !== "object") return null;
-    const identity = (value as Record<string, unknown>).__inspireLiveId;
-    return typeof identity === "string" ? identity : null;
-  }
 
   private liveOverlayId(
     slot: RuntimeSlot,
@@ -117,18 +109,16 @@ export class RuntimeLiveTail {
     const correlation = messageFallbackCorrelation(message);
     const liveId = this.liveOverlayId(slot, correlation, phase === "start");
     const index = slot.overlay.findIndex(
-      (item) => this.overlayIdentity(item) === liveId,
+      ({ message }) => jsonRecord(message)?.__inspireLiveId === liveId,
     );
-    const previousBytes = slot.overlayItemBytes[index];
+    const previous = slot.overlay[index];
     const incrementalBytes =
       phase === "update" &&
       delta &&
-      index >= 0 &&
-      slot.overlay[index] === delta.previous &&
-      slot.overlayItemBytes.length === slot.overlay.length &&
-      previousBytes !== undefined &&
-      this.overlayIdentity(message) === liveId
-        ? assistantDeltaProjectionBytes(message, delta, previousBytes)
+      previous &&
+      previous.message === delta.previous &&
+      jsonRecord(message)?.__inspireLiveId === liveId
+        ? assistantDeltaProjectionBytes(message, delta, previous.bytes)
         : null;
     const boundedProjection =
       incrementalBytes !== null && incrementalBytes <= TRANSCRIPT_ITEM_MAX_BYTES
@@ -137,10 +127,7 @@ export class RuntimeLiveTail {
             this.promptFileName(path),
           );
     const bounded = boundedProjection.value;
-    const boundedRecord =
-      bounded && typeof bounded === "object" && !Array.isArray(bounded)
-        ? (bounded as Record<string, unknown>)
-        : null;
+    const boundedRecord = jsonRecord(bounded);
     const live =
       boundedRecord &&
       ({
@@ -159,67 +146,54 @@ export class RuntimeLiveTail {
     }
     if (live && slot.activeTurnId) live.__inspireTurnId = slot.activeTurnId;
     const projected = live ?? bounded;
-    const next = [...slot.overlay];
-    const itemBytes = [...slot.overlayItemBytes];
     const projectedBytes =
       phase === "update" &&
       boundedRecord?.__inspireLiveId === liveId &&
       boundedRecord.__inspireTurnId === live?.__inspireTurnId
         ? boundedProjection.bytes
         : overlayItemBytes(projected);
-    if (phase === "end" && message && typeof message === "object")
-      slot.workerView?.finishedMessages.set(
-        liveId,
-        messageEvidence(nativeMessage(message as Record<string, unknown>)),
-      );
-    if (index >= 0) {
-      next[index] = projected;
-      itemBytes[index] = projectedBytes;
-    } else {
-      next.push(projected);
-      itemBytes.push(projectedBytes);
-    }
+    const evidence =
+      phase === "end" && slot.workerView && live
+        ? messageEvidence(nativeMessage(message as Record<string, unknown>))
+        : previous?.evidence;
+    const row = { message: projected, bytes: projectedBytes, evidence };
+    if (previous) slot.overlay[index] = row;
+    else slot.overlay.push(row);
     if (phase === "end" && correlation)
       slot.activeOverlayIds.delete(correlation);
-    while (
-      next.length > 0 &&
-      overlayArrayBytes(itemBytes) > TRANSIENT_OVERLAY_MAX_BYTES
-    ) {
-      const dropped = this.overlayIdentity(next.shift());
-      if (dropped) slot.workerView?.finishedMessages.delete(dropped);
-      itemBytes.shift();
-    }
-    slot.overlay = next;
-    slot.overlayItemBytes = itemBytes;
+    trimOverlay(slot.overlay);
     return projected;
   }
 
   /** A replaced session view starts without live messages of its own. */
   clearOverlay(slot: RuntimeSlot): void {
     slot.overlay = [];
-    recountOverlay(slot);
     slot.activeAssistantKey = null;
     slot.activeTurnId = null;
     slot.activeOverlayIds.clear();
-    slot.workerView?.finishedMessages.clear();
   }
 
   activeAssistantOverlayMessage(slot: RuntimeSlot): unknown {
     return (
       slot.overlay.find(
-        (message) =>
-          `live:${this.overlayIdentity(message)}` === slot.activeAssistantKey,
-      ) ?? null
+        ({ message }) =>
+          `live:${jsonRecord(message)?.__inspireLiveId}` ===
+          slot.activeAssistantKey,
+      )?.message ?? null
     );
   }
 
   markUnconfirmed(slot: RuntimeSlot): void {
-    slot.overlay = slot.overlay.map((item) =>
-      item && typeof item === "object"
-        ? { ...item, __inspireUnconfirmed: true, __inspireSettled: true }
-        : item,
-    );
-    recountOverlay(slot);
+    for (const row of slot.overlay) {
+      if (!row.message || typeof row.message !== "object") continue;
+      row.message = {
+        ...row.message,
+        __inspireUnconfirmed: true,
+        __inspireSettled: true,
+      };
+      row.bytes = overlayItemBytes(row.message);
+    }
+    trimOverlay(slot.overlay);
   }
 
   /** Compare ordered occurrences inside the native checkpoint only. Neither
@@ -227,32 +201,26 @@ export class RuntimeLiveTail {
   seal(slot: RuntimeSlot, entries: readonly SessionEntry[]): boolean {
     const worker = slot.workerView;
     if (!worker) return false;
-    const candidates = entries.map((entry) => ({
-      entry,
-      evidence: entryEvidence(entry),
-    }));
+    let candidates: (string | undefined)[] | undefined;
     let next = 0;
     let changed = false;
-    slot.overlay = slot.overlay.filter((item) => {
-      const id = this.overlayIdentity(item);
-      const seen = id ? worker.finishedMessages.get(id) : undefined;
-      if (!id || !seen) return true;
-      worker.finishedMessages.delete(id);
-      const match = candidates.findIndex(
-        ({ evidence }, index) => index >= next && evidence === seen,
-      );
+    slot.overlay = slot.overlay.filter((row) => {
+      const seen = row.evidence;
+      if (!seen) return true;
+      candidates ??= entries.map(entryEvidence);
+      const match = candidates.indexOf(seen, next);
+      if (match === -1 && seen.startsWith("bashExecution:")) return true;
+      delete row.evidence;
+      const message = jsonRecord(row.message)!;
       if (match === -1) {
-        if (seen.startsWith("bashExecution:")) {
-          worker.finishedMessages.set(id, seen);
-          return true;
-        }
-        const row = item as Record<string, unknown>;
-        row.__inspireUnconfirmed = true;
+        row.message = { ...message, __inspireUnconfirmed: true };
+        row.bytes = overlayItemBytes(row.message);
         changed = true;
         return true;
       }
-      const { entry } = candidates[match]!;
-      const turn = (item as Record<string, unknown>).__inspireTurnId;
+      const entry = entries[match]!;
+      const id = message.__inspireLiveId;
+      const turn = message.__inspireTurnId;
       if (typeof turn === "string") {
         worker.entryTurns.set(entry.id, turn);
         // The registry serves the bounded Live page only. History always uses native IDs.
@@ -267,7 +235,7 @@ export class RuntimeLiveTail {
       changed = true;
       return false;
     });
-    if (changed) recountOverlay(slot);
+    if (changed) trimOverlay(slot.overlay);
     return changed;
   }
 }

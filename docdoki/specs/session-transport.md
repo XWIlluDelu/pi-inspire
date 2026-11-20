@@ -250,9 +250,11 @@ browser projection and follows the ordinary structured-key redaction policy.
 
 ### Ordered batches and recovery
 
-Established sockets receive ordered coalesced assistant deltas. Clients joining behind snapshot
-synchronization receive complete idempotent replacements. Flush same-message Host batches after
-16 ms or before lifecycle/identity boundaries. Browser visual commits adapt from 16 to 50 ms as
+The Host publishes assistant fragments directly. While an addressed snapshot is in flight it
+buffers each fragment separately and replays those after the captured sequence. Established
+sockets receive consecutive same-message deltas in batches, flushed after 16 ms or before a
+lifecycle or identity change. A clipped projection travels as a complete replacement.
+Browser visual commits adapt from 16 to 50 ms as
 text/argument previews grow. Coalesce adjacent updates to one tool while preserving `sourceEventCount`
 and its original revision span, including through render-window batching and the 2,048-source-event
 ceiling. Invalid identity, reconstructed length, serialization or size state requires an

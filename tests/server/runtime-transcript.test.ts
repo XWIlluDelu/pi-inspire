@@ -369,10 +369,10 @@ it("preserves ordered assistant deltas and repeated timestamps, then reads the c
   ])
     f.emit("message_update", { assistantMessageEvent });
   expect(
-    f.events.filter(({ type }) => type === "message_update"),
+    f.events.filter(({ type }) => type === "message_update_batch"),
   ).toMatchObject(
     [0, 12, 12, 23].map((streamTextLength, index) => ({
-      streamDelta: true,
+      sourceEventCount: 1,
       streamMessageKey: `live:${firstId}`,
       streamTextLength,
       streamRevision: index + 1,

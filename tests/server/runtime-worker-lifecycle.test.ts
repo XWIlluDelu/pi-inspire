@@ -4,7 +4,7 @@ import { nullDiagnosticLogger } from "../../server/diagnostics.js";
 import { PiRpcProcess } from "../../server/pi-rpc.js";
 import { RuntimeController } from "../../server/runtime.js";
 import type { PendingImageRecovery } from "../../server/runtime-pending-images.js";
-import { createRuntimeSlot } from "../../server/runtime-slot.js";
+import { RuntimeSlot } from "../../server/runtime-slot.js";
 import { RuntimeWorkerLifecycle } from "../../server/runtime-worker-lifecycle.js";
 import { emptyPendingQueues } from "../../shared/contracts.js";
 
@@ -364,18 +364,8 @@ it("releases the previous worker's view without letting its disposal clear a rep
       extensionUi: { clear },
     } as unknown as ConstructorParameters<typeof RuntimeWorkerLifecycle>[2],
   );
-  const slot = createRuntimeSlot({
-    id: "a",
-    cwd: "/tmp",
-    sessionPath: "/sessions/a.jsonl",
-    process: null,
-    preview: null,
-    projection: null,
-    bridge: null,
-    branchRevision: 1,
-    incarnationId: "slot-a",
-    viewId: "view-a",
-  });
+  const slot = new RuntimeSlot("a", "/tmp");
+  slot.sessionPath = "/sessions/a.jsonl";
   const disposed = deferredSignal();
   const previous = {
     dispose: vi.fn(() => disposed.promise),

@@ -14,7 +14,7 @@ import {
   type RuntimeControllerOptions,
 } from "../../server/runtime.js";
 import { RuntimeExternalSessions } from "../../server/runtime-external-sessions.js";
-import { createRuntimeSlot } from "../../server/runtime-slot.js";
+import { RuntimeSlot } from "../../server/runtime-slot.js";
 import {
   SessionCatalog,
   type SessionRecord,
@@ -121,21 +121,13 @@ function workerFactory(configure?: (worker: FakeRpc) => void) {
 async function directAttachment(
   connect: ConnectExternalSession,
   host: Partial<ConstructorParameters<typeof RuntimeExternalSessions>[1]> = {},
+  entries: readonly object[] = [],
 ) {
   const session = record("a", "/tmp");
-  const projection = await preview(session, []);
-  const slot = createRuntimeSlot({
-    id: "a",
-    cwd: session.cwd,
-    sessionPath: session.path,
-    process: null,
-    preview: null,
-    projection,
-    bridge: null,
-    branchRevision: 1,
-    incarnationId: "slot-a",
-    viewId: "view-a",
-  });
+  const projection = await preview(session, entries);
+  const slot = new RuntimeSlot("a", session.cwd);
+  slot.adoptSavedProjection(projection);
+  slot.viewId = "view-a";
   const emit = vi.fn();
   const taskOutcome = vi.fn();
   const released = vi.fn();
@@ -148,10 +140,7 @@ async function directAttachment(
       taskOutcome,
       assertUsable: vi.fn(),
       released,
-      corresponds: () => true,
-      continues: () => true,
       followLeaf: vi.fn(),
-      renewView: vi.fn(),
       log,
       reconcile: async () => {},
       ...host,
@@ -930,11 +919,20 @@ describe("continue an externally owned Pi", () => {
     "retire a busy attachment on %s without reporting failure",
     async (reason, state) => {
       vi.useFakeTimers();
-      const f = nativeFixture({ activity: "working" });
+      const f = nativeFixture({ activity: "working", leafId: "home" });
       const { slot, external, emit, taskOutcome, released } =
-        await directAttachment(async () => f.native, {
-          corresponds: (_slot, leaf) => leaf !== "elsewhere",
-        });
+        await directAttachment(async () => f.native, {}, [
+          messageEntry("elsewhere", null, {
+            role: "user",
+            content: "Other branch",
+            timestamp: 1,
+          }),
+          messageEntry("home", null, {
+            role: "user",
+            content: "Current branch",
+            timestamp: 2,
+          }),
+        ]);
       await external.connect(slot);
       expect(slot.runState).toBe("running");
       f.setState(state);

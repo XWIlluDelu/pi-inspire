@@ -103,10 +103,6 @@ interface RuntimeEventControllerHost {
 /** Owns the Pi event boundary: persistence provenance is recorded before
  * browser projection, and lifecycle/UI events update exactly one runtime slot. */
 export class RuntimeEventController {
-  /** Once a terminal event starts an asynchronous reconciliation, later Pi
-   * events for that slot must retain wire order until the reconciliation
-   * boundary drains. */
-  private readonly orderedSlots = new WeakSet<RuntimeSlot>();
   private readonly argumentStreams = new WeakMap<
     PiRpcProcess,
     Map<number, ToolArgumentStream>
@@ -115,7 +111,7 @@ export class RuntimeEventController {
   constructor(private readonly host: RuntimeEventControllerHost) {}
 
   publishCheckpoint(slot: RuntimeSlot, publish: () => void): void {
-    if (this.orderedSlots.has(slot))
+    if (slot.eventTail)
       this.enqueueOrderedEvent(slot, publish, "worker_checkpoint");
     else publish();
   }
@@ -125,15 +121,13 @@ export class RuntimeEventController {
     task: () => Promise<void> | void,
     source: string,
   ): void {
-    this.orderedSlots.add(slot);
-    let tail: Promise<void>;
-    tail = slot.eventTail
+    const tail = (slot.eventTail ?? Promise.resolve())
       .then(task)
       .catch((error) => {
         this.host.logRuntimeError(slot.id, error, source);
       })
       .finally(() => {
-        if (slot.eventTail === tail) this.orderedSlots.delete(slot);
+        if (slot.eventTail === tail) slot.eventTail = null;
       });
     slot.eventTail = tail;
   }
@@ -450,22 +444,24 @@ export class RuntimeEventController {
         // The authoritative tool end can be large and needs normal redaction /
         // projection bounds. Send its one complete replacement, not the raw
         // ToolCall duplicated inside an AssistantMessageEvent.
-        const { assistantMessageEvent: _rawDelta, ...metadata } = record;
+        const {
+          assistantMessageEvent: rawDelta,
+          message: _nativeMessage,
+          ...metadata
+        } = record;
         forwardedEvent = {
           ...metadata,
-          ...(incremental
-            ? { assistantMessageEvent: record.assistantMessageEvent }
-            : {}),
-          message: projectedMessage,
-          ...(toolActivity ? { toolActivity } : {}),
-          ...(streamRevision === null ? {} : { streamRevision }),
           ...(incremental && streamMessageKey
             ? {
-                streamDelta: true,
+                type: "message_update_batch",
+                assistantMessageEvents: [rawDelta],
+                sourceEventCount: 1,
                 streamMessageKey,
                 streamTextLength: assistantStreamTextLength(projectedMessage),
               }
-            : {}),
+            : { message: projectedMessage }),
+          ...(toolActivity ? { toolActivity } : {}),
+          ...(streamRevision === null ? {} : { streamRevision }),
         };
       }
     }
@@ -802,7 +798,7 @@ export class RuntimeEventController {
         },
         "terminal_event_failed",
       );
-    } else if (this.orderedSlots.has(slot)) {
+    } else if (slot.eventTail) {
       this.enqueueOrderedEvent(
         slot,
         () => {

@@ -46,11 +46,6 @@ interface ExternalSessionHost {
   log(slot: RuntimeSlot, error: unknown): void;
   released(slot: RuntimeSlot): void;
   followLeaf(slot: RuntimeSlot, leafId: string | null): void;
-  renewView(slot: RuntimeSlot): void;
-  /** Whether a leaf still continues this view's branch. */
-  corresponds(slot: RuntimeSlot, leafId: string | null): boolean;
-  /** A confirmed leaf at or after the selected position. */
-  continues(slot: RuntimeSlot, leafId: string | null): boolean;
 }
 
 /** Conversation access to externally owned sessions, deliberately outside the
@@ -222,9 +217,9 @@ export class RuntimeExternalSessions {
       slot.id,
       slot.sessionPath,
       (leaf) => {
-        if (this.host.continues(slot, leaf)) return "continues";
+        if (slot.continuesView(leaf)) return "continues";
         if (
-          this.host.corresponds(slot, leaf) ||
+          slot.sharesBranch(leaf) ||
           (leaf !== null && !slot.projection?.entry(leaf))
         )
           return "possible";
@@ -241,7 +236,7 @@ export class RuntimeExternalSessions {
     if (
       "ended" in state ||
       (idleOnly && state.activity !== "idle") ||
-      !this.host.continues(slot, state.leafId) ||
+      !slot.continuesView(state.leafId) ||
       this.closed ||
       !this.host.current(slot) ||
       slot.process
@@ -256,7 +251,7 @@ export class RuntimeExternalSessions {
       selectionRevision: 0,
     };
     this.connections.set(slot, connection);
-    this.host.renewView(slot);
+    slot.renewView();
     // Attached Pi accepts input: the view is no longer read-only.
     if (slot.readOnlyReason === "external-active") slot.readOnlyReason = null;
     this.applyState(slot, connection, state, true);
@@ -312,7 +307,7 @@ export class RuntimeExternalSessions {
     if (mode === "restart" && "ended" in state && state.ended === "unreachable")
       throw requestError("The attached Pi could not confirm its state.", 409);
     connection.latestRead = read;
-    if ("ended" in state || !this.host.corresponds(slot, state.leafId)) {
+    if ("ended" in state || !slot.sharesBranch(state.leafId)) {
       this.end(
         slot,
         "ended" in state ? state.ended : "left-branch",
@@ -459,7 +454,7 @@ export class RuntimeExternalSessions {
     const duringWork = isBusyRunState(slot.runState);
     if (duringWork && reason === "exited") this.host.taskOutcome(slot, "ended");
     this.detach(slot);
-    this.host.renewView(slot);
+    slot.renewView();
     if (slot.runState !== "failed")
       slot.runState = slot.conflict ? "conflict" : "idle";
     this.host.emit(slot, {

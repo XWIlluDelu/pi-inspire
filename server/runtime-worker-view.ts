@@ -23,11 +23,11 @@ export function createWorkerView(
     fileNameForPath,
   );
   index.appendWorkerEntries(entries, leaf);
+  for (const row of slot.overlay) delete row.evidence;
   return {
     index,
     navigationLeased: false,
     contextGeneration: 1,
-    finishedMessages: new Map(),
     sealedCursor: entries.at(-1)?.id ?? null,
     nativeLeafId: leaf,
     entryTurns: new Map(),

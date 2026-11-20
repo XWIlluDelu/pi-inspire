@@ -18,12 +18,7 @@ import type { RuntimeBashController } from "./runtime-bash.js";
 import { newBridgeIdentity } from "./runtime-branch-bridge.js";
 import { parseRpcEntryChain } from "./runtime-entry-chain.js";
 import type { RuntimeExtensionUiController } from "./runtime-extension-ui.js";
-import {
-  type BranchBridgeIdentity,
-  clearWorkerPresentation,
-  type RuntimeSlot,
-  workerOnSeparateBranch,
-} from "./runtime-slot.js";
+import { type BranchBridgeIdentity, type RuntimeSlot } from "./runtime-slot.js";
 import { createWorkerView } from "./runtime-worker-view.js";
 import type {
   ProjectionReconcileResult,
@@ -75,7 +70,6 @@ interface RuntimeWorkerLifecycleHost {
     diagnosticFields?: Record<string, unknown>,
   ): ProjectionConflict;
   markLiveUnconfirmed(slot: RuntimeSlot): void;
-  renewView(slot: RuntimeSlot): void;
   emitSlotEvent(slot: RuntimeSlot, event: unknown): void;
   dispatchProcessEvent(
     slot: RuntimeSlot,
@@ -251,7 +245,9 @@ export class RuntimeWorkerLifecycle {
     reason: Parameters<RuntimeExtensionUiController["clear"]>[1],
   ): void {
     this.collaborators.extensionUi.clear(slot, reason);
-    clearWorkerPresentation(slot);
+    slot.extensionDisplays = [];
+    slot.extensionStatuses = {};
+    slot.toolActivity = {};
   }
 
   async stop(
@@ -301,11 +297,11 @@ export class RuntimeWorkerLifecycle {
     slot.startupPhase = "idle";
     if (cancelledCommand !== "compact") slot.activeTask = null;
     slot.compactionReturnState = null;
-    if (workerOnSeparateBranch(slot)) slot.branchRevision += 1;
+    if (slot.workerOnSeparateBranch) slot.branchRevision += 1;
     slot.workerView = null;
     slot.bridge = null;
     // Pre-start preparation has not acquired a Pi view to retire.
-    if (started) this.host.renewView(slot);
+    if (started) slot.renewView();
     if (slot.pendingBranchBridge) {
       slot.pendingBranchBridge.reject(
         new Error("Branch bridge worker stopped"),

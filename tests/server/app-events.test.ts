@@ -260,30 +260,33 @@ describe("WebSocket observation and transport limits", () => {
       await captured.promise;
       expect(snapshotSpy).toHaveBeenCalledWith("fixture-history");
       runtime.emit("event", {
-        type: "message_update",
+        type: "message_update_batch",
         runtimeSequence: cut,
         sessionId: "fixture-history",
-        streamDelta: true,
+        sourceEventCount: 1,
         streamMessageKey: "new-assistant",
-        assistantMessageEvent: {
-          type: "text_delta",
-          contentIndex: 0,
-          delta: "already captured",
-        },
+        assistantMessageEvents: [
+          {
+            type: "text_delta",
+            contentIndex: 0,
+            delta: "already captured",
+          },
+        ],
       });
       runtime.emit("event", {
-        type: "message_update",
+        type: "message_update_batch",
         runtimeSequence: cut + 2,
         sessionId: "fixture-history",
-        streamDelta: true,
+        sourceEventCount: 1,
         streamMessageKey: "new-assistant",
         streamTextLength: 9,
-        assistantMessageEvent: {
-          type: "text_delta",
-          contentIndex: 0,
-          delta: "new-owner",
-        },
-        message: { role: "assistant", content: "new-owner" },
+        assistantMessageEvents: [
+          {
+            type: "text_delta",
+            contentIndex: 0,
+            delta: "new-owner",
+          },
+        ],
       });
       expect(frames).toHaveLength(0);
       newRead.resolve();
@@ -378,13 +381,12 @@ describe("WebSocket observation and transport limits", () => {
           __inspireStreamRevision: ++revision,
         };
         const event = {
-          type: "message_update",
-          streamDelta: true,
+          type: "message_update_batch",
+          sourceEventCount: 1,
           streamMessageKey: "live:wire-write",
           streamRevision: revision,
           streamTextLength: assistantStreamTextLength(message),
-          assistantMessageEvent,
-          message,
+          assistantMessageEvents: [assistantMessageEvent],
         };
         emit(event);
       };

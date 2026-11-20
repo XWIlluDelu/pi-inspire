@@ -1,10 +1,10 @@
+import { resolve } from "node:path";
 import {
   type ActiveSnapshot,
   type ExtensionDisplay,
   type ExtensionUiRequest,
   emptyPendingQueues,
   type PendingInput,
-  type PendingQueues,
   type ProjectionConflict,
   type PromptRequest,
   type RetryInfo,
@@ -12,6 +12,7 @@ import {
   type SessionReadOnlyReason,
 } from "../shared/contracts.js";
 import type { PiRpcProcess } from "./pi-rpc.js";
+import { runtimeToken } from "./runtime-token.js";
 import type { NativeBashExecution } from "./runtime-bash.js";
 import type { startBranchNavigation } from "./runtime-branch-bridge.js";
 import type { PendingImageRecovery } from "./runtime-pending-images.js";
@@ -37,31 +38,6 @@ export interface PendingExtensionDialog {
 
 type CompletionAttention = "completed" | "failed";
 
-export function effectiveRuntimeLeaf(slot: RuntimeSlot): string | null {
-  if (slot.workerView) return slot.workerView.index.leafId;
-  const view = slot.viewLeafId;
-  return view !== undefined && (view === null || slot.projection?.entry(view))
-    ? view
-    : (slot.projection?.leafId ?? null);
-}
-
-export function runtimeHistory(slot: RuntimeSlot) {
-  return slot.workerView?.index ?? slot.projection;
-}
-
-export function workerOnSeparateBranch(slot: RuntimeSlot): boolean {
-  const worker = slot.workerView;
-  const file = slot.projection;
-  // A running worker can know the next native leaf before Live adopts it.
-  const leaf = worker?.nativeLeafId;
-  return Boolean(
-    worker &&
-      file &&
-      leaf !== undefined &&
-      !worker.index.continues(leaf, file.leafId),
-  );
-}
-
 export interface BranchBridgeIdentity {
   workerId: string;
   command: string;
@@ -77,24 +53,10 @@ export interface WorkerView {
   /** Verified navigation away from the saved branch, rather than checkpoint lag. */
   navigationLeased: boolean;
   contextGeneration: number;
-  finishedMessages: Map<string, string>;
   sealedCursor: string | null;
   nativeLeafId: string | null;
   /** View-local turn owners for native entries adopted from the current worker. */
   entryTurns: Map<string, string>;
-}
-
-/** What the current Pi worker publishes about its extensions and tools.
- * Discarded together whenever that worker stops or is replaced. */
-type WorkerPresentation = Pick<
-  RuntimeSlot,
-  "extensionDisplays" | "extensionStatuses" | "toolActivity"
->;
-
-export function clearWorkerPresentation(slot: WorkerPresentation): void {
-  slot.extensionDisplays = [];
-  slot.extensionStatuses = {};
-  slot.toolActivity = {};
 }
 
 export interface RuntimeOperationQueue {
@@ -106,34 +68,38 @@ function emptyOperationQueue(): RuntimeOperationQueue {
   return { tail: Promise.resolve(), pending: 0 };
 }
 
-export interface RuntimeSlot {
-  id: string;
-  /** Physical workspace root; the recorded path while that root is unavailable. */
-  cwd: string;
-  readOnlyReason: SessionReadOnlyReason | null;
-  sessionPath: string | null;
+/** One transient session slot owns its worker, live view and operation queues. */
+export class RuntimeSlot {
+  /** cwd is the physical workspace root, or its recorded path while unavailable. */
+  constructor(
+    public id: string,
+    public cwd: string,
+  ) {}
+
+  readOnlyReason: SessionReadOnlyReason | null = null;
+  sessionPath: string | null = null;
   /** An explicit `--thinking` startup intent stays visible until the Pi-owned
    * JSONL records its matching active-path setting. */
-  startupThinkingLevel: string | null;
-  process: PiRpcProcess | null;
-  unbindWorkerEvents: (() => void) | null;
-  startupPhase: "idle" | "starting" | "ready";
-  startupError: Error | null;
-  nativeStart: unknown;
+  startupThinkingLevel: string | null = null;
+  process: PiRpcProcess | null = null;
+  unbindWorkerEvents: (() => void) | null = null;
+  startupPhase: "idle" | "starting" | "ready" = "idle";
+  startupError: Error | null = null;
+  nativeStart: unknown = null;
   /** A reclaimed worker must finish stopping before the same session starts
    * another one, preserving Pi's one-writer-per-session rule. */
-  stopping: Promise<void> | null;
+  stopping: Promise<void> | null = null;
   /** Prompt RPCs still unwinding on the current worker. */
-  pendingPromptCount: number;
-  nativeBash: NativeBashExecution | null;
+  pendingPromptCount = 0;
+  nativeBash: NativeBashExecution | null = null;
   /** Standalone compaction owns its native command boundary and cancellation evidence. */
   manualCompaction: {
     worker: PiRpcProcess;
     finished: Promise<void>;
     aborted: boolean;
-  } | null;
+  } | null = null;
   /** Explicit branch selection changes, distinct from a compaction's view refresh. */
-  deliveryNavigationEpoch: number;
+  deliveryNavigationEpoch = 0;
   /** Host-held input awaiting a safe Pi prompt boundary; not persisted Pi history. */
   deferredPrompts: Array<{
     request: PromptRequest & {
@@ -143,132 +109,116 @@ export interface RuntimeSlot {
     navigationEpoch: number;
     resolve: () => void;
     reject: (error: Error) => void;
-  }>;
-  drainingDeferredPrompts: boolean;
-  deliveryQueue: RuntimeOperationQueue;
-  preview: SessionMetadata | null;
-  projection: SessionProjection | null;
-  runState: RunState;
-  activeTask: "agent" | "compaction" | null;
+  }> = [];
+  drainingDeferredPrompts = false;
+  deliveryQueue = emptyOperationQueue();
+  preview: SessionMetadata | null = null;
+  projection: SessionProjection | null = null;
+  runState: RunState = "idle";
+  activeTask: "agent" | "compaction" | null = null;
   /** State to restore after the current manual or automatic compaction ends. */
-  compactionReturnState: RunState | null;
-  retry: RetryInfo | null;
-  summarizationRetry: RetryInfo | null;
-  attention: CompletionAttention | null;
+  compactionReturnState: RunState | null = null;
+  retry: RetryInfo | null = null;
+  summarizationRetry: RetryInfo | null = null;
+  attention: CompletionAttention | null = null;
   attentionId?: number;
-  pendingExtensionDialogs: Map<string, PendingExtensionDialog>;
-  extensionResponseQueue: RuntimeOperationQueue;
-  pendingQueues: PendingQueues;
+  pendingExtensionDialogs = new Map<string, PendingExtensionDialog>();
+  extensionResponseQueue = emptyOperationQueue();
+  pendingQueues = emptyPendingQueues();
   /** Native queue text, or null when the observation was incomplete. */
-  piPendingInput: PendingInput | null;
+  piPendingInput: PendingInput | null = { steering: [], followUp: [] };
   /** Worker-bound artifact ownership, not a queue/scheduling authority. */
-  pendingImages: PendingImageRecovery | null;
-  stoppingInput: boolean;
-  inputStopEpoch: number;
-  extensionDisplays: ExtensionDisplay[];
-  extensionStatuses: Record<string, string>;
+  pendingImages: PendingImageRecovery | null = null;
+  stoppingInput = false;
+  inputStopEpoch = 0;
+  extensionDisplays: ExtensionDisplay[] = [];
+  extensionStatuses: Record<string, string> = {};
   toolActivity: Record<
     string,
     import("../shared/tool-activity.js").ActivityTool
-  >;
-  availableModels: unknown[] | null;
-  commands: unknown[] | null;
-  lastUsed: number;
+  > = {};
+  availableModels: unknown[] | null = null;
+  commands: unknown[] | null = null;
+  lastUsed = 0;
   /** Eligible for the bounded preview cache after an explicit HTTP open. */
-  opened: boolean;
-  activeOperations: number;
-  workerView: WorkerView | null;
-  overlay: unknown[];
-  /** Exact serialized bytes for each bounded overlay item. */
-  overlayItemBytes: number[];
-  nextOverlayId: number;
-  activeAssistantKey: string | null;
-  activeTurnId: string | null;
-  activeOverlayIds: Map<string, string>;
-  conflict: ProjectionConflict | null;
-  mutationQueue: RuntimeOperationQueue;
-  eventTail: Promise<void>;
-  projectionTail: Promise<void>;
-  bridge: BranchBridgeIdentity | null;
-  pendingBranchBridge: PendingBranchBridge | null;
+  opened = false;
+  activeOperations = 0;
+  workerView: WorkerView | null = null;
+  overlay: Array<{
+    message: unknown;
+    bytes: number;
+    /** Exact native content digest retained until a worker checkpoint seals this row. */
+    evidence?: string;
+  }> = [];
+  nextOverlayId = 0;
+  activeAssistantKey: string | null = null;
+  activeTurnId: string | null = null;
+  activeOverlayIds = new Map<string, string>();
+  conflict: ProjectionConflict | null = null;
+  mutationQueue = emptyOperationQueue();
+  /** Pending ordered Pi events. Ordinary deltas can publish synchronously when the lane is idle. */
+  eventTail: Promise<void> | null = null;
+  bridge: BranchBridgeIdentity | null = null;
+  pendingBranchBridge: PendingBranchBridge | null = null;
   /** Branch leaf shown while no Inspire worker runs; undefined follows the
    * saved default. A running worker has its own native index. */
   viewLeafId?: string | null;
-  branchRevision: number;
-  incarnationId: string;
-  viewId: string;
-}
+  branchRevision = 1;
+  readonly incarnationId = runtimeToken("slot");
+  viewId = runtimeToken("view");
 
-interface RuntimeSlotSeed {
-  id: string;
-  cwd: string;
-  readOnlyReason?: SessionReadOnlyReason | null;
-  sessionPath: string | null;
-  startupThinkingLevel?: string | null;
-  process: PiRpcProcess | null;
-  preview: SessionMetadata | null;
-  projection: SessionProjection | null;
-  bridge: BranchBridgeIdentity | null;
-  branchRevision: number;
-  incarnationId: string;
-  viewId: string;
-}
+  get history() {
+    return this.workerView?.index ?? this.projection;
+  }
 
-/**
- * One transient slot contains the reloadable browser projection and all
- * single-worker lifecycle state for a Pi session. RuntimeController remains
- * the only registry and transaction authority; this factory only centralizes
- * safe initialization so existing and provisional sessions cannot drift.
- */
-export function createRuntimeSlot(seed: RuntimeSlotSeed): RuntimeSlot {
-  return {
-    ...seed,
-    readOnlyReason: seed.readOnlyReason ?? null,
-    startupThinkingLevel: seed.startupThinkingLevel ?? null,
-    unbindWorkerEvents: null,
-    startupPhase: "idle",
-    startupError: null,
-    nativeStart: null,
-    stopping: null,
-    pendingPromptCount: 0,
-    nativeBash: null,
-    manualCompaction: null,
-    deliveryNavigationEpoch: 0,
-    deferredPrompts: [],
-    drainingDeferredPrompts: false,
-    deliveryQueue: emptyOperationQueue(),
-    runState: "idle",
-    activeTask: null,
-    compactionReturnState: null,
-    retry: null,
-    summarizationRetry: null,
-    attention: null,
-    pendingExtensionDialogs: new Map(),
-    extensionResponseQueue: emptyOperationQueue(),
-    pendingQueues: emptyPendingQueues(),
-    piPendingInput: { steering: [], followUp: [] },
-    pendingImages: null,
-    stoppingInput: false,
-    inputStopEpoch: 0,
-    extensionDisplays: [],
-    extensionStatuses: {},
-    toolActivity: {},
-    availableModels: null,
-    commands: null,
-    lastUsed: 0,
-    opened: false,
-    activeOperations: 0,
-    workerView: null,
-    overlay: [],
-    overlayItemBytes: [],
-    nextOverlayId: 0,
-    activeAssistantKey: null,
-    activeTurnId: null,
-    activeOverlayIds: new Map(),
-    conflict: null,
-    mutationQueue: emptyOperationQueue(),
-    eventTail: Promise.resolve(),
-    projectionTail: Promise.resolve(),
-    pendingBranchBridge: null,
-  };
+  get effectiveLeaf(): string | null {
+    if (this.workerView) return this.workerView.index.leafId;
+    const leaf = this.viewLeafId;
+    return leaf !== undefined && (leaf === null || this.projection?.entry(leaf))
+      ? leaf
+      : (this.projection?.leafId ?? null);
+  }
+
+  sharesBranch(leaf: string | null): boolean {
+    const view = this.effectiveLeaf;
+    return leaf === view || this.projection?.onSameLine(view, leaf) === true;
+  }
+
+  /** The attached writer must attest the displayed position or a known descendant. */
+  continuesView(leaf: string | null): boolean {
+    const view = this.effectiveLeaf;
+    return (
+      leaf === view ||
+      Boolean(
+        leaf !== null &&
+          this.projection?.entry(leaf) &&
+          this.projection.continues(leaf, view),
+      )
+    );
+  }
+
+  get workerOnSeparateBranch(): boolean {
+    // An unsealed native checkpoint can already know the next leaf.
+    const worker = this.workerView;
+    return Boolean(
+      worker &&
+        this.projection &&
+        !worker.index.continues(worker.nativeLeafId, this.projection.leafId),
+    );
+  }
+
+  renewView(): void {
+    this.viewId = runtimeToken("view");
+  }
+
+  adoptSavedProjection(projection: SessionProjection, name?: string): void {
+    this.projection = projection;
+    this.sessionPath = resolve(projection.path);
+    this.branchRevision = projection.revision;
+    this.preview = {
+      sessionName: name,
+      model: projection.model,
+      thinkingLevel: projection.thinkingLevel,
+    };
+  }
 }

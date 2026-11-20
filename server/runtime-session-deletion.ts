@@ -183,7 +183,6 @@ export class RuntimeSessionDeletionController {
               409,
             );
           await slot.eventTail;
-          await slot.projectionTail;
           // Suspend reads/watchers and drain their file handles without losing
           // the selected view. A failed move can resume this same projection.
           const currentProjection = slot.projection;
