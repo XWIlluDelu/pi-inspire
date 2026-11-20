@@ -520,7 +520,9 @@ async function hostLifecycle(action) {
 async function prepareRestart() {
   await ensureDependencies();
   await ensureBuild();
-  if ((await runInherited(process.execPath, runtimeArgs("restart-preflight"))) !== 0)
+  if ((await runInherited(process.execPath, runtimeArgs("restart-preflight"), {
+    env: { ...process.env, INSPIRE_INSTALLATION_ROOT: root },
+  })) !== 0)
     throw new Error(
       "Restart preparation failed. The running Host was not stopped.",
     );

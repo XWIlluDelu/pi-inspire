@@ -34,8 +34,10 @@ const WORK_BUSY =
  * proven non-issuance can reopen admission; HTTP observation is never authority. */
 export class HostRestartController {
   private readonly hostId = randomUUID();
-  private readonly receipts = new Map<string, HostRestartOperation>();
-  private operation: HostRestartOperation | null = null;
+  private readonly receipts: HostRestartOperation[] = [];
+  private get operation() {
+    return this.receipts.at(-1);
+  }
   private availability: ReturnType<HostRestartBackend["inspect"]> | null = null;
 
   constructor(
@@ -78,7 +80,7 @@ export class HostRestartController {
         "Confirm closing all Pi sessions before restarting.",
         400,
       );
-    const previous = this.receipts.get(request.operationId);
+    const previous = this.receipts.find(({ id }) => id === request.operationId);
     if (previous) {
       if (!matchesRestartIntent(previous, request))
         throw requestError("Restart operation does not match.", 409);
@@ -97,7 +99,7 @@ export class HostRestartController {
     )
       throw requestError("Review the unconfirmed Stop before restarting.", 409);
     // Never forget an identity and accidentally admit it again on this Host.
-    if (this.receipts.size >= 32)
+    if (this.receipts.length >= 32)
       throw requestError(
         "Restart attempt limit reached. Use the Host CLI.",
         429,
@@ -109,8 +111,7 @@ export class HostRestartController {
       ...(request.skipAttachedStop ? { skipAttachedStop: true as const } : {}),
       phase: "preparing",
     };
-    this.receipts.set(operation.id, operation);
-    this.operation = operation;
+    this.receipts.push(operation);
     void this.execute(operation);
     return { ...operation };
   }
