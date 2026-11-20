@@ -37,6 +37,7 @@ import type {
   ModelConfigEdit,
   ModelPreferencesPatch,
   ModelSettingsSnapshot,
+  ModelSettingsWriteResult,
 } from "../shared/model-settings";
 import type { TaskNotificationGrouping } from "../shared/notifications";
 import type { ProviderAuthOperation } from "../shared/provider-auth-bridge";
@@ -179,10 +180,17 @@ export class AppStore {
   private clearingWorkbench = false;
   private listeners = new Set<() => void>();
   private api: Api | null = null;
-  private readonly notifications = new TaskNotificationController({
+  private readonly controllerHost = {
     state: () => this.state,
-    patch: (patch) => this.set(patch),
+    patch: (patch: Partial<AppState>) => this.set(patch),
     api: () => this.api,
+    authorityId: () => this.hostAuthorityId,
+    selectionGeneration: () => this.selectionGeneration,
+    notify: (kind: Notice["kind"], text: string) => this.notify(kind, text),
+    handleAuthFailure: () => this.handleAuthFailure(),
+  };
+  private readonly notifications = new TaskNotificationController({
+    ...this.controllerHost,
     mark: (event) => {
       if (event.sessionId)
         this.runtimeEvents.markTaskAttention(event.sessionId);
@@ -191,20 +199,12 @@ export class AppStore {
     openSession: (id) => this.selection.open(id),
   });
   /** Both Files surfaces consume this one tree/search projection. */
-  private readonly workspace = new WorkspaceController({
-    state: () => this.state,
-    patch: (patch) => this.set(patch),
-    api: () => this.api,
-    handleAuthFailure: () => this.handleAuthFailure(),
-  });
+  private readonly workspace = new WorkspaceController(this.controllerHost);
   /** ResourceController owns request lifecycles only. AppStore supplies every
    * state read/write, so it remains the one browser snapshot authority. */
   private readonly resources: ResourceController = new ResourceController({
+    ...this.controllerHost,
     saveDownload: downloadFileUrl,
-    state: () => this.state,
-    patch: (patch) => this.set(patch),
-    api: () => this.api,
-    handleAuthFailure: () => this.handleAuthFailure(),
     revealWorkspacePath: (path) => {
       this.workspace.revealPath(path);
       if (showsFileComparison(this.state)) void this.git.refreshStatus();
@@ -214,26 +214,16 @@ export class AppStore {
    * AppStore remains the sole state publisher and cross-domain transaction
    * facade, including resource previews opened from a Git path. */
   private readonly git = new GitController({
-    state: () => ({
-      ...this.state,
-      selectionGeneration: this.selectionGeneration,
-    }),
-    patch: (patch) => this.set(patch),
-    api: () => this.api,
+    ...this.controllerHost,
     openResourceFromGit: (change) => this.openGitFileTab(change),
-    handleAuthFailure: () => this.handleAuthFailure(),
   });
   /** BranchController owns branch-tree/action generations. AppStore applies
    * snapshots and selection transfers at the controller's verified commit
    * boundary, so no branch path becomes a second session authority. */
   private readonly branches = new BranchController({
-    state: () => this.state,
-    patch: (patch) => this.set(patch),
-    api: () => this.api,
-    selectionGeneration: () => this.selectionGeneration,
+    ...this.controllerHost,
     selectionRequest: () => this.selection.generation,
     beginForkSelection: () => this.selection.beginForkSelection(),
-    handleAuthFailure: () => this.handleAuthFailure(),
     draftRevision: () => this.drafts.get(this.state.sessionId).revision,
     applyNavigation: (response, draftRevision) => {
       const sessionId = this.state.sessionId!;
@@ -264,31 +254,18 @@ export class AppStore {
       this.drafts.setText(response.sessionId, response.editorText);
     },
     refreshSessionCatalog: () => void this.catalog.refreshLoaded(),
-    notify: (kind, text) => this.notify(kind, text),
   });
   private readonly preferences = new PreferenceController({
-    state: () => this.state,
-    patch: (patch) => this.set(patch),
-    api: () => this.api,
-    notify: (kind, text) => this.notify(kind, text),
-    handleAuthFailure: () => this.handleAuthFailure(),
+    ...this.controllerHost,
     curationChanged: (added) => this.catalog.reconcileCuration(added),
     clearCompletionAttention: () => this.runtimeEvents.clearTitleAttention(),
   });
   /** SessionCatalogController owns pagination, curation/live hydration, and
    * retry lifecycles. AppStore remains the only catalog snapshot publisher and
    * selection authority. */
-  private readonly catalog = new SessionCatalogController({
-    state: () => this.state,
-    patch: (patch) => this.set(patch),
-    api: () => this.api,
-    handleAuthFailure: () => this.handleAuthFailure(),
-  });
+  private readonly catalog = new SessionCatalogController(this.controllerHost);
   private readonly selection = new SessionSelectionController({
-    state: () => this.state,
-    api: () => this.api,
-    authorityId: () => this.hostAuthorityId,
-    patch: (patch) => this.set(patch),
+    ...this.controllerHost,
     onOpenIntent: () => {
       this.branches.invalidate();
       this.nativeSettings.clear();
@@ -300,15 +277,11 @@ export class AppStore {
     },
     applySnapshot: (snapshot) => this.applySnapshot(snapshot),
     ensureSessionVisible: (sessionId) => this.catalog.ensureVisible(sessionId),
-    setActionError: (sessionActionError) => this.set({ sessionActionError }),
     rememberModel: (model) => this.preferences.rememberModel(model),
     refreshSessionCatalog: () => void this.catalog.refreshLoaded(),
-    notify: (kind, text) => this.notify(kind, text),
-    handleAuthFailure: () => this.handleAuthFailure(),
   });
   private readonly runtimeEvents = new RuntimeEventController({
-    state: () => this.state,
-    patch: (patch) => this.set(patch),
+    ...this.controllerHost,
     setEditorText: (sessionId, text) => this.drafts.setText(sessionId, text),
     applySnapshot: (snapshot) => this.applySnapshot(snapshot),
     applyTranscript: (sessionId, data, sequence, statuses) =>
@@ -317,30 +290,20 @@ export class AppStore {
     refreshLoadedSessions: () => this.catalog.refreshLoaded(),
     hasVisibleGitSurface: () => this.git.hasVisibleSurface(),
     refreshGitStatus: () => this.git.refreshStatus(),
-    selectionGeneration: () => this.selectionGeneration,
     invalidateResync: () => {
       this.resyncRequest += 1;
     },
     resync: (sessionId, generation) => this.resync(sessionId, generation),
   });
   private readonly composer = new ComposerController({
-    state: () => this.state,
+    ...this.controllerHost,
     drafts: this.drafts,
-    api: () => this.api,
-    authorityId: () => this.hostAuthorityId,
-    notify: (kind, text) => this.notify(kind, text),
     notifyVisible: (sessionId, message) => {
       if (this.state.sessionId === sessionId) this.notify("warning", message);
     },
-    handleAuthFailure: () => this.handleAuthFailure(),
   });
   private readonly sessionManagement = new SessionManagementController({
-    state: () => this.state,
-    patch: (patch) => this.set(patch),
-    api: () => this.api,
-    authorityId: () => this.hostAuthorityId,
-    notify: (kind, text) => this.notify(kind, text),
-    handleAuthFailure: () => this.handleAuthFailure(),
+    ...this.controllerHost,
     refreshLoadedSessions: () => this.catalog.refreshLoaded(),
     preserveLoadedSessions: (query, offset, total) =>
       this.catalog.preserve(query, offset, total),
@@ -355,17 +318,11 @@ export class AppStore {
   private visibleEventSequence = -1;
   private snapshotGeneration = 0;
   private readonly pendingRecovery = new PendingRecoveryController({
-    api: () => this.api,
-    authorityId: () => this.hostAuthorityId,
+    ...this.controllerHost,
     restore: (sessionId, recovered, feedback) =>
       this.restorePendingInput(sessionId, recovered, feedback),
-    handleAuthFailure: () => this.handleAuthFailure(),
   });
-  private readonly updates = new UpdateController({
-    state: () => this.state,
-    patch: (patch) => this.set(patch),
-    api: () => this.api,
-  });
+  private readonly updates = new UpdateController(this.controllerHost);
   /** ConnectionController owns WebSocket lifetime/backoff only. AppStore
    * continues to publish connection state and owns every stream consequence. */
   private readonly connectionController = new ConnectionController({
@@ -2486,44 +2443,48 @@ export class AppStore {
     return snapshot;
   };
 
-  saveModelPreferences = async (
+  private async writeModelSettings(
     owner: { sessionId?: string; cwd?: string },
-    revision: string,
-    patch: ModelPreferencesPatch,
-  ) => {
+    write: (api: Api) => Promise<ModelSettingsWriteResult>,
+    refreshCatalog = false,
+  ) {
     const { api, current } = this.modelSettingsOperation(owner);
-    const result = await api.json("saveModelPreferences", {
-      query: owner,
-      body: { revision, patch },
-    });
+    const result = await write(api);
     if (current()) {
       this.modelCatalogRead++;
-      if (result.snapshot && !result.snapshot.modelDiscoveryFailed)
-        this.set({ commonModels: result.snapshot.commonModels });
-    }
-    return result;
-  };
-
-  editModelConfig = async (
-    owner: { sessionId?: string; cwd?: string },
-    revision: string,
-    edit: ModelConfigEdit,
-  ) => {
-    const { api, current } = this.modelSettingsOperation(owner);
-    const result = await api.json("editModelConfig", {
-      query: owner,
-      body: { revision, edit },
-    });
-    if (current()) {
-      this.modelCatalogRead++;
-      if (result.snapshot && !result.snapshot.modelDiscoveryFailed)
+      const { snapshot } = result;
+      if (snapshot && !snapshot.modelDiscoveryFailed)
         this.set({
-          availableModels: result.snapshot.models,
-          commonModels: result.snapshot.commonModels,
+          ...(refreshCatalog ? { availableModels: snapshot.models } : {}),
+          commonModels: snapshot.commonModels,
         });
     }
     return result;
-  };
+  }
+
+  saveModelPreferences = (
+    owner: { sessionId?: string; cwd?: string },
+    revision: string,
+    patch: ModelPreferencesPatch,
+  ) =>
+    this.writeModelSettings(owner, (api) =>
+      api.json("saveModelPreferences", {
+        query: owner,
+        body: { revision, patch },
+      }),
+    );
+
+  editModelConfig = (
+    owner: { sessionId?: string; cwd?: string },
+    revision: string,
+    edit: ModelConfigEdit,
+  ) =>
+    this.writeModelSettings(
+      owner,
+      (api) =>
+        api.json("editModelConfig", { query: owner, body: { revision, edit } }),
+      true,
+    );
 
   providerAuth = async (
     owner: { sessionId?: string; cwd?: string },

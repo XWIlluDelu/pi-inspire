@@ -24,14 +24,14 @@ interface SessionSelectionControllerHost {
   api(): Api | null;
   authorityId(): string | null;
   patch(state: {
-    openingSessionId: string | null;
-    sessionSelectionPending: boolean;
+    openingSessionId?: string | null;
+    sessionSelectionPending?: boolean;
     startupPending?: false;
+    sessionActionError?: string | null;
   }): void;
   onOpenIntent(): void;
   applySnapshot(snapshot: ActiveSnapshot): void;
   ensureSessionVisible(sessionId: string): void;
-  setActionError(message: string | null): void;
   rememberModel(model: ModelIdentity): void;
   refreshSessionCatalog(): void;
   notify(kind: "warning", text: string): void;
@@ -236,16 +236,17 @@ export class SessionSelectionController {
       const snapshot = await request(observation.signal);
       if (!owns()) return staleResult;
       this.host.applySnapshot(snapshot);
-      this.host.setActionError(null);
+      this.host.patch({ sessionActionError: null });
       return afterApply(snapshot);
     } catch (error) {
       if (owns()) {
         if (error instanceof ApiError && error.status === 401)
           this.host.handleAuthFailure();
         else {
-          this.host.setActionError(
-            error instanceof Error ? error.message : fallbackMessage,
-          );
+          this.host.patch({
+            sessionActionError:
+              error instanceof Error ? error.message : fallbackMessage,
+          });
           if (error instanceof ApiError && error.code === "SESSION_NOT_FOUND")
             this.host.refreshSessionCatalog();
         }

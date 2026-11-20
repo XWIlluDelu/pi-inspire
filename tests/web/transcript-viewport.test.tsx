@@ -108,6 +108,22 @@ function setScrollGeometry(
   });
 }
 
+function openViewport(clientHeight = 400) {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  render(<ViewportHarness />);
+  const log = screen.getByRole("log");
+  setScrollGeometry(log, { clientHeight, scrollTop: 1_000 - clientHeight });
+  fireEvent.scroll(log);
+  return log;
+}
+
+function deliverLayout(log: HTMLElement) {
+  act(() => {
+    TestResizeObserver.trigger(log);
+    flushAnimationFrames();
+  });
+}
+
 describe("transcript viewport geometry", () => {
   beforeEach(() => {
     TestResizeObserver.instances = [];
@@ -207,11 +223,7 @@ describe("transcript viewport geometry", () => {
   });
 
   it("keeps an upward wheel intent across a queued layout scroll at latest", () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    render(<ViewportHarness />);
-    const log = screen.getByRole("log");
-    setScrollGeometry(log, { clientHeight: 400, scrollTop: 600 });
-    fireEvent.scroll(log);
+    const log = openViewport();
 
     fireEvent.wheel(log, { deltaY: -500 });
     // Disclosure reflow can move the bottom before the browser delivers the
@@ -224,10 +236,7 @@ describe("transcript viewport geometry", () => {
     fireEvent.scroll(log);
     log.scrollTop = 110;
     fireEvent.scroll(log);
-    act(() => {
-      TestResizeObserver.trigger(log);
-      flushAnimationFrames();
-    });
+    deliverLayout(log);
 
     expect(log.scrollTop).toBe(110);
     expect(log).toHaveAttribute("data-at-latest", "false");
@@ -237,10 +246,7 @@ describe("transcript viewport geometry", () => {
     fireEvent.wheel(log, { deltaY: 440 });
     log.scrollTop = 550;
     fireEvent.scroll(log);
-    act(() => {
-      TestResizeObserver.trigger(log);
-      flushAnimationFrames();
-    });
+    deliverLayout(log);
     expect(log.scrollTop).toBe(550);
 
     fireEvent.wheel(log, { deltaY: 60 });
@@ -251,19 +257,12 @@ describe("transcript viewport geometry", () => {
       configurable: true,
       value: 1_110,
     });
-    act(() => {
-      TestResizeObserver.trigger(log);
-      flushAnimationFrames();
-    });
+    deliverLayout(log);
     expect(log.scrollTop).toBe(710);
   });
 
   it("retains follow when an upward wheel cannot move a short transcript", () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    render(<ViewportHarness />);
-    const log = screen.getByRole("log");
-    setScrollGeometry(log, { clientHeight: 1_000, scrollTop: 0 });
-    fireEvent.scroll(log);
+    const log = openViewport(1_000);
     fireEvent.wheel(log, { deltaY: -500 });
     fireEvent.scroll(log);
 
@@ -271,10 +270,7 @@ describe("transcript viewport geometry", () => {
       configurable: true,
       value: 1_100,
     });
-    act(() => {
-      TestResizeObserver.trigger(log);
-      flushAnimationFrames();
-    });
+    deliverLayout(log);
     expect(log.scrollTop).toBe(0);
     act(() => vi.runOnlyPendingTimers());
     expect(log.scrollTop).toBe(100);
@@ -282,11 +278,7 @@ describe("transcript viewport geometry", () => {
   });
 
   it("reports the visible latest boundary independently of follow ownership", () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    render(<ViewportHarness />);
-    const log = screen.getByRole("log");
-    setScrollGeometry(log, { clientHeight: 400, scrollTop: 600 });
-    fireEvent.scroll(log);
+    const log = openViewport();
     fireEvent.wheel(log);
     log.scrollTop = 550;
     fireEvent.scroll(log);
@@ -301,10 +293,7 @@ describe("transcript viewport geometry", () => {
       configurable: true,
       value: 1_100,
     });
-    act(() => {
-      TestResizeObserver.trigger(log);
-      flushAnimationFrames();
-    });
+    deliverLayout(log);
     expect(log.scrollTop).toBe(600);
     expect(log).toHaveAttribute("data-at-latest", "false");
   });
@@ -315,11 +304,7 @@ describe("transcript viewport geometry", () => {
   ])(
     "restores follow after clearing search only at the latest boundary ($scrollTop)",
     ({ scrollTop, expectedTop }) => {
-      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-      render(<ViewportHarness />);
-      const log = screen.getByRole("log");
-      setScrollGeometry(log, { clientHeight: 400, scrollTop: 600 });
-      fireEvent.scroll(log);
+      const log = openViewport();
       fireEvent.wheel(log);
       log.scrollTop = scrollTop;
       fireEvent.scroll(log);
@@ -330,10 +315,7 @@ describe("transcript viewport geometry", () => {
         configurable: true,
         value: 1_100,
       });
-      act(() => {
-        TestResizeObserver.trigger(log);
-        flushAnimationFrames();
-      });
+      deliverLayout(log);
       expect(log.scrollTop).toBe(expectedTop);
     },
   );

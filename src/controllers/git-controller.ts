@@ -69,7 +69,6 @@ export type GitDiffView =
 
 export interface GitControllerState extends FileInspectionState {
   sessionId: string | null;
-  selectionGeneration: number;
   resourcesOpen: boolean;
   contextMode: "files" | "changes" | "terminal" | "history";
   gitStatus: GitStatusResponse | null;
@@ -87,6 +86,7 @@ interface GitControllerPatch {
 
 interface GitControllerHost {
   state(): GitControllerState;
+  selectionGeneration(): number;
   patch(patch: GitControllerPatch): void;
   api(): Api | null;
   openResourceFromGit(change: GitFileChange): Promise<void>;
@@ -164,8 +164,10 @@ export class GitController {
 
   private readOwner(): GitReadOwner | null {
     const api = this.host.api();
-    const { sessionId, selectionGeneration } = this.host.state();
-    return api && sessionId ? { api, sessionId, selectionGeneration } : null;
+    const { sessionId } = this.host.state();
+    return api && sessionId
+      ? { api, sessionId, selectionGeneration: this.host.selectionGeneration() }
+      : null;
   }
 
   private owns({ api, sessionId, selectionGeneration }: GitReadOwner): boolean {
@@ -173,7 +175,7 @@ export class GitController {
     return (
       this.host.api() === api &&
       state.sessionId === sessionId &&
-      state.selectionGeneration === selectionGeneration
+      this.host.selectionGeneration() === selectionGeneration
     );
   }
 

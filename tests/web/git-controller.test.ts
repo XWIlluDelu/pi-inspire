@@ -63,7 +63,6 @@ function fixture(files = [changed(path)], visible = true) {
   }
   let state: GitControllerState = {
     sessionId: "s1",
-    selectionGeneration: 1,
     resourcesOpen: false,
     contextMode: "files",
     fileInspection: { kind: "browse" },
@@ -109,6 +108,7 @@ function fixture(files = [changed(path)], visible = true) {
   });
   const controller = new GitController({
     state: () => state,
+    selectionGeneration: () => 1,
     patch,
     api: () => api,
     handleAuthFailure: vi.fn(),

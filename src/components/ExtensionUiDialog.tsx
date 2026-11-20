@@ -94,14 +94,7 @@ export const ExtensionUiDialog = memo(function ExtensionUiDialog({
           </ActivityDetails>
         ),
       }
-    : {
-        method: request.method,
-        title: request.title,
-        message: request.message,
-        options: request.options,
-        placeholder: request.placeholder,
-        prefill: request.prefill,
-      };
+    : request;
   return (
     <Modal
       aria-label={request.title || "Pi extension request"}
