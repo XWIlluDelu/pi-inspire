@@ -1,12 +1,6 @@
 import { basename } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import {
-  BRANCH_BRIDGE_MAX_ARGUMENT_BYTES,
-  decodeBranchBridgeJson,
-  encodeBranchBridgeJson,
-} from "../../shared/branch-bridge-protocol.js";
 import type { ToolLoadoutEntry } from "../../shared/contracts.js";
-import { isJsonRecord } from "../../shared/json-record.js";
 import {
   TOOL_LOADOUT_MAX_DESCRIPTION_CHARS,
   TOOL_LOADOUT_MAX_NAME_CHARS,
@@ -15,41 +9,21 @@ import {
   TOOL_LOADOUT_SUFFIX,
 } from "../../shared/tool-loadout.js";
 import type { BranchBridgeIdentity } from "../runtime-slot.js";
+import { registerWorkerStatusCommand } from "./worker-status-command.js";
 
 export function registerToolLoadoutBridge(
   pi: ExtensionAPI,
-  { command, statusKey, workerId }: BranchBridgeIdentity,
+  owner: BranchBridgeIdentity,
 ): void {
-  pi.registerCommand(`${command}${TOOL_LOADOUT_SUFFIX}`, {
-    description: "Internal Inspire tool loadout",
-    handler: async (argument, ctx) => {
-      const request = decodeBranchBridgeJson(
-        argument,
-        BRANCH_BRIDGE_MAX_ARGUMENT_BYTES,
-      );
-      if (
-        !isJsonRecord(request) ||
-        ctx.mode !== "rpc" ||
-        request.workerId !== workerId ||
-        request.sessionId !== ctx.sessionManager.getSessionId() ||
-        typeof request.nonce !== "string" ||
-        !/^[A-Za-z0-9_-]{16,200}$/.test(request.nonce)
-      )
-        throw new Error("Invalid tool loadout owner");
-
-      const emit = (packet: object) =>
-        ctx.ui.setStatus(
-          `${statusKey}${TOOL_LOADOUT_SUFFIX}`,
-          encodeBranchBridgeJson(
-            {
-              ...packet,
-              workerId,
-              sessionId: request.sessionId,
-              nonce: request.nonce,
-            },
-            TOOL_LOADOUT_PACKET_LIMIT,
-          ),
-        );
+  registerWorkerStatusCommand(
+    pi,
+    owner,
+    {
+      suffix: TOOL_LOADOUT_SUFFIX,
+      description: "tool loadout",
+      resultLimit: TOOL_LOADOUT_PACKET_LIMIT,
+    },
+    (request, _ctx, emit) => {
       const inventory = pi.getAllTools();
       let active = new Set(pi.getActiveTools());
       if (request.name !== undefined || request.active !== undefined) {
@@ -102,5 +76,5 @@ export function registerToolLoadoutBridge(
       }
       emit({ tools, truncated: tools.length < inventory.length });
     },
-  });
+  );
 }

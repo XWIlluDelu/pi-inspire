@@ -1,4 +1,6 @@
 import {
+  BRANCH_BRIDGE_MAX_ARGUMENT_BYTES,
+  BRANCH_BRIDGE_MAX_RESULT_BYTES,
   decodeBranchBridgeJson,
   encodeBranchBridgeJson,
 } from "../shared/branch-bridge-protocol.js";
@@ -9,8 +11,8 @@ import { runtimeToken } from "./runtime-token.js";
 interface StatusRequest {
   suffix: string;
   argument?: Record<string, unknown>;
-  maxArgumentBytes: number;
-  maxResultBytes: number;
+  maxArgumentBytes?: number;
+  maxResultBytes?: number;
   timeoutMs?: number;
   malformedError: Error;
 }
@@ -89,13 +91,22 @@ export async function requestWorkerStatus(
   const owner = { nonce: runtimeToken("status"), workerId: bridge.workerId, sessionId };
   let invalid = false;
   const unwatch = watchWorkerStatus(
-    rpc, `${bridge.statusKey}${options.suffix}`, owner, options.maxResultBytes,
-    receive, () => { invalid = true; },
+    rpc,
+    `${bridge.statusKey}${options.suffix}`,
+    owner,
+    options.maxResultBytes ?? BRANCH_BRIDGE_MAX_RESULT_BYTES,
+    receive,
+    () => {
+      invalid = true;
+    },
   );
   try {
     await sendWorkerStatusRequest(
-      rpc, `${bridge.command}${options.suffix}`, { ...options.argument, ...owner },
-      options.maxArgumentBytes, options.timeoutMs ?? 30_000,
+      rpc,
+      `${bridge.command}${options.suffix}`,
+      { ...options.argument, ...owner },
+      options.maxArgumentBytes ?? BRANCH_BRIDGE_MAX_ARGUMENT_BYTES,
+      options.timeoutMs ?? 30_000,
     );
     if (invalid) throw options.malformedError;
   } finally {

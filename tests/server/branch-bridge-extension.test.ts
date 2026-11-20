@@ -86,7 +86,7 @@ describe("inspire branch extension", () => {
         Buffer.from(JSON.stringify(request)).toString("base64url"),
         fixture.context,
       ),
-    ).rejects.toThrow("invalid retry state owner");
+    ).rejects.toThrow("invalid worker status owner");
     expect(fixture.getSettings).not.toHaveBeenCalled();
     expect(fixture.statuses).toHaveLength(0);
   });

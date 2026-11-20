@@ -1,6 +1,4 @@
 import {
-  BRANCH_BRIDGE_MAX_ARGUMENT_BYTES,
-  BRANCH_BRIDGE_MAX_RESULT_BYTES,
   BRANCH_BRIDGE_VERSION,
   RETRY_STATE_SUFFIX,
 } from "../shared/branch-bridge-protocol.js";
@@ -22,8 +20,6 @@ export async function readWorkerRetryState(
     {
       suffix: RETRY_STATE_SUFFIX,
       argument: { v: BRANCH_BRIDGE_VERSION },
-      maxArgumentBytes: BRANCH_BRIDGE_MAX_ARGUMENT_BYTES,
-      maxResultBytes: BRANCH_BRIDGE_MAX_RESULT_BYTES,
       malformedError: new Error("Malformed retry state result"),
     },
     (value) => {

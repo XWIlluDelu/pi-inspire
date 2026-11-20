@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { BRANCH_BRIDGE_MAX_ARGUMENT_BYTES } from "../shared/branch-bridge-protocol.js";
 import {
   TOOL_LOADOUT_EXPOSURES,
   type ToolLoadoutSnapshot,
@@ -48,7 +47,6 @@ export async function requestWorkerToolLoadout(
         ...(change
           ? { argument: { name: change.name, active: change.active } }
           : {}),
-        maxArgumentBytes: BRANCH_BRIDGE_MAX_ARGUMENT_BYTES,
         maxResultBytes: TOOL_LOADOUT_PACKET_LIMIT,
         malformedError: malformed,
       },

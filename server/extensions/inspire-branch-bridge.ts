@@ -15,8 +15,6 @@ import {
   MODEL_REFRESH_TIMEOUT_MS,
   PENDING_IMAGE_SUFFIX,
   RETRY_STATE_SUFFIX,
-  type RetryStateRequest,
-  type RetryStateResult,
   UI_RELOAD_SUFFIX,
 } from "../../shared/branch-bridge-protocol.js";
 import { MAX_SESSION_ID_CHARS } from "../../shared/contracts.js";
@@ -32,6 +30,7 @@ import { nativeEntryDigest } from "../native-entry-digest.js";
 import { userMessageEvidence } from "../pending-image-evidence.js";
 import { registerProviderAuthBridge } from "./provider-auth-bridge.js";
 import { registerToolLoadoutBridge } from "./tool-loadout-bridge.js";
+import { registerWorkerStatusCommand } from "./worker-status-command.js";
 
 const CHECKPOINT_STATE = Symbol.for("inspire.worker-checkpoint");
 type CheckpointState = {
@@ -129,8 +128,9 @@ export default function inspireBranchBridge(pi: ExtensionAPI): void {
   if (!TOKEN.test(command) || !TOKEN.test(statusKey) || !TOKEN.test(workerId))
     return;
 
-  registerProviderAuthBridge(pi, { command, statusKey, workerId });
-  registerToolLoadoutBridge(pi, { command, statusKey, workerId });
+  const owner = { command, statusKey, workerId };
+  registerProviderAuthBridge(pi, owner);
+  registerToolLoadoutBridge(pi, owner);
 
   const processState = process as NodeJS.Process & {
     [CHECKPOINT_STATE]?: CheckpointState;
@@ -285,75 +285,35 @@ export default function inspireBranchBridge(pi: ExtensionAPI): void {
     }
   });
 
-  pi.registerCommand(`${command}${RETRY_STATE_SUFFIX}`, {
-    description: "Internal Inspire effective retry state",
-    handler: async (argument, ctx) => {
-      const request = decodeBranchBridgeJson(
-        argument,
-        BRANCH_BRIDGE_MAX_ARGUMENT_BYTES,
-      ) as RetryStateRequest;
-      if (
-        !request ||
-        ctx.mode !== "rpc" ||
-        request.v !== BRANCH_BRIDGE_VERSION ||
-        request.workerId !== workerId ||
-        request.sessionId !== ctx.sessionManager.getSessionId() ||
-        typeof request.nonce !== "string" ||
-        !TOKEN.test(request.nonce)
-      )
-        throw new Error("invalid retry state owner");
-      const settings = pi.getSettings();
-      ctx.ui.setStatus(
-        `${statusKey}${RETRY_STATE_SUFFIX}`,
-        encodeBranchBridgeJson(
-          {
-            v: BRANCH_BRIDGE_VERSION,
-            nonce: request.nonce,
-            workerId,
-            sessionId: request.sessionId,
-            autoRetryEnabled: settings.retry?.enabled ?? true,
-          } satisfies RetryStateResult,
-          BRANCH_BRIDGE_MAX_RESULT_BYTES,
-        ),
-      );
+  registerWorkerStatusCommand(
+    pi,
+    owner,
+    {
+      suffix: RETRY_STATE_SUFFIX,
+      description: "effective retry state",
+      versioned: true,
     },
-  });
+    (_request, _ctx, emit) => {
+      emit({ autoRetryEnabled: pi.getSettings().retry?.enabled ?? true });
+    },
+  );
 
-  pi.registerCommand(`${command}${PENDING_IMAGE_SUFFIX}`, {
-    description: "Internal Inspire pending image evidence",
-    handler: async (argument, ctx) => {
-      const request = decodeBranchBridgeJson(
-        argument,
-        BRANCH_BRIDGE_MAX_ARGUMENT_BYTES,
-      ) as Record<string, unknown>;
+  registerWorkerStatusCommand(
+    pi,
+    owner,
+    {
+      suffix: PENDING_IMAGE_SUFFIX,
+      description: "pending image evidence",
+      versioned: true,
+    },
+    (request, ctx, emit) => {
       if (
-        !request ||
-        ctx.mode !== "rpc" ||
-        request.v !== BRANCH_BRIDGE_VERSION ||
-        request.workerId !== workerId ||
-        request.sessionId !== ctx.sessionManager.getSessionId() ||
-        typeof request.nonce !== "string" ||
-        !TOKEN.test(request.nonce) ||
-        (request.since !== undefined &&
-          request.since !== null &&
-          typeof request.since !== "string")
+        request.since !== undefined &&
+        request.since !== null &&
+        typeof request.since !== "string"
       )
-        throw new Error("invalid pending image owner");
+        throw new Error("invalid pending image cursor");
       const entries = ctx.sessionManager.getEntries();
-      const emit = (payload: object) =>
-        ctx.ui.setStatus(
-          `${statusKey}${PENDING_IMAGE_SUFFIX}`,
-          encodeBranchBridgeJson(
-            {
-              v: BRANCH_BRIDGE_VERSION,
-              nonce: request.nonce,
-              workerId,
-              sessionId: request.sessionId,
-              ...payload,
-            },
-            BRANCH_BRIDGE_MAX_RESULT_BYTES,
-          ),
-        );
       if (request.since !== undefined) {
         const start =
           request.since === null
@@ -371,26 +331,19 @@ export default function inspireBranchBridge(pi: ExtensionAPI): void {
       // message_start events still own consumption before persistence.
       emit({ cursor: entries.at(-1)?.id ?? null });
     },
-  });
+  );
 
   // Catalog refresh is independent of branch navigation and active agent work.
   // ModelRuntime retains extension providers and owns authentication/network policy.
   let refreshing: Promise<string | undefined> | undefined;
-  pi.registerCommand(`${command}${MODEL_REFRESH_SUFFIX}`, {
-    description: "Internal Inspire model catalog refresh",
-    handler: async (argument, ctx) => {
-      const request = decodeBranchBridgeJson(
-        argument,
-        BRANCH_BRIDGE_MAX_ARGUMENT_BYTES,
-      ) as Record<string, unknown>;
-      if (
-        ctx.mode !== "rpc" ||
-        request.workerId !== workerId ||
-        request.sessionId !== ctx.sessionManager.getSessionId() ||
-        typeof request.nonce !== "string" ||
-        !TOKEN.test(request.nonce)
-      )
-        throw new Error("invalid model refresh owner");
+  registerWorkerStatusCommand(
+    pi,
+    owner,
+    {
+      suffix: MODEL_REFRESH_SUFFIX,
+      description: "model catalog refresh",
+    },
+    async (_request, ctx, emit) => {
       let ok = true;
       let warning: string | undefined;
       try {
@@ -420,21 +373,9 @@ export default function inspireBranchBridge(pi: ExtensionAPI): void {
         ok = false;
         warning = boundedError(error);
       }
-      ctx.ui.setStatus(
-        `${statusKey}${MODEL_REFRESH_SUFFIX}`,
-        encodeBranchBridgeJson(
-          {
-            nonce: request.nonce,
-            workerId,
-            sessionId: request.sessionId,
-            ok,
-            ...(warning ? { warning: warning.slice(0, 300) } : {}),
-          },
-          BRANCH_BRIDGE_MAX_RESULT_BYTES,
-        ),
-      );
+      emit({ ok, ...(warning ? { warning: warning.slice(0, 300) } : {}) });
     },
-  });
+  );
 
   let navigating:
     | {

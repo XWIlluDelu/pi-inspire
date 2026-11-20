@@ -34,17 +34,6 @@ export interface BranchBridgeResult {
   error?: string;
 }
 
-export interface RetryStateRequest {
-  v: typeof BRANCH_BRIDGE_VERSION;
-  nonce: string;
-  workerId: string;
-  sessionId: string;
-}
-
-export interface RetryStateResult extends RetryStateRequest {
-  autoRetryEnabled: boolean;
-}
-
 /** Structural framing only. Endpoints remain responsible for validating fields. */
 export function decodeBranchBridgeJson(
   encodedValue: unknown,

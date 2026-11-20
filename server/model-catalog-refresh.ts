@@ -20,7 +20,6 @@ export async function refreshWorkerCatalog(
     {
       suffix: MODEL_REFRESH_SUFFIX,
       maxArgumentBytes: 4_096,
-      maxResultBytes: 2_048,
       timeoutMs: MODEL_REFRESH_TIMEOUT_MS + 5_000,
       malformedError: new Error("Malformed model refresh result"),
     },
