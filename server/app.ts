@@ -1289,6 +1289,9 @@ export function createInspireServer(deps: AppDependencies): {
   jsonRoute(app, routes.forkBranch, ({ body }) =>
     deps.runtime.forkBranch(body),
   );
+  jsonRoute(app, routes.recoverWorkspaceFork, ({ body }) =>
+    deps.runtime.recoverWorkspaceFork(body),
+  );
 
   // Unknown API paths are protocol errors, never client-side routes. Keep
   // them out of the SPA fallback so a typo cannot return index.html as 200.

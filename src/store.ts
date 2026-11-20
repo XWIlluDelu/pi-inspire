@@ -3009,6 +3009,8 @@ export class AppStore {
   forkBranch = (targetId: string): Promise<boolean> =>
     this.branches.fork(targetId);
 
+  prepareWorkspaceFork = () => this.branches.prepareWorkspaceFork();
+
   returnToLatestBranch = (): Promise<boolean> => this.branches.returnToLatest();
 
   cloneBranch = (targetId: string): Promise<boolean> =>

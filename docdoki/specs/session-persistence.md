@@ -41,8 +41,9 @@ for history reads or writer admission.
 
 Valid retained history remains readable when its project directory is missing, is not a directory,
 or cannot be resolved. The snapshot reports `readOnlyReason: workspace-unavailable`; neither a Pi
-worker nor project model discovery starts. Worker-backed mutations and independent Fork/Clone reject
-at admission. The history source must still be valid: missing or corrupt JSONL keeps its own error.
+worker nor project model discovery starts. Worker-backed mutations and History Fork/Clone reject
+at admission. **Fork into another folder…** can recover the saved tree as an independent Session in
+a user-selected workspace under [[session-branches]]. All paths require valid retained history.
 
 After publishing a browser's initial or switched session view, start Pi in the background if the
 view is editable and has no attached or managed Pi. Use the same writer admission as prompts and

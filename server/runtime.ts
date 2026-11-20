@@ -45,6 +45,7 @@ import {
   THINKING_LEVELS,
   type ThinkingLevel,
   type UploadedAttachment,
+  type WorkspaceForkRequest,
 } from "../shared/contracts.js";
 import type { SessionHistoryQuery } from "../shared/history-query.js";
 import type { RuntimeSetting } from "../shared/host-endpoints.js";
@@ -2170,6 +2171,23 @@ export class RuntimeController extends EventEmitter {
     }
   }
 
+  private async refreshWorkspaceAvailability(
+    slot: RuntimeSlot,
+    path = slot.cwd,
+  ): Promise<void> {
+    const cwd = slot.cwd;
+    const root = await this.resolveWorkspaceRoot(path);
+    if (this.slots.get(slot.id) !== slot || slot.cwd !== cwd) return;
+    if (root && slot.readOnlyReason === "workspace-unavailable") {
+      slot.cwd = root;
+      slot.readOnlyReason = null;
+      this.renewView(slot);
+    } else if (!root && slot.readOnlyReason !== "workspace-unavailable") {
+      slot.readOnlyReason = "workspace-unavailable";
+      this.renewView(slot);
+    }
+  }
+
   private attachProjection(
     slot: RuntimeSlot,
     projection: SessionProjectionView,
@@ -2224,16 +2242,7 @@ export class RuntimeController extends EventEmitter {
     }
     const existing = this.slots.get(session.id);
     if (existing && (existing.projection || existing.process)) {
-      if (existing.readOnlyReason === "workspace-unavailable") {
-        const slot = existing;
-        await this.mutateSlot(slot, async () => {
-          const root = await this.resolveWorkspaceRoot(session.cwd);
-          if (!root || !slot.readOnlyReason) return;
-          slot.cwd = root;
-          slot.readOnlyReason = null;
-          this.renewView(slot);
-        });
-      }
+      await this.refreshWorkspaceAvailability(existing, session.cwd);
       return existing;
     }
     const pathOwner = [...this.slots.values()].find(
@@ -3573,26 +3582,42 @@ export class RuntimeController extends EventEmitter {
 
   async forkBranch(request: BranchForkRequest): Promise<BranchForkResponse> {
     return this.withMaintenanceOperation(() =>
-      this.copyBranchInside(request, "fork"),
+      this.copyBranchInside({ ...request, mode: "fork" }),
     );
   }
 
   async cloneBranch(request: BranchCloneRequest): Promise<BranchForkResponse> {
     return this.withMaintenanceOperation(() =>
-      this.copyBranchInside(request, "clone"),
+      this.copyBranchInside({ ...request, mode: "clone" }),
+    );
+  }
+
+  async recoverWorkspaceFork(
+    request: WorkspaceForkRequest,
+  ): Promise<BranchForkResponse> {
+    return this.withMaintenanceOperation(() =>
+      this.copyBranchInside({ ...request, mode: "recover" }),
     );
   }
 
   private async copyBranchInside(
-    request: BranchForkRequest | BranchCloneRequest,
-    mode: "fork" | "clone",
+    request:
+      | (BranchForkRequest & { mode: "fork" })
+      | (BranchCloneRequest & { mode: "clone" })
+      | (WorkspaceForkRequest & { mode: "recover" }),
   ): Promise<BranchForkResponse> {
+    const { mode } = request;
     const source = this.requireSlot(request.sessionId);
     const selectionAtDispatch = this.openHintSequence;
     return this.mutateSlot(source, async () => {
-      // A copy writes a new session; the source may belong to another Pi.
-      // The destination still inherits this project and must be runnable there.
-      if (
+      // History copies inherit the project. Recovery explicitly selects a new one.
+      if (mode === "recover") {
+        if (source.readOnlyReason !== "workspace-unavailable")
+          throw requestError(
+            "The source project folder is still available",
+            409,
+          );
+      } else if (
         source.readOnlyReason === "workspace-unavailable" ||
         !(await this.resolveWorkspaceRoot(source.cwd))
       )
@@ -3609,7 +3634,11 @@ export class RuntimeController extends EventEmitter {
       if (!projection || !sourcePath) {
         throw requestError("Fork requires a materialized source Session", 409);
       }
-      const targetId = request.targetId;
+      const cwd =
+        mode === "recover"
+          ? await resolveProjectDirectory(request.cwd)
+          : source.cwd;
+      const targetId = mode === "recover" ? null : request.targetId;
       const node = targetId === null ? null : projection.entry(targetId);
       if (
         (targetId !== null && !node) ||
@@ -3631,9 +3660,9 @@ export class RuntimeController extends EventEmitter {
         sourceCommittedBytes: projection.committedBytes,
         sourceFingerprint: projection.fingerprint,
         sourceIdentity: projection.sourceIdentity ?? undefined,
-        targetId,
-        targetParentId: node?.parentId ?? null,
-        mode,
+        ...(mode === "recover"
+          ? { mode, destinationCwd: cwd }
+          : { mode, targetId, targetParentId: node?.parentId ?? null }),
       });
       const destinationId = staged.destinationId;
       const destinationPath = resolve(staged.destinationPath);
@@ -3666,7 +3695,7 @@ export class RuntimeController extends EventEmitter {
 
         const stagedRecord: SessionRecord = {
           id: destinationId,
-          cwd: source.cwd,
+          cwd,
           path: staged.stagedPath,
           name: staged.sessionName,
           parentSessionPath: resolve(sourcePath),
@@ -3707,10 +3736,16 @@ export class RuntimeController extends EventEmitter {
         }
 
         await this.projectionCoordinator.reconcile(source, true);
+        if (mode === "recover" && (await this.resolveWorkspaceRoot(cwd)) !== cwd)
+          throw requestError(
+            "The destination folder changed or is unavailable",
+            409,
+          );
         this.throwIfConflicted(source);
         this.requireHistoryView(source, request.viewId);
         await publishStagedSessionFork(staged);
         published = true;
+        if (mode === "recover") this.rememberProjectCwd(cwd);
         const destinationRecord: SessionRecord = {
           ...stagedRecord,
           path: destinationPath,
@@ -3730,7 +3765,7 @@ export class RuntimeController extends EventEmitter {
         const destinationViewId = bridgeToken("view");
         const destination = createRuntimeSlot({
           id: destinationId,
-          cwd: source.cwd,
+          cwd,
           sessionPath: destinationPath,
           process: null,
           preview: {
@@ -4842,9 +4877,10 @@ export class RuntimeController extends EventEmitter {
   async snapshot(sessionId: string | null): Promise<ActiveSnapshot> {
     this.assertMaintenanceAvailable();
     if (sessionId === null) return this.emptySnapshot();
-    const slot =
-      this.retainedCatalogSlot(sessionId) ?? (await this.prepareCatalogSlot(sessionId));
+    const retained = this.retainedCatalogSlot(sessionId);
+    const slot = retained ?? (await this.prepareCatalogSlot(sessionId));
     return this.useSlot(slot, async () => {
+      if (retained) await this.refreshWorkspaceAvailability(retained);
       if (!slot.mutationQueue.pending && this.sessionViewObservers.has(slot.id))
         await this.observeExternalOwner(slot);
       this.assertMaintenanceAvailable();

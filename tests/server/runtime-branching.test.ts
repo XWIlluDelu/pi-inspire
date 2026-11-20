@@ -1,6 +1,13 @@
 import { readFileSync } from "node:fs";
-import { appendFile, readdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import {
+  appendFile,
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  writeFile,
+} from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { PiRpcOptions, PiRpcProcess } from "../../server/pi-rpc.js";
 import {
@@ -225,6 +232,61 @@ async function fixture({
       }),
   };
 }
+
+it("forks the whole saved tree after a retained session's workspace moves", async () => {
+  const f = await fixture({
+    extra: [
+      entry("alternate", "a1", "user", "Side branch", 8),
+      entry("latest", "a2", "assistant", "Latest branch", 9),
+    ],
+  });
+  await rename(join(fixtureWorkspace, "workspace"), join(fixtureWorkspace, "moved"));
+  const {
+    sessionId,
+    transcriptPage: { viewId },
+    readOnlyReason,
+  } = await f.active();
+  expect(readOnlyReason).toBe("workspace-unavailable");
+  const cwd = join(fixtureWorkspace, "other");
+  const destinationDirectory = join(fixtureWorkspace, "recovered-sessions");
+  const config = join(cwd, ".pi");
+  await mkdir(config);
+  await writeFile(
+    join(config, "settings.json"),
+    JSON.stringify({ sessionDir: destinationDirectory }),
+  );
+  vi.stubEnv("PI_CODING_AGENT_SESSION_DIR", "");
+
+  const forked = await f.runtime.recoverWorkspaceFork({
+    sessionId,
+    viewId,
+    cwd,
+  });
+  const file = forked.snapshot.active!.sessionFile!;
+  expect(dirname(file)).toBe(destinationDirectory);
+  const [header, ...entries] = parseLines(await readFile(file, "utf8"));
+  expect(header).toMatchObject({
+    id: forked.sessionId,
+    parentSession: f.path,
+    cwd,
+  });
+  expect(forked.sessionId).not.toBe(sessionId);
+  expect(entries).toEqual(parseLines(f.source).slice(1));
+  expect(forked.snapshot.active).toMatchObject({
+    durableLeafId: "latest",
+    cwd,
+  });
+  expect(forked.snapshot.active?.readOnlyReason).toBeUndefined();
+  expect(forked.editorText).toBe("");
+  expect(forked.editorAttachments).toBeUndefined();
+  expect(await f.catalog.get(forked.sessionId)).toMatchObject({
+    cwd,
+    path: file,
+  });
+  expect(await readFile(f.path, "utf8")).toBe(f.source);
+  expect(f.workers).toEqual([f.worker]);
+  expect(f.worker.available).toBe(true);
+});
 
 it.each(["Stop", "exit"] as const)(
   "cannot renew a worker lease retired by %s during final reconciliation",

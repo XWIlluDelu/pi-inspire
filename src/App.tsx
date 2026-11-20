@@ -28,6 +28,7 @@ import {
   ContextPaneShell,
 } from "./components/ContextPaneShell";
 import { ContextPaneState } from "./components/ContextPaneState";
+import { DirectoryPicker } from "./components/DirectoryPicker";
 import { ExportDialog } from "./components/ExportDialog";
 import { ExtensionDisplayDock } from "./components/ExtensionDisplays";
 import {
@@ -413,11 +414,13 @@ const ConversationStage = memo(function ConversationStage({
           </dl>
           {state.readOnlyReason === "external-active" && state.sessionId ? (
             <TakeOverNotice key={state.sessionId} sessionId={state.sessionId} />
+          ) : state.readOnlyReason === "workspace-unavailable" ? (
+            <WorkspaceRecoveryNotice
+              key={`${state.sessionId}:${state.transcriptViewId}`}
+            />
           ) : (
             <p role="status">
-              {state.readOnlyReason === "workspace-unavailable"
-                ? "Project folder unavailable. This session is read-only."
-                : "Pi is unavailable. You can still read this session."}
+              Pi is unavailable. You can still read this session.
             </p>
           )}
         </div>
@@ -437,6 +440,39 @@ const ConversationStage = memo(function ConversationStage({
     </section>
   );
 });
+
+function WorkspaceRecoveryNotice() {
+  const [fork, setFork] =
+    useState<ReturnType<typeof store.prepareWorkspaceFork>>(null);
+  const action = useAppState((state) => state.branchActionId);
+  return (
+    <div className="composer-readonly__notice">
+      <p role="status">Project folder unavailable. This session is read-only.</p>
+      <button
+        type="button"
+        className="button button--quiet"
+        disabled={action !== null}
+        onClick={() => {
+          const prepared = store.prepareWorkspaceFork();
+          if (prepared) setFork(() => prepared);
+        }}
+      >
+        {action === "recover" ? "Forking…" : "Fork into another folder…"}
+      </button>
+      {fork ? (
+        <DirectoryPicker
+          title="Choose fork destination"
+          actionLabel="Fork into this folder"
+          onCancel={() => setFork(null)}
+          onPick={(cwd) => {
+            setFork(null);
+            void fork(cwd);
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
 
 /** Another Pi is running this branch: watch here, or take it over. Taking
  * over attaches to that Pi; its terminal keeps working alongside Inspire. */

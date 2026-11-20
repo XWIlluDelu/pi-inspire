@@ -9,18 +9,22 @@ import { DialogHeader, Modal } from "./Modal";
 import { PiLoader } from "./PiLoader";
 
 /**
- * Host-side directory browser for the session-start surface. The host
+ * Host-side directory browser for Session workspace selection. The host
  * process lists its own filesystem, so over SSH forwards or remote
  * deployments the tree is always the machine sessions run on, and entry
  * paths arrive pre-joined with the host's own separators.
  */
 export function DirectoryPicker({
   initial,
+  title = "Choose project directory",
+  actionLabel = "Use this directory",
   onCancel,
   onPick,
 }: {
   /** Starting directory; a bad or relative value falls back to the host home. */
   initial?: string;
+  title?: string;
+  actionLabel?: string;
   onCancel: () => void;
   onPick: (path: string) => void;
 }) {
@@ -32,6 +36,7 @@ export function DirectoryPicker({
   const [location, setLocation] = useState(initial?.trim() ?? "");
   const [draftPath, setDraftPath] = useState<string | null>(null);
   const path = draftPath ?? location;
+  const requestedPath = draftPath?.trim() ?? location;
   const [roots, setRoots] = useState<HostDirEntry[]>([]);
   const [rootsUnavailable, setRootsUnavailable] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -41,8 +46,8 @@ export function DirectoryPicker({
   const listing =
     confirmed?.transport === transportGeneration ? confirmed.listing : null;
   const initialTransport = useRef(transportGeneration);
-  const pathRef = useRef(path);
-  pathRef.current = path;
+  const pathRef = useRef(requestedPath);
+  pathRef.current = requestedPath;
   // Each new read aborts its predecessor, including its pending retry and late result.
   const listingRequest = useRef<ReturnType<typeof recoverableRead> | null>(
     null,
@@ -138,7 +143,7 @@ export function DirectoryPicker({
   useEffect(() => {
     const request = recoverableRead(ownsTransport);
     setDraftPath(null);
-    void load(pathRef.current.trim() || undefined, {
+    void load(pathRef.current || undefined, {
       fallbackHome: initialTransport.current === transportGeneration,
     });
     setRoots([]);
@@ -159,9 +164,9 @@ export function DirectoryPicker({
   }, [transportGeneration]);
 
   return (
-    <Modal aria-label="Choose project directory" onDismiss={onCancel}>
+    <Modal aria-label={title} onDismiss={onCancel}>
       <div className="dialog dirpicker">
-        <DialogHeader title="Choose project directory" bar={false}>
+        <DialogHeader title={title} bar={false}>
           <button
             type="button"
             className="icon-button dirpicker__hidden"
@@ -202,7 +207,7 @@ export function DirectoryPicker({
             )
               return;
             event.preventDefault();
-            if (path.trim() && !loading) void navigate(path.trim());
+            if (requestedPath && !loading) void navigate(requestedPath);
           }}
         />
         {rootsUnavailable ? (
@@ -288,16 +293,17 @@ export function DirectoryPicker({
           <button
             type="button"
             className="button button--primary"
-            disabled={!path.trim() || loading || !!error}
+            disabled={!requestedPath || loading || !!error}
             onClick={() => {
-              if (listing && path.trim() === listing.path) onPick(listing.path);
+              if (listing && requestedPath === listing.path)
+                onPick(listing.path);
               else
-                void navigate(path.trim()).then((result) => {
+                void navigate(requestedPath).then((result) => {
                   if (result) onPick(result.path);
                 });
             }}
           >
-            Use this directory
+            {actionLabel}
           </button>
         </div>
       </div>

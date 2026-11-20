@@ -285,6 +285,9 @@ const branchForkSchema = z
 const branchCloneSchema = branchForkSchema.extend({
   targetId: z.string().min(1).max(200).nullable(),
 });
+const workspaceForkSchema = branchForkSchema.omit({ targetId: true }).extend({
+  cwd: z.string().min(1).max(4_096),
+});
 const gitDiffSchema = z.object({
   sessionId: sessionIdField,
   pathId: z
@@ -405,6 +408,12 @@ export const hostEndpoints = {
     "post",
     "/api/branches/fork",
     { body: branchForkSchema },
+    longObservation,
+  ),
+  recoverWorkspaceFork: endpoint<BranchForkResponse>()(
+    "post",
+    "/api/branches/recover-workspace",
+    { body: workspaceForkSchema },
     longObservation,
   ),
   sessions: endpoint<SessionListResponse>()("get", "/api/sessions", {

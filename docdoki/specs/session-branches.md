@@ -130,6 +130,15 @@ Pi determines ancestry, labels, metadata and the generated identity:
 
 Neither action sends a model prompt or transfers the source's unsent draft/artifacts or pending input.
 
+### Workspace recovery
+
+When the original project folder is unavailable, **Fork into another folder…** chooses an existing
+directory from the Host. Bind the picker to its original session and view. Recovery copies the
+whole admitted Pi tree, including alternate branches and metadata, into Pi's session directory for
+the chosen workspace. It opens an empty Composer and keeps the source file, draft and worker state.
+Generate the new header with Pi's public SessionManager. Record the real source file as its parent.
+Stage beside the final path and check destination availability again before publication.
+
 ### Snapshot and publication
 
 Capture a fresh conflict-free committed source prefix and retained endpoint. A worker thread reads

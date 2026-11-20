@@ -54,6 +54,8 @@ to restore the search and position. **Switch branch…** in the title menu opens
 - **Fork into new session** copies up to the selected user input and restores that input's text
   and saved images for editing. **Clone into new session** includes its selected endpoint and opens
   an empty draft. The title menu and palette can also clone the current branch.
+- **Fork into another folder…** is available when the original project folder is unavailable.
+  Choose an existing directory to copy the whole saved session tree and open it with an empty draft.
 
 Continuing requires an idle session with no pending input or dialogs. Fork and Clone can copy
 recorded history while the source continues running. For extension lifecycle differences, see
@@ -166,9 +168,10 @@ means the Host still has an older Pi version loaded. Reload the session to apply
 ## Sessions and terminal use
 
 Choose **Copy resume command** in the palette and run it in the project folder to open terminal Pi.
-If the folder is missing, run the command in the new folder and choose **Fork** in Pi 1.5.2 or
-later. A Pi worker started by Inspire, a connected native Pi and the **Terminal** panel have
-separate lifecycles. The panel runs independent project shells. Terminal appearance is a browser
+If the folder is missing, choose **Fork into another folder…** in Inspire to copy all saved
+branches to a workspace you select. In terminal Pi 1.5.2 or later, run the resume command in the
+new folder and choose **Fork**. A Pi worker started by Inspire, a connected native Pi and the
+**Terminal** panel have separate lifecycles. The panel runs independent project shells. Terminal appearance is a browser
 preference. **Persist output** and **Retention** belong to the Host's terminal service. Turning
 saved output off removes its retained output. On macOS, enable **Option as Meta** to send
 Escape-prefixed shell keys. Leaving it off preserves characters and accents. For terminal Pi

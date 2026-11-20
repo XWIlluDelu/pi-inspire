@@ -1092,6 +1092,7 @@ export interface BranchNavigateResponse {
 export type BranchForkRequest = Body<"forkBranch">;
 
 export type BranchCloneRequest = Body<"cloneBranch">;
+export type WorkspaceForkRequest = Body<"recoverWorkspaceFork">;
 
 export interface BranchForkResponse {
   sessionId: string;

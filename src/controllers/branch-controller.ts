@@ -25,8 +25,11 @@ export type BranchControllerState = Pick<
 > & { readOnlyReason?: SessionReadOnlyReason | null };
 
 /** Independent copies need a readable source, not control of its writer. */
-function branchCopyBlockReason(state: BranchControllerState): string | null {
-  if (state.readOnlyReason === "workspace-unavailable")
+function branchCopyBlockReason(
+  state: BranchControllerState,
+  recoverWorkspace = false,
+): string | null {
+  if (!recoverWorkspace && state.readOnlyReason === "workspace-unavailable")
     return "The project folder is unavailable";
   if (state.branchActionId) return "A history action is in progress";
   if (state.view.health.status === "error" || state.view.conflict)
@@ -359,10 +362,31 @@ export class BranchController {
     return this.copyBranch({ kind: "clone", targetId }, onFailure);
   }
 
+  prepareWorkspaceFork() {
+    const state = this.host.state();
+    const api = this.host.api();
+    if (
+      !api ||
+      !state.sessionId ||
+      !state.view.viewId ||
+      state.readOnlyReason !== "workspace-unavailable"
+    )
+      return null;
+    const ticket = this.viewTicket(state);
+    return (cwd: string) => {
+      if (this.host.api() !== api || !this.ownsView(ticket, "view"))
+        return Promise.resolve(false);
+      return this.copyBranch({ kind: "recover", cwd }, (message) =>
+        this.host.notify("warning", message),
+      );
+    };
+  }
+
   private async copyBranch(
     copy:
       | { kind: "fork"; targetId: string }
-      | { kind: "clone"; targetId?: string },
+      | { kind: "clone"; targetId?: string }
+      | { kind: "recover"; cwd: string },
     onFailure?: (message: string) => void,
   ): Promise<boolean> {
     const api = this.host.api();
@@ -370,33 +394,49 @@ export class BranchController {
     const sessionId = state.sessionId;
     const viewId = state.view.viewId;
     if (!api || !sessionId || !viewId) return false;
-    const blocked = branchCopyBlockReason(state);
+    if (
+      copy.kind === "recover" &&
+      state.readOnlyReason !== "workspace-unavailable"
+    )
+      return false;
+    const blocked = branchCopyBlockReason(state, copy.kind === "recover");
     if (blocked) {
       onFailure?.(blocked);
       return false;
     }
     const address = { sessionId, viewId };
     const selectionRequest = this.host.beginForkSelection();
+    const perform = () => {
+      switch (copy.kind) {
+        case "fork":
+          return api.json("forkBranch", {
+            body: { ...address, targetId: copy.targetId },
+          });
+        case "clone":
+          return api.json("cloneBranch", {
+            body: {
+              ...address,
+              targetId: copy.targetId ?? state.view.effectiveLeafId,
+            },
+          });
+        case "recover":
+          return api.json("recoverWorkspaceFork", {
+            body: { ...address, cwd: copy.cwd },
+          });
+      }
+    };
     return this.runAction(
-      `${copy.kind}:${copy.targetId ?? "current"}`,
+      copy.kind === "recover"
+        ? copy.kind
+        : `${copy.kind}:${copy.targetId ?? "current"}`,
       api,
       { ...this.viewTicket(state), selectionRequest },
-      () =>
-        copy.kind === "fork"
-          ? api.json("forkBranch", {
-              body: { ...address, targetId: copy.targetId },
-            })
-          : api.json("cloneBranch", {
-              body: {
-                ...address,
-                targetId: copy.targetId ?? state.view.effectiveLeafId,
-              },
-            }),
+      perform,
       (response) => {
         this.host.applyFork(response);
         this.host.refreshSessionCatalog();
       },
-      copy.kind === "fork" ? "Fork failed" : "Clone failed",
+      copy.kind === "clone" ? "Clone failed" : "Fork failed",
       "view",
       async (response) => {
         if (copy.kind === "fork")
