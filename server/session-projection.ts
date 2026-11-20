@@ -158,25 +158,20 @@ async function sameDirectory(left: string, right: string): Promise<boolean> {
   }
 }
 
-function contextMessages(
+/** Pi places the latest compaction first, then its kept prefix and the
+ * entire suffix after it. Put the summary back at that boundary for display. */
+function transcriptEntries(
   leafId: string | null,
   byId: Map<string, SessionEntry>,
-): unknown[] {
-  const contextEntries = buildContextEntries([], leafId, byId);
-  // Pi prepends the latest summary for model consumption. A transcript must
-  // retain the same selected entries, but show the compaction where it happened.
-  if (contextEntries[0]?.type !== "compaction") {
-    return appendContextMessages([], contextEntries);
+) {
+  const entries = buildContextEntries([], leafId, byId);
+  const summary = entries[0];
+  if (summary?.type === "compaction") {
+    entries.shift();
+    const child = entries.findIndex((entry) => entry.parentId === summary.id);
+    entries.splice(child < 0 ? entries.length : child, 0, summary);
   }
-  // The selected ancestry is already in reverse append order. Keep Pi's
-  // membership and stop once all selected entries have been seen.
-  const included = new Set(contextEntries.map((entry) => entry.id));
-  const transcriptEntries: SessionEntry[] = [];
-  for (const entry of branchAncestors(byId, leafId)) {
-    if (included.delete(entry.id)) transcriptEntries.push(entry);
-    if (included.size === 0) break;
-  }
-  return appendContextMessages([], transcriptEntries.reverse());
+  return entries;
 }
 
 function appendContextMessages(
@@ -681,9 +676,11 @@ class SessionEntryIndex {
       isLinearAppend(this.currentLeafId, suffix) &&
       (suffix.at(-1)?.id ?? this.currentLeafId) === leafId;
     const previousMessages = this.currentMessages;
-    const messages = linear
-      ? appendContextMessages(previousMessages, suffix)
-      : contextMessages(leafId, byId);
+    const visible = linear ? suffix : transcriptEntries(leafId, byId);
+    const messages = appendContextMessages(
+      linear ? previousMessages : [],
+      visible,
+    );
     const replacesRows =
       kind === "rewrite" ||
       (!linear &&
@@ -693,9 +690,11 @@ class SessionEntryIndex {
               jsonRecord(row)?.__inspireMessageId !==
               jsonRecord(messages[index])?.__inspireMessageId,
           )));
-    const branch = linear
-      ? suffix
-      : [...branchAncestors(byId, leafId)].reverse();
+    // Compaction can conceal model and thinking settings earlier on this branch.
+    const branch =
+      !linear && visible.some((entry) => entry.type === "compaction")
+        ? [...branchAncestors(byId, leafId)].reverse()
+        : visible;
     const modelSelection = appendModelSelection(
       linear ? this.currentModelSelection : { change: null, fallback: null },
       branch,
@@ -871,7 +870,10 @@ class SessionEntryIndex {
     ) {
       throw requestError("Effective branch leaf does not exist", 409);
     }
-    return contextMessages(effectiveLeafId, this.currentEntriesById);
+    return appendContextMessages(
+      [],
+      transcriptEntries(effectiveLeafId, this.currentEntriesById),
+    );
   }
 
   /** Preserve the displayed image number from the chronological recall list. */
@@ -1092,7 +1094,13 @@ class SessionEntryIndex {
 
   private nativeHistory(leafId: string | null) {
     if (this.historyCache?.leafId === leafId) return this.historyCache;
-    const messages = appendContextMessages([], this.branchEntries(leafId));
+    const messages =
+      leafId === this.currentLeafId &&
+      !this.currentMessages.some(
+        (row) => jsonRecord(row)?.role === "compactionSummary",
+      )
+        ? this.currentMessages
+        : appendContextMessages([], this.branchEntries(leafId));
     const entries = new Map<string, number>();
     const turns: number[] = [];
     messages.forEach((message, index) => {
@@ -1181,9 +1189,6 @@ class SessionEntryIndex {
     currentLeafId: string | null,
   ): SessionHistoryPages["branches"] {
     const routes = sessionRouteIndex(this.currentEntries);
-    const ends = this.currentEntries
-      .filter(({ id }) => !routes.has(id))
-      .reverse();
     const excerpt = (leaf: SessionEntry): string => {
       for (const entry of branchAncestors(this.currentEntriesById, leaf.id)) {
         if (entry.type === "message" && entry.message.role === "user") {
@@ -1193,15 +1198,22 @@ class SessionEntryIndex {
       }
       return "";
     };
-    return {
-      total: ends.length,
-      leaves: ends.slice(0, 30).map((leaf) => ({
-        id: leaf.id,
-        excerpt: excerpt(leaf),
-        updatedAt: leaf.timestamp,
-        isCurrent: leaf.id === currentLeafId,
-      })),
-    };
+    const leaves: SessionHistoryPages["branches"]["leaves"] = [];
+    for (
+      let i = this.currentEntries.length - 1;
+      i >= 0 && leaves.length < 30;
+      i--
+    ) {
+      const leaf = this.currentEntries[i]!;
+      if (!routes.has(leaf.id))
+        leaves.push({
+          id: leaf.id,
+          excerpt: excerpt(leaf),
+          updatedAt: leaf.timestamp,
+          isCurrent: leaf.id === currentLeafId,
+        });
+    }
+    return { total: this.currentEntries.length - routes.size, leaves };
   }
 
   private composerHistoryVersion(effectiveLeafId: string | null): string {
