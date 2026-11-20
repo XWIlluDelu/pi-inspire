@@ -17,8 +17,11 @@ Implemented behavior belongs to [[pi-integration]], [[model-settings]], [[mcp]] 
 
 ## Blocked requirements
 
-The gaps below remain in Pi 1.5.0, checked against its public RPC command types and handlers,
-extension contexts, and SDK declarations for session mutation, settings and resource loading.
+This inventory was originally assembled against Pi 1.5.0/1.5.1. It remains focused on requirements
+blocked by missing owning-worker interfaces, rather than serving as the complete capability audit.
+The [2026-11-20 review](quality-simplification-2026-11-20.md) rechecks the installed integration
+against Pi 1.5.2, records newly available RPC operations that Inspire has not yet adopted, and
+separates worthwhile product work from low-value interface gaps.
 
 | Requirement | Missing interface |
 | --- | --- |
