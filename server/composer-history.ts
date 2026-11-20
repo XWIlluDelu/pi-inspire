@@ -47,6 +47,32 @@ function historyFile(
   };
 }
 
+/** Keep the original content coordinates when projecting a saved prompt. */
+export function savedComposerPrompt(content: unknown) {
+  let text = typeof content === "string" ? content : "";
+  const images: Array<{ partIndex: number; data: string; mimeType: string }> =
+    [];
+  if (Array.isArray(content)) {
+    content.forEach((part, partIndex) => {
+      if (!part || typeof part !== "object") return;
+      const item = part as Record<string, unknown>;
+      if (item.type === "text" && typeof item.text === "string") {
+        text += item.text;
+        return;
+      }
+      if (
+        item.type === "image" &&
+        typeof item.data === "string" &&
+        typeof item.mimeType === "string"
+      ) {
+        images.push({ partIndex, data: item.data, mimeType: item.mimeType });
+      }
+    });
+  }
+
+  return { ...parseAttachmentContext(text, images.length), images };
+}
+
 function userMessageEntry(
   message: ComposerHistoryMessage,
   cwd?: string,
@@ -65,48 +91,20 @@ function userMessageEntry(
   }
   if (message.role !== "user") return null;
 
-  let content = "";
-  const images: ComposerHistoryImage[] = [];
-  const imageData: string[] = [];
-  if (typeof message.content === "string") {
-    content = message.content;
-  } else if (Array.isArray(message.content)) {
-    message.content.forEach((part, partIndex) => {
-      if (!part || typeof part !== "object") return;
-      const item = part as Record<string, unknown>;
-      if (item.type === "text" && typeof item.text === "string") {
-        content += item.text;
-        return;
-      }
-      if (
-        item.type === "image" &&
-        typeof item.data === "string" &&
-        typeof item.mimeType === "string"
-      ) {
-        images.push({
-          reference: composerArtifactReference(
-            "image",
-            message.__inspireHistoryEntryId,
-            partIndex,
-          ),
-          mimeType: item.mimeType,
-          size: Buffer.byteLength(item.data, "base64"),
-        });
-        imageData.push(item.data);
-      }
-    });
-  }
-
-  const parsed = parseAttachmentContext(content, images.length);
-  const text = parsed.text.trim();
-  const files = parsed.references.map((path, referenceIndex) =>
+  const prompt = savedComposerPrompt(message.content);
+  const entryId = message.__inspireHistoryEntryId;
+  const text = prompt.text.trim();
+  const images: ComposerHistoryImage[] = prompt.images.map(
+    ({ partIndex, data, mimeType }) => ({
+      reference: composerArtifactReference("image", entryId, partIndex),
+      mimeType,
+      size: Buffer.byteLength(data, "base64"),
+    }),
+  );
+  const files = prompt.references.map((path, referenceIndex) =>
     historyFile(
       path,
-      composerArtifactReference(
-        "file",
-        message.__inspireHistoryEntryId,
-        referenceIndex,
-      ),
+      composerArtifactReference("file", entryId, referenceIndex),
       cwd,
       fileNameForPath,
     ),
@@ -114,8 +112,8 @@ function userMessageEntry(
   return text || images.length > 0 || files.length > 0
     ? {
         entry: { text, images, files },
-        imageData,
-        filePaths: parsed.references,
+        imageData: prompt.images.map(({ data }) => data),
+        filePaths: prompt.references,
       }
     : null;
 }

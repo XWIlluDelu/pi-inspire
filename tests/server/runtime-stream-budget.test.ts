@@ -23,7 +23,7 @@ function setup(incremental = true) {
     incarnationId: "incarnation",
     viewId: "view",
   });
-  slot.ready = true;
+  slot.startupPhase = "ready";
   const ownership = new RuntimeLiveTail(() => null);
   let forwarded: Record<string, unknown> = {};
   const events = new RuntimeEventController({

@@ -7,7 +7,7 @@ import { requestError } from "./request-error.js";
 import { type RuntimeSlot, workerOnSeparateBranch } from "./runtime-slot.js";
 import type {
   ProjectionReconcileResult,
-  SessionProjectionView,
+  SessionProjection,
 } from "./session-projection.js";
 
 interface RuntimeProjectionHost {
@@ -32,7 +32,7 @@ export class RuntimeProjectionCoordinator {
     private readonly diagnostics: DiagnosticLogger,
   ) {}
 
-  attach(slot: RuntimeSlot, projection: SessionProjectionView): void {
+  attach(slot: RuntimeSlot, projection: SessionProjection): void {
     projection.setReconcileHandler(async (result) => {
       if (slot.projection !== projection || this.host.isClosing()) return;
       if (!result.changed && !result.healthChanged && !result.sourceChanged)
@@ -48,7 +48,7 @@ export class RuntimeProjectionCoordinator {
 
   private async observe(
     slot: RuntimeSlot,
-    projection: SessionProjectionView,
+    projection: SessionProjection,
     result: ProjectionReconcileResult,
   ) {
     this.diagnostics.record("debug", "projection_reconcile", {

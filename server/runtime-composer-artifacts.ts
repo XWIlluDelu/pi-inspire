@@ -11,13 +11,13 @@ import {
   type PromptRequest,
 } from "../shared/contracts.js";
 import { isSupportedPromptImageMimeType } from "../shared/image-types.js";
+import { jsonRecord } from "../shared/json-record.js";
 import {
   type AttachmentContextFile,
   type AttachmentStore,
-  parseAttachmentContext,
   resolveProjectFiles,
 } from "./attachments.js";
-import type { ComposerHistoryMessage } from "./composer-history.js";
+import { savedComposerPrompt } from "./composer-history.js";
 import { filesystemRelativePath } from "./filesystem-containment.js";
 import { canonicalBase64DecodedSize } from "./image-content.js";
 import { requestError } from "./request-error.js";
@@ -29,8 +29,7 @@ import {
 
 type HistorySelection = NonNullable<PromptRequest["historyArtifacts"]>;
 type RecalledImage = { type: "image"; data: string; mimeType: string };
-type UserMessage = Record<string, unknown>;
-type UserMessageLookup = (entryId: string) => UserMessage;
+type UserContentLookup = (entryId: string) => unknown;
 
 interface PromptArtifacts {
   images: RecalledImage[];
@@ -66,13 +65,10 @@ export function samePromptArtifacts(
   );
 }
 
-function historyProjection(
+function historyUserContent(
   slot: RuntimeSlot,
   selection: HistorySelection,
-): {
-  projection: NonNullable<ReturnType<typeof runtimeHistory>>;
-  effectiveLeafId: string | null;
-} {
+): UserContentLookup {
   const projection = runtimeHistory(slot);
   const effectiveLeafId = effectiveRuntimeLeaf(slot);
   if (
@@ -86,31 +82,7 @@ function historyProjection(
       409,
     );
   }
-  return { projection, effectiveLeafId };
-}
-
-function userMessageLookup(
-  messages: readonly ComposerHistoryMessage[],
-): UserMessageLookup {
-  const byEntryId = new Map<string, ComposerHistoryMessage>();
-  for (const message of messages) {
-    const id = message.__inspireHistoryEntryId;
-    if (byEntryId.has(id)) {
-      throw requestError(
-        "The conversation contains ambiguous attachment references",
-        409,
-      );
-    }
-    byEntryId.set(id, message);
-  }
-
-  return (entryId) => {
-    const message = byEntryId.get(entryId);
-    if (message?.role !== "user") {
-      throw requestError("A recalled attachment is no longer available", 409);
-    }
-    return message;
-  };
+  return (entryId) => projection.historyUserContent(entryId, effectiveLeafId);
 }
 
 function recalledReference(
@@ -125,22 +97,17 @@ function recalledReference(
 
 function recalledImages(
   references: readonly string[],
-  userMessage: UserMessageLookup,
+  userContent: UserContentLookup,
 ): RecalledImage[] {
   return references.map((reference) => {
     const [entryId, partIndex] = recalledReference(reference, "image");
-    const record = userMessage(entryId);
-    const part = Array.isArray(record.content)
-      ? record.content[partIndex]
+    const content = userContent(entryId);
+    const image = Array.isArray(content)
+      ? jsonRecord(content[partIndex])
       : null;
-    if (
-      !part ||
-      typeof part !== "object" ||
-      (part as UserMessage).type !== "image"
-    ) {
+    if (image?.type !== "image") {
       throw requestError("A recalled image is not a user attachment", 400);
     }
-    const image = part as UserMessage;
     const data = image.data;
     const mimeType = image.mimeType;
     if (
@@ -164,38 +131,15 @@ function recalledImages(
   });
 }
 
-function promptText(record: UserMessage): string {
-  if (typeof record.content === "string") return record.content;
-  if (!Array.isArray(record.content)) return "";
-  return record.content
-    .flatMap((part) =>
-      part &&
-      typeof part === "object" &&
-      (part as UserMessage).type === "text" &&
-      typeof (part as UserMessage).text === "string"
-        ? [(part as UserMessage).text as string]
-        : [],
-    )
-    .join("");
-}
-
 function recalledFilePaths(
   references: readonly string[],
-  userMessage: UserMessageLookup,
+  userContent: UserContentLookup,
 ): string[] {
   return references.map((reference) => {
     const [entryId, referenceIndex] = recalledReference(reference, "file");
-    const message = userMessage(entryId);
-    const imageCount = Array.isArray(message.content)
-      ? message.content.filter(
-          (part) =>
-            part &&
-            typeof part === "object" &&
-            (part as UserMessage).type === "image",
-        ).length
-      : 0;
-    const path = parseAttachmentContext(promptText(message), imageCount)
-      .references[referenceIndex];
+    const path = savedComposerPrompt(userContent(entryId)).references[
+      referenceIndex
+    ];
     if (!path) {
       throw requestError(
         "A recalled file is not a persisted prompt attachment",
@@ -338,10 +282,9 @@ export function readComposerHistoryImages(
   slot: RuntimeSlot,
   selection: HistorySelection,
 ): RecalledImage[] {
-  const { projection, effectiveLeafId } = historyProjection(slot, selection);
   return recalledImages(
     selection.imageReferences,
-    userMessageLookup(projection.composerHistoryMessages(effectiveLeafId)),
+    historyUserContent(slot, selection),
   );
 }
 
@@ -362,14 +305,11 @@ export async function resolveComposerHistoryArtifacts(
     throw requestError("A recalled attachment was repeated", 400);
   }
 
-  const { projection, effectiveLeafId } = historyProjection(slot, selection);
-  const userMessage = userMessageLookup(
-    projection.composerHistoryMessages(effectiveLeafId),
-  );
-  const images = recalledImages(selection.imageReferences, userMessage);
+  const userContent = historyUserContent(slot, selection);
+  const images = recalledImages(selection.imageReferences, userContent);
   const resolvedFiles = await recalledFiles(
     slot.cwd,
-    recalledFilePaths(selection.fileReferences, userMessage),
+    recalledFilePaths(selection.fileReferences, userContent),
     attachments,
   );
   return { images, ...resolvedFiles };

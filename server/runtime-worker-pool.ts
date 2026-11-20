@@ -168,7 +168,7 @@ export class RuntimeWorkerPool {
   private canEvict(slot: RuntimeSlot): boolean {
     return Boolean(
       slot.process &&
-        slot.ready &&
+        slot.startupPhase === "ready" &&
         this.hasNoWorkerWork(slot) &&
         this.unclaimed(slot),
     );

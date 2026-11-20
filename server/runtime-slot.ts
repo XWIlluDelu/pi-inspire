@@ -16,7 +16,7 @@ import type { NativeBashExecution } from "./runtime-bash.js";
 import type { startBranchNavigation } from "./runtime-branch-bridge.js";
 import type { PendingImageRecovery } from "./runtime-pending-images.js";
 import type {
-  SessionProjectionView,
+  SessionProjection,
   WorkerEntryIndex,
 } from "./session-projection.js";
 
@@ -46,20 +46,7 @@ export function effectiveRuntimeLeaf(slot: RuntimeSlot): string | null {
     : (slot.projection?.leafId ?? null);
 }
 
-export function runtimeHistory(
-  slot: RuntimeSlot,
-): Pick<
-  SessionProjectionView,
-  | "revision"
-  | "incarnation"
-  | "entry"
-  | "viewMessages"
-  | "branchImage"
-  | "branchEntries"
-  | "latestPage"
-  | "historyPage"
-  | "composerHistoryMessages"
-> | null {
+export function runtimeHistory(slot: RuntimeSlot) {
   return slot.workerView?.index ?? slot.projection;
 }
 
@@ -131,7 +118,7 @@ export interface RuntimeSlot {
   startupThinkingLevel: string | null;
   process: PiRpcProcess | null;
   unbindWorkerEvents: (() => void) | null;
-  startupPhase: "idle" | "starting" | "complete";
+  startupPhase: "idle" | "starting" | "ready";
   startupError: Error | null;
   nativeStart: unknown;
   /** A reclaimed worker must finish stopping before the same session starts
@@ -155,15 +142,13 @@ export interface RuntimeSlot {
     };
     worker: PiRpcProcess;
     navigationEpoch: number;
-    incarnationId: string;
     resolve: () => void;
     reject: (error: Error) => void;
   }>;
   drainingDeferredPrompts: boolean;
   deliveryQueue: RuntimeOperationQueue;
-  ready: boolean;
   preview: SessionMetadata | null;
-  projection: SessionProjectionView | null;
+  projection: SessionProjection | null;
   runState: RunState;
   activeTask: "agent" | "compaction" | null;
   /** State to restore after the current manual or automatic compaction ends. */
@@ -223,7 +208,7 @@ interface RuntimeSlotSeed {
   startupThinkingLevel?: string | null;
   process: PiRpcProcess | null;
   preview: SessionMetadata | null;
-  projection: SessionProjectionView | null;
+  projection: SessionProjection | null;
   bridge: BranchBridgeIdentity | null;
   branchRevision: number;
   incarnationId: string;
@@ -253,7 +238,6 @@ export function createRuntimeSlot(seed: RuntimeSlotSeed): RuntimeSlot {
     deferredPrompts: [],
     drainingDeferredPrompts: false,
     deliveryQueue: emptyOperationQueue(),
-    ready: false,
     runState: "idle",
     activeTask: null,
     compactionReturnState: null,

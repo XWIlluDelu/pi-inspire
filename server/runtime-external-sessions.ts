@@ -616,7 +616,9 @@ export class RuntimeExternalSessions {
       if (uncertain) {
         this.attachments.restageUncertainPrompt(originalIds, copied);
       } else if (delivered) {
-        await this.attachments.releaseConsumed([...originalIds, ...copied]);
+        await this.attachments
+          .releaseConsumed([...originalIds, ...copied])
+          .catch((error) => this.host.log(slot, error));
       } else {
         this.attachments.restage([...originalIds, ...copied]);
         await Promise.allSettled(

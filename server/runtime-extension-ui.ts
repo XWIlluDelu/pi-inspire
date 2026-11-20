@@ -146,7 +146,7 @@ export class RuntimeExtensionUiController {
       if (
         request.sessionId !== sessionId ||
         slot.process !== rpc ||
-        !slot.ready
+        slot.startupPhase !== "ready"
       ) {
         throw requestError(
           "The extension request no longer belongs to this worker",

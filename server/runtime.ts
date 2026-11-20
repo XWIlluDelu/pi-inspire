@@ -163,7 +163,6 @@ import {
 import { projectSafeValue } from "./safe-projection.js";
 import {
   SessionProjection,
-  type SessionProjectionView,
 } from "./session-projection.js";
 
 const MAX_DEFERRED_PROMPTS = 16;
@@ -262,9 +261,7 @@ type DestinationReservation =
       completion: Promise<RuntimeSlot>;
     };
 
-type OpenProjection = (
-  session: SessionRecord,
-) => Promise<SessionProjectionView>;
+type OpenProjection = (session: SessionRecord) => Promise<SessionProjection>;
 
 /** Replaceable collaborators; each defaults to the real implementation. */
 export interface RuntimeControllerOptions {
@@ -1011,7 +1008,7 @@ export class RuntimeController extends EventEmitter {
 
   private recordViewChange(
     slot: RuntimeSlot,
-    projection: Pick<SessionProjectionView, "continues">,
+    projection: Pick<SessionProjection, "continues">,
     before: string | null,
     after: string | null,
   ): void {
@@ -1138,24 +1135,14 @@ export class RuntimeController extends EventEmitter {
     operation: () => Promise<T>,
     allowDeleting = false,
   ): Promise<T> {
-    const guarded = () => {
+    const guarded = async () => {
       if (this.closing) throw requestError("Runtime is closing", 503);
       if (!allowDeleting && this.deletions.isDeleting(slot.id))
         throw requestError("That session is being deleted", 409);
       return operation();
     };
     const release = this.retainSlot(slot);
-    queue.pending += 1;
-    let run: Promise<T>;
-    if (queue.pending === 1) {
-      try {
-        run = Promise.resolve(guarded());
-      } catch (error) {
-        run = Promise.reject(error);
-      }
-    } else {
-      run = queue.tail.then(guarded, guarded);
-    }
+    const run = queue.pending++ === 0 ? guarded() : queue.tail.then(guarded);
     queue.tail = run.then(
       () => undefined,
       () => undefined,
@@ -1191,7 +1178,10 @@ export class RuntimeController extends EventEmitter {
 
   private deliveryWorker(slot: RuntimeSlot): PiRpcProcess | null {
     const rpc = slot.process;
-    return rpc?.available && slot.ready && !slot.conflict && this.ownsLiveSlot(slot)
+    return rpc?.available &&
+      slot.startupPhase === "ready" &&
+      !slot.conflict &&
+      this.ownsLiveSlot(slot)
       ? rpc
       : null;
   }
@@ -1203,13 +1193,9 @@ export class RuntimeController extends EventEmitter {
   ): Promise<T> {
     const worker = this.deliveryWorker(slot);
     if (!worker) return this.mutateSlot(slot, () => operation(null));
-    const { viewId, incarnationId } = slot;
+    const { viewId } = slot;
     return this.deliverySlot(slot, () => {
-      if (
-        this.deliveryWorker(slot) !== worker ||
-        slot.viewId !== viewId ||
-        slot.incarnationId !== incarnationId
-      )
+      if (this.deliveryWorker(slot) !== worker || slot.viewId !== viewId)
         throw requestError(`Session or worker changed before ${action}`, 409);
       return operation(worker);
     });
@@ -1269,7 +1255,6 @@ export class RuntimeController extends EventEmitter {
       request: { ...request, behavior: request.behavior ?? "followUp" },
       worker,
       navigationEpoch: slot.deliveryNavigationEpoch,
-      incarnationId: slot.incarnationId,
       resolve,
       reject,
     });
@@ -1287,8 +1272,7 @@ export class RuntimeController extends EventEmitter {
   ): boolean {
     return (
       slot.process === item.worker &&
-      slot.deliveryNavigationEpoch === item.navigationEpoch &&
-      slot.incarnationId === item.incarnationId
+      slot.deliveryNavigationEpoch === item.navigationEpoch
     );
   }
 
@@ -1487,7 +1471,7 @@ export class RuntimeController extends EventEmitter {
       );
     const previousDefault = slot.process ? undefined : slot.projection?.leafId;
     const rpc = await this.workerLifecycle.ensureFreshWriter(slot);
-    if (slot.process !== rpc || !slot.ready)
+    if (slot.process !== rpc || slot.startupPhase !== "ready")
       throw requestError("Pi runtime failed to start", 503);
     // Pi opens at the saved default; continue from the branch being viewed.
     const target = slot.viewLeafId;
@@ -1783,7 +1767,7 @@ export class RuntimeController extends EventEmitter {
     )
       slot.attentionId = this.eventSequence + 1;
     const sessionStatus = this.statusFor(slot);
-    if (slot.process && slot.ready) {
+    if (slot.process && slot.startupPhase === "ready") {
       const previous = this.workerStatuses.get(slot.process);
       const needsInput = sessionStatus.needsInput === true;
       if (
@@ -2006,7 +1990,7 @@ export class RuntimeController extends EventEmitter {
     const publish = (data: ModelMetadata | null) => {
       if (this.closing || revision !== catalog.revision) return;
       this.previewModels.set(slot, { revision, data });
-      if (!slot.ready)
+      if (slot.startupPhase !== "ready")
         this.emitSlotEvent(slot, { type: "model_metadata_changed" });
     };
     const operation = catalog
@@ -2023,7 +2007,7 @@ export class RuntimeController extends EventEmitter {
         if (
           !this.closing &&
           this.slots.get(slot.id) === slot &&
-          !slot.ready &&
+          slot.startupPhase !== "ready" &&
           revision !== catalog.revision
         )
           void this.readPreviewModels(slot);
@@ -2095,7 +2079,7 @@ export class RuntimeController extends EventEmitter {
   ): ActiveSnapshot {
     if (!slot.preview || !slot.projection)
       throw new Error("Session projection is not available");
-    const live = Boolean(slot.process && slot.ready);
+    const live = Boolean(slot.process && slot.startupPhase === "ready");
     const external = this.externalSessions?.has(slot) === true;
     const nativeSelection = this.externalSessions?.modelSelection(slot);
     const known = this.previewModels.get(slot);
@@ -2197,7 +2181,7 @@ export class RuntimeController extends EventEmitter {
 
   private attachProjection(
     slot: RuntimeSlot,
-    projection: SessionProjectionView,
+    projection: SessionProjection,
   ): void {
     this.projectionCoordinator.attach(slot, projection);
   }
@@ -2539,7 +2523,7 @@ export class RuntimeController extends EventEmitter {
     }
     if (slot.readOnlyReason === "external-active") slot.readOnlyReason = null;
     this.workingSessions.add(slot.id);
-    if (slot.process && slot.ready) {
+    if (slot.process && slot.startupPhase === "ready") {
       await this.navigateInsideGate(slot, {
         sessionId: slot.id,
         targetId,
@@ -2737,7 +2721,7 @@ export class RuntimeController extends EventEmitter {
       slot.id = sessionId;
       slot.sessionPath = reportedPath;
       this.assertNotClosing();
-      let projection: SessionProjectionView;
+      let projection: SessionProjection;
       if (slot.sessionPath) {
         const pendingProjection = await SessionProjection.openPending(
           {
@@ -2805,7 +2789,11 @@ export class RuntimeController extends EventEmitter {
         dialog.request = { ...dialog.request, sessionId };
       const extras = await this.readRuntimeExtras(slot, rpc);
       this.assertNotClosing();
-      if (slot.process !== rpc || !slot.ready || !rpc.available) {
+      if (
+        slot.process !== rpc ||
+        slot.startupPhase !== "ready" ||
+        !rpc.available
+      ) {
         throw requestError(
           "Pi exited before the new session became ready",
           503,
@@ -2886,14 +2874,18 @@ export class RuntimeController extends EventEmitter {
           },
         );
     };
+    const assertNotStopped = () => {
+      if (slot.inputStopEpoch !== stopEpoch || slot.stoppingInput)
+        throw requestError("This input was stopped before delivery", 409, {
+          code: "PROMPT_ABORTED",
+        });
+    };
     assertPromptView(deferred ? undefined : request.expectedViewId);
     const external = this.externalSessions;
     const deliverAttached = external?.bindPrompt(slot);
     if (deliverAttached)
-      return this.useSlot(slot, () =>
-        this.deliverySlot(slot, () =>
-          deliverAttached(request, stopEpoch, assertPromptView),
-        ),
+      return this.deliverySlot(slot, () =>
+        deliverAttached(request, stopEpoch, assertPromptView),
       );
     if (slot.readOnlyReason === "external-active") {
       await this.observeExternalOwner(slot);
@@ -2902,7 +2894,12 @@ export class RuntimeController extends EventEmitter {
         throw requestError("The Pi connection changed before delivery.", 409);
     }
     const entered = request.message.trim();
-    assertPromptView();
+    const attachmentIds = request.attachmentIds ?? [];
+    const hasArtifacts = Boolean(
+      attachmentIds.length ||
+        request.historyArtifacts ||
+        request.projectFiles?.length,
+    );
     if (slot.stoppingInput)
       throw requestError(
         "Stop is in progress; send again after it finishes",
@@ -2919,9 +2916,15 @@ export class RuntimeController extends EventEmitter {
     );
     const native =
       invocation && nativeCommand(invocation.name) ? invocation : null;
-    if (invocation && !native && slot.process && slot.ready)
+    if (
+      invocation &&
+      !native &&
+      slot.process &&
+      slot.startupPhase === "ready"
+    ) {
       await this.readRuntimeCommands(slot, slot.process);
-    assertPromptView();
+      assertPromptView();
+    }
     const resource = invocation && runtimeResource(slot, invocation.name);
     const canQueue = Boolean(
       (request.behavior || slot.deferredPrompts.length > 0) &&
@@ -2946,15 +2949,11 @@ export class RuntimeController extends EventEmitter {
     if (
       invocation &&
       !resource &&
-      ((native ? native.name !== "compact" : slot.ready) ||
-        request.attachmentIds?.length ||
-        request.historyArtifacts ||
-        request.projectFiles?.length)
+      ((native ? native.name !== "compact" : slot.startupPhase === "ready") ||
+        hasArtifacts)
     ) {
       throw requestError(
-        request.attachmentIds?.length ||
-          request.historyArtifacts ||
-          request.projectFiles?.length
+        hasArtifacts
           ? "Pi commands cannot include attachments or project-file references"
           : native
             ? `/${native.name} must be executed through INSΠRE's native command surface`
@@ -2963,11 +2962,7 @@ export class RuntimeController extends EventEmitter {
       );
     }
     if (entered.startsWith("!")) {
-      if (
-        request.attachmentIds?.length ||
-        request.historyArtifacts ||
-        request.projectFiles?.length
-      )
+      if (hasArtifacts)
         throw requestError(
           "Shell commands cannot include attachments or project-file references",
           409,
@@ -2995,131 +2990,117 @@ export class RuntimeController extends EventEmitter {
     // Lease uploads and begin the first project-file authorization before the
     // persistence FIFO. A worker startup already occupying that FIFO must not
     // leave staged files withdrawable or postpone selection until delivery.
-    const resolving = this.attachments.resolveForPrompt(request.attachmentIds);
+    const resolvingUploads = this.attachments.resolveForPrompt(attachmentIds);
     const resolvingProjectFiles = resolveProjectFiles(
       slot.cwd,
       request.projectFiles,
     );
-    let resolvedPrompt: Awaited<typeof resolving>;
-    let resolvedProjectFiles: Awaited<ReturnType<typeof resolveProjectFiles>>;
+    let consumeUploads = false;
+    let pendingImages:
+      | { owner: PendingImageRecovery; delivery: PendingImageDelivery }
+      | undefined;
+    let uploadsSettled = false;
+    const settleUploads = async () => {
+      uploadsSettled = true;
+      if (!consumeUploads) {
+        // A failed resolution has already returned its own lease. It may
+        // also have failed because another prompt owns these IDs.
+        await resolvingUploads.then(
+          () => this.attachments.restage(attachmentIds),
+          () => undefined,
+        );
+      } else if (attachmentIds.length > 0) {
+        await this.attachments
+          .releaseConsumed(
+            attachmentIds.filter(
+              (id) =>
+                !pendingImages?.delivery.attachments.some((item) => item.id === id),
+            ),
+          )
+          .catch((error) =>
+            this.logRuntimeError(slot.id, error, "prompt_upload_cleanup_failed"),
+          );
+      }
+    };
     try {
-      [resolvedPrompt, resolvedProjectFiles] = await Promise.all([
-        resolving,
+      const [resolved, resolvedProjectFiles] = await Promise.all([
+        resolvingUploads,
         resolvingProjectFiles,
       ]);
-    } catch (error) {
-      try {
-        await resolving;
-        this.attachments.restage(request.attachmentIds);
-      } catch {
-        // The attachment resolver already rolled back its failed lease.
-      }
-      throw error;
-    }
-    if (!this.ownsLiveSlot(slot)) {
-      this.attachments.restage(request.attachmentIds);
-      throw requestError("The session changed before prompt delivery", 409);
-    }
-
-    let enteredGate = false;
-    try {
+      if (!this.ownsLiveSlot(slot))
+        throw requestError("The session changed before prompt delivery", 409);
+      const prepare = async () => {
+        assertPromptView();
+        const commandText = entered.startsWith("/");
+        const readHistory = () =>
+          resolveComposerHistoryArtifacts(slot, request, this.attachments);
+        const previousHistory =
+          request.historyArtifacts && (!directDelivery || commandText)
+            ? await readHistory()
+            : undefined;
+        const readyProcess = directDelivery
+          ? slot.process
+          : await this.ensureFreshWriterInsideGate(slot);
+        if (!readyProcess || slot.startupPhase !== "ready")
+          throw requestError("Pi runtime failed to start", 503);
+        assertPublicPrompt(slot, entered);
+        // Cold previews can miss extension names with punctuation or Unicode.
+        if (commandText) await this.readRuntimeCommands(slot, readyProcess);
+        const command =
+          invocation ??
+          parseCommandInvocation(entered, (name) =>
+            Boolean(runtimeResource(slot, name)),
+          );
+        const resource = command && runtimeResource(slot, command.name);
+        if (command && !resource)
+          throw requestError(
+            `Pi command /${command.name} is no longer available; refresh the command inventory`,
+            409,
+          );
+        if (command && hasArtifacts)
+          throw requestError(
+            "Pi commands cannot include attachments or project-file references",
+            409,
+          );
+        // Pi splits extension commands on a literal space.
+        const message = command
+          ? `/${command.name}${command.argument ? ` ${command.argument}` : ""}`
+          : entered;
+        const history = await readHistory();
+        if (previousHistory && !samePromptArtifacts(history, previousHistory))
+          throw requestError(
+            "A recalled attachment changed before prompt delivery",
+            409,
+          );
+        const { files, images, projectFiles } = await preparePromptArtifacts(
+          slot,
+          request,
+          resolved,
+          resolvedProjectFiles,
+          history,
+        );
+        const fullMessage = addAttachmentContext(message, files, projectFiles);
+        if (!fullMessage && images.length === 0)
+          throw new Error("Message or attachment is required");
+        return { readyProcess, command, resource, fullMessage, images, recalledImages: history.images };
+      };
       const deliver = async () => {
-        enteredGate = true;
-        let accepted = false;
-        let imageDelivery: PendingImageDelivery | null = null;
-        let imageOwner: PendingImageRecovery | null = null;
-        const acceptedUploadIds = () =>
-          (request.attachmentIds ?? []).filter(
-            (id) => !imageDelivery?.attachments.some((item) => item.id === id),
-          );
         try {
-          assertPromptView();
-          const resolved = resolvedPrompt;
-          let history = await resolveComposerHistoryArtifacts(
-            slot,
-            request,
-            this.attachments,
-          );
-          const readyProcess = directDelivery
-            ? slot.process
-            : await this.ensureFreshWriterInsideGate(slot);
-          if (!readyProcess || !slot.ready) {
-            throw requestError("Pi runtime failed to start", 503);
-          }
-          assertPublicPrompt(slot, entered);
-          // Re-read on the actual writer. Cold previews may not yet know
-          // extension names that contain punctuation or Unicode.
-          if (entered.startsWith("/"))
-            await this.readRuntimeCommands(slot, readyProcess);
-          const command =
-            invocation ??
-            parseCommandInvocation(entered, (name) =>
-              Boolean(runtimeResource(slot, name)),
-            );
-          const resource = command && runtimeResource(slot, command.name);
-          if (command && !resource)
-            throw requestError(
-              `Pi command /${command.name} is no longer available; refresh the command inventory`,
-              409,
-            );
-          if (
-            command &&
-            (request.attachmentIds?.length ||
-              request.historyArtifacts ||
-              request.projectFiles?.length)
-          )
-            throw requestError(
-              "Pi commands cannot include attachments or project-file references",
-              409,
-            );
-          // Pi splits extension commands on a literal space.
-          const message = command
-            ? `/${command.name}${command.argument ? ` ${command.argument}` : ""}`
-            : entered;
-          if (request.historyArtifacts) {
-            const refreshed = await resolveComposerHistoryArtifacts(
-              slot,
-              request,
-              this.attachments,
-            );
-            if (!samePromptArtifacts(refreshed, history)) {
-              throw requestError(
-                "A recalled attachment changed before prompt delivery",
-                409,
-              );
-            }
-            history = refreshed;
-          }
           const {
-            files: contextFiles,
+            readyProcess,
+            command,
+            resource,
+            fullMessage,
             images,
-            projectFiles,
-          } = await preparePromptArtifacts(
-            slot,
-            request,
-            resolved,
-            resolvedProjectFiles,
-            history,
-          );
-          const fullMessage = addAttachmentContext(
-            message,
-            contextFiles,
-            projectFiles,
-          );
-          if (!fullMessage && images.length === 0)
-            throw new Error("Message or attachment is required");
+            recalledImages,
+          } = await prepare();
           const assertDeliveryOwner = () => {
             assertPromptView();
-            if (slot.inputStopEpoch !== stopEpoch || slot.stoppingInput)
-              throw requestError(
-                "This input was stopped before delivery",
-                409,
-                { code: "PROMPT_ABORTED" },
-              );
+            assertNotStopped();
             if (
               !this.ownsLiveSlot(slot) ||
               slot.process !== readyProcess ||
-              !slot.ready ||
+              slot.startupPhase !== "ready" ||
               (expected && !this.ownsDeferredPrompt(slot, expected))
             )
               throw requestError(
@@ -3130,41 +3111,47 @@ export class RuntimeController extends EventEmitter {
               throw requestError("Pending message was cleared", 409, {
                 code: "PROMPT_CLEARED",
               });
-            if (imageDelivery && !imageOwner!.isPrepared(imageDelivery))
+            if (
+              pendingImages &&
+              !pendingImages.owner.isPrepared(pendingImages.delivery)
+            )
               throw requestError(
                 "Image preparation was cancelled before delivery",
                 409,
                 { code: "PROMPT_ABORTED" },
               );
           };
-          assertDeliveryOwner();
-          if (directDelivery && request.behavior && images.length > 0) {
-            if (!slot.pendingImages) await slot.eventTail;
-            assertDeliveryOwner();
-            imageOwner = slot.pendingImages ??= new PendingImageRecovery(
-              this.attachments,
-              slot.piPendingInput,
-              (error) =>
-                this.logRuntimeError(slot.id, error, "pending_image_lifecycle"),
-              (since) =>
-                readPendingImageEvidence(
-                  readyProcess,
-                  slot.bridge!,
-                  slot.id,
-                  since,
-                ),
-            );
-            await imageOwner.prepare();
-            assertDeliveryOwner();
-            imageDelivery = await imageOwner.begin(
-              request.behavior,
-              fullMessage,
-              images,
-              request.attachmentIds ?? [],
-              history.images,
-            );
-          }
           if (directDelivery) {
+            assertDeliveryOwner();
+            if (request.behavior && images.length > 0) {
+              if (!slot.pendingImages) {
+                await slot.eventTail;
+                assertDeliveryOwner();
+              }
+              const owner = (slot.pendingImages ??= new PendingImageRecovery(
+                this.attachments,
+                slot.piPendingInput,
+                (error) =>
+                  this.logRuntimeError(slot.id, error, "pending_image_lifecycle"),
+                (since) =>
+                  readPendingImageEvidence(
+                    readyProcess,
+                    slot.bridge!,
+                    slot.id,
+                    since,
+                  ),
+              ));
+              await owner.prepare();
+              assertDeliveryOwner();
+              const delivery = await owner.begin(
+                request.behavior,
+                fullMessage,
+                images,
+                attachmentIds,
+                recalledImages,
+              );
+              pendingImages = { owner, delivery };
+            }
             await this.projectionCoordinator.reconcile(slot, false);
             this.throwIfConflicted(slot);
             if (slot.projection?.health.status === "pending")
@@ -3209,17 +3196,15 @@ export class RuntimeController extends EventEmitter {
           try {
             // Publication/listeners cannot admit work prepared before Stop.
             assertPromptView();
-            if (
-              slot.inputStopEpoch !== stopEpoch ||
-              slot.stoppingInput ||
-              slot.process !== readyProcess
-            )
+            assertNotStopped();
+            if (slot.process !== readyProcess)
               throw requestError(
                 "This input was stopped or changed before delivery",
                 409,
                 { code: "PROMPT_ABORTED" },
               );
-            if (imageDelivery) imageOwner!.dispatched(imageDelivery);
+            if (pendingImages)
+              pendingImages.owner.dispatched(pendingImages.delivery);
             const receipt = await this.requestPersistence<{
               disposition?: unknown;
             }>(slot, readyProcess, {
@@ -3230,10 +3215,13 @@ export class RuntimeController extends EventEmitter {
                 ? { streamingBehavior: request.behavior }
                 : {}),
             });
-            accepted = true;
+            consumeUploads = true;
             this.workingSessions.add(slot.id);
-            if (imageDelivery)
-              imageOwner!.accepted(imageDelivery, receipt?.disposition);
+            if (pendingImages)
+              pendingImages.owner.accepted(
+                pendingImages.delivery,
+                receipt?.disposition,
+              );
             // Commands and input hooks can handle a prompt without starting
             // an agent. Only Pi's idle state can retire that silent admission;
             // a receipt alone must not clear queued or newer work.
@@ -3292,55 +3280,25 @@ export class RuntimeController extends EventEmitter {
             if (slot.process === readyProcess) slot.pendingPromptCount -= 1;
           }
         } catch (error) {
-          const outcomeUnknown =
-            error &&
-            typeof error === "object" &&
-            (error as { outcomeUnknown?: unknown }).outcomeUnknown === true;
-          if (imageDelivery && !accepted && !outcomeUnknown)
-            await imageOwner!.rejected(imageDelivery);
-          if (accepted || outcomeUnknown) {
-            // Pi accepted the prompt, or may have accepted it before losing the
-            // response. Restaging would invite a duplicate prompt on retry.
-            if (request.attachmentIds?.length)
-              await this.attachments.releaseConsumed(acceptedUploadIds());
-            throw error;
-          }
-          this.attachments.restage(request.attachmentIds);
+          // Acceptance or a lost response both forbid reuse of the uploads.
+          consumeUploads ||= isPiRpcOutcomeUnknown(error);
+          if (consumeUploads) throw error;
+          if (pendingImages)
+            await pendingImages.owner.rejected(pendingImages.delivery);
           if (slot.inputStopEpoch !== stopEpoch)
             throw requestError("This input was stopped before delivery", 409, {
               code: "PROMPT_ABORTED",
             });
           throw error;
+        } finally {
+          // The next deferred input can take a returned lease as soon as its
+          // predecessor releases the writer gate.
+          await settleUploads();
         }
-        // Delivered: image bytes travelled inside the request, so their upload
-        // cache entries are no longer needed. File attachments stay (their host
-        // paths are part of the conversation text).
-        if (request.attachmentIds?.length)
-          await this.attachments
-            .releaseConsumed(acceptedUploadIds())
-            .catch((error) =>
-              this.logRuntimeError(
-                slot.id,
-                error,
-                "accepted_prompt_cleanup_failed",
-              ),
-            );
       };
-      return directDelivery
-        ? await deliver()
-        : await this.mutateSlot(slot, deliver);
-    } catch (error) {
-      if (!enteredGate) {
-        // A closing runtime can reject a queued mutation before its callback
-        // starts. Settle both eager reads and return any lease acquired above.
-        const [attachments] = await Promise.allSettled([
-          resolving,
-          resolvingProjectFiles,
-        ]);
-        if (attachments.status === "fulfilled")
-          this.attachments.restage(request.attachmentIds);
-      }
-      throw error;
+      await (directDelivery ? deliver() : this.mutateSlot(slot, deliver));
+    } finally {
+      if (!uploadsSettled) await settleUploads();
     }
   }
 
@@ -3562,7 +3520,7 @@ export class RuntimeController extends EventEmitter {
   /** Reopen the saved position when Pi's current index cannot select it in place. */
   private async restoreSavedPositionInsideGate(
     slot: RuntimeSlot,
-    projection: SessionProjectionView,
+    projection: SessionProjection,
     targetId: string,
     revision: number,
   ): Promise<void> {
@@ -3673,15 +3631,15 @@ export class RuntimeController extends EventEmitter {
       });
       const destinationId = staged.destinationId;
       const destinationPath = resolve(staged.destinationPath);
-      const matchesFork = (candidate: SessionProjectionView, path: string) =>
+      const matchesFork = (candidate: SessionProjection, path: string) =>
         candidate.sessionId === destinationId &&
         resolve(candidate.path) === resolve(path) &&
         candidate.health.status !== "error" &&
         candidate.leafId === staged.destinationLeafId &&
         (mode !== "fork" || targetId === null || !candidate.entry(targetId));
       let reservation: ForkReservation | null = null;
-      let stagedProjection: SessionProjectionView | null = null;
-      let destinationProjection: SessionProjectionView | null = null;
+      let stagedProjection: SessionProjection | null = null;
+      let destinationProjection: SessionProjection | null = null;
       let published = false;
       let attached = false;
       let returned = false;
@@ -3955,7 +3913,7 @@ export class RuntimeController extends EventEmitter {
         ...host,
         error: "The session view changed while recovering Pending input.",
       };
-    if (!rpc || !slot.ready) {
+    if (!rpc || slot.startupPhase !== "ready") {
       return slot.piPendingInput === null || slot.pendingQueues.totalCount > 0
         ? {
             ...host,
@@ -4172,7 +4130,7 @@ export class RuntimeController extends EventEmitter {
       }
       await this.useSlot(slot, async () => {
         const rpc = slot.process;
-        if (!rpc || !slot.ready) {
+        if (!rpc || slot.startupPhase !== "ready") {
           throw requestError("There is no live Pi runtime to abort", 409);
         }
         try {
@@ -4611,7 +4569,7 @@ export class RuntimeController extends EventEmitter {
       };
       const rpc = slot.process;
       const bridge = slot.bridge;
-      if (!rpc || !bridge || !slot.ready) {
+      if (!rpc || !bridge || slot.startupPhase !== "ready") {
         if (!this.modelMetadata)
           throw requestError("No active Pi model catalog", 409);
         const read = this.modelMetadata.read(slot.cwd, true);
@@ -4631,7 +4589,9 @@ export class RuntimeController extends EventEmitter {
       const existing = this.modelRefreshes.get(rpc);
       if (existing) return { ...(await existing), ...(await selected()) };
       const owns = () =>
-        slot.process === rpc && slot.bridge === bridge && slot.ready;
+        slot.process === rpc &&
+        slot.bridge === bridge &&
+        slot.startupPhase === "ready";
       const operation = (async () => {
         const warning = await refreshWorkerCatalog(rpc, bridge, sessionId);
         if (!owns())
@@ -4656,9 +4616,11 @@ export class RuntimeController extends EventEmitter {
     const slot = this.slots.get(sessionId);
     const rpc = slot?.process;
     const bridge = slot?.bridge;
-    if (!slot || !rpc || !bridge || !slot.ready) return null;
+    if (!slot || !rpc || !bridge || slot.startupPhase !== "ready") return null;
     const owns = () =>
-      slot.process === rpc && slot.bridge === bridge && slot.ready;
+      slot.process === rpc &&
+      slot.bridge === bridge &&
+      slot.startupPhase === "ready";
     return {
       id: bridge.workerId,
       cancelLogin: async (id) => {
@@ -4691,12 +4653,16 @@ export class RuntimeController extends EventEmitter {
       if (
         !rpc ||
         !bridge ||
-        !slot.ready ||
+        slot.startupPhase !== "ready" ||
         (workerId && workerId !== bridge.workerId)
       )
         throw requestError("No active Pi authentication owner", 409);
       const result = await requestWorkerAuth(rpc, bridge, sessionId, operation);
-      if (slot.process !== rpc || slot.bridge !== bridge || !slot.ready)
+      if (
+        slot.process !== rpc ||
+        slot.bridge !== bridge ||
+        slot.startupPhase !== "ready"
+      )
         throw requestError("Pi worker changed during authentication", 409);
       return result;
     });
@@ -4800,7 +4766,7 @@ export class RuntimeController extends EventEmitter {
     return this.useSlot(slot, async () => {
       await this.projectionCoordinator.reconcile(slot, false);
       const rpc = slot.process;
-      if (!rpc || !slot.ready) {
+      if (!rpc || slot.startupPhase !== "ready") {
         void this.readPreviewModels(slot);
         if (
           slot.preview &&
@@ -4838,7 +4804,7 @@ export class RuntimeController extends EventEmitter {
           : null;
       if (
         slot.process !== rpc ||
-        !slot.ready ||
+        slot.startupPhase !== "ready" ||
         !rpc.available ||
         (runtimeSessionId !== null && runtimeSessionId !== slot.id) ||
         (runtimeSessionPath !== null &&

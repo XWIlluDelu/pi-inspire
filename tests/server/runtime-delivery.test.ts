@@ -110,6 +110,7 @@ it.each([
   { operation: "prompt", fault: "confirmed exit", cancelled: false },
   { operation: "prompt", fault: "unconfirmed exit", cancelled: true },
   { operation: "prompt", fault: "projection failure", cancelled: true },
+  { operation: "prompt", fault: "upload cleanup", cancelled: false },
   { operation: "bash", fault: "unconfirmed exit", cancelled: true },
 ] as const)(
   "keeps a $operation delivery uncertain after $fault (explicit Stop: $cancelled)",
@@ -147,6 +148,8 @@ it.each([
       operation === "prompt"
         ? await f.store.add(upload("notes.txt", "text/plain"))
         : null;
+    if (fault === "upload cleanup")
+      vi.spyOn(f.store, "releaseConsumed").mockRejectedValueOnce(failure);
     const send = expect(
       f.runtime.prompt({
         sessionId: "a",

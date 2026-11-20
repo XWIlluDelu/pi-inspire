@@ -27,7 +27,7 @@ import {
 import { createWorkerView } from "./runtime-worker-view.js";
 import type {
   ProjectionReconcileResult,
-  SessionProjectionView,
+  SessionProjection,
 } from "./session-projection.js";
 
 const NEW_SESSION_ENTRY_MAX_COUNT = 10_000;
@@ -46,7 +46,7 @@ interface StartupProjectionBaseline {
 }
 
 function captureStartupProjection(
-  projection: SessionProjectionView,
+  projection: SessionProjection,
 ): StartupProjectionBaseline {
   return {
     entries: projection.entriesAfter(null),
@@ -172,8 +172,7 @@ export class RuntimeWorkerLifecycle {
       if (attest) slot.readOnlyReason = null;
       throw error;
     }
-    slot.startupPhase = "complete";
-    slot.ready = true;
+    slot.startupPhase = "ready";
   }
 
   publishReady(slot: RuntimeSlot, rpc: PiRpcProcess, created = false): void {
@@ -277,7 +276,7 @@ export class RuntimeWorkerLifecycle {
     });
     if (
       reason === "stopped" &&
-      slot.ready &&
+      slot.startupPhase === "ready" &&
       slot.projection?.health.status === "pending" &&
       !slot.conflict
     ) {
@@ -298,14 +297,15 @@ export class RuntimeWorkerLifecycle {
     slot.process = null;
     slot.pendingPromptCount = 0;
     slot.nativeBash = null;
-    slot.ready = false;
+    const started = slot.startupPhase !== "idle";
+    slot.startupPhase = "idle";
     if (cancelledCommand !== "compact") slot.activeTask = null;
     slot.compactionReturnState = null;
     if (workerOnSeparateBranch(slot)) slot.branchRevision += 1;
     slot.workerView = null;
     slot.bridge = null;
     // Pre-start preparation has not acquired a Pi view to retire.
-    if (slot.startupPhase !== "idle") this.host.renewView(slot);
+    if (started) this.host.renewView(slot);
     if (slot.pendingBranchBridge) {
       slot.pendingBranchBridge.reject(
         new Error("Branch bridge worker stopped"),
@@ -326,12 +326,7 @@ export class RuntimeWorkerLifecycle {
     });
     try {
       await stopping;
-      if (slot.stopping === stopping) {
-        slot.stopping = null;
-        // Failed startup is settled once its worker is gone, not ongoing work.
-        // Keep startupError available to the caller unwinding that startup.
-        slot.startupPhase = "idle";
-      }
+      if (slot.stopping === stopping) slot.stopping = null;
     } catch (error) {
       // Rejection is not an exit acknowledgement. Keep the rejected barrier
       // so neither recovery nor another start can silently acquire this file.
@@ -359,11 +354,15 @@ export class RuntimeWorkerLifecycle {
       );
     }
     if (slot.conflict) throw requestError(slot.conflict.message, 409);
-    if (slot.process && slot.ready && !slot.process.available) {
+    if (
+      slot.process &&
+      slot.startupPhase === "ready" &&
+      !slot.process.available
+    ) {
       await this.stop(slot);
     }
-    if (!slot.process || !slot.ready) await this.start(slot);
-    if (!slot.process || !slot.ready)
+    if (!slot.process || slot.startupPhase !== "ready") await this.start(slot);
+    if (!slot.process || slot.startupPhase !== "ready")
       throw requestError("Pi runtime failed to start", 503);
     return slot.process;
   }
@@ -397,7 +396,6 @@ export class RuntimeWorkerLifecycle {
       slot.startupError = null;
       slot.nativeStart = null;
       slot.bridge = bridge;
-      slot.ready = false;
       const released = this.releaseWorkerView(slot, "replaced");
       slot.availableModels = null;
       slot.commands = null;

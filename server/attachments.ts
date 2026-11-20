@@ -723,12 +723,7 @@ export class AttachmentStore {
     originalIds: readonly string[],
     transportIds: readonly string[],
   ): void {
-    for (const id of originalIds) {
-      const value = this.values.get(id);
-      if (value?.state !== "in-flight") continue;
-      if (value.kind === "file") value.retainOnWithdraw = true;
-      value.state = "staged";
-    }
+    this.restage(originalIds, true);
     // The receiver may still be reading these independent copies. Their
     // persisted expiration handles both normal cleanup and Host restart.
     for (const id of transportIds) this.values.delete(id);
@@ -913,10 +908,12 @@ export class AttachmentStore {
 
   /** A prompt that failed before delivery hands its leased files back:
    * they become withdrawable (and resendable) again. */
-  restage(ids: string[] = []): void {
+  restage(ids: readonly string[], retainFiles = false): void {
     for (const id of ids) {
       const value = this.values.get(id);
-      if (value?.state === "in-flight") value.state = "staged";
+      if (value?.state !== "in-flight") continue;
+      if (retainFiles && value.kind === "file") value.retainOnWithdraw = true;
+      value.state = "staged";
     }
   }
 
@@ -929,8 +926,8 @@ export class AttachmentStore {
         const value = this.values.get(id);
         if (!value) return;
         if (value.kind !== "image") {
+          // resolveForPrompt durably protected this file before Pi could see it.
           value.state = "consumed";
-          await this.protectDelivery(value);
           return;
         }
         // Worker artifact ownership outlives queue acceptance. Runtime excludes

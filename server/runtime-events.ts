@@ -719,7 +719,6 @@ export class RuntimeEventController {
     record: Record<string, unknown>,
   ): boolean {
     if (
-      slot.ready ||
       slot.startupPhase !== "starting" ||
       record.type !== "extension_ui_request"
     )

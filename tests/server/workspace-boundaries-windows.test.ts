@@ -115,13 +115,7 @@ describe("workspace boundaries under a Windows case-sensitive directory contract
       projection: {
         incarnation: "incarnation",
         leafId: null,
-        composerHistoryMessages: () => [
-          {
-            role: "user",
-            content: addAttachmentContext("Use", [], [outside]),
-            __inspireHistoryEntryId: "entry-0",
-          },
-        ],
+        historyUserContent: () => addAttachmentContext("Use", [], [outside]),
       },
     } as unknown as RuntimeSlot;
     await expect(
