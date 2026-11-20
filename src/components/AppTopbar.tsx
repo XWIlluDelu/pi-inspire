@@ -2,6 +2,7 @@ import {
   AlertTriangle,
   Check,
   Command,
+  Ellipsis,
   Folder,
   GitBranch,
   PanelLeft,
@@ -439,9 +440,13 @@ export const AppTopbar = memo(function AppTopbar({
           className="icon-button topbar__palette"
           onClick={() => onOpenCommandPalette()}
           aria-label="Open command palette"
-          title="Command palette (Ctrl+K)"
+          title={narrowViewport ? "Actions" : "Command palette (Ctrl+K)"}
         >
-          <Command size={15} aria-hidden />
+          {narrowViewport ? (
+            <Ellipsis size={17} aria-hidden />
+          ) : (
+            <Command size={15} aria-hidden />
+          )}
         </button>
         <button
           type="button"

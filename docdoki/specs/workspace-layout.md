@@ -155,11 +155,14 @@ completion behavior are unchanged.
   its session-row indicators without a duplicate header badge. Both layouts preserve background
   outcome visibility when navigation hides the list, using text rather than color alone.
 
-  Session title, project, Git and extension status form one leading cluster. Secondary labels
-  truncate as space shrinks. A compact desktop header can hide the project label. On mobile,
+  Session title, project, Git and extension status form one leading cluster. Project, Git and
+  extension labels use 11.5px Flux Mono SC. All four controls share quiet pill-shaped hover and
+  pressed feedback. Extension status also has a faint resting fill. Secondary labels truncate
+  as space shrinks. A compact desktop header can hide the project label. On mobile,
   Git yields space to the project location by showing the branch glyph and numeric count.
   Git shows up to `99+` changes, with the exact change and conflict counts and branch in the
-  accessible name. Truncated extension statuses remain available by click, tap or keyboard.
+  accessible name. A narrow header shows extension status as a puzzle icon. It adds a count for
+  multiple entries when space allows. The full statuses remain available by click, tap or keyboard.
   Trailing actions keep their own space.
 
   On desktop and narrow screens, the right end of the header holds the command palette, Settings
