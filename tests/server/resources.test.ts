@@ -43,7 +43,10 @@ function context(
   revision = 1,
   viewId = "view-s1",
 ) {
-  return { ...scope(cwd, revision, viewId), messages };
+  return {
+    ...scope(cwd, revision, viewId),
+    loadMessages: async () => messages,
+  };
 }
 
 function citation(text: string, role = "assistant") {
@@ -573,7 +576,10 @@ describe("literal native paths and URL reference identity", () => {
     const appended = {
       ...before,
       revision: 3,
-      messages: [...before.messages, citation("append")],
+      loadMessages: async () => [
+        ...(await before.loadMessages()),
+        citation("append"),
+      ],
     };
     await expect(
       resources.authorize(descriptor.id, appended),

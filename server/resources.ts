@@ -46,21 +46,14 @@ import {
 } from "./project-files.js";
 import { requestError } from "./request-error.js";
 
-interface ResourceContextIdentity {
+/** A revision-bound lazy source keeps workspace reads independent of history. */
+export interface ResourceContext {
   sessionId: string;
   viewId: string;
   revision: number;
   cwd: string;
+  loadMessages(): Promise<unknown[]>;
 }
-
-/** Resource authority is always bound to one transcript view and exactly one
- * message source. The live runtime loads lazily so indexed workspace previews
- * do not require a complete transcript RPC read. */
-export type ResourceContext = ResourceContextIdentity &
-  (
-    | { messages: unknown[]; loadMessages?: never }
-    | { messages?: never; loadMessages: () => Promise<unknown[]> }
-  );
 
 const RESOURCE_OPEN_FLAGS = constants.O_RDONLY | constants.O_NONBLOCK;
 
@@ -332,12 +325,6 @@ function kindFor(mimeType: string): ResourceKind {
   return "binary";
 }
 
-function contextMessages(context: ResourceContext): Promise<unknown[]> {
-  return context.loadMessages
-    ? context.loadMessages()
-    : Promise.resolve(context.messages);
-}
-
 interface EmbeddedCitation {
   messageIndex: number;
   mimeType: string;
@@ -472,9 +459,9 @@ export class ResourceStore {
       this.citationIndexes.set(key, cached);
       return cached.promise;
     }
-    const promise = contextMessages(context).then((messages) =>
-      buildCitationIndex(context, messages),
-    );
+    const promise = context
+      .loadMessages()
+      .then((messages) => buildCitationIndex(context, messages));
     const entry = {
       sessionId: context.sessionId,
       generation: ++this.citationIndexGeneration,
@@ -899,7 +886,7 @@ export class ResourceStore {
     resource: ResolvedResource,
     context: ResourceContext,
   ): Promise<{ data: Buffer; mimeType: string }> {
-    const messages = await contextMessages(context);
+    const messages = await context.loadMessages();
     let encoded = "";
     let mimeType = "";
     visitEmbeddedImages(

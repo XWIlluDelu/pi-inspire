@@ -386,7 +386,7 @@ it("recalls retained branch prompts and exact artifacts through live compaction,
       viewId: slot.viewId,
       revision: projection.revision,
       cwd,
-      messages: [
+      loadMessages: async () => [
         ...projection.viewMessages(),
         ...projection.composerHistoryMessages(),
       ],

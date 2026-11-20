@@ -43,7 +43,7 @@ const context = {
   viewId: "v1",
   revision: 1,
   cwd: root,
-  messages: [],
+  loadMessages: async () => [],
 };
 const resources = new ResourceStore();
 const destinations = new Map<string, string>();
