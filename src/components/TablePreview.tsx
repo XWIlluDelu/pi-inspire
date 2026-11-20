@@ -42,28 +42,27 @@ export function TablePreview({
   const order = useMemo(() => {
     const indices = table.rows.map((_, index) => index);
     if (!sort) return indices;
-    const sign = sort.direction === "ascending" ? 1 : -1;
+    const { column, direction } = sort;
+    const sign = direction === "ascending" ? 1 : -1;
+    if (numeric[column]) {
+      const values = table.rows.map((row) => {
+        const value = numericValue(row[column]);
+        // Missing values sink in either direction. Stable sort keeps ties in input order.
+        return Number.isNaN(value) ? Infinity : value * sign;
+      });
+      return indices.sort((left, right) => values[left]! - values[right]!);
+    }
     const collator = new Intl.Collator(undefined, {
       numeric: true,
       sensitivity: "base",
     });
-    return indices.sort((left, right) => {
-      const a = table.rows[left]![sort.column];
-      const b = table.rows[right]![sort.column];
-      if (numeric[sort.column]) {
-        const x = numericValue(a);
-        const y = numericValue(b);
-        // Blank and non-numeric cells sink in both directions.
-        if (Number.isNaN(x) || Number.isNaN(y))
-          return Number.isNaN(x) === Number.isNaN(y)
-            ? left - right
-            : Number.isNaN(x)
-              ? 1
-              : -1;
-        return (x - y) * sign || left - right;
-      }
-      return collator.compare(a ?? "", b ?? "") * sign || left - right;
-    });
+    return indices.sort(
+      (left, right) =>
+        collator.compare(
+          table.rows[left]![column] ?? "",
+          table.rows[right]![column] ?? "",
+        ) * sign,
+    );
   }, [numeric, sort, table.rows]);
 
   if (table.columns === 0)
