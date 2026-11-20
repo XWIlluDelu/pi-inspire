@@ -43,6 +43,7 @@
     "docs/pi-commands.md",
     "docs/ssh-reverse.md",
     "docs/tool-presentations.md",
+    "docs/tool-presentations.schema.json",
     "inspire",
     "inspire.mjs",
     "LICENSE",

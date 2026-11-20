@@ -1,10 +1,19 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { z } from "zod";
 import {
   defaultToolPresentationConfigPath,
   ToolPresentationConfigStore,
+  toolPresentationFileSchema,
 } from "../../server/tool-presentation-config.js";
 
 const roots: string[] = [];
@@ -27,6 +36,22 @@ afterEach(async () => {
 });
 
 describe("ToolPresentationConfigStore", () => {
+  it("keeps the published editor schema in step with the file schema", async () => {
+    const path = new URL(
+      "../../docs/tool-presentations.schema.json",
+      import.meta.url,
+    );
+    const schema = z.toJSONSchema(toolPresentationFileSchema, {
+      io: "input",
+      reused: "ref",
+    });
+    schema.title = "Inspire presentation profile or adapter module";
+    const expected = `${JSON.stringify(schema, null, 2)}\n`;
+    if (process.env.UPDATE_PRESENTATION_SCHEMA === "1")
+      await writeFile(path, expected);
+    expect(await readFile(path, "utf8")).toBe(expected);
+  });
+
   it("composes external adapters beside a symlinked profile and removes disabled contributions", async () => {
     const { root, path, store } = await fixture();
     const profileDirectory = join(root, "profiles");
@@ -34,6 +59,7 @@ describe("ToolPresentationConfigStore", () => {
     await writeFile(
       join(profileDirectory, "module.json"),
       JSON.stringify({
+        $schema: "./module-schema.json",
         version: 1,
         rules: {},
         mappings: {},
@@ -64,6 +90,7 @@ describe("ToolPresentationConfigStore", () => {
     await writeFile(
       join(profileDirectory, "profile.json"),
       JSON.stringify({
+        $schema: "https://example.invalid/presentation-schema.json",
         version: 1,
         rules: {},
         mappings: {},
@@ -81,6 +108,7 @@ describe("ToolPresentationConfigStore", () => {
     await symlink(join(profileDirectory, "profile.json"), path);
     const active = await store.inspect();
     expect(active.warning).toBeUndefined();
+    expect(active.configuration).not.toHaveProperty("$schema");
     expect(active.configuration.hiddenStatuses).toEqual(["example-state"]);
     expect(active.configuration.controls?.[0]?.command).toBe("/mode:2");
     expect(active.configuration.checkpoints?.[0]?.source).toBe("example");

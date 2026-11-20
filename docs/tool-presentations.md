@@ -22,6 +22,11 @@ receives the declarations, so keep credentials out of the profile.
 Every profile requires `version`, `rules`, and `mappings`. The empty profile is
 `{"version":1,"rules":{},"mappings":{}}`.
 
+For editor completion and structure checks, point `"$schema"` at the
+[editor schema](tool-presentations.schema.json). A profile in a source checkout's `.inspire/`
+directory can use `"$schema": "../docs/tool-presentations.schema.json"`. Inspire validates the
+rules when it reads the profile and keeps the schema reference local to the file.
+
 ## Example
 
 Save this profile and replace `custom_search` with the tool's exact RPC name. Its result contains

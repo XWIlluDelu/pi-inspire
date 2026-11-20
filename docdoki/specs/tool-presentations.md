@@ -170,6 +170,8 @@ unchanged. Invalid configuration warns the browser and activates only shipped ru
 use ignored `.inspire/tool-presentations.json`; packages use the platform configuration directory.
 `INSPIRE_TOOL_PRESENTATIONS_PATH` overrides either. Locations, schema fields, working examples, and
 versioned personal profiles are documented in [Custom tool presentations](../../docs/tool-presentations.md).
+Profiles and adapters can include a string `$schema` for editor completion. The Host removes
+the reference before sending declarations to the browser.
 
 Personal profiles share the product codebase and may live in a separate configuration repository.
 An empty version-1 profile selects shipped rules and generic cards; it does not disable extensions.
@@ -209,3 +211,6 @@ Runtime state and credentials stay outside presentation configuration.
 Resolver tests exercise rule selection, shape checks, and fallback. Component tests exercise
 disclosure, retained content, and copy ownership. Browser tests exercise reading position,
 scrolling, and clipboard behavior.
+
+The profile loader test checks that the published editor schema matches the file declaration.
+Set `UPDATE_PRESENTATION_SCHEMA=1` when running that test to regenerate the artifact.

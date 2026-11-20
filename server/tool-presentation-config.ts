@@ -1,15 +1,21 @@
 import { existsSync } from "node:fs";
 import { open, realpath } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { inspireConfigDirectory } from "./platform-paths.mjs";
+import { z } from "zod";
 import {
   emptyToolPresentationConfiguration,
   type PresentationAdapterInfo,
   type ToolPresentationConfiguration,
   toolPresentationConfigurationSchema,
 } from "../shared/tool-presentation-config.js";
+import { inspireConfigDirectory } from "./platform-paths.mjs";
 
 const MAX_CONFIG_BYTES = 256 * 1024;
+
+export const toolPresentationFileSchema =
+  toolPresentationConfigurationSchema.safeExtend({
+    $schema: z.string().optional().describe("Reference for the JSON editor."),
+  });
 
 export interface ToolPresentationConfigurationState {
   configuration: ToolPresentationConfiguration;
@@ -44,14 +50,15 @@ async function readConfiguration(
     } catch {
       throw new Error("the file is not valid JSON");
     }
-    const parsed = toolPresentationConfigurationSchema.safeParse(decoded);
+    const parsed = toolPresentationFileSchema.safeParse(decoded);
     if (!parsed.success) {
       const issue = parsed.error.issues[0];
       throw new Error(
         `${issue?.message ?? "the schema is invalid"}${issue?.path.length ? " at " + issue.path.join(".") : ""}`,
       );
     }
-    return parsed.data;
+    const { $schema: _editorSchema, ...configuration } = parsed.data;
+    return configuration;
   } finally {
     await handle.close();
   }
