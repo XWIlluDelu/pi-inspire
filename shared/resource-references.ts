@@ -27,10 +27,6 @@ export function isEmbeddedImageReference(reference: string): boolean {
   );
 }
 
-export function isToolResourceArgumentKey(key: string): boolean {
-  return FILE_ARGUMENT_KEYS.has(key);
-}
-
 const TEXT_FILE_EXTENSIONS = new Set([
   "bash",
   "bat",
@@ -381,6 +377,16 @@ function valuesForArgument(value: unknown): string[] {
   return [];
 }
 
+/** Structured Pi file arguments in their original order, shared by citations and tool cards. */
+export function* toolFileArguments(args: unknown) {
+  if (!args || typeof args !== "object") return;
+  for (const [key, raw] of Object.entries(args)) {
+    if (!FILE_ARGUMENT_KEYS.has(key)) continue;
+    for (const value of valuesForArgument(raw))
+      if (isLocalResourceReference(value)) yield { key, value };
+  }
+}
+
 /** Bare output needs a clear filename boundary: a diagnostic location, a
  * whole path line, or one whitespace-free token. Never cite a guessed prefix
  * of a space-containing path. Structured/quoted surfaces are collected below. */
@@ -567,7 +573,6 @@ export function collectSessionResourceReferences(
   messages: readonly unknown[],
   limit = Number.POSITIVE_INFINITY,
 ): SessionResourceReference[] {
-  const resources: SessionResourceReference[] = [];
   const seen = new Map<string, SessionResourceReference>();
   const add = (resource: SessionResourceReference) => {
     const existing = seen.get(resource.key);
@@ -577,34 +582,29 @@ export function collectSessionResourceReferences(
       if (isWritingToolName(resource.toolName)) existing.writes = true;
       return;
     }
-    if (resources.length >= limit) return;
+    if (seen.size >= limit) return;
     if (isWritingToolName(resource.toolName)) resource.writes = true;
     seen.set(resource.key, resource);
-    resources.push(resource);
   };
   const addToolArgumentReferences = (
     values: Record<string, unknown>,
     metadata: Pick<SessionResourceReference, "toolName"> = {},
   ) => {
-    for (const [key, value] of Object.entries(values)) {
-      if (!isToolResourceArgumentKey(key)) continue;
-      for (const rawReference of valuesForArgument(value)) {
-        if (!isLocalResourceReference(rawReference)) continue;
-        const reference = fileResourceReference(rawReference);
-        add({
-          key: `file:${reference}`,
-          reference,
-          label: rawReference,
-          source: "tool",
-          ...metadata,
-        });
-      }
+    for (const { value } of toolFileArguments(values)) {
+      const reference = fileResourceReference(value);
+      add({
+        key: `file:${reference}`,
+        reference,
+        label: value,
+        source: "tool",
+        ...metadata,
+      });
     }
   };
 
   for (
     let messageIndex = messages.length - 1;
-    messageIndex >= 0 && resources.length < limit;
+    messageIndex >= 0 && seen.size < limit;
     messageIndex -= 1
   ) {
     const raw = messages[messageIndex];
@@ -618,7 +618,7 @@ export function collectSessionResourceReferences(
     const parts = contentParts(message);
     for (
       let partPosition = parts.length - 1;
-      partPosition >= 0 && resources.length < limit;
+      partPosition >= 0 && seen.size < limit;
       partPosition -= 1
     ) {
       const { part, index: partIndex } = parts[partPosition]!;
@@ -673,7 +673,7 @@ export function collectSessionResourceReferences(
       }
     }
   }
-  return resources;
+  return [...seen.values()];
 }
 
 function nestedToolCall(value: unknown): {

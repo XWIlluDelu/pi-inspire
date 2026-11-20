@@ -22,9 +22,8 @@ import {
 import type { VisibilityPreference } from "../../shared/contracts";
 import {
   fileResourceReference,
-  isLocalResourceReference,
   isResourceReferenceText,
-  isToolResourceArgumentKey,
+  toolFileArguments,
 } from "../../shared/resource-references";
 import { type ChildCallList } from "../../shared/tool-activity";
 import { stripTerminalSequences } from "../ansi";
@@ -290,29 +289,6 @@ function toolSummary(call: ToolCallContent): string {
   return "";
 }
 
-/** String tool arguments that carry a local file reference, in argument order. */
-function toolFileArguments(
-  call: ToolCallContent,
-): Array<{ key: string; value: string }> {
-  const args = call.arguments;
-  if (!args || typeof args !== "object") return [];
-  const found: Array<{ key: string; value: string }> = [];
-  for (const [key, value] of Object.entries(args as Record<string, unknown>)) {
-    if (!isToolResourceArgumentKey(key)) continue;
-    const values =
-      typeof value === "string"
-        ? [value]
-        : Array.isArray(value)
-          ? value.filter((item): item is string => typeof item === "string")
-          : [];
-    for (const candidate of values) {
-      if (isLocalResourceReference(candidate))
-        found.push({ key, value: candidate });
-    }
-  }
-  return found;
-}
-
 /** A file reference retains its complete action and accessible name while its
  * visual label may use a responsive path projection. */
 function FileRefButton({
@@ -351,7 +327,7 @@ function FileRefButton({
 }
 
 function fallbackSummary(call: ToolCallContent): ToolPresentationSummary {
-  const reference = toolFileArguments(call)[0]?.value;
+  const reference = toolFileArguments(call.arguments).next().value?.value;
   if (reference)
     return { parts: [{ kind: "resource", text: reference, reference }] };
   const text = toolSummary(call);
@@ -905,11 +881,14 @@ function ToolActivityText(props: React.ComponentProps<typeof ActivityText>) {
 }
 
 function ArgumentReader({ call }: { call: ToolCallContent }) {
-  const items = toolFileArguments(call).map(({ key, value }) => ({
-    label: key,
-    value,
-    resourceRef: value,
-  }));
+  const items = Array.from(
+    toolFileArguments(call.arguments),
+    ({ key, value }) => ({
+      label: key,
+      value,
+      resourceRef: value,
+    }),
+  );
   return (
     <>
       {items.length > 0 && renderToolBlock({ type: "properties", items })}
