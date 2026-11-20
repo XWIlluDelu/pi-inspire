@@ -10,7 +10,6 @@ import type {
   StageSessionForkRequest,
 } from "./session-fork.js";
 import { SessionDocumentReader } from "./session-jsonl.js";
-import { indexSessionEntries } from "./session-tree.js";
 
 export type ForkWorkerInput = StageSessionForkRequest & {
   stagingDir: string;
@@ -67,15 +66,13 @@ async function copy(request: ForkWorkerInput): Promise<ForkWorkerReply> {
     )
       throw changed();
     migrateSessionEntries(entries);
-    const savedEntries = entries.slice(1) as SessionEntry[];
-    indexSessionEntries(savedEntries);
     let destination: ReturnType<typeof SessionManager.inMemory>;
     if (request.mode === "recover") {
       // Seed Pi with the full attested tree and let it create the new header.
       destination = SessionManager.inMemory(
         request.destinationCwd,
         undefined,
-        savedEntries,
+        entries.slice(1) as SessionEntry[],
       );
     } else {
       const source = SessionManager.inMemory(
@@ -109,12 +106,13 @@ async function copy(request: ForkWorkerInput): Promise<ForkWorkerReply> {
     );
     const output = await open(stagedPath, "wx", 0o600);
     try {
-      const lines = [
-        JSON.stringify({ ...header, parentSession: request.sourcePath }) + "\n",
-      ];
-      for (const entry of destination.getEntries())
-        lines.push(JSON.stringify(entry) + "\n");
-      await output.writeFile(lines);
+      function* lines() {
+        yield JSON.stringify({ ...header, parentSession: request.sourcePath }) +
+          "\n";
+        for (const entry of destination.getEntries())
+          yield JSON.stringify(entry) + "\n";
+      }
+      await output.writeFile(lines());
     } finally {
       await output.close();
     }
