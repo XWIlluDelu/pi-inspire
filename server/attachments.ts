@@ -41,6 +41,7 @@ import { isSupportedPromptImageMimeType } from "../shared/image-types.js";
 import { filesystemRelativePath } from "./filesystem-containment.js";
 import { canonicalBase64DecodedSize } from "./image-content.js";
 import { processStartIdentity } from "./instance-state.mjs";
+import { replacePrivateStateFile } from "./replace-private-state-file.mjs";
 import { inspireStateDirectory } from "./platform-paths.mjs";
 import { requestError } from "./request-error.js";
 
@@ -351,17 +352,8 @@ export class AttachmentStore {
       delivery: "possible",
     };
     const metadata = join(this.root, `${value.id}.json`);
-    const temporary = `${metadata}.${randomUUID()}`;
-    try {
-      await writeFile(temporary, JSON.stringify(ownership), {
-        mode: 0o600,
-        flag: "wx",
-      });
-      await rename(temporary, metadata);
-      this.owned.set(value.path, ownership);
-    } finally {
-      await rm(temporary, { force: true });
-    }
+    await replacePrivateStateFile(metadata, JSON.stringify(ownership));
+    this.owned.set(value.path, ownership);
   }
 
   /** Unsubmitted copies of retired owners and expired transport-only images

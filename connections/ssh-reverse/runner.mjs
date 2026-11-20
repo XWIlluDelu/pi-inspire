@@ -6,10 +6,8 @@ import {
   mkdir,
   readFile,
   readlink,
-  rename,
   rm,
   stat,
-  writeFile,
 } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { homedir } from "node:os";
@@ -21,9 +19,9 @@ const sourceSupport = new URL("../../server/", import.meta.url);
 const support = existsSync(new URL("file-lock.mjs", sourceSupport))
   ? sourceSupport
   : new URL("../../build/server/", import.meta.url);
-const [{ acquireFileLock }, { processStartIdentity }, { runChild }] =
+const [{ acquireFileLock }, { processStartIdentity }, { runChild }, { replacePrivateStateFile }] =
   await Promise.all(
-    ["file-lock", "instance-state", "process-tree"].map((module) =>
+    ["file-lock", "instance-state", "process-tree", "replace-private-state-file"].map((module) =>
       import(new URL(`${module}.mjs`, support).href),
     ),
   );
@@ -191,13 +189,7 @@ async function ensurePrivateDirectory(path) {
 
 async function writePrivateFile(path, content) {
   await ensurePrivateDirectory(dirname(path));
-  const temporary = `${path}.${process.pid}.${Date.now()}.tmp`;
-  try {
-    await writeFile(temporary, content, { mode: 0o600 });
-    await rename(temporary, path);
-  } finally {
-    await rm(temporary, { force: true });
-  }
+  await replacePrivateStateFile(path, content);
 }
 
 function validState(value) {
