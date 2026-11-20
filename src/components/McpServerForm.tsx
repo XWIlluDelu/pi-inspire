@@ -23,7 +23,7 @@ import {
   useConfigurationFields,
 } from "./ConfigurationForm";
 import { DetailSummary } from "./DetailSummary";
-import { SettingsSwitch } from "./SettingsControls";
+import { ToggleSwitch } from "./ToggleSwitch";
 
 const exposureOptions = MCP_EXPOSURES.map((value) => ({
   value,
@@ -608,7 +608,7 @@ export function McpServerForm({
           ) : (
             <div className="models-form__field">
               <span>Enabled in file</span>
-              <SettingsSwitch
+              <ToggleSwitch
                 label="Enabled in file"
                 checked={enabled ?? true}
                 disabled={busy}

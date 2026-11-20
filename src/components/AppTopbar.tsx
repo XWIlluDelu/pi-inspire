@@ -25,7 +25,7 @@ import {
 import { selectedRunState } from "../app-state";
 import { gitChangeCount, gitHeadLabel } from "../git-presentation";
 import { isComposingKeyboardEvent } from "../keyboard-input";
-import { sessionPresentationName } from "../session-actions";
+import { type SessionInspection, sessionPresentationName } from "../session-actions";
 import { shallowEqual, store, useAppState } from "../store";
 import { useCopied } from "../use-copied";
 import { ExtensionStatus } from "./ExtensionDisplays";
@@ -130,9 +130,9 @@ function GitSummary() {
 }
 
 const SessionIdent = memo(function SessionIdent({
-  onExport,
+  onInspect,
 }: {
-  onExport: () => void;
+  onInspect: (kind: SessionInspection) => void;
 }) {
   const { sessionId, heading, cwd, projectDisplay, readOnly, branchRequest } =
     useAppState(
@@ -299,7 +299,7 @@ const SessionIdent = memo(function SessionIdent({
           sessionId={sessionId}
           onClose={closeMenu}
           onRename={(_, name) => setEdit({ initial: name, name })}
-          onExport={onExport}
+          onInspect={onInspect}
         />
       ) : null}
       <div className="topbar__workspace-meta">
@@ -341,7 +341,7 @@ export const AppTopbar = memo(function AppTopbar({
   settingsOpen,
   onToggleNavigation,
   onOpenCommandPalette,
-  onExportSession,
+  onInspectSession,
   onToggleSettings,
   onToggleResources,
 }: {
@@ -350,7 +350,7 @@ export const AppTopbar = memo(function AppTopbar({
   settingsOpen: boolean;
   onToggleNavigation: () => void;
   onOpenCommandPalette: () => void;
-  onExportSession: () => void;
+  onInspectSession: (kind: SessionInspection) => void;
   onToggleSettings: () => void;
   onToggleResources: () => void;
 }) {
@@ -391,7 +391,7 @@ export const AppTopbar = memo(function AppTopbar({
           <PanelLeft size={15} aria-hidden />
         </NavigationToggle>
       ) : null}
-      <SessionIdent key={state.sessionId} onExport={onExportSession} />
+      <SessionIdent key={state.sessionId} onInspect={onInspectSession} />
       <div className="topbar__status" aria-live="polite">
         <StateChip
           runState={state.runState}

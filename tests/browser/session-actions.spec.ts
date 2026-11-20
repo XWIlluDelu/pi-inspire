@@ -170,7 +170,7 @@ test.describe("phone session actions", () => {
       await touch.detach();
       await expect
         .poll(savedOrder)
-        .toEqual(["rename", "copy-id", "clone", "export", "switch-branch"]);
+        .toEqual(["rename", "copy-id", "clone", "export", "switch-branch", "tool-loadout"]);
 
       await page.reload();
       await context.grantPermissions(["clipboard-read", "clipboard-write"]);
@@ -184,6 +184,7 @@ test.describe("phone session actions", () => {
         "Clone current branch",
         "Export session…",
         "Switch branch…",
+        "Tool Loadout…",
       ]);
       await menu.getByRole("menuitem", { name: "Copy session ID" }).tap();
       await expect(
@@ -193,6 +194,8 @@ test.describe("phone session actions", () => {
         sessionId,
       );
       await page.keyboard.press("End");
+      await expect(menu.getByRole("menuitem", { name: "Tool Loadout…" })).toBeFocused();
+      await page.keyboard.press("ArrowUp");
       await expect(
         menu.getByRole("menuitem", { name: "Switch branch…" }),
       ).toBeFocused();

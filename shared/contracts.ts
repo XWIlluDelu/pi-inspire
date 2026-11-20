@@ -113,6 +113,28 @@ export interface ModelSelectionResponse {
   thinkingLevel: string;
 }
 
+export const TOOL_LOADOUT_EXPOSURES = [
+  "direct",
+  "model-only",
+  "codemode",
+  "deferred",
+  "hidden",
+] as const;
+
+export interface ToolLoadoutEntry {
+  name: string;
+  description: string;
+  source: string;
+  exposure: (typeof TOOL_LOADOUT_EXPOSURES)[number];
+  active: boolean;
+}
+
+export interface ToolLoadoutSnapshot {
+  workerId: string;
+  tools: ToolLoadoutEntry[];
+  truncated: boolean;
+}
+
 export type NewSessionOptions = Omit<Body<"newSession">, "cwd" | "receipt">;
 
 /** Pi's resolved startup choice for a new session in one canonical workspace.
@@ -236,6 +258,7 @@ export const SESSION_ACTION_IDS = [
   "clone",
   "switch-branch",
   "export",
+  "tool-loadout",
 ] as const;
 export type SessionActionId = (typeof SESSION_ACTION_IDS)[number];
 

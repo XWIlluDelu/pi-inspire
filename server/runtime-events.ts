@@ -30,6 +30,7 @@ import { jsonRecord } from "../shared/json-record.js";
 import { structuralMessageIdentity } from "../shared/message-identity.js";
 import type { TaskOutcome } from "../shared/notifications.js";
 import { PROVIDER_AUTH_SUFFIX } from "../shared/provider-auth-bridge.js";
+import { TOOL_LOADOUT_SUFFIX } from "../shared/tool-loadout.js";
 import {
   type ActivityTool,
   childCallFromEvent,
@@ -844,6 +845,7 @@ export class RuntimeEventController {
         `${slot.bridge.statusKey}${PROVIDER_AUTH_SUFFIX}`,
         `${slot.bridge.statusKey}${RETRY_STATE_SUFFIX}`,
         `${slot.bridge.statusKey}${PENDING_IMAGE_SUFFIX}`,
+        `${slot.bridge.statusKey}${TOOL_LOADOUT_SUFFIX}`,
       ].includes(record.statusKey as string)
     )
       return;

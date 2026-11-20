@@ -1062,6 +1062,62 @@
   overflow: hidden;
 }
 
+.tool-loadout {
+  width: min(600px, 100%);
+  max-height: 75dvh;
+}
+
+.tool-loadout__controls {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.tool-loadout__controls > input {
+  flex: 1;
+  min-width: 0;
+}
+
+.tool-loadout__list {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+  margin: 0;
+  padding: 0 2px;
+  border-block: 1px solid var(--line);
+}
+
+.tool-loadout__tool {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  padding: var(--space-2);
+  overflow-wrap: anywhere;
+}
+
+.tool-loadout__tool + .tool-loadout__tool {
+  border-top: 1px solid var(--line);
+}
+
+.tool-loadout__tool small,
+.tool-loadout__tool p {
+  display: block;
+  margin: var(--space-1) 0 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.tool-loadout__tool p {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.tool-loadout__tool > [role="switch"] {
+  min-width: 44px;
+  min-height: 44px;
+}
+
 .palette.dialog {
   --palette-content-inset: var(--space-5);
   width: min(580px, 94vw);

@@ -43,11 +43,17 @@ import { RenderErrorBoundary } from "./components/RenderErrorBoundary";
 import type { SettingsCategoryId } from "./components/Settings";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { StartupCard } from "./components/StartupCard";
+import { ToolLoadoutDialog } from "./components/ToolLoadoutDialog";
 import { Transcript, type TranscriptNavigation } from "./components/Transcript";
 import { Welcome, type WelcomeInheritance } from "./components/Welcome";
 import { isComposingKeyboardEvent, isEditableTarget } from "./keyboard-input";
 import { thinkingLevelLabel } from "./model-options";
-import { runStop, type WorkbenchDestinations } from "./session-actions";
+import {
+  runStop,
+  sessionActionAvailable,
+  type SessionInspection,
+  type WorkbenchDestinations,
+} from "./session-actions";
 import { shallowEqual, store, useAppState } from "./store";
 import { useInspectionHistory } from "./use-inspection-history";
 import { hasActiveModal, useModalDepth } from "./use-modal-focus";
@@ -522,6 +528,12 @@ type Inspection =
   | { kind: "palette" }
   | { kind: "rename"; sessionId: string; name: string; fromPalette: boolean }
   | { kind: "export"; sessionId: string }
+  | {
+      kind: "tool-loadout";
+      sessionId: string;
+      viewId: string;
+      transportGeneration: number;
+    }
   | { kind: "help"; mode: "hotkeys" | "changelog" };
 
 export function App() {
@@ -650,7 +662,8 @@ export function App() {
   useEffect(() => {
     if (state.sessionId) setWelcomeInheritance(null);
     setInspection((current) =>
-      (current?.kind === "export" || current?.kind === "rename") &&
+      (current?.kind === "export" || current?.kind === "rename" ||
+        current?.kind === "tool-loadout") &&
       current.sessionId !== state.sessionId
         ? current.kind === "rename" && current.fromPalette
           ? { kind: "palette" }
@@ -753,14 +766,19 @@ export function App() {
     if (extensionOverlayOpen || hasActiveModal()) return;
     showCommandPalette();
   }, [extensionOverlayOpen, showCommandPalette]);
-  const openExport = useCallback(() => {
-    const sessionId = store.getState().sessionId;
-    if (!sessionId) return;
+  const openSessionInspection = useCallback((kind: SessionInspection) => {
+    const source = store.getState();
+    const { sessionId, view: { viewId }, transportGeneration } = source;
+    if (!sessionId || !sessionActionAvailable(kind, source)) return;
+    const next: Inspection | null = kind === "export"
+      ? { kind, sessionId }
+      : viewId ? { kind, sessionId, viewId, transportGeneration } : null;
+    if (!next) return;
     closeCommandPalette();
     // Let the invoking menu/palette restore focus before taking modal ownership.
     requestAnimationFrame(() => {
       if (store.getState().sessionId === sessionId)
-        setInspection((current) => current ?? { kind: "export", sessionId });
+        setInspection((previous) => previous ?? next);
     });
   }, [closeCommandPalette]);
 
@@ -1025,7 +1043,7 @@ export function App() {
           settingsOpen={settingsOpen}
           onToggleNavigation={toggleNavigation}
           onOpenCommandPalette={openCommandPalette}
-          onExportSession={openExport}
+          onInspectSession={openSessionInspection}
           onToggleSettings={toggleSettings}
           onToggleResources={toggleResources}
         />
@@ -1128,6 +1146,15 @@ export function App() {
           onClose={closeInspection}
         />
       ) : null}
+      {inspection?.kind === "tool-loadout" && inspection.sessionId === state.sessionId ? (
+        <ToolLoadoutDialog
+          sessionId={inspection.sessionId}
+          viewId={inspection.viewId}
+          transportGeneration={inspection.transportGeneration}
+          active={!extensionOverlayOpen}
+          onClose={closeInspection}
+        />
+      ) : null}
       {inspection?.kind === "palette" ||
       (inspection?.kind === "rename" && inspection.fromPalette) ? (
         <CommandPalette
@@ -1135,7 +1162,7 @@ export function App() {
           rename={inspection.kind === "rename" ? inspection : undefined}
           onRenameBack={closeRename}
           onClose={closeCommandPalette}
-          onExportSession={openExport}
+          onInspectSession={openSessionInspection}
           onRenameSession={openRename}
           onToggleNav={toggleNavigation}
           onToggleCtx={toggleResources}

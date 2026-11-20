@@ -5,6 +5,7 @@ import {
   useRef,
 } from "react";
 import { Dropdown } from "./Dropdown";
+import { ToggleSwitch } from "./ToggleSwitch";
 
 export function SettingsLayout<Category extends string>({
   label,
@@ -192,37 +193,10 @@ export function SwitchField({
   ...control
 }: Pick<FieldDetails, "label" | "description" | "status"> & {
   controlLabel?: string;
-} & Omit<ComponentProps<typeof SettingsSwitch>, "label">) {
+} & Omit<ComponentProps<typeof ToggleSwitch>, "label">) {
   return (
     <SettingField layout="inline" {...{ label, description, status }}>
-      <SettingsSwitch label={controlLabel ?? label} {...control} />
+      <ToggleSwitch label={controlLabel ?? label} {...control} />
     </SettingField>
-  );
-}
-
-export function SettingsSwitch({
-  label,
-  checked,
-  onChange,
-  disabled = false,
-  busy = false,
-}: {
-  label: string;
-  checked: boolean;
-  onChange: (checked: boolean) => void;
-  disabled?: boolean;
-  busy?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      className="settings-switch"
-      aria-label={label}
-      aria-checked={checked}
-      aria-busy={busy}
-      disabled={disabled}
-      onClick={() => onChange(!checked)}
-    />
   );
 }

@@ -52,7 +52,7 @@ function renderTopbar(readOnly = false) {
       settingsOpen={false}
       onToggleNavigation={noop}
       onOpenCommandPalette={noop}
-      onExportSession={noop}
+      onInspectSession={noop}
       onToggleSettings={noop}
       onToggleResources={noop}
     />,

@@ -31,6 +31,7 @@ import {
 import { nativeEntryDigest } from "../native-entry-digest.js";
 import { userMessageEvidence } from "../pending-image-evidence.js";
 import { registerProviderAuthBridge } from "./provider-auth-bridge.js";
+import { registerToolLoadoutBridge } from "./tool-loadout-bridge.js";
 
 const CHECKPOINT_STATE = Symbol.for("inspire.worker-checkpoint");
 type CheckpointState = {
@@ -129,6 +130,7 @@ export default function inspireBranchBridge(pi: ExtensionAPI): void {
     return;
 
   registerProviderAuthBridge(pi, { command, statusKey, workerId });
+  registerToolLoadoutBridge(pi, { command, statusKey, workerId });
 
   const processState = process as NodeJS.Process & {
     [CHECKPOINT_STATE]?: CheckpointState;

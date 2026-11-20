@@ -117,6 +117,17 @@ owns selection and discovery semantics; [[herdr-enhancement]] owns the TUI recei
 assistance and resource preparation. [[pi-capability-gaps]] tracks generic argument completion and
 the public callback interface it needs.
 
+### Tool Loadout
+
+Tool Loadout reads the live Inspire-owned worker's tool inventory, including exposure and Pi's
+active selection. Activation affects Pi's selected tools. Exposure and extension hooks still
+determine which tools are discoverable, callable, or declared to the provider.
+
+An edit addresses one tool on the observed worker and view. The worker merges the change into its
+fresh active set through Pi's public Extension API and reports the resulting selection. Hidden
+tools are informational. The inventory is bounded and may be truncated. A cold session, attached
+terminal, or replaced worker requires a new observation of a suitable worker.
+
 ## Extension UI reuse and source DIY
 
 Standard dialog bodies accept presentation props for the question and text draft, pending and error

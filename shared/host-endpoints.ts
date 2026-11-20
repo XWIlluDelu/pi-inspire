@@ -28,6 +28,7 @@ import {
   type SessionHistoryPages,
   type SessionListResponse,
   THINKING_LEVELS,
+  type ToolLoadoutSnapshot,
 } from "./contracts.js";
 import type { HerdrEnhancementStatus } from "./herdr.js";
 import { historyQuerySchema } from "./history-query.js";
@@ -74,6 +75,7 @@ import type {
   TerminalServiceSettings,
 } from "./terminal-contracts.js";
 import { terminalIdSchema } from "./terminal-operations.js";
+import { TOOL_LOADOUT_MAX_NAME_CHARS } from "./tool-loadout.js";
 import type {
   PresentationAdapterInfo,
   ToolPresentationConfiguration,
@@ -240,6 +242,9 @@ const sessionCwdsSchema = z.object({
     .max(MAX_SESSION_CWD_HYDRATION_CWDS),
 });
 const sessionAddress = z.object({ sessionId: sessionIdField });
+const toolLoadoutAddress = sessionAddress
+  .extend({ viewId: z.string().min(1).max(256) })
+  .strict();
 const resourceResolveSchema = z
   .object({
     sessionId: sessionIdField,
@@ -553,6 +558,23 @@ export const hostEndpoints = {
   cycleThinkingLevel: modelSelection("post", "/api/control/thinking-cycle", {
     body: z.strictObject({ sessionId: sessionIdField }),
   }),
+  toolLoadout: endpoint<ToolLoadoutSnapshot>()(
+    "get",
+    "/api/control/tool-loadout",
+    { query: toolLoadoutAddress },
+    read,
+  ),
+  setToolLoadout: endpoint<ToolLoadoutSnapshot>()(
+    "post",
+    "/api/control/tool-loadout",
+    {
+      body: toolLoadoutAddress.extend({
+        workerId: z.string().min(1).max(200),
+        name: z.string().min(1).max(TOOL_LOADOUT_MAX_NAME_CHARS),
+        active: z.boolean(),
+      }),
+    },
+  ),
   setRuntimeSetting: ok("post", "/api/control/runtime-setting", {
     body: z.strictObject({
       sessionId: sessionIdField,

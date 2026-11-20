@@ -2400,6 +2400,31 @@ export class AppStore {
   readMcpConfig = async (owner: { sessionId?: string; cwd?: string }) =>
     this.settingsApi().json("mcpConfig", { query: owner });
 
+  toolLoadout = async (
+    owner: { sessionId: string; viewId: string; transportGeneration: number },
+    signal: AbortSignal,
+    change?: { workerId: string; name: string; active: boolean },
+  ) => {
+    const api = this.settingsApi();
+    const { sessionId, viewId, transportGeneration } = owner;
+    if (
+      this.state.sessionId !== sessionId ||
+      this.state.view.viewId !== viewId ||
+      this.state.transportGeneration !== transportGeneration ||
+      this.state.sessionSelectionPending
+    )
+      throw new Error("The session view changed.");
+    try {
+      return change
+        ? await api.json("setToolLoadout", { body: { sessionId, viewId, ...change } }, signal)
+        : await api.json("toolLoadout", { query: { sessionId, viewId } }, signal);
+    } catch (error) {
+      if (this.api === api && error instanceof ApiError && error.status === 401)
+        this.handleAuthFailure();
+      throw error;
+    }
+  };
+
   readMcpConnection = async (
     owner: { sessionId?: string; cwd?: string },
     input: import("../shared/mcp").McpConnectionRead,

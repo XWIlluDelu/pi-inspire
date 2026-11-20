@@ -44,6 +44,7 @@ import {
   type SessionRuntimeStatus,
   THINKING_LEVELS,
   type ThinkingLevel,
+  type ToolLoadoutSnapshot,
   type UploadedAttachment,
   type WorkspaceForkRequest,
 } from "../shared/contracts.js";
@@ -56,6 +57,10 @@ import {
   type ProviderAuthOperation,
   type ProviderAuthResult,
 } from "../shared/provider-auth-bridge.js";
+import {
+  TOOL_LOADOUT_SUFFIX,
+  type ToolLoadoutChange,
+} from "../shared/tool-loadout.js";
 import { CHECKPOINT_SUFFIX } from "../shared/worker-checkpoint.js";
 import {
   AttachmentStore,
@@ -119,6 +124,7 @@ import {
 import { RuntimeProjectionCoordinator } from "./runtime-projection-coordinator.js";
 import { RuntimeReadController } from "./runtime-reads.js";
 import { readWorkerRetryState } from "./runtime-retry-state.js";
+import { requestWorkerToolLoadout } from "./runtime-tool-loadout.js";
 import { RuntimeSessionDeletionController } from "./runtime-session-deletion.js";
 import { runtimeToken as bridgeToken } from "./runtime-token.js";
 import { RuntimeWorkerLifecycle } from "./runtime-worker-lifecycle.js";
@@ -1881,6 +1887,7 @@ export class RuntimeController extends EventEmitter {
                 `${reserved}${PROVIDER_AUTH_SUFFIX}`,
                 `${reserved}${RETRY_STATE_SUFFIX}`,
                 `${reserved}${PENDING_IMAGE_SUFFIX}`,
+                `${reserved}${TOOL_LOADOUT_SUFFIX}`,
                 `${reserved}${CHECKPOINT_SUFFIX}`,
                 // Used by attached clients, not typed by people.
                 "attach-control",
@@ -4718,6 +4725,43 @@ export class RuntimeController extends EventEmitter {
       "the thinking-level cycle",
       (rpc) => this.readModelSelection(rpc),
     );
+  }
+
+  toolLoadout(
+    sessionId: string,
+    viewId: string,
+    change?: ToolLoadoutChange & { workerId: string },
+  ): Promise<ToolLoadoutSnapshot> {
+    return this.withSessionSlot(sessionId, (slot) => {
+      const changed = () =>
+        requestError("Pi changed. Open the tool loadout again.", 409, {
+          code: "TOOL_LOADOUT_OWNER_CHANGED",
+        });
+      if (slot.viewId !== viewId) throw changed();
+
+      const ownedWorker = () =>
+        slot.readOnlyReason ? null : this.deliveryWorker(slot);
+      const worker = ownedWorker();
+      const { bridge } = slot;
+      if (!worker || !bridge)
+        throw requestError(
+          "Tool Loadout needs a running Inspire Pi worker for this session.",
+          409,
+          { code: "TOOL_LOADOUT_UNAVAILABLE" },
+        );
+      if (change && bridge.workerId !== change.workerId) throw changed();
+
+      return this.mutateSlot(slot, async () => {
+        const assertOwner = () => {
+          if (slot.viewId !== viewId || ownedWorker() !== worker || slot.bridge !== bridge)
+            throw changed();
+        };
+        assertOwner();
+        const result = await requestWorkerToolLoadout(worker, bridge, sessionId, change);
+        assertOwner();
+        return result;
+      });
+    });
   }
 
   setRuntimeSetting(sessionId: string, setting: RuntimeSetting): Promise<void> {

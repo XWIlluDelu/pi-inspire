@@ -3,6 +3,8 @@
 ## Unreleased
 
 - The thinking shortcut uses the live Pi worker's native cycle order.
+- **Tool Loadout…** in the session menu and palette shows Pi's tool inventory and lets you change
+  its active selection.
 - **Fork into another folder…** recovers the whole saved session tree when its project folder is
   unavailable.
 - **Restart all** closes current-user Pi sessions before restarting Inspire and project terminals.

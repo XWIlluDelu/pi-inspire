@@ -88,6 +88,7 @@ it("repairs only addressed fields while keeping older settings and their unknown
       "clone",
       "switch-branch",
       "copy-id",
+      "tool-loadout",
     ],
     recentModelIds: [identity],
   });

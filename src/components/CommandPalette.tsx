@@ -19,6 +19,7 @@ import {
   runStop,
   sessionActionAvailable,
   sessionActions,
+  type SessionInspection,
   sessionPresentationName,
   type WorkbenchDestinations,
 } from "../session-actions";
@@ -79,7 +80,7 @@ export const CommandPalette = memo(function CommandPalette({
   active = true,
   rename,
   onRenameBack,
-  onExportSession,
+  onInspectSession,
   onRenameSession,
   onToggleNav,
   onToggleCtx,
@@ -90,7 +91,7 @@ export const CommandPalette = memo(function CommandPalette({
   active?: boolean;
   rename?: { sessionId: string; name: string };
   onRenameBack: () => void;
-  onExportSession: () => void;
+  onInspectSession: (kind: SessionInspection) => void;
   onRenameSession: (sessionId: string, name: string) => void;
   onToggleNav: () => void;
   onToggleCtx: () => void;
@@ -102,6 +103,7 @@ export const CommandPalette = memo(function CommandPalette({
       sessionId: source.sessionId,
       readOnlyReason: source.readOnlyReason,
       clone: sessionActionAvailable("clone", source),
+      toolLoadout: sessionActionAvailable("tool-loadout", source),
       external: Boolean(
         source.sessionId && source.sessionStatuses[source.sessionId]?.external,
       ),
@@ -197,7 +199,8 @@ export const CommandPalette = memo(function CommandPalette({
           if (
             id === "copy-id" ||
             (id === "clone" && !state.clone) ||
-            (id === "rename" && state.readOnlyReason)
+            (id === "rename" && state.readOnlyReason) ||
+            (id === "tool-loadout" && !state.toolLoadout)
           )
             return [];
           const action = sessionActions[id];
@@ -207,7 +210,7 @@ export const CommandPalette = memo(function CommandPalette({
               id,
               title: id === "rename" ? `${action.title}…` : action.title,
               aliases: [
-                `/${action.command}`,
+                ...(action.command ? [`/${action.command}`] : ["active tools"]),
                 ...(branchSwitch
                   ? ["branches", "branch navigation"]
                   : id === "rename"
@@ -221,7 +224,7 @@ export const CommandPalette = memo(function CommandPalette({
                 runSessionAction(id, sessionId, {
                   rename: onRenameSession,
                   renameName: sessionPresentationName,
-                  export: onExportSession,
+                  inspect: onInspectSession,
                 }),
             },
           ];
@@ -397,7 +400,7 @@ export const CommandPalette = memo(function CommandPalette({
     onToggleCtx,
     onOpenSession,
     destinations,
-    onExportSession,
+    onInspectSession,
     onRenameSession,
   ]);
 

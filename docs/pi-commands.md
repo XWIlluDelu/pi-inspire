@@ -101,6 +101,10 @@ Removing a credential there leaves provider-side grants and environment or model
 
 ## Runtime behavior settings
 
+**Tool Loadout…** in the session title menu or palette reads the running Inspire Pi worker's
+tool inventory and changes its active selection. Exposure and extension hooks can affect which
+tools are discoverable or sent to the provider. Refresh to read changes made by extensions.
+
 Settings → Behavior applies delivery, automatic compaction and retry to the selected Inspire-owned
 worker and asks Pi to save global settings. Project overrides still apply. Other workers retain
 their loaded values. Pi confirms the runtime change but does not report completion of the settings
