@@ -5,7 +5,7 @@ import type {
   ExternalSessionActivity,
 } from "../shared/session-activity.js";
 import type { AttachControlRegistry } from "./attach-control.js";
-import type { SessionCatalogLike } from "./session-catalog.js";
+import type { SessionCatalogLike, SessionRecord } from "./session-catalog.js";
 
 const POLL_MS = 2_000;
 
@@ -70,15 +70,12 @@ export class PiSessionActivity {
 
     // Both native identity and file must match the existing discovery catalog.
     // Reports do not expand storage roots or authorize access to arbitrary files.
-    const records = await this.options.catalog.refresh();
-    const counts = new Map<string, number>();
-    for (const record of records)
-      counts.set(record.id, (counts.get(record.id) ?? 0) + 1);
-    const byId = new Map(
-      records
-        .filter((record) => counts.get(record.id) === 1)
-        .map((record) => [record.id, record]),
+    const byId = new Map<string, SessionRecord | null | undefined>(
+      reports.map(({ sessionId }) => [sessionId, undefined]),
     );
+    for (const record of await this.options.catalog.refresh())
+      if (byId.has(record.id))
+        byId.set(record.id, byId.get(record.id) === undefined ? record : null);
     const priorities = { idle: 0, blocked: 1, working: 2 };
     const result = new Map<string, ExternalSessionActivity>();
     for (const report of reports) {
