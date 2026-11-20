@@ -145,8 +145,9 @@ boundaries in this contract.
   output and context summaries use the same display normalization for search and rendering, so
   terminal control sequences and removed summary prefixes add no invisible matches.
 
-  Desktop search remains visible as a compact single-row input at the top-right of the reading
-  measure. Ctrl/Cmd+F in the conversation, its composer or header focuses/selects its text without
+  Desktop search floats as a compact single-row input at the top-right of the reading measure. A
+  top inset clears the first row and positions revealed matches below the search control.
+  Ctrl/Cmd+F in the conversation, its composer or header focuses/selects its text without
   an extra launcher. Escape blurs the desktop input while preserving its query, highlights and
   selected match; clearing the input releases match ownership. IME composition, modal and contextual
   surfaces keep their keyboard ownership. Local-tool placement follows [[design-system]]: the

@@ -36,6 +36,16 @@ test("search keeps tab order, wraps matches, and yields composing keys", async (
   const search = page.getByRole("search", { name: "Search conversation" });
   const result = search.getByLabel("Transcript search matches");
   const before = await search.boundingBox();
+  const scrollport = page.getByRole("log");
+  const firstMessage = scrollport.getByText("测量一，测量二。", {
+    exact: true,
+  });
+  await expect(firstMessage).toBeVisible();
+  const reader = (await scrollport.boundingBox())!;
+  expect(before!.y).toBeGreaterThan(reader.y);
+  expect((await firstMessage.boundingBox())!.y).toBeGreaterThan(
+    before!.y + before!.height,
+  );
   await input.fill("测量");
   await expect(result).toHaveText("2 matches");
   expect(await search.boundingBox()).toEqual(before);

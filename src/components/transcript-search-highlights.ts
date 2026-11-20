@@ -172,8 +172,15 @@ export function useTranscriptSearchHighlights({
           }
           const viewport = root.getBoundingClientRect();
           const visible = selected.getBoundingClientRect();
+          const topInset =
+            Number.parseFloat(getComputedStyle(root).scrollPaddingTop) || 0;
           root.scrollTop +=
-            (visible.top + visible.bottom - viewport.top - viewport.bottom) / 2;
+            (visible.top +
+              visible.bottom -
+              viewport.top -
+              topInset -
+              viewport.bottom) /
+            2;
         }
       }
     };
