@@ -34,11 +34,13 @@ function validateEntryIdentity(
     );
 }
 
+/** Validate and index a new batch. A previously indexed prefix stays owned by the caller. */
 export function indexSessionEntries(
   entries: readonly SessionEntry[],
-  existing?: ReadonlyMap<string, SessionEntry>,
+  prefix?: ReadonlyMap<string, SessionEntry>,
 ): Map<string, SessionEntry> {
-  const byId = new Map(existing);
+  const byId = new Map<string, SessionEntry>();
+  const has = (id: string) => byId.has(id) || prefix?.has(id);
   for (const entry of entries) {
     if (
       typeof entry.type !== "string" ||
@@ -49,9 +51,9 @@ export function indexSessionEntries(
     validateEntryIdentity(entry.id, "entry");
     if (entry.parentId !== null)
       validateEntryIdentity(entry.parentId, "parent");
-    if (byId.has(entry.id))
+    if (has(entry.id))
       throw new Error(`Persisted session contains duplicate entry ${entry.id}`);
-    if (entry.parentId !== null && !byId.has(entry.parentId))
+    if (entry.parentId !== null && !has(entry.parentId))
       throw new Error(
         `Persisted session entry ${entry.id} has a missing or forward parent`,
       );
@@ -217,12 +219,41 @@ const treeIndexes = new WeakMap<
   readonly SessionEntry[],
   ReturnType<typeof indexSessionTree>
 >();
+const routeIndexes = new WeakMap<
+  readonly SessionEntry[],
+  ReadonlyMap<string, number>
+>();
+
+/** Present only for entries with a saved descendant. The last appended
+ * descendant wins, regardless of timestamps. */
+export function sessionRouteIndex(
+  entries: readonly SessionEntry[],
+): ReadonlyMap<string, number> {
+  const cached = routeIndexes.get(entries);
+  if (cached) return cached;
+  const routes = new Map<string, number>();
+  for (let index = entries.length - 1; index >= 0; index--) {
+    const { id, parentId } = entries[index]!;
+    if (parentId === null) continue;
+    const tip = routes.get(id) ?? index;
+    if (tip > (routes.get(parentId) ?? -1)) routes.set(parentId, tip);
+  }
+  routeIndexes.set(entries, routes);
+  return routes;
+}
+
+export function latestSessionRouteLeaf(
+  entries: readonly SessionEntry[],
+  id: string,
+) {
+  const position = sessionRouteIndex(entries).get(id);
+  return position === undefined ? id : entries[position]!.id;
+}
 
 function indexSessionTree(entries: readonly SessionEntry[]) {
   const depth = new Map<string, number>();
   const labels = new Map<string, string>();
   const children = new Map<string | null, number>();
-  const descendant = new Map<string, string>();
   for (const entry of entries) {
     depth.set(
       entry.id,
@@ -234,14 +265,7 @@ function indexSessionTree(entries: readonly SessionEntry[]) {
       else labels.delete(entry.targetId);
     }
   }
-  for (let index = entries.length - 1; index >= 0; index--) {
-    const entry = entries[index]!;
-    const leaf = descendant.get(entry.id) ?? entry.id;
-    descendant.set(entry.id, leaf);
-    if (entry.parentId !== null && !descendant.has(entry.parentId))
-      descendant.set(entry.parentId, leaf);
-  }
-  return { depth, labels, children, descendant };
+  return { depth, labels, children };
 }
 
 /** One bounded page. The complete projection remains action/search authority;
@@ -262,7 +286,7 @@ export function projectHistoryPoint(
   leaf: boolean,
   text = previewPrefix(entry),
 ): BranchTreeNode {
-  const { depth, labels, children, descendant } = sessionTreeIndex(entries);
+  const { depth, labels, children } = sessionTreeIndex(entries);
   const role = entryRole(entry);
   const snippet =
     text.length > BRANCH_SNIPPET_CHARS
@@ -278,7 +302,7 @@ export function projectHistoryPoint(
     parentId: entry.parentId,
     depth: depth.get(entry.id)!,
     childCount: children.get(entry.id) ?? 0,
-    routeLeafId: descendant.get(entry.id)!,
+    routeLeafId: latestSessionRouteLeaf(entries, entry.id),
     type: entry.type,
     role,
     label: labels.get(entry.id) ?? (snippet || entry.type.replaceAll("_", " ")),

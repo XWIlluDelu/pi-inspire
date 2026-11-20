@@ -906,6 +906,7 @@ describe("SessionProjection bounded paging", () => {
       message("left-end", "left", "user", "Left end", 28),
     ];
     await append(...branches);
+    expect(ids(projection.viewMessages("c2"))).toEqual(["follow", "c2"]);
     expect(ids(projection.messages)).toEqual([
       ...entries.slice(0, 19).map(({ id }) => id),
       "left",
@@ -921,6 +922,9 @@ describe("SessionProjection bounded paging", () => {
     ] as const) {
       expect(projection.latestContinuation(from)).toBe(tip);
     }
+    expect(projection.historyPage({ kind: "outline" }).nodes).toContainEqual(
+      expect.objectContaining({ id: "u18", routeLeafId: "left-end" }),
+    );
     expect(() => cursorPage(cursor)).toThrow(/selected branch/);
     expect(cursorPage(cursor, "c2").messages).toEqual(older.messages);
     const branched = projection.latestPage().composerHistoryVersion;

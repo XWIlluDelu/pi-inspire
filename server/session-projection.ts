@@ -67,6 +67,8 @@ import {
   projectHistoryPoint,
   projectSessionTree,
   indexSessionEntries,
+  latestSessionRouteLeaf,
+  sessionRouteIndex,
 } from "./session-tree.js";
 
 export { MAX_PERSISTED_ENTRY_BYTES } from "./session-jsonl.js";
@@ -96,10 +98,7 @@ interface Candidate {
   start: number;
 }
 
-export type InitialMaterializationAttestation =
-  | "partial"
-  | "complete"
-  | "mismatch";
+type InitialMaterializationAttestation = "partial" | "complete" | "mismatch";
 
 export interface ProjectionReconcileResult {
   changed: boolean;
@@ -123,11 +122,11 @@ export interface ProjectionReconcileResult {
   previousTailVerified: boolean;
 }
 
-export type ProjectionReconcileHandler = (
+type ProjectionReconcileHandler = (
   result: ProjectionReconcileResult,
 ) => Promise<void>;
 
-export interface ProjectionEntryTarget {
+interface ProjectionEntryTarget {
   id: string;
   parentId: string | null;
   type: string;
@@ -227,21 +226,24 @@ async function sameDirectory(left: string, right: string): Promise<boolean> {
 }
 
 function contextMessages(
-  entries: SessionEntry[],
   leafId: string | null,
   byId: Map<string, SessionEntry>,
 ): unknown[] {
-  const contextEntries = buildContextEntries(entries, leafId, byId);
+  const contextEntries = buildContextEntries([], leafId, byId);
   // Pi prepends the latest summary for model consumption. A transcript must
   // retain the same selected entries, but show the compaction where it happened.
-  // Persisted append order is authoritative even with skewed/equal timestamps;
-  // membership from Pi excludes discarded context and unrelated branches.
-  let transcriptEntries = contextEntries;
-  if (contextEntries[0]?.type === "compaction") {
-    const included = new Set(contextEntries.map((entry) => entry.id));
-    transcriptEntries = entries.filter((entry) => included.has(entry.id));
+  if (contextEntries[0]?.type !== "compaction") {
+    return appendContextMessages([], contextEntries);
   }
-  return appendContextMessages([], transcriptEntries);
+  // The selected ancestry is already in reverse append order. Keep Pi's
+  // membership and stop once all selected entries have been seen.
+  const included = new Set(contextEntries.map((entry) => entry.id));
+  const transcriptEntries: SessionEntry[] = [];
+  for (const entry of branchAncestors(byId, leafId)) {
+    if (included.delete(entry.id)) transcriptEntries.push(entry);
+    if (included.size === 0) break;
+  }
+  return appendContextMessages([], transcriptEntries.reverse());
 }
 
 function appendContextMessages(
@@ -678,7 +680,7 @@ class SessionEntryIndex {
   };
   protected currentThinkingLevel = "off";
   protected currentLeafId: string | null = null;
-  protected currentEntries: SessionEntry[] = [];
+  protected currentEntries: readonly SessionEntry[] = [];
   protected currentEntriesById = new Map<string, SessionEntry>();
   protected currentHistoryAnchor: string | null = null;
   protected historySourceGeneration = 0;
@@ -719,10 +721,48 @@ class SessionEntryIndex {
     return this.currentEntries.at(-1)?.id ?? null;
   }
 
-  protected publishEntries(
-    entries: SessionEntry[],
-    byId: Map<string, SessionEntry>,
+  /** Validate the incoming suffix before touching the index, and publish the
+   * rows and metadata together. Unsealed checkpoints only advance the index. */
+  protected applyEntries(
+    incoming: readonly SessionEntry[],
+    kind: "append" | "rewrite",
+    retainPrefix: boolean,
+    requestedLeaf?: string | null,
+    publishLeaf = true,
+  ): boolean {
+    const prefix = retainPrefix ? this.currentEntriesById : undefined;
+    const added = indexSessionEntries(incoming, prefix);
+    const entries = !retainPrefix
+      ? incoming
+      : incoming.length === 0
+        ? this.currentEntries
+        : this.currentEntries.concat(incoming);
+    const leafId = requestedLeaf === undefined
+      ? (entries.at(-1)?.id ?? null)
+      : requestedLeaf;
+    if (leafId !== null && !added.has(leafId) && !prefix?.has(leafId))
+      throw requestError("The Pi checkpoint refers to an unknown leaf", 409);
+    const byId = prefix ?? added;
+    if (prefix) for (const [id, entry] of added) prefix.set(id, entry);
+    try {
+      const replacesRows = publishLeaf && this.publishEntries(
+        leafId,
+        byId,
+        retainPrefix ? incoming : entries.slice(this.currentEntries.length),
+        kind,
+      );
+      this.currentEntries = entries;
+      this.currentEntriesById = byId;
+      return replacesRows;
+    } catch (error) {
+      if (prefix) for (const id of added.keys()) prefix.delete(id);
+      throw error;
+    }
+  }
+
+  private publishEntries(
     leafId: string | null,
+    byId: Map<string, SessionEntry>,
     suffix: readonly SessionEntry[],
     kind: ProjectionReconcileResult["kind"],
   ): boolean {
@@ -733,7 +773,7 @@ class SessionEntryIndex {
     const previousMessages = this.currentMessages;
     const messages = linear
       ? appendContextMessages(previousMessages, suffix)
-      : contextMessages(entries, leafId, byId);
+      : contextMessages(leafId, byId);
     const replacesRows =
       kind === "rewrite" ||
       (!linear &&
@@ -746,20 +786,20 @@ class SessionEntryIndex {
     const branch = linear
       ? suffix
       : [...branchAncestors(byId, leafId)].reverse();
-    this.currentModelSelection = appendModelSelection(
+    const modelSelection = appendModelSelection(
       linear ? this.currentModelSelection : { change: null, fallback: null },
       branch,
     );
     const thinking = branch.findLast(
       (entry) => entry.type === "thinking_level_change",
     );
-    if (thinking) this.currentThinkingLevel = thinking.thinkingLevel;
-    else if (!linear) this.currentThinkingLevel = "off";
-    this.currentHistoryAnchor =
+    const historyAnchor =
       branch.findLast(composerInputMessage)?.id ??
       (linear ? this.currentHistoryAnchor : null);
-    this.currentEntries = entries;
-    this.currentEntriesById = byId;
+    this.currentModelSelection = modelSelection;
+    if (thinking) this.currentThinkingLevel = thinking.thinkingLevel;
+    else if (!linear) this.currentThinkingLevel = "off";
+    this.currentHistoryAnchor = historyAnchor;
     this.currentLeafId = leafId;
     this.currentMessages = messages;
     this.historyCache = undefined;
@@ -768,22 +808,15 @@ class SessionEntryIndex {
     return replacesRows;
   }
 
+  /** The most recently saved entry continuing this leaf. */
   latestContinuation(leafId: string | null): string | null {
     if (leafId === null) return this.tailEntryId;
     if (leafId === this.tailEntryId || !this.currentEntriesById.has(leafId))
       return leafId;
-    const descendants = new Set([leafId]);
-    let latest = leafId;
-    // Parents precede children in the validated file, so one pass classifies
-    // each entry and the last match is the latest saved continuation.
-    for (const entry of this.currentEntries) {
-      if (entry.parentId === null || !descendants.has(entry.parentId)) continue;
-      descendants.add(entry.id);
-      latest = entry.id;
-    }
-    return latest;
+    return latestSessionRouteLeaf(this.currentEntries, leafId);
   }
 
+  /** Whether either leaf is on the other's saved ancestry. */
   onSameLine(leafId: string | null, other: string | null): boolean {
     return this.continues(leafId, other) || this.continues(other, leafId);
   }
@@ -813,6 +846,7 @@ class SessionEntryIndex {
     };
   }
 
+  /** Committed append suffix after an operation's admitted durable tail. */
   entriesAfter(tailEntryId: string | null): readonly SessionEntry[] {
     if (tailEntryId === null) return this.currentEntries;
     const index = this.currentEntries.findLastIndex(
@@ -927,17 +961,25 @@ class SessionEntryIndex {
     ) {
       throw requestError("Effective branch leaf does not exist", 409);
     }
-    return contextMessages(
-      this.currentEntries,
-      effectiveLeafId,
-      this.currentEntriesById,
-    );
+    return contextMessages(effectiveLeafId, this.currentEntriesById);
   }
 
   composerHistoryMessages(
     effectiveLeafId: string | null = this.currentLeafId,
   ): readonly ComposerHistoryMessage[] {
     return [...this.recentComposerMessages(effectiveLeafId)].reverse();
+  }
+
+  /** Retained user entry on this branch, independent of model compaction. */
+  historyUserContent(id: string, leafId: string | null): unknown {
+    const message = this.currentEntriesById.get(id);
+    if (
+      message?.type !== "message" ||
+      message.message.role !== "user" ||
+      !this.continues(leafId, id)
+    )
+      throw requestError("A recalled attachment is no longer available", 409);
+    return message.message.content;
   }
 
   private *recentComposerMessages(leaf: string | null) {
@@ -1211,9 +1253,10 @@ class SessionEntryIndex {
   private branchLeaves(
     currentLeafId: string | null,
   ): SessionHistoryPages["branches"] {
-    const entries = this.currentEntries;
-    const parents = new Set(entries.map((entry) => entry.parentId));
-    const ends = entries.filter((entry) => !parents.has(entry.id)).reverse();
+    const routes = sessionRouteIndex(this.currentEntries);
+    const ends = this.currentEntries
+      .filter(({ id }) => !routes.has(id))
+      .reverse();
     const excerpt = (leaf: SessionEntry): string => {
       for (const entry of branchAncestors(this.currentEntriesById, leaf.id)) {
         if (entry.type === "message" && entry.message.role === "user") {
@@ -1284,28 +1327,12 @@ export class WorkerEntryIndex extends SessionEntryIndex {
     publishLeaf = true,
   ): boolean {
     if (entries.length === 0 && leafId === this.currentLeafId) return false;
-    const byId = entries.length
-      ? indexSessionEntries(entries, this.currentEntriesById)
-      : this.currentEntriesById;
-    if (leafId !== null && !byId.has(leafId))
-      throw requestError("The Pi checkpoint refers to an unknown leaf", 409);
-    const all = entries.length
-      ? [...this.currentEntries, ...entries]
-      : this.currentEntries;
-    if (!publishLeaf) {
-      this.currentEntriesById = byId;
-      this.currentEntries = all;
-      return false;
-    }
-    this.publishEntries(all, byId, leafId, entries, "append");
-    return true;
+    this.applyEntries(entries, "append", true, leafId, publishLeaf);
+    return publishLeaf;
   }
 }
 
-export class SessionProjection
-  extends SessionEntryIndex
-  implements SessionProjectionView
-{
+export class SessionProjection extends SessionEntryIndex {
   private currentHealth: ProjectionHealth = { status: "ok" };
   private currentFailureStatus: number | null = null;
   private currentFailureCode: string | undefined;
@@ -1420,6 +1447,7 @@ export class SessionProjection
       ? `${this.currentIdentity.dev}:${this.currentIdentity.ino}`
       : null;
   }
+  /** Exact stat version used to fence movement before worker startup. */
   get sourceVersion(): string | null {
     const value = this.currentIdentity;
     return value ? sessionSourceVersion(value) : null;
@@ -1553,6 +1581,7 @@ export class SessionProjection
     return this.enqueueReconcile(force, true);
   }
 
+  /** Startup attestation while ordinary readers are suspended. */
   reconcileSuspended(force = false): Promise<ProjectionReconcileResult> {
     // Startup attestation consumes its result itself while ordinary readers wait.
     return this.enqueueReconcile(force, false);
@@ -1662,20 +1691,10 @@ export class SessionProjection
             previousTailVerified)
             ? "append"
             : "rewrite";
-        const appended = candidate.start > 0;
-        const entries = appended
-          ? this.currentEntries.concat(candidate.entries)
-          : candidate.entries;
-        const byId = indexSessionEntries(
+        replacesRows = this.applyEntries(
           candidate.entries,
-          appended ? this.currentEntriesById : undefined,
-        );
-        replacesRows = this.publishEntries(
-          entries,
-          byId,
-          entries.at(-1)?.id ?? null,
-          kind === "append" ? entries.slice(this.currentEntries.length) : [],
           kind,
+          candidate.start > 0,
         );
         this.currentHeader = candidate.header;
         this.currentFingerprint = candidate.fingerprint;
