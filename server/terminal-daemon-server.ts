@@ -24,6 +24,7 @@ import {
   TERMINAL_IPC_INPUT_FRAME,
   TERMINAL_IPC_JSON_FRAME,
   TerminalIpcDecoder,
+  writeTerminalIpcFrame,
   type TerminalIpcFrame,
 } from "./terminal-ipc.js";
 import {
@@ -33,7 +34,6 @@ import {
 } from "./terminal-service.js";
 
 const CONNECTION_LIMIT = 192;
-const IPC_BUFFER_LIMIT_BYTES = 8 * 1024 * 1024;
 const ATTACH_PENDING_LIMIT_BYTES = 2 * 1024 * 1024;
 const HANDSHAKE_TIMEOUT_MS = 5_000;
 
@@ -173,7 +173,7 @@ export class TerminalDaemonServer {
     handshakeTimeout.unref();
 
     const sendJson = (value: unknown): void => {
-      this.write(socket, encodeTerminalIpcJson(value));
+      writeTerminalIpcFrame(socket, encodeTerminalIpcJson(value));
     };
     const endAttachment = (code: number, reason: string) => {
       if (socket.destroyed) return;
@@ -326,7 +326,7 @@ export class TerminalDaemonServer {
     return this.terminals.attach(terminalAttachmentSchema.parse(input), {
       sendControl: sendJson,
       sendData: (frame) => {
-        this.write(
+        writeTerminalIpcFrame(
           socket,
           encodeTerminalIpcFrame(TERMINAL_IPC_DATA_FRAME, frame),
         );
@@ -335,12 +335,4 @@ export class TerminalDaemonServer {
     });
   }
 
-  private write(socket: Socket, frame: Buffer): void {
-    if (socket.destroyed) throw new Error("Terminal IPC socket is closed");
-    if (socket.writableLength + frame.byteLength > IPC_BUFFER_LIMIT_BYTES) {
-      socket.destroy();
-      throw new Error("Terminal IPC client is too slow");
-    }
-    socket.write(frame);
-  }
 }

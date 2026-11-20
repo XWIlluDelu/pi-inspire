@@ -1,5 +1,8 @@
+import type { Socket } from "node:net";
+
 const IPC_HEADER_BYTES = 5;
 const MAX_IPC_FRAME_BYTES = 16 * 1024 * 1024;
+const IPC_BUFFER_LIMIT_BYTES = 8 * 1024 * 1024;
 
 export const TERMINAL_IPC_JSON_FRAME = 1;
 export const TERMINAL_IPC_DATA_FRAME = 2;
@@ -8,6 +11,15 @@ export const TERMINAL_IPC_INPUT_FRAME = 3;
 export interface TerminalIpcFrame {
   kind: number;
   payload: Buffer;
+}
+
+export function writeTerminalIpcFrame(socket: Socket, frame: Buffer): void {
+  if (socket.destroyed) throw new Error("Terminal IPC socket is closed");
+  if (socket.writableLength + frame.byteLength > IPC_BUFFER_LIMIT_BYTES) {
+    socket.destroy();
+    throw new Error("Terminal IPC peer is too slow");
+  }
+  socket.write(frame);
 }
 
 export function encodeTerminalIpcFrame(

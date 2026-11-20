@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { TLSSocket } from "node:tls";
 import {
   type TerminalCatalogResponse,
   type TerminalServerControlMessage,
@@ -28,11 +29,11 @@ import {
   TERMINAL_IPC_INPUT_FRAME,
   TERMINAL_IPC_JSON_FRAME,
   TerminalIpcDecoder,
+  writeTerminalIpcFrame,
 } from "./terminal-ipc.js";
 import type {
   TerminalAttachment,
   TerminalAttachmentSink,
-  TerminalClientFrame,
   TerminalService,
 } from "./terminal-service.js";
 import { TerminalServiceError } from "./terminal-service.js";
@@ -42,7 +43,17 @@ const RPC_TIMEOUT_MS = 5_000;
 // PTY output drain before the daemon can acknowledge the result.
 const LIFECYCLE_RPC_TIMEOUT_MS = 15_000;
 const ATTACH_TIMEOUT_MS = 30_000;
-const IPC_BUFFER_LIMIT_BYTES = 8 * 1024 * 1024;
+
+async function* daemonFrames(socket: TLSSocket) {
+  const decoder = new TerminalIpcDecoder();
+  try {
+    for await (const chunk of socket) yield* decoder.push(chunk);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ERR_STREAM_PREMATURE_CLOSE")
+      throw connectionLost();
+    throw error;
+  }
+}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object"
@@ -147,159 +158,103 @@ export class TerminalDaemonClient implements TerminalService {
     return socket;
   }
 
-  attach(
+  async attach(
     options: TerminalAttachOptions,
     sink: TerminalAttachmentSink,
   ): Promise<TerminalAttachment> {
-    return new Promise<TerminalAttachment>((resolvePromise, rejectPromise) => {
-      const socket = this.connect({ mode: "attach", options });
-      socket.setNoDelay(true);
-      const decoder = new TerminalIpcDecoder();
-      let state: "connecting" | "publishing" | "ready" | "closed" = "connecting";
-      let attachment: TerminalAttachment | null = null;
-      let attachTimeout: ReturnType<typeof setTimeout> | null = null;
-      const pendingDeliveries: Array<() => void> = [];
+    const socket = this.connect({ mode: "attach", options });
+    socket.setNoDelay(true);
+    const deadline = setTimeout(
+      () => socket.destroy(new Error("Terminal daemon attach timed out")),
+      ATTACH_TIMEOUT_MS,
+    ).unref();
+    const frames = daemonFrames(socket);
+    const handle: TerminalAttachment = {
+      send: (frame) => {
+        if (!this.attachments.has(handle) || socket.destroyed)
+          throw new Error("Terminal attachment is disconnected");
+        const packet =
+          "data" in frame
+            ? encodeTerminalIpcFrame(TERMINAL_IPC_INPUT_FRAME, frame.data)
+            : encodeTerminalIpcJson(frame.control);
+        writeTerminalIpcFrame(socket, packet);
+      },
+      detach: () => {
+        if (!this.attachments.delete(handle)) return;
+        clearTimeout(deadline);
+        if (!socket.destroyed)
+          socket.end(encodeTerminalIpcJson({ type: "terminal_daemon_detach" }));
+      },
+    };
+    let first: Record<string, unknown>;
+    try {
+      const next = await frames.next();
+      if (next.done) throw connectionLost();
+      const message =
+        next.value.kind === TERMINAL_IPC_JSON_FRAME
+          ? asRecord(decodeTerminalIpcJson(next.value.payload))
+          : null;
+      if (message?.type === "terminal_daemon_error")
+        throw daemonError(message.error);
+      if (message?.type === "terminal_daemon_close")
+        throw new TerminalServiceError(
+          "terminal_attach_failed",
+          503,
+          typeof message.reason === "string"
+            ? message.reason
+            : "Terminal closed",
+        );
+      if (message?.type !== "attached")
+        throw new Error("Terminal daemon did not identify the attachment");
+      if (this.closed) throw serviceStopping();
+      first = message;
+    } catch (error) {
+      clearTimeout(deadline);
+      socket.destroy();
+      await frames.return(undefined);
+      throw error;
+    }
 
-      const clearDeadline = () => {
-        if (attachTimeout) clearTimeout(attachTimeout);
-        attachTimeout = null;
-      };
-      const fail = (error: unknown): void => {
-        if (state === "closed") return;
-        const connecting = state === "connecting";
-        state = "closed";
-        pendingDeliveries.length = 0;
-        clearDeadline();
-        if (connecting) rejectPromise(error);
-        else {
-          try {
-            sink.close(1012, "Terminal service connection lost");
-          } catch {
-            // The browser may already be gone.
+    this.attachments.add(handle);
+    // Publish the handle before replay reaches a sink that can send input immediately.
+    const forward = async () => {
+      let code = 1012;
+      let reason = "Terminal service connection lost";
+      try {
+        if (!this.attachments.has(handle)) return;
+        sink.sendControl(first as unknown as TerminalServerControlMessage);
+        for await (const frame of frames) {
+          if (!this.attachments.has(handle)) break;
+          if (frame.kind === TERMINAL_IPC_DATA_FRAME) {
+            sink.sendData(frame.payload);
+            continue;
           }
-        }
-      };
-      const deliver = (operation: () => void): void => {
-        if (state === "publishing") pendingDeliveries.push(operation);
-        else if (state === "ready") operation();
-      };
-      const establishAttachment = (): void => {
-        if (state !== "connecting") return;
-        if (this.closed) throw serviceStopping();
-        const handle: TerminalAttachment = {
-          send(frame: TerminalClientFrame) {
-            if (state === "closed" || socket.destroyed)
-              throw new Error("Terminal attachment is disconnected");
-            const packet =
-              "data" in frame
-                ? encodeTerminalIpcFrame(TERMINAL_IPC_INPUT_FRAME, frame.data)
-                : encodeTerminalIpcJson(frame.control);
-            if (socket.writableLength + packet.byteLength > IPC_BUFFER_LIMIT_BYTES) {
-              socket.destroy();
-              throw new Error("Terminal attachment is too slow");
-            }
-            socket.write(packet);
-          },
-          detach: () => {
-            if (state === "closed") return;
-            state = "closed";
-            clearDeadline();
-            this.attachments.delete(handle);
-            if (!socket.destroyed)
-              socket.end(encodeTerminalIpcJson({ type: "terminal_daemon_detach" }));
-          },
-        };
-        attachment = handle;
-        this.attachments.add(handle);
-        state = "publishing";
-        resolvePromise(handle);
-        // Promise reactions run before this microtask. That lets the Host
-        // publish the attachment handle before replay_complete can cause a
-        // fast browser to send its first input frame.
-        queueMicrotask(() => {
-          if (state !== "publishing") {
-            pendingDeliveries.length = 0;
-            return;
-          }
-          state = "ready";
-          try {
-            for (const operation of pendingDeliveries.splice(0)) deliver(operation);
-          } catch (error) {
-            fail(error);
-            socket.destroy();
-          }
-        });
-      };
-      attachTimeout = setTimeout(() => {
-        fail(new Error("Terminal daemon attach timed out"));
-        socket.destroy();
-      }, ATTACH_TIMEOUT_MS);
-      attachTimeout.unref();
-
-      socket.on("data", (chunk) => {
-        try {
-          for (const frame of decoder.push(chunk)) {
-            if (frame.kind === TERMINAL_IPC_DATA_FRAME) {
-              if (state === "connecting")
-                throw new Error("Terminal daemon sent output before attaching");
-              deliver(() => sink.sendData(frame.payload));
-              continue;
-            }
-            if (frame.kind !== TERMINAL_IPC_JSON_FRAME)
-              throw new Error("Terminal daemon sent an unknown IPC frame");
-            const message = asRecord(decodeTerminalIpcJson(frame.payload));
-            if (message?.type === TERMINAL_DAEMON_READY_TYPE) {
-              if (state === "connecting")
-                throw new Error("Terminal daemon did not identify the attachment");
-              clearDeadline();
-              continue;
-            }
-            if (message?.type === "terminal_daemon_error") {
-              const error = daemonError(message.error);
-              fail(error);
-              socket.destroy();
-              continue;
-            }
-            if (message?.type === "terminal_daemon_close") {
-              const code =
-                typeof message.code === "number" ? message.code : 1012;
-              const reason =
-                typeof message.reason === "string"
-                  ? message.reason
-                  : "Terminal closed";
-              if (state === "connecting")
-                throw new TerminalServiceError("terminal_attach_failed", 503, reason);
-              deliver(() => {
-                state = "closed";
-                clearDeadline();
-                try {
-                  sink.close(code, reason);
-                } finally {
-                  socket.end();
-                }
-              });
-              continue;
-            }
-            if (message?.type === "attached") establishAttachment();
-            if (attachment === null && state !== "closed")
-              throw new Error("Terminal daemon did not identify the attachment");
-            deliver(() =>
-              sink.sendControl(
-                message as unknown as TerminalServerControlMessage,
-              ),
+          if (frame.kind !== TERMINAL_IPC_JSON_FRAME) break;
+          const message = asRecord(decodeTerminalIpcJson(frame.payload));
+          if (message?.type === TERMINAL_DAEMON_READY_TYPE)
+            clearTimeout(deadline);
+          else if (message?.type === "terminal_daemon_error") break;
+          else if (message?.type === "terminal_daemon_close") {
+            if (typeof message.code === "number") code = message.code;
+            reason =
+              typeof message.reason === "string"
+                ? message.reason
+                : "Terminal closed";
+            break;
+          } else
+            sink.sendControl(
+              message as unknown as TerminalServerControlMessage,
             );
-          }
-        } catch (error) {
-          fail(error);
-          socket.destroy();
         }
-      });
-      socket.once("error", (error) => fail(error));
-      socket.once("close", () => {
-        if (attachment) this.attachments.delete(attachment);
-        fail(connectionLost());
-      });
-    });
+      } finally {
+        clearTimeout(deadline);
+        socket.destroy();
+        await frames.return(undefined);
+        if (this.attachments.delete(handle)) sink.close(code, reason);
+      }
+    };
+    setImmediate(() => void forward().catch(() => {}));
+    return handle;
   }
 
   async close(): Promise<void> {
@@ -308,59 +263,39 @@ export class TerminalDaemonClient implements TerminalService {
     this.attachments.clear();
   }
 
-  private rpc<Method extends TerminalDaemonRpcMethod>(
+  private async rpc<Method extends TerminalDaemonRpcMethod>(
     method: Method,
     params: TerminalDaemonRpcParams<Method>,
     timeoutMs = RPC_TIMEOUT_MS,
   ): Promise<TerminalDaemonRpcResult<Method>> {
-    type Result = TerminalDaemonRpcResult<Method>;
-    return new Promise<Result>((resolvePromise, rejectPromise) => {
-      const requestId = randomUUID();
-      const socket = this.connect({ mode: "rpc", requestId, method, params });
-      const decoder = new TerminalIpcDecoder();
-      let settled = false;
-      const timeout = setTimeout(() => {
-        finish(
+    const requestId = randomUUID();
+    const socket = this.connect({ mode: "rpc", requestId, method, params });
+    const timeout = setTimeout(
+      () =>
+        socket.destroy(
           new TerminalServiceError(
             "terminal_daemon_timeout",
             503,
             "The terminal service did not respond in time.",
           ),
-        );
-        socket.destroy();
-      }, timeoutMs);
-      timeout.unref();
-
-      const finish = (error?: unknown, result?: Result): void => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeout);
-        if (error) rejectPromise(error);
-        else resolvePromise(result as Result);
-      };
-
-      socket.on("data", (chunk) => {
-        try {
-          for (const frame of decoder.push(chunk)) {
-            if (frame.kind !== TERMINAL_IPC_JSON_FRAME)
-              throw new Error("Terminal daemon sent an unknown RPC frame");
-            const response = decodeTerminalIpcJson(
-              frame.payload,
-            ) as TerminalDaemonRpcResponse;
-            if (response.requestId !== requestId) continue;
-            if (!response.ok) finish(daemonError(response.error));
-            else finish(undefined, response.result as Result);
-            socket.end();
-          }
-        } catch (error) {
-          finish(error);
-          socket.destroy();
-        }
-      });
-      socket.once("error", (error) => finish(error));
-      socket.once("close", () => {
-        finish(connectionLost());
-      });
-    });
+        ),
+      timeoutMs,
+    ).unref();
+    try {
+      for await (const frame of daemonFrames(socket)) {
+        if (frame.kind !== TERMINAL_IPC_JSON_FRAME)
+          throw new Error("Terminal daemon sent an unknown RPC frame");
+        const response = decodeTerminalIpcJson(
+          frame.payload,
+        ) as TerminalDaemonRpcResponse;
+        if (response.requestId !== requestId) continue;
+        if (!response.ok) throw daemonError(response.error);
+        return response.result as TerminalDaemonRpcResult<Method>;
+      }
+      throw connectionLost();
+    } finally {
+      clearTimeout(timeout);
+      socket.destroy();
+    }
   }
 }
