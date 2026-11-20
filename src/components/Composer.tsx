@@ -225,11 +225,10 @@ export const Composer = memo(function Composer() {
     state.sessionSelectionPending,
   );
   const editorDraft = recall.displayed;
-  useSyncExternalStore(
+  const failedCount = useSyncExternalStore(
     store.composer.subscribe,
-    store.composer.getDeliveryVersion,
+    () => store.composer.failedDeliveryCount(sessionId),
   );
-  const failedCount = store.composer.failedDeliveryCount(sessionId);
   const [deliveryBehavior, setDeliveryBehavior] = useState<
     "steer" | "followUp"
   >("steer");
@@ -343,7 +342,7 @@ export const Composer = memo(function Composer() {
             <button
               type="button"
               className="button button--quiet"
-              onClick={store.restoreFailedComposerPrompt}
+              onClick={() => store.composer.restoreFailedPrompt(sessionId)}
               disabled={sessionOpening || hasDraftInput(draft)}
             >
               Restore draft

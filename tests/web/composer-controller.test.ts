@@ -180,7 +180,6 @@ it("ignores a retired result and observes the original operation on the new tran
   f.replaceTransport();
   expect(signal?.aborted).toBe(true);
   expect(f.draft().text).toBe("");
-  expect(f.draft().intentId).toBeUndefined();
   expect(JSON.parse(sessionStorage.getItem(ledger)!)).toMatchObject([f.receipt()]);
 
   f.edit("replacement");
@@ -194,7 +193,6 @@ it("ignores a retired result and observes the original operation on the new tran
   );
   expect(f.prompt).toHaveBeenCalledOnce();
   expect(f.draft().text).toBe("replacement");
-  expect(f.draft().intentId).toBeUndefined();
   expect(f.notice).not.toHaveBeenCalled();
 });
 
@@ -283,6 +281,14 @@ it("can send a new draft after an unknown delivery without resubmitting its atta
   expect(f.prompt.mock.calls[1]![0].attachmentIds).toBeUndefined();
   expect(f.receipt(1).operationId).not.toBe(f.receipt().operationId);
   expect(f.deleteAttachment).not.toHaveBeenCalled();
+
+  const returned = new ApiError(409, "Pending returned", undefined, "PROMPT_RECOVERED");
+  returned.recoveredAttachments = [image("restaged")];
+  returned.recoveryId = "return-from-another-browser";
+  f.observePrompt.mockRejectedValueOnce(returned);
+  f.controller.resumeDeliveries();
+  await vi.waitFor(() => expect(f.handles()).toEqual(["restaged"]));
+  expect(f.prompt).toHaveBeenCalledTimes(2);
 });
 
 it("recovers confirmed unsent input from a background check without clearing the newer draft", async () => {

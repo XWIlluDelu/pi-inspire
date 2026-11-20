@@ -96,7 +96,6 @@ export function useComposerRecall(
           text: entry.text,
           attachments: recalledInputAttachments(scope, entry),
           projectFiles: [],
-          intentId: undefined,
         }
       : draft;
 

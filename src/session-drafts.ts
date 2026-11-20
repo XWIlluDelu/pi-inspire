@@ -8,7 +8,6 @@ export interface SessionDraft {
   attachments: PendingAttachment[];
   projectFiles: string[];
   workspaceCwd?: string;
-  intentId?: string;
 }
 
 export function hasDraftInput(draft: SessionDraft): boolean {
@@ -81,7 +80,6 @@ export class SessionDrafts {
       attachments: [],
       projectFiles: [],
       workspaceCwd: undefined,
-      intentId: undefined,
     });
   }
 

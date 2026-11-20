@@ -359,8 +359,10 @@ full content is unavailable.
   receipt merges into its original partition, preserving newer text/artifacts and another session's
   work. Receipt reclamation applies each handoff once, including after a lost HTTP result or a
   reconnect with the previous observer still pending. Host-held uploads and recalled images are
-  included in the receipt even when another browser performs Return or Stop. The original prompt
-  observer receives those same staging handles and an image-handoff identity. Apply each handle
+  included in the receipt even when another browser performs Return or Stop. The tab holding the
+  submitted images can recover the same handles and handoff ID from either the prompt response
+  or a later read of its receipt. After a full page reload, the saved receipt carries text and
+  project paths only. Apply each live image handle
   once per authority/session/handoff, including after the user removes or resends it and after an
   empty draft is discarded; later recovery handoffs may return that handle again. Either response
   order preserves subsequent user actions; preview observation does not own staging validity. If

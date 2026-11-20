@@ -174,6 +174,9 @@ export class AppStore {
   private api: Api | null = null;
   private readonly controllerHost = {
     state: () => this.state,
+    applySnapshot: (snapshot: ActiveSnapshot) => this.applySnapshot(snapshot),
+    ensureSessionVisible: (sessionId: string) => this.catalog.ensureVisible(sessionId),
+    refreshLoadedSessions: (): Promise<void> => this.catalog.refreshLoaded(),
     patch: (patch: Partial<AppState>) => this.set(patch),
     api: () => this.api,
     authorityId: () => this.hostAuthorityId,
@@ -245,7 +248,6 @@ export class AppStore {
       );
       this.drafts.setText(response.sessionId, response.editorText);
     },
-    refreshSessionCatalog: () => void this.catalog.refreshLoaded(),
   });
   readonly preferences = new PreferenceController({
     ...this.controllerHost,
@@ -267,19 +269,13 @@ export class AppStore {
         thinkingLevelPending: false,
       });
     },
-    applySnapshot: (snapshot) => this.applySnapshot(snapshot),
-    ensureSessionVisible: (sessionId) => this.catalog.ensureVisible(sessionId),
     rememberModel: (model) => this.preferences.rememberModel(model),
-    refreshSessionCatalog: () => void this.catalog.refreshLoaded(),
   });
   readonly runtimeEvents = new RuntimeEventController({
     ...this.controllerHost,
     setEditorText: (sessionId, text) => this.drafts.setText(sessionId, text),
-    applySnapshot: (snapshot) => this.applySnapshot(snapshot),
     applyTranscript: (sessionId, data, sequence, statuses) =>
       this.applyLiveTranscript(sessionId, data, sequence, statuses),
-    ensureSessionVisible: (sessionId) => this.catalog.ensureVisible(sessionId),
-    refreshLoadedSessions: () => this.catalog.refreshLoaded(),
     hasVisibleGitSurface: () => this.git.hasVisibleSurface(),
     refreshGitStatus: () => this.git.refreshStatus(),
     invalidateResync: () => {
@@ -296,7 +292,6 @@ export class AppStore {
   });
   readonly sessionManagement = new SessionManagementController({
     ...this.controllerHost,
-    refreshLoadedSessions: () => this.catalog.refreshLoaded(),
     preserveLoadedSessions: (query, offset, total) =>
       this.catalog.preserve(query, offset, total),
     forgetSessions: (sessionIds) => this.forgetSessions(sessionIds),
@@ -1630,11 +1625,6 @@ export class AppStore {
     return false;
   }
 
-  restoreFailedComposerPrompt = (): boolean => {
-    const sessionId = this.state.sessionId;
-    return sessionId ? this.composer.restoreFailedPrompt(sessionId) : false;
-  };
-
   sendPrompt = async (
     message: string,
     behavior?: "steer" | "followUp",
@@ -1872,7 +1862,7 @@ export class AppStore {
   ): Promise<CopySource | null> => {
     const sessionId = this.state.sessionId;
     const viewId = this.state.view.viewId;
-    const generation = this.selectionGeneration;
+    const ownsView = this.copyOwnership();
     const queueRevision = this.state.live.queue.revision;
     const api = this.api;
     if (!api || !sessionId || !viewId) {
@@ -1881,11 +1871,8 @@ export class AppStore {
     }
     const owns = () =>
       !signal.aborted &&
-      this.api === api &&
-      this.state.sessionId === sessionId &&
-      this.state.view.viewId === viewId &&
-      this.state.live.queue.revision === queueRevision &&
-      this.selectionGeneration === generation;
+      ownsView() &&
+      this.state.live.queue.revision === queueRevision;
     try {
       const result = await api.json(
         "pendingText",

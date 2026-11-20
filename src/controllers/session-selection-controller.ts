@@ -33,7 +33,7 @@ interface SessionSelectionControllerHost {
   applySnapshot(snapshot: ActiveSnapshot): void;
   ensureSessionVisible(sessionId: string): void;
   rememberModel(model: ModelIdentity): void;
-  refreshSessionCatalog(): void;
+  refreshLoadedSessions(): Promise<void>;
   notify(kind: "warning", text: string): void;
   handleAuthFailure(): void;
 }
@@ -203,7 +203,7 @@ export class SessionSelectionController {
           const sessionId = snapshot.active?.sessionId ?? null;
           if (sessionId) this.host.ensureSessionVisible(sessionId);
           if (options.model) this.host.rememberModel(options.model);
-          this.host.refreshSessionCatalog();
+          void this.host.refreshLoadedSessions();
           return sessionId;
         },
       );
@@ -248,7 +248,7 @@ export class SessionSelectionController {
               error instanceof Error ? error.message : fallbackMessage,
           });
           if (error instanceof ApiError && error.code === "SESSION_NOT_FOUND")
-            this.host.refreshSessionCatalog();
+            void this.host.refreshLoadedSessions();
         }
         return onFailure?.(error) ?? staleResult;
       }

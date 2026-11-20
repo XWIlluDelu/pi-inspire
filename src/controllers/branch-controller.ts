@@ -68,7 +68,7 @@ interface BranchControllerHost {
     draftRevision: number,
   ): void;
   applyFork(response: BranchForkResponse): void;
-  refreshSessionCatalog(): void;
+  refreshLoadedSessions(): Promise<void>;
   notify(kind: "warning", text: string): void;
 }
 
@@ -425,7 +425,7 @@ export class BranchController {
       perform,
       (response) => {
         this.host.applyFork(response);
-        this.host.refreshSessionCatalog();
+        void this.host.refreshLoadedSessions();
       },
       copy.kind === "clone" ? "Clone failed" : "Fork failed",
       "view",
