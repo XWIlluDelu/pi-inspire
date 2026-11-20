@@ -100,6 +100,43 @@ test("interrupted calls stay neutral and nested failures remain keyboard-readabl
   ).toBeLessThanOrEqual(1);
 });
 
+test("the Activity footer appears only when useful and gives focus back on resize", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1024, height: 420 });
+  const send = await openEventSession(
+    page,
+    "Activity footer",
+    customMessageConfiguration,
+    {
+      activityFoldVisibility: "expanded",
+      thinkingVisibility: "collapsed",
+    },
+  );
+  send(
+    ...Array.from({ length: 16 }, (_, index) => ({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "thinking", thinking: `Step ${index + 1}` }],
+        timestamp: index + 1,
+      },
+    })),
+  );
+  const group = page.getByRole("region", { name: "Assistant activity" });
+  const footer = group.getByRole("button", {
+    name: "Collapse activity",
+    exact: true,
+  });
+  await expect(footer).toBeVisible();
+  await footer.focus();
+  await page.setViewportSize({ width: 1024, height: 1000 });
+  await expect(footer).toHaveCount(0);
+  await expect(
+    group.getByRole("button", { name: "Collapse assistant activity" }),
+  ).toBeFocused();
+});
+
 test.describe("touch activity disclosures", () => {
   test.use({ hasTouch: true, isMobile: true });
 

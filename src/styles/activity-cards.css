@@ -155,6 +155,7 @@ summary.disclosure-row::-webkit-details-marker { display: none; }
 
 /* Separate identity/status from its summary without moving adjacent Copy. */
 .card__disclosure + .card__summary {
+  flex: 1 1 0;
   margin-inline-start: 6px;
 }
 

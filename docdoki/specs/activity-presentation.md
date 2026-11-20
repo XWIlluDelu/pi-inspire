@@ -38,9 +38,9 @@ Displayed custom messages break the group and remain independently readable.
 | Collapsed | Shows the Activity disclosure and matrix. Opening reveals Compact. |
 | Adaptive (`dynamic`) | Starts Compact while running and closes when settled unless the reader has opened or is inspecting it. |
 
-The header and footer can collapse an open group. The footer shares the header's disclosure
-typography and chevron axis and sits below the group's vertical guide. The earlier steps expand
-in place from a plain disclosure row aligned with the nested activity arrows.
+The header collapses an open group. A multi-item group taller than the usable transcript shows a
+second collapse control below the vertical guide, using the header's typography and chevron axis.
+The earlier steps expand in place from a plain disclosure row aligned with the nested activity arrows.
 The group stays open during inspection and no page controls interrupt reading.
 
 Adjacent activity items share one spacing rhythm across assistant-message boundaries; prose and

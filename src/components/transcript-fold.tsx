@@ -194,6 +194,7 @@ export function ResponseActivityFold({
   const [inspecting, setInspecting] = useState(false);
   const header = useRef<HTMLButtonElement>(null);
   const group = useRef<HTMLElement>(null);
+  const content = useRef<HTMLDivElement>(null);
   const footer = useRef<HTMLButtonElement>(null);
   const anchor = useRef<{ edge: "top" | "bottom"; position: number }>(null);
   const dynamicOpen = useActivityCloseDelay(
@@ -232,7 +233,8 @@ export function ResponseActivityFold({
     if (!previous || !section || !scroll) return;
     scroll.scrollTop +=
       section.getBoundingClientRect()[previous.edge] - previous.position;
-    (previous.edge === "bottom" && open ? footer : header).current?.focus({
+    const control = previous.edge === "bottom" ? footer.current : null;
+    (control ?? header.current)?.focus({
       preventScroll: true,
     });
   }, [density, open]);
@@ -248,6 +250,36 @@ export function ResponseActivityFold({
       };
     setChoice(next);
   }
+
+  const canHaveFooter = open && items.length > 1;
+  const [tall, setTall] = useState(false);
+  useLayoutEffect(() => {
+    const body = content.current;
+    const toggle = header.current;
+    const scroll = body?.closest<HTMLElement>(".transcript");
+    if (!canHaveFooter || !body || !toggle || !scroll) {
+      setTall(false);
+      return;
+    }
+    const measure = () => {
+      // Exclude the footer itself so showing or hiding it cannot change the result.
+      const height =
+        body.getBoundingClientRect().bottom -
+        toggle.getBoundingClientRect().top;
+      const topInset =
+        Number.parseFloat(getComputedStyle(scroll).scrollPaddingTop) || 0;
+      const needsFooter = height > scroll.clientHeight - topInset;
+      if (!needsFooter && document.activeElement === footer.current)
+        toggle.focus({ preventScroll: true });
+      setTall(needsFooter);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(body);
+    observer.observe(toggle);
+    observer.observe(scroll);
+    return () => observer.disconnect();
+  }, [canHaveFooter]);
 
   const collapseTo =
     density === "expanded" && items.length > ACTIVITY_PAGE_SIZE
@@ -308,7 +340,12 @@ export function ResponseActivityFold({
           </span>
         )}
       </button>
-      <div id={id} className="activity-fold__content" hidden={!open}>
+      <div
+        ref={content}
+        id={id}
+        className="activity-fold__content"
+        hidden={!open}
+      >
         {open && (
           <>
             {earlierCount > 0 && (
@@ -333,7 +370,7 @@ export function ResponseActivityFold({
           </>
         )}
       </div>
-      {open && items.length > 1 && (
+      {canHaveFooter && tall && (
         <button
           type="button"
           className="disclosure-row activity-fold__disclosure"
