@@ -43,7 +43,6 @@ export interface TerminalService {
 /** Initialize only on demand. Connection failures may be retried; dispatched work never is. */
 export class TerminalConnection {
   private pending: Promise<TerminalService> | null = null;
-  private closed = false;
   private closing: Promise<void> | null = null;
 
   constructor(
@@ -53,7 +52,6 @@ export class TerminalConnection {
 
   close(): Promise<void> {
     if (this.closing) return this.closing;
-    this.closed = true;
     this.closing = (async () => {
       await this.pending?.catch(() => {});
       const service = this.service;
@@ -75,21 +73,21 @@ export class TerminalConnection {
     operation: (service: TerminalService) => Result | Promise<Result>,
   ): Promise<Result> {
     const service = await this.connectOnce();
-    if (this.closed) throw this.closedError();
+    if (this.closing) throw this.closedError();
     return operation(service);
   }
 
   private async connectOnce(): Promise<TerminalService> {
-    if (this.closed) throw this.closedError();
+    if (this.closing) throw this.closedError();
     if (this.service) return this.service;
     if (this.pending) return this.pending;
     const pending: Promise<TerminalService> = Promise.resolve()
       .then(() => {
-        if (this.closed) throw this.closedError();
+        if (this.closing) throw this.closedError();
         return this.connect();
       })
       .then(async (service) => {
-        if (this.closed) {
+        if (this.closing) {
           await service.close();
           throw this.closedError();
         }

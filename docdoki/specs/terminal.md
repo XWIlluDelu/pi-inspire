@@ -200,7 +200,8 @@ output/input continuity. Visibility and BFCache returns also retire stale transp
 Monotonically acknowledged input frames let reconnect resend only unacknowledged bytes. One attachment
 owns input and PTY dimensions; other paired browsers remain live read-only viewers. Explicit takeover
 revokes the previous writer. A disconnected writer can reclaim its lease with an opaque token during
-the bounded grace period.
+the bounded grace period. The daemon uses that lease to admit writes and report ownership. PTY exit
+ends the lease even if an attachment is still replaying.
 
 HTTP controls use explicit bearer authentication; WebSocket upgrades use the origin/audience-bound
 socket tickets defined by [[host-lifecycle]]. Terminal attachment additionally consumes its
