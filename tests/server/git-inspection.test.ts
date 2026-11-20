@@ -68,7 +68,7 @@ describe("porcelain-v2 parser", () => {
       ),
       Buffer.from("nested/"),
     );
-    const both = parsed.files[0]!;
+    const both = parsed.files.get(path.toString("base64url"))!;
     expect(both.path.id).toBe(path.toString("base64url"));
     expect(both.path.workspacePath).toBe("space tab\tline\nname.txt");
     expect(both.path.display).toBe("nested/space tab\\tline\\nname.txt");
@@ -76,11 +76,14 @@ describe("porcelain-v2 parser", () => {
       staged: { kind: "modified" },
       unstaged: { kind: "modified" },
     });
-    const arbitrary = parsed.files[1]!;
+    const arbitrary = parsed.files.get(invalid.toString("base64url"))!;
     expect(arbitrary.path.id).toBe(invalid.toString("base64url"));
     expect(arbitrary.path.utf8Path).toBeUndefined();
     expect(arbitrary.path.display).toBe("bad\\xff");
-    expect(parsed.files[2]?.unstaged).toEqual({ kind: "deleted" });
+    expect(
+      parsed.files.get(Buffer.from("deleted.txt").toString("base64url"))
+        ?.unstaged,
+    ).toEqual({ kind: "deleted" });
   });
 
   it("keeps both paths of a copied entry", () => {
@@ -90,7 +93,7 @@ describe("porcelain-v2 parser", () => {
     const { files } = parsePorcelainV2(
       statusBuffer(...headers(), copy, Buffer.from("source name")),
     );
-    expect(files[0]).toMatchObject({
+    expect([...files.values()][0]).toMatchObject({
       path: { utf8Path: "copied name" },
       staged: { kind: "copied", originalPath: { utf8Path: "source name" } },
     });

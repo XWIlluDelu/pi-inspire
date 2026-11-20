@@ -237,7 +237,7 @@ function validBranchRef(value: Buffer): boolean {
 
 interface ParsedRepository {
   head: GitHead;
-  files: GitFileChange[];
+  files: Map<string, GitFileChange>;
 }
 
 export function parsePorcelainV2(
@@ -254,8 +254,7 @@ export function parsePorcelainV2(
     .map((part) => Buffer.from(part, "latin1"));
   let branchOid: string | undefined;
   let branchHead: string | undefined;
-  const files: GitFileChange[] = [];
-  const seenIds = new Map<string, GitFileChange>();
+  const files = new Map<string, GitFileChange>();
 
   for (let index = 0; index < records.length; index += 1) {
     const record = records[index]!;
@@ -347,7 +346,7 @@ export function parsePorcelainV2(
     } else {
       throw new GitInspectionError("Git returned an unsupported status record");
     }
-    const previous = seenIds.get(change.path.id);
+    const previous = files.get(change.path.id);
     if (previous) {
       // Git legitimately emits D + ? when an index deletion leaves a file on
       // disk. It is one filesystem identity, not two selectable file tabs.
@@ -361,8 +360,7 @@ export function parsePorcelainV2(
       }
       throw new GitInspectionError("Git returned duplicate path identities");
     }
-    seenIds.set(change.path.id, change);
-    files.push(change);
+    files.set(change.path.id, change);
   }
 
   if (branchOid === undefined || branchHead === undefined)
@@ -669,8 +667,7 @@ export class GitInspectionService {
     runner: GitRunner,
     signal?: AbortSignal,
   ): Promise<Extract<GitStatusDetail, { kind: "repository" }>> {
-    const native = new Map(inspected.files.map((file) => [file.path.id, file]));
-    const { head } = inspected;
+    const { head, files: native } = inspected;
     // hash-object without -w computes the format-specific empty tree ID and
     // never writes an object or touches the user's index.
     inspected.comparisonBase =
