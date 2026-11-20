@@ -41,11 +41,20 @@ interface PendingImageClear {
   rows: Rows | null;
   candidates: Set<PendingImageDelivery>;
 }
-function texts(rows: Row[]): string[] {
-  return rows.map((row) => row.text);
+function sameRows(rows: Row[], input: string[]): boolean {
+  return (
+    rows.length === input.length &&
+    rows.every((row, i) => row.text === input[i])
+  );
 }
-function equal(a: readonly string[], b: readonly string[]): boolean {
-  return a.length === b.length && a.every((text, index) => text === b[index]);
+
+/** Earliest single removal, including when several adjacent captions match. */
+function removedRow(rows: Row[], next: string[]): number {
+  if (rows.length !== next.length + 1) return -1;
+  let index = next.length;
+  while (index > 0 && rows[index]!.text === next[index - 1]) index--;
+  for (let i = 0; i < index; i++) if (rows[i]!.text !== next[i]) return -1;
+  return index;
 }
 
 /** Artifact ownership at observed Pi boundaries, never a scheduler or queue authority.
@@ -180,10 +189,10 @@ export class PendingImageRecovery {
     ] as const) {
       const previous = this.rows[key];
       const next = input[key];
-      if (equal(texts(previous), next)) continue;
+      if (sameRows(previous, next)) continue;
       if (
         next.length === previous.length + 1 &&
-        equal(texts(previous), next.slice(0, -1))
+        previous.every((row, i) => row.text === next[i])
       ) {
         const text = next.at(-1)!;
         const delivery =
@@ -197,12 +206,7 @@ export class PendingImageRecovery {
         this.rows[key] = [...previous, { text, delivery }];
         continue;
       }
-      const removedIndex = previous.findIndex((_row, index) =>
-        equal(
-          texts(previous.filter((_item, position) => position !== index)),
-          next,
-        ),
-      );
+      const removedIndex = removedRow(previous, next);
       if (removedIndex >= 0) {
         const row = previous[removedIndex]!;
         if (!clearing && !row.consumed) {
@@ -216,9 +220,7 @@ export class PendingImageRecovery {
           this.removed.push(row);
           if (row.delivery?.state === "queued") row.delivery.state = "removed";
         }
-        this.rows[key] = previous.filter(
-          (_row, index) => index !== removedIndex,
-        );
+        this.rows[key] = previous.toSpliced(removedIndex, 1);
       } else {
         for (const row of previous) {
           if (!clearing && !row.consumed) {
@@ -331,8 +333,8 @@ export class PendingImageRecovery {
     const rows = clear.rows;
     if (
       !rows ||
-      !equal(texts(rows.steering), input.steering) ||
-      !equal(texts(rows.followUp), input.followUp)
+      !sameRows(rows.steering, input.steering) ||
+      !sameRows(rows.followUp, input.followUp)
     )
       return input;
     const content = this.content(rows);
@@ -413,8 +415,8 @@ export class PendingImageRecovery {
     const rows = clear.rows;
     const matches =
       rows &&
-      equal(texts(rows.steering), input.steering) &&
-      equal(texts(rows.followUp), input.followUp);
+      sameRows(rows.steering, input.steering) &&
+      sameRows(rows.followUp, input.followUp);
     const uncertain = this.uncertain(clear);
     const attachments: UploadedAttachment[] = [];
     let lost = false;
