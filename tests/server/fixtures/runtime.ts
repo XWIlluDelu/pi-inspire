@@ -61,7 +61,7 @@ export class FakeRpc extends EventEmitter {
     entries: readonly Record<string, unknown>[] = [],
     options: {
       leaf?: string | null;
-      sealed?: "turn" | "settled" | "idle" | null;
+      sealed?: boolean;
     } = {},
   ): void {
     const statusKey = `${this.options.env?.INSPIRE_BRANCH_STATUS_KEY}${CHECKPOINT_SUFFIX}`;
@@ -86,8 +86,7 @@ export class FakeRpc extends EventEmitter {
         from,
         tail,
         leaf: options.leaf === undefined ? tail : options.leaf,
-        run: 0,
-        sealed: options.sealed === undefined ? "idle" : options.sealed,
+        sealed: options.sealed ?? true,
         entries: entries.length,
       }),
     );
@@ -152,7 +151,7 @@ export class FakeRpc extends EventEmitter {
           : entries.findIndex((item) => item.id === this.checkpointTail);
       this.publishCheckpoint(entries.slice(after + 1), {
         leaf: this.checkpointLeaf(),
-        sealed: null,
+        sealed: false,
       });
       return { disposition: "handled" } as T;
     }

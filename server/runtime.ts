@@ -426,22 +426,21 @@ export class RuntimeController extends EventEmitter {
                 "Pi checkpoint does not continue the admitted native index",
               );
           if (unseen.length > overlap) return;
-          const fresh = entries.slice(overlap);
+          const fresh = overlap ? entries.slice(overlap) : entries;
           const previousLeaf = view.index.leafId;
           // The branch command also verifies its own result and publishes its epoch.
           if (slot.pendingBranchBridge) return;
           // Unsealed batches can advance the native cursor while the same rows
           // still belong to Live. Advance the visible leaf with the seal.
-          const sealed = marker.sealed !== null;
           const changed = view.index.appendWorkerEntries(
             fresh,
             marker.leaf,
-            sealed,
+            marker.sealed,
           );
           view.nativeLeafId = marker.leaf;
           if (view.navigationLeased && !slot.workerOnSeparateBranch)
             view.navigationLeased = false;
-          if (!sealed) return;
+          if (!marker.sealed) return;
           const adopted = this.liveTail.seal(
             slot,
             view.index.entriesAfter(view.sealedCursor),

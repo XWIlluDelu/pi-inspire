@@ -5,6 +5,7 @@ import {
   BRANCH_BRIDGE_VERSION,
   type BranchBridgeRequest,
   type BranchBridgeResult,
+  branchBridgeResult,
 } from "../shared/branch-bridge-protocol.js";
 import { isPiRpcOutcomeUnknown, type PiRpcProcess } from "./pi-rpc.js";
 import type { BranchBridgeIdentity } from "./runtime-slot.js";
@@ -59,41 +60,6 @@ export function branchDeltaMatches(
   return anchorSeen && parent === result.effectiveLeaf;
 }
 
-function parseBridgeResult(value: Record<string, unknown>): BranchBridgeResult {
-  const leaf = (candidate: unknown) =>
-    candidate === null || typeof candidate === "string";
-  if (
-    value.v !== BRANCH_BRIDGE_VERSION ||
-    typeof value.ok !== "boolean" ||
-    typeof value.cancelled !== "boolean" ||
-    !leaf(value.beforeLeaf) ||
-    !leaf(value.effectiveLeaf) ||
-    (value.navigationLeaf !== undefined && !leaf(value.navigationLeaf)) ||
-    (value.summaryId !== undefined &&
-      (typeof value.summaryId !== "string" || !value.summaryId)) ||
-    (value.error !== undefined &&
-      (typeof value.error !== "string" || value.error.length > 300)) ||
-    Object.keys(value).some(
-      (key) =>
-        ![
-          "v",
-          "nonce",
-          "workerId",
-          "sessionId",
-          "ok",
-          "cancelled",
-          "beforeLeaf",
-          "effectiveLeaf",
-          "navigationLeaf",
-          "summaryId",
-          "error",
-        ].includes(key),
-    )
-  )
-    throw new Error("Malformed branch bridge result");
-  return value as unknown as BranchBridgeResult;
-}
-
 export function startBranchNavigation(
   rpc: PiRpcProcess,
   bridge: BranchBridgeIdentity,
@@ -114,12 +80,9 @@ export function startBranchNavigation(
       return;
     }
     received = true;
-    try {
-      if (!value) throw new Error("Invalid branch bridge result");
-      resolve(parseBridgeResult(value));
-    } catch (error) {
-      reject(error);
-    }
+    const parsed = branchBridgeResult.safeParse(value);
+    if (parsed.success) resolve(parsed.data);
+    else reject(new Error("Malformed branch bridge result"));
   };
   const unwatch = watchWorkerStatus(
     rpc, bridge.statusKey, owner, BRANCH_BRIDGE_MAX_RESULT_BYTES,

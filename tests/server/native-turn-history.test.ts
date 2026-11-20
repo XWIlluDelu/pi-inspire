@@ -142,7 +142,7 @@ it("retains unsaved live output and reads only the saved prefix while Pi's leaf 
     type: "message_end",
     message: { role: "assistant", timestamp: 2, content: "unsaved output" },
   });
-  worker.publishCheckpoint([], { sealed: "settled" });
+  worker.publishCheckpoint([]);
   worker.emit("event", { type: "agent_settled" });
   const page = (await runtime.snapshot("session-a")).active!.transcriptPage;
   expect(page.messages.at(-1)).toMatchObject({
@@ -152,7 +152,7 @@ it("retains unsaved live output and reads only the saved prefix while Pi's leaf 
   expect(page.messages.at(-1)).not.toHaveProperty("__inspireEntryId");
 
   const native = entry("native", "u1", "assistant", "unsaved output");
-  worker.publishCheckpoint([native], { sealed: "settled" });
+  worker.publishCheckpoint([native]);
   expect((await runtime.snapshot("session-a")).active).toMatchObject({
     effectiveLeafId: "native",
     transcriptPage: {

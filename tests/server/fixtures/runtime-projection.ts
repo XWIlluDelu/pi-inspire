@@ -252,7 +252,7 @@ export class NewSessionRpc extends FakeRpc {
   private publishedCount = 0;
   private publishPendingCheckpoint() {
     this.publishCheckpoint(this.entries.slice(this.publishedCount), {
-      sealed: "settled",
+      sealed: true,
     });
     this.publishedCount = this.entries.length;
     this.emit("event", { type: "agent_settled" });

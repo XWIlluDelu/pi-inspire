@@ -137,7 +137,7 @@ it.each(stopCases)(
         ...message,
         __inspireLiveId: expect.any(String),
       });
-      f.worker.publishCheckpoint([entry], { sealed: "settled" });
+      f.worker.publishCheckpoint([entry]);
     } else
       f.emit("auto_retry_end", {
         success: false,
@@ -328,11 +328,11 @@ it("adopts native identities only at the ordered seal even for identical custom 
   expect(new Set(liveIds).size).toBe(4);
   expect(live.every((row) => !row.__inspireEntryId)).toBe(true);
   await f.append(...rest);
-  f.worker.publishCheckpoint([first], { sealed: null });
+  f.worker.publishCheckpoint([first], { sealed: false });
   expect(await read()).toEqual(live);
-  f.worker.publishCheckpoint(rest, { sealed: null });
+  f.worker.publishCheckpoint(rest, { sealed: false });
   expect(await read()).toEqual(live);
-  f.worker.publishCheckpoint([], { sealed: "idle" });
+  f.worker.publishCheckpoint([]);
   await vi.waitFor(async () => {
     const saved = await read();
     expect(saved).toMatchObject([
@@ -425,7 +425,7 @@ it("preserves ordered assistant deltas and repeated timestamps, then reads the c
     messageEntry("a2", "a1", second),
   ];
   await f.append(...saved);
-  f.worker.publishCheckpoint(saved, { sealed: "settled" });
+  f.worker.publishCheckpoint(saved);
   await vi.waitFor(async () => {
     const active = await f.active();
     expect(active.activeAssistantMessageKey).toBe("persisted:a2:0");
