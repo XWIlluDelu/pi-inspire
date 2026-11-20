@@ -41,7 +41,7 @@ export const EarlierBranchBanner = memo(function EarlierBranchBanner({
         className="button button--quiet earlier-branch-banner__restore"
         disabled={busy}
         aria-busy={returning || undefined}
-        onClick={() => void store.returnToLatestBranch()}
+        onClick={() => void store.branches.returnToLatest()}
       >
         {returning && <PiLoader size={13} aria-hidden />}
         Continue from latest saved point

@@ -240,13 +240,13 @@ export class WorkspaceController {
     return true;
   }
 
-  setShowHidden(showHidden: boolean): void {
+  setShowHidden = (showHidden: boolean): void => {
     if (showHidden === this.host.state().workspaceShowHidden) return;
     this.resetProjection(showHidden);
     void this.refresh();
-  }
+  };
 
-  setQuery(query: string): void {
+  setQuery = (query: string): void => {
     this.searchRequest?.abort();
     this.searchRequest = null;
     const state = this.host.state();
@@ -259,7 +259,7 @@ export class WorkspaceController {
       workspaceSearchError: null,
     });
     if (query.trim()) void this.search(query);
-  }
+  };
 
   private async search(query: string): Promise<void> {
     const api = this.host.api();

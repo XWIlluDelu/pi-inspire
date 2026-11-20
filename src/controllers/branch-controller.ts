@@ -19,7 +19,7 @@ import type { CopyContent } from "../content-copy";
 import { RecoveryBackoff, readScope } from "../recovery-backoff";
 import { shellCopyText } from "../shell-record";
 
-export type BranchControllerState = Pick<
+type BranchControllerState = Pick<
   AppState,
   "sessionId" | "view" | "branchTreeError" | "branchActionId"
 > & { readOnlyReason?: SessionReadOnlyReason | null };
@@ -41,7 +41,7 @@ export function branchCopiesBlocked(state: BranchControllerState): boolean {
   return branchCopyBlockReason(state) !== null;
 }
 
-export interface BranchControllerPatch {
+interface BranchControllerPatch {
   branchTreeError?: string | null;
   branchActionId?: string | null;
 }
@@ -335,20 +335,11 @@ export class BranchController {
 
   /** The server validates this retained target in the captured source view;
    * no preparatory tree refresh is needed. */
-  async forkFromEntry(targetId: string): Promise<boolean> {
-    const sessionId = this.host.state().sessionId;
-    if (!sessionId || !targetId) return false;
-    const pending = this.fork(targetId);
-    const ticket = this.viewTicket(this.host.state());
-    const api = this.host.api();
-    const forked = await pending;
-    if (!forked && this.host.api() === api && this.ownsView(ticket, "view")) {
-      this.host.notify(
-        "warning",
-        this.host.state().branchTreeError ?? "Fork failed",
-      );
-    }
-    return forked;
+  forkFromEntry(targetId: string): Promise<boolean> {
+    if (!targetId) return Promise.resolve(false);
+    return this.copyBranch({ kind: "fork", targetId }, (message) =>
+      this.host.notify("warning", message),
+    );
   }
 
   fork(targetId: string): Promise<boolean> {

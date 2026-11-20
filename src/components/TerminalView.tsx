@@ -204,32 +204,28 @@ async function clipboardText(): Promise<string> {
   return navigator.clipboard.readText();
 }
 
-export const TerminalView = memo(function TerminalView({
-  api,
-  terminal: descriptor,
-  active,
-  settings,
-  publishActions,
-  onDescriptor,
-  onBackgroundOutput,
-  onBell,
-  onOpenFile,
-  onSendToComposer,
-  onCommandComplete,
-}: TerminalViewProps) {
+export const TerminalView = memo(function TerminalView(
+  props: TerminalViewProps,
+) {
+  const {
+    api,
+    terminal: descriptor,
+    active,
+    settings,
+    publishActions,
+    onDescriptor,
+    onBackgroundOutput,
+    onSendToComposer,
+  } = props;
   const hostRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const searchRef = useRef<TerminalSearchAddon | null>(null);
   const connectionRef = useRef<TerminalConnection | null>(null);
+  const propsRef = useRef(props);
+  propsRef.current = props;
   const descriptorRef = useRef(descriptor);
-  const activeRef = useRef(active);
   const writableRef = useRef(false);
-  const settingsRef = useRef(settings);
-  const onBellRef = useRef(onBell);
-  const onOpenFileRef = useRef(onOpenFile);
-  const onSendToComposerRef = useRef(onSendToComposer);
-  const onCommandCompleteRef = useRef(onCommandComplete);
   const modifiersRef = useRef(NO_TERMINAL_MODIFIERS);
   const replayGenerationRef = useRef(0);
   const clipboardEpochRef = useRef(0);
@@ -264,13 +260,7 @@ export const TerminalView = memo(function TerminalView({
   );
 
   descriptorRef.current = descriptor;
-  activeRef.current = active;
   writableRef.current = writable;
-  settingsRef.current = settings;
-  onBellRef.current = onBell;
-  onOpenFileRef.current = onOpenFile;
-  onSendToComposerRef.current = onSendToComposer;
-  onCommandCompleteRef.current = onCommandComplete;
 
   const updateModifiers = useCallback((next: TerminalModifiers) => {
     modifiersRef.current = next;
@@ -302,14 +292,14 @@ export const TerminalView = memo(function TerminalView({
   }, []);
 
   const currentDimensions = useCallback(() => {
-    const proposed = activeRef.current
+    const proposed = propsRef.current.active
       ? fitRef.current?.proposeDimensions()
       : undefined;
     return safeDimensions(proposed, descriptorRef.current);
   }, []);
 
   const fitAndResize = useCallback(() => {
-    if (!activeRef.current || !writableRef.current) return;
+    if (!propsRef.current.active || !writableRef.current) return;
     const { cols, rows } = currentDimensions();
     connectionRef.current?.resize(cols, rows);
   }, [currentDimensions]);
@@ -354,7 +344,7 @@ export const TerminalView = memo(function TerminalView({
         const completeReplay = () => {
           if (replayGeneration !== replayGenerationRef.current) return;
           setReady(true);
-          if (activeRef.current && writableRef.current)
+          if (propsRef.current.active && writableRef.current)
             requestAnimationFrame(fitAndResize);
         };
         // The protocol replay edge can arrive before xterm has drained its
@@ -365,12 +355,12 @@ export const TerminalView = memo(function TerminalView({
       } else if (message.type === "ownership") {
         writableRef.current = message.writable;
         setWritable(message.writable);
-        if (message.writable && activeRef.current)
+        if (message.writable && propsRef.current.active)
           requestAnimationFrame(fitAndResize);
       } else if (message.type === "descriptor") {
         applyDescriptor(message.terminal);
       } else if (message.type === "command_complete") {
-        onCommandCompleteRef.current?.(descriptorRef.current, message);
+        propsRef.current.onCommandComplete?.(descriptorRef.current, message);
       } else if (message.type === "exit") {
         writableRef.current = false;
         setWritable(false);
@@ -396,7 +386,7 @@ export const TerminalView = memo(function TerminalView({
           xterm.buffer.active.viewportY < xterm.buffer.active.baseY,
         );
       });
-      if (frame.kind === "output" && !activeRef.current)
+      if (frame.kind === "output" && !propsRef.current.active)
         onBackgroundOutput(descriptorRef.current.id);
     },
     [clearCommandOutput, onBackgroundOutput],
@@ -407,23 +397,23 @@ export const TerminalView = memo(function TerminalView({
     if (!host) return;
     const xterm = new Terminal({
       allowProposedApi: true,
-      cursorBlink: settingsRef.current.cursorBlink,
-      cursorStyle: settingsRef.current.cursorStyle,
+      cursorBlink: propsRef.current.settings.cursorBlink,
+      cursorStyle: propsRef.current.settings.cursorStyle,
       cursorInactiveStyle: "outline",
       customGlyphs: true,
       fontFamily: terminalFontFamily(),
-      fontSize: settingsRef.current.fontSize,
+      fontSize: propsRef.current.settings.fontSize,
       fontWeight: 400,
       fontWeightBold: 600,
       letterSpacing: 0,
-      lineHeight: settingsRef.current.lineHeight,
+      lineHeight: propsRef.current.settings.lineHeight,
       logLevel: "off",
-      macOptionIsMeta: settingsRef.current.macOptionIsMeta,
+      macOptionIsMeta: propsRef.current.settings.macOptionIsMeta,
       minimumContrastRatio: 4.5,
       rescaleOverlappingGlyphs: true,
       rightClickSelectsWord: true,
-      screenReaderMode: settingsRef.current.screenReaderMode,
-      scrollback: settingsRef.current.scrollbackRows,
+      screenReaderMode: propsRef.current.settings.screenReaderMode,
+      scrollback: propsRef.current.settings.scrollbackRows,
       scrollOnEraseInDisplay: true,
       smoothScrollDuration: 0,
       theme: terminalTheme(),
@@ -449,7 +439,7 @@ export const TerminalView = memo(function TerminalView({
       const value = event.clipboardData?.getData("text/plain") ?? "";
       if (
         !value ||
-        !settingsRef.current.pasteProtection ||
+        !propsRef.current.settings.pasteProtection ||
         !isRiskyPaste(value)
       )
         return;
@@ -508,7 +498,7 @@ export const TerminalView = memo(function TerminalView({
     );
     const fileLinksDisposable = xterm.registerLinkProvider({
       provideLinks(lineNumber, callback) {
-        if (!onOpenFileRef.current) {
+        if (!propsRef.current.onOpenFile) {
           callback(undefined);
           return;
         }
@@ -518,7 +508,7 @@ export const TerminalView = memo(function TerminalView({
           return;
         }
         const links = terminalFileLinks(line, lineNumber, (_event, value) =>
-          onOpenFileRef.current?.(
+          propsRef.current.onOpenFile?.(
             terminalFileReference(value, descriptorRef.current.currentCwd),
           ),
         );
@@ -579,7 +569,7 @@ export const TerminalView = memo(function TerminalView({
       setOutputBelow(xterm.buffer.active.viewportY < xterm.buffer.active.baseY),
     );
     const bellDisposable = xterm.onBell(() => {
-      if (settingsRef.current.bell === "off") return;
+      if (propsRef.current.settings.bell === "off") return;
       setBellFlash(true);
       if (bellTimerRef.current !== null)
         window.clearTimeout(bellTimerRef.current);
@@ -587,7 +577,7 @@ export const TerminalView = memo(function TerminalView({
         bellTimerRef.current = null;
         setBellFlash(false);
       }, 180);
-      onBellRef.current(descriptorRef.current);
+      propsRef.current.onBell(descriptorRef.current);
     });
     const inputDisposable = xterm.onData((value) => {
       const input = terminalTextInput(value, modifiersRef.current);
@@ -597,7 +587,7 @@ export const TerminalView = memo(function TerminalView({
     xterm.attachCustomKeyEventHandler((event) => {
       const command = event.metaKey || event.ctrlKey;
       const workbenchShortcut =
-        settingsRef.current.shortcutMode === "workbench" || event.metaKey;
+        propsRef.current.settings.shortcutMode === "workbench" || event.metaKey;
       if (event.type !== "keydown") return true;
       if (event.defaultPrevented) return false;
       if (isComposingKeyboardEvent(event) || event.getModifierState("AltGraph"))
@@ -605,7 +595,7 @@ export const TerminalView = memo(function TerminalView({
       const applicationShortcut =
         workbenchShortcut &&
         ((command && ["k", "b", "."].includes(event.key.toLowerCase())) ||
-          (settingsRef.current.shortcutMode === "workbench" &&
+          (propsRef.current.settings.shortcutMode === "workbench" &&
             terminalShortcut(event) !== null));
       // Returning early leaves the DOM event available to the workbench-level
       // shortcut handlers instead of letting xterm stop its propagation.
@@ -663,7 +653,7 @@ export const TerminalView = memo(function TerminalView({
       }
       if (xtermRef.current !== xterm) return;
       updateTheme();
-      if (activeRef.current) fit.fit();
+      if (propsRef.current.active) fit.fit();
       connection.start();
     };
     void initialize();
@@ -719,7 +709,7 @@ export const TerminalView = memo(function TerminalView({
     const permitted = terminalActivationFocus();
     const frame = requestAnimationFrame(() => {
       fitAndResize();
-      if (activeRef.current && permitted()) xtermRef.current?.focus();
+      if (propsRef.current.active && permitted()) xtermRef.current?.focus();
     });
     return () => cancelAnimationFrame(frame);
   }, [active, fitAndResize]);
@@ -742,7 +732,7 @@ export const TerminalView = memo(function TerminalView({
             continue;
           }
           if (
-            settingsRef.current.pasteProtection &&
+            propsRef.current.settings.pasteProtection &&
             !window.confirm("Insert multiple lines? Review before running.")
           )
             continue;
@@ -827,7 +817,7 @@ export const TerminalView = memo(function TerminalView({
     const opener = document.activeElement;
     const ownsPaste = () =>
       epoch === clipboardEpochRef.current &&
-      activeRef.current &&
+      propsRef.current.active &&
       writableRef.current &&
       descriptorRef.current.status === "running" &&
       xtermRef.current === xterm;
@@ -836,7 +826,7 @@ export const TerminalView = memo(function TerminalView({
       if (!ownsPaste()) return;
       if (
         value &&
-        (!settingsRef.current.pasteProtection ||
+        (!propsRef.current.settings.pasteProtection ||
           !isRiskyPaste(value) ||
           window.confirm("Paste multiple lines or control characters?"))
       ) {
@@ -955,7 +945,7 @@ export const TerminalView = memo(function TerminalView({
       hasLastOutput,
       invoke(action, opener) {
         if (
-          activeRef.current &&
+          propsRef.current.active &&
           xtermRef.current &&
           `${descriptorRef.current.id}:${descriptorRef.current.outputEpoch}` ===
             owner
@@ -1090,7 +1080,8 @@ export const TerminalView = memo(function TerminalView({
                   className="button button--quiet terminal-selection__quote"
                   onClick={() => {
                     const selection = xtermRef.current?.getSelection();
-                    if (selection) onSendToComposerRef.current?.(selection);
+                    if (selection)
+                      propsRef.current.onSendToComposer?.(selection);
                   }}
                   aria-label="Send terminal selection to composer"
                   title="Add selection to draft"

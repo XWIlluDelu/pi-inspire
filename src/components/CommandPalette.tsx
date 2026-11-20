@@ -174,7 +174,7 @@ export const CommandPalette = memo(function CommandPalette({
         id: "refresh",
         group: "Actions",
         title: "Refresh session list",
-        run: () => void store.refreshSessions(),
+        run: () => void store.catalog.refresh(),
       },
       ...(["nav", "ctx"] as const).map((id) => ({
         id,
@@ -276,7 +276,7 @@ export const CommandPalette = memo(function CommandPalette({
           title: "Continue from latest saved point",
           aliases: ["Restore latest saved position", "Back to latest branch"],
           default: true,
-          run: runInSession(() => void store.returnToLatestBranch()),
+          run: runInSession(() => void store.branches.returnToLatest()),
         });
       }
     }
@@ -302,7 +302,7 @@ export const CommandPalette = memo(function CommandPalette({
           group: "Preferences",
           title: `${title}: ${"actionLabel" in option ? option.actionLabel : option.label}`,
           hint: state.prefs[key] === option.value ? "current" : undefined,
-          run: () => store.setPreference(key, option.value),
+          run: () => store.preferences.set(key, option.value),
         });
     }
 

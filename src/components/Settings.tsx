@@ -80,7 +80,7 @@ function PreferenceChoice({
               className="palette-picker__choice"
               data-palette-choice={value}
               aria-pressed={prefs.palette === value}
-              onClick={() => store.setPreference("palette", value)}
+              onClick={() => store.preferences.set("palette", value)}
             >
               <span className="palette-picker__swatch" aria-hidden />
               <span>{label}</span>
@@ -110,7 +110,7 @@ function PreferenceChoice({
                 key={value}
                 type="button"
                 aria-pressed={prefs[name] === value}
-                onClick={() => store.setPreference(name, value)}
+                onClick={() => store.preferences.set(name, value)}
               >
                 {Icon && <Icon size={13} aria-hidden />}
                 <span>{label}</span>
@@ -126,7 +126,7 @@ function PreferenceChoice({
       description={description}
       value={prefs[name]}
       options={preferenceChoices[name].options}
-      onChange={(value) => store.setPreference(name, value)}
+      onChange={(value) => store.preferences.set(name, value)}
     />
   );
 }
@@ -222,7 +222,7 @@ export const SettingsContent = memo(function SettingsContent({
     shallowEqual,
   );
   useEffect(() => {
-    void store.refreshTaskAlerts();
+    void store.notifications.initialize();
   }, []);
   const prefs = { ...state.prefs, ...state.desiredPreferences };
   const alerts = state.taskAlerts;
@@ -310,7 +310,7 @@ export const SettingsContent = memo(function SettingsContent({
               description="Animated needles in the installed app's title bar."
               checked={prefs.titlebarNeedles}
               onChange={(value) =>
-                store.setPreference("titlebarNeedles", value)
+                store.preferences.set("titlebarNeedles", value)
               }
             />
           </Section>
@@ -354,7 +354,7 @@ export const SettingsContent = memo(function SettingsContent({
                             alerts.busy || alerts.permission === "unavailable"
                           }
                           onClick={() =>
-                            void store.setCompletionAttention("desktop")
+                            void store.notifications.setMode("desktop")
                           }
                         >
                           Enable notifications
@@ -366,7 +366,7 @@ export const SettingsContent = memo(function SettingsContent({
                         disabled={
                           alerts.busy || alerts.permission !== "granted"
                         }
-                        onClick={() => void store.testTaskNotification()}
+                        onClick={() => void store.notifications.test()}
                       >
                         Send test notification
                       </button>
@@ -406,7 +406,7 @@ export const SettingsContent = memo(function SettingsContent({
               aria-busy={alerts.busy}
               value={alerts.mode}
               options={COMPLETION_ALERTS}
-              onChange={(value) => void store.setCompletionAttention(value)}
+              onChange={(value) => void store.notifications.setMode(value)}
             />
             <SelectField
               label="Notification grouping"
@@ -419,7 +419,7 @@ export const SettingsContent = memo(function SettingsContent({
                       className="button button--small"
                       disabled={alerts.groupingBusy}
                       onClick={() =>
-                        void store.setTaskNotificationGrouping(alerts.grouping)
+                        void store.notifications.setGrouping(alerts.grouping)
                       }
                     >
                       Retry
@@ -437,16 +437,14 @@ export const SettingsContent = memo(function SettingsContent({
               ]}
               disabled={alerts.groupingBusy}
               aria-busy={alerts.groupingBusy}
-              onChange={(value) =>
-                void store.setTaskNotificationGrouping(value)
-              }
+              onChange={(value) => void store.notifications.setGrouping(value)}
             />
           </Section>
 
           <SessionActionsSettings
             order={prefs.sessionActionOrder}
             onChange={(value) =>
-              store.setPreference("sessionActionOrder", value)
+              store.preferences.set("sessionActionOrder", value)
             }
           />
 

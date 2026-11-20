@@ -132,7 +132,7 @@ const ChangeRow = memo(function ChangeRow({
         const workspacePath = change.path.workspacePath;
         if ((event.ctrlKey || event.metaKey) && workspacePath)
           void store.showInFileManager(workspacePath, workspacePath);
-        else void store.openGitDiff(change.path.id);
+        else void store.git.openChange(change.path.id);
       }}
     />
   );
@@ -434,7 +434,7 @@ export function useFileChanges({
         icon={<AlertTriangle size={17} aria-hidden />}
         title="Source unavailable"
         hint={diffView.message}
-        action={{ run: () => void store.openGitDiff(diffView.pathId) }}
+        action={{ run: () => void store.git.openChange(diffView.pathId) }}
       />
     );
   } else if (textResult && projection?.rows.length) {

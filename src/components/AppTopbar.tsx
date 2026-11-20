@@ -202,7 +202,10 @@ const SessionIdent = memo(function SessionIdent({
     saveInFlight.current = true;
     setSaving(true);
     try {
-      const saved = await store.renameSession(sessionId, name);
+      const saved = await store.sessionManagement.renameSession(
+        sessionId,
+        name,
+      );
       if (
         saved &&
         editRef.current === edit &&
@@ -375,8 +378,8 @@ export const AppTopbar = memo(function AppTopbar({
     // Session changes already refresh Git in the store; remounting that
     // subscription would cancel and restart the same request.
     if (!state.observesRepository) return;
-    store.setGitSurfaceVisible("topbar-git", true);
-    return () => store.setGitSurfaceVisible("topbar-git", false);
+    store.git.setSurfaceVisible("topbar-git", true);
+    return () => store.git.setSurfaceVisible("topbar-git", false);
   }, [state.observesRepository]);
   return (
     <header className="topbar">

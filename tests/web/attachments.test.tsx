@@ -15,7 +15,7 @@ import { store } from "../../src/store";
 
 it("reads a recalled image using its original view when the projection incarnation is absent", async () => {
   const load = vi
-    .spyOn(store, "loadTranscriptImage")
+    .spyOn(store.resources, "loadTranscriptImage")
     .mockResolvedValue(new Blob(["png"]));
   const item: PendingAttachment = {
     localId: "recalled-image",
@@ -26,10 +26,13 @@ it("reads a recalled image using its original view when the projection incarnati
     status: "ready",
     recalledArtifact: {
       type: "image",
-      scopeKey: "history-scope",
-      viewId: "history-view",
-      incarnation: null,
-      effectiveLeafId: null,
+      scope: {
+        sessionId: "session-a",
+        viewId: "history-view",
+        incarnation: null,
+        effectiveLeafId: null,
+        historyVersion: "1",
+      },
       reference: "pi-history-image://entry-4/0",
     },
   };

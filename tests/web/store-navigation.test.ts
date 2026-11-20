@@ -92,11 +92,11 @@ it("hydrates confirmed folder curation without rereading pages and prunes it bef
     },
   });
   await vi.waitFor(() => expect(ids(store)).toEqual([recent.id, "first"]));
-  store.toggleProjectHidden(offPage.cwd);
+  store.preferences.toggleProjectHidden(offPage.cwd);
   expect(store.getState().prefs.hiddenProjectCwds).toEqual([]);
   write.resolve();
   await vi.waitFor(() => expect(ids(store)).toContain(offPage.id));
-  store.toggleSessionPin("next");
+  store.preferences.toggleSessionPin("next");
   await vi.waitFor(() =>
     expect(ids(store)).toEqual([recent.id, "first", offPage.id, "next"]),
   );
@@ -110,9 +110,9 @@ it("hydrates confirmed folder curation without rereading pages and prunes it bef
   });
 
   lookup.mockReturnValueOnce(stale.promise.then(() => summary([offPage])));
-  const refreshed = store.refreshSessions();
+  const refreshed = store.catalog.refresh();
   await vi.waitFor(() => expect(lookup).toHaveBeenCalledTimes(2));
-  store.toggleProjectHidden(offPage.cwd);
+  store.preferences.toggleProjectHidden(offPage.cwd);
   await vi.waitFor(() => expect(ids(store)).not.toContain(offPage.id));
   stale.resolve();
   await refreshed;
@@ -133,7 +133,7 @@ it.each(["rejected", "confirmed"] as const)(
       },
     });
     await vi.waitFor(() => expect(ids(store)).toEqual([recent.id, offPage.id]));
-    store.toggleSessionHidden(offPage.id);
+    store.preferences.toggleSessionHidden(offPage.id);
     expect(store.getState()).toMatchObject({
       curationPending: true,
       prefs: { hiddenSessionIds: [offPage.id] },
@@ -177,12 +177,12 @@ it("retries a child restore once the hidden folder's membership can be read", as
     preferences: { hiddenProjectCwds: [offPage.cwd] },
     routes: (url) => (url === "/api/sessions/by-cwd" ? folder() : undefined),
   });
-  await store.loadSessions(child.title);
+  await store.catalog.load(child.title);
   folder.mockReturnValueOnce({
     status: 503,
     body: { error: "Folder lookup failed" },
   });
-  store.toggleSessionHidden(child.id);
+  store.preferences.toggleSessionHidden(child.id);
   await vi.waitFor(() =>
     expect(store.getState().live.notices.at(-1)?.text).toBe(
       "Folder lookup failed",
@@ -192,7 +192,7 @@ it("retries a child restore once the hidden folder's membership can be read", as
     hiddenProjectCwds: [offPage.cwd],
     hiddenSessionIds: [],
   });
-  store.toggleSessionHidden(child.id);
+  store.preferences.toggleSessionHidden(child.id);
   await vi.waitFor(() =>
     expect(store.getState().prefs).toMatchObject({
       hiddenProjectCwds: [],
@@ -237,7 +237,7 @@ it.each([false, true])(
       };
     });
     const { store } = await initStore();
-    store.setPreference("theme", "dark");
+    store.preferences.set("theme", "dark");
     await pending.promise;
     reconnected = true;
     await store.init();
@@ -261,7 +261,7 @@ it("applies a late rename only to the session it targeted", async () => {
     url === "/api/sessions/rename" ? request(jsonBody(init)) : undefined,
   );
   const { store } = await initStore();
-  const writing = store.renameSession("s1", "Renamed A");
+  const writing = store.sessionManagement.renameSession("s1", "Renamed A");
   await selectSession(
     store,
     activeSnapshot({ sessionId: "s2", sessionName: "Session B" }),

@@ -37,7 +37,7 @@ describe("document image ownership", () => {
       value: vi.fn(),
     });
     Element.prototype.scrollIntoView = vi.fn();
-    vi.spyOn(store, "loadDocumentImage").mockResolvedValue(
+    vi.spyOn(store.resources, "loadDocumentImage").mockResolvedValue(
       new Blob(["image"], { type: "image/png" }),
     );
   });
@@ -77,16 +77,21 @@ describe("document image ownership", () => {
 
   it("rejects late images after document replacement and survives StrictMode replay", async () => {
     const late = deferred<Blob>();
-    vi.mocked(store.loadDocumentImage).mockImplementation((_id, reference) =>
-      reference.includes("old")
-        ? late.promise
-        : Promise.resolve(new Blob(["new"])),
+    vi.mocked(store.resources.loadDocumentImage).mockImplementation(
+      (_id, reference) =>
+        reference.includes("old")
+          ? late.promise
+          : Promise.resolve(new Blob(["new"])),
     );
     const { rerender } = render(
       <StrictMode>{preview("![Old](old.png)")}</StrictMode>,
     );
-    await waitFor(() => expect(store.loadDocumentImage).toHaveBeenCalled());
-    const oldSignal = vi.mocked(store.loadDocumentImage).mock.calls.at(-1)![2];
+    await waitFor(() =>
+      expect(store.resources.loadDocumentImage).toHaveBeenCalled(),
+    );
+    const oldSignal = vi
+      .mocked(store.resources.loadDocumentImage)
+      .mock.calls.at(-1)![2];
     rerender(
       <StrictMode>
         {preview("![New](new.png)", { ...descriptor, id: "document-2" })}

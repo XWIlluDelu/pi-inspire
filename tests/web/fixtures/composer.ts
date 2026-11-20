@@ -110,10 +110,10 @@ export function typeDraft(text: string) {
 }
 
 function clearComposer() {
-  store.replaceComposerText("");
+  store.drafts.setText(store.getState().sessionId, "");
   for (const item of store.drafts.get(store.getState().sessionId).attachments)
-    store.removeAttachment(item.localId);
+    store.composer.removeAttachment(item.localId);
   for (const path of store.drafts.get(store.getState().sessionId).projectFiles)
-    store.removeProjectFile(path);
+    store.composer.removeProjectFile(path);
   store.dismissError();
 }

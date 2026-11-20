@@ -64,8 +64,8 @@ export function useComposerRecall(
   useEffect(() => {
     if (!key || !sessionId || !viewId || !historyVersion) return;
     const read = new AbortController();
-    void store
-      .loadComposerHistory(
+    void store.branches
+      .composerHistory(
         { sessionId, viewId, incarnation: incarnation ?? null, historyVersion },
         read.signal,
       )

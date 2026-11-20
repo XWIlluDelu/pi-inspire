@@ -298,8 +298,8 @@ export const SessionRow = memo(function SessionRow({
         noun="session"
         pinned={pinned}
         disabled={curationDisabled}
-        togglePin={() => store.toggleSessionPin(session.id)}
-        toggleHidden={() => store.toggleSessionHidden(session.id)}
+        togglePin={() => store.preferences.toggleSessionPin(session.id)}
+        toggleHidden={() => store.preferences.toggleSessionHidden(session.id)}
         remove={
           hidden
             ? {
@@ -389,7 +389,7 @@ export function ProjectGroup({
           className="nav__group-toggle"
           aria-expanded={expanded}
           disabled={searching}
-          onClick={() => store.toggleNavGroup(group.cwd)}
+          onClick={() => store.preferences.toggleNavGroup(group.cwd)}
         >
           {expanded ? (
             <FolderOpen size={16} aria-hidden />
@@ -420,8 +420,8 @@ export function ProjectGroup({
           noun="folder"
           pinned={pinned}
           disabled={curationDisabled}
-          togglePin={() => store.toggleProjectPin(group.cwd)}
-          toggleHidden={() => store.toggleProjectHidden(group.cwd)}
+          togglePin={() => store.preferences.toggleProjectPin(group.cwd)}
+          toggleHidden={() => store.preferences.toggleProjectHidden(group.cwd)}
           remove={
             hidden
               ? {

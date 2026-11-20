@@ -24,7 +24,7 @@ afterEach(() => {
   cleanup();
   for (const attachment of store.drafts.get(store.getState().sessionId)
     .attachments)
-    store.removeAttachment(attachment.localId);
+    store.composer.removeAttachment(attachment.localId);
   if (store.getState().sessionId)
     store.drafts.setText(store.getState().sessionId!, "");
   vi.restoreAllMocks();
@@ -105,7 +105,7 @@ it.each([
     } = store.getState();
     store.drafts.setText(sessionId!, "Keep this unsent draft");
     await act(async () =>
-      store.addFiles([
+      store.composer.addFiles([
         new File(["notes"], "notes.txt", { type: "text/plain" }),
       ]),
     );

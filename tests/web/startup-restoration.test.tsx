@@ -147,7 +147,7 @@ describe("initial workbench restoration", () => {
     });
     expectRestoring();
     await act(async () => {
-      await current.deselectSession();
+      await current.selection.deselect();
     });
     expect(
       screen.getByRole("form", { name: "Start a session" }),

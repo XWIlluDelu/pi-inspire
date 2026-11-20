@@ -514,18 +514,18 @@ export class ResourceController {
   }
 
   /** A linked image needs its own resource authorization. */
-  loadDocumentImage(
+  loadDocumentImage = (
     documentId: string,
     reference: string,
     signal: AbortSignal,
-  ): Promise<Blob> {
+  ): Promise<Blob> => {
     return this.readSelectedFile(
       documentId,
       AbortSignal.any([this.documentImages.signal, signal]),
       (state) => state.contextMode === "files",
       (owner) => this.readInlineImage(owner, reference, "document"),
     );
-  }
+  };
 
   async downloadResource(): Promise<void> {
     const {

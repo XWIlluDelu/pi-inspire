@@ -122,7 +122,7 @@ it("reuploads browser-held attachments only after a different Host confirms its 
   });
   const { store } = await initStore();
   const attachment = () => store.drafts.get("s1").attachments[0];
-  await store.addFiles([new File(["notes"], "notes.txt")]);
+  await store.composer.addFiles([new File(["notes"], "notes.txt")]);
   await store.init();
   expect(attachment()?.status).toBe("ready");
   expect(uploads).toBe(1);

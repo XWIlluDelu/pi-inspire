@@ -226,10 +226,10 @@ export const Composer = memo(function Composer() {
   );
   const editorDraft = recall.displayed;
   useSyncExternalStore(
-    store.subscribeComposerDeliveries,
-    store.composerDeliveryVersion,
+    store.composer.subscribe,
+    store.composer.getDeliveryVersion,
   );
-  const failedCount = store.failedComposerDeliveryCount(sessionId);
+  const failedCount = store.composer.failedDeliveryCount(sessionId);
   const [deliveryBehavior, setDeliveryBehavior] = useState<
     "steer" | "followUp"
   >("steer");
@@ -319,7 +319,7 @@ export const Composer = memo(function Composer() {
         scope: sessionId,
         search: store.searchProjectFiles,
         showHidden: state.workspaceShowHidden,
-        onShowHiddenChange: store.setWorkspaceShowHidden,
+        onShowHiddenChange: store.workspace.setShowHidden,
       }}
       input={{
         commands: state.commands,

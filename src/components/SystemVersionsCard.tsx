@@ -163,8 +163,8 @@ export function SystemVersionsCard() {
             disabled={checking}
             aria-busy={checking}
             onClick={() => {
-              void store.checkPiUpdate();
-              void store.checkInspireUpdate();
+              void store.updates.refreshPi();
+              void store.updates.refreshInspire();
             }}
           >
             {checking ? (

@@ -21,7 +21,7 @@ let nextSelection: ActiveSnapshot | undefined;
 export async function selectSession(
   store: {
     openSession(id: string): Promise<void>;
-    deselectSession(): Promise<boolean>;
+    selection: { deselect(): Promise<boolean> };
   },
   snapshot: ActiveSnapshot,
 ): Promise<void> {
@@ -29,7 +29,7 @@ export async function selectSession(
   try {
     await act(async () => {
       if (snapshot.active) await store.openSession(snapshot.active.sessionId);
-      else await store.deselectSession();
+      else await store.selection.deselect();
     });
   } finally {
     nextSelection = undefined;

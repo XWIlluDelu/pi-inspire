@@ -153,7 +153,7 @@ describe("transcript viewport geometry", () => {
       content: "Current reply",
     };
     const read = vi
-      .spyOn(store, "readNativeHistory")
+      .spyOn(store.branches, "history")
       .mockImplementation(async (_, __, query) => {
         if (query.kind !== "page") return null;
         return {

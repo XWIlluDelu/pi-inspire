@@ -101,7 +101,7 @@ export class UpdateController {
     this.check("pi");
   }
 
-  snooze(): void {
+  snooze = (): void => {
     const api = this.host.api();
     const { availableUpdateIdentity: identity, updateSnoozedUntil } = this.host.state();
     if (!identity || updateSnoozedUntil !== null) return;
@@ -120,7 +120,7 @@ export class UpdateController {
         if (api === this.host.api()) this.applyStatus(checkedStatus(status));
       })
       .catch(() => {});
-  }
+  };
 
   private project(status: HostUpdateStatus): Partial<UpdateControllerState> {
     const local = this.dismissal?.identity === status.availableUpdateIdentity

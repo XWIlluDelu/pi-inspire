@@ -49,7 +49,9 @@ describe("session deletion ownership", () => {
     });
     const { store } = await initStore();
     store.drafts.setText("s2", "discard deleted draft");
-    await expect(store.deleteSession("s2")).resolves.toBe("trashed");
+    await expect(store.sessionManagement.deleteSession("s2")).resolves.toBe(
+      "trashed",
+    );
     expect(store.getState().prefs.hiddenSessionIds).toEqual(["s2"]);
     expect(store.drafts.get("s2").text).toBe("");
     expect(store.getState().live.notices.at(-1)?.text).toContain(
@@ -114,15 +116,15 @@ describe("session deletion ownership", () => {
           ]),
         }),
       );
-      const pending = store.clearHiddenSessions(ids);
+      const pending = store.sessionManagement.clearHiddenSessions(ids);
       await vi.waitFor(() => expect(refreshed).toHaveBeenCalledOnce());
       const oldPublication = publish();
-      store.setPreference("theme", "dark");
+      store.preferences.set("theme", "dark");
       await vi.waitFor(() => expect(preferences.theme).toBe("dark"));
       preferenceRead.resolve(oldPublication);
       await expect(pending).resolves.toBeNull();
       expect(store.getState().sessionDeleteReviewRequired).toBe(true);
-      await store.clearHiddenSessions(ids);
+      await store.sessionManagement.clearHiddenSessions(ids);
       expect(submitted).toHaveBeenCalledExactlyOnceWith({
         scope: "hidden",
         sessionIds: ["s1", "s2"],
@@ -177,7 +179,7 @@ describe("session deletion ownership", () => {
       expect(store.getState().externalSessionActivities.s1).toBe("idle");
       store.drafts.setText("s1", "deleted draft");
       store.drafts.setText("s2", "keep this draft");
-      const deleting = store.deleteSession("s1");
+      const deleting = store.sessionManagement.deleteSession("s1");
       await vi.waitFor(() => expect(requested).toBe(true));
       expect(store.getState().sessionId).toBe("s1");
       const opening = store.openSession("s2");
@@ -263,8 +265,8 @@ describe("session deletion ownership", () => {
       await vi.waitFor(() => expect(reads).toBe(1));
       const removing =
         method === "clear"
-          ? store.clearHiddenSessions(targets)
-          : store.deleteSession("s1");
+          ? store.sessionManagement.clearHiddenSessions(targets)
+          : store.sessionManagement.deleteSession("s1");
       await requested.promise;
       await store.refreshSession();
       expect(reads).toBe(1);
@@ -365,22 +367,24 @@ describe("session deletion ownership", () => {
     store.drafts.setText("s1", "keep this draft");
     store.drafts.setText("s2", "deleted draft");
 
-    store.toggleSessionHidden("s2");
+    store.preferences.toggleSessionHidden("s2");
     await vi.waitFor(() =>
       expect(patches).toEqual([
         { hiddenSessionIds: ["s2"], pinnedSessionIds: [] },
       ]),
     );
     expect(store.getState().prefs.hiddenSessionIds).toEqual([]);
-    await expect(store.deleteSession("s2")).resolves.toBeNull();
+    await expect(
+      store.sessionManagement.deleteSession("s2"),
+    ).resolves.toBeNull();
     hide.resolve();
     await vi.waitFor(() =>
       expect(store.getState().prefs.hiddenSessionIds).toEqual(["s2"]),
     );
-    const removing = store.deleteSession("s2");
+    const removing = store.sessionManagement.deleteSession("s2");
     await requested.promise;
-    store.setPreference("theme", "dark");
-    store.toggleSessionPin("s1");
+    store.preferences.set("theme", "dark");
+    store.preferences.toggleSessionPin("s1");
     await vi.waitFor(() => expect(patches).toContainEqual({ theme: "dark" }));
     expect(patches).toEqual([
       { hiddenSessionIds: ["s2"], pinnedSessionIds: [] },

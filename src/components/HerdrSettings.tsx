@@ -118,7 +118,7 @@ export function HerdrSettings({
       checked={desired ?? saved}
       disabled={!saved && !canEnable}
       busy={loading}
-      onChange={(checked) => store.setPreference("herdrEnabled", checked)}
+      onChange={(checked) => store.preferences.set("herdrEnabled", checked)}
     />
   );
 }

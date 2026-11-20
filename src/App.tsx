@@ -302,7 +302,7 @@ function HostUnavailable({
         <button
           type="button"
           className="button button--primary"
-          onClick={() => store.retryConnection()}
+          onClick={() => store.connectionController.retry()}
         >
           Try again
         </button>
@@ -449,7 +449,7 @@ const ConversationStage = memo(function ConversationStage({
 
 function WorkspaceRecoveryNotice() {
   const [fork, setFork] =
-    useState<ReturnType<typeof store.prepareWorkspaceFork>>(null);
+    useState<ReturnType<typeof store.branches.prepareWorkspaceFork>>(null);
   const action = useAppState((state) => state.branchActionId);
   return (
     <div className="composer-readonly__notice">
@@ -459,7 +459,7 @@ function WorkspaceRecoveryNotice() {
         className="button button--quiet"
         disabled={action !== null}
         onClick={() => {
-          const prepared = store.prepareWorkspaceFork();
+          const prepared = store.branches.prepareWorkspaceFork();
           if (prepared) setFork(() => prepared);
         }}
       >
@@ -653,7 +653,7 @@ export function App() {
         commands: [...current.commands],
       });
     }
-    void store.deselectSession().then((deselected) => {
+    void store.selection.deselect().then((deselected) => {
       if (!deselected) return;
       store.setResourcesOpen(false);
     });
@@ -890,7 +890,7 @@ export function App() {
   }, [state.windowTitle, state.sessionName, state.attentionCount]);
 
   useEffect(() => {
-    const acknowledge = () => store.acknowledgeVisibleSession();
+    const acknowledge = () => store.runtimeEvents.acknowledgeVisibleSession();
     window.addEventListener("focus", acknowledge);
     document.addEventListener("visibilitychange", acknowledge);
     acknowledge();
@@ -1084,7 +1084,10 @@ export function App() {
                   ).detail
                 : "Connection lost. Recent content stays visible."}
             </span>
-            <button type="button" onClick={() => store.retryConnection()}>
+            <button
+              type="button"
+              onClick={() => store.connectionController.retry()}
+            >
               Retry now
             </button>
           </div>

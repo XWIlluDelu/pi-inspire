@@ -87,13 +87,8 @@ export function TranscriptPromptMap({
       const existing = pending.current.get(key);
       if (existing) return existing.task;
       const request = new AbortController();
-      const task = store
-        .readNativeHistory(
-          sessionId,
-          viewId,
-          { kind: "turns", start },
-          request.signal,
-        )
+      const task = store.branches
+        .history(sessionId, viewId, { kind: "turns", start }, request.signal)
         .then((page) => {
           if (!page || request.signal.aborted) return [];
           pages.current.set(page.start, page);

@@ -62,9 +62,9 @@ it.each(["curation", "older page"] as const)(
       },
     );
     await vi.waitFor(() => expect(ids(store)).toEqual(["s0", "s1"]));
-    const older = store.loadOlderSessions();
-    const duplicate = store.loadOlderSessions();
-    store.toggleSessionPin("pinned");
+    const older = store.catalog.loadOlder();
+    const duplicate = store.catalog.loadOlder();
+    store.preferences.toggleSessionPin("pinned");
     await vi.waitFor(() =>
       expect(store.getState().sessionListHydrating).toBe(true),
     );
@@ -81,7 +81,7 @@ it.each(["curation", "older page"] as const)(
       expect(ids(store)).toEqual(["s0", "s1", "s2"]);
       curated.resolve();
     }
-    await store.loadOlderSessions();
+    await store.catalog.loadOlder();
     await vi.waitFor(() =>
       expect(ids(store)).toEqual(["s0", "s1", "s2", "s3", "s4", "pinned"]),
     );
@@ -109,13 +109,13 @@ it.each(["replacement query", "transport"] as const)(
     const { store } = await installCatalog(list);
     await vi.waitFor(() => expect(ids(store)).toEqual(["recent"]));
     vi.useFakeTimers();
-    const pending = store.loadOlderSessions();
+    const pending = store.catalog.loadOlder();
     if (change === "transport") {
-      store.searchSessions("latest");
+      store.catalog.search("latest");
       await store.init();
       await clock(500);
-    } else await store.loadSessions("latest");
-    await store.loadOlderSessions();
+    } else await store.catalog.load("latest");
+    await store.catalog.loadOlder();
     stale.resolve();
     await pending;
     await clock();
@@ -163,9 +163,9 @@ it("hydrates newly created and forked selections missing from the chronological 
         return lookup(jsonBody(init).ids as string[]);
     },
   });
-  await expect(store.newSession("/new")).resolves.toBe("created");
+  await expect(store.selection.create("/new")).resolves.toBe("created");
   await vi.waitFor(() => expect(ids(store)).toContain("created"));
-  await expect(store.forkBranch("leaf")).resolves.toBe(true);
+  await expect(store.branches.fork("leaf")).resolves.toBe(true);
   await vi.waitFor(() => expect(ids(store)).toContain("forked"));
   expect(lookup.mock.calls.flat(2)).toEqual(
     expect.arrayContaining(["created", "forked"]),
@@ -304,7 +304,7 @@ it("publishes a preserved multi-page extent atomically after retry", async () =>
   await vi.waitFor(() =>
     expect(store.getState().sessionListNextOffset).toBe(40),
   );
-  for (let page = 0; page < 5; page++) await store.loadOlderSessions();
+  for (let page = 0; page < 5; page++) await store.catalog.loadOlder();
   const middle = [
     [0, 100],
     [100, 100],
@@ -324,7 +324,7 @@ it("publishes a preserved multi-page extent atomically after retry", async () =>
   live(socket, "other-background", true);
   await clock();
   expect(ids(store)).toEqual(fresh.slice(0, 241));
-  await store.loadSessions("new-query");
+  await store.catalog.load("new-query");
   release.resolve();
   await clock();
   expect(requests).toEqual(middle);
@@ -370,7 +370,7 @@ it("recovers live rows without rereading a page or publishing a retired query's 
   await vi.waitFor(() =>
     expect(store.getState().sessionListNextOffset).toBe(40),
   );
-  await store.loadOlderSessions();
+  await store.catalog.loadOlder();
   vi.useFakeTimers();
   for (const id of ["unavailable", "materializing", "absent"]) live(socket, id);
   await clock();
@@ -388,9 +388,9 @@ it("recovers live rows without rereading a page or publishing a retired query's 
   live(socket, "race");
   await clock(1_000);
   expect(attempts.get("race")).toBe(2);
-  await store.loadSessions("needle");
+  await store.catalog.load("needle");
   expect(ids(store)).toEqual(["match"]);
-  store.searchSessions("");
+  store.catalog.search("");
   live(socket, "race");
   await clock();
   retired.resolve();

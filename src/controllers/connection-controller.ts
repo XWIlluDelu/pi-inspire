@@ -81,7 +81,7 @@ export type ManagedConnectionProblem =
   | { kind: "service-error"; message: string }
   | { kind: "stream-interrupted" }
   | null;
-export type ConnectionRecoveryTrigger = "online" | "pageshow" | "visible";
+type ConnectionRecoveryTrigger = "online" | "pageshow" | "visible";
 
 interface ConnectionControllerHost {
   state(): {

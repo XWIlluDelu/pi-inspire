@@ -121,10 +121,11 @@ export function ModelsSettings({
     selection?.kind === "remove-provider" || selection?.kind === "remove-model"
       ? selection
       : null;
-  const [providers, setProviders] = useState<ProviderLoginOption[]>([]);
+  const [providers, setProviders] = useState<ProviderLoginOption[] | null>(
+    null,
+  );
   const [authError, setAuthError] = useState<string | null>(null);
   const [providersLoading, setProvidersLoading] = useState(true);
-  const [providersLoaded, setProvidersLoaded] = useState(false);
   const declarationsRef = useRef<HTMLDetailsElement>(null);
   const savedEntriesRef = useRef<HTMLDetailsElement>(null);
   const addProviderRef = useRef<HTMLButtonElement>(null);
@@ -135,9 +136,8 @@ export function ModelsSettings({
   const opened = useRef(false);
   useLayoutEffect(() => {
     opened.current = false;
-    setProviders([]);
+    setProviders(null);
     setAuthError(null);
-    setProvidersLoaded(false);
     return () => {
       providerGeneration.current++;
     };
@@ -158,7 +158,6 @@ export function ModelsSettings({
       const auth = (await store.providerAuth(owner, { operation: "providers" })) as ProviderLoginOption[];
       if (owns()) {
         setProviders(auth);
-        setProvidersLoaded(true);
         setAuthError(null);
         return auth;
       }
@@ -926,7 +925,7 @@ export function ModelsSettings({
         >
           <ProviderAuthentication
             owner={owner}
-            providers={providers}
+            providers={providers ?? []}
             initialQuery={
               destination?.focus === "credentials"
                 ? destination.query
@@ -935,7 +934,7 @@ export function ModelsSettings({
             discover={destination?.focus === "credentials"}
             loadError={authError}
             loading={providersLoading}
-            loaded={providersLoaded}
+            loaded={providers !== null}
             onRefresh={refreshCredentials}
           />
         </SettingsSection>

@@ -9,20 +9,22 @@ import "./styles.css";
 
 // Strip a one-use launch transfer before render. Ordinary PWA launches use the
 // origin-stored non-extractable browser key, never a persistent bearer/cookie.
-store.captureNotificationTarget();
+store.notifications.captureTarget();
 captureBrowserBootstrap();
 const initialization = store.init();
 
 // Browser freezes and network changes can strand an apparently open socket
 // without promptly delivering `close`. Re-enter through the same bootstrap +
 // authoritative-snapshot path instead of creating a parallel resync protocol.
-window.addEventListener("online", () => store.recoverConnection("online"));
+window.addEventListener("online", () =>
+  store.connectionController.recover("online"),
+);
 window.addEventListener("pageshow", (event) => {
-  if (event.persisted) store.recoverConnection("pageshow");
+  if (event.persisted) store.connectionController.recover("pageshow");
 });
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible")
-    store.recoverConnection("visible");
+    store.connectionController.recover("visible");
 });
 
 // The full CJK face registry is large even though the browser ultimately

@@ -26,7 +26,7 @@ describe("image preview ownership", () => {
     const other = deferred<Blob>();
     const returning = deferred<Blob>();
     const load = vi
-      .spyOn(store, "loadTranscriptImage")
+      .spyOn(store.resources, "loadTranscriptImage")
       .mockResolvedValueOnce(new Blob(["first view"]))
       .mockReturnValueOnce(other.promise)
       .mockReturnValueOnce(returning.promise);
@@ -71,7 +71,7 @@ describe("image preview ownership", () => {
   it("clears a retired error and discards an image that finishes after unmount", async () => {
     const retry = deferred<Blob>();
     const load = vi
-      .spyOn(store, "loadTranscriptImage")
+      .spyOn(store.resources, "loadTranscriptImage")
       .mockRejectedValueOnce(new Error("Image unavailable"))
       .mockReturnValueOnce(retry.promise);
     const create = vi.spyOn(URL, "createObjectURL");

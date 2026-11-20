@@ -81,7 +81,7 @@ export function MessageEditor({
   useLayoutEffect(() => setDragging(false), [sessionId]);
   const addFiles = (attachments: File[]) => {
     if (!disabled && attachments.length && beforeEdit())
-      void store.addFiles(attachments, sessionId);
+      void store.composer.addFiles(attachments, sessionId);
   };
   const submit = () => {
     if (!disabled && store.getState().sessionId === sessionId) onSubmit();
@@ -127,15 +127,15 @@ export function MessageEditor({
         items={draft.attachments}
         disabled={disabled}
         onRemove={(id) => {
-          if (beforeEdit()) store.removeAttachment(id, sessionId);
+          if (beforeEdit()) store.composer.removeAttachment(id, sessionId);
         }}
-        onRetry={sessionId ? store.retryAttachment : undefined}
+        onRetry={sessionId ? store.composer.retryAttachment : undefined}
       />
       <ProjectFileChips
         paths={draft.projectFiles}
         disabled={disabled}
         onRemove={(path) => {
-          if (beforeEdit()) store.removeProjectFile(path, sessionId);
+          if (beforeEdit()) store.composer.removeProjectFile(path, sessionId);
         }}
       />
       {beforeInput}
@@ -184,7 +184,7 @@ export function MessageEditor({
             search={files.search}
             onAdd={(file) => {
               if (beforeEdit())
-                store.addProjectFile(
+                store.composer.addProjectFile(
                   file.path,
                   sessionId,
                   sessionId === null ? file.workspaceCwd : undefined,

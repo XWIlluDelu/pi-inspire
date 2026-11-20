@@ -135,9 +135,11 @@ export function SessionDeleteDialog({
       busyLabel="Deleting…"
       deleting={deleting}
       onConfirm={() => {
-        void store.deleteSession(session.id).then((deleted) => {
-          if (deleted) onClose();
-        });
+        void store.sessionManagement
+          .deleteSession(session.id)
+          .then((deleted) => {
+            if (deleted) onClose();
+          });
       }}
       onClose={onClose}
     />

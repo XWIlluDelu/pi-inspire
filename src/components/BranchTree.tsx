@@ -102,7 +102,7 @@ type InspectedPoint = BranchEntryResponse & { node: BranchTreeNode };
 function readOutline(query: BranchTreeQuery, signal: AbortSignal) {
   const { sessionId, view } = store.getState();
   if (!sessionId || !view.viewId) return Promise.resolve(null);
-  return store.readNativeHistory(
+  return store.branches.history(
     sessionId,
     view.viewId,
     { kind: "outline", ...query },
@@ -117,7 +117,7 @@ async function readEntry(
 ): Promise<InspectedPoint | null> {
   const { sessionId, view } = store.getState();
   if (!sessionId || !view.viewId) return null;
-  const entry = await store.readNativeHistory(
+  const entry = await store.branches.history(
     sessionId,
     view.viewId,
     { kind: "entry", targetId, offset, point: "1" },
@@ -189,7 +189,6 @@ export function BranchTree({
   const detailRef = useRef<HTMLDivElement>(null);
   const backRef = useRef<HTMLButtonElement>(null);
   const selectedButtonRef = useRef<HTMLButtonElement | null>(null);
-  const outlineScrollRef = useRef(savedReading.outline.top);
   const restoreOutline = useRef(savedReading.restored);
   const restoreDetail = useRef(
     savedReading.selectedEntryId ? { ...savedReading.detail } : null,
@@ -199,23 +198,21 @@ export function BranchTree({
   const restorationAttemptRef = useRef<string | null>(null);
   const tree = page ?? state.tree;
   const searching = Boolean(query.trim());
-  function setQuery(value: string) {
-    if (savedReading.query === value) return;
+  function resetOutline() {
     retireRead();
     setPage(null);
     savedReading.outline = { top: 0, left: 0 };
-    outlineScrollRef.current = 0;
     restoreOutline.current = false;
+  }
+  function setQuery(value: string) {
+    if (savedReading.query === value) return;
+    resetOutline();
     savedReading.query = value;
     savedReading.save?.();
     setQueryState(value);
   }
   function setRouteLeaf(value: string | undefined) {
-    retireRead();
-    setPage(null);
-    savedReading.outline = { top: 0, left: 0 };
-    outlineScrollRef.current = 0;
-    restoreOutline.current = false;
+    resetOutline();
     outlineOwnerRef.current = null;
     savedReading.routeLeafId = value ?? null;
     savedReading.save?.();
@@ -242,7 +239,7 @@ export function BranchTree({
   const selectedContent = copyLoader(
     async (signal: AbortSignal) => {
       if (!selected) return null;
-      return store.branchCopyContent(selected.id, signal);
+      return store.branches.copyContent(selected.id, signal);
     },
     {
       text: Boolean(detail?.totalChars) || !detail?.images?.length,
@@ -426,7 +423,7 @@ export function BranchTree({
     if (selectedId) backRef.current?.focus();
     else {
       if (rowsRef.current) {
-        rowsRef.current.scrollTop = outlineScrollRef.current;
+        rowsRef.current.scrollTop = savedReading.outline.top;
         rowsRef.current.scrollLeft = savedReading.outline.left;
       }
       selectedButtonRef.current?.focus({ preventScroll: true });
@@ -446,7 +443,6 @@ export function BranchTree({
     if (!rows) return;
     rows.scrollTop = savedReading.outline.top;
     rows.scrollLeft = savedReading.outline.left;
-    outlineScrollRef.current = savedReading.outline.top;
     if (Math.abs(rows.scrollTop - savedReading.outline.top) <= 1)
       restoreOutline.current = false;
     outlineOwnerRef.current = `${state.sessionId}\0${state.viewId}\0${routeLeaf ?? ""}`;
@@ -545,9 +541,8 @@ export function BranchTree({
   }
 
   async function preview(node: BranchTreeNode, button: HTMLButtonElement) {
-    outlineScrollRef.current = rowsRef.current?.scrollTop ?? 0;
     savedReading.outline = {
-      top: outlineScrollRef.current,
+      top: rowsRef.current?.scrollTop ?? 0,
       left: rowsRef.current?.scrollLeft ?? 0,
     };
     selectedButtonRef.current = button;
@@ -616,7 +611,7 @@ export function BranchTree({
     )
       return;
     setSummarizing(summarize);
-    const ok = await store.navigateBranch(
+    const ok = await store.branches.navigate(
       selected.id,
       selected.canEdit ? "edit" : "switch",
       {
@@ -638,8 +633,8 @@ export function BranchTree({
   async function copySelected(mode: "fork" | "clone") {
     if (!selected || blocked) return;
     const ok = await (mode === "fork"
-      ? store.forkBranch(selected.id)
-      : store.cloneBranch(selected.id));
+      ? store.branches.fork(selected.id)
+      : store.branches.clone(selected.id));
     if (ok) onContextChange?.();
   }
 
@@ -786,7 +781,6 @@ export function BranchTree({
               top: event.currentTarget.scrollTop,
               left: event.currentTarget.scrollLeft,
             };
-            outlineScrollRef.current = savedReading.outline.top;
             savedReading.save?.();
           }}
         >
@@ -1192,13 +1186,8 @@ export function BranchTree({
                         onClick={() => {
                           const sessionId = store.getState().sessionId;
                           if (!sessionId) return;
-                          void store
-                            .navigateBranch(
-                              selected.id,
-                              "watch",
-                              {},
-                              tree.revision,
-                            )
+                          void store.branches
+                            .navigate(selected.id, "watch", {}, tree.revision)
                             .then((ok) => {
                               if (!ok) return;
                               setSelected(null);

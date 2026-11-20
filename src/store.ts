@@ -6,8 +6,6 @@ import {
 } from "../shared/commands";
 import {
   type ActiveSnapshot,
-  type BranchNavigateRequest,
-  type CompletionAttentionPreference,
   type ComposerHistoryEntry,
   emptyPendingQueues,
   type GitFileChange,
@@ -18,18 +16,14 @@ import {
   type LiveTranscript,
   type ModelOption,
   type ModelSelectionResponse,
-  type NewSessionOptions,
   type PendingRecovery,
   type PromptAcceptedResponse,
   parseExtensionStatuses,
   parsePendingQueues,
   parseRetryInfo,
   projectionConflictSeverity,
-  type SessionDeleteDisposition,
-  type SessionDeletionResponse,
   type ThinkingLevel,
 } from "../shared/contracts";
-import type { SessionHistoryQuery } from "../shared/history-query";
 import type { RuntimeSetting } from "../shared/host-endpoints";
 import { jsonRecord } from "../shared/json-record";
 import type {
@@ -39,7 +33,6 @@ import type {
   ModelSettingsSnapshot,
   ModelSettingsWriteResult,
 } from "../shared/model-settings";
-import type { TaskNotificationGrouping } from "../shared/notifications";
 import type { ProviderAuthOperation } from "../shared/provider-auth-bridge";
 import { resourceReferenceLine } from "../shared/resource-references";
 import type { StatusControlDeclaration } from "../shared/tool-presentation-config";
@@ -72,7 +65,6 @@ import { BranchController } from "./controllers/branch-controller";
 import { ComposerController } from "./controllers/composer-controller";
 import {
   ConnectionController,
-  type ConnectionRecoveryTrigger,
 } from "./controllers/connection-controller";
 import {
   GitController,
@@ -189,7 +181,7 @@ export class AppStore {
     notify: (kind: Notice["kind"], text: string) => this.notify(kind, text),
     handleAuthFailure: () => this.handleAuthFailure(),
   };
-  private readonly notifications = new TaskNotificationController({
+  readonly notifications = new TaskNotificationController({
     ...this.controllerHost,
     mark: (event) => {
       if (event.sessionId)
@@ -199,10 +191,10 @@ export class AppStore {
     openSession: (id) => this.selection.open(id),
   });
   /** Both Files surfaces consume this one tree/search projection. */
-  private readonly workspace = new WorkspaceController(this.controllerHost);
+  readonly workspace = new WorkspaceController(this.controllerHost);
   /** ResourceController owns request lifecycles only. AppStore supplies every
    * state read/write, so it remains the one browser snapshot authority. */
-  private readonly resources: ResourceController = new ResourceController({
+  readonly resources: ResourceController = new ResourceController({
     ...this.controllerHost,
     saveDownload: downloadFileUrl,
     revealWorkspacePath: (path) => {
@@ -213,14 +205,14 @@ export class AppStore {
   /** GitController owns polling, selection, and diff request lifecycles.
    * AppStore remains the sole state publisher and cross-domain transaction
    * facade, including resource previews opened from a Git path. */
-  private readonly git = new GitController({
+  readonly git = new GitController({
     ...this.controllerHost,
     openResourceFromGit: (change) => this.openGitFileTab(change),
   });
   /** BranchController owns branch-tree/action generations. AppStore applies
    * snapshots and selection transfers at the controller's verified commit
    * boundary, so no branch path becomes a second session authority. */
-  private readonly branches = new BranchController({
+  readonly branches = new BranchController({
     ...this.controllerHost,
     selectionRequest: () => this.selection.generation,
     beginForkSelection: () => this.selection.beginForkSelection(),
@@ -255,7 +247,7 @@ export class AppStore {
     },
     refreshSessionCatalog: () => void this.catalog.refreshLoaded(),
   });
-  private readonly preferences = new PreferenceController({
+  readonly preferences = new PreferenceController({
     ...this.controllerHost,
     curationChanged: (added) => this.catalog.reconcileCuration(added),
     clearCompletionAttention: () => this.runtimeEvents.clearTitleAttention(),
@@ -263,8 +255,8 @@ export class AppStore {
   /** SessionCatalogController owns pagination, curation/live hydration, and
    * retry lifecycles. AppStore remains the only catalog snapshot publisher and
    * selection authority. */
-  private readonly catalog = new SessionCatalogController(this.controllerHost);
-  private readonly selection = new SessionSelectionController({
+  readonly catalog = new SessionCatalogController(this.controllerHost);
+  readonly selection = new SessionSelectionController({
     ...this.controllerHost,
     onOpenIntent: () => {
       this.branches.invalidate();
@@ -280,7 +272,7 @@ export class AppStore {
     rememberModel: (model) => this.preferences.rememberModel(model),
     refreshSessionCatalog: () => void this.catalog.refreshLoaded(),
   });
-  private readonly runtimeEvents = new RuntimeEventController({
+  readonly runtimeEvents = new RuntimeEventController({
     ...this.controllerHost,
     setEditorText: (sessionId, text) => this.drafts.setText(sessionId, text),
     applySnapshot: (snapshot) => this.applySnapshot(snapshot),
@@ -295,14 +287,14 @@ export class AppStore {
     },
     resync: (sessionId, generation) => this.resync(sessionId, generation),
   });
-  private readonly composer = new ComposerController({
+  readonly composer = new ComposerController({
     ...this.controllerHost,
     drafts: this.drafts,
     notifyVisible: (sessionId, message) => {
       if (this.state.sessionId === sessionId) this.notify("warning", message);
     },
   });
-  private readonly sessionManagement = new SessionManagementController({
+  readonly sessionManagement = new SessionManagementController({
     ...this.controllerHost,
     refreshLoadedSessions: () => this.catalog.refreshLoaded(),
     preserveLoadedSessions: (query, offset, total) =>
@@ -322,10 +314,10 @@ export class AppStore {
     restore: (sessionId, recovered, feedback) =>
       this.restorePendingInput(sessionId, recovered, feedback),
   });
-  private readonly updates = new UpdateController(this.controllerHost);
+  readonly updates = new UpdateController(this.controllerHost);
   /** ConnectionController owns WebSocket lifetime/backoff only. AppStore
    * continues to publish connection state and owns every stream consequence. */
-  private readonly connectionController = new ConnectionController({
+  readonly connectionController = new ConnectionController({
     state: () => ({
       bootstrapped: this.state.bootstrapped,
       authorityId: this.hostAuthorityId,
@@ -487,17 +479,10 @@ export class AppStore {
     }
   }
 
-  acknowledgeVisibleSession = (): void =>
-    this.runtimeEvents.acknowledgeVisibleSession();
-
   dismissError = (): void => this.set({ error: null, errorSeverity: "error" });
 
   refreshSession = (): Promise<void> =>
     this.resync(this.state.sessionId, this.selectionGeneration, true);
-
-  replaceComposerText = (text: string): void => {
-    if (this.state.sessionId) this.drafts.setText(this.state.sessionId, text);
-  };
 
   private invalidateTransportRequests(): void {
     this.resyncRecovery.reset();
@@ -656,7 +641,7 @@ export class AppStore {
       if (boot.toolPresentationsWarning)
         this.notify("warning", boot.toolPresentationsWarning);
       this.notifications.start();
-      const catalog = this.loadSessions(this.state.sessionQuery);
+      const catalog = this.catalog.load(this.state.sessionQuery);
       this.afterInitialSnapshot = () => {
         if (!showsFileComparison(this.state))
           void this.git.resumeAfterTransportReplacement();
@@ -992,70 +977,9 @@ export class AppStore {
     }
   }
 
-  readNativeHistory = <Q extends SessionHistoryQuery>(
-    sessionId: string,
-    viewId: string,
-    query: Q,
-    signal: AbortSignal,
-  ) => this.branches.history(sessionId, viewId, query, signal);
-
-  loadComposerHistory = (
-    scope: Omit<
-      import("./composer-history").ComposerHistoryScope,
-      "effectiveLeafId"
-    >,
-    signal: AbortSignal,
-  ) => this.branches.composerHistory(scope, signal);
-
-  // --- Connection lifecycle ---
-
-  retryConnection = (): void => this.connectionController.retry();
-
-  recoverConnection = (trigger: ConnectionRecoveryTrigger): void =>
-    this.connectionController.recover(trigger);
-
-  // --- Sessions ---
-
-  /** Public facades retain the established AppStore surface while the catalog
-   * controller owns query generations, pagination, hydration, and retries. */
-  loadSessions = (query: string): Promise<void> => this.catalog.load(query);
-
-  loadOlderSessions = (): Promise<void> => this.catalog.loadOlder();
-
-  retrySessionList = (): Promise<void> => this.catalog.retryCurrent();
-
-  searchSessions = (query: string): void => this.catalog.search(query);
-
-  refreshSessions = (retryQuery = this.state.sessionQuery): Promise<void> =>
-    this.catalog.refresh(retryQuery);
-
   openSession = async (id: string): Promise<void> => {
     await this.selection.open(id);
   };
-
-  deselectSession = (): Promise<boolean> => this.selection.deselect();
-
-  newSession = (
-    cwd?: string,
-    options: NewSessionOptions = {},
-  ): Promise<string | null> => this.selection.create(cwd, options);
-
-  renameSession = (sessionId: string, name: string): Promise<boolean> =>
-    this.sessionManagement.renameSession(sessionId, name);
-
-  clearSessionDeleteError = (): void =>
-    this.sessionManagement.clearSessionDeleteError();
-
-  deleteSession = (
-    sessionId: string,
-  ): Promise<SessionDeleteDisposition | null> =>
-    this.sessionManagement.deleteSession(sessionId);
-
-  clearHiddenSessions = (
-    sessionIds: string[],
-    projectCwd?: string,
-  ): Promise<SessionDeletionResponse | null> =>
-    this.sessionManagement.clearHiddenSessions(sessionIds, projectCwd);
 
   // --- Prompting & native commands ---
 
@@ -1711,10 +1635,6 @@ export class AppStore {
     return sessionId ? this.composer.restoreFailedPrompt(sessionId) : false;
   };
 
-  readonly subscribeComposerDeliveries = this.composer.subscribe;
-  readonly composerDeliveryVersion = this.composer.getDeliveryVersion;
-  readonly failedComposerDeliveryCount = this.composer.failedDeliveryCount;
-
   sendPrompt = async (
     message: string,
     behavior?: "steer" | "followUp",
@@ -2201,31 +2121,6 @@ export class AppStore {
     return this.composer.useHistoryEntry(scope, entry);
   };
 
-  addFiles = (files: File[], sessionId = this.state.sessionId): Promise<void> =>
-    this.composer.addFiles(files, sessionId);
-
-  removeAttachment = (
-    localId: string,
-    sessionId = this.state.sessionId,
-  ): void => this.composer.removeAttachment(localId, sessionId);
-
-  retryAttachment = (localId: string): Promise<void> =>
-    this.composer.retryAttachment(localId);
-
-  addProjectFile = (
-    path: string,
-    sessionId = this.state.sessionId,
-    cwd?: string,
-  ): void => this.composer.addProjectFile(path, sessionId, cwd);
-
-  removeProjectFile = (path: string, sessionId = this.state.sessionId): void =>
-    this.composer.removeProjectFile(path, sessionId);
-
-  transferStartDraft = (
-    sessionId: string,
-    draft: SessionDraft,
-  ): Promise<void> => this.composer.transferStart(sessionId, draft);
-
   searchProjectFiles = async (
     query: string,
     signal: AbortSignal,
@@ -2245,9 +2140,6 @@ export class AppStore {
       signal,
     );
   };
-
-  setWorkspaceShowHidden = (value: boolean): void =>
-    this.workspace.setShowHidden(value);
 
   private modelCycleQueue: {
     sessionId: string;
@@ -2584,24 +2476,6 @@ export class AppStore {
     };
   };
 
-  loadWorkspaceDirectory = (dir: string): Promise<void> =>
-    this.workspace.loadDirectory(dir);
-
-  toggleWorkspaceDirectory = (dir: string): void => {
-    this.workspace.toggleDirectory(dir);
-  };
-
-  consumeWorkspaceRevealRequest = (nonce: number): boolean =>
-    this.workspace.consumeRevealRequest(nonce);
-
-  setWorkspaceQuery = (query: string): void => {
-    this.workspace.setQuery(query);
-  };
-
-  resumeWorkspaceSearch = (): void => {
-    this.workspace.resumeSearch();
-  };
-
   openWorkspaceFile = (path: string): Promise<void> => {
     this.workspace.revealPath(path);
     return this.openResource(path, path);
@@ -2632,8 +2506,6 @@ export class AppStore {
         );
     }
   };
-
-  refreshWorkspaceBrowser = (): Promise<void> => this.workspace.refresh();
 
   /** Filesystem roots for cross-volume navigation in the host picker. */
   browseHostRoots = async (): Promise<HostRootsResponse> => {
@@ -2704,12 +2576,6 @@ export class AppStore {
     return null;
   };
 
-  checkInspireUpdate = (): void => this.updates.refreshInspire();
-
-  checkPiUpdate = (): void => this.updates.refreshPi();
-
-  snoozeUpdate = (): void => this.updates.snooze();
-
   dismissNotice = (id: number): void => {
     if (!this.state.live.notices.some((notice) => notice.id === id)) return;
     this.patchLive({
@@ -2737,32 +2603,11 @@ export class AppStore {
     configurePresentationAdapters(result.configuration, result.adapters);
     if (result.warning) this.notify("warning", result.warning);
   };
-
-  setPreference: PreferenceController["set"] = (field, value) =>
-    this.preferences.set(field, value);
-  setCompletionAttention = (
-    value: CompletionAttentionPreference,
-  ): Promise<boolean> => this.notifications.setMode(value);
-  setTaskNotificationGrouping = (
-    value: TaskNotificationGrouping,
-  ): Promise<boolean> => this.notifications.setGrouping(value);
-  refreshTaskAlerts = (): Promise<void> => this.notifications.initialize();
-  testTaskNotification = (): Promise<void> => this.notifications.test();
-  captureNotificationTarget = (): void => this.notifications.captureTarget();
   restoreDefaultSettings = (): void => {
     this.preferences.restoreDefaults();
     void this.notifications.setMode("off");
     void this.notifications.setGrouping("session");
   };
-  toggleNavGroup = (cwd: string): void => this.preferences.toggleNavGroup(cwd);
-  toggleSessionPin = (id: string): void =>
-    this.preferences.toggleSessionPin(id);
-  toggleSessionHidden = (id: string): void =>
-    this.preferences.toggleSessionHidden(id);
-  toggleProjectPin = (cwd: string): void =>
-    this.preferences.toggleProjectPin(cwd);
-  toggleProjectHidden = (cwd: string): void =>
-    this.preferences.toggleProjectHidden(cwd);
 
   // --- Files/resources pane ---
 
@@ -2968,90 +2813,15 @@ export class AppStore {
     this.changeContext(true, contextMode);
 
   historyReadingState = () => readHistoryReading(this.workbenchKey());
-
-  branchCopyContent = (
-    targetId: string,
-    signal: AbortSignal,
-    format?: "message",
-  ) => this.branches.copyContent(targetId, signal, format);
-
-  readBranchImage = (targetId: string, index: number, signal?: AbortSignal) =>
-    this.branches.readImage(targetId, index, signal);
-
-  navigateBranch = (
-    targetId: string,
-    mode: BranchNavigateRequest["mode"],
-    options: Pick<
-      Exclude<BranchNavigateRequest, { mode: "watch" }>,
-      "summarize" | "customInstructions"
-    > = {},
-    revision?: number,
-  ): Promise<boolean> =>
-    this.branches.navigate(targetId, mode, options, revision);
-
-  forkFromEntry = (targetId: string): Promise<boolean> =>
-    this.branches.forkFromEntry(targetId);
-
-  forkBranch = (targetId: string): Promise<boolean> =>
-    this.branches.fork(targetId);
-
-  prepareWorkspaceFork = () => this.branches.prepareWorkspaceFork();
-
-  returnToLatestBranch = (): Promise<boolean> => this.branches.returnToLatest();
-
-  cloneBranch = (targetId: string): Promise<boolean> =>
-    this.branches.clone(targetId);
   cloneCurrentBranch = (): Promise<boolean> =>
     this.branches.clone(undefined, (message) =>
       this.notify("warning", message),
     );
 
-  setGitSurfaceVisible = (surface: string, visible: boolean): void => {
-    this.git.setSurfaceVisible(surface, visible);
-  };
-
-  refreshGitStatus = (): Promise<void> => this.git.refreshStatus();
-
-  openGitDiff = (pathId: string): Promise<void> => this.git.openChange(pathId);
-
-  cancelResourceProbes = (): void => this.resources.cancelProbes();
-
-  loadSessionResources = (signal?: AbortSignal) =>
-    this.resources.loadSessionResources(signal);
-
-  probeResources = (references: string[], signal?: AbortSignal): Promise<void> =>
-    this.resources.probeResources(references, signal);
-
-  loadDocumentImage = (
-    documentId: string,
-    reference: string,
-    signal: AbortSignal,
-  ): Promise<Blob> =>
-    this.resources.loadDocumentImage(documentId, reference, signal);
-
-  createHtmlPreview = () => this.resources.createHtmlPreview();
-
-  downloadResource = () => this.resources.downloadResource();
-
   loadAttachmentImage = (id: string, signal: AbortSignal): Promise<Blob> => {
     if (!this.api) return Promise.reject(new Error("The Host is unavailable"));
     return this.api.attachmentPreview(id, signal);
   };
-
-  loadTranscriptImage = (
-    sessionId: string,
-    viewId: string,
-    projectionKey: string,
-    reference: string,
-    signal: AbortSignal,
-  ): Promise<Blob> =>
-    this.resources.loadTranscriptImage(
-      sessionId,
-      viewId,
-      projectionKey,
-      reference,
-      signal,
-    );
 
   consumeFileSourceJump = (jump: FileSourceJump): boolean => {
     const inspection = this.state.fileInspection;

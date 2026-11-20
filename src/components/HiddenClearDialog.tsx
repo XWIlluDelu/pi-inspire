@@ -47,7 +47,7 @@ export function HiddenClearDialog({
       busyLabel="Clearing…"
       deleting={deleting}
       onConfirm={() => {
-        void store
+        void store.sessionManagement
           .clearHiddenSessions(sessionIds, projectCwd)
           .then((result) => {
             if (result && !result.failure) onClose();

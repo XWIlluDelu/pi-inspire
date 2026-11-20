@@ -466,7 +466,7 @@ export const Nav = memo(function Nav({
             onCompositionEnd={() => {
               composing.current = false;
             }}
-            onValueChange={store.searchSessions}
+            onValueChange={store.catalog.search}
             onKeyDown={(event) => {
               if (
                 isComposingKeyboardEvent(event.nativeEvent) ||
@@ -489,7 +489,7 @@ export const Nav = memo(function Nav({
               event.preventDefault();
               event.stopPropagation();
               if (event.key === "Escape") {
-                if (sessionQuery) store.searchSessions("");
+                if (sessionQuery) store.catalog.search("");
                 else event.currentTarget.blur();
               } else if (event.key === "Enter") {
                 if (highlighted && highlighted.id !== openingSessionId)
@@ -548,7 +548,7 @@ export const Nav = memo(function Nav({
               <button
                 type="button"
                 className="button button--quiet"
-                onClick={() => void store.retrySessionList()}
+                onClick={() => void store.catalog.retryCurrent()}
               >
                 {retrySessionLabel}
               </button>
@@ -567,7 +567,7 @@ export const Nav = memo(function Nav({
                 type="button"
                 className="button button--quiet"
                 disabled={sessionListBusy}
-                onClick={() => void store.loadOlderSessions()}
+                onClick={() => void store.catalog.loadOlder()}
               >
                 Load older sessions
               </button>
@@ -649,7 +649,7 @@ export const Nav = memo(function Nav({
         <SessionDeleteDialog
           session={deleteCandidate}
           onClose={() => {
-            store.clearSessionDeleteError();
+            store.sessionManagement.clearSessionDeleteError();
             setDeleteCandidate(null);
           }}
         />
@@ -659,7 +659,7 @@ export const Nav = memo(function Nav({
           sessionIds={hiddenClearCandidate.sessionIds}
           projectCwd={hiddenClearCandidate.projectCwd}
           onClose={() => {
-            store.clearSessionDeleteError();
+            store.sessionManagement.clearSessionDeleteError();
             setHiddenClearCandidate(null);
           }}
         />

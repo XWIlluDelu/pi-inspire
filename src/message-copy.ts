@@ -47,7 +47,7 @@ export function messageCopyLoader(
             "The message's conversation changed",
             "AbortError",
           );
-        const content = await store.branchCopyContent(
+        const content = await store.branches.copyContent(
           message.__inspireEntryId,
           signal,
           "message",
@@ -96,7 +96,7 @@ export async function messageCopyContent(
             "The message's conversation changed",
             "AbortError",
           );
-        const image = await store.readBranchImage(
+        const image = await store.branches.readImage(
           message.__inspireEntryId,
           index,
           signal,
@@ -106,7 +106,7 @@ export async function messageCopyContent(
       } else if (Number.isSafeInteger(message.__inspireMessageIndex)) {
         if (!owner) throw new Error("The image's conversation is unavailable");
         images.push(
-          await store.loadTranscriptImage(
+          await store.resources.loadTranscriptImage(
             owner.sessionId,
             owner.viewId,
             owner.projectionKey,

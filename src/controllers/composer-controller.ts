@@ -43,10 +43,7 @@ interface RecalledHistoryArtifact {
   type: "image" | "file";
   reference: string;
   fileKind?: "attachment" | "project";
-  viewId: string;
-  incarnation: string | null;
-  effectiveLeafId: string | null;
-  scopeKey: string;
+  scope: ComposerHistoryScope;
 }
 
 export interface PendingAttachment {
@@ -124,13 +121,7 @@ export function recalledInputAttachments(
   entry: ComposerHistoryEntry,
 ): PendingAttachment[] {
   const scopeKey = composerHistoryScopeKey(scope);
-  const owner = {
-    viewId: scope.viewId,
-    incarnation: scope.incarnation,
-    effectiveLeafId: scope.effectiveLeafId,
-    scopeKey,
-  };
-  const attachments = [
+  return [
     ...entry.images.map<PendingAttachment>((image, index) => ({
       localId: `history:${scopeKey}:${image.reference}`,
       fileName: `Recalled image ${index + 1}`,
@@ -139,7 +130,7 @@ export function recalledInputAttachments(
       kind: "image",
       status: "ready",
       recalledArtifact: {
-        ...owner,
+        scope,
         type: "image",
         reference: image.reference,
       },
@@ -152,14 +143,13 @@ export function recalledInputAttachments(
       kind: "file",
       status: "ready",
       recalledArtifact: {
-        ...owner,
+        scope,
         type: "file",
         reference: file.reference,
         fileKind: file.kind,
       },
     })),
   ];
-  return attachments;
 }
 
 /** Owns staging and delivery resources. Editors read the draft itself. */
@@ -510,18 +500,17 @@ export class ComposerController {
     const attachmentIds = included
       .map((item) => item.uploadedId)
       .filter((id): id is string => Boolean(id));
-    const recalled = included.filter(
-      (
-        item,
-      ): item is PendingAttachment & {
-        recalledArtifact: RecalledHistoryArtifact;
-      } => Boolean(item.recalledArtifact),
+    const recalled = included.flatMap(({ recalledArtifact }) =>
+      recalledArtifact ? [recalledArtifact] : [],
     );
-    const historyOwner = recalled[0]?.recalledArtifact;
+    const historyOwner = recalled[0]?.scope;
     if (
       historyOwner &&
       recalled.some(
-        (item) => item.recalledArtifact.scopeKey !== historyOwner.scopeKey,
+        ({ scope }) =>
+          scope !== historyOwner &&
+          composerHistoryScopeKey(scope) !==
+            composerHistoryScopeKey(historyOwner),
       )
     ) {
       this.host.notify(
@@ -568,11 +557,11 @@ export class ComposerController {
               incarnation: historyOwner.incarnation,
               effectiveLeafId: historyOwner.effectiveLeafId,
               imageReferences: recalled
-                .filter((item) => item.recalledArtifact.type === "image")
-                .map((item) => item.recalledArtifact.reference),
+                .filter((item) => item.type === "image")
+                .map((item) => item.reference),
               fileReferences: recalled
-                .filter((item) => item.recalledArtifact.type === "file")
-                .map((item) => item.recalledArtifact.reference),
+                .filter((item) => item.type === "file")
+                .map((item) => item.reference),
             },
           }
         : {}),
@@ -1094,7 +1083,7 @@ export class ComposerController {
     }
   }
 
-  retryAttachment(localId: string): Promise<void> {
+  retryAttachment = (localId: string): Promise<void> => {
     const sessionId = this.host.state().sessionId;
     const staged = this.stagedFiles.get(localId);
     if (
@@ -1106,7 +1095,7 @@ export class ComposerController {
       return Promise.resolve();
     staged.recovery.reset();
     return this.uploadStaged(sessionId, [localId]);
-  }
+  };
 
   /** A resumed transport restarts only unfinished staging in its original partition. */
   resumeUploads(): void {

@@ -257,6 +257,13 @@ test("hidden inline references send unchanged text; only explicit picker selecti
   const completion = page.getByRole("listbox", {
     name: "Project file completions",
   });
+  await page.route("**/api/files?**q=offline-catalog**", (route) =>
+    route.fulfill({ status: 422, json: { error: "Catalog query refused" } }),
+  );
+  await input.fill("@offline-catalog");
+  await expect(
+    completion.getByText("Project file search failed"),
+  ).toBeVisible();
   await input.fill("Read @config");
   await expect(completion.getByText("No matching project files")).toBeVisible();
   await page

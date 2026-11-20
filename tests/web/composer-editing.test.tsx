@@ -140,7 +140,7 @@ it("dispatches only the configured desktop send chord and disables proofing mark
   expect(host.promptBodies).toEqual([]);
   await send("ordinary Enter");
 
-  act(() => store.setPreference("desktopSendKey", "mod-enter"));
+  act(() => store.preferences.set("desktopSendKey", "mod-enter"));
   await waitFor(() =>
     expect(store.getState().prefs.desktopSendKey).toBe("mod-enter"),
   );

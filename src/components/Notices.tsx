@@ -61,7 +61,7 @@ function UpdateNotice({
       copyLabel="Update details"
       dismissLabel="Close updates for 24 hours"
       dismissTitle="Close for 24 hours"
-      onDismiss={store.snoozeUpdate}
+      onDismiss={store.updates.snooze}
     >
       {message}{" "}
       <a

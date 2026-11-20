@@ -404,7 +404,7 @@ export function Welcome({
       // A displayed workspace default is a preview, not an explicit override:
       // native startup must resolve its own model after registration/trust.
       const selected = model && chosen;
-      const opened = await store.newSession(target || undefined, {
+      const opened = await store.selection.create(target || undefined, {
         ...(createDirectory ? { createDirectory: true } : {}),
         ...(selected
           ? { model: { provider: model.provider, id: model.id } }
@@ -419,7 +419,7 @@ export function Welcome({
       }
 
       const destinationEmpty = !store.drafts.get(opened).text;
-      const upload = store.transferStartDraft(opened, draft);
+      const upload = store.composer.transferStart(opened, draft);
       const revision = store.drafts.get(opened).revision;
       await upload;
       const ownsDraft = () =>

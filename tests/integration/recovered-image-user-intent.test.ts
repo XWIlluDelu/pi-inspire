@@ -101,7 +101,7 @@ it.each([
       const connect = () => initStore(snapshot, host.application.authorityId);
       const { store: sender } = await connect();
       const store = observer === "sender" ? sender : (await connect()).store;
-      await sender.addFiles([
+      await sender.composer.addFiles([
         new File(["pixels"], "intent.png", { type: "image/png" }),
       ]);
       sending = sender.sendPrompt(
@@ -160,7 +160,7 @@ it.each([
         expect(await next).toBe(false);
         expect(imageHandles(store)).toEqual([image.id]);
       }
-      store.removeAttachment(draft(store).attachments[0]!.localId);
+      store.composer.removeAttachment(draft(store).attachments[0]!.localId);
       await vi.waitFor(() => expect(draft(store).attachments).toEqual([]));
       await vi.waitFor(async () =>
         expect(attachments.imagePreview(image.id)).rejects.toMatchObject({

@@ -148,12 +148,12 @@ it("recovers a timed-out creation with the same receipt", async () => {
     if (url === "/api/sessions/deselect") return { body: emptySnapshot };
   });
   const { store } = await initStore();
-  await store.deselectSession();
-  await expect(store.newSession()).resolves.toBeNull();
+  await store.selection.deselect();
+  await expect(store.selection.create()).resolves.toBeNull();
   expect(create).not.toHaveBeenCalled();
 
-  const creating = store.newSession("/proj");
-  await store.newSession("/proj");
+  const creating = store.selection.create("/proj");
+  await store.selection.create("/proj");
   expect(create).toHaveBeenCalledOnce();
   timeout.resolve({ status: 504, body: { error: "Gateway timed out" } });
   await expect(creating).resolves.toBe("created");
@@ -184,11 +184,13 @@ it.each(["create", "deselect", "switch", "clear"] as const)(
       gesture === "clear" ? null : gesture === "switch" ? "s2" : "s1";
     const previous =
       gesture === "create"
-        ? store.newSession("/proj")
+        ? store.selection.create("/proj")
         : gesture === "deselect"
-          ? store.deselectSession()
+          ? store.selection.deselect()
           : undefined;
-    const latest = target ? store.openSession(target) : store.deselectSession();
+    const latest = target
+      ? store.openSession(target)
+      : store.selection.deselect();
     if (previous) {
       await previous;
       expect(retiredSignal?.aborted).toBe(true);

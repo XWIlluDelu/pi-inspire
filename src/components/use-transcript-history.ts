@@ -128,7 +128,7 @@ export function useTranscriptHistory(
     setStatus({ key });
     try {
       const cursor = current?.[direction];
-      const response: NativeTurnPage | null = await store.readNativeHistory(
+      const response: NativeTurnPage | null = await store.branches.history(
         sessionId,
         viewId,
         entryId

@@ -81,7 +81,7 @@ function MessageActions({
           disabled={forking}
           onClick={() => {
             setForking(true);
-            void store
+            void store.branches
               .forkFromEntry(forkEntryId)
               .finally(() => setForking(false));
           }}

@@ -111,7 +111,9 @@ export const ContextPane = memo(function ContextPane({
     resourceRequest.current = request;
     setResourceRead({ owner: resourceOwner });
     try {
-      const response = await store.loadSessionResources(request.signal);
+      const response = await store.resources.loadSessionResources(
+        request.signal,
+      );
       if (request.signal.aborted) return;
       if (response)
         setResourcePage({
@@ -155,7 +157,7 @@ export const ContextPane = memo(function ContextPane({
     // the references confirmed for the current transcript and transport.
     if (!showingRecentFiles || !currentResourcePage) return;
     const request = new AbortController();
-    void store.probeResources(
+    void store.resources.probeResources(
       recentRows.map((row) => row.reference ?? row.label),
       request.signal,
     );
@@ -164,8 +166,8 @@ export const ContextPane = memo(function ContextPane({
 
   const gitDetailView = showsGitDetails(state);
   useEffect(() => {
-    store.setGitSurfaceVisible("resources-pane", gitDetailView);
-    return () => store.setGitSurfaceVisible("resources-pane", false);
+    store.git.setSurfaceVisible("resources-pane", gitDetailView);
+    return () => store.git.setSurfaceVisible("resources-pane", false);
   }, [gitDetailView]);
 
   const handleTerminalOpenFile = useCallback((reference: string) => {
@@ -207,7 +209,7 @@ export const ContextPane = memo(function ContextPane({
   );
 
   const handleTerminalCommandComplete = useCallback(
-    () => void store.refreshGitStatus(),
+    () => void store.git.refreshStatus(),
     [],
   );
 
@@ -239,9 +241,9 @@ export const ContextPane = memo(function ContextPane({
     setManualRefresh(request);
     try {
       if (state.contextMode === "files") {
-        if (showingRecentFiles) store.cancelResourceProbes();
+        if (showingRecentFiles) store.resources.cancelProbes();
         await Promise.all([
-          store.refreshWorkspaceBrowser(),
+          store.workspace.refresh(),
           showingRecentFiles
             ? loadResources()
             : activeFile
@@ -249,7 +251,7 @@ export const ContextPane = memo(function ContextPane({
               : undefined,
         ]);
       } else {
-        await store.refreshGitStatus();
+        await store.git.refreshStatus();
       }
     } finally {
       setManualRefresh((current) => (current === request ? null : current));

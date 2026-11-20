@@ -41,7 +41,10 @@ export function RenameSessionForm({
     const revision = editRevision.current;
     setSaving(true);
     try {
-      const saved = await store.renameSession(sessionId, name);
+      const saved = await store.sessionManagement.renameSession(
+        sessionId,
+        name,
+      );
       if (
         saved &&
         revision === editRevision.current &&

@@ -519,7 +519,7 @@ export function FilePreview({
   const downloadResource = async () => {
     setDownload({ scope: htmlScope, pending: true });
     try {
-      await store.downloadResource();
+      await store.resources.downloadResource();
       setDownload({ scope: htmlScope, pending: false });
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") return;
@@ -576,7 +576,7 @@ export function FilePreview({
     const generation = interactionGeneration.current;
     setInteraction({ scope: htmlScope, status: "loading" });
     try {
-      const lease = await store.createHtmlPreview();
+      const lease = await store.resources.createHtmlPreview();
       if (generation !== interactionGeneration.current) {
         lease.release();
         return;

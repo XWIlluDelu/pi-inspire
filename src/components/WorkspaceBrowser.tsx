@@ -24,7 +24,7 @@ export function WorkspaceVisibilityToggle() {
   return (
     <HiddenFilesToggle
       showHidden={showHidden}
-      onChange={store.setWorkspaceShowHidden}
+      onChange={store.workspace.setShowHidden}
     />
   );
 }
@@ -60,14 +60,14 @@ export function WorkspaceFileSearch() {
     shallowEqual,
   );
   useEffect(() => {
-    store.resumeWorkspaceSearch();
+    store.workspace.resumeSearch();
   }, [state.cwd, state.sessionId]);
   return (
     <SearchField
       aria-label="Search workspace files"
       placeholder="Search workspace"
       value={state.workspaceQuery}
-      onValueChange={store.setWorkspaceQuery}
+      onValueChange={store.workspace.setQuery}
       clearLabel="Clear workspace search"
       iconSize={13}
       loading={state.workspaceSearchLoading}
@@ -80,7 +80,7 @@ export function WorkspaceFileSearch() {
           return;
         event.preventDefault();
         event.stopPropagation();
-        if (state.workspaceQuery) store.setWorkspaceQuery("");
+        if (state.workspaceQuery) store.workspace.setQuery("");
         else event.currentTarget.blur();
       }}
     />
@@ -167,7 +167,7 @@ export const WorkspaceTree = memo(function WorkspaceTree({
   useEffect(() => {
     if (!state.sessionId || !state.cwd) return;
     for (const dir of ["", ...store.getState().workspaceExpandedDirs])
-      void store.loadWorkspaceDirectory(dir);
+      void store.workspace.loadDirectory(dir);
   }, [state.cwd, state.sessionId, state.transportGeneration]);
 
   useLayoutEffect(() => {
@@ -177,7 +177,7 @@ export const WorkspaceTree = memo(function WorkspaceTree({
     const target = rootRef.current?.querySelector<HTMLElement>(
       `[data-workspace-path="${escaped}"]`,
     );
-    if (!target || !store.consumeWorkspaceRevealRequest(request.nonce)) return;
+    if (!target || !store.workspace.consumeRevealRequest(request.nonce)) return;
     target.scrollIntoView({ block: "nearest" });
   }, [state.workspaceLevels, state.workspaceRevealRequest]);
 
@@ -190,7 +190,7 @@ export const WorkspaceTree = memo(function WorkspaceTree({
         className="workspace-tree__status workspace-tree__status--error"
         style={indent}
         title={error}
-        onClick={() => void store.loadWorkspaceDirectory(dir)}
+        onClick={() => void store.workspace.loadDirectory(dir)}
       >
         <AlertTriangle size={11} aria-hidden />
         <span>
@@ -253,7 +253,7 @@ export const WorkspaceTree = memo(function WorkspaceTree({
                 onClick={(event) => {
                   if (event.ctrlKey || event.metaKey)
                     void store.showInFileManager(path, path, true);
-                  else store.toggleWorkspaceDirectory(path);
+                  else store.workspace.toggleDirectory(path);
                 }}
               >
                 <ChevronRight size={11} className="chev" aria-hidden />
@@ -329,7 +329,7 @@ export const WorkspaceSearchResults = memo(function WorkspaceSearchResults({
         <button
           type="button"
           className="workspace-tree__status workspace-tree__status--error"
-          onClick={() => store.setWorkspaceQuery(state.workspaceQuery)}
+          onClick={() => store.workspace.setQuery(state.workspaceQuery)}
         >
           <AlertTriangle size={11} aria-hidden />
           <span>{state.workspaceSearchError}</span>

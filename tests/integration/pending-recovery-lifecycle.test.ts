@@ -59,7 +59,7 @@ describe("Pending intent and receipt lifecycle", () => {
     const operation = store.recoverPending();
     try {
       await delivered.promise;
-      store.recoverConnection("online");
+      store.connectionController.recover("online");
       await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2));
       FakeWebSocket.instances[1]!.join(await snapshot(), { authorityId: authority() });
       await vi.waitFor(() => expect(read).toHaveBeenCalledOnce());

@@ -104,7 +104,7 @@ export class SessionCatalogController {
 
   /** Search changes query ownership synchronously, then issues its debounced
    * reset. Old-query pages cannot remain rendered or win while typing. */
-  search(query: string): void {
+  search = (query: string): void => {
     this.retireQuery();
     this.host.patch({
       ...this.resetRows(query),
@@ -113,7 +113,7 @@ export class SessionCatalogController {
     });
     this.clearSearchTimer();
     this.searchTimer = setTimeout(() => void this.load(query), 180);
-  }
+  };
 
   private resetRows(query: string) {
     this.basePages.clear();

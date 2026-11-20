@@ -178,7 +178,7 @@ async function initialized(
   await store.init();
   // Most cases begin after a completed device-settings refresh. Startup tests
   // instead supply the real stream settings-before-offer sequence below.
-  if (refresh) await store.refreshTaskAlerts();
+  if (refresh) await store.notifications.initialize();
   const socket = FakeWebSocket.instances.at(-1)!;
   socket.join(activeSnapshot());
   return { store, socket };
@@ -321,14 +321,14 @@ describe("device-local task alerts", () => {
     expect(subscribe).not.toHaveBeenCalled();
 
     mutations = [];
-    await store.refreshTaskAlerts();
+    await store.notifications.initialize();
     expect(mutations).toEqual([]);
     local.endpoint += "-rotated";
-    await store.refreshTaskAlerts();
+    await store.notifications.initialize();
     expect(mutations).toEqual([{ subscription: local.toJSON() }]);
 
     getSubscription.mockResolvedValue(null);
-    await store.refreshTaskAlerts();
+    await store.notifications.initialize();
     expect(mutations.at(-1)).toEqual({ subscription: null });
     expect(store.getState().taskAlerts).toMatchObject({
       mode: "desktop",
@@ -343,10 +343,10 @@ describe("device-local task alerts", () => {
       const permission = deferred<NotificationPermission>();
       Permission.permission = "default";
       Permission.requestPermission.mockReturnValueOnce(permission.promise);
-      const enabling = store.setCompletionAttention("desktop");
+      const enabling = store.notifications.setMode("desktop");
       await vi.waitFor(() => expect(mode).toBe("desktop"));
 
-      if (owner === "this window") await store.setCompletionAttention("off");
+      if (owner === "this window") await store.notifications.setMode("off");
       else if (owner === "a replacement Host") {
         hostPublicKey = "replacement-host-public-key";
         await initialized("off", undefined, store);
@@ -470,8 +470,8 @@ describe("device-local task alerts", () => {
           : oldRead.promise
         : undefined,
     );
-    const refresh = store.refreshTaskAlerts();
-    await store.setTaskNotificationGrouping("project");
+    const refresh = store.notifications.initialize();
+    await store.notifications.setGrouping("project");
     oldRead.resolve({ body: hostSettings() });
     await refresh;
     socket.emit({
@@ -545,7 +545,7 @@ describe("device-local task alerts", () => {
     expect(workerMessages).toEqual([]);
     expect(store.getState().attentionSessionIds).toEqual(["bg"]);
     await store.openSession("bg");
-    store.acknowledgeVisibleSession();
+    store.runtimeEvents.acknowledgeVisibleSession();
     expect(store.getState().attentionSessionIds).toEqual([]);
   });
 
@@ -575,7 +575,7 @@ describe("device-local task alerts", () => {
       return { body: activeSnapshot({ sessionId: id }) };
     }
     const store = new AppStore();
-    store.captureNotificationTarget();
+    store.notifications.captureTarget();
     click("bg");
     await initialized("desktop", open, store);
     await vi.waitFor(() =>
@@ -685,7 +685,7 @@ describe("device-local task alerts", () => {
       const { store, socket } = await initialized("off");
       const pending = deferred<NonNullable<typeof subscription>>();
       subscribe.mockReturnValueOnce(pending.promise);
-      const enabling = store.setCompletionAttention("desktop");
+      const enabling = store.notifications.setMode("desktop");
       await vi.waitFor(() => expect(subscribe).toHaveBeenCalledOnce());
 
       // Another window writes Off while this one waits on the push service.

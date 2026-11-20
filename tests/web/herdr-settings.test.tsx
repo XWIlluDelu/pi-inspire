@@ -21,7 +21,9 @@ vi.mock("../../src/store", () => ({
   useAppState: (selector: (state: unknown) => unknown) =>
     selector({ prefs: { herdrEnabled: fixture.saved } }),
   store: {
-    setPreference: (_field: string, value: boolean) => fixture.save(value),
+    preferences: {
+      set: (_field: string, value: boolean) => fixture.save(value),
+    },
   },
 }));
 const ready = {
