@@ -20,10 +20,8 @@ Commands in this guide use the globally installed `inspire` entry. From a source
 `npm run inspire -- <arguments>` (or `./inspire <arguments>` on Linux/macOS). With restricted
 Windows PowerShell, use the [batch shims from the README](../README.md#run-locally).
 
-Running the launcher again reopens the matching Host. `inspire status` checks that instance and
-prints a fresh local pairing link; it does not start a stopped Host. A direct launch stays attached
-to its terminal, so keep that terminal open, or use [Linux user services](#linux-user-services).
-Closing a browser page does not stop the Host.
+A direct launch stays attached to its terminal. Use [Linux user services](#linux-user-services)
+to keep it running after the terminal closes. Closing the browser leaves the Host running.
 
 Set overrides in the environment that launches the Host:
 
@@ -107,15 +105,14 @@ See [Chrome's manifest update process](https://web.dev/articles/manifest-updates
 | Command | Effect |
 | --- | --- |
 | `inspire` | Start or reopen the matching instance. |
-| `inspire status` | Check the managed Host and print a fresh local pairing link. |
+| `inspire status` | Check a running Host and print a fresh local pairing link. |
 | `inspire token` | Print the verified Host token for manual pairing; keep this output private. |
 | `inspire restart` | Prepare the next build and runtime, then restart the Host and its own Pi workers. Project terminals keep running. |
 | `inspire restart --terminals` | Restart the Linux Host and terminal services, closing project terminals. |
 | `inspire restart --all` | Close current-user Pi sessions, then restart the Linux Host and terminals. Include Herdr Pi when enhancement is active. |
 | `inspire stop` | Stop the Host and its installed terminal service. A direct-launch terminal daemon keeps running. |
 | `inspire terminal status` | Inspect the matching terminal daemon without creating one. |
-| `inspire terminal stop` | Stop that daemon; running terminals require `--force`. |
-| `inspire terminal restart` | Replace that daemon; saved tabs return as exited. Running terminals require `--force`. |
+| `inspire terminal stop` / `restart` | Stop or replace the daemon. See [terminal-service maintenance](#terminal-service-maintenance). |
 
 ## Task notifications
 
@@ -180,9 +177,8 @@ the restart command survives Pi shutdown. Connection services continue across re
 
 ### Terminal-service maintenance
 
-Use `inspire terminal status` in any terminal. From an external terminal, use
-`inspire terminal stop` or `inspire terminal restart`. Add `--force` to confirm closing live
-terminals. Saved tabs reopen as exited. The Host keeps running.
+Run `inspire terminal stop` or `inspire terminal restart` from an external terminal. Add
+`--force` to close live terminals. Saved tabs reopen as exited and the Host keeps running.
 
 Use the same `INSPIRE_HOST`, `INSPIRE_PORT`, `INSPIRE_TERMINAL_DAEMON_ADDRESS`,
 `INSPIRE_TERMINAL_TOKEN_PATH` and `INSPIRE_TERMINAL_STATE_PATH` overrides as the Host.
@@ -322,24 +318,19 @@ printed link expires after 30 seconds; Vite's `o` + Enter opens a fresh one.
 
 ## Build and install a package
 
-Inspire packages the browser client and compiled Host as a standalone npm CLI. The installed
-application uses an external Pi; the Pi development dependency is only for compatibility checks.
-
 ```bash
 npm ci
-npm run release:verify
 npm pack
 npm install --global ./inspire-pi-gui-0.7.0.tgz
 inspire
 ```
 
-Use the tarball name printed by `npm pack`. Build from a separate checkout if the source Host is
-in use. Packaging keeps only the current asset generation, so older open tabs may lose lazy-loaded
-assets. `release:verify` installs the tarball with production dependencies and exercises the CLI,
-an external Pi session and a project terminal that survives Host restart. CI runs this on Linux
-after a push to main.
-Run the same command on macOS or Windows to verify a package on that Host platform.
-[Platform evidence](https://github.com/XWIlluDelu/pi-inspire/blob/main/docdoki/notes/platform-compatibility.md#verified-native-baseline)
+Use the tarball name printed by `npm pack`. Package from a separate checkout if the source Host is
+running. Packaging keeps only the current assets, so older tabs can lose lazy-loaded assets.
+
+To verify a release on the target platform, run `npm run release:verify` separately. It builds a
+temporary tarball and tests the installed CLI, an external Pi session and terminal continuity
+across Host restart. The [platform baseline](https://github.com/XWIlluDelu/pi-inspire/blob/main/docdoki/notes/platform-compatibility.md#verified-native-baseline)
 records the checked versions.
 
 ## Updating Inspire

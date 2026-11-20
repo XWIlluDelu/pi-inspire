@@ -52,7 +52,7 @@ INSPIRE_SSH_REMOTE_PORT=14587
 # INSPIRE_SSH_IDENTITY_FILE=/absolute/path/to/private-key
 ```
 
-The parser accepts only these fields; it never executes the configuration as shell code. It never accepts a remote bind address and always issues the equivalent of:
+The module reads these settings as data and fixes the server-side listener to loopback:
 
 ```bash
 ssh -N -R 127.0.0.1:14587:127.0.0.1:4587 relay-user@relay-host
@@ -63,9 +63,7 @@ detect an interrupted connection. SSH uses its normal compression setting.
 
 ## Server-side minimum
 
-Keep the reverse listener on the server's loopback interface. Expose the HTTPS proxy to browsers.
-
-A minimal Caddy site is:
+Expose the reverse listener through HTTPS. A minimal Caddy site:
 
 ```caddyfile
 inspire.example.com {
@@ -92,7 +90,8 @@ inspire.example.com {
 }
 ```
 
-Configure the site without an access log that retains request URLs. Caddy sets `X-Forwarded-Proto` for proxied requests by default; any substitute must overwrite that header. INSΠRE trusts it only when the immediate connection is loopback-local.
+Avoid retaining request URLs in proxy logs. The proxy must preserve the public Host header and
+overwrite `X-Forwarded-Proto` with `https`. Inspire trusts that header on loopback connections.
 
 Use an SSH authorization policy that confines the key to the assigned `127.0.0.1:<remote-port>` reverse listener and disallows ordinary interactive use. Keep the reverse listener itself local to the server. Permit TCP 443 for HTTPS and, where the server firewall supports it, UDP 443 so Caddy can serve HTTP/3 on the phone-facing hop; `curl --http3-only -I https://inspire.example.com` can confirm that path when the installed curl build supports HTTP/3.
 
@@ -124,9 +123,7 @@ paste the token into the browser's **Pair** form. Use the local launcher's one-u
 local browser. The [pairing guide](host.md#browser-pairing) covers credentials, rotation and
 the authority a paired browser has over files and terminals.
 
-The proxy must preserve the public Host header and overwrite `X-Forwarded-Proto` with `https`.
-Project terminals use the same tunnel for their `/terminal` WebSocket and reconnect to existing
-PTYs after an interruption.
+Project terminals use the same tunnel and reconnect to existing PTYs after an interruption.
 
 ## Automatic recovery
 

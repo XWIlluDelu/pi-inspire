@@ -120,10 +120,9 @@ original terminal. Browser Stop there requests agent interruption.
 ## Pending input and stopping
 
 During model work, choose **Steer** to redirect the next turn or **Queue** to follow it. Select
-the activity bar's count to focus the Pending list. Copy returns full text. **Return all** places
-unconsumed Steer inputs, then Queue inputs, before the current draft. **Clear queue** asks for
-confirmation and leaves the draft and task intact. Return restores focus unless another control or
-dialog has taken it.
+the count above the Composer to focus Pending. **Copy** uses the full text, including any
+truncated previews. **Return all** puts unconsumed Steer inputs, then Queue inputs, before the
+draft. **Clear all** confirms before discarding queued input and leaves the draft and task intact.
 
 Stopping model work recovers unconsumed input, including identifiable original images submitted
 through Inspire. Undelivered files and project references also return. Pi-consumed images stay in
