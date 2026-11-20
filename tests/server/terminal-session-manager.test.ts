@@ -101,16 +101,21 @@ describe("TerminalSessionManager", () => {
       "relative/path\u001b]2;spoof";
     state.terminals.find(({ id }) => id === unavailable.id)!.profileId =
       "missing-shell";
-    state.orderByProject[0]!.terminalIds = [
-      unavailable.id,
-      terminal.id,
-      terminal.id,
+    // A prior v1 daemon persisted ordering separately, including stale IDs.
+    state.orderByProject = [
+      {
+        projectCwd: process.cwd(),
+        terminalIds: [unavailable.id, "removed-terminal", unavailable.id],
+      },
     ];
     await first.manager.close();
 
     const second = setup();
     try {
       await second.manager.restoreState(state);
+      expect(
+        second.manager.exportState().terminals.map(({ id }) => id),
+      ).toEqual([unavailable.id, terminal.id]);
       expect(second.spawns).toHaveLength(0);
       expect(second.manager.list(process.cwd())).toMatchObject({
         terminals: [

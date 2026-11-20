@@ -131,7 +131,6 @@ interface TerminalSessionMetadata {
   id: string;
   projectCwd: string;
   profile: ResolvedTerminalProfile;
-  titleSource: "automatic" | "user";
   customTitle: string;
   automaticTitle: string;
   currentCwd: string;
@@ -181,7 +180,8 @@ export interface TerminalPersistedState {
   version: 1;
   settings: TerminalServiceSettings;
   terminals: TerminalPersistedSession[];
-  orderByProject: Array<{ projectCwd: string; terminalIds: string[] }>;
+  /** Older v1 writers persisted tab order separately. */
+  orderByProject?: Array<{ projectCwd: string; terminalIds: string[] }>;
 }
 
 export interface TerminalHistoryBackend {
@@ -281,8 +281,6 @@ function asOutputBytes(data: string | Buffer): Buffer {
 function normalizeCwd(value: string): string {
   if (
     typeof value !== "string" ||
-    value.length < 1 ||
-    value.length > MAX_TERMINAL_CWD_CHARS ||
     cleanTerminalPath(value) !== value ||
     !isAbsolute(value)
   )
@@ -294,7 +292,6 @@ export class TerminalSessionManager implements TerminalService {
   private readonly operations = new TerminalOperationReceipts();
   private readonly sessions = new Map<string, ManagedTerminal>();
   private readonly lifecycleMutations = new Set<string>();
-  private readonly orderByProject = new Map<string, string[]>();
   private readonly profiles: ResolvedTerminalProfile[];
   private readonly ptyFactory: TerminalPtyFactory;
   private readonly env: NodeJS.ProcessEnv;
@@ -371,20 +368,27 @@ export class TerminalSessionManager implements TerminalService {
     ) as Promise<TerminalOperationResults[I["command"]]>;
   }
 
-  list(cwd?: string): TerminalCatalogResponse {
-    const projectCwd = cwd === undefined ? undefined : normalizeCwd(cwd);
-    const sessions = [...this.sessions.values()].filter(
-      (session) =>
-        projectCwd === undefined || session.projectCwd === projectCwd,
+  private projectSessions(cwd: string): ManagedTerminal[] {
+    return [...this.sessions.values()].filter(
+      (session) => session.projectCwd === cwd,
     );
-    const order = projectCwd ? (this.orderByProject.get(projectCwd) ?? []) : [];
-    sessions.sort((left, right) => {
-      if (projectCwd) return order.indexOf(left.id) - order.indexOf(right.id);
-      const cwdOrder = left.projectCwd.localeCompare(right.projectCwd);
-      if (cwdOrder !== 0) return cwdOrder;
-      const projectOrder = this.orderByProject.get(left.projectCwd) ?? [];
-      return projectOrder.indexOf(left.id) - projectOrder.indexOf(right.id);
-    });
+  }
+
+  private applyTabOrder(ids: readonly string[]): void {
+    for (const id of ids) {
+      const session = this.sessions.get(id)!;
+      this.sessions.delete(id);
+      this.sessions.set(id, session);
+    }
+  }
+
+  list(cwd?: string): TerminalCatalogResponse {
+    const sessions =
+      cwd === undefined
+        ? [...this.sessions.values()].sort((a, b) =>
+            a.projectCwd.localeCompare(b.projectCwd),
+          )
+        : this.projectSessions(normalizeCwd(cwd));
     return {
       catalogEpoch: this.catalogEpoch,
       revision: this.revision,
@@ -401,7 +405,7 @@ export class TerminalSessionManager implements TerminalService {
         id: session.id,
         projectCwd: session.projectCwd,
         profileId: session.profile.id,
-        titleSource: session.titleSource,
+        titleSource: session.customTitle ? "user" : "automatic",
         customTitle: session.customTitle,
         currentCwd: session.currentCwd,
         cols: session.cols,
@@ -409,12 +413,6 @@ export class TerminalSessionManager implements TerminalService {
         createdAt: session.createdAt,
         updatedAt: session.updatedAt,
       })),
-      orderByProject: [...this.orderByProject].map(
-        ([projectCwd, terminalIds]) => ({
-          projectCwd,
-          terminalIds: [...terminalIds],
-        }),
-      ),
     };
   }
 
@@ -455,10 +453,10 @@ export class TerminalSessionManager implements TerminalService {
         const projectCwd = normalizeCwd(candidate.projectCwd);
         const cwdInfo = await stat(projectCwd).catch(() => null);
         if (!cwdInfo?.isDirectory()) continue;
-        const projectCount = [...this.sessions.values()].filter(
-          (session) => session.projectCwd === projectCwd,
-        ).length;
-        if (projectCount >= MAX_TERMINALS_PER_PROJECT) continue;
+        if (
+          this.projectSessions(projectCwd).length >= MAX_TERMINALS_PER_PROJECT
+        )
+          continue;
         validateDimensions(candidate.cols, candidate.rows);
         const profile = this.profileForRestore(candidate.profileId);
         const createdAt =
@@ -471,9 +469,8 @@ export class TerminalSessionManager implements TerminalService {
           Number.isFinite(Date.parse(candidate.updatedAt))
             ? candidate.updatedAt
             : createdAt;
-        const titleSource =
-          candidate.titleSource === "user" ? "user" : "automatic";
         const customTitle =
+          candidate.titleSource === "user" &&
           typeof candidate.customTitle === "string"
             ? cleanTerminalText(candidate.customTitle, MAX_TERMINAL_TITLE_CHARS)
             : "";
@@ -492,7 +489,6 @@ export class TerminalSessionManager implements TerminalService {
           rows: candidate.rows,
           createdAt,
           updatedAt,
-          titleSource: customTitle ? titleSource : "automatic",
           customTitle,
           automaticTitle: profile.label,
           currentCwd:
@@ -507,36 +503,21 @@ export class TerminalSessionManager implements TerminalService {
         // Ignore stale or invalid records while preserving the remaining tabs.
       }
     }
-    const persistedOrder = new Map<string, string[]>();
     if (Array.isArray(state.orderByProject)) {
-      for (const entry of state.orderByProject) {
+      for (const group of state.orderByProject) {
         if (
-          entry &&
-          typeof entry.projectCwd === "string" &&
-          Array.isArray(entry.terminalIds)
+          typeof group?.projectCwd !== "string" ||
+          !Array.isArray(group.terminalIds)
         )
-          persistedOrder.set(
-            resolve(entry.projectCwd),
-            entry.terminalIds.filter(
-              (id): id is string => typeof id === "string",
-            ),
-          );
+          continue;
+        const remaining = new Set(
+          this.projectSessions(resolve(group.projectCwd)).map(({ id }) => id),
+        );
+        this.applyTabOrder([
+          ...group.terminalIds.filter((id) => remaining.delete(id)),
+          ...remaining,
+        ]);
       }
-    }
-    const projectCwds = new Set(
-      [...this.sessions.values()].map((session) => session.projectCwd),
-    );
-    for (const projectCwd of projectCwds) {
-      const validIds = [...this.sessions.values()]
-        .filter((session) => session.projectCwd === projectCwd)
-        .map((session) => session.id);
-      const preferred = [
-        ...new Set(persistedOrder.get(projectCwd) ?? []),
-      ].filter((id) => validIds.includes(id));
-      this.orderByProject.set(projectCwd, [
-        ...preferred,
-        ...validIds.filter((id) => !preferred.includes(id)),
-      ]);
     }
     if (this.sessions.size > 0) this.revision += 1;
   }
@@ -594,8 +575,7 @@ export class TerminalSessionManager implements TerminalService {
         "Terminal working directory does not exist",
       );
     this.requireOpen();
-    const projectSessions = this.orderByProject.get(projectCwd) ?? [];
-    if (projectSessions.length >= MAX_TERMINALS_PER_PROJECT)
+    if (this.projectSessions(projectCwd).length >= MAX_TERMINALS_PER_PROJECT)
       terminalError(
         "project_terminal_limit",
         409,
@@ -619,11 +599,9 @@ export class TerminalSessionManager implements TerminalService {
       cols,
       rows,
       createdAt: this.now().toISOString(),
-      titleSource: "automatic",
       customTitle: "",
     });
     this.sessions.set(id, session);
-    this.orderByProject.set(projectCwd, [...projectSessions, id]);
     this.touch(session);
     return this.describe(session);
   }
@@ -634,13 +612,11 @@ export class TerminalSessionManager implements TerminalService {
   ): Promise<TerminalDescriptor> {
     const session = this.requireStableSession(id);
     if (request.title === null || request.title.trim() === "") {
-      session.titleSource = "automatic";
       session.customTitle = "";
     } else {
       const title = cleanTerminalText(request.title, MAX_TERMINAL_TITLE_CHARS);
       if (!title)
         terminalError("invalid_title", 400, "Terminal title is invalid");
-      session.titleSource = "user";
       session.customTitle = title;
     }
     this.touch(session);
@@ -653,18 +629,19 @@ export class TerminalSessionManager implements TerminalService {
     terminalIds: string[],
   ): Promise<TerminalCatalogResponse> {
     const projectCwd = normalizeCwd(cwd);
-    const current = this.orderByProject.get(projectCwd) ?? [];
+    const current = new Set(
+      this.projectSessions(projectCwd).map(({ id }) => id),
+    );
     if (
-      terminalIds.length !== current.length ||
-      new Set(terminalIds).size !== terminalIds.length ||
-      terminalIds.some((id) => !current.includes(id))
+      terminalIds.length !== current.size ||
+      terminalIds.some((id) => !current.delete(id))
     )
       terminalError(
         "invalid_terminal_order",
         400,
         "Terminal order does not match this project",
       );
-    this.orderByProject.set(projectCwd, [...terminalIds]);
+    this.applyTabOrder(terminalIds);
     this.revision += 1;
     this.onChange();
     return this.list(projectCwd);
@@ -683,7 +660,6 @@ export class TerminalSessionManager implements TerminalService {
         cols: previous.cols,
         rows: previous.rows,
         createdAt: previous.createdAt,
-        titleSource: previous.titleSource,
         customTitle: previous.customTitle,
       });
       this.sessions.set(id, session);
@@ -698,10 +674,6 @@ export class TerminalSessionManager implements TerminalService {
       await this.stopPty(session, force);
       if (!this.closing) {
         this.sessions.delete(id);
-        const { projectCwd } = session;
-        const order = this.orderByProject.get(projectCwd)?.filter((tab) => tab !== id);
-        if (order?.length) this.orderByProject.set(projectCwd, order);
-        else this.orderByProject.delete(projectCwd);
         this.retireSession(session, 1000, "Terminal closed");
         await this.history?.remove(id);
         this.revision += 1;
@@ -943,7 +915,6 @@ export class TerminalSessionManager implements TerminalService {
       if (failure?.status === "rejected") throw failure.reason;
       await this.history?.flush();
       this.lifecycleMutations.clear();
-      this.orderByProject.clear();
     })().catch((error) => {
       // Keep failed PTYs tracked and allow a later explicit stop retry.
       this.closePromise = null;
@@ -1577,11 +1548,8 @@ export class TerminalSessionManager implements TerminalService {
       catalogRevision: this.revision,
       id: session.id,
       projectCwd: session.projectCwd,
-      title:
-        session.titleSource === "user"
-          ? session.customTitle
-          : session.automaticTitle,
-      titleSource: session.titleSource,
+      title: session.customTitle || session.automaticTitle,
+      titleSource: session.customTitle ? "user" : "automatic",
       profileId: session.profile.id,
       shellLabel: session.profile.label,
       currentCwd: session.currentCwd,
