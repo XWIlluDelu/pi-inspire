@@ -8,15 +8,28 @@
   gap: var(--space-2);
 }
 
+.activity:has(> .activity__pending:only-child) {
+  /* Keep the composer's left alignment without taking a row from Transcript. */
+  position: relative;
+  margin-bottom: 0;
+}
+
 .activity__pending {
-  border-color: transparent;
-  background: transparent;
+  border-color: var(--hairline);
+  border-radius: var(--radius-pill);
+  background: var(--bg-raised);
   color: var(--muted);
   line-height: inherit;
 }
 
-.activity__pending:hover,
-.activity__pending:focus-visible {
+.activity__pending:only-child {
+  position: absolute;
+  z-index: 1;
+  inset-block-end: var(--space-2);
+  inset-inline-start: 0;
+}
+
+.activity__pending:is(:hover, :focus-visible) {
   background: var(--bg-inset);
   color: var(--ink);
 }

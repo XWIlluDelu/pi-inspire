@@ -325,11 +325,11 @@ queues use quiet group labels without group counts or per-row S/Q badges. Bounde
 omitted entries keep a generic header and visible group labels, because they cannot establish the
 whole queue's mode.
 
-The activity surface's compact count is a native Jump to Pending button with neutral interaction
-feedback; it disappears when the queue is empty. Pointer and keyboard activation align the queue's
-start below floating reading controls, scroll only Transcript and focus the Pending region, not the
-editor. Latest-follow stays active only when the destination is at the latest boundary. The region
-adds no ordinary Tab stop.
+The Pending count is a neutral Jump to Pending pill above the Composer's left edge. It floats
+without reducing Transcript height when shown alone and sits inline with retry or compaction
+status when present. It disappears when the queue is empty. Activation scrolls only Transcript,
+aligns the queue's start below the floating reading controls, and focuses the Pending region.
+Latest-follow stays active only at the latest boundary. The region adds no ordinary Tab stop.
 
 Text previews keep up to three leading lines and one trailing line within 512 characters, separated
 by an explicit middle ellipsis. Short text stays whole; omitted rows keep total and omitted counts.

@@ -382,8 +382,8 @@ const ConversationStage = memo(function ConversationStage({
   );
   const composer = (
     <div className="composer-dock">
-      <CommandActivity />
       <ActivityBar onJumpToPending={jumpToPending} />
+      <CommandActivity />
       <ExtensionDisplayDock
         displays={state.extensionDisplays}
         placement="aboveEditor"

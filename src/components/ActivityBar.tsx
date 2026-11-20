@@ -80,7 +80,7 @@ export const ActivityBar = memo(function ActivityBar({
       {pending > 0 ? (
         <button
           type="button"
-          className="chip chip--info activity__pending"
+          className="chip activity__pending"
           onClick={onJumpToPending}
           aria-label={`Jump to ${pending} pending ${pending === 1 ? "item" : "items"}`}
           title="Jump to Pending input"

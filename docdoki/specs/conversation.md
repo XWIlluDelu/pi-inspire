@@ -340,12 +340,10 @@ history keep one result per native execution. [[pi-integration]] owns execution 
   gestures are idempotent; [[pi-integration]] owns Host request/worker validation, deadlines,
   reconnect retention and cleanup. Model settlement does not dismiss an independent command's dialog.
 
-- Pending sits at the end of Transcript; the composer-adjacent activity surface provides a compact
-  count and Jump to Pending action. That surface keeps the Composer's full measure and left alignment
-  for Pending, retry and compaction states, including in short windows. Retry/compaction feedback
-  belongs to the activity surface; running and failed tools stay in their chronological cards.
-  [[composer]] owns navigation, previews, copying, recovery and discard; [[design-system]] owns
-  visual emphasis. Pending is a projection of Pi/Host-owned input, not a browser-owned queue.
+- Pending sits at the end of Transcript, with a compact jump button near the Composer.
+  The activity surface above the Composer owns retry and compaction feedback. Running and failed
+  tools stay in their chronological cards. [[composer]] owns Pending presentation and actions.
+  Pending is a projection of Pi/Host-owned input, not a browser-owned queue.
 
 - Running, retrying, compacting, queued, user-stopped, failed, and settled states remain
   distinguishable; a user-initiated abort is presented as `Stopped`, not as a failed run.
