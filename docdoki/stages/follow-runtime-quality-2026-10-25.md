@@ -6,6 +6,7 @@ scope:
   - tests/**
   - scripts/**
   - docs/**
+specs: [host-lifecycle, pi-integration, session-transport]
 ---
 
 # Runtime quality and device acceptance

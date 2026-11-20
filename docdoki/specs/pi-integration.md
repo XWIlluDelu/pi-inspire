@@ -17,6 +17,7 @@ covers:
   - tests/browser/extension-ui.spec.ts
   - tests/web/extension-ui-ownership.test.tsx
   - tests/web/{store*,events}.test.ts
+area: "Pi & Hosting"
 ---
 
 # Pi integration

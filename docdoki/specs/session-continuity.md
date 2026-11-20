@@ -77,6 +77,7 @@ covers:
   - tests/web/connection-controller.test.ts
   - tests/web/events.test.ts
   - tests/browser/model-workflow.spec.ts
+area: "Sessions"
 ---
 
 # Session continuity

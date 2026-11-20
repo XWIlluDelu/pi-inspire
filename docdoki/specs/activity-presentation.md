@@ -14,6 +14,7 @@ covers:
   - tests/web/activity-visibility.test.tsx
   - tests/web/events.test.ts
   - tests/server/runtime-transcript.test.ts
+area: "Conversation & Content"
 ---
 
 # Activity disclosure

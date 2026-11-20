@@ -25,6 +25,7 @@ covers:
   - tests/web/thinking-presentations.test.tsx
   - tests/web/tool-presentations.test.ts
   - tests/web/custom-message-presentations.test.ts
+area: "Conversation & Content"
 ---
 
 # Configurable presentations

@@ -18,6 +18,7 @@ covers:
   - tests/web/{branch-controller,branch-store}.test.ts*
   - tests/browser/history.spec.ts
   - src/styles/{history,transcript}.css
+area: "Sessions"
 ---
 
 # History, branches and independent copies

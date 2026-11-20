@@ -13,6 +13,7 @@ covers:
   - tests/server/configuration-file.test.ts
   - tests/web/configuration-document.test.tsx
   - tests/browser/*mcp*.ts
+area: "Input & Models"
 ---
 
 # MCP management

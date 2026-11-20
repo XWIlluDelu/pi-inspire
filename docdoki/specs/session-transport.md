@@ -15,6 +15,7 @@ covers:
   - tests/server/{app-events,app-input-operations,runtime-worker-pool}.test.ts
   - tests/integration/session-detail-join.test.ts
   - tests/web/{events,store,store-navigation,store-async-ownership}.test.ts
+area: "Sessions"
 ---
 
 # Session transport and browser ownership

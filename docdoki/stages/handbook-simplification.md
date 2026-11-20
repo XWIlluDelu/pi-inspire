@@ -7,6 +7,7 @@ scope:
   - scripts/**
   - tests/**
   - inspire.mjs
+specs: [workbench, session-transport]
 ---
 
 # Internal simplification

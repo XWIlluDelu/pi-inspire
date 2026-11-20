@@ -7,6 +7,7 @@ scope:
   - server/task-notifications.ts
   - public/service-worker.js
   - docs/host.md
+specs: [notifications]
 ---
 
 # Task-alert device acceptance

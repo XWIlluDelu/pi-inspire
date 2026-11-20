@@ -20,6 +20,7 @@ covers:
   - tests/web/table-preview.test.tsx
   - tests/server/html-preview.test.ts
   - tests/browser/{context-tabs,filesystem-files,document-images,pdf-preview,html-preview,resource-reading}.spec.ts
+area: "Tools & Remote"
 ---
 
 # Resource preview

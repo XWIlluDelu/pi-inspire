@@ -16,6 +16,7 @@ covers:
   - tests/web/{composer*,session-drafts,native-commands,readonly-session,content-copy,welcome*,directory-picker,model-selector,model-store}.test.ts*
   - tests/web/{image-preview,attachments}.test.tsx
   - tests/browser/{composer,file-attachments,usage-facts,model-selection,model-workflow,project-directory,project-file-picker,pending-input,image-interactions}.spec.ts
+area: "Input & Models"
 ---
 
 # Conversation composer

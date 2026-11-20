@@ -9,6 +9,7 @@ covers:
   - server/instance-state.*
   - tests/connections/**
   - tests/server/{app-auth,instance-state}.test.ts
+area: "Tools & Remote"
 ---
 
 # Connection modules

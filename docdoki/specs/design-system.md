@@ -30,6 +30,7 @@ covers:
   - tests/browser/{shell-layout,settings-layout,palette-preferences}.spec.ts
   - tests/browser/support/colors.ts
   - tests/browser/loading-states.spec.ts
+area: "Visual & Preferences"
 ---
 
 # Design system

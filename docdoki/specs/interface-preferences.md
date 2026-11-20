@@ -10,6 +10,7 @@ covers:
   - tests/server/{preferences,update-checker,update-coordinator}.test.ts
   - tests/web/{preferences,session-actions,settings-navigation,system-versions,notices,update-controller,attention,modal-focus}.test.ts*
   - tests/browser/{settings-layout,loading-states}.spec.ts
+area: "Visual & Preferences"
 ---
 
 # Interface preferences and task alerts

@@ -20,19 +20,13 @@ locally and are not tracked.
 
 | Area | Contracts |
 | --- | --- |
-| Workbench and layout | [workbench](specs/workbench.md), [workspace-layout](specs/workspace-layout.md) |
-| Visual system and preferences | [visual-language](specs/visual-language.md), [design-system](specs/design-system.md), [interface-preferences](specs/interface-preferences.md) |
-| Conversation and activity | [conversation](specs/conversation.md), [activity-presentation](specs/activity-presentation.md) |
-| Task notifications | [notifications](specs/notifications.md) |
-| Rich content and custom presentations | [rich-rendering](specs/rich-rendering.md), [tool-presentations](specs/tool-presentations.md) |
-| Input, models and MCP | [composer](specs/composer.md), [model-settings](specs/model-settings.md), [mcp](specs/mcp.md) |
-| Session discovery and persistence | [session-continuity](specs/session-continuity.md), [session-persistence](specs/session-persistence.md) |
-| Transport and prompt observations | [session-transport](specs/session-transport.md) |
-| History, Fork/Clone and exports | [session-branches](specs/session-branches.md) |
-| Session deletion | [session-deletion](specs/session-deletion.md) |
-| Pi integration and hosting | [pi-integration](specs/pi-integration.md), [host-lifecycle](specs/host-lifecycle.md), [herdr-enhancement](specs/herdr-enhancement.md) |
-| Terminals, Files and Changes | [terminal](specs/terminal.md), [resource-preview](specs/resource-preview.md) |
-| Remote connections | [connection-modules](specs/connection-modules.md) |
+| Workbench & Layout | [workbench](specs/workbench.md), [workspace-layout](specs/workspace-layout.md) |
+| Visual & Preferences | [visual-language](specs/visual-language.md), [design-system](specs/design-system.md), [interface-preferences](specs/interface-preferences.md) |
+| Conversation & Content | [conversation](specs/conversation.md), [activity-presentation](specs/activity-presentation.md), [rich-rendering](specs/rich-rendering.md), [tool-presentations](specs/tool-presentations.md), [notifications](specs/notifications.md) |
+| Input & Models | [composer](specs/composer.md), [model-settings](specs/model-settings.md), [mcp](specs/mcp.md) |
+| Sessions | [session-continuity](specs/session-continuity.md), [session-persistence](specs/session-persistence.md), [session-transport](specs/session-transport.md), [session-branches](specs/session-branches.md), [session-deletion](specs/session-deletion.md) |
+| Pi & Hosting | [pi-integration](specs/pi-integration.md), [host-lifecycle](specs/host-lifecycle.md), [herdr-enhancement](specs/herdr-enhancement.md) |
+| Tools & Remote | [terminal](specs/terminal.md), [resource-preview](specs/resource-preview.md), [connection-modules](specs/connection-modules.md) |
 
 ## Work state
 
@@ -44,8 +38,11 @@ locally and are not tracked.
 | Device acceptance open | [Task-alert device acceptance](stages/follow-notifications-2026-10-22.md) tracks Android background delivery and iOS Home Screen notifications. |
 | Release history | [Changelog](../CHANGELOG.md) and [verified platform baseline](notes/platform-compatibility.md#verified-native-baseline). |
 | Blocked on Pi | [Pi capability gaps](stages/pi-capability-gaps.md) lists the GUI requirements and the public interfaces each needs. |
-| Deferred | Holistic Files layout work: [file-browsing](stages/file-browsing.md); the current layout remains the implemented contract. |
-| Undecided | Additional History, usage, configuration and palette enhancements in [pi-capability-gaps](stages/pi-capability-gaps.md). Source-level extension UI reuse follows [northstar](northstar.md); further framework-level expansion has no decided requirement. |
+
+## Open decisions
+
+- The [wide-pane Files search placement](stages/file-browsing.md#deferred-design-questions) is deferred until the responsive Files layout is reviewed as a whole.
+- [Inspire interaction proposals](stages/follow-workbench-interactions-2026-10-24.md#undecided-interaction-proposals) and [Pi-related proposals](stages/pi-capability-gaps.md#open-proposals) await a scope decision.
 
 ## Engineering notes
 

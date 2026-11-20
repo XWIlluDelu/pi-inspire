@@ -18,6 +18,7 @@ covers:
   - tests/browser/{rich-text-delimiters,filesystem-files,custom-message,rich-text-layout}.spec.ts
   - tests/fixtures/rich-text-benchmark.tsx
   - scripts/benchmark-rich-text.mjs
+area: "Conversation & Content"
 ---
 
 # Rich rendering

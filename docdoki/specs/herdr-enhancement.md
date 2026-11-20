@@ -15,6 +15,7 @@ covers:
   - tests/server/herdr-*.test.ts
   - tests/server/pi-rpc*.test.ts
   - tests/server/runtime-{worker-pool,worker-lifecycle,session-deletion}.test.ts
+area: "Pi & Hosting"
 ---
 
 # Herdr enhancement

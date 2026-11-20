@@ -6,6 +6,7 @@ scope:
   - src/styles/*.css
   - tests/web/workspace-controller.test.ts
   - tests/browser/filesystem-files.spec.ts
+specs: [resource-preview, workspace-layout]
 ---
 
 # File browsing experience

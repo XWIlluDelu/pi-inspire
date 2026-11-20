@@ -7,6 +7,7 @@ scope:
   - docdoki/specs/resource-preview.md
   - docdoki/specs/workspace-layout.md
   - docdoki/specs/composer.md
+specs: [workbench, workspace-layout, composer, conversation]
 ---
 
 # Workbench interactions

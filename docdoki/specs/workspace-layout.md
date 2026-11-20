@@ -14,6 +14,7 @@ covers:
   - src/styles/*.css
   - tests/web/{workspace-controller,pane-resize,modal-focus}.test.ts*
   - tests/browser/{composer,session-actions}.spec.ts
+area: "Workbench & Layout"
 ---
 
 # Workspace layout and contextual panes

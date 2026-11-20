@@ -102,6 +102,7 @@ covers:
   - tests/web/nav-render.test.tsx
   - tests/web/workspace-controller.test.ts
   - tests/web/pane-resize.test.tsx
+area: "Workbench & Layout"
 ---
 
 # Workbench shell

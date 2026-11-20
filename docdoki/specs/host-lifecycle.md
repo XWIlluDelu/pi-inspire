@@ -46,6 +46,7 @@ covers:
   - tests/server/terminal-daemon-launcher.test.ts
   - tests/portable/**
   - tests/server/{app,app-auth,pi-installation,pi-rpc,current-web-build}.test.ts
+area: "Pi & Hosting"
 ---
 
 # Host lifecycle, pairing, and distribution

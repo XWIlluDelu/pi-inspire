@@ -6,6 +6,7 @@ scope:
   - server/**
   - shared/**
   - tests/**
+specs: [composer, mcp, model-settings, pi-integration]
 ---
 
 # Pi capability gaps

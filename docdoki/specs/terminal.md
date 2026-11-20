@@ -21,6 +21,7 @@ covers:
   - tests/deploy/systemd-control.test.mjs
   - tests/launcher.test.ts
   - vite.config.ts
+area: "Tools & Remote"
 ---
 
 # Project terminal

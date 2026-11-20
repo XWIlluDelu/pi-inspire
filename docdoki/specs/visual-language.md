@@ -5,6 +5,7 @@ covers:
   - src/**/*.tsx
   - src/styles.css
   - tests/browser/shell-layout.spec.ts
+area: "Visual & Preferences"
 ---
 
 # Visual language

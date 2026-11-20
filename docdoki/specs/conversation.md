@@ -57,6 +57,7 @@ covers:
   - tests/web/live-transcript-search.test.tsx
   - tests/web/transcript-viewport.test.tsx
   - tests/server/runtime-transcript.test.ts
+area: "Conversation & Content"
 ---
 
 # Conversation experience

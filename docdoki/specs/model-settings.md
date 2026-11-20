@@ -14,6 +14,7 @@ covers:
   - tests/web/{configuration-document,model-store,model-selector,modal-focus,provider-authentication,welcome-model-transition}.test.ts*
   - tests/browser/{model-selection,model-settings*,model-workflow,provider-authentication}.spec.ts
 progress: in-progress
+area: "Input & Models"
 ---
 
 # Model settings and authentication

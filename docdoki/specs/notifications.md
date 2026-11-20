@@ -14,6 +14,7 @@ covers:
   - tests/web/{attention,preferences,service-worker}.test.ts
 after: [session-transport,conversation]
 progress: in-progress
+area: "Conversation & Content"
 ---
 
 # Task notifications

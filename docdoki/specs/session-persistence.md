@@ -13,6 +13,7 @@ covers:
   - tests/server/session-projection*.test.ts
   - scripts/benchmark-projection-reads.mjs
   - tests/server/pi-{rpc,startup.integration}.test.ts
+area: "Sessions"
 ---
 
 # Session persistence and worker ownership
