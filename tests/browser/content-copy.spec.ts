@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { openEventSession } from "./support/host-events";
-import { openFixtureSession, pairedPage } from "./support/navigation";
+import { openResourceFixture, openWorkspaceFile } from "./support/navigation";
 
 declare global {
   interface Window {
@@ -21,27 +21,8 @@ test.describe("touch file copy", () => {
     context,
   }) => {
     await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-    await pairedPage(page);
-    await openFixtureSession(
-      page,
-      /Resource virtualization and sandbox fixture/,
-    );
-    const resources = page.getByRole("button", {
-      name: "Toggle resources panel",
-      exact: true,
-    });
-    if ((await resources.getAttribute("aria-expanded")) === "false")
-      await resources.click();
-    const pane = page.locator(".ctx");
-    const open = async (name: string) => {
-      await pane.getByRole("tab", { name: "Files", exact: true }).click();
-      await pane
-        .getByRole("region", { name: "Workspace file tree" })
-        .getByRole("button", { name, exact: true })
-        .click();
-    };
-
-    await open("README.md");
+    const pane = await openResourceFixture(page);
+    await openWorkspaceFile(pane, "README.md");
     await pane.getByRole("button", { name: /Copy path .*README\.md/ }).click();
     await expect(
       pane.getByRole("button", { name: "Path copied" }),
@@ -49,7 +30,6 @@ test.describe("touch file copy", () => {
     expect(await page.evaluate(() => navigator.clipboard.readText())).toMatch(
       /README\.md$/,
     );
-
   });
 });
 
