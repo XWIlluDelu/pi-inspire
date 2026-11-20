@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The thinking shortcut uses the live Pi worker's native cycle order.
 - **Restart all** closes current-user Pi sessions before restarting Inspire and project terminals.
   Herdr Pi are included when enhancement is active and preserved otherwise.
 - `inspire restart --all` uses the same scope. The previous terminal-service-only scope is now

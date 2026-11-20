@@ -83,8 +83,9 @@ keeps the rest searchable. Changing defaults leaves the open session's selection
 **Next model**, **Previous model** and **Cycle thinking level** appear in palette search and
 `/hotkeys`. Their shortcuts are Ctrl+⌘+M/P/R on macOS and Alt+Shift+M/P/R elsewhere.
 Next model uses the owned worker's cycle order and effort defaults. Pi RPC currently lacks previous
-model cycling. Cycle shortcuts work from a message draft and respect open completions, dialogs,
-other editors and composition input.
+model cycling. For owned workers, Pi also performs the thinking cycle. An attached Pi uses the
+thinking setter for the same gesture. Cycle shortcuts work
+from a message draft and respect open completions, dialogs, other editors and composition input.
 
 Provider and model forms edit Pi's `models.json`, follow existing symlinks and preserve fields
 outside the form. Invalid files and concurrent edits are reported before saving. Removing a

@@ -91,8 +91,9 @@ Router in the existing model list. A physical response does not replace the sele
 Live selection comes from the owning Pi, including after branch navigation. A taken-over Pi
 supplies its own available catalog and selection through attach-control. Model and
 thinking setters return actual state, including native adjustment and extension changes, without a
-second setter overriding that decision or changing saved defaults. Native model cycling stays in the
-original terminal; explicit selection and supported thinking-cycle gestures use the GUI controls.
+second setter overriding that decision or changing saved defaults. The picker uses Pi's model
+metadata. Owned workers perform the thinking cycle through Pi RPC. An attached Pi uses its public
+thinking setter for the GUI cycle. Model cycling for attached Pi stays in the original terminal.
 Controls require advertised support, not merely an external owner or idle status. Unsupported controls
 cannot disable the separate configuration/credential surfaces. For inactive sessions,
 selection follows the viewed branch and Pi's recovery rules with current registration metadata.

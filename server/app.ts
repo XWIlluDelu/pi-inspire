@@ -1037,6 +1037,9 @@ export function createInspireServer(deps: AppDependencies): {
   jsonRoute(app, routes.setThinkingLevel, ({ body }) =>
     deps.runtime.setThinkingLevel(body.sessionId, body.level),
   );
+  jsonRoute(app, routes.cycleThinkingLevel, ({ body }) =>
+    deps.runtime.cycleThinkingLevel(body.sessionId),
+  );
   jsonRoute(
     app,
     routes.setRuntimeSetting,

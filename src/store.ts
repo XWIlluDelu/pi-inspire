@@ -2379,6 +2379,17 @@ export class AppStore {
   cycleThinking = (): Promise<void> =>
     this.queueModelCycle(async () => {
       if (!this.state.model || this.state.readOnlyReason) return;
+      if (!this.visibleSessionIsExternal()) {
+        await this.reportSelectionChange(() =>
+          this.changeNativeSetting(
+            "thinking",
+            "Failed to cycle thinking level",
+            (api, sessionId) =>
+              api.json("cycleThinkingLevel", { body: { sessionId } }),
+          ),
+        );
+        return;
+      }
       const levels = supportedThinkingLevels(
         resolveModelMetadata(this.state.model, this.state.availableModels),
       );

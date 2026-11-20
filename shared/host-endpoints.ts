@@ -541,6 +541,9 @@ export const hostEndpoints = {
   setThinkingLevel: modelSelection("post", "/api/control/thinking", {
     body: thinkingSchema,
   }),
+  cycleThinkingLevel: modelSelection("post", "/api/control/thinking-cycle", {
+    body: z.strictObject({ sessionId: sessionIdField }),
+  }),
   setRuntimeSetting: ok("post", "/api/control/runtime-setting", {
     body: z.strictObject({
       sessionId: sessionIdField,

@@ -4676,6 +4676,15 @@ export class RuntimeController extends EventEmitter {
     );
   }
 
+  cycleThinkingLevel(sessionId: string): Promise<ModelSelectionResponse> {
+    return this.mutateNativeSelection(
+      sessionId,
+      { type: "cycle_thinking_level" },
+      "the thinking-level cycle",
+      (rpc) => this.readModelSelection(rpc),
+    );
+  }
+
   setRuntimeSetting(sessionId: string, setting: RuntimeSetting): Promise<void> {
     const { key, value } = setting;
     const command =
