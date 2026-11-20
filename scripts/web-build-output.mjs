@@ -58,11 +58,21 @@ async function regularFiles(root, relativePath = "") {
     if (entry.isDirectory()) files.push(...(await regularFiles(root, child)));
     else if (entry.isFile()) files.push(child);
   }
-  return files.sort();
+  return files;
+}
+
+async function publishAtomically(destination, write) {
+  await mkdir(dirname(destination), { recursive: true });
+  const temporary = `${destination}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await write(temporary);
+    await rename(temporary, destination);
+  } finally {
+    await rm(temporary, { force: true }).catch(() => undefined);
+  }
 }
 
 async function publishFile(source, destination, skipMatchingContent = false) {
-  await mkdir(dirname(destination), { recursive: true });
   if (skipMatchingContent) {
     const [sourceInfo, destinationInfo] = await Promise.all([
       stat(source),
@@ -76,23 +86,9 @@ async function publishFile(source, destination, skipMatchingContent = false) {
       if (sourceContent.equals(destinationContent)) return;
     }
   }
-  const temporary = `${destination}.${process.pid}.${randomUUID()}.tmp`;
-  try {
-    await copyFile(source, temporary);
-    await rename(temporary, destination);
-  } finally {
-    await rm(temporary, { force: true }).catch(() => undefined);
-  }
-}
-
-async function publishManifest(path, value) {
-  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
-  try {
-    await writeFile(temporary, `${JSON.stringify(value)}\n`);
-    await rename(temporary, path);
-  } finally {
-    await rm(temporary, { force: true }).catch(() => undefined);
-  }
+  await publishAtomically(destination, (temporary) =>
+    copyFile(source, temporary),
+  );
 }
 
 /** Publish assets before switching the index and keep recent lazy chunks available. */
@@ -102,7 +98,13 @@ export async function publishWebBuild(
   { retainPrevious = true } = {},
 ) {
   const stagingRoot = join(stagingDirectory, "assets");
-  const stagedAssets = await regularFiles(stagingRoot);
+  const assetPrefix = `assets${sep}`;
+  const stagedFiles = await regularFiles(stagingDirectory);
+  const stagedAssets = stagedFiles
+    .filter((path) => path.startsWith(assetPrefix))
+    .map((path) => path.slice(assetPrefix.length));
+  if (!stagedAssets.length || !stagedFiles.includes("index.html"))
+    throw new Error("The client build must produce an index and assets");
   const encodedAssets = await precompressAssets(stagingRoot, stagedAssets);
   const stagingAssets = [
     ...new Set([...stagedAssets, ...encodedAssets]),
@@ -116,14 +118,11 @@ export async function publishWebBuild(
     );
   }
 
-  const stagedFiles = await regularFiles(stagingDirectory);
   for (const relativePath of stagedFiles) {
     if (
       relativePath === "index.html" ||
       relativePath === CURRENT_WEB_ASSETS_MANIFEST ||
-      relativePath.startsWith(
-        `assets${process.platform === "win32" ? "\\" : "/"}`,
-      )
+      relativePath.startsWith(assetPrefix)
     )
       continue;
     await publishFile(
@@ -143,10 +142,10 @@ export async function publishWebBuild(
       if (generations.length === WEB_ASSET_GENERATIONS) break;
     }
   }
-  await publishManifest(join(distDirectory, CURRENT_WEB_ASSETS_MANIFEST), {
-    version: 3,
-    generations,
-  });
+  await publishAtomically(
+    join(distDirectory, CURRENT_WEB_ASSETS_MANIFEST),
+    (temporary) => writeFile(temporary, `${JSON.stringify({ version: 3, generations })}\n`),
+  );
   await publishFile(
     join(stagingDirectory, "index.html"),
     join(distDirectory, "index.html"),
