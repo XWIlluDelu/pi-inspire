@@ -269,6 +269,46 @@ body.pane-resizing .nav {
   font-variant-numeric: tabular-nums;
 }
 
+/* Desktop keeps the quiet icon strip; a full-screen phone pane has room to
+   name its views, and its actions sit apart from those views. */
+.ctx__mode-label { display: none; }
+
+@media (max-width: 600px) {
+  .ctx[aria-modal="true"] .ctx__tools:has(.ctx__mode) {
+    flex: 1;
+    min-width: 0;
+    margin-inline-start: 0;
+    padding-inline-start: var(--space-1);
+  }
+
+  .ctx[aria-modal="true"] .ctx__mode {
+    width: auto;
+    min-width: var(--pane-tool-size);
+    flex: 0 1 auto;
+    gap: var(--space-1);
+    padding-inline: var(--space-1);
+  }
+
+  .ctx[aria-modal="true"] .ctx__mode > svg { display: none; }
+
+  .ctx[aria-modal="true"] .ctx__mode-label {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    font: 500 var(--text-sm) / 1 var(--font-sans);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .ctx[aria-modal="true"] .ctx__mode-count {
+    font-size: var(--text-xs);
+  }
+
+  .ctx[aria-modal="true"] .ctx__tool-gap {
+    margin-inline-start: auto;
+  }
+}
+
 .ctx__content,
 .workspace-dock,
 .terminal-pane {

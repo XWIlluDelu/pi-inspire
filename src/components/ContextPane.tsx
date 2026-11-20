@@ -26,6 +26,11 @@ import { PiLoader } from "./PiLoader";
 import { WorkspaceDock } from "./WorkspaceDock";
 
 const NO_RECENT_FILES: ResourceRow[] = [];
+const CONTEXT_MODES = [
+  { mode: "files", label: "Files", Icon: Folder },
+  { mode: "changes", label: "Changes", Icon: GitCompareArrows },
+  { mode: "history", label: "History", Icon: History },
+] as const;
 
 export const ContextPane = memo(function ContextPane({
   isModal = false,
@@ -270,9 +275,7 @@ export const ContextPane = memo(function ContextPane({
   });
   const tools = (
     <div className="ctx__tools">
-      {(["files", "changes", "history"] as const).map((mode) => {
-        const label = { files: "Files", changes: "Changes", history: "History" }[mode];
-        const Icon = { files: Folder, changes: GitCompareArrows, history: History }[mode];
+      {CONTEXT_MODES.map(({ mode, label, Icon }) => {
         const selected =
           state.contextMode === mode && (mode !== "files" || !activeFile);
         const changesCount =
@@ -299,6 +302,9 @@ export const ContextPane = memo(function ContextPane({
             }}
           >
             <Icon size={16} aria-hidden />
+            <span className="ctx__mode-label" aria-hidden="true">
+              {label}
+            </span>
             {changesCount > 0 ? (
               <span className="ctx__mode-count" aria-hidden="true">
                 {changesCount > 99 ? "99+" : changesCount}
@@ -309,7 +315,7 @@ export const ContextPane = memo(function ContextPane({
       })}
       <button
         type="button"
-        className="icon-button"
+        className="icon-button ctx__tool-gap"
         aria-label="New terminal"
         title="New terminal"
         disabled={!state.cwd}

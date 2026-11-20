@@ -351,11 +351,11 @@ precede folders and keep the shared text axis. Narrow/coarse-pointer
 New/Search rows are 36px high with 14px labels; icon-only rail/close actions retain 44px targets.
 WebKit uses 16px editing text to avoid focus zoom, retaining compact resting labels.
 
-The contextual header uses the compact pane toolbar with an adjacent row of Files, Changes,
-New terminal, Refresh and drawer Close actions. File and terminal tabs share a scrollable strip
-with a searchable Open tabs list. A compact pane gives the strip its own row when tabs are present.
-Selected tabs and tool modes use the same accent tint and keep inset keyboard focus. The Changes
-tab shows up to `99+` next to its icon and gives the exact total in its title.
+The contextual header puts Files, Changes and History beside New terminal, Refresh and drawer
+Close. The phone drawer labels its modes with text. Changes shows up to `99+` beside its icon
+or label and gives the exact total in its title. File and terminal tabs share a scrollable strip
+with searchable Open tabs and get their own row in a compact pane. Selected tabs and modes
+share an accent tint and inset keyboard focus.
 
 Session, conversation and workspace search use muted icons/placeholders and ink-colored input,
 stronger hover icons and accent focus borders. Session search rests on an inset control surface with
