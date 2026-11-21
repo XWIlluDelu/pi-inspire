@@ -1,4 +1,5 @@
 import {
+  canStartHostRestart,
   type HostRestartRequest,
   type HostRestartScope,
   type HostRestartStatus,
@@ -101,18 +102,12 @@ export class HostRestartClient {
         this.persist(null, { notice: "Host reconnected." });
       } else if (pending && matchesRestartIntent(status.operation, pending)) {
         this.checked = pending.operationId;
-        if (
-          status.operation?.phase === "rejected" ||
-          status.operation?.phase === "unknown"
-        )
-          this.persist(null);
+        if (status.operation?.phase === "rejected") this.persist(null);
       } else if (
         pending &&
         !this.state.sending &&
         this.checked !== pending.operationId &&
-        (!status.operation ||
-          status.operation.phase === "rejected" ||
-          status.operation.phase === "unknown")
+        canStartHostRestart(status.operation)
       ) {
         this.checked = pending.operationId;
         void this.retry();
@@ -133,9 +128,7 @@ export class HostRestartClient {
     if (
       this.state.pending ||
       !this.state.status ||
-      (this.state.status.operation &&
-        this.state.status.operation.phase !== "rejected" &&
-        this.state.status.operation.phase !== "unknown") ||
+      !canStartHostRestart(this.state.status.operation) ||
       (scope === "all-pi" && !interruptWork) ||
       !(scope === "all-pi"
         ? this.state.status.allPiAvailable
@@ -158,7 +151,8 @@ export class HostRestartClient {
     if (
       !pending ||
       this.state.sending ||
-      this.state.status?.hostId !== pending.hostId
+      this.state.status?.hostId !== pending.hostId ||
+      !canStartHostRestart(this.state.status.operation)
     )
       return;
     this.patch({ sending: true, error: null });
@@ -185,13 +179,12 @@ export class HostRestartClient {
           (operation.phase === "preparing" ||
             (operation.phase === "submitted" &&
               receipt.phase !== "preparing"))) ||
-        (operation.id === previousOperationId &&
-          (operation.phase === "rejected" || operation.phase === "unknown"))
+        (operation.id === previousOperationId && canStartHostRestart(operation))
       ) {
         this.receiptRevision += 1;
         this.patch({ status: { ...status, operation: receipt } });
       }
-      if (receipt.phase === "rejected" || receipt.phase === "unknown") {
+      if (receipt.phase === "rejected") {
         this.persist(null, {
           notice: receipt.error ?? "Restart did not finish.",
         });

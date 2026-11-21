@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  canStartHostRestart,
   type HostRestartOperation,
   type HostRestartRequest,
   type HostRestartScope,
@@ -86,13 +87,9 @@ export class HostRestartController {
         throw requestError("Restart operation does not match.", 409);
       return { ...previous };
     }
-    if (
-      this.operation &&
-      this.operation.phase !== "rejected" &&
-      this.operation.phase !== "unknown"
-    )
+    if (!canStartHostRestart(this.operation))
       throw requestError(
-        "A restart is already in progress.",
+        this.operation?.error ?? "A restart is already in progress.",
         409,
       );
     if (this.receipts.length >= 32) this.receipts.shift();
@@ -185,7 +182,8 @@ export class HostRestartController {
     if (result.kind === "issued") return;
     if (result.kind === "unconfirmed") {
       operation.phase = "unknown";
-      operation.error = "Restart outcome is unknown. Check the Host launcher or service.";
+      operation.error =
+        "The restart may still be pending. Check the Host launcher or service.";
       return;
     }
     operation.phase = "rejected";

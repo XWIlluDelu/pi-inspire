@@ -321,8 +321,9 @@ Scheduled restart uses a single-owner handoff through signed actions at `/api/ho
 ## Explicit restart controls
 
 The page uses a lifecycle receipt tied to the original Host and operation ID. A submitted
-restart stays pending until the browser observes a different Host identity. A rejection or
-unconfirmed submission keeps its domain phase and does not trigger a new restart automatically.
+or unconfirmed restart continues to be observed until the browser sees a different Host identity.
+While the outcome is unconfirmed, the page directs the user to check the launcher or service.
+A new restart is available after the Host has rejected the previous request or been replaced.
 
 ### Scope and preparation
 

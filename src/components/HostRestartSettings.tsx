@@ -1,5 +1,6 @@
 import { RefreshCw } from "lucide-react";
 import { useEffect, useState, useSyncExternalStore } from "react";
+import { canStartHostRestart } from "../../shared/host-restart";
 import { hostRestartClient } from "../controllers/host-restart-controller";
 import { ConfirmationDialog } from "./Modal";
 import { SettingField } from "./SettingsControls";
@@ -41,11 +42,8 @@ export function HostRestartSettings({
     };
   }, [observing]);
   const operation = state.status?.operation;
-  const active =
-    operation &&
-    operation.phase !== "rejected" &&
-    operation.phase !== "unknown";
-  const disabled = !state.status || state.sending || !!active;
+  const disabled =
+    !state.status || state.sending || !canStartHostRestart(operation);
   const busyScope =
     operation?.phase === "rejected" &&
     (operation.busyReason === "active-work" ||

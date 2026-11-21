@@ -30,6 +30,12 @@ export interface HostRestartStatus {
   operation: HostRestartOperation | null;
 }
 
+export function canStartHostRestart(
+  operation: HostRestartOperation | null | undefined,
+): boolean {
+  return !operation || operation.phase === "rejected";
+}
+
 export const hostRestartRequestSchema = z
   .object({
     hostId: z.string().uuid(),
