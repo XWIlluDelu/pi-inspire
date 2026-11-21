@@ -22,10 +22,9 @@ seven jobs for [v0.6.0](https://github.com/XWIlluDelu/pi-inspire/tree/v0.6.0)
 and Windows. The [v0.6.5 release run](https://github.com/XWIlluDelu/pi-inspire/actions/runs/40339358680)
 failed at its tag. A later `auto-dev` revision (`2fe2dc73`) passed all seven jobs in
 [run 40481436169](https://github.com/XWIlluDelu/pi-inspire/actions/runs/40481436169).
-[[follow-runtime-quality-2026-10-25]] records the separate v0.6.5 Linux production-install check.
 
-Package checks exercise default-daemon PTY I/O, terminal maintenance, Host restart preserving
-terminals, authenticated readiness/pairing and session recovery. Native shell/filesystem checks
+The v0.8.0 Linux package check exercises an external Pi 1.6.0 session, session recovery, and a
+real project PTY. The replacement Host restores the saved terminal tab with its shell exited. Native shell/filesystem checks
 and simulated Win32 contracts provide separate evidence.
 
 ## CI verification scope

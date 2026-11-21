@@ -1,6 +1,36 @@
 # Changelog
 
-## 0.7.0
+## 0.8.0 — 2026-11-21
+
+Changes since [v0.7.0](https://github.com/XWIlluDelu/pi-inspire/tree/v0.7.0).
+
+### Host and native Pi
+
+- Pair for one browser session by clearing **Remember this browser**. **Sign out** removes a
+  saved pairing before returning to the pairing page.
+- **Restart** reloads Inspire, its owned Pi workers, and project terminals. Terminal tabs and
+  optional saved output return on reconnect. A PTY survives browser disconnects and ends with
+  its Host. The separate terminal daemon and the extra restart modes have been removed.
+- Development and release checks use Pi **1.6.0**. Production continues to use the installed Pi.
+  The thinking shortcut follows the live worker's available levels. **Tool Loadout…** reads and
+  changes the active worker's tool selection.
+- **Fork into another folder…** brings the entire saved branch tree to a new project folder.
+  Prompt delivery stays with its admitted worker, and returned Pending images can be recovered
+  after the original response is lost.
+
+### Workbench
+
+- Markdown renders Mermaid on demand with a Diagram/Source toggle. Source previews recognize
+  more languages and offer line wrapping and a target-line highlight.
+- Activity uses adaptive disclosure, with completed tool calls shown as compact rows. **Send key**
+  now lives in **Settings → Behavior**.
+- Files and Changes refresh after Pi settles. The workbench notices external configuration
+  changes while idle. Narrow layouts keep the context switcher, search, and Prompt Map clear of
+  the transcript.
+- Bundled CJK fonts shrink from **31.4 MiB** to **6.0 MiB**, with system fonts covering additional
+  characters.
+
+## 0.7.0 — 2026-11-09
 
 Changes since [v0.6.5](https://github.com/XWIlluDelu/pi-inspire/tree/v0.6.5).
 
@@ -29,12 +59,8 @@ Changes since [v0.6.5](https://github.com/XWIlluDelu/pi-inspire/tree/v0.6.5).
   keeps confirmed previews available. The Changes count sits beside its icon.
 - PDF previews scroll continuously through pages. Narrow readers give opening Markdown text room
   to clear the reading controls, and the composer offers **Expand** when the editor can grow.
-- History in the right pane searches saved branches and lets you preview entries before continuing,
-  editing, forking or cloning. Prompt Map navigates the current conversation.
-- Activity groups expand in place. Compact groups show the latest steps and reveal earlier
-  activity on request. Folded tool runs can be inspected from their tool icons.
-- Inspire checks message delivery receipts in the background. If delivery is still unconfirmed,
-  a dismissible notice leaves the composer ready for the next message.
+- Activity headers use the mono face. Expanded groups summarize their steps, tools and failed
+  calls in one line.
 - Shorter confirmation and settings text puts deletion, restart and recovery consequences next
   to the action.
 - The Carbon & Silicon palette adds a monochrome option in light and dark. Structural labels use
@@ -42,13 +68,13 @@ Changes since [v0.6.5](https://github.com/XWIlluDelu/pi-inspire/tree/v0.6.5).
 
 ### Host and native Pi
 
-- **Restart** reloads Inspire and its Pi workers while keeping project terminals open. **Restart
-  all** also closes current-user Pi sessions and project terminals. It includes Herdr Pi when
-  enhancement is active. Use `inspire restart --terminals` for the terminal-service-only scope.
+- Host settings offer **Restart Host**, which reloads taken-over Pi and keeps project terminals
+  open, and **Restart all**, which also restarts the installed Linux terminal service and closes
+  its project terminals. The browser tracks a submitted restart across reconnects.
 - Inspire finds Pi installed through supported version and package managers and preserves native
   OAuth model defaults and MCP project trust. The provider chooser keeps its initial focus and
   position in the settings panel.
-- Native Pi integration tests now use Pi 1.5.2. The `inspire mock` command and
+- The native Pi compatibility pin moves from 1.3.0 to 1.5.0. The `inspire mock` command and
   `npm run start:mock` are removed. Use `npm run dev` to run a development checkout with native Pi.
 - Declared status controls keep their machine-readable state out of the header automatically.
   `INSPIRE_HERDR_ENV_EXCLUDE` can keep selected extension environment prefixes out of the shared

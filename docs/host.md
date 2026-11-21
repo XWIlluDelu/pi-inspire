@@ -285,7 +285,7 @@ printed link expires after 30 seconds; Vite's `o` + Enter opens a fresh one.
 ```bash
 npm ci
 npm pack
-npm install --global ./inspire-pi-gui-0.7.0.tgz
+npm install --global ./inspire-pi-gui-0.8.0.tgz
 inspire
 ```
 
@@ -293,15 +293,16 @@ Use the tarball name printed by `npm pack`. Package from a separate checkout if 
 running. Packaging keeps only the current assets, so older tabs can lose lazy-loaded assets.
 
 To verify a release on the target platform, run `npm run release:verify` separately. It builds a
-temporary tarball and tests the installed CLI, an external Pi session and terminal continuity
-across Host restart. The [platform baseline](https://github.com/XWIlluDelu/pi-inspire/blob/main/docdoki/notes/platform-compatibility.md#verified-native-baseline)
+temporary tarball, starts an external Pi session and a project PTY, and verifies that the
+terminal tab returns after Host restart. The [platform baseline](https://github.com/XWIlluDelu/pi-inspire/blob/main/docdoki/notes/platform-compatibility.md#verified-native-baseline)
 records the checked versions.
 
 ## Updating Inspire
 
 Finish active work and stop an older Host through its original launcher or service manager before
-replacing its files. If the terminal daemon also needs an update, finish terminal work and stop it
-through its original owner. Stop all old Hosts that share the same upload store.
+replacing its files. If the previous version used a separate terminal daemon, finish its terminal
+work and stop the daemon through its original service manager. Stop all old Hosts that share
+the same upload store.
 
 Start the updated Host and reload the browser. Use the launcher link or Pair form if pairing is
 needed. A stored generated token with an unsupported format requires explicit replacement and

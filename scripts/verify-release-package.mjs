@@ -575,9 +575,10 @@ try {
   const { terminals } = await request(
     `/terminals?cwd=${encodeURIComponent(canonicalWorkspace)}`,
   );
-  assert(
-    terminals.some((row) => row.id === terminal.id),
-    "Packaged Host restart lost the saved terminal tab",
+  assert.equal(
+    terminals.find((row) => row.id === terminal.id)?.status,
+    "exited",
+    "Packaged Host restart must restore the tab without its old PTY",
   );
   await terminalMutation("remove", { id: terminal.id, force: true });
 

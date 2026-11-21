@@ -11,10 +11,9 @@ covers:
   - shared/herdr.ts
   - server/local-json-line.ts
   - src/components/*Settings*.tsx
-  - tests/web/herdr-settings.test.tsx
   - tests/server/herdr-*.test.ts
   - tests/server/pi-rpc*.test.ts
-  - tests/server/runtime-{worker-pool,worker-lifecycle,session-deletion}.test.ts
+  - tests/herdr/*.test.ts
 area: "Pi & Hosting"
 ---
 
