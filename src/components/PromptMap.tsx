@@ -152,8 +152,8 @@ export function PromptMap({
       const columnLeft = column ? column.left : rect.left + rect.width / 2;
       const columnRight = column ? column.right : rect.left + rect.width / 2;
       const gap = rect.right - columnRight;
-      const offset = Math.max(28, Math.min(gap * 0.5, 72));
-      const x = Math.max(columnLeft - offset, rect.left + 14);
+      const offset = Math.max(30, Math.min(gap * 0.5, 72));
+      const x = Math.max(columnLeft - offset, rect.left + 18);
       const y = rect.top + rect.height / 2;
 
       if (open) {
@@ -204,7 +204,7 @@ export function PromptMap({
     [],
   );
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open) {
       pointerFocusRef.current = false;
       wasOpenRef.current = false;
@@ -219,13 +219,19 @@ export function PromptMap({
     if (!firstOpen && listUserOwnedRef.current) return;
     if (!firstOpen && followedOrdinalRef.current === target) return;
     followedOrdinalRef.current = target;
-    const frame = requestAnimationFrame(() => {
-      if (!listUserOwnedRef.current)
-        virtualizer.scrollToIndex(target, {
-          align: firstOpen ? "center" : "auto",
-        });
+    const list = listRef.current;
+    if (firstOpen && list) {
+      const viewportHeight =
+        list.clientHeight || Math.min(total, 12) * ROW_HEIGHT;
+      list.scrollTop = Math.max(
+        0,
+        target * ROW_HEIGHT - Math.max(0, (viewportHeight - ROW_HEIGHT) / 2),
+      );
+    }
+    virtualizer.scrollToIndex(target, {
+      align: firstOpen ? "center" : "auto",
+      behavior: "auto",
     });
-    return () => cancelAnimationFrame(frame);
   }, [activeOrdinal, open, total, virtualizer.scrollToIndex]);
 
   useLayoutEffect(() => {

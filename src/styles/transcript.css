@@ -20,6 +20,12 @@
   mask-image: linear-gradient(to bottom, transparent 0, #000 20px);
 }
 
+@media (min-width: 901px) {
+  .transcript-wrap:has(> .prompt-map) > .transcript {
+    padding-inline-start: 48px;
+  }
+}
+
 /* One measured content owner lets live-follow survive thinking/tool deltas,
    Markdown reflow, and virtual-row measurement without polling the scroller. */
 .transcript__content {
