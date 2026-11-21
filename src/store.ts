@@ -44,6 +44,7 @@ import {
   HTTP_OBSERVATION_TIMEOUT_MS,
   type ProjectFileSearchResult,
 } from "./api";
+import { clearBrowserPairing } from "./browser-auth";
 import {
   type AppState,
   contextUsage,
@@ -555,6 +556,19 @@ export class AppStore {
     this.set({ pendingRuntimeSettings: {}, thinkingLevelPending: false });
     this.preferences.invalidateTransport();
   }
+
+  signOut = async (): Promise<void> => {
+    try {
+      await clearBrowserPairing();
+    } catch {
+      this.notify(
+        "warning",
+        "Couldn’t remove the saved sign-in. Allow browser storage and try again.",
+      );
+      return;
+    }
+    this.handleAuthFailure();
+  };
 
   private handleAuthFailure(): void {
     this.replaceTransport();

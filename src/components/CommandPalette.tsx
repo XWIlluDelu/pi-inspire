@@ -176,6 +176,13 @@ export const CommandPalette = memo(function CommandPalette({
         title: "Refresh session list",
         run: () => void store.catalog.refresh(),
       },
+      {
+        id: "sign-out",
+        group: "Actions",
+        title: "Sign out",
+        aliases: ["logout", "unpair", "forget browser", "clear token"],
+        run: () => void store.signOut(),
+      },
       ...(["nav", "ctx"] as const).map((id) => ({
         id,
         group: "Actions",

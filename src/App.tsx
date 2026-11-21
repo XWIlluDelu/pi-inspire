@@ -191,12 +191,13 @@ function composeDocumentTitle(
 
 function TokenGate() {
   const [value, setValue] = useState("");
+  const [remember, setRemember] = useState(true);
   const [pairing, setPairing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   return (
     <StartupCard
       title="Pair this browser"
-      hint="Open the launcher link or paste the Host access token."
+      hint="Open the launcher link or paste the Host access token. Uncheck Remember on shared or untrusted devices."
     >
       <form
         onSubmit={(event) => {
@@ -205,7 +206,7 @@ function TokenGate() {
           if (!token || pairing) return;
           setPairing(true);
           setError(null);
-          void pairBrowser(token)
+          void pairBrowser(token, { persist: remember })
             .then(() => store.init())
             .catch((reason: unknown) => {
               setError(
@@ -234,6 +235,18 @@ function TokenGate() {
           {pairing ? "Pairing…" : "Pair"}
         </button>
       </form>
+      <label className="token-gate__remember">
+        <input
+          type="checkbox"
+          className="choice-input"
+          checked={remember}
+          onChange={(event) => setRemember(event.target.checked)}
+        />
+        <span>
+          Remember this browser
+          {!remember ? " (one-time session — reloading signs out)" : ""}
+        </span>
+      </label>
       {error ? (
         <p className="token-gate__error" role="alert">
           {error}
