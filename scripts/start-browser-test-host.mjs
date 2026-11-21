@@ -80,7 +80,6 @@ const child = spawn(
       INSPIRE_STOP_REQUEST_PATH: resolve(home, "stop-request.json"),
       INSPIRE_LOG_PATH: resolve(home, "diagnostics.jsonl"),
       INSPIRE_PORT: String(port),
-      INSPIRE_TERMINAL_IN_PROCESS: "1",
     },
     stdio: "inherit",
     windowsHide: true,

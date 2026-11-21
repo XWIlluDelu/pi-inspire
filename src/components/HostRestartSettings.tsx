@@ -115,7 +115,7 @@ export function HostRestartSettings({
             label={name}
             description={
               host
-                ? "Restart Inspire and its Pi workers. Keep project terminals running."
+                ? "Restart Inspire, its Pi workers, and project terminals."
                 : state.status && !available
                   ? state.status.allPiReason
                   : state.status?.allPiIncludesHerdr
@@ -159,7 +159,7 @@ export function HostRestartSettings({
               ? state.status?.allPiIncludesHerdr
                 ? "All your Pi sessions, including Herdr sessions, will close. Project terminals will close and running tasks will stop."
                 : "Your Pi sessions outside Herdr will close. Project terminals will close and running tasks will stop."
-              : "Inspire's Pi workers will restart. Project terminals keep running. The page will briefly disconnect."
+              : "Inspire's Pi workers and project terminals will restart. The page will briefly disconnect."
           }
           onClose={() => setConfirmation(null)}
           confirm={{

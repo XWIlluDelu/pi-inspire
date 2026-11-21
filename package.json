@@ -57,8 +57,6 @@
     "entry": [
       "server/index.ts",
       "server/attached-pi-entry.ts",
-      "server/terminal-daemon-entry.ts",
-      "server/terminal-control-entry.ts",
       "server/session-recovery-entry.ts",
       "server/herdr-worker-entry.ts",
       "server/restart-preflight.ts",

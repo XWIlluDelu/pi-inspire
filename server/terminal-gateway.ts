@@ -19,7 +19,6 @@ import { settleOperation } from "./operation-receipts.js";
 import { requestError } from "./request-error.js";
 import {
   type TerminalAttachment,
-  type TerminalConnection,
   type TerminalService,
 } from "./terminal-service.js";
 
@@ -35,11 +34,10 @@ interface TerminalSocketState {
 }
 
 /** Register after /api authentication. Upgrade admission remains in the Host:
- * exact-origin single-use socket tickets are required before attach is read.
- * This gateway owns only tickets/attachments; the daemon still owns the PTYs. */
+ * exact-origin single-use socket tickets are required before attach is read. */
 export function createTerminalGateway(
   app: Express,
-  service: TerminalService | Pick<TerminalConnection, "run"> | undefined,
+  service: TerminalService | undefined,
   heartbeatIntervalMs: number,
 ) {
   const terminalTickets = new Map<
@@ -63,7 +61,7 @@ export function createTerminalGateway(
       throw requestError("Terminal service is unavailable", 503, {
         code: "terminal_unavailable",
       });
-    return "run" in service ? service.run(operation) : operation(service);
+    return operation(service);
   };
   app.get(TERMINAL_OPERATIONS_PATH, async (_request, response) => {
     response.set("Cache-Control", "no-store");
@@ -285,8 +283,6 @@ export function createTerminalGateway(
           attachment.send({ data });
         } else {
           const control = JSON.parse(data.toString("utf8"));
-          if (control?.type === "terminal_daemon_detach")
-            throw new Error("Terminal message is invalid");
           attachment.send({ control });
         }
       } catch (error) {

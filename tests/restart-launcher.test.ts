@@ -140,19 +140,11 @@ describe.runIf(process.platform === "linux")(
       const unit = (name: string) =>
         readFile(join(f.env.XDG_CONFIG_HOME!, "systemd/user", name), "utf8");
       const host = await unit("inspire-host.service");
-      const terminal = await unit("inspire-terminal.service");
       expect(host).toContain(`ExecStartPost=${f.root}/inspire wait-ready`);
-      expect(host).toContain(
-        "Wants=network-online.target inspire-terminal.service",
-      );
-      expect(terminal).toContain(
-        `ExecStart=${f.root}/inspire terminal-daemon --root ${f.root}`,
-      );
-      for (const content of [host, terminal]) {
-        expect(content).toContain("Environment=INSPIRE_ENVIRONMENT=shell");
-        expect(content).not.toContain("Environment=NODE_ENV=");
-        expect(content).not.toContain(f.env.PATH);
-      }
+      expect(host).toContain("Wants=network-online.target");
+      expect(host).toContain("Environment=INSPIRE_ENVIRONMENT=shell");
+      expect(host).not.toContain("Environment=NODE_ENV=");
+      expect(host).not.toContain(f.env.PATH);
 
       await writeFile(join(f.root, "old-host-exited"), "");
       f.run([]);
@@ -167,15 +159,10 @@ describe.runIf(process.platform === "linux")(
       expect(log.match(/^--user (?:start|stop|enable|disable) .*$/gmu)).toEqual(
         [
           "--user start inspire-host.service",
-          expect.stringMatching(/^--user stop inspire-terminal-.*\.service$/u),
           "--user stop inspire-host.service",
-          "--user stop inspire-terminal.service",
-          "--user enable inspire-terminal.service",
           "--user enable --now inspire-host.service",
-          expect.stringMatching(/^--user stop inspire-terminal-.*\.service$/u),
           "--user disable --now inspire-idle-maintenance-restart.timer",
           "--user disable --now inspire-host.service",
-          "--user disable --now inspire-terminal.service",
         ],
       );
       f.env.FIXTURE_OUTDATED = "1";
@@ -195,6 +182,7 @@ describe.runIf(process.platform === "linux")(
       expect(() => f.run(["restart", "--all"])).toThrow(/outside Pi/);
       delete f.env.FIXTURE_PI_ANCESTOR;
       f.env.INSPIRE_TERMINAL_ID = "project-terminal";
+      expect(() => f.run(["restart"])).toThrow(/external OS terminal/);
       expect(() => f.run(["restart", "--all"])).toThrow(/external OS terminal/);
       expect(await f.log()).not.toMatch(/preflight|stop-all-pi/);
       expect(await f.mutations()).toEqual([]);
@@ -207,22 +195,12 @@ describe.runIf(process.platform === "linux")(
       expect(await f.mutations()).toEqual([]);
       expect(await f.log()).toContain("preflight\n");
       delete f.env.FIXTURE_PREFLIGHT_FAIL;
-      f.run(["restart", "--terminals"]);
+      expect(f.run(["restart"])).toContain("Restarted INSΠRE Host.");
       expect(await f.mutations()).toEqual([
-        "--user restart inspire-terminal.service inspire-host.service",
+        "--user restart inspire-host.service",
       ]);
       expect(await f.log()).toMatch(
-        /preflight\n[\s\S]*restart inspire-terminal.service inspire-host.service/,
-      );
-      // The manager fixture has two invocation IDs. Give the next
-      // transaction a fresh service start boundary.
-      await rm(join(f.root, "started"));
-      f.env.INSPIRE_TERMINAL_ID = "project-terminal";
-      expect(f.run(["restart"])).toContain(
-        "Restarted INSΠRE Host. Terminals remain running.",
-      );
-      expect((await f.mutations()).at(-1)).toBe(
-        "--user restart inspire-host.service",
+        /preflight\n[\s\S]*restart inspire-host.service/,
       );
     });
 

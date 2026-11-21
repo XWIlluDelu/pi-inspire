@@ -413,6 +413,7 @@ export async function processMayBeLive({ pid, processStartTime }, signal) {
   }
 }
 
+/** @public Dynamically imported by inspire.mjs. */
 export async function observeProcessExit(owner, timeoutMs) {
   const signal = AbortSignal.timeout(timeoutMs);
   while (!signal.aborted) {

@@ -6,21 +6,14 @@ import { isAbsolute, join, resolve } from "node:path";
 const support = existsSync(new URL("../../server/process-tree.mjs", import.meta.url))
   ? "../../server/"
   : "../../build/server/";
-const [{ runChild }, { installationKey }, { submitRestart }] = await Promise.all(
-  ["process-tree.mjs", "platform-paths.mjs", "restart-submission.mjs"].map((module) =>
+const [{ runChild }, { submitRestart }] = await Promise.all(
+  ["process-tree.mjs", "restart-submission.mjs"].map((module) =>
     import(new URL(support + module, import.meta.url).href),
   ),
 );
 
 const HOST_SERVICE_NAME = "inspire-host.service";
-const TERMINAL_SERVICE_NAME = "inspire-terminal.service";
 const IDLE_MAINTENANCE_TIMER_NAME = "inspire-idle-maintenance-restart.timer";
-const HOST_ADDRESS = "127.0.0.1";
-const HOST_PORT = 4587;
-
-function transientTerminalServiceName(root) {
-  return `inspire-terminal-${installationKey(resolve(root), HOST_ADDRESS, HOST_PORT).slice(0, 12)}.service`;
-}
 
 function configHome(environment = process.env) {
   return (
@@ -31,15 +24,6 @@ function configHome(environment = process.env) {
 
 export function hostServicePath(environment = process.env) {
   return join(configHome(environment), "systemd", "user", HOST_SERVICE_NAME);
-}
-
-export function terminalServicePath(environment = process.env) {
-  return join(
-    configHome(environment),
-    "systemd",
-    "user",
-    TERMINAL_SERVICE_NAME,
-  );
 }
 
 export function runSystemctl(arguments_, environment = process.env) {
@@ -148,24 +132,22 @@ function showUnit(unit, fields, options) {
   return controlUnit(options, "show", unit, ...fields.map((field) => `--property=${field}`));
 }
 
-// Host After=terminal orders both shutdown and startup in one transaction.
-function restartCommand(terminals, detached = false) {
+function restartCommand(detached = false) {
   return [
     ...(detached ? ["--no-block"] : []),
     "restart",
-    ...(terminals ? [TERMINAL_SERVICE_NAME] : []),
     HOST_SERVICE_NAME,
   ];
 }
 
 /** A generic user-unit name is shared by installations. Require its checkout
- * and installed Host/terminal commands before delegating to systemd. */
+ * and installed Host command before delegating to systemd. */
 export async function inspectHostService(root, options = {}) {
   const { environment = process.env, inspectPath = lstat } = options;
   const expectedRoot = resolve(root);
   const result = await showUnit(HOST_SERVICE_NAME, [
     "LoadState", "FragmentPath", "WorkingDirectory", "ExecStart", "ExecStartPost",
-    "Wants", "After", "UnitFileState", "ActiveState", "SubState", "InvocationID",
+    "UnitFileState", "ActiveState", "SubState", "InvocationID",
   ], options);
   if (result.code !== 0) {
     if (
@@ -194,35 +176,7 @@ export async function inspectHostService(root, options = {}) {
   ) {
     return { kind: "foreign", fragmentPath: value.FragmentPath || undefined };
   }
-  if (
-    !expectedCommand(value.ExecStartPost ?? "", launcher, "wait-ready") ||
-    !(value.Wants ?? "").split(/\s+/u).includes(TERMINAL_SERVICE_NAME) ||
-    !(value.After ?? "").split(/\s+/u).includes(TERMINAL_SERVICE_NAME)
-  ) {
-    return { kind: "outdated" };
-  }
-
-  const terminalResult = await showUnit(
-    TERMINAL_SERVICE_NAME,
-    ["LoadState", "FragmentPath", "WorkingDirectory", "ExecStart"],
-    options,
-  );
-  if (terminalResult.code !== 0) {
-    if (/not[ -]found|not loaded/iu.test(commandDetail(terminalResult)))
-      return { kind: "outdated" };
-    return { kind: "unavailable", detail: commandDetail(terminalResult) };
-  }
-  const terminal = properties(terminalResult.stdout);
-  if (
-    terminal.LoadState !== "loaded" ||
-    terminal.FragmentPath !== terminalServicePath(environment) ||
-    terminal.WorkingDirectory !== expectedRoot ||
-    !expectedCommand(
-      terminal.ExecStart ?? "",
-      launcher,
-      "terminal-daemon", "--root", expectedRoot, "--host", HOST_ADDRESS, "--port", String(HOST_PORT),
-    )
-  ) {
+  if (!expectedCommand(value.ExecStartPost ?? "", launcher, "wait-ready")) {
     return { kind: "outdated" };
   }
   return {
@@ -246,35 +200,19 @@ export async function manageHostService(root, action, options = {}) {
     options.target.invocationId !== service.invocationId ||
     options.target.activeState !== service.activeState
   )) return { kind: "invocation-changed" };
-  const restart = action === "restart" || action === "restart-all";
+  const restart = action === "restart";
   const commands = {
-    // Host Wants/After starts the installed terminal unit. A duplicate owner
-    // may refuse that start without blocking Host access to a compatible daemon.
     start: [["start", HOST_SERVICE_NAME]],
-    stop: [
-      ["stop", HOST_SERVICE_NAME],
-      ["stop", TERMINAL_SERVICE_NAME],
-    ],
-    enable: [
-      ["enable", TERMINAL_SERVICE_NAME],
-      ["enable", "--now", HOST_SERVICE_NAME],
-    ],
+    stop: [["stop", HOST_SERVICE_NAME]],
+    enable: [["enable", "--now", HOST_SERVICE_NAME]],
     disable: [
       ["disable", "--now", IDLE_MAINTENANCE_TIMER_NAME],
       ["disable", "--now", HOST_SERVICE_NAME],
-      ["disable", "--now", TERMINAL_SERVICE_NAME],
     ],
   };
-  const commandsForAction = restart
-    ? [restartCommand(action === "restart-all")]
-    : commands[action];
+  const commandsForAction = restart ? [restartCommand()] : commands[action];
   if (!commandsForAction)
     throw new Error(`Unsupported host-service action: ${action}`);
-
-  // Starting/enabling must not migrate ownership or end existing terminals.
-  // Only explicit stop/disable includes the installation's transient owner.
-  if (["stop", "disable"].includes(action))
-    await controlUnit(options, "stop", transientTerminalServiceName(root));
 
   for (const arguments_ of commandsForAction) {
     const result = await controlUnit(options, ...arguments_);
@@ -323,7 +261,7 @@ async function currentInvocation(invocationId, options) {
 
 export function submitSystemdRestart(
   root,
-  { invocationId, commit, beforeRestart, terminals = false, detached = false },
+  { invocationId, commit, beforeRestart, detached = false },
   options = {},
 ) {
   return submitRestart(async () => {
@@ -338,7 +276,7 @@ export function submitSystemdRestart(
         return "invocation-changed";
     }
   }, async () => {
-    const result = await controlUnit(options, ...restartCommand(terminals, detached));
+    const result = await controlUnit(options, ...restartCommand(detached));
     return result.issued === false ? false : result.code === 0 ? true : undefined;
   });
 }
@@ -352,8 +290,7 @@ export function reportHostService(result, action) {
       const messages = {
         start: "Started INSΠRE system service.",
         stop: "Stopped INSΠRE system service.",
-        restart: "Restarted INSΠRE Host. Terminals remain running.",
-        "restart-all": "Restarted INSΠRE Host and terminal services.",
+        restart: "Restarted INSΠRE Host.",
         enable: "Enabled and started INSΠRE system service.",
         disable: "Disabled and stopped INSΠRE system service.",
       };

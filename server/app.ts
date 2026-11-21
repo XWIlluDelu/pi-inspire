@@ -85,10 +85,7 @@ import {
   TaskNotifications,
 } from "./task-notifications.js";
 import { createTerminalGateway } from "./terminal-gateway.js";
-import type {
-  TerminalConnection,
-  TerminalService,
-} from "./terminal-service.js";
+import type { TerminalService } from "./terminal-service.js";
 import type {
   ToolPresentationConfigStore,
   ToolPresentationConfigurationState,
@@ -141,9 +138,8 @@ interface AppDependencies {
    * instance; test hosts default to one without checkers. */
   updateCoordinator?: UpdateCoordinator;
   distDir?: string;
-  /** The persistent PTY authority. Production connects to the terminal
-   * daemon; tests may supply an in-process implementation. */
-  terminal?: TerminalService | Pick<TerminalConnection, "run" | "close">;
+  /** In-process PTY manager owned by this Host. */
+  terminal?: TerminalService;
   /** Internal cadence override used by the transport liveness test. */
   websocketHeartbeatIntervalMs?: number;
 }

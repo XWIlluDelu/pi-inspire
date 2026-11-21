@@ -53,7 +53,6 @@ async function main() {
   const unitDirectory = dirname(hostServicePath());
   const units = [
     "inspire-host.service",
-    "inspire-terminal.service",
     "inspire-idle-maintenance-restart.service",
     "inspire-idle-maintenance-restart.timer",
   ];

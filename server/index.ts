@@ -53,6 +53,10 @@ import {
 } from "./pi-runtime.js";
 import { PiSessionActivity } from "./pi-session-activity.js";
 import { probePiUpdate } from "./pi-update-checker.js";
+import {
+  installationKey,
+  inspireStateDirectory,
+} from "./platform-paths.mjs";
 import { PreferencesStore } from "./preferences.js";
 import {
   nativeOAuthDescriptors,
@@ -61,12 +65,13 @@ import {
 import { ResourceStore } from "./resources.js";
 import { RuntimeController } from "./runtime.js";
 import { createHostSessionCatalog } from "./session-catalog.js";
-import {
-  connectExistingTerminalDaemon,
-  launchTerminalDaemon,
-} from "./terminal-daemon-launcher.js";
-import { TerminalConnection } from "./terminal-service.js";
+import { TerminalHistoryStore } from "./terminal-history-store.js";
 import { TerminalSessionManager } from "./terminal-session-manager.js";
+import { ensureTerminalShellIntegration } from "./terminal-shell-integration.js";
+import {
+  readTerminalState,
+  TerminalStateWriter,
+} from "./terminal-state-store.js";
 import {
   defaultToolPresentationConfigPath,
   ToolPresentationConfigStore,
@@ -210,22 +215,51 @@ const toolPresentations = new ToolPresentationConfigStore(
 );
 const resources = new ResourceStore();
 const git = new GitInspectionService();
-const connectTerminal = () =>
-  connectExistingTerminalDaemon({ root, host, port });
-const terminal = new TerminalConnection(
-  connectTerminal,
-  process.env.INSPIRE_TERMINAL_IN_PROCESS === "1"
-    ? new TerminalSessionManager()
-    : await launchTerminalDaemon({ root, host, port }).catch((error) => {
-        diagnostics.record("warning", "terminal_daemon_unavailable", {
-          errorName: error instanceof Error ? error.name : typeof error,
-        });
-        console.error(
-          `Terminal service unavailable: ${error instanceof Error ? error.message : "Terminal service unavailable"}`,
-        );
-        return null;
-      }),
+const terminalStatePath =
+  process.env.INSPIRE_TERMINAL_STATE_PATH ||
+  join(
+    inspireStateDirectory(),
+    "terminals",
+    `${installationKey(root, host, port)}.json`,
+  );
+const reportTerminalError = (error: unknown): void => {
+  console.error(error instanceof Error ? error.message : String(error));
+};
+const terminalHistory = new TerminalHistoryStore(
+  `${terminalStatePath}.history`,
+  reportTerminalError,
 );
+let shellIntegrationDirectory: string | undefined =
+  `${terminalStatePath}.shell`;
+try {
+  await ensureTerminalShellIntegration(shellIntegrationDirectory);
+} catch (error) {
+  shellIntegrationDirectory = undefined;
+  reportTerminalError(error);
+}
+let persistTerminalChanges = true;
+let terminalStateWriter: TerminalStateWriter | null = null;
+const terminal = new TerminalSessionManager({
+  history: terminalHistory,
+  shellIntegrationDirectory,
+  onChange: () => {
+    if (persistTerminalChanges) terminalStateWriter?.schedule();
+  },
+});
+terminalStateWriter = new TerminalStateWriter(
+  terminalStatePath,
+  () => terminal.exportState(),
+  reportTerminalError,
+);
+const previousTerminalState = await readTerminalState(terminalStatePath).catch(
+  (error) => {
+    reportTerminalError(error);
+    return null;
+  },
+);
+if (previousTerminalState) {
+  await terminal.restoreState(previousTerminalState).catch(reportTerminalError);
+}
 const modelRuntime = await ModelRuntime.create({
   refreshOnCreate: false,
 }).catch((error) => {
@@ -307,6 +341,8 @@ async function shutdown(reason: string, requestedExitCode = 0): Promise<void> {
   console.log(`Shutting down after ${reason}…`);
   diagnostics.record("info", "host_stopping", { reason, requestedExitCode });
   try {
+    persistTerminalChanges = false;
+    await terminalStateWriter?.flush();
     await application.close();
     if (statePublication) await statePublication;
   } catch (error) {

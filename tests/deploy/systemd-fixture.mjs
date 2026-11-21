@@ -1,7 +1,4 @@
-import {
-  hostServicePath,
-  terminalServicePath,
-} from "../../deploy/systemd/control.mjs";
+import { hostServicePath } from "../../deploy/systemd/control.mjs";
 
 export const root = "/workspace/inspire";
 export const environment = {
@@ -12,22 +9,14 @@ export const environment = {
 
 export const invocationId = "a".repeat(32);
 
-export function show(
-  hostProperties,
-  terminalProperties = managedTerminalProperties(),
-) {
-  return async (arguments_) => {
-    const selected = arguments_.includes("inspire-terminal.service")
-      ? terminalProperties
-      : hostProperties;
-    return {
-      code: 0,
-      stdout: `${Object.entries(selected)
-        .map(([key, value]) => `${key}=${value}`)
-        .join("\n")}\n`,
-      stderr: "",
-    };
-  };
+export function show(hostProperties) {
+  return async () => ({
+    code: 0,
+    stdout: `${Object.entries(hostProperties)
+      .map(([key, value]) => `${key}=${value}`)
+      .join("\n")}\n`,
+    stderr: "",
+  });
 }
 
 export function managedProperties(overrides = {}) {
@@ -37,22 +26,12 @@ export function managedProperties(overrides = {}) {
     WorkingDirectory: root,
     ExecStart: `{ path=${root}/inspire ; argv[]=${root}/inspire ; }`,
     ExecStartPost: `{ path=${root}/inspire ; argv[]=${root}/inspire wait-ready ; }`,
-    Wants: "network-online.target inspire-terminal.service",
-    After: "network-online.target inspire-terminal.service",
+    Wants: "network-online.target",
+    After: "network-online.target",
     UnitFileState: "enabled",
     ActiveState: "active",
     SubState: "running",
     InvocationID: invocationId,
-    ...overrides,
-  };
-}
-
-export function managedTerminalProperties(overrides = {}) {
-  return {
-    LoadState: "loaded",
-    FragmentPath: terminalServicePath(environment),
-    WorkingDirectory: root,
-    ExecStart: `{ path=${root}/inspire ; argv[]=${root}/inspire terminal-daemon --root ${root} --host 127.0.0.1 --port 4587 ; }`,
     ...overrides,
   };
 }

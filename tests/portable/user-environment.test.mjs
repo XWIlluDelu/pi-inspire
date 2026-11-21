@@ -89,7 +89,7 @@ test("direct Host and terminal launches preserve caller exports without probing 
     SHELL: "/missing/shell",
     CUSTOM: "value",
   };
-  for (const mode of ["host", "terminal-daemon"]) {
+  for (const mode of ["host"]) {
     for (const nodeEnv of [undefined, "test", ""]) {
       const result = launch(mode, { ...environment, NODE_ENV: nodeEnv });
       assert.equal(result.NODE_ENV, nodeEnv);
@@ -186,7 +186,7 @@ printf 'initialized\\n' >> "$HOME/probes"
   assert.equal(environment.REMOVE_ME, "remove this");
 
   const launch = await packagedEnvironmentProbe(f.home);
-  for (const mode of ["host", "terminal-daemon"]) {
+  for (const mode of ["host"]) {
     const child = launch(mode, {
       INSPIRE_ENVIRONMENT: "shell",
       INSPIRE_SHELL: "/bin/bash",

@@ -95,11 +95,7 @@ it.runIf(process.platform === "linux").each([
       .split("\n")
       .filter((line) => line.includes(" restart "));
     expect(restarts).toEqual(
-      issued
-        ? [
-            "--user --no-block restart inspire-terminal.service inspire-host.service",
-          ]
-        : [],
+      issued ? ["--user --no-block restart inspire-host.service"] : [],
     );
   },
 );

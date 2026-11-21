@@ -139,9 +139,6 @@ const temporary = await realpath(
   await mkdtemp(join(tmpdir(), "inspire-release-smoke-")),
 );
 let host = null;
-let terminalOwner = null;
-let terminalClient = null;
-let terminalControl = null;
 try {
   const packDirectory = join(temporary, "pack");
   const installDirectory = join(temporary, "install");
@@ -481,59 +478,6 @@ try {
   assert.equal(await readFile(recoveredPath, "utf8"), forkSource);
   await cli(["prepare-restart"]);
 
-  // Own the real daemon as a fixture so failure cleanup can reap it. All
-  // address and token defaults still resolve through the packaged launcher.
-  terminalControl = { bin, environment };
-  terminalOwner = startProcess(
-    bin,
-    [
-      "terminal-daemon",
-      "--root",
-      installedRoot,
-      "--host",
-      loopback,
-      "--port",
-      String(port),
-    ],
-    processOptions,
-  );
-  const [protocol, { TerminalDaemonClient }, { terminalDaemonSecretPath }] =
-    await Promise.all([
-      installed("build/server/terminal-daemon-protocol.js"),
-      installed("build/server/terminal-daemon-client.js"),
-      installed("build/server/terminal-daemon-tls.js"),
-    ]);
-  const paths = { environment, home: homeDirectory };
-  const daemonAddress = protocol.defaultTerminalDaemonAddress(
-    installedRoot,
-    loopback,
-    port,
-    paths,
-  );
-  const secretPath = terminalDaemonSecretPath(
-    protocol.defaultTerminalDaemonTokenPath(
-      installedRoot,
-      loopback,
-      port,
-      paths,
-    ),
-  );
-  terminalClient = await waitFor("the packaged terminal daemon", async () => {
-    if (
-      terminalOwner.child.exitCode !== null ||
-      terminalOwner.child.signalCode !== null
-    )
-      throw new Error("Packaged terminal daemon exited during startup");
-    try {
-      const daemonToken = (await readFile(secretPath, "utf8")).trim();
-      const client = new TerminalDaemonClient(daemonAddress, daemonToken);
-      await client.probe();
-      return client;
-    } catch {
-      return null;
-    }
-  });
-
   const origin = `http://${loopback}:${port}`;
   async function request(path, { method = "GET", body, headers } = {}) {
     const response = await fetch(origin + "/api" + path, {
@@ -599,37 +543,7 @@ try {
   const terminal = await terminalMutation("create", {
     request: { cwd: canonicalWorkspace, cols: 80, rows: 24 },
   });
-  const { decodeTerminalServerDataFrame, encodeTerminalInputFrame } =
-    await installed("build/shared/terminal-contracts.js");
-  let output = "";
-  const attachment = await terminalClient.attach(
-    { terminalId: terminal.id, clientId: randomUUID(), cols: 80, rows: 24 },
-    {
-      sendData(data) {
-        const frame = decodeTerminalServerDataFrame(data);
-        output = (output + Buffer.from(frame.data).toString("utf8")).slice(
-          -8192,
-        );
-      },
-      sendControl() {},
-      close() {},
-    },
-  );
-  // Split the marker in the command so line editing/echo cannot satisfy it.
-  const echo =
-    terminal.profileId === "cmd"
-      ? "echo INSPIRE_DAEMON_BE^FORE\r"
-      : 'echo INSPIRE_DAEMON_"BEFORE"\r';
-  try {
-    attachment.send({ data: encodeTerminalInputFrame(1, Buffer.from(echo)) });
-    await waitFor(
-      "real PTY output",
-      () => output.includes("INSPIRE_DAEMON_BEFORE"),
-      15_000,
-    );
-  } finally {
-    attachment.detach();
-  }
+  assert.equal(terminal.status, "running");
 
   const { active } = await request("/sessions/new", {
     method: "POST",
@@ -662,31 +576,14 @@ try {
     `/terminals?cwd=${encodeURIComponent(canonicalWorkspace)}`,
   );
   assert(
-    terminals.some((row) => row.id === terminal.id && row.status === "running"),
-    "Packaged Host restart lost the real PTY",
+    terminals.some((row) => row.id === terminal.id),
+    "Packaged Host restart lost the saved terminal tab",
   );
   await terminalMutation("remove", { id: terminal.id, force: true });
 
   await cli(["stop"]);
   await waitForExit(host.child);
   assert.equal(host.child.exitCode, 0, "Packaged Host did not exit cleanly");
-
-  const before = await terminalClient.daemonInfo();
-  await cli(["terminal", "restart"]);
-  const after = await terminalClient.daemonInfo();
-  assert.notEqual(
-    after.instanceId,
-    before.instanceId,
-    "Daemon restart reused its old owner",
-  );
-  await cli(["terminal", "stop"]);
-  terminalControl = null;
-  await waitForExit(terminalOwner.child);
-  assert.equal(
-    terminalOwner.child.exitCode,
-    0,
-    "Packaged daemon did not exit cleanly",
-  );
 
   console.log(
     JSON.stringify({
@@ -696,22 +593,13 @@ try {
       publishDryRun: "accepted without metadata correction",
       installation: "production-only, no bundled Pi",
       packagedChecks:
-        "CLI, maintenance, fork, recovery, external Pi session, PTY output and restart",
+        "CLI, maintenance, fork, recovery, external Pi session, PTY and restart",
     }),
   );
 } catch (error) {
   if (host?.output) console.error(host.output);
-  if (terminalOwner?.output) console.error(terminalOwner.output);
   throw error;
 } finally {
   await stopProcess(host);
-  if (terminalControl)
-    await execFile(
-      process.execPath,
-      [terminalControl.bin, "terminal", "stop", "--force"],
-      { env: terminalControl.environment, timeout: 30_000 },
-    ).catch(() => undefined);
-  await terminalClient?.close();
-  await stopProcess(terminalOwner);
   await rm(temporary, { recursive: true, force: true });
 }

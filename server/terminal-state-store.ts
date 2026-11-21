@@ -7,7 +7,7 @@ import type { TerminalPersistedState } from "./terminal-session-manager.js";
 const MAX_STATE_BYTES = 2 * 1024 * 1024;
 const WRITE_DELAY_MS = 200;
 
-export function prepareTerminalStateDirectory(path: string): Promise<void> {
+function prepareTerminalStateDirectory(path: string): Promise<void> {
   return ensurePrivateDirectory(dirname(path), "terminal state directory");
 }
 

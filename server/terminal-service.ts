@@ -40,53 +40,6 @@ export interface TerminalService {
   close(): Promise<void>;
 }
 
-/** Initialize only on demand. Connection failures may be retried; dispatched work never is. */
-export class TerminalConnection {
-  private connection: Promise<TerminalService> | null;
-  private closing: Promise<void> | null = null;
-
-  constructor(
-    private readonly connect: () => Promise<TerminalService>,
-    service: TerminalService | null = null,
-  ) {
-    this.connection = service ? Promise.resolve(service) : null;
-  }
-
-  close(): Promise<void> {
-    return (this.closing ??=
-      this.connection?.then(
-        (service) => service.close(),
-        () => {},
-      ) ?? Promise.resolve());
-  }
-
-  private closedError(): TerminalServiceError {
-    return new TerminalServiceError(
-      "terminal_service_closed",
-      503,
-      "The terminal service is stopping.",
-    );
-  }
-
-  async run<Result>(
-    operation: (service: TerminalService) => Result | Promise<Result>,
-  ): Promise<Result> {
-    if (this.closing) throw this.closedError();
-    this.connection ??= Promise.resolve()
-      .then(() => {
-        if (this.closing) throw this.closedError();
-        return this.connect();
-      })
-      .catch((error) => {
-        this.connection = null;
-        throw error;
-      });
-    const service = await this.connection;
-    if (this.closing) throw this.closedError();
-    return operation(service);
-  }
-}
-
 export class TerminalServiceError extends Error {
   constructor(
     readonly code: string,

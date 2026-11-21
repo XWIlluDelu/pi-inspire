@@ -59,7 +59,6 @@ interface ServiceControl {
     root: string,
     plan: {
       invocationId: string;
-      terminals: boolean;
       detached: boolean;
       commit: () => boolean | Promise<boolean>;
       beforeRestart?: () => Promise<void>;
@@ -103,7 +102,6 @@ export function systemdRestartBackend(
         return { kind: "not-issued", reason: "unsupported" };
       return (await control()).submitSystemdRestart(root, {
         invocationId,
-        terminals: scope === "all-pi",
         detached: true,
         commit,
         beforeRestart:

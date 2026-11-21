@@ -144,11 +144,8 @@ async function build() {
 
 async function ensureBuild() {
   if (distribution) {
-    const required = [join(root, "dist", "index.html"), join(supportRoot, "terminal-daemon-entry.js")];
-    for (const path of required) {
-      if (!(await exists(path)))
-        throw new Error("The installed INSΠRE package is incomplete.");
-    }
+    if (!(await exists(join(root, "dist", "index.html"))))
+      throw new Error("The installed INSΠRE package is incomplete.");
     return;
   }
   const stamp = await readFile(join(root, ".inspire-build"), "utf8").catch(() => "");
@@ -379,7 +376,7 @@ async function superviseHost(context, lease) {
       if (!restart.shouldRestart(result.code, result.signal))
         return result.code ?? (result.signal ? 1 : 0);
       restarting = true;
-      console.log("Restarting INSΠRE Host. Terminals remain running.");
+      console.log("Restarting INSΠRE Host…");
     }
   } finally {
     process.off("SIGINT", onInt);
@@ -530,19 +527,18 @@ async function prepareRestart() {
 
 async function restartHost(scope = "host") {
   const allPi = scope === "all-pi";
-  const terminals = scope !== "host";
-  if (terminals && process.env.INSPIRE_TERMINAL_ID)
+  if (process.env.INSPIRE_TERMINAL_ID)
     throw new Error(
-      "Run this restart from an external OS terminal. It can close the terminal running this command before reporting the result.",
+      "Run this restart from an external OS terminal. Restarting the Host closes project terminals.",
     );
   const context = instanceContext();
   const systemd = await serviceController(context);
   const service = await systemd?.inspectHostService(root);
   if (service && service.kind !== "managed" && service.kind !== "absent")
     return systemd.reportHostService(service, "status");
-  if (terminals && service?.kind !== "managed")
+  if (allPi && service?.kind !== "managed")
     throw new Error(
-      "Full restart requires this installation's Linux systemd services. No service was restarted.",
+      "Full restart requires this installation's Linux systemd service. No service was restarted.",
     );
 
   let stopPi;
@@ -563,16 +559,15 @@ async function restartHost(scope = "host") {
     const current = await systemd?.inspectHostService(root);
     if (current && current.kind !== "absent")
       throw new Error("The installed service changed during preparation. Inspect it before retrying.");
-    console.log("Restarting INSΠRE Host. Terminals remain running.");
+    console.log("Restarting INSΠRE Host…");
     return stopLocalHost(context, true, owner.kind === "healthy" ? owner.state : undefined);
   }
   if (owner.kind === "healthy" && owner.state.systemdInvocationId !== service.invocationId)
     throw new Error("The running Host does not belong to the inspected service invocation.");
   if (!allPi) {
-    const action = terminals ? "restart-all" : "restart";
     return systemd.reportHostService(
-      await systemd.manageHostService(root, action, { target: service }),
-      action,
+      await systemd.manageHostService(root, "restart", { target: service }),
+      "restart",
     );
   }
 
@@ -658,7 +653,7 @@ function requireLinuxService() {
 
 function printHelp() {
   console.log(
-    `Usage:\n  inspire                 start the configured service or local Host\n  inspire restart             restart Inspire and its Pi workers; keep terminals\n  inspire restart --terminals  also close project terminals (Linux services)\n  inspire restart --all        close Pi sessions and restart; include Herdr in enhanced mode (Linux services)\n  inspire stop            stop the service or local Host\n  inspire status          inspect the service or local Host\n  inspire token           show the verified Host token for manual pairing\n  inspire recover-session <folder>  restore a session recovery bundle\n  inspire pi [--session <session.jsonl>]  open native Pi with remote queue receipts\n  inspire terminal <status|stop|restart> [--force]  manage this instance\'s terminals\n  inspire dev             run Vite and the development Host\n  inspire build           build the source checkout\n  inspire connection list | <name> [action]\n  inspire --ssh-reverse [action]\n  inspire service [install-host|enable-host|disable-host|status-host]\n\nCore lifecycle commands support Linux, macOS, and Windows. System service\ncommands remain Linux-only.`,
+    `Usage:\n  inspire                 start the configured service or local Host\n  inspire restart             restart Inspire, its Pi workers, and project terminals\n  inspire restart --all        also close other Pi sessions (include Herdr in enhanced mode, Linux services)\n  inspire stop            stop the service or local Host\n  inspire status          inspect the service or local Host\n  inspire token           show the verified Host token for manual pairing\n  inspire recover-session <folder>  restore a session recovery bundle\n  inspire pi [--session <session.jsonl>]  open native Pi with remote queue receipts\n  inspire dev             run Vite and the development Host\n  inspire build           build the source checkout\n  inspire connection list | <name> [action]\n  inspire --ssh-reverse [action]\n  inspire service [install-host|enable-host|disable-host|status-host]\n\nCore lifecycle commands support Linux, macOS, and Windows. System service\ncommands remain Linux-only.`,
   );
 }
 
@@ -679,13 +674,11 @@ async function main() {
     case "stop":
       return hostLifecycle("stop");
     case "restart":
-      if (args.length > 1 || (args.length === 1 && !["--all", "--terminals"].includes(args[0]))) {
-        console.error("Use: inspire restart [--all | --terminals]");
+      if (args.length > 1 || (args.length === 1 && args[0] !== "--all")) {
+        console.error("Use: inspire restart [--all]");
         return 64;
       }
-      return restartHost(args[0] === "--all" ? "all-pi"
-        : args[0] === "--terminals" ? "all"
-        : "host");
+      return restartHost(args[0] === "--all" ? "all-pi" : "host");
     case "recover-session": {
       if (args.length !== 1) {
         console.error("Use: inspire recover-session <bundle-folder>");
@@ -739,12 +732,6 @@ async function main() {
         cwd: invocationCwd,
         env: { ...process.env, INSPIRE_INSTALLATION_ROOT: root },
       });
-    }
-    case "terminal":
-    case "terminal-daemon": {
-      await ensureDependencies();
-      const entry = mode === "terminal" ? "terminal-control-entry" : "terminal-daemon-entry";
-      return runInherited(process.execPath, runtimeArgs(entry, args));
     }
     case "connection":
     case "--ssh-reverse": {
