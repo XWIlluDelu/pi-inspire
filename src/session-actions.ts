@@ -112,7 +112,7 @@ export type WorkbenchDestinations = Record<
 >;
 
 /** Prefer explicit metadata and the catalog. A complete short transcript covers the first catalog refresh. */
-export function sessionHeading(
+function sessionHeading(
   sessionName: string,
   catalogTitle: string | undefined,
   messages: readonly { role: string; content?: unknown }[],

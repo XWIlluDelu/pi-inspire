@@ -415,7 +415,7 @@ export const AppTopbar = memo(function AppTopbar({
                     : problem?.kind === "service-error"
                       ? "Host error"
                       : problem?.kind === "address-unreachable"
-                        ? "Address unavailable"
+                        ? "Unreachable"
                         : state.connection === "reconnecting"
                           ? "Reconnecting"
                           : "Connecting";

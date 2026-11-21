@@ -83,14 +83,14 @@ export const preferenceChoices = {
     ],
   },
   thinkingVisibility: {
-    label: "Reasoning detail",
-    paletteLabel: "Reasoning details",
+    label: "Thinking detail",
+    paletteLabel: "Thinking",
     description: "How much model thinking to show.",
     options: preferenceOptions(VISIBILITY_PREFERENCES, {
       dynamic: "Opens while the model is working and folds afterward.",
-      expanded: "Shows reasoning text in open cards.",
-      collapsed: "Shows reasoning summaries until opened.",
-      hidden: "Hides reasoning cards.",
+      expanded: "Shows thinking in open cards.",
+      collapsed: "Shows thinking summaries until opened.",
+      hidden: "Hides thinking cards.",
     }),
   },
   toolVisibility: {
@@ -106,7 +106,7 @@ export const preferenceChoices = {
   },
   activityFoldVisibility: {
     label: "Activity groups",
-    description: "How groups of reasoning and tool calls open.",
+    description: "How groups of thinking and tool calls open.",
     options: preferenceOptions(ACTIVITY_FOLD_VISIBILITIES, {
       dynamic: "Opens during live activity and folds when it settles.",
       expanded: "Shows all steps in order.",

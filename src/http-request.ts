@@ -44,12 +44,12 @@ export class ApiTransportError extends Error {
   ) {
     super(
       outcomeUnknown
-        ? "INSΠRE could not confirm that the action finished."
+        ? "Could not confirm that the action finished."
         : timedOut
           ? "The request timed out. Try again."
           : phase === "request"
-            ? "The INSΠRE address did not return a response"
-            : "The INSΠRE address returned an invalid response",
+            ? "Inspire did not respond."
+            : "Inspire returned an invalid response.",
     );
     this.name = "ApiTransportError";
   }

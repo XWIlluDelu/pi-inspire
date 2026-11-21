@@ -143,7 +143,7 @@ import {
 
 /** Keep a small warm cache, but never stop observed, busy, in-use, or
  * extension-blocked workers. Busy sessions may temporarily exceed the cap. */
-export const MAX_IDLE_WORKERS = 3;
+const MAX_IDLE_WORKERS = 3;
 // An HTTP open can finish just before its browser subscribes, and addressed
 // HTTP actions also use the slot between observations. Keep a bounded warm
 // projection cache independently of the last-opened hint.

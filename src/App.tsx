@@ -273,17 +273,17 @@ function connectionProblemText(
       };
     case "service-error":
       return {
-        title: "Host needs attention",
+        title: "Host error",
         detail: problem.message,
       };
     case "stream-interrupted":
       return {
-        title: "Live connection interrupted",
+        title: "Connection interrupted",
         detail: `Reconnecting to ${host}. Recent content stays visible.`,
       };
     default:
       return {
-        title: "INSΠRE address not reachable",
+        title: "Cannot reach Inspire",
         detail: `Could not connect to ${host}.`,
       };
   }

@@ -24,11 +24,11 @@ export interface HostRestartBackend {
 }
 
 const UNAVAILABLE =
-  "Page restart requires the Inspire launcher or this Host's installed Linux systemd services.";
+  "Page restart requires the Inspire launcher or installed Linux systemd service.";
 const ALL_PI_UNAVAILABLE =
-  "Restart all requires this Host's installed Linux services and Pi process control.";
+  "Restart all requires the installed Linux service and Pi process control.";
 const WORK_BUSY =
-  "Finish Pi work and pending operations before restarting, or choose Stop work and restart.";
+  "Finish active Pi work before restarting, or stop work and restart.";
 
 /** One process-scoped operation, shared by all observers. Only preparation and
  * proven non-issuance can reopen admission; HTTP observation is never authority. */
@@ -86,24 +86,16 @@ export class HostRestartController {
         throw requestError("Restart operation does not match.", 409);
       return { ...previous };
     }
-    if (this.operation && this.operation.phase !== "rejected")
+    if (
+      this.operation &&
+      this.operation.phase !== "rejected" &&
+      this.operation.phase !== "unknown"
+    )
       throw requestError(
-        "A restart is already pending. Check its status.",
+        "A restart is already in progress.",
         409,
       );
-    if (
-      request.skipAttachedStop &&
-      (!request.interruptWork ||
-        this.operation?.scope !== request.scope ||
-        !this.operation.stopUnconfirmed)
-    )
-      throw requestError("Review the unconfirmed Stop before restarting.", 409);
-    // Never forget an identity and accidentally admit it again on this Host.
-    if (this.receipts.length >= 32)
-      throw requestError(
-        "Restart attempt limit reached. Use the Host CLI.",
-        429,
-      );
+    if (this.receipts.length >= 32) this.receipts.shift();
     const operation: HostRestartOperation = {
       id: request.operationId,
       scope: request.scope,

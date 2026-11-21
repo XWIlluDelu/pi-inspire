@@ -41,8 +41,11 @@ export function HostRestartSettings({
     };
   }, [observing]);
   const operation = state.status?.operation;
-  const active = operation && operation.phase !== "rejected";
-  const disabled = !state.status || state.blocked || state.sending || !!active;
+  const active =
+    operation &&
+    operation.phase !== "rejected" &&
+    operation.phase !== "unknown";
+  const disabled = !state.status || state.sending || !!active;
   const busyScope =
     operation?.phase === "rejected" &&
     (operation.busyReason === "active-work" ||
@@ -77,20 +80,17 @@ export function HostRestartSettings({
     state.error ??
     (currentOperation?.phase === "rejected"
       ? currentOperation.busyReason === "active-work"
-        ? "Last restart attempt: Pi was busy."
+        ? "Pi is busy."
         : currentOperation.busyReason === "in-flight-operation"
-          ? "Last restart attempt: a request was still in progress."
-          : currentOperation.error &&
-            `Last restart attempt: ${currentOperation.error}`
+          ? "A request is still in progress."
+          : currentOperation.error
       : currentOperation?.error);
   const message =
-    state.blocked && state.error
-      ? state.error
-      : (progress ??
-        failure ??
-        (state.pending && !currentOperation
-          ? "Couldn’t confirm the restart."
-          : state.notice));
+    progress ??
+    failure ??
+    (state.pending && !currentOperation
+      ? "Restart did not finish. Try again."
+      : state.notice);
   const unavailable =
     state.status?.available === false ? state.status.reason : null;
   return (

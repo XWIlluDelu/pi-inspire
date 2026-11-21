@@ -494,8 +494,7 @@ export class AppStore {
               ? {
                   ...activity,
                   status: "warning" as const,
-                  message:
-                    "The Host connection changed before this command result could be confirmed.",
+                  message: "Connection reset before the command finished.",
                 }
               : activity,
           ),
@@ -1424,7 +1423,10 @@ export class AppStore {
     ) => this.runCommandActivity(sessionId, name, message, async () => {
       const result = await action();
       return result.status === "stale"
-        ? { status: "warning", message: "The command outcome is unknown after ownership changed." }
+        ? {
+            status: "warning",
+            message: "Session ownership changed before the command finished.",
+          }
         : { status: result.status, message: result.message ?? confirmation };
     });
     const draft = this.drafts.get(sessionId);
@@ -1758,7 +1760,7 @@ export class AppStore {
           error instanceof Error ? error.message : "Failed to abort";
         if (compacting)
           this.updateCommandActivity(sessionId, compacting.id, {
-            message: `Cancellation was not confirmed: ${message}`,
+            message: `Could not stop Pi: ${message}`,
           });
         if (
           this.state.sessionId === sessionId &&
