@@ -21,7 +21,7 @@ connect remotely to the same Host.
 - **Shared with terminal Pi:** with `attach-control` installed, an idle terminal Pi can attach automatically. **Take over** controls a running Pi from the browser while its process stays in the terminal.
 - **Rich input:** project-file references, images/files, retained drafts and prompt history, plus Steer/Queue with text/image recovery during a run.
 - **Native Pi controls:** model/thinking selection, saved defaults/common models, provider configuration/login, direct shell input, compaction, and HTML/JSONL export.
-- **Inspectable activity:** live tool output, native and customizable tool cards, and independent Thinking/tool detail settings. Adaptive mode shows current work and compacts completed activity.
+- **Inspectable activity:** live tool output, native and customizable tool cards, and adaptive disclosure that expands current work and compacts completed activity into clean single-line summaries.
 - **Files and Changes:** browse the workspace, inspect Git diffs, and preview images, Markdown, notebooks, HTML, PDF, source, audio, and video beside the conversation.
 - **Project terminals:** project-scoped shell tabs run in the Host and survive browser disconnects.
 - **Desktop and narrow layouts:** resizable panes, a command palette, keyboard shortcuts, and Wisteria, Hydrangea, Lycoris, Chimonanthus, Jade, Amber and Carbon & Silicon palettes, each in light and dark.
@@ -105,7 +105,7 @@ branching and session controls. [Task notifications](docs/host.md#task-notificat
 alerts on each browser or phone; installing the PWA alone does not enable them.
 
 Use `npm run inspire -- stop` from source or `inspire stop` for an installed package when you want to
-stop the Host. See [Lifecycle](docs/host.md#lifecycle) for restart scopes and their effects on Pi work
+stop the Host. See [Lifecycle](docs/host.md#lifecycle) for restart behavior and its effects on Pi work
 and terminals.
 
 ### Platform support

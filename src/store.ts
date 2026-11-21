@@ -279,6 +279,11 @@ export class AppStore {
       this.applyLiveTranscript(sessionId, data, sequence, statuses),
     hasVisibleGitSurface: () => this.git.hasVisibleSurface(),
     refreshGitStatus: () => this.git.refreshStatus(),
+    hasVisibleWorkspaceSurface: () =>
+      this.state.resourcesOpen &&
+      this.state.contextMode === "files" &&
+      this.state.fileInspection.kind === "browse",
+    refreshWorkspace: () => this.workspace.refresh(),
     invalidateResync: () => {
       this.resyncRequest += 1;
     },

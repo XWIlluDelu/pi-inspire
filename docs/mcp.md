@@ -50,9 +50,10 @@ configuration symlinks must stay within the project.
 
 ## Apply a saved change
 
-New workers read the saved file. For an idle Inspire-owned session, confirm **Reload selected
-session…** to apply it now. A taken-over Pi uses `/reload` in its original terminal. Removing a
-configuration entry leaves Pi's saved OAuth credentials intact.
+New workers read the saved file. For an idle Inspire-owned session, Inspire reloads it automatically
+after saving. While a session is busy, use **Reload selected session** once it becomes idle. A
+taken-over Pi uses `/reload` in its original terminal. Removing a configuration entry leaves Pi's
+saved OAuth credentials intact.
 
 Use the selected session's `/mcp` command to inspect live connections. `/mcp login <server>`,
 `/mcp logout <server>` and `/mcp reconnect <server>` act on that session. Shell `pi mcp list` opens

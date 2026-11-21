@@ -295,10 +295,14 @@ test.describe("touch source navigation", () => {
       release = resolve;
     });
     try {
-      // Pause the clock so a scheduled poll cannot satisfy the tool refresh.
+      // Pause the clock so a scheduled poll cannot satisfy the settle refresh.
       await page.clock.pauseAt(await page.evaluate(() => Date.now() + 500));
       transport.send({
         type: "tool_execution_end",
+        sessionId: "fixture-resources",
+      });
+      transport.send({
+        type: "agent_settled",
         sessionId: "fixture-resources",
       });
       await expect.poll(() => pending).toBe(true);

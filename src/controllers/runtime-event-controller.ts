@@ -48,6 +48,8 @@ interface RuntimeEventHost {
   refreshLoadedSessions(): Promise<void>;
   hasVisibleGitSurface(): boolean;
   refreshGitStatus(): Promise<void>;
+  hasVisibleWorkspaceSurface?(): boolean;
+  refreshWorkspace?(): Promise<void>;
   selectionGeneration(): number;
   invalidateResync(): void;
   resync(sessionId: string | null, generation: number): Promise<void>;
@@ -58,6 +60,7 @@ interface RuntimeEventHost {
  * without giving event producers a second browser-state authority. */
 export class RuntimeEventController {
   private readonly titleAttention = new Set<string>();
+  private readonly turnRanTools = new Set<string>();
   private acknowledgedStatus = new Map<string, number>();
   private statusAuthorityId: string | null = null;
   private pendingResync: {
@@ -156,6 +159,7 @@ export class RuntimeEventController {
   invalidateTransport(): void {
     if (this.pendingResync) clearTimeout(this.pendingResync.timer);
     this.pendingResync = null;
+    this.turnRanTools.clear();
   }
 
   setStatusAuthority(authorityId: string | null): void {
@@ -270,11 +274,18 @@ export class RuntimeEventController {
 
     if (eventSessionId) this.host.ensureSessionVisible(eventSessionId);
 
-    if (
-      event.type === "tool_execution_end" &&
-      this.host.hasVisibleGitSurface()
-    ) {
-      void this.host.refreshGitStatus();
+    if (event.type === "tool_execution_end") {
+      const activeSessionId = eventSessionId ?? this.host.state().sessionId;
+      if (activeSessionId) this.turnRanTools.add(activeSessionId);
+    }
+
+    if (event.type === "agent_settled") {
+      const activeSessionId = eventSessionId ?? this.host.state().sessionId;
+      if (activeSessionId && this.turnRanTools.delete(activeSessionId)) {
+        if (this.host.hasVisibleGitSurface()) void this.host.refreshGitStatus();
+        if (this.host.hasVisibleWorkspaceSurface?.())
+          void this.host.refreshWorkspace?.();
+      }
     }
 
     if (

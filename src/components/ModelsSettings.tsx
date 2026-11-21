@@ -149,6 +149,14 @@ export function ModelsSettings({
     [owner],
   );
   const load = useCallback(() => readSettings(readConfig), [readSettings, readConfig]);
+  useEffect(() => {
+    if (!active || !configuration.browsing || !snapshot) return;
+    const onVisibility = () => {
+      if (document.visibilityState === "visible" && !busy) void load();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [active, busy, configuration.browsing, load, snapshot]);
   const refreshProviders = useCallback(async () => {
     if (!alive.current) return;
     const current = ++providerGeneration.current;

@@ -184,6 +184,8 @@ test("MCP reveals saved connection values on request, keeps edits scoped, and re
     await settings.getByRole("button", { name: "Remove header X-Tenant" }).click();
     await settings.getByText("OAuth client configuration", { exact: true }).click();
     await settings.getByLabel("Callback port", { exact: true }).fill("8765");
+    // Saving while busy defers reload until idle, with a single-click reload action.
+    fixture.worker("running");
     await save.click();
     await expect(settings.getByText("MCP settings saved.")).toBeVisible();
     await expect(edit).toBeFocused();
@@ -193,28 +195,37 @@ test("MCP reveals saved connection values on request, keeps edits scoped, and re
     expect(saved.url).toContain("stored-url-secret");
     expect(saved.headers).toEqual({ Authorization: "Bearer stored-header-secret" });
     expect(saved.oauth).toMatchObject({ clientSecret: "stored-oauth-secret", callbackPort: 8765 });
-    await settings
-      .getByRole("button", { name: "Reload selected session…" })
-      .click();
-    const confirm = settings.getByRole("button", {
-      name: "Reload Pi resources",
+    const reloadButton = settings.getByRole("button", {
+      name: "Reload selected session",
       exact: true,
     });
-    fixture.worker("running");
-    await expect(confirm).toBeDisabled();
+    await expect(reloadButton).toBeDisabled();
     fixture.worker("idle");
-    await expect(confirm).toBeEnabled();
+    await expect(reloadButton).toBeEnabled();
     const reloaded = page.waitForResponse("**/api/control/native-command");
-    await confirm.click();
+    await reloadButton.click();
     expect((await reloaded).ok()).toBe(true);
-    await expect(confirm).toBeHidden();
+    await expect(reloadButton).toBeHidden();
     expect(fixture.reloads()).toBe(1);
+    // Saving while idle reloads automatically without extra confirmation.
+    await edit.click();
+    await settings.getByText("Advanced configuration", { exact: true }).click();
+    await settings
+      .getByLabel("Description", { exact: true })
+      .fill("Auto-reloaded documentation");
+    const autoReloaded = page.waitForResponse("**/api/control/native-command");
+    await save.click();
+    expect((await autoReloaded).ok()).toBe(true);
+    await expect(
+      settings.getByText("MCP settings saved and Pi reloaded."),
+    ).toBeVisible();
+    expect(fixture.reloads()).toBe(2);
     fixture.worker("idle", true);
     await expect(
       settings.getByText("Run /reload in the original Pi terminal."),
     ).toBeVisible();
     await expect(
-      settings.getByRole("button", { name: "Reload selected session…" }),
+      settings.getByRole("button", { name: "Reload selected session" }),
     ).toHaveCount(0);
 
     // Retire the owner with an actual credential reveal in flight.
