@@ -12,8 +12,8 @@ const COMPACTION_FIXTURE_SESSION_ID = "fixture-compaction";
 const ERROR_FIXTURE_SESSION_ID = "fixture-errors";
 const RESOURCE_FIXTURE_SESSION_ID = "fixture-resources";
 const PROMPT_MAP_FIXTURE_SESSION_ID = "fixture-prompt-map";
-export const COPY_FIXTURE_SESSION_ID = "fixture-saved-copy";
-export const savedCopy = {
+const COPY_FIXTURE_SESSION_ID = "fixture-saved-copy";
+const savedCopy = {
   user: "User source. ".repeat(6000) + "USER_COPY_TAIL",
   response: "Assistant source. ".repeat(4500) + "ASSISTANT_COPY_TAIL",
   final: "Final response fragment.",
@@ -22,7 +22,7 @@ export const savedCopy = {
 };
 
 const mixedFileContext = `${ATTACHMENT_CONTEXT_HEADING}\n- "/workspace/report.md"`;
-export const mixedCopySource = [
+const mixedCopySource = [
   "Inspect mixed attachments in report.md.",
   mixedFileContext,
   "[Image: original 2560x133, displayed at 2000x104. Multiply coordinates by 1.28 to map to original image.]",

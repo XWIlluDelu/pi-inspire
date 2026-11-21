@@ -5,31 +5,17 @@ import {
   jsonBody,
   type RouteHandler,
   type RouteResponse,
-  sessionSummary,
 } from "../helpers";
 import { initStore, installStoreRoutes, sessionPage } from "../store-fixture";
 
 export { sessionPage };
 
-export interface PageRequest {
+interface PageRequest {
   query: string;
   offset: number;
   limit: number;
   signal: RequestInit["signal"];
 }
-
-export const catalogRows = (ids: readonly string[]) =>
-  ids.map((id) => sessionSummary({ id }));
-export const pageResult = (
-  ids: readonly string[],
-  total = ids.length,
-  offset = 0,
-  limit = 40,
-) => ({ body: sessionPage(catalogRows(ids), total, offset, limit) });
-export const pageOf = (
-  ids: readonly string[],
-  { offset, limit }: Pick<PageRequest, "offset" | "limit">,
-) => pageResult(ids.slice(offset, offset + limit), ids.length, offset, limit);
 
 export function installCatalog(
   list: (page: PageRequest) => RouteResponse | Promise<RouteResponse>,

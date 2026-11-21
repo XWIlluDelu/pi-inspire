@@ -109,7 +109,7 @@ it.each(["deadline", "selection", "bootstrap"] as const)(
           sessionId: "s1",
           connection: "open",
           sessionSelectionPending: false,
-          sessionActionError: expect.stringContaining("could not confirm"),
+          sessionActionError: expect.stringMatching(/could not confirm/i),
         });
       }
       await store.openSession(current);

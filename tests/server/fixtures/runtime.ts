@@ -267,8 +267,6 @@ export const TEST_CWD = realpathSync(tmpdir());
 
 export let fixtureWorkspace: string;
 
-export let HIDDEN_FOLDER_CWD: string;
-
 export function fixtureCwd(cwd: string): string {
   return /^\/(project|folder|loose|ordinary|hidden|other)(\/|$)/u.test(cwd)
     ? join(fixtureWorkspace, cwd.slice(1))
@@ -395,7 +393,7 @@ export function catalog(records: SessionRecord[]): SessionCatalogLike {
 const runtimes: RuntimeController[] = [];
 const attachments: AttachmentStore[] = [];
 
-export const workspaceDirectories: string[] = [];
+const workspaceDirectories: string[] = [];
 
 /** Real upload lifecycle with periodic cleanup disabled for deterministic fixtures. */
 export function workerAttachmentStore(root: string): AttachmentStore {
@@ -491,7 +489,6 @@ export async function initializeRuntimeFixture() {
       mkdir(join(fixtureWorkspace, directory), { recursive: true }),
     ),
   );
-  HIDDEN_FOLDER_CWD = fixtureCwd("/folder");
 }
 
 export async function disposeRuntimeFixture() {

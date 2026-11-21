@@ -1,4 +1,3 @@
-import { fireEvent, screen } from "@testing-library/react";
 import type { ComposerHistoryEntry } from "../../../shared/contracts";
 import { discardComposerHistory } from "../../../src/composer-history";
 import { store } from "../../../src/store";
@@ -101,12 +100,6 @@ export async function createComposerFixture() {
 
   clearComposer();
   return host;
-}
-
-export function typeDraft(text: string) {
-  fireEvent.change(screen.getByLabelText("Message"), {
-    target: { value: text },
-  });
 }
 
 function clearComposer() {
