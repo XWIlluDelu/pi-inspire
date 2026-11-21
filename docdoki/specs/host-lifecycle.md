@@ -73,8 +73,8 @@ failure, with no legacy-engine fallback.
   optional service and extension files, and installs the exact tarball with production dependencies.
   The archive includes the built app and public examples. Tests and internal TypeScript stay in the
   source checkout.
-  The installed CLI exercises the external Pi SDK and RPC, session recovery and a real PTY across
-  Host restart. The Host and daemon must stop cleanly.
+  The installed CLI exercises the external Pi SDK and RPC, session recovery, and a real PTY. The
+  replacement Host restores the saved tab with its shell exited. The Host must stop cleanly.
 
   The project is MIT-licensed. Every Vite build derives `dist/THIRD_PARTY_NOTICES.txt` from the
   actual bundled module graph; missing third-party license text fails the build. Locally bundled
@@ -103,11 +103,9 @@ failure, with no legacy-engine fallback.
   without probing again, while terminal tabs retain their own initialization.
 - Application-specific settings must not rewrite unrelated user variables. Inspire does not force
   `NODE_ENV`; an unset, empty, or user-supplied value is preserved through Host, Pi, and project
-  terminals. Express owns its production HTTP mode locally. An explicit
-  `INSPIRE_TERMINAL_IN_PROCESS` flag, not a user's NODE_ENV, selects the test-only in-process owner.
-- Transient terminal services carry exports through systemd without command-line values or the
-  Host's service identity. Installed unit files must not snapshot credentials or the installer's PATH.
-  Changing a running daemon's environment requires an explicit terminal restart. The
+  terminals. Express owns its production HTTP mode locally. Project terminals inherit the
+  Host's environment. Installed unit files must not snapshot credentials or the installer's PATH.
+  The
   [operator guide](../../docs/host.md#shell-startup-problems) covers older units with a NODE_ENV override.
 
 This contract covers exported variables and executable lookup, not aliases, shell functions, or

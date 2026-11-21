@@ -1,26 +1,34 @@
 # Changelog
 
-## Unreleased
+## 0.8.0 — 2026-11-21
 
-- Added **Remember this browser** (unchecked for a one-time session stored only in memory) on the
-  pairing screen, plus **Sign out** in **Settings → System → Host** and the command palette.
-- Added lazy-loaded **Mermaid** diagram rendering in Markdown with a Diagram/Source toggle.
-- Moved project terminals in-process into the Host, removing the separate `inspire-terminal.service`
-  daemon, `inspire terminal` subcommands, `inspire restart --terminals`, and **Restart all**
-  (`inspire restart --all`). A single **Restart** now restarts Inspire, its Pi workers, and project
-  terminals.
-- Updated the Pi development compatibility baseline to **1.6.0**.
-- Subsetted bundled `IBM Plex Sans SC` and `Flux Mono SC` web fonts to full GB2312 +
-  high-frequency multi-weight tiers with system CJK fallbacks (reducing bundled font assets from
-  31.4 MB to 6.0 MB across 169 `.woff2` shards).
-- Removed the redundant **Thinking detail**, **Tool activity**, and **Activity groups** mode
-  dropdowns (always using adaptive disclosure) and moved **Send key** into **Settings → Behavior**.
-- Simplified notices, Host restart recovery, and user-facing copy (unified **Thinking** terminology).
-- The thinking shortcut uses the live Pi worker's native cycle order.
-- **Tool Loadout…** in the session menu and palette shows Pi's tool inventory and lets you change
-  its active selection.
-- **Fork into another folder…** recovers the whole saved session tree when its project folder is
-  unavailable.
+Changes since [v0.7.0](https://github.com/XWIlluDelu/pi-inspire/tree/v0.7.0).
+
+### Host and native Pi
+
+- Pair for one browser session by clearing **Remember this browser**. **Sign out** removes a
+  saved pairing before returning to the pairing page.
+- **Restart** reloads Inspire, its owned Pi workers, and project terminals. Terminal tabs and
+  optional saved output return on reconnect. A PTY survives browser disconnects and ends with
+  its Host. The separate terminal daemon and the extra restart modes have been removed.
+- Development and release checks use Pi **1.6.0**. Production continues to use the installed Pi.
+  The thinking shortcut follows the live worker's available levels. **Tool Loadout…** reads and
+  changes the active worker's tool selection.
+- **Fork into another folder…** brings the entire saved branch tree to a new project folder.
+  Prompt delivery stays with its admitted worker, and returned Pending images can be recovered
+  after the original response is lost.
+
+### Workbench
+
+- Markdown renders Mermaid on demand with a Diagram/Source toggle. Source previews recognize
+  more languages and offer line wrapping and a target-line highlight.
+- Activity uses adaptive disclosure, with completed tool calls shown as compact rows. **Send key**
+  now lives in **Settings → Behavior**.
+- Files and Changes refresh after Pi settles. The workbench notices external configuration
+  changes while idle. Narrow layouts keep the context switcher, search, and Prompt Map clear of
+  the transcript.
+- Bundled CJK fonts shrink from **31.4 MiB** to **6.0 MiB**, with system fonts covering additional
+  characters.
 
 ## 0.7.0 — 2026-11-09
 
