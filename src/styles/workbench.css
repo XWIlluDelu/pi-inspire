@@ -275,10 +275,19 @@ body.pane-resizing .nav {
 
 @media (max-width: 600px) {
   .ctx[aria-modal="true"] .ctx__tools:has(.ctx__mode) {
-    flex: 1;
+    order: -1;
+    flex: 1 0 100%;
     min-width: 0;
+    min-height: var(--topbar-h);
     margin-inline-start: 0;
-    padding-inline-start: var(--space-1);
+    padding-inline: var(--space-1) 0;
+  }
+
+  .ctx[aria-modal="true"] .ctx__header:has(.dock-tab) .dock-tabs {
+    flex: 1 0 100%;
+    min-height: 36px;
+    padding: 2px var(--space-1);
+    border-top: 1px solid var(--hairline);
   }
 
   .ctx[aria-modal="true"] .ctx__mode {
