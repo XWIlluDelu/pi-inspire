@@ -1,4 +1,5 @@
 import { type ReactNode, useId } from "react";
+import { PiLoader } from "./PiLoader";
 
 /** Card-level empty or error content uses the same inset as setting rows. */
 export function SettingsCardMessage({
@@ -15,7 +16,11 @@ export function SettingsCardMessage({
   return (
     <div className={`settings__card-message${error ? " settings__error" : ""}`}>
       {children && (
-        <span role={error ? "alert" : loading ? "status" : undefined}>
+        <span
+          className={loading ? "settings__card-loading" : undefined}
+          role={error ? "alert" : loading ? "status" : undefined}
+        >
+          {loading ? <PiLoader size={13} aria-hidden /> : null}
           {children}
         </span>
       )}
